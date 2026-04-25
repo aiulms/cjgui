@@ -1,0 +1,41 @@
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+
+# Local machine and editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Build outputs and compiled artifacts
+build/
+dist/
+out/
+target/
+bin/
+obj/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.app/
+
+# External repository mirrors and reference checkouts.
+# Keep these managed by their own Git repos unless we deliberately add submodules.
+reference_repos/
+repos/
+sources/

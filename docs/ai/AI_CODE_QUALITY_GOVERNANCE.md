@@ -1,9 +1,9 @@
 # 仓颉 GUI 项目 AI 代码质量治理
 
-最后更新：2026-04-24
+最后更新：2026-04-27
 
-性质：docs-only / code-quality governance / AI execution rule  
-状态：生效中  
+性质：docs-only / code-quality governance / AI execution rule
+状态：生效中
 范围：用于约束后续由 AI 主导实现时的代码质量、边界控制、验证与封账
 
 ## 0. 为什么还需要这份文档
@@ -61,13 +61,17 @@ AI 在真正写代码时，最容易出现的问题不是“完全不会做”�
 
 > 先冻结本轮写码边界，再进入实现；实现时只在批准范围内动作；完成前必须验证尾部影响；完成后必须封账。
 
+补充约束：
+
+> 治理文档是为了打开受限实现窗口，不是为了让 AI 永远停留在分析区。
+
 ### 2.1 AI 执行承诺
 
 每个参与实现的 AI，都默认接受下面的承诺：
 
-> 我不会把能跑一次当作完成。  
-> 我不会为了局部修复破坏 owner、truth 和 stop-line。  
-> 我会先确认边界，再写代码；写完之后给出真实验证证据。  
+> 我不会把能跑一次当作完成。
+> 我不会为了局部修复破坏 owner、truth 和 stop-line。
+> 我会先确认边界，再写代码；写完之后给出真实验证证据。
 > 如果发现本轮需要越界，我会暂停并回到治理门，而不是自行扩面。
 
 ## 3. 五道治理门
@@ -91,6 +95,10 @@ AI 在真正写代码时，最容易出现的问题不是“完全不会做”�
 
 没有执行卡，不允许开工。
 
+但执行卡一旦回答清楚 authority、goal、write set、forbidden scope、verification 和 stop-line，就视为开工许可证。
+
+除非发现新的高风险冲突，否则 AI 不得继续用新的 docs-only 文档替代本应进入的 bounded implementation。
+
 ### 3.2 写码门：Write Set 与 Diff Budget
 
 AI 写码时必须满足：
@@ -108,6 +116,41 @@ AI 写码时必须满足：
 - 超出预算就必须暂停并重新走 docs-only gate
 
 这里的重点不是卡死文件数量，而是防止“写着写着变成另一项工作”。
+
+### 3.2.1 实现偏置：边界清楚后默认写代码
+
+当本轮已经具备以下条件：
+
+- owner / truth 已冻结
+- write set 已冻结
+- forbidden scope 已冻结
+- stop-line 已冻结
+- verification 已冻结
+
+下一步默认应进入 bounded implementation。
+
+只有在发现下面情况时，才允许回到 docs-only：
+
+- 代码现实与文档冲突
+- 必须触碰未批准文件
+- 必须改变 public API / owner / truth
+- 必须引入新依赖、迁移、系统权限或平台桥接
+- 当前验证条件不成立，且不能通过窄实现解决
+
+否则继续写 preflight / execution card 属于治理反噬。
+
+### 3.2.2 Comment-only 不能冒充实现
+
+除非任务本身明确是文档或注释整理，`comment-only` 不得计为 implementation。
+
+如果任务名称包含 `implementation`、`first slice`、`bounded implementation` 或 `runtime slice`，则必须至少产生一种真实行为变化：
+
+- 可编译的仓颉类型、函数或内部结构
+- 可运行的 smoke / harness
+- 可测试的错误分类、状态转换或输入输出变化
+- 构建系统可见的 package / module / entry 能力
+
+只有注释、README、stop-line 或计划文档变化时，必须如实称为 docs-only，不得称为 implementation。
 
 ### 3.3 尾部治理门：Fallout Scan
 
@@ -220,6 +263,20 @@ AI 不能只靠“代码看起来对”结束任务。
 GUI 项目的验证不能只停在代码层。
 只要本轮涉及窗口、渲染、输入、布局、控件，至少要留下一个视觉或交互层面的验证证据。
 
+### 4.8 仓颉语言知识是否经过查证
+
+AI 在仓颉 GUI 项目里写代码时，不能只凭模型记忆判断仓颉语法、FFI、`cjc` / `cjpm`、标准库、构建参数或工具链 workaround。
+
+默认查证规则：
+
+- 普通 docs-only、Objective-C bridge、日志 harness 或治理更新，不需要每轮读取 `CangjieSkills` / `DocFlow`。
+- 一旦任务涉及仓颉语言语法、FFI、`cjc` / `cjpm`、标准库或工具链 workaround，执行 AI 必须按需查证本项目文档、本地官方文档、已有 smoke demo 或相关 skill。
+- `CangjieSkills` 已作为本地辅助 skill 接入 `/Users/jiangxuanyang/.agents/skills`；`DocFlow` 当前没有 `SKILL.md`，只保留为 knowledge / tool repo。
+- `CangjieSkills` / `DocFlow` 不作为每轮 execution card 的强制必读入口。
+- 读取 skill 时只读取与当前不确定点相关的小节，不全文翻阅，不让外部 skill 扩大本轮 write set。
+- 本项目真相源仍是项目文档、本地官方文档、已验证 smoke / harness 和当前 execution card；skill 只提供辅助解释和补充样例。
+- 凡进入代码实现的仓颉语法、FFI 或工具链判断，最终必须通过 `cjc` / `cjpm`、smoke 或对应 harness 验证。
+
 ## 5. AI 的默认暂停条件
 
 AI 一旦遇到以下任一情况，必须暂停：
@@ -234,9 +291,13 @@ AI 一旦遇到以下任一情况，必须暂停：
 
 暂停后不能自己偷偷扩面，只能回到 docs-only gate。
 
+但暂停不是默认选择。
+
+当执行卡已经批准且未出现上述暂停条件时，AI 必须继续推进受限实现，不得因为“继续写文档更安全”而停在 docs-only 循环。
+
 ## 6. Definition of Done
 
-后续任何 AI 说“做完了”，至少要满足下面 8 条中的适用项：
+后续任何 AI 说“做完了”，至少要满足下面 10 条中的适用项：
 
 1. 本轮 authority 和目标清楚
 2. 改动没有越出批准边界
@@ -246,6 +307,8 @@ AI 一旦遇到以下任一情况，必须暂停：
 6. 验证做过，并说明了未做项
 7. stop-line 守住了
 8. 必要的文档 / 账本 / closure 已同步
+9. 如果任务叫 implementation，必须有真实可编译、可运行或可验证的行为变化
+10. 如果本轮只改文档，必须明确称为 docs-only，不能冒充代码进展
 
 ## 7. 最推荐的协作模式
 
@@ -278,4 +341,4 @@ review AI 要负责：
 
 一句话：
 
-> 后续 AI 不是“会写代码就行”，而是必须在明确边界内写、写完能验证、验证后能封账。
+> 后续 AI 不是“会写代码就行”，也不是“只会写文档就安全”，而是必须在明确边界内写代码、写完能验证、验证后能封账。

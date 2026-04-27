@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目风险账本
 
-最后更新：2026-04-25
+最后更新：2026-04-26
 
 ## 用途
 
@@ -416,6 +416,206 @@
 - demo 只能证明现象
 - 后续每个看似稳定的系统，都要找不熟悉的小应用去打破它
 
+### 20. 治理反噬与上下文过载
+
+典型表现：
+
+- 每个小 slice 都留下 preflight / execution card / closure review，历史文档越来越多
+- 执行 AI 每轮需要读取过多前置文档
+- 旧 policy 与新 policy 出现隐性冲突
+- 为了遵守所有历史规则，代码开始过度防御或无法推进
+
+后果：
+
+- 文档本身成为系统复杂度来源
+- AI 上下文窗口被治理材料挤满，反而遗漏当前 authority
+- 历史结论无法被压缩成当前最小 truth
+- 项目速度在进入 runtime / renderer 深水区前被文档负担拖慢
+
+当前防守规则：
+
+- 当前 execution card 永远是本轮局部 authority，历史文档不能无限扩大本轮 scope
+- 稳定结论需要阶段性 compaction，未来应开 `governance compaction / truth manifest preflight`
+- compaction 只能压缩已有决策，不能发明新能力
+- 未来执行 AI 的默认上下文应是当前 tracker / manifest / current card，而不是所有历史文档全文
+
+### 21. 像素哈希和 pixel diff 的确定性幻觉
+
+典型表现：
+
+- 把单次 screenshot hash 当成长期 regression truth
+- 在 GPU、字体、颜色空间、Retina scale、抗锯齿和硬件差异未冻结前建立 baseline
+- AI 自动更新 golden hash
+- pixel diff mismatch 被直接归因为 render failure
+
+后果：
+
+- CI 噪声极高
+- baseline 更新变成日常维护泥潭
+- GPU / compositor / font / display 环境差异被误判成 UI 逻辑回归
+- 测试系统制造第二真相源
+
+当前防守规则：
+
+- 当前继续保持 `hash_value_persistence_allowed=false`、`baseline_allowed=false`、`pixel_diff_allowed=false`
+- screenshot / frame hash 只作为 smoke guard 和 feasibility evidence
+- 未来进入 render pipeline 前，应单独评估 `render command list / display list hash` 作为更稳定 evidence 的可能性
+- command list / display list 也不能提前定义，必须等 Renderer / render truth owner 出现后再开 preflight
+
+### 22. macOS runloop / AppKit 事件语义过拟合
+
+典型表现：
+
+- 把 `NSRunLoop`、`dispatch_get_main_queue`、`NSEvent` 或 Objective-C callback 语义写成 core runtime 真相
+- future core API 被 AppKit event loop 驱动方式反向定义
+- main-thread queue 的 macOS 单实例 smoke 形态被升级成长期通用 UI message system
+
+后果：
+
+- 后续 Windows / Wayland / Linux backend 难以接入
+- 平台偶然性污染公共 runtime API
+- event ingress、frame scheduling、input batching 和 lifecycle owner 后期要推翻重写
+
+当前防守规则：
+
+- macOS event loop 只能属于 platform adapter / bridge
+- core runtime 不应持有 AppKit runloop truth
+- core 层未来只能消费脱水 lifecycle / input / frame step / queue drain 等抽象事实
+- `tick` / `step` / input buffer 可以作为 future candidate，但不能在当前 app/window lifecycle slice 里仓促承诺
+- 防过拟合不等于提前做跨平台抽象
+
+### 23. AI semantic tree 热路径性能陷阱
+
+典型表现：
+
+- 每帧维护完整 semantic tree
+- render tree 和 semantic tree 双轨状态各自缓存 UI truth
+- 动画、滚动、进度条等高频视觉变化触发语义树重建
+- Agent action 读取或修改语义树绕过应用 owner
+
+后果：
+
+- CPU / 内存 / GC 压力拖垮轻量 runtime
+- semantic tree 成为第二真相源
+- AI action 获得普通用户不可见或不可操作的后门能力
+
+当前防守规则：
+
+- semantic tree 默认应是 cold / lazy / on-demand projection
+- render hot path 不应维护完整 semantic tree
+- 未来必须区分 render dirty 与 semantic dirty
+- Semantic projection 和 Action Router 必须另开 preflight，不能进入 app/window lifecycle first slice
+- AI action 必须经 owner / gateway，不得绕过应用状态真相
+
+### 24. 自绘路线的过度重绘 / 电池杀手风险
+
+典型表现：
+
+- 为了简化 runtime，把 GUI 做成默认全局 `tick`
+- 没有 UI 状态变化时仍以 `60fps` / `120fps` 重绘整个窗口
+- 动画、输入、resize 和普通 idle 状态使用同一条无差别 frame loop
+
+后果：
+
+- CPU / GPU 空转
+- 笔记本耗电、发热、风扇噪声上升
+- 轻量 GUI 框架变成高功耗 runtime
+- 后续再补 dirty rect / invalidation 时会反向重构核心调度模型
+
+当前防守规则：
+
+- 默认不允许 global tick 驱动全窗口盲重绘
+- redraw 应由 event / invalidation / dirty region / explicit animation request 触发
+- 任何引入 frame loop 的 execution card 必须说明 idle 时如何不重绘
+- dirty rect / invalidation owner 必须另开 preflight，不得在 lifecycle slice 中顺手实现
+
+### 25. 自绘手感与视觉的恐怖谷风险
+
+典型表现：
+
+- 自绘滚动惯性、焦点反馈、selection、文本 raster 和字体 fallback 与原生平台存在细微偏差
+- 控件内部直接写死滚动物理、文本渲染策略或平台手感常量
+- 早期 demo 看起来可用，但真实应用里“摸起来不对劲”
+
+后果：
+
+- 用户感知质量低于视觉截图能证明的水平
+- 后续统一滚动、文本、focus、selection 策略时需要拆控件内部逻辑
+- 自绘路线的主权变成长期手感债务
+
+当前防守规则：
+
+- 第一阶段可以接受手感不完美，但不能把手感策略写死在控件里
+- 滚动物理模型、文本 shaping / raster backend、focus / selection visual policy 必须未来有独立 owner
+- 在 layout / widget 之前不提前承诺具体滚动或文本渲染行为
+
+### 26. IME 隔离导致候选窗 / 光标坐标错位
+
+典型表现：
+
+- 为了避免 IME 状态机，把输入法完全放在框架外部输入区
+- 框架只接收最终 committed text
+- 用户滚动、resize、跨屏或 DPI 切换后，IME candidate window 仍停在旧的屏幕坐标
+
+后果：
+
+- 输入体验不可用
+- 文本模型、layout、scroll 和平台 IME 坐标同步被迫在后期补洞
+- “只提交最终字符串”被误当成完整输入系统 contract
+
+当前防守规则：
+
+- P1 不做 Input / IME
+- `final committed string only` 只能是 future early isolation candidate，不是长期完整方案
+- 未来 IME preflight 必须回答 preedit、candidate position、cursor rect / screen coordinate sync、composition cancel / commit、selection 和 scroll / layout 更新
+- 当前只登记 IME cursor rect sync channel 作为 future slot
+
+### 27. 自绘窗口的无障碍黑盒风险
+
+典型表现：
+
+- 自绘窗口对 OS accessibility 来说只是一张不可读图片
+- 控件、文本、role、action、focus 和 selection 没有语义投影
+- AI semantic tree 和 accessibility semantic tree 各造一套第二真相
+
+后果：
+
+- VoiceOver / screen reader 等辅助技术无法使用
+- 后续补无障碍时需要从控件、layout、scene、state 层一起返工
+- semantic projection 进入 render hot path 后拖慢 runtime
+
+当前防守规则：
+
+- P1 不做无障碍
+- 未来 accessibility 应尽量复用同一 UI truth 的 semantic projection
+- semantic projection 必须 lazy / on-demand，不能成为 render hot path 的每帧维护对象
+- render dirty 与 semantic dirty 未来必须分离
+
+### 28. AI 动作协议选型错误导致安全漏洞或 token 爆炸
+
+典型表现：
+
+- 让 AI 使用隐式栈协议生成 UI action command
+- 使用过度自由的 JSON DSL 表达复杂嵌套 UI 操作，导致 scope / generation / target context 字段遗漏
+- 把 S-expression 误当成可执行 Lisp，允许 `eval`、macro 或任意 symbol execution
+- action command 字符串绕过 typed AST / ActionRequest / owner gateway，直接触发内部函数
+
+后果：
+
+- AI 从局部操作退化到全局寻址，误操作危险按钮或批量对象
+- 指令 token 成本膨胀，长任务上下文更容易丢失
+- parser 无法 fail closed，安全审计困难
+- Action Router 变成 AI 后门，绕过应用 owner 和人类可见 UI 权限
+
+当前防守规则：
+
+- RPN 不作为 AI-authored UI action command 格式
+- JSON 不作为复杂 AI-authored action DSL 的默认首选，但仍可作为 snapshot、debug、IPC envelope、audit log 等普通数据格式候选
+- Lisp-style S-expression 登记为 future AI-authored Action Command 的 preferred north-star candidate
+- S-expression 只能作为 data grammar，必须 parse 成受限 AST / typed ActionRequest
+- 禁止 `eval`、macro、user-defined function、arbitrary symbol execution
+- Action Router protocol 必须另开 preflight，不能进入 app/window lifecycle first slice
+
 ## 六、当前项目的长期禁忌
 
 以下是当前项目的长期禁忌：
@@ -436,6 +636,15 @@
 - 假设所有硬件都满足高性能渲染路径
 - 为了“为爱发电”接受结构性补丁
 - 为了“更优雅”跳过真实验证
+- 让治理文档无限堆叠而没有 compaction / manifest 机制
+- 把 screenshot hash / pixel diff 当成默认业务回归真相
+- 把 AppKit runloop / callback 语义写进 core runtime truth
+- 在热路径维护完整 AI semantic tree
+- 用 global tick / blind redraw 作为 GUI runtime 默认调度模型
+- 把“只提交最终字符串”误写成完整 IME / 输入系统 contract
+- 因为选择自绘就忽略未来无障碍和 semantic bridge
+- 让 AI action command 绕过 typed AST / owner gateway 直接执行
+- 把 S-expression 当成 executable Lisp 而不是 data grammar
 
 ## 七、每次开工前的风险自问
 
@@ -454,5 +663,14 @@
 11. 这一步是否仍能按 `BUILD_FROM_ZERO.md` 从零复现？
 12. 这一步的错误处理属于 fatal、recoverable 还是 degraded？
 13. 这一步是否假设了过强的 GPU / 内存 / Metal 能力？
+14. 这一步是否让治理上下文继续膨胀，而没有压缩当前 truth？
+15. 这一步是否把平台 runloop / callback 语义泄露进 core truth？
+16. 这一步是否把 pixel hash / screenshot evidence 当成长期 regression truth？
+17. 这一步是否让 semantic projection 进入 render hot path？
+18. 这一步是否引入了默认 global tick 或 idle 时全窗口重绘？
+19. 这一步是否把滚动物理、文本渲染或平台手感写死在控件里？
+20. 这一步是否把 IME 的 final committed string 当成完整输入系统答案？
+21. 这一步是否让自绘路线忘记未来 accessibility / semantic bridge？
+22. 这一步是否让 AI action protocol 绕过 typed AST、validation 或 owner gateway？
 
 如果这些问题里有 2 个以上答不稳，就应该先暂停，回到治理文档和思考框架。

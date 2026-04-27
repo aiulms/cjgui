@@ -5,6 +5,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <objc/runtime.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 typedef enum CJGuiErrorCode {
     CJGUI_STATUS_OK = 0,
@@ -20,10 +21,19 @@ typedef enum CJGuiErrorCode {
     CJGUI_ERROR_VIEW_INVALIDATED = 30
 } CJGuiErrorCode;
 
+typedef enum CJGuiLifecycleMessage {
+    CJGUI_LIFECYCLE_MESSAGE_NONE = 0,
+    CJGUI_LIFECYCLE_MESSAGE_REQUEST_CLOSE = 1
+} CJGuiLifecycleMessage;
+
 static int32_t gLastErrorCode = CJGUI_STATUS_OK;
 static int32_t gLastErrorCategory = CJGUI_ERROR_NONE;
 static const char *gLastErrorMessage = "ok";
 static char CJGuiBridgeContextAssociationKey;
+
+static const char *CJGuiPixelFormatName(MTLPixelFormat pixelFormat);
+static uint8_t CJGuiColorChannelToByte(double value);
+static BOOL CJGuiColorByteMatches(uint8_t actual, uint8_t expected);
 
 static void CJGuiSetLastError(int32_t code, CjguiErrorCategory category, const char *message) {
     gLastErrorCode = code;
@@ -54,6 +64,10 @@ const char *cjgui_last_error_message(void) {
 @property(nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property(nonatomic, strong) CAMetalLayer *metalLayer;
 @property(nonatomic, assign) BOOL invalidated;
+@property(nonatomic, assign) BOOL frameDiagnosticsEnabled;
+@property(nonatomic, assign) BOOL metalReadbackProbeCompleted;
+@property(nonatomic, assign) uint64_t frameIndex;
+@property(nonatomic, assign) uint64_t renderAttemptCount;
 - (instancetype)initWithFrame:(NSRect)frame
                        device:(id<MTLDevice>)device
                  commandQueue:(id<MTLCommandQueue>)commandQueue;
@@ -82,7 +96,8 @@ const char *cjgui_last_error_message(void) {
 
     self.metalLayer.device = self.device;
     self.metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-    self.metalLayer.framebufferOnly = YES;
+    // Smoke-only readback probe needs a blit-readable drawable.
+    self.metalLayer.framebufferOnly = NO;
     self.metalLayer.contentsScale = NSScreen.mainScreen.backingScaleFactor;
     self.layer = self.metalLayer;
     [self updateDrawableSize];
@@ -122,6 +137,11 @@ const char *cjgui_last_error_message(void) {
 }
 
 - (BOOL)render {
+    BOOL emitFrameDiagnostics = self.frameDiagnosticsEnabled;
+    if (emitFrameDiagnostics) {
+        self.renderAttemptCount += 1;
+    }
+
     if (self.invalidated) {
         CJGuiSetLastError(CJGUI_ERROR_VIEW_INVALIDATED, CJGUI_ERROR_RECOVERABLE, "view is already invalidated");
         return NO;
@@ -146,10 +166,30 @@ const char *cjgui_last_error_message(void) {
     }
 
     MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    MTLClearColor clearColor = MTLClearColorMake(0.08, 0.16, 0.20, 1.0);
     pass.colorAttachments[0].texture = drawable.texture;
     pass.colorAttachments[0].loadAction = MTLLoadActionClear;
     pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-    pass.colorAttachments[0].clearColor = MTLClearColorMake(0.08, 0.16, 0.20, 1.0);
+    pass.colorAttachments[0].clearColor = clearColor;
+
+    BOOL shouldProbeMetalReadback = emitFrameDiagnostics && !self.metalReadbackProbeCompleted;
+    const NSUInteger readbackBytesPerRow = 256;
+    id<MTLBuffer> readbackBuffer = nil;
+    const char *readbackDegradedReason = "none";
+    BOOL readbackHasDegradedReason = NO;
+    BOOL readbackBlitEncoded = NO;
+    BOOL readbackCommandBufferCompleted = NO;
+    BOOL readbackClearColorMatch = NO;
+    BOOL readbackSuccess = NO;
+
+    if (shouldProbeMetalReadback) {
+        readbackBuffer = [self.device newBufferWithLength:readbackBytesPerRow
+                                                  options:MTLResourceStorageModeShared];
+        if (!readbackBuffer) {
+            readbackDegradedReason = "buffer_unavailable";
+            readbackHasDegradedReason = YES;
+        }
+    }
 
     id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:pass];
     if (!encoder) {
@@ -158,8 +198,99 @@ const char *cjgui_last_error_message(void) {
     }
 
     [encoder endEncoding];
+
+    if (shouldProbeMetalReadback && readbackBuffer) {
+        NSUInteger textureWidth = drawable.texture.width;
+        NSUInteger textureHeight = drawable.texture.height;
+        if (textureWidth == 0 || textureHeight == 0) {
+            readbackDegradedReason = "empty_texture";
+            readbackHasDegradedReason = YES;
+        } else {
+            id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
+            if (!blitEncoder) {
+                readbackDegradedReason = "blit_encoder_unavailable";
+                readbackHasDegradedReason = YES;
+            } else {
+                MTLOrigin sampleOrigin = MTLOriginMake(textureWidth / 2, textureHeight / 2, 0);
+                MTLSize sampleSize = MTLSizeMake(1, 1, 1);
+                [blitEncoder copyFromTexture:drawable.texture
+                                 sourceSlice:0
+                                 sourceLevel:0
+                                sourceOrigin:sampleOrigin
+                                  sourceSize:sampleSize
+                                    toBuffer:readbackBuffer
+                           destinationOffset:0
+                      destinationBytesPerRow:readbackBytesPerRow
+                    destinationBytesPerImage:readbackBytesPerRow];
+                [blitEncoder endEncoding];
+                readbackBlitEncoded = YES;
+            }
+        }
+    }
+
     [commandBuffer presentDrawable:drawable];
     [commandBuffer commit];
+
+    if (shouldProbeMetalReadback) {
+        if (readbackBlitEncoded && readbackBuffer) {
+            [commandBuffer waitUntilCompleted];
+            readbackCommandBufferCompleted = commandBuffer.status == MTLCommandBufferStatusCompleted;
+            if (readbackCommandBufferCompleted) {
+                const uint8_t *sample = (const uint8_t *)[readbackBuffer contents];
+                if (sample) {
+                    uint8_t expectedBlue = CJGuiColorChannelToByte(clearColor.blue);
+                    uint8_t expectedGreen = CJGuiColorChannelToByte(clearColor.green);
+                    uint8_t expectedRed = CJGuiColorChannelToByte(clearColor.red);
+                    uint8_t expectedAlpha = CJGuiColorChannelToByte(clearColor.alpha);
+                    readbackClearColorMatch = CJGuiColorByteMatches(sample[0], expectedBlue) &&
+                                              CJGuiColorByteMatches(sample[1], expectedGreen) &&
+                                              CJGuiColorByteMatches(sample[2], expectedRed) &&
+                                              CJGuiColorByteMatches(sample[3], expectedAlpha);
+                    if (readbackClearColorMatch) {
+                        readbackSuccess = YES;
+                    } else {
+                        readbackDegradedReason = "clear_color_mismatch";
+                        readbackHasDegradedReason = YES;
+                    }
+                } else {
+                    readbackDegradedReason = "buffer_contents_unavailable";
+                    readbackHasDegradedReason = YES;
+                }
+            } else {
+                readbackDegradedReason = "command_buffer_not_completed";
+                readbackHasDegradedReason = YES;
+            }
+        } else if (!readbackHasDegradedReason) {
+            readbackDegradedReason = "blit_not_encoded";
+            readbackHasDegradedReason = YES;
+        }
+
+        NSLog(@"cjgui: metal readback: requested=true");
+        NSLog(@"cjgui: metal readback: command_buffer_completed=%s", readbackCommandBufferCompleted ? "true" : "false");
+        NSLog(@"cjgui: metal readback: source=clear_color_probe");
+        NSLog(@"cjgui: metal readback: clear_color_match=%s", readbackClearColorMatch ? "true" : "false");
+        NSLog(@"cjgui: metal readback: success=%s degraded=%s",
+              readbackSuccess ? "true" : "false",
+              readbackHasDegradedReason ? readbackDegradedReason : "none");
+        self.metalReadbackProbeCompleted = YES;
+    }
+
+    if (emitFrameDiagnostics) {
+        self.frameIndex += 1;
+        CGSize drawableSize = self.metalLayer.drawableSize;
+        CGFloat scale = self.metalLayer.contentsScale;
+        NSLog(@"cjgui: frame metadata: index=%llu drawable=%.0fx%.0f scale=%.2f pixel_format=%s clear_color=%.2f,%.2f,%.2f,%.2f submitted=true committed=unknown attempts=%llu success=true degraded=none",
+              (unsigned long long)self.frameIndex,
+              (double)drawableSize.width,
+              (double)drawableSize.height,
+              (double)scale,
+              CJGuiPixelFormatName(self.metalLayer.pixelFormat),
+              clearColor.red,
+              clearColor.green,
+              clearColor.blue,
+              clearColor.alpha,
+              (unsigned long long)self.renderAttemptCount);
+    }
     CJGuiSetLastError(CJGUI_STATUS_OK, CJGUI_ERROR_NONE, "ok");
     return YES;
 }
@@ -184,8 +315,13 @@ const char *cjgui_last_error_message(void) {
 @property(nonatomic, strong) CJGuiMetalView *view;
 @property(nonatomic, assign) BOOL closeRequested;
 @property(nonatomic, assign) BOOL destroyed;
+@property(nonatomic, assign) BOOL drainScheduled;
+@property(nonatomic, assign) CJGuiLifecycleMessage pendingLifecycleMessage;
+@property(nonatomic, assign) const char *pendingCloseReason;
 - (int32_t)startWithApp:(NSApplication *)app;
-- (void)requestCloseWithReason:(const char *)reason;
+- (void)postCloseRequestWithReason:(const char *)reason;
+- (void)drainMainThreadLifecycleQueue;
+- (void)performCloseWithReason:(const char *)reason;
 - (void)destroyIfNeeded;
 @end
 
@@ -201,6 +337,34 @@ static void CJGuiStopApp(void) {
                                            data1:0
                                            data2:0];
     [NSApp postEvent:event atStart:NO];
+}
+
+static const char *CJGuiPixelFormatName(MTLPixelFormat pixelFormat) {
+    switch (pixelFormat) {
+        case MTLPixelFormatBGRA8Unorm:
+            return "BGRA8Unorm";
+        default:
+            return "unknown";
+    }
+}
+
+static uint8_t CJGuiColorChannelToByte(double value) {
+    if (value <= 0.0) {
+        return 0;
+    }
+    if (value >= 1.0) {
+        return 255;
+    }
+    return (uint8_t)(value * 255.0 + 0.5);
+}
+
+static BOOL CJGuiColorByteMatches(uint8_t actual, uint8_t expected) {
+    const int tolerance = 3;
+    int delta = (int)actual - (int)expected;
+    if (delta < 0) {
+        delta = -delta;
+    }
+    return delta <= tolerance;
 }
 
 @implementation CJGuiBridgeContext
@@ -253,6 +417,7 @@ static void CJGuiStopApp(void) {
     [self.window makeKeyAndOrderFront:nil];
     [self.app activateIgnoringOtherApps:YES];
 
+    self.view.frameDiagnosticsEnabled = YES;
     if (![self.view render]) {
         return CJGuiFail(cjgui_last_error_code(), (CjguiErrorCategory)cjgui_last_error_category(), cjgui_last_error_message());
     }
@@ -260,7 +425,56 @@ static void CJGuiStopApp(void) {
     return CJGUI_STATUS_OK;
 }
 
-- (void)requestCloseWithReason:(const char *)reason {
+- (void)postCloseRequestWithReason:(const char *)reason {
+    const char *safeReason = reason ? reason : "unknown";
+    NSLog(@"cjgui: post close request: %s", safeReason);
+
+    self.pendingLifecycleMessage = CJGUI_LIFECYCLE_MESSAGE_REQUEST_CLOSE;
+    self.pendingCloseReason = safeReason;
+
+    if (self.drainScheduled) {
+        return;
+    }
+
+    self.drainScheduled = YES;
+    __weak CJGuiBridgeContext *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CJGuiBridgeContext *context = weakSelf;
+        if (context) {
+            [context drainMainThreadLifecycleQueue];
+        }
+    });
+}
+
+- (void)drainMainThreadLifecycleQueue {
+    if (![NSThread isMainThread]) {
+        CJGuiSetLastError(CJGUI_ERROR_NOT_MAIN_THREAD, CJGUI_ERROR_FATAL, "lifecycle queue drain must run on main thread");
+        return;
+    }
+
+    self.drainScheduled = NO;
+    if (self.pendingLifecycleMessage == CJGUI_LIFECYCLE_MESSAGE_NONE) {
+        return;
+    }
+
+    CJGuiLifecycleMessage message = self.pendingLifecycleMessage;
+    const char *reason = self.pendingCloseReason ? self.pendingCloseReason : "unknown";
+    self.pendingLifecycleMessage = CJGUI_LIFECYCLE_MESSAGE_NONE;
+    self.pendingCloseReason = NULL;
+
+    NSLog(@"cjgui: main-thread drain");
+
+    if (message == CJGUI_LIFECYCLE_MESSAGE_REQUEST_CLOSE) {
+        if (self.destroyed || self.closeRequested) {
+            NSLog(@"cjgui: stale close request dropped: %s", reason);
+            return;
+        }
+
+        [self performCloseWithReason:reason];
+    }
+}
+
+- (void)performCloseWithReason:(const char *)reason {
     if (!self.closeRequested) {
         self.closeRequested = YES;
         NSLog(@"cjgui: close requested: %s", reason ? reason : "unknown");
@@ -271,6 +485,16 @@ static void CJGuiStopApp(void) {
     } else {
         CJGuiStopApp();
     }
+}
+
+- (BOOL)windowShouldClose:(id)sender {
+    (void)sender;
+    if (self.closeRequested || self.destroyed) {
+        return YES;
+    }
+
+    [self postCloseRequestWithReason:"window"];
+    return NO;
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
@@ -346,7 +570,7 @@ int32_t cjgui_app_run(void) {
                         return;
                     }
                     NSLog(@"cjgui: auto-closing after %.2f seconds", seconds);
-                    [strongContext requestCloseWithReason:"auto-close"];
+                    [strongContext postCloseRequestWithReason:"auto-close"];
                 });
             }
         }

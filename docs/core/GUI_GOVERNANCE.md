@@ -1,9 +1,9 @@
 # 仓颉 GUI 项目治理总则
 
-最后更新：2026-04-25
+最后更新：2026-04-27
 
-性质：docs-only / governance gate / project rule  
-状态：生效中  
+性质：docs-only / governance gate / project rule
+状态：生效中
 范围：用于约束“仓颉原生 GUI 框架”项目的架构判断、开口审批、实现边界与封账方式
 
 ## 0. 这份文档是干什么的
@@ -18,6 +18,7 @@
 - 先确认 owner 和真相层，再开抽象
 - 先确认当前 stop-line，再决定本轮只做什么
 - 做完以后要封账，不让下一轮重复踩同一个坑
+- 治理文档的目标是批准受限实现，不是无限推迟实现
 
 这份治理文档是轻量版，不照搬业务系统的重流程。
 它只服务于 GUI 框架研发真正高风险的地方。
@@ -179,6 +180,33 @@
 - 发现当前文档判断与代码现实明显冲突
 - 为了修一个局部问题，开始扩到本轮 blast radius 之外
 
+### 3.1 Docs Exit / Implementation Bias Rule
+
+docs-only gate 必须有出口。
+
+当某条 opening 已经满足以下条件：
+
+- owner 已明确
+- truth 已明确
+- write set 已明确
+- forbidden scope 已明确
+- stop-line 已明确
+- verification 已明确
+
+则下一轮默认必须进入 bounded implementation。
+
+除非出现以下情况，否则禁止继续创建新的 preflight / execution card 来替代实现：
+
+- 发现新的 HIGH / CRITICAL 风险
+- 当前代码现实与既有文档明显冲突
+- 必须触碰未批准 write set
+- 必须改变 public API / runtime contract / owner / truth
+- 必须新增依赖、系统权限、平台桥接或迁移
+
+执行卡是开工许可证，不是新的文档循环入口。
+
+如果已有 preflight 已经冻结边界，execution card 应保持短小，并且同一轮或下一轮必须落到代码。
+
 ## 4. 三种 docs-only 任务
 
 ### 4.1 Preflight
@@ -284,12 +312,21 @@ Closure Review 至少要回答：
 ```text
 preflight
 -> approval gate（如有高风险开口）
+-> execution card
 -> bounded implementation
 -> closure review
 ```
 
 如果只是局部、低风险、完全不改变边界的修补，可以不走完整 gate。
 但只要进入本治理文档列出的高风险场景，就不能跳步。
+
+默认工作流不能退化成：
+
+```text
+preflight -> execution card -> closure -> preflight -> execution card -> closure
+```
+
+如果连续两轮都是 docs-only 且没有新的实质风险发现，第三轮必须优先选择 bounded implementation 或明确暂停该方向。
 
 ## 6. 文档职责分工
 
@@ -325,6 +362,7 @@ preflight
 
 - preflight
 - approval gate
+- execution card
 - closure review
 
 ### 6.5 [AI_CODE_QUALITY_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/AI_CODE_QUALITY_GOVERNANCE.md)
@@ -367,6 +405,30 @@ preflight
 
 如果实现开始越出当前切口，就必须停下，不允许边写边扩。
 
+### 8.1 No Comment-Only Implementation Rule
+
+除非任务本身明确是文档整理、注释补账或 public documentation cleanup，否则 `comment-only` 不得计为 implementation。
+
+如果一轮任务名为：
+
+- implementation
+- first slice
+- bounded implementation
+- runtime slice
+- code slice
+
+则必须至少产生一个可编译、可运行或可验证的行为变化。
+
+允许的最小行为变化包括：
+
+- 新增可编译的仓颉类型 / 函数 / 内部结构
+- 新增可运行 smoke / harness
+- 新增真实错误分类或状态转换
+- 新增测试能捕捉到的行为
+- 新增构建可见的包、模块或入口能力
+
+不允许把“只新增注释、只扩写 stop-line、只整理 README”命名为 implementation。
+
 ## 9. 当前项目的统一 stop-line
 
 在新的单独批准出现之前，当前统一保持：
@@ -404,4 +466,4 @@ preflight
 
 一句话：
 
-> 先把 GUI 底座边界写清楚，再实现；实现后封账，不让下一轮继续在同一个坑里打转。
+> 先把 GUI 底座边界写清楚，再实现；边界清楚后必须实现；实现后封账，不让下一轮继续在同一个坑里打转。

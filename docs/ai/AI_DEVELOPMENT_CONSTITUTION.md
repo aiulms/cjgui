@@ -1,9 +1,9 @@
 # AI 开发宪法卡
 
-最后更新：2026-04-24
+最后更新：2026-04-27
 
-性质：quick-reference / hard boundary / AI execution constitution  
-状态：生效中  
+性质：quick-reference / hard boundary / AI execution constitution
+状态：生效中
 范围：所有参与仓颉 GUI 项目的 AI、未来维护者和临时审阅者
 
 ## 0. 用途
@@ -12,7 +12,7 @@
 
 它不是替代 [GUI_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_GOVERNANCE.md) 和 [AI_CODE_QUALITY_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/AI_CODE_QUALITY_GOVERNANCE.md)，而是让任何 AI 在开工前先看到最硬的边界。
 
-## 1. 十条硬规则
+## 1. 十二条硬规则
 
 1. 不允许在没有执行卡的情况下开始非平凡代码实现。
 2. 不允许越出批准的 write set。
@@ -24,6 +24,8 @@
 8. 不允许顺手打开 `Input`、`IME`、无障碍、复杂文本系统。
 9. 不允许引入重型 GUI 框架依赖来绕过本项目初心。
 10. 不允许只凭“能跑一次”宣称完成，必须给出验证证据和 stop-line。
+11. 不允许在 owner、truth、write set、verification、stop-line 已明确后继续用 docs-only 文档替代受限实现。
+12. 除明确的文档整理任务外，不允许把 comment-only 变化命名为 implementation。
 
 ## 2. 开工前 30 秒检查
 
@@ -35,6 +37,7 @@
 - 本轮允许改哪里？
 - 本轮明确不做什么？
 - 本轮如何验证？
+- 如果边界已经清楚，为什么不直接进入 bounded implementation？
 
 答不出来，就回到 docs-only gate。
 

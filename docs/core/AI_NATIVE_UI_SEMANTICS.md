@@ -1,6 +1,6 @@
 # AI 原生 UI 语义方向
 
-最后更新：2026-04-25
+最后更新：2026-04-26
 
 ## 1. 文档定位
 
@@ -246,6 +246,14 @@ AI action 不是可信 OS 输入。
 
 它更接近一个本地 UI action gateway。
 
+协议方向补充：
+
+- [AI_ACTION_PROTOCOL_EXPERIMENT.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_ACTION_PROTOCOL_EXPERIMENT.md) 记录了一次 RPN / JSON / Lisp-style S-expression 的 action command 格式实验。
+- 当前结论是：RPN rejected；JSON 不作为复杂 AI-authored action DSL 的默认首选；Lisp-style S-expression 是未来 AI-authored Action Command 的 preferred north-star candidate。
+- 这不是完整协议冻结，也不批准当前实现 Action Router。
+- S-expression 在本项目中必须是 data grammar，不是 executable Lisp；禁止 `eval`、macro、user-defined function、arbitrary symbol execution。
+- 未来正确路径应是：S-expression surface syntax -> restricted AST -> typed ActionRequest -> zero-trust Action Gateway -> application owner。
+
 ### 9.5 IPC 的隐性复杂度
 
 如果 Agent 是外部进程或服务，它如何读取 semantic tree、发送 action、订阅变化，都需要边界。
@@ -279,6 +287,7 @@ AI action 不是可信 OS 输入。
 2. 未来 `Scene` 不应该成为唯一输出，semantic projection 也要从同一 UI truth 生成。
 3. 未来 action 不能等同于回调乱飞，必须回到 owner boundary。
 4. 未来节点至少应允许携带稳定 `id` / `tag` / debug label 这类非绘制属性，但不在 P1 生成 semantic tree。
+5. 未来如果需要 AI-authored action command，优先从 S-expression 作为 surface syntax 候选开始 preflight，但必须先 parse 成受限 AST / typed ActionRequest。
 
 这意味着早期设计不要写死成：
 
@@ -303,6 +312,7 @@ Element
 - 不做 semantic tree。
 - 不做 action router。
 - 不做 IPC。
+- 不实现 S-expression action protocol。
 - 不让 AI action 与 mouse / keyboard 形成第二套状态机。
 - 未来若进入 action 设计，AI action 和鼠标键盘事件应能进入同一 owner-controlled event queue，而不是开后门。
 
@@ -353,6 +363,7 @@ Element
 - 现在做测试自动化框架
 - 现在为语义树设计完整公共 API
 - 现在设计 IPC server
+- 现在实现 S-expression action protocol
 - 让 AI 绕过 app owner 直接修改状态
 
 本文件只批准：
@@ -361,3 +372,4 @@ Element
 - 在未来 Element / Scene / Renderer 设计中保留语义投影空间
 - 把 “语义树不能成为第二真相源” 写入长期治理原则
 - 把物理可见性、时序稳定、空间语义、zero-trust action、IPC 边界列为 future semantic first slice 的必答问题
+- 把 S-expression 记录为未来 AI-authored action command 的 preferred north-star candidate，而不是当前实现任务

@@ -1,13 +1,44 @@
-# 仓颉笔记
+# CJGUI
 
 最后更新：2026-04-27
 
-## 用途
+CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
+它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
 
-这个目录是我们长期交流仓颉相关内容的工作区。
-后续已经确认的结论、待研究的问题、重要链接和项目方向，都会持续沉淀在这里。
+当前项目处于 `P1 runtime 受限实现准备阶段`。仓库已经完成 macOS AppKit / Metal smoke、主线程 UI message queue、自动化 GUI 验证、用户可见窗口截图验证和 frame hash 可行性等实验链路，并开始建立 `runtime/cjgui` 的最小 runtime skeleton。
 
-## 当前入口
+这还不是可用的 GUI 框架，也不提供稳定 public API。现阶段更像一个有严格边界和审计记录的系统编程实验室：先把 app lifecycle、window lifecycle、platform adapter、error strategy、验证链路和 stop-line 讲清楚，再逐步进入真实 runtime。
+
+## 快速入口
+
+- 想知道项目方向：看 [GUI_PROJECT_DIRECTION.md](docs/core/GUI_PROJECT_DIRECTION.md)。
+- 想接着干活：看 [GUI_TASK_TRACKER.md](GUI_TASK_TRACKER.md)，以 `当前 next opening` 为准。
+- 想看正式 runtime 骨架：看 [runtime/cjgui](runtime/cjgui)。
+- 想看 macOS 桥接实验：看 [labs/macos_bridge_smoke](labs/macos_bridge_smoke)。
+- 想查历史决策：看 [docs/plans/README.md](docs/plans/README.md)。
+- 想看文档分区：看 [docs/README.md](docs/README.md)。
+
+## 当前不是什么
+
+- 不是成熟 GUI toolkit。
+- 不提供稳定 public runtime API。
+- 不提供 public C ABI。
+- 不是跨平台抽象层。
+- 不包含声明式 UI DSL、控件库、布局系统、文本系统、IME 或无障碍实现。
+- 不把 smoke demo、截图验证、frame hash 或实验诊断当成长期 runtime contract。
+
+## 仓库结构
+
+- `runtime/cjgui/`：未来正式 runtime 的最小 package / source skeleton，目前只承载 internal marker、state shape 和边界文档。
+- `labs/`：实验室 smoke 和验证脚本，当前主要是 macOS AppKit / Metal bridge smoke。
+- `docs/core/`：项目方向、治理、风险、AI 原生 UI 语义和协作边界。
+- `docs/setup/`：本地工具链、构建、资料索引和上游问题账本。
+- `docs/plans/`：每一刀 preflight、execution card、closure review 的历史索引。
+- `GUI_TASK_TRACKER.md`：当前阶段判断、healthy stop-line、active / future openings。
+
+本机工作区可能还包含 `sources/`、`repos/`、`reference_repos/` 等资料镜像和参考仓库；它们通常由各自 Git 仓库管理，不作为 CJGUI 根仓库的一部分提交。
+
+## 个人工作区入口
 
 如果以后上下文丢失，优先按这个顺序读取：
 
@@ -39,6 +70,7 @@
 - [2026-04-26-p1-error-taxonomy-marker-closure-recoverability-boundary-preflight.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-26-p1-error-taxonomy-marker-closure-recoverability-boundary-preflight.md)
 - [2026-04-27-p1-first-internal-app-lifecycle-state-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-first-internal-app-lifecycle-state-execution-card.md)
 - [2026-04-27-p1-app-lifecycle-state-shape-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-shape-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md)
 
 ## 当前已确认
 

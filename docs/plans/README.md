@@ -312,6 +312,11 @@
   - 状态：完成；不自动开启实现
   - 用途：短卡授权未来 `P1 app lifecycle state shape first slice`；未来第一刀只允许修改 `runtime/cjgui/src/app_lifecycle.cj` 中的 `CjguiInternalAppLifecycleState`，最多新增一个不可变 `Bool` 字段，语义等价于 `stateMachineActive: Bool = false`，只表达最小脱水 state shape；继续禁止其他字段、`public`、import、函数 / 方法 / 显式 init、构造逻辑、runtime behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
 
+- [2026-04-27-p1-app-lifecycle-state-shape-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-shape-closure-review.md)
+  - 类型：closure review
+  - 状态：完成
+  - 用途：封账 P1 app lifecycle state shape first slice，记录 `CjguiInternalAppLifecycleState` 新增唯一默认 internal 不可变字段 `isStateMachineActive: Bool = false`、`app_lifecycle_state_shape_refined=true`、`state_machine_defined=false`、`run_behavior_present=false`、`shutdown_behavior_present=false`、`request_quit_behavior_present=false`、`queue_behavior_present=false`、`drain_behavior_present=false`、`public_api_present=false`、`public_c_abi_present=false`、`behavior_code_present=false`、`function_present=false`、`method_present=false`、`explicit_init_present=false`、`import_present=false`、`cjpm_toml_changed=false`、`smoke_changed=false`、`cjpm build --target-dir /tmp/cjgui-app-lifecycle-state-shape-target --skip-script` 通过、smoke guard 通过，并将 next opening 转向 `P1 app lifecycle state shape closure / lifecycle transition boundary decision`。
+
 - [2026-04-26-p1-window-lifecycle-surface-boundary-preflight.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-26-p1-window-lifecycle-surface-boundary-preflight.md)
   - 类型：preflight
   - 状态：完成；不批准直接实现
@@ -466,14 +471,14 @@
 
 下一步推荐：
 
-- `P1 app lifecycle state shape first slice`
+- `P1 app lifecycle state shape closure / lifecycle transition boundary decision`
 
 用途：
 
-- 基于 [2026-04-27-p1-app-lifecycle-state-shape-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-shape-execution-card.md)，只给 `CjguiInternalAppLifecycleState` 添加一个不可变 `Bool` 字段，用来表达最小脱水 state shape。
-- 该 first slice 不得定义 state machine、transition、`run` / `shutdown` / `request quit`、queue / drain、public runtime API 或 public C ABI。
+- 基于 [2026-04-27-p1-app-lifecycle-state-shape-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-shape-closure-review.md)，复盘 `isStateMachineActive: Bool = false` 是否足以封账。
+- 决定下一步是否只做 docs-only lifecycle transition boundary，仍不得直接实现 state machine、transition、`run` / `shutdown` / `request quit`、queue / drain、public runtime API 或 public C ABI。
 
 当前可执行动作：
 
 - 不自动开启实现。
-- 如需继续推进，必须由用户明确批准 `P1 app lifecycle state shape first slice`；执行前必须查证 CangjieSkills / 本地官方文档中的 struct field / package / visibility / build 规则，并运行 `cjpm build`、smoke guard 和 `git diff --check`。
+- 如需继续推进，建议先创建 docs-only lifecycle transition boundary decision / preflight；任何实现仍需新的明确 execution card。

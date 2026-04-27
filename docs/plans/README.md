@@ -317,6 +317,11 @@
   - 状态：完成
   - 用途：封账 P1 app lifecycle state shape first slice，记录 `CjguiInternalAppLifecycleState` 新增唯一默认 internal 不可变字段 `isStateMachineActive: Bool = false`、`app_lifecycle_state_shape_refined=true`、`state_machine_defined=false`、`run_behavior_present=false`、`shutdown_behavior_present=false`、`request_quit_behavior_present=false`、`queue_behavior_present=false`、`drain_behavior_present=false`、`public_api_present=false`、`public_c_abi_present=false`、`behavior_code_present=false`、`function_present=false`、`method_present=false`、`explicit_init_present=false`、`import_present=false`、`cjpm_toml_changed=false`、`smoke_changed=false`、`cjpm build --target-dir /tmp/cjgui-app-lifecycle-state-shape-target --skip-script` 通过、smoke guard 通过，并将 next opening 转向 `P1 app lifecycle state shape closure / lifecycle transition boundary decision`。
 
+- [2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md)
+  - 类型：execution card
+  - 状态：完成；默认进入 bounded implementation
+  - 用途：短卡判断并授权下一刀 `P1 app lifecycle transition marker first slice`；未来第一刀最多只能在 `runtime/cjgui/src/app_lifecycle.cj` 新增一个默认 internal、无 `public`、无 import 的空 transition marker type，语义为 transition boundary exists but transition behavior is not yet defined；继续禁止函数、修改 `isStateMachineActive`、新增第二个 state 字段、`run` / `shutdown` / `request quit` / queue / drain、platform adapter callback binding、window / error behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
+
 - [2026-04-26-p1-window-lifecycle-surface-boundary-preflight.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-26-p1-window-lifecycle-surface-boundary-preflight.md)
   - 类型：preflight
   - 状态：完成；不批准直接实现
@@ -471,14 +476,14 @@
 
 下一步推荐：
 
-- `P1 app lifecycle state shape closure / lifecycle transition boundary decision`
+- `P1 app lifecycle transition marker first slice`
 
 用途：
 
-- 基于 [2026-04-27-p1-app-lifecycle-state-shape-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-shape-closure-review.md)，复盘 `isStateMachineActive: Bool = false` 是否足以封账。
-- 决定下一步是否只做 docs-only lifecycle transition boundary，仍不得直接实现 state machine、transition、`run` / `shutdown` / `request quit`、queue / drain、public runtime API 或 public C ABI。
+- 基于 [2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md)，只新增一个默认 internal、无 `public`、无 import 的 app lifecycle transition marker type。
+- 该 marker 只表达 transition boundary exists but transition behavior is not yet defined，不得实现 state machine、transition behavior、`run` / `shutdown` / `request quit`、queue / drain、public runtime API 或 public C ABI。
 
 当前可执行动作：
 
 - 不自动开启实现。
-- 如需继续推进，建议先创建 docs-only lifecycle transition boundary decision / preflight；任何实现仍需新的明确 execution card。
+- 根据 Docs Exit Rule，下一轮默认应进入 bounded implementation；除非发现 HIGH / CRITICAL 风险或 authority 冲突，不再新开 docs-only 入口替代实现。

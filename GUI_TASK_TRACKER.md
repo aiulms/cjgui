@@ -190,6 +190,8 @@
 
 最新补充：P1 internal runtime run request bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeRunRequest` 与 `CjguiInternalRuntimeRunRequestReport`，以及 `cjguiInternalBuildRuntimeRunRequest(intent)`、`cjguiInternalEvaluateRuntimeRunRequest(request)`、`cjguiInternalExecuteRuntimeRunRequestDraft(driverRequest, input, policy)`、`cjguiInternalExecuteDefaultRuntimeRunRequestDraft()` 和三条直接相关 sanity helpers。run request 只把 run intent 包装并评估为 internal request summary；`isRequestAllowed` 只由 `intent.mayRequestRuntimeRun` 派生，不是 public `run()` 调用、event loop start、scheduler、queue item、platform callback 或 public runtime API。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-run-request-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime run request bundle closure / next runtime behavior decision`。
 
+最新补充：P1 internal runtime readiness / run-boundary chain compaction 已完成；新增 [2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)，将 root state、runtime step、runtime cycle、command draft、command pipeline、driver pass、driver report、run intent、run request 压缩为一份短结论。关键判断：不建议继续增加纯 report / wrapper 层；下一步推荐先补 `shutdown / cancellation intent`，避免 run-boundary 只有进入方向没有退出方向。当前 next opening 转向 `P1 internal shutdown / cancellation intent bundle implementation`。
+
 ## 当前 current-state summary
 
 ### 1. 项目目标已清楚
@@ -243,17 +245,16 @@
 
 当前推荐开启的下一条 opening：
 
-### `P1 internal runtime run request bundle closure / next runtime behavior decision`
+### `P1 internal shutdown / cancellation intent bundle implementation`
 
-性质：bundled closure review / next runtime behavior bundle decision
+性质：bounded implementation / W3 internal subsystem draft
 
 目标：
 
-- 基于 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle。
-- internal runtime run request / request evaluation summary 已落地并封账。
-- 不再继续一 helper 一轮。
-- 不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime behavior。
-- 不改变 state shape、constructor shape、projection behavior、coordination behavior、bootstrap builder behavior、step behavior、public runtime API 或 public C ABI。
+- 基于 [2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)，补齐 internal shutdown / cancellation intent。
+- 当前正向 readiness / run request 链路已足够，不建议继续增加纯 report / wrapper 层。
+- 下一步应先建立退出 / cancel / shutdown 方向的 internal-only 脱水意图，再讨论更接近 run boundary 的实现。
+- 不自动进入 public API、C ABI、app run、event loop、queue / drain、window create 或 platform callback。
 
 本 opening 仍禁止：
 
@@ -2687,16 +2688,15 @@ P1 bridge boundary cleanup、P1 main-thread UI message queue first slice、P1 au
 
 当前推荐的下一条 opening 是：
 
-### `P1 internal runtime run request bundle closure / next runtime behavior decision`
+### `P1 internal shutdown / cancellation intent bundle implementation`
 
 性质：bundled closure review / next runtime behavior bundle decision
 
 目标：
 
-- 基于 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle。
-- internal runtime run request / request evaluation summary 已落地并封账。
-- 不再继续一 helper 一轮。
-- 不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime behavior。
+- 基于 [2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)，补齐 internal shutdown / cancellation intent。
+- 不继续增加纯 report / wrapper 层。
+- 不自动进入 app run、event loop、queue / drain、window create 或 public surface。
 - 不改变 state shape、constructor shape、projection behavior、coordination behavior、bootstrap builder behavior、step behavior、public runtime API 或 public C ABI。
 
 禁止：
@@ -3155,12 +3155,12 @@ Stop-line：
 
 如果继续推进，最合适的下一步是：
 
-> `P1 internal runtime run request bundle closure / next runtime behavior decision`
+> `P1 internal shutdown / cancellation intent bundle implementation`
 
-范围只允许基于 [P1 internal runtime run request bundle closure review](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle；不再继续一 helper 一轮；不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime 行为。
+范围只允许基于 [P1 internal runtime readiness / run-boundary chain compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)，进入 internal shutdown / cancellation intent bundle。推荐理由：当前链路只证明 ready / request-run 方向，退出 / cancel / shutdown 方向尚未建模；如果直接走 run boundary，容易让未来 `run` 只有“进”没有“退”。
 
 当前 app lifecycle、window lifecycle 与 platform adapter 已证明 internal immutable state / fact、construction shape、NoOp function、极窄 marker transition、platform readiness fact -> lifecycle marker projection、internal lifecycle coordination result / function、默认 internal sanity function、app lifecycle observed platform readiness state、window lifecycle observed platform readiness state、app/window readiness predicate helpers、positive coordination readiness sanity helper、negative coordination readiness sanity helper、readiness sanity parity helper、internal runtime readiness aggregate type、internal runtime readiness aggregate builder、internal runtime bootstrap snapshot type、internal runtime bootstrap snapshot builder、internal runtime root state type、internal runtime root state builder、internal runtime root ready sanity helper、internal runtime step result type、first internal runtime step function，以及 internal runtime step ready sanity helper 都能落地。
 
-下一步默认进入 `P1 internal runtime run request bundle closure / next runtime behavior decision`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、queue / drain、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
+下一步默认进入 `P1 internal shutdown / cancellation intent bundle implementation`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、queue / drain、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
 
-本轮已完成 run request bundle implementation；下一轮应基于该 internal request evaluation summary 判断后续 runtime behavior bundle，不再单独创建 one-helper execution card。
+本轮已完成 readiness / run-boundary chain compaction；下一轮不应继续增加纯 report / wrapper 层，应优先补齐 internal shutdown / cancellation intent。

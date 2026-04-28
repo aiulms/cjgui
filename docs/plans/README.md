@@ -713,16 +713,20 @@
 - runtime run request bundle：
   - [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)
 
+- runtime readiness / run-boundary chain compaction：
+  - [2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)
+
 ## 当前下一步 opening
 
 下一步推荐：
 
-- `P1 internal runtime run request bundle closure / next runtime behavior decision`
+- `P1 internal shutdown / cancellation intent bundle implementation`
 
 用途：
 
-- 基于 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle。
-- 不再继续一 helper 一轮。
+- 基于 [2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)，补齐 internal shutdown / cancellation intent。
+- 不继续增加纯 report / wrapper 层。
+- 不自动进入 public API、C ABI、app run、event loop、queue / drain、window create 或 platform callback。
 
 当前可执行动作：
 

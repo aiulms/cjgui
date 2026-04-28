@@ -1,6 +1,6 @@
 # 仓颉 GUI 文档中心
 
-最后更新：2026-04-27
+最后更新：2026-04-28
 
 ## 1. 文档入口规则
 
@@ -57,12 +57,23 @@
 
 - [plans/README.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/README.md)
 
+### 2.5 [research](/Users/jiangxuanyang/Desktop/cangjie/docs/research)
+
+放 sidecar research、行业排雷和不阻塞当前 runtime implementation 的架构风险情报。
+
+research 文档是按需雷达，不是每轮 implementation 的默认必读上下文。只有触碰对应高风险开口时，才读取相关章节。
+
+当前包括：
+
+- [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md)
+
 ## 3. 新文档放置规则
 
 - 方向、治理、长期设计、风险账本：放 `docs/core/`
 - AI 执行规则、代码质量、执行卡模板：放 `docs/ai/`
 - 环境、构建、工具链、本地资料、仓颉上游问题账本：放 `docs/setup/`
 - 单次任务计划、preflight、gate、closure：放 `docs/plans/`
+- sidecar research、行业排雷、架构风险情报：放 `docs/research/`
 - 只有总入口和当前任务账本可以留在根目录
 
 如果一个新文档不知道该放哪里，先不要创建，应该先在 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 或本文件里补职责说明。

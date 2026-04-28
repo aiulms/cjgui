@@ -1,6 +1,6 @@
 # CJGUI 上下文装载策略
 
-最后更新：2026-04-27
+最后更新：2026-04-28
 
 性质：AI context loading policy / anti-overload rule
 状态：生效中
@@ -52,6 +52,10 @@ AI 不应默认全文读取所有治理文档、所有 plans、所有参考仓�
 - 再读相关代码。
 - 只有遇到不确定点，才读取对应的风险、工具链、历史计划或外部 skill。
 
+sidecar research 不是每轮 implementation 的默认必读上下文。
+
+例如 [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md) 只在相关高风险开口前按需读取，例如 event loop / queue / drain、renderer / invalidation / layout、Text / IME / Accessibility、platform handle / public API / C ABI、semantic tree / Action Router。它是排雷雷达，不是每轮执行的前置门槛。
+
 ### 1.4 上下文预算是任务边界的一部分
 
 架构 AI 给执行 AI 下发任务时，必须同时给出 `Loaded Context Budget`。
@@ -85,12 +89,14 @@ AI 在读取长提示词前，必须先判断本轮到底是哪一种意图：
 
 - `W0 review-only`：只做治理审查或提示词评估。默认不改文件，不跑实现命令；最多读取当前入口、被评估提示词和直接相关治理文档片段。
 - `W1 light slice`：普通 first slice 或小实现。默认必读不超过 5 个文件：当前 tracker、当前 execution card、最近直接 closure、write set 文件、必要语法 / build 资料。W1 execution card 应优先使用短卡格式，避免长模板反向制造上下文负担。W1 不等于 one-symbol slice；只要 owner、write set、truth、forbidden scope 和验证清楚，W1 可以覆盖一个完整 internal concept slice。
-- `W2 standard slice`：有直接前置 preflight / closure、需要验证脚本或多文件 write set 的实现。必读通常不超过 8 个文件，并逐项说明必要性。
+- `W2 standard slice`：有直接前置 preflight / closure、需要验证脚本或多文件 write set 的实现。必读通常不超过 8 个文件，并逐项说明必要性。W2 可以是完整 internal behavior bundle，不等于重上下文；如果 owner、truth、write set 和验证路径清楚，可以一次授权 3-7 个相关 internal changes，而不必把 helper、input、policy、decision、result、sanity 拆成多轮。
 - `W3 heavy slice`：只有 HIGH / CRITICAL 风险、public contract、migration、跨 owner、平台桥接、FFI 生命周期、构建系统或安全边界变化时才允许。超过 8 个必读文件必须写明“为什么重上下文会降低风险，而不是拖慢推进”。
 
 如果一个小实现被包装成 `W3 heavy slice`，架构 AI 必须先压缩提示词，不能把安全感转嫁给执行 AI。
 
 如果一个治理审查被包装成 implementation prompt，审查 AI 必须先指出意图冲突，不能直接执行。
+
+helper / sanity 链封账后，下一张 implementation prompt 应优先提升到 W2 internal behavior bundle。提高实现授权不要求默认增加上下文阅读量；上下文仍按 L0 / L1 / L2 最小必要原则装载。
 
 ## 2. 四层装载模型
 
@@ -133,6 +139,7 @@ L1 的目标是回答：
 
 - 触碰 owner / truth / stop-line：读 [GUI_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_GOVERNANCE.md) 的相关章节。
 - 触碰 GUI / 渲染 / 平台边界：读 [GUI_RISK_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_RISK_LEDGER.md) 的相关条目。
+- 触碰 event loop / queue / drain、renderer / invalidation / layout、Text / IME / Accessibility、platform handle / public API / C ABI、semantic tree / Action Router：按需读 [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md) 的相关章节；不要把整份 research 文档加入普通 W1 / W2 implementation 的默认必读清单。
 - 触碰仓颉语法、`cjpm`、`cjc`、FFI 或 SDK workaround：读 [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)、[CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)，并按需读取 CangjieSkills。
 - 触碰 macOS bridge smoke：读 `[labs/macos_bridge_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/macos_bridge_smoke`) 的相关 README、脚本或 native 文件。
 - 触碰 C FFI smoke：读 `[labs/cffi_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/cffi_smoke`) 的相关文件。

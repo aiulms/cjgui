@@ -4,7 +4,7 @@ package cjgui
 // 日期: 2026-04-26
 //
 // 本文件当前只承载一个默认 internal 的 app lifecycle 状态标记、
-// 两个最小脱水 Bool 形状字段、最小构造期初始化形状，
+// 三个最小脱水 Bool 形状字段、最小构造期初始化形状，
 // 以及边界说明注释。
 // 它不定义 public runtime API。
 // 它不实现 app lifecycle 行为。
@@ -16,11 +16,13 @@ package cjgui
 // - 这是普通顶层 struct, 使用默认 internal 可见性。
 // - 它只标记 app lifecycle state 边界存在。
 // - 它同时标记 lifecycle state machine 尚未定义。
-// - 它只有两个不可变 Bool 字段:
+// - 它只有三个不可变 Bool 字段:
 //   - isStateMachineActive, 默认构造为 false, 不定义 state machine。
 //   - hasLifecyclePhase, 默认构造为 false, 只标记 phase boundary 存在,
 //     不定义 lifecycle phase taxonomy。
-// - 它的构造期初始化只允许写入这两个不可变 Bool facts。
+//   - hasObservedPlatformReady, 默认构造为 false, 只标记已观察到脱水
+//     platform readiness fact, 不定义 run 或 event loop 行为。
+// - 它的构造期初始化只允许写入这三个不可变 Bool facts。
 // - 它没有普通函数、方法、import 或 runtime 行为。
 // - 它不是 run、shutdown、request quit、queue、drain、public runtime API、
 //   public C ABI、platform callback binding、window lifecycle behavior 或
@@ -29,15 +31,22 @@ package cjgui
 struct CjguiInternalAppLifecycleState {
     let isStateMachineActive: Bool
     let hasLifecyclePhase: Bool
+    let hasObservedPlatformReady: Bool
 
     init() {
         this.isStateMachineActive = false
         this.hasLifecyclePhase = false
+        this.hasObservedPlatformReady = false
     }
 
-    init(isStateMachineActive: Bool, hasLifecyclePhase: Bool) {
+    init(
+        isStateMachineActive: Bool,
+        hasLifecyclePhase: Bool,
+        hasObservedPlatformReady: Bool
+    ) {
         this.isStateMachineActive = isStateMachineActive
         this.hasLifecyclePhase = hasLifecyclePhase
+        this.hasObservedPlatformReady = hasObservedPlatformReady
     }
 }
 
@@ -83,6 +92,7 @@ func cjguiInternalNoOpAppLifecycleTransition(
 // - 这是普通顶层函数, 使用默认 internal 可见性。
 // - 它只把 hasLifecyclePhase 推进为 true。
 // - 它保留输入 state 的 isStateMachineActive 值。
+// - 它保留输入 state 的 hasObservedPlatformReady 值。
 // - 它不定义 lifecycle phase taxonomy。
 // - 它不是 run、shutdown、request quit、queue、drain、public runtime API、
 //   public C ABI、platform callback binding、window lifecycle behavior 或
@@ -91,7 +101,24 @@ func cjguiInternalNoOpAppLifecycleTransition(
 func cjguiInternalAppLifecyclePhaseMarkerTransition(
     state: CjguiInternalAppLifecycleState
 ): CjguiInternalAppLifecycleState {
-    CjguiInternalAppLifecycleState(state.isStateMachineActive, true)
+    CjguiInternalAppLifecycleState(
+        state.isStateMachineActive,
+        true,
+        state.hasObservedPlatformReady
+    )
+}
+
+// 内部 app lifecycle readiness predicate:
+// - 这是普通顶层函数, 使用默认 internal 可见性。
+// - 它只读取 hasObservedPlatformReady 这一枚脱水 Bool fact。
+// - 它不改变 state shape、constructor shape 或 projection behavior。
+// - 它不是 public runtime API、public C ABI、platform callback binding、
+//   run、shutdown、queue 或 drain。
+
+func cjguiInternalAppLifecycleHasObservedPlatformReady(
+    state: CjguiInternalAppLifecycleState
+): Bool {
+    state.hasObservedPlatformReady
 }
 
 //

@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-04-27
+最后更新：2026-04-28
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -16,6 +16,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 - 想看正式 runtime 骨架：看 [runtime/cjgui](runtime/cjgui)。
 - 想看 macOS 桥接实验：看 [labs/macos_bridge_smoke](labs/macos_bridge_smoke)。
 - 想查历史决策：看 [docs/plans/README.md](docs/plans/README.md)。
+- 想看 GUI framework 行业排雷雷达：看 [gui-framework-pitfalls-intelligence.md](docs/research/gui-framework-pitfalls-intelligence.md)。它是按需雷达，不是每轮 implementation 的默认必读项。
 - 想看文档分区：看 [docs/README.md](docs/README.md)。
 - 想控制 AI 每轮读多少上下文：看 [CJGUI_CONTEXT_LOADING_POLICY.md](docs/ai/CJGUI_CONTEXT_LOADING_POLICY.md)。
 
@@ -35,6 +36,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 - `docs/core/`：项目方向、治理、风险、AI 原生 UI 语义和协作边界。
 - `docs/setup/`：本地工具链、构建、资料索引和上游问题账本。
 - `docs/plans/`：每一刀 preflight、execution card、closure review 的历史索引。
+- `docs/research/`：sidecar research、行业排雷和不阻塞 runtime 主线的架构风险情报。
 - `GUI_TASK_TRACKER.md`：当前阶段判断、healthy stop-line、active / future openings。
 
 本机工作区可能还包含 `sources/`、`repos/`、`reference_repos/` 等资料镜像和参考仓库；它们通常由各自 Git 仓库管理，不作为 CJGUI 根仓库的一部分提交。
@@ -53,6 +55,8 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 8. [docs/plans/README.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/README.md)：历史 preflight / execution card / closure review 索引。
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
+
+最新 runtime opening：`P1 internal runtime step sanity bundle slice A`，授权基于第一条 internal runtime step 新增最小 ready sanity helper，不进入 app run、event loop、queue / drain 或 window create。
 
 当前 runtime package / first-compilable source 边界文档：
 
@@ -314,6 +318,16 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
   - [2026-04-26-p1-app-lifecycle-surface-comment-only-refinement-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-26-p1-app-lifecycle-surface-comment-only-refinement-closure-review.md)
 - P1 first internal app lifecycle state execution card 在这里：
   - [2026-04-27-p1-first-internal-app-lifecycle-state-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-first-internal-app-lifecycle-state-execution-card.md)
+- P1 app lifecycle platform readiness state execution card 在这里：
+  - [2026-04-28-p1-app-lifecycle-platform-readiness-state-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-app-lifecycle-platform-readiness-state-execution-card.md)
+- P1 window lifecycle platform readiness state execution card 在这里：
+  - [2026-04-28-p1-window-lifecycle-platform-readiness-state-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-window-lifecycle-platform-readiness-state-execution-card.md)
+- P1 readiness state helper bundle execution card 在这里：
+  - [2026-04-28-p1-readiness-state-helper-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-state-helper-bundle-execution-card.md)
+- P1 readiness coordination negative-path bundle execution card 在这里：
+  - [2026-04-28-p1-readiness-coordination-negative-path-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-coordination-negative-path-bundle-execution-card.md)
+- P1 internal runtime readiness aggregate bundle execution card 在这里：
+  - [2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-execution-card.md)
 - P1 window lifecycle surface boundary preflight 在这里：
   - [2026-04-26-p1-window-lifecycle-surface-boundary-preflight.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-26-p1-window-lifecycle-surface-boundary-preflight.md)
 - P1 window lifecycle surface execution card 在这里：

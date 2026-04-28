@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目风险账本
 
-最后更新：2026-04-26
+最后更新：2026-04-28
 
 ## 用途
 
@@ -11,6 +11,15 @@
 - 我们这个仓颉 GUI 项目当前必须长期防守的禁忌
 
 它不是实现计划，而是长期风险提醒。
+
+## Sidecar Risk Intelligence
+
+### GUI framework historical pitfalls
+
+- 入口：[gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md)
+- 性质：sidecar risk intelligence / architecture research。
+- 说明：该文档提炼现有 GUI framework / UI runtime 的常见工程坑，只作为排雷雷达，不阻塞当前 runtime implementation，不改变当前 runtime next opening。
+- 读取规则：它不是每轮 implementation 的默认必读项；仅在开启 event loop / queue / drain、renderer / invalidation / layout、Text / IME / Accessibility、platform handle / public API / C ABI、semantic tree / Action Router 等相关高风险 opening 前按需读取对应章节。
 
 ## 一、架构与分层陷阱
 

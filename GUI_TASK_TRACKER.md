@@ -100,6 +100,72 @@
 
 最新补充：P1 platform readiness fact semantics execution card 已完成；这是 W2 internal concept slice，授权下一轮把 `CjguiInternalPlatformAdapterFact` 的泛化 `hasPlatformFact` marker 语义推进为更明确的 internal platform readiness fact 语义，仍保持 internal-only、脱水、无平台对象、无 public runtime API / public C ABI。当前 next opening 转向 `P1 platform readiness fact semantics first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
 
+最新补充：P1 platform readiness fact semantics first slice 已完成；`CjguiInternalPlatformAdapterFact` 的核心 Bool fact 已从 `hasPlatformFact` 窄口替换为 `isPlatformReady`，并同步更新 constructor、no-op ingestion 语义说明、projection、coordination 与 sanity 调用。未保留兼容字段，避免 internal skeleton 出现双字段语义膨胀。runtime build、smoke guard 与 `git diff --check` 通过；当前 next opening 转向 `P1 platform readiness fact semantics closure / next functional slice decision`。
+
+最新补充：P1 app lifecycle platform readiness state execution card 已完成；这是 W2 internal concept slice，授权下一轮让 `CjguiInternalAppLifecycleState` 承载 internal `hasObservedPlatformReady` 或等价 Bool fact，并让现有 platform readiness -> app lifecycle projection 在 `isPlatformReady=true` 时推进该 app state。当前 next opening 转向 `P1 app lifecycle platform readiness state first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 app lifecycle platform readiness state first slice 已完成；`CjguiInternalAppLifecycleState` 新增 immutable `hasObservedPlatformReady: Bool`，默认构造为 `false`，带参构造同步扩展。`cjguiInternalAppLifecyclePhaseMarkerTransition` 保留该 fact，`cjguiInternalProjectPlatformFactToAppLifecycleState` 在 `isPlatformReady=true` 时将其推进为 `true`。runtime build、smoke guard 与 `git diff --check` 通过；当前 next opening 转向 `P1 app lifecycle platform readiness state closure / next functional slice decision`。
+
+最新补充：P1 window lifecycle platform readiness state execution card 已完成；这是 W2 internal concept slice，授权下一轮让 `CjguiInternalWindowLifecycleState` 承载 internal `hasObservedPlatformReady` 或等价 Bool fact，并让现有 platform readiness -> window lifecycle projection 在 `isPlatformReady=true` 时推进该 window state。当前 next opening 转向 `P1 window lifecycle platform readiness state first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 window lifecycle platform readiness state first slice 已完成；`CjguiInternalWindowLifecycleState` 新增 immutable `hasObservedPlatformReady: Bool`，默认构造为 `false`，带参构造同步扩展。`cjguiInternalWindowLifecycleStateMarkerTransition` 保留该 fact，`cjguiInternalProjectPlatformFactToWindowLifecycleState` 在 `isPlatformReady=true` 时将其推进为 `true`。runtime build、smoke guard 与 `git diff --check` 通过；当前 next opening 转向 `P1 window lifecycle platform readiness state closure / next functional slice decision`。
+
+最新补充：治理节奏修正 + P1 readiness state helper bundle execution card 已完成；低风险 internal-only runtime work 现在允许一张 bundled execution card 授权 2-3 个连续小切片，每个 slice 仍独立跑 build / smoke / `git diff --check`，slice 后可先只写 tracker 简短日志，bundle 完成后再写 mini-compaction / bundled closure。当前 next opening 转向 `P1 readiness helper bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 readiness helper bundle slice A 已完成；新增默认 internal `cjguiInternalAppLifecycleHasObservedPlatformReady` 与 `cjguiInternalWindowLifecycleHasObservedPlatformReady`，分别只读取 app/window state 的 `hasObservedPlatformReady` Bool fact，不改变 state shape、constructor shape、projection 或 coordination behavior。`cjpm build --target-dir /tmp/cjgui-readiness-helper-bundle-slice-a-target --skip-script`、smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 readiness helper bundle slice B`。
+
+最新补充：P1 readiness helper bundle slice B 已完成；新增默认 internal `cjguiInternalLifecycleCoordinationSanityObservedPlatformReady`，复用 `cjguiInternalLifecycleCoordinationSanity()` 并通过 app/window readiness predicate helpers 确认两侧都已 observed platform ready，返回 `Bool`。`cjpm build --target-dir /tmp/cjgui-readiness-helper-bundle-slice-b-target --skip-script`、smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-readiness-state-helper-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-state-helper-bundle-closure-review.md)。当前 next opening 转向 `P1 readiness helper bundle closure / next functional slice decision`。
+
+最新补充：P1 readiness coordination negative-path bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 新增 negative platform readiness fact sanity helper，确认 `isPlatformReady=false` 不会推进默认 app/window observed platform ready；Slice B 新增 readiness sanity parity helper，同时检查 positive 与 negative sanity。当前 next opening 转向 `P1 readiness coordination negative-path bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 readiness coordination negative-path bundle slice A 已完成；新增默认 internal `cjguiInternalLifecycleCoordinationSanityNotObservedPlatformReady`，构造 `CjguiInternalPlatformAdapterFact(false)` 与默认 app/window state，调用 `cjguiInternalCoordinateLifecycleFromPlatformFact`，并通过 app/window readiness predicate helpers 确认两侧都没有 observed platform ready。`cjpm build --target-dir /tmp/cjgui-readiness-negative-path-bundle-slice-a-target --skip-script`、smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 readiness coordination negative-path bundle slice B`。
+
+最新补充：P1 readiness coordination negative-path bundle slice B 已完成；新增默认 internal `cjguiInternalLifecycleCoordinationReadinessSanityParity`，同时调用 positive sanity helper 与 negative sanity helper，只有两者都为 true 时返回 true。`cjpm build --target-dir /tmp/cjgui-readiness-negative-path-bundle-slice-b-target --skip-script`、smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-readiness-coordination-negative-path-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-coordination-negative-path-bundle-closure-review.md)。当前 next opening 转向 `P1 readiness coordination negative-path bundle closure / next functional slice decision`。
+
+最新补充：P1 internal runtime readiness aggregate bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 新增默认 internal runtime readiness aggregate type，聚合 app state、window state 与 readiness parity Bool；Slice B 新增 aggregate builder，复用 coordination sanity 与 readiness parity sanity 返回 aggregate。owner 选择为 `runtime/cjgui/src/platform_adapter.cj`，因为 aggregate 聚合的是 platform readiness coordination summary，不拥有 app/window state truth。当前 next opening 转向 `P1 internal runtime readiness aggregate bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 internal runtime readiness aggregate bundle slice A 已完成；新增默认 internal `CjguiInternalRuntimeReadinessAggregate`，聚合 `appState: CjguiInternalAppLifecycleState`、`windowState: CjguiInternalWindowLifecycleState` 与 `isReadinessParityClean: Bool`，只作为 readiness coordination summary，不拥有 app/window state truth。`cjpm build --target-dir /tmp/cjgui-readiness-aggregate-bundle-slice-a-target --skip-script`、smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 internal runtime readiness aggregate bundle slice B`。
+
+最新补充：P1 internal runtime readiness aggregate bundle slice B 已完成；新增默认 internal `cjguiInternalBuildRuntimeReadinessAggregate()`，复用 `cjguiInternalLifecycleCoordinationSanity()` 得到 app/window state，并复用 `cjguiInternalLifecycleCoordinationReadinessSanityParity()` 得到 readiness parity Bool，返回 `CjguiInternalRuntimeReadinessAggregate`。`cjpm build --target-dir /tmp/cjgui-readiness-aggregate-bundle-slice-b-target --skip-script`、smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime readiness aggregate bundle closure / next functional slice decision`。
+
+最新补充：P1 internal runtime bootstrap draft bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 新增默认 internal runtime bootstrap snapshot type，聚合 readiness aggregate 与 `isBootstrapReady` Bool；Slice B 新增 bootstrap snapshot builder，复用 `cjguiInternalBuildRuntimeReadinessAggregate()` 并根据 `readiness.isReadinessParityClean` 决定 bootstrap readiness。owner 选择为 `runtime/cjgui/src/platform_adapter.cj`，因为 bootstrap draft 只消费 readiness aggregate summary，不拥有 app/window state truth，也不实现 app run / event loop / queue / drain / window create。当前 next opening 转向 `P1 internal runtime bootstrap draft bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 internal runtime bootstrap draft bundle slice A 已完成；新增默认 internal `CjguiInternalRuntimeBootstrapSnapshot`，聚合 `readiness: CjguiInternalRuntimeReadinessAggregate` 与 `isBootstrapReady: Bool`，只作为 internal bootstrap draft snapshot，不实现 app run、event loop、queue / drain、window create 或 shutdown。`cjpm build --target-dir /tmp/cjgui-bootstrap-draft-bundle-slice-a-target --skip-script`、smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 internal runtime bootstrap draft bundle slice B`。
+
+最新补充：P1 internal runtime bootstrap draft bundle slice B 已完成；新增默认 internal `cjguiInternalBuildRuntimeBootstrapSnapshot()`，复用 `cjguiInternalBuildRuntimeReadinessAggregate()`，并用 `readiness.isReadinessParityClean` 作为 `isBootstrapReady`，返回 `CjguiInternalRuntimeBootstrapSnapshot`。`cjpm build --target-dir /tmp/cjgui-bootstrap-draft-bundle-slice-b-target --skip-script`、smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-bootstrap-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-bootstrap-draft-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime bootstrap draft bundle closure / next functional slice decision`。
+
+最新补充：P1 internal runtime bootstrap owner cleanup bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 新建 `runtime/cjgui/src/runtime_bootstrap.cj` 并迁移 runtime readiness aggregate / bootstrap snapshot owner symbols；Slice B 做 owner boundary cleanup / imports if needed，并在 bundle 完成后写 bundled closure。owner cleanup 策略是让 `platform_adapter.cj` 回到 platform fact、projection、coordination sanity / readiness sanity 的 adapter-facing summary 边界，把 runtime bootstrap summary 聚合物迁到 `runtime_bootstrap.cj`。当前 next opening 转向 `P1 internal runtime bootstrap owner cleanup bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 internal runtime bootstrap owner cleanup bundle slice A 已完成；新增 `runtime/cjgui/src/runtime_bootstrap.cj`，并从 `platform_adapter.cj` 迁移 `CjguiInternalRuntimeReadinessAggregate`、`cjguiInternalBuildRuntimeReadinessAggregate`、`CjguiInternalRuntimeBootstrapSnapshot`、`cjguiInternalBuildRuntimeBootstrapSnapshot`。envsetup 后 `cjpm build --target-dir /tmp/cjgui-bootstrap-owner-cleanup-bundle-slice-a-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 internal runtime bootstrap owner cleanup bundle slice B`。
+
+最新补充：P1 internal runtime bootstrap owner cleanup bundle slice B 已完成；只做注释级 owner cleanup，确认 `platform_adapter.cj` 保留 platform fact / projection / coordination / readiness sanity helpers，`runtime_bootstrap.cj` 拥有 readiness aggregate / bootstrap snapshot / bootstrap builder。envsetup 后 `cjpm build --target-dir /tmp/cjgui-bootstrap-owner-cleanup-bundle-slice-b-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-bootstrap-owner-cleanup-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-bootstrap-owner-cleanup-bundle-closure-review.md)。当前 next opening 转向 `P1 runtime bootstrap owner cleanup closure / next larger runtime slice decision`。
+
+最新补充：P1 internal runtime root state bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 新建 `runtime/cjgui/src/runtime_state.cj` 并新增默认 internal runtime root state type；Slice B 新增 root state builder，复用 `cjguiInternalBuildRuntimeBootstrapSnapshot()` 并用 `bootstrap.isBootstrapReady` 作为 `isRuntimeReady`。owner 选择为 `runtime_state.cj`，因为 root state 是 bootstrap 之后的 runtime-level summary，不属于 platform adapter 或 runtime bootstrap owner。当前 next opening 转向 `P1 internal runtime root state bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 internal runtime root state bundle slice A 已完成；新增 `runtime/cjgui/src/runtime_state.cj` 与默认 internal `CjguiInternalRuntimeRootState`，聚合 `bootstrap: CjguiInternalRuntimeBootstrapSnapshot` 和 `isRuntimeReady: Bool`，只作为 runtime root state summary，不实现 app run、event loop、queue / drain、window create 或 shutdown。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-root-state-bundle-slice-a-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 internal runtime root state bundle slice B`。
+
+最新补充：P1 internal runtime root state bundle slice B 已完成；新增默认 internal `cjguiInternalBuildRuntimeRootState()`，复用 `cjguiInternalBuildRuntimeBootstrapSnapshot()`，并用 `bootstrap.isBootstrapReady` 作为 `isRuntimeReady`，返回 `CjguiInternalRuntimeRootState`。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-root-state-bundle-slice-b-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-root-state-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-root-state-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime root state bundle closure / next functional slice decision`。
+
+最新补充：P1 internal runtime root sanity bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 在 `runtime_state.cj` 新增默认 internal root ready sanity helper，调用 `cjguiInternalBuildRuntimeRootState()` 并返回 `root.isRuntimeReady`；Slice B 默认只做 bundle closure / mini-compaction，记录 root state 已有 ready sanity 且不继续堆 helper 链。当前 next opening 转向 `P1 internal runtime root sanity bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 internal runtime root sanity bundle slice A 已完成；新增默认 internal `cjguiInternalRuntimeRootStateReadySanity()`，调用 `cjguiInternalBuildRuntimeRootState()` 并返回 `root.isRuntimeReady`，只证明 root state builder 的 ready path，不改变 root state shape、bootstrap builder behavior、projection 或 coordination behavior。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-root-sanity-bundle-slice-a-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 internal runtime root sanity bundle slice B`。
+
+最新补充：P1 internal runtime root sanity bundle slice B 已完成；本轮未新增 helper function、未新增 runtime behavior，只新增 bundled closure [2026-04-28-p1-internal-runtime-root-sanity-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-root-sanity-bundle-closure-review.md)，确认 `cjguiInternalRuntimeRootStateReadySanity(): Bool` 已足够表达当前最小 ready path，并明确停止 root helper 链。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-root-sanity-bundle-slice-b-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过。当前 next opening 转向 `P1 first internal runtime step bundle decision`。
+
+最新补充：P1 first internal runtime step bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 在 `runtime_state.cj` 新增默认 internal `CjguiInternalRuntimeStepResult`，聚合 `state: CjguiInternalRuntimeRootState` 与 `didAdvance: Bool`；Slice B 新增默认 internal `cjguiInternalRuntimeStep(state: CjguiInternalRuntimeRootState): CjguiInternalRuntimeStepResult`，只根据 `state.isRuntimeReady` 返回 didAdvance Bool 与原 state。当前 next opening 转向 `P1 first internal runtime step bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 first internal runtime step bundle slice A 已完成；新增默认 internal `CjguiInternalRuntimeStepResult`，聚合 `state: CjguiInternalRuntimeRootState` 与 `didAdvance: Bool`，只作为脱水 step result summary，不实现 event loop、queue / drain、app run 或 window create。envsetup 后 `cjpm build --target-dir /tmp/cjgui-first-internal-runtime-step-bundle-slice-a-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 first internal runtime step bundle slice B`。
+
+最新补充：P1 first internal runtime step bundle slice B 已完成；新增默认 internal `cjguiInternalRuntimeStep(state: CjguiInternalRuntimeRootState): CjguiInternalRuntimeStepResult`，原样保留输入 state，并将 `state.isRuntimeReady` 映射为 `didAdvance`，返回 `CjguiInternalRuntimeStepResult`。envsetup 后 `cjpm build --target-dir /tmp/cjgui-first-internal-runtime-step-bundle-slice-b-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-first-internal-runtime-step-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-first-internal-runtime-step-bundle-closure-review.md)。当前 next opening 转向 `P1 first internal runtime step bundle closure / next functional slice decision`。
+
+最新补充：P1 internal runtime step sanity bundle execution card 已完成；这是 bundled execution card，授权后续两个 internal-only slices：Slice A 在 `runtime_state.cj` 新增默认 internal runtime step ready sanity helper，调用 `cjguiInternalBuildRuntimeRootState()` 与 `cjguiInternalRuntimeStep(root)` 并返回 `step.didAdvance`；Slice B 默认只做 bundle closure / mini-compaction，记录 step sanity 已足够且不继续堆 helper 链。当前 next opening 转向 `P1 internal runtime step sanity bundle slice A`；下一轮默认进入 bundle 内 bounded implementation，不再为 Slice A 单独创建 execution card。
+
+最新补充：P1 internal runtime step sanity bundle slice A 已完成；新增默认 internal `cjguiInternalRuntimeStepReadySanity()`，调用 `cjguiInternalBuildRuntimeRootState()`、再调用 `cjguiInternalRuntimeStep(root)`，并返回 `step.didAdvance`，只验证 ready path 会推进 `didAdvance=true`。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-step-sanity-bundle-slice-a-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；未新增独立 closure review。当前 next opening 转向 `P1 internal runtime step sanity bundle slice B`。
+
+最新补充：P1 internal runtime step sanity bundle slice B 已完成；本轮未新增 helper function、未新增 runtime behavior，只新增 bundled closure [2026-04-28-p1-internal-runtime-step-sanity-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-sanity-bundle-closure-review.md)，确认 `cjguiInternalRuntimeStepReadySanity(): Bool` 已足够覆盖当前最小 step ready path，并明确停止 helper-by-helper 链。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-step-sanity-bundle-slice-b-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过。当前 next opening 转向 `P1 internal runtime step input / policy bundle decision`；下一张 bundle 应提升授权粒度，进入完整 internal behavior concept，不再继续单 helper 粒度。
+
+最新补充：P1 internal runtime step input policy bundle execution card 已完成；这是 W2 internal behavior bundle，授权下一轮一次完成 internal step input、policy、decision、default builders、decision function、step-with-input-policy、少量直接相关 sanity / parity 和 bundled closure。当前 next opening 转向 `P1 internal runtime step input policy bundle implementation`；下一轮默认进入 bounded implementation，不再拆成多个 one-helper slices。
+
 ## 当前 current-state summary
 
 ### 1. 项目目标已清楚
@@ -153,15 +219,18 @@
 
 当前推荐开启的下一条 opening：
 
-### `P1 platform readiness fact semantics first slice`
+### `P1 internal runtime step input policy bundle implementation`
 
-性质：bounded implementation / W2 internal concept slice
+性质：bounded implementation / W2 internal behavior bundle
 
 目标：
 
-- 基于 [2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md)，进入 bounded implementation。
-- 把 `CjguiInternalPlatformAdapterFact` 当前泛化的 `hasPlatformFact` marker 语义推进为更明确的 internal platform readiness fact 语义。
-- 保持 internal-only、脱水 Bool fact、无平台对象、无 public runtime API / public C ABI。
+- 基于 [2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，进入完整 W2 internal behavior concept slice。
+- root / step sanity 已封账，`cjguiInternalRuntimeStepReadySanity(): Bool` 已足够覆盖当前最小 ready path。
+- 一次完成 internal step input、policy、decision、default builders、decision function、step-with-input-policy，以及最多 2-3 个直接相关 sanity / parity helpers。
+- 不再继续一 helper 一轮，不再创建新的 preflight / execution card 替代实现。
+- 不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime behavior。
+- 不改变 state shape、constructor shape、projection behavior、coordination behavior、bootstrap builder behavior、step behavior、public runtime API 或 public C ABI。
 
 本 opening 仍禁止：
 
@@ -2595,6 +2664,32 @@ P1 bridge boundary cleanup、P1 main-thread UI message queue first slice、P1 au
 
 当前推荐的下一条 opening 是：
 
+### `P1 internal runtime step input policy bundle implementation`
+
+性质：bounded implementation / W2 internal behavior bundle
+
+目标：
+
+- 基于 [2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，进入完整 W2 internal behavior concept slice。
+- root / step sanity 已封账，`cjguiInternalRuntimeStepReadySanity(): Bool` 已足够覆盖当前最小 ready path。
+- 一次完成 internal step input、policy、decision、default builders、decision function、step-with-input-policy，以及最多 2-3 个直接相关 sanity / parity helpers。
+- 不再继续一 helper 一轮，不再创建新的 preflight / execution card 替代实现。
+- 不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime behavior。
+- 不改变 state shape、constructor shape、projection behavior、coordination behavior、bootstrap builder behavior、step behavior、public runtime API 或 public C ABI。
+
+禁止：
+
+- 不修改 `labs/macos_bridge_smoke`、harness、native bridge 或仓颉入口。
+- 不修改 `cjpm.toml`，不新增 `src/main.cj` 或 `package_anchor.cj`。
+- 不新增 `public` runtime API 或 public C ABI。
+- 不引用 AppKit / Metal / Objective-C，或暴露 platform object、native handle、raw pointer。
+- 不实现 event loop、callback binding、queue / drain、app run / shutdown、window create / close / destroy / release。
+- 不新增 handle table / generation。
+
+## 历史 next opening 记录（旧内容，当前以 active / next opening 为准）
+
+当前推荐的下一条 opening 是：
+
 ### `P1 app lifecycle transition marker first slice`
 
 性质：bounded implementation / app lifecycle transition marker
@@ -3038,12 +3133,12 @@ Stop-line：
 
 如果继续推进，最合适的下一步是：
 
-> `P1 platform readiness fact semantics first slice`
+> `P1 internal runtime step input policy bundle implementation`
 
-范围只允许基于 [P1 platform readiness fact semantics execution card](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md)，把当前泛化的 internal platform fact 推进为更明确的 platform readiness fact 语义。
+范围只允许基于 [P1 internal runtime step input policy bundle execution card](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，一次完成 step input / policy / decision / step-with-input-policy 的完整 W2 internal behavior concept；不再继续一 helper 一轮；不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime 行为。
 
-当前 app lifecycle、window lifecycle 与 platform adapter 已证明 internal immutable state / fact、construction shape、NoOp function、极窄 marker transition、platform fact -> lifecycle marker projection、internal lifecycle coordination result / function，以及默认 internal sanity function 都能落地。下一步应让 platform fact 的语义从泛化 marker 收窄到 readiness。
+当前 app lifecycle、window lifecycle 与 platform adapter 已证明 internal immutable state / fact、construction shape、NoOp function、极窄 marker transition、platform readiness fact -> lifecycle marker projection、internal lifecycle coordination result / function、默认 internal sanity function、app lifecycle observed platform readiness state、window lifecycle observed platform readiness state、app/window readiness predicate helpers、positive coordination readiness sanity helper、negative coordination readiness sanity helper、readiness sanity parity helper、internal runtime readiness aggregate type、internal runtime readiness aggregate builder、internal runtime bootstrap snapshot type、internal runtime bootstrap snapshot builder、internal runtime root state type、internal runtime root state builder、internal runtime root ready sanity helper、internal runtime step result type、first internal runtime step function，以及 internal runtime step ready sanity helper 都能落地。
 
-下一轮默认进入 bounded implementation；除非发现 HIGH / CRITICAL 风险或 authority 冲突，不得继续创建新的 preflight / execution card 替代实现。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、queue / drain、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
+下一步默认进入 `P1 internal runtime step input policy bundle implementation`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、queue / drain、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
 
-本轮不自动执行下一步实现，但下一轮默认应进入 bounded implementation。
+本轮不写 runtime code；下一轮默认进入 bounded implementation，一次完成 step input / policy bundle，不再单独创建 one-helper execution card。

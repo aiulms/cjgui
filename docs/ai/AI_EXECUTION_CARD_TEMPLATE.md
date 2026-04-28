@@ -21,6 +21,10 @@
 
 执行卡不应把一个低风险 internal concept slice 拆成多个 one-symbol / one-field / one-function 卡。若同一 owner、同一 write set、同一 truth 边界和同一验证路径已经清楚，执行卡应优先授权完整内部概念切片，例如 type + facts + construction shape + no-op transition + 极窄 state-changing transition。代码行数不是独立风险指标；大 diff 需要解释和验证，不等于必须拆成文档循环。
 
+低风险 internal-only runtime work 可使用 bundled execution card，一张卡最多授权 2-3 个连续小 slice。每个 slice 必须独立验证 build / smoke / `git diff --check`，slice 后可先只更新 tracker 简短日志，bundle 完成后再写 mini-compaction / bundled closure。bundle 不得绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界 gate。
+
+当 helper / sanity 链已经封账，下一张 W2 bundle 应提高到完整 internal behavior concept，而不是继续 helper-by-helper。W2 internal behavior bundle 可以一次授权 3-7 个相关 internal changes，例如 input / policy / decision / result types、builders、核心 internal behavior function、positive / negative path、sanity / parity check 和 bundled closure。行数不是风险；越过 public contract、platform bridge、event loop、queue / drain、handle table 或安全边界才是风险。
+
 用途：后续每次进入非平凡实现前，先填写这一张卡。
 
 执行卡是开工许可证，不是新的 docs-only 循环入口。

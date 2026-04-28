@@ -150,6 +150,27 @@ W1/W2 internal concept slice 不要求 one-symbol 切割。
 
 “写的更多行”本身不是风险指标，越界风险由语义和边界决定。
 
+### 3.2.1.2 低风险 internal-only work 可 bundle
+
+低风险 internal-only runtime work 可以用一张 bundled execution card 授权 2-3 个连续小实现切片。每个 slice 必须独立跑 build / smoke / `git diff --check`；slice 后可先只写 tracker 简短日志，bundle 结束后再写 mini-compaction / bundled closure。
+
+bundle 不能绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界；触碰这些边界时恢复单卡单 closure。
+
+### 3.2.1.3 helper 链封账后必须提高实现粒度
+
+如果一条 internal-only runtime 线已经通过 helper / sanity / parity 证明了最小链路，后续不应继续默认新增单个 helper。
+
+下一张 W2 bundle 应优先授权完整 internal behavior concept，例如：
+
+- 1-3 个 internal type。
+- 2-5 个 internal function。
+- 必要 constructor / builder。
+- positive / negative path。
+- sanity / parity check。
+- bundled closure。
+
+这种 bundle 不等于放开 public API、public C ABI、platform bridge、event loop、queue / drain 或 handle table。只要仍是 internal-only，且 owner、truth、write set、stop-line 和 verification 清楚，就应该让执行 AI 一次完成完整内部行为概念，而不是每轮只写十几行辅助函数。
+
 ### 3.2.1 实现偏置：边界清楚后默认写代码
 
 当本轮已经具备以下条件：

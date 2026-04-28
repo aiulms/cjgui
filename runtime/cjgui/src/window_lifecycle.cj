@@ -4,7 +4,8 @@ package cjgui
 // 日期: 2026-04-26
 //
 // 本文件当前只承载一个默认 internal 的 window lifecycle 状态标记、
-// 一个最小 no-op transition 和一个最小 state marker transition,
+// 一个最小 no-op transition、一个最小 state marker transition,
+// 两个最小脱水 Bool 形状字段,
 // 以及边界说明注释。
 // 它不定义 stable public API。
 // 它不实现真实 window lifecycle 行为。
@@ -15,23 +16,28 @@ package cjgui
 // - 这是普通顶层 struct, 使用默认 internal 可见性。
 // - 它只标记 window lifecycle state 边界存在。
 // - 它同时标记 window state machine 尚未定义。
-// - 它只有一个不可变 Bool 字段:
+// - 它只有两个不可变 Bool 字段:
 //   - hasWindowState, 只标记 window state boundary 存在,
 //     不定义 window state taxonomy。
-// - 它的构造期初始化只允许写入 hasWindowState 这一枚不可变 Bool fact。
+//   - hasObservedPlatformReady, 默认构造为 false, 只标记已观察到脱水
+//     platform readiness fact, 不定义 window create / close / destroy 行为。
+// - 它的构造期初始化只允许写入这两枚不可变 Bool facts。
 // - 它没有其他字段、enum、handle、handle table、generation、import 或行为。
 // - 它不是 window create、request close、destroy、release、
 //   public runtime API、public C ABI、platform object wrapper 或 native handle。
 
 struct CjguiInternalWindowLifecycleState {
     let hasWindowState: Bool
+    let hasObservedPlatformReady: Bool
 
     init() {
         this.hasWindowState = false
+        this.hasObservedPlatformReady = false
     }
 
-    init(hasWindowState: Bool) {
+    init(hasWindowState: Bool, hasObservedPlatformReady: Bool) {
         this.hasWindowState = hasWindowState
+        this.hasObservedPlatformReady = hasObservedPlatformReady
     }
 }
 
@@ -40,6 +46,7 @@ struct CjguiInternalWindowLifecycleState {
 // - 它只证明 package 可以承载内部 window lifecycle transition 函数形状。
 // - 它原样返回输入 state。
 // - 它不修改 hasWindowState。
+// - 它不修改 hasObservedPlatformReady。
 // - 它不是 create、request close、destroy、release、public runtime API、
 //   public C ABI、platform object wrapper 或 native handle。
 
@@ -52,6 +59,7 @@ func cjguiInternalNoOpWindowLifecycleTransition(
 // 内部 window lifecycle state marker transition 函数:
 // - 这是普通顶层函数, 使用默认 internal 可见性。
 // - 它只把 hasWindowState 推进为 true。
+// - 它保留输入 state 的 hasObservedPlatformReady 值。
 // - 它不定义 window state taxonomy。
 // - 它不是 create、request close、destroy、release、public runtime API、
 //   public C ABI、platform object wrapper 或 native handle。
@@ -59,7 +67,23 @@ func cjguiInternalNoOpWindowLifecycleTransition(
 func cjguiInternalWindowLifecycleStateMarkerTransition(
     state: CjguiInternalWindowLifecycleState
 ): CjguiInternalWindowLifecycleState {
-    CjguiInternalWindowLifecycleState(true)
+    CjguiInternalWindowLifecycleState(
+        true,
+        state.hasObservedPlatformReady
+    )
+}
+
+// 内部 window lifecycle readiness predicate:
+// - 这是普通顶层函数, 使用默认 internal 可见性。
+// - 它只读取 hasObservedPlatformReady 这一枚脱水 Bool fact。
+// - 它不改变 state shape、constructor shape 或 projection behavior。
+// - 它不是 create、request close、destroy、release、public runtime API、
+//   public C ABI、platform object wrapper 或 native handle。
+
+func cjguiInternalWindowLifecycleHasObservedPlatformReady(
+    state: CjguiInternalWindowLifecycleState
+): Bool {
+    state.hasObservedPlatformReady
 }
 
 

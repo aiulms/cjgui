@@ -3,7 +3,10 @@ package cjgui
 // P1 minimal app/window lifecycle runtime skeleton.
 // 日期: 2026-04-26
 //
-// 本文件当前只承载 package declaration, 文档边界与默认 internal fact sanity symbols.
+// 本文件当前承载 platform adapter-facing internal facts、projection、
+// lifecycle coordination 与 readiness sanity helpers.
+// runtime readiness aggregate 与 bootstrap snapshot owner symbols 已迁移到
+// runtime_bootstrap.cj。
 // 它不是 platform adapter implementation.
 // 它不是 public runtime API.
 // 它不是 public C ABI.
@@ -107,14 +110,14 @@ package cjgui
 // - 不暴露 platform object。
 
 struct CjguiInternalPlatformAdapterFact {
-    let hasPlatformFact: Bool
+    let isPlatformReady: Bool
 
     init() {
-        this.hasPlatformFact = false
+        this.isPlatformReady = false
     }
 
-    init(hasPlatformFact: Bool) {
-        this.hasPlatformFact = hasPlatformFact
+    init(isPlatformReady: Bool) {
+        this.isPlatformReady = isPlatformReady
     }
 }
 
@@ -124,8 +127,8 @@ func cjguiInternalNoOpPlatformAdapterFactIngestion(
     return fact
 }
 
-// 内部 platform fact -> lifecycle marker projection 函数:
-// - 仅消费脱水 Bool fact。
+// 内部 platform readiness fact -> lifecycle marker projection 函数:
+// - 仅消费脱水 readiness Bool fact。
 // - 它们只推进已有 app/window internal marker state。
 // - 它们不绑定平台对象、callback、event loop、public runtime API 或 public C ABI。
 
@@ -133,8 +136,12 @@ func cjguiInternalProjectPlatformFactToAppLifecycleState(
     fact: CjguiInternalPlatformAdapterFact,
     state: CjguiInternalAppLifecycleState
 ): CjguiInternalAppLifecycleState {
-    if (fact.hasPlatformFact) {
-        return CjguiInternalAppLifecycleState(state.isStateMachineActive, true)
+    if (fact.isPlatformReady) {
+        return CjguiInternalAppLifecycleState(
+            state.isStateMachineActive,
+            true,
+            true
+        )
     }
     return state
 }
@@ -143,8 +150,11 @@ func cjguiInternalProjectPlatformFactToWindowLifecycleState(
     fact: CjguiInternalPlatformAdapterFact,
     state: CjguiInternalWindowLifecycleState
 ): CjguiInternalWindowLifecycleState {
-    if (fact.hasPlatformFact) {
-        return CjguiInternalWindowLifecycleState(true)
+    if (fact.isPlatformReady) {
+        return CjguiInternalWindowLifecycleState(
+            true,
+            true
+        )
     }
     return state
 }
@@ -163,7 +173,7 @@ struct CjguiInternalLifecycleCoordinationResult {
 }
 
 // 内部 lifecycle coordination 入口:
-// - 只组合已有 platform fact -> app/window marker projection。
+// - 只组合已有 platform readiness fact -> app/window marker projection。
 // - 不创建 event loop、queue / drain、platform object、public runtime API 或 public C
 //   ABI。
 
@@ -180,7 +190,7 @@ func cjguiInternalCoordinateLifecycleFromPlatformFact(
 
 // 内部 lifecycle coordination sanity 函数:
 // - 这是普通顶层函数, 使用默认 internal 可见性。
-// - 它只构造最小 internal platform fact 与默认 app/window state。
+// - 它只构造最小 internal platform readiness fact 与默认 app/window state。
 // - 它只调用既有 coordination 入口, 不新增 behavior、owner、public runtime API
 //   或 public C ABI。
 
@@ -190,4 +200,55 @@ func cjguiInternalLifecycleCoordinationSanity(): CjguiInternalLifecycleCoordinat
         CjguiInternalAppLifecycleState(),
         CjguiInternalWindowLifecycleState()
     )
+}
+
+// 内部 lifecycle coordination readiness sanity helper:
+// - 这是普通顶层函数, 使用默认 internal 可见性。
+// - 它复用既有 cjguiInternalLifecycleCoordinationSanity()。
+// - 它只通过 app/window readiness predicate helpers 读取脱水 Bool facts。
+// - 它不改变 projection、coordination、state shape、constructor shape、
+//   public runtime API 或 public C ABI。
+
+func cjguiInternalLifecycleCoordinationSanityObservedPlatformReady(): Bool {
+    let result = cjguiInternalLifecycleCoordinationSanity()
+    if (cjguiInternalAppLifecycleHasObservedPlatformReady(result.appState)) {
+        return cjguiInternalWindowLifecycleHasObservedPlatformReady(result.windowState)
+    }
+    return false
+}
+
+// 内部 lifecycle coordination negative readiness sanity helper:
+// - 这是普通顶层函数, 使用默认 internal 可见性。
+// - 它构造 isPlatformReady=false 的脱水 platform fact。
+// - 它复用既有 coordination 入口和 app/window readiness predicate helpers。
+// - 它只验证 false path 不会把默认 app/window state 标记为 observed platform ready。
+// - 它不改变 projection、coordination、state shape、constructor shape、
+//   public runtime API 或 public C ABI。
+
+func cjguiInternalLifecycleCoordinationSanityNotObservedPlatformReady(): Bool {
+    let result = cjguiInternalCoordinateLifecycleFromPlatformFact(
+        CjguiInternalPlatformAdapterFact(false),
+        CjguiInternalAppLifecycleState(),
+        CjguiInternalWindowLifecycleState()
+    )
+    if (cjguiInternalAppLifecycleHasObservedPlatformReady(result.appState)) {
+        return false
+    }
+    if (cjguiInternalWindowLifecycleHasObservedPlatformReady(result.windowState)) {
+        return false
+    }
+    return true
+}
+
+// 内部 lifecycle coordination readiness sanity parity helper:
+// - 这是普通顶层函数, 使用默认 internal 可见性。
+// - 它只组合 positive / negative readiness sanity helpers。
+// - 它不改变 projection、coordination、state shape、constructor shape、
+//   public runtime API 或 public C ABI。
+
+func cjguiInternalLifecycleCoordinationReadinessSanityParity(): Bool {
+    if (cjguiInternalLifecycleCoordinationSanityObservedPlatformReady()) {
+        return cjguiInternalLifecycleCoordinationSanityNotObservedPlatformReady()
+    }
+    return false
 }

@@ -452,6 +452,126 @@
   - 状态：完成
   - 用途：冻结 platform readiness fact 语义 first slice。
 
+- [2026-04-28-p1-platform-readiness-fact-semantics-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-platform-readiness-fact-semantics-closure-review.md)
+  - 类型：closure review
+  - 状态：完成
+  - 用途：封账 platform readiness fact 语义 first slice。
+
+- [2026-04-28-p1-app-lifecycle-platform-readiness-state-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-app-lifecycle-platform-readiness-state-execution-card.md)
+  - 类型：execution card
+  - 状态：完成
+  - 用途：冻结 app lifecycle platform readiness observed state first slice。
+
+- [2026-04-28-p1-app-lifecycle-platform-readiness-state-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-app-lifecycle-platform-readiness-state-closure-review.md)
+  - 类型：closure review
+  - 状态：完成
+  - 用途：封账 app lifecycle platform readiness observed state first slice。
+
+- [2026-04-28-p1-window-lifecycle-platform-readiness-state-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-window-lifecycle-platform-readiness-state-execution-card.md)
+  - 类型：execution card
+  - 状态：完成
+  - 用途：冻结 window lifecycle platform readiness observed state first slice。
+
+- [2026-04-28-p1-window-lifecycle-platform-readiness-state-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-window-lifecycle-platform-readiness-state-closure-review.md)
+  - 类型：closure review
+  - 状态：完成
+  - 用途：封账 window lifecycle platform readiness observed state first slice。
+
+- [2026-04-28-p1-readiness-state-helper-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-state-helper-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 readiness helper predicates 与 coordination readiness sanity helper 两个 internal-only slices。
+
+- [2026-04-28-p1-readiness-state-helper-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-state-helper-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 readiness helper predicates 与 coordination readiness sanity helper 两个 internal-only slices。
+
+- [2026-04-28-p1-readiness-coordination-negative-path-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-coordination-negative-path-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 negative platform readiness fact sanity 与 readiness sanity parity helper 两个 internal-only slices。
+
+- [2026-04-28-p1-readiness-coordination-negative-path-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-readiness-coordination-negative-path-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 negative readiness sanity helper 与 readiness sanity parity helper 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 internal runtime readiness aggregate type 与 aggregate builder 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-readiness-aggregate-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime readiness aggregate type 与 aggregate builder 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-bootstrap-draft-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-bootstrap-draft-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 internal runtime bootstrap snapshot type 与 bootstrap snapshot builder 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-bootstrap-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-bootstrap-draft-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime bootstrap snapshot type 与 bootstrap snapshot builder 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-bootstrap-owner-cleanup-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-bootstrap-owner-cleanup-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 runtime bootstrap owner file 创建与 bootstrap owner boundary cleanup 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-bootstrap-owner-cleanup-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-bootstrap-owner-cleanup-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 runtime bootstrap owner file 创建与 owner boundary cleanup 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-root-state-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-root-state-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 internal runtime root state type 与 root state builder 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-root-state-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-root-state-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime root state type 与 root state builder 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-root-sanity-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-root-sanity-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 runtime root ready sanity helper 与 no-further-helper-chain closure 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-root-sanity-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-root-sanity-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 runtime root ready sanity helper 与 no-further-helper-chain closure 两个 internal-only slices。
+
+- [2026-04-28-p1-first-internal-runtime-step-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-first-internal-runtime-step-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 internal runtime step result type 与 first internal runtime step function 两个 internal-only slices。
+
+- [2026-04-28-p1-first-internal-runtime-step-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-first-internal-runtime-step-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime step result type 与 first internal runtime step function 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-step-sanity-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-sanity-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权 runtime step ready sanity helper 与 no-further-helper-chain closure 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-step-sanity-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-sanity-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 runtime step ready sanity helper 与 no-further-helper-chain closure 两个 internal-only slices。
+
+- [2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权下一轮一次完成 internal runtime step input / policy / decision / step-with-input-policy / sanity 的完整 W2 internal behavior concept slice。
+
 - [2026-04-27-p1-lifecycle-parity-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-lifecycle-parity-compaction.md)
   - 类型：compaction
   - 状态：完成
@@ -541,15 +661,15 @@
 
 下一步推荐：
 
-- `P1 platform readiness fact semantics first slice`
+- `P1 internal runtime step input policy bundle implementation`
 
 用途：
 
-- 基于 [2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md)，进入 bounded implementation。
-- 下一刀默认把当前 `CjguiInternalPlatformAdapterFact` 的泛化 `hasPlatformFact` 语义推进为更明确的 internal platform readiness fact 语义。
-- 除非发现 HIGH / CRITICAL 风险或 authority 冲突，不得继续创建新的 preflight / execution card 替代实现。
+- 基于 [2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，一次完成 step input / policy / decision / step-with-input-policy 的完整 W2 internal behavior concept。
+- 不再继续一 helper 一轮。
+- 完成后新增 bundled closure。
 
 当前可执行动作：
 
-- bounded implementation / W2 internal concept slice。
+- bounded implementation / W2 internal behavior bundle。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、queue / drain、app run / shutdown、window create / close / destroy / release、handle table / generation、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

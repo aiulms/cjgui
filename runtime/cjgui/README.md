@@ -8,7 +8,7 @@
 
 ## First Compilable Source Boundary
 
-当前四个 `src/*.cj` 文件都使用同一个 `package cjgui` declaration，并且只承载默认 internal 的最小骨架符号：
+当前六个 `src/*.cj` 文件都使用同一个 `package cjgui` declaration，并且只承载默认 internal 的最小骨架符号：
 
 - `src/app_lifecycle.cj`
   - `CjguiInternalAppLifecycleState`
@@ -16,10 +16,12 @@
   - `CjguiInternalAppLifecyclePhaseTaxonomyMarker`
   - `cjguiInternalNoOpAppLifecycleTransition`
   - `cjguiInternalAppLifecyclePhaseMarkerTransition`
+  - `cjguiInternalAppLifecycleHasObservedPlatformReady`
 - `src/window_lifecycle.cj`
   - `CjguiInternalWindowLifecycleState`
   - `cjguiInternalNoOpWindowLifecycleTransition`
   - `cjguiInternalWindowLifecycleStateMarkerTransition`
+  - `cjguiInternalWindowLifecycleHasObservedPlatformReady`
 - `src/platform_adapter.cj`
   - `CjguiInternalPlatformAdapterFact`
   - `cjguiInternalNoOpPlatformAdapterFactIngestion`
@@ -28,6 +30,21 @@
   - `CjguiInternalLifecycleCoordinationResult`
   - `cjguiInternalCoordinateLifecycleFromPlatformFact`
   - `cjguiInternalLifecycleCoordinationSanity`
+  - `cjguiInternalLifecycleCoordinationSanityObservedPlatformReady`
+  - `cjguiInternalLifecycleCoordinationSanityNotObservedPlatformReady`
+  - `cjguiInternalLifecycleCoordinationReadinessSanityParity`
+- `src/runtime_bootstrap.cj`
+  - `CjguiInternalRuntimeReadinessAggregate`
+  - `CjguiInternalRuntimeBootstrapSnapshot`
+  - `cjguiInternalBuildRuntimeReadinessAggregate`
+  - `cjguiInternalBuildRuntimeBootstrapSnapshot`
+- `src/runtime_state.cj`
+  - `CjguiInternalRuntimeRootState`
+  - `CjguiInternalRuntimeStepResult`
+  - `cjguiInternalBuildRuntimeRootState`
+  - `cjguiInternalRuntimeRootStateReadySanity`
+  - `cjguiInternalRuntimeStep`
+  - `cjguiInternalRuntimeStepReadySanity`
 - `src/error.cj`
   - `CjguiInternalCompileSanityMarker`
   - `CjguiInternalErrorFact`
@@ -35,10 +52,12 @@
 
 当前已落地的最小脱水形状如下：
 
-- app lifecycle state: `isStateMachineActive: Bool`、`hasLifecyclePhase: Bool`
-- window lifecycle state: `hasWindowState: Bool`
-- platform adapter fact: `hasPlatformFact: Bool`
+- app lifecycle state: `isStateMachineActive: Bool`、`hasLifecyclePhase: Bool`、`hasObservedPlatformReady: Bool`
+- window lifecycle state: `hasWindowState: Bool`、`hasObservedPlatformReady: Bool`
+- platform adapter fact: `isPlatformReady: Bool`
 - error fact: `hasNativePayload: Bool = false`
+
+当前 app/window lifecycle 各有一个默认 internal readiness predicate helper，只读取 `hasObservedPlatformReady`，不改变 state shape、constructor shape 或 projection behavior。platform adapter 另有默认 internal coordination readiness sanity helpers：positive helper 复用既有 sanity 链路并确认 app/window 都观察到 platform readiness；negative helper 使用 `isPlatformReady=false` 的 fact 确认默认 app/window 不会被标记为 observed platform ready；parity helper 同时确认 positive / negative sanity 都成立。`src/runtime_bootstrap.cj` 是默认 internal bootstrap owner 文件，承载 runtime readiness aggregate type / builder 与 bootstrap snapshot type / builder；它只聚合 app/window readiness coordination summary 与 bootstrap readiness Bool，不拥有 app/window state truth，也不实现 runtime 启动行为。`src/runtime_state.cj` 是默认 internal runtime root state owner 文件，只聚合 bootstrap snapshot 与 runtime readiness Bool；其 step result 只聚合 root state 与 didAdvance Bool，step function 只读取 root readiness 并原样返回 state，builder 只复用 bootstrap snapshot builder，ready sanity helpers 只读取 root readiness 或 step didAdvance Bool，并不定义 runtime state machine 或 run behavior。
 
 当前边界如下：
 
@@ -80,7 +99,7 @@
 
 ## Platform Adapter / Core Boundary
 
-当前 `src/platform_adapter.cj` 已经承载默认 internal 的 fact shape、最小 no-op ingestion、platform fact 到 app/window lifecycle 的投影、最小 lifecycle coordination 结果与入口，以及默认 internal sanity 调用。它仍不是正式 platform adapter implementation。
+当前 `src/platform_adapter.cj` 已经承载默认 internal 的 readiness fact shape、最小 no-op ingestion、platform readiness fact 到 app/window lifecycle 的投影、最小 lifecycle coordination 结果与入口，以及默认 internal sanity 调用。它仍不是正式 platform adapter implementation。
 
 边界如下：
 
@@ -90,6 +109,35 @@
 - window lifecycle 可在未来消费 adapter 发出的脱水 window facts，例如 create observed、close requested、visibility summary、destroyed、release completed、stale message。
 - `NSRunLoop`、`NSEvent`、`dispatch_main`、AppKit / Metal / CoreGraphics / Objective-C 对象、native handle、raw pointer 只能作为 adapter-internal truth 或 README 中的禁止事项出现。
 - platform adapter boundary 不意味着默认 global tick、blind redraw、frame scheduler、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree、Action Router、command-list hash、pixel diff、baseline 或 offscreen renderer 已打开。
+
+## Runtime Bootstrap Owner
+
+当前 `src/runtime_bootstrap.cj` 承载默认 internal runtime readiness aggregate 与 bootstrap snapshot owner symbols。它只组合既有 coordination sanity 与 readiness parity summary，不拥有 app lifecycle truth、window lifecycle truth 或 platform object truth。
+
+边界如下：
+
+- readiness aggregate 只聚合 app/window state 与 readiness parity Bool。
+- bootstrap snapshot 只聚合 readiness aggregate 与 `isBootstrapReady` Bool。
+- builder 只复用现有 internal coordination sanity helper，不改变 projection / coordination behavior。
+- 当前不实现 app run、event loop、callback binding、queue / drain、window create、shutdown 或真实 runtime behavior。
+- 当前不新增 public runtime API、public C ABI、platform object、native handle 或 raw pointer。
+
+## Runtime Root State Owner
+
+当前 `src/runtime_state.cj` 承载默认 internal runtime root state summary。它只聚合 bootstrap snapshot 与 `isRuntimeReady` Bool，不拥有 app lifecycle truth、window lifecycle truth 或 platform object truth。
+
+边界如下：
+
+- root state 只持有 `bootstrap: CjguiInternalRuntimeBootstrapSnapshot` 与 `isRuntimeReady: Bool`。
+- root state builder 只调用 `cjguiInternalBuildRuntimeBootstrapSnapshot()`，并用 `bootstrap.isBootstrapReady` 作为 `isRuntimeReady`。
+- root ready sanity helper 只调用 `cjguiInternalBuildRuntimeRootState()` 并返回 `root.isRuntimeReady`。
+- runtime step result 只持有 `state: CjguiInternalRuntimeRootState` 与 `didAdvance: Bool`。
+- runtime step function 只返回原 state，并把 `state.isRuntimeReady` 映射为 `didAdvance`。
+- runtime step ready sanity helper 只调用 root state builder 与 runtime step，并返回 `step.didAdvance`。
+- step sanity 已封账；下一步应转向 step input / policy bundle，而不是继续堆 helper 链。
+- root sanity 已封账；下一步应转向 first internal runtime step / step result，而不是继续堆 root helper。
+- root state 不定义 runtime state machine、app run、event loop、queue / drain、window create 或 shutdown。
+- 当前不新增 public runtime API、public C ABI、platform object、native handle 或 raw pointer。
 
 ## Error Strategy Surface Boundary
 
@@ -110,7 +158,7 @@
 边界如下：
 
 - package owner 候选是 `runtime/cjgui`，不属于 `labs/macos_bridge_smoke`。
-- 当前四个 `.cj` source 允许已经落地的默认 internal marker / fact / transition / coordination skeleton。
+- 当前六个 `.cj` source 允许已经落地的默认 internal marker / fact / transition / coordination / bootstrap / root state owner skeleton。
 - 除已封账的 internal skeleton 外，不应顺手新增 public API、public C ABI、真实 runtime behavior、`main` entry、额外 build script 或 smoke 迁移。
 - build / check 结果只能作为工具链证据，不能替代 source truth。
 

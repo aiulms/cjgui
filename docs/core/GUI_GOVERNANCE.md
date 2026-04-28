@@ -207,6 +207,33 @@ docs-only gate 必须有出口。
 
 如果已有 preflight 已经冻结边界，execution card 应保持短小，并且同一轮或下一轮必须落到代码。
 
+### 3.2 Internal Concept Slice Rule
+
+治理文档用于帮助执行 AI 找准方向，不用于把执行 AI 限制到每次只能写一个 symbol、一行字段或一个 marker。
+
+bounded implementation 的粒度应按风险和内部概念划分，而不是按代码行数划分：
+
+- 如果本轮仍在同一 owner 内。
+- 不改变 public runtime API / public C ABI。
+- 不暴露平台对象、native handle、raw pointer 或 FFI 生命周期。
+- 不跨越既有 truth / projection 边界。
+- write set、forbidden scope、verification 和 stop-line 已清楚。
+
+则 execution card 应优先授权一个完整的 internal concept slice，而不是拆成 `marker -> field -> constructor -> no-op -> transition` 的多轮文档链。
+
+一个 W1 / W2 internal concept slice 可以在同一轮内包含多个相互依赖的小动作，例如：
+
+- 一个 internal type。
+- 少量 immutable facts。
+- construction shape。
+- no-op transition。
+- 一个极窄 state-changing transition。
+- 对应 closure review 和索引更新。
+
+代码行数本身不是风险指标。2 行、1000 行或 3000 行都可能是合理实现，前提是它们仍在批准的 owner / write set / stop-line 内，并且验证能覆盖本轮目标。相反，即使只改 1 行，只要它改变 public contract、truth owner、平台对象暴露、FFI 生命周期或安全边界，也必须重新走高风险 gate。
+
+禁止无实质风险理由地把同一 internal concept slice 拆成多轮 docs-only / one-symbol implementation 循环。只有在出现语言语法不确定、build fail、authority 冲突、public contract 风险、跨 owner 影响或验证不可成立时，才应主动缩小切片或 fail closed。
+
 ## 4. 三种 docs-only 任务
 
 ### 4.1 Preflight
@@ -379,6 +406,22 @@ preflight -> execution card -> closure -> preflight -> execution card -> closure
 承载：
 
 - 每次非平凡实现前的执行卡模板
+
+### 6.7 [CJGUI_CONTEXT_LOADING_POLICY.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/CJGUI_CONTEXT_LOADING_POLICY.md)
+
+承载：
+
+- 每轮 AI 必读上下文预算
+- L0 / L1 / L2 / L3 分层读取规则
+- 防止架构 AI 用长阅读清单替代清晰执行边界
+
+### 6.8 [CJGUI_SKILLIZATION_PLAN.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/CJGUI_SKILLIZATION_PLAN.md)
+
+承载：
+
+- CJGUI 治理未来 skill 化的阶段计划
+- skill 与项目文档的真相源边界
+- 避免 skill 复制整套文档或变成第二个 tracker
 
 ## 7. 必须暂停的场景
 

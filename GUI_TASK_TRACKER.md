@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目任务账本
 
-最后更新：2026-04-27
+最后更新：2026-04-28
 
 ## 账本职责
 
@@ -27,6 +27,78 @@
 
 当前已经完成实验性 P0 bridge smoke、P1 bridge boundary cleanup、P1 main-thread UI message queue first slice、P1 automated GUI verification first slice、P1 frame metadata / render stats first slice、P1 screenshot / Metal readback verification preflight、P1 Metal readback feasibility first slice、P1 user-visible window verification evidence preflight、P1 user-visible window screenshot feasibility execution card、P1 user-visible window screenshot feasibility first slice、P1 user-visible window screenshot verification preflight、P1 user-visible window screenshot verification execution card、P1 user-visible window screenshot verification first slice、P1 screenshot verification artifact retention policy preflight、P1 screenshot artifact retention execution card、P1 screenshot artifact retention first slice、P1 pixel diff / frame hash prerequisites preflight、P1 frame hash feasibility execution card、P1 frame hash feasibility first slice、P1 frame hash evidence review / baseline policy preflight、P1 frame hash baseline-readiness diagnostics execution card、P1 frame hash baseline-readiness diagnostics first slice、P1 frame hash baseline owner / update policy preflight、P1 frame hash baseline owner / update policy execution card、P1 frame hash baseline owner / update policy first slice、P1 frame hash source normalization policy preflight、P1 frame hash source normalization policy execution card、P1 frame hash source normalization readiness diagnostics first slice、P1 frame hash source normalization evidence closure / next-boundary preflight、P1 frame hash bounds / crop semantics policy preflight、P1 frame hash bounds / crop semantics policy execution card、P1 frame hash bounds / crop semantics readiness diagnostics first slice、P1 frame hash verification evidence line closure / runtime pivot preflight、P1 smoke-to-runtime boundary preflight、P1 minimal app/window lifecycle runtime boundary preflight、P1 red-team risk intake / runtime guardrails preflight、P1 minimal app/window lifecycle runtime execution card、P1 minimal app/window lifecycle runtime skeleton first slice、P1 self-drawn platform reduction / IME / accessibility guardrails preflight、P1 minimal runtime skeleton closure / app-window lifecycle surface review preflight、P1 app lifecycle surface boundary preflight、P1 app lifecycle surface execution card、P1 app lifecycle surface comment-only refinement first slice、P1 window lifecycle surface boundary preflight、P1 window lifecycle surface execution card、P1 window lifecycle surface comment-only refinement first slice、P1 platform adapter boundary preflight、P1 platform adapter boundary execution card、P1 platform adapter surface comment-only refinement first slice、P1 error strategy boundary preflight、P1 error strategy boundary execution card、P1 error strategy surface comment-only refinement first slice、P1 minimal runtime skeleton surface phase closure / compaction preflight、P1 runtime build/package boundary preflight、P1 runtime build/package boundary execution card、P1 runtime build/package metadata first slice、P1 first compilable runtime source boundary preflight、P1 first compilable runtime source execution card、P1 first compilable runtime source first slice、P1 first compilable runtime source closure / next implementation boundary preflight、P1 runtime visibility / internal symbol boundary preflight、P1 runtime internal symbol boundary execution card、P1 runtime internal symbol boundary first slice、P1 runtime internal symbol closure / first internal type boundary preflight、P1 first internal runtime type execution card、P1 first internal runtime type first slice、P1 first internal runtime type closure / error fact shape boundary preflight、P1 error fact shape execution card、P1 error fact shape first slice、P1 error fact shape closure / error taxonomy boundary preflight、P1 error taxonomy boundary execution card、P1 error taxonomy marker first slice、P1 error taxonomy marker closure / recoverability boundary preflight、P1 first internal app lifecycle state execution card、P1 first internal app lifecycle state first slice、P1 app lifecycle state shape execution card、P1 app lifecycle state shape first slice，以及 P1 app lifecycle transition boundary execution card。
 2026-04-27 已完成 `CjguiInternalAppLifecycleState` 的最小脱水 Bool 字段 first slice；字段为 `isStateMachineActive: Bool = false`，只表达 state shape，不定义 state machine 或 runtime 行为。
+
+最新补充：P1 app lifecycle transition marker first slice 已完成，新增 `CjguiInternalAppLifecycleTransitionMarker`，当前 next opening 转向 `P1 app lifecycle transition marker closure / first internal no-op transition decision`。
+
+最新补充：P1 app lifecycle no-op transition execution card 已完成，当前 next opening 转向 `P1 app lifecycle no-op transition first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 app lifecycle no-op transition first slice 已完成，新增 `cjguiInternalNoOpAppLifecycleTransition`，closure review 已封账；当前 next opening 转向 `P1 first real app lifecycle transition boundary decision`。
+
+最新补充：P1 app lifecycle phase marker execution card 已完成，当前 next opening 转向 `P1 app lifecycle phase marker first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 app lifecycle phase marker first slice 已完成，新增 `hasLifecyclePhase: Bool = false`，closure review 已封账；当前 next opening 转向 `P1 app lifecycle phase marker closure / first real transition readiness decision`。
+
+最新补充：P1 app lifecycle first state-changing transition execution card 已完成，当前 next opening 转向 `P1 app lifecycle first state-changing transition first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 app lifecycle first state-changing transition first slice 已 fail closed；当前 state 只生成无参构造函数，无法在“只新增一个 transition function”的授权内构造 `hasLifecyclePhase = true` 的新 state。未修改 runtime，build / smoke guard 通过；当前 next opening 转向 `P1 app lifecycle state construction authority decision`。
+
+最新补充：P1 app lifecycle state construction execution card 已完成；下一刀只允许给 `CjguiInternalAppLifecycleState` 打开最小默认 internal 构造 shape，推荐显式 `init` 只覆盖既有两个 Bool 字段且无副作用。当前 next opening 转向 `P1 app lifecycle state construction first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 app lifecycle state construction first slice 已 fail closed；显式 `init` 与当前两个默认初始化 `let` 字段冲突，仓颉编译器报 `cannot assign to immutable value`。临时 runtime 修改已撤回，build / smoke guard 通过；当前 next opening 转向 `P1 app lifecycle state construction fail-closed / constructor shape decision`。
+
+最新补充：P1 app lifecycle state initialization shape execution card 已完成；下一刀只允许把 `CjguiInternalAppLifecycleState` 从字段默认值初始化推进到主构造或等价构造期初始化 shape，保留两个 immutable Bool facts 并允许构造不同 state。当前 next opening 转向 `P1 app lifecycle state initialization shape first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 app lifecycle state initialization shape first slice 已完成；`CjguiInternalAppLifecycleState` 改为默认 internal 构造期初始化 shape，两个 facts 仍为 `let`，无参构造保持 inactive / no lifecycle phase，带参构造允许构造不同 internal state。build / smoke guard 通过；当前 next opening 转向 `P1 app lifecycle state initialization shape closure / retry first state-changing transition`。
+
+最新补充：P1 app lifecycle first state-changing transition retry first slice 已完成；新增默认 internal `cjguiInternalAppLifecyclePhaseMarkerTransition`，只把 returned state 的 `hasLifecyclePhase` 推进为 `true`，并保留输入 `isStateMachineActive`。build / smoke guard 通过；当前 next opening 转向 `P1 app lifecycle first state-changing transition closure / app lifecycle mini-slice compaction`。
+
+最新补充：P1 app lifecycle mini-slice compaction 已完成；已将 app lifecycle 从 state marker、shape、construction shape、no-op transition 到 first state-changing transition 的事实压缩到 [2026-04-27-p1-app-lifecycle-mini-slice-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-mini-slice-compaction.md)。当前 next opening 转向 `P1 app lifecycle first real phase taxonomy decision`，不自动开启实现。
+
+最新补充：P1 app lifecycle phase taxonomy execution card 已完成；下一刀最多只能新增一个默认 internal 空 phase taxonomy marker / placeholder type，不定义真实 taxonomy、enum 或 state machine。当前 next opening 转向 `P1 app lifecycle phase taxonomy marker first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 app lifecycle phase taxonomy marker first slice 已完成；新增默认 internal 空 `CjguiInternalAppLifecyclePhaseTaxonomyMarker`，只表达 phase taxonomy boundary exists but taxonomy is not yet defined。build / smoke guard 通过；当前 next opening 转向 `P1 app lifecycle phase taxonomy marker closure / window lifecycle pivot decision`。
+
+最新补充：P1 first internal window lifecycle state execution card 已完成；已从 app lifecycle mini-slice pivot 到 window lifecycle，下一刀最多只能在 `runtime/cjgui/src/window_lifecycle.cj` 新增默认 internal 空 window lifecycle state marker / placeholder type。当前 next opening 转向 `P1 first internal window lifecycle state first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 first internal window lifecycle state first slice 已完成；新增默认 internal 空 `CjguiInternalWindowLifecycleState`，只表达 window lifecycle state boundary exists but window state machine is not yet defined。build / smoke guard 通过；当前 next opening 转向 `P1 first internal window lifecycle state closure / window state shape decision`。
+
+最新补充：P1 window lifecycle state shape execution card 已完成；下一刀最多只能给 `CjguiInternalWindowLifecycleState` 新增一个不可变 Bool 字段，推荐语义等价于 `hasWindowState: Bool = false`，只表达 window state boundary exists，但 window state taxonomy 尚未定义。当前 next opening 转向 `P1 window lifecycle state shape first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 window lifecycle state shape first slice 已完成；`CjguiInternalWindowLifecycleState` 新增唯一不可变 Bool 字段 `hasWindowState: Bool = false`，只表达 window state boundary exists，但 window state taxonomy 尚未定义。build / smoke guard 通过；当前 next opening 转向 `P1 window lifecycle state shape closure / combined construction transition slice decision`。
+
+最新补充：P1 window lifecycle construction + no-op transition execution card 已完成；下一刀允许同时修改 `CjguiInternalWindowLifecycleState` 的 initialization shape，并新增默认 internal no-op window lifecycle transition function。当前 next opening 转向 `P1 window lifecycle construction + no-op transition first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 window lifecycle construction + no-op transition first slice 已完成；`CjguiInternalWindowLifecycleState` 改为默认 internal explicit init pair，仍只保留 immutable `hasWindowState`，并新增默认 internal `cjguiInternalNoOpWindowLifecycleTransition` 原样返回输入 state。临时探针、runtime build、smoke guard 通过；当前 next opening 转向 `P1 window lifecycle construction + no-op transition closure / first state-changing transition decision`。
+
+最新补充：P1 window lifecycle first state-changing transition execution card 已完成；下一刀最多只能新增一个默认 internal state-changing transition function，唯一允许的 state change 是返回一个 `hasWindowState = true` 的 `CjguiInternalWindowLifecycleState`。当前 next opening 转向 `P1 window lifecycle first state-changing transition first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 window lifecycle first state-changing transition first slice 已完成；新增默认 internal `cjguiInternalWindowLifecycleStateMarkerTransition`，只返回 `hasWindowState=true` 的 new state，不定义 window taxonomy、handle、create / close / destroy / release。build / smoke guard 通过；当前 next opening 转向 `P1 window lifecycle first state-changing transition closure / lifecycle parity compaction`。
+
+最新补充：P1 lifecycle parity compaction 已完成；已将 app/window lifecycle 两条 internal mini-slice 的对称能力压缩到 [2026-04-27-p1-lifecycle-parity-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-lifecycle-parity-compaction.md)。当前 next opening 转向 `P1 lifecycle internal mini-runtime closure / next functional slice decision`，不自动开启实现。
+
+最新补充：P1 platform adapter fact ingestion execution card 已完成；已从 lifecycle mini-runtime pivot 到 platform adapter fact ingestion，下一刀最多只能在 `runtime/cjgui/src/platform_adapter.cj` 新增一个默认 internal 空 platform adapter fact marker / placeholder type。当前 next opening 转向 `P1 platform adapter fact marker first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 platform adapter fact marker first slice 已完成；新增默认 internal 空 `CjguiInternalPlatformAdapterFact`，只表达 platform adapter can provide dehydrated facts, but fact shape is not yet defined。build / smoke guard 通过；当前 next opening 转向 `P1 platform adapter fact marker closure / fact shape decision`。
+
+最新补充：P1 platform adapter fact shape + construction + no-op ingestion execution card 已完成；这是 W1 internal concept slice，不是 one-symbol slice。下一刀最多只能围绕 `CjguiInternalPlatformAdapterFact` 增加一个 immutable Bool fact shape、构造期初始化能力和一个默认 internal no-op fact ingestion function。当前 next opening 转向 `P1 platform adapter fact shape + construction + no-op ingestion first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 platform adapter fact shape + construction + no-op ingestion first slice 已完成；`CjguiInternalPlatformAdapterFact` 新增唯一 immutable Bool fact `hasPlatformFact`、默认 internal explicit init pair，以及默认 internal `cjguiInternalNoOpPlatformAdapterFactIngestion` 原样返回输入 fact。临时探针、runtime build、smoke guard 通过；当前 next opening 转向 `P1 platform adapter fact shape + construction + no-op ingestion closure / next functional slice decision`。
+
+最新补充：P1 runtime internal concept compaction 已完成；已将 app lifecycle、window lifecycle、platform adapter 三条 internal code slice 的当前能力压缩到 [2026-04-27-p1-runtime-internal-concept-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-runtime-internal-concept-compaction.md)。当前 next opening 转向 `P1 platform fact to lifecycle ingestion boundary decision`，不自动开启实现。
+
+最新补充：P1 platform fact to lifecycle ingestion execution card 已完成；这是 W2 light internal concept slice，用 [2026-04-27-p1-runtime-internal-concept-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-runtime-internal-concept-compaction.md) 作为 authority，授权下一轮实现 platform adapter dehydrated fact -> app/window lifecycle internal marker state 的最小 ingestion / projection。当前 next opening 转向 `P1 platform fact to lifecycle ingestion first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 platform fact to lifecycle ingestion first slice 已完成；新增默认 internal `cjguiInternalProjectPlatformFactToAppLifecycleState` 与 `cjguiInternalProjectPlatformFactToWindowLifecycleState`，让 `hasPlatformFact=true` 的脱水 platform fact 可以推进 app/window internal marker state。runtime build 与 smoke guard 通过；当前 next opening 转向 `P1 platform fact to lifecycle ingestion closure / next functional slice decision`。
+
+最新补充：P1 internal lifecycle coordination execution card 已完成；这是 W2 internal concept slice，授权下一轮把已有 platform fact、app lifecycle state、window lifecycle state 串成最小 internal coordination 入口。当前 next opening 转向 `P1 internal lifecycle coordination first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 internal lifecycle coordination first slice 已完成；新增默认 internal `CjguiInternalLifecycleCoordinationResult` 与 `cjguiInternalCoordinateLifecycleFromPlatformFact`，用既有 platform fact projection functions 返回协调后的 app/window marker state。runtime build 与 smoke guard 通过；当前 next opening 转向 `P1 internal lifecycle coordination closure / next functional slice decision`。
+
+最新补充：P1 internal lifecycle coordination sanity execution card 已完成；这是 W1 light internal concept slice，授权下一轮新增一个默认 internal sanity function，用最小 platform fact、默认 app/window state 调用现有 coordination 链条并返回 `CjguiInternalLifecycleCoordinationResult`。当前 next opening 转向 `P1 internal lifecycle coordination sanity first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最新补充：P1 internal lifecycle coordination sanity first slice 已完成；先做了窄口恢复修正，把 `cjguiInternalNo0pAppLifecycleTransition`、`cjguiInternalNo0pWindowLifecycleTransition`、`cjguiInternalNo0pPlatformAdapterFactIngestion` 统一修正为 `NoOp` 命名，并同步更新 `runtime/cjgui/README.md`。随后新增默认 internal `cjguiInternalLifecycleCoordinationSanity`，它构造 `CjguiInternalPlatformAdapterFact(true)`、默认 app/window state，并调用 `cjguiInternalCoordinateLifecycleFromPlatformFact` 返回 `CjguiInternalLifecycleCoordinationResult`。runtime build、smoke guard 与 `git diff --check` 通过；当前 next opening 转向 `P1 internal lifecycle coordination sanity closure / next functional slice decision`。
+
+最新补充：P1 platform readiness fact semantics execution card 已完成；这是 W2 internal concept slice，授权下一轮把 `CjguiInternalPlatformAdapterFact` 的泛化 `hasPlatformFact` marker 语义推进为更明确的 internal platform readiness fact 语义，仍保持 internal-only、脱水、无平台对象、无 public runtime API / public C ABI。当前 next opening 转向 `P1 platform readiness fact semantics first slice`；下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
 
 ## 当前 current-state summary
 
@@ -81,24 +153,24 @@
 
 当前推荐开启的下一条 opening：
 
-### `P1 app lifecycle transition marker first slice`
+### `P1 platform readiness fact semantics first slice`
 
-性质：bounded implementation / app lifecycle transition marker
+性质：bounded implementation / W2 internal concept slice
 
 目标：
 
-- 基于 [2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md)，只在 `runtime/cjgui/src/app_lifecycle.cj` 新增一个默认 internal transition marker type。
-- 该 marker 只表达 transition boundary exists but transition behavior is not yet defined。
-- 不实现 state machine、transition behavior、`run` / `shutdown` / `request quit`、queue / drain、public runtime API 或 public C ABI。
+- 基于 [2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md)，进入 bounded implementation。
+- 把 `CjguiInternalPlatformAdapterFact` 当前泛化的 `hasPlatformFact` marker 语义推进为更明确的 internal platform readiness fact 语义。
+- 保持 internal-only、脱水 Bool fact、无平台对象、无 public runtime API / public C ABI。
 
 本 opening 仍禁止：
 
 - 修改 `labs/macos_bridge_smoke`、harness、native bridge 或仓颉入口。
 - 修改 `cjpm.toml`，新增 `src/main.cj` 或 `package_anchor.cj`。
-- 修改 `isStateMachineActive` 的值或语义，或新增第二个 state 字段。
-- 新增 `public`、import、函数、方法、显式 init、构造逻辑或 runtime behavior。
-- 实现 `run` / `shutdown` / `request quit` / queue / drain、platform adapter callback binding、window lifecycle behavior 或 error strategy behavior。
-- 定义 public runtime API、public C ABI，或引用 AppKit / Metal / Objective-C。
+- 新增 `public` runtime API 或 public C ABI。
+- 引用 AppKit / Metal / Objective-C，或暴露 platform object、native handle、raw pointer。
+- 实现 event loop、callback binding、queue / drain、app run / shutdown、window create / close / destroy / release。
+- 新增 handle table / generation。
 - 进入 Renderer / Scene / Widget / Layout / DSL、Dirty Rect / global tick / frame scheduler、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff / baseline / offscreen renderer。
 
 最近完成的 bounded implementation opening：
@@ -301,6 +373,204 @@
 - 默认不授权函数；如果选择函数，必须 fail closed，除非另有单独授权。
 - 继续禁止修改 `isStateMachineActive` 的值或语义、第二个 state 字段、`run` / `shutdown` / `request quit` / queue / drain、platform adapter callback binding、window / error behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
 - 当前 next opening 更新为 `P1 app lifecycle transition marker first slice`；根据 Docs Exit Rule，下一轮默认应进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+### `P1 app lifecycle transition marker first slice`
+
+- [2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-transition-marker-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-transition-marker-closure-review.md)
+
+完成内容：
+
+- 新增默认 internal 空 `struct CjguiInternalAppLifecycleTransitionMarker {}`。
+- 该 marker 只表达 app lifecycle transition boundary exists but transition behavior is not yet defined。
+- 未修改 `CjguiInternalAppLifecycleState` 或 `isStateMachineActive`，未新增字段、函数、方法、显式 init、import、runtime behavior、public runtime API 或 public C ABI。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-transition-marker-target --skip-script` 通过，smoke guard 通过，`cjpm.toml` 与 smoke / harness / native bridge / 仓颉入口未修改。
+- 当前 next opening 更新为 `P1 app lifecycle transition marker closure / first internal no-op transition decision`，但不自动开启下一步。
+
+### `P1 app lifecycle no-op transition execution card`
+
+- [2026-04-27-p1-app-lifecycle-no-op-transition-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-no-op-transition-execution-card.md)
+
+完成内容：
+
+- 创建一张短 execution card；创建本卡不等于实现。
+- 授权下一刀进入 bounded implementation：最多只在 `runtime/cjgui/src/app_lifecycle.cj` 新增一个默认 internal no-op transition function。
+- 推荐函数语义为接收并返回同一个 `CjguiInternalAppLifecycleState`，只证明包内可以承载 internal lifecycle transition function。
+- 继续禁止 state change、state machine activation、真实 lifecycle API 名称、`public`、import、enum、`Result` type、queue / drain / request quit / shutdown / run 行为、platform adapter callback binding、window / error behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
+- 当前 next opening 更新为 `P1 app lifecycle no-op transition first slice`；根据 Docs Exit Rule，下一轮默认应进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+### `P1 app lifecycle no-op transition first slice`
+
+- [2026-04-27-p1-app-lifecycle-no-op-transition-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-no-op-transition-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-no-op-transition-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-no-op-transition-closure-review.md)
+
+完成内容：
+
+- 在 `runtime/cjgui/src/app_lifecycle.cj` 新增默认 internal `func cjguiInternalNoOpAppLifecycleTransition(state: CjguiInternalAppLifecycleState): CjguiInternalAppLifecycleState`。
+- 函数返回输入 state 本身，只证明包内可以承载 internal lifecycle transition function。
+- `state_modified=false`、`is_state_machine_active_modified=false`、`state_machine_activated=false`、`run_behavior_present=false`、`shutdown_behavior_present=false`、`request_quit_behavior_present=false`、`queue_behavior_present=false`、`drain_behavior_present=false`。
+- `public_api_present=false`、`public_c_abi_present=false`、`behavior_code_present=false`、`public_present=false`、`import_present=false`、`enum_present=false`、`result_type_present=false`。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-no-op-transition-target --skip-script` 通过并报告 existing unused function warning；smoke guard 通过，`cjpm_toml_changed=false`、`smoke_changed=false`。
+- 当前 next opening 更新为 `P1 first real app lifecycle transition boundary decision`，但不自动开启下一步。
+
+### `P1 app lifecycle phase marker execution card`
+
+- [2026-04-27-p1-app-lifecycle-phase-marker-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-phase-marker-execution-card.md)
+
+完成内容：
+
+- 创建短 execution card，不等于实现。
+- 授权下一刀最多只给 `CjguiInternalAppLifecycleState` 新增一个默认 internal、不可变 `Bool` phase marker / field，语义等价于 `hasLifecyclePhase: Bool = false`。
+- 明确 phase marker 只表达 phase boundary exists，不定义 lifecycle phase taxonomy。
+- 继续禁止 `public`、enum、`Result` type、string / int code、category、severity、修改 no-op transition、真实 lifecycle behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
+- 当前 next opening 更新为 `P1 app lifecycle phase marker first slice`；根据 Docs Exit Rule，下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+### `P1 app lifecycle phase marker first slice`
+
+- [2026-04-27-p1-app-lifecycle-phase-marker-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-phase-marker-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-phase-marker-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-phase-marker-closure-review.md)
+
+完成内容：
+
+- 在 `CjguiInternalAppLifecycleState` 中新增默认 internal 不可变 `Bool` 字段 `hasLifecyclePhase: Bool = false`。
+- 字段只表达 phase boundary exists，不定义 lifecycle phase taxonomy、state machine 或真实 transition behavior。
+- `no_op_transition_modified=false`、`is_state_machine_active_modified=false`、`enum_present=false`、`result_type_present=false`、`string_code_present=false`、`int_code_present=false`、`category_present=false`、`severity_present=false`。
+- `run_behavior_present=false`、`shutdown_behavior_present=false`、`request_quit_behavior_present=false`、`queue_behavior_present=false`、`drain_behavior_present=false`。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-phase-marker-target --skip-script` 通过并报告 existing unused function warning；smoke guard 通过，`cjpm_toml_changed=false`、`smoke_changed=false`。
+- 当前 next opening 更新为 `P1 app lifecycle phase marker closure / first real transition readiness decision`，但不自动开启下一步。
+
+### `P1 app lifecycle first state-changing transition execution card`
+
+- [2026-04-27-p1-app-lifecycle-first-state-changing-transition-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-first-state-changing-transition-execution-card.md)
+
+完成内容：
+
+- 创建短 execution card，不等于实现。
+- 授权下一刀进入 bounded implementation：最多新增一个默认 internal state-changing transition function。
+- 该函数只能接收并返回 `CjguiInternalAppLifecycleState`，唯一允许的 state change 是返回 `hasLifecyclePhase = true`。
+- 继续禁止把 `isStateMachineActive` 改成 true、phase taxonomy、enum、`Result` type、run / shutdown / request quit / queue / drain、platform / window / error behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
+- 当前 next opening 更新为 `P1 app lifecycle first state-changing transition first slice`；根据 Docs Exit Rule，下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+### `P1 app lifecycle first state-changing transition first slice`
+
+- [2026-04-27-p1-app-lifecycle-first-state-changing-transition-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-first-state-changing-transition-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-first-state-changing-transition-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-first-state-changing-transition-closure-review.md)
+
+完成内容：
+
+- 本轮按要求 fail closed，未修改 runtime。
+- 仓颉 struct 文档和临时编译探针确认：当前 `CjguiInternalAppLifecycleState` 因只有带默认值的 `let` 字段且无自定义构造函数，只自动生成无参构造函数。
+- `CjguiInternalAppLifecycleState(false, true)` 和 `CjguiInternalAppLifecycleState(hasLifecyclePhase: true)` 均不可编译。
+- 若要返回 `hasLifecyclePhase = true` 的新 state，必须另行授权显式 init / 主构造函数 / state construction shape；这超出本轮“只新增一个 transition function”的 write set。
+- `state_changing_transition_added=false`、`no_op_transition_modified=false`、`field_added=false`、`phase_taxonomy_defined=false`、`is_state_machine_active_set_true=false`。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-first-state-changing-transition-target --skip-script` 通过并报告 existing unused function warning；smoke guard 通过，`cjpm_toml_changed=false`、`smoke_changed=false`。
+- 当前 next opening 更新为 `P1 app lifecycle state construction authority decision`，本轮不会自动打开下一步。
+
+### `P1 app lifecycle state construction execution card`
+
+- [2026-04-27-p1-app-lifecycle-state-construction-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-construction-execution-card.md)
+
+完成内容：
+
+- 创建短 execution card，不等于实现。
+- 本卡只回应上一轮 fail-closed 暴露的构造能力缺口。
+- 授权下一刀最多只修改 `CjguiInternalAppLifecycleState` 的构造 shape。
+- 推荐方向是新增默认 internal 显式 `init`，参数只允许覆盖既有 `isStateMachineActive` 与 `hasLifecyclePhase` 两个 `Bool` 字段，且只能赋值、无副作用。
+- 继续禁止新增字段、enum、`Result` type、phase taxonomy、state-changing transition function、修改 no-op transition function、把默认状态改成 active、run / shutdown / request quit / queue / drain、platform / window / error behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
+- 后续 implementation 已 fail closed；见 [2026-04-27-p1-app-lifecycle-state-construction-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-construction-closure-review.md)。
+
+### `P1 app lifecycle state construction first slice`
+
+- [2026-04-27-p1-app-lifecycle-state-construction-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-construction-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-state-construction-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-construction-closure-review.md)
+- [2026-04-27-p1-app-lifecycle-state-initialization-shape-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-initialization-shape-execution-card.md)
+
+完成内容：
+
+- 本轮按要求 fail closed，未保留 runtime 修改。
+- 仓颉 struct `init` 探针确认：当前 `CjguiInternalAppLifecycleState` 的两个字段是带默认值的不可变 `let` 字段，在显式 `init` 中再次赋值会触发 `cannot assign to immutable value`。
+- 临时显式 `init` 已撤回；`state_construction_added=false`、`field_added=false`、`state_changing_transition_added=false`、`no_op_transition_modified=false`、`default_state_active=false`、`default_has_lifecycle_phase=false`。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-state-construction-target --skip-script` 通过并报告 existing unused function warning；smoke guard 通过，`cjpm_toml_changed=false`、`smoke_changed=false`。
+- 当前 next opening 更新为 `P1 app lifecycle state construction fail-closed / constructor shape decision`，本轮不会自动打开下一步。
+
+后续 decision / execution card 已完成：
+
+- [2026-04-27-p1-app-lifecycle-state-initialization-shape-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-initialization-shape-execution-card.md)
+- 授权下一轮进入 bounded implementation：只允许把 `CjguiInternalAppLifecycleState` 改为主构造或等价构造期初始化 shape；不得改成 `var`，不得新增字段、state-changing transition function、真实 lifecycle API 或 public contract。
+
+### `P1 app lifecycle state initialization shape first slice`
+
+- [2026-04-27-p1-app-lifecycle-state-initialization-shape-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-initialization-shape-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-state-initialization-shape-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-initialization-shape-closure-review.md)
+
+完成内容：
+
+- `CjguiInternalAppLifecycleState` 从字段默认值初始化改为默认 internal 显式 `init` 构造期初始化 shape。
+- `isStateMachineActive` 与 `hasLifecyclePhase` 仍为 `let`，未改成 `var`。
+- 无参 `init()` 继续构造 inactive / no lifecycle phase。
+- 带参 `init(isStateMachineActive: Bool, hasLifecyclePhase: Bool)` 只写入这两个 `Bool` facts，允许内部构造不同 state。
+- 未新增字段、state-changing transition function、enum、`Result` type 或 phase taxonomy。
+- no-op transition function 未修改。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-state-initialization-shape-target --skip-script` 通过，smoke guard 通过。
+
+最近完成的 bounded implementation opening：
+
+### `P1 app lifecycle first state-changing transition retry first slice`
+
+- [2026-04-27-p1-app-lifecycle-first-state-changing-transition-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-first-state-changing-transition-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-state-initialization-shape-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-state-initialization-shape-closure-review.md)
+- [2026-04-27-p1-app-lifecycle-first-state-changing-transition-retry-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-first-state-changing-transition-retry-closure-review.md)
+
+完成内容：
+
+- 在 `runtime/cjgui/src/app_lifecycle.cj` 新增默认 internal `cjguiInternalAppLifecyclePhaseMarkerTransition`。
+- 函数接收并返回 `CjguiInternalAppLifecycleState`，唯一 state change 是 returned state 的 `hasLifecyclePhase=true`。
+- 函数保留输入 `isStateMachineActive`，不强制把它改成 `true`。
+- 未新增字段、enum、`Result` type、phase taxonomy、string / int code、category、severity、public runtime API 或 public C ABI。
+- no-op transition function 未修改。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-first-state-changing-transition-retry-target --skip-script` 通过；smoke guard 通过。
+
+最近完成的 docs-only compaction：
+
+### `P1 app lifecycle first state-changing transition closure / app lifecycle mini-slice compaction`
+
+- [2026-04-27-p1-app-lifecycle-mini-slice-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-mini-slice-compaction.md)
+
+完成内容：
+
+- 压缩当前 app lifecycle internal surface：`CjguiInternalAppLifecycleState`、`isStateMachineActive`、`hasLifecyclePhase`、`CjguiInternalAppLifecycleTransitionMarker`、no-op transition function、phase marker transition function。
+- 明确这些 symbol 只证明 internal state / transition surface 可编译，不证明 state machine、phase taxonomy、run、shutdown、request quit、queue、drain、platform callback binding、window lifecycle behavior、public runtime API 或 public C ABI。
+- 后续 app lifecycle 线建议优先读取 compaction、当轮 current execution card 和 `runtime/cjgui/src/app_lifecycle.cj`，不默认读取完整 marker / shape / constructor / transition closure 历史。
+
+最近完成的 docs-only opening：
+
+### `P1 app lifecycle phase taxonomy execution card`
+
+- [2026-04-27-p1-app-lifecycle-phase-taxonomy-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-phase-taxonomy-execution-card.md)
+
+完成内容：
+
+- 创建短 execution card，不等于实现。
+- 授权下一刀最多新增一个默认 internal 空 phase taxonomy marker / placeholder type，推荐语义类似 `CjguiInternalAppLifecyclePhaseTaxonomyMarker`。
+- 明确 marker 只表达 phase taxonomy boundary exists but taxonomy is not yet defined。
+- 继续禁止 enum、string / int code、category、severity、修改 `CjguiInternalAppLifecycleState`、新增字段、修改 no-op / phase marker transition、新增 state-changing transition、run / shutdown / request quit / queue / drain、platform / window / error behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、`cjpm.toml` 修改、`src/main.cj` / `package_anchor.cj`、smoke / harness / native bridge / 仓颉入口修改。
+- 当前 next opening 更新为 `P1 app lifecycle phase taxonomy marker first slice`；根据 Docs Exit Rule，下一轮默认进入 bounded implementation，除非发现 HIGH / CRITICAL 风险或 authority 冲突。
+
+最近完成的 bounded implementation opening：
+
+### `P1 app lifecycle phase taxonomy marker first slice`
+
+- [2026-04-27-p1-app-lifecycle-phase-taxonomy-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-phase-taxonomy-execution-card.md)
+- [2026-04-27-p1-app-lifecycle-phase-taxonomy-marker-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-phase-taxonomy-marker-closure-review.md)
+
+完成内容：
+
+- 在 `runtime/cjgui/src/app_lifecycle.cj` 新增默认 internal 空 `CjguiInternalAppLifecyclePhaseTaxonomyMarker`。
+- 该 marker 只表达 phase taxonomy boundary exists but taxonomy is not yet defined。
+- 未定义真实 phase taxonomy、enum、string code、int code、category、severity、public runtime API 或 public C ABI。
+- 未修改 `CjguiInternalAppLifecycleState`、no-op transition 或 phase marker transition。
+- 未新增字段、state-changing transition、run / shutdown / request quit / queue / drain。
+- `cjpm build --target-dir /tmp/cjgui-app-lifecycle-phase-taxonomy-marker-target --skip-script` 通过；smoke guard 通过。
 
 ### `P1 window lifecycle surface boundary preflight`
 
@@ -2768,10 +3038,12 @@ Stop-line：
 
 如果继续推进，最合适的下一步是：
 
-> `P1 app lifecycle transition marker first slice`
+> `P1 platform readiness fact semantics first slice`
 
-范围只允许按 [P1 app lifecycle transition boundary execution card](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-app-lifecycle-transition-boundary-execution-card.md)，在 [runtime/cjgui/src/app_lifecycle.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/app_lifecycle.cj) 新增一个默认 internal、无 `public`、无 import 的 app lifecycle transition marker type。
+范围只允许基于 [P1 platform readiness fact semantics execution card](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-platform-readiness-fact-semantics-execution-card.md)，把当前泛化的 internal platform fact 推进为更明确的 platform readiness fact 语义。
 
-下一刀不得修改 `isStateMachineActive` 的值或语义，不得新增第二个 state 字段、函数、方法、显式 init、构造逻辑、runtime behavior、`run` / `shutdown` / `request quit` / queue / drain、platform adapter callback binding、window lifecycle behavior、error strategy behavior、public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、Renderer / Scene / Widget / Layout / DSL、global tick、Text / Input / IME / Accessibility、command-list hash、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
+当前 app lifecycle、window lifecycle 与 platform adapter 已证明 internal immutable state / fact、construction shape、NoOp function、极窄 marker transition、platform fact -> lifecycle marker projection、internal lifecycle coordination result / function，以及默认 internal sanity function 都能落地。下一步应让 platform fact 的语义从泛化 marker 收窄到 readiness。
 
-根据 Docs Exit Rule，下一轮默认应进入 bounded implementation；除非发现 HIGH / CRITICAL 风险或 authority 冲突，不再新开 docs-only 入口替代实现。
+下一轮默认进入 bounded implementation；除非发现 HIGH / CRITICAL 风险或 authority 冲突，不得继续创建新的 preflight / execution card 替代实现。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、queue / drain、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
+
+本轮不自动执行下一步实现，但下一轮默认应进入 bounded implementation。

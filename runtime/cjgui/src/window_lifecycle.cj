@@ -1,92 +1,145 @@
 package cjgui
 
 // P1 minimal app/window lifecycle runtime skeleton.
-// Date: 2026-04-26
+// 日期: 2026-04-26
 //
-// This file is intentionally comment-only.
-// It does not define a stable public API.
-// It does not implement window lifecycle behavior.
-// It does not create, close, or destroy a platform window.
-// It does not expose native handles or platform objects.
-//
-// Future window lifecycle owner:
-// - belongs to the formal runtime core window lifecycle module.
-// - owns dehydrated window lifecycle state.
-// - owns window-target lifecycle facts such as create requested, close requested, closing,
-//   destroyed, release completed, and stale window message classification.
-// - does not own app-level run, quit, shutdown, or queue acceptance policy.
-// - delegates all platform object work to a platform adapter.
-// - must not own Renderer, Scene, Widget, Layout, Text, Input, IME, Accessibility,
-//   semantic tree, Action Router, or render scheduling state.
-//
-// App lifecycle relation:
-// - app lifecycle is the conceptual owner of app-level state, queue acceptance,
-//   shutdown policy, and future main-thread queue / drain policy.
-// - window lifecycle owns window-target state transitions after an accepted
-//   window-targeted lifecycle request reaches the window layer.
-// - request close should eventually flow through app lifecycle queue acceptance
-//   and platform-adapter main-thread drain before window state advances.
-// - this file does not implement app lifecycle, event loop, queue, drain, run,
-//   request quit, or shutdown behavior.
-//
-// Platform adapter relation:
-// - platform adapter owns platform runloop callbacks, platform close events,
-//   platform object creation, and platform object release.
-// - core window lifecycle receives only dehydrated lifecycle facts.
-// - AppKit, Metal, Objective-C, NSWindow, NSView, CAMetalLayer, MTLDevice,
-//   CAMetalDrawable, CGImageRef, Objective-C id, native handles, and raw pointers
-//   are platform-adapter internal concerns only.
-// - those names may appear here only as forbidden platform truth, not as API,
-//   fields, parameters, return values, or implementation.
-//
-// Future slots, not implemented here:
+// 本文件当前只承载一个默认 internal 的 window lifecycle 状态标记、
+// 一个最小 no-op transition 和一个最小 state marker transition,
+// 以及边界说明注释。
+// 它不定义 stable public API。
+// 它不实现真实 window lifecycle 行为。
+// 它不创建、关闭或销毁 platform window。
+// 它不暴露 native handles 或 platform objects。
+
+// 内部 window lifecycle 状态标记:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只标记 window lifecycle state 边界存在。
+// - 它同时标记 window state machine 尚未定义。
+// - 它只有一个不可变 Bool 字段:
+//   - hasWindowState, 只标记 window state boundary 存在,
+//     不定义 window state taxonomy。
+// - 它的构造期初始化只允许写入 hasWindowState 这一枚不可变 Bool fact。
+// - 它没有其他字段、enum、handle、handle table、generation、import 或行为。
+// - 它不是 window create、request close、destroy、release、
+//   public runtime API、public C ABI、platform object wrapper 或 native handle。
+
+struct CjguiInternalWindowLifecycleState {
+    let hasWindowState: Bool
+
+    init() {
+        this.hasWindowState = false
+    }
+
+    init(hasWindowState: Bool) {
+        this.hasWindowState = hasWindowState
+    }
+}
+
+// 内部 no-op window lifecycle transition 函数:
+// - 这是普通顶层函数, 使用默认 internal 可见性。
+// - 它只证明 package 可以承载内部 window lifecycle transition 函数形状。
+// - 它原样返回输入 state。
+// - 它不修改 hasWindowState。
+// - 它不是 create、request close、destroy、release、public runtime API、
+//   public C ABI、platform object wrapper 或 native handle。
+
+func cjguiInternalNoOpWindowLifecycleTransition(
+    state: CjguiInternalWindowLifecycleState
+): CjguiInternalWindowLifecycleState {
+    state
+}
+
+// 内部 window lifecycle state marker transition 函数:
+// - 这是普通顶层函数, 使用默认 internal 可见性。
+// - 它只把 hasWindowState 推进为 true。
+// - 它不定义 window state taxonomy。
+// - 它不是 create、request close、destroy、release、public runtime API、
+//   public C ABI、platform object wrapper 或 native handle。
+
+func cjguiInternalWindowLifecycleStateMarkerTransition(
+    state: CjguiInternalWindowLifecycleState
+): CjguiInternalWindowLifecycleState {
+    CjguiInternalWindowLifecycleState(true)
+}
+
+
+// 未来 window lifecycle owner:
+// - 归属正式 runtime core window lifecycle 模块。
+// - 拥有脱水 window lifecycle state。
+// - 拥有 window-target lifecycle facts, 例如 create requested、close requested、
+//   closing、destroyed、release completed 与 stale window message classification。
+// - 不拥有 app-level run、quit、shutdown 或 queue acceptance policy。
+// - 所有 platform object 工作都委托给 platform adapter。
+// - 不得拥有 Renderer、Scene、Widget、Layout、Text、Input、IME、Accessibility、
+//   semantic tree、Action Router 或 render scheduling state。
+
+// 与 app lifecycle 的关系:
+// - app lifecycle 是 app-level state、queue acceptance、shutdown policy 与未来
+//   main-thread queue / drain policy 的概念 owner。
+// - window lifecycle 在已接受的 window-targeted lifecycle request 到达 window 层后,
+//   拥有 window-target state transitions。
+// - request close 未来应先经过 app lifecycle queue acceptance 与 platform-adapter
+//   main-thread drain, 然后再推进 window state。
+// - 本文件不实现 app lifecycle、event loop、queue、drain、run、request quit 或
+//   shutdown 行为。
+
+// 与 platform adapter 的关系:
+// - platform adapter 拥有 platform runloop callbacks、platform close events、
+//   platform object creation 与 platform object release。
+// - core window lifecycle 只接收脱水 lifecycle facts。
+// - AppKit、Metal、Objective-C、NSWindow、NSView、CAMetalLayer、MTLDevice、
+//   CAMetalDrawable、CGImageRef、Objective-C id、native handles 与 raw pointers
+//   只属于 platform-adapter 内部关注点。
+// - 这些名字在这里出现时, 只表示禁止泄漏的平台真相, 不表示 API、field、
+//   parameter、return value 或 implementation。
+
+// 未来槽位, 本文件不实现:
 // - create window:
-//   - records a future creation request and binds dehydrated window state.
-//   - platform adapter may later create platform objects on the platform main thread.
-//   - core should only observe created / failed facts.
-//   - must not expose native handles, create renderers, create scenes, create widgets,
-//     or implicitly start app run.
+//   - 记录未来 creation request, 并绑定脱水 window state。
+//   - platform adapter 未来可在 platform main thread 上创建 platform objects。
+//   - core 只应观察 created / failed facts。
+//   - 不得暴露 native handles, 不得创建 renderers、scenes、widgets,
+//     也不得隐式启动 app run。
 // - request close:
-//   - records a future idempotent close request for the target window.
-//   - should unify auto-close, manual close, and future async close into one close path.
-//   - must not directly release platform objects or bypass app lifecycle queue / drain.
+//   - 记录未来面向目标 window 的幂等 close request。
+//   - 应把 auto-close、manual close 与未来 async close 收敛为同一条 close path。
+//   - 不得直接释放 platform objects, 也不得绕过 app lifecycle queue / drain。
 // - destroy / release:
-//   - destroy is a future terminal transition candidate for dehydrated window state.
-//   - release is a future platform-adapter completion fact after platform cleanup.
-//   - core must not directly release AppKit, Metal, or Objective-C objects.
+//   - destroy 是未来脱水 window state 的 terminal transition 候选。
+//   - release 是 platform cleanup 之后未来 platform-adapter completion fact。
+//   - core 不得直接释放 AppKit、Metal 或 Objective-C objects。
 // - stale message / destroyed window handling:
-//   - destroyed window state must be terminal.
-//   - stale close and stale message must not resurrect a window.
-//   - stale operations must be safely discarded or classified by future structured errors.
+//   - destroyed window state 必须是 terminal。
+//   - stale close 与 stale message 不得复活窗口。
+//   - stale operations 必须被安全丢弃, 或由未来 structured errors 分类。
 // - single-window first slice:
-//   - the first real implementation may remain single-window to keep the lifecycle
-//     surface narrow.
-//   - single-window is not a long-term runtime limit.
-//
-// Handle table / generation future trigger:
-// - not implemented in this first skeleton.
-// - must remain closed while there is no public window handle, multi-window,
-//   target update, async UI message targeting, destroyed-target identity reuse,
-//   or cross-thread target validation.
-// - when any of those appear, open a separate handle table / generation preflight
-//   or execution card before implementation.
-//
-// Error strategy relation:
-// - window lifecycle can identify future error / diagnostics cases such as duplicate
-//   close, close after destroyed, destroy before create, platform create failure,
-//   platform release failure, stale message, wrong thread, invalid target identity,
-//   or future generation mismatch.
-// - concrete error types belong to future error strategy work.
-// - smoke last_error must not migrate directly into the formal runtime.
-// - future errors must be call-associated, structured, non-global, and concurrency-safe.
-//
-// Stop-line:
-// - no real window create / close / destroy.
-// - no handle table / generation implementation.
-// - no multi-window, target update, or async UI message targeting.
-// - no public runtime API.
-// - no Renderer / Scene / Widget / Layout / DSL.
-// - no Dirty Rect, global tick, blind redraw, or frame scheduler.
-// - no Text / Input / IME / Accessibility.
-// - no semantic tree / Action Router.
-// - no command-list hash, pixel diff, baseline, or offscreen renderer.
+//   - 第一段真实实现可以保持 single-window, 以维持 lifecycle surface 狭窄。
+//   - single-window 不是长期 runtime 限制。
+
+// 句柄表 / generation 未来触发条件:
+// - 本 first skeleton 不实现。
+// - 在没有 public window handle、multi-window、target update、async UI message
+//   targeting、destroyed-target identity reuse 或 cross-thread target validation 之前,
+//   该方向必须保持关闭。
+// - 一旦出现上述任一需求, 必须先开单独的 handle table / generation preflight
+//   或 execution card, 再实现。
+
+// 与 error strategy 的关系:
+// - window lifecycle 未来可识别 duplicate close、close after destroyed、
+//   destroy before create、platform create failure、platform release failure、
+//   stale message、wrong thread、invalid target identity 或 future generation mismatch
+//   等 error / diagnostics cases。
+// - 具体 error types 属于未来 error strategy 工作。
+// - smoke last_error 不得直接迁移到正式 runtime。
+// - future errors 必须是 call-associated、structured、non-global 且 concurrency-safe。
+
+// 停止线 (Stop-line):
+// - 不实现真实 window create / close / destroy。
+// - 不实现 handle table / generation。
+// - 不做 multi-window、target update 或 async UI message targeting。
+// - 不提供 public runtime API。
+// - 不做 Renderer / Scene / Widget / Layout / DSL。
+// - 不做 Dirty Rect、global tick、blind redraw 或 frame scheduler。
+// - 不做 Text / Input / IME / Accessibility。
+// - 不做 semantic tree / Action Router。
+// - 不做 command-list hash、pixel diff、baseline 或 offscreen renderer。

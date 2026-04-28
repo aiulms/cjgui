@@ -76,7 +76,7 @@ AI 在真正写代码时，最容易出现的问题不是“完全不会做”�
 
 ## 3. 五道治理门
 
-### 3.1 开工门：Implementation Contract
+### 3.1 开工门：实现契约 (Implementation Contract)
 
 任何非平凡实现开始前，AI 必须先写清楚本轮执行卡。
 
@@ -99,7 +99,26 @@ AI 在真正写代码时，最容易出现的问题不是“完全不会做”�
 
 除非发现新的高风险冲突，否则 AI 不得继续用新的 docs-only 文档替代本应进入的 bounded implementation。
 
-### 3.2 写码门：Write Set 与 Diff Budget
+### 3.1.1 上下文装载门：上下文装载预算 (Loaded Context Budget)
+
+任何实现前都需要先确认上下文装载是否已满足，不允许为了省心把所有上下文一次读完。
+
+- 必读：本轮 authority、当前 execution card、相应 closure、影响文件与当前变更相关的核心源码。
+- 可选读：同 owner 相关的前序 plan（按需）、相关平台前置文档（按需）。
+- 禁止默认读：无关模块、历史无关 closure、未授权的完整路径文档。
+- 如果 required reads 超过 5 个文件，必须在 execution card 里明确 justification。
+- 建议默认预算为 `<= 5` 个关键文档。
+- 本条目与本仓颉项目治理策略联动：[CJGUI_CONTEXT_LOADING_POLICY.md](./CJGUI_CONTEXT_LOADING_POLICY.md)。
+
+### 3.1.2 意图门：先判定是审查还是执行
+
+除非本轮任务明确是治理审查（review-only）或文档梳理（docs-only），否则默认进入实现轨。
+
+- 含 `bounded implementation`、`first slice`、`W1`/`W2` 的卡默认按实现处理。
+- 含 `review` 且不带实现授权语义的卡，默认走审查，不产生行为代码变更。
+- 无明确 authority + no behavior 时，默认停在 docs-only。
+
+### 3.2 写码门：修改范围 (Write Set) 与差异预算 (Diff Budget)
 
 AI 写码时必须满足：
 
@@ -116,6 +135,20 @@ AI 写码时必须满足：
 - 超出预算就必须暂停并重新走 docs-only gate
 
 这里的重点不是卡死文件数量，而是防止“写着写着变成另一项工作”。
+
+### 3.2.1.1 内部概念切片优先，不按单个符号切碎
+
+W1/W2 internal concept slice 不要求 one-symbol 切割。
+
+只要 write set、stop-line、verification、owner/truth 约束不变，允许在单轮内一起完成同一 internal 概念内的以下项：
+
+- type
+- field / fact
+- construction shape
+- no-op
+- 极窄 marker transition
+
+“写的更多行”本身不是风险指标，越界风险由语义和边界决定。
 
 ### 3.2.1 实现偏置：边界清楚后默认写代码
 
@@ -139,7 +172,7 @@ AI 写码时必须满足：
 
 否则继续写 preflight / execution card 属于治理反噬。
 
-### 3.2.2 Comment-only 不能冒充实现
+### 3.2.2 纯注释 (Comment-only) 不能冒充实现
 
 除非任务本身明确是文档或注释整理，`comment-only` 不得计为 implementation。
 
@@ -152,7 +185,15 @@ AI 写码时必须满足：
 
 只有注释、README、stop-line 或计划文档变化时，必须如实称为 docs-only，不得称为 implementation。
 
-### 3.3 尾部治理门：Fallout Scan
+### 3.2.3 注释与文档语言：中文优先
+
+文档和注释默认中文为主。
+
+- 命令、符号、类型名、协议名可保留英文。
+- 术语可给出中文解释 + 英文原词。
+- 避免为了“统一风格”将中文说明改写为长英文段落。
+
+### 3.3 尾部治理门：尾部影响扫描 (Fallout Scan)
 
 这一步专门防你说的“顾头不顾尾”。
 
@@ -168,7 +209,7 @@ AI 在完成实现前，必须回答：
 
 如果这些问题没过，就不能宣称完成。
 
-### 3.4 验证门：Verification Bundle
+### 3.4 验证门：验证包 (Verification Bundle)
 
 AI 不能只靠“代码看起来对”结束任务。
 
@@ -194,7 +235,7 @@ AI 不能只靠“代码看起来对”结束任务。
 - 为什么没做
 - 这会留下什么风险
 
-### 3.5 封账门：Closure 与账本更新
+### 3.5 封账门：封账 (Closure) 与账本更新
 
 实现完成后，必须说明：
 
@@ -295,9 +336,9 @@ AI 一旦遇到以下任一情况，必须暂停：
 
 当执行卡已经批准且未出现上述暂停条件时，AI 必须继续推进受限实现，不得因为“继续写文档更安全”而停在 docs-only 循环。
 
-## 6. Definition of Done
+## 6. 完成定义 (Definition of Done)
 
-后续任何 AI 说“做完了”，至少要满足下面 10 条中的适用项：
+后续任何 AI 说“做完了”，至少要满足下面 12 条中的适用项：
 
 1. 本轮 authority 和目标清楚
 2. 改动没有越出批准边界
@@ -309,6 +350,8 @@ AI 一旦遇到以下任一情况，必须暂停：
 8. 必要的文档 / 账本 / closure 已同步
 9. 如果任务叫 implementation，必须有真实可编译、可运行或可验证的行为变化
 10. 如果本轮只改文档，必须明确称为 docs-only，不能冒充代码进展
+11. 本轮上下文装载符合 [CJGUI_CONTEXT_LOADING_POLICY.md](./CJGUI_CONTEXT_LOADING_POLICY.md)，没有用过量阅读替代实现
+12. 新增注释和项目文档默认中文，必要英文技术名词保留原文即可
 
 ## 7. 最推荐的协作模式
 

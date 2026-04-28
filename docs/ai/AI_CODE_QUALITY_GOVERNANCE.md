@@ -152,7 +152,14 @@ W1/W2 internal concept slice 不要求 one-symbol 切割。
 
 ### 3.2.1.2 低风险 internal-only work 可 bundle
 
-低风险 internal-only runtime work 可以用一张 bundled execution card 授权 2-3 个连续小实现切片。每个 slice 必须独立跑 build / smoke / `git diff --check`；slice 后可先只写 tracker 简短日志，bundle 结束后再写 mini-compaction / bundled closure。
+低风险 internal-only runtime work 可以用一张 bundled execution card 授权完整内部概念，不应默认限制为一轮一个函数或几个小字段。
+
+常用粒度：
+
+- `W2 internal behavior bundle`：一次完成一个完整内部行为概念，通常包含 3-7 个相关 internal changes。
+- `W3 internal subsystem draft bundle`：当 owner、truth、write set、verification 与 stop-line 都清楚，且仍完全 internal-only 时，一次完成一个内部子系统草案，通常包含 6-15 个相关 internal changes。
+
+如果 bundle 被拆成多个 slice，每个 slice 必须独立跑 build / smoke / `git diff --check`；slice 后可先只写 tracker 简短日志，bundle 结束后再写 mini-compaction / bundled closure。如果 bundle 是单次完整实现，可以在实现结束后统一验证并写 bundled closure。
 
 bundle 不能绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界；触碰这些边界时恢复单卡单 closure。
 
@@ -160,7 +167,7 @@ bundle 不能绕过 public API、public C ABI、platform bridge、event loop、q
 
 如果一条 internal-only runtime 线已经通过 helper / sanity / parity 证明了最小链路，后续不应继续默认新增单个 helper。
 
-下一张 W2 bundle 应优先授权完整 internal behavior concept，例如：
+下一张 W2 / W3 bundle 应优先授权完整 internal behavior concept 或 internal subsystem draft，例如：
 
 - 1-3 个 internal type。
 - 2-5 个 internal function。
@@ -169,7 +176,9 @@ bundle 不能绕过 public API、public C ABI、platform bridge、event loop、q
 - sanity / parity check。
 - bundled closure。
 
-这种 bundle 不等于放开 public API、public C ABI、platform bridge、event loop、queue / drain 或 handle table。只要仍是 internal-only，且 owner、truth、write set、stop-line 和 verification 清楚，就应该让执行 AI 一次完成完整内部行为概念，而不是每轮只写十几行辅助函数。
+W3 internal subsystem draft 可以更大：允许 3-6 个 internal type、5-12 个 internal function、多个 ready / blocked / input / policy / outcome path，以及一份 bundled closure。它仍不等于放开 public API、public C ABI、platform bridge、event loop、queue / drain 或 handle table。
+
+只要仍是 internal-only，且 owner、truth、write set、stop-line 和 verification 清楚，就应该让执行 AI 一次完成完整内部行为概念，而不是每轮只写十几行辅助函数。顶级模型的能力应被用来完成清晰边界内的完整概念；治理只负责防越界，不负责把实现切碎。
 
 ### 3.2.1 实现偏置：边界清楚后默认写代码
 

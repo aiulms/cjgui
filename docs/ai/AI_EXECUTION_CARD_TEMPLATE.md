@@ -15,15 +15,17 @@
 - verification
 - next implementation expectation
 
-只有 `W2 standard slice` / `W3 heavy slice`，或涉及 `public contract`、FFI、平台桥接、迁移、安全边界时，才需要完整展开下面所有模板章节。
+只有 `W2 standard slice` / `W3 internal subsystem draft` / `W3 high-risk slice`，或涉及 `public contract`、FFI、平台桥接、迁移、安全边界时，才需要完整展开下面所有模板章节。
 
 不得机械复制空章节来制造“治理完整感”。空章节越多，不代表边界越清楚；短卡只要把 `authority`、`write set`、`forbidden scope`、`verification` 和下一步 implementation expectation 写清楚，就可以作为开工许可证。
 
 执行卡不应把一个低风险 internal concept slice 拆成多个 one-symbol / one-field / one-function 卡。若同一 owner、同一 write set、同一 truth 边界和同一验证路径已经清楚，执行卡应优先授权完整内部概念切片，例如 type + facts + construction shape + no-op transition + 极窄 state-changing transition。代码行数不是独立风险指标；大 diff 需要解释和验证，不等于必须拆成文档循环。
 
-低风险 internal-only runtime work 可使用 bundled execution card，一张卡最多授权 2-3 个连续小 slice。每个 slice 必须独立验证 build / smoke / `git diff --check`，slice 后可先只更新 tracker 简短日志，bundle 完成后再写 mini-compaction / bundled closure。bundle 不得绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界 gate。
+低风险 internal-only runtime work 可使用 bundled execution card。W2 bundle 应授权一个完整 internal behavior concept，通常包含 3-7 个相关 internal changes。W3 internal subsystem draft bundle 可在同一 owner / truth / write set / verification 清楚时授权一个更完整的内部子系统草案，通常包含 6-15 个相关 internal changes。若 bundle 拆成多个 slice，每个 slice 必须独立验证 build / smoke / `git diff --check`，slice 后可先只更新 tracker 简短日志，bundle 完成后再写 mini-compaction / bundled closure；若 bundle 是单次完整实现，可在实现结束后统一验证并写 bundled closure。bundle 不得绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界 gate。
 
 当 helper / sanity 链已经封账，下一张 W2 bundle 应提高到完整 internal behavior concept，而不是继续 helper-by-helper。W2 internal behavior bundle 可以一次授权 3-7 个相关 internal changes，例如 input / policy / decision / result types、builders、核心 internal behavior function、positive / negative path、sanity / parity check 和 bundled closure。行数不是风险；越过 public contract、platform bridge、event loop、queue / drain、handle table 或安全边界才是风险。
+
+当一个 W2 internal behavior bundle 已经连续验证通过，且下一步仍在同一 internal owner 内推进同一行为链路，可以升级为 W3 internal subsystem draft。W3 internal subsystem draft 允许一次覆盖 request / response / pipeline / command draft / outcome / sanity 等完整内部闭环。它不是 public contract 或平台桥接授权；如果需要 public API、C ABI、event loop、queue / drain、handle table 或平台对象，必须另走高风险 gate。
 
 用途：后续每次进入非平凡实现前，先填写这一张卡。
 
@@ -64,7 +66,7 @@
 
 提示词重量等级：
 
-- W0 review-only / W1 light slice / W2 standard slice / W3 heavy slice
+- W0 review-only / W1 light slice / W2 standard slice / W3 internal subsystem draft / W3 high-risk slice
 
 选择该重量的理由：
 

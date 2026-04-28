@@ -41,10 +41,86 @@
 - `src/runtime_state.cj`
   - `CjguiInternalRuntimeRootState`
   - `CjguiInternalRuntimeStepResult`
+  - `CjguiInternalRuntimeStepInput`
+  - `CjguiInternalRuntimeStepPolicy`
+  - `CjguiInternalRuntimeStepDecision`
+  - `CjguiInternalRuntimeCycleRequest`
+  - `CjguiInternalRuntimeCycleResult`
+  - `CjguiInternalRuntimeCommandDraft`
+  - `CjguiInternalRuntimeCommandPipelineRequest`
+  - `CjguiInternalRuntimeCommandPipelineResult`
+  - `CjguiInternalRuntimeDriverRequest`
+  - `CjguiInternalRuntimeDriverResult`
+  - `CjguiInternalRuntimeDriverInput`
+  - `CjguiInternalRuntimeDriverPolicy`
+  - `CjguiInternalRuntimeDriverDecision`
+  - `CjguiInternalRuntimeDriverReport`
+  - `CjguiInternalRuntimeRunIntent`
+  - `CjguiInternalRuntimeRunRequest`
+  - `CjguiInternalRuntimeRunRequestReport`
   - `cjguiInternalBuildRuntimeRootState`
   - `cjguiInternalRuntimeRootStateReadySanity`
   - `cjguiInternalRuntimeStep`
   - `cjguiInternalRuntimeStepReadySanity`
+  - `cjguiInternalDefaultRuntimeStepInput`
+  - `cjguiInternalDefaultRuntimeStepPolicy`
+  - `cjguiInternalDecideRuntimeStep`
+  - `cjguiInternalRuntimeStepWithInput`
+  - `cjguiInternalDefaultRuntimeCycleRequest`
+  - `cjguiInternalExecuteRuntimeCycle`
+  - `cjguiInternalRuntimeStepInputPolicyReadySanity`
+  - `cjguiInternalRuntimeStepInputPolicyNotReadyBlockedSanity`
+  - `cjguiInternalRuntimeStepInputPolicyInputBlockedSanity`
+  - `cjguiInternalRuntimeStepReadyOutcomeSanity`
+  - `cjguiInternalRuntimeStepBlockedOutcomeSanity`
+  - `cjguiInternalRuntimeCycleReadySanity`
+  - `cjguiInternalRuntimeCycleNotReadyBlockedSanity`
+  - `cjguiInternalRuntimeCycleInputBlockedSanity`
+  - `cjguiInternalRuntimeCycleProgressReadySanity`
+  - `cjguiInternalRuntimeCycleProgressBlockedSanity`
+  - `cjguiInternalBuildRuntimeCommandDraft`
+  - `cjguiInternalExecuteRuntimeCycleDraftCommand`
+  - `cjguiInternalDefaultRuntimeCommandPipelineRequest`
+  - `cjguiInternalExecuteRuntimeCommandPipeline`
+  - `cjguiInternalExecuteDefaultRuntimeCommandPipeline`
+  - `cjguiInternalDefaultRuntimeDriverRequest`
+  - `cjguiInternalExecuteRuntimeDriverPass`
+  - `cjguiInternalExecuteDefaultRuntimeDriverPass`
+  - `cjguiInternalDefaultRuntimeDriverInput`
+  - `cjguiInternalDefaultRuntimeDriverPolicy`
+  - `cjguiInternalDecideRuntimeDriverPass`
+  - `cjguiInternalExecuteRuntimeDriverPassWithInput`
+  - `cjguiInternalBuildRuntimeDriverReport`
+  - `cjguiInternalExecuteRuntimeDriverPassReport`
+  - `cjguiInternalExecuteDefaultRuntimeDriverPassReport`
+  - `cjguiInternalBuildRuntimeRunIntent`
+  - `cjguiInternalExecuteRuntimeRunIntentDraft`
+  - `cjguiInternalExecuteDefaultRuntimeRunIntentDraft`
+  - `cjguiInternalBuildRuntimeRunRequest`
+  - `cjguiInternalEvaluateRuntimeRunRequest`
+  - `cjguiInternalExecuteRuntimeRunRequestDraft`
+  - `cjguiInternalExecuteDefaultRuntimeRunRequestDraft`
+  - `cjguiInternalRuntimeCommandDraftReadySanity`
+  - `cjguiInternalRuntimeCommandDraftNotReadyBlockedSanity`
+  - `cjguiInternalRuntimeCommandDraftInputBlockedSanity`
+  - `cjguiInternalRuntimeCommandPipelineReadySanity`
+  - `cjguiInternalRuntimeCommandPipelineNotReadyBlockedSanity`
+  - `cjguiInternalRuntimeCommandPipelineInputBlockedSanity`
+  - `cjguiInternalRuntimeDriverReadySanity`
+  - `cjguiInternalRuntimeDriverNotReadyBlockedSanity`
+  - `cjguiInternalRuntimeDriverInputBlockedSanity`
+  - `cjguiInternalRuntimeDriverInputPolicyReadySanity`
+  - `cjguiInternalRuntimeDriverInputPolicyRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeDriverInputPolicyInputBlockedSanity`
+  - `cjguiInternalRuntimeDriverReportReadySanity`
+  - `cjguiInternalRuntimeDriverReportRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeDriverReportInputBlockedSanity`
+  - `cjguiInternalRuntimeRunIntentReadySanity`
+  - `cjguiInternalRuntimeRunIntentRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeRunIntentInputBlockedSanity`
+  - `cjguiInternalRuntimeRunRequestReadySanity`
+  - `cjguiInternalRuntimeRunRequestRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeRunRequestInputBlockedSanity`
 - `src/error.cj`
   - `CjguiInternalCompileSanityMarker`
   - `CjguiInternalErrorFact`
@@ -57,7 +133,7 @@
 - platform adapter fact: `isPlatformReady: Bool`
 - error fact: `hasNativePayload: Bool = false`
 
-当前 app/window lifecycle 各有一个默认 internal readiness predicate helper，只读取 `hasObservedPlatformReady`，不改变 state shape、constructor shape 或 projection behavior。platform adapter 另有默认 internal coordination readiness sanity helpers：positive helper 复用既有 sanity 链路并确认 app/window 都观察到 platform readiness；negative helper 使用 `isPlatformReady=false` 的 fact 确认默认 app/window 不会被标记为 observed platform ready；parity helper 同时确认 positive / negative sanity 都成立。`src/runtime_bootstrap.cj` 是默认 internal bootstrap owner 文件，承载 runtime readiness aggregate type / builder 与 bootstrap snapshot type / builder；它只聚合 app/window readiness coordination summary 与 bootstrap readiness Bool，不拥有 app/window state truth，也不实现 runtime 启动行为。`src/runtime_state.cj` 是默认 internal runtime root state owner 文件，只聚合 bootstrap snapshot 与 runtime readiness Bool；其 step result 只聚合 root state 与 didAdvance Bool，step function 只读取 root readiness 并原样返回 state，builder 只复用 bootstrap snapshot builder，ready sanity helpers 只读取 root readiness 或 step didAdvance Bool，并不定义 runtime state machine 或 run behavior。
+当前 app/window lifecycle 各有一个默认 internal readiness predicate helper，只读取 `hasObservedPlatformReady`，不改变 state shape、constructor shape 或 projection behavior。platform adapter 另有默认 internal coordination readiness sanity helpers：positive helper 复用既有 sanity 链路并确认 app/window 都观察到 platform readiness；negative helper 使用 `isPlatformReady=false` 的 fact 确认默认 app/window 不会被标记为 observed platform ready；parity helper 同时确认 positive / negative sanity 都成立。`src/runtime_bootstrap.cj` 是默认 internal bootstrap owner 文件，承载 runtime readiness aggregate type / builder 与 bootstrap snapshot type / builder；它只聚合 app/window readiness coordination summary 与 bootstrap readiness Bool，不拥有 app/window state truth，也不实现 runtime 启动行为。`src/runtime_state.cj` 是默认 internal runtime root state owner 文件，只聚合 bootstrap snapshot 与 runtime readiness Bool；其 step result 聚合 root state、didAdvance Bool 与最小 blocked outcome，step input / policy / decision 只表达 internal step gate、policy 与脱水 decision summary，step-with-input-policy 只根据 decision 返回原 state 与 didAdvance / blocked outcome，cycle request / result 只组合一次 root state、step input、step policy、decision、step result 与 internal cycle progress marker，command draft 只表达一次 cycle 后的 internal runtime intent summary，command pipeline 只把 cycle request、cycle result 与 command draft 串成 internal summary pipeline，driver draft 只组织一次 pipeline pass 并投影 driver-level summary，driver input / policy / decision 只作为 driver pass 的脱水 gate，driver pass with input 只在 gate 允许时复用既有 pipeline pass，driver report 只把 driver result 规整成 internal next-action summary，run intent 只把 driver report 投影为 internal run-boundary intent summary，run request 只把 run intent 包装并评估为 internal request summary，ready / blocked sanity helpers 只验证 default advance、not-ready fail-closed、input-blocked fail-closed、outcome 字段一致性、一次 cycle request/result 一致性、progress marker 一致性、command draft intent summary 一致性、pipeline summary 一致性、driver summary pass 一致性、driver input/policy gate 一致性、driver report projection 一致性、run intent projection 一致性与 run request evaluation 一致性，并不定义 runtime state machine、event loop、queue / drain、frame/render/layout progress、renderer command list 或 run behavior。
 
 当前边界如下：
 
@@ -131,10 +207,48 @@
 - root state 只持有 `bootstrap: CjguiInternalRuntimeBootstrapSnapshot` 与 `isRuntimeReady: Bool`。
 - root state builder 只调用 `cjguiInternalBuildRuntimeBootstrapSnapshot()`，并用 `bootstrap.isBootstrapReady` 作为 `isRuntimeReady`。
 - root ready sanity helper 只调用 `cjguiInternalBuildRuntimeRootState()` 并返回 `root.isRuntimeReady`。
-- runtime step result 只持有 `state: CjguiInternalRuntimeRootState` 与 `didAdvance: Bool`。
-- runtime step function 只返回原 state，并把 `state.isRuntimeReady` 映射为 `didAdvance`。
+- runtime step result 只持有 `state: CjguiInternalRuntimeRootState`、`didAdvance: Bool`、`isBlocked: Bool`、`isBlockedByRuntimeNotReady: Bool` 与 `isBlockedByInput: Bool`。
+- runtime step function 只返回原 state，并把 `state.isRuntimeReady` 映射为 `didAdvance` 与 runtime-not-ready blocked outcome。
 - runtime step ready sanity helper 只调用 root state builder 与 runtime step，并返回 `step.didAdvance`。
-- step sanity 已封账；下一步应转向 step input / policy bundle，而不是继续堆 helper 链。
+- runtime step input 只持有 `allowsAdvance: Bool` 与 `hasExternalWork: Bool`；`hasExternalWork` 只是脱水 marker，不代表真实 queue、event loop 或 platform callback。
+- runtime step policy 只持有 `requiresRuntimeReady: Bool` 与 `requiresInputAllowsAdvance: Bool`。
+- runtime step decision 只持有 `shouldAdvance: Bool`、`isBlockedByRuntimeNotReady: Bool` 与 `isBlockedByInput: Bool`。
+- runtime step-with-input-policy 只调用 decision function，返回原 state，并用 `decision.shouldAdvance` 与 blocker facts 形成 step result outcome。
+- step input / policy sanity helpers 只覆盖 default advance、not-ready blocked 与 input-blocked 三条 internal path。
+- step outcome sanity helpers 只覆盖 ready outcome 与 blocked outcome 字段一致性。
+- runtime cycle request 只持有 `state: CjguiInternalRuntimeRootState`、`input: CjguiInternalRuntimeStepInput` 与 `policy: CjguiInternalRuntimeStepPolicy`。
+- runtime cycle result 只持有 `request: CjguiInternalRuntimeCycleRequest`、`step: CjguiInternalRuntimeStepResult`、`decision: CjguiInternalRuntimeStepDecision` 与 `didProduceProgress: Bool`。
+- default runtime cycle request 只组合 root state builder、default step input 与 default step policy。
+- runtime cycle executor 只用 request 运行一次 decision 与 step-with-input-policy，返回 request / step / decision / progress summary；它用 `step.didAdvance` 派生 `didProduceProgress`，不改变 request state、不循环、不消费 queue 或 platform callback。
+- runtime cycle sanity helpers 只覆盖 default ready、runtime-not-ready blocked、input-blocked 与 progress marker consistency。
+- cycle progress 只是 internal cycle outcome marker，不是 frame progress、render progress、layout progress、event loop tick、queue drain 或 app run。
+- runtime command draft 只持有 `shouldRequestNextCycle: Bool`、`shouldReportBlocked: Bool` 与 `didObserveProgress: Bool`。
+- command draft builder 只从 cycle result 派生意图摘要：`didObserveProgress = cycle.didProduceProgress`、`shouldReportBlocked = cycle.step.isBlocked`、`shouldRequestNextCycle = cycle.didProduceProgress`。
+- cycle draft command helper 只执行一次 internal cycle 并构造 command draft；它不创建 public command、不消费 queue、不触发 callback。
+- command draft 不是 renderer command list、public runtime API、event loop task、queue item、platform callback 或 AppKit / Metal command。
+- runtime command pipeline request 只包装一次 `CjguiInternalRuntimeCycleRequest`。
+- runtime command pipeline result 只聚合 pipeline request、cycle result、command draft 与 `didCompletePipeline` Bool。
+- runtime command pipeline executor 只串联一次 cycle executor 与 command draft builder；`didCompletePipeline=true` 只表示 internal summary 已生成，不代表真实 runtime run。
+- runtime command pipeline 不是 public API、renderer command list、event loop、queue / drain、platform callback、AppKit / Metal command 或 app run。
+- runtime driver request 只包装一次 `CjguiInternalRuntimeCommandPipelineRequest`。
+- runtime driver result 只聚合 driver request、pipeline result，以及从 command draft 投影出的 `shouldRequestNextCycle`、`shouldReportBlocked`、`didObserveProgress` 与 `didCompleteDriverPass`。
+- runtime driver pass executor 只组织一次 internal pipeline pass；`didCompleteDriverPass` 来自 `pipeline.didCompletePipeline`，不代表真实 runtime driver。
+- runtime driver draft 不是 public API、event loop、queue / drain、platform callback、app run、window create、renderer command list 或 AppKit / Metal command。
+- runtime driver input 只持有 `allowsDriverPass: Bool` 与 `hasExternalDriverWork: Bool`；后者只是脱水 marker，不代表 event queue、platform event、callback、render command 或 native task。
+- runtime driver policy 只持有 `requiresRuntimeReady: Bool` 与 `requiresInputAllowsDriverPass: Bool`；它不是 scheduling policy、threading policy、queue drain policy 或 platform runloop policy。
+- runtime driver decision 只持有 `shouldRunPipeline: Bool`、`isBlockedByRuntimeNotReady: Bool` 与 `isBlockedByInput: Bool`。
+- runtime driver pass with input / policy 只在 decision 允许时复用既有 driver pass；blocked path 只返回 fail-closed summary，不执行 pipeline pass、不改变 root state、不消费 queue、不产生 platform callback。
+- driver input / policy layer 只是 internal driver pass gate，不是 event loop、queue、scheduler、platform runloop、public API 或 public C ABI。
+- runtime driver report 只持有原始 `CjguiInternalRuntimeDriverResult` 以及从 result 投影出的 `didCompleteDriverPass`、`shouldRequestNextCycle`、`shouldReportBlocked`、`didObserveProgress` 与 `isReadyForNextInternalPass`。
+- driver report builder 只从 driver result 复制 / 派生字段；`isReadyForNextInternalPass` 等价于 `didCompleteDriverPass` 且 `shouldRequestNextCycle`。
+- driver report executor 只组合 gated driver pass 与 report builder，不实现 scheduler、event loop、queue / drain、runloop policy、renderer command list 或真实 next action。
+- runtime run intent 只持有 driver report，以及从 report 投影出的 `mayRequestRuntimeRun`、`shouldContinueInternalCycles`、`shouldSurfaceBlockedReport` 与 `didObserveInternalProgress`。
+- run intent builder 只把 `mayRequestRuntimeRun` 派生为 `report.isReadyForNextInternalPass`，其余字段直接投影 driver report。
+- run intent draft executor 只组合 driver pass report 与 run intent builder；它只是 internal run-boundary intent summary，不是 run loop、scheduler、queue item、event loop command 或 public runtime run API。
+- runtime run request 只持有 run intent 与 `isRequestAllowed`，其中 `isRequestAllowed` 等价于 `intent.mayRequestRuntimeRun`。
+- runtime run request report 只持有 request evaluation summary：`didAcceptRequest`、`shouldDeferRequest`、`shouldSurfaceBlockedReport` 与 `didObserveInternalProgress`。
+- run request draft executor 只组合 run intent draft、run request builder 与 request evaluator；它不是 public `run()` 调用、event loop start、scheduler、queue item、platform callback 或 public runtime API。
+- step outcome bundle 已封账；下一步应转向更大的 runtime behavior decision，而不是继续堆 helper 链。
 - root sanity 已封账；下一步应转向 first internal runtime step / step result，而不是继续堆 root helper。
 - root state 不定义 runtime state machine、app run、event loop、queue / drain、window create 或 shutdown。
 - 当前不新增 public runtime API、public C ABI、platform object、native handle 或 raw pointer。

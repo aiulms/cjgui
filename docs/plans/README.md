@@ -572,6 +572,56 @@
   - 状态：完成
   - 用途：授权下一轮一次完成 internal runtime step input / policy / decision / step-with-input-policy / sanity 的完整 W2 internal behavior concept slice。
 
+- [2026-04-28-p1-internal-runtime-step-input-policy-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime step input / policy / decision / step-with-input-policy / sanity 的完整 W2 internal behavior concept slice。
+
+- [2026-04-28-p1-internal-runtime-step-outcome-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-outcome-bundle-execution-card.md)
+  - 类型：bundled execution card
+  - 状态：完成
+  - 用途：授权下一轮一次完成 internal runtime step outcome / status 的完整 W2 internal behavior concept slice。
+
+- [2026-04-28-p1-internal-runtime-step-outcome-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-outcome-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime step outcome / status 的完整 W2 internal behavior concept slice。
+
+- [2026-04-28-p1-internal-runtime-cycle-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-cycle-request-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime cycle request / result 的完整 W2 internal behavior concept slice。
+
+- [2026-04-28-p1-internal-runtime-cycle-state-progress-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-cycle-state-progress-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime cycle progress marker 的完整 W2 internal behavior concept slice。
+
+- [2026-04-28-p1-internal-runtime-command-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-command-draft-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime command draft / intent summary 的完整 W2 internal behavior concept slice。
+
+- [2026-04-28-p1-internal-runtime-command-pipeline-subsystem-draft-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-command-pipeline-subsystem-draft-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime command pipeline subsystem draft 的 W3 internal subsystem draft slice。
+
+- [2026-04-28-p1-internal-runtime-driver-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-driver-draft-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime driver draft 的 W3 internal subsystem draft slice。
+
+- [2026-04-28-p1-internal-runtime-driver-input-policy-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-driver-input-policy-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime driver input / policy / decision gate 的 W3 internal subsystem draft slice。
+
+- [2026-04-29-p1-internal-runtime-driver-report-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-driver-report-bundle-closure-review.md)
+  - 类型：bundled closure / mini-compaction
+  - 状态：完成
+  - 用途：封账 internal runtime driver report / next-action summary 的 W3 internal subsystem draft slice。
+
 - [2026-04-27-p1-lifecycle-parity-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-27-p1-lifecycle-parity-compaction.md)
   - 类型：compaction
   - 状态：完成
@@ -657,19 +707,24 @@
 - `-reconstructed` 文件先作为恢复证据保留；后续如需删除、归档或合并，应单独开一次清理动作。
 - `2026-04-27-p1-app-lifecycle-transition-boundary-execution-card-reconstructed.md` 存在一处 link text 拼写偏差，进一步支持暂不把 reconstructed 版升为 canonical。
 
+- runtime run intent bundle：
+  - [2026-04-29-p1-internal-runtime-run-intent-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-intent-bundle-closure-review.md)
+
+- runtime run request bundle：
+  - [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)
+
 ## 当前下一步 opening
 
 下一步推荐：
 
-- `P1 internal runtime step input policy bundle implementation`
+- `P1 internal runtime run request bundle closure / next runtime behavior decision`
 
 用途：
 
-- 基于 [2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，一次完成 step input / policy / decision / step-with-input-policy 的完整 W2 internal behavior concept。
+- 基于 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle。
 - 不再继续一 helper 一轮。
-- 完成后新增 bundled closure。
 
 当前可执行动作：
 
-- bounded implementation / W2 internal behavior bundle。
+- bundled closure review / next runtime behavior decision。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、queue / drain、app run / shutdown、window create / close / destroy / release、handle table / generation、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

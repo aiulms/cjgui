@@ -90,13 +90,14 @@ AI 在读取长提示词前，必须先判断本轮到底是哪一种意图：
 - `W0 review-only`：只做治理审查或提示词评估。默认不改文件，不跑实现命令；最多读取当前入口、被评估提示词和直接相关治理文档片段。
 - `W1 light slice`：普通 first slice 或小实现。默认必读不超过 5 个文件：当前 tracker、当前 execution card、最近直接 closure、write set 文件、必要语法 / build 资料。W1 execution card 应优先使用短卡格式，避免长模板反向制造上下文负担。W1 不等于 one-symbol slice；只要 owner、write set、truth、forbidden scope 和验证清楚，W1 可以覆盖一个完整 internal concept slice。
 - `W2 standard slice`：有直接前置 preflight / closure、需要验证脚本或多文件 write set 的实现。必读通常不超过 8 个文件，并逐项说明必要性。W2 可以是完整 internal behavior bundle，不等于重上下文；如果 owner、truth、write set 和验证路径清楚，可以一次授权 3-7 个相关 internal changes，而不必把 helper、input、policy、decision、result、sanity 拆成多轮。
-- `W3 heavy slice`：只有 HIGH / CRITICAL 风险、public contract、migration、跨 owner、平台桥接、FFI 生命周期、构建系统或安全边界变化时才允许。超过 8 个必读文件必须写明“为什么重上下文会降低风险，而不是拖慢推进”。
+- `W3 internal subsystem draft`：仍然完全 internal-only、同一 owner / truth / write set / verification 清楚，但需要一次完成更完整的内部子系统草案。可以授权 6-15 个相关 internal changes，例如 request / response / pipeline / command draft / outcome / sanity 的闭环。W3 internal subsystem draft 不自动增加默认必读文件；上下文仍按最小必要读取。
+- `W3 high-risk slice`：只有 HIGH / CRITICAL 风险、public contract、migration、跨 owner、平台桥接、FFI 生命周期、构建系统或安全边界变化时才允许。超过 8 个必读文件必须写明“为什么重上下文会降低风险，而不是拖慢推进”。
 
-如果一个小实现被包装成 `W3 heavy slice`，架构 AI 必须先压缩提示词，不能把安全感转嫁给执行 AI。
+如果一个小实现被包装成 `W3 high-risk slice`，架构 AI 必须先压缩提示词，不能把安全感转嫁给执行 AI。`W3 internal subsystem draft` 不应被误判为 high-risk；它只是更大的 internal-only 实现授权。
 
 如果一个治理审查被包装成 implementation prompt，审查 AI 必须先指出意图冲突，不能直接执行。
 
-helper / sanity 链封账后，下一张 implementation prompt 应优先提升到 W2 internal behavior bundle。提高实现授权不要求默认增加上下文阅读量；上下文仍按 L0 / L1 / L2 最小必要原则装载。
+helper / sanity 链封账后，下一张 implementation prompt 应优先提升到 W2 internal behavior bundle。若连续 W2 bundle 已经证明同一 internal 行为链路稳定，下一张可以提升到 W3 internal subsystem draft。提高实现授权不要求默认增加上下文阅读量；上下文仍按 L0 / L1 / L2 最小必要原则装载。
 
 ## 2. 四层装载模型
 

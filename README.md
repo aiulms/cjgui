@@ -56,7 +56,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 runtime opening：`P1 internal runtime step sanity bundle slice A`，授权基于第一条 internal runtime step 新增最小 ready sanity helper，不进入 app run、event loop、queue / drain 或 window create。
+最新 runtime opening：`P1 internal runtime command draft bundle closure / next runtime behavior bundle decision`，下一步应决定更大的 internal-only runtime behavior bundle；不自动进入 public API、C ABI、app run、event loop、queue / drain、window create 或 renderer。
 
 当前 runtime package / first-compilable source 边界文档：
 

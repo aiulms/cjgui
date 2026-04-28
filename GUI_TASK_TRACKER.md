@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目任务账本
 
-最后更新：2026-04-28
+最后更新：2026-04-29
 
 ## 账本职责
 
@@ -166,6 +166,30 @@
 
 最新补充：P1 internal runtime step input policy bundle execution card 已完成；这是 W2 internal behavior bundle，授权下一轮一次完成 internal step input、policy、decision、default builders、decision function、step-with-input-policy、少量直接相关 sanity / parity 和 bundled closure。当前 next opening 转向 `P1 internal runtime step input policy bundle implementation`；下一轮默认进入 bounded implementation，不再拆成多个 one-helper slices。
 
+最新补充：P1 internal runtime step input policy bundle implementation 已完成；一次新增 `CjguiInternalRuntimeStepInput`、`CjguiInternalRuntimeStepPolicy`、`CjguiInternalRuntimeStepDecision`、default input / policy builders、`cjguiInternalDecideRuntimeStep`、`cjguiInternalRuntimeStepWithInput` 与三条直接相关 sanity helpers。既有 `cjguiInternalRuntimeStep(state)` 行为未改变，`hasExternalWork` 仍只是脱水 marker，不代表真实 queue / event loop / platform callback。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-step-input-policy-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-step-input-policy-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime step input policy closure / next runtime behavior bundle decision`。
+
+最新补充：P1 internal runtime step outcome bundle execution card 已完成；这是 W2 internal behavior bundle，授权下一轮一次扩展 `CjguiInternalRuntimeStepResult` 的 internal-only outcome shape，并同步更新 simple step、step-with-input-policy、相关 sanity、README、tracker、plans README 与 bundled closure。当前 next opening 转向 `P1 internal runtime step outcome bundle implementation`；下一轮默认进入 bounded implementation，不再拆成 one-helper slices。
+
+最新补充：P1 internal runtime step outcome bundle implementation 已完成；`CjguiInternalRuntimeStepResult` 新增 `isBlocked`、`isBlockedByRuntimeNotReady`、`isBlockedByInput` 三个 internal-only outcome fields，并更新 `cjguiInternalRuntimeStep` 与 `cjguiInternalRuntimeStepWithInput` 填充 blocked outcome。新增 `cjguiInternalRuntimeStepReadyOutcomeSanity` 与 `cjguiInternalRuntimeStepBlockedOutcomeSanity` 两个直接相关 sanity helpers。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-step-outcome-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-step-outcome-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-outcome-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime step outcome closure / next runtime behavior bundle decision`。
+
+最新补充：P1 internal runtime cycle request bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeCycleRequest` 与 `CjguiInternalRuntimeCycleResult`，以及 `cjguiInternalDefaultRuntimeCycleRequest()`、`cjguiInternalExecuteRuntimeCycle(request)` 和三条直接相关 sanity helpers。该 cycle 只组合 root state、step input、step policy、decision 与 step result，不代表 event loop、queue / drain、platform callback 或 app run。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-cycle-request-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-cycle-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-cycle-request-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime cycle request bundle closure / next runtime behavior bundle decision`。
+
+最新补充：P1 internal runtime cycle state progress bundle implementation 已完成；`CjguiInternalRuntimeCycleResult` 新增 `didProduceProgress: Bool`，由 `cjguiInternalExecuteRuntimeCycle(request)` 使用 `step.didAdvance` 派生。已有 cycle sanity helpers 已适配 progress marker，并新增 `cjguiInternalRuntimeCycleProgressReadySanity()` 与 `cjguiInternalRuntimeCycleProgressBlockedSanity()`。该 progress 只是 internal cycle outcome marker，不代表 frame/render/layout progress、event loop tick、queue drain、platform callback 或 app run。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-cycle-state-progress-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-cycle-state-progress-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-cycle-state-progress-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime cycle state progress bundle closure / next runtime behavior bundle decision`。
+
+最新补充：P1 internal runtime command draft bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeCommandDraft`，以及 `cjguiInternalBuildRuntimeCommandDraft(cycle)`、`cjguiInternalExecuteRuntimeCycleDraftCommand(request)` 和三条直接相关 sanity helpers。command draft 只从 cycle result 派生 internal runtime intent summary：progress 时 request-next-cycle，blocked 时 report-blocked；它不是 public command API、renderer command list、event loop task、queue / drain item、platform callback 或 AppKit / Metal command。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-command-draft-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-command-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-command-draft-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime command draft bundle closure / next runtime behavior bundle decision`。
+
+最新补充：P1 internal runtime command pipeline subsystem draft implementation 已完成；新增默认 internal `CjguiInternalRuntimeCommandPipelineRequest` 与 `CjguiInternalRuntimeCommandPipelineResult`，以及 `cjguiInternalDefaultRuntimeCommandPipelineRequest()`、`cjguiInternalExecuteRuntimeCommandPipeline(request)`、`cjguiInternalExecuteDefaultRuntimeCommandPipeline()` 和三条直接相关 sanity helpers。pipeline 只把 existing cycle request、cycle result 与 command draft 串成 internal summary pipeline；`didCompletePipeline=true` 只表示 summary 已生成，不代表真实 runtime run。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-command-pipeline-subsystem-draft-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-command-pipeline-subsystem-draft-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-command-pipeline-subsystem-draft-closure-review.md)。当前 next opening 转向 `P1 internal runtime command pipeline subsystem draft closure / next runtime behavior decision`。
+
+最新补充：P1 internal runtime driver draft bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeDriverRequest` 与 `CjguiInternalRuntimeDriverResult`，以及 `cjguiInternalDefaultRuntimeDriverRequest()`、`cjguiInternalExecuteRuntimeDriverPass(request)`、`cjguiInternalExecuteDefaultRuntimeDriverPass()` 和三条直接相关 sanity helpers。driver draft 只组织一次 internal command pipeline pass，并把 pipeline draft 投影为 driver-level summary；`didCompleteDriverPass` 只表示 internal summary pass 已完成，不代表真实 runtime driver。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-driver-draft-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-driver-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-driver-draft-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime driver draft bundle closure / next runtime behavior decision`。
+
+最新补充：P1 internal runtime driver input policy bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeDriverInput`、`CjguiInternalRuntimeDriverPolicy`、`CjguiInternalRuntimeDriverDecision`，以及 default driver input / policy builders、`cjguiInternalDecideRuntimeDriverPass`、`cjguiInternalExecuteRuntimeDriverPassWithInput` 和三条直接相关 sanity helpers。driver input / policy 只作为 driver pass 的脱水 gate；allowed path 复用既有 driver pass，blocked path 只返回 fail-closed summary，不执行 pipeline pass、不消费 queue、不触发 callback。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-driver-input-policy-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-28-p1-internal-runtime-driver-input-policy-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-driver-input-policy-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime driver input policy bundle closure / next runtime behavior decision`。
+
+最新补充：P1 internal runtime driver report bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeDriverReport`，以及 `cjguiInternalBuildRuntimeDriverReport(result)`、`cjguiInternalExecuteRuntimeDriverPassReport(request, input, policy)`、`cjguiInternalExecuteDefaultRuntimeDriverPassReport()` 和三条直接相关 sanity helpers。driver report 只把 gated driver pass result 规整成 internal next-action summary；`isReadyForNextInternalPass` 只由 `didCompleteDriverPass` 与 `shouldRequestNextCycle` 派生，不是 scheduler、event loop command、queue item 或 renderer command list。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-driver-report-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-internal-runtime-driver-report-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-driver-report-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime driver report bundle closure / next runtime behavior decision`。
+
+最新补充：P1 internal runtime run intent bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeRunIntent`，以及 `cjguiInternalBuildRuntimeRunIntent(report)`、`cjguiInternalExecuteRuntimeRunIntentDraft(request, input, policy)`、`cjguiInternalExecuteDefaultRuntimeRunIntentDraft()` 和三条直接相关 sanity helpers。run intent 只把 driver report 投影为 internal run-boundary intent summary；`mayRequestRuntimeRun` 只由 `report.isReadyForNextInternalPass` 派生，不是 run loop、scheduler、queue item、event loop command 或 public runtime run API。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-run-intent-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-internal-runtime-run-intent-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-intent-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime run intent bundle closure / next runtime behavior decision`。
+
+最新补充：P1 internal runtime run request bundle implementation 已完成；新增默认 internal `CjguiInternalRuntimeRunRequest` 与 `CjguiInternalRuntimeRunRequestReport`，以及 `cjguiInternalBuildRuntimeRunRequest(intent)`、`cjguiInternalEvaluateRuntimeRunRequest(request)`、`cjguiInternalExecuteRuntimeRunRequestDraft(driverRequest, input, policy)`、`cjguiInternalExecuteDefaultRuntimeRunRequestDraft()` 和三条直接相关 sanity helpers。run request 只把 run intent 包装并评估为 internal request summary；`isRequestAllowed` 只由 `intent.mayRequestRuntimeRun` 派生，不是 public `run()` 调用、event loop start、scheduler、queue item、platform callback 或 public runtime API。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-run-request-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)。当前 next opening 转向 `P1 internal runtime run request bundle closure / next runtime behavior decision`。
+
 ## 当前 current-state summary
 
 ### 1. 项目目标已清楚
@@ -219,16 +243,15 @@
 
 当前推荐开启的下一条 opening：
 
-### `P1 internal runtime step input policy bundle implementation`
+### `P1 internal runtime run request bundle closure / next runtime behavior decision`
 
-性质：bounded implementation / W2 internal behavior bundle
+性质：bundled closure review / next runtime behavior bundle decision
 
 目标：
 
-- 基于 [2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，进入完整 W2 internal behavior concept slice。
-- root / step sanity 已封账，`cjguiInternalRuntimeStepReadySanity(): Bool` 已足够覆盖当前最小 ready path。
-- 一次完成 internal step input、policy、decision、default builders、decision function、step-with-input-policy，以及最多 2-3 个直接相关 sanity / parity helpers。
-- 不再继续一 helper 一轮，不再创建新的 preflight / execution card 替代实现。
+- 基于 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle。
+- internal runtime run request / request evaluation summary 已落地并封账。
+- 不再继续一 helper 一轮。
 - 不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime behavior。
 - 不改变 state shape、constructor shape、projection behavior、coordination behavior、bootstrap builder behavior、step behavior、public runtime API 或 public C ABI。
 
@@ -2664,16 +2687,15 @@ P1 bridge boundary cleanup、P1 main-thread UI message queue first slice、P1 au
 
 当前推荐的下一条 opening 是：
 
-### `P1 internal runtime step input policy bundle implementation`
+### `P1 internal runtime run request bundle closure / next runtime behavior decision`
 
-性质：bounded implementation / W2 internal behavior bundle
+性质：bundled closure review / next runtime behavior bundle decision
 
 目标：
 
-- 基于 [2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，进入完整 W2 internal behavior concept slice。
-- root / step sanity 已封账，`cjguiInternalRuntimeStepReadySanity(): Bool` 已足够覆盖当前最小 ready path。
-- 一次完成 internal step input、policy、decision、default builders、decision function、step-with-input-policy，以及最多 2-3 个直接相关 sanity / parity helpers。
-- 不再继续一 helper 一轮，不再创建新的 preflight / execution card 替代实现。
+- 基于 [2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle。
+- internal runtime run request / request evaluation summary 已落地并封账。
+- 不再继续一 helper 一轮。
 - 不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime behavior。
 - 不改变 state shape、constructor shape、projection behavior、coordination behavior、bootstrap builder behavior、step behavior、public runtime API 或 public C ABI。
 
@@ -3133,12 +3155,12 @@ Stop-line：
 
 如果继续推进，最合适的下一步是：
 
-> `P1 internal runtime step input policy bundle implementation`
+> `P1 internal runtime run request bundle closure / next runtime behavior decision`
 
-范围只允许基于 [P1 internal runtime step input policy bundle execution card](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-28-p1-internal-runtime-step-input-policy-bundle-execution-card.md)，一次完成 step input / policy / decision / step-with-input-policy 的完整 W2 internal behavior concept；不再继续一 helper 一轮；不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime 行为。
+范围只允许基于 [P1 internal runtime run request bundle closure review](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-run-request-bundle-closure-review.md)，决定下一张 internal runtime behavior bundle；不再继续一 helper 一轮；不自动进入 app run、event loop、queue / drain、window create 或更大的 runtime 行为。
 
 当前 app lifecycle、window lifecycle 与 platform adapter 已证明 internal immutable state / fact、construction shape、NoOp function、极窄 marker transition、platform readiness fact -> lifecycle marker projection、internal lifecycle coordination result / function、默认 internal sanity function、app lifecycle observed platform readiness state、window lifecycle observed platform readiness state、app/window readiness predicate helpers、positive coordination readiness sanity helper、negative coordination readiness sanity helper、readiness sanity parity helper、internal runtime readiness aggregate type、internal runtime readiness aggregate builder、internal runtime bootstrap snapshot type、internal runtime bootstrap snapshot builder、internal runtime root state type、internal runtime root state builder、internal runtime root ready sanity helper、internal runtime step result type、first internal runtime step function，以及 internal runtime step ready sanity helper 都能落地。
 
-下一步默认进入 `P1 internal runtime step input policy bundle implementation`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、queue / drain、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
+下一步默认进入 `P1 internal runtime run request bundle closure / next runtime behavior decision`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、queue / drain、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
 
-本轮不写 runtime code；下一轮默认进入 bounded implementation，一次完成 step input / policy bundle，不再单独创建 one-helper execution card。
+本轮已完成 run request bundle implementation；下一轮应基于该 internal request evaluation summary 判断后续 runtime behavior bundle，不再单独创建 one-helper execution card。

@@ -236,9 +236,18 @@ bounded implementation 的粒度应按风险和内部概念划分，而不是按
 
 ### 3.3 Bundled Execution Card Rule
 
-低风险 internal-only runtime work 可以使用 bundled execution card，一张卡最多授权 2-3 个连续小切片。每个 slice 仍必须独立运行 build / smoke / `git diff --check`，slice 完成后可先只在 tracker 记录简短日志，bundle 完成后再写一份 mini-compaction / bundled closure。
+低风险 internal-only runtime work 可以使用 bundled execution card。bundle 的大小按内部概念完整性和风险边界决定，不按“每轮只能写几个函数”决定。
 
-bundle 不得绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界 gate；触碰这些边界时恢复单卡单 closure。
+允许两档常用 bundle：
+
+- `W2 internal behavior bundle`：一次完成一个完整内部行为概念，通常包含 3-7 个相互关联的 internal changes，代码规模可以是几十行到数百行。
+- `W3 internal subsystem draft bundle`：当 owner / truth / write set / verification 都清楚，且仍完全 internal-only 时，可以一次完成一个内部子系统草案，通常包含 6-15 个相关 internal changes，代码规模可以达到数百行。它可以横跨同一 owner 下的多个紧密相关 types、builders、decision functions、result types、sanity paths 和 bundled closure。
+
+W3 internal subsystem draft bundle 不是 high-risk gate 的同义词。只要它不触碰 public runtime API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth、系统权限或安全边界，就不必因为代码行数较大而拆回 one-helper slices。
+
+如果 bundle 被拆成多个 slice，每个 slice 仍必须独立运行 build / smoke / `git diff --check`，slice 完成后可先只在 tracker 记录简短日志，bundle 完成后再写一份 mini-compaction / bundled closure。如果 bundle 是单次完整实现，可以在实现结束后统一运行验证并写 bundled closure。
+
+bundle 不得绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界 gate；触碰这些边界时恢复高风险 docs-only gate 或单卡单 closure。
 
 ### 3.4 Helper Chain Exit / Larger Internal Behavior Bundle Rule
 
@@ -246,16 +255,18 @@ helper / sanity 链只能用于证明内部链路可组合，不能成为长期�
 
 当某条 internal-only 方向已经完成 positive path、negative path、parity 或 root sanity，并且 bundle closure 已明确验证 build / smoke / `git diff --check`，下一张 bundle 默认应提高授权粒度，转向完整的 internal behavior concept。
 
-完整 internal behavior concept 可以在一张 W2 bundle 中包含 3-7 个相互关联的 internal changes，例如：
+完整 internal behavior concept 可以在一张 W2 bundle 中包含 3-7 个相互关联的 internal changes；如果同一 owner 下的内部子系统边界已经清楚，可以升级为 W3 internal subsystem draft bundle，一次包含 6-15 个相关 internal changes。例如：
 
 - input / policy / decision / result 等 internal types。
 - default constructor 或 builder。
 - 核心 internal behavior function。
 - positive / negative path。
 - minimal sanity / parity check。
+- request / response / pipeline / draft command 等同一内部行为链路。
+- 状态汇总、outcome、progress、command draft 等同一 owner 内的闭环草案。
 - tracker log 与 bundled closure。
 
-只要仍满足 internal-only、owner 清楚、truth 清楚、write set 清楚、verification 清楚，并且不触碰 public runtime API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation 或安全边界，就不应把这些相关变化拆成 helper-by-helper 的多轮循环。
+只要仍满足 internal-only、owner 清楚、truth 清楚、write set 清楚、verification 清楚，并且不触碰 public runtime API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation 或安全边界，就不应把这些相关变化拆成 helper-by-helper 的多轮循环。拆分的理由必须是风险、语法不确定、验证不可成立或 owner 冲突，而不是“代码行数看起来多”。
 
 模型能力不是风险来源；越界才是风险来源。顶级执行模型可以承担完整 internal concept slice。治理应帮助模型对齐方向，而不是把模型降级成每轮只能写一个函数的打字员。
 

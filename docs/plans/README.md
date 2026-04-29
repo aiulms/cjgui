@@ -716,19 +716,83 @@
 - runtime readiness / run-boundary chain compaction：
   - [2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)
 
+- runtime shutdown / cancellation intent bundle：
+  - [2026-04-29-p1-internal-shutdown-cancellation-intent-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-shutdown-cancellation-intent-bundle-closure-review.md)
+
+- runtime run-boundary readiness compaction：
+  - [2026-04-29-p1-internal-run-boundary-readiness-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-run-boundary-readiness-compaction.md)
+
+- runtime run boundary draft bundle：
+  - [2026-04-29-p1-internal-run-boundary-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-run-boundary-draft-bundle-closure-review.md)
+
+- runtime app run surface boundary compaction：
+  - [2026-04-29-p1-internal-app-run-surface-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-app-run-surface-boundary-compaction.md)
+
+- runtime app run surface bundle：
+  - [2026-04-29-p1-internal-app-run-surface-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-app-run-surface-bundle-closure-review.md)
+
+- runtime app run controller boundary compaction：
+  - [2026-04-29-p1-internal-app-run-controller-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-app-run-controller-boundary-compaction.md)
+
+- runtime app run controller draft bundle：
+  - [2026-04-29-p1-internal-app-run-controller-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-app-run-controller-draft-bundle-closure-review.md)
+
+- runtime app run execution plan draft bundle：
+  - [2026-04-29-p1-internal-app-run-execution-plan-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-app-run-execution-plan-draft-bundle-closure-review.md)
+
+- runtime app run dispatch draft bundle：
+  - [2026-04-29-p1-internal-app-run-dispatch-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-app-run-dispatch-draft-bundle-closure-review.md)
+
+- runtime run loop draft boundary compaction：
+  - [2026-04-29-p1-internal-run-loop-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-run-loop-draft-boundary-compaction.md)
+
+- runtime run loop draft bundle：
+  - [2026-04-29-p1-internal-run-loop-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-run-loop-draft-bundle-closure-review.md)
+
+- runtime loop iteration draft boundary compaction：
+  - [2026-04-29-p1-internal-loop-iteration-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-loop-iteration-draft-boundary-compaction.md)
+
+- runtime loop iteration draft bundle：
+  - [2026-04-29-p1-internal-loop-iteration-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-loop-iteration-draft-bundle-closure-review.md)
+
+- runtime iteration work packet boundary compaction：
+  - [2026-04-29-p1-internal-iteration-work-packet-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-iteration-work-packet-boundary-compaction.md)
+
+- runtime iteration work packet draft bundle：
+  - [2026-04-29-p1-internal-iteration-work-packet-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-iteration-work-packet-draft-bundle-closure-review.md)
+
+- runtime lifecycle work draft boundary compaction：
+  - [2026-04-29-p1-internal-lifecycle-work-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-lifecycle-work-draft-boundary-compaction.md)
+
+- runtime lifecycle work draft bundle：
+  - [2026-04-29-p1-internal-lifecycle-work-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-lifecycle-work-draft-bundle-closure-review.md)
+
+- lifecycle owner handoff draft boundary compaction：
+  - [2026-04-29-p1-lifecycle-owner-handoff-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-owner-handoff-draft-boundary-compaction.md)
+
+- lifecycle owner handoff draft bundle：
+  - [2026-04-29-p1-lifecycle-owner-handoff-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-owner-handoff-draft-bundle-closure-review.md)
+
+- lifecycle mutation readiness draft boundary compaction：
+  - [2026-04-29-p1-lifecycle-mutation-readiness-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-boundary-compaction.md)
+
+- lifecycle mutation readiness draft bundle：
+  - [2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)
+
 ## 当前下一步 opening
 
 下一步推荐：
 
-- `P1 internal shutdown / cancellation intent bundle implementation`
+- `P1 lifecycle mutation readiness draft bundle closure / next runtime behavior decision`
 
 用途：
 
-- 基于 [2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md)，补齐 internal shutdown / cancellation intent。
-- 不继续增加纯 report / wrapper 层。
-- 不自动进入 public API、C ABI、app run、event loop、queue / drain、window create 或 platform callback。
+- 基于 [2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)，判断下一条 runtime behavior slice。
+- 当前 mutation readiness draft 已把 app readiness facts 放在 `app_lifecycle.cj`，window readiness facts 放在 `window_lifecycle.cj`。
+- `runtime_state.cj` 只做 cross-owner readiness summary，消费 owner handoff report，不拥有 lifecycle mutation semantics。
+- 不自动进入真实 lifecycle mutation、state-changing transition invocation、queue / drain、event loop、platform callback、window create / close / destroy 或 public surface。
 
 当前可执行动作：
 
-- bundled closure review / next runtime behavior decision。
-- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、queue / drain、app run / shutdown、window create / close / destroy / release、handle table / generation、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。
+- next runtime behavior decision。
+- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、真实 app/window lifecycle execution、app/window state mutation、调用 state-changing transition functions、`while` loop / scheduling loop、queue / drain、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

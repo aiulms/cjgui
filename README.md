@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-04-28
+最后更新：2026-04-29
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -56,7 +56,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 runtime compaction：[P1 internal runtime readiness / run-boundary chain compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-readiness-run-boundary-chain-compaction.md) 已完成；当前 recommended next opening 是 `P1 internal shutdown / cancellation intent bundle implementation`。下一步应补齐 internal-only shutdown / cancellation intent，不继续增加纯 report / wrapper 层，也不自动进入 public API、C ABI、app run、event loop、queue / drain、window create 或 renderer。
+最新 lifecycle mutation readiness draft boundary compaction：[P1 lifecycle mutation readiness draft boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-boundary-compaction.md) 已完成；当前 recommended next opening 是 `P1 lifecycle mutation readiness draft bundle implementation`。下一步可以定义 internal-only mutation readiness draft：app readiness facts 继续归属 `app_lifecycle.cj`，window readiness facts 继续归属 `window_lifecycle.cj`，`runtime_state.cj` 只做 cross-owner readiness summary；仍不执行 lifecycle mutation、不修改 app/window state、不调用 state-changing transition functions、不 drain queue、不调平台，也不进入 public API / C ABI。
 
 当前 runtime package / first-compilable source 边界文档：
 

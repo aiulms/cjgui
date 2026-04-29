@@ -161,6 +161,8 @@
   - `CjguiInternalRuntimeCommittedStateStoreDraft`
   - `CjguiInternalRuntimeCycleFeedbackRequest`
   - `CjguiInternalRuntimeCycleFeedbackDraft`
+  - `CjguiInternalRuntimeNextCycleRequestDraftRequest`
+  - `CjguiInternalRuntimeNextCycleRequestDraft`
   - `cjguiInternalBuildRuntimeRootState`
   - `cjguiInternalRuntimeRootStateReadySanity`
   - `cjguiInternalRuntimeStep`
@@ -304,6 +306,10 @@
   - `cjguiInternalEvaluateRuntimeCycleFeedback`
   - `cjguiInternalExecuteRuntimeCycleFeedbackDraft`
   - `cjguiInternalExecuteDefaultRuntimeCycleFeedbackDraft`
+  - `cjguiInternalBuildRuntimeNextCycleRequestDraftRequest`
+  - `cjguiInternalEvaluateRuntimeNextCycleRequestDraft`
+  - `cjguiInternalExecuteRuntimeNextCycleRequestDraft`
+  - `cjguiInternalExecuteDefaultRuntimeNextCycleRequestDraft`
   - `cjguiInternalRuntimeCommandDraftReadySanity`
   - `cjguiInternalRuntimeCommandDraftNotReadyBlockedSanity`
   - `cjguiInternalRuntimeCommandDraftInputBlockedSanity`
@@ -439,6 +445,11 @@
   - `cjguiInternalRuntimeCycleFeedbackInputBlockedSanity`
   - `cjguiInternalRuntimeCycleFeedbackShutdownBlockedSanity`
   - `cjguiInternalRuntimeCycleFeedbackCancellationBlockedSanity`
+  - `cjguiInternalRuntimeNextCycleRequestOpenSanity`
+  - `cjguiInternalRuntimeNextCycleRequestRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeNextCycleRequestInputBlockedSanity`
+  - `cjguiInternalRuntimeNextCycleRequestShutdownBlockedSanity`
+  - `cjguiInternalRuntimeNextCycleRequestCancellationBlockedSanity`
 - `src/error.cj`
   - `CjguiInternalCompileSanityMarker`
   - `CjguiInternalErrorFact`
@@ -610,6 +621,7 @@
 - runtime state holder draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCarriedStateContainer`，并把 carried app/window state 包装成 value-style held state summary；本层不是 committed runtime state store，不是 global mutable singleton，不写 runtime global state、不公开 state、不执行 mutation、不读取 CarryForwardReport / PublicationReport / OutcomeReport 或 lower-level facts。
 - runtime committed state store draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeStateHolderDraft`，并把 held app/window state 包装成 value-style committed state summary；本层不是 committed runtime global state store，不是 global mutable singleton，不写 runtime global state、不公开 state、不执行 mutation、不读取 CarriedStateContainer / CarryForwardReport / PublicationReport / lower-level facts。
 - runtime cycle feedback draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCommittedStateStoreDraft`，并把 committed app/window state 投影为下一轮 internal runtime cycle 的 value-style feedback candidates；本层不执行下一轮 cycle，不写 runtime global state，不创建 global mutable singleton，不公开 state、不执行 mutation、不读取 StateHolderDraft / CarriedStateContainer / CarryForwardReport / lower-level facts。
+- runtime next-cycle request draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，并构造 value-style `CjguiInternalRuntimeCycleRequest` candidate；当前 root state shape 不承载 app/window state，因此 app/window feedback 只作为 request preparation gate。本层不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不写 runtime global state，不创建 global mutable singleton，不公开 state、不执行 mutation、不读取 CommittedStateStoreDraft / StateHolderDraft 或 lower-level facts。
 - step outcome bundle 已封账；下一步应转向更大的 runtime behavior decision，而不是继续堆 helper 链。
 - root sanity 已封账；下一步应转向 first internal runtime step / step result，而不是继续堆 root helper。
 - root state 不定义 runtime state machine、app run、event loop、queue / drain、window create 或 shutdown。

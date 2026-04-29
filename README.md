@@ -56,7 +56,9 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 runtime next-cycle request boundary compaction：[P1 runtime next-cycle request boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md) 已完成；当前 recommended next opening 是 `P1 runtime next-cycle request draft bundle implementation`。下一步只允许定义 internal-only / value-style next-cycle request draft，消费 `CjguiInternalRuntimeCycleFeedbackDraft` 并表达 next-cycle root state / input / policy request summary；仍不新增 public API / C ABI，不写 runtime global state，不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不接 platform callback、queue / drain、scheduler 或 event loop。
+最新 runtime cycle handoff boundary compaction：[P1 runtime cycle handoff boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md) 已完成；当前 recommended next opening 是 `P1 runtime cycle handoff draft bundle implementation`。下一步只允许定义 internal-only / value-style cycle handoff draft，消费 `CjguiInternalRuntimeNextCycleRequestDraft` 并表达 prepared next-cycle request candidate 是否可 hand off 给 future runtime boundary；仍不新增 public API / C ABI，不写 runtime global state，不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不接 platform callback、queue / drain、scheduler 或 event loop。
+
+阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 
 当前 runtime package / first-compilable source 边界文档：
 

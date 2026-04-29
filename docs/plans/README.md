@@ -860,17 +860,26 @@
 - runtime next-cycle request boundary compaction：
   - [2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md)
 
+- runtime next-cycle request draft bundle：
+  - [2026-04-29-p1-runtime-next-cycle-request-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-draft-bundle-closure-review.md)
+
+- runtime cycle handoff boundary compaction：
+  - [2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md)
+
+- runtime progress health checkpoint：
+  - [2026-04-29-p1-runtime-progress-health-checkpoint.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md)
+
 ## 当前下一步 opening
 
 下一步推荐：
 
-- `P1 runtime next-cycle request draft bundle implementation`
+- `P1 runtime cycle handoff draft bundle implementation`
 
 用途：
 
-- 基于 [2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md)，新增 internal-only / value-style runtime next-cycle request draft。
-- Next-cycle request draft 必须只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，表达 next-cycle root state / input / policy request summary。
-- 它可以构造 value-style `CjguiInternalRuntimeCycleRequest` candidate，但不能执行 `cjguiInternalExecuteRuntimeCycle`，不能执行 runtime step，不能写 runtime global state。
+- 基于 [2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md)，新增 internal-only / value-style runtime cycle handoff draft。
+- Cycle handoff draft 必须只消费 `CjguiInternalRuntimeNextCycleRequestDraft`，并表达 prepared next-cycle request candidate 是否可 hand off 给 future runtime boundary。
+- 它可以持有 `CjguiInternalRuntimeCycleRequest` candidate，但不能执行它，不能执行 runtime cycle / step，不能写 runtime global state。
 - 下一步是 bounded implementation，仍不跨全链路重命名、不移动 owner boundaries、不新增 public surface。
 
 当前可执行动作：

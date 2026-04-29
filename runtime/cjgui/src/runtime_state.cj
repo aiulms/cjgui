@@ -1664,6 +1664,84 @@ struct CjguiInternalRuntimeCycleFeedbackDraft {
     }
 }
 
+// 内部 runtime next-cycle request draft request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 runtime cycle feedback draft。
+// - 它不执行下一轮 cycle, 不执行 runtime step, 不写 runtime global state。
+
+struct CjguiInternalRuntimeNextCycleRequestDraftRequest {
+    let feedback: CjguiInternalRuntimeCycleFeedbackDraft
+
+    init(
+        feedback: CjguiInternalRuntimeCycleFeedbackDraft
+    ) {
+        this.feedback = feedback
+    }
+}
+
+// 内部 runtime next-cycle request draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示 value-style next-cycle request candidate summary。
+// - 它不是 event loop、scheduler、global state write 或 next-cycle execution。
+
+struct CjguiInternalRuntimeNextCycleRequestDraft {
+    let nextCycleRequestCandidate: CjguiInternalRuntimeCycleRequest
+    let didPrepareNextCycleRequest: Bool
+    let shouldDeferNextCycleRequest: Bool
+    let shouldReportNextCycleRequestBlocked: Bool
+
+    init(
+        nextCycleRequestCandidate: CjguiInternalRuntimeCycleRequest,
+        didPrepareNextCycleRequest: Bool,
+        shouldDeferNextCycleRequest: Bool,
+        shouldReportNextCycleRequestBlocked: Bool
+    ) {
+        this.nextCycleRequestCandidate = nextCycleRequestCandidate
+        this.didPrepareNextCycleRequest = didPrepareNextCycleRequest
+        this.shouldDeferNextCycleRequest = shouldDeferNextCycleRequest
+        this.shouldReportNextCycleRequestBlocked = shouldReportNextCycleRequestBlocked
+    }
+}
+
+// 内部 runtime cycle handoff request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 runtime next-cycle request draft。
+// - 它不执行 next-cycle request, 不执行 runtime cycle / step, 不写 runtime global state。
+
+struct CjguiInternalRuntimeCycleHandoffRequest {
+    let nextCycle: CjguiInternalRuntimeNextCycleRequestDraft
+
+    init(
+        nextCycle: CjguiInternalRuntimeNextCycleRequestDraft
+    ) {
+        this.nextCycle = nextCycle
+    }
+}
+
+// 内部 runtime cycle handoff draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示 prepared next-cycle request candidate 的 value-style handoff summary。
+// - 它不是 next-cycle execution、runtime step、event loop、scheduler 或 global state write。
+
+struct CjguiInternalRuntimeCycleHandoffDraft {
+    let cycleRequestCandidate: CjguiInternalRuntimeCycleRequest
+    let didPrepareCycleHandoff: Bool
+    let shouldDeferCycleHandoff: Bool
+    let shouldReportCycleHandoffBlocked: Bool
+
+    init(
+        cycleRequestCandidate: CjguiInternalRuntimeCycleRequest,
+        didPrepareCycleHandoff: Bool,
+        shouldDeferCycleHandoff: Bool,
+        shouldReportCycleHandoffBlocked: Bool
+    ) {
+        this.cycleRequestCandidate = cycleRequestCandidate
+        this.didPrepareCycleHandoff = didPrepareCycleHandoff
+        this.shouldDeferCycleHandoff = shouldDeferCycleHandoff
+        this.shouldReportCycleHandoffBlocked = shouldReportCycleHandoffBlocked
+    }
+}
+
 func cjguiInternalDefaultRuntimeStepInput(): CjguiInternalRuntimeStepInput {
     return CjguiInternalRuntimeStepInput()
 }
@@ -3580,6 +3658,96 @@ func cjguiInternalExecuteDefaultRuntimeCycleFeedbackDraft(
 ): CjguiInternalRuntimeCycleFeedbackDraft {
     let store = cjguiInternalExecuteDefaultRuntimeCommittedStateStoreDraft()
     return cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+}
+
+// 内部 runtime next-cycle request draft:
+// - 它只消费 CycleFeedbackDraft, 不越级读取 committed store 或 lower-level facts。
+// - cycle request candidate 是 value-style candidate, 不会被本层执行。
+// - 当前 root state shape 不承载 app/window state; app/window feedback 只作为
+//   request preparation gate, 不公开 state, 不写 runtime global state。
+
+func cjguiInternalBuildRuntimeNextCycleRequestDraftRequest(
+    feedback: CjguiInternalRuntimeCycleFeedbackDraft
+): CjguiInternalRuntimeNextCycleRequestDraftRequest {
+    return CjguiInternalRuntimeNextCycleRequestDraftRequest(feedback)
+}
+
+func cjguiInternalEvaluateRuntimeNextCycleRequestDraft(
+    request: CjguiInternalRuntimeNextCycleRequestDraftRequest
+): CjguiInternalRuntimeNextCycleRequestDraft {
+    let feedback = request.feedback
+    let appCandidateReady = feedback.nextCycleAppStateCandidate.isStateMachineActive &&
+        feedback.nextCycleAppStateCandidate.hasLifecyclePhase
+    let windowCandidateReady = feedback.nextCycleWindowStateCandidate.hasWindowState
+    let shouldPrepare = feedback.didPrepareCycleFeedback && appCandidateReady &&
+        windowCandidateReady
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            shouldPrepare
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    return CjguiInternalRuntimeNextCycleRequestDraft(
+        cycleRequest,
+        shouldPrepare,
+        feedback.shouldDeferCycleFeedback,
+        feedback.shouldReportCycleFeedbackBlocked
+    )
+}
+
+func cjguiInternalExecuteRuntimeNextCycleRequestDraft(
+    feedback: CjguiInternalRuntimeCycleFeedbackDraft
+): CjguiInternalRuntimeNextCycleRequestDraft {
+    let request = cjguiInternalBuildRuntimeNextCycleRequestDraftRequest(feedback)
+    return cjguiInternalEvaluateRuntimeNextCycleRequestDraft(request)
+}
+
+func cjguiInternalExecuteDefaultRuntimeNextCycleRequestDraft(
+): CjguiInternalRuntimeNextCycleRequestDraft {
+    let feedback = cjguiInternalExecuteDefaultRuntimeCycleFeedbackDraft()
+    return cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+}
+
+// 内部 runtime cycle handoff draft:
+// - 它只消费 NextCycleRequestDraft, 不越级读取 feedback / store 或 lower-level facts。
+// - cycle request candidate 只来自 next-cycle draft, 不会被本层执行。
+// - 它不执行 runtime cycle / step, 不写 runtime global state, 不公开 state。
+
+func cjguiInternalBuildRuntimeCycleHandoffRequest(
+    nextCycle: CjguiInternalRuntimeNextCycleRequestDraft
+): CjguiInternalRuntimeCycleHandoffRequest {
+    return CjguiInternalRuntimeCycleHandoffRequest(nextCycle)
+}
+
+func cjguiInternalEvaluateRuntimeCycleHandoff(
+    request: CjguiInternalRuntimeCycleHandoffRequest
+): CjguiInternalRuntimeCycleHandoffDraft {
+    let nextCycle = request.nextCycle
+    let shouldPrepare = nextCycle.didPrepareNextCycleRequest &&
+        nextCycle.shouldDeferNextCycleRequest == false &&
+        nextCycle.shouldReportNextCycleRequestBlocked == false
+    return CjguiInternalRuntimeCycleHandoffDraft(
+        nextCycle.nextCycleRequestCandidate,
+        shouldPrepare,
+        nextCycle.shouldDeferNextCycleRequest,
+        nextCycle.shouldReportNextCycleRequestBlocked
+    )
+}
+
+func cjguiInternalExecuteRuntimeCycleHandoffDraft(
+    nextCycle: CjguiInternalRuntimeNextCycleRequestDraft
+): CjguiInternalRuntimeCycleHandoffDraft {
+    let request = cjguiInternalBuildRuntimeCycleHandoffRequest(nextCycle)
+    return cjguiInternalEvaluateRuntimeCycleHandoff(request)
+}
+
+func cjguiInternalExecuteDefaultRuntimeCycleHandoffDraft(
+): CjguiInternalRuntimeCycleHandoffDraft {
+    let nextCycle = cjguiInternalExecuteDefaultRuntimeNextCycleRequestDraft()
+    return cjguiInternalExecuteRuntimeCycleHandoffDraft(nextCycle)
 }
 
 // 内部 runtime step ready sanity helper:
@@ -7510,4 +7678,264 @@ func cjguiInternalRuntimeCycleFeedbackCancellationBlockedSanity(): Bool {
         return false
     }
     return draft.shouldReportCycleFeedbackBlocked
+}
+
+func cjguiInternalRuntimeNextCycleRequestOpenSanity(): Bool {
+    let draft = cjguiInternalExecuteDefaultRuntimeNextCycleRequestDraft()
+    if (draft.didPrepareNextCycleRequest == false) {
+        return false
+    }
+    if (draft.shouldDeferNextCycleRequest) {
+        return false
+    }
+    if (draft.shouldReportNextCycleRequestBlocked) {
+        return false
+    }
+    if (draft.nextCycleRequestCandidate.state.isRuntimeReady == false) {
+        return false
+    }
+    if (draft.nextCycleRequestCandidate.input.allowsAdvance == false) {
+        return false
+    }
+    return draft.nextCycleRequestCandidate.policy.requiresRuntimeReady
+}
+
+func cjguiInternalRuntimeNextCycleRequestRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        CjguiInternalRuntimeDriverRequest(
+            CjguiInternalRuntimeCommandPipelineRequest(
+                CjguiInternalRuntimeCycleRequest(
+                    CjguiInternalRuntimeRootState(
+                        root.bootstrap,
+                        false
+                    ),
+                    cjguiInternalDefaultRuntimeStepInput(),
+                    cjguiInternalDefaultRuntimeStepPolicy()
+                )
+            )
+        ),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let draft = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    if (draft.didPrepareNextCycleRequest) {
+        return false
+    }
+    if (draft.shouldDeferNextCycleRequest == false) {
+        return false
+    }
+    if (draft.nextCycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportNextCycleRequestBlocked
+}
+
+func cjguiInternalRuntimeNextCycleRequestInputBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let draft = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    if (draft.didPrepareNextCycleRequest) {
+        return false
+    }
+    if (draft.shouldDeferNextCycleRequest == false) {
+        return false
+    }
+    if (draft.nextCycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportNextCycleRequestBlocked
+}
+
+func cjguiInternalRuntimeNextCycleRequestShutdownBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let draft = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    if (draft.didPrepareNextCycleRequest) {
+        return false
+    }
+    if (draft.shouldDeferNextCycleRequest == false) {
+        return false
+    }
+    if (draft.nextCycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportNextCycleRequestBlocked
+}
+
+func cjguiInternalRuntimeNextCycleRequestCancellationBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let draft = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    if (draft.didPrepareNextCycleRequest) {
+        return false
+    }
+    if (draft.shouldDeferNextCycleRequest == false) {
+        return false
+    }
+    if (draft.nextCycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportNextCycleRequestBlocked
+}
+
+func cjguiInternalRuntimeCycleHandoffOpenSanity(): Bool {
+    let draft = cjguiInternalExecuteDefaultRuntimeCycleHandoffDraft()
+    if (draft.didPrepareCycleHandoff == false) {
+        return false
+    }
+    if (draft.shouldDeferCycleHandoff) {
+        return false
+    }
+    if (draft.shouldReportCycleHandoffBlocked) {
+        return false
+    }
+    if (draft.cycleRequestCandidate.state.isRuntimeReady == false) {
+        return false
+    }
+    if (draft.cycleRequestCandidate.input.allowsAdvance == false) {
+        return false
+    }
+    return draft.cycleRequestCandidate.policy.requiresRuntimeReady
+}
+
+func cjguiInternalRuntimeCycleHandoffRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        CjguiInternalRuntimeDriverRequest(
+            CjguiInternalRuntimeCommandPipelineRequest(
+                CjguiInternalRuntimeCycleRequest(
+                    CjguiInternalRuntimeRootState(
+                        root.bootstrap,
+                        false
+                    ),
+                    cjguiInternalDefaultRuntimeStepInput(),
+                    cjguiInternalDefaultRuntimeStepPolicy()
+                )
+            )
+        ),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let nextCycle = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    let draft = cjguiInternalExecuteRuntimeCycleHandoffDraft(nextCycle)
+    if (draft.didPrepareCycleHandoff) {
+        return false
+    }
+    if (draft.shouldDeferCycleHandoff == false) {
+        return false
+    }
+    if (draft.cycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportCycleHandoffBlocked
+}
+
+func cjguiInternalRuntimeCycleHandoffInputBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let nextCycle = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    let draft = cjguiInternalExecuteRuntimeCycleHandoffDraft(nextCycle)
+    if (draft.didPrepareCycleHandoff) {
+        return false
+    }
+    if (draft.shouldDeferCycleHandoff == false) {
+        return false
+    }
+    if (draft.cycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportCycleHandoffBlocked
+}
+
+func cjguiInternalRuntimeCycleHandoffShutdownBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let nextCycle = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    let draft = cjguiInternalExecuteRuntimeCycleHandoffDraft(nextCycle)
+    if (draft.didPrepareCycleHandoff) {
+        return false
+    }
+    if (draft.shouldDeferCycleHandoff == false) {
+        return false
+    }
+    if (draft.cycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportCycleHandoffBlocked
+}
+
+func cjguiInternalRuntimeCycleHandoffCancellationBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    let nextCycle = cjguiInternalExecuteRuntimeNextCycleRequestDraft(feedback)
+    let draft = cjguiInternalExecuteRuntimeCycleHandoffDraft(nextCycle)
+    if (draft.didPrepareCycleHandoff) {
+        return false
+    }
+    if (draft.shouldDeferCycleHandoff == false) {
+        return false
+    }
+    if (draft.cycleRequestCandidate.state.isRuntimeReady) {
+        return false
+    }
+    return draft.shouldReportCycleHandoffBlocked
 }

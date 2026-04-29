@@ -288,6 +288,12 @@
 
 最新补充：P1 runtime next-cycle request boundary compaction 已完成；新增 [2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md)，将 committed state store 与 cycle feedback draft 压缩成 next-cycle request 前结论。关键判断：可以进入 internal-only / value-style runtime next-cycle request draft；下一刀应只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，表达 next-cycle root state / input / policy request summary，可构造 value-style `CjguiInternalRuntimeCycleRequest` candidate 但不能执行它。本轮没有写 runtime code，没有创建 preflight / execution card；当前 next opening 转向 `P1 runtime next-cycle request draft bundle implementation`。
 
+最新补充：P1 runtime next-cycle request draft bundle implementation 已完成；在 `runtime_state.cj` 新增默认 internal `CjguiInternalRuntimeNextCycleRequestDraftRequest`、`CjguiInternalRuntimeNextCycleRequestDraft`、request builder、evaluator、draft executor、default draft executor 和 open / runtime-blocked / input-blocked / shutdown-blocked / cancellation-blocked sanity helpers。Next-cycle request draft 只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，用 feedback 的 app/window state candidates 作为 preparation gate，并构造 value-style `CjguiInternalRuntimeCycleRequest` candidate；它不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不写 runtime global state，不创建 global mutable singleton，不公开 state，不执行 mutation，也不读取 CommittedStateStoreDraft / StateHolderDraft 或 lower-level facts。GitNexus 文件级窄口 impact 为 LOW / direct callers 0 / affected processes 0；较新的 cycle feedback symbols 在当前索引中未解析到，返回 not found / UNKNOWN 而非 HIGH / CRITICAL。envsetup 后 `cjpm build --target-dir /tmp/cjgui-runtime-next-cycle-request-draft-bundle-target --skip-script` 通过（仅既有 unused warnings）；smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-runtime-next-cycle-request-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-draft-bundle-closure-review.md)。当前 next opening 转向 `P1 runtime next-cycle request draft bundle closure / next runtime behavior decision`。
+
+最新补充：P1 runtime cycle handoff boundary compaction 已完成；新增 [2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md)，将 CycleFeedback draft 与 NextCycleRequest draft 压缩成 cycle handoff 前结论。关键判断：可以进入 internal-only / value-style runtime cycle handoff draft；下一刀应只消费 `CjguiInternalRuntimeNextCycleRequestDraft`，表达 prepared next-cycle request candidate 是否可 hand off 给 future runtime boundary；它可持有 `CjguiInternalRuntimeCycleRequest` candidate，但不能执行 next-cycle request，不能执行 runtime cycle / step，不能写 global state，不能 mutate app/window state，不能绕过 NextCycleRequestDraft 读取 CycleFeedbackDraft / CommittedStateStoreDraft 或 lower-level facts。本轮没有写 runtime code，没有创建 preflight / execution card；`git diff --check` 通过；当前 next opening 转向 `P1 runtime cycle handoff draft bundle implementation`。
+
+最新补充：P1 runtime progress health checkpoint 已完成；新增 [2026-04-29-p1-runtime-progress-health-checkpoint.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md)，用于换会话 / 大方向判断时恢复阶段记忆。关键判断：当前 P1 internal runtime skeleton 推进健康，已形成 internal-only flow 雏形，但仍不是 public API、C ABI、真实 app run、event loop、queue / drain、platform callback、window lifecycle、render / layout / input / accessibility。低风险 internal-only behavior 可继续用 W3 bundle；高风险边界前仍可用 W1 compaction；`runtime_state.cj` 偏胖、wrapper / sanity 层数偏多，后续需周期性做 owner cleanup / 局部 normalization。本 checkpoint 不是每轮 implementation 必读项，不改变当前 next opening。
+
 ## 当前 current-state summary
 
 ### 1. 项目目标已清楚
@@ -341,15 +347,15 @@
 
 当前推荐开启的下一条 opening：
 
-### `P1 runtime next-cycle request draft bundle implementation`
+### `P1 runtime cycle handoff draft bundle implementation`
 
 性质：bounded implementation
 
 目标：
 
-- 基于 [2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md)，新增 internal-only / value-style runtime next-cycle request draft。
-- Next-cycle request draft 必须只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，表达 next-cycle root state / input / policy request summary。
-- Next-cycle request draft 可以构造 value-style `CjguiInternalRuntimeCycleRequest` candidate，但不能执行 `cjguiInternalExecuteRuntimeCycle`，不能执行 runtime step，不能写 runtime global state。
+- 基于 [2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md)，新增 internal-only / value-style runtime cycle handoff draft。
+- Cycle handoff draft 必须只消费 `CjguiInternalRuntimeNextCycleRequestDraft`，表达 prepared next-cycle request candidate 是否可 hand off 给 future runtime boundary。
+- Cycle handoff draft 可以持有 `CjguiInternalRuntimeCycleRequest` candidate，但不能执行 next-cycle request，不能执行 runtime cycle / step，不能写 runtime global state。
 
 本 opening 仍禁止：
 
@@ -359,7 +365,7 @@
 - 引用 AppKit / Metal / Objective-C，或暴露 platform object、native handle、raw pointer。
 - 实现 event loop、`while` loop / scheduling loop、callback binding、queue / drain、scheduler、input processing、layout / render、真实 app/window lifecycle execution、new app/window state mutation、runtime global state write、global mutable state、var / in-place mutation、调用现有 state-changing transition functions、transition execution、next-cycle execution、app run / shutdown、window create / close / destroy / release、public state publication，或跨全链路重命名。
 - 改变现有 app/window state field semantics，或让 `runtime_state.cj` 直接修改 app/window state。
-- 绕过 CommittedStateStoreDraft 读取 StateHolderDraft / CarriedStateContainer / CarryForwardReport / PublicationReport / OutcomeReport / MutationReport 或 lower-level facts。
+- 绕过 NextCycleRequestDraft 读取 CycleFeedbackDraft / CommittedStateStoreDraft / StateHolderDraft / CarriedStateContainer / CarryForwardReport / PublicationReport / OutcomeReport / MutationReport 或 lower-level facts。
 - 移动 app/window owner boundaries，或把局部 normalization 扩大成全链路重构。
 - 新增 handle table / generation。
 - 进入 Renderer / Scene / Widget / Layout / DSL、Dirty Rect / global tick / frame scheduler、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff / baseline / offscreen renderer。
@@ -3258,12 +3264,12 @@ Stop-line：
 
 如果继续推进，最合适的下一步是：
 
-> `P1 runtime next-cycle request draft bundle implementation`
+> `P1 runtime cycle handoff draft bundle implementation`
 
-范围基于 [P1 runtime next-cycle request boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md)，新增 internal-only / value-style runtime next-cycle request draft。下一刀只能消费 `CjguiInternalRuntimeCycleFeedbackDraft`，表达 next-cycle root state / input / policy request summary；可构造 value-style `CjguiInternalRuntimeCycleRequest` candidate，但仍不得执行 `cjguiInternalExecuteRuntimeCycle`、执行 runtime step、写 runtime global state、创建 global mutable singleton、再次 mutation、修改 state、公开 state、移动 owner boundaries、绕过 CycleFeedbackDraft 读取 CommittedStateStoreDraft / StateHolderDraft / lower-level facts 或做全链路重命名。
+范围基于 [P1 runtime cycle handoff boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md)，新增 internal-only / value-style runtime cycle handoff draft。下一刀只能消费 `CjguiInternalRuntimeNextCycleRequestDraft`，表达 prepared next-cycle request candidate 是否可 hand off 给 future runtime boundary；可持有 `CjguiInternalRuntimeCycleRequest` candidate，但仍不得执行 `cjguiInternalExecuteRuntimeCycle`、执行 runtime step、写 runtime global state、创建 global mutable singleton、再次 mutation、修改 state、公开 state、移动 owner boundaries、绕过 NextCycleRequestDraft 读取 CycleFeedbackDraft / CommittedStateStoreDraft / lower-level facts 或做全链路重命名。
 
-当前 app lifecycle、window lifecycle 与 runtime state 链路已证明 owner-local immutable-copy state transition 可以落地，publication draft 已能把 already-produced nextState 标记为 internal 后续输入候选，carry-forward draft 已把这些候选压成下一轮 internal runtime cycle 的候选摘要，carried state container 已能将候选包装为下一轮 internal runtime cycle 可携带的 container draft，state holder draft 已能把 container 提升为 value-style held state summary，committed state store draft 已能把 holder 提升为 value-style committed state summary，cycle feedback draft 已能把 committed state 投影成下一轮 internal runtime cycle feedback candidate。它仍没有形成下一轮 runtime cycle request。
+当前 app lifecycle、window lifecycle 与 runtime state 链路已证明 owner-local immutable-copy state transition 可以落地，publication draft 已能把 already-produced nextState 标记为 internal 后续输入候选，carry-forward draft 已把这些候选压成下一轮 internal runtime cycle 的候选摘要，carried state container 已能将候选包装为下一轮 internal runtime cycle 可携带的 container draft，state holder draft 已能把 container 提升为 value-style held state summary，committed state store draft 已能把 holder 提升为 value-style committed state summary，cycle feedback draft 已能把 committed state 投影成下一轮 internal runtime cycle feedback candidate，next-cycle request draft 已能把 feedback 投影为 value-style `CjguiInternalRuntimeCycleRequest` candidate。它仍没有 hand off request candidate，也没有执行下一轮 runtime cycle。
 
-下一步默认进入 `P1 runtime next-cycle request draft bundle implementation`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、runtime step execution、new app/window state mutation、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、transition execution、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline、offscreen renderer、public state publication、跨全链路重命名或移动 owner boundaries。
+下一步默认进入 `P1 runtime cycle handoff draft bundle implementation`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、runtime step execution、new app/window state mutation、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、transition execution、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline、offscreen renderer、public state publication、跨全链路重命名或移动 owner boundaries。
 
-本轮已完成 runtime next-cycle request boundary compaction；下一轮进入 next-cycle request draft bundle implementation。
+本轮已完成 runtime cycle handoff boundary compaction；下一轮进入 cycle handoff draft bundle implementation。

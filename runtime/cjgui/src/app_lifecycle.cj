@@ -323,6 +323,78 @@ func cjguiInternalAppLifecycleMutationPlanBlockedSanity(): Bool {
     return plan.shouldReportAppLifecycleMutationPlanBlocked
 }
 
+// 内部 app lifecycle mutation commit gate draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app lifecycle owner 是否可以进入 mutation commit gate。
+// - 它不修改 CjguiInternalAppLifecycleState, 不调用 transition functions。
+// - 它不执行 app lifecycle work, 不是 public runtime API 或 public C ABI。
+
+struct CjguiInternalAppLifecycleMutationCommitGateDraft {
+    let canEnterAppLifecycleMutationCommit: Bool
+    let shouldDeferAppLifecycleMutationCommit: Bool
+    let shouldReportAppLifecycleMutationCommitBlocked: Bool
+
+    init(
+        canEnterAppLifecycleMutationCommit: Bool,
+        shouldDeferAppLifecycleMutationCommit: Bool,
+        shouldReportAppLifecycleMutationCommitBlocked: Bool
+    ) {
+        this.canEnterAppLifecycleMutationCommit = canEnterAppLifecycleMutationCommit
+        this.shouldDeferAppLifecycleMutationCommit = shouldDeferAppLifecycleMutationCommit
+        this.shouldReportAppLifecycleMutationCommitBlocked = shouldReportAppLifecycleMutationCommitBlocked
+    }
+}
+
+func cjguiInternalBuildAppLifecycleMutationCommitGateDraft(
+    plan: CjguiInternalAppLifecycleMutationPlanDraft
+): CjguiInternalAppLifecycleMutationCommitGateDraft {
+    return CjguiInternalAppLifecycleMutationCommitGateDraft(
+        plan.shouldPlanAppLifecycleMutation,
+        plan.shouldDeferAppLifecycleMutationPlan,
+        plan.shouldReportAppLifecycleMutationPlanBlocked
+    )
+}
+
+func cjguiInternalAppLifecycleMutationCommitGateOpenSanity(): Bool {
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildAppLifecycleMutationCommitGateDraft(plan)
+    if (gate.canEnterAppLifecycleMutationCommit == false) {
+        return false
+    }
+    if (gate.shouldDeferAppLifecycleMutationCommit) {
+        return false
+    }
+    return gate.shouldReportAppLifecycleMutationCommitBlocked == false
+}
+
+func cjguiInternalAppLifecycleMutationCommitGateBlockedSanity(): Bool {
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildAppLifecycleMutationCommitGateDraft(plan)
+    if (gate.canEnterAppLifecycleMutationCommit) {
+        return false
+    }
+    if (gate.shouldDeferAppLifecycleMutationCommit == false) {
+        return false
+    }
+    return gate.shouldReportAppLifecycleMutationCommitBlocked
+}
+
 //
 // 未来 app lifecycle owner:
 // - 归属正式的 runtime/cjgui core app lifecycle 模块。

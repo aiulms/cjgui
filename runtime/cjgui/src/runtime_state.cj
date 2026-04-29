@@ -1205,6 +1205,56 @@ struct CjguiInternalLifecycleMutationPlanReport {
     }
 }
 
+// 内部 lifecycle mutation commit gate request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 mutation plan report。
+// - runtime_state.cj 在这里仅作为 cross-owner commit gate summary owner。
+// - 它不拥有 app/window lifecycle mutation semantics。
+
+struct CjguiInternalLifecycleMutationCommitGateRequest {
+    let planReport: CjguiInternalLifecycleMutationPlanReport
+
+    init(
+        planReport: CjguiInternalLifecycleMutationPlanReport
+    ) {
+        this.planReport = planReport
+    }
+}
+
+// 内部 lifecycle mutation commit gate report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app/window mutation commit gate summary。
+// - canEnterLifecycleMutationCommit 不是真实 mutation execution。
+// - 它不执行 lifecycle mutation, 不 commit state, 不修改 app/window state。
+
+struct CjguiInternalLifecycleMutationCommitGateReport {
+    let request: CjguiInternalLifecycleMutationCommitGateRequest
+    let appCommitGate: CjguiInternalAppLifecycleMutationCommitGateDraft
+    let windowCommitGate: CjguiInternalWindowLifecycleMutationCommitGateDraft
+    let canEnterLifecycleMutationCommit: Bool
+    let shouldDeferLifecycleMutationCommit: Bool
+    let shouldReportLifecycleMutationCommitBlocked: Bool
+    let didBuildMutationCommitGate: Bool
+
+    init(
+        request: CjguiInternalLifecycleMutationCommitGateRequest,
+        appCommitGate: CjguiInternalAppLifecycleMutationCommitGateDraft,
+        windowCommitGate: CjguiInternalWindowLifecycleMutationCommitGateDraft,
+        canEnterLifecycleMutationCommit: Bool,
+        shouldDeferLifecycleMutationCommit: Bool,
+        shouldReportLifecycleMutationCommitBlocked: Bool,
+        didBuildMutationCommitGate: Bool
+    ) {
+        this.request = request
+        this.appCommitGate = appCommitGate
+        this.windowCommitGate = windowCommitGate
+        this.canEnterLifecycleMutationCommit = canEnterLifecycleMutationCommit
+        this.shouldDeferLifecycleMutationCommit = shouldDeferLifecycleMutationCommit
+        this.shouldReportLifecycleMutationCommitBlocked = shouldReportLifecycleMutationCommitBlocked
+        this.didBuildMutationCommitGate = didBuildMutationCommitGate
+    }
+}
+
 func cjguiInternalDefaultRuntimeStepInput(): CjguiInternalRuntimeStepInput {
     return CjguiInternalRuntimeStepInput()
 }
@@ -2537,6 +2587,65 @@ func cjguiInternalExecuteLifecycleMutationPlanDraft(
 func cjguiInternalExecuteDefaultLifecycleMutationPlanDraft(
 ): CjguiInternalLifecycleMutationPlanReport {
     return cjguiInternalExecuteLifecycleMutationPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 lifecycle mutation commit gate cross-owner summary:
+// - 它只消费 MutationPlanReport, 不越级读取 MutationReadinessReport 或 lower-level facts。
+// - app/window mutation commit gate facts 由各自 lifecycle owner module 构建。
+// - runtime_state.cj 只负责 cross-owner summary, 不执行 lifecycle mutation 或 commit。
+
+func cjguiInternalBuildLifecycleMutationCommitGateRequest(
+    planReport: CjguiInternalLifecycleMutationPlanReport
+): CjguiInternalLifecycleMutationCommitGateRequest {
+    return CjguiInternalLifecycleMutationCommitGateRequest(planReport)
+}
+
+func cjguiInternalEvaluateLifecycleMutationCommitGate(
+    request: CjguiInternalLifecycleMutationCommitGateRequest
+): CjguiInternalLifecycleMutationCommitGateReport {
+    let appCommitGate = cjguiInternalBuildAppLifecycleMutationCommitGateDraft(
+        request.planReport.appPlan
+    )
+    let windowCommitGate = cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(
+        request.planReport.windowPlan
+    )
+    return CjguiInternalLifecycleMutationCommitGateReport(
+        request,
+        appCommitGate,
+        windowCommitGate,
+        appCommitGate.canEnterAppLifecycleMutationCommit && windowCommitGate.canEnterWindowLifecycleMutationCommit,
+        appCommitGate.shouldDeferAppLifecycleMutationCommit || windowCommitGate.shouldDeferWindowLifecycleMutationCommit,
+        appCommitGate.shouldReportAppLifecycleMutationCommitBlocked || windowCommitGate.shouldReportWindowLifecycleMutationCommitBlocked,
+        true
+    )
+}
+
+func cjguiInternalExecuteLifecycleMutationCommitGateDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalLifecycleMutationCommitGateReport {
+    let planReport = cjguiInternalExecuteLifecycleMutationPlanDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLifecycleMutationCommitGateRequest(
+        planReport
+    )
+    return cjguiInternalEvaluateLifecycleMutationCommitGate(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleMutationCommitGateDraft(
+): CjguiInternalLifecycleMutationCommitGateReport {
+    return cjguiInternalExecuteLifecycleMutationCommitGateDraft(
         cjguiInternalDefaultRuntimeDriverRequest(),
         cjguiInternalDefaultRuntimeDriverInput(),
         cjguiInternalDefaultRuntimeDriverPolicy(),
@@ -4868,4 +4977,136 @@ func cjguiInternalLifecycleMutationPlanCancellationBlockedSanity(): Bool {
         return false
     }
     return report.shouldReportLifecycleMutationPlanBlocked
+}
+
+func cjguiInternalLifecycleMutationCommitGateOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleMutationCommitGateDraft()
+    if (report.didBuildMutationCommitGate == false) {
+        return false
+    }
+    if (report.appCommitGate.canEnterAppLifecycleMutationCommit == false) {
+        return false
+    }
+    if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit == false) {
+        return false
+    }
+    if (report.canEnterLifecycleMutationCommit == false) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationCommit) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationCommitBlocked == false
+}
+
+func cjguiInternalLifecycleMutationCommitGateRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleMutationCommitGateDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildMutationCommitGate == false) {
+        return false
+    }
+    if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
+        return false
+    }
+    if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
+        return false
+    }
+    if (report.canEnterLifecycleMutationCommit) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationCommit == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationCommitBlocked
+}
+
+func cjguiInternalLifecycleMutationCommitGateInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationCommitGateDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildMutationCommitGate == false) {
+        return false
+    }
+    if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
+        return false
+    }
+    if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
+        return false
+    }
+    if (report.canEnterLifecycleMutationCommit) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationCommit == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationCommitBlocked
+}
+
+func cjguiInternalLifecycleMutationCommitGateShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationCommitGateDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildMutationCommitGate == false) {
+        return false
+    }
+    if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
+        return false
+    }
+    if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
+        return false
+    }
+    if (report.canEnterLifecycleMutationCommit) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationCommit == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationCommitBlocked
+}
+
+func cjguiInternalLifecycleMutationCommitGateCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationCommitGateDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildMutationCommitGate == false) {
+        return false
+    }
+    if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
+        return false
+    }
+    if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
+        return false
+    }
+    if (report.canEnterLifecycleMutationCommit) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationCommit == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationCommitBlocked
 }

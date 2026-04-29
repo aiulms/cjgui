@@ -785,18 +785,24 @@
 - lifecycle mutation plan draft bundle：
   - [2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md)
 
+- lifecycle mutation commit gate draft boundary compaction：
+  - [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-boundary-compaction.md)
+
+- lifecycle mutation commit gate draft bundle：
+  - [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)
+
 ## 当前下一步 opening
 
 下一步推荐：
 
-- `P1 lifecycle mutation plan draft bundle closure / next runtime behavior decision`
+- `P1 lifecycle mutation commit gate draft bundle closure / next runtime behavior decision`
 
 用途：
 
-- 基于 [2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md)，封账 internal-only mutation plan draft 并决定下一条 runtime behavior boundary。
-- app mutation plan facts 已放在 `app_lifecycle.cj`，window mutation plan facts 已放在 `window_lifecycle.cj`。
-- `runtime_state.cj` 只做 cross-owner mutation plan routing summary，消费 mutation readiness report，不拥有 lifecycle mutation semantics。
-- plan draft 只表达 `shouldPlanMutation` / `shouldDeferPlan` / `shouldReportPlanBlocked`。
+- 基于 [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)，封账 internal-only lifecycle mutation commit gate draft 并决定下一条 runtime behavior boundary。
+- app commit gate facts 已放在 `app_lifecycle.cj`，window commit gate facts 已放在 `window_lifecycle.cj`。
+- `runtime_state.cj` 只做 cross-owner commit gate summary，消费 mutation plan report，不拥有 lifecycle mutation semantics。
+- commit gate draft 只能表达 `canEnterCommit` / `shouldDeferCommit` / `shouldReportCommitBlocked`。
 
 当前可执行动作：
 

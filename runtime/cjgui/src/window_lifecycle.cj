@@ -290,6 +290,79 @@ func cjguiInternalWindowLifecycleMutationPlanBlockedSanity(): Bool {
     return plan.shouldReportWindowLifecycleMutationPlanBlocked
 }
 
+// 内部 window lifecycle mutation commit gate draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 window lifecycle owner 是否可以进入 mutation commit gate。
+// - 它不修改 CjguiInternalWindowLifecycleState, 不调用 transition functions。
+// - 它不执行 create / close / destroy / release。
+// - 它不是 public runtime API、public C ABI、platform object wrapper 或 native handle。
+
+struct CjguiInternalWindowLifecycleMutationCommitGateDraft {
+    let canEnterWindowLifecycleMutationCommit: Bool
+    let shouldDeferWindowLifecycleMutationCommit: Bool
+    let shouldReportWindowLifecycleMutationCommitBlocked: Bool
+
+    init(
+        canEnterWindowLifecycleMutationCommit: Bool,
+        shouldDeferWindowLifecycleMutationCommit: Bool,
+        shouldReportWindowLifecycleMutationCommitBlocked: Bool
+    ) {
+        this.canEnterWindowLifecycleMutationCommit = canEnterWindowLifecycleMutationCommit
+        this.shouldDeferWindowLifecycleMutationCommit = shouldDeferWindowLifecycleMutationCommit
+        this.shouldReportWindowLifecycleMutationCommitBlocked = shouldReportWindowLifecycleMutationCommitBlocked
+    }
+}
+
+func cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(
+    plan: CjguiInternalWindowLifecycleMutationPlanDraft
+): CjguiInternalWindowLifecycleMutationCommitGateDraft {
+    return CjguiInternalWindowLifecycleMutationCommitGateDraft(
+        plan.shouldPlanWindowLifecycleMutation,
+        plan.shouldDeferWindowLifecycleMutationPlan,
+        plan.shouldReportWindowLifecycleMutationPlanBlocked
+    )
+}
+
+func cjguiInternalWindowLifecycleMutationCommitGateOpenSanity(): Bool {
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildWindowLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(plan)
+    if (gate.canEnterWindowLifecycleMutationCommit == false) {
+        return false
+    }
+    if (gate.shouldDeferWindowLifecycleMutationCommit) {
+        return false
+    }
+    return gate.shouldReportWindowLifecycleMutationCommitBlocked == false
+}
+
+func cjguiInternalWindowLifecycleMutationCommitGateBlockedSanity(): Bool {
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildWindowLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(plan)
+    if (gate.canEnterWindowLifecycleMutationCommit) {
+        return false
+    }
+    if (gate.shouldDeferWindowLifecycleMutationCommit == false) {
+        return false
+    }
+    return gate.shouldReportWindowLifecycleMutationCommitBlocked
+}
+
 
 // 未来 window lifecycle owner:
 // - 归属正式 runtime core window lifecycle 模块。

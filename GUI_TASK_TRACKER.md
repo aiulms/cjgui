@@ -238,6 +238,10 @@
 
 最新补充：P1 lifecycle mutation plan draft bundle implementation 已完成；在 `app_lifecycle.cj` 新增默认 internal `CjguiInternalAppLifecycleMutationPlanDraft`、builder 与 open / blocked sanity，在 `window_lifecycle.cj` 新增默认 internal `CjguiInternalWindowLifecycleMutationPlanDraft`、builder 与 open / blocked sanity，在 `runtime_state.cj` 新增默认 internal `CjguiInternalLifecycleMutationPlanRequest`、`CjguiInternalLifecycleMutationPlanReport`、request builder、cross-owner evaluator、draft executor、default draft executor 和五条直接相关 sanity helpers。runtime summary 只消费 `CjguiInternalLifecycleMutationReadinessReport.appReadiness` / `windowReadiness`，不越级读取 OwnerHandoffReport、LifecycleWorkDraftReport 或 lower-level facts；app/window plan drafts 只表达 shouldPlan / defer-plan / blocked-plan facts，不修改 app/window state、不调用 state-changing transition functions、不执行 lifecycle work。envsetup 后 `cjpm build --target-dir /tmp/cjgui-lifecycle-mutation-plan-draft-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md)。当前 next opening 转向 `P1 lifecycle mutation plan draft bundle closure / next runtime behavior decision`。
 
+最新补充：P1 lifecycle mutation commit gate draft boundary compaction 已完成；新增 [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-boundary-compaction.md)，将 app/window mutation plan facts 与 runtime cross-owner plan summary 压缩成 commit gate 前结论。关键判断：可以进入 internal-only lifecycle mutation commit gate draft；app commit gate facts 应继续归属 `app_lifecycle.cj`，window commit gate facts 应继续归属 `window_lifecycle.cj`，`runtime_state.cj` 只做 cross-owner commit gate summary。下一刀只能表达 `canEnterCommit` / `shouldDeferCommit` / `shouldReportCommitBlocked`，不能修改 app/window state，不能调用 state-changing transition functions，也不能进入 queue / drain、event loop、platform callback、window create / close / destroy、public API 或 C ABI。本轮没有写 runtime code，没有创建 preflight / execution card；当前 next opening 转向 `P1 lifecycle mutation commit gate draft bundle implementation`。
+
+最新补充：P1 lifecycle mutation commit gate draft bundle implementation 已完成；在 `app_lifecycle.cj` 新增默认 internal `CjguiInternalAppLifecycleMutationCommitGateDraft`、builder 与 open / blocked sanity，在 `window_lifecycle.cj` 新增默认 internal `CjguiInternalWindowLifecycleMutationCommitGateDraft`、builder 与 open / blocked sanity，在 `runtime_state.cj` 新增默认 internal `CjguiInternalLifecycleMutationCommitGateRequest`、`CjguiInternalLifecycleMutationCommitGateReport`、request builder、cross-owner evaluator、draft executor、default draft executor 和五条直接相关 sanity helpers。runtime summary 只消费 `CjguiInternalLifecycleMutationPlanReport.appPlan` / `windowPlan`，不越级读取 MutationReadinessReport、OwnerHandoffReport、LifecycleWorkDraftReport 或 lower-level facts；app/window commit gate drafts 只表达 canEnterCommit / defer-commit / blocked-commit facts，不修改 app/window state、不调用 state-changing transition functions、不执行 lifecycle work。envsetup 后 `cjpm build --target-dir /tmp/cjgui-lifecycle-mutation-commit-gate-draft-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)。当前 next opening 转向 `P1 lifecycle mutation commit gate draft bundle closure / next runtime behavior decision`。
+
 ## 当前 current-state summary
 
 ### 1. 项目目标已清楚
@@ -291,16 +295,16 @@
 
 当前推荐开启的下一条 opening：
 
-### `P1 lifecycle mutation plan draft bundle closure / next runtime behavior decision`
+### `P1 lifecycle mutation commit gate draft bundle closure / next runtime behavior decision`
 
 性质：closure review / architecture decision
 
 目标：
 
-- 基于 [2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md)，封账 internal-only lifecycle mutation plan draft。
-- app mutation plan facts 已放在 `app_lifecycle.cj`；window mutation plan facts 已放在 `window_lifecycle.cj`。
-- `runtime_state.cj` 只做 cross-owner mutation plan routing summary，消费 mutation readiness report，不拥有 lifecycle mutation semantics。
-- 下一步需要先判断是否继续进入 lifecycle mutation execution readiness / command draft，或转向更高层 compaction。
+- 基于 [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)，封账 internal-only lifecycle mutation commit gate draft。
+- app commit gate facts 已放在 `app_lifecycle.cj`；window commit gate facts 已放在 `window_lifecycle.cj`。
+- `runtime_state.cj` 只做 cross-owner commit gate summary，消费 mutation plan report，不拥有 lifecycle mutation semantics。
+- 下一步需要先判断是否进入 mutation commit command / execution readiness，或转向更高层 compaction。
 
 本 opening 仍禁止：
 
@@ -2734,16 +2738,16 @@ P1 bridge boundary cleanup、P1 main-thread UI message queue first slice、P1 au
 
 当前推荐的下一条 opening 是：
 
-### `P1 lifecycle mutation plan draft bundle closure / next runtime behavior decision`
+### `P1 lifecycle mutation commit gate draft bundle closure / next runtime behavior decision`
 
 性质：closure review / architecture decision
 
 目标：
 
-- 基于 [2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md)，封账 internal-only lifecycle mutation plan draft。
-- app mutation plan facts 已归属 `app_lifecycle.cj`；window mutation plan facts 已归属 `window_lifecycle.cj`。
-- `runtime_state.cj` 只做 cross-owner mutation plan routing summary，消费 mutation readiness report，不拥有 app/window lifecycle mutation semantics。
-- 下一步需要判断是否进入 lifecycle mutation execution readiness / command draft，或转向更高层 compaction。
+- 基于 [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)，封账 internal-only lifecycle mutation commit gate draft。
+- app commit gate facts 已归属 `app_lifecycle.cj`；window commit gate facts 已归属 `window_lifecycle.cj`。
+- `runtime_state.cj` 只做 cross-owner commit gate summary，消费 mutation plan report，不拥有 app/window lifecycle mutation semantics。
+- 下一步需要判断是否进入 mutation commit command / execution readiness，或转向更高层 compaction。
 
 禁止：
 
@@ -3201,12 +3205,12 @@ Stop-line：
 
 如果继续推进，最合适的下一步是：
 
-> `P1 lifecycle mutation plan draft bundle closure / next runtime behavior decision`
+> `P1 lifecycle mutation commit gate draft bundle closure / next runtime behavior decision`
 
-范围基于 [P1 lifecycle mutation plan draft bundle closure review](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-bundle-closure-review.md)，对 internal-only mutation plan draft 做封账并决定下一条 runtime behavior boundary。当前 mutation plan 已能把 app lifecycle plan facts 放在 `app_lifecycle.cj`、window lifecycle plan facts 放在 `window_lifecycle.cj`，`runtime_state.cj` 只做 cross-owner plan summary；下一刀不应继续无判断地堆 wrapper。
+范围基于 [P1 lifecycle mutation commit gate draft bundle closure review](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)，对 internal-only mutation commit gate draft 做封账并决定下一条 runtime behavior boundary。当前 commit gate 已能把 app lifecycle commit gate facts 放在 `app_lifecycle.cj`、window lifecycle commit gate facts 放在 `window_lifecycle.cj`，`runtime_state.cj` 只做 cross-owner commit gate summary；下一刀不应直接变成真实 mutation commit。
 
 当前 app lifecycle、window lifecycle 与 platform adapter 已证明 internal immutable state / fact、construction shape、NoOp function、极窄 marker transition、platform readiness fact -> lifecycle marker projection、internal lifecycle coordination result / function、默认 internal sanity function、app lifecycle observed platform readiness state、window lifecycle observed platform readiness state、app/window readiness predicate helpers、positive coordination readiness sanity helper、negative coordination readiness sanity helper、readiness sanity parity helper、internal runtime readiness aggregate type、internal runtime readiness aggregate builder、internal runtime bootstrap snapshot type、internal runtime bootstrap snapshot builder、internal runtime root state type、internal runtime root state builder、internal runtime root ready sanity helper、internal runtime step result type、first internal runtime step function，以及 internal runtime step ready sanity helper 都能落地。
 
-下一步默认进入 `P1 lifecycle mutation plan draft bundle closure / next runtime behavior decision`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、真实 loop iteration、真实 work execution、真实 app/window lifecycle execution、app/window state mutation、调用 state-changing transition functions、`while` loop / scheduling loop、queue / drain、input processing、layout / render、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
+下一步默认进入 `P1 lifecycle mutation commit gate draft bundle closure / next runtime behavior decision`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、真实 loop iteration、真实 work execution、真实 app/window lifecycle execution、app/window state mutation、调用 state-changing transition functions、`while` loop / scheduling loop、queue / drain、input processing、layout / render、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
 
-本轮已完成 lifecycle mutation plan draft bundle implementation；下一轮应先做 closure / next-boundary decision，避免直接把 plan draft 变成真实 lifecycle mutation。
+本轮已完成 lifecycle mutation commit gate draft bundle implementation；下一轮应先做 closure / next-boundary decision，避免直接把 commit gate 变成真实 lifecycle mutation 或 state commit。

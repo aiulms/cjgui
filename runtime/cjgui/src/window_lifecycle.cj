@@ -86,6 +86,139 @@ func cjguiInternalWindowLifecycleHasObservedPlatformReady(
     state.hasObservedPlatformReady
 }
 
+// 内部 window lifecycle owner handoff draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 window lifecycle owner-facing handoff facts。
+// - 它不修改 window lifecycle state, 不执行 create / close / destroy / release。
+// - 它不是 public runtime API、public C ABI、platform object wrapper 或 native handle。
+
+struct CjguiInternalWindowLifecycleWorkHandoffDraft {
+    let shouldAcceptLifecycleWork: Bool
+    let shouldDeferLifecycleWork: Bool
+    let shouldReportLifecycleBlocked: Bool
+
+    init(
+        shouldAcceptLifecycleWork: Bool,
+        shouldDeferLifecycleWork: Bool,
+        shouldReportLifecycleBlocked: Bool
+    ) {
+        this.shouldAcceptLifecycleWork = shouldAcceptLifecycleWork
+        this.shouldDeferLifecycleWork = shouldDeferLifecycleWork
+        this.shouldReportLifecycleBlocked = shouldReportLifecycleBlocked
+    }
+}
+
+func cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+    shouldProcessLifecycleWork: Bool,
+    shouldDeferLifecycleWork: Bool,
+    shouldReportLifecycleBlocked: Bool
+): CjguiInternalWindowLifecycleWorkHandoffDraft {
+    return CjguiInternalWindowLifecycleWorkHandoffDraft(
+        shouldProcessLifecycleWork,
+        shouldDeferLifecycleWork,
+        shouldReportLifecycleBlocked
+    )
+}
+
+func cjguiInternalWindowLifecycleWorkHandoffOpenSanity(): Bool {
+    let draft = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    if (draft.shouldAcceptLifecycleWork == false) {
+        return false
+    }
+    if (draft.shouldDeferLifecycleWork) {
+        return false
+    }
+    return draft.shouldReportLifecycleBlocked == false
+}
+
+func cjguiInternalWindowLifecycleWorkHandoffBlockedSanity(): Bool {
+    let draft = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    if (draft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (draft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    return draft.shouldReportLifecycleBlocked
+}
+
+// 内部 window lifecycle mutation readiness draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 window lifecycle owner 是否具备 mutation readiness。
+// - 它不修改 CjguiInternalWindowLifecycleState, 不调用 transition functions。
+// - 它不执行 create / close / destroy / release。
+// - 它不是 public runtime API、public C ABI、platform object wrapper 或 native handle。
+
+struct CjguiInternalWindowLifecycleMutationReadinessDraft {
+    let canMutateWindowLifecycle: Bool
+    let shouldDeferWindowLifecycleMutation: Bool
+    let shouldReportWindowLifecycleMutationBlocked: Bool
+
+    init(
+        canMutateWindowLifecycle: Bool,
+        shouldDeferWindowLifecycleMutation: Bool,
+        shouldReportWindowLifecycleMutationBlocked: Bool
+    ) {
+        this.canMutateWindowLifecycle = canMutateWindowLifecycle
+        this.shouldDeferWindowLifecycleMutation = shouldDeferWindowLifecycleMutation
+        this.shouldReportWindowLifecycleMutationBlocked = shouldReportWindowLifecycleMutationBlocked
+    }
+}
+
+func cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+    handoff: CjguiInternalWindowLifecycleWorkHandoffDraft
+): CjguiInternalWindowLifecycleMutationReadinessDraft {
+    return CjguiInternalWindowLifecycleMutationReadinessDraft(
+        handoff.shouldAcceptLifecycleWork,
+        handoff.shouldDeferLifecycleWork,
+        handoff.shouldReportLifecycleBlocked
+    )
+}
+
+func cjguiInternalWindowLifecycleMutationReadinessOpenSanity(): Bool {
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    if (readiness.canMutateWindowLifecycle == false) {
+        return false
+    }
+    if (readiness.shouldDeferWindowLifecycleMutation) {
+        return false
+    }
+    return readiness.shouldReportWindowLifecycleMutationBlocked == false
+}
+
+func cjguiInternalWindowLifecycleMutationReadinessBlockedSanity(): Bool {
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    if (readiness.canMutateWindowLifecycle) {
+        return false
+    }
+    if (readiness.shouldDeferWindowLifecycleMutation == false) {
+        return false
+    }
+    return readiness.shouldReportWindowLifecycleMutationBlocked
+}
+
 
 // 未来 window lifecycle owner:
 // - 归属正式 runtime core window lifecycle 模块。

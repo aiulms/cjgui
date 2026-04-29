@@ -14,14 +14,30 @@
   - `CjguiInternalAppLifecycleState`
   - `CjguiInternalAppLifecycleTransitionMarker`
   - `CjguiInternalAppLifecyclePhaseTaxonomyMarker`
+  - `CjguiInternalAppLifecycleWorkHandoffDraft`
+  - `CjguiInternalAppLifecycleMutationReadinessDraft`
   - `cjguiInternalNoOpAppLifecycleTransition`
   - `cjguiInternalAppLifecyclePhaseMarkerTransition`
   - `cjguiInternalAppLifecycleHasObservedPlatformReady`
+  - `cjguiInternalBuildAppLifecycleWorkHandoffDraft`
+  - `cjguiInternalBuildAppLifecycleMutationReadinessDraft`
+  - `cjguiInternalAppLifecycleWorkHandoffOpenSanity`
+  - `cjguiInternalAppLifecycleWorkHandoffBlockedSanity`
+  - `cjguiInternalAppLifecycleMutationReadinessOpenSanity`
+  - `cjguiInternalAppLifecycleMutationReadinessBlockedSanity`
 - `src/window_lifecycle.cj`
   - `CjguiInternalWindowLifecycleState`
+  - `CjguiInternalWindowLifecycleWorkHandoffDraft`
+  - `CjguiInternalWindowLifecycleMutationReadinessDraft`
   - `cjguiInternalNoOpWindowLifecycleTransition`
   - `cjguiInternalWindowLifecycleStateMarkerTransition`
   - `cjguiInternalWindowLifecycleHasObservedPlatformReady`
+  - `cjguiInternalBuildWindowLifecycleWorkHandoffDraft`
+  - `cjguiInternalBuildWindowLifecycleMutationReadinessDraft`
+  - `cjguiInternalWindowLifecycleWorkHandoffOpenSanity`
+  - `cjguiInternalWindowLifecycleWorkHandoffBlockedSanity`
+  - `cjguiInternalWindowLifecycleMutationReadinessOpenSanity`
+  - `cjguiInternalWindowLifecycleMutationReadinessBlockedSanity`
 - `src/platform_adapter.cj`
   - `CjguiInternalPlatformAdapterFact`
   - `cjguiInternalNoOpPlatformAdapterFactIngestion`
@@ -58,6 +74,39 @@
   - `CjguiInternalRuntimeRunIntent`
   - `CjguiInternalRuntimeRunRequest`
   - `CjguiInternalRuntimeRunRequestReport`
+  - `CjguiInternalRuntimeShutdownIntent`
+  - `CjguiInternalRuntimeShutdownRequest`
+  - `CjguiInternalRuntimeShutdownReport`
+  - `CjguiInternalRunBoundaryRequest`
+  - `CjguiInternalRunBoundaryReport`
+  - `CjguiInternalAppRunState`
+  - `CjguiInternalAppRunRequest`
+  - `CjguiInternalAppRunReport`
+  - `CjguiInternalAppRunControllerRequest`
+  - `CjguiInternalAppRunControllerDecision`
+  - `CjguiInternalAppRunControllerReport`
+  - `CjguiInternalAppRunExecutionPlanRequest`
+  - `CjguiInternalAppRunExecutionPlan`
+  - `CjguiInternalAppRunExecutionPlanReport`
+  - `CjguiInternalAppRunDispatchRequest`
+  - `CjguiInternalAppRunDispatchSummary`
+  - `CjguiInternalAppRunDispatchReport`
+  - `CjguiInternalRunLoopDraftRequest`
+  - `CjguiInternalRunLoopDraftIntent`
+  - `CjguiInternalRunLoopDraftReport`
+  - `CjguiInternalLoopIterationDraftRequest`
+  - `CjguiInternalLoopIterationDraftIntent`
+  - `CjguiInternalLoopIterationDraftReport`
+  - `CjguiInternalIterationWorkPacketDraftRequest`
+  - `CjguiInternalIterationWorkPacketDraft`
+  - `CjguiInternalIterationWorkPacketDraftReport`
+  - `CjguiInternalLifecycleWorkDraftRequest`
+  - `CjguiInternalLifecycleWorkDraft`
+  - `CjguiInternalLifecycleWorkDraftReport`
+  - `CjguiInternalLifecycleOwnerHandoffRequest`
+  - `CjguiInternalLifecycleOwnerHandoffReport`
+  - `CjguiInternalLifecycleMutationReadinessRequest`
+  - `CjguiInternalLifecycleMutationReadinessReport`
   - `cjguiInternalBuildRuntimeRootState`
   - `cjguiInternalRuntimeRootStateReadySanity`
   - `cjguiInternalRuntimeStep`
@@ -100,6 +149,62 @@
   - `cjguiInternalEvaluateRuntimeRunRequest`
   - `cjguiInternalExecuteRuntimeRunRequestDraft`
   - `cjguiInternalExecuteDefaultRuntimeRunRequestDraft`
+  - `cjguiInternalDefaultRuntimeShutdownIntent`
+  - `cjguiInternalBuildRuntimeShutdownIntent`
+  - `cjguiInternalBuildRuntimeShutdownRequest`
+  - `cjguiInternalEvaluateRuntimeShutdownRequest`
+  - `cjguiInternalBuildRunBoundaryRequest`
+  - `cjguiInternalEvaluateRunBoundaryRequest`
+  - `cjguiInternalExecuteRunBoundaryDraft`
+  - `cjguiInternalExecuteDefaultRunBoundaryDraft`
+  - `cjguiInternalBuildAppRunState`
+  - `cjguiInternalBuildAppRunRequest`
+  - `cjguiInternalEvaluateAppRunRequest`
+  - `cjguiInternalExecuteAppRunSurfaceDraft`
+  - `cjguiInternalExecuteDefaultAppRunSurfaceDraft`
+  - `cjguiInternalBuildAppRunControllerRequest`
+  - `cjguiInternalDecideAppRunController`
+  - `cjguiInternalEvaluateAppRunController`
+  - `cjguiInternalExecuteAppRunControllerDraft`
+  - `cjguiInternalExecuteDefaultAppRunControllerDraft`
+  - `cjguiInternalBuildAppRunExecutionPlanRequest`
+  - `cjguiInternalBuildAppRunExecutionPlan`
+  - `cjguiInternalEvaluateAppRunExecutionPlan`
+  - `cjguiInternalExecuteAppRunExecutionPlanDraft`
+  - `cjguiInternalExecuteDefaultAppRunExecutionPlanDraft`
+  - `cjguiInternalBuildAppRunDispatchRequest`
+  - `cjguiInternalBuildAppRunDispatchSummary`
+  - `cjguiInternalEvaluateAppRunDispatch`
+  - `cjguiInternalExecuteAppRunDispatchDraft`
+  - `cjguiInternalExecuteDefaultAppRunDispatchDraft`
+  - `cjguiInternalBuildRunLoopDraftRequest`
+  - `cjguiInternalBuildRunLoopDraftIntent`
+  - `cjguiInternalEvaluateRunLoopDraft`
+  - `cjguiInternalExecuteRunLoopDraft`
+  - `cjguiInternalExecuteDefaultRunLoopDraft`
+  - `cjguiInternalBuildLoopIterationDraftRequest`
+  - `cjguiInternalBuildLoopIterationDraftIntent`
+  - `cjguiInternalEvaluateLoopIterationDraft`
+  - `cjguiInternalExecuteLoopIterationDraft`
+  - `cjguiInternalExecuteDefaultLoopIterationDraft`
+  - `cjguiInternalBuildIterationWorkPacketDraftRequest`
+  - `cjguiInternalBuildIterationWorkPacketDraft`
+  - `cjguiInternalEvaluateIterationWorkPacketDraft`
+  - `cjguiInternalExecuteIterationWorkPacketDraft`
+  - `cjguiInternalExecuteDefaultIterationWorkPacketDraft`
+  - `cjguiInternalBuildLifecycleWorkDraftRequest`
+  - `cjguiInternalBuildLifecycleWorkDraft`
+  - `cjguiInternalEvaluateLifecycleWorkDraft`
+  - `cjguiInternalExecuteLifecycleWorkDraft`
+  - `cjguiInternalExecuteDefaultLifecycleWorkDraft`
+  - `cjguiInternalBuildLifecycleOwnerHandoffRequest`
+  - `cjguiInternalEvaluateLifecycleOwnerHandoff`
+  - `cjguiInternalExecuteLifecycleOwnerHandoffDraft`
+  - `cjguiInternalExecuteDefaultLifecycleOwnerHandoffDraft`
+  - `cjguiInternalBuildLifecycleMutationReadinessRequest`
+  - `cjguiInternalEvaluateLifecycleMutationReadiness`
+  - `cjguiInternalExecuteLifecycleMutationReadinessDraft`
+  - `cjguiInternalExecuteDefaultLifecycleMutationReadinessDraft`
   - `cjguiInternalRuntimeCommandDraftReadySanity`
   - `cjguiInternalRuntimeCommandDraftNotReadyBlockedSanity`
   - `cjguiInternalRuntimeCommandDraftInputBlockedSanity`
@@ -121,6 +226,65 @@
   - `cjguiInternalRuntimeRunRequestReadySanity`
   - `cjguiInternalRuntimeRunRequestRuntimeBlockedSanity`
   - `cjguiInternalRuntimeRunRequestInputBlockedSanity`
+  - `cjguiInternalRuntimeShutdownIdleSanity`
+  - `cjguiInternalRuntimeShutdownRequestedSanity`
+  - `cjguiInternalRuntimeCancellationRequestedSanity`
+  - `cjguiInternalRuntimeShutdownAndCancellationRequestedSanity`
+  - `cjguiInternalRunBoundaryOpenSanity`
+  - `cjguiInternalRunBoundaryRuntimeBlockedSanity`
+  - `cjguiInternalRunBoundaryInputBlockedSanity`
+  - `cjguiInternalRunBoundaryShutdownBlockedSanity`
+  - `cjguiInternalRunBoundaryCancellationBlockedSanity`
+  - `cjguiInternalAppRunSurfaceOpenSanity`
+  - `cjguiInternalAppRunSurfaceRuntimeBlockedSanity`
+  - `cjguiInternalAppRunSurfaceInputBlockedSanity`
+  - `cjguiInternalAppRunSurfaceShutdownBlockedSanity`
+  - `cjguiInternalAppRunSurfaceCancellationBlockedSanity`
+  - `cjguiInternalAppRunControllerOpenSanity`
+  - `cjguiInternalAppRunControllerRuntimeBlockedSanity`
+  - `cjguiInternalAppRunControllerInputBlockedSanity`
+  - `cjguiInternalAppRunControllerShutdownBlockedSanity`
+  - `cjguiInternalAppRunControllerCancellationBlockedSanity`
+  - `cjguiInternalAppRunExecutionPlanOpenSanity`
+  - `cjguiInternalAppRunExecutionPlanRuntimeBlockedSanity`
+  - `cjguiInternalAppRunExecutionPlanInputBlockedSanity`
+  - `cjguiInternalAppRunExecutionPlanShutdownBlockedSanity`
+  - `cjguiInternalAppRunExecutionPlanCancellationBlockedSanity`
+  - `cjguiInternalAppRunDispatchOpenSanity`
+  - `cjguiInternalAppRunDispatchRuntimeBlockedSanity`
+  - `cjguiInternalAppRunDispatchInputBlockedSanity`
+  - `cjguiInternalAppRunDispatchShutdownBlockedSanity`
+  - `cjguiInternalAppRunDispatchCancellationBlockedSanity`
+  - `cjguiInternalRunLoopDraftOpenSanity`
+  - `cjguiInternalRunLoopDraftRuntimeBlockedSanity`
+  - `cjguiInternalRunLoopDraftInputBlockedSanity`
+  - `cjguiInternalRunLoopDraftShutdownBlockedSanity`
+  - `cjguiInternalRunLoopDraftCancellationBlockedSanity`
+  - `cjguiInternalLoopIterationDraftOpenSanity`
+  - `cjguiInternalLoopIterationDraftRuntimeBlockedSanity`
+  - `cjguiInternalLoopIterationDraftInputBlockedSanity`
+  - `cjguiInternalLoopIterationDraftShutdownBlockedSanity`
+  - `cjguiInternalLoopIterationDraftCancellationBlockedSanity`
+  - `cjguiInternalIterationWorkPacketDraftOpenSanity`
+  - `cjguiInternalIterationWorkPacketDraftRuntimeBlockedSanity`
+  - `cjguiInternalIterationWorkPacketDraftInputBlockedSanity`
+  - `cjguiInternalIterationWorkPacketDraftShutdownBlockedSanity`
+  - `cjguiInternalIterationWorkPacketDraftCancellationBlockedSanity`
+  - `cjguiInternalLifecycleWorkDraftOpenSanity`
+  - `cjguiInternalLifecycleWorkDraftRuntimeBlockedSanity`
+  - `cjguiInternalLifecycleWorkDraftInputBlockedSanity`
+  - `cjguiInternalLifecycleWorkDraftShutdownBlockedSanity`
+  - `cjguiInternalLifecycleWorkDraftCancellationBlockedSanity`
+  - `cjguiInternalLifecycleOwnerHandoffOpenSanity`
+  - `cjguiInternalLifecycleOwnerHandoffRuntimeBlockedSanity`
+  - `cjguiInternalLifecycleOwnerHandoffInputBlockedSanity`
+  - `cjguiInternalLifecycleOwnerHandoffShutdownBlockedSanity`
+  - `cjguiInternalLifecycleOwnerHandoffCancellationBlockedSanity`
+  - `cjguiInternalLifecycleMutationReadinessOpenSanity`
+  - `cjguiInternalLifecycleMutationReadinessRuntimeBlockedSanity`
+  - `cjguiInternalLifecycleMutationReadinessInputBlockedSanity`
+  - `cjguiInternalLifecycleMutationReadinessShutdownBlockedSanity`
+  - `cjguiInternalLifecycleMutationReadinessCancellationBlockedSanity`
 - `src/error.cj`
   - `CjguiInternalCompileSanityMarker`
   - `CjguiInternalErrorFact`
@@ -133,7 +297,7 @@
 - platform adapter fact: `isPlatformReady: Bool`
 - error fact: `hasNativePayload: Bool = false`
 
-当前 app/window lifecycle 各有一个默认 internal readiness predicate helper，只读取 `hasObservedPlatformReady`，不改变 state shape、constructor shape 或 projection behavior。platform adapter 另有默认 internal coordination readiness sanity helpers：positive helper 复用既有 sanity 链路并确认 app/window 都观察到 platform readiness；negative helper 使用 `isPlatformReady=false` 的 fact 确认默认 app/window 不会被标记为 observed platform ready；parity helper 同时确认 positive / negative sanity 都成立。`src/runtime_bootstrap.cj` 是默认 internal bootstrap owner 文件，承载 runtime readiness aggregate type / builder 与 bootstrap snapshot type / builder；它只聚合 app/window readiness coordination summary 与 bootstrap readiness Bool，不拥有 app/window state truth，也不实现 runtime 启动行为。`src/runtime_state.cj` 是默认 internal runtime root state owner 文件，只聚合 bootstrap snapshot 与 runtime readiness Bool；其 step result 聚合 root state、didAdvance Bool 与最小 blocked outcome，step input / policy / decision 只表达 internal step gate、policy 与脱水 decision summary，step-with-input-policy 只根据 decision 返回原 state 与 didAdvance / blocked outcome，cycle request / result 只组合一次 root state、step input、step policy、decision、step result 与 internal cycle progress marker，command draft 只表达一次 cycle 后的 internal runtime intent summary，command pipeline 只把 cycle request、cycle result 与 command draft 串成 internal summary pipeline，driver draft 只组织一次 pipeline pass 并投影 driver-level summary，driver input / policy / decision 只作为 driver pass 的脱水 gate，driver pass with input 只在 gate 允许时复用既有 pipeline pass，driver report 只把 driver result 规整成 internal next-action summary，run intent 只把 driver report 投影为 internal run-boundary intent summary，run request 只把 run intent 包装并评估为 internal request summary，ready / blocked sanity helpers 只验证 default advance、not-ready fail-closed、input-blocked fail-closed、outcome 字段一致性、一次 cycle request/result 一致性、progress marker 一致性、command draft intent summary 一致性、pipeline summary 一致性、driver summary pass 一致性、driver input/policy gate 一致性、driver report projection 一致性、run intent projection 一致性与 run request evaluation 一致性，并不定义 runtime state machine、event loop、queue / drain、frame/render/layout progress、renderer command list 或 run behavior。
+当前 app/window lifecycle 各有一个默认 internal readiness predicate helper，只读取 `hasObservedPlatformReady`，不改变 state shape、constructor shape 或 projection behavior。platform adapter 另有默认 internal coordination readiness sanity helpers：positive helper 复用既有 sanity 链路并确认 app/window 都观察到 platform readiness；negative helper 使用 `isPlatformReady=false` 的 fact 确认默认 app/window 不会被标记为 observed platform ready；parity helper 同时确认 positive / negative sanity 都成立。`src/runtime_bootstrap.cj` 是默认 internal bootstrap owner 文件，承载 runtime readiness aggregate type / builder 与 bootstrap snapshot type / builder；它只聚合 app/window readiness coordination summary 与 bootstrap readiness Bool，不拥有 app/window state truth，也不实现 runtime 启动行为。`src/runtime_state.cj` 是默认 internal runtime root state owner 文件，只聚合 bootstrap snapshot 与 runtime readiness Bool；其 step result 聚合 root state、didAdvance Bool 与最小 blocked outcome，step input / policy / decision 只表达 internal step gate、policy 与脱水 decision summary，step-with-input-policy 只根据 decision 返回原 state 与 didAdvance / blocked outcome，cycle request / result 只组合一次 root state、step input、step policy、decision、step result 与 internal cycle progress marker，command draft 只表达一次 cycle 后的 internal runtime intent summary，command pipeline 只把 cycle request、cycle result 与 command draft 串成 internal summary pipeline，driver draft 只组织一次 pipeline pass 并投影 driver-level summary，driver input / policy / decision 只作为 driver pass 的脱水 gate，driver pass with input 只在 gate 允许时复用既有 pipeline pass，driver report 只把 driver result 规整成 internal next-action summary，run intent 只把 driver report 投影为 internal run-boundary intent summary，run request 只把 run intent 包装并评估为 internal request summary，shutdown / cancellation intent 只表达退出方向的 internal 脱水意图与 defer-run 影响，run boundary draft 只聚合 run request report 与 shutdown report 并判断 boundary open / deferred / blocked，app run surface 只消费 run boundary report 并投影为脱水 AppRun state/request/report summary，app run controller draft 只消费 AppRun report 并派生 accepted / deferred / blocked / future-boundary next-action summary，app run execution plan draft 只消费 AppRun controller report 并投影 future execution phases 的脱水 plan summary，app run dispatch draft 只消费 AppRun execution plan report 并投影 dispatch-facing 脱水 summary，run loop draft 只消费 AppRun dispatch report 并投影 loop-intent 脱水 summary，ready / blocked sanity helpers 只验证 default advance、not-ready fail-closed、input-blocked fail-closed、outcome 字段一致性、一次 cycle request/result 一致性、progress marker 一致性、command draft intent summary 一致性、pipeline summary 一致性、driver summary pass 一致性、driver input/policy gate 一致性、driver report projection 一致性、run intent projection 一致性、run request evaluation 一致性、shutdown/cancellation intent evaluation 一致性、run boundary readiness 一致性、AppRun surface projection 一致性、AppRun controller decision projection 一致性、AppRun execution plan projection 一致性、AppRun dispatch projection 一致性与 RunLoopDraft intent projection 一致性，并不定义 runtime state machine、event loop、queue / drain、frame/render/layout progress、renderer command list、run behavior 或真实 shutdown behavior。
 
 当前边界如下：
 
@@ -248,6 +412,35 @@
 - runtime run request 只持有 run intent 与 `isRequestAllowed`，其中 `isRequestAllowed` 等价于 `intent.mayRequestRuntimeRun`。
 - runtime run request report 只持有 request evaluation summary：`didAcceptRequest`、`shouldDeferRequest`、`shouldSurfaceBlockedReport` 与 `didObserveInternalProgress`。
 - run request draft executor 只组合 run intent draft、run request builder 与 request evaluator；它不是 public `run()` 调用、event loop start、scheduler、queue item、platform callback 或 public runtime API。
+- runtime shutdown intent 只持有 `shouldRequestShutdown: Bool` 与 `shouldRequestCancellation: Bool`，只表达 internal exit-direction intent summary。
+- runtime shutdown request 只把 intent 包装为 `isShutdownRequested` 与 `isCancellationRequested` summary。
+- runtime shutdown report 只表达 shutdown/cancel request 对 run request 的内部影响：`shouldDeferRunRequest`、`shouldEnterShutdownPath` 与 `shouldEnterCancellationPath`。
+- shutdown / cancellation intent layer 不是真实 app shutdown、event loop stop、queue drain、platform close callback、task cancellation、public API 或 public C ABI。
+- run boundary request 只聚合 `CjguiInternalRuntimeRunRequestReport` 与 `CjguiInternalRuntimeShutdownReport`。
+- run boundary report 只持有 internal readiness summary：`isBoundaryOpen`、`isBoundaryDeferred`、`isBoundaryBlocked`、`isBlockedByRunRequest`、`isBlockedByShutdown` 与 `isBlockedByCancellation`。
+- run boundary draft executor 只组合 run request draft 与 shutdown request evaluator；它不是真实 `run()`、event loop、queue / drain、scheduler、platform callback、public API 或 public C ABI。
+- app run state 只持有 `CjguiInternalRunBoundaryReport` 与从 boundary report 投影出的 `isAppRunAllowed`、`isAppRunDeferred`、`isAppRunBlocked`。
+- app run request 只包装 `CjguiInternalRunBoundaryReport`；它不是 public `run()` request 或 platform run request。
+- app run report 只持有 request、state、`didAcceptAppRun`、`shouldDeferAppRun` 与 `shouldReportAppRunBlocked`。
+- app run surface draft 只消费 run boundary report 并投影脱水 summary；它不执行 `run()`，不启动 event loop，不 drain queue，不调用平台，不绕过 run boundary 读取 lower-level readiness / platform / lifecycle facts。
+- app run controller request 只包装 `CjguiInternalAppRunReport`；controller decision 只从 AppRun report 派生 accepted / deferred / blocked / future-boundary next-action summary；controller report 只表示 internal evaluation completed。
+- app run controller draft 不执行 action，不启动 event loop，不 drain queue，不调用平台，也不绕过 AppRunReport 读取 RunBoundaryReport 或 lower-level readiness / platform / lifecycle facts。
+- app run execution plan request 只包装 `CjguiInternalAppRunControllerReport`；execution plan 只从 controller decision 投影 `shouldPrepareRuntime`、`shouldEnterRunLoopDraft`、`shouldDeferExecution`、`shouldReportBlockedExecution` 与 `shouldRequestFutureBoundary`。
+- app run execution plan draft 不执行 plan、不执行 `run()`、不启动 event loop、不 drain queue、不调用平台，也不绕过 ControllerReport 读取 AppRunReport、RunBoundaryReport 或 lower-level readiness / platform / lifecycle facts。
+- app run dispatch request 只包装 `CjguiInternalAppRunExecutionPlanReport`；dispatch summary 只从 execution plan 投影 prepare-runtime、run-loop-draft、deferred notice、blocked notice 与 future-boundary request signals。
+- app run dispatch draft 不执行 dispatch、不写 queue、不执行 `run()`、不启动 event loop、不 drain queue、不调用平台，也不绕过 ExecutionPlanReport 读取 ControllerReport、AppRunReport、RunBoundaryReport 或 lower-level readiness / platform / lifecycle facts。
+- run loop draft request 只包装 `CjguiInternalAppRunDispatchReport`；run loop draft intent 只从 dispatch summary 投影 enter-loop-draft、defer-loop-draft、blocked-loop-report 与 future-boundary signals。
+- run loop draft 不执行 loop、不写 `while` / scheduling loop、不写 queue、不 drain queue、不调用平台，也不绕过 DispatchReport 读取 ExecutionPlanReport、ControllerReport、AppRunReport、RunBoundaryReport 或 lower-level readiness / platform / lifecycle facts。
+- loop iteration draft request 只包装 `CjguiInternalRunLoopDraftReport`；loop iteration draft intent 只从 RunLoopDraft intent 投影 attempt-iteration、defer-iteration、blocked-iteration-report 与 future-boundary signals。
+- loop iteration draft 不执行 loop、不执行 iteration、不 schedule、不写 queue、不 drain queue、不调用平台，也不绕过 RunLoopDraftReport 读取 DispatchReport、ExecutionPlanReport、ControllerReport、AppRunReport、RunBoundaryReport 或 lower-level readiness / platform / lifecycle facts。
+- iteration work packet draft request 只包装 `CjguiInternalLoopIterationDraftReport`；work packet draft 只从 loop iteration intent 投影 prepare-runtime work、lifecycle work、future-boundary work、defer work 与 blocked-work signals。
+- iteration work packet draft 不执行 work、不写 queue、不 drain queue、不 process input、不 layout / render、不调用平台，也不绕过 LoopIterationDraftReport 读取 RunLoopDraftReport、DispatchReport、ExecutionPlanReport、ControllerReport、AppRunReport、RunBoundaryReport 或 lower-level readiness / platform / lifecycle facts。
+- lifecycle work draft request 只包装 `CjguiInternalIterationWorkPacketDraftReport`；lifecycle work draft 只从 work packet 投影 process-lifecycle、defer-lifecycle、blocked-lifecycle 与 future-boundary-after-lifecycle signals。
+- lifecycle work draft 不执行 app/window lifecycle、不修改 app/window state、不写 queue、不 drain queue、不调用平台，也不绕过 IterationWorkPacketDraftReport 读取 LoopIterationDraftReport、RunLoopDraftReport、DispatchReport、ExecutionPlanReport、ControllerReport、AppRunReport、RunBoundaryReport 或 lower-level readiness / platform / lifecycle facts。
+- lifecycle owner handoff draft 将 owner-specific handoff facts 切回 `app_lifecycle.cj` 与 `window_lifecycle.cj`；app/window handoff draft 只表达 accept / defer / blocked facts，不执行 lifecycle transition 或 state mutation。
+- runtime owner handoff request / report 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleWorkDraftReport.draft` 并路由到 app/window owner builders；它不越级读取 IterationWorkPacketDraftReport、LoopIterationDraftReport、RunLoopDraftReport 或 lower-level facts，也不执行 lifecycle work。
+- lifecycle mutation readiness draft 将 owner-specific readiness facts 留在 `app_lifecycle.cj` 与 `window_lifecycle.cj`；app/window readiness draft 只表达 canMutate / shouldDefer / shouldReportBlocked，不修改 state、不调用 transition functions、不执行 lifecycle work。
+- runtime mutation readiness request / report 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleOwnerHandoffReport.appDraft` / `windowDraft` 并汇总 cross-owner readiness；它不越级读取 LifecycleWorkDraftReport 或 lower-level facts，也不执行 mutation。
 - step outcome bundle 已封账；下一步应转向更大的 runtime behavior decision，而不是继续堆 helper 链。
 - root sanity 已封账；下一步应转向 first internal runtime step / step result，而不是继续堆 root helper。
 - root state 不定义 runtime state machine、app run、event loop、queue / drain、window create 或 shutdown。

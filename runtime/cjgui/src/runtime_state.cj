@@ -450,6 +450,711 @@ struct CjguiInternalRuntimeRunRequestReport {
     }
 }
 
+// 内部 runtime shutdown intent:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 shutdown / cancellation 的脱水 intent summary。
+// - 它不表示真实 app shutdown、event loop stop、queue drain 或
+//   platform close callback。
+
+struct CjguiInternalRuntimeShutdownIntent {
+    let shouldRequestShutdown: Bool
+    let shouldRequestCancellation: Bool
+
+    init(
+        shouldRequestShutdown: Bool,
+        shouldRequestCancellation: Bool
+    ) {
+        this.shouldRequestShutdown = shouldRequestShutdown
+        this.shouldRequestCancellation = shouldRequestCancellation
+    }
+}
+
+// 内部 runtime shutdown request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只把 shutdown intent 包装为 internal request summary。
+// - 它不执行 shutdown, 不取消 task, 不消费 queue。
+
+struct CjguiInternalRuntimeShutdownRequest {
+    let intent: CjguiInternalRuntimeShutdownIntent
+    let isShutdownRequested: Bool
+    let isCancellationRequested: Bool
+
+    init(
+        intent: CjguiInternalRuntimeShutdownIntent,
+        isShutdownRequested: Bool,
+        isCancellationRequested: Bool
+    ) {
+        this.intent = intent
+        this.isShutdownRequested = isShutdownRequested
+        this.isCancellationRequested = isCancellationRequested
+    }
+}
+
+// 内部 runtime shutdown report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 shutdown/cancel request 对 run request 的内部影响。
+// - 它不是真实 error system, 不执行 shutdown 或 cancellation。
+
+struct CjguiInternalRuntimeShutdownReport {
+    let request: CjguiInternalRuntimeShutdownRequest
+    let shouldDeferRunRequest: Bool
+    let shouldEnterShutdownPath: Bool
+    let shouldEnterCancellationPath: Bool
+
+    init(
+        request: CjguiInternalRuntimeShutdownRequest,
+        shouldDeferRunRequest: Bool,
+        shouldEnterShutdownPath: Bool,
+        shouldEnterCancellationPath: Bool
+    ) {
+        this.request = request
+        this.shouldDeferRunRequest = shouldDeferRunRequest
+        this.shouldEnterShutdownPath = shouldEnterShutdownPath
+        this.shouldEnterCancellationPath = shouldEnterCancellationPath
+    }
+}
+
+// 内部 run boundary request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只聚合 internal run request report 与 shutdown/cancellation report。
+// - 它不表示 public run() request、event loop request 或 platform callback。
+
+struct CjguiInternalRunBoundaryRequest {
+    let runRequestReport: CjguiInternalRuntimeRunRequestReport
+    let shutdownReport: CjguiInternalRuntimeShutdownReport
+
+    init(
+        runRequestReport: CjguiInternalRuntimeRunRequestReport,
+        shutdownReport: CjguiInternalRuntimeShutdownReport
+    ) {
+        this.runRequestReport = runRequestReport
+        this.shutdownReport = shutdownReport
+    }
+}
+
+// 内部 run boundary report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 internal run boundary readiness summary。
+// - 它不执行 run, 不启动 loop, 不触发 shutdown。
+
+struct CjguiInternalRunBoundaryReport {
+    let request: CjguiInternalRunBoundaryRequest
+    let isBoundaryOpen: Bool
+    let isBoundaryDeferred: Bool
+    let isBoundaryBlocked: Bool
+    let isBlockedByRunRequest: Bool
+    let isBlockedByShutdown: Bool
+    let isBlockedByCancellation: Bool
+
+    init(
+        request: CjguiInternalRunBoundaryRequest,
+        isBoundaryOpen: Bool,
+        isBoundaryDeferred: Bool,
+        isBoundaryBlocked: Bool,
+        isBlockedByRunRequest: Bool,
+        isBlockedByShutdown: Bool,
+        isBlockedByCancellation: Bool
+    ) {
+        this.request = request
+        this.isBoundaryOpen = isBoundaryOpen
+        this.isBoundaryDeferred = isBoundaryDeferred
+        this.isBoundaryBlocked = isBoundaryBlocked
+        this.isBlockedByRunRequest = isBlockedByRunRequest
+        this.isBlockedByShutdown = isBlockedByShutdown
+        this.isBlockedByCancellation = isBlockedByCancellation
+    }
+}
+
+// 内部 app run surface state:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只从 run boundary report 投影 app-run surface facts。
+// - 它不表示真实 app running 状态、event loop active 或 platform app object。
+
+struct CjguiInternalAppRunState {
+    let boundaryReport: CjguiInternalRunBoundaryReport
+    let isAppRunAllowed: Bool
+    let isAppRunDeferred: Bool
+    let isAppRunBlocked: Bool
+
+    init(
+        boundaryReport: CjguiInternalRunBoundaryReport,
+        isAppRunAllowed: Bool,
+        isAppRunDeferred: Bool,
+        isAppRunBlocked: Bool
+    ) {
+        this.boundaryReport = boundaryReport
+        this.isAppRunAllowed = isAppRunAllowed
+        this.isAppRunDeferred = isAppRunDeferred
+        this.isAppRunBlocked = isAppRunBlocked
+    }
+}
+
+// 内部 app run request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 internal run boundary report。
+// - 它不是 public run() request, 也不是 platform run request。
+
+struct CjguiInternalAppRunRequest {
+    let boundaryReport: CjguiInternalRunBoundaryReport
+
+    init(
+        boundaryReport: CjguiInternalRunBoundaryReport
+    ) {
+        this.boundaryReport = boundaryReport
+    }
+}
+
+// 内部 app run report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 internal app run surface evaluation summary。
+// - 它不执行 run, 不启动 loop, 不调用平台。
+
+struct CjguiInternalAppRunReport {
+    let request: CjguiInternalAppRunRequest
+    let state: CjguiInternalAppRunState
+    let didAcceptAppRun: Bool
+    let shouldDeferAppRun: Bool
+    let shouldReportAppRunBlocked: Bool
+
+    init(
+        request: CjguiInternalAppRunRequest,
+        state: CjguiInternalAppRunState,
+        didAcceptAppRun: Bool,
+        shouldDeferAppRun: Bool,
+        shouldReportAppRunBlocked: Bool
+    ) {
+        this.request = request
+        this.state = state
+        this.didAcceptAppRun = didAcceptAppRun
+        this.shouldDeferAppRun = shouldDeferAppRun
+        this.shouldReportAppRunBlocked = shouldReportAppRunBlocked
+    }
+}
+
+// 内部 app run controller request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 AppRun surface report。
+// - 它不是 public run request、event loop task、platform callback 或 queue item。
+
+struct CjguiInternalAppRunControllerRequest {
+    let appRunReport: CjguiInternalAppRunReport
+
+    init(
+        appRunReport: CjguiInternalAppRunReport
+    ) {
+        this.appRunReport = appRunReport
+    }
+}
+
+// 内部 app run controller decision:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只从 AppRun report 派生 internal next-action summary。
+// - 它不执行 accepted / deferred / blocked action, 也不是 scheduler decision。
+
+struct CjguiInternalAppRunControllerDecision {
+    let shouldEnterAcceptedPath: Bool
+    let shouldEnterDeferredPath: Bool
+    let shouldEnterBlockedPath: Bool
+    let shouldRequestFutureRunBoundary: Bool
+
+    init(
+        shouldEnterAcceptedPath: Bool,
+        shouldEnterDeferredPath: Bool,
+        shouldEnterBlockedPath: Bool,
+        shouldRequestFutureRunBoundary: Bool
+    ) {
+        this.shouldEnterAcceptedPath = shouldEnterAcceptedPath
+        this.shouldEnterDeferredPath = shouldEnterDeferredPath
+        this.shouldEnterBlockedPath = shouldEnterBlockedPath
+        this.shouldRequestFutureRunBoundary = shouldRequestFutureRunBoundary
+    }
+}
+
+// 内部 app run controller report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 controller draft evaluation summary。
+// - didEvaluateController 只表示 internal evaluation completed, 不表示 run loop started。
+
+struct CjguiInternalAppRunControllerReport {
+    let request: CjguiInternalAppRunControllerRequest
+    let decision: CjguiInternalAppRunControllerDecision
+    let didEvaluateController: Bool
+
+    init(
+        request: CjguiInternalAppRunControllerRequest,
+        decision: CjguiInternalAppRunControllerDecision,
+        didEvaluateController: Bool
+    ) {
+        this.request = request
+        this.decision = decision
+        this.didEvaluateController = didEvaluateController
+    }
+}
+
+// 内部 app run execution plan request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 AppRun controller report。
+// - 它不是 public run request、event loop task、platform callback 或 queue item。
+
+struct CjguiInternalAppRunExecutionPlanRequest {
+    let controllerReport: CjguiInternalAppRunControllerReport
+
+    init(
+        controllerReport: CjguiInternalAppRunControllerReport
+    ) {
+        this.controllerReport = controllerReport
+    }
+}
+
+// 内部 app run execution plan:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 future execution phases 的脱水 internal plan。
+// - shouldEnterRunLoopDraft 不是真实 event loop, 本 struct 不执行任何阶段。
+
+struct CjguiInternalAppRunExecutionPlan {
+    let shouldPrepareRuntime: Bool
+    let shouldEnterRunLoopDraft: Bool
+    let shouldDeferExecution: Bool
+    let shouldReportBlockedExecution: Bool
+    let shouldRequestFutureBoundary: Bool
+
+    init(
+        shouldPrepareRuntime: Bool,
+        shouldEnterRunLoopDraft: Bool,
+        shouldDeferExecution: Bool,
+        shouldReportBlockedExecution: Bool,
+        shouldRequestFutureBoundary: Bool
+    ) {
+        this.shouldPrepareRuntime = shouldPrepareRuntime
+        this.shouldEnterRunLoopDraft = shouldEnterRunLoopDraft
+        this.shouldDeferExecution = shouldDeferExecution
+        this.shouldReportBlockedExecution = shouldReportBlockedExecution
+        this.shouldRequestFutureBoundary = shouldRequestFutureBoundary
+    }
+}
+
+// 内部 app run execution plan report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 plan draft 已构建。
+// - didBuildPlan 只表示 internal planning completed, 不表示 plan 已执行。
+
+struct CjguiInternalAppRunExecutionPlanReport {
+    let request: CjguiInternalAppRunExecutionPlanRequest
+    let plan: CjguiInternalAppRunExecutionPlan
+    let didBuildPlan: Bool
+
+    init(
+        request: CjguiInternalAppRunExecutionPlanRequest,
+        plan: CjguiInternalAppRunExecutionPlan,
+        didBuildPlan: Bool
+    ) {
+        this.request = request
+        this.plan = plan
+        this.didBuildPlan = didBuildPlan
+    }
+}
+
+// 内部 app run dispatch request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 AppRun execution plan report。
+// - 它不是 queue item、event loop task、platform callback 或 public run request。
+
+struct CjguiInternalAppRunDispatchRequest {
+    let planReport: CjguiInternalAppRunExecutionPlanReport
+
+    init(
+        planReport: CjguiInternalAppRunExecutionPlanReport
+    ) {
+        this.planReport = planReport
+    }
+}
+
+// 内部 app run dispatch summary:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 dispatch-facing 脱水 summary。
+// - shouldDispatchRunLoopDraft 不是真实 event loop, 本 struct 不执行 dispatch。
+
+struct CjguiInternalAppRunDispatchSummary {
+    let shouldDispatchPrepareRuntime: Bool
+    let shouldDispatchRunLoopDraft: Bool
+    let shouldDispatchDeferredNotice: Bool
+    let shouldDispatchBlockedNotice: Bool
+    let shouldDispatchFutureBoundaryRequest: Bool
+
+    init(
+        shouldDispatchPrepareRuntime: Bool,
+        shouldDispatchRunLoopDraft: Bool,
+        shouldDispatchDeferredNotice: Bool,
+        shouldDispatchBlockedNotice: Bool,
+        shouldDispatchFutureBoundaryRequest: Bool
+    ) {
+        this.shouldDispatchPrepareRuntime = shouldDispatchPrepareRuntime
+        this.shouldDispatchRunLoopDraft = shouldDispatchRunLoopDraft
+        this.shouldDispatchDeferredNotice = shouldDispatchDeferredNotice
+        this.shouldDispatchBlockedNotice = shouldDispatchBlockedNotice
+        this.shouldDispatchFutureBoundaryRequest = shouldDispatchFutureBoundaryRequest
+    }
+}
+
+// 内部 app run dispatch report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 dispatch summary 已构建。
+// - didBuildDispatchSummary 只表示 internal dispatch planning completed。
+
+struct CjguiInternalAppRunDispatchReport {
+    let request: CjguiInternalAppRunDispatchRequest
+    let summary: CjguiInternalAppRunDispatchSummary
+    let didBuildDispatchSummary: Bool
+
+    init(
+        request: CjguiInternalAppRunDispatchRequest,
+        summary: CjguiInternalAppRunDispatchSummary,
+        didBuildDispatchSummary: Bool
+    ) {
+        this.request = request
+        this.summary = summary
+        this.didBuildDispatchSummary = didBuildDispatchSummary
+    }
+}
+
+// 内部 run loop draft request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 AppRun dispatch report。
+// - 它不是 real event loop request、queue item、platform callback 或 scheduler task。
+
+struct CjguiInternalRunLoopDraftRequest {
+    let dispatchReport: CjguiInternalAppRunDispatchReport
+
+    init(
+        dispatchReport: CjguiInternalAppRunDispatchReport
+    ) {
+        this.dispatchReport = dispatchReport
+    }
+}
+
+// 内部 run loop draft intent:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 loop-intent 脱水 summary。
+// - shouldEnterLoopDraft 不是真实 event loop, 本 struct 不启动 loop。
+
+struct CjguiInternalRunLoopDraftIntent {
+    let shouldEnterLoopDraft: Bool
+    let shouldDeferLoopDraft: Bool
+    let shouldReportLoopBlocked: Bool
+    let shouldRequestFutureBoundary: Bool
+
+    init(
+        shouldEnterLoopDraft: Bool,
+        shouldDeferLoopDraft: Bool,
+        shouldReportLoopBlocked: Bool,
+        shouldRequestFutureBoundary: Bool
+    ) {
+        this.shouldEnterLoopDraft = shouldEnterLoopDraft
+        this.shouldDeferLoopDraft = shouldDeferLoopDraft
+        this.shouldReportLoopBlocked = shouldReportLoopBlocked
+        this.shouldRequestFutureBoundary = shouldRequestFutureBoundary
+    }
+}
+
+// 内部 run loop draft report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 loop draft 已构建。
+// - didBuildLoopDraft 只表示 internal loop-intent planning completed。
+
+struct CjguiInternalRunLoopDraftReport {
+    let request: CjguiInternalRunLoopDraftRequest
+    let intent: CjguiInternalRunLoopDraftIntent
+    let didBuildLoopDraft: Bool
+
+    init(
+        request: CjguiInternalRunLoopDraftRequest,
+        intent: CjguiInternalRunLoopDraftIntent,
+        didBuildLoopDraft: Bool
+    ) {
+        this.request = request
+        this.intent = intent
+        this.didBuildLoopDraft = didBuildLoopDraft
+    }
+}
+
+// 内部 single loop iteration draft request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 RunLoopDraft report。
+// - 它不是 real loop iteration request、queue item、platform callback 或
+//   scheduler task。
+
+struct CjguiInternalLoopIterationDraftRequest {
+    let loopDraftReport: CjguiInternalRunLoopDraftReport
+
+    init(
+        loopDraftReport: CjguiInternalRunLoopDraftReport
+    ) {
+        this.loopDraftReport = loopDraftReport
+    }
+}
+
+// 内部 single loop iteration draft intent:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 single iteration intent 脱水 summary。
+// - shouldAttemptIteration 不是真实 loop iteration, 本 struct 不执行 iteration。
+
+struct CjguiInternalLoopIterationDraftIntent {
+    let shouldAttemptIteration: Bool
+    let shouldDeferIteration: Bool
+    let shouldReportIterationBlocked: Bool
+    let shouldRequestFutureBoundary: Bool
+
+    init(
+        shouldAttemptIteration: Bool,
+        shouldDeferIteration: Bool,
+        shouldReportIterationBlocked: Bool,
+        shouldRequestFutureBoundary: Bool
+    ) {
+        this.shouldAttemptIteration = shouldAttemptIteration
+        this.shouldDeferIteration = shouldDeferIteration
+        this.shouldReportIterationBlocked = shouldReportIterationBlocked
+        this.shouldRequestFutureBoundary = shouldRequestFutureBoundary
+    }
+}
+
+// 内部 single loop iteration draft report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 single iteration draft 已构建。
+// - didBuildIterationDraft 只表示 internal iteration planning completed。
+
+struct CjguiInternalLoopIterationDraftReport {
+    let request: CjguiInternalLoopIterationDraftRequest
+    let intent: CjguiInternalLoopIterationDraftIntent
+    let didBuildIterationDraft: Bool
+
+    init(
+        request: CjguiInternalLoopIterationDraftRequest,
+        intent: CjguiInternalLoopIterationDraftIntent,
+        didBuildIterationDraft: Bool
+    ) {
+        this.request = request
+        this.intent = intent
+        this.didBuildIterationDraft = didBuildIterationDraft
+    }
+}
+
+// 内部 iteration work packet draft request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 LoopIterationDraft report。
+// - 它不是 queue item、work execution request、platform callback 或
+//   input / layout / render task。
+
+struct CjguiInternalIterationWorkPacketDraftRequest {
+    let iterationReport: CjguiInternalLoopIterationDraftReport
+
+    init(
+        iterationReport: CjguiInternalLoopIterationDraftReport
+    ) {
+        this.iterationReport = iterationReport
+    }
+}
+
+// 内部 iteration work packet draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 single iteration 可能涉及的 internal work-category summary。
+// - shouldProcessLifecycleWork 不是真实 lifecycle execution。
+// - 本 struct 不执行 runtime work、input processing、layout 或 render。
+
+struct CjguiInternalIterationWorkPacketDraft {
+    let shouldPrepareRuntimeWork: Bool
+    let shouldProcessLifecycleWork: Bool
+    let shouldPrepareFutureBoundaryWork: Bool
+    let shouldDeferWork: Bool
+    let shouldReportBlockedWork: Bool
+
+    init(
+        shouldPrepareRuntimeWork: Bool,
+        shouldProcessLifecycleWork: Bool,
+        shouldPrepareFutureBoundaryWork: Bool,
+        shouldDeferWork: Bool,
+        shouldReportBlockedWork: Bool
+    ) {
+        this.shouldPrepareRuntimeWork = shouldPrepareRuntimeWork
+        this.shouldProcessLifecycleWork = shouldProcessLifecycleWork
+        this.shouldPrepareFutureBoundaryWork = shouldPrepareFutureBoundaryWork
+        this.shouldDeferWork = shouldDeferWork
+        this.shouldReportBlockedWork = shouldReportBlockedWork
+    }
+}
+
+// 内部 iteration work packet draft report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 work packet draft 已构建。
+// - didBuildWorkPacket 只表示 internal packet planning completed。
+
+struct CjguiInternalIterationWorkPacketDraftReport {
+    let request: CjguiInternalIterationWorkPacketDraftRequest
+    let packet: CjguiInternalIterationWorkPacketDraft
+    let didBuildWorkPacket: Bool
+
+    init(
+        request: CjguiInternalIterationWorkPacketDraftRequest,
+        packet: CjguiInternalIterationWorkPacketDraft,
+        didBuildWorkPacket: Bool
+    ) {
+        this.request = request
+        this.packet = packet
+        this.didBuildWorkPacket = didBuildWorkPacket
+    }
+}
+
+// 内部 lifecycle work draft request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 IterationWorkPacketDraft report。
+// - 它不是 lifecycle execution request、app/window state mutation request、
+//   platform callback 或 queue item。
+
+struct CjguiInternalLifecycleWorkDraftRequest {
+    let workPacketReport: CjguiInternalIterationWorkPacketDraftReport
+
+    init(
+        workPacketReport: CjguiInternalIterationWorkPacketDraftReport
+    ) {
+        this.workPacketReport = workPacketReport
+    }
+}
+
+// 内部 lifecycle work draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 lifecycle-work summary。
+// - shouldProcessLifecycleWork 不是真实 lifecycle execution。
+// - 本 struct 不修改 app/window state, 不调用 platform。
+
+struct CjguiInternalLifecycleWorkDraft {
+    let shouldProcessLifecycleWork: Bool
+    let shouldDeferLifecycleWork: Bool
+    let shouldReportLifecycleBlocked: Bool
+    let shouldPrepareFutureBoundaryAfterLifecycle: Bool
+
+    init(
+        shouldProcessLifecycleWork: Bool,
+        shouldDeferLifecycleWork: Bool,
+        shouldReportLifecycleBlocked: Bool,
+        shouldPrepareFutureBoundaryAfterLifecycle: Bool
+    ) {
+        this.shouldProcessLifecycleWork = shouldProcessLifecycleWork
+        this.shouldDeferLifecycleWork = shouldDeferLifecycleWork
+        this.shouldReportLifecycleBlocked = shouldReportLifecycleBlocked
+        this.shouldPrepareFutureBoundaryAfterLifecycle = shouldPrepareFutureBoundaryAfterLifecycle
+    }
+}
+
+// 内部 lifecycle work draft report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 lifecycle work draft 已构建。
+// - didBuildLifecycleWorkDraft 只表示 internal planning completed。
+
+struct CjguiInternalLifecycleWorkDraftReport {
+    let request: CjguiInternalLifecycleWorkDraftRequest
+    let draft: CjguiInternalLifecycleWorkDraft
+    let didBuildLifecycleWorkDraft: Bool
+
+    init(
+        request: CjguiInternalLifecycleWorkDraftRequest,
+        draft: CjguiInternalLifecycleWorkDraft,
+        didBuildLifecycleWorkDraft: Bool
+    ) {
+        this.request = request
+        this.draft = draft
+        this.didBuildLifecycleWorkDraft = didBuildLifecycleWorkDraft
+    }
+}
+
+// 内部 lifecycle owner handoff request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 runtime-level LifecycleWorkDraft report。
+// - runtime_state.cj 在这里仅作为 cross-owner routing owner。
+// - 它不拥有 app/window lifecycle semantics。
+
+struct CjguiInternalLifecycleOwnerHandoffRequest {
+    let lifecycleWorkReport: CjguiInternalLifecycleWorkDraftReport
+
+    init(
+        lifecycleWorkReport: CjguiInternalLifecycleWorkDraftReport
+    ) {
+        this.lifecycleWorkReport = lifecycleWorkReport
+    }
+}
+
+// 内部 lifecycle owner handoff report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app/window owner-facing handoff drafts 已生成。
+// - 它不执行 app/window lifecycle work, 不修改 app/window state。
+
+struct CjguiInternalLifecycleOwnerHandoffReport {
+    let request: CjguiInternalLifecycleOwnerHandoffRequest
+    let appDraft: CjguiInternalAppLifecycleWorkHandoffDraft
+    let windowDraft: CjguiInternalWindowLifecycleWorkHandoffDraft
+    let didBuildOwnerHandoff: Bool
+
+    init(
+        request: CjguiInternalLifecycleOwnerHandoffRequest,
+        appDraft: CjguiInternalAppLifecycleWorkHandoffDraft,
+        windowDraft: CjguiInternalWindowLifecycleWorkHandoffDraft,
+        didBuildOwnerHandoff: Bool
+    ) {
+        this.request = request
+        this.appDraft = appDraft
+        this.windowDraft = windowDraft
+        this.didBuildOwnerHandoff = didBuildOwnerHandoff
+    }
+}
+
+// 内部 lifecycle mutation readiness request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 owner handoff report。
+// - runtime_state.cj 在这里仅作为 cross-owner readiness routing owner。
+// - 它不拥有 app/window lifecycle mutation semantics。
+
+struct CjguiInternalLifecycleMutationReadinessRequest {
+    let ownerHandoffReport: CjguiInternalLifecycleOwnerHandoffReport
+
+    init(
+        ownerHandoffReport: CjguiInternalLifecycleOwnerHandoffReport
+    ) {
+        this.ownerHandoffReport = ownerHandoffReport
+    }
+}
+
+// 内部 lifecycle mutation readiness report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app/window mutation readiness summary。
+// - canMutateLifecycleOwners 不是真实 mutation execution。
+// - 它不执行 lifecycle mutation, 不修改 app/window state。
+
+struct CjguiInternalLifecycleMutationReadinessReport {
+    let request: CjguiInternalLifecycleMutationReadinessRequest
+    let appReadiness: CjguiInternalAppLifecycleMutationReadinessDraft
+    let windowReadiness: CjguiInternalWindowLifecycleMutationReadinessDraft
+    let canMutateLifecycleOwners: Bool
+    let shouldDeferLifecycleMutation: Bool
+    let shouldReportLifecycleMutationBlocked: Bool
+    let didBuildMutationReadiness: Bool
+
+    init(
+        request: CjguiInternalLifecycleMutationReadinessRequest,
+        appReadiness: CjguiInternalAppLifecycleMutationReadinessDraft,
+        windowReadiness: CjguiInternalWindowLifecycleMutationReadinessDraft,
+        canMutateLifecycleOwners: Bool,
+        shouldDeferLifecycleMutation: Bool,
+        shouldReportLifecycleMutationBlocked: Bool,
+        didBuildMutationReadiness: Bool
+    ) {
+        this.request = request
+        this.appReadiness = appReadiness
+        this.windowReadiness = windowReadiness
+        this.canMutateLifecycleOwners = canMutateLifecycleOwners
+        this.shouldDeferLifecycleMutation = shouldDeferLifecycleMutation
+        this.shouldReportLifecycleMutationBlocked = shouldReportLifecycleMutationBlocked
+        this.didBuildMutationReadiness = didBuildMutationReadiness
+    }
+}
+
 func cjguiInternalDefaultRuntimeStepInput(): CjguiInternalRuntimeStepInput {
     return CjguiInternalRuntimeStepInput()
 }
@@ -961,6 +1666,772 @@ func cjguiInternalExecuteDefaultRuntimeRunRequestDraft(
         cjguiInternalDefaultRuntimeDriverRequest(),
         cjguiInternalDefaultRuntimeDriverInput(),
         cjguiInternalDefaultRuntimeDriverPolicy()
+    )
+}
+
+func cjguiInternalDefaultRuntimeShutdownIntent(
+): CjguiInternalRuntimeShutdownIntent {
+    return CjguiInternalRuntimeShutdownIntent(false, false)
+}
+
+func cjguiInternalBuildRuntimeShutdownIntent(
+    shouldRequestShutdown: Bool,
+    shouldRequestCancellation: Bool
+): CjguiInternalRuntimeShutdownIntent {
+    return CjguiInternalRuntimeShutdownIntent(
+        shouldRequestShutdown,
+        shouldRequestCancellation
+    )
+}
+
+func cjguiInternalBuildRuntimeShutdownRequest(
+    intent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalRuntimeShutdownRequest {
+    return CjguiInternalRuntimeShutdownRequest(
+        intent,
+        intent.shouldRequestShutdown,
+        intent.shouldRequestCancellation
+    )
+}
+
+func cjguiInternalEvaluateRuntimeShutdownRequest(
+    request: CjguiInternalRuntimeShutdownRequest
+): CjguiInternalRuntimeShutdownReport {
+    if (request.isShutdownRequested) {
+        return CjguiInternalRuntimeShutdownReport(
+            request,
+            true,
+            true,
+            request.isCancellationRequested
+        )
+    }
+
+    if (request.isCancellationRequested) {
+        return CjguiInternalRuntimeShutdownReport(
+            request,
+            true,
+            false,
+            true
+        )
+    }
+
+    return CjguiInternalRuntimeShutdownReport(
+        request,
+        false,
+        false,
+        false
+    )
+}
+
+func cjguiInternalBuildRunBoundaryRequest(
+    runRequestReport: CjguiInternalRuntimeRunRequestReport,
+    shutdownReport: CjguiInternalRuntimeShutdownReport
+): CjguiInternalRunBoundaryRequest {
+    return CjguiInternalRunBoundaryRequest(
+        runRequestReport,
+        shutdownReport
+    )
+}
+
+// 内部 run boundary evaluator:
+// - 它只聚合 run request report 与 shutdown report。
+// - open path 要求 run request accepted 且 shutdown report 不要求 defer。
+// - blocked / deferred 只是 internal summary, 不是真实 error system。
+
+func cjguiInternalEvaluateRunBoundaryRequest(
+    request: CjguiInternalRunBoundaryRequest
+): CjguiInternalRunBoundaryReport {
+    if (request.runRequestReport.didAcceptRequest) {
+        if (request.shutdownReport.shouldDeferRunRequest == false) {
+            return CjguiInternalRunBoundaryReport(
+                request,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false
+            )
+        }
+    }
+
+    if (request.runRequestReport.shouldDeferRequest) {
+        return CjguiInternalRunBoundaryReport(
+            request,
+            false,
+            true,
+            true,
+            true,
+            request.shutdownReport.shouldEnterShutdownPath,
+            request.shutdownReport.shouldEnterCancellationPath
+        )
+    }
+
+    if (request.shutdownReport.shouldDeferRunRequest) {
+        return CjguiInternalRunBoundaryReport(
+            request,
+            false,
+            true,
+            true,
+            false,
+            request.shutdownReport.shouldEnterShutdownPath,
+            request.shutdownReport.shouldEnterCancellationPath
+        )
+    }
+
+    return CjguiInternalRunBoundaryReport(
+        request,
+        false,
+        false,
+        true,
+        false,
+        request.shutdownReport.shouldEnterShutdownPath,
+        request.shutdownReport.shouldEnterCancellationPath
+    )
+}
+
+func cjguiInternalExecuteRunBoundaryDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalRunBoundaryReport {
+    let runRequestReport = cjguiInternalExecuteRuntimeRunRequestDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy
+    )
+    let shutdownRequest = cjguiInternalBuildRuntimeShutdownRequest(
+        shutdownIntent
+    )
+    let shutdownReport = cjguiInternalEvaluateRuntimeShutdownRequest(
+        shutdownRequest
+    )
+    let request = cjguiInternalBuildRunBoundaryRequest(
+        runRequestReport,
+        shutdownReport
+    )
+    return cjguiInternalEvaluateRunBoundaryRequest(request)
+}
+
+func cjguiInternalExecuteDefaultRunBoundaryDraft(
+): CjguiInternalRunBoundaryReport {
+    return cjguiInternalExecuteRunBoundaryDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 app run surface state builder:
+// - 它只消费 run boundary report, 不绕过 boundary 读取 lower-level facts。
+// - 它不执行 run(), 不启动 event loop, 不消费 queue, 不调用平台。
+
+func cjguiInternalBuildAppRunState(
+    boundaryReport: CjguiInternalRunBoundaryReport
+): CjguiInternalAppRunState {
+    return CjguiInternalAppRunState(
+        boundaryReport,
+        boundaryReport.isBoundaryOpen,
+        boundaryReport.isBoundaryDeferred,
+        boundaryReport.isBoundaryBlocked
+    )
+}
+
+func cjguiInternalBuildAppRunRequest(
+    boundaryReport: CjguiInternalRunBoundaryReport
+): CjguiInternalAppRunRequest {
+    return CjguiInternalAppRunRequest(boundaryReport)
+}
+
+func cjguiInternalEvaluateAppRunRequest(
+    request: CjguiInternalAppRunRequest
+): CjguiInternalAppRunReport {
+    let state = cjguiInternalBuildAppRunState(request.boundaryReport)
+    return CjguiInternalAppRunReport(
+        request,
+        state,
+        state.isAppRunAllowed,
+        state.isAppRunDeferred,
+        state.isAppRunBlocked
+    )
+}
+
+func cjguiInternalExecuteAppRunSurfaceDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalAppRunReport {
+    let boundaryReport = cjguiInternalExecuteRunBoundaryDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildAppRunRequest(boundaryReport)
+    return cjguiInternalEvaluateAppRunRequest(request)
+}
+
+func cjguiInternalExecuteDefaultAppRunSurfaceDraft(
+): CjguiInternalAppRunReport {
+    return cjguiInternalExecuteAppRunSurfaceDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 app run controller draft:
+// - 它只消费 AppRun report, 不越级读取 RunBoundaryReport 或 lower-level facts。
+// - 它只派生 next-action summary, 不执行 action、不启动 loop、不调用平台。
+
+func cjguiInternalBuildAppRunControllerRequest(
+    appRunReport: CjguiInternalAppRunReport
+): CjguiInternalAppRunControllerRequest {
+    return CjguiInternalAppRunControllerRequest(appRunReport)
+}
+
+func cjguiInternalDecideAppRunController(
+    request: CjguiInternalAppRunControllerRequest
+): CjguiInternalAppRunControllerDecision {
+    let appRunReport = request.appRunReport
+    return CjguiInternalAppRunControllerDecision(
+        appRunReport.didAcceptAppRun,
+        appRunReport.shouldDeferAppRun,
+        appRunReport.shouldReportAppRunBlocked,
+        appRunReport.didAcceptAppRun
+    )
+}
+
+func cjguiInternalEvaluateAppRunController(
+    request: CjguiInternalAppRunControllerRequest
+): CjguiInternalAppRunControllerReport {
+    let decision = cjguiInternalDecideAppRunController(request)
+    return CjguiInternalAppRunControllerReport(
+        request,
+        decision,
+        true
+    )
+}
+
+func cjguiInternalExecuteAppRunControllerDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalAppRunControllerReport {
+    let appRunReport = cjguiInternalExecuteAppRunSurfaceDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildAppRunControllerRequest(appRunReport)
+    return cjguiInternalEvaluateAppRunController(request)
+}
+
+func cjguiInternalExecuteDefaultAppRunControllerDraft(
+): CjguiInternalAppRunControllerReport {
+    return cjguiInternalExecuteAppRunControllerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 app run execution plan draft:
+// - 它只消费 AppRun controller report, 不越级读取 AppRunReport / RunBoundaryReport。
+// - 它只构建 future execution plan summary, 不执行 plan、不启动 loop、不调用平台。
+
+func cjguiInternalBuildAppRunExecutionPlanRequest(
+    controllerReport: CjguiInternalAppRunControllerReport
+): CjguiInternalAppRunExecutionPlanRequest {
+    return CjguiInternalAppRunExecutionPlanRequest(controllerReport)
+}
+
+func cjguiInternalBuildAppRunExecutionPlan(
+    request: CjguiInternalAppRunExecutionPlanRequest
+): CjguiInternalAppRunExecutionPlan {
+    let decision = request.controllerReport.decision
+    return CjguiInternalAppRunExecutionPlan(
+        decision.shouldEnterAcceptedPath,
+        decision.shouldEnterAcceptedPath,
+        decision.shouldEnterDeferredPath,
+        decision.shouldEnterBlockedPath,
+        decision.shouldRequestFutureRunBoundary
+    )
+}
+
+func cjguiInternalEvaluateAppRunExecutionPlan(
+    request: CjguiInternalAppRunExecutionPlanRequest
+): CjguiInternalAppRunExecutionPlanReport {
+    let plan = cjguiInternalBuildAppRunExecutionPlan(request)
+    return CjguiInternalAppRunExecutionPlanReport(
+        request,
+        plan,
+        true
+    )
+}
+
+func cjguiInternalExecuteAppRunExecutionPlanDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalAppRunExecutionPlanReport {
+    let controllerReport = cjguiInternalExecuteAppRunControllerDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildAppRunExecutionPlanRequest(
+        controllerReport
+    )
+    return cjguiInternalEvaluateAppRunExecutionPlan(request)
+}
+
+func cjguiInternalExecuteDefaultAppRunExecutionPlanDraft(
+): CjguiInternalAppRunExecutionPlanReport {
+    return cjguiInternalExecuteAppRunExecutionPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 app run dispatch draft:
+// - 它只消费 AppRun execution plan report, 不越级读取 ControllerReport。
+// - 它只构建 dispatch summary, 不执行 dispatch、不写 queue、不调用平台。
+
+func cjguiInternalBuildAppRunDispatchRequest(
+    planReport: CjguiInternalAppRunExecutionPlanReport
+): CjguiInternalAppRunDispatchRequest {
+    return CjguiInternalAppRunDispatchRequest(planReport)
+}
+
+func cjguiInternalBuildAppRunDispatchSummary(
+    request: CjguiInternalAppRunDispatchRequest
+): CjguiInternalAppRunDispatchSummary {
+    let plan = request.planReport.plan
+    return CjguiInternalAppRunDispatchSummary(
+        plan.shouldPrepareRuntime,
+        plan.shouldEnterRunLoopDraft,
+        plan.shouldDeferExecution,
+        plan.shouldReportBlockedExecution,
+        plan.shouldRequestFutureBoundary
+    )
+}
+
+func cjguiInternalEvaluateAppRunDispatch(
+    request: CjguiInternalAppRunDispatchRequest
+): CjguiInternalAppRunDispatchReport {
+    let summary = cjguiInternalBuildAppRunDispatchSummary(request)
+    return CjguiInternalAppRunDispatchReport(
+        request,
+        summary,
+        true
+    )
+}
+
+func cjguiInternalExecuteAppRunDispatchDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalAppRunDispatchReport {
+    let planReport = cjguiInternalExecuteAppRunExecutionPlanDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildAppRunDispatchRequest(
+        planReport
+    )
+    return cjguiInternalEvaluateAppRunDispatch(request)
+}
+
+func cjguiInternalExecuteDefaultAppRunDispatchDraft(
+): CjguiInternalAppRunDispatchReport {
+    return cjguiInternalExecuteAppRunDispatchDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 run loop draft:
+// - 它只消费 AppRun dispatch report, 不越级读取 ExecutionPlanReport。
+// - 它只构建 loop-intent summary, 不执行 loop、不写 queue、不调用平台。
+
+func cjguiInternalBuildRunLoopDraftRequest(
+    dispatchReport: CjguiInternalAppRunDispatchReport
+): CjguiInternalRunLoopDraftRequest {
+    return CjguiInternalRunLoopDraftRequest(dispatchReport)
+}
+
+func cjguiInternalBuildRunLoopDraftIntent(
+    request: CjguiInternalRunLoopDraftRequest
+): CjguiInternalRunLoopDraftIntent {
+    let summary = request.dispatchReport.summary
+    return CjguiInternalRunLoopDraftIntent(
+        summary.shouldDispatchRunLoopDraft,
+        summary.shouldDispatchDeferredNotice,
+        summary.shouldDispatchBlockedNotice,
+        summary.shouldDispatchFutureBoundaryRequest
+    )
+}
+
+func cjguiInternalEvaluateRunLoopDraft(
+    request: CjguiInternalRunLoopDraftRequest
+): CjguiInternalRunLoopDraftReport {
+    let intent = cjguiInternalBuildRunLoopDraftIntent(request)
+    return CjguiInternalRunLoopDraftReport(
+        request,
+        intent,
+        true
+    )
+}
+
+func cjguiInternalExecuteRunLoopDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalRunLoopDraftReport {
+    let dispatchReport = cjguiInternalExecuteAppRunDispatchDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildRunLoopDraftRequest(
+        dispatchReport
+    )
+    return cjguiInternalEvaluateRunLoopDraft(request)
+}
+
+func cjguiInternalExecuteDefaultRunLoopDraft(
+): CjguiInternalRunLoopDraftReport {
+    return cjguiInternalExecuteRunLoopDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 single loop iteration draft:
+// - 它只消费 RunLoopDraft report, 不越级读取 AppRun dispatch report。
+// - 它只构建 single-iteration intent summary, 不执行 loop、iteration、
+//   scheduling、queue 或 platform callback。
+
+func cjguiInternalBuildLoopIterationDraftRequest(
+    loopDraftReport: CjguiInternalRunLoopDraftReport
+): CjguiInternalLoopIterationDraftRequest {
+    return CjguiInternalLoopIterationDraftRequest(loopDraftReport)
+}
+
+func cjguiInternalBuildLoopIterationDraftIntent(
+    request: CjguiInternalLoopIterationDraftRequest
+): CjguiInternalLoopIterationDraftIntent {
+    let intent = request.loopDraftReport.intent
+    return CjguiInternalLoopIterationDraftIntent(
+        intent.shouldEnterLoopDraft,
+        intent.shouldDeferLoopDraft,
+        intent.shouldReportLoopBlocked,
+        intent.shouldRequestFutureBoundary
+    )
+}
+
+func cjguiInternalEvaluateLoopIterationDraft(
+    request: CjguiInternalLoopIterationDraftRequest
+): CjguiInternalLoopIterationDraftReport {
+    let intent = cjguiInternalBuildLoopIterationDraftIntent(request)
+    return CjguiInternalLoopIterationDraftReport(
+        request,
+        intent,
+        true
+    )
+}
+
+func cjguiInternalExecuteLoopIterationDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalLoopIterationDraftReport {
+    let loopDraftReport = cjguiInternalExecuteRunLoopDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLoopIterationDraftRequest(
+        loopDraftReport
+    )
+    return cjguiInternalEvaluateLoopIterationDraft(request)
+}
+
+func cjguiInternalExecuteDefaultLoopIterationDraft(
+): CjguiInternalLoopIterationDraftReport {
+    return cjguiInternalExecuteLoopIterationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 iteration work packet draft:
+// - 它只消费 LoopIterationDraft report, 不越级读取 RunLoopDraft report。
+// - 它只构建 work-category summary, 不执行 work、input processing、
+//   layout、render、queue 或 platform callback。
+
+func cjguiInternalBuildIterationWorkPacketDraftRequest(
+    iterationReport: CjguiInternalLoopIterationDraftReport
+): CjguiInternalIterationWorkPacketDraftRequest {
+    return CjguiInternalIterationWorkPacketDraftRequest(iterationReport)
+}
+
+func cjguiInternalBuildIterationWorkPacketDraft(
+    request: CjguiInternalIterationWorkPacketDraftRequest
+): CjguiInternalIterationWorkPacketDraft {
+    let intent = request.iterationReport.intent
+    return CjguiInternalIterationWorkPacketDraft(
+        intent.shouldAttemptIteration,
+        intent.shouldAttemptIteration,
+        intent.shouldRequestFutureBoundary,
+        intent.shouldDeferIteration,
+        intent.shouldReportIterationBlocked
+    )
+}
+
+func cjguiInternalEvaluateIterationWorkPacketDraft(
+    request: CjguiInternalIterationWorkPacketDraftRequest
+): CjguiInternalIterationWorkPacketDraftReport {
+    let packet = cjguiInternalBuildIterationWorkPacketDraft(request)
+    return CjguiInternalIterationWorkPacketDraftReport(
+        request,
+        packet,
+        true
+    )
+}
+
+func cjguiInternalExecuteIterationWorkPacketDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalIterationWorkPacketDraftReport {
+    let iterationReport = cjguiInternalExecuteLoopIterationDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildIterationWorkPacketDraftRequest(
+        iterationReport
+    )
+    return cjguiInternalEvaluateIterationWorkPacketDraft(request)
+}
+
+func cjguiInternalExecuteDefaultIterationWorkPacketDraft(
+): CjguiInternalIterationWorkPacketDraftReport {
+    return cjguiInternalExecuteIterationWorkPacketDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 lifecycle work draft:
+// - 它只消费 IterationWorkPacketDraft report, 不越级读取 LoopIterationDraft report。
+// - 它只构建 lifecycle-work summary, 不执行 app/window lifecycle、
+//   state mutation、queue 或 platform callback。
+
+func cjguiInternalBuildLifecycleWorkDraftRequest(
+    workPacketReport: CjguiInternalIterationWorkPacketDraftReport
+): CjguiInternalLifecycleWorkDraftRequest {
+    return CjguiInternalLifecycleWorkDraftRequest(workPacketReport)
+}
+
+func cjguiInternalBuildLifecycleWorkDraft(
+    request: CjguiInternalLifecycleWorkDraftRequest
+): CjguiInternalLifecycleWorkDraft {
+    let packet = request.workPacketReport.packet
+    return CjguiInternalLifecycleWorkDraft(
+        packet.shouldProcessLifecycleWork,
+        packet.shouldDeferWork,
+        packet.shouldReportBlockedWork,
+        packet.shouldPrepareFutureBoundaryWork
+    )
+}
+
+func cjguiInternalEvaluateLifecycleWorkDraft(
+    request: CjguiInternalLifecycleWorkDraftRequest
+): CjguiInternalLifecycleWorkDraftReport {
+    let draft = cjguiInternalBuildLifecycleWorkDraft(request)
+    return CjguiInternalLifecycleWorkDraftReport(
+        request,
+        draft,
+        true
+    )
+}
+
+func cjguiInternalExecuteLifecycleWorkDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalLifecycleWorkDraftReport {
+    let workPacketReport = cjguiInternalExecuteIterationWorkPacketDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLifecycleWorkDraftRequest(
+        workPacketReport
+    )
+    return cjguiInternalEvaluateLifecycleWorkDraft(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleWorkDraft(
+): CjguiInternalLifecycleWorkDraftReport {
+    return cjguiInternalExecuteLifecycleWorkDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 lifecycle owner handoff routing summary:
+// - 它只消费 LifecycleWorkDraft report, 不越级读取 work packet 或 lower-level facts。
+// - app/window owner-specific facts 由各自 lifecycle owner module 构建。
+// - runtime_state.cj 只负责 cross-owner routing, 不执行 lifecycle mutation。
+
+func cjguiInternalBuildLifecycleOwnerHandoffRequest(
+    lifecycleWorkReport: CjguiInternalLifecycleWorkDraftReport
+): CjguiInternalLifecycleOwnerHandoffRequest {
+    return CjguiInternalLifecycleOwnerHandoffRequest(lifecycleWorkReport)
+}
+
+func cjguiInternalEvaluateLifecycleOwnerHandoff(
+    request: CjguiInternalLifecycleOwnerHandoffRequest
+): CjguiInternalLifecycleOwnerHandoffReport {
+    let draft = request.lifecycleWorkReport.draft
+    let appDraft = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        draft.shouldProcessLifecycleWork,
+        draft.shouldDeferLifecycleWork,
+        draft.shouldReportLifecycleBlocked
+    )
+    let windowDraft = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        draft.shouldProcessLifecycleWork,
+        draft.shouldDeferLifecycleWork,
+        draft.shouldReportLifecycleBlocked
+    )
+    return CjguiInternalLifecycleOwnerHandoffReport(
+        request,
+        appDraft,
+        windowDraft,
+        true
+    )
+}
+
+func cjguiInternalExecuteLifecycleOwnerHandoffDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalLifecycleOwnerHandoffReport {
+    let lifecycleWorkReport = cjguiInternalExecuteLifecycleWorkDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLifecycleOwnerHandoffRequest(
+        lifecycleWorkReport
+    )
+    return cjguiInternalEvaluateLifecycleOwnerHandoff(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleOwnerHandoffDraft(
+): CjguiInternalLifecycleOwnerHandoffReport {
+    return cjguiInternalExecuteLifecycleOwnerHandoffDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 lifecycle mutation readiness cross-owner summary:
+// - 它只消费 OwnerHandoffReport, 不越级读取 LifecycleWorkDraft 或 lower-level facts。
+// - app/window mutation readiness facts 由各自 lifecycle owner module 构建。
+// - runtime_state.cj 只负责 cross-owner summary, 不执行 lifecycle mutation。
+
+func cjguiInternalBuildLifecycleMutationReadinessRequest(
+    ownerHandoffReport: CjguiInternalLifecycleOwnerHandoffReport
+): CjguiInternalLifecycleMutationReadinessRequest {
+    return CjguiInternalLifecycleMutationReadinessRequest(ownerHandoffReport)
+}
+
+func cjguiInternalEvaluateLifecycleMutationReadiness(
+    request: CjguiInternalLifecycleMutationReadinessRequest
+): CjguiInternalLifecycleMutationReadinessReport {
+    let appReadiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        request.ownerHandoffReport.appDraft
+    )
+    let windowReadiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        request.ownerHandoffReport.windowDraft
+    )
+    return CjguiInternalLifecycleMutationReadinessReport(
+        request,
+        appReadiness,
+        windowReadiness,
+        appReadiness.canMutateAppLifecycle && windowReadiness.canMutateWindowLifecycle,
+        appReadiness.shouldDeferAppLifecycleMutation || windowReadiness.shouldDeferWindowLifecycleMutation,
+        appReadiness.shouldReportAppLifecycleMutationBlocked || windowReadiness.shouldReportWindowLifecycleMutationBlocked,
+        true
+    )
+}
+
+func cjguiInternalExecuteLifecycleMutationReadinessDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalLifecycleMutationReadinessReport {
+    let ownerHandoffReport = cjguiInternalExecuteLifecycleOwnerHandoffDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLifecycleMutationReadinessRequest(
+        ownerHandoffReport
+    )
+    return cjguiInternalEvaluateLifecycleMutationReadiness(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleMutationReadinessDraft(
+): CjguiInternalLifecycleMutationReadinessReport {
+    return cjguiInternalExecuteLifecycleMutationReadinessDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
     )
 }
 
@@ -1751,4 +3222,1409 @@ func cjguiInternalRuntimeRunRequestInputBlockedSanity(): Bool {
         return false
     }
     return report.didObserveInternalProgress == false
+}
+
+func cjguiInternalRuntimeShutdownIdleSanity(): Bool {
+    let intent = cjguiInternalDefaultRuntimeShutdownIntent()
+    let request = cjguiInternalBuildRuntimeShutdownRequest(intent)
+    let report = cjguiInternalEvaluateRuntimeShutdownRequest(request)
+    if (report.shouldDeferRunRequest) {
+        return false
+    }
+    if (report.shouldEnterShutdownPath) {
+        return false
+    }
+    return report.shouldEnterCancellationPath == false
+}
+
+func cjguiInternalRuntimeShutdownRequestedSanity(): Bool {
+    let intent = cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    let request = cjguiInternalBuildRuntimeShutdownRequest(intent)
+    let report = cjguiInternalEvaluateRuntimeShutdownRequest(request)
+    if (report.shouldDeferRunRequest == false) {
+        return false
+    }
+    if (report.shouldEnterShutdownPath == false) {
+        return false
+    }
+    return report.shouldEnterCancellationPath == false
+}
+
+func cjguiInternalRuntimeCancellationRequestedSanity(): Bool {
+    let intent = cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    let request = cjguiInternalBuildRuntimeShutdownRequest(intent)
+    let report = cjguiInternalEvaluateRuntimeShutdownRequest(request)
+    if (report.shouldDeferRunRequest == false) {
+        return false
+    }
+    if (report.shouldEnterShutdownPath) {
+        return false
+    }
+    return report.shouldEnterCancellationPath
+}
+
+func cjguiInternalRuntimeShutdownAndCancellationRequestedSanity(): Bool {
+    let intent = cjguiInternalBuildRuntimeShutdownIntent(true, true)
+    let request = cjguiInternalBuildRuntimeShutdownRequest(intent)
+    let report = cjguiInternalEvaluateRuntimeShutdownRequest(request)
+    if (report.shouldDeferRunRequest == false) {
+        return false
+    }
+    if (report.shouldEnterShutdownPath == false) {
+        return false
+    }
+    return report.shouldEnterCancellationPath
+}
+
+func cjguiInternalRunBoundaryOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultRunBoundaryDraft()
+    if (report.isBoundaryOpen == false) {
+        return false
+    }
+    if (report.isBoundaryDeferred) {
+        return false
+    }
+    return report.isBoundaryBlocked == false
+}
+
+func cjguiInternalRunBoundaryRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteRunBoundaryDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.isBoundaryOpen) {
+        return false
+    }
+    if (report.isBoundaryDeferred == false) {
+        return false
+    }
+    if (report.isBoundaryBlocked == false) {
+        return false
+    }
+    if (report.isBlockedByShutdown) {
+        return false
+    }
+    if (report.isBlockedByCancellation) {
+        return false
+    }
+    return report.isBlockedByRunRequest
+}
+
+func cjguiInternalRunBoundaryInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteRunBoundaryDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.isBoundaryOpen) {
+        return false
+    }
+    if (report.isBoundaryDeferred == false) {
+        return false
+    }
+    if (report.isBoundaryBlocked == false) {
+        return false
+    }
+    if (report.isBlockedByShutdown) {
+        return false
+    }
+    if (report.isBlockedByCancellation) {
+        return false
+    }
+    return report.isBlockedByRunRequest
+}
+
+func cjguiInternalRunBoundaryShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteRunBoundaryDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.isBoundaryOpen) {
+        return false
+    }
+    if (report.isBoundaryDeferred == false) {
+        return false
+    }
+    if (report.isBoundaryBlocked == false) {
+        return false
+    }
+    if (report.isBlockedByRunRequest) {
+        return false
+    }
+    if (report.isBlockedByCancellation) {
+        return false
+    }
+    return report.isBlockedByShutdown
+}
+
+func cjguiInternalRunBoundaryCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteRunBoundaryDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.isBoundaryOpen) {
+        return false
+    }
+    if (report.isBoundaryDeferred == false) {
+        return false
+    }
+    if (report.isBoundaryBlocked == false) {
+        return false
+    }
+    if (report.isBlockedByRunRequest) {
+        return false
+    }
+    if (report.isBlockedByShutdown) {
+        return false
+    }
+    return report.isBlockedByCancellation
+}
+
+func cjguiInternalAppRunSurfaceOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultAppRunSurfaceDraft()
+    if (report.didAcceptAppRun == false) {
+        return false
+    }
+    if (report.shouldDeferAppRun) {
+        return false
+    }
+    return report.shouldReportAppRunBlocked == false
+}
+
+func cjguiInternalAppRunSurfaceRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteAppRunSurfaceDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didAcceptAppRun) {
+        return false
+    }
+    if (report.shouldDeferAppRun == false) {
+        return false
+    }
+    return report.shouldReportAppRunBlocked
+}
+
+func cjguiInternalAppRunSurfaceInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunSurfaceDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didAcceptAppRun) {
+        return false
+    }
+    if (report.shouldDeferAppRun == false) {
+        return false
+    }
+    return report.shouldReportAppRunBlocked
+}
+
+func cjguiInternalAppRunSurfaceShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunSurfaceDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didAcceptAppRun) {
+        return false
+    }
+    if (report.shouldDeferAppRun == false) {
+        return false
+    }
+    return report.shouldReportAppRunBlocked
+}
+
+func cjguiInternalAppRunSurfaceCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunSurfaceDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didAcceptAppRun) {
+        return false
+    }
+    if (report.shouldDeferAppRun == false) {
+        return false
+    }
+    return report.shouldReportAppRunBlocked
+}
+
+func cjguiInternalAppRunControllerOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultAppRunControllerDraft()
+    if (report.didEvaluateController == false) {
+        return false
+    }
+    if (report.decision.shouldEnterAcceptedPath == false) {
+        return false
+    }
+    if (report.decision.shouldEnterDeferredPath) {
+        return false
+    }
+    if (report.decision.shouldEnterBlockedPath) {
+        return false
+    }
+    return report.decision.shouldRequestFutureRunBoundary
+}
+
+func cjguiInternalAppRunControllerRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteAppRunControllerDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didEvaluateController == false) {
+        return false
+    }
+    if (report.decision.shouldEnterAcceptedPath) {
+        return false
+    }
+    if (report.decision.shouldEnterDeferredPath == false) {
+        return false
+    }
+    if (report.decision.shouldEnterBlockedPath == false) {
+        return false
+    }
+    return report.decision.shouldRequestFutureRunBoundary == false
+}
+
+func cjguiInternalAppRunControllerInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunControllerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didEvaluateController == false) {
+        return false
+    }
+    if (report.decision.shouldEnterAcceptedPath) {
+        return false
+    }
+    if (report.decision.shouldEnterDeferredPath == false) {
+        return false
+    }
+    if (report.decision.shouldEnterBlockedPath == false) {
+        return false
+    }
+    return report.decision.shouldRequestFutureRunBoundary == false
+}
+
+func cjguiInternalAppRunControllerShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunControllerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didEvaluateController == false) {
+        return false
+    }
+    if (report.decision.shouldEnterAcceptedPath) {
+        return false
+    }
+    if (report.decision.shouldEnterDeferredPath == false) {
+        return false
+    }
+    if (report.decision.shouldEnterBlockedPath == false) {
+        return false
+    }
+    return report.decision.shouldRequestFutureRunBoundary == false
+}
+
+func cjguiInternalAppRunControllerCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunControllerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didEvaluateController == false) {
+        return false
+    }
+    if (report.decision.shouldEnterAcceptedPath) {
+        return false
+    }
+    if (report.decision.shouldEnterDeferredPath == false) {
+        return false
+    }
+    if (report.decision.shouldEnterBlockedPath == false) {
+        return false
+    }
+    return report.decision.shouldRequestFutureRunBoundary == false
+}
+
+func cjguiInternalAppRunExecutionPlanOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultAppRunExecutionPlanDraft()
+    if (report.didBuildPlan == false) {
+        return false
+    }
+    if (report.plan.shouldPrepareRuntime == false) {
+        return false
+    }
+    if (report.plan.shouldEnterRunLoopDraft == false) {
+        return false
+    }
+    if (report.plan.shouldDeferExecution) {
+        return false
+    }
+    if (report.plan.shouldReportBlockedExecution) {
+        return false
+    }
+    return report.plan.shouldRequestFutureBoundary
+}
+
+func cjguiInternalAppRunExecutionPlanRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteAppRunExecutionPlanDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildPlan == false) {
+        return false
+    }
+    if (report.plan.shouldPrepareRuntime) {
+        return false
+    }
+    if (report.plan.shouldEnterRunLoopDraft) {
+        return false
+    }
+    if (report.plan.shouldDeferExecution == false) {
+        return false
+    }
+    if (report.plan.shouldReportBlockedExecution == false) {
+        return false
+    }
+    return report.plan.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalAppRunExecutionPlanInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunExecutionPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildPlan == false) {
+        return false
+    }
+    if (report.plan.shouldPrepareRuntime) {
+        return false
+    }
+    if (report.plan.shouldEnterRunLoopDraft) {
+        return false
+    }
+    if (report.plan.shouldDeferExecution == false) {
+        return false
+    }
+    if (report.plan.shouldReportBlockedExecution == false) {
+        return false
+    }
+    return report.plan.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalAppRunExecutionPlanShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunExecutionPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildPlan == false) {
+        return false
+    }
+    if (report.plan.shouldPrepareRuntime) {
+        return false
+    }
+    if (report.plan.shouldEnterRunLoopDraft) {
+        return false
+    }
+    if (report.plan.shouldDeferExecution == false) {
+        return false
+    }
+    if (report.plan.shouldReportBlockedExecution == false) {
+        return false
+    }
+    return report.plan.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalAppRunExecutionPlanCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunExecutionPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildPlan == false) {
+        return false
+    }
+    if (report.plan.shouldPrepareRuntime) {
+        return false
+    }
+    if (report.plan.shouldEnterRunLoopDraft) {
+        return false
+    }
+    if (report.plan.shouldDeferExecution == false) {
+        return false
+    }
+    if (report.plan.shouldReportBlockedExecution == false) {
+        return false
+    }
+    return report.plan.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalAppRunDispatchOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultAppRunDispatchDraft()
+    if (report.didBuildDispatchSummary == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchPrepareRuntime == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchRunLoopDraft == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchDeferredNotice) {
+        return false
+    }
+    if (report.summary.shouldDispatchBlockedNotice) {
+        return false
+    }
+    return report.summary.shouldDispatchFutureBoundaryRequest
+}
+
+func cjguiInternalAppRunDispatchRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteAppRunDispatchDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildDispatchSummary == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchPrepareRuntime) {
+        return false
+    }
+    if (report.summary.shouldDispatchRunLoopDraft) {
+        return false
+    }
+    if (report.summary.shouldDispatchDeferredNotice == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchBlockedNotice == false) {
+        return false
+    }
+    return report.summary.shouldDispatchFutureBoundaryRequest == false
+}
+
+func cjguiInternalAppRunDispatchInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunDispatchDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildDispatchSummary == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchPrepareRuntime) {
+        return false
+    }
+    if (report.summary.shouldDispatchRunLoopDraft) {
+        return false
+    }
+    if (report.summary.shouldDispatchDeferredNotice == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchBlockedNotice == false) {
+        return false
+    }
+    return report.summary.shouldDispatchFutureBoundaryRequest == false
+}
+
+func cjguiInternalAppRunDispatchShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunDispatchDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildDispatchSummary == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchPrepareRuntime) {
+        return false
+    }
+    if (report.summary.shouldDispatchRunLoopDraft) {
+        return false
+    }
+    if (report.summary.shouldDispatchDeferredNotice == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchBlockedNotice == false) {
+        return false
+    }
+    return report.summary.shouldDispatchFutureBoundaryRequest == false
+}
+
+func cjguiInternalAppRunDispatchCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteAppRunDispatchDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildDispatchSummary == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchPrepareRuntime) {
+        return false
+    }
+    if (report.summary.shouldDispatchRunLoopDraft) {
+        return false
+    }
+    if (report.summary.shouldDispatchDeferredNotice == false) {
+        return false
+    }
+    if (report.summary.shouldDispatchBlockedNotice == false) {
+        return false
+    }
+    return report.summary.shouldDispatchFutureBoundaryRequest == false
+}
+
+func cjguiInternalRunLoopDraftOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultRunLoopDraft()
+    if (report.didBuildLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldEnterLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldDeferLoopDraft) {
+        return false
+    }
+    if (report.intent.shouldReportLoopBlocked) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary
+}
+
+func cjguiInternalRunLoopDraftRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteRunLoopDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldEnterLoopDraft) {
+        return false
+    }
+    if (report.intent.shouldDeferLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldReportLoopBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalRunLoopDraftInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteRunLoopDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldEnterLoopDraft) {
+        return false
+    }
+    if (report.intent.shouldDeferLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldReportLoopBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalRunLoopDraftShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteRunLoopDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldEnterLoopDraft) {
+        return false
+    }
+    if (report.intent.shouldDeferLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldReportLoopBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalRunLoopDraftCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteRunLoopDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldEnterLoopDraft) {
+        return false
+    }
+    if (report.intent.shouldDeferLoopDraft == false) {
+        return false
+    }
+    if (report.intent.shouldReportLoopBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalLoopIterationDraftOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLoopIterationDraft()
+    if (report.didBuildIterationDraft == false) {
+        return false
+    }
+    if (report.intent.shouldAttemptIteration == false) {
+        return false
+    }
+    if (report.intent.shouldDeferIteration) {
+        return false
+    }
+    if (report.intent.shouldReportIterationBlocked) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary
+}
+
+func cjguiInternalLoopIterationDraftRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLoopIterationDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildIterationDraft == false) {
+        return false
+    }
+    if (report.intent.shouldAttemptIteration) {
+        return false
+    }
+    if (report.intent.shouldDeferIteration == false) {
+        return false
+    }
+    if (report.intent.shouldReportIterationBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalLoopIterationDraftInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLoopIterationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildIterationDraft == false) {
+        return false
+    }
+    if (report.intent.shouldAttemptIteration) {
+        return false
+    }
+    if (report.intent.shouldDeferIteration == false) {
+        return false
+    }
+    if (report.intent.shouldReportIterationBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalLoopIterationDraftShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLoopIterationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildIterationDraft == false) {
+        return false
+    }
+    if (report.intent.shouldAttemptIteration) {
+        return false
+    }
+    if (report.intent.shouldDeferIteration == false) {
+        return false
+    }
+    if (report.intent.shouldReportIterationBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalLoopIterationDraftCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLoopIterationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildIterationDraft == false) {
+        return false
+    }
+    if (report.intent.shouldAttemptIteration) {
+        return false
+    }
+    if (report.intent.shouldDeferIteration == false) {
+        return false
+    }
+    if (report.intent.shouldReportIterationBlocked == false) {
+        return false
+    }
+    return report.intent.shouldRequestFutureBoundary == false
+}
+
+func cjguiInternalIterationWorkPacketDraftOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultIterationWorkPacketDraft()
+    if (report.didBuildWorkPacket == false) {
+        return false
+    }
+    if (report.packet.shouldPrepareRuntimeWork == false) {
+        return false
+    }
+    if (report.packet.shouldProcessLifecycleWork == false) {
+        return false
+    }
+    if (report.packet.shouldPrepareFutureBoundaryWork == false) {
+        return false
+    }
+    if (report.packet.shouldDeferWork) {
+        return false
+    }
+    return report.packet.shouldReportBlockedWork == false
+}
+
+func cjguiInternalIterationWorkPacketDraftRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteIterationWorkPacketDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildWorkPacket == false) {
+        return false
+    }
+    if (report.packet.shouldPrepareRuntimeWork) {
+        return false
+    }
+    if (report.packet.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.packet.shouldPrepareFutureBoundaryWork) {
+        return false
+    }
+    if (report.packet.shouldDeferWork == false) {
+        return false
+    }
+    return report.packet.shouldReportBlockedWork
+}
+
+func cjguiInternalIterationWorkPacketDraftInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteIterationWorkPacketDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildWorkPacket == false) {
+        return false
+    }
+    if (report.packet.shouldPrepareRuntimeWork) {
+        return false
+    }
+    if (report.packet.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.packet.shouldPrepareFutureBoundaryWork) {
+        return false
+    }
+    if (report.packet.shouldDeferWork == false) {
+        return false
+    }
+    return report.packet.shouldReportBlockedWork
+}
+
+func cjguiInternalIterationWorkPacketDraftShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteIterationWorkPacketDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildWorkPacket == false) {
+        return false
+    }
+    if (report.packet.shouldPrepareRuntimeWork) {
+        return false
+    }
+    if (report.packet.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.packet.shouldPrepareFutureBoundaryWork) {
+        return false
+    }
+    if (report.packet.shouldDeferWork == false) {
+        return false
+    }
+    return report.packet.shouldReportBlockedWork
+}
+
+func cjguiInternalIterationWorkPacketDraftCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteIterationWorkPacketDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildWorkPacket == false) {
+        return false
+    }
+    if (report.packet.shouldPrepareRuntimeWork) {
+        return false
+    }
+    if (report.packet.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.packet.shouldPrepareFutureBoundaryWork) {
+        return false
+    }
+    if (report.packet.shouldDeferWork == false) {
+        return false
+    }
+    return report.packet.shouldReportBlockedWork
+}
+
+func cjguiInternalLifecycleWorkDraftOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleWorkDraft()
+    if (report.didBuildLifecycleWorkDraft == false) {
+        return false
+    }
+    if (report.draft.shouldProcessLifecycleWork == false) {
+        return false
+    }
+    if (report.draft.shouldDeferLifecycleWork) {
+        return false
+    }
+    if (report.draft.shouldReportLifecycleBlocked) {
+        return false
+    }
+    return report.draft.shouldPrepareFutureBoundaryAfterLifecycle
+}
+
+func cjguiInternalLifecycleWorkDraftRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleWorkDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildLifecycleWorkDraft == false) {
+        return false
+    }
+    if (report.draft.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.draft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.draft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.draft.shouldPrepareFutureBoundaryAfterLifecycle == false
+}
+
+func cjguiInternalLifecycleWorkDraftInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleWorkDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildLifecycleWorkDraft == false) {
+        return false
+    }
+    if (report.draft.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.draft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.draft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.draft.shouldPrepareFutureBoundaryAfterLifecycle == false
+}
+
+func cjguiInternalLifecycleWorkDraftShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleWorkDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildLifecycleWorkDraft == false) {
+        return false
+    }
+    if (report.draft.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.draft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.draft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.draft.shouldPrepareFutureBoundaryAfterLifecycle == false
+}
+
+func cjguiInternalLifecycleWorkDraftCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleWorkDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildLifecycleWorkDraft == false) {
+        return false
+    }
+    if (report.draft.shouldProcessLifecycleWork) {
+        return false
+    }
+    if (report.draft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.draft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.draft.shouldPrepareFutureBoundaryAfterLifecycle == false
+}
+
+func cjguiInternalLifecycleOwnerHandoffOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleOwnerHandoffDraft()
+    if (report.didBuildOwnerHandoff == false) {
+        return false
+    }
+    if (report.appDraft.shouldAcceptLifecycleWork == false) {
+        return false
+    }
+    if (report.windowDraft.shouldAcceptLifecycleWork == false) {
+        return false
+    }
+    if (report.appDraft.shouldDeferLifecycleWork) {
+        return false
+    }
+    if (report.windowDraft.shouldDeferLifecycleWork) {
+        return false
+    }
+    if (report.appDraft.shouldReportLifecycleBlocked) {
+        return false
+    }
+    return report.windowDraft.shouldReportLifecycleBlocked == false
+}
+
+func cjguiInternalLifecycleOwnerHandoffRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleOwnerHandoffDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildOwnerHandoff == false) {
+        return false
+    }
+    if (report.appDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.windowDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.appDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.windowDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.appDraft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.windowDraft.shouldReportLifecycleBlocked
+}
+
+func cjguiInternalLifecycleOwnerHandoffInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleOwnerHandoffDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildOwnerHandoff == false) {
+        return false
+    }
+    if (report.appDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.windowDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.appDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.windowDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.appDraft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.windowDraft.shouldReportLifecycleBlocked
+}
+
+func cjguiInternalLifecycleOwnerHandoffShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleOwnerHandoffDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildOwnerHandoff == false) {
+        return false
+    }
+    if (report.appDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.windowDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.appDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.windowDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.appDraft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.windowDraft.shouldReportLifecycleBlocked
+}
+
+func cjguiInternalLifecycleOwnerHandoffCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleOwnerHandoffDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildOwnerHandoff == false) {
+        return false
+    }
+    if (report.appDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.windowDraft.shouldAcceptLifecycleWork) {
+        return false
+    }
+    if (report.appDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.windowDraft.shouldDeferLifecycleWork == false) {
+        return false
+    }
+    if (report.appDraft.shouldReportLifecycleBlocked == false) {
+        return false
+    }
+    return report.windowDraft.shouldReportLifecycleBlocked
+}
+
+func cjguiInternalLifecycleMutationReadinessOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleMutationReadinessDraft()
+    if (report.didBuildMutationReadiness == false) {
+        return false
+    }
+    if (report.appReadiness.canMutateAppLifecycle == false) {
+        return false
+    }
+    if (report.windowReadiness.canMutateWindowLifecycle == false) {
+        return false
+    }
+    if (report.canMutateLifecycleOwners == false) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked == false
+}
+
+func cjguiInternalLifecycleMutationReadinessRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleMutationReadinessDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildMutationReadiness == false) {
+        return false
+    }
+    if (report.appReadiness.canMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowReadiness.canMutateWindowLifecycle) {
+        return false
+    }
+    if (report.canMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleMutationReadinessInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationReadinessDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildMutationReadiness == false) {
+        return false
+    }
+    if (report.appReadiness.canMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowReadiness.canMutateWindowLifecycle) {
+        return false
+    }
+    if (report.canMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleMutationReadinessShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationReadinessDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildMutationReadiness == false) {
+        return false
+    }
+    if (report.appReadiness.canMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowReadiness.canMutateWindowLifecycle) {
+        return false
+    }
+    if (report.canMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleMutationReadinessCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationReadinessDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildMutationReadiness == false) {
+        return false
+    }
+    if (report.appReadiness.canMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowReadiness.canMutateWindowLifecycle) {
+        return false
+    }
+    if (report.canMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
 }

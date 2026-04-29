@@ -234,6 +234,8 @@
 
 最新补充：P1 lifecycle mutation readiness draft bundle implementation 已完成；在 `app_lifecycle.cj` 新增默认 internal `CjguiInternalAppLifecycleMutationReadinessDraft`、builder 与 open / blocked sanity，在 `window_lifecycle.cj` 新增默认 internal `CjguiInternalWindowLifecycleMutationReadinessDraft`、builder 与 open / blocked sanity，在 `runtime_state.cj` 新增默认 internal `CjguiInternalLifecycleMutationReadinessRequest`、`CjguiInternalLifecycleMutationReadinessReport`、request builder、cross-owner evaluator、draft executor、default draft executor 和五条直接相关 sanity helpers。runtime summary 只消费 `CjguiInternalLifecycleOwnerHandoffReport.appDraft` / `windowDraft`，不越级读取 LifecycleWorkDraftReport 或 lower-level facts；app/window readiness drafts 只表达 canMutate / defer / blocked facts，不修改 app/window state、不调用 state-changing transition functions、不执行 lifecycle work。envsetup 后 `cjpm build --target-dir /tmp/cjgui-lifecycle-mutation-readiness-draft-bundle-target --skip-script` 通过（仅 unused warnings），smoke guard 与 `git diff --check` 通过；bundle closure 已封账为 [2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)。当前 next opening 转向 `P1 lifecycle mutation readiness draft bundle closure / next runtime behavior decision`。
 
+最新补充：P1 lifecycle mutation plan draft boundary compaction 已完成；新增 [2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md)，将 app/window mutation readiness facts 与 runtime cross-owner readiness summary 压缩成 mutation plan 前结论。关键判断：可以进入 internal-only lifecycle mutation plan draft；app mutation plan facts 应继续归属 `app_lifecycle.cj`，window mutation plan facts 应继续归属 `window_lifecycle.cj`，`runtime_state.cj` 只做 cross-owner mutation plan routing summary。下一刀只能表达 `shouldPlanMutation` / `shouldDeferPlan` / `shouldReportPlanBlocked`，不能修改 app/window state，不能调用 state-changing transition functions，也不能进入 queue / drain、event loop、platform callback、window create / close / destroy、public API 或 C ABI。本轮没有写 runtime code，没有创建 preflight / execution card；当前 next opening 转向 `P1 lifecycle mutation plan draft bundle implementation`。
+
 ## 当前 current-state summary
 
 ### 1. 项目目标已清楚
@@ -287,15 +289,16 @@
 
 当前推荐开启的下一条 opening：
 
-### `P1 lifecycle mutation readiness draft bundle closure / next runtime behavior decision`
+### `P1 lifecycle mutation plan draft bundle implementation`
 
-性质：bundled closure review / next runtime behavior decision
+性质：bounded implementation / W3 internal subsystem draft
 
 目标：
 
-- 基于 [2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)，判断下一条 runtime behavior slice。
-- mutation readiness 已完成 app/window owner split；下一刀不应回到 `runtime_state.cj` 继续拥有 app/window lifecycle mutation semantics。
-- 不自动进入 app/window lifecycle mutation、不修改 app/window state、不调用 state-changing transition functions、不进入 public API / C ABI、queue / drain、event loop、platform callback、window create / close / destroy 或 AppKit / Metal bridge。
+- 基于 [2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md)，实现 internal-only lifecycle mutation plan draft。
+- app mutation plan facts 放在 `app_lifecycle.cj`；window mutation plan facts 放在 `window_lifecycle.cj`。
+- `runtime_state.cj` 只做 cross-owner mutation plan routing summary，消费 mutation readiness report，不拥有 lifecycle mutation semantics。
+- plan draft 只能表达 `shouldPlanMutation` / `shouldDeferPlan` / `shouldReportPlanBlocked`。
 
 本 opening 仍禁止：
 
@@ -2729,16 +2732,16 @@ P1 bridge boundary cleanup、P1 main-thread UI message queue first slice、P1 au
 
 当前推荐的下一条 opening 是：
 
-### `P1 lifecycle mutation readiness draft bundle closure / next runtime behavior decision`
+### `P1 lifecycle mutation plan draft bundle implementation`
 
-性质：bundled closure review / next runtime behavior decision
+性质：bounded implementation / W3 internal subsystem draft
 
 目标：
 
-- 基于 [2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)，判断下一条 runtime behavior slice。
-- mutation readiness 已把 app readiness facts 放在 `app_lifecycle.cj`，window readiness facts 放在 `window_lifecycle.cj`。
-- `runtime_state.cj` 只做 cross-owner readiness summary，消费 owner handoff report，不拥有 app/window lifecycle mutation semantics。
-- 不自动进入真实 lifecycle mutation、state-changing transition invocation、queue / drain、event loop、platform callback、window create / close / destroy 或 public surface。
+- 基于 [2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md)，进入 internal-only lifecycle mutation plan draft。
+- app mutation plan facts 归属 `app_lifecycle.cj`；window mutation plan facts 归属 `window_lifecycle.cj`。
+- `runtime_state.cj` 只做 cross-owner mutation plan routing summary，消费 mutation readiness report，不拥有 app/window lifecycle mutation semantics。
+- plan draft 只能表达 `shouldPlanMutation` / `shouldDeferPlan` / `shouldReportPlanBlocked`。
 
 禁止：
 
@@ -3196,12 +3199,12 @@ Stop-line：
 
 如果继续推进，最合适的下一步是：
 
-> `P1 lifecycle mutation readiness draft bundle closure / next runtime behavior decision`
+> `P1 lifecycle mutation plan draft bundle implementation`
 
-范围只允许基于 [P1 lifecycle mutation readiness draft bundle closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)，判断下一条 runtime behavior slice。当前 mutation readiness 已能 internal-only 把 owner handoff report 投影为 app/window canMutate / defer / blocked readiness facts；仍不执行 app/window lifecycle、不修改 app/window state、不调用 state-changing transition functions、不 drain queue、不 process input、不 layout / render、不调平台。
+范围只允许基于 [P1 lifecycle mutation plan draft boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md)，进入 internal-only mutation plan draft。当前 mutation readiness 已能把 app lifecycle readiness facts 放在 `app_lifecycle.cj`、window lifecycle readiness facts 放在 `window_lifecycle.cj`，`runtime_state.cj` 只做 readiness summary；下一刀可以继续让 app/window owner modules 分别派生 mutation plan facts。
 
 当前 app lifecycle、window lifecycle 与 platform adapter 已证明 internal immutable state / fact、construction shape、NoOp function、极窄 marker transition、platform readiness fact -> lifecycle marker projection、internal lifecycle coordination result / function、默认 internal sanity function、app lifecycle observed platform readiness state、window lifecycle observed platform readiness state、app/window readiness predicate helpers、positive coordination readiness sanity helper、negative coordination readiness sanity helper、readiness sanity parity helper、internal runtime readiness aggregate type、internal runtime readiness aggregate builder、internal runtime bootstrap snapshot type、internal runtime bootstrap snapshot builder、internal runtime root state type、internal runtime root state builder、internal runtime root ready sanity helper、internal runtime step result type、first internal runtime step function，以及 internal runtime step ready sanity helper 都能落地。
 
-下一步默认进入 `P1 lifecycle mutation readiness draft bundle closure / next runtime behavior decision`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、真实 loop iteration、真实 work execution、真实 app/window lifecycle execution、app/window state mutation、调用 state-changing transition functions、`while` loop / scheduling loop、queue / drain、input processing、layout / render、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
+下一步默认进入 `P1 lifecycle mutation plan draft bundle implementation`。仍不得新增 public runtime API、public C ABI、AppKit / Metal / Objective-C 引用、platform object、native handle、raw pointer、callback binding、真实 event loop、真实 loop iteration、真实 work execution、真实 app/window lifecycle execution、app/window state mutation、调用 state-changing transition functions、`while` loop / scheduling loop、queue / drain、input processing、layout / render、app run / shutdown、window create / request close / destroy / release、handle table / generation、Renderer / Scene / Widget / Layout / DSL、Text / Input / IME / Accessibility、semantic tree / Action Router、pixel diff、baseline 或 offscreen renderer。
 
-本轮已完成 lifecycle mutation readiness draft bundle；下一轮应做 next runtime behavior decision，不应把 readiness report 宣称为真实 lifecycle result。
+本轮已完成 lifecycle mutation plan draft boundary compaction；下一轮可以做 W3 internal subsystem draft implementation，但只能定义 mutation plan facts / request / report，不执行真实 lifecycle mutation。

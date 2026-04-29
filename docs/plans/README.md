@@ -779,20 +779,23 @@
 - lifecycle mutation readiness draft bundle：
   - [2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)
 
+- lifecycle mutation plan draft boundary compaction：
+  - [2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md)
+
 ## 当前下一步 opening
 
 下一步推荐：
 
-- `P1 lifecycle mutation readiness draft bundle closure / next runtime behavior decision`
+- `P1 lifecycle mutation plan draft bundle implementation`
 
 用途：
 
-- 基于 [2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-readiness-draft-bundle-closure-review.md)，判断下一条 runtime behavior slice。
-- 当前 mutation readiness draft 已把 app readiness facts 放在 `app_lifecycle.cj`，window readiness facts 放在 `window_lifecycle.cj`。
-- `runtime_state.cj` 只做 cross-owner readiness summary，消费 owner handoff report，不拥有 lifecycle mutation semantics。
-- 不自动进入真实 lifecycle mutation、state-changing transition invocation、queue / drain、event loop、platform callback、window create / close / destroy 或 public surface。
+- 基于 [2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-plan-draft-boundary-compaction.md)，进入 internal-only mutation plan draft。
+- app mutation plan facts 放在 `app_lifecycle.cj`，window mutation plan facts 放在 `window_lifecycle.cj`。
+- `runtime_state.cj` 只做 cross-owner mutation plan routing summary，消费 mutation readiness report，不拥有 lifecycle mutation semantics。
+- plan draft 只能表达 `shouldPlanMutation` / `shouldDeferPlan` / `shouldReportPlanBlocked`。
 
 当前可执行动作：
 
-- next runtime behavior decision。
+- W3 internal subsystem draft implementation。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、真实 app/window lifecycle execution、app/window state mutation、调用 state-changing transition functions、`while` loop / scheduling loop、queue / drain、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

@@ -1155,6 +1155,56 @@ struct CjguiInternalLifecycleMutationReadinessReport {
     }
 }
 
+// 内部 lifecycle mutation plan request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 mutation readiness report。
+// - runtime_state.cj 在这里仅作为 cross-owner mutation plan routing owner。
+// - 它不拥有 app/window lifecycle mutation semantics。
+
+struct CjguiInternalLifecycleMutationPlanRequest {
+    let readinessReport: CjguiInternalLifecycleMutationReadinessReport
+
+    init(
+        readinessReport: CjguiInternalLifecycleMutationReadinessReport
+    ) {
+        this.readinessReport = readinessReport
+    }
+}
+
+// 内部 lifecycle mutation plan report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app/window mutation plan summary。
+// - shouldPlanLifecycleMutation 不是真实 mutation execution。
+// - 它不执行 lifecycle mutation, 不修改 app/window state。
+
+struct CjguiInternalLifecycleMutationPlanReport {
+    let request: CjguiInternalLifecycleMutationPlanRequest
+    let appPlan: CjguiInternalAppLifecycleMutationPlanDraft
+    let windowPlan: CjguiInternalWindowLifecycleMutationPlanDraft
+    let shouldPlanLifecycleMutation: Bool
+    let shouldDeferLifecycleMutationPlan: Bool
+    let shouldReportLifecycleMutationPlanBlocked: Bool
+    let didBuildMutationPlan: Bool
+
+    init(
+        request: CjguiInternalLifecycleMutationPlanRequest,
+        appPlan: CjguiInternalAppLifecycleMutationPlanDraft,
+        windowPlan: CjguiInternalWindowLifecycleMutationPlanDraft,
+        shouldPlanLifecycleMutation: Bool,
+        shouldDeferLifecycleMutationPlan: Bool,
+        shouldReportLifecycleMutationPlanBlocked: Bool,
+        didBuildMutationPlan: Bool
+    ) {
+        this.request = request
+        this.appPlan = appPlan
+        this.windowPlan = windowPlan
+        this.shouldPlanLifecycleMutation = shouldPlanLifecycleMutation
+        this.shouldDeferLifecycleMutationPlan = shouldDeferLifecycleMutationPlan
+        this.shouldReportLifecycleMutationPlanBlocked = shouldReportLifecycleMutationPlanBlocked
+        this.didBuildMutationPlan = didBuildMutationPlan
+    }
+}
+
 func cjguiInternalDefaultRuntimeStepInput(): CjguiInternalRuntimeStepInput {
     return CjguiInternalRuntimeStepInput()
 }
@@ -2428,6 +2478,65 @@ func cjguiInternalExecuteLifecycleMutationReadinessDraft(
 func cjguiInternalExecuteDefaultLifecycleMutationReadinessDraft(
 ): CjguiInternalLifecycleMutationReadinessReport {
     return cjguiInternalExecuteLifecycleMutationReadinessDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 lifecycle mutation plan cross-owner summary:
+// - 它只消费 MutationReadinessReport, 不越级读取 OwnerHandoffReport 或 lower-level facts。
+// - app/window mutation plan facts 由各自 lifecycle owner module 构建。
+// - runtime_state.cj 只负责 cross-owner summary, 不执行 lifecycle mutation。
+
+func cjguiInternalBuildLifecycleMutationPlanRequest(
+    readinessReport: CjguiInternalLifecycleMutationReadinessReport
+): CjguiInternalLifecycleMutationPlanRequest {
+    return CjguiInternalLifecycleMutationPlanRequest(readinessReport)
+}
+
+func cjguiInternalEvaluateLifecycleMutationPlan(
+    request: CjguiInternalLifecycleMutationPlanRequest
+): CjguiInternalLifecycleMutationPlanReport {
+    let appPlan = cjguiInternalBuildAppLifecycleMutationPlanDraft(
+        request.readinessReport.appReadiness
+    )
+    let windowPlan = cjguiInternalBuildWindowLifecycleMutationPlanDraft(
+        request.readinessReport.windowReadiness
+    )
+    return CjguiInternalLifecycleMutationPlanReport(
+        request,
+        appPlan,
+        windowPlan,
+        appPlan.shouldPlanAppLifecycleMutation && windowPlan.shouldPlanWindowLifecycleMutation,
+        appPlan.shouldDeferAppLifecycleMutationPlan || windowPlan.shouldDeferWindowLifecycleMutationPlan,
+        appPlan.shouldReportAppLifecycleMutationPlanBlocked || windowPlan.shouldReportWindowLifecycleMutationPlanBlocked,
+        true
+    )
+}
+
+func cjguiInternalExecuteLifecycleMutationPlanDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalLifecycleMutationPlanReport {
+    let readinessReport = cjguiInternalExecuteLifecycleMutationReadinessDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLifecycleMutationPlanRequest(
+        readinessReport
+    )
+    return cjguiInternalEvaluateLifecycleMutationPlan(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleMutationPlanDraft(
+): CjguiInternalLifecycleMutationPlanReport {
+    return cjguiInternalExecuteLifecycleMutationPlanDraft(
         cjguiInternalDefaultRuntimeDriverRequest(),
         cjguiInternalDefaultRuntimeDriverInput(),
         cjguiInternalDefaultRuntimeDriverPolicy(),
@@ -4627,4 +4736,136 @@ func cjguiInternalLifecycleMutationReadinessCancellationBlockedSanity(): Bool {
         return false
     }
     return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleMutationPlanOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleMutationPlanDraft()
+    if (report.didBuildMutationPlan == false) {
+        return false
+    }
+    if (report.appPlan.shouldPlanAppLifecycleMutation == false) {
+        return false
+    }
+    if (report.windowPlan.shouldPlanWindowLifecycleMutation == false) {
+        return false
+    }
+    if (report.shouldPlanLifecycleMutation == false) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationPlan) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationPlanBlocked == false
+}
+
+func cjguiInternalLifecycleMutationPlanRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleMutationPlanDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildMutationPlan == false) {
+        return false
+    }
+    if (report.appPlan.shouldPlanAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowPlan.shouldPlanWindowLifecycleMutation) {
+        return false
+    }
+    if (report.shouldPlanLifecycleMutation) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationPlan == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationPlanBlocked
+}
+
+func cjguiInternalLifecycleMutationPlanInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.didBuildMutationPlan == false) {
+        return false
+    }
+    if (report.appPlan.shouldPlanAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowPlan.shouldPlanWindowLifecycleMutation) {
+        return false
+    }
+    if (report.shouldPlanLifecycleMutation) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationPlan == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationPlanBlocked
+}
+
+func cjguiInternalLifecycleMutationPlanShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.didBuildMutationPlan == false) {
+        return false
+    }
+    if (report.appPlan.shouldPlanAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowPlan.shouldPlanWindowLifecycleMutation) {
+        return false
+    }
+    if (report.shouldPlanLifecycleMutation) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationPlan == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationPlanBlocked
+}
+
+func cjguiInternalLifecycleMutationPlanCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationPlanDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.didBuildMutationPlan == false) {
+        return false
+    }
+    if (report.appPlan.shouldPlanAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowPlan.shouldPlanWindowLifecycleMutation) {
+        return false
+    }
+    if (report.shouldPlanLifecycleMutation) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationPlan == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationPlanBlocked
 }

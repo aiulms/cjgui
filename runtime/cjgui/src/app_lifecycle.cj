@@ -253,6 +253,76 @@ func cjguiInternalAppLifecycleMutationReadinessBlockedSanity(): Bool {
     return readiness.shouldReportAppLifecycleMutationBlocked
 }
 
+// 内部 app lifecycle mutation plan draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app lifecycle owner 是否应计划 mutation。
+// - 它不修改 CjguiInternalAppLifecycleState, 不调用 transition functions。
+// - 它不执行 app lifecycle work, 不是 public runtime API 或 public C ABI。
+
+struct CjguiInternalAppLifecycleMutationPlanDraft {
+    let shouldPlanAppLifecycleMutation: Bool
+    let shouldDeferAppLifecycleMutationPlan: Bool
+    let shouldReportAppLifecycleMutationPlanBlocked: Bool
+
+    init(
+        shouldPlanAppLifecycleMutation: Bool,
+        shouldDeferAppLifecycleMutationPlan: Bool,
+        shouldReportAppLifecycleMutationPlanBlocked: Bool
+    ) {
+        this.shouldPlanAppLifecycleMutation = shouldPlanAppLifecycleMutation
+        this.shouldDeferAppLifecycleMutationPlan = shouldDeferAppLifecycleMutationPlan
+        this.shouldReportAppLifecycleMutationPlanBlocked = shouldReportAppLifecycleMutationPlanBlocked
+    }
+}
+
+func cjguiInternalBuildAppLifecycleMutationPlanDraft(
+    readiness: CjguiInternalAppLifecycleMutationReadinessDraft
+): CjguiInternalAppLifecycleMutationPlanDraft {
+    return CjguiInternalAppLifecycleMutationPlanDraft(
+        readiness.canMutateAppLifecycle,
+        readiness.shouldDeferAppLifecycleMutation,
+        readiness.shouldReportAppLifecycleMutationBlocked
+    )
+}
+
+func cjguiInternalAppLifecycleMutationPlanOpenSanity(): Bool {
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    if (plan.shouldPlanAppLifecycleMutation == false) {
+        return false
+    }
+    if (plan.shouldDeferAppLifecycleMutationPlan) {
+        return false
+    }
+    return plan.shouldReportAppLifecycleMutationPlanBlocked == false
+}
+
+func cjguiInternalAppLifecycleMutationPlanBlockedSanity(): Bool {
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    if (plan.shouldPlanAppLifecycleMutation) {
+        return false
+    }
+    if (plan.shouldDeferAppLifecycleMutationPlan == false) {
+        return false
+    }
+    return plan.shouldReportAppLifecycleMutationPlanBlocked
+}
+
 //
 // 未来 app lifecycle owner:
 // - 归属正式的 runtime/cjgui core app lifecycle 模块。

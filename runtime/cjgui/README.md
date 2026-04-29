@@ -16,28 +16,36 @@
   - `CjguiInternalAppLifecyclePhaseTaxonomyMarker`
   - `CjguiInternalAppLifecycleWorkHandoffDraft`
   - `CjguiInternalAppLifecycleMutationReadinessDraft`
+  - `CjguiInternalAppLifecycleMutationPlanDraft`
   - `cjguiInternalNoOpAppLifecycleTransition`
   - `cjguiInternalAppLifecyclePhaseMarkerTransition`
   - `cjguiInternalAppLifecycleHasObservedPlatformReady`
   - `cjguiInternalBuildAppLifecycleWorkHandoffDraft`
   - `cjguiInternalBuildAppLifecycleMutationReadinessDraft`
+  - `cjguiInternalBuildAppLifecycleMutationPlanDraft`
   - `cjguiInternalAppLifecycleWorkHandoffOpenSanity`
   - `cjguiInternalAppLifecycleWorkHandoffBlockedSanity`
   - `cjguiInternalAppLifecycleMutationReadinessOpenSanity`
   - `cjguiInternalAppLifecycleMutationReadinessBlockedSanity`
+  - `cjguiInternalAppLifecycleMutationPlanOpenSanity`
+  - `cjguiInternalAppLifecycleMutationPlanBlockedSanity`
 - `src/window_lifecycle.cj`
   - `CjguiInternalWindowLifecycleState`
   - `CjguiInternalWindowLifecycleWorkHandoffDraft`
   - `CjguiInternalWindowLifecycleMutationReadinessDraft`
+  - `CjguiInternalWindowLifecycleMutationPlanDraft`
   - `cjguiInternalNoOpWindowLifecycleTransition`
   - `cjguiInternalWindowLifecycleStateMarkerTransition`
   - `cjguiInternalWindowLifecycleHasObservedPlatformReady`
   - `cjguiInternalBuildWindowLifecycleWorkHandoffDraft`
   - `cjguiInternalBuildWindowLifecycleMutationReadinessDraft`
+  - `cjguiInternalBuildWindowLifecycleMutationPlanDraft`
   - `cjguiInternalWindowLifecycleWorkHandoffOpenSanity`
   - `cjguiInternalWindowLifecycleWorkHandoffBlockedSanity`
   - `cjguiInternalWindowLifecycleMutationReadinessOpenSanity`
   - `cjguiInternalWindowLifecycleMutationReadinessBlockedSanity`
+  - `cjguiInternalWindowLifecycleMutationPlanOpenSanity`
+  - `cjguiInternalWindowLifecycleMutationPlanBlockedSanity`
 - `src/platform_adapter.cj`
   - `CjguiInternalPlatformAdapterFact`
   - `cjguiInternalNoOpPlatformAdapterFactIngestion`
@@ -107,6 +115,8 @@
   - `CjguiInternalLifecycleOwnerHandoffReport`
   - `CjguiInternalLifecycleMutationReadinessRequest`
   - `CjguiInternalLifecycleMutationReadinessReport`
+  - `CjguiInternalLifecycleMutationPlanRequest`
+  - `CjguiInternalLifecycleMutationPlanReport`
   - `cjguiInternalBuildRuntimeRootState`
   - `cjguiInternalRuntimeRootStateReadySanity`
   - `cjguiInternalRuntimeStep`
@@ -205,6 +215,10 @@
   - `cjguiInternalEvaluateLifecycleMutationReadiness`
   - `cjguiInternalExecuteLifecycleMutationReadinessDraft`
   - `cjguiInternalExecuteDefaultLifecycleMutationReadinessDraft`
+  - `cjguiInternalBuildLifecycleMutationPlanRequest`
+  - `cjguiInternalEvaluateLifecycleMutationPlan`
+  - `cjguiInternalExecuteLifecycleMutationPlanDraft`
+  - `cjguiInternalExecuteDefaultLifecycleMutationPlanDraft`
   - `cjguiInternalRuntimeCommandDraftReadySanity`
   - `cjguiInternalRuntimeCommandDraftNotReadyBlockedSanity`
   - `cjguiInternalRuntimeCommandDraftInputBlockedSanity`
@@ -285,6 +299,11 @@
   - `cjguiInternalLifecycleMutationReadinessInputBlockedSanity`
   - `cjguiInternalLifecycleMutationReadinessShutdownBlockedSanity`
   - `cjguiInternalLifecycleMutationReadinessCancellationBlockedSanity`
+  - `cjguiInternalLifecycleMutationPlanOpenSanity`
+  - `cjguiInternalLifecycleMutationPlanRuntimeBlockedSanity`
+  - `cjguiInternalLifecycleMutationPlanInputBlockedSanity`
+  - `cjguiInternalLifecycleMutationPlanShutdownBlockedSanity`
+  - `cjguiInternalLifecycleMutationPlanCancellationBlockedSanity`
 - `src/error.cj`
   - `CjguiInternalCompileSanityMarker`
   - `CjguiInternalErrorFact`
@@ -441,6 +460,8 @@
 - runtime owner handoff request / report 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleWorkDraftReport.draft` 并路由到 app/window owner builders；它不越级读取 IterationWorkPacketDraftReport、LoopIterationDraftReport、RunLoopDraftReport 或 lower-level facts，也不执行 lifecycle work。
 - lifecycle mutation readiness draft 将 owner-specific readiness facts 留在 `app_lifecycle.cj` 与 `window_lifecycle.cj`；app/window readiness draft 只表达 canMutate / shouldDefer / shouldReportBlocked，不修改 state、不调用 transition functions、不执行 lifecycle work。
 - runtime mutation readiness request / report 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleOwnerHandoffReport.appDraft` / `windowDraft` 并汇总 cross-owner readiness；它不越级读取 LifecycleWorkDraftReport 或 lower-level facts，也不执行 mutation。
+- lifecycle mutation plan draft 将 owner-specific plan facts 留在 `app_lifecycle.cj` 与 `window_lifecycle.cj`；app/window plan draft 只表达 shouldPlan / shouldDeferPlan / shouldReportPlanBlocked，不修改 state、不调用 transition functions、不执行 lifecycle work。
+- runtime mutation plan request / report 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleMutationReadinessReport.appReadiness` / `windowReadiness` 并汇总 cross-owner plan；它不越级读取 OwnerHandoffReport、LifecycleWorkDraftReport 或 lower-level facts，也不执行 mutation。
 - step outcome bundle 已封账；下一步应转向更大的 runtime behavior decision，而不是继续堆 helper 链。
 - root sanity 已封账；下一步应转向 first internal runtime step / step result，而不是继续堆 root helper。
 - root state 不定义 runtime state machine、app run、event loop、queue / drain、window create 或 shutdown。

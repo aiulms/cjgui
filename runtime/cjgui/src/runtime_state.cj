@@ -1224,34 +1224,443 @@ struct CjguiInternalLifecycleMutationCommitGateRequest {
 // 内部 lifecycle mutation commit gate report:
 // - 这是普通顶层 struct, 使用默认 internal 可见性。
 // - 它只表达 app/window mutation commit gate summary。
-// - canEnterLifecycleMutationCommit 不是真实 mutation execution。
+// - both-owner commit entry 可由 app/window owner facts 推导。
 // - 它不执行 lifecycle mutation, 不 commit state, 不修改 app/window state。
 
 struct CjguiInternalLifecycleMutationCommitGateReport {
     let request: CjguiInternalLifecycleMutationCommitGateRequest
     let appCommitGate: CjguiInternalAppLifecycleMutationCommitGateDraft
     let windowCommitGate: CjguiInternalWindowLifecycleMutationCommitGateDraft
-    let canEnterLifecycleMutationCommit: Bool
     let shouldDeferLifecycleMutationCommit: Bool
     let shouldReportLifecycleMutationCommitBlocked: Bool
-    let didBuildMutationCommitGate: Bool
 
     init(
         request: CjguiInternalLifecycleMutationCommitGateRequest,
         appCommitGate: CjguiInternalAppLifecycleMutationCommitGateDraft,
         windowCommitGate: CjguiInternalWindowLifecycleMutationCommitGateDraft,
-        canEnterLifecycleMutationCommit: Bool,
         shouldDeferLifecycleMutationCommit: Bool,
-        shouldReportLifecycleMutationCommitBlocked: Bool,
-        didBuildMutationCommitGate: Bool
+        shouldReportLifecycleMutationCommitBlocked: Bool
     ) {
         this.request = request
         this.appCommitGate = appCommitGate
         this.windowCommitGate = windowCommitGate
-        this.canEnterLifecycleMutationCommit = canEnterLifecycleMutationCommit
         this.shouldDeferLifecycleMutationCommit = shouldDeferLifecycleMutationCommit
         this.shouldReportLifecycleMutationCommitBlocked = shouldReportLifecycleMutationCommitBlocked
-        this.didBuildMutationCommitGate = didBuildMutationCommitGate
+    }
+}
+
+// 内部 lifecycle mutation apply request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 mutation commit gate report。
+// - runtime_state.cj 在这里仅作为 cross-owner apply summary owner。
+// - 它不拥有 app/window lifecycle mutation semantics。
+
+struct CjguiInternalLifecycleMutationApplyRequest {
+    let commitGateReport: CjguiInternalLifecycleMutationCommitGateReport
+
+    init(
+        commitGateReport: CjguiInternalLifecycleMutationCommitGateReport
+    ) {
+        this.commitGateReport = commitGateReport
+    }
+}
+
+// 内部 lifecycle mutation apply report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app/window mutation apply intent summary。
+// - both-owner apply intent 可由 app/window owner facts 推导。
+// - 它不执行 lifecycle mutation, 不 apply state, 不修改 app/window state。
+
+struct CjguiInternalLifecycleMutationApplyReport {
+    let request: CjguiInternalLifecycleMutationApplyRequest
+    let appApply: CjguiInternalAppLifecycleMutationApplyDraft
+    let windowApply: CjguiInternalWindowLifecycleMutationApplyDraft
+    let shouldDeferLifecycleMutationApply: Bool
+    let shouldReportLifecycleMutationApplyBlocked: Bool
+
+    init(
+        request: CjguiInternalLifecycleMutationApplyRequest,
+        appApply: CjguiInternalAppLifecycleMutationApplyDraft,
+        windowApply: CjguiInternalWindowLifecycleMutationApplyDraft,
+        shouldDeferLifecycleMutationApply: Bool,
+        shouldReportLifecycleMutationApplyBlocked: Bool
+    ) {
+        this.request = request
+        this.appApply = appApply
+        this.windowApply = windowApply
+        this.shouldDeferLifecycleMutationApply = shouldDeferLifecycleMutationApply
+        this.shouldReportLifecycleMutationApplyBlocked = shouldReportLifecycleMutationApplyBlocked
+    }
+}
+
+// 内部 lifecycle state mutation request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 mutation apply report 与先前 app/window lifecycle state。
+// - runtime_state.cj 只负责 cross-owner result summary。
+// - 它不拥有 app/window lifecycle state mutation semantics。
+
+struct CjguiInternalLifecycleStateMutationRequest {
+    let applyReport: CjguiInternalLifecycleMutationApplyReport
+    let appState: CjguiInternalAppLifecycleState
+    let windowState: CjguiInternalWindowLifecycleState
+
+    init(
+        applyReport: CjguiInternalLifecycleMutationApplyReport,
+        appState: CjguiInternalAppLifecycleState,
+        windowState: CjguiInternalWindowLifecycleState
+    ) {
+        this.applyReport = applyReport
+        this.appState = appState
+        this.windowState = windowState
+    }
+}
+
+// 内部 lifecycle state mutation report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只汇总 app/window owner-local immutable-copy mutation result。
+// - didMutateLifecycleOwners 不代表 public lifecycle result 或 platform behavior。
+// - 它不执行 platform callback, 不 touch queue, 不启动 event loop。
+
+struct CjguiInternalLifecycleStateMutationReport {
+    let request: CjguiInternalLifecycleStateMutationRequest
+    let appResult: CjguiInternalAppLifecycleMutationResult
+    let windowResult: CjguiInternalWindowLifecycleMutationResult
+    let didMutateLifecycleOwners: Bool
+    let shouldDeferLifecycleMutation: Bool
+    let shouldReportLifecycleMutationBlocked: Bool
+    let didBuildLifecycleMutationResult: Bool
+
+    init(
+        request: CjguiInternalLifecycleStateMutationRequest,
+        appResult: CjguiInternalAppLifecycleMutationResult,
+        windowResult: CjguiInternalWindowLifecycleMutationResult,
+        didMutateLifecycleOwners: Bool,
+        shouldDeferLifecycleMutation: Bool,
+        shouldReportLifecycleMutationBlocked: Bool,
+        didBuildLifecycleMutationResult: Bool
+    ) {
+        this.request = request
+        this.appResult = appResult
+        this.windowResult = windowResult
+        this.didMutateLifecycleOwners = didMutateLifecycleOwners
+        this.shouldDeferLifecycleMutation = shouldDeferLifecycleMutation
+        this.shouldReportLifecycleMutationBlocked = shouldReportLifecycleMutationBlocked
+        this.didBuildLifecycleMutationResult = didBuildLifecycleMutationResult
+    }
+}
+
+// 内部 lifecycle state mutation outcome request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 already-produced lifecycle state mutation report。
+// - 它不拥有 app/window lifecycle mutation semantics, 不执行 mutation。
+
+struct CjguiInternalLifecycleStateMutationOutcomeRequest {
+    let mutationReport: CjguiInternalLifecycleStateMutationReport
+
+    init(
+        mutationReport: CjguiInternalLifecycleStateMutationReport
+    ) {
+        this.mutationReport = mutationReport
+    }
+}
+
+// 内部 lifecycle state mutation outcome report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示 mutation outcome / verification summary。
+// - 它不表示 public lifecycle result, 不执行任何新的 mutation。
+
+struct CjguiInternalLifecycleStateMutationOutcomeReport {
+    let request: CjguiInternalLifecycleStateMutationOutcomeRequest
+    let didMutateAppLifecycle: Bool
+    let didMutateWindowLifecycle: Bool
+    let didPreserveBlockedLifecycleState: Bool
+    let shouldReportLifecycleMutationBlocked: Bool
+
+    init(
+        request: CjguiInternalLifecycleStateMutationOutcomeRequest,
+        didMutateAppLifecycle: Bool,
+        didMutateWindowLifecycle: Bool,
+        didPreserveBlockedLifecycleState: Bool,
+        shouldReportLifecycleMutationBlocked: Bool
+    ) {
+        this.request = request
+        this.didMutateAppLifecycle = didMutateAppLifecycle
+        this.didMutateWindowLifecycle = didMutateWindowLifecycle
+        this.didPreserveBlockedLifecycleState = didPreserveBlockedLifecycleState
+        this.shouldReportLifecycleMutationBlocked = shouldReportLifecycleMutationBlocked
+    }
+}
+
+// 内部 lifecycle mutated state publication request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 mutation outcome report。
+// - 它不拥有 app/window mutation semantics, 不执行 mutation, 不公开 state。
+
+struct CjguiInternalLifecycleMutatedStatePublicationRequest {
+    let outcomeReport: CjguiInternalLifecycleStateMutationOutcomeReport
+
+    init(
+        outcomeReport: CjguiInternalLifecycleStateMutationOutcomeReport
+    ) {
+        this.outcomeReport = outcomeReport
+    }
+}
+
+// 内部 lifecycle mutated state publication report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示 already-produced nextState 是否可作为后续 internal runtime 输入。
+// - 它不表示 public state publication, 不写入 runtime global state。
+
+struct CjguiInternalLifecycleMutatedStatePublicationReport {
+    let request: CjguiInternalLifecycleMutatedStatePublicationRequest
+    let appState: CjguiInternalAppLifecycleState
+    let windowState: CjguiInternalWindowLifecycleState
+    let shouldPublishAppState: Bool
+    let shouldPublishWindowState: Bool
+    let shouldDeferPublication: Bool
+    let shouldReportPublicationBlocked: Bool
+    let didBuildPublicationDraft: Bool
+
+    init(
+        request: CjguiInternalLifecycleMutatedStatePublicationRequest,
+        appState: CjguiInternalAppLifecycleState,
+        windowState: CjguiInternalWindowLifecycleState,
+        shouldPublishAppState: Bool,
+        shouldPublishWindowState: Bool,
+        shouldDeferPublication: Bool,
+        shouldReportPublicationBlocked: Bool,
+        didBuildPublicationDraft: Bool
+    ) {
+        this.request = request
+        this.appState = appState
+        this.windowState = windowState
+        this.shouldPublishAppState = shouldPublishAppState
+        this.shouldPublishWindowState = shouldPublishWindowState
+        this.shouldDeferPublication = shouldDeferPublication
+        this.shouldReportPublicationBlocked = shouldReportPublicationBlocked
+        this.didBuildPublicationDraft = didBuildPublicationDraft
+    }
+}
+
+// 内部 runtime state carry-forward request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 mutated state publication report。
+// - 它不拥有 app/window mutation semantics, 不执行 mutation, 不写 runtime global state。
+
+struct CjguiInternalRuntimeStateCarryForwardRequest {
+    let publicationReport: CjguiInternalLifecycleMutatedStatePublicationReport
+
+    init(
+        publicationReport: CjguiInternalLifecycleMutatedStatePublicationReport
+    ) {
+        this.publicationReport = publicationReport
+    }
+}
+
+// 内部 runtime state carry-forward report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示下一轮 internal runtime cycle 的 state candidate summary。
+// - 它不是 committed runtime state store, 不写入 runtime global state。
+
+struct CjguiInternalRuntimeStateCarryForwardReport {
+    let request: CjguiInternalRuntimeStateCarryForwardRequest
+    let nextAppStateCandidate: CjguiInternalAppLifecycleState
+    let nextWindowStateCandidate: CjguiInternalWindowLifecycleState
+    let shouldCarryForwardAppState: Bool
+    let shouldCarryForwardWindowState: Bool
+    let shouldDeferCarryForward: Bool
+    let shouldReportCarryForwardBlocked: Bool
+    let didBuildCarryForwardDraft: Bool
+
+    init(
+        request: CjguiInternalRuntimeStateCarryForwardRequest,
+        nextAppStateCandidate: CjguiInternalAppLifecycleState,
+        nextWindowStateCandidate: CjguiInternalWindowLifecycleState,
+        shouldCarryForwardAppState: Bool,
+        shouldCarryForwardWindowState: Bool,
+        shouldDeferCarryForward: Bool,
+        shouldReportCarryForwardBlocked: Bool,
+        didBuildCarryForwardDraft: Bool
+    ) {
+        this.request = request
+        this.nextAppStateCandidate = nextAppStateCandidate
+        this.nextWindowStateCandidate = nextWindowStateCandidate
+        this.shouldCarryForwardAppState = shouldCarryForwardAppState
+        this.shouldCarryForwardWindowState = shouldCarryForwardWindowState
+        this.shouldDeferCarryForward = shouldDeferCarryForward
+        this.shouldReportCarryForwardBlocked = shouldReportCarryForwardBlocked
+        this.didBuildCarryForwardDraft = didBuildCarryForwardDraft
+    }
+}
+
+// 内部 runtime carried state container request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 carry-forward report。
+// - 它不拥有 app/window mutation semantics, 不执行 mutation, 不写 runtime global state。
+
+struct CjguiInternalRuntimeCarriedStateContainerRequest {
+    let carryForwardReport: CjguiInternalRuntimeStateCarryForwardReport
+
+    init(
+        carryForwardReport: CjguiInternalRuntimeStateCarryForwardReport
+    ) {
+        this.carryForwardReport = carryForwardReport
+    }
+}
+
+// 内部 runtime carried state container draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示下一轮 internal runtime cycle 可携带的 state container draft。
+// - 它不是 committed runtime state store, 不写入 runtime global state。
+
+struct CjguiInternalRuntimeCarriedStateContainer {
+    let carriedAppState: CjguiInternalAppLifecycleState
+    let carriedWindowState: CjguiInternalWindowLifecycleState
+    let didCarryAppState: Bool
+    let didCarryWindowState: Bool
+    let shouldDeferCarriedState: Bool
+    let shouldReportCarriedStateBlocked: Bool
+
+    init(
+        carriedAppState: CjguiInternalAppLifecycleState,
+        carriedWindowState: CjguiInternalWindowLifecycleState,
+        didCarryAppState: Bool,
+        didCarryWindowState: Bool,
+        shouldDeferCarriedState: Bool,
+        shouldReportCarriedStateBlocked: Bool
+    ) {
+        this.carriedAppState = carriedAppState
+        this.carriedWindowState = carriedWindowState
+        this.didCarryAppState = didCarryAppState
+        this.didCarryWindowState = didCarryWindowState
+        this.shouldDeferCarriedState = shouldDeferCarriedState
+        this.shouldReportCarriedStateBlocked = shouldReportCarriedStateBlocked
+    }
+}
+
+// 内部 runtime state holder request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 carried state container。
+// - 它不拥有 app/window mutation semantics, 不执行 mutation, 不写 runtime global state。
+
+struct CjguiInternalRuntimeStateHolderRequest {
+    let container: CjguiInternalRuntimeCarriedStateContainer
+
+    init(
+        container: CjguiInternalRuntimeCarriedStateContainer
+    ) {
+        this.container = container
+    }
+}
+
+// 内部 runtime state holder draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示 value-style internal state holder summary。
+// - 它不是 committed runtime state store, 也不是 global mutable singleton。
+
+struct CjguiInternalRuntimeStateHolderDraft {
+    let heldAppState: CjguiInternalAppLifecycleState
+    let heldWindowState: CjguiInternalWindowLifecycleState
+    let didHoldRuntimeState: Bool
+    let shouldDeferRuntimeStateHold: Bool
+    let shouldReportRuntimeStateHoldBlocked: Bool
+
+    init(
+        heldAppState: CjguiInternalAppLifecycleState,
+        heldWindowState: CjguiInternalWindowLifecycleState,
+        didHoldRuntimeState: Bool,
+        shouldDeferRuntimeStateHold: Bool,
+        shouldReportRuntimeStateHoldBlocked: Bool
+    ) {
+        this.heldAppState = heldAppState
+        this.heldWindowState = heldWindowState
+        this.didHoldRuntimeState = didHoldRuntimeState
+        this.shouldDeferRuntimeStateHold = shouldDeferRuntimeStateHold
+        this.shouldReportRuntimeStateHoldBlocked = shouldReportRuntimeStateHoldBlocked
+    }
+}
+
+// 内部 runtime committed state store request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 runtime state holder draft。
+// - 它不拥有 app/window mutation semantics, 不执行 mutation, 不写 runtime global state。
+
+struct CjguiInternalRuntimeCommittedStateStoreRequest {
+    let holder: CjguiInternalRuntimeStateHolderDraft
+
+    init(
+        holder: CjguiInternalRuntimeStateHolderDraft
+    ) {
+        this.holder = holder
+    }
+}
+
+// 内部 runtime committed state store draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示 value-style internal committed state summary。
+// - 它不是 runtime global state store, 也不是 global mutable singleton。
+
+struct CjguiInternalRuntimeCommittedStateStoreDraft {
+    let committedAppState: CjguiInternalAppLifecycleState
+    let committedWindowState: CjguiInternalWindowLifecycleState
+    let didCommitRuntimeState: Bool
+    let shouldDeferRuntimeStateCommit: Bool
+    let shouldReportRuntimeStateCommitBlocked: Bool
+
+    init(
+        committedAppState: CjguiInternalAppLifecycleState,
+        committedWindowState: CjguiInternalWindowLifecycleState,
+        didCommitRuntimeState: Bool,
+        shouldDeferRuntimeStateCommit: Bool,
+        shouldReportRuntimeStateCommitBlocked: Bool
+    ) {
+        this.committedAppState = committedAppState
+        this.committedWindowState = committedWindowState
+        this.didCommitRuntimeState = didCommitRuntimeState
+        this.shouldDeferRuntimeStateCommit = shouldDeferRuntimeStateCommit
+        this.shouldReportRuntimeStateCommitBlocked = shouldReportRuntimeStateCommitBlocked
+    }
+}
+
+// 内部 runtime cycle feedback request:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只包装 committed state store draft。
+// - 它不执行下一轮 cycle, 不写 runtime global state, 不公开 state。
+
+struct CjguiInternalRuntimeCycleFeedbackRequest {
+    let store: CjguiInternalRuntimeCommittedStateStoreDraft
+
+    init(
+        store: CjguiInternalRuntimeCommittedStateStoreDraft
+    ) {
+        this.store = store
+    }
+}
+
+// 内部 runtime cycle feedback draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表示 value-style next-cycle feedback candidate summary。
+// - 它不是 event loop、scheduler、global state store 或 next-cycle execution。
+
+struct CjguiInternalRuntimeCycleFeedbackDraft {
+    let nextCycleAppStateCandidate: CjguiInternalAppLifecycleState
+    let nextCycleWindowStateCandidate: CjguiInternalWindowLifecycleState
+    let didPrepareCycleFeedback: Bool
+    let shouldDeferCycleFeedback: Bool
+    let shouldReportCycleFeedbackBlocked: Bool
+
+    init(
+        nextCycleAppStateCandidate: CjguiInternalAppLifecycleState,
+        nextCycleWindowStateCandidate: CjguiInternalWindowLifecycleState,
+        didPrepareCycleFeedback: Bool,
+        shouldDeferCycleFeedback: Bool,
+        shouldReportCycleFeedbackBlocked: Bool
+    ) {
+        this.nextCycleAppStateCandidate = nextCycleAppStateCandidate
+        this.nextCycleWindowStateCandidate = nextCycleWindowStateCandidate
+        this.didPrepareCycleFeedback = didPrepareCycleFeedback
+        this.shouldDeferCycleFeedback = shouldDeferCycleFeedback
+        this.shouldReportCycleFeedbackBlocked = shouldReportCycleFeedbackBlocked
     }
 }
 
@@ -2618,11 +3027,15 @@ func cjguiInternalEvaluateLifecycleMutationCommitGate(
         request,
         appCommitGate,
         windowCommitGate,
-        appCommitGate.canEnterAppLifecycleMutationCommit && windowCommitGate.canEnterWindowLifecycleMutationCommit,
         appCommitGate.shouldDeferAppLifecycleMutationCommit || windowCommitGate.shouldDeferWindowLifecycleMutationCommit,
-        appCommitGate.shouldReportAppLifecycleMutationCommitBlocked || windowCommitGate.shouldReportWindowLifecycleMutationCommitBlocked,
-        true
+        appCommitGate.shouldReportAppLifecycleMutationCommitBlocked || windowCommitGate.shouldReportWindowLifecycleMutationCommitBlocked
     )
+}
+
+func cjguiInternalLifecycleMutationCommitGateCanEnterBothOwners(
+    report: CjguiInternalLifecycleMutationCommitGateReport
+): Bool {
+    return report.appCommitGate.canEnterAppLifecycleMutationCommit && report.windowCommitGate.canEnterWindowLifecycleMutationCommit
 }
 
 func cjguiInternalExecuteLifecycleMutationCommitGateDraft(
@@ -2651,6 +3064,522 @@ func cjguiInternalExecuteDefaultLifecycleMutationCommitGateDraft(
         cjguiInternalDefaultRuntimeDriverPolicy(),
         cjguiInternalDefaultRuntimeShutdownIntent()
     )
+}
+
+// 内部 lifecycle mutation apply cross-owner summary:
+// - 它只消费 CommitGateReport, 不越级读取 MutationPlanReport 或 lower-level facts。
+// - app/window mutation apply facts 由各自 lifecycle owner module 构建。
+// - runtime_state.cj 只负责 cross-owner summary, 不执行 lifecycle mutation 或 apply state。
+
+func cjguiInternalBuildLifecycleMutationApplyRequest(
+    commitGateReport: CjguiInternalLifecycleMutationCommitGateReport
+): CjguiInternalLifecycleMutationApplyRequest {
+    return CjguiInternalLifecycleMutationApplyRequest(commitGateReport)
+}
+
+func cjguiInternalEvaluateLifecycleMutationApply(
+    request: CjguiInternalLifecycleMutationApplyRequest
+): CjguiInternalLifecycleMutationApplyReport {
+    let appApply = cjguiInternalBuildAppLifecycleMutationApplyDraft(
+        request.commitGateReport.appCommitGate
+    )
+    let windowApply = cjguiInternalBuildWindowLifecycleMutationApplyDraft(
+        request.commitGateReport.windowCommitGate
+    )
+    return CjguiInternalLifecycleMutationApplyReport(
+        request,
+        appApply,
+        windowApply,
+        appApply.shouldDeferAppLifecycleMutationApply || windowApply.shouldDeferWindowLifecycleMutationApply,
+        appApply.shouldReportAppLifecycleMutationApplyBlocked || windowApply.shouldReportWindowLifecycleMutationApplyBlocked
+    )
+}
+
+func cjguiInternalLifecycleMutationApplyShouldApplyBothOwners(
+    report: CjguiInternalLifecycleMutationApplyReport
+): Bool {
+    return report.appApply.shouldApplyAppLifecycleMutation && report.windowApply.shouldApplyWindowLifecycleMutation
+}
+
+func cjguiInternalExecuteLifecycleMutationApplyDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent
+): CjguiInternalLifecycleMutationApplyReport {
+    let commitGateReport = cjguiInternalExecuteLifecycleMutationCommitGateDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLifecycleMutationApplyRequest(
+        commitGateReport
+    )
+    return cjguiInternalEvaluateLifecycleMutationApply(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleMutationApplyDraft(
+): CjguiInternalLifecycleMutationApplyReport {
+    return cjguiInternalExecuteLifecycleMutationApplyDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+}
+
+// 内部 lifecycle state mutation cross-owner summary:
+// - 它只消费 ApplyReport 与先前 app/window state。
+// - app/window state copy transition 分别由 lifecycle owner modules 执行。
+// - runtime_state.cj 不拥有 app/window mutation semantics, 不做 in-place mutation。
+
+func cjguiInternalBuildLifecycleStateMutationRequest(
+    applyReport: CjguiInternalLifecycleMutationApplyReport,
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState
+): CjguiInternalLifecycleStateMutationRequest {
+    return CjguiInternalLifecycleStateMutationRequest(
+        applyReport,
+        appState,
+        windowState
+    )
+}
+
+func cjguiInternalEvaluateLifecycleStateMutation(
+    request: CjguiInternalLifecycleStateMutationRequest
+): CjguiInternalLifecycleStateMutationReport {
+    let appResult = cjguiInternalApplyAppLifecycleMutationDraft(
+        request.appState,
+        request.applyReport.appApply
+    )
+    let windowResult = cjguiInternalApplyWindowLifecycleMutationDraft(
+        request.windowState,
+        request.applyReport.windowApply
+    )
+    return CjguiInternalLifecycleStateMutationReport(
+        request,
+        appResult,
+        windowResult,
+        appResult.didMutateAppLifecycle && windowResult.didMutateWindowLifecycle,
+        appResult.shouldDeferAppLifecycleMutation || windowResult.shouldDeferWindowLifecycleMutation,
+        appResult.shouldReportAppLifecycleMutationBlocked || windowResult.shouldReportWindowLifecycleMutationBlocked,
+        true
+    )
+}
+
+func cjguiInternalExecuteLifecycleStateMutationDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent,
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState
+): CjguiInternalLifecycleStateMutationReport {
+    let applyReport = cjguiInternalExecuteLifecycleMutationApplyDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent
+    )
+    let request = cjguiInternalBuildLifecycleStateMutationRequest(
+        applyReport,
+        appState,
+        windowState
+    )
+    return cjguiInternalEvaluateLifecycleStateMutation(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleStateMutationDraft(
+): CjguiInternalLifecycleStateMutationReport {
+    return cjguiInternalExecuteLifecycleStateMutationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(),
+        CjguiInternalWindowLifecycleState()
+    )
+}
+
+// 内部 lifecycle state mutation outcome draft:
+// - 它只消费 StateMutationReport, 不越级读取 ApplyReport 或 lower-level facts。
+// - 它只聚合 / 验证 already-produced owner mutation results。
+// - 它不执行新的 mutation, 不修改 app/window state。
+
+func cjguiInternalBuildLifecycleStateMutationOutcomeRequest(
+    mutationReport: CjguiInternalLifecycleStateMutationReport
+): CjguiInternalLifecycleStateMutationOutcomeRequest {
+    return CjguiInternalLifecycleStateMutationOutcomeRequest(mutationReport)
+}
+
+func cjguiInternalEvaluateLifecycleStateMutationOutcome(
+    request: CjguiInternalLifecycleStateMutationOutcomeRequest
+): CjguiInternalLifecycleStateMutationOutcomeReport {
+    let appDidMutate = request.mutationReport.appResult.didMutateAppLifecycle
+    let windowDidMutate = request.mutationReport.windowResult.didMutateWindowLifecycle
+    let shouldReportBlocked = request.mutationReport.shouldReportLifecycleMutationBlocked
+    let didPreserveBlockedState = shouldReportBlocked == false || (appDidMutate == false && windowDidMutate == false)
+    return CjguiInternalLifecycleStateMutationOutcomeReport(
+        request,
+        appDidMutate,
+        windowDidMutate,
+        didPreserveBlockedState,
+        shouldReportBlocked
+    )
+}
+
+func cjguiInternalLifecycleStateMutationOutcomeDidMutateBothOwners(
+    report: CjguiInternalLifecycleStateMutationOutcomeReport
+): Bool {
+    return report.didMutateAppLifecycle && report.didMutateWindowLifecycle
+}
+
+func cjguiInternalExecuteLifecycleStateMutationOutcomeDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent,
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState
+): CjguiInternalLifecycleStateMutationOutcomeReport {
+    let mutationReport = cjguiInternalExecuteLifecycleStateMutationDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent,
+        appState,
+        windowState
+    )
+    let request = cjguiInternalBuildLifecycleStateMutationOutcomeRequest(
+        mutationReport
+    )
+    return cjguiInternalEvaluateLifecycleStateMutationOutcome(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleStateMutationOutcomeDraft(
+): CjguiInternalLifecycleStateMutationOutcomeReport {
+    return cjguiInternalExecuteLifecycleStateMutationOutcomeDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(),
+        CjguiInternalWindowLifecycleState()
+    )
+}
+
+// 内部 lifecycle mutated state publication draft:
+// - 它只消费 OutcomeReport, 不越级读取 ApplyReport 或 lower-level facts。
+// - app/window state 只来自 already-produced owner mutation result nextState。
+// - 它不执行新的 mutation, 不修改 app/window state, 不公开 state。
+
+func cjguiInternalBuildLifecycleMutatedStatePublicationRequest(
+    outcomeReport: CjguiInternalLifecycleStateMutationOutcomeReport
+): CjguiInternalLifecycleMutatedStatePublicationRequest {
+    return CjguiInternalLifecycleMutatedStatePublicationRequest(outcomeReport)
+}
+
+func cjguiInternalEvaluateLifecycleMutatedStatePublication(
+    request: CjguiInternalLifecycleMutatedStatePublicationRequest
+): CjguiInternalLifecycleMutatedStatePublicationReport {
+    let outcome = request.outcomeReport
+    return CjguiInternalLifecycleMutatedStatePublicationReport(
+        request,
+        outcome.request.mutationReport.appResult.nextState,
+        outcome.request.mutationReport.windowResult.nextState,
+        outcome.didMutateAppLifecycle,
+        outcome.didMutateWindowLifecycle,
+        outcome.shouldReportLifecycleMutationBlocked,
+        outcome.shouldReportLifecycleMutationBlocked,
+        true
+    )
+}
+
+func cjguiInternalExecuteLifecycleMutatedStatePublicationDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent,
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState
+): CjguiInternalLifecycleMutatedStatePublicationReport {
+    let outcomeReport = cjguiInternalExecuteLifecycleStateMutationOutcomeDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent,
+        appState,
+        windowState
+    )
+    let request = cjguiInternalBuildLifecycleMutatedStatePublicationRequest(
+        outcomeReport
+    )
+    return cjguiInternalEvaluateLifecycleMutatedStatePublication(request)
+}
+
+func cjguiInternalExecuteDefaultLifecycleMutatedStatePublicationDraft(
+): CjguiInternalLifecycleMutatedStatePublicationReport {
+    return cjguiInternalExecuteLifecycleMutatedStatePublicationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(),
+        CjguiInternalWindowLifecycleState()
+    )
+}
+
+// 内部 runtime state carry-forward draft:
+// - 它只消费 PublicationReport, 不越级读取 OutcomeReport 或 lower-level facts。
+// - candidate state 只来自 publication report 的 app/window state。
+// - 它不执行新的 mutation, 不公开 state, 不写 runtime global state。
+
+func cjguiInternalBuildRuntimeStateCarryForwardRequest(
+    publicationReport: CjguiInternalLifecycleMutatedStatePublicationReport
+): CjguiInternalRuntimeStateCarryForwardRequest {
+    return CjguiInternalRuntimeStateCarryForwardRequest(publicationReport)
+}
+
+func cjguiInternalEvaluateRuntimeStateCarryForward(
+    request: CjguiInternalRuntimeStateCarryForwardRequest
+): CjguiInternalRuntimeStateCarryForwardReport {
+    let publication = request.publicationReport
+    return CjguiInternalRuntimeStateCarryForwardReport(
+        request,
+        publication.appState,
+        publication.windowState,
+        publication.shouldPublishAppState,
+        publication.shouldPublishWindowState,
+        publication.shouldDeferPublication,
+        publication.shouldReportPublicationBlocked,
+        true
+    )
+}
+
+func cjguiInternalExecuteRuntimeStateCarryForwardDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent,
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState
+): CjguiInternalRuntimeStateCarryForwardReport {
+    let publicationReport = cjguiInternalExecuteLifecycleMutatedStatePublicationDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent,
+        appState,
+        windowState
+    )
+    let request = cjguiInternalBuildRuntimeStateCarryForwardRequest(
+        publicationReport
+    )
+    return cjguiInternalEvaluateRuntimeStateCarryForward(request)
+}
+
+func cjguiInternalExecuteDefaultRuntimeStateCarryForwardDraft(
+): CjguiInternalRuntimeStateCarryForwardReport {
+    return cjguiInternalExecuteRuntimeStateCarryForwardDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(),
+        CjguiInternalWindowLifecycleState()
+    )
+}
+
+// 内部 runtime carried state container draft:
+// - 它只消费 CarryForwardReport, 不越级读取 PublicationReport 或 lower-level facts。
+// - carried state 只来自 carry-forward report 的 app/window candidates。
+// - 它不执行新的 mutation, 不公开 state, 不写 runtime global state。
+
+func cjguiInternalBuildRuntimeCarriedStateContainerRequest(
+    carryForwardReport: CjguiInternalRuntimeStateCarryForwardReport
+): CjguiInternalRuntimeCarriedStateContainerRequest {
+    return CjguiInternalRuntimeCarriedStateContainerRequest(
+        carryForwardReport
+    )
+}
+
+func cjguiInternalEvaluateRuntimeCarriedStateContainer(
+    request: CjguiInternalRuntimeCarriedStateContainerRequest
+): CjguiInternalRuntimeCarriedStateContainer {
+    let carryForward = request.carryForwardReport
+    return CjguiInternalRuntimeCarriedStateContainer(
+        carryForward.nextAppStateCandidate,
+        carryForward.nextWindowStateCandidate,
+        carryForward.shouldCarryForwardAppState,
+        carryForward.shouldCarryForwardWindowState,
+        carryForward.shouldDeferCarryForward,
+        carryForward.shouldReportCarryForwardBlocked
+    )
+}
+
+func cjguiInternalExecuteRuntimeCarriedStateContainerDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent,
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState
+): CjguiInternalRuntimeCarriedStateContainer {
+    let carryForwardReport = cjguiInternalExecuteRuntimeStateCarryForwardDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent,
+        appState,
+        windowState
+    )
+    let request = cjguiInternalBuildRuntimeCarriedStateContainerRequest(
+        carryForwardReport
+    )
+    return cjguiInternalEvaluateRuntimeCarriedStateContainer(request)
+}
+
+func cjguiInternalExecuteDefaultRuntimeCarriedStateContainerDraft(
+): CjguiInternalRuntimeCarriedStateContainer {
+    return cjguiInternalExecuteRuntimeCarriedStateContainerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(),
+        CjguiInternalWindowLifecycleState()
+    )
+}
+
+// 内部 runtime state holder draft:
+// - 它只消费 CarriedStateContainer, 不越级读取 CarryForwardReport 或 lower-level facts。
+// - held state 只来自 carried state container 的 app/window state。
+// - 它不执行新的 mutation, 不公开 state, 不写 runtime global state。
+
+func cjguiInternalBuildRuntimeStateHolderRequest(
+    container: CjguiInternalRuntimeCarriedStateContainer
+): CjguiInternalRuntimeStateHolderRequest {
+    return CjguiInternalRuntimeStateHolderRequest(container)
+}
+
+func cjguiInternalEvaluateRuntimeStateHolder(
+    request: CjguiInternalRuntimeStateHolderRequest
+): CjguiInternalRuntimeStateHolderDraft {
+    let container = request.container
+    return CjguiInternalRuntimeStateHolderDraft(
+        container.carriedAppState,
+        container.carriedWindowState,
+        container.didCarryAppState && container.didCarryWindowState,
+        container.shouldDeferCarriedState,
+        container.shouldReportCarriedStateBlocked
+    )
+}
+
+func cjguiInternalExecuteRuntimeStateHolderDraft(
+    driverRequest: CjguiInternalRuntimeDriverRequest,
+    driverInput: CjguiInternalRuntimeDriverInput,
+    driverPolicy: CjguiInternalRuntimeDriverPolicy,
+    shutdownIntent: CjguiInternalRuntimeShutdownIntent,
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState
+): CjguiInternalRuntimeStateHolderDraft {
+    let container = cjguiInternalExecuteRuntimeCarriedStateContainerDraft(
+        driverRequest,
+        driverInput,
+        driverPolicy,
+        shutdownIntent,
+        appState,
+        windowState
+    )
+    let request = cjguiInternalBuildRuntimeStateHolderRequest(container)
+    return cjguiInternalEvaluateRuntimeStateHolder(request)
+}
+
+func cjguiInternalExecuteDefaultRuntimeStateHolderDraft(
+): CjguiInternalRuntimeStateHolderDraft {
+    return cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(),
+        CjguiInternalWindowLifecycleState()
+    )
+}
+
+// 内部 runtime committed state store draft:
+// - 它只消费 StateHolderDraft, 不越级读取 CarriedStateContainer 或 lower-level facts。
+// - committed state 只来自 holder 的 held app/window state。
+// - 它不执行新的 mutation, 不公开 state, 不写 runtime global state。
+
+func cjguiInternalBuildRuntimeCommittedStateStoreRequest(
+    holder: CjguiInternalRuntimeStateHolderDraft
+): CjguiInternalRuntimeCommittedStateStoreRequest {
+    return CjguiInternalRuntimeCommittedStateStoreRequest(holder)
+}
+
+func cjguiInternalEvaluateRuntimeCommittedStateStore(
+    request: CjguiInternalRuntimeCommittedStateStoreRequest
+): CjguiInternalRuntimeCommittedStateStoreDraft {
+    let holder = request.holder
+    return CjguiInternalRuntimeCommittedStateStoreDraft(
+        holder.heldAppState,
+        holder.heldWindowState,
+        holder.didHoldRuntimeState,
+        holder.shouldDeferRuntimeStateHold,
+        holder.shouldReportRuntimeStateHoldBlocked
+    )
+}
+
+func cjguiInternalExecuteRuntimeCommittedStateStoreDraft(
+    holder: CjguiInternalRuntimeStateHolderDraft
+): CjguiInternalRuntimeCommittedStateStoreDraft {
+    let request = cjguiInternalBuildRuntimeCommittedStateStoreRequest(holder)
+    return cjguiInternalEvaluateRuntimeCommittedStateStore(request)
+}
+
+func cjguiInternalExecuteDefaultRuntimeCommittedStateStoreDraft(
+): CjguiInternalRuntimeCommittedStateStoreDraft {
+    let holder = cjguiInternalExecuteDefaultRuntimeStateHolderDraft()
+    return cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+}
+
+// 内部 runtime cycle feedback draft:
+// - 它只消费 CommittedStateStoreDraft, 不越级读取 StateHolderDraft 或 lower-level facts。
+// - next-cycle candidates 只来自 committed store 的 app/window state。
+// - 它不执行下一轮 cycle, 不执行新的 mutation, 不写 runtime global state。
+
+func cjguiInternalBuildRuntimeCycleFeedbackRequest(
+    store: CjguiInternalRuntimeCommittedStateStoreDraft
+): CjguiInternalRuntimeCycleFeedbackRequest {
+    return CjguiInternalRuntimeCycleFeedbackRequest(store)
+}
+
+func cjguiInternalEvaluateRuntimeCycleFeedback(
+    request: CjguiInternalRuntimeCycleFeedbackRequest
+): CjguiInternalRuntimeCycleFeedbackDraft {
+    let store = request.store
+    return CjguiInternalRuntimeCycleFeedbackDraft(
+        store.committedAppState,
+        store.committedWindowState,
+        store.didCommitRuntimeState,
+        store.shouldDeferRuntimeStateCommit,
+        store.shouldReportRuntimeStateCommitBlocked
+    )
+}
+
+func cjguiInternalExecuteRuntimeCycleFeedbackDraft(
+    store: CjguiInternalRuntimeCommittedStateStoreDraft
+): CjguiInternalRuntimeCycleFeedbackDraft {
+    let request = cjguiInternalBuildRuntimeCycleFeedbackRequest(store)
+    return cjguiInternalEvaluateRuntimeCycleFeedback(request)
+}
+
+func cjguiInternalExecuteDefaultRuntimeCycleFeedbackDraft(
+): CjguiInternalRuntimeCycleFeedbackDraft {
+    let store = cjguiInternalExecuteDefaultRuntimeCommittedStateStoreDraft()
+    return cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
 }
 
 // 内部 runtime step ready sanity helper:
@@ -4981,16 +5910,13 @@ func cjguiInternalLifecycleMutationPlanCancellationBlockedSanity(): Bool {
 
 func cjguiInternalLifecycleMutationCommitGateOpenSanity(): Bool {
     let report = cjguiInternalExecuteDefaultLifecycleMutationCommitGateDraft()
-    if (report.didBuildMutationCommitGate == false) {
-        return false
-    }
     if (report.appCommitGate.canEnterAppLifecycleMutationCommit == false) {
         return false
     }
     if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit == false) {
         return false
     }
-    if (report.canEnterLifecycleMutationCommit == false) {
+    if (cjguiInternalLifecycleMutationCommitGateCanEnterBothOwners(report) == false) {
         return false
     }
     if (report.shouldDeferLifecycleMutationCommit) {
@@ -5018,16 +5944,13 @@ func cjguiInternalLifecycleMutationCommitGateRuntimeBlockedSanity(): Bool {
         cjguiInternalDefaultRuntimeDriverPolicy(),
         cjguiInternalDefaultRuntimeShutdownIntent()
     )
-    if (report.didBuildMutationCommitGate == false) {
-        return false
-    }
     if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
         return false
     }
     if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
         return false
     }
-    if (report.canEnterLifecycleMutationCommit) {
+    if (cjguiInternalLifecycleMutationCommitGateCanEnterBothOwners(report)) {
         return false
     }
     if (report.shouldDeferLifecycleMutationCommit == false) {
@@ -5043,16 +5966,13 @@ func cjguiInternalLifecycleMutationCommitGateInputBlockedSanity(): Bool {
         cjguiInternalDefaultRuntimeDriverPolicy(),
         cjguiInternalDefaultRuntimeShutdownIntent()
     )
-    if (report.didBuildMutationCommitGate == false) {
-        return false
-    }
     if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
         return false
     }
     if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
         return false
     }
-    if (report.canEnterLifecycleMutationCommit) {
+    if (cjguiInternalLifecycleMutationCommitGateCanEnterBothOwners(report)) {
         return false
     }
     if (report.shouldDeferLifecycleMutationCommit == false) {
@@ -5068,16 +5988,13 @@ func cjguiInternalLifecycleMutationCommitGateShutdownBlockedSanity(): Bool {
         cjguiInternalDefaultRuntimeDriverPolicy(),
         cjguiInternalBuildRuntimeShutdownIntent(true, false)
     )
-    if (report.didBuildMutationCommitGate == false) {
-        return false
-    }
     if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
         return false
     }
     if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
         return false
     }
-    if (report.canEnterLifecycleMutationCommit) {
+    if (cjguiInternalLifecycleMutationCommitGateCanEnterBothOwners(report)) {
         return false
     }
     if (report.shouldDeferLifecycleMutationCommit == false) {
@@ -5093,20 +6010,1504 @@ func cjguiInternalLifecycleMutationCommitGateCancellationBlockedSanity(): Bool {
         cjguiInternalDefaultRuntimeDriverPolicy(),
         cjguiInternalBuildRuntimeShutdownIntent(false, true)
     )
-    if (report.didBuildMutationCommitGate == false) {
-        return false
-    }
     if (report.appCommitGate.canEnterAppLifecycleMutationCommit) {
         return false
     }
     if (report.windowCommitGate.canEnterWindowLifecycleMutationCommit) {
         return false
     }
-    if (report.canEnterLifecycleMutationCommit) {
+    if (cjguiInternalLifecycleMutationCommitGateCanEnterBothOwners(report)) {
         return false
     }
     if (report.shouldDeferLifecycleMutationCommit == false) {
         return false
     }
     return report.shouldReportLifecycleMutationCommitBlocked
+}
+
+func cjguiInternalLifecycleMutationApplyOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleMutationApplyDraft()
+    if (report.appApply.shouldApplyAppLifecycleMutation == false) {
+        return false
+    }
+    if (report.windowApply.shouldApplyWindowLifecycleMutation == false) {
+        return false
+    }
+    if (cjguiInternalLifecycleMutationApplyShouldApplyBothOwners(report) == false) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationApply) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationApplyBlocked == false
+}
+
+func cjguiInternalLifecycleMutationApplyRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleMutationApplyDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.appApply.shouldApplyAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowApply.shouldApplyWindowLifecycleMutation) {
+        return false
+    }
+    if (cjguiInternalLifecycleMutationApplyShouldApplyBothOwners(report)) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationApply == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationApplyBlocked
+}
+
+func cjguiInternalLifecycleMutationApplyInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationApplyDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent()
+    )
+    if (report.appApply.shouldApplyAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowApply.shouldApplyWindowLifecycleMutation) {
+        return false
+    }
+    if (cjguiInternalLifecycleMutationApplyShouldApplyBothOwners(report)) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationApply == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationApplyBlocked
+}
+
+func cjguiInternalLifecycleMutationApplyShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationApplyDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false)
+    )
+    if (report.appApply.shouldApplyAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowApply.shouldApplyWindowLifecycleMutation) {
+        return false
+    }
+    if (cjguiInternalLifecycleMutationApplyShouldApplyBothOwners(report)) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationApply == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationApplyBlocked
+}
+
+func cjguiInternalLifecycleMutationApplyCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleMutationApplyDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true)
+    )
+    if (report.appApply.shouldApplyAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowApply.shouldApplyWindowLifecycleMutation) {
+        return false
+    }
+    if (cjguiInternalLifecycleMutationApplyShouldApplyBothOwners(report)) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutationApply == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationApplyBlocked
+}
+
+func cjguiInternalLifecycleStateMutationOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleStateMutationDraft()
+    if (report.didBuildLifecycleMutationResult == false) {
+        return false
+    }
+    if (report.appResult.didMutateAppLifecycle == false) {
+        return false
+    }
+    if (report.windowResult.didMutateWindowLifecycle == false) {
+        return false
+    }
+    if (report.didMutateLifecycleOwners == false) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation) {
+        return false
+    }
+    if (report.shouldReportLifecycleMutationBlocked) {
+        return false
+    }
+    if (report.appResult.shouldDeferAppLifecycleMutation) {
+        return false
+    }
+    if (report.windowResult.shouldDeferWindowLifecycleMutation) {
+        return false
+    }
+    if (report.appResult.shouldReportAppLifecycleMutationBlocked) {
+        return false
+    }
+    if (report.windowResult.shouldReportWindowLifecycleMutationBlocked) {
+        return false
+    }
+    if ((report.appResult.previousState.isStateMachineActive == report.request.appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appResult.previousState.hasLifecyclePhase == report.request.appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appResult.previousState.hasObservedPlatformReady == report.request.appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if (report.appResult.nextState.isStateMachineActive == false) {
+        return false
+    }
+    if (report.appResult.nextState.hasLifecyclePhase == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasObservedPlatformReady == report.request.appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowResult.previousState.hasWindowState == report.request.windowState.hasWindowState) == false) {
+        return false
+    }
+    if ((report.windowResult.previousState.hasObservedPlatformReady == report.request.windowState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if (report.windowResult.nextState.hasWindowState == false) {
+        return false
+    }
+    return report.windowResult.nextState.hasObservedPlatformReady == report.request.windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleStateMutationRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteLifecycleStateMutationDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (report.didBuildLifecycleMutationResult == false) {
+        return false
+    }
+    if (report.appResult.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowResult.didMutateWindowLifecycle) {
+        return false
+    }
+    if (report.didMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    if (report.shouldReportLifecycleMutationBlocked == false) {
+        return false
+    }
+    if (report.appResult.shouldDeferAppLifecycleMutation == false) {
+        return false
+    }
+    if (report.windowResult.shouldDeferWindowLifecycleMutation == false) {
+        return false
+    }
+    if (report.appResult.shouldReportAppLifecycleMutationBlocked == false) {
+        return false
+    }
+    if (report.windowResult.shouldReportWindowLifecycleMutationBlocked == false) {
+        return false
+    }
+    if ((report.appResult.nextState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowResult.nextState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowResult.nextState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleStateMutationInputBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteLifecycleStateMutationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (report.didBuildLifecycleMutationResult == false) {
+        return false
+    }
+    if (report.appResult.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowResult.didMutateWindowLifecycle) {
+        return false
+    }
+    if (report.didMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    if (report.shouldReportLifecycleMutationBlocked == false) {
+        return false
+    }
+    if ((report.appResult.nextState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowResult.nextState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowResult.nextState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleStateMutationShutdownBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteLifecycleStateMutationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        appState,
+        windowState
+    )
+    if (report.didBuildLifecycleMutationResult == false) {
+        return false
+    }
+    if (report.appResult.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowResult.didMutateWindowLifecycle) {
+        return false
+    }
+    if (report.didMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    if (report.shouldReportLifecycleMutationBlocked == false) {
+        return false
+    }
+    if ((report.appResult.nextState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowResult.nextState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowResult.nextState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleStateMutationCancellationBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteLifecycleStateMutationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        appState,
+        windowState
+    )
+    if (report.didBuildLifecycleMutationResult == false) {
+        return false
+    }
+    if (report.appResult.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.windowResult.didMutateWindowLifecycle) {
+        return false
+    }
+    if (report.didMutateLifecycleOwners) {
+        return false
+    }
+    if (report.shouldDeferLifecycleMutation == false) {
+        return false
+    }
+    if (report.shouldReportLifecycleMutationBlocked == false) {
+        return false
+    }
+    if ((report.appResult.nextState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appResult.nextState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowResult.nextState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowResult.nextState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleStateMutationOutcomeOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleStateMutationOutcomeDraft()
+    if (report.didMutateAppLifecycle == false) {
+        return false
+    }
+    if (report.didMutateWindowLifecycle == false) {
+        return false
+    }
+    if (cjguiInternalLifecycleStateMutationOutcomeDidMutateBothOwners(report) == false) {
+        return false
+    }
+    if (report.didPreserveBlockedLifecycleState == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked == false
+}
+
+func cjguiInternalLifecycleStateMutationOutcomeRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleStateMutationOutcomeDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    if (report.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.didMutateWindowLifecycle) {
+        return false
+    }
+    if (cjguiInternalLifecycleStateMutationOutcomeDidMutateBothOwners(report)) {
+        return false
+    }
+    if (report.didPreserveBlockedLifecycleState == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleStateMutationOutcomeInputBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleStateMutationOutcomeDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    if (report.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.didMutateWindowLifecycle) {
+        return false
+    }
+    if (cjguiInternalLifecycleStateMutationOutcomeDidMutateBothOwners(report)) {
+        return false
+    }
+    if (report.didPreserveBlockedLifecycleState == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleStateMutationOutcomeShutdownBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleStateMutationOutcomeDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    if (report.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.didMutateWindowLifecycle) {
+        return false
+    }
+    if (cjguiInternalLifecycleStateMutationOutcomeDidMutateBothOwners(report)) {
+        return false
+    }
+    if (report.didPreserveBlockedLifecycleState == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleStateMutationOutcomeCancellationBlockedSanity(): Bool {
+    let report = cjguiInternalExecuteLifecycleStateMutationOutcomeDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    if (report.didMutateAppLifecycle) {
+        return false
+    }
+    if (report.didMutateWindowLifecycle) {
+        return false
+    }
+    if (cjguiInternalLifecycleStateMutationOutcomeDidMutateBothOwners(report)) {
+        return false
+    }
+    if (report.didPreserveBlockedLifecycleState == false) {
+        return false
+    }
+    return report.shouldReportLifecycleMutationBlocked
+}
+
+func cjguiInternalLifecycleMutatedStatePublicationOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultLifecycleMutatedStatePublicationDraft()
+    if (report.didBuildPublicationDraft == false) {
+        return false
+    }
+    if (report.shouldPublishAppState == false) {
+        return false
+    }
+    if (report.shouldPublishWindowState == false) {
+        return false
+    }
+    if (report.shouldDeferPublication) {
+        return false
+    }
+    if (report.shouldReportPublicationBlocked) {
+        return false
+    }
+    if (report.appState.isStateMachineActive == false) {
+        return false
+    }
+    if (report.appState.hasLifecyclePhase == false) {
+        return false
+    }
+    return report.windowState.hasWindowState
+}
+
+func cjguiInternalLifecycleMutatedStatePublicationRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteLifecycleMutatedStatePublicationDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (report.didBuildPublicationDraft == false) {
+        return false
+    }
+    if (report.shouldPublishAppState) {
+        return false
+    }
+    if (report.shouldPublishWindowState) {
+        return false
+    }
+    if (report.shouldDeferPublication == false) {
+        return false
+    }
+    if (report.shouldReportPublicationBlocked == false) {
+        return false
+    }
+    if ((report.appState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleMutatedStatePublicationInputBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteLifecycleMutatedStatePublicationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (report.didBuildPublicationDraft == false) {
+        return false
+    }
+    if (report.shouldPublishAppState) {
+        return false
+    }
+    if (report.shouldPublishWindowState) {
+        return false
+    }
+    if (report.shouldDeferPublication == false) {
+        return false
+    }
+    if (report.shouldReportPublicationBlocked == false) {
+        return false
+    }
+    if ((report.appState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleMutatedStatePublicationShutdownBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteLifecycleMutatedStatePublicationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        appState,
+        windowState
+    )
+    if (report.didBuildPublicationDraft == false) {
+        return false
+    }
+    if (report.shouldPublishAppState) {
+        return false
+    }
+    if (report.shouldPublishWindowState) {
+        return false
+    }
+    if (report.shouldDeferPublication == false) {
+        return false
+    }
+    if (report.shouldReportPublicationBlocked == false) {
+        return false
+    }
+    if ((report.appState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalLifecycleMutatedStatePublicationCancellationBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteLifecycleMutatedStatePublicationDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        appState,
+        windowState
+    )
+    if (report.didBuildPublicationDraft == false) {
+        return false
+    }
+    if (report.shouldPublishAppState) {
+        return false
+    }
+    if (report.shouldPublishWindowState) {
+        return false
+    }
+    if (report.shouldDeferPublication == false) {
+        return false
+    }
+    if (report.shouldReportPublicationBlocked == false) {
+        return false
+    }
+    if ((report.appState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.appState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.appState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.windowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.windowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateCarryForwardOpenSanity(): Bool {
+    let report = cjguiInternalExecuteDefaultRuntimeStateCarryForwardDraft()
+    if (report.didBuildCarryForwardDraft == false) {
+        return false
+    }
+    if (report.shouldCarryForwardAppState == false) {
+        return false
+    }
+    if (report.shouldCarryForwardWindowState == false) {
+        return false
+    }
+    if (report.shouldDeferCarryForward) {
+        return false
+    }
+    if (report.shouldReportCarryForwardBlocked) {
+        return false
+    }
+    if (report.nextAppStateCandidate.isStateMachineActive == false) {
+        return false
+    }
+    if (report.nextAppStateCandidate.hasLifecyclePhase == false) {
+        return false
+    }
+    return report.nextWindowStateCandidate.hasWindowState
+}
+
+func cjguiInternalRuntimeStateCarryForwardRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let report = cjguiInternalExecuteRuntimeStateCarryForwardDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (report.didBuildCarryForwardDraft == false) {
+        return false
+    }
+    if (report.shouldCarryForwardAppState) {
+        return false
+    }
+    if (report.shouldCarryForwardWindowState) {
+        return false
+    }
+    if (report.shouldDeferCarryForward == false) {
+        return false
+    }
+    if (report.shouldReportCarryForwardBlocked == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.nextWindowStateCandidate.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.nextWindowStateCandidate.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateCarryForwardInputBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteRuntimeStateCarryForwardDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (report.didBuildCarryForwardDraft == false) {
+        return false
+    }
+    if (report.shouldCarryForwardAppState) {
+        return false
+    }
+    if (report.shouldCarryForwardWindowState) {
+        return false
+    }
+    if (report.shouldDeferCarryForward == false) {
+        return false
+    }
+    if (report.shouldReportCarryForwardBlocked == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.nextWindowStateCandidate.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.nextWindowStateCandidate.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateCarryForwardShutdownBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteRuntimeStateCarryForwardDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        appState,
+        windowState
+    )
+    if (report.didBuildCarryForwardDraft == false) {
+        return false
+    }
+    if (report.shouldCarryForwardAppState) {
+        return false
+    }
+    if (report.shouldCarryForwardWindowState) {
+        return false
+    }
+    if (report.shouldDeferCarryForward == false) {
+        return false
+    }
+    if (report.shouldReportCarryForwardBlocked == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.nextWindowStateCandidate.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.nextWindowStateCandidate.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateCarryForwardCancellationBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let report = cjguiInternalExecuteRuntimeStateCarryForwardDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        appState,
+        windowState
+    )
+    if (report.didBuildCarryForwardDraft == false) {
+        return false
+    }
+    if (report.shouldCarryForwardAppState) {
+        return false
+    }
+    if (report.shouldCarryForwardWindowState) {
+        return false
+    }
+    if (report.shouldDeferCarryForward == false) {
+        return false
+    }
+    if (report.shouldReportCarryForwardBlocked == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((report.nextAppStateCandidate.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((report.nextWindowStateCandidate.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return report.nextWindowStateCandidate.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeCarriedStateContainerOpenSanity(): Bool {
+    let container = cjguiInternalExecuteDefaultRuntimeCarriedStateContainerDraft()
+    if (container.didCarryAppState == false) {
+        return false
+    }
+    if (container.didCarryWindowState == false) {
+        return false
+    }
+    if (container.shouldDeferCarriedState) {
+        return false
+    }
+    if (container.shouldReportCarriedStateBlocked) {
+        return false
+    }
+    if (container.carriedAppState.isStateMachineActive == false) {
+        return false
+    }
+    if (container.carriedAppState.hasLifecyclePhase == false) {
+        return false
+    }
+    return container.carriedWindowState.hasWindowState
+}
+
+func cjguiInternalRuntimeCarriedStateContainerRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let container = cjguiInternalExecuteRuntimeCarriedStateContainerDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (container.didCarryAppState) {
+        return false
+    }
+    if (container.didCarryWindowState) {
+        return false
+    }
+    if (container.shouldDeferCarriedState == false) {
+        return false
+    }
+    if (container.shouldReportCarriedStateBlocked == false) {
+        return false
+    }
+    if ((container.carriedAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((container.carriedWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return container.carriedWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeCarriedStateContainerInputBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let container = cjguiInternalExecuteRuntimeCarriedStateContainerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (container.didCarryAppState) {
+        return false
+    }
+    if (container.didCarryWindowState) {
+        return false
+    }
+    if (container.shouldDeferCarriedState == false) {
+        return false
+    }
+    if (container.shouldReportCarriedStateBlocked == false) {
+        return false
+    }
+    if ((container.carriedAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((container.carriedWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return container.carriedWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeCarriedStateContainerShutdownBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let container = cjguiInternalExecuteRuntimeCarriedStateContainerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        appState,
+        windowState
+    )
+    if (container.didCarryAppState) {
+        return false
+    }
+    if (container.didCarryWindowState) {
+        return false
+    }
+    if (container.shouldDeferCarriedState == false) {
+        return false
+    }
+    if (container.shouldReportCarriedStateBlocked == false) {
+        return false
+    }
+    if ((container.carriedAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((container.carriedWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return container.carriedWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeCarriedStateContainerCancellationBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let container = cjguiInternalExecuteRuntimeCarriedStateContainerDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        appState,
+        windowState
+    )
+    if (container.didCarryAppState) {
+        return false
+    }
+    if (container.didCarryWindowState) {
+        return false
+    }
+    if (container.shouldDeferCarriedState == false) {
+        return false
+    }
+    if (container.shouldReportCarriedStateBlocked == false) {
+        return false
+    }
+    if ((container.carriedAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((container.carriedAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((container.carriedWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return container.carriedWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateHolderOpenSanity(): Bool {
+    let holder = cjguiInternalExecuteDefaultRuntimeStateHolderDraft()
+    if (holder.didHoldRuntimeState == false) {
+        return false
+    }
+    if (holder.shouldDeferRuntimeStateHold) {
+        return false
+    }
+    if (holder.shouldReportRuntimeStateHoldBlocked) {
+        return false
+    }
+    if (holder.heldAppState.isStateMachineActive == false) {
+        return false
+    }
+    if (holder.heldAppState.hasLifecyclePhase == false) {
+        return false
+    }
+    return holder.heldWindowState.hasWindowState
+}
+
+func cjguiInternalRuntimeStateHolderRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let cycleRequest = CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            false
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+    let driverRequest = CjguiInternalRuntimeDriverRequest(
+        CjguiInternalRuntimeCommandPipelineRequest(cycleRequest)
+    )
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        driverRequest,
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (holder.didHoldRuntimeState) {
+        return false
+    }
+    if (holder.shouldDeferRuntimeStateHold == false) {
+        return false
+    }
+    if (holder.shouldReportRuntimeStateHoldBlocked == false) {
+        return false
+    }
+    if ((holder.heldAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((holder.heldWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return holder.heldWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateHolderInputBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        appState,
+        windowState
+    )
+    if (holder.didHoldRuntimeState) {
+        return false
+    }
+    if (holder.shouldDeferRuntimeStateHold == false) {
+        return false
+    }
+    if (holder.shouldReportRuntimeStateHoldBlocked == false) {
+        return false
+    }
+    if ((holder.heldAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((holder.heldWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return holder.heldWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateHolderShutdownBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        appState,
+        windowState
+    )
+    if (holder.didHoldRuntimeState) {
+        return false
+    }
+    if (holder.shouldDeferRuntimeStateHold == false) {
+        return false
+    }
+    if (holder.shouldReportRuntimeStateHoldBlocked == false) {
+        return false
+    }
+    if ((holder.heldAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((holder.heldWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return holder.heldWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeStateHolderCancellationBlockedSanity(): Bool {
+    let appState = CjguiInternalAppLifecycleState(false, false, true)
+    let windowState = CjguiInternalWindowLifecycleState(false, true)
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        appState,
+        windowState
+    )
+    if (holder.didHoldRuntimeState) {
+        return false
+    }
+    if (holder.shouldDeferRuntimeStateHold == false) {
+        return false
+    }
+    if (holder.shouldReportRuntimeStateHoldBlocked == false) {
+        return false
+    }
+    if ((holder.heldAppState.isStateMachineActive == appState.isStateMachineActive) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasLifecyclePhase == appState.hasLifecyclePhase) == false) {
+        return false
+    }
+    if ((holder.heldAppState.hasObservedPlatformReady == appState.hasObservedPlatformReady) == false) {
+        return false
+    }
+    if ((holder.heldWindowState.hasWindowState == windowState.hasWindowState) == false) {
+        return false
+    }
+    return holder.heldWindowState.hasObservedPlatformReady == windowState.hasObservedPlatformReady
+}
+
+func cjguiInternalRuntimeCommittedStateStoreOpenSanity(): Bool {
+    let draft = cjguiInternalExecuteDefaultRuntimeCommittedStateStoreDraft()
+    if (draft.didCommitRuntimeState == false) {
+        return false
+    }
+    if (draft.shouldDeferRuntimeStateCommit) {
+        return false
+    }
+    if (draft.shouldReportRuntimeStateCommitBlocked) {
+        return false
+    }
+    if (draft.committedAppState.isStateMachineActive == false) {
+        return false
+    }
+    if (draft.committedAppState.hasLifecyclePhase == false) {
+        return false
+    }
+    return draft.committedWindowState.hasWindowState
+}
+
+func cjguiInternalRuntimeCommittedStateStoreRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        CjguiInternalRuntimeDriverRequest(
+            CjguiInternalRuntimeCommandPipelineRequest(
+                CjguiInternalRuntimeCycleRequest(
+                    CjguiInternalRuntimeRootState(
+                        root.bootstrap,
+                        false
+                    ),
+                    cjguiInternalDefaultRuntimeStepInput(),
+                    cjguiInternalDefaultRuntimeStepPolicy()
+                )
+            )
+        ),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let draft = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    if (draft.didCommitRuntimeState) {
+        return false
+    }
+    if (draft.shouldDeferRuntimeStateCommit == false) {
+        return false
+    }
+    return draft.shouldReportRuntimeStateCommitBlocked
+}
+
+func cjguiInternalRuntimeCommittedStateStoreInputBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let draft = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    if (draft.didCommitRuntimeState) {
+        return false
+    }
+    if (draft.shouldDeferRuntimeStateCommit == false) {
+        return false
+    }
+    return draft.shouldReportRuntimeStateCommitBlocked
+}
+
+func cjguiInternalRuntimeCommittedStateStoreShutdownBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let draft = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    if (draft.didCommitRuntimeState) {
+        return false
+    }
+    if (draft.shouldDeferRuntimeStateCommit == false) {
+        return false
+    }
+    return draft.shouldReportRuntimeStateCommitBlocked
+}
+
+func cjguiInternalRuntimeCommittedStateStoreCancellationBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let draft = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    if (draft.didCommitRuntimeState) {
+        return false
+    }
+    if (draft.shouldDeferRuntimeStateCommit == false) {
+        return false
+    }
+    return draft.shouldReportRuntimeStateCommitBlocked
+}
+
+func cjguiInternalRuntimeCycleFeedbackOpenSanity(): Bool {
+    let draft = cjguiInternalExecuteDefaultRuntimeCycleFeedbackDraft()
+    if (draft.didPrepareCycleFeedback == false) {
+        return false
+    }
+    if (draft.shouldDeferCycleFeedback) {
+        return false
+    }
+    if (draft.shouldReportCycleFeedbackBlocked) {
+        return false
+    }
+    if (draft.nextCycleAppStateCandidate.isStateMachineActive == false) {
+        return false
+    }
+    if (draft.nextCycleAppStateCandidate.hasLifecyclePhase == false) {
+        return false
+    }
+    return draft.nextCycleWindowStateCandidate.hasWindowState
+}
+
+func cjguiInternalRuntimeCycleFeedbackRuntimeBlockedSanity(): Bool {
+    let root = cjguiInternalBuildRuntimeRootState()
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        CjguiInternalRuntimeDriverRequest(
+            CjguiInternalRuntimeCommandPipelineRequest(
+                CjguiInternalRuntimeCycleRequest(
+                    CjguiInternalRuntimeRootState(
+                        root.bootstrap,
+                        false
+                    ),
+                    cjguiInternalDefaultRuntimeStepInput(),
+                    cjguiInternalDefaultRuntimeStepPolicy()
+                )
+            )
+        ),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let draft = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    if (draft.didPrepareCycleFeedback) {
+        return false
+    }
+    if (draft.shouldDeferCycleFeedback == false) {
+        return false
+    }
+    return draft.shouldReportCycleFeedbackBlocked
+}
+
+func cjguiInternalRuntimeCycleFeedbackInputBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        CjguiInternalRuntimeDriverInput(false, false),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalDefaultRuntimeShutdownIntent(),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let draft = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    if (draft.didPrepareCycleFeedback) {
+        return false
+    }
+    if (draft.shouldDeferCycleFeedback == false) {
+        return false
+    }
+    return draft.shouldReportCycleFeedbackBlocked
+}
+
+func cjguiInternalRuntimeCycleFeedbackShutdownBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(true, false),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let draft = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    if (draft.didPrepareCycleFeedback) {
+        return false
+    }
+    if (draft.shouldDeferCycleFeedback == false) {
+        return false
+    }
+    return draft.shouldReportCycleFeedbackBlocked
+}
+
+func cjguiInternalRuntimeCycleFeedbackCancellationBlockedSanity(): Bool {
+    let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
+        cjguiInternalDefaultRuntimeDriverRequest(),
+        cjguiInternalDefaultRuntimeDriverInput(),
+        cjguiInternalDefaultRuntimeDriverPolicy(),
+        cjguiInternalBuildRuntimeShutdownIntent(false, true),
+        CjguiInternalAppLifecycleState(false, false, true),
+        CjguiInternalWindowLifecycleState(false, true)
+    )
+    let store = cjguiInternalExecuteRuntimeCommittedStateStoreDraft(holder)
+    let draft = cjguiInternalExecuteRuntimeCycleFeedbackDraft(store)
+    if (draft.didPrepareCycleFeedback) {
+        return false
+    }
+    if (draft.shouldDeferCycleFeedback == false) {
+        return false
+    }
+    return draft.shouldReportCycleFeedbackBlocked
 }

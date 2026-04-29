@@ -791,20 +791,89 @@
 - lifecycle mutation commit gate draft bundle：
   - [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)
 
+- lifecycle mutation apply draft boundary compaction：
+  - [2026-04-29-p1-lifecycle-mutation-apply-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-apply-draft-boundary-compaction.md)
+
+- lifecycle mutation apply draft bundle：
+  - [2026-04-29-p1-lifecycle-mutation-apply-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-apply-draft-bundle-closure-review.md)
+
+- first internal lifecycle state mutation boundary compaction：
+  - [2026-04-29-p1-first-internal-lifecycle-state-mutation-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-first-internal-lifecycle-state-mutation-boundary-compaction.md)
+
+- first internal lifecycle state mutation bundle：
+  - [2026-04-29-p1-first-internal-lifecycle-state-mutation-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-first-internal-lifecycle-state-mutation-bundle-closure-review.md)
+
+- lifecycle state mutation outcome boundary compaction：
+  - [2026-04-29-p1-lifecycle-state-mutation-outcome-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-state-mutation-outcome-boundary-compaction.md)
+
+- lifecycle state mutation outcome draft bundle：
+  - [2026-04-29-p1-lifecycle-state-mutation-outcome-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-state-mutation-outcome-draft-bundle-closure-review.md)
+
+- internal runtime model compaction / naming normalization decision：
+  - [2026-04-29-p1-internal-runtime-model-compaction-naming-normalization-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-model-compaction-naming-normalization-decision.md)
+
+- lifecycle state mutation outcome model normalization：
+  - [2026-04-29-p1-lifecycle-state-mutation-outcome-model-normalization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-state-mutation-outcome-model-normalization-closure-review.md)
+
+- internal runtime model normalization follow-up decision：
+  - [2026-04-29-p1-internal-runtime-model-normalization-follow-up-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-internal-runtime-model-normalization-follow-up-decision.md)
+
+- lifecycle mutation apply / commit gate model normalization：
+  - [2026-04-29-p1-lifecycle-mutation-apply-commit-gate-model-normalization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-apply-commit-gate-model-normalization-closure-review.md)
+
+- lifecycle mutated state publication boundary compaction：
+  - [2026-04-29-p1-lifecycle-mutated-state-publication-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutated-state-publication-boundary-compaction.md)
+
+- lifecycle mutated state publication draft bundle：
+  - [2026-04-29-p1-lifecycle-mutated-state-publication-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutated-state-publication-draft-bundle-closure-review.md)
+
+- runtime state carry-forward boundary compaction：
+  - [2026-04-29-p1-runtime-state-carry-forward-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-state-carry-forward-boundary-compaction.md)
+
+- runtime state carry-forward draft bundle：
+  - [2026-04-29-p1-runtime-state-carry-forward-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-state-carry-forward-draft-bundle-closure-review.md)
+
+- runtime carried state container boundary compaction：
+  - [2026-04-29-p1-runtime-carried-state-container-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-carried-state-container-boundary-compaction.md)
+
+- runtime carried state container draft bundle：
+  - [2026-04-29-p1-runtime-carried-state-container-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-carried-state-container-draft-bundle-closure-review.md)
+
+- runtime state holder draft boundary compaction：
+  - [2026-04-29-p1-runtime-state-holder-draft-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-state-holder-draft-boundary-compaction.md)
+
+- runtime state holder draft bundle：
+  - [2026-04-29-p1-runtime-state-holder-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-state-holder-draft-bundle-closure-review.md)
+
+- runtime committed state store boundary compaction：
+  - [2026-04-29-p1-runtime-committed-state-store-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-committed-state-store-boundary-compaction.md)
+
+- runtime committed state store draft bundle：
+  - [2026-04-29-p1-runtime-committed-state-store-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-committed-state-store-draft-bundle-closure-review.md)
+
+- runtime cycle feedback boundary compaction：
+  - [2026-04-29-p1-runtime-cycle-feedback-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-feedback-boundary-compaction.md)
+
+- runtime cycle feedback draft bundle：
+  - [2026-04-29-p1-runtime-cycle-feedback-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-feedback-draft-bundle-closure-review.md)
+
+- runtime next-cycle request boundary compaction：
+  - [2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md)
+
 ## 当前下一步 opening
 
 下一步推荐：
 
-- `P1 lifecycle mutation commit gate draft bundle closure / next runtime behavior decision`
+- `P1 runtime next-cycle request draft bundle implementation`
 
 用途：
 
-- 基于 [2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-bundle-closure-review.md)，封账 internal-only lifecycle mutation commit gate draft 并决定下一条 runtime behavior boundary。
-- app commit gate facts 已放在 `app_lifecycle.cj`，window commit gate facts 已放在 `window_lifecycle.cj`。
-- `runtime_state.cj` 只做 cross-owner commit gate summary，消费 mutation plan report，不拥有 lifecycle mutation semantics。
-- commit gate draft 只能表达 `canEnterCommit` / `shouldDeferCommit` / `shouldReportCommitBlocked`。
+- 基于 [2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md)，新增 internal-only / value-style runtime next-cycle request draft。
+- Next-cycle request draft 必须只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，表达 next-cycle root state / input / policy request summary。
+- 它可以构造 value-style `CjguiInternalRuntimeCycleRequest` candidate，但不能执行 `cjguiInternalExecuteRuntimeCycle`，不能执行 runtime step，不能写 runtime global state。
+- 下一步是 bounded implementation，仍不跨全链路重命名、不移动 owner boundaries、不新增 public surface。
 
 当前可执行动作：
 
-- W1 closure / architecture decision 或后续经授权的 W3 internal subsystem draft。
-- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、真实 app/window lifecycle execution、app/window state mutation、调用 state-changing transition functions、`while` loop / scheduling loop、queue / drain、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。
+- W3 bounded implementation。
+- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、new app/window state mutation、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

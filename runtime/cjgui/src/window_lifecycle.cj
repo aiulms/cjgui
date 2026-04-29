@@ -363,6 +363,176 @@ func cjguiInternalWindowLifecycleMutationCommitGateBlockedSanity(): Bool {
     return gate.shouldReportWindowLifecycleMutationCommitBlocked
 }
 
+// 内部 window lifecycle mutation apply draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 window lifecycle owner 是否应产生 mutation apply intent。
+// - 它不修改 CjguiInternalWindowLifecycleState, 不调用 transition functions。
+// - 它不执行 create / close / destroy / release。
+// - 它不是 public runtime API、public C ABI、platform object wrapper 或 native handle。
+
+struct CjguiInternalWindowLifecycleMutationApplyDraft {
+    let shouldApplyWindowLifecycleMutation: Bool
+    let shouldDeferWindowLifecycleMutationApply: Bool
+    let shouldReportWindowLifecycleMutationApplyBlocked: Bool
+
+    init(
+        shouldApplyWindowLifecycleMutation: Bool,
+        shouldDeferWindowLifecycleMutationApply: Bool,
+        shouldReportWindowLifecycleMutationApplyBlocked: Bool
+    ) {
+        this.shouldApplyWindowLifecycleMutation = shouldApplyWindowLifecycleMutation
+        this.shouldDeferWindowLifecycleMutationApply = shouldDeferWindowLifecycleMutationApply
+        this.shouldReportWindowLifecycleMutationApplyBlocked = shouldReportWindowLifecycleMutationApplyBlocked
+    }
+}
+
+func cjguiInternalBuildWindowLifecycleMutationApplyDraft(
+    commitGate: CjguiInternalWindowLifecycleMutationCommitGateDraft
+): CjguiInternalWindowLifecycleMutationApplyDraft {
+    return CjguiInternalWindowLifecycleMutationApplyDraft(
+        commitGate.canEnterWindowLifecycleMutationCommit,
+        commitGate.shouldDeferWindowLifecycleMutationCommit,
+        commitGate.shouldReportWindowLifecycleMutationCommitBlocked
+    )
+}
+
+func cjguiInternalWindowLifecycleMutationApplyOpenSanity(): Bool {
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildWindowLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildWindowLifecycleMutationApplyDraft(gate)
+    if (apply.shouldApplyWindowLifecycleMutation == false) {
+        return false
+    }
+    if (apply.shouldDeferWindowLifecycleMutationApply) {
+        return false
+    }
+    return apply.shouldReportWindowLifecycleMutationApplyBlocked == false
+}
+
+func cjguiInternalWindowLifecycleMutationApplyBlockedSanity(): Bool {
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildWindowLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildWindowLifecycleMutationApplyDraft(gate)
+    if (apply.shouldApplyWindowLifecycleMutation) {
+        return false
+    }
+    if (apply.shouldDeferWindowLifecycleMutationApply == false) {
+        return false
+    }
+    return apply.shouldReportWindowLifecycleMutationApplyBlocked
+}
+
+struct CjguiInternalWindowLifecycleMutationResult {
+    let previousState: CjguiInternalWindowLifecycleState
+    let nextState: CjguiInternalWindowLifecycleState
+    let didMutateWindowLifecycle: Bool
+    let shouldDeferWindowLifecycleMutation: Bool
+    let shouldReportWindowLifecycleMutationBlocked: Bool
+
+    init(
+        previousState: CjguiInternalWindowLifecycleState,
+        nextState: CjguiInternalWindowLifecycleState,
+        didMutateWindowLifecycle: Bool,
+        shouldDeferWindowLifecycleMutation: Bool,
+        shouldReportWindowLifecycleMutationBlocked: Bool
+    ) {
+        this.previousState = previousState
+        this.nextState = nextState
+        this.didMutateWindowLifecycle = didMutateWindowLifecycle
+        this.shouldDeferWindowLifecycleMutation = shouldDeferWindowLifecycleMutation
+        this.shouldReportWindowLifecycleMutationBlocked = shouldReportWindowLifecycleMutationBlocked
+    }
+}
+
+func cjguiInternalApplyWindowLifecycleMutationDraft(
+    state: CjguiInternalWindowLifecycleState,
+    apply: CjguiInternalWindowLifecycleMutationApplyDraft
+): CjguiInternalWindowLifecycleMutationResult {
+    if (apply.shouldApplyWindowLifecycleMutation) {
+        return CjguiInternalWindowLifecycleMutationResult(
+            state,
+            CjguiInternalWindowLifecycleState(
+                true,
+                state.hasObservedPlatformReady
+            ),
+            true,
+            false,
+            false
+        )
+    }
+
+    return CjguiInternalWindowLifecycleMutationResult(
+        state,
+        state,
+        false,
+        apply.shouldDeferWindowLifecycleMutationApply,
+        apply.shouldReportWindowLifecycleMutationApplyBlocked
+    )
+}
+
+func cjguiInternalWindowLifecycleMutationOpenSanity(): Bool {
+    let state = CjguiInternalWindowLifecycleState(false, true)
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildWindowLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildWindowLifecycleMutationApplyDraft(gate)
+    let result = cjguiInternalApplyWindowLifecycleMutationDraft(state, apply)
+
+    return result.didMutateWindowLifecycle &&
+        result.shouldDeferWindowLifecycleMutation == false &&
+        result.shouldReportWindowLifecycleMutationBlocked == false &&
+        result.previousState.hasWindowState == state.hasWindowState &&
+        result.previousState.hasObservedPlatformReady == state.hasObservedPlatformReady &&
+        result.nextState.hasWindowState &&
+        result.nextState.hasObservedPlatformReady == state.hasObservedPlatformReady
+}
+
+func cjguiInternalWindowLifecycleMutationBlockedSanity(): Bool {
+    let state = CjguiInternalWindowLifecycleState(false, true)
+    let handoff = cjguiInternalBuildWindowLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildWindowLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildWindowLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildWindowLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildWindowLifecycleMutationApplyDraft(gate)
+    let result = cjguiInternalApplyWindowLifecycleMutationDraft(state, apply)
+
+    return result.didMutateWindowLifecycle == false &&
+        result.shouldDeferWindowLifecycleMutation &&
+        result.shouldReportWindowLifecycleMutationBlocked &&
+        result.previousState.hasWindowState == state.hasWindowState &&
+        result.previousState.hasObservedPlatformReady == state.hasObservedPlatformReady &&
+        result.nextState.hasWindowState == state.hasWindowState &&
+        result.nextState.hasObservedPlatformReady == state.hasObservedPlatformReady
+}
 
 // 未来 window lifecycle owner:
 // - 归属正式 runtime core window lifecycle 模块。

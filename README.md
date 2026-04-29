@@ -56,7 +56,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 lifecycle mutation commit gate draft boundary compaction：[P1 lifecycle mutation commit gate draft boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-lifecycle-mutation-commit-gate-draft-boundary-compaction.md) 已完成；当前 recommended next opening 是 `P1 lifecycle mutation commit gate draft bundle implementation`。下一步可以定义 internal-only mutation commit gate draft：app commit gate facts 继续归属 `app_lifecycle.cj`，window commit gate facts 继续归属 `window_lifecycle.cj`，`runtime_state.cj` 只做 cross-owner commit gate summary；仍不执行 lifecycle mutation、不修改 app/window state、不调用 state-changing transition functions、不执行 commit、不 drain queue、不调平台，也不进入 public API / C ABI。
+最新 runtime next-cycle request boundary compaction：[P1 runtime next-cycle request boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-next-cycle-request-boundary-compaction.md) 已完成；当前 recommended next opening 是 `P1 runtime next-cycle request draft bundle implementation`。下一步只允许定义 internal-only / value-style next-cycle request draft，消费 `CjguiInternalRuntimeCycleFeedbackDraft` 并表达 next-cycle root state / input / policy request summary；仍不新增 public API / C ABI，不写 runtime global state，不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不接 platform callback、queue / drain、scheduler 或 event loop。
 
 当前 runtime package / first-compilable source 边界文档：
 

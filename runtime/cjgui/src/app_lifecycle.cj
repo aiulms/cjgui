@@ -395,6 +395,181 @@ func cjguiInternalAppLifecycleMutationCommitGateBlockedSanity(): Bool {
     return gate.shouldReportAppLifecycleMutationCommitBlocked
 }
 
+// 内部 app lifecycle mutation apply draft:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只表达 app lifecycle owner 是否应产生 mutation apply intent。
+// - 它不修改 CjguiInternalAppLifecycleState, 不调用 transition functions。
+// - 它不执行 app lifecycle work, 不是 public runtime API 或 public C ABI。
+
+struct CjguiInternalAppLifecycleMutationApplyDraft {
+    let shouldApplyAppLifecycleMutation: Bool
+    let shouldDeferAppLifecycleMutationApply: Bool
+    let shouldReportAppLifecycleMutationApplyBlocked: Bool
+
+    init(
+        shouldApplyAppLifecycleMutation: Bool,
+        shouldDeferAppLifecycleMutationApply: Bool,
+        shouldReportAppLifecycleMutationApplyBlocked: Bool
+    ) {
+        this.shouldApplyAppLifecycleMutation = shouldApplyAppLifecycleMutation
+        this.shouldDeferAppLifecycleMutationApply = shouldDeferAppLifecycleMutationApply
+        this.shouldReportAppLifecycleMutationApplyBlocked = shouldReportAppLifecycleMutationApplyBlocked
+    }
+}
+
+func cjguiInternalBuildAppLifecycleMutationApplyDraft(
+    commitGate: CjguiInternalAppLifecycleMutationCommitGateDraft
+): CjguiInternalAppLifecycleMutationApplyDraft {
+    return CjguiInternalAppLifecycleMutationApplyDraft(
+        commitGate.canEnterAppLifecycleMutationCommit,
+        commitGate.shouldDeferAppLifecycleMutationCommit,
+        commitGate.shouldReportAppLifecycleMutationCommitBlocked
+    )
+}
+
+func cjguiInternalAppLifecycleMutationApplyOpenSanity(): Bool {
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildAppLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildAppLifecycleMutationApplyDraft(gate)
+    if (apply.shouldApplyAppLifecycleMutation == false) {
+        return false
+    }
+    if (apply.shouldDeferAppLifecycleMutationApply) {
+        return false
+    }
+    return apply.shouldReportAppLifecycleMutationApplyBlocked == false
+}
+
+func cjguiInternalAppLifecycleMutationApplyBlockedSanity(): Bool {
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildAppLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildAppLifecycleMutationApplyDraft(gate)
+    if (apply.shouldApplyAppLifecycleMutation) {
+        return false
+    }
+    if (apply.shouldDeferAppLifecycleMutationApply == false) {
+        return false
+    }
+    return apply.shouldReportAppLifecycleMutationApplyBlocked
+}
+
+struct CjguiInternalAppLifecycleMutationResult {
+    let previousState: CjguiInternalAppLifecycleState
+    let nextState: CjguiInternalAppLifecycleState
+    let didMutateAppLifecycle: Bool
+    let shouldDeferAppLifecycleMutation: Bool
+    let shouldReportAppLifecycleMutationBlocked: Bool
+
+    init(
+        previousState: CjguiInternalAppLifecycleState,
+        nextState: CjguiInternalAppLifecycleState,
+        didMutateAppLifecycle: Bool,
+        shouldDeferAppLifecycleMutation: Bool,
+        shouldReportAppLifecycleMutationBlocked: Bool
+    ) {
+        this.previousState = previousState
+        this.nextState = nextState
+        this.didMutateAppLifecycle = didMutateAppLifecycle
+        this.shouldDeferAppLifecycleMutation = shouldDeferAppLifecycleMutation
+        this.shouldReportAppLifecycleMutationBlocked = shouldReportAppLifecycleMutationBlocked
+    }
+}
+
+func cjguiInternalApplyAppLifecycleMutationDraft(
+    state: CjguiInternalAppLifecycleState,
+    apply: CjguiInternalAppLifecycleMutationApplyDraft
+): CjguiInternalAppLifecycleMutationResult {
+    if (apply.shouldApplyAppLifecycleMutation) {
+        return CjguiInternalAppLifecycleMutationResult(
+            state,
+            CjguiInternalAppLifecycleState(
+                true,
+                true,
+                state.hasObservedPlatformReady
+            ),
+            true,
+            false,
+            false
+        )
+    }
+
+    return CjguiInternalAppLifecycleMutationResult(
+        state,
+        state,
+        false,
+        apply.shouldDeferAppLifecycleMutationApply,
+        apply.shouldReportAppLifecycleMutationApplyBlocked
+    )
+}
+
+func cjguiInternalAppLifecycleMutationOpenSanity(): Bool {
+    let state = CjguiInternalAppLifecycleState(false, false, true)
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        true,
+        false,
+        false
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildAppLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildAppLifecycleMutationApplyDraft(gate)
+    let result = cjguiInternalApplyAppLifecycleMutationDraft(state, apply)
+
+    return result.didMutateAppLifecycle &&
+        result.shouldDeferAppLifecycleMutation == false &&
+        result.shouldReportAppLifecycleMutationBlocked == false &&
+        result.previousState.isStateMachineActive == state.isStateMachineActive &&
+        result.previousState.hasLifecyclePhase == state.hasLifecyclePhase &&
+        result.previousState.hasObservedPlatformReady == state.hasObservedPlatformReady &&
+        result.nextState.isStateMachineActive &&
+        result.nextState.hasLifecyclePhase &&
+        result.nextState.hasObservedPlatformReady == state.hasObservedPlatformReady
+}
+
+func cjguiInternalAppLifecycleMutationBlockedSanity(): Bool {
+    let state = CjguiInternalAppLifecycleState(false, false, true)
+    let handoff = cjguiInternalBuildAppLifecycleWorkHandoffDraft(
+        false,
+        true,
+        true
+    )
+    let readiness = cjguiInternalBuildAppLifecycleMutationReadinessDraft(
+        handoff
+    )
+    let plan = cjguiInternalBuildAppLifecycleMutationPlanDraft(readiness)
+    let gate = cjguiInternalBuildAppLifecycleMutationCommitGateDraft(plan)
+    let apply = cjguiInternalBuildAppLifecycleMutationApplyDraft(gate)
+    let result = cjguiInternalApplyAppLifecycleMutationDraft(state, apply)
+
+    return result.didMutateAppLifecycle == false &&
+        result.shouldDeferAppLifecycleMutation &&
+        result.shouldReportAppLifecycleMutationBlocked &&
+        result.previousState.isStateMachineActive == state.isStateMachineActive &&
+        result.previousState.hasLifecyclePhase == state.hasLifecyclePhase &&
+        result.previousState.hasObservedPlatformReady == state.hasObservedPlatformReady &&
+        result.nextState.isStateMachineActive == state.isStateMachineActive &&
+        result.nextState.hasLifecyclePhase == state.hasLifecyclePhase &&
+        result.nextState.hasObservedPlatformReady == state.hasObservedPlatformReady
+}
+
 //
 // 未来 app lifecycle owner:
 // - 归属正式的 runtime/cjgui core app lifecycle 模块。

@@ -1,6 +1,6 @@
 # AI 原生 UI 语义方向
 
-最后更新：2026-04-26
+最后更新：2026-04-29
 
 ## 1. 文档定位
 
@@ -60,6 +60,45 @@ App State Truth
 - Semantic tree 是语义投影。
 - Action router 只能把动作请求送回真正 owner。
 - AI 不能绕过应用 owner 直接改状态。
+
+### 3.1 “场与波”的工程化映射
+
+本项目可以引入“场与波”作为 AI 原生 UI 的长期解释模型，但它不是当前 P1 的实现任务，也不意味着未来必须出现名为 `Field`、`Wave`、`Observer` 的运行时 API。
+
+工程映射如下：
+
+- “场”对应 `Action Router + Single App State principle + ownership boundary`，不是全局事件总线。
+- “波”对应脱水、可序列化、可审计的 `Action / Intent / Fact`。
+- “观测”对应公开契约投影，包括 semantic projection、状态快照和可执行 action 描述。
+- 人类通过 hit-testing 产生的 UI 事件，和 AI 注入的 semantic intent，长期都应被归一为 owner-controlled action path。
+
+这里的 `Single App State` 不是 God Object。它表示 app-level truth 只能有一套解释权；局部组件仍然拥有自己的高频内部状态。
+
+### 3.2 局部状态：Snapshot / Controller 双轨
+
+AI 原生 UI 的难点之一，是让 AI 可以协作，但又不破坏局部组件主权。
+
+读路径使用不可变 `State Snapshot`：
+
+- 组件内部的高频状态，例如 `scrollOffset`、hover、高亮、动画中间帧，不默认进入全局状态树。
+- 组件只在语义上有意义的时刻向外投影脱水快照，例如滚动稳定、焦点提交、选择变化或布局稳定。
+- AI 可以读取快照结果，但不能介入高频局部过程。
+
+写路径使用生命周期受限的 `Controller Handle`：
+
+- 当 AI 必须主动控制局部组件，例如“滚动到底部”或“展开某个节点”，组件可以向 Action Router 注册极窄 controller。
+- Controller 必须与组件生命周期绑定，目标失效后句柄立即失效。
+- Controller 只暴露 owner 批准的动作，不暴露内部可变状态。
+- AI semantic action 通过 registry 寻址、经过校验后调用 controller，不能直接改组件字段。
+
+这套模式是未来解决 AI 跨组件协作的官方设计方向：
+
+```text
+read:  local owner -> immutable State Snapshot -> AI / semantic projection
+write: AI semantic Action -> Action Router -> lifecycle-bound Controller Handle -> local owner
+```
+
+它同样不批准当前实现 Action Router、Controller Registry 或任何真实 runtime 代码。
 
 ## 4. 一个最小语义例子
 
@@ -311,9 +350,12 @@ Element
 - 可以考虑为未来 Element / RenderCommand 保留稳定 ID 或 tag 的位置。
 - 不做 semantic tree。
 - 不做 action router。
+- 不做 Field / Wave 运行时抽象。
+- 不做 Controller registry / Controller handle。
 - 不做 IPC。
 - 不实现 S-expression action protocol。
 - 不让 AI action 与 mouse / keyboard 形成第二套状态机。
+- 不为了 AI 便利把高频局部状态提升进全局状态树。
 - 未来若进入 action 设计，AI action 和鼠标键盘事件应能进入同一 owner-controlled event queue，而不是开后门。
 
 ## 11. 与当前 GUI 路线的关系
@@ -358,6 +400,8 @@ Element
 
 - 现在实现 semantic tree
 - 现在实现 action router
+- 现在实现 Field / Wave 运行时抽象
+- 现在实现 Controller registry / Controller handle
 - 现在引入 AI runtime
 - 现在做无障碍系统
 - 现在做测试自动化框架
@@ -365,11 +409,14 @@ Element
 - 现在设计 IPC server
 - 现在实现 S-expression action protocol
 - 让 AI 绕过 app owner 直接修改状态
+- 为了 AI 可控性把局部高频状态提升为全局真相
 
 本文件只批准：
 
 - 把 AI-readable / Agent-operable UI 记录为长期方向
+- 把“场与波”记录为长期解释模型，而不是当前实现任务
 - 在未来 Element / Scene / Renderer 设计中保留语义投影空间
 - 把 “语义树不能成为第二真相源” 写入长期治理原则
+- 把 “局部状态快照 + 受限 Controller Handle” 写入未来 AI 跨组件协作的官方设计模式
 - 把物理可见性、时序稳定、空间语义、zero-trust action、IPC 边界列为 future semantic first slice 的必答问题
 - 把 S-expression 记录为未来 AI-authored action command 的 preferred north-star candidate，而不是当前实现任务

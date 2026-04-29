@@ -1,6 +1,6 @@
 # CJGUI 上下文装载策略
 
-最后更新：2026-04-28
+最后更新：2026-04-29
 
 性质：AI context loading policy / anti-overload rule
 状态：生效中
@@ -141,6 +141,7 @@ L1 的目标是回答：
 - 触碰 owner / truth / stop-line：读 [GUI_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_GOVERNANCE.md) 的相关章节。
 - 触碰 GUI / 渲染 / 平台边界：读 [GUI_RISK_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_RISK_LEDGER.md) 的相关条目。
 - 触碰 event loop / queue / drain、renderer / invalidation / layout、Text / IME / Accessibility、platform handle / public API / C ABI、semantic tree / Action Router：按需读 [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md) 的相关章节；不要把整份 research 文档加入普通 W1 / W2 implementation 的默认必读清单。
+- 触碰 AI-native semantic tree、Action Router、semantic action protocol、Controller registry / Controller handle、局部状态 snapshot、AI 跨组件协作、或“场与波”解释模型：按需读 [AI_NATIVE_UI_SEMANTICS.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_NATIVE_UI_SEMANTICS.md) 的相关章节，以及 [GUI_THINKING_FRAMEWORK.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_THINKING_FRAMEWORK.md) 中 “场与波” / 局部主权相关章节；不要把这两份长期方向文档加入普通 runtime implementation 的默认必读清单。
 - 触碰仓颉语法、`cjpm`、`cjc`、FFI 或 SDK workaround：读 [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)、[CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)，并按需读取 CangjieSkills。
 - 触碰 macOS bridge smoke：读 `[labs/macos_bridge_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/macos_bridge_smoke`) 的相关 README、脚本或 native 文件。
 - 触碰 C FFI smoke：读 `[labs/cffi_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/cffi_smoke`) 的相关文件。

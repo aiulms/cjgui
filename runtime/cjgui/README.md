@@ -163,6 +163,12 @@
   - `CjguiInternalRuntimeCycleFeedbackDraft`
   - `CjguiInternalRuntimeNextCycleRequestDraftRequest`
   - `CjguiInternalRuntimeNextCycleRequestDraft`
+  - `CjguiInternalRuntimeCycleHandoffRequest`
+  - `CjguiInternalRuntimeCycleHandoffDraft`
+  - `CjguiInternalRuntimeCycleReplayRequest`
+  - `CjguiInternalRuntimeCycleReplayDraft`
+  - `CjguiInternalRuntimeReplayOutcomeRequest`
+  - `CjguiInternalRuntimeReplayOutcomeReport`
   - `cjguiInternalBuildRuntimeRootState`
   - `cjguiInternalRuntimeRootStateReadySanity`
   - `cjguiInternalRuntimeStep`
@@ -310,6 +316,18 @@
   - `cjguiInternalEvaluateRuntimeNextCycleRequestDraft`
   - `cjguiInternalExecuteRuntimeNextCycleRequestDraft`
   - `cjguiInternalExecuteDefaultRuntimeNextCycleRequestDraft`
+  - `cjguiInternalBuildRuntimeCycleHandoffRequest`
+  - `cjguiInternalEvaluateRuntimeCycleHandoff`
+  - `cjguiInternalExecuteRuntimeCycleHandoffDraft`
+  - `cjguiInternalExecuteDefaultRuntimeCycleHandoffDraft`
+  - `cjguiInternalBuildRuntimeCycleReplayRequest`
+  - `cjguiInternalEvaluateRuntimeCycleReplay`
+  - `cjguiInternalExecuteRuntimeCycleReplayDraft`
+  - `cjguiInternalExecuteDefaultRuntimeCycleReplayDraft`
+  - `cjguiInternalBuildRuntimeReplayOutcomeRequest`
+  - `cjguiInternalEvaluateRuntimeReplayOutcome`
+  - `cjguiInternalExecuteRuntimeReplayOutcomeDraft`
+  - `cjguiInternalExecuteDefaultRuntimeReplayOutcomeDraft`
   - `cjguiInternalRuntimeCommandDraftReadySanity`
   - `cjguiInternalRuntimeCommandDraftNotReadyBlockedSanity`
   - `cjguiInternalRuntimeCommandDraftInputBlockedSanity`
@@ -450,6 +468,21 @@
   - `cjguiInternalRuntimeNextCycleRequestInputBlockedSanity`
   - `cjguiInternalRuntimeNextCycleRequestShutdownBlockedSanity`
   - `cjguiInternalRuntimeNextCycleRequestCancellationBlockedSanity`
+  - `cjguiInternalRuntimeCycleHandoffOpenSanity`
+  - `cjguiInternalRuntimeCycleHandoffRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeCycleHandoffInputBlockedSanity`
+  - `cjguiInternalRuntimeCycleHandoffShutdownBlockedSanity`
+  - `cjguiInternalRuntimeCycleHandoffCancellationBlockedSanity`
+  - `cjguiInternalRuntimeCycleReplayOpenSanity`
+  - `cjguiInternalRuntimeCycleReplayRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeCycleReplayInputBlockedSanity`
+  - `cjguiInternalRuntimeCycleReplayShutdownBlockedSanity`
+  - `cjguiInternalRuntimeCycleReplayCancellationBlockedSanity`
+  - `cjguiInternalRuntimeReplayOutcomeOpenSanity`
+  - `cjguiInternalRuntimeReplayOutcomeRuntimeBlockedSanity`
+  - `cjguiInternalRuntimeReplayOutcomeInputBlockedSanity`
+  - `cjguiInternalRuntimeReplayOutcomeShutdownBlockedSanity`
+  - `cjguiInternalRuntimeReplayOutcomeCancellationBlockedSanity`
 - `src/error.cj`
   - `CjguiInternalCompileSanityMarker`
   - `CjguiInternalErrorFact`
@@ -622,6 +655,14 @@
 - runtime committed state store draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeStateHolderDraft`，并把 held app/window state 包装成 value-style committed state summary；本层不是 committed runtime global state store，不是 global mutable singleton，不写 runtime global state、不公开 state、不执行 mutation、不读取 CarriedStateContainer / CarryForwardReport / PublicationReport / lower-level facts。
 - runtime cycle feedback draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCommittedStateStoreDraft`，并把 committed app/window state 投影为下一轮 internal runtime cycle 的 value-style feedback candidates；本层不执行下一轮 cycle，不写 runtime global state，不创建 global mutable singleton，不公开 state、不执行 mutation、不读取 StateHolderDraft / CarriedStateContainer / CarryForwardReport / lower-level facts。
 - runtime next-cycle request draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，并构造 value-style `CjguiInternalRuntimeCycleRequest` candidate；当前 root state shape 不承载 app/window state，因此 app/window feedback 只作为 request preparation gate。本层不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不写 runtime global state，不创建 global mutable singleton，不公开 state、不执行 mutation、不读取 CommittedStateStoreDraft / StateHolderDraft 或 lower-level facts。
+- runtime cycle handoff draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeNextCycleRequestDraft`，并把 prepared next-cycle request candidate 投影成 future runtime boundary handoff summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate，但不执行该 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不执行 mutation、不读取 CycleFeedbackDraft / CommittedStateStoreDraft / lower-level facts。
+- runtime cycle replay draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCycleHandoffDraft`，并把 handoff 后的 cycle request candidate 投影成 replay readiness summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate，但不执行该 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不执行 mutation、不读取 NextCycleRequestDraft / CycleFeedbackDraft / lower-level facts。
+- runtime replay outcome draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCycleReplayDraft`，并把 replay readiness 投影成 accepted / deferred / blocked outcome summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate 作为 trace，但不执行该 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不执行 mutation、不读取 CycleHandoffDraft / NextCycleRequestDraft / lower-level facts。
+- runtime chain model compression / owner cleanup 只在 `runtime_state.cj` 尾部链条做 behavior-preserving helper 化：feedback state candidate readiness 与 cycle request candidate readiness 由局部 helper 复用；tail-chain readiness / accepted fields 与 request wrappers 保留，因为它们仍表达上游 gate facts 与 one-hop traceability。本轮不新增 runtime capability、不进入 execution boundary、不执行 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`。
+- runtime execution admission draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeReplayOutcomeReport`，并把 replay outcome accepted / deferred / blocked 投影为 future execution-boundary admission summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate 作为 trace，但 admission 不是 execution，不执行 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不读取 CycleReplayDraft / CycleHandoffDraft / lower-level facts。
+- runtime dry-run execution plan draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeExecutionAdmissionReport`，并把 admission summary 投影为 future execution 的 value-style dry-run plan；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate 作为 dry-run trace，但 dry-run plan 不是 execution，不执行 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不读取 ReplayOutcomeReport / CycleReplayDraft / lower-level facts。
+- runtime first internal execution attempt draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeDryRunExecutionPlan`；allowed path 最多执行一个 `CjguiInternalRuntimeCycleRequest` candidate 并返回 attempt summary，blocked / deferred path 不执行 candidate。本层仍不是 event loop、scheduler、queue / drain、app run 或 global state commit，不执行多个 cycle、不写 runtime global state、不公开 state、不读取 ExecutionAdmissionReport / ReplayOutcomeReport / lower-level facts。
+- runtime tail outcome wrapper compression 已移除 pure post-attempt `CjguiInternalRuntimeExecutionAttemptOutcome*` wrapper；当前 execution tail 的最后 internal summary 回到 `CjguiInternalRuntimeExecutionAttemptReport`。first internal execution attempt 仍保留 allowed path exactly-one cycle execution，blocked / deferred path 仍不执行 candidate；本轮不新增 wrapper / sanity / runtime capability。
 - step outcome bundle 已封账；下一步应转向更大的 runtime behavior decision，而不是继续堆 helper 链。
 - root sanity 已封账；下一步应转向 first internal runtime step / step result，而不是继续堆 root helper。
 - root state 不定义 runtime state machine、app run、event loop、queue / drain、window create 或 shutdown。

@@ -866,6 +866,57 @@
 - runtime cycle handoff boundary compaction：
   - [2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md)
 
+- runtime cycle handoff draft bundle：
+  - [2026-04-29-p1-runtime-cycle-handoff-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-draft-bundle-closure-review.md)
+
+- runtime cycle replay boundary compaction：
+  - [2026-04-30-p1-runtime-cycle-replay-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-cycle-replay-boundary-compaction.md)
+
+- runtime cycle replay draft bundle：
+  - [2026-04-30-p1-runtime-cycle-replay-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-cycle-replay-draft-bundle-closure-review.md)
+
+- runtime replay outcome boundary compaction：
+  - [2026-04-30-p1-runtime-replay-outcome-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-replay-outcome-boundary-compaction.md)
+
+- runtime replay outcome draft bundle：
+  - [2026-04-30-p1-runtime-replay-outcome-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-replay-outcome-draft-bundle-closure-review.md)
+
+- readiness-to-execution boundary decision：
+  - [2026-04-30-p1-readiness-to-execution-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-readiness-to-execution-boundary-decision.md)
+
+- runtime chain model compression / owner cleanup：
+  - [2026-04-30-p1-runtime-chain-model-compression-owner-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-chain-model-compression-owner-cleanup-closure-review.md)
+
+- post-compression readiness-to-execution boundary decision：
+  - [2026-04-30-p1-post-compression-readiness-to-execution-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-post-compression-readiness-to-execution-boundary-decision.md)
+
+- runtime execution admission draft bundle：
+  - [2026-04-30-p1-runtime-execution-admission-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-admission-draft-bundle-closure-review.md)
+
+- runtime dry-run execution plan boundary decision：
+  - [2026-04-30-p1-runtime-dry-run-execution-plan-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-dry-run-execution-plan-boundary-decision.md)
+
+- runtime dry-run execution plan draft bundle：
+  - [2026-04-30-p1-runtime-dry-run-execution-plan-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-dry-run-execution-plan-draft-bundle-closure-review.md)
+
+- runtime dry-run execution closure / next boundary decision：
+  - [2026-04-30-p1-runtime-dry-run-execution-closure-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-dry-run-execution-closure-next-boundary-decision.md)
+
+- runtime first internal execution attempt bundle：
+  - [2026-04-30-p1-runtime-first-internal-execution-attempt-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-first-internal-execution-attempt-bundle-closure-review.md)
+
+- runtime first internal execution attempt next boundary decision：
+  - [2026-04-30-p1-runtime-first-internal-execution-attempt-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-first-internal-execution-attempt-next-boundary-decision.md)
+
+- runtime execution attempt outcome draft bundle：
+  - [2026-04-30-p1-runtime-execution-attempt-outcome-draft-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-attempt-outcome-draft-bundle-closure-review.md)
+
+- runtime governance slimming / execution pivot decision：
+  - [2026-04-30-p1-runtime-governance-slimming-execution-pivot-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-governance-slimming-execution-pivot-decision.md)
+
+- runtime tail outcome wrapper compression：
+  - [2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md)
+
 - runtime progress health checkpoint：
   - [2026-04-29-p1-runtime-progress-health-checkpoint.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md)
 
@@ -873,16 +924,16 @@
 
 下一步推荐：
 
-- `P1 runtime cycle handoff draft bundle implementation`
+- `P1 runtime tail outcome wrapper compression closure / tracker compaction decision`
 
 用途：
 
-- 基于 [2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md)，新增 internal-only / value-style runtime cycle handoff draft。
-- Cycle handoff draft 必须只消费 `CjguiInternalRuntimeNextCycleRequestDraft`，并表达 prepared next-cycle request candidate 是否可 hand off 给 future runtime boundary。
-- 它可以持有 `CjguiInternalRuntimeCycleRequest` candidate，但不能执行它，不能执行 runtime cycle / step，不能写 runtime global state。
-- 下一步是 bounded implementation，仍不跨全链路重命名、不移动 owner boundaries、不新增 public surface。
+- 基于 [2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md)，确认 pure post-attempt outcome wrapper 已移除。
+- 当前 runtime tail 的最后 internal summary 是 `CjguiInternalRuntimeExecutionAttemptReport`；first internal execution attempt 本身保留。
+- 下一轮应做 closure / tracker compaction decision，避免继续新增同义 wrapper / feedback / observation 层。
+- 如果后续仍要新增 `Draft / Report / Request / Sanity`，必须证明它不是治理反噬，并且直接减少重复或接入已有 state / cycle / owner 边界。
 
 当前可执行动作：
 
-- W3 bounded implementation。
-- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、new app/window state mutation、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。
+- W1/W2 closure decision：tail compression closure / tracker compaction / model cleanup / execution convergence 边界判断。
+- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

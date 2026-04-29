@@ -27,6 +27,8 @@
 
 当一个 W2 internal behavior bundle 已经连续验证通过，且下一步仍在同一 internal owner 内推进同一行为链路，可以升级为 W3 internal subsystem draft。W3 internal subsystem draft 允许一次覆盖 request / response / pipeline / command draft / outcome / sanity 等完整内部闭环。它不是 public contract 或平台桥接授权；如果需要 public API、C ABI、event loop、queue / drain、handle table 或平台对象，必须另走高风险 gate。
 
+runtime execution tail 已到 first internal execution attempt / post-attempt outcome 后，不得继续把下一张卡写成纯 post-attempt wrapper / observation / feedback / result report。若执行卡仍要新增 `Draft / Report / Request / Sanity`，必须在 goal 或 invariants 中说明它会删除 / 合并旧结构、接入已有 state / cycle / owner 边界，或提供不可替代的 high-risk evidence。否则下一张卡应转向 execution convergence、model compression、owner cleanup 或 tracker compaction。
+
 用途：后续每次进入非平凡实现前，先填写这一张卡。
 
 执行卡是开工许可证，不是新的 docs-only 循环入口。
@@ -168,6 +170,7 @@
 - 视觉 / 交互：
 - 文档 / 示例：
 - 测试：
+- 仓颉语言 / SDK / FFI / 工具链 / 上游反馈：
 
 ## 8. 验证 (Verification)
 
@@ -214,6 +217,13 @@
 完成后需要同步的文档或账本：
 
 -
+
+如果本轮触发仓颉语言、SDK、FFI、`cjc` / `cjpm`、标准库、工具链或文档疑点，closure 必须说明：
+
+- 是否更新 [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)。
+- 是否已有最小复现、workaround 和移除条件。
+- 是否需要上游 issue / 文档建议 / 能力反馈。
+- 如果不入账，原因是什么。
 
 ---
 

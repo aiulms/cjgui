@@ -1,6 +1,6 @@
 # 仓颉 GUI 文档中心
 
-最后更新：2026-04-28
+最后更新：2026-04-30
 
 ## 1. 文档入口规则
 
@@ -41,7 +41,7 @@
 
 ### 2.3 [setup](/Users/jiangxuanyang/Desktop/cangjie/docs/setup)
 
-放本机环境、构建链和本地资料索引。
+放本机环境、构建链、本地资料索引，以及仓颉上游倒推 / 贡献账本。
 
 当前包括：
 
@@ -67,12 +67,14 @@ research 文档是按需雷达，不是每轮 implementation 的默认必读上�
 当前包括：
 
 - [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md)
+- [ai-native-gui-runtime-architecture-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/ai-native-gui-runtime-architecture-intake.md)
+- [cangjie-1.1-owner-tooling-ffi-capability-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md)
 
 ## 3. 新文档放置规则
 
 - 方向、治理、长期设计、风险账本：放 `docs/core/`
 - AI 执行规则、代码质量、执行卡模板：放 `docs/ai/`
-- 环境、构建、工具链、本地资料、仓颉上游问题账本：放 `docs/setup/`
+- 环境、构建、工具链、本地资料、仓颉上游倒推与贡献账本：放 `docs/setup/`
 - 单次任务计划、preflight、gate、closure：放 `docs/plans/`
 - sidecar research、行业排雷、架构风险情报：放 `docs/research/`
 - 只有总入口和当前任务账本可以留在根目录

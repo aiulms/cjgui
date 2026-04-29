@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-04-29
+最后更新：2026-04-30
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -17,6 +17,8 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 - 想看 macOS 桥接实验：看 [labs/macos_bridge_smoke](labs/macos_bridge_smoke)。
 - 想查历史决策：看 [docs/plans/README.md](docs/plans/README.md)。
 - 想看 GUI framework 行业排雷雷达：看 [gui-framework-pitfalls-intelligence.md](docs/research/gui-framework-pitfalls-intelligence.md)。它是按需雷达，不是每轮 implementation 的默认必读项。
+- 想看 AI-native GUI runtime 架构 intake：看 [ai-native-gui-runtime-architecture-intake.md](docs/research/ai-native-gui-runtime-architecture-intake.md)。它只在语义投影、Action Router、Hard / Soft Cycle、AI 协作边界前按需读取。
+- 想看仓颉 1.1 owner / tooling / FFI 能力边界：看 [cangjie-1.1-owner-tooling-ffi-capability-intake.md](docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md)。它只在 owner 语言保证、FFI / platform bridge、debug / profiling / memory tooling 或未来语言能力迁移前按需读取。
 - 想看文档分区：看 [docs/README.md](docs/README.md)。
 - 想控制 AI 每轮读多少上下文：看 [CJGUI_CONTEXT_LOADING_POLICY.md](docs/ai/CJGUI_CONTEXT_LOADING_POLICY.md)。
 
@@ -34,7 +36,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 - `runtime/cjgui/`：未来正式 runtime 的最小 package / source skeleton，目前只承载 internal marker、state shape 和边界文档。
 - `labs/`：实验室 smoke 和验证脚本，当前主要是 macOS AppKit / Metal bridge smoke。
 - `docs/core/`：项目方向、治理、风险、AI 原生 UI 语义和协作边界。
-- `docs/setup/`：本地工具链、构建、资料索引和上游问题账本。
+- `docs/setup/`：本地工具链、构建、资料索引和仓颉上游倒推 / 贡献账本。
 - `docs/plans/`：每一刀 preflight、execution card、closure review 的历史索引。
 - `docs/research/`：sidecar research、行业排雷和不阻塞 runtime 主线的架构风险情报。
 - `GUI_TASK_TRACKER.md`：当前阶段判断、healthy stop-line、active / future openings。
@@ -56,7 +58,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 runtime cycle handoff boundary compaction：[P1 runtime cycle handoff boundary compaction](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-cycle-handoff-boundary-compaction.md) 已完成；当前 recommended next opening 是 `P1 runtime cycle handoff draft bundle implementation`。下一步只允许定义 internal-only / value-style cycle handoff draft，消费 `CjguiInternalRuntimeNextCycleRequestDraft` 并表达 prepared next-cycle request candidate 是否可 hand off 给 future runtime boundary；仍不新增 public API / C ABI，不写 runtime global state，不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不接 platform callback、queue / drain、scheduler 或 event loop。
+最新 runtime tail outcome wrapper compression：[P1 runtime tail outcome wrapper compression closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md) 已完成；当前 recommended next opening 是 `P1 runtime tail outcome wrapper compression closure / tracker compaction decision`。Pure post-attempt outcome wrapper 已被移除，当前 runtime tail 的最后 internal summary 回到 first internal execution attempt report；下一刀应优先封账 compression、压缩 tracker / model 噪声，并判断后续 execution convergence 是否仍需 owner cleanup，且不得新增 public API / C ABI、event loop、queue / drain、scheduler、platform callback、多个 cycle execution 或 runtime global state write。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 
@@ -218,7 +220,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
   - [LOCAL_TOOLCHAIN_SETUP.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/LOCAL_TOOLCHAIN_SETUP.md)
 - 从零构建和灾难恢复手册在这里：
   - [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)
-- 仓颉问题判定与上游 Bug 账本在这里：
+- 仓颉问题判定、上游倒推与贡献账本在这里：
   - [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)
 - 仓颉调用 C 的最小 smoke test 在这里：
   - [cffi_smoke](/Users/jiangxuanyang/Desktop/cangjie/labs/cffi_smoke)

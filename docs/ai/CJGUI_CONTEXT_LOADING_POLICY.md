@@ -1,6 +1,6 @@
 # CJGUI 上下文装载策略
 
-最后更新：2026-04-29
+最后更新：2026-04-30
 
 性质：AI context loading policy / anti-overload rule
 状态：生效中
@@ -142,7 +142,10 @@ L1 的目标是回答：
 - 触碰 GUI / 渲染 / 平台边界：读 [GUI_RISK_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_RISK_LEDGER.md) 的相关条目。
 - 触碰 event loop / queue / drain、renderer / invalidation / layout、Text / IME / Accessibility、platform handle / public API / C ABI、semantic tree / Action Router：按需读 [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md) 的相关章节；不要把整份 research 文档加入普通 W1 / W2 implementation 的默认必读清单。
 - 触碰 AI-native semantic tree、Action Router、semantic action protocol、Controller registry / Controller handle、局部状态 snapshot、AI 跨组件协作、或“场与波”解释模型：按需读 [AI_NATIVE_UI_SEMANTICS.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_NATIVE_UI_SEMANTICS.md) 的相关章节，以及 [GUI_THINKING_FRAMEWORK.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_THINKING_FRAMEWORK.md) 中 “场与波” / 局部主权相关章节；不要把这两份长期方向文档加入普通 runtime implementation 的默认必读清单。
-- 触碰仓颉语法、`cjpm`、`cjc`、FFI 或 SDK workaround：读 [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)、[CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)，并按需读取 CangjieSkills。
+- 触碰 Hard Cycle / Soft Cycle、AI intent arbitration、semantic projection fast path、owner 粒度、cycle driver、Action Router 位置、最小控件 / 声明式 surface、渲染后端选择、AI generation contract / schema / bounded generation surface、AI-native semantic demo、或 owner 编译期 / 运行时契约判断：按需读 [ai-native-gui-runtime-architecture-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/ai-native-gui-runtime-architecture-intake.md) 的相关章节；不要把它加入普通 runtime implementation 的默认必读清单。
+- 触碰 runtime execution tail、post-attempt boundary、继续新增 `Draft / Report / Request / Sanity`，或准备执行治理瘦身 / execution convergence：按需读 [2026-04-30-p1-runtime-governance-slimming-execution-pivot-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-governance-slimming-execution-pivot-decision.md) 的相关章节；不要把全部历史 execution chain 文档加入默认必读清单。
+- 触碰仓颉 1.1 owner 语言保证、线性类型 / 借用检查等价能力判断、FFI handle / native object lifecycle、debug / profiling / memory tooling、platform bridge capability、或未来语言能力迁移：按需读 [cangjie-1.1-owner-tooling-ffi-capability-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md) 的相关章节；不要把它加入普通 runtime implementation 的默认必读清单。
+- 触碰仓颉语法、`cjpm`、`cjc`、FFI、SDK workaround，或准备仓颉上游 issue / 文档建议 / 能力反馈：读 [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)、[CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)，并按需读取 CangjieSkills。
 - 触碰 macOS bridge smoke：读 `[labs/macos_bridge_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/macos_bridge_smoke`) 的相关 README、脚本或 native 文件。
 - 触碰 C FFI smoke：读 `[labs/cffi_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/cffi_smoke`) 的相关文件。
 
@@ -224,6 +227,15 @@ L2 不应整包装载，只读相关章节或相关文件。
 - 相关 CangjieSkills 小节。
 
 只有当这些仍不能回答问题时，才继续查本地官方文档或外部资料。
+
+如果本轮发现稳定仓颉问题或需要长期 workaround，closure 前还必须判断是否进入上游倒推闭环：
+
+- 是否有最小复现。
+- 是否能分类为误用、环境问题、文档缺口、上游疑似 bug 或能力缺口。
+- 是否需要新增 / 更新 [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)。
+- 是否需要准备 issue draft、文档建议、最小复现或能力反馈。
+
+这不是每轮 implementation 的默认阅读负担；只有出现仓颉语言 / SDK / FFI / toolchain / docs 信号时触发。
 
 ## 4. 架构 AI 下发任务时必须写清楚
 

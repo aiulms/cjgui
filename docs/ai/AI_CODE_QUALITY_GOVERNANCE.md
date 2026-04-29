@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目 AI 代码质量治理
 
-最后更新：2026-04-27
+最后更新：2026-04-30
 
 性质：docs-only / code-quality governance / AI execution rule
 状态：生效中
@@ -274,11 +274,13 @@ AI 不能只靠“代码看起来对”结束任务。
 - stop-line 是否守住
 - 哪些残留问题没有做
 - 后续不能误以为这条线已经完整解决
+- 本轮是否遇到仓颉语言 / SDK / FFI / 工具链 / 文档问题；如果遇到，是否已经更新上游问题账本或说明暂不入账理由
 
 必要时同步更新：
 
 - [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md)
 - `docs/plans/*-closure-review.md`
+- [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)
 
 ## 4. GUI 项目专属的必查项
 
@@ -348,6 +350,38 @@ AI 在仓颉 GUI 项目里写代码时，不能只凭模型记忆判断仓颉语
 - 本项目真相源仍是项目文档、本地官方文档、已验证 smoke / harness 和当前 execution card；skill 只提供辅助解释和补充样例。
 - 凡进入代码实现的仓颉语法、FFI 或工具链判断，最终必须通过 `cjc` / `cjpm`、smoke 或对应 harness 验证。
 
+### 4.9 仓颉上游问题是否进入贡献闭环
+
+CJGUI 开发过程中遇到的仓颉语言、SDK、FFI、工具链或文档缺口，不能只在当前线程里口头记住。
+
+AI 在 closure 前必须做轻量判断：
+
+- 本轮是否出现新的仓颉上游疑点。
+- 是否需要最小复现、issue draft、文档建议或能力反馈。
+- 是否已经更新 [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)。
+- 如果没有更新账本，原因是否清楚：误用、本机环境、无稳定复现、只属于本项目代码问题，或本轮没有相关问题。
+
+这个检查不要求每轮都读完整账本；只有触发仓颉语言 / SDK / FFI / toolchain / docs 问题时，才按 [CJGUI_CONTEXT_LOADING_POLICY.md](./CJGUI_CONTEXT_LOADING_POLICY.md) 读取相关章节。
+
+### 4.10 Draft / Sanity 是否正在反客为主
+
+AI 在 runtime execution tail 上写代码前，必须检查本轮是不是又在新增纯 wrapper 或重复 sanity。
+
+如果本轮新增的是 `Draft / Report / Request / Outcome / Observation / Feedback` 类符号，必须说明：
+
+- 它是否直接接入已有 state / cycle / owner 边界。
+- 它是否删除、合并或替代了已有 wrapper。
+- 它是否减少了重复 Bool、重复 sanity 或重复 trace。
+- 为什么不能复用已有 report。
+
+如果本轮新增的是 `Sanity` helper，必须说明：
+
+- 它覆盖了哪个新的行为分支或新 blocked path。
+- 为什么现有 build / smoke / helper 不能覆盖。
+- 为什么不是复制已有五件套。
+
+如果回答不了，默认应该停止新增 wrapper / sanity，转向 model compression、owner cleanup、execution convergence 或 tracker compaction。
+
 ## 5. AI 的默认暂停条件
 
 AI 一旦遇到以下任一情况，必须暂停：
@@ -368,7 +402,7 @@ AI 一旦遇到以下任一情况，必须暂停：
 
 ## 6. 完成定义 (Definition of Done)
 
-后续任何 AI 说“做完了”，至少要满足下面 12 条中的适用项：
+后续任何 AI 说“做完了”，至少要满足下面 14 条中的适用项：
 
 1. 本轮 authority 和目标清楚
 2. 改动没有越出批准边界
@@ -382,6 +416,8 @@ AI 一旦遇到以下任一情况，必须暂停：
 10. 如果本轮只改文档，必须明确称为 docs-only，不能冒充代码进展
 11. 本轮上下文装载符合 [CJGUI_CONTEXT_LOADING_POLICY.md](./CJGUI_CONTEXT_LOADING_POLICY.md)，没有用过量阅读替代实现
 12. 新增注释和项目文档默认中文，必要英文技术名词保留原文即可
+13. 如本轮触发仓颉语言 / SDK / FFI / 工具链 / 文档问题，必须更新 [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md) 或在 closure 中说明不入账理由
+14. 如本轮新增 pure `Draft / Report / Request` 或重复 `Sanity`，必须说明它不是治理反噬；否则优先执行 compression / convergence
 
 ## 7. 最推荐的协作模式
 

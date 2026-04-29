@@ -1,8 +1,8 @@
-# 仓颉问题判定与上游 Bug 账本
+# 仓颉问题判定、上游倒推与贡献账本
 
-最后更新：2026-04-25
+最后更新：2026-04-30
 
-性质：toolchain issue ledger / upstream bug evidence / recheck list  
+性质：toolchain issue ledger / upstream feedback loop / contribution evidence / recheck list
 状态：生效中  
 范围：记录仓颉语言、SDK、编译器、标准库、FFI、包管理与本机工具链相关问题。
 
@@ -21,6 +21,9 @@
 原则：
 
 > 先记录证据，再判断归因；没有最小复现前，不轻易把问题定性为仓颉 bug。
+
+CJGUI 也是仓颉语言、工具链和 FFI 能力的长期压力测试场。
+如果 GUI runtime 开发过程中发现仓颉上游缺口，本项目不只是在本地绕开问题，还要尽量把可复现证据倒推给上游，形成 issue、文档修正、最小复现或能力建议。
 
 ## 2. 使用规则
 
@@ -47,9 +50,93 @@
 - 暂时只能靠 workaround 推进。
 - 未来适合提交给仓颉社区或官方 issue。
 
-## 3. 判定等级
+每轮 closure / bundled closure 必须做一次轻量判断：
 
-### 3.1 `UNCLASSIFIED`
+- 本轮是否遇到新的仓颉语法、编译器、SDK、FFI、cjpm、标准库或工具链问题。
+- 如果遇到，是否已经在本账本新增或更新条目。
+- 如果暂不入账，closure 需要说明原因，例如“确认是本项目误用”“只是一次性环境问题”“无稳定复现”。
+
+这条规则的目标不是阻塞 runtime 主线，而是防止我们把上游问题埋在 workaround 里，过几周换会话后又重新踩一遍。
+
+## 3. 上游倒推 / 贡献闭环
+
+遇到疑似仓颉上游问题时，按下面闭环处理。
+
+### 3.1 Detect：发现信号
+
+以下信号应触发上游问题判断：
+
+- `cjc` / `cjpm` / SDK / 标准库行为与官方文档或合理语义不一致。
+- C FFI、C ABI、linker、platform SDK、debug / profile / coverage 工具出现稳定异常。
+- 为了继续推进 CJGUI，不得不引入仓颉 toolchain workaround。
+- 同一类仓颉限制反复影响 runtime、platform bridge、build 或 smoke。
+- 仓颉文档缺少关键说明，导致实现 AI 或人类反复误判。
+
+### 3.2 Minimize：最小化证据
+
+在提交上游前，优先准备：
+
+- 最小复现代码，优先放在 `/tmp/<topic>-repro-YYYYMMDD`，或可长期保留的 `labs/*_smoke`。
+- 精确版本：`cjc --version`、`cjpm --version`、SDK 版本、平台和架构。
+- 完整命令：包含 `envsetup.sh`、`SDKROOT`、`cjpm build`、`cjc` 参数。
+- 实际错误输出和预期行为。
+- 如果有 workaround，记录 workaround 命令和移除条件。
+
+### 3.3 Classify：先归因，再上游
+
+先把问题分成：
+
+- 本项目误用。
+- 本机环境问题。
+- 官方文档缺口。
+- 疑似编译器 / SDK / 标准库 / FFI / cjpm bug。
+- 语言能力缺口或工具链能力缺口。
+
+只有在有最小复现或稳定证据后，才升级到 `UPSTREAM_SUSPECTED` / `UPSTREAM_REPORTED`。
+
+### 3.4 Workaround：继续推进但留下移除条件
+
+如果本项目可以安全 workaround，允许继续推进 runtime 主线。
+
+但 workaround 必须记录：
+
+- 影响范围。
+- 当前为什么可接受。
+- 未来什么版本、issue 状态或验证命令通过后可以移除。
+- 这是否影响 public API / C ABI / platform bridge 设计。
+
+### 3.5 Report / Contribute：倒推上游
+
+可贡献形式不只限于 bug issue：
+
+- 上游 issue：稳定 bug、兼容性问题、工具链异常。
+- 文档 PR / 文档建议：语义、FFI、工具链参数、平台限制说明不清。
+- 最小复现仓库或 smoke：帮助上游快速定位。
+- 能力建议：语言、调试、profiling、FFI、包管理、跨平台编译能力缺口。
+- 设计反馈：来自 GUI runtime 场景的具体约束和用例。
+
+提交上游时，优先带上：
+
+- 最小复现。
+- 预期 / 实际行为。
+- CJGUI 中的实际影响。
+- 当前 workaround。
+- 是否阻塞当前路线。
+
+### 3.6 Recheck：随上游演进复查
+
+每次升级仓颉 SDK / toolchain / 文档后，应复查仍处于 `UPSTREAM_SUSPECTED` / `UPSTREAM_REPORTED` 且有 workaround 的条目。
+
+复查不是只看“是否能跑”，还要判断：
+
+- workaround 是否可以删除。
+- 项目文档是否要更新。
+- 本地 smoke 是否要简化。
+- 曾经的运行时设计保守假设是否可以收窄。
+
+## 4. 判定等级
+
+### 4.1 `UNCLASSIFIED`
 
 默认状态。
 
@@ -64,7 +151,7 @@
 - 必须补当前仓颉版本。
 - 必须补当前命令和错误输出。
 
-### 3.2 `MISUSE_CONFIRMED`
+### 4.2 `MISUSE_CONFIRMED`
 
 确认是我们没有按文档使用。
 
@@ -74,7 +161,7 @@
 - 不提交上游。
 - 保留记录，防止未来重复踩坑。
 
-### 3.3 `ENVIRONMENT_ISSUE`
+### 4.3 `ENVIRONMENT_ISSUE`
 
 确认是本机、SDK 路径、shell、Homebrew、Xcode、macOS SDK 等环境问题。
 
@@ -83,7 +170,7 @@
 - 更新 [LOCAL_TOOLCHAIN_SETUP.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/LOCAL_TOOLCHAIN_SETUP.md) 或 [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)。
 - 不直接归因给仓颉。
 
-### 3.4 `UPSTREAM_SUSPECTED`
+### 4.4 `UPSTREAM_SUSPECTED`
 
 疑似仓颉上游问题，但证据还不足。
 
@@ -95,7 +182,7 @@
 - 实际行为。
 - 官方文档依据或合理语言语义依据。
 
-### 3.5 `UPSTREAM_REPORTED`
+### 4.5 `UPSTREAM_REPORTED`
 
 已经提交给仓颉社区 / 官方 / 仓库。
 
@@ -106,7 +193,7 @@
 - 记录 workaround。
 - 记录下一次复查日期。
 
-### 3.6 `RESOLVED`
+### 4.6 `RESOLVED`
 
 问题已解决。
 
@@ -116,7 +203,7 @@
 - 记录验证命令。
 - 记录是否移除 workaround。
 
-## 4. 每条问题的记录模板
+## 5. 每条问题的记录模板
 
 ```md
 ### CJ-YYYYMMDD-NNN：一句话标题
@@ -135,14 +222,19 @@
 - 关键错误输出：
 - 当前判断：
 - workaround：
+- workaround 移除条件：
 - 是否适合提交上游：是 / 否 / 待定
+- 上游目标仓库：`Cangjie/cangjie_compiler | Cangjie/CangjieCommunity | docs | other | 待定`
+- 上游贡献类型：bug / docs / repro / proposal / tooling / FFI / 待定
+- CJGUI 临时决策：继续 workaround / fail closed / 阻塞当前线 / 待定
+- 上游提交材料路径：
 - 上游链接：
 - 下次复查日期：
 - 复查命令：
 - 结论更新记录：
 ```
 
-## 5. 复查节奏
+## 6. 复查节奏
 
 默认复查节奏：
 
@@ -160,7 +252,7 @@
 - 我们的文档是否需要更新。
 - 旧判断是否需要改成误用、环境问题或已解决。
 
-## 6. 当前问题账本
+## 7. 当前问题账本
 
 ### CJ-20260425-001：默认 `MacOSX26.4.sdk` 导致仓颉 1.1.0 macOS arm64 最小程序链接失败
 
@@ -250,7 +342,12 @@ cjc hello.cj -o hello
 ```
 
 - 当前判断：更像仓颉 1.1.0 自带 `ld64.lld 15.0.4` 与 `MacOSX26.4.sdk` 的 `libSystem.tbd` / target 表达不兼容，而不是仓颉源码用法错误。仍需上游确认这是已知限制、期望用户固定旧 SDK，还是需要升级 bundled linker / TAPI 支持。
+- workaround 移除条件：升级仓颉 SDK / bundled linker / macOS SDK 后，默认 `SDKROOT` 下最小 `hello.cj` 可直接 `cjc hello.cj -o hello` 并运行。
 - 是否适合提交上游：是。
+- 上游目标仓库：`Cangjie/cangjie_compiler`
+- 上游贡献类型：bug / repro / tooling
+- CJGUI 临时决策：继续 workaround；CJGUI 本地构建默认显式使用已验证 macOS SDK，避免阻塞 runtime 主线。
+- 上游提交材料路径：本条目内 “上游 issue 草稿”。
 - 上游链接：[Cangjie/cangjie_compiler#859](https://gitcode.com/Cangjie/cangjie_compiler/issues/859)
 - 下次复查日期：下次升级仓颉 SDK 或 Xcode Command Line Tools 后。
 - 复查命令：
@@ -383,7 +480,7 @@ Hello, clang
 4. Would upgrading the bundled linker / TAPI support be the intended fix?
 ````
 
-## 7. 不进入本账本的问题
+## 8. 不进入本账本的问题
 
 以下问题不默认进入本账本：
 

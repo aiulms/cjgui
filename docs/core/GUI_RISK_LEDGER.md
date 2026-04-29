@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目风险账本
 
-最后更新：2026-04-28
+最后更新：2026-04-30
 
 ## 用途
 
@@ -20,6 +20,20 @@
 - 性质：sidecar risk intelligence / architecture research。
 - 说明：该文档提炼现有 GUI framework / UI runtime 的常见工程坑，只作为排雷雷达，不阻塞当前 runtime implementation，不改变当前 runtime next opening。
 - 读取规则：它不是每轮 implementation 的默认必读项；仅在开启 event loop / queue / drain、renderer / invalidation / layout、Text / IME / Accessibility、platform handle / public API / C ABI、semantic tree / Action Router 等相关高风险 opening 前按需读取对应章节。
+
+### AI-native GUI runtime architecture intake
+
+- 入口：[ai-native-gui-runtime-architecture-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/ai-native-gui-runtime-architecture-intake.md)
+- 性质：sidecar architecture intake / future risk radar。
+- 说明：该文档记录 AI-native GUI runtime 的外部架构提醒，包括 Hard / Soft Cycle、owner 编译期与运行时契约、semantic projection、Action Router、AI intent arbitration、三条生死线、owner 粒度 / cycle driver / Action Router 位置岔路、面向 AI 生成的长期 contract 思路和最小语义 demo。
+- 读取规则：它不是每轮 implementation 的默认必读项；仅在开启 semantic projection / semantic tree、Action Router、AI action protocol、controller handle、local state snapshot、Hard / Soft Cycle、input / animation fast path、最小控件 / 声明式 surface、渲染后端选择、AI generation contract / schema 或 AI-native semantic demo 前按需读取。
+
+### Cangjie 1.1 owner / tooling / FFI capability intake
+
+- 入口：[cangjie-1.1-owner-tooling-ffi-capability-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md)
+- 性质：sidecar language capability risk intake / future migration radar。
+- 说明：该文档冻结仓颉 1.1.0 下 owner 语言保证、debug / profiling / memory tooling、C FFI / platform bridge 和未来语言能力迁移的判断。当前 Owner 边界应理解为“编译期辅助 + 运行时 / 治理契约”，未来若仓颉提供线性类型、move-only resource、borrow / lifetime-like 检查或 resource type，应优先把这些契约下沉到类型系统。
+- 读取规则：它不是每轮 implementation 的默认必读项；仅在 owner boundary 进入 public-facing contract、state owner 进入真实 mutable runtime store、FFI handle / native object / platform bridge lifecycle、debug / profiling / memory leak investigation、language feature migration 或 public API / C ABI capability review 前按需读取。
 
 ## 一、架构与分层陷阱
 

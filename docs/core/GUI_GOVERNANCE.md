@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目治理总则
 
-最后更新：2026-04-27
+最后更新：2026-04-30
 
 性质：docs-only / governance gate / project rule
 状态：生效中
@@ -99,6 +99,24 @@
 
 渲染能力不允许默认假设永远可用。未来需要 capability query 来说明当前设备支持什么、不支持什么。
 
+### 1.10 CJGUI 也是仓颉上游压力测试场
+
+本项目不是只在本地绕过仓颉语言、SDK、FFI、工具链或文档问题。
+
+如果 runtime 开发过程中发现稳定的仓颉问题或能力缺口，默认要进入：
+
+```text
+发现问题 -> 最小复现 -> 归因分类 -> 本地 workaround -> 上游 issue / 文档建议 / 能力反馈 -> 后续复查
+```
+
+执行规则：
+
+- 不把没有最小复现的问题草率定性为上游 bug。
+- 不让上游问题阻塞可安全 workaround 的 runtime 主线。
+- 不把 workaround 藏在实现代码里，必须记录移除条件。
+- 一旦确认是仓颉语言、SDK、FFI、工具链或文档缺口，必须更新 [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md) 或在 closure 中说明为什么暂不入账。
+- 上游贡献可以是 issue、最小复现、文档建议、能力建议或后续 PR，不限于 bug report。
+
 ## 2. GUI 项目中的三层治理
 
 任何非平凡能力都先看三层：
@@ -177,6 +195,7 @@
 - 要开启文本系统深化、输入框、IME、无障碍
 - 要把平台原生事件翻译成框架公共事件模型
 - 要重写平台桥接边界
+- 发现稳定的仓颉语言 / SDK / FFI / 工具链问题，需要长期 workaround、上游 issue 或能力反馈
 - 发现当前文档判断与代码现实明显冲突
 - 为了修一个局部问题，开始扩到本轮 blast radius 之外
 
@@ -269,6 +288,55 @@ helper / sanity 链只能用于证明内部链路可组合，不能成为长期�
 只要仍满足 internal-only、owner 清楚、truth 清楚、write set 清楚、verification 清楚，并且不触碰 public runtime API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation 或安全边界，就不应把这些相关变化拆成 helper-by-helper 的多轮循环。拆分的理由必须是风险、语法不确定、验证不可成立或 owner 冲突，而不是“代码行数看起来多”。
 
 模型能力不是风险来源；越界才是风险来源。顶级执行模型可以承担完整 internal concept slice。治理应帮助模型对齐方向，而不是把模型降级成每轮只能写一个函数的打字员。
+
+### 3.5 Runtime Draft Chain Cap / Execution Pivot Rule
+
+runtime 链路一旦已经到达 first internal execution attempt，后续不得继续无限新增纯 `Draft / Report / Request` 包装层。
+
+如果一个新 layer 只是把上一层 Bool、candidate 或 blocked summary 原样搬到下一层，而没有减少重复、合并结构、接入已有 state / cycle / owner 边界，或打开真实执行收敛能力，则默认视为治理反噬。
+
+post-attempt 之后，下一步默认应在下面几类中选择：
+
+- execution convergence：让一次 internal execution attempt 的结果进入已有 cycle / state carry-forward / committed-state / next-cycle 语义。
+- model compression：删除 always-true marker、stored derived Bool、重复 wrapper 或重复 sanity。
+- owner cleanup：把 owner-specific facts 拆回对应 owner 文件。
+- tracker compaction：压缩当前入口，降低上下文装载成本。
+
+只有出现新的 HIGH / CRITICAL 风险，或确实需要一个不可替代的证据层，才允许继续新增纯 post-attempt wrapper。
+
+### 3.6 Sanity Helper Freeze Rule
+
+`Sanity` helper 是诊断层，不是主要推进方式。
+
+当一条路径已经有 open / blocked / parity 或 equivalent sanity 证明，后续 layer 不应默认复制五件套 sanity helper。
+
+允许新增 sanity 的情况：
+
+- 新增了真实行为分支。
+- 新增了新的 blocked path 语义。
+- 正在删除 / 合并旧 helper，需要一个 aggregate sanity 证明行为等价。
+
+不允许新增 sanity 的情况：
+
+- 只是把上一层 summary 投影到下一层。
+- 只是复用同一套 open / runtime-blocked / input-blocked / shutdown-blocked / cancellation-blocked 组合。
+- 只是为了让 closure 看起来完整。
+
+### 3.7 Tracker Compaction Trigger
+
+[GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 是当前入口，不是完整历史数据库。
+
+当 tracker 超过可快速恢复上下文的规模，或当前 active / next opening 不能在短时间内读完时，必须触发 tracker compaction。
+
+compaction 后 tracker 应优先保留：
+
+- 当前阶段。
+- 当前 next opening。
+- 最近 5-10 条 landed facts。
+- 当前 healthy stop-line。
+- 必要入口链接。
+
+历史流水应压缩进 plan / compaction 文档，而不是无限追加到 tracker。
 
 ## 4. 三种 docs-only 任务
 
@@ -367,6 +435,7 @@ Closure Review 至少要回答：
 - stop-line 是否守住
 - 还剩哪些 residual
 - 哪些线不能自动重开
+- 是否发现仓颉语言 / SDK / FFI / 工具链 / 文档问题；如果发现，是否已更新 [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)，或说明了暂不入账理由
 
 ## 5. 默认工作流
 

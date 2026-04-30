@@ -117,6 +117,26 @@
 - 一旦确认是仓颉语言、SDK、FFI、工具链或文档缺口，必须更新 [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md) 或在 closure 中说明为什么暂不入账。
 - 上游贡献可以是 issue、最小复现、文档建议、能力建议或后续 PR，不限于 bug report。
 
+### 1.11 单文件规模也是 owner 边界信号
+
+单个源码文件持续膨胀不是单纯的格式问题，而是 owner、truth 和 subsystem 边界可能失焦的信号。
+
+本项目不允许把“还没坏”当成继续追加的理由。尤其是 runtime 主线文件承载多个 internal subsystem 时，必须主动检查是否需要 owner split、manifest、section grouping 或 module extraction。
+
+长期规则：
+
+- `.cj` 文件超过 `1500` 行：进入 soft warning。新增行为前必须说明为什么仍放在该文件。
+- `.cj` 文件超过 `3000` 行：进入 hard warning。默认不继续追加新的 subsystem，除非本轮明确是同 owner 的 bounded extension，且 closure 记录行数和拆分判断。
+- `.cj` 文件超过 `8000` 行或接近 `1MB`：进入 critical warning。默认不再追加新行为；下一步应优先考虑 owner split、tail consolidation、manifest / stabilization 或 module extraction。若仍必须修改，执行卡必须写明为何暂不拆分，以及后续拆分触发条件。
+
+该规则不把代码行数当作唯一风险指标。小文件也可能越界，大文件也可能因为仍在探索期暂时存在；但一旦超过阈值，后续提示词和 closure 必须显式处理这个事实。
+
+### 1.12 AI 资源效率也是治理目标
+
+治理不能把实现切成没有必要的小碎步。同一 owner、truth、write set、stop-line 和验证路径已经清楚时，应优先使用 W2 / W3 same-owner bundle，而不是每轮只新增一个 symbol、helper 或 projection。
+
+本条只修正实现粒度，不放开 public API、C ABI、platform bridge、event loop、queue / drain、runtime cycle、global state write 或跨 owner truth。具体执行规则以 [AI_CODE_QUALITY_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/AI_CODE_QUALITY_GOVERNANCE.md) 的“AI 资源效率门”为准。
+
 ## 2. GUI 项目中的三层治理
 
 任何非平凡能力都先看三层：

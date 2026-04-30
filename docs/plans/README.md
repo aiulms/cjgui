@@ -917,6 +917,189 @@
 - runtime tail outcome wrapper compression：
   - [2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md)
 
+- runtime tracker compaction / execution runway：
+  - [2026-04-30-p1-runtime-tracker-compaction-execution-runway.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-tracker-compaction-execution-runway.md)
+
+- runtime execution convergence bundle：
+  - [2026-04-30-p1-runtime-execution-convergence-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-convergence-bundle-closure-review.md)
+
+- runtime execution convergence next boundary decision：
+  - [2026-04-30-p1-runtime-execution-convergence-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-convergence-next-boundary-decision.md)
+
+- runtime execution commit candidate bundle：
+  - [2026-04-30-p1-runtime-execution-commit-candidate-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-commit-candidate-bundle-closure-review.md)
+
+- runtime execution commit candidate next boundary decision：
+  - [2026-04-30-p1-runtime-execution-commit-candidate-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-commit-candidate-next-boundary-decision.md)
+
+- runtime execution commit readiness bundle：
+  - [2026-04-30-p1-runtime-execution-commit-readiness-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-commit-readiness-bundle-closure-review.md)
+
+- runtime execution commit boundary bundle：
+  - [2026-04-30-p1-runtime-execution-commit-boundary-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-commit-boundary-bundle-closure-review.md)
+
+- runtime state integration / tail consolidation decision：
+  - [2026-04-30-p1-runtime-state-integration-tail-consolidation-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-state-integration-tail-consolidation-decision.md)
+
+- runtime state integration / tail consolidation bundle：
+  - [2026-04-30-p1-runtime-state-integration-tail-consolidation-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-state-integration-tail-consolidation-bundle-closure-review.md)
+
+- runtime execution-state loop closure boundary decision：
+  - [2026-04-30-p1-runtime-execution-state-loop-closure-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-state-loop-closure-boundary-decision.md)
+
+- runtime execution-state loop closure bundle：
+  - [2026-04-30-p1-runtime-execution-state-loop-closure-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-execution-state-loop-closure-bundle-closure-review.md)
+
+- runtime old tail deprecation boundary decision：
+  - [2026-04-30-p1-runtime-old-tail-deprecation-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-old-tail-deprecation-boundary-decision.md)
+
+- runtime old tail deprecation / default-path cleanup bundle：
+  - [2026-04-30-p1-runtime-old-tail-deprecation-default-path-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-old-tail-deprecation-default-path-cleanup-closure-review.md)
+
+- runtime internal tail milestone decision：
+  - [2026-04-30-p1-runtime-internal-tail-milestone-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-internal-tail-milestone-decision.md)
+
+- runtime internal tail milestone manifest：
+  - [2026-04-30-p1-runtime-internal-tail-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-internal-tail-milestone-manifest.md)
+
+- runtime internal tail milestone stabilization bundle：
+  - [2026-04-30-p1-runtime-internal-tail-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-internal-tail-milestone-stabilization-closure-review.md)
+
+- next real runtime boundary decision：
+  - [2026-04-30-p1-next-real-runtime-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-next-real-runtime-boundary-decision.md)
+
+- internal runtime state store transition boundary bundle：
+  - [2026-04-30-p1-internal-runtime-state-store-transition-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-runtime-state-store-transition-boundary-closure-review.md)
+
+- runtime state store transition next boundary decision：
+  - [2026-04-30-p1-runtime-state-store-transition-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-state-store-transition-next-boundary-decision.md)
+
+- runtime state store transition manifest：
+  - [2026-04-30-p1-runtime-state-store-transition-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-state-store-transition-manifest.md)
+
+- runtime state store transition stabilization bundle：
+  - [2026-04-30-p1-runtime-state-store-transition-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-state-store-transition-stabilization-closure-review.md)
+
+- runtime input-or-scheduler boundary decision：
+  - [2026-04-30-p1-runtime-input-or-scheduler-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-input-or-scheduler-boundary-decision.md)
+
+- internal input intent boundary bundle：
+  - [2026-04-30-p1-internal-input-intent-boundary-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-input-intent-boundary-bundle-closure-review.md)
+
+- input routing boundary decision：
+  - [2026-04-30-p1-input-routing-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-input-routing-boundary-decision.md)
+
+- internal input routing boundary bundle：
+  - [2026-04-30-p1-internal-input-routing-boundary-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-input-routing-boundary-bundle-closure-review.md)
+
+- input-to-runtime ingress boundary decision：
+  - [2026-04-30-p1-input-to-runtime-ingress-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-input-to-runtime-ingress-boundary-decision.md)
+
+- internal input-to-runtime ingress boundary bundle：
+  - [2026-04-30-p1-internal-input-to-runtime-ingress-boundary-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-input-to-runtime-ingress-boundary-bundle-closure-review.md)
+
+- input-to-runtime ingress next boundary decision：
+  - [2026-04-30-p1-input-to-runtime-ingress-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-input-to-runtime-ingress-next-boundary-decision.md)
+
+- input-to-runtime ingress manifest：
+  - [2026-04-30-p1-input-to-runtime-ingress-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-input-to-runtime-ingress-manifest.md)
+
+- input-to-runtime ingress stabilization bundle：
+  - [2026-04-30-p1-input-to-runtime-ingress-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-input-to-runtime-ingress-stabilization-closure-review.md)
+
+- scheduler-or-Action-Router boundary decision：
+  - [2026-04-30-p1-scheduler-or-action-router-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-scheduler-or-action-router-boundary-decision.md)
+
+- internal scheduler tick intent boundary bundle：
+  - [2026-04-30-p1-internal-scheduler-tick-intent-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-scheduler-tick-intent-boundary-closure-review.md)
+
+- scheduler-to-runtime ingress boundary decision：
+  - [2026-04-30-p1-scheduler-to-runtime-ingress-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-scheduler-to-runtime-ingress-boundary-decision.md)
+
+- internal scheduler-to-runtime ingress boundary bundle：
+  - [2026-04-30-p1-internal-scheduler-to-runtime-ingress-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-scheduler-to-runtime-ingress-boundary-closure-review.md)
+
+- runtime pacing next boundary decision：
+  - [2026-04-30-p1-runtime-pacing-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-pacing-next-boundary-decision.md)
+
+- internal runtime ingress coordinator boundary bundle：
+  - [2026-04-30-p1-internal-runtime-ingress-coordinator-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-runtime-ingress-coordinator-boundary-closure-review.md)
+
+- runtime ingress manifest stabilization decision：
+  - [2026-04-30-p1-runtime-ingress-manifest-stabilization-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-ingress-manifest-stabilization-decision.md)
+
+- runtime ingress manifest：
+  - [2026-04-30-p1-runtime-ingress-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-ingress-manifest.md)
+
+- runtime ingress manifest stabilization bundle：
+  - [2026-04-30-p1-runtime-ingress-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-ingress-manifest-stabilization-closure-review.md)
+
+- Action Router or queue boundary decision：
+  - [2026-04-30-p1-action-router-or-queue-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-or-queue-boundary-decision.md)
+
+- internal queue admission boundary bundle：
+  - [2026-04-30-p1-internal-queue-admission-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-queue-admission-boundary-closure-review.md)
+
+- queue or Action Router boundary decision：
+  - [2026-04-30-p1-queue-or-action-router-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-queue-or-action-router-boundary-decision.md)
+
+- Action Router implementation runway decision：
+  - [2026-04-30-p1-action-router-implementation-runway-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-implementation-runway-decision.md)
+
+- internal Action Router action intent boundary bundle：
+  - [2026-04-30-p1-internal-action-router-action-intent-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-action-router-action-intent-boundary-closure-review.md)
+
+- Action Router routing boundary decision：
+  - [2026-04-30-p1-action-router-routing-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-routing-boundary-decision.md)
+
+- internal Action Router routing boundary bundle：
+  - [2026-04-30-p1-internal-action-router-routing-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-action-router-routing-boundary-closure-review.md)
+
+- Action Router manifest stabilization decision：
+  - [2026-04-30-p1-action-router-manifest-stabilization-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-manifest-stabilization-decision.md)
+
+- Action Router manifest：
+  - [2026-04-30-p1-action-router-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-manifest.md)
+
+- Action Router manifest stabilization bundle：
+  - [2026-04-30-p1-action-router-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-manifest-stabilization-closure-review.md)
+
+- action execution-or-queue next boundary decision：
+  - [2026-04-30-p1-action-execution-or-queue-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-execution-or-queue-next-boundary-decision.md)
+
+- internal Action Router dispatch admission boundary bundle：
+  - [2026-04-30-p1-internal-action-router-dispatch-admission-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-action-router-dispatch-admission-boundary-closure-review.md)
+
+- action dispatch next boundary decision：
+  - [2026-04-30-p1-action-dispatch-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-dispatch-next-boundary-decision.md)
+
+- internal Action Router dispatch plan boundary bundle：
+  - [2026-04-30-p1-internal-action-router-dispatch-plan-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-action-router-dispatch-plan-boundary-closure-review.md)
+
+- internal Action Router dispatch convergence bundle：
+  - [2026-04-30-p1-internal-action-router-dispatch-convergence-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-action-router-dispatch-convergence-bundle-closure-review.md)
+
+- action boundary next decision：
+  - [2026-04-30-p1-action-boundary-next-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-boundary-next-decision.md)
+
+- internal Action Router dispatch record / manifest stabilization bundle：
+  - [2026-04-30-p1-internal-action-router-dispatch-record-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-action-router-dispatch-record-manifest-stabilization-closure-review.md)
+
+- AI resource-efficient bundle granularity governance update：
+  - [2026-04-30-p1-ai-resource-efficient-bundle-granularity-governance-update.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-ai-resource-efficient-bundle-granularity-governance-update.md)
+
+- Action Router same-owner bundle runway decision：
+  - [2026-04-30-p1-action-router-same-owner-bundle-runway-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-same-owner-bundle-runway-decision.md)
+
+- internal Action Router effect model / execution guard same-owner bundle：
+  - [2026-04-30-p1-internal-action-router-effect-model-execution-guard-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-internal-action-router-effect-model-execution-guard-bundle-closure-review.md)
+
+- action execution boundary decision：
+  - [2026-05-01-p1-action-execution-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-execution-boundary-decision.md)
+
+- internal Action Router first execution attempt bundle：
+  - [2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md)
+
 - runtime progress health checkpoint：
   - [2026-04-29-p1-runtime-progress-health-checkpoint.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md)
 
@@ -924,16 +1107,17 @@
 
 下一步推荐：
 
-- `P1 runtime tail outcome wrapper compression closure / tracker compaction decision`
+- `P1 internal Action Router first execution attempt closure / next action execution boundary decision`
 
 用途：
 
-- 基于 [2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md)，确认 pure post-attempt outcome wrapper 已移除。
-- 当前 runtime tail 的最后 internal summary 是 `CjguiInternalRuntimeExecutionAttemptReport`；first internal execution attempt 本身保留。
-- 下一轮应做 closure / tracker compaction decision，避免继续新增同义 wrapper / feedback / observation 层。
-- 如果后续仍要新增 `Draft / Report / Request / Sanity`，必须证明它不是治理反噬，并且直接减少重复或接入已有 state / cycle / owner 边界。
+- 基于 [2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md)，封账 Action Router first execution attempt bundle。
+- 下一轮决定是否继续推进 no-side-effect action execution boundary，或先做 Action Router execution-attempt manifest / tail consolidation。
+- AI 资源效率要求继续生效：后续同 owner / truth / stop-line 清楚时应做 W2 / W3 same-owner bundle，不回到 one-symbol 微切片。
+- 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：
 
-- W1/W2 closure decision：tail compression closure / tracker compaction / model cleanup / execution convergence 边界判断。
+- W2 docs decision：internal Action Router first execution attempt closure / next action execution boundary decision。
+- 该 decision 必须继续保护 no-real-execution / no-queue / no-provider / no-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

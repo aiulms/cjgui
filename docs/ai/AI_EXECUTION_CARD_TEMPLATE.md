@@ -23,11 +23,22 @@
 
 低风险 internal-only runtime work 可使用 bundled execution card。W2 bundle 应授权一个完整 internal behavior concept，通常包含 3-7 个相关 internal changes。W3 internal subsystem draft bundle 可在同一 owner / truth / write set / verification 清楚时授权一个更完整的内部子系统草案，通常包含 6-15 个相关 internal changes。若 bundle 拆成多个 slice，每个 slice 必须独立验证 build / smoke / `git diff --check`，slice 后可先只更新 tracker 简短日志，bundle 完成后再写 mini-compaction / bundled closure；若 bundle 是单次完整实现，可在实现结束后统一验证并写 bundled closure。bundle 不得绕过 public API、public C ABI、platform bridge、event loop、queue / drain、handle table / generation、跨 owner truth 或安全边界 gate。
 
+AI 资源效率也是执行卡质量的一部分。如果本轮需要读取 tracker、manifest、closure、源码并运行 build / smoke，就不应默认授权 one-symbol / one-helper / one-projection 的微切片。除非本轮打开高风险边界或 GitNexus / owner split 明确要求保守，执行卡应给出最小有意义 bundle；详细判断以 [AI_CODE_QUALITY_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/AI_CODE_QUALITY_GOVERNANCE.md) 的“AI 资源效率门”为准。
+
 当 helper / sanity 链已经封账，下一张 W2 bundle 应提高到完整 internal behavior concept，而不是继续 helper-by-helper。W2 internal behavior bundle 可以一次授权 3-7 个相关 internal changes，例如 input / policy / decision / result types、builders、核心 internal behavior function、positive / negative path、sanity / parity check 和 bundled closure。行数不是风险；越过 public contract、platform bridge、event loop、queue / drain、handle table 或安全边界才是风险。
 
 当一个 W2 internal behavior bundle 已经连续验证通过，且下一步仍在同一 internal owner 内推进同一行为链路，可以升级为 W3 internal subsystem draft。W3 internal subsystem draft 允许一次覆盖 request / response / pipeline / command draft / outcome / sanity 等完整内部闭环。它不是 public contract 或平台桥接授权；如果需要 public API、C ABI、event loop、queue / drain、handle table 或平台对象，必须另走高风险 gate。
 
 runtime execution tail 已到 first internal execution attempt / post-attempt outcome 后，不得继续把下一张卡写成纯 post-attempt wrapper / observation / feedback / result report。若执行卡仍要新增 `Draft / Report / Request / Sanity`，必须在 goal 或 invariants 中说明它会删除 / 合并旧结构、接入已有 state / cycle / owner 边界，或提供不可替代的 high-risk evidence。否则下一张卡应转向 execution convergence、model compression、owner cleanup 或 tracker compaction。
+
+执行卡如果允许修改 `.cj` 文件，必须包含单文件体积 / owner split 检查。至少写明：
+
+- 本轮目标 `.cj` 文件当前行数档位：`<=1500` / `1500-3000` / `3000-8000` / `>8000 or near 1MB`。
+- 如果超过 `1500` 行，为什么本轮仍在该文件内修改。
+- 如果超过 `3000` 行，为什么不是先做 owner split / module extraction / manifest stabilization。
+- 如果超过 `8000` 行或接近 `1MB`，本轮是否被明确授权修改；若授权，必须记录后续拆分候选。
+
+代码行数不是唯一风险指标，但执行卡不得忽略巨型文件正在形成这一事实。
 
 用途：后续每次进入非平凡实现前，先填写这一张卡。
 
@@ -139,6 +150,34 @@ runtime execution tail 已到 first internal execution attempt / post-attempt ou
 -
 
 本轮禁止触碰的文件 / 模块：
+
+-
+
+## 4.1 单文件体积 / Owner Split 检查
+
+本轮会修改的 `.cj` 文件及当前行数：
+
+-
+
+是否触发体积预警：
+
+- `>1500` soft warning：是 / 否
+- `>3000` hard warning：是 / 否
+- `>8000` 或接近 `1MB` critical warning：是 / 否
+
+如果触发 warning，为什么本轮仍在该文件内修改：
+
+-
+
+本轮是否新增 owner / subsystem / truth 边界：
+
+- 是 / 否
+
+如果是，为什么不先拆分文件或模块：
+
+-
+
+后续拆分 / module extraction 候选：
 
 -
 

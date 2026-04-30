@@ -1470,7 +1470,6 @@ struct CjguiInternalRuntimeStateCarryForwardReport {
     let shouldCarryForwardWindowState: Bool
     let shouldDeferCarryForward: Bool
     let shouldReportCarryForwardBlocked: Bool
-    let didBuildCarryForwardDraft: Bool
 
     init(
         request: CjguiInternalRuntimeStateCarryForwardRequest,
@@ -1479,8 +1478,7 @@ struct CjguiInternalRuntimeStateCarryForwardReport {
         shouldCarryForwardAppState: Bool,
         shouldCarryForwardWindowState: Bool,
         shouldDeferCarryForward: Bool,
-        shouldReportCarryForwardBlocked: Bool,
-        didBuildCarryForwardDraft: Bool
+        shouldReportCarryForwardBlocked: Bool
     ) {
         this.request = request
         this.nextAppStateCandidate = nextAppStateCandidate
@@ -1489,7 +1487,6 @@ struct CjguiInternalRuntimeStateCarryForwardReport {
         this.shouldCarryForwardWindowState = shouldCarryForwardWindowState
         this.shouldDeferCarryForward = shouldDeferCarryForward
         this.shouldReportCarryForwardBlocked = shouldReportCarryForwardBlocked
-        this.didBuildCarryForwardDraft = didBuildCarryForwardDraft
     }
 }
 
@@ -1943,6 +1940,423 @@ struct CjguiInternalRuntimeExecutionAttemptReport {
         this.didProduceCycleProgress = didProduceCycleProgress
         this.shouldDeferExecutionAttempt = shouldDeferExecutionAttempt
         this.shouldReportExecutionAttemptBlocked = shouldReportExecutionAttemptBlocked
+    }
+}
+
+// 内部 runtime execution convergence report:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它直接消费 execution attempt report, 不新增 request wrapper。
+// - 它只把一次 attempt 收敛为 converged / deferred / blocked summary。
+
+struct CjguiInternalRuntimeExecutionConvergenceReport {
+    let attempt: CjguiInternalRuntimeExecutionAttemptReport
+    let didConvergeExecution: Bool
+    let shouldDeferConvergence: Bool
+    let shouldReportConvergenceBlocked: Bool
+    let didObserveExecutionProgress: Bool
+
+    init(
+        attempt: CjguiInternalRuntimeExecutionAttemptReport,
+        didConvergeExecution: Bool,
+        shouldDeferConvergence: Bool,
+        shouldReportConvergenceBlocked: Bool,
+        didObserveExecutionProgress: Bool
+    ) {
+        this.attempt = attempt
+        this.didConvergeExecution = didConvergeExecution
+        this.shouldDeferConvergence = shouldDeferConvergence
+        this.shouldReportConvergenceBlocked = shouldReportConvergenceBlocked
+        this.didObserveExecutionProgress = didObserveExecutionProgress
+    }
+}
+
+// 内部 runtime execution commit candidate:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只消费 execution convergence report, 不新增 request wrapper。
+// - 它只是 commit-boundary candidate summary, 不是 state commit 或 global store。
+
+struct CjguiInternalRuntimeExecutionCommitCandidate {
+    let convergence: CjguiInternalRuntimeExecutionConvergenceReport
+    let canCommitExecutionResult: Bool
+    let shouldDeferCommitCandidate: Bool
+    let shouldReportCommitCandidateBlocked: Bool
+    let didObserveCommitCandidateProgress: Bool
+
+    init(
+        convergence: CjguiInternalRuntimeExecutionConvergenceReport,
+        canCommitExecutionResult: Bool,
+        shouldDeferCommitCandidate: Bool,
+        shouldReportCommitCandidateBlocked: Bool,
+        didObserveCommitCandidateProgress: Bool
+    ) {
+        this.convergence = convergence
+        this.canCommitExecutionResult = canCommitExecutionResult
+        this.shouldDeferCommitCandidate = shouldDeferCommitCandidate
+        this.shouldReportCommitCandidateBlocked = shouldReportCommitCandidateBlocked
+        this.didObserveCommitCandidateProgress = didObserveCommitCandidateProgress
+    }
+}
+
+// 内部 runtime execution commit readiness:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只消费 execution commit candidate, 不新增 request wrapper。
+// - 它只是 commit-boundary readiness summary, 不是 state commit 或 global store。
+
+struct CjguiInternalRuntimeExecutionCommitReadiness {
+    let candidate: CjguiInternalRuntimeExecutionCommitCandidate
+    let canEnterCommitBoundary: Bool
+    let shouldDeferCommitReadiness: Bool
+    let shouldReportCommitReadinessBlocked: Bool
+    let didObserveCommitReadinessProgress: Bool
+
+    init(
+        candidate: CjguiInternalRuntimeExecutionCommitCandidate,
+        canEnterCommitBoundary: Bool,
+        shouldDeferCommitReadiness: Bool,
+        shouldReportCommitReadinessBlocked: Bool,
+        didObserveCommitReadinessProgress: Bool
+    ) {
+        this.candidate = candidate
+        this.canEnterCommitBoundary = canEnterCommitBoundary
+        this.shouldDeferCommitReadiness = shouldDeferCommitReadiness
+        this.shouldReportCommitReadinessBlocked = shouldReportCommitReadinessBlocked
+        this.didObserveCommitReadinessProgress = didObserveCommitReadinessProgress
+    }
+}
+
+// 内部 runtime execution commit record:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只消费 execution commit readiness, 不新增 request wrapper。
+// - 它是 value-style committed execution record, 不是 global state commit。
+
+struct CjguiInternalRuntimeExecutionCommitRecord {
+    let readiness: CjguiInternalRuntimeExecutionCommitReadiness
+    let didCommitExecutionResult: Bool
+    let shouldDeferExecutionCommit: Bool
+    let shouldReportExecutionCommitBlocked: Bool
+    let didPreserveExecutionProgress: Bool
+
+    init(
+        readiness: CjguiInternalRuntimeExecutionCommitReadiness,
+        didCommitExecutionResult: Bool,
+        shouldDeferExecutionCommit: Bool,
+        shouldReportExecutionCommitBlocked: Bool,
+        didPreserveExecutionProgress: Bool
+    ) {
+        this.readiness = readiness
+        this.didCommitExecutionResult = didCommitExecutionResult
+        this.shouldDeferExecutionCommit = shouldDeferExecutionCommit
+        this.shouldReportExecutionCommitBlocked = shouldReportExecutionCommitBlocked
+        this.didPreserveExecutionProgress = didPreserveExecutionProgress
+    }
+}
+
+// 内部 runtime execution commit finalization:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只消费 execution commit record, 不新增 request wrapper。
+// - 它是后续 runtime boundary 可消费的 finalization summary, 不是 global store。
+
+struct CjguiInternalRuntimeExecutionCommitFinalization {
+    let record: CjguiInternalRuntimeExecutionCommitRecord
+    let isExecutionCommitFinalized: Bool
+    let shouldDeferExecutionFinalization: Bool
+    let shouldReportExecutionFinalizationBlocked: Bool
+    let didFinalizeExecutionProgress: Bool
+
+    init(
+        record: CjguiInternalRuntimeExecutionCommitRecord,
+        isExecutionCommitFinalized: Bool,
+        shouldDeferExecutionFinalization: Bool,
+        shouldReportExecutionFinalizationBlocked: Bool,
+        didFinalizeExecutionProgress: Bool
+    ) {
+        this.record = record
+        this.isExecutionCommitFinalized = isExecutionCommitFinalized
+        this.shouldDeferExecutionFinalization = shouldDeferExecutionFinalization
+        this.shouldReportExecutionFinalizationBlocked = shouldReportExecutionFinalizationBlocked
+        this.didFinalizeExecutionProgress = didFinalizeExecutionProgress
+    }
+}
+
+// 内部 runtime execution state integration:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它把 execution commit finalization 接回 existing committed-state / feedback tail。
+// - 它不执行新的 cycle, 不写 runtime global state, 不公开 state。
+
+struct CjguiInternalRuntimeExecutionStateIntegration {
+    let finalization: CjguiInternalRuntimeExecutionCommitFinalization
+    let committedState: CjguiInternalRuntimeCommittedStateStoreDraft
+    let feedback: CjguiInternalRuntimeCycleFeedbackDraft
+    let didIntegrateExecutionCommit: Bool
+    let shouldDeferExecutionStateIntegration: Bool
+    let shouldReportExecutionStateIntegrationBlocked: Bool
+
+    init(
+        finalization: CjguiInternalRuntimeExecutionCommitFinalization,
+        committedState: CjguiInternalRuntimeCommittedStateStoreDraft,
+        feedback: CjguiInternalRuntimeCycleFeedbackDraft,
+        didIntegrateExecutionCommit: Bool,
+        shouldDeferExecutionStateIntegration: Bool,
+        shouldReportExecutionStateIntegrationBlocked: Bool
+    ) {
+        this.finalization = finalization
+        this.committedState = committedState
+        this.feedback = feedback
+        this.didIntegrateExecutionCommit = didIntegrateExecutionCommit
+        this.shouldDeferExecutionStateIntegration = shouldDeferExecutionStateIntegration
+        this.shouldReportExecutionStateIntegrationBlocked = shouldReportExecutionStateIntegrationBlocked
+    }
+}
+
+// 内部 runtime execution-state loop closure:
+// - 这是普通顶层 struct, 使用默认 internal 可见性。
+// - 它只消费 execution state integration, 并归拢 next internal cycle request candidate。
+// - 它不执行 next cycle, 不写 runtime global state, 不公开 state。
+
+struct CjguiInternalRuntimeExecutionStateLoopClosure {
+    let integration: CjguiInternalRuntimeExecutionStateIntegration
+    let cycleFeedback: CjguiInternalRuntimeCycleFeedbackDraft
+    let nextCycleRequest: CjguiInternalRuntimeCycleRequest
+    let didCloseExecutionStateLoop: Bool
+    let shouldDeferExecutionStateLoopClosure: Bool
+    let shouldReportExecutionStateLoopClosureBlocked: Bool
+
+    init(
+        integration: CjguiInternalRuntimeExecutionStateIntegration,
+        cycleFeedback: CjguiInternalRuntimeCycleFeedbackDraft,
+        nextCycleRequest: CjguiInternalRuntimeCycleRequest,
+        didCloseExecutionStateLoop: Bool,
+        shouldDeferExecutionStateLoopClosure: Bool,
+        shouldReportExecutionStateLoopClosureBlocked: Bool
+    ) {
+        this.integration = integration
+        this.cycleFeedback = cycleFeedback
+        this.nextCycleRequest = nextCycleRequest
+        this.didCloseExecutionStateLoop = didCloseExecutionStateLoop
+        this.shouldDeferExecutionStateLoopClosure = shouldDeferExecutionStateLoopClosure
+        this.shouldReportExecutionStateLoopClosureBlocked = shouldReportExecutionStateLoopClosureBlocked
+    }
+}
+
+// 内部 runtime state store version:
+// - 这是 value-style internal marker, 不是 global mutable version counter。
+// - 默认 version 为 0; open transition 只返回 value + 1 的新值。
+
+struct CjguiInternalRuntimeStateStoreVersion {
+    let value: Int64
+
+    init() {
+        this.value = 0
+    }
+
+    init(value: Int64) {
+        this.value = value
+    }
+}
+
+// 内部 runtime state store snapshot:
+// - 这是 value-style internal snapshot, 不是 runtime global state store。
+// - app/window state 只作为 internal transition value 保存, 不公开。
+
+struct CjguiInternalRuntimeStateStoreSnapshot {
+    let appState: CjguiInternalAppLifecycleState
+    let windowState: CjguiInternalWindowLifecycleState
+    let version: CjguiInternalRuntimeStateStoreVersion
+
+    init(
+        appState: CjguiInternalAppLifecycleState,
+        windowState: CjguiInternalWindowLifecycleState,
+        version: CjguiInternalRuntimeStateStoreVersion
+    ) {
+        this.appState = appState
+        this.windowState = windowState
+        this.version = version
+    }
+}
+
+// 内部 runtime state store transition:
+// - 它只表达 previous -> next 的 value-style transition summary。
+// - 它不写 process-wide runtime global state, 不创建 global mutable singleton。
+// - blocked / deferred path 保留 previous snapshot。
+
+struct CjguiInternalRuntimeStateStoreTransition {
+    let previous: CjguiInternalRuntimeStateStoreSnapshot
+    let next: CjguiInternalRuntimeStateStoreSnapshot
+    let loopClosure: CjguiInternalRuntimeExecutionStateLoopClosure
+    let didTransitionRuntimeStateStore: Bool
+    let shouldDeferRuntimeStateStoreTransition: Bool
+    let shouldReportRuntimeStateStoreTransitionBlocked: Bool
+
+    init(
+        previous: CjguiInternalRuntimeStateStoreSnapshot,
+        next: CjguiInternalRuntimeStateStoreSnapshot,
+        loopClosure: CjguiInternalRuntimeExecutionStateLoopClosure,
+        didTransitionRuntimeStateStore: Bool,
+        shouldDeferRuntimeStateStoreTransition: Bool,
+        shouldReportRuntimeStateStoreTransitionBlocked: Bool
+    ) {
+        this.previous = previous
+        this.next = next
+        this.loopClosure = loopClosure
+        this.didTransitionRuntimeStateStore = didTransitionRuntimeStateStore
+        this.shouldDeferRuntimeStateStoreTransition = shouldDeferRuntimeStateStoreTransition
+        this.shouldReportRuntimeStateStoreTransitionBlocked = shouldReportRuntimeStateStoreTransitionBlocked
+    }
+}
+
+// 内部 input intent source:
+// - 这是脱水 source facts, 不是 platform event source object。
+// - platformOrigin 只是 value marker, 不保存 native handle / pointer / callback。
+
+struct CjguiInternalInputIntentSource {
+    let isSynthetic: Bool
+    let isPlatformOrigin: Bool
+    let isUserOrigin: Bool
+
+    init() {
+        this.isSynthetic = true
+        this.isPlatformOrigin = false
+        this.isUserOrigin = false
+    }
+
+    init(
+        isSynthetic: Bool,
+        isPlatformOrigin: Bool,
+        isUserOrigin: Bool
+    ) {
+        this.isSynthetic = isSynthetic
+        this.isPlatformOrigin = isPlatformOrigin
+        this.isUserOrigin = isUserOrigin
+    }
+}
+
+// 内部 input intent kind:
+// - 这是脱水 kind facts, 不是 platform event object。
+// - 默认 activation intent 只作为 internal ingress sanity baseline。
+
+struct CjguiInternalInputIntentKind {
+    let isActivationIntent: Bool
+    let isTextIntent: Bool
+    let isPointerIntent: Bool
+    let isLifecycleIntent: Bool
+
+    init() {
+        this.isActivationIntent = true
+        this.isTextIntent = false
+        this.isPointerIntent = false
+        this.isLifecycleIntent = false
+    }
+
+    init(
+        isActivationIntent: Bool,
+        isTextIntent: Bool,
+        isPointerIntent: Bool,
+        isLifecycleIntent: Bool
+    ) {
+        this.isActivationIntent = isActivationIntent
+        this.isTextIntent = isTextIntent
+        this.isPointerIntent = isPointerIntent
+        this.isLifecycleIntent = isLifecycleIntent
+    }
+}
+
+// 内部 input intent:
+// - 这是 runtime ingress 的脱水 value model。
+// - 它不表示平台事件对象、queue item、scheduler tick 或 runtime cycle request。
+
+struct CjguiInternalInputIntent {
+    let source: CjguiInternalInputIntentSource
+    let kind: CjguiInternalInputIntentKind
+    let isInputIntentPresent: Bool
+
+    init(
+        source: CjguiInternalInputIntentSource,
+        kind: CjguiInternalInputIntentKind,
+        isInputIntentPresent: Bool
+    ) {
+        this.source = source
+        this.kind = kind
+        this.isInputIntentPresent = isInputIntentPresent
+    }
+}
+
+// 内部 input intent admission:
+// - 这是 admission summary, 不是 queue admission、event loop admission 或 public API。
+// - 它只消费 input intent value, 不执行 runtime cycle / step。
+
+struct CjguiInternalInputIntentAdmission {
+    let intent: CjguiInternalInputIntent
+    let canAdmitInputIntent: Bool
+    let shouldDeferInputIntent: Bool
+    let shouldReportInputIntentBlocked: Bool
+
+    init(
+        intent: CjguiInternalInputIntent,
+        canAdmitInputIntent: Bool,
+        shouldDeferInputIntent: Bool,
+        shouldReportInputIntentBlocked: Bool
+    ) {
+        this.intent = intent
+        this.canAdmitInputIntent = canAdmitInputIntent
+        this.shouldDeferInputIntent = shouldDeferInputIntent
+        this.shouldReportInputIntentBlocked = shouldReportInputIntentBlocked
+    }
+}
+
+// 内部 input routing result:
+// - 它只消费 input intent admission, 表达 future runtime ingress candidate。
+// - didPreserveInputIntent 只是把脱水 intent 作为 candidate 继续携带,
+//   不是 enqueue、event dispatch、scheduler tick 或 runtime cycle execution。
+
+struct CjguiInternalInputRoutingResult {
+    let admission: CjguiInternalInputIntentAdmission
+    let isRuntimeIngressCandidate: Bool
+    let shouldDeferInputRouting: Bool
+    let shouldReportInputRoutingBlocked: Bool
+    let didPreserveInputIntent: Bool
+
+    init(
+        admission: CjguiInternalInputIntentAdmission,
+        isRuntimeIngressCandidate: Bool,
+        shouldDeferInputRouting: Bool,
+        shouldReportInputRoutingBlocked: Bool,
+        didPreserveInputIntent: Bool
+    ) {
+        this.admission = admission
+        this.isRuntimeIngressCandidate = isRuntimeIngressCandidate
+        this.shouldDeferInputRouting = shouldDeferInputRouting
+        this.shouldReportInputRoutingBlocked = shouldReportInputRoutingBlocked
+        this.didPreserveInputIntent = didPreserveInputIntent
+    }
+}
+
+// 内部 input-to-runtime ingress:
+// - 它把脱水 input routing candidate 与 runtime state boundary context 合成 acceptance value。
+// - didPreserveRuntimeIngressCandidate 只表示二者作为 candidate 一起携带,
+//   不是 enqueue、dispatch、scheduler tick、state write 或 runtime cycle execution。
+
+struct CjguiInternalInputRuntimeIngress {
+    let routing: CjguiInternalInputRoutingResult
+    let stateTransition: CjguiInternalRuntimeStateStoreTransition
+    let canEnterRuntimeIngress: Bool
+    let shouldDeferRuntimeIngress: Bool
+    let shouldReportRuntimeIngressBlocked: Bool
+    let didPreserveRuntimeIngressCandidate: Bool
+
+    init(
+        routing: CjguiInternalInputRoutingResult,
+        stateTransition: CjguiInternalRuntimeStateStoreTransition,
+        canEnterRuntimeIngress: Bool,
+        shouldDeferRuntimeIngress: Bool,
+        shouldReportRuntimeIngressBlocked: Bool,
+        didPreserveRuntimeIngressCandidate: Bool
+    ) {
+        this.routing = routing
+        this.stateTransition = stateTransition
+        this.canEnterRuntimeIngress = canEnterRuntimeIngress
+        this.shouldDeferRuntimeIngress = shouldDeferRuntimeIngress
+        this.shouldReportRuntimeIngressBlocked = shouldReportRuntimeIngressBlocked
+        this.didPreserveRuntimeIngressCandidate = didPreserveRuntimeIngressCandidate
     }
 }
 
@@ -3634,8 +4048,7 @@ func cjguiInternalEvaluateRuntimeStateCarryForward(
         publication.shouldPublishAppState,
         publication.shouldPublishWindowState,
         publication.shouldDeferPublication,
-        publication.shouldReportPublicationBlocked,
-        true
+        publication.shouldReportPublicationBlocked
     )
 }
 
@@ -3885,6 +4298,28 @@ func cjguiInternalRuntimeCycleRequestCandidateReady(
     return candidate.policy.requiresRuntimeReady
 }
 
+func cjguiInternalRuntimeShouldPrepareNextCycleRequest(
+    feedback: CjguiInternalRuntimeCycleFeedbackDraft
+): Bool {
+    return feedback.didPrepareCycleFeedback &&
+        cjguiInternalRuntimeCycleFeedbackStateCandidatesReady(feedback)
+}
+
+func cjguiInternalBuildRuntimeNextCycleRequestCandidateFromFeedback(
+    feedback: CjguiInternalRuntimeCycleFeedbackDraft
+): CjguiInternalRuntimeCycleRequest {
+    let shouldPrepare = cjguiInternalRuntimeShouldPrepareNextCycleRequest(feedback)
+    let root = cjguiInternalBuildRuntimeRootState()
+    return CjguiInternalRuntimeCycleRequest(
+        CjguiInternalRuntimeRootState(
+            root.bootstrap,
+            shouldPrepare
+        ),
+        cjguiInternalDefaultRuntimeStepInput(),
+        cjguiInternalDefaultRuntimeStepPolicy()
+    )
+}
+
 // 内部 runtime next-cycle request draft:
 // - 它只消费 CycleFeedbackDraft, 不越级读取 committed store 或 lower-level facts。
 // - cycle request candidate 是 value-style candidate, 不会被本层执行。
@@ -3901,17 +4336,8 @@ func cjguiInternalEvaluateRuntimeNextCycleRequestDraft(
     request: CjguiInternalRuntimeNextCycleRequestDraftRequest
 ): CjguiInternalRuntimeNextCycleRequestDraft {
     let feedback = request.feedback
-    let shouldPrepare = feedback.didPrepareCycleFeedback &&
-        cjguiInternalRuntimeCycleFeedbackStateCandidatesReady(feedback)
-    let root = cjguiInternalBuildRuntimeRootState()
-    let cycleRequest = CjguiInternalRuntimeCycleRequest(
-        CjguiInternalRuntimeRootState(
-            root.bootstrap,
-            shouldPrepare
-        ),
-        cjguiInternalDefaultRuntimeStepInput(),
-        cjguiInternalDefaultRuntimeStepPolicy()
-    )
+    let shouldPrepare = cjguiInternalRuntimeShouldPrepareNextCycleRequest(feedback)
+    let cycleRequest = cjguiInternalBuildRuntimeNextCycleRequestCandidateFromFeedback(feedback)
     return CjguiInternalRuntimeNextCycleRequestDraft(
         cycleRequest,
         shouldPrepare,
@@ -3972,10 +4398,11 @@ func cjguiInternalExecuteDefaultRuntimeCycleHandoffDraft(
     return cjguiInternalExecuteRuntimeCycleHandoffDraft(nextCycle)
 }
 
-// 内部 runtime cycle replay draft:
+// Legacy diagnostics runtime cycle replay draft:
 // - 它只消费 CycleHandoffDraft, 不越级读取 next-cycle request / feedback 或 lower-level facts。
 // - cycle request candidate 只来自 handoff draft, 不会被本层执行。
 // - 它不调用 cjguiInternalExecuteRuntimeCycle, 不执行 runtime step, 不写 runtime global state。
+// - 新 default tail endpoint 是 RuntimeExecutionStateLoopClosure; 本段仅保留 legacy trace。
 
 func cjguiInternalBuildRuntimeCycleReplayRequest(
     handoff: CjguiInternalRuntimeCycleHandoffDraft
@@ -4011,10 +4438,11 @@ func cjguiInternalExecuteDefaultRuntimeCycleReplayDraft(
     return cjguiInternalExecuteRuntimeCycleReplayDraft(handoff)
 }
 
-// 内部 runtime replay outcome draft:
+// Legacy diagnostics runtime replay outcome draft:
 // - 它只消费 CycleReplayDraft, 不越级读取 handoff / next-cycle request 或 lower-level facts。
 // - cycle request candidate 只作为 trace 从 replay draft 投影, 不会被本层执行。
 // - 它不调用 cjguiInternalExecuteRuntimeCycle, 不执行 runtime step, 不写 runtime global state。
+// - 新 default tail endpoint 是 RuntimeExecutionStateLoopClosure; 本段仅保留 legacy trace。
 
 func cjguiInternalBuildRuntimeReplayOutcomeRequest(
     replay: CjguiInternalRuntimeCycleReplayDraft
@@ -4050,10 +4478,11 @@ func cjguiInternalExecuteDefaultRuntimeReplayOutcomeDraft(
     return cjguiInternalExecuteRuntimeReplayOutcomeDraft(replay)
 }
 
-// 内部 runtime execution admission draft:
+// Legacy diagnostics runtime execution admission draft:
 // - 它只消费 RuntimeReplayOutcomeReport, 不越级读取 replay / handoff 或 lower-level facts。
 // - cycle request candidate 只作为 trace 从 replay outcome 投影, 不会被本层执行。
 // - 它不调用 cjguiInternalExecuteRuntimeCycle, 不执行 runtime step, 不写 runtime global state。
+// - 新 default tail endpoint 是 RuntimeExecutionStateLoopClosure; 本段仅保留 legacy trace。
 
 func cjguiInternalBuildRuntimeExecutionAdmissionRequest(
     outcome: CjguiInternalRuntimeReplayOutcomeReport
@@ -4089,10 +4518,11 @@ func cjguiInternalExecuteDefaultRuntimeExecutionAdmissionDraft(
     return cjguiInternalExecuteRuntimeExecutionAdmissionDraft(outcome)
 }
 
-// 内部 runtime dry-run execution plan draft:
+// Legacy diagnostics runtime dry-run execution plan draft:
 // - 它只消费 RuntimeExecutionAdmissionReport, 不越级读取 replay outcome 或 lower-level facts。
 // - cycle request candidate 只作为 dry-run trace 从 admission report 投影, 不会被本层执行。
 // - 它不调用 cjguiInternalExecuteRuntimeCycle, 不执行 runtime step, 不写 runtime global state。
+// - 新 default tail endpoint 是 RuntimeExecutionStateLoopClosure; 本段仅保留 legacy trace。
 
 func cjguiInternalBuildRuntimeDryRunExecutionPlanRequest(
     admission: CjguiInternalRuntimeExecutionAdmissionReport
@@ -4184,6 +4614,627 @@ func cjguiInternalExecuteDefaultRuntimeExecutionAttemptDraft(
 ): CjguiInternalRuntimeExecutionAttemptReport {
     let plan = cjguiInternalExecuteDefaultRuntimeDryRunExecutionPlanDraft()
     return cjguiInternalExecuteRuntimeExecutionAttemptDraft(plan)
+}
+
+// 内部 runtime execution convergence:
+// - 它只消费 RuntimeExecutionAttemptReport, 不越级读取 dry-run / admission / replay facts。
+// - 它不再次执行 candidate, 不调用 cjguiInternalExecuteRuntimeCycle。
+// - 异常 flag 组合 fail closed 为 blocked。
+
+func cjguiInternalBuildRuntimeExecutionConvergenceReport(
+    attempt: CjguiInternalRuntimeExecutionAttemptReport
+): CjguiInternalRuntimeExecutionConvergenceReport {
+    let hasExecutionMarker = attempt.didAttemptExecution ||
+        attempt.didExecuteCycleCandidate ||
+        attempt.didProduceCycleProgress
+    let hasBlockingMarker = attempt.shouldDeferExecutionAttempt ||
+        attempt.shouldReportExecutionAttemptBlocked
+    let didCompleteExecution = attempt.didAttemptExecution &&
+        attempt.didExecuteCycleCandidate &&
+        attempt.didProduceCycleProgress
+    let didConverge = didCompleteExecution && hasBlockingMarker == false
+    let shouldDefer = hasExecutionMarker == false &&
+        attempt.shouldDeferExecutionAttempt &&
+        attempt.shouldReportExecutionAttemptBlocked == false
+    let shouldBlock = didConverge == false && shouldDefer == false
+    return CjguiInternalRuntimeExecutionConvergenceReport(
+        attempt,
+        didConverge,
+        shouldDefer,
+        shouldBlock,
+        didConverge
+    )
+}
+
+func cjguiInternalExecuteDefaultRuntimeExecutionConvergenceDraft(
+): CjguiInternalRuntimeExecutionConvergenceReport {
+    let attempt = cjguiInternalExecuteDefaultRuntimeExecutionAttemptDraft()
+    return cjguiInternalBuildRuntimeExecutionConvergenceReport(attempt)
+}
+
+// 内部 runtime execution commit candidate:
+// - 它只消费 RuntimeExecutionConvergenceReport。
+// - 它不再次执行 candidate, 不调用 cjguiInternalExecuteRuntimeCycle。
+// - 异常 convergence flag 组合 fail closed 为 blocked。
+
+func cjguiInternalBuildRuntimeExecutionCommitCandidate(
+    convergence: CjguiInternalRuntimeExecutionConvergenceReport
+): CjguiInternalRuntimeExecutionCommitCandidate {
+    let hasBlockingMarker = convergence.shouldDeferConvergence ||
+        convergence.shouldReportConvergenceBlocked
+    let canCommit = convergence.didConvergeExecution &&
+        hasBlockingMarker == false &&
+        convergence.didObserveExecutionProgress
+    let shouldDefer = convergence.didConvergeExecution == false &&
+        convergence.shouldDeferConvergence &&
+        convergence.shouldReportConvergenceBlocked == false &&
+        convergence.didObserveExecutionProgress == false
+    let shouldBlock = canCommit == false && shouldDefer == false
+    return CjguiInternalRuntimeExecutionCommitCandidate(
+        convergence,
+        canCommit,
+        shouldDefer,
+        shouldBlock,
+        canCommit
+    )
+}
+
+func cjguiInternalExecuteDefaultRuntimeExecutionCommitCandidateDraft(
+): CjguiInternalRuntimeExecutionCommitCandidate {
+    let convergence = cjguiInternalExecuteDefaultRuntimeExecutionConvergenceDraft()
+    return cjguiInternalBuildRuntimeExecutionCommitCandidate(convergence)
+}
+
+// 内部 runtime execution commit readiness:
+// - 它只消费 RuntimeExecutionCommitCandidate。
+// - 它不再次执行 candidate, 不调用 cjguiInternalExecuteRuntimeCycle。
+// - 异常 candidate flag 组合 fail closed 为 blocked。
+
+func cjguiInternalBuildRuntimeExecutionCommitReadiness(
+    candidate: CjguiInternalRuntimeExecutionCommitCandidate
+): CjguiInternalRuntimeExecutionCommitReadiness {
+    let hasBlockingMarker = candidate.shouldDeferCommitCandidate ||
+        candidate.shouldReportCommitCandidateBlocked
+    let canEnter = candidate.canCommitExecutionResult &&
+        hasBlockingMarker == false &&
+        candidate.didObserveCommitCandidateProgress
+    let shouldDefer = candidate.canCommitExecutionResult == false &&
+        candidate.shouldDeferCommitCandidate &&
+        candidate.shouldReportCommitCandidateBlocked == false &&
+        candidate.didObserveCommitCandidateProgress == false
+    let shouldBlock = canEnter == false && shouldDefer == false
+    return CjguiInternalRuntimeExecutionCommitReadiness(
+        candidate,
+        canEnter,
+        shouldDefer,
+        shouldBlock,
+        canEnter
+    )
+}
+
+func cjguiInternalExecuteDefaultRuntimeExecutionCommitReadinessDraft(
+): CjguiInternalRuntimeExecutionCommitReadiness {
+    let candidate = cjguiInternalExecuteDefaultRuntimeExecutionCommitCandidateDraft()
+    return cjguiInternalBuildRuntimeExecutionCommitReadiness(candidate)
+}
+
+// 内部 runtime execution commit record:
+// - 它只消费 RuntimeExecutionCommitReadiness。
+// - 它不再次执行 candidate, 不调用 cjguiInternalExecuteRuntimeCycle。
+// - 异常 readiness flag 组合 fail closed 为 blocked。
+
+func cjguiInternalBuildRuntimeExecutionCommitRecord(
+    readiness: CjguiInternalRuntimeExecutionCommitReadiness
+): CjguiInternalRuntimeExecutionCommitRecord {
+    let hasBlockingMarker = readiness.shouldDeferCommitReadiness ||
+        readiness.shouldReportCommitReadinessBlocked
+    let didCommit = readiness.canEnterCommitBoundary &&
+        hasBlockingMarker == false &&
+        readiness.didObserveCommitReadinessProgress
+    let shouldDefer = readiness.canEnterCommitBoundary == false &&
+        readiness.shouldDeferCommitReadiness &&
+        readiness.shouldReportCommitReadinessBlocked == false &&
+        readiness.didObserveCommitReadinessProgress == false
+    let shouldBlock = didCommit == false && shouldDefer == false
+    return CjguiInternalRuntimeExecutionCommitRecord(
+        readiness,
+        didCommit,
+        shouldDefer,
+        shouldBlock,
+        didCommit
+    )
+}
+
+// 内部 runtime execution commit finalization:
+// - 它只消费 RuntimeExecutionCommitRecord。
+// - 它不执行 runtime step, 不写 runtime global state。
+// - 异常 record flag 组合 fail closed 为 blocked。
+
+func cjguiInternalFinalizeRuntimeExecutionCommit(
+    record: CjguiInternalRuntimeExecutionCommitRecord
+): CjguiInternalRuntimeExecutionCommitFinalization {
+    let hasBlockingMarker = record.shouldDeferExecutionCommit ||
+        record.shouldReportExecutionCommitBlocked
+    let isFinalized = record.didCommitExecutionResult &&
+        hasBlockingMarker == false &&
+        record.didPreserveExecutionProgress
+    let shouldDefer = record.didCommitExecutionResult == false &&
+        record.shouldDeferExecutionCommit &&
+        record.shouldReportExecutionCommitBlocked == false &&
+        record.didPreserveExecutionProgress == false
+    let shouldBlock = isFinalized == false && shouldDefer == false
+    return CjguiInternalRuntimeExecutionCommitFinalization(
+        record,
+        isFinalized,
+        shouldDefer,
+        shouldBlock,
+        isFinalized
+    )
+}
+
+func cjguiInternalExecuteDefaultRuntimeExecutionCommitBoundaryDraft(
+): CjguiInternalRuntimeExecutionCommitFinalization {
+    let readiness = cjguiInternalExecuteDefaultRuntimeExecutionCommitReadinessDraft()
+    let record = cjguiInternalBuildRuntimeExecutionCommitRecord(readiness)
+    return cjguiInternalFinalizeRuntimeExecutionCommit(record)
+}
+
+// 内部 runtime execution state integration:
+// - 它只消费 RuntimeExecutionCommitFinalization 与 existing committed-state store draft。
+// - feedback 由 existing committed-state tail 生成, 不执行 cycle / step。
+// - 异常 finalization / committed-state / feedback flag 组合 fail closed 为 blocked。
+
+func cjguiInternalIntegrateRuntimeExecutionCommitFinalization(
+    finalization: CjguiInternalRuntimeExecutionCommitFinalization,
+    committedState: CjguiInternalRuntimeCommittedStateStoreDraft
+): CjguiInternalRuntimeExecutionStateIntegration {
+    let feedback = cjguiInternalExecuteRuntimeCycleFeedbackDraft(committedState)
+    let finalizationReady = finalization.isExecutionCommitFinalized &&
+        finalization.shouldDeferExecutionFinalization == false &&
+        finalization.shouldReportExecutionFinalizationBlocked == false &&
+        finalization.didFinalizeExecutionProgress
+    let finalizationDeferred = finalization.isExecutionCommitFinalized == false &&
+        finalization.shouldDeferExecutionFinalization &&
+        finalization.shouldReportExecutionFinalizationBlocked == false &&
+        finalization.didFinalizeExecutionProgress == false
+    let finalizationBlocked = finalization.shouldReportExecutionFinalizationBlocked ||
+        (finalization.isExecutionCommitFinalized && finalization.shouldDeferExecutionFinalization) ||
+        (finalization.didFinalizeExecutionProgress && finalization.isExecutionCommitFinalized == false)
+    let committedReady = committedState.didCommitRuntimeState &&
+        committedState.shouldDeferRuntimeStateCommit == false &&
+        committedState.shouldReportRuntimeStateCommitBlocked == false
+    let committedDeferred = committedState.didCommitRuntimeState == false &&
+        committedState.shouldDeferRuntimeStateCommit &&
+        committedState.shouldReportRuntimeStateCommitBlocked == false
+    let committedBlocked = committedState.shouldReportRuntimeStateCommitBlocked ||
+        (committedState.didCommitRuntimeState && committedState.shouldDeferRuntimeStateCommit)
+    let feedbackReady = feedback.didPrepareCycleFeedback &&
+        feedback.shouldDeferCycleFeedback == false &&
+        feedback.shouldReportCycleFeedbackBlocked == false &&
+        cjguiInternalRuntimeCycleFeedbackStateCandidatesReady(feedback)
+    let feedbackDeferred = feedback.didPrepareCycleFeedback == false &&
+        feedback.shouldDeferCycleFeedback &&
+        feedback.shouldReportCycleFeedbackBlocked == false
+    let feedbackBlocked = feedback.shouldReportCycleFeedbackBlocked ||
+        (feedback.didPrepareCycleFeedback && feedback.shouldDeferCycleFeedback)
+    let didIntegrate = finalizationReady && committedReady && feedbackReady
+    let shouldDefer = didIntegrate == false &&
+        finalizationBlocked == false &&
+        committedBlocked == false &&
+        feedbackBlocked == false &&
+        (finalizationDeferred || committedDeferred || feedbackDeferred)
+    let shouldBlock = didIntegrate == false && shouldDefer == false
+    return CjguiInternalRuntimeExecutionStateIntegration(
+        finalization,
+        committedState,
+        feedback,
+        didIntegrate,
+        shouldDefer,
+        shouldBlock
+    )
+}
+
+func cjguiInternalExecuteDefaultRuntimeExecutionStateIntegrationDraft(
+): CjguiInternalRuntimeExecutionStateIntegration {
+    let finalization = cjguiInternalExecuteDefaultRuntimeExecutionCommitBoundaryDraft()
+    let committedState = cjguiInternalExecuteDefaultRuntimeCommittedStateStoreDraft()
+    return cjguiInternalIntegrateRuntimeExecutionCommitFinalization(
+        finalization,
+        committedState
+    )
+}
+
+// 内部 runtime execution-state loop closure:
+// - 它只消费 RuntimeExecutionStateIntegration。
+// - next-cycle request candidate 由 integration.feedback 通过 shared helper 构造。
+// - 它不执行 candidate, 不调用 cjguiInternalExecuteRuntimeCycle, 不写 global state。
+// - 异常 integration / feedback flag 组合 fail closed 为 blocked。
+
+func cjguiInternalCloseRuntimeExecutionStateLoop(
+    integration: CjguiInternalRuntimeExecutionStateIntegration
+): CjguiInternalRuntimeExecutionStateLoopClosure {
+    let feedback = integration.feedback
+    let nextCycleRequest = cjguiInternalBuildRuntimeNextCycleRequestCandidateFromFeedback(feedback)
+    let integrationReady = integration.didIntegrateExecutionCommit &&
+        integration.shouldDeferExecutionStateIntegration == false &&
+        integration.shouldReportExecutionStateIntegrationBlocked == false
+    let integrationDeferred = integration.didIntegrateExecutionCommit == false &&
+        integration.shouldDeferExecutionStateIntegration &&
+        integration.shouldReportExecutionStateIntegrationBlocked == false
+    let integrationBlocked = integration.shouldReportExecutionStateIntegrationBlocked ||
+        (integration.didIntegrateExecutionCommit &&
+            integration.shouldDeferExecutionStateIntegration)
+    let feedbackReady = feedback.didPrepareCycleFeedback &&
+        feedback.shouldDeferCycleFeedback == false &&
+        feedback.shouldReportCycleFeedbackBlocked == false &&
+        cjguiInternalRuntimeCycleFeedbackStateCandidatesReady(feedback)
+    let feedbackDeferred = feedback.didPrepareCycleFeedback == false &&
+        feedback.shouldDeferCycleFeedback &&
+        feedback.shouldReportCycleFeedbackBlocked == false
+    let feedbackBlocked = feedback.shouldReportCycleFeedbackBlocked ||
+        (feedback.didPrepareCycleFeedback && feedback.shouldDeferCycleFeedback)
+    let didClose = integrationReady &&
+        feedbackReady &&
+        cjguiInternalRuntimeCycleRequestCandidateReady(nextCycleRequest)
+    let shouldDefer = didClose == false &&
+        integrationBlocked == false &&
+        feedbackBlocked == false &&
+        (integrationDeferred || feedbackDeferred)
+    let shouldBlock = didClose == false && shouldDefer == false
+    return CjguiInternalRuntimeExecutionStateLoopClosure(
+        integration,
+        feedback,
+        nextCycleRequest,
+        didClose,
+        shouldDefer,
+        shouldBlock
+    )
+}
+
+func cjguiInternalExecuteDefaultRuntimeExecutionStateLoopClosureDraft(
+): CjguiInternalRuntimeExecutionStateLoopClosure {
+    let integration = cjguiInternalExecuteDefaultRuntimeExecutionStateIntegrationDraft()
+    return cjguiInternalCloseRuntimeExecutionStateLoop(integration)
+}
+
+func cjguiInternalExecuteDefaultRuntimeTailDraft(
+): CjguiInternalRuntimeExecutionStateLoopClosure {
+    return cjguiInternalExecuteDefaultRuntimeExecutionStateLoopClosureDraft()
+}
+
+// 内部 runtime state store transition boundary:
+// - 它只消费 value-style previous snapshot 与 execution-state loop closure。
+// - open path 生成新 snapshot 与 version marker; blocked / deferred path 保留 previous。
+// - 它不写 runtime global state, 不公开 state, 不执行 cycle / step。
+
+func cjguiInternalBuildRuntimeStateStoreSnapshot(
+    appState: CjguiInternalAppLifecycleState,
+    windowState: CjguiInternalWindowLifecycleState,
+    version: CjguiInternalRuntimeStateStoreVersion
+): CjguiInternalRuntimeStateStoreSnapshot {
+    return CjguiInternalRuntimeStateStoreSnapshot(
+        appState,
+        windowState,
+        version
+    )
+}
+
+func cjguiInternalAdvanceRuntimeStateStoreVersion(
+    version: CjguiInternalRuntimeStateStoreVersion
+): CjguiInternalRuntimeStateStoreVersion {
+    return CjguiInternalRuntimeStateStoreVersion(version.value + 1)
+}
+
+func cjguiInternalBuildRuntimeStateStoreTransition(
+    previous: CjguiInternalRuntimeStateStoreSnapshot,
+    loopClosure: CjguiInternalRuntimeExecutionStateLoopClosure
+): CjguiInternalRuntimeStateStoreTransition {
+    let candidateReady = cjguiInternalRuntimeCycleRequestCandidateReady(
+        loopClosure.nextCycleRequest
+    )
+    let feedbackReady = loopClosure.cycleFeedback.didPrepareCycleFeedback &&
+        loopClosure.cycleFeedback.shouldDeferCycleFeedback == false &&
+        loopClosure.cycleFeedback.shouldReportCycleFeedbackBlocked == false &&
+        cjguiInternalRuntimeCycleFeedbackStateCandidatesReady(
+            loopClosure.cycleFeedback
+        )
+    let canTransition = loopClosure.didCloseExecutionStateLoop &&
+        loopClosure.shouldDeferExecutionStateLoopClosure == false &&
+        loopClosure.shouldReportExecutionStateLoopClosureBlocked == false &&
+        candidateReady &&
+        feedbackReady
+    let shouldDefer = canTransition == false &&
+        loopClosure.didCloseExecutionStateLoop == false &&
+        loopClosure.shouldDeferExecutionStateLoopClosure &&
+        loopClosure.shouldReportExecutionStateLoopClosureBlocked == false
+    if (canTransition) {
+        let next = cjguiInternalBuildRuntimeStateStoreSnapshot(
+            loopClosure.cycleFeedback.nextCycleAppStateCandidate,
+            loopClosure.cycleFeedback.nextCycleWindowStateCandidate,
+            cjguiInternalAdvanceRuntimeStateStoreVersion(previous.version)
+        )
+        return CjguiInternalRuntimeStateStoreTransition(
+            previous,
+            next,
+            loopClosure,
+            true,
+            false,
+            false
+        )
+    }
+    return CjguiInternalRuntimeStateStoreTransition(
+        previous,
+        previous,
+        loopClosure,
+        false,
+        shouldDefer,
+        shouldDefer == false
+    )
+}
+
+func cjguiInternalRuntimeStateStoreTransitionDidOpen(
+    transition: CjguiInternalRuntimeStateStoreTransition
+): Bool {
+    return transition.didTransitionRuntimeStateStore &&
+        transition.shouldDeferRuntimeStateStoreTransition == false &&
+        transition.shouldReportRuntimeStateStoreTransitionBlocked == false
+}
+
+func cjguiInternalRuntimeStateStoreTransitionShouldDefer(
+    transition: CjguiInternalRuntimeStateStoreTransition
+): Bool {
+    return transition.didTransitionRuntimeStateStore == false &&
+        transition.shouldDeferRuntimeStateStoreTransition &&
+        transition.shouldReportRuntimeStateStoreTransitionBlocked == false
+}
+
+func cjguiInternalRuntimeStateStoreTransitionShouldReportBlocked(
+    transition: CjguiInternalRuntimeStateStoreTransition
+): Bool {
+    return transition.didTransitionRuntimeStateStore == false &&
+        transition.shouldDeferRuntimeStateStoreTransition == false &&
+        transition.shouldReportRuntimeStateStoreTransitionBlocked
+}
+
+func cjguiInternalExecuteDefaultRuntimeStateStoreTransitionDraft(
+): CjguiInternalRuntimeStateStoreTransition {
+    let loopClosure = cjguiInternalExecuteDefaultRuntimeTailDraft()
+    let committedState = loopClosure.integration.committedState
+    let previous = cjguiInternalBuildRuntimeStateStoreSnapshot(
+        committedState.committedAppState,
+        committedState.committedWindowState,
+        CjguiInternalRuntimeStateStoreVersion()
+    )
+    return cjguiInternalBuildRuntimeStateStoreTransition(
+        previous,
+        loopClosure
+    )
+}
+
+// 内部 input intent boundary:
+// - 它只处理脱水 input intent / source / kind facts。
+// - 它不接平台事件、不写 queue / event loop / scheduler、不执行 cycle / step。
+
+func cjguiInternalDefaultInputIntentSource(): CjguiInternalInputIntentSource {
+    return CjguiInternalInputIntentSource()
+}
+
+func cjguiInternalDefaultInputIntentKind(): CjguiInternalInputIntentKind {
+    return CjguiInternalInputIntentKind()
+}
+
+func cjguiInternalBuildInputIntent(
+    source: CjguiInternalInputIntentSource,
+    kind: CjguiInternalInputIntentKind,
+    isInputIntentPresent: Bool
+): CjguiInternalInputIntent {
+    return CjguiInternalInputIntent(
+        source,
+        kind,
+        isInputIntentPresent
+    )
+}
+
+func cjguiInternalInputIntentSourceIsValid(
+    source: CjguiInternalInputIntentSource
+): Bool {
+    let syntheticOnly = source.isSynthetic &&
+        source.isPlatformOrigin == false &&
+        source.isUserOrigin == false
+    let platformOnly = source.isSynthetic == false &&
+        source.isPlatformOrigin &&
+        source.isUserOrigin == false
+    let userOnly = source.isSynthetic == false &&
+        source.isPlatformOrigin == false &&
+        source.isUserOrigin
+    return syntheticOnly || platformOnly || userOnly
+}
+
+func cjguiInternalInputIntentKindIsValid(
+    kind: CjguiInternalInputIntentKind
+): Bool {
+    let activationOnly = kind.isActivationIntent &&
+        kind.isTextIntent == false &&
+        kind.isPointerIntent == false &&
+        kind.isLifecycleIntent == false
+    let textOnly = kind.isActivationIntent == false &&
+        kind.isTextIntent &&
+        kind.isPointerIntent == false &&
+        kind.isLifecycleIntent == false
+    let pointerOnly = kind.isActivationIntent == false &&
+        kind.isTextIntent == false &&
+        kind.isPointerIntent &&
+        kind.isLifecycleIntent == false
+    let lifecycleOnly = kind.isActivationIntent == false &&
+        kind.isTextIntent == false &&
+        kind.isPointerIntent == false &&
+        kind.isLifecycleIntent
+    return activationOnly || textOnly || pointerOnly || lifecycleOnly
+}
+
+func cjguiInternalEvaluateInputIntentAdmission(
+    intent: CjguiInternalInputIntent
+): CjguiInternalInputIntentAdmission {
+    if (intent.isInputIntentPresent == false) {
+        return CjguiInternalInputIntentAdmission(
+            intent,
+            false,
+            true,
+            false
+        )
+    }
+    if (
+        cjguiInternalInputIntentSourceIsValid(intent.source) &&
+        cjguiInternalInputIntentKindIsValid(intent.kind)
+    ) {
+        return CjguiInternalInputIntentAdmission(
+            intent,
+            true,
+            false,
+            false
+        )
+    }
+    return CjguiInternalInputIntentAdmission(
+        intent,
+        false,
+        false,
+        true
+    )
+}
+
+func cjguiInternalExecuteDefaultInputIntentAdmissionDraft(
+): CjguiInternalInputIntentAdmission {
+    let intent = cjguiInternalBuildInputIntent(
+        cjguiInternalDefaultInputIntentSource(),
+        cjguiInternalDefaultInputIntentKind(),
+        true
+    )
+    return cjguiInternalEvaluateInputIntentAdmission(intent)
+}
+
+// 内部 input routing boundary:
+// - 它只路由已脱水 admission facts。
+// - 它不接平台事件、不写 queue / event loop / scheduler、不执行 cycle / step。
+
+func cjguiInternalRouteInputIntentAdmission(
+    admission: CjguiInternalInputIntentAdmission
+): CjguiInternalInputRoutingResult {
+    if (
+        admission.canAdmitInputIntent &&
+        admission.shouldDeferInputIntent == false &&
+        admission.shouldReportInputIntentBlocked == false
+    ) {
+        return CjguiInternalInputRoutingResult(
+            admission,
+            true,
+            false,
+            false,
+            true
+        )
+    }
+    if (
+        admission.canAdmitInputIntent == false &&
+        admission.shouldDeferInputIntent &&
+        admission.shouldReportInputIntentBlocked == false
+    ) {
+        return CjguiInternalInputRoutingResult(
+            admission,
+            false,
+            true,
+            false,
+            false
+        )
+    }
+    return CjguiInternalInputRoutingResult(
+        admission,
+        false,
+        false,
+        true,
+        false
+    )
+}
+
+func cjguiInternalExecuteDefaultInputRoutingDraft(
+): CjguiInternalInputRoutingResult {
+    let admission = cjguiInternalExecuteDefaultInputIntentAdmissionDraft()
+    return cjguiInternalRouteInputIntentAdmission(admission)
+}
+
+// 内部 input-to-runtime ingress boundary:
+// - 它只组合 routing result 与 state-store transition context。
+// - 它不接平台事件、不写 queue / event loop / scheduler、不执行 cycle / step。
+
+func cjguiInternalBuildInputRuntimeIngress(
+    routing: CjguiInternalInputRoutingResult,
+    stateTransition: CjguiInternalRuntimeStateStoreTransition
+): CjguiInternalInputRuntimeIngress {
+    let routingReady = routing.isRuntimeIngressCandidate &&
+        routing.shouldDeferInputRouting == false &&
+        routing.shouldReportInputRoutingBlocked == false &&
+        routing.didPreserveInputIntent
+    let routingDeferred = routing.isRuntimeIngressCandidate == false &&
+        routing.didPreserveInputIntent == false &&
+        routing.shouldDeferInputRouting &&
+        routing.shouldReportInputRoutingBlocked == false
+    let routingInconsistent = (
+        routing.isRuntimeIngressCandidate &&
+            (routing.shouldDeferInputRouting ||
+                routing.shouldReportInputRoutingBlocked)
+        ) ||
+        (routing.didPreserveInputIntent &&
+            routing.isRuntimeIngressCandidate == false) ||
+        (routing.didPreserveInputIntent == false &&
+            routing.isRuntimeIngressCandidate) ||
+        (routing.shouldDeferInputRouting &&
+            routing.shouldReportInputRoutingBlocked)
+    let transitionReady = stateTransition.didTransitionRuntimeStateStore &&
+        stateTransition.shouldDeferRuntimeStateStoreTransition == false &&
+        stateTransition.shouldReportRuntimeStateStoreTransitionBlocked == false
+    let transitionDeferred = stateTransition.didTransitionRuntimeStateStore == false &&
+        stateTransition.shouldDeferRuntimeStateStoreTransition &&
+        stateTransition.shouldReportRuntimeStateStoreTransitionBlocked == false
+    let transitionInconsistent = (
+        stateTransition.didTransitionRuntimeStateStore &&
+            (stateTransition.shouldDeferRuntimeStateStoreTransition ||
+                stateTransition.shouldReportRuntimeStateStoreTransitionBlocked)
+        ) ||
+        (stateTransition.shouldDeferRuntimeStateStoreTransition &&
+            stateTransition.shouldReportRuntimeStateStoreTransitionBlocked)
+    let canEnter = routingReady && transitionReady
+    let shouldDefer = canEnter == false &&
+        routingInconsistent == false &&
+        transitionInconsistent == false &&
+        routing.shouldReportInputRoutingBlocked == false &&
+        stateTransition.shouldReportRuntimeStateStoreTransitionBlocked == false &&
+        (routingDeferred || transitionDeferred)
+    if (canEnter) {
+        return CjguiInternalInputRuntimeIngress(
+            routing,
+            stateTransition,
+            true,
+            false,
+            false,
+            true
+        )
+    }
+    return CjguiInternalInputRuntimeIngress(
+        routing,
+        stateTransition,
+        false,
+        shouldDefer,
+        shouldDefer == false,
+        false
+    )
+}
+
+func cjguiInternalExecuteDefaultInputRuntimeIngressDraft(
+): CjguiInternalInputRuntimeIngress {
+    let routing = cjguiInternalExecuteDefaultInputRoutingDraft()
+    let stateTransition = cjguiInternalExecuteDefaultRuntimeStateStoreTransitionDraft()
+    return cjguiInternalBuildInputRuntimeIngress(
+        routing,
+        stateTransition
+    )
 }
 
 // 内部 runtime step ready sanity helper:
@@ -7337,9 +8388,6 @@ func cjguiInternalLifecycleMutatedStatePublicationCancellationBlockedSanity(): B
 
 func cjguiInternalRuntimeStateCarryForwardOpenSanity(): Bool {
     let report = cjguiInternalExecuteDefaultRuntimeStateCarryForwardDraft()
-    if (report.didBuildCarryForwardDraft == false) {
-        return false
-    }
     if (report.shouldCarryForwardAppState == false) {
         return false
     }
@@ -7384,9 +8432,6 @@ func cjguiInternalRuntimeStateCarryForwardRuntimeBlockedSanity(): Bool {
         appState,
         windowState
     )
-    if (report.didBuildCarryForwardDraft == false) {
-        return false
-    }
     if (report.shouldCarryForwardAppState) {
         return false
     }
@@ -7425,9 +8470,6 @@ func cjguiInternalRuntimeStateCarryForwardInputBlockedSanity(): Bool {
         appState,
         windowState
     )
-    if (report.didBuildCarryForwardDraft == false) {
-        return false
-    }
     if (report.shouldCarryForwardAppState) {
         return false
     }
@@ -7466,9 +8508,6 @@ func cjguiInternalRuntimeStateCarryForwardShutdownBlockedSanity(): Bool {
         appState,
         windowState
     )
-    if (report.didBuildCarryForwardDraft == false) {
-        return false
-    }
     if (report.shouldCarryForwardAppState) {
         return false
     }
@@ -7507,9 +8546,6 @@ func cjguiInternalRuntimeStateCarryForwardCancellationBlockedSanity(): Bool {
         appState,
         windowState
     )
-    if (report.didBuildCarryForwardDraft == false) {
-        return false
-    }
     if (report.shouldCarryForwardAppState) {
         return false
     }
@@ -8362,22 +9398,6 @@ func cjguiInternalRuntimeCycleHandoffCancellationBlockedSanity(): Bool {
     return draft.shouldReportCycleHandoffBlocked
 }
 
-func cjguiInternalRuntimeCycleReplayOpenSanity(): Bool {
-    let draft = cjguiInternalExecuteDefaultRuntimeCycleReplayDraft()
-    if (draft.isReplayReady == false) {
-        return false
-    }
-    if (draft.shouldDeferReplay) {
-        return false
-    }
-    if (draft.shouldReportReplayBlocked) {
-        return false
-    }
-    return cjguiInternalRuntimeCycleRequestCandidateReady(
-        draft.cycleRequestCandidate
-    )
-}
-
 func cjguiInternalRuntimeCycleReplayRuntimeBlockedSanity(): Bool {
     let root = cjguiInternalBuildRuntimeRootState()
     let holder = cjguiInternalExecuteRuntimeStateHolderDraft(
@@ -8492,22 +9512,6 @@ func cjguiInternalRuntimeCycleReplayCancellationBlockedSanity(): Bool {
         return false
     }
     return draft.shouldReportReplayBlocked
-}
-
-func cjguiInternalRuntimeReplayOutcomeOpenSanity(): Bool {
-    let report = cjguiInternalExecuteDefaultRuntimeReplayOutcomeDraft()
-    if (report.didAcceptReplay == false) {
-        return false
-    }
-    if (report.shouldDeferReplay) {
-        return false
-    }
-    if (report.shouldReportReplayBlocked) {
-        return false
-    }
-    return cjguiInternalRuntimeCycleRequestCandidateReady(
-        report.cycleRequestCandidate
-    )
 }
 
 func cjguiInternalRuntimeReplayOutcomeRuntimeBlockedSanity(): Bool {
@@ -8628,22 +9632,6 @@ func cjguiInternalRuntimeReplayOutcomeCancellationBlockedSanity(): Bool {
         return false
     }
     return report.shouldReportReplayBlocked
-}
-
-func cjguiInternalRuntimeExecutionAdmissionOpenSanity(): Bool {
-    let report = cjguiInternalExecuteDefaultRuntimeExecutionAdmissionDraft()
-    if (report.didAdmitExecution == false) {
-        return false
-    }
-    if (report.shouldDeferExecution) {
-        return false
-    }
-    if (report.shouldReportExecutionBlocked) {
-        return false
-    }
-    return cjguiInternalRuntimeCycleRequestCandidateReady(
-        report.cycleRequestCandidate
-    )
 }
 
 func cjguiInternalRuntimeExecutionAdmissionRuntimeBlockedSanity(): Bool {
@@ -8768,22 +9756,6 @@ func cjguiInternalRuntimeExecutionAdmissionCancellationBlockedSanity(): Bool {
         return false
     }
     return report.shouldReportExecutionBlocked
-}
-
-func cjguiInternalRuntimeDryRunExecutionPlanOpenSanity(): Bool {
-    let plan = cjguiInternalExecuteDefaultRuntimeDryRunExecutionPlanDraft()
-    if (plan.isExecutionAllowed == false) {
-        return false
-    }
-    if (plan.shouldDeferExecution) {
-        return false
-    }
-    if (plan.shouldReportExecutionBlocked) {
-        return false
-    }
-    return cjguiInternalRuntimeCycleRequestCandidateReady(
-        plan.cycleRequestCandidate
-    )
 }
 
 func cjguiInternalRuntimeDryRunExecutionPlanRuntimeBlockedSanity(): Bool {

@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-04-30
+最后更新：2026-05-01
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -13,6 +13,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 - 想知道项目方向：看 [GUI_PROJECT_DIRECTION.md](docs/core/GUI_PROJECT_DIRECTION.md)。
 - 想接着干活：看 [GUI_TASK_TRACKER.md](GUI_TASK_TRACKER.md)，以 `当前 active opening`、`当前 next opening` 和 `当前建议的下一步` 为准，不默认全文阅读历史流水。
+- 想看当前 runtime execution runway：看 [2026-04-30-p1-runtime-tracker-compaction-execution-runway.md](docs/plans/2026-04-30-p1-runtime-tracker-compaction-execution-runway.md)。
 - 想看正式 runtime 骨架：看 [runtime/cjgui](runtime/cjgui)。
 - 想看 macOS 桥接实验：看 [labs/macos_bridge_smoke](labs/macos_bridge_smoke)。
 - 想查历史决策：看 [docs/plans/README.md](docs/plans/README.md)。
@@ -58,7 +59,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 runtime tail outcome wrapper compression：[P1 runtime tail outcome wrapper compression closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-tail-outcome-wrapper-compression-closure-review.md) 已完成；当前 recommended next opening 是 `P1 runtime tail outcome wrapper compression closure / tracker compaction decision`。Pure post-attempt outcome wrapper 已被移除，当前 runtime tail 的最后 internal summary 回到 first internal execution attempt report；下一刀应优先封账 compression、压缩 tracker / model 噪声，并判断后续 execution convergence 是否仍需 owner cleanup，且不得新增 public API / C ABI、event loop、queue / drain、scheduler、platform callback、多个 cycle execution 或 runtime global state write。
+最新 Action Router execution boundary decision：[P1 action execution boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-execution-boundary-decision.md) 已完成；当前 recommended next opening 是 `P1 internal Action Router first execution attempt bundle implementation`。下一轮只允许在 `action_router.cj` 中把 `CjguiInternalActionExecutionReadiness` 投影为 internal value-style attempt / result summary；这不是真实 action execution，不公开 AI API，不接 model provider / prompt / external agent，不写 queue / enqueue / drain，不回塞 critical `runtime_state.cj`。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 

@@ -8,8 +8,21 @@
 
 ## First Compilable Source Boundary
 
-当前六个 `src/*.cj` 文件都使用同一个 `package cjgui` declaration，并且只承载默认 internal 的最小骨架符号：
+当前十个 `src/*.cj` 文件都使用同一个 `package cjgui` declaration，并且只承载默认 internal 的最小骨架符号：
 
+- `src/action_router.cj`
+  - `CjguiInternalActionSource`
+  - `CjguiInternalActionKind`
+  - `CjguiInternalActionIntent`
+  - `CjguiInternalActionAdmission`
+  - `cjguiInternalDefaultActionSource`
+  - `cjguiInternalDefaultActionKind`
+  - `cjguiInternalBuildActionIntent`
+  - `cjguiInternalActionSourceIsValid`
+  - `cjguiInternalActionKindIsValid`
+  - `cjguiInternalEvaluateActionAdmission`
+  - `cjguiInternalExecuteDefaultActionAdmissionDraft`
+  - `cjguiInternalActionAdmissionCanAdmit`
 - `src/app_lifecycle.cj`
   - `CjguiInternalAppLifecycleState`
   - `CjguiInternalAppLifecycleTransitionMarker`
@@ -86,6 +99,34 @@
   - `CjguiInternalRuntimeBootstrapSnapshot`
   - `cjguiInternalBuildRuntimeReadinessAggregate`
   - `cjguiInternalBuildRuntimeBootstrapSnapshot`
+- `src/runtime_scheduler.cj`
+  - `CjguiInternalSchedulerTickSource`
+  - `CjguiInternalSchedulerTickKind`
+  - `CjguiInternalSchedulerTickIntent`
+  - `CjguiInternalSchedulerTickAdmission`
+  - `CjguiInternalSchedulerRuntimeIngress`
+  - `cjguiInternalDefaultSchedulerTickSource`
+  - `cjguiInternalDefaultSchedulerTickKind`
+  - `cjguiInternalBuildSchedulerTickIntent`
+  - `cjguiInternalSchedulerTickSourceIsValid`
+  - `cjguiInternalSchedulerTickKindIsValid`
+  - `cjguiInternalEvaluateSchedulerTickAdmission`
+  - `cjguiInternalExecuteDefaultSchedulerTickAdmissionDraft`
+  - `cjguiInternalBuildSchedulerRuntimeIngress`
+  - `cjguiInternalExecuteDefaultSchedulerRuntimeIngressDraft`
+- `src/runtime_ingress.cj`
+  - `CjguiInternalRuntimeIngressCoordinator`
+  - `cjguiInternalCoordinateRuntimeIngress`
+  - `cjguiInternalExecuteDefaultRuntimeIngressCoordinatorDraft`
+  - `cjguiInternalRuntimeIngressCoordinatorCanEnter`
+  - `cjguiInternalRuntimeIngressCoordinatorShouldReportBlocked`
+- `src/runtime_queue.cj`
+  - `CjguiInternalQueueAdmissionPolicy`
+  - `CjguiInternalQueueAdmission`
+  - `cjguiInternalDefaultQueueAdmissionPolicy`
+  - `cjguiInternalEvaluateQueueAdmission`
+  - `cjguiInternalExecuteDefaultQueueAdmissionDraft`
+  - `cjguiInternalQueueAdmissionCanAdmit`
 - `src/runtime_state.cj`
   - `CjguiInternalRuntimeRootState`
   - `CjguiInternalRuntimeStepResult`
@@ -649,20 +690,23 @@
 - runtime lifecycle state mutation request / report 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleMutationApplyReport.appApply` / `windowApply` 与 prior app/window states 并汇总 cross-owner result；它不越级读取 CommitGateReport、MutationPlanReport、MutationReadinessReport 或 lower-level facts，不做 in-place mutation，不调用 existing state-changing transition functions，不执行 platform callback、queue、event loop 或 window create / close / destroy。
 - lifecycle state mutation outcome draft 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleStateMutationReport` 并聚合 / 验证 already-produced owner mutation results；normalization 后 report 只存储 app/window mutation flags、blocked-state preservation 与 blocked report flag，已移除 always-true `didBuildMutationOutcome` marker 和可推导的 stored both-mutated field，both-mutated 由局部 helper 推导。OutcomeReport -> OutcomeRequest -> StateMutationReport 嵌套保留为 traceability，不是递归循环；本层不执行第二次 mutation、不修改 app/window state、不读取 ApplyReport / CommitGateReport / MutationPlanReport 或 lower-level facts。
 - lifecycle mutated state publication draft 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleStateMutationOutcomeReport`，并通过 outcome traceability 读取 already-produced `appResult.nextState` / `windowResult.nextState`，表达这些 nextState values 是否可作为后续 internal runtime 输入；本层不执行新的 mutation、不修改 app/window state、不公开 state、不写 runtime global state、不读取 ApplyReport / CommitGateReport / MutationPlanReport 或 lower-level facts。
-- runtime state carry-forward draft 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleMutatedStatePublicationReport`，并把 publication report 中的 app/window state 标记为下一轮 internal runtime cycle 的 candidate；本层只是 candidate summary，不是 committed runtime state store，不写 runtime global state、不公开 state、不执行 mutation、不读取 OutcomeReport / MutationReport / ApplyReport 或 lower-level facts。
+- runtime state carry-forward draft 留在 `runtime_state.cj`，只消费 `CjguiInternalLifecycleMutatedStatePublicationReport`，并把 publication report 中的 app/window state 标记为下一轮 internal runtime cycle 的 candidate；model consolidation 后不再存储恒为 true 的 `didBuildCarryForwardDraft` marker。本层只是 candidate summary，不是 committed runtime state store，不写 runtime global state、不公开 state、不执行 mutation、不读取 OutcomeReport / MutationReport / ApplyReport 或 lower-level facts。
 - runtime carried state container draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeStateCarryForwardReport`，并把 carry-forward candidate app/window state 包装为下一轮 internal runtime cycle 可携带的 container draft；本层不是 committed runtime state store，不写 runtime global state、不公开 state、不执行 mutation、不读取 PublicationReport / OutcomeReport / MutationReport 或 lower-level facts。
 - runtime state holder draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCarriedStateContainer`，并把 carried app/window state 包装成 value-style held state summary；本层不是 committed runtime state store，不是 global mutable singleton，不写 runtime global state、不公开 state、不执行 mutation、不读取 CarryForwardReport / PublicationReport / OutcomeReport 或 lower-level facts。
 - runtime committed state store draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeStateHolderDraft`，并把 held app/window state 包装成 value-style committed state summary；本层不是 committed runtime global state store，不是 global mutable singleton，不写 runtime global state、不公开 state、不执行 mutation、不读取 CarriedStateContainer / CarryForwardReport / PublicationReport / lower-level facts。
 - runtime cycle feedback draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCommittedStateStoreDraft`，并把 committed app/window state 投影为下一轮 internal runtime cycle 的 value-style feedback candidates；本层不执行下一轮 cycle，不写 runtime global state，不创建 global mutable singleton，不公开 state、不执行 mutation、不读取 StateHolderDraft / CarriedStateContainer / CarryForwardReport / lower-level facts。
-- runtime next-cycle request draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCycleFeedbackDraft`，并构造 value-style `CjguiInternalRuntimeCycleRequest` candidate；当前 root state shape 不承载 app/window state，因此 app/window feedback 只作为 request preparation gate。本层不执行 `cjguiInternalExecuteRuntimeCycle`，不执行 runtime step，不写 runtime global state，不创建 global mutable singleton，不公开 state、不执行 mutation、不读取 CommittedStateStoreDraft / StateHolderDraft 或 lower-level facts。
-- runtime cycle handoff draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeNextCycleRequestDraft`，并把 prepared next-cycle request candidate 投影成 future runtime boundary handoff summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate，但不执行该 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不执行 mutation、不读取 CycleFeedbackDraft / CommittedStateStoreDraft / lower-level facts。
-- runtime cycle replay draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCycleHandoffDraft`，并把 handoff 后的 cycle request candidate 投影成 replay readiness summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate，但不执行该 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不执行 mutation、不读取 NextCycleRequestDraft / CycleFeedbackDraft / lower-level facts。
-- runtime replay outcome draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeCycleReplayDraft`，并把 replay readiness 投影成 accepted / deferred / blocked outcome summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate 作为 trace，但不执行该 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不执行 mutation、不读取 CycleHandoffDraft / NextCycleRequestDraft / lower-level facts。
-- runtime chain model compression / owner cleanup 只在 `runtime_state.cj` 尾部链条做 behavior-preserving helper 化：feedback state candidate readiness 与 cycle request candidate readiness 由局部 helper 复用；tail-chain readiness / accepted fields 与 request wrappers 保留，因为它们仍表达上游 gate facts 与 one-hop traceability。本轮不新增 runtime capability、不进入 execution boundary、不执行 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`。
-- runtime execution admission draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeReplayOutcomeReport`，并把 replay outcome accepted / deferred / blocked 投影为 future execution-boundary admission summary；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate 作为 trace，但 admission 不是 execution，不执行 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不读取 CycleReplayDraft / CycleHandoffDraft / lower-level facts。
-- runtime dry-run execution plan draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeExecutionAdmissionReport`，并把 admission summary 投影为 future execution 的 value-style dry-run plan；它可以持有 `CjguiInternalRuntimeCycleRequest` candidate 作为 dry-run trace，但 dry-run plan 不是 execution，不执行 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不执行 runtime step、不写 runtime global state、不公开 state、不读取 ReplayOutcomeReport / CycleReplayDraft / lower-level facts。
-- runtime first internal execution attempt draft 留在 `runtime_state.cj`，只消费 `CjguiInternalRuntimeDryRunExecutionPlan`；allowed path 最多执行一个 `CjguiInternalRuntimeCycleRequest` candidate 并返回 attempt summary，blocked / deferred path 不执行 candidate。本层仍不是 event loop、scheduler、queue / drain、app run 或 global state commit，不执行多个 cycle、不写 runtime global state、不公开 state、不读取 ExecutionAdmissionReport / ReplayOutcomeReport / lower-level facts。
-- runtime tail outcome wrapper compression 已移除 pure post-attempt `CjguiInternalRuntimeExecutionAttemptOutcome*` wrapper；当前 execution tail 的最后 internal summary 回到 `CjguiInternalRuntimeExecutionAttemptReport`。first internal execution attempt 仍保留 allowed path exactly-one cycle execution，blocked / deferred path 仍不执行 candidate；本轮不新增 wrapper / sanity / runtime capability。
+- runtime internal tail milestone：current default tail endpoint 是 `cjguiInternalExecuteDefaultRuntimeTailDraft()`，返回 `CjguiInternalRuntimeExecutionStateLoopClosure`；loop closure 只消费 `CjguiInternalRuntimeExecutionStateIntegration`，从 integration feedback 归拢下一轮 internal cycle request candidate，但不执行 candidate、不调用 `cjguiInternalExecuteRuntimeCycle`、不写 runtime global state。主线符号与 stop-line 见 [P1 runtime internal tail milestone manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-internal-tail-milestone-manifest.md)。
+- runtime state store transition boundary 留在 `runtime_state.cj`，通过 `CjguiInternalRuntimeStateStoreVersion` / `CjguiInternalRuntimeStateStoreSnapshot` / `CjguiInternalRuntimeStateStoreTransition` 表达 value-style snapshot transition；`cjguiInternalExecuteDefaultRuntimeStateStoreTransitionDraft()` 从 default tail 取得 loop closure，并从 integration committed state 构造 previous snapshot。open path 只返回 version+1 的 next snapshot，defer / blocked / inconsistent path 保留 previous snapshot；本层不是 global mutable state，不写 process-wide runtime global state，不公开 state、不执行 second cycle、不接 event loop / queue / platform。state-store transition 的 owner / truth / stop-line 见 [P1 runtime state store transition manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-state-store-transition-manifest.md)；`cjguiInternalRuntimeStateStoreTransitionDidOpen` / `ShouldDefer` / `ShouldReportBlocked` 仅为 derived predicates，不改变 transition behavior。
+- internal input intent boundary 留在 `runtime_state.cj`，通过 `CjguiInternalInputIntentSource` / `CjguiInternalInputIntentKind` / `CjguiInternalInputIntent` / `CjguiInternalInputIntentAdmission` 表达脱水 runtime ingress facts。source 必须在 synthetic / platform-origin / user-origin 中 exactly one，kind 必须在 activation / text / pointer / lifecycle 中 exactly one；absent intent defer，invalid source / kind fail-closed blocked，默认 draft 为 synthetic activation present。它不是 platform event object，不保存 native handle / raw pointer / callback，不写 queue / event loop / scheduler，不执行 runtime cycle，不写 global state。
+- internal input routing boundary 留在 `runtime_state.cj`，通过 `CjguiInternalInputRoutingResult` 只消费 `CjguiInternalInputIntentAdmission`，把 admitted input intent 标记为 future runtime ingress candidate；defer / blocked path 保持 defer / fail-closed blocked。`didPreserveInputIntent` 只表示继续携带脱水 intent candidate，不是 enqueue、event dispatch、scheduler tick 或 runtime cycle execution；本层不接 platform、不写 queue / event loop / scheduler、不调用 `cjguiInternalExecuteRuntimeCycle`、不写 global state。
+- internal input-to-runtime ingress boundary 留在 `runtime_state.cj`，通过 `CjguiInternalInputRuntimeIngress` 组合 `CjguiInternalInputRoutingResult` 与 `CjguiInternalRuntimeStateStoreTransition`，只判断脱水 input candidate 是否可被当前 runtime state boundary 接受。`didPreserveRuntimeIngressCandidate` 只表示 input candidate 与 state boundary context 作为 value 一起携带，不是 enqueue、dispatch、scheduler tick、runtime cycle execution 或 global state write；本层不接 platform event object / native handle / raw pointer，不写 queue / event loop / scheduler，不调用 `cjguiInternalExecuteRuntimeCycle`。主线、acceptance 语义与 stop-line 见 [P1 input-to-runtime ingress manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-input-to-runtime-ingress-manifest.md)；`runtime_state.cj` 已处于 single-file critical warning 区间，后续新增 ingress subsystem 应优先考虑 split / module extraction。
+- internal scheduler tick intent boundary 已拆到 `runtime_scheduler.cj`，通过 `CjguiInternalSchedulerTickSource` / `Kind` / `Intent` / `Admission` 表达脱水 tick ingress facts。source 必须在 synthetic / frame-pacing / deferred-work 中 exactly one，kind 必须在 cycle-preparation / render-preparation / idle-maintenance 中 exactly one；absent tick defer，invalid source / kind fail-closed blocked，默认 draft 为 synthetic cycle-preparation present admitted。它不是 platform timer、runloop source、callback、scheduler implementation、queue / drain、event loop 或 runtime cycle execution；owner split 避免继续增大 critical `runtime_state.cj`。
+- internal scheduler-to-runtime ingress boundary 留在 `runtime_scheduler.cj`，通过 `CjguiInternalSchedulerRuntimeIngress` 组合 scheduler tick admission 与 `CjguiInternalRuntimeStateStoreTransition` context。open path 需要 admitted tick 与 open state transition，defer-only 保持 defer，blocked / inconsistent fail-closed blocked；`didPreserveSchedulerTick` 只表示脱水 tick candidate 与 state boundary context 被 value-style 携带，不是 enqueue、dispatch、scheduler implementation、event loop 或 runtime cycle execution。default draft 只调用 scheduler admission default 与 state-store transition default，不调用 `cjguiInternalExecuteRuntimeCycle`，也不写 queue / global state。
+- internal runtime ingress coordinator 已拆到 `runtime_ingress.cj`，通过 `CjguiInternalRuntimeIngressCoordinator` 组合 `CjguiInternalInputRuntimeIngress` 与 `CjguiInternalSchedulerRuntimeIngress`。open path 要求 input candidate 与 scheduler pacing candidate 同时 ready，defer-only 保持 defer，blocked / inconsistent fail-closed blocked；它只表达 unified internal front door readiness，不是 enqueue、dispatch、event loop、scheduler implementation、runtime cycle execution 或 global state write。default draft 只组合已有 input ingress / scheduler ingress default values，不调用 `cjguiInternalExecuteRuntimeCycle`；`cjguiInternalRuntimeIngressCoordinatorCanEnter` / `ShouldReportBlocked` 只是 derived predicates，不改变 coordinator behavior。runtime ingress 主线、owner / truth 与 stop-line 见 [P1 runtime ingress manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-ingress-manifest.md)；`runtime_state.cj` critical warning 仍保留，新 ingress owner 不回塞该文件。
+- internal queue admission boundary 已拆到 `runtime_queue.cj`，通过 `CjguiInternalQueueAdmissionPolicy` / `CjguiInternalQueueAdmission` 只消费 `CjguiInternalRuntimeIngressCoordinator`，表达 future queue admission readiness。default policy 要求 ingress front door ready 且不允许 deferred admission；open path 只保留 dehydrated ingress candidate，defer / blocked / inconsistent fail-closed。它不是 queue storage、enqueue side effect、drain、scheduler implementation、event loop、runtime cycle execution 或 global state write；`runtime_state.cj` critical warning 仍保留，queue symbols 不回塞该文件。
+- internal Action Router action intent boundary 已拆到 `action_router.cj`，通过 `CjguiInternalActionSource` / `Kind` / `Intent` / `Admission` 表达 dehydrated action facts。source 必须在 human / agent / system 中 exactly one，kind 必须在 input / scheduler / runtime-boundary / diagnostic 中 exactly one；default draft 使用 system origin + runtime-boundary action，并消费 `CjguiInternalQueueAdmission` 作为下游 gate。`CjguiInternalActionRoutingResult` 只消费 action admission，将 admitted action intent 投影为 runtime boundary route candidate；defer / blocked / inconsistent 保持 defer 或 fail-closed blocked。`CjguiInternalActionDispatchAdmission` 只消费 routing result，将 route candidate 投影为 future dispatch boundary readiness；`CjguiInternalActionDispatchPlan` 只消费 dispatch admission，将 ready admission 投影为 value-style dispatch plan candidate / defer / blocked。dispatch convergence / commit candidate / finalization 继续只消费上一阶段 value，将 plan 收束为可提交的 internal dispatch candidate 和 finalization summary；`CjguiInternalActionDispatchRecord` 只记录 finalization 形成的 internal value-style dispatch boundary。effect model / execution guard / execution readiness 继续只从 dispatch record 投影 future action execution 的 effect category、guard readiness 和 readiness summary；first execution attempt / attempt result 只从 readiness 投影 attempt accepted / deferred / blocked summary。它们不是真实 action execution、action side effect、queue enqueue / drain、AI provider、public API、event loop、scheduler、platform callback、runtime cycle 或 public audit log。Action Router owner / truth / stop-line 见 [P1 Action Router manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-manifest.md)。`runtime_state.cj` critical warning 仍保留，Action Router symbols 不回塞该文件。
+- current main tail path：`CjguiInternalRuntimeExecutionAttemptReport` -> `CjguiInternalRuntimeExecutionConvergenceReport` -> `CjguiInternalRuntimeExecutionCommitCandidate` -> `CjguiInternalRuntimeExecutionCommitReadiness` -> `CjguiInternalRuntimeExecutionCommitRecord` -> `CjguiInternalRuntimeExecutionCommitFinalization` -> `CjguiInternalRuntimeExecutionStateIntegration` -> `CjguiInternalRuntimeExecutionStateLoopClosure`。这些 value-style summaries 只收束 already-produced internal attempt / integration facts，不新增 public API / C ABI、event loop、queue、scheduler、platform callback、global state write 或 second cycle execution。
+- legacy diagnostics / trace：`CjguiInternalRuntimeCycleReplay*`、`CjguiInternalRuntimeReplayOutcome*`、`CjguiInternalRuntimeExecutionAdmission*`、`CjguiInternalRuntimeDryRunExecutionPlan*` 仍保留为 diagnostics / trace 或 first execution attempt 的 legacy input trace，但不再是 default tail path；旧 replay / outcome / admission / dry-run open-default sanity helper 已删除，blocked legacy sanity 仅作 diagnostics。
 - step outcome bundle 已封账；下一步应转向更大的 runtime behavior decision，而不是继续堆 helper 链。
 - root sanity 已封账；下一步应转向 first internal runtime step / step result，而不是继续堆 root helper。
 - root state 不定义 runtime state machine、app run、event loop、queue / drain、window create 或 shutdown。
@@ -687,7 +731,7 @@
 边界如下：
 
 - package owner 候选是 `runtime/cjgui`，不属于 `labs/macos_bridge_smoke`。
-- 当前六个 `.cj` source 允许已经落地的默认 internal marker / fact / transition / coordination / bootstrap / root state owner skeleton。
+- 当前十个 `.cj` source 允许已经落地的默认 internal marker / fact / transition / coordination / bootstrap / root state / scheduler tick / scheduler ingress / unified ingress owner skeleton / queue admission owner skeleton / Action Router action intent owner skeleton。
 - 除已封账的 internal skeleton 外，不应顺手新增 public API、public C ABI、真实 runtime behavior、`main` entry、额外 build script 或 smoke 迁移。
 - build / check 结果只能作为工具链证据，不能替代 source truth。
 

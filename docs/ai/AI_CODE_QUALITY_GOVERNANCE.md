@@ -136,6 +136,25 @@ AI 写码时必须满足：
 
 这里的重点不是卡死文件数量，而是防止“写着写着变成另一项工作”。
 
+### 3.2.0 单文件体积门：防止巨型源码文件失控
+
+AI 每次准备修改 `.cj` 文件时，必须把目标文件当前行数纳入风险判断。单文件过大往往意味着 owner、truth、subsystem、diagnostics 或 legacy tail 没有及时拆分。
+
+阈值：
+
+- `> 1500` 行：soft warning。允许修改，但完成汇报必须说明为什么继续放在该文件。
+- `> 3000` 行：hard warning。默认不新增新的 subsystem；若继续新增行为，必须说明它仍属于同一 owner / truth，并记录后续拆分候选。
+- `> 8000` 行或接近 `1MB`：critical warning。默认不得继续追加新行为；下一步优先做 owner split、module extraction、manifest / stabilization、tail consolidation 或 dead-helper cleanup。确需修改时，执行卡必须显式授权，并在 closure 中记录“为什么暂不拆”。
+
+执行要求：
+
+- 修改前：报告本轮触碰 `.cj` 文件的行数档位。
+- 实现中：避免因为“加几行很方便”继续把新 owner / 新 subsystem 塞进已经过大的文件。
+- 完成后：如果目标文件处于 hard / critical warning，closure 必须记录新增 / 删除行数趋势、是否产生新的拆分候选、下一次应优先拆哪里。
+- 提示词中若允许修改 critical 文件，必须写出 `file-size / owner split check`，不能只写功能目标。
+
+本规则不要求每次超过阈值都立刻拆分。它要求 AI 不再无意识地把大文件继续养大。
+
 ### 3.2.1.1 内部概念切片优先，不按单个符号切碎
 
 W1/W2 internal concept slice 不要求 one-symbol 切割。
@@ -179,6 +198,25 @@ bundle 不能绕过 public API、public C ABI、platform bridge、event loop、q
 W3 internal subsystem draft 可以更大：允许 3-6 个 internal type、5-12 个 internal function、多个 ready / blocked / input / policy / outcome path，以及一份 bundled closure。它仍不等于放开 public API、public C ABI、platform bridge、event loop、queue / drain 或 handle table。
 
 只要仍是 internal-only，且 owner、truth、write set、stop-line 和 verification 清楚，就应该让执行 AI 一次完成完整内部行为概念，而不是每轮只写十几行辅助函数。顶级模型的能力应被用来完成清晰边界内的完整概念；治理只负责防越界，不负责把实现切碎。
+
+### 3.2.1.4 AI 资源效率门：禁止低风险链路长期小碎步
+
+上下文装载、GitNexus、build / smoke、链接检查和人工复核都有固定成本。如果每轮都要求 AI 读取完整治理上下文，却只允许新增一个 value type、一个 builder 或一个 helper，会造成明显模型资源浪费。
+
+后续执行卡和提示词必须遵守：
+
+- 同一 owner、同一 truth、同一 write set、同一 stop-line、同一验证路径下，默认使用 W2 / W3 bundle，而不是 one-symbol slice。
+- 连续两个 implementation 都是“单薄 projection / record / helper”后，下一轮不得继续自动新增同类薄层；必须升级为 same-owner bundle、做 tail consolidation，或进入 manifest stabilization。
+- 禁止把 `no action execution`、`no queue`、`no provider` 等 stop-line 误解成“只能写几十行”。这些 stop-line 只禁止越界 side effect，不禁止在同一 owner 内完成完整 internal value pipeline。
+- docs-only decision 不能作为每轮代码后的固定拍子。只有 owner、truth、write set、side effect、public surface、platform、queue / drain、scheduler 或 runtime cycle 边界变化时，才需要新的 decision。
+- closure 必须说明本轮粒度是否匹配上下文成本；如果读了多个治理文档却只改了极少代码，需要说明为何不能 bundle。
+
+例外情况：
+
+- 高风险边界第一次打开。
+- 必须触碰 hard / critical 大文件且 owner split 未清楚。
+- GitNexus 返回 HIGH / CRITICAL。
+- 需要 public API、C ABI、platform bridge、queue / drain、event loop、scheduler、runtime cycle 或 global state write。
 
 ### 3.2.1 实现偏置：边界清楚后默认写代码
 

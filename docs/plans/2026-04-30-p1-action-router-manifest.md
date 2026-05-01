@@ -7,6 +7,10 @@
 - Downstream handoff queue integration owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/action_handoff_queue.cj`
 - Queue-side handoff owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_handoff.cj`
 - Queue permission owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_permission.cj`
+- Queue staging owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_staging.cj`
+- Queue enqueue dry-run owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_enqueue.cj`
+- Queue value-style storage owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_storage.cj`
+- Queue storage commit gate owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_commit.cj`
 - Upstream dependency: `CjguiInternalQueueAdmission`
 - Current runway: `ActionIntent -> ActionAdmission -> ActionRoutingResult -> ActionDispatchAdmission -> ActionDispatchPlan -> ActionDispatchConvergence -> ActionDispatchCommitCandidate -> ActionDispatchFinalization -> ActionDispatchRecord -> ActionEffectModel -> ActionExecutionGuard -> ActionExecutionReadiness -> ActionExecutionAttempt -> ActionExecutionAttemptResult -> ActionExecutionConvergence -> ActionExecutionCommitCandidate -> ActionExecutionFinalization -> ActionExecutionRecord -> ActionExecutionPolicyModel -> ActionExecutionPolicyGate -> ActionExecutionPolicyReadiness -> ActionGuardedExecutionAttempt -> ActionGuardedExecutionAttemptResult -> ActionGuardedExecutionAcceptance -> ActionGuardedExecutionEffectPlan -> ActionGuardedExecutionCommitCandidate -> ActionGuardedExecutionFinalization -> ActionGuardedExecutionResultPublication -> ActionGuardedExecutionHandoffCandidate`
 - Canonical endpoint: `CjguiInternalActionGuardedExecutionHandoffCandidate` via `cjguiInternalExecuteDefaultActionGuardedExecutionResultPublicationDraft()`
@@ -18,6 +22,14 @@
 - Queue-side handoff endpoint: `CjguiInternalQueueHandoffGate` via `cjguiInternalExecuteDefaultQueueHandoffConsumerDraft()`
 - Queue permission runway: `QueueHandoffGate -> QueuePermissionPolicy -> QueuePermissionGate -> QueuePermissionReadiness`
 - Queue permission endpoint: `CjguiInternalQueuePermissionReadiness` via `cjguiInternalExecuteDefaultQueuePermissionDraft()`
+- Queue staging runway: `QueuePermissionReadiness -> QueueStagedItem -> QueueStagingCandidate -> QueueStagingReadiness`
+- Queue staging endpoint: `CjguiInternalQueueStagingReadiness` via `cjguiInternalExecuteDefaultQueueStagingDraft()`
+- Queue enqueue dry-run runway: `QueueStagingReadiness -> QueueEnqueueDryRunPlan -> QueueEnqueueShadowCandidate -> QueueEnqueueDryRunReadiness`
+- Queue enqueue dry-run endpoint: `CjguiInternalQueueEnqueueDryRunReadiness` via `cjguiInternalExecuteDefaultQueueEnqueueDryRunDraft()`
+- Queue value-style storage runway: `QueueEnqueueDryRunReadiness -> QueuePendingStore -> QueueStorageCandidate -> QueueStorageCommitCandidate`
+- Queue value-style storage endpoint: `CjguiInternalQueueStorageCommitCandidate` via `cjguiInternalExecuteDefaultQueueStorageDraft()`
+- Queue storage commit gate runway: `QueueStorageCommitCandidate -> QueueStorageCommitGate -> QueueStorageCommitReadiness -> QueueStorageCommitFinalizationCandidate`
+- Queue storage commit gate endpoint: `CjguiInternalQueueStorageCommitFinalizationCandidate` via `cjguiInternalExecuteDefaultQueueStorageCommitDraft()`
 
 ## Current Truth Model
 
@@ -64,6 +76,18 @@
 - `CjguiInternalQueuePermissionPolicy` carries enqueue-before local policy facts; it is not queue config, scheduler config, or enqueue authorization side effect.
 - `CjguiInternalQueuePermissionGate` consumes queue handoff gate plus policy facts and carries enqueue-before permission gate facts; it is not queue storage, enqueue side effect, drain plan, or scheduler task.
 - `CjguiInternalQueuePermissionReadiness` consumes queue permission gate and carries the current queue permission canonical endpoint; it is not queue storage, enqueue side effect, drain plan, event-loop work, public audit log, observer callback, or execution result.
+- `CjguiInternalQueueStagedItem` consumes queue permission readiness and carries staged queue item value facts; it is not actual queue item storage, enqueue record, drain plan, or scheduler task.
+- `CjguiInternalQueueStagingCandidate` consumes staged item facts and carries a staging candidate value; it is not queue storage, queue mutation, or event-loop work.
+- `CjguiInternalQueueStagingReadiness` consumes staging candidate facts and carries the staging owner endpoint; it is not queue storage, enqueue side effect, drain plan, public audit, or execution result.
+- `CjguiInternalQueueEnqueueDryRunPlan` consumes staging readiness and carries future enqueue dry-run plan facts; it is not queue storage, enqueue side effect, or drain plan.
+- `CjguiInternalQueueEnqueueShadowCandidate` consumes dry-run plan facts and carries shadow enqueue candidate facts; it is not a stored queue item or enqueue record.
+- `CjguiInternalQueueEnqueueDryRunReadiness` consumes shadow candidate facts and carries the dry-run endpoint; it is not queue storage, enqueue side effect, scheduler task, or runtime-cycle work.
+- `CjguiInternalQueuePendingStore` consumes dry-run readiness and carries value-style pending store facts; it is not actual queue storage, global mutable queue, or enqueue side effect.
+- `CjguiInternalQueueStorageCandidate` consumes pending store facts and carries value-style storage candidate facts; it is not queue storage write or queue mutation.
+- `CjguiInternalQueueStorageCommitCandidate` consumes storage candidate facts and carries value-style storage commit candidate facts; it is not actual queue storage commit, enqueue record, or drain plan.
+- `CjguiInternalQueueStorageCommitGate` consumes storage commit candidate facts and carries the commit gate value; it is not actual queue storage commit, global mutable queue, or enqueue authorization side effect.
+- `CjguiInternalQueueStorageCommitReadiness` consumes commit gate facts and carries commit readiness; it is not queue storage write, enqueue side effect, or scheduler work.
+- `CjguiInternalQueueStorageCommitFinalizationCandidate` consumes commit readiness and carries the current queue commit-gate endpoint; it is not actual queue finalization, queue storage write, enqueue record, drain plan, public audit, or runtime-cycle work.
 
 ## Defaults
 
@@ -80,6 +104,10 @@
 - Default action handoff queue integration calls default action handoff receipt plus default queue admission, then builds queue admission, integration, and candidate without writing queue state, enqueueing, draining, or executing actions.
 - Default queue handoff consumer calls default action handoff queue integration, then builds queue-side consumer, acceptance, and gate without writing queue state, enqueueing, draining, scheduling, or executing actions.
 - Default queue permission readiness calls default queue handoff consumer, then builds permission policy, gate, and readiness without writing queue state, enqueueing, draining, scheduling, or executing actions.
+- Default queue staging readiness calls default queue permission, then builds staged item, staging candidate, and readiness without writing queue state, enqueueing, draining, scheduling, or executing actions.
+- Default queue enqueue dry-run readiness calls default queue staging, then builds dry-run plan, shadow candidate, and readiness without writing queue state, enqueueing, draining, scheduling, or executing actions.
+- Default queue storage commit candidate calls default queue enqueue dry-run, then builds pending store, storage candidate, and commit candidate without writing queue state, creating a global queue, enqueueing, draining, scheduling, or executing actions.
+- Default queue storage commit finalization candidate calls default queue storage, then builds commit gate, readiness, and finalization candidate without writing queue state, creating a global queue, enqueueing, draining, scheduling, or executing actions.
 
 ## Routing Boundary
 
@@ -188,7 +216,7 @@
 - Queue handoff gate is not queue storage, not enqueue side effect, not drain plan, not scheduler task, not real action execution, not action side effect, not public audit log, not observer callback, not provider response, not public API / C ABI, not event loop / platform callback, and not runtime cycle execution.
 - The implementation lives in `runtime_queue_handoff.cj`; it consumes the downstream queue-adjacent candidate without extending the `action_router.cj`, `action_handoff.cj`, or `action_handoff_queue.cj` local tails and does not grow `runtime_state.cj`, `runtime_queue.cj`, `runtime_scheduler.cj`, or `runtime_ingress.cj`.
 
-## Queue Permission Gate Boundary
+## Queue Permission / Staging / Storage Commit Boundaries
 
 - Queue permission policy, gate, and readiness consume only `CjguiInternalQueueHandoffGate` and local permission policy facts.
 - Open path requires an open queue handoff gate and a policy that allows queue permission before marking permission readiness true.
@@ -196,6 +224,9 @@
 - Blocked or inconsistent flags fail closed as blocked.
 - Queue permission readiness is not queue storage, not enqueue authorization side effect, not enqueue record, not drain plan, not scheduler task, not real action execution, not public audit log, not observer callback, not provider response, not public API / C ABI, not event loop / platform callback, and not runtime cycle execution.
 - The implementation lives in `runtime_queue_permission.cj`; it consumes queue-side handoff gate facts without extending the `action_router.cj`, `action_handoff.cj`, `action_handoff_queue.cj`, or `runtime_queue_handoff.cj` local tails and does not grow `runtime_state.cj`, `runtime_queue.cj`, `runtime_scheduler.cj`, or `runtime_ingress.cj`.
+- Queue staging, enqueue dry-run, value-style storage, and storage commit gate boundaries continue in separate owners: `runtime_queue_staging.cj`, `runtime_queue_enqueue.cj`, `runtime_queue_storage.cj`, and `runtime_queue_commit.cj`.
+- Queue storage commit gate consumes only `CjguiInternalQueueStorageCommitCandidate`; open path marks commit gate open, commit readiness true, and finalization candidate ready. Defer-only remains deferred, while blocked or inconsistent facts fail closed.
+- Queue storage commit finalization candidate is not actual queue finalization, not real queue storage write, not global mutable queue, not enqueue side effect, not drain, not scheduler task, not event-loop work, not public audit, and not runtime cycle execution.
 
 ## Stop Lines
 
@@ -209,4 +240,4 @@
 
 ## Next Reasonable Boundary
 
-`P1 internal Queue permission gate closure / next queue staging decision`
+`P1 internal Queue storage commit gate closure / next queue finalization-boundary decision`

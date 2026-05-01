@@ -1169,6 +1169,33 @@
 - internal Queue permission gate boundary bundle：
   - [2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md)
 
+- Queue permission next-staging decision：
+  - [2026-05-01-p1-queue-permission-next-staging-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-permission-next-staging-decision.md)
+
+- internal Queue staging model boundary bundle：
+  - [2026-05-01-p1-internal-queue-staging-model-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-staging-model-boundary-closure-review.md)
+
+- Queue staging next enqueue-boundary decision：
+  - [2026-05-01-p1-queue-staging-next-enqueue-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-staging-next-enqueue-boundary-decision.md)
+
+- internal Queue enqueue dry-run plan boundary bundle：
+  - [2026-05-01-p1-internal-queue-enqueue-dry-run-plan-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-enqueue-dry-run-plan-boundary-closure-review.md)
+
+- Queue enqueue dry-run next storage-boundary decision：
+  - [2026-05-01-p1-queue-enqueue-dry-run-next-storage-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-enqueue-dry-run-next-storage-boundary-decision.md)
+
+- internal Queue value-style storage model boundary bundle：
+  - [2026-05-01-p1-internal-queue-value-style-storage-model-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-value-style-storage-model-boundary-closure-review.md)
+
+- Queue storage next commit-boundary decision：
+  - [2026-05-01-p1-queue-storage-next-commit-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-next-commit-boundary-decision.md)
+
+- internal Queue storage commit gate boundary bundle：
+  - [2026-05-01-p1-internal-queue-storage-commit-gate-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-storage-commit-gate-boundary-closure-review.md)
+
+- Queue storage commit next finalization-boundary decision：
+  - [2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md)
+
 - source comment sufficiency / owner header cleanup bundle：
   - [2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md)
 
@@ -1179,16 +1206,16 @@
 
 下一步推荐：
 
-- `P1 internal Queue permission gate closure / next queue staging decision`
+- `P1 internal Queue committed snapshot value boundary bundle implementation`
 
 用途：
 
-- 基于 [2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md)，复核 `CjguiInternalQueuePermissionReadiness` 已成为 enqueue 前 permission canonical endpoint。
-- 下一轮执行 docs-only boundary decision，在 queue staging model、permission record / manifest stabilization、或 queue-side consolidation 之间选择；不得继续追加 permission thin tail wrapper，不得写 queue、enqueue 或 drain。
-- 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
+- 基于 [2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md)，下一轮从 `CjguiInternalQueueStorageCommitFinalizationCandidate` 进入 value-style committed queue snapshot / committed state candidate。
+- 优先新建 `runtime_queue_snapshot.cj` 或等价 committed-snapshot owner；不得继续在 `runtime_queue_commit.cj` 末尾追加 commit thin wrapper。
+- 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage write、global mutable queue、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：
 
-- W2 boundary decision：internal Queue permission gate closure / next queue staging decision。
+- W2/W3 bounded implementation：internal Queue committed snapshot value boundary bundle。
 - 后续 implementation 必须继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

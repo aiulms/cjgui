@@ -138,18 +138,27 @@
 - internal Queue owner handoff consumer boundary 已落地：新增 `runtime/cjgui/src/runtime_queue_handoff.cj`，定义 `CjguiInternalQueueHandoffConsumer` / `Acceptance` / `Gate` 与 builders / default draft；它只消费 `CjguiInternalActionHandoffQueueCandidate`，把 queue-adjacent handoff candidate 投影为 queue-side consumer / acceptance / gate facts，不写 queue storage、不 enqueue、不 drain、不执行真实 action、不接 provider / public surface，且未回改 `action_router.cj` / `action_handoff.cj` / `action_handoff_queue.cj` / `runtime_queue.cj` / `runtime_state.cj` / `runtime_scheduler.cj` / `runtime_ingress.cj`。
 - Queue handoff gate next-boundary decision 已完成：选择 `P1 internal Queue permission gate boundary bundle implementation`；下一刀应优先新建 `runtime_queue_permission.cj`，只消费 `CjguiInternalQueueHandoffGate`，表达 enqueue 前 internal permission / policy gate facts，仍不写 queue storage、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle。
 - internal Queue permission gate boundary 已落地：新增 `runtime/cjgui/src/runtime_queue_permission.cj`，定义 `CjguiInternalQueuePermissionPolicy` / `Gate` / `Readiness` 与 builders / default draft；它只消费 `CjguiInternalQueueHandoffGate`，把 queue-side gate 投影为 enqueue 前 permission / policy / readiness facts，不写 queue storage、不 enqueue、不 drain、不执行真实 action、不接 provider / public surface，且未回改 `action_router.cj` / `action_handoff.cj` / `action_handoff_queue.cj` / `runtime_queue_handoff.cj` / `runtime_queue.cj` / `runtime_state.cj` / `runtime_scheduler.cj` / `runtime_ingress.cj`。
+- Queue permission next-staging decision 已完成：选择 `P1 internal Queue staging model boundary bundle implementation`；下一刀应优先新建 `runtime_queue_staging.cj`，只消费 `CjguiInternalQueuePermissionReadiness`，表达 value-style queue staging model / candidate / readiness facts，仍不写真实 queue storage、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle，也不在 `runtime_queue_permission.cj` 末尾追加 permission thin wrapper。
+- internal Queue staging model boundary 已落地：新增 `runtime/cjgui/src/runtime_queue_staging.cj`，定义 `CjguiInternalQueueStagedItem` / `StagingCandidate` / `StagingReadiness` 与 builders / default draft；它只消费 `CjguiInternalQueuePermissionReadiness`，把 enqueue 前 permission readiness 投影为 staged item / staging candidate / staging readiness facts，不写 queue storage、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle，且未回改 `runtime_queue_permission.cj` / `runtime_queue_handoff.cj` / `runtime_queue.cj` / `runtime_state.cj`。
+- Queue staging next enqueue-boundary decision 已完成：选择 `P1 internal Queue enqueue dry-run plan boundary bundle implementation`；下一刀应新建 `runtime_queue_enqueue.cj` 或等价 enqueue dry-run owner，只消费 `CjguiInternalQueueStagingReadiness`，表达 future enqueue dry-run / shadow plan facts，仍不写 queue storage、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle，也不继续在 `runtime_queue_staging.cj` 末尾追加 thin tail wrapper。
+- internal Queue enqueue dry-run plan boundary 已落地：新增 `runtime/cjgui/src/runtime_queue_enqueue.cj`，定义 `CjguiInternalQueueEnqueueDryRunPlan` / `ShadowCandidate` / `DryRunReadiness` 与 builders / default draft；它只消费 `CjguiInternalQueueStagingReadiness`，把 staging readiness 投影为 future enqueue dry-run / shadow candidate / dry-run readiness facts，不写 queue storage、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle，且未回改 `runtime_queue_staging.cj` / `runtime_queue_permission.cj` / `runtime_queue_handoff.cj` / `runtime_queue.cj` / `runtime_state.cj`。
+- Queue enqueue dry-run next storage-boundary decision 已完成：选择 `P1 internal Queue value-style storage model boundary bundle implementation`；下一刀应优先新建 `runtime_queue_storage.cj`，只消费 `CjguiInternalQueueEnqueueDryRunReadiness`，表达 pending store / storage candidate / commit candidate value facts，仍不写真实 queue storage、不创建 global mutable queue、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle。
+- internal Queue value-style storage model boundary 已落地：新增 `runtime/cjgui/src/runtime_queue_storage.cj`，定义 `CjguiInternalQueuePendingStore` / `StorageCandidate` / `StorageCommitCandidate` 与 builders / default draft；它只消费 `CjguiInternalQueueEnqueueDryRunReadiness`，把 dry-run readiness 投影为 pending store / storage candidate / commit candidate value facts，不写真实 queue storage、不创建 global mutable queue、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle，且未回改 `runtime_queue_enqueue.cj` / `runtime_queue_staging.cj` / `runtime_queue_permission.cj` / `runtime_queue_handoff.cj` / `runtime_queue.cj` / `runtime_state.cj`。
+- Queue storage next commit-boundary decision 已完成：选择 `P1 internal Queue storage commit gate boundary bundle implementation`；下一刀应优先新建 `runtime_queue_commit.cj`，只消费 `CjguiInternalQueueStorageCommitCandidate`，表达 value-style storage commit gate / commit readiness facts，仍不写真实 queue storage、不创建 global mutable queue、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle。
+- internal Queue storage commit gate boundary 已落地：新增 `runtime/cjgui/src/runtime_queue_commit.cj`，定义 `CjguiInternalQueueStorageCommitGate` / `CommitReadiness` / `CommitFinalizationCandidate` 与 builders / default draft；它只消费 `CjguiInternalQueueStorageCommitCandidate`，把 storage commit candidate 投影为 commit gate / readiness / finalization candidate value facts，不写真实 queue storage、不创建 global mutable queue、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle，且未回改 `runtime_queue_storage.cj` / `runtime_queue_enqueue.cj` / `runtime_queue_staging.cj` / `runtime_queue_permission.cj` / `runtime_queue_handoff.cj` / `runtime_queue.cj` / `runtime_state.cj`。
+- Queue storage commit next-finalization decision 已完成：选择 `P1 internal Queue committed snapshot value boundary bundle implementation`；下一刀应优先新建 `runtime_queue_snapshot.cj` 或等价 committed-snapshot owner，只消费 `CjguiInternalQueueStorageCommitFinalizationCandidate`，表达 value-style committed queue snapshot / committed state candidate facts，仍不写真实 queue storage、不创建 global mutable queue、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle，也不继续在 `runtime_queue_commit.cj` 末尾追加 thin wrapper。
 - 当前 tracker 已压缩为 current-state dashboard；历史追溯入口改为 plans README 与 closure review 链。
 - source comment sufficiency / owner header cleanup 已完成：补充 `action_router.cj`、`runtime_ingress.cj`、`runtime_queue.cj`、`runtime_scheduler.cj` 的 owner / truth / stop-line 与少量 fail-closed / default draft 维护注释；本轮只做 comment-only cleanup，不改行为、签名、字段或 build config；`runtime_state.cj` 当前 10065 行 critical 已扫描但未触碰；closure 见 [2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md)。
 - overnight automation produced unreviewed report：本轮自动化报告将写入 [2026-05-01-p1-overnight-safe-worktree-report.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-overnight-safe-worktree-report.md)；awaiting human review，后续自动化不得在人工确认前继续叠加推进。
 
 ## 当前 verification baseline
 
-最近 runtime code 变更的验证基线来自 internal Queue permission gate boundary closure：
+最近 runtime code 变更的验证基线来自 internal Queue storage commit gate boundary closure：
 
-- `source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh && cjpm build --target-dir /tmp/cjgui-queue-permission-gate-boundary-target --skip-script` 通过；仅保留既有 internal skeleton unused warnings 与 new queue permission internal skeleton unused warning。
+- `source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh && cjpm build --target-dir /tmp/cjgui-queue-storage-commit-gate-boundary-target --skip-script` 通过；仅保留既有 internal skeleton unused warnings 与 new queue storage commit-gate internal skeleton unused warning。
 - `/Users/jiangxuanyang/Desktop/cangjie/labs/macos_bridge_smoke/scripts/verify_auto_close.sh` 通过。
 - `git diff --check` 通过。
-- GitNexus / owner split：new `runtime_queue_permission.cj` symbols impact 为 UNKNOWN / not found，`detect_changes(scope=unstaged)` 已运行；`runtime_state.cj` 当前 10065 行，处于 critical warning，本轮未修改该文件，`action_router.cj` / `action_handoff.cj` / `action_handoff_queue.cj` / `runtime_queue_handoff.cj` / `runtime_queue.cj` / `runtime_scheduler.cj` / `runtime_ingress.cj` 未修改。
+- GitNexus / owner split：new `runtime_queue_commit.cj` symbols impact 为 UNKNOWN / not found，`detect_changes(scope=unstaged)` 已运行；`runtime_state.cj` 当前 10065 行，处于 critical warning，本轮未修改该文件，`runtime_queue_storage.cj` / `runtime_queue_enqueue.cj` / `runtime_queue_staging.cj` / `runtime_queue_permission.cj` / `runtime_queue_handoff.cj` / `runtime_queue.cj` / `runtime_scheduler.cj` / `runtime_ingress.cj` / `action_router.cj` / `action_handoff.cj` / `action_handoff_queue.cj` 未修改。
 
 ## 当前统一 stop-line
 
@@ -173,20 +182,20 @@
 
 ## 当前 active opening
 
-### `P1 internal Queue permission gate closure / next queue staging decision`
+### `P1 internal Queue committed snapshot value boundary bundle implementation`
 
-性质：W2 boundary decision / queue permission gate closure
+性质：bounded implementation / value-style committed queue snapshot
 
 目标：
 
-- 基于 [2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md)，复核 `CjguiInternalQueuePermissionReadiness` 已成为 enqueue 前 permission canonical endpoint。
-- 下一步在 queue staging model、permission record / manifest stabilization、或 queue-side consolidation 之间做 bounded decision；不要继续在 `runtime_queue_permission.cj` 末尾追加 readiness / record / outcome thin wrapper。
-- 继续禁止真实 action execution、queue storage / enqueue / drain、AI provider / public API、event loop / scheduler / platform 或 runtime cycle。
+- 基于 [2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md)，从 `CjguiInternalQueueStorageCommitFinalizationCandidate` 进入 value-style committed queue snapshot / committed state candidate。
+- 默认新建 `runtime_queue_snapshot.cj` 或等价 committed-snapshot owner；不要继续在 `runtime_queue_commit.cj` 末尾追加 commit receipt / record / outcome / thin wrapper。
+- 继续禁止真实 queue storage write、global mutable queue / singleton、enqueue side effect、drain、AI provider / public API、event loop / scheduler / platform 或 runtime cycle。
 
 ## 当前建议的下一步
 
-> `P1 internal Queue permission gate closure / next queue staging decision`
+> `P1 internal Queue committed snapshot value boundary bundle implementation`
 
-下一轮应执行 docs-only boundary decision，消费本轮 closure 和 `CjguiInternalQueuePermissionReadiness` endpoint，判断是否进入 queue staging model、permission record / manifest stabilization、或 queue-side consolidation；不得做 permission thin tail wrapper 回潮，或打开 queue storage / enqueue / drain。
+下一轮应做 bounded implementation，优先新建 committed-snapshot owner，只消费 `CjguiInternalQueueStorageCommitFinalizationCandidate`，并生成 dehydrated committed queue snapshot / committed state candidate facts；不得打开真实 queue storage write / global mutable queue / enqueue / drain，也不得触碰 critical `runtime_state.cj`。
 
 本 opening 不批准真实 action side effect、public API / C ABI、AI provider / prompt / external agent、event loop、queue / scheduler、platform callback、app run / shutdown、window create / close / destroy / release、多个 cycle execution、runtime global state write，或继续堆 pure wrapper / report / sanity 层。

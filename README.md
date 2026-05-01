@@ -59,7 +59,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 Queue permission gate boundary closure：[P1 internal queue permission gate boundary closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md) 已完成；当前 recommended next opening 是 `P1 internal Queue permission gate closure / next queue staging decision`。下一轮应判断 `CjguiInternalQueuePermissionReadiness` 后是否进入 queue staging model、permission record / manifest stabilization、或 queue-side consolidation；仍不写 queue storage、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle、不触碰 critical `runtime_state.cj`。
+最新 Queue storage commit next-boundary decision：[P1 queue storage commit next finalization boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md) 已完成；当前 recommended next opening 是 `P1 internal Queue committed snapshot value boundary bundle implementation`。下一轮应从 `CjguiInternalQueueStorageCommitFinalizationCandidate` 进入 value-style committed queue snapshot / committed state candidate owner；仍不批准真实 queue storage write、global mutable queue、真实 enqueue、drain、scheduler / event loop / runtime cycle 或触碰 critical `runtime_state.cj`。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 

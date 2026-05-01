@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目 AI 代码质量治理
 
-最后更新：2026-04-30
+最后更新：2026-05-01
 
 性质：docs-only / code-quality governance / AI execution rule
 状态：生效中
@@ -208,6 +208,8 @@ W3 internal subsystem draft 可以更大：允许 3-6 个 internal type、5-12 �
 - 同一 owner、同一 truth、同一 write set、同一 stop-line、同一验证路径下，默认使用 W2 / W3 bundle，而不是 one-symbol slice。
 - 连续两个 implementation 都是“单薄 projection / record / helper”后，下一轮不得继续自动新增同类薄层；必须升级为 same-owner bundle、做 tail consolidation，或进入 manifest stabilization。
 - 禁止把 `no action execution`、`no queue`、`no provider` 等 stop-line 误解成“只能写几十行”。这些 stop-line 只禁止越界 side effect，不禁止在同一 owner 内完成完整 internal value pipeline。
+- 执行卡应尽量描述目标、输入、输出、invariant、stop-line 和验收标准，而不是把实现降格成固定 symbol 清单填空。可以给建议 symbol，但不应把建议写成唯一允许路径，除非该符号名本身就是 public / interop / compatibility contract。
+- 同一 owner 内允许 AI 自主选择更合适的拆分、合并、删除低价值 helper、补维护注释或更新 manifest；只要不越过 stop-line，结构复杂度可以放开给模型发挥。
 - docs-only decision 不能作为每轮代码后的固定拍子。只有 owner、truth、write set、side effect、public surface、platform、queue / drain、scheduler 或 runtime cycle 边界变化时，才需要新的 decision。
 - closure 必须说明本轮粒度是否匹配上下文成本；如果读了多个治理文档却只改了极少代码，需要说明为何不能 bundle。
 
@@ -217,6 +219,32 @@ W3 internal subsystem draft 可以更大：允许 3-6 个 internal type、5-12 �
 - 必须触碰 hard / critical 大文件且 owner split 未清楚。
 - GitNexus 返回 HIGH / CRITICAL。
 - 需要 public API、C ABI、platform bridge、queue / drain、event loop、scheduler、runtime cycle 或 global state write。
+
+简化判断：
+
+- 可以放开：同 owner 内的完整 internal design、tail consolidation、behavior-preserving cleanup、注释补账、manifest 同步、policy / readiness / blocked reason 的成组建模。
+- 不能放开：跨 owner truth、真实 side effect、public surface、平台桥接、queue / drain、event loop / scheduler、runtime global state、critical 大文件无授权增长。
+
+### 3.2.1.5 Tail Endpoint Exit Gate：canonical endpoint 后必须换挡
+
+AI 资源效率门解决的是“不要切太碎”；但仅仅把 one-symbol 改成 W2 / W3 bundle 还不够。如果同一 owner 内的 value tail 已经到达 manifest 标记的 canonical endpoint，继续追加 `readiness -> record -> outcome -> publication -> handoff -> record` 这类同构 value-stage，仍然会形成漂亮但空转的尾巴。
+
+当 manifest、tracker 或 closure 已经标记某个 symbol / default draft 为 canonical endpoint 时，下一轮不得默认继续在同一 owner 末尾新增薄层。下一轮必须在以下出口中选择一个：
+
+- **downstream consumer / handoff integration**：让另一个 owner 或既有下游边界消费该 endpoint。
+- **permission gate decision**：如果确实准备靠近真实执行，先建立极窄 permission gate，并说明仍禁止哪些 side effect。
+- **milestone closure / manifest stabilization**：明确该 tail 暂时封账，后续不再本地自包。
+- **tail consolidation / deletion**：删除、合并或标记 legacy-only / diagnostics-only tail。
+- **real boundary execution card**：只有在 stop-line、write set、verification 和回滚/失败路径都清楚时，才打开真实 side effect 前置卡。
+
+如果 AI 仍想在同一 owner 后面新增本地 value-stage，必须回答：
+
+- 为什么现有 canonical endpoint 不能被下游消费。
+- 新 layer 是否减少重复、合并结构、承载新的不可替代 truth，或打开新的高风险证据门。
+- 为什么它不是把上一层 Bool / defer / blocked summary 原样改名搬运。
+- 本轮新增后新的 exit 是什么；不能只写“下一轮继续 boundary decision”。
+
+如果回答不了，默认停止新增 tail layer，转向 handoff consumer、permission gate decision、milestone closure 或 consolidation。
 
 ### 3.2.1 实现偏置：边界清楚后默认写代码
 
@@ -260,6 +288,35 @@ W3 internal subsystem draft 可以更大：允许 3-6 个 internal type、5-12 �
 - 命令、符号、类型名、协议名可保留英文。
 - 术语可给出中文解释 + 英文原词。
 - 避免为了“统一风格”将中文说明改写为长英文段落。
+- 新增代码注释默认必须使用中文；必要英文技术名词可以保留原文，但解释句应使用中文。
+- 若 AI 生成了英文代码注释，交付前必须改成中文，除非该注释是在引用外部 API 原文、编译器原文、协议字段名或错误信息。
+- closure review 必须说明新增关键维护注释是否符合中文优先；若保留英文注释，必须说明原因。
+
+### 3.2.4 代码注释充分性门：关键语义必须可维护
+
+AI 不应把“避免空注释”误解为“尽量不写注释”。本项目的 internal runtime 链路有大量相似的 value-style stage、fail-closed 分支和 stop-line，缺少关键注释会让后续维护者无法判断这些结构为什么存在、为什么不能合并或为什么不能执行真实 side effect。
+
+必须写最小维护注释的场景：
+
+- 新 owner file 顶部：说明该文件拥有的 owner / truth，以及明确不拥有的边界。
+- 新 internal runway 的关键 boundary type：说明它消费哪一层、产出什么 summary、不是哪种真实行为。
+- fail-closed / inconsistent 分支：说明为什么选择 blocked，而不是 silently defer 或 accept。
+- default draft / default executor：说明它只是 draft / summary path，不是真实执行、真实 queue 或真实 platform call。
+- 临时 workaround、上游限制、语言 / 工具链规避：说明移除条件。
+- 名称相近但语义不同的 stage：例如 `Plan`、`Convergence`、`CommitCandidate`、`Finalization`、`Record`，至少在链路入口或关键类型处解释差异。
+
+不要求注释的场景：
+
+- 机械字段赋值。
+- 纯 derived helper，且函数名已经完整表达投影含义。
+- 简单 builder 中与类型字段一一对应的构造。
+- 重复粘贴 README / manifest 中已有的长 stop-line。
+
+执行要求：
+
+- 新增或修改 `.cj` 时，执行卡 / 提示词应提醒检查注释充分性。
+- closure 必须说明本轮是否新增了关键 owner / boundary / fail-closed 语义；若有但没有补注释，应解释原因。
+- `comment-only` 仍不得冒充 implementation；维护注释是实现质量的一部分，不是单独进度。
 
 ### 3.3 尾部治理门：尾部影响扫描 (Fallout Scan)
 
@@ -419,6 +476,20 @@ AI 在 runtime execution tail 上写代码前，必须检查本轮是不是又�
 - 为什么不是复制已有五件套。
 
 如果回答不了，默认应该停止新增 wrapper / sanity，转向 model compression、owner cleanup、execution convergence 或 tracker compaction。
+
+### 4.11 Canonical Tail 是否正在自我包装
+
+AI 在同一 owner 的 action / runtime / ingress tail 后继续写代码前，必须检查当前 manifest 是否已经声明 canonical endpoint。
+
+如果已经声明 canonical endpoint，下一步默认不是“再加一个本地 tail value”，而是：
+
+- 下游 owner 消费；
+- permission gate decision；
+- milestone closure；
+- tail consolidation；
+- 或真实边界前置卡。
+
+只有当新增层承载新的不可替代 truth 时，才允许继续本地追加。单纯把 `didX / shouldDeferX / shouldReportBlockedX` 改名投影到下一层，不构成新的 truth。
 
 ## 5. AI 的默认暂停条件
 

@@ -137,6 +137,12 @@
 
 本条只修正实现粒度，不放开 public API、C ABI、platform bridge、event loop、queue / drain、runtime cycle、global state write 或跨 owner truth。具体执行规则以 [AI_CODE_QUALITY_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/AI_CODE_QUALITY_GOVERNANCE.md) 的“AI 资源效率门”为准。
 
+### 1.13 Canonical endpoint 是出口，不是继续自包的入口
+
+当 tracker、manifest 或 closure 已经把某个 internal value tail 标记为 canonical endpoint，治理默认应把它视为出口。下一步应选择 downstream consumer / handoff integration、permission gate decision、milestone closure 或 tail consolidation，而不是继续在同一 owner 末尾追加 record / readiness / outcome / publication / handoff 的同构薄层。
+
+本条不是压制 AI 发挥，而是避免把强模型资源耗在 tail self-wrapping 上。AI 可以在清楚边界内做更大的 W2 / W3 bundle；但 bundle 应推进到新的 consumer、gate、integration 或 consolidation，而不是把同一个 Bool / defer / blocked summary 改名搬到下一层。
+
 ## 2. GUI 项目中的三层治理
 
 任何非平凡能力都先看三层：

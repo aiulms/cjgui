@@ -1100,6 +1100,75 @@
 - internal Action Router first execution attempt bundle：
   - [2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md)
 
+- action execution attempt next-boundary decision：
+  - [2026-05-01-p1-action-execution-attempt-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-execution-attempt-next-boundary-decision.md)
+
+- internal Action Router execution convergence / commit candidate bundle：
+  - [2026-05-01-p1-internal-action-router-execution-convergence-commit-candidate-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-execution-convergence-commit-candidate-bundle-closure-review.md)
+
+- action execution convergence next-boundary decision：
+  - [2026-05-01-p1-action-execution-convergence-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-execution-convergence-next-boundary-decision.md)
+
+- internal Action Router execution record / manifest stabilization bundle：
+  - [2026-05-01-p1-internal-action-router-execution-record-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-execution-record-manifest-stabilization-closure-review.md)
+
+- Action Router tail consolidation or execution policy decision：
+  - [2026-05-01-p1-action-router-tail-consolidation-or-execution-policy-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-router-tail-consolidation-or-execution-policy-decision.md)
+
+- internal Action Router tail consolidation bundle：
+  - [2026-05-01-p1-internal-action-router-tail-consolidation-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-tail-consolidation-bundle-closure-review.md)
+
+- Action Router tail consolidation closure next execution policy decision：
+  - [2026-05-01-p1-action-router-tail-consolidation-closure-next-execution-policy-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-router-tail-consolidation-closure-next-execution-policy-decision.md)
+
+- internal Action Router execution policy model bundle：
+  - [2026-05-01-p1-internal-action-router-execution-policy-model-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-execution-policy-model-bundle-closure-review.md)
+
+- Action execution policy next-boundary decision：
+  - [2026-05-01-p1-action-execution-policy-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-execution-policy-next-boundary-decision.md)
+
+- internal Action Router guarded execution attempt boundary bundle：
+  - [2026-05-01-p1-internal-action-router-guarded-execution-attempt-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-guarded-execution-attempt-boundary-closure-review.md)
+
+- guarded execution next-boundary decision：
+  - [2026-05-01-p1-guarded-execution-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-guarded-execution-next-boundary-decision.md)
+
+- internal Action Router guarded execution commit / effect boundary bundle：
+  - [2026-05-01-p1-internal-action-router-guarded-execution-commit-effect-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-guarded-execution-commit-effect-boundary-closure-review.md)
+
+- guarded execution finalization next-boundary decision：
+  - [2026-05-01-p1-guarded-execution-finalization-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-guarded-execution-finalization-next-boundary-decision.md)
+
+- internal Action Router guarded execution result publication boundary bundle：
+  - [2026-05-01-p1-internal-action-router-guarded-execution-result-publication-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-guarded-execution-result-publication-boundary-closure-review.md)
+
+- tail endpoint exit governance patch：
+  - [2026-05-01-p1-tail-endpoint-exit-governance-patch.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-tail-endpoint-exit-governance-patch.md)
+
+- Action Router handoff endpoint next-boundary decision：
+  - [2026-05-01-p1-action-router-handoff-endpoint-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-router-handoff-endpoint-next-boundary-decision.md)
+
+- internal Action Router handoff downstream consumer boundary bundle：
+  - [2026-05-01-p1-internal-action-router-handoff-downstream-consumer-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-handoff-downstream-consumer-boundary-closure-review.md)
+
+- Action Handoff receipt next-integration decision：
+  - [2026-05-01-p1-action-handoff-receipt-next-integration-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-handoff-receipt-next-integration-decision.md)
+
+- internal Action Handoff queue integration boundary bundle：
+  - [2026-05-01-p1-internal-action-handoff-queue-integration-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-handoff-queue-integration-boundary-closure-review.md)
+
+- Action Handoff queue next-boundary decision：
+  - [2026-05-01-p1-action-handoff-queue-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-handoff-queue-next-boundary-decision.md)
+
+- internal Queue owner handoff consumer boundary bundle：
+  - [2026-05-01-p1-internal-queue-owner-handoff-consumer-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-owner-handoff-consumer-boundary-closure-review.md)
+
+- Queue handoff gate next-boundary decision：
+  - [2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md)
+
+- source comment sufficiency / owner header cleanup bundle：
+  - [2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md)
+
 - runtime progress health checkpoint：
   - [2026-04-29-p1-runtime-progress-health-checkpoint.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md)
 
@@ -1107,17 +1176,16 @@
 
 下一步推荐：
 
-- `P1 internal Action Router first execution attempt closure / next action execution boundary decision`
+- `P1 internal Queue permission gate boundary bundle implementation`
 
 用途：
 
-- 基于 [2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-action-router-first-execution-attempt-bundle-closure-review.md)，封账 Action Router first execution attempt bundle。
-- 下一轮决定是否继续推进 no-side-effect action execution boundary，或先做 Action Router execution-attempt manifest / tail consolidation。
-- AI 资源效率要求继续生效：后续同 owner / truth / stop-line 清楚时应做 W2 / W3 same-owner bundle，不回到 one-symbol 微切片。
+- 基于 [2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md)，从 `CjguiInternalQueueHandoffGate` 进入 enqueue 前 permission gate boundary。
+- 下一轮执行 bounded implementation，默认优先新建 `runtime/cjgui/src/runtime_queue_permission.cj` 或等价 queue permission owner，消费 queue handoff gate 并表达 permission / policy gate facts；不得写 queue、enqueue 或 drain。
 - 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：
 
-- W2 docs decision：internal Action Router first execution attempt closure / next action execution boundary decision。
-- 该 decision 必须继续保护 no-real-execution / no-queue / no-provider / no-public-surface stop-lines。
+- W2/W3 implementation：internal Queue permission gate boundary bundle。
+- 后续 implementation 必须继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

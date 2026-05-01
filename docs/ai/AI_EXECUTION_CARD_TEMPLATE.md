@@ -25,11 +25,15 @@
 
 AI 资源效率也是执行卡质量的一部分。如果本轮需要读取 tracker、manifest、closure、源码并运行 build / smoke，就不应默认授权 one-symbol / one-helper / one-projection 的微切片。除非本轮打开高风险边界或 GitNexus / owner split 明确要求保守，执行卡应给出最小有意义 bundle；详细判断以 [AI_CODE_QUALITY_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/AI_CODE_QUALITY_GOVERNANCE.md) 的“AI 资源效率门”为准。
 
+执行卡可以给建议 symbol，但应优先写清目标、输入、输出、invariant、stop-line 和验收标准。除非涉及 public / interop / compatibility contract，不应把执行 AI 限制成固定 symbol 清单填空；同一 owner 内的合理拆分、合并、cleanup、注释补账和 manifest 同步可以交给执行 AI 自主完成。
+
 当 helper / sanity 链已经封账，下一张 W2 bundle 应提高到完整 internal behavior concept，而不是继续 helper-by-helper。W2 internal behavior bundle 可以一次授权 3-7 个相关 internal changes，例如 input / policy / decision / result types、builders、核心 internal behavior function、positive / negative path、sanity / parity check 和 bundled closure。行数不是风险；越过 public contract、platform bridge、event loop、queue / drain、handle table 或安全边界才是风险。
 
 当一个 W2 internal behavior bundle 已经连续验证通过，且下一步仍在同一 internal owner 内推进同一行为链路，可以升级为 W3 internal subsystem draft。W3 internal subsystem draft 允许一次覆盖 request / response / pipeline / command draft / outcome / sanity 等完整内部闭环。它不是 public contract 或平台桥接授权；如果需要 public API、C ABI、event loop、queue / drain、handle table 或平台对象，必须另走高风险 gate。
 
 runtime execution tail 已到 first internal execution attempt / post-attempt outcome 后，不得继续把下一张卡写成纯 post-attempt wrapper / observation / feedback / result report。若执行卡仍要新增 `Draft / Report / Request / Sanity`，必须在 goal 或 invariants 中说明它会删除 / 合并旧结构、接入已有 state / cycle / owner 边界，或提供不可替代的 high-risk evidence。否则下一张卡应转向 execution convergence、model compression、owner cleanup 或 tracker compaction。
+
+当 manifest 已经标记 canonical endpoint，执行卡不得继续默认授权同 owner 的 tail self-wrapping。下一张卡必须优先选择 downstream consumer / handoff integration、permission gate decision、milestone closure、tail consolidation，或真实边界前置卡。若仍要新增本地 value-stage，必须写清它承载的新 truth、为什么不能由现有 endpoint 表达，以及新增后的 exit 条件。
 
 执行卡如果允许修改 `.cj` 文件，必须包含单文件体积 / owner split 检查。至少写明：
 
@@ -120,6 +124,37 @@ runtime execution tail 已到 first internal execution attempt / post-attempt ou
 允许保留必要技术名词原文，例如 `owner`、`truth`、`write set`、`stop-line`、`bounded implementation`、`runtime`、`public API`、`C ABI`、`Renderer`、`Scene`、`Widget`、`run`、`queue`、`drain`。
 
 除非是在引用外部 API 原文、命令输出或错误信息，否则不得新增整段英文注释替代中文说明。
+
+新增代码注释必须优先中文表达；如果生成了英文注释，交付前应翻译为中文。只有外部 API 原文、编译器原文、协议字段名、错误信息或不可翻译技术名词可以保留英文。
+
+## 0.3 代码注释充分性 (Comment Sufficiency)
+
+本轮是否新增 / 修改以下内容：
+
+- 新 owner file：
+- 新关键 boundary type：
+- fail-closed / inconsistent 分支：
+- default draft / default executor：
+- workaround / 上游限制：
+- 名称相近但语义不同的 stage：
+
+若有，是否补充了最小维护注释：
+
+-
+
+新增维护注释是否为中文：
+
+-
+
+若保留英文注释，原因：
+
+-
+
+若未补充，原因：
+
+-
+
+注释要求以 [AI_CODE_QUALITY_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/ai/AI_CODE_QUALITY_GOVERNANCE.md) 的“代码注释充分性门”为准。不要给机械赋值写空注释，也不要用 comment-only 变化冒充 implementation。
 
 ## 1. 授权依据 (Authority)
 

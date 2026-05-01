@@ -59,7 +59,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 Action Router execution boundary decision：[P1 action execution boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-action-execution-boundary-decision.md) 已完成；当前 recommended next opening 是 `P1 internal Action Router first execution attempt bundle implementation`。下一轮只允许在 `action_router.cj` 中把 `CjguiInternalActionExecutionReadiness` 投影为 internal value-style attempt / result summary；这不是真实 action execution，不公开 AI API，不接 model provider / prompt / external agent，不写 queue / enqueue / drain，不回塞 critical `runtime_state.cj`。
+最新 Queue handoff gate next-boundary decision：[P1 queue handoff gate next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md) 已完成；当前 recommended next opening 是 `P1 internal Queue permission gate boundary bundle implementation`。下一轮应优先新建 `runtime/cjgui/src/runtime_queue_permission.cj` 或等价 queue permission owner，消费 `CjguiInternalQueueHandoffGate` 并表达 enqueue 前 internal permission / policy gate facts；仍不写 queue storage、不 enqueue、不 drain、不接 scheduler / event loop / runtime cycle、不触碰 critical `runtime_state.cj`。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 

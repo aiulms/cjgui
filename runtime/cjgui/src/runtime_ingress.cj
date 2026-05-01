@@ -1,5 +1,18 @@
 package cjgui
 
+// Internal runtime ingress owner:
+// - This file owns the first front-door coordination summary between input
+//   ingress and scheduler ingress.
+// - Its truth is already-dehydrated input/scheduler readiness facts; it does
+//   not own input semantics, scheduler ticks, queue admission, runtime state,
+//   app lifecycle, window lifecycle, or platform truth.
+// - It outputs only an internal ingress coordinator summary for downstream
+//   queue/action boundaries.
+// - Stop-line: no event loop, no queue drain, no scheduler driving, no action
+//   execution, no platform bridge, no public runtime API, and no public C ABI.
+
+// Coordinator is a value summary of two upstream ingress facts. It is not a
+// runtime state machine and does not mutate either upstream owner.
 struct CjguiInternalRuntimeIngressCoordinator {
     let inputIngress: CjguiInternalInputRuntimeIngress
     let schedulerIngress: CjguiInternalSchedulerRuntimeIngress
@@ -88,6 +101,7 @@ func cjguiInternalCoordinateRuntimeIngress(
             false
         )
     }
+    // Any non-ready path that is not a clean deferral is reported as blocked.
     return CjguiInternalRuntimeIngressCoordinator(
         inputIngress,
         schedulerIngress,
@@ -101,6 +115,7 @@ func cjguiInternalCoordinateRuntimeIngress(
 
 func cjguiInternalExecuteDefaultRuntimeIngressCoordinatorDraft(
 ): CjguiInternalRuntimeIngressCoordinator {
+    // Default draft only chains existing default value facts; it does not run a loop.
     let inputIngress = cjguiInternalExecuteDefaultInputRuntimeIngressDraft()
     let schedulerIngress = cjguiInternalExecuteDefaultSchedulerRuntimeIngressDraft()
     return cjguiInternalCoordinateRuntimeIngress(

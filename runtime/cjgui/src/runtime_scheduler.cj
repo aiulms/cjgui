@@ -1,7 +1,17 @@
 package cjgui
 
-// Internal-only dehydrated scheduler tick facts. This file owns the scheduler
-// ingress model so runtime_state.cj does not keep growing for new subsystems.
+// Internal scheduler ingress owner:
+// - This file owns the first dehydrated scheduler tick and runtime pacing
+//   admission summaries.
+// - Its truth is local tick intent facts plus runtime state-store transition
+//   facts; it does not own frame scheduling, render invalidation, event loops,
+//   queue drain, action execution, app/window lifecycle, or platform runloop.
+// - It outputs only internal scheduler ingress Bool summaries for runtime
+//   ingress coordination.
+// - Stop-line: no real scheduler, no frame loop, no timer, no queue drain, no
+//   platform bridge, no public runtime API, and no public C ABI.
+
+// Tick source is a dehydrated origin fact. Exactly one source should be true.
 struct CjguiInternalSchedulerTickSource {
     let isSynthetic: Bool
     let isFramePacing: Bool
@@ -20,6 +30,7 @@ struct CjguiInternalSchedulerTickSource {
     }
 }
 
+// Tick kind is a routing fact, not a render or idle implementation.
 struct CjguiInternalSchedulerTickKind {
     let isCyclePreparationTick: Bool
     let isRenderPreparationTick: Bool
@@ -77,6 +88,8 @@ struct CjguiInternalSchedulerTickAdmission {
     }
 }
 
+// Scheduler runtime ingress only combines tick admission with state-store
+// transition facts; it does not drive pacing by itself.
 struct CjguiInternalSchedulerRuntimeIngress {
     let admission: CjguiInternalSchedulerTickAdmission
     let stateTransition: CjguiInternalRuntimeStateStoreTransition
@@ -164,10 +177,12 @@ func cjguiInternalEvaluateSchedulerTickAdmission(
         return CjguiInternalSchedulerTickAdmission(intent, true, false, false)
     }
 
+    // Invalid source/kind combinations fail closed as blocked.
     return CjguiInternalSchedulerTickAdmission(intent, false, false, true)
 }
 
 func cjguiInternalExecuteDefaultSchedulerTickAdmissionDraft(): CjguiInternalSchedulerTickAdmission {
+    // Default draft constructs synthetic value facts only; it does not tick a scheduler.
     let source = cjguiInternalDefaultSchedulerTickSource()
     let kind = cjguiInternalDefaultSchedulerTickKind()
     let intent = cjguiInternalBuildSchedulerTickIntent(source, kind, true)
@@ -221,6 +236,7 @@ func cjguiInternalBuildSchedulerRuntimeIngress(
             true
         )
     }
+    // Non-ready paths that are not clean deferrals become blocked ingress.
     return CjguiInternalSchedulerRuntimeIngress(
         admission,
         stateTransition,

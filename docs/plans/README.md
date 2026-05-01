@@ -1196,6 +1196,135 @@
 - Queue storage commit next finalization-boundary decision：
   - [2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md)
 
+- internal Queue committed snapshot value boundary bundle：
+  - [2026-05-01-p1-internal-queue-committed-snapshot-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-committed-snapshot-value-boundary-closure-review.md)
+
+- Queue committed snapshot next storage-boundary decision：
+  - [2026-05-01-p1-queue-committed-snapshot-next-storage-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-committed-snapshot-next-storage-boundary-decision.md)
+
+- Queue real storage preflight decision：
+  - [2026-05-01-p1-queue-real-storage-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-real-storage-preflight-decision.md)
+
+- internal Queue real storage owner/value-store boundary bundle：
+  - [2026-05-01-p1-internal-queue-real-storage-owner-value-store-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-real-storage-owner-value-store-boundary-closure-review.md)
+
+- Queue store next write-boundary decision：
+  - [2026-05-01-p1-queue-store-next-write-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-store-next-write-boundary-decision.md)
+
+- internal Queue store write admission boundary bundle：
+  - [2026-05-01-p1-internal-queue-store-write-admission-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-store-write-admission-boundary-closure-review.md)
+
+- Queue store write next-boundary decision：
+  - [2026-05-01-p1-queue-store-write-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-store-write-next-boundary-decision.md)
+
+- internal Queue immutable store write commit boundary bundle：
+  - [2026-05-01-p1-internal-queue-immutable-store-write-commit-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-immutable-store-write-commit-boundary-closure-review.md)
+
+- Queue immutable write commit next storage-boundary decision：
+  - [2026-05-01-p1-queue-immutable-write-commit-next-storage-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-immutable-write-commit-next-storage-decision.md)
+
+- internal Queue write failure / rollback model boundary bundle：
+  - [2026-05-01-p1-internal-queue-write-failure-rollback-model-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-write-failure-rollback-model-boundary-closure-review.md)
+
+- Queue mutable storage preflight decision：
+  - [2026-05-01-p1-queue-mutable-storage-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-mutable-storage-preflight-decision.md)
+
+- internal Queue mutable store shell boundary bundle：
+  - [2026-05-01-p1-internal-queue-mutable-store-shell-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-mutable-store-shell-boundary-closure-review.md)
+
+- Queue mutable store next-write decision：
+  - [2026-05-01-p1-queue-mutable-store-next-write-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-mutable-store-next-write-decision.md)
+
+- internal Queue mutable store write admission boundary bundle：
+  - [2026-05-01-p1-internal-queue-mutable-store-write-admission-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-mutable-store-write-admission-boundary-closure-review.md)
+
+- Queue mutable write next commit-boundary decision：
+  - [2026-05-01-p1-queue-mutable-write-next-commit-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-mutable-write-next-commit-boundary-decision.md)
+
+- internal Queue owner-local mutable write commit boundary bundle：
+  - [2026-05-01-p1-internal-queue-owner-local-mutable-write-commit-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-owner-local-mutable-write-commit-boundary-closure-review.md)
+
+- Queue mutable write commit next-boundary decision：
+  - [2026-05-01-p1-queue-mutable-write-commit-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-mutable-write-commit-next-boundary-decision.md)
+
+- internal Queue mutable write result handoff boundary bundle：
+  - [2026-05-01-p1-internal-queue-mutable-write-result-handoff-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-mutable-write-result-handoff-boundary-closure-review.md)
+
+- Queue mutable handoff next process-local write decision：
+  - [2026-05-01-p1-queue-mutable-handoff-next-process-local-write-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-mutable-handoff-next-process-local-write-decision.md)
+
+- internal Queue process-local write preflight boundary bundle：
+  - [2026-05-01-p1-internal-queue-process-local-write-preflight-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-process-local-write-preflight-boundary-closure-review.md)
+
+- Queue process-local write next realization decision：
+  - [2026-05-01-p1-queue-process-local-write-next-realization-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-process-local-write-next-realization-decision.md)
+
+- internal Queue owner-local write realization boundary bundle：
+  - [2026-05-01-p1-internal-queue-owner-local-write-realization-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-owner-local-write-realization-boundary-closure-review.md)
+
+- Queue owner-local write next handoff decision：
+  - [2026-05-01-p1-queue-owner-local-write-next-handoff-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-owner-local-write-next-handoff-decision.md)
+
+- internal Queue owner-local write result handoff boundary bundle：
+  - [2026-05-01-p1-internal-queue-owner-local-write-result-handoff-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-owner-local-write-result-handoff-boundary-closure-review.md)
+
+- Queue owner-local handoff next public-boundary decision：
+  - [2026-05-01-p1-queue-owner-local-handoff-next-public-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-owner-local-handoff-next-public-boundary-decision.md)
+
+- Queue public boundary preflight decision：
+  - [2026-05-01-p1-queue-public-boundary-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-public-boundary-preflight-decision.md)
+
+- internal Queue public boundary admission value bundle：
+  - [2026-05-01-p1-internal-queue-public-boundary-admission-value-bundle-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-boundary-admission-value-bundle-closure-review.md)
+
+- Queue public boundary next surface decision：
+  - [2026-05-01-p1-queue-public-boundary-next-surface-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-public-boundary-next-surface-decision.md)
+
+- internal Queue public surface policy boundary bundle：
+  - [2026-05-01-p1-internal-queue-public-surface-policy-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-surface-policy-boundary-closure-review.md)
+
+- Queue public API shape preflight decision：
+  - [2026-05-01-p1-queue-public-api-shape-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-public-api-shape-preflight-decision.md)
+
+- internal Queue public API admission value boundary bundle：
+  - [2026-05-01-p1-internal-queue-public-api-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-api-admission-value-boundary-closure-review.md)
+
+- Queue public API next result-boundary decision：
+  - [2026-05-01-p1-queue-public-api-next-result-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-public-api-next-result-boundary-decision.md)
+
+- internal Queue public result shape boundary bundle：
+  - [2026-05-01-p1-internal-queue-public-result-shape-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-result-shape-boundary-closure-review.md)
+
+- Queue public API implementation preflight decision：
+  - [2026-05-01-p1-queue-public-api-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-public-api-implementation-preflight-decision.md)
+
+- internal Queue public API shell / entry value boundary bundle：
+  - [2026-05-01-p1-internal-queue-public-api-shell-entry-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-api-shell-entry-value-boundary-closure-review.md)
+
+- Queue public API exposure preflight decision：
+  - [2026-05-01-p1-queue-public-api-exposure-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-public-api-exposure-preflight-decision.md)
+
+- internal Queue public exposure gate / symbol readiness boundary bundle：
+  - [2026-05-01-p1-internal-queue-public-exposure-gate-symbol-readiness-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-exposure-gate-symbol-readiness-boundary-closure-review.md)
+
+- Queue public API visibility decision：
+  - [2026-05-01-p1-queue-public-api-visibility-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-public-api-visibility-decision.md)
+
+- internal Queue experimental public submit shell boundary bundle：
+  - [2026-05-01-p1-internal-queue-experimental-public-submit-shell-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-experimental-public-submit-shell-boundary-closure-review.md)
+
+- Queue experimental public submit shell hardening decision：
+  - [2026-05-01-p1-experimental-public-submit-shell-hardening-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-hardening-decision.md)
+
+- Queue experimental public submit shell visibility manifest：
+  - [2026-05-01-p1-experimental-public-submit-shell-visibility-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-visibility-manifest.md)
+
+- internal Queue experimental public submit shell hardening closure：
+  - [2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md)
+
+- AI-native architecture radar future plan：
+  - [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)
+
 - source comment sufficiency / owner header cleanup bundle：
   - [2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md)
 
@@ -1206,16 +1335,17 @@
 
 下一步推荐：
 
-- `P1 internal Queue committed snapshot value boundary bundle implementation`
+- `P1 internal Queue experimental public submit shell hardening closure / next public submit result-boundary decision`
 
 用途：
 
-- 基于 [2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md)，下一轮从 `CjguiInternalQueueStorageCommitFinalizationCandidate` 进入 value-style committed queue snapshot / committed state candidate。
-- 优先新建 `runtime_queue_snapshot.cj` 或等价 committed-snapshot owner；不得继续在 `runtime_queue_commit.cj` 末尾追加 commit thin wrapper。
+- 基于 [2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md)，下一轮只做 docs-only decision，评估 `CjguiInternalQueueExperimentalSubmitResult` 后的 submit result hardening / handoff / stabilization / rollback 方向。
+- 当前唯一允许 public symbol 是 `cjguiExperimentalQueueSubmitShellReady(): Bool`，并已由 [visibility manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-visibility-manifest.md) 固定；下一轮默认不允许新增第二个 public symbol，不允许 richer public API structured return。
+- 当前 endpoint 明确仍没有 stable public API compatibility promise；下一轮仍不得扩大 public surface，不得使用 `enqueue` 命名承诺真实 side effect，不得实现 public C ABI，不得 real enqueue，不得接受 raw pointer / native handle / platform object。
 - 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage write、global mutable queue、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：
 
-- W2/W3 bounded implementation：internal Queue committed snapshot value boundary bundle。
-- 后续 implementation 必须继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-surface stop-lines。
-- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。
+- docs-only decision：internal Queue experimental public submit shell hardening closure / next public submit result-boundary decision。
+- 后续 implementation 必须继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-API-implementation / no-stable-public-surface stop-lines。
+- 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、module-level `var` / escaping in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

@@ -5,21 +5,30 @@
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
 
-当前项目处于 `P1 runtime 受限实现准备阶段`。仓库已经完成 macOS AppKit / Metal smoke、主线程 UI message queue、自动化 GUI 验证、用户可见窗口截图验证和 frame hash 可行性等实验链路，并开始建立 `runtime/cjgui` 的最小 runtime skeleton。
+当前项目处于 `P1 runtime 受限实现 / runtime state transition runway`。仓库已经完成 macOS AppKit / Metal smoke、主线程 UI message queue、自动化 GUI 验证、用户可见窗口截图验证和 frame hash 可行性等实验链路；`runtime/cjgui` 也已经从最小 skeleton 推进到一组 internal-only runtime owner files。
 
-这还不是可用的 GUI 框架，也不提供稳定 public API。现阶段更像一个有严格边界和审计记录的系统编程实验室：先把 app lifecycle、window lifecycle、platform adapter、error strategy、验证链路和 stop-line 讲清楚，再逐步进入真实 runtime。
+这还不是可用的 GUI 框架，也不提供稳定 public API。现阶段更像一个有严格边界和审计记录的系统编程实验室：先把 app lifecycle、window lifecycle、platform adapter、runtime state、Action Router、handoff、queue boundary、验证链路和 stop-line 讲清楚，再逐步进入真实 runtime。
+
+## 当前推进到哪里
+
+- `runtime/cjgui` 已经可以作为最小 internal package 构建，并拆出了 app / window lifecycle、platform adapter、error boundary、runtime state、scheduler ingress、runtime ingress、Action Router、Action Handoff 和 Queue 相关 owner files。
+- Action Router 主线已从 action intent / admission / routing 推进到 guarded execution、handoff downstream consumer 与 queue-adjacent integration；这些仍是 value-style facts，不是真实 action side effect。
+- Queue 主线已从 admission 推进到 owner handoff、permission gate、staging、enqueue dry-run、value-style storage、commit gate、committed snapshot、immutable value-store owner shell、store write admission、immutable store write commit、write failure / rollback model、mutable store shell、mutable write admission、owner-local mutable write commit、mutable write result handoff、process-local write preflight、owner-local write realization、owner-local write result handoff、public boundary admission、public surface policy、public API admission、public result shape、public API shell、public exposure gate / symbol readiness 与 experimental public submit shell value facts；这些仍不写真实 queue storage，也不创建 global mutable queue。
+- 当前所有 runtime 进展都保持 internal-only：不公开 public runtime API / public C ABI，不接 AI provider / prompt / external agent，不接真实 event loop / scheduler / queue drain。
+- 项目治理也已经补上了文件体积闸门、AI 资源效率门、Tail Endpoint Exit Gate 和代码注释充分性门，避免 P1 被无限 thin wrapper 或不可维护注释债拖偏。
 
 ## 快速入口
 
 - 想知道项目方向：看 [GUI_PROJECT_DIRECTION.md](docs/core/GUI_PROJECT_DIRECTION.md)。
 - 想接着干活：看 [GUI_TASK_TRACKER.md](GUI_TASK_TRACKER.md)，以 `当前 active opening`、`当前 next opening` 和 `当前建议的下一步` 为准，不默认全文阅读历史流水。
 - 想看当前 runtime execution runway：看 [2026-04-30-p1-runtime-tracker-compaction-execution-runway.md](docs/plans/2026-04-30-p1-runtime-tracker-compaction-execution-runway.md)。
-- 想看正式 runtime 骨架：看 [runtime/cjgui](runtime/cjgui)。
+- 想看正式 runtime 骨架和内部 stop-line：看 [runtime/cjgui](runtime/cjgui)。
 - 想看 macOS 桥接实验：看 [labs/macos_bridge_smoke](labs/macos_bridge_smoke)。
 - 想查历史决策：看 [docs/plans/README.md](docs/plans/README.md)。
 - 想看 GUI framework 行业排雷雷达：看 [gui-framework-pitfalls-intelligence.md](docs/research/gui-framework-pitfalls-intelligence.md)。它是按需雷达，不是每轮 implementation 的默认必读项。
 - 想看 AI-native GUI runtime 架构 intake：看 [ai-native-gui-runtime-architecture-intake.md](docs/research/ai-native-gui-runtime-architecture-intake.md)。它只在语义投影、Action Router、Hard / Soft Cycle、AI 协作边界前按需读取。
 - 想看仓颉 1.1 owner / tooling / FFI 能力边界：看 [cangjie-1.1-owner-tooling-ffi-capability-intake.md](docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md)。它只在 owner 语言保证、FFI / platform bridge、debug / profiling / memory tooling 或未来语言能力迁移前按需读取。
+- 想看代数效应 / ECS / CRDT / Scene-DisplayList 这些未来架构雷达：看 [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)。它只记录未来规划，不改变当前 P1 implementation runway。
 - 想看文档分区：看 [docs/README.md](docs/README.md)。
 - 想控制 AI 每轮读多少上下文：看 [CJGUI_CONTEXT_LOADING_POLICY.md](docs/ai/CJGUI_CONTEXT_LOADING_POLICY.md)。
 
@@ -29,12 +38,14 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 - 不提供稳定 public runtime API。
 - 不提供 public C ABI。
 - 不是跨平台抽象层。
+- 不是已经具备真实 queue storage、enqueue、drain、scheduler 或 event loop 的 runtime。
+- 不是已经具备真实 Action execution、AI provider、prompt 接入或外部 Agent 公共入口的框架。
 - 不包含声明式 UI DSL、控件库、布局系统、文本系统、IME 或无障碍实现。
 - 不把 smoke demo、截图验证、frame hash 或实验诊断当成长期 runtime contract。
 
 ## 仓库结构
 
-- `runtime/cjgui/`：未来正式 runtime 的最小 package / source skeleton，目前只承载 internal marker、state shape 和边界文档。
+- `runtime/cjgui/`：未来正式 runtime 的 internal package，目前承载 runtime state、lifecycle、ingress、Action Router / Handoff、Queue value-style boundary 等 owner files；仍不提供 public API。
 - `labs/`：实验室 smoke 和验证脚本，当前主要是 macOS AppKit / Metal bridge smoke。
 - `docs/core/`：项目方向、治理、风险、AI 原生 UI 语义和协作边界。
 - `docs/setup/`：本地工具链、构建、资料索引和仓颉上游倒推 / 贡献账本。
@@ -59,7 +70,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 Queue storage commit next-boundary decision：[P1 queue storage commit next finalization boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-storage-commit-next-finalization-boundary-decision.md) 已完成；当前 recommended next opening 是 `P1 internal Queue committed snapshot value boundary bundle implementation`。下一轮应从 `CjguiInternalQueueStorageCommitFinalizationCandidate` 进入 value-style committed queue snapshot / committed state candidate owner；仍不批准真实 queue storage write、global mutable queue、真实 enqueue、drain、scheduler / event loop / runtime cycle 或触碰 critical `runtime_state.cj`。
+最新 Queue experimental public submit shell hardening closure：[P1 internal Queue experimental public submit shell hardening closure review](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md) 已完成；当前 recommended next opening 是 `P1 internal Queue experimental public submit shell hardening closure / next public submit result-boundary decision`。本轮新增 [experimental public submit shell visibility manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-visibility-manifest.md)，并将 public symbol allowlist 固定为 `cjguiExperimentalQueueSubmitShellReady(): Bool`；没有新增第二个 public symbol，签名保持 Bool-only。继续禁止 `enqueue` 命名、stable public API compatibility promise、public C ABI、real enqueue、drain、scheduler / event loop / runtime cycle 和 `runtime_state.cj` 修改。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 

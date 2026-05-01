@@ -6,6 +6,7 @@
 - Downstream handoff owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/action_handoff.cj`
 - Downstream handoff queue integration owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/action_handoff_queue.cj`
 - Queue-side handoff owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_handoff.cj`
+- Queue permission owner file: `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_queue_permission.cj`
 - Upstream dependency: `CjguiInternalQueueAdmission`
 - Current runway: `ActionIntent -> ActionAdmission -> ActionRoutingResult -> ActionDispatchAdmission -> ActionDispatchPlan -> ActionDispatchConvergence -> ActionDispatchCommitCandidate -> ActionDispatchFinalization -> ActionDispatchRecord -> ActionEffectModel -> ActionExecutionGuard -> ActionExecutionReadiness -> ActionExecutionAttempt -> ActionExecutionAttemptResult -> ActionExecutionConvergence -> ActionExecutionCommitCandidate -> ActionExecutionFinalization -> ActionExecutionRecord -> ActionExecutionPolicyModel -> ActionExecutionPolicyGate -> ActionExecutionPolicyReadiness -> ActionGuardedExecutionAttempt -> ActionGuardedExecutionAttemptResult -> ActionGuardedExecutionAcceptance -> ActionGuardedExecutionEffectPlan -> ActionGuardedExecutionCommitCandidate -> ActionGuardedExecutionFinalization -> ActionGuardedExecutionResultPublication -> ActionGuardedExecutionHandoffCandidate`
 - Canonical endpoint: `CjguiInternalActionGuardedExecutionHandoffCandidate` via `cjguiInternalExecuteDefaultActionGuardedExecutionResultPublicationDraft()`
@@ -15,6 +16,8 @@
 - Downstream queue integration endpoint: `CjguiInternalActionHandoffQueueCandidate` via `cjguiInternalExecuteDefaultActionHandoffQueueIntegrationDraft()`
 - Queue-side handoff runway: `ActionHandoffQueueCandidate -> QueueHandoffConsumer -> QueueHandoffAcceptance -> QueueHandoffGate`
 - Queue-side handoff endpoint: `CjguiInternalQueueHandoffGate` via `cjguiInternalExecuteDefaultQueueHandoffConsumerDraft()`
+- Queue permission runway: `QueueHandoffGate -> QueuePermissionPolicy -> QueuePermissionGate -> QueuePermissionReadiness`
+- Queue permission endpoint: `CjguiInternalQueuePermissionReadiness` via `cjguiInternalExecuteDefaultQueuePermissionDraft()`
 
 ## Current Truth Model
 
@@ -58,6 +61,9 @@
 - `CjguiInternalQueueHandoffConsumer` consumes the queue-adjacent candidate and carries queue-side owner consumer facts; it is not a queue item, enqueue record, drain plan, or scheduler task.
 - `CjguiInternalQueueHandoffAcceptance` consumes the queue handoff consumer value and carries queue-side acceptance facts; it is not enqueue permission or queue mutation.
 - `CjguiInternalQueueHandoffGate` consumes queue handoff acceptance and carries the queue-side gate endpoint; it is not queue storage, enqueue side effect, drain plan, scheduler task, public audit log, observer callback, or execution result.
+- `CjguiInternalQueuePermissionPolicy` carries enqueue-before local policy facts; it is not queue config, scheduler config, or enqueue authorization side effect.
+- `CjguiInternalQueuePermissionGate` consumes queue handoff gate plus policy facts and carries enqueue-before permission gate facts; it is not queue storage, enqueue side effect, drain plan, or scheduler task.
+- `CjguiInternalQueuePermissionReadiness` consumes queue permission gate and carries the current queue permission canonical endpoint; it is not queue storage, enqueue side effect, drain plan, event-loop work, public audit log, observer callback, or execution result.
 
 ## Defaults
 
@@ -73,6 +79,7 @@
 - Default action handoff receipt calls default guarded result publication, then builds downstream consumer, acceptance, and receipt without executing action side effects or writing queue state.
 - Default action handoff queue integration calls default action handoff receipt plus default queue admission, then builds queue admission, integration, and candidate without writing queue state, enqueueing, draining, or executing actions.
 - Default queue handoff consumer calls default action handoff queue integration, then builds queue-side consumer, acceptance, and gate without writing queue state, enqueueing, draining, scheduling, or executing actions.
+- Default queue permission readiness calls default queue handoff consumer, then builds permission policy, gate, and readiness without writing queue state, enqueueing, draining, scheduling, or executing actions.
 
 ## Routing Boundary
 
@@ -181,6 +188,15 @@
 - Queue handoff gate is not queue storage, not enqueue side effect, not drain plan, not scheduler task, not real action execution, not action side effect, not public audit log, not observer callback, not provider response, not public API / C ABI, not event loop / platform callback, and not runtime cycle execution.
 - The implementation lives in `runtime_queue_handoff.cj`; it consumes the downstream queue-adjacent candidate without extending the `action_router.cj`, `action_handoff.cj`, or `action_handoff_queue.cj` local tails and does not grow `runtime_state.cj`, `runtime_queue.cj`, `runtime_scheduler.cj`, or `runtime_ingress.cj`.
 
+## Queue Permission Gate Boundary
+
+- Queue permission policy, gate, and readiness consume only `CjguiInternalQueueHandoffGate` and local permission policy facts.
+- Open path requires an open queue handoff gate and a policy that allows queue permission before marking permission readiness true.
+- Defer-only remains deferred through the queue permission chain.
+- Blocked or inconsistent flags fail closed as blocked.
+- Queue permission readiness is not queue storage, not enqueue authorization side effect, not enqueue record, not drain plan, not scheduler task, not real action execution, not public audit log, not observer callback, not provider response, not public API / C ABI, not event loop / platform callback, and not runtime cycle execution.
+- The implementation lives in `runtime_queue_permission.cj`; it consumes queue-side handoff gate facts without extending the `action_router.cj`, `action_handoff.cj`, `action_handoff_queue.cj`, or `runtime_queue_handoff.cj` local tails and does not grow `runtime_state.cj`, `runtime_queue.cj`, `runtime_scheduler.cj`, or `runtime_ingress.cj`.
+
 ## Stop Lines
 
 - No action execution.
@@ -193,4 +209,4 @@
 
 ## Next Reasonable Boundary
 
-`P1 internal Queue owner handoff consumer closure / next queue boundary decision`
+`P1 internal Queue permission gate closure / next queue staging decision`

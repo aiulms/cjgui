@@ -1166,6 +1166,9 @@
 - Queue handoff gate next-boundary decision：
   - [2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md)
 
+- internal Queue permission gate boundary bundle：
+  - [2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md)
+
 - source comment sufficiency / owner header cleanup bundle：
   - [2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md)
 
@@ -1176,16 +1179,16 @@
 
 下一步推荐：
 
-- `P1 internal Queue permission gate boundary bundle implementation`
+- `P1 internal Queue permission gate closure / next queue staging decision`
 
 用途：
 
-- 基于 [2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-queue-handoff-gate-next-boundary-decision.md)，从 `CjguiInternalQueueHandoffGate` 进入 enqueue 前 permission gate boundary。
-- 下一轮执行 bounded implementation，默认优先新建 `runtime/cjgui/src/runtime_queue_permission.cj` 或等价 queue permission owner，消费 queue handoff gate 并表达 permission / policy gate facts；不得写 queue、enqueue 或 drain。
+- 基于 [2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-permission-gate-boundary-closure-review.md)，复核 `CjguiInternalQueuePermissionReadiness` 已成为 enqueue 前 permission canonical endpoint。
+- 下一轮执行 docs-only boundary decision，在 queue staging model、permission record / manifest stabilization、或 queue-side consolidation 之间选择；不得继续追加 permission thin tail wrapper，不得写 queue、enqueue 或 drain。
 - 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：
 
-- W2/W3 implementation：internal Queue permission gate boundary bundle。
+- W2 boundary decision：internal Queue permission gate closure / next queue staging decision。
 - 后续 implementation 必须继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、var / in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

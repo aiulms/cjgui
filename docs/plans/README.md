@@ -1322,6 +1322,12 @@
 - internal Queue experimental public submit shell hardening closure：
   - [2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md)
 
+- Queue public submit Bool result next-boundary decision：
+  - [2026-05-01-p1-public-submit-bool-result-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-public-submit-bool-result-next-boundary-decision.md)
+
+- internal Queue public submit Bool result hardening boundary bundle：
+  - [2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md)
+
 - AI-native architecture radar future plan：
   - [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)
 
@@ -1335,13 +1341,13 @@
 
 下一步推荐：
 
-- `P1 internal Queue experimental public submit shell hardening closure / next public submit result-boundary decision`
+- `P1 internal Queue public submit Bool result hardening closure / next public submit result-boundary decision`
 
 用途：
 
-- 基于 [2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-experimental-public-submit-shell-hardening-closure-review.md)，下一轮只做 docs-only decision，评估 `CjguiInternalQueueExperimentalSubmitResult` 后的 submit result hardening / handoff / stabilization / rollback 方向。
-- 当前唯一允许 public symbol 是 `cjguiExperimentalQueueSubmitShellReady(): Bool`，并已由 [visibility manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-visibility-manifest.md) 固定；下一轮默认不允许新增第二个 public symbol，不允许 richer public API structured return。
-- 当前 endpoint 明确仍没有 stable public API compatibility promise；下一轮仍不得扩大 public surface，不得使用 `enqueue` 命名承诺真实 side effect，不得实现 public C ABI，不得 real enqueue，不得接受 raw pointer / native handle / platform object。
+- 基于 [2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md)，下一轮只做 docs-only decision，评估 `CjguiInternalQueuePublicSubmitNoQueueWriteGuarantee` 后的 downstream handoff / result-shape preflight / stabilization / rollback 方向。
+- 当前唯一允许 public symbol 是 `cjguiExperimentalQueueSubmitShellReady(): Bool`，并已由 [visibility manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-visibility-manifest.md) 固定；下一轮默认不允许新增第二个 public symbol，不允许 richer public API structured return，也不修改 Bool-only 签名。
+- 当前 endpoint 明确仍没有 stable public API compatibility promise；下一轮不得扩大 public surface，不得使用 `enqueue` 命名承诺真实 side effect，不得实现 public C ABI，不得 real enqueue，不得接受 raw pointer / native handle / platform object。
 - 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage write、global mutable queue、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：

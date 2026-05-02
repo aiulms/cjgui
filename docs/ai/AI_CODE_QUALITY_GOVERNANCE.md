@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目 AI 代码质量治理
 
-最后更新：2026-05-01
+最后更新：2026-05-02
 
 性质：docs-only / code-quality governance / AI execution rule
 状态：生效中
@@ -245,6 +245,25 @@ AI 资源效率门解决的是“不要切太碎”；但仅仅把 one-symbol �
 - 本轮新增后新的 exit 是什么；不能只写“下一轮继续 boundary decision”。
 
 如果回答不了，默认停止新增 tail layer，转向 handoff consumer、permission gate decision、milestone closure 或 consolidation。
+
+### 3.2.1.6 Same-shape Boundary Brake：连续同构 owner file 必须审查
+
+Tail Endpoint Exit Gate 处理 canonical endpoint 后的出口；Same-shape Boundary Brake 处理更早出现的模板化同构风险。
+
+当同一 runway 连续出现两个以上结构高度相似的 value boundary，下一轮必须先做 thin-wrapper review。触发信号包括：
+
+- 多个新 owner file 行数接近，且都由 3-5 个 value type、对应 builder、default draft、open / defer / blocked / inconsistent 分支组成。
+- 新层主要把上一层 readiness / candidate / admission / Bool facts 改名投影到下一层。
+- stop-line 仍禁止真实资源、真实 state、真实 side effect 或下游 consumer，因此新层无法表达新的可执行 truth。
+- closure 无法说明本轮新增边界和上一层相比新增了什么不可替代语义。
+
+触发后，下一轮不得仅凭 next opening 的自然命名继续实现。必须在下面三类中选择：
+
+- **继续实现**：必须说明新边界新增的 owner truth、consumer、gate、integration 或风险证据，并说明为什么不是同构 wrapper。
+- **milestone / manifest stabilization**：固定当前 chain、canonical tail endpoint 和 stop-line。
+- **consolidation / cleanup**：删除、合并或标记 low-value helper / duplicate projection / diagnostics-only tail。
+
+本规则不禁止大文件，也不把 `600` / `700` 行作为失败信号。它禁止的是“相同形状 + 仅替换名词 + 没有新增语义”的自动推进。
 
 ### 3.2.1 实现偏置：边界清楚后默认写代码
 

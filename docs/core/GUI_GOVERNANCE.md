@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目治理总则
 
-最后更新：2026-04-30
+最后更新：2026-05-02
 
 性质：docs-only / governance gate / project rule
 状态：生效中
@@ -142,6 +142,19 @@
 当 tracker、manifest 或 closure 已经把某个 internal value tail 标记为 canonical endpoint，治理默认应把它视为出口。下一步应选择 downstream consumer / handoff integration、permission gate decision、milestone closure 或 tail consolidation，而不是继续在同一 owner 末尾追加 record / readiness / outcome / publication / handoff 的同构薄层。
 
 本条不是压制 AI 发挥，而是避免把强模型资源耗在 tail self-wrapping 上。AI 可以在清楚边界内做更大的 W2 / W3 bundle；但 bundle 应推进到新的 consumer、gate、integration 或 consolidation，而不是把同一个 Bool / defer / blocked summary 改名搬到下一层。
+
+### 1.14 Same-shape Boundary Brake：连续同构边界必须主动刹车
+
+行数不是风险本身，但连续多个 owner file 出现相同结构、相同 open / defer / blocked / fail-closed 分支、相同 type / builder / default draft 形状，而主要差异只是名词替换时，治理必须把它视为同构边界风险。
+
+当同一 runway 连续出现两个以上 same-shape value boundary，下一轮 docs-only decision 或 execution prompt 必须显式做 thin-wrapper review：
+
+- 新边界是否承载不可替代的 owner truth。
+- 是否减少重复、合并结构、接入新 consumer / gate / integration，或打开新的真实风险证据门。
+- 是否只是把上一层 Bool / candidate / readiness / blocked facts 改名搬运。
+- 如果继续实现，新的 exit 是什么；不能只写“下一轮继续 boundary decision”。
+
+如果无法证明新增边界不是 thin wrapper，默认选择 milestone / manifest stabilization / consolidation，而不是继续新增同构 owner file。
 
 ## 2. GUI 项目中的三层治理
 

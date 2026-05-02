@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-05-01
+最后更新：2026-05-02
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -15,7 +15,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 - Action Router 主线已从 action intent / admission / routing 推进到 guarded execution、handoff downstream consumer 与 queue-adjacent integration；这些仍是 value-style facts，不是真实 action side effect。
 - Queue 主线已从 admission 推进到 owner handoff、permission gate、staging、enqueue dry-run、value-style storage、commit gate、committed snapshot、immutable value-store owner shell、store write admission、immutable store write commit、write failure / rollback model、mutable store shell、mutable write admission、owner-local mutable write commit、mutable write result handoff、process-local write preflight、owner-local write realization、owner-local write result handoff、public boundary admission、public surface policy、public API admission、public result shape、public API shell、public exposure gate / symbol readiness 与 experimental public submit shell value facts；这些仍不写真实 queue storage，也不创建 global mutable queue。
 - 当前所有 runtime 进展都保持 internal-only：不公开 public runtime API / public C ABI，不接 AI provider / prompt / external agent，不接真实 event loop / scheduler / queue drain。
-- 项目治理也已经补上了文件体积闸门、AI 资源效率门、Tail Endpoint Exit Gate 和代码注释充分性门，避免 P1 被无限 thin wrapper 或不可维护注释债拖偏。
+- 项目治理也已经补上了文件体积闸门、AI 资源效率门、Tail Endpoint Exit Gate、Same-shape Boundary Brake 和代码注释充分性门，避免 P1 被无限 thin wrapper、同构 owner file 或不可维护注释债拖偏。
 
 ## 快速入口
 
@@ -70,7 +70,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 Queue public submit Bool result hardening closure：[P1 internal Queue public submit Bool result hardening closure review](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md) 已完成；当前 recommended next opening 是 `P1 internal Queue public submit Bool result hardening closure / next public submit result-boundary decision`。本轮新增 internal owner `runtime_queue_public_submit_result.cj`，只消费 `CjguiInternalQueueExperimentalSubmitResult`，固定 Bool shell result contract、diagnostic projection、no-stable-compatibility 和 no-real-queue-write guarantee；当前 public symbol allowlist 仍只有 `cjguiExperimentalQueueSubmitShellReady(): Bool`。继续禁止新增第二个 public symbol、修改 Bool-only 签名、structured public return、`enqueue` 命名、public C ABI、real enqueue、storage write、drain、scheduler / event loop / runtime cycle 和 `runtime_state.cj` 修改。
+最新 Renderer packet normalization manifest：[manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-normalization-manifest.md) 与 [closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md) 已完成；当前 recommended next opening 是 `P1 internal Renderer packet error taxonomy boundary bundle implementation`。Normalization canonical endpoint 仍是 `CjguiInternalRendererPacketNormalizationResult` / `cjguiInternalExecuteDefaultRendererPacketNormalizationDraft()`；下一步只允许 backend-agnostic failure / degraded / blocked reason taxonomy，不得新增 normalization receipt / record / publication、backend packet、command buffer、render execution、sorting side effect、public surface 或触碰 `runtime_state.cj`。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 

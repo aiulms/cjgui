@@ -1088,6 +1088,9 @@
 - AI resource-efficient bundle granularity governance update：
   - [2026-04-30-p1-ai-resource-efficient-bundle-granularity-governance-update.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-ai-resource-efficient-bundle-granularity-governance-update.md)
 
+- Same-shape Boundary Brake governance update：
+  - [2026-05-02-p1-same-shape-boundary-brake-governance-update.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-same-shape-boundary-brake-governance-update.md)
+
 - Action Router same-owner bundle runway decision：
   - [2026-04-30-p1-action-router-same-owner-bundle-runway-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-same-owner-bundle-runway-decision.md)
 
@@ -1328,6 +1331,138 @@
 - internal Queue public submit Bool result hardening boundary bundle：
   - [2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md)
 
+- Queue public submit Bool result hardening next-milestone decision：
+  - [2026-05-01-p1-public-submit-bool-result-hardening-next-milestone-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-public-submit-bool-result-hardening-next-milestone-decision.md)
+
+- Queue experimental public submit shell milestone manifest：
+  - [2026-05-01-p1-experimental-public-submit-shell-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-milestone-manifest.md)
+
+- internal Queue experimental public submit shell milestone stabilization closure：
+  - [2026-05-01-p1-internal-queue-experimental-public-submit-shell-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-experimental-public-submit-shell-milestone-stabilization-closure-review.md)
+
+- Queue public shell milestone next phase decision：
+  - [2026-05-01-p1-public-shell-milestone-next-phase-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-public-shell-milestone-next-phase-decision.md)
+
+- Scene / Renderer input preflight decision：
+  - [2026-05-01-p1-scene-renderer-input-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-scene-renderer-input-preflight-decision.md)
+
+- internal Scene / Renderer input contract boundary bundle：
+  - [2026-05-01-p1-internal-scene-renderer-input-contract-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-scene-renderer-input-contract-boundary-closure-review.md)
+
+- Scene / Renderer input next-boundary decision：
+  - [2026-05-02-p1-scene-renderer-input-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-scene-renderer-input-next-boundary-decision.md)
+
+- Scene / Renderer input manifest：
+  - [2026-05-02-p1-scene-renderer-input-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-scene-renderer-input-manifest.md)
+
+- internal Scene / Renderer input manifest stabilization closure：
+  - [2026-05-02-p1-internal-scene-renderer-input-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-scene-renderer-input-manifest-stabilization-closure-review.md)
+
+- internal RenderCommand / DisplayList command shape boundary closure：
+  - [2026-05-02-p1-internal-render-command-display-list-command-shape-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-render-command-display-list-command-shape-boundary-closure-review.md)
+
+- RenderCommand / DisplayList command shape next-boundary decision：
+  - [2026-05-02-p1-render-command-shape-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-render-command-shape-next-boundary-decision.md)
+
+- RenderCommand / DisplayList command shape manifest：
+  - [2026-05-02-p1-render-command-display-list-command-shape-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-render-command-display-list-command-shape-manifest.md)
+
+- internal RenderCommand / DisplayList command shape manifest stabilization closure：
+  - [2026-05-02-p1-internal-render-command-display-list-command-shape-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-render-command-display-list-command-shape-manifest-stabilization-closure-review.md)
+
+- internal RenderCommand material / batching hint boundary closure：
+  - [2026-05-02-p1-internal-render-command-material-batching-hint-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-render-command-material-batching-hint-boundary-closure-review.md)
+
+- RenderCommand material / batching hint next-boundary decision：
+  - [2026-05-02-p1-render-command-material-batching-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-render-command-material-batching-next-boundary-decision.md)
+
+- RenderCommand material / batching hint manifest：
+  - [2026-05-02-p1-render-command-material-batching-hint-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-render-command-material-batching-hint-manifest.md)
+
+- internal RenderCommand material / batching hint manifest stabilization closure：
+  - [2026-05-02-p1-internal-render-command-material-batching-hint-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-render-command-material-batching-hint-manifest-stabilization-closure-review.md)
+
+- internal Renderer packet handoff boundary closure：
+  - [2026-05-02-p1-internal-renderer-packet-handoff-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-handoff-boundary-closure-review.md)
+
+- Renderer backend-adapter preflight decision：
+  - [2026-05-02-p1-renderer-backend-adapter-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-backend-adapter-preflight-decision.md)
+
+- Renderer backend-adapter owner / truth preflight decision：
+  - [2026-05-02-p1-renderer-backend-adapter-owner-truth-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-backend-adapter-owner-truth-preflight-decision.md)
+
+- internal Renderer backend-adapter value boundary closure：
+  - [2026-05-02-p1-internal-renderer-backend-adapter-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-backend-adapter-value-boundary-closure-review.md)
+
+- Renderer backend contract next-boundary decision：
+  - [2026-05-02-p1-renderer-backend-contract-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-backend-contract-next-boundary-decision.md)
+
+- internal Renderer backend contract value boundary closure：
+  - [2026-05-02-p1-internal-renderer-backend-contract-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-backend-contract-value-boundary-closure-review.md)
+
+- Renderer backend capability profile next-boundary decision：
+  - [2026-05-02-p1-renderer-backend-capability-profile-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-backend-capability-profile-next-boundary-decision.md)
+
+- internal Renderer backend capability profile boundary closure：
+  - [2026-05-02-p1-internal-renderer-backend-capability-profile-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-backend-capability-profile-boundary-closure-review.md)
+
+- Renderer adapter selection next-boundary decision：
+  - [2026-05-02-p1-renderer-adapter-selection-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-adapter-selection-next-boundary-decision.md)
+
+- internal Renderer adapter selection value boundary closure：
+  - [2026-05-02-p1-internal-renderer-adapter-selection-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-adapter-selection-value-boundary-closure-review.md)
+
+- Renderer adapter binding next-boundary decision：
+  - [2026-05-02-p1-renderer-adapter-binding-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-adapter-binding-next-boundary-decision.md)
+
+- internal Renderer adapter binding value boundary closure：
+  - [2026-05-02-p1-internal-renderer-adapter-binding-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-adapter-binding-value-boundary-closure-review.md)
+
+- Renderer adapter binding next-lifecycle decision：
+  - [2026-05-02-p1-renderer-adapter-binding-next-lifecycle-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-adapter-binding-next-lifecycle-decision.md)
+
+- Renderer backend tail milestone manifest：
+  - [2026-05-02-p1-renderer-backend-tail-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-backend-tail-milestone-manifest.md)
+
+- internal Renderer backend tail milestone stabilization closure：
+  - [2026-05-02-p1-internal-renderer-backend-tail-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-backend-tail-milestone-stabilization-closure-review.md)
+
+- Renderer backend shell preflight decision：
+  - [2026-05-02-p1-renderer-backend-shell-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-backend-shell-preflight-decision.md)
+
+- internal Renderer backend shell value boundary closure：
+  - [2026-05-02-p1-internal-renderer-backend-shell-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-backend-shell-value-boundary-closure-review.md)
+
+- Renderer backend shell next-contract decision：
+  - [2026-05-02-p1-renderer-backend-shell-next-contract-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-backend-shell-next-contract-decision.md)
+
+- internal Renderer command packet validation boundary closure：
+  - [2026-05-02-p1-internal-renderer-command-packet-validation-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-command-packet-validation-boundary-closure-review.md)
+
+- Renderer command packet validation next-boundary decision：
+  - [2026-05-02-p1-renderer-command-packet-validation-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-command-packet-validation-next-boundary-decision.md)
+
+- Renderer command packet validation manifest：
+  - [2026-05-02-p1-renderer-command-packet-validation-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-command-packet-validation-manifest.md)
+
+- internal Renderer command packet validation manifest stabilization closure：
+  - [2026-05-02-p1-internal-renderer-command-packet-validation-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-command-packet-validation-manifest-stabilization-closure-review.md)
+
+- Renderer packet normalization preflight decision：
+  - [2026-05-02-p1-renderer-packet-normalization-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-normalization-preflight-decision.md)
+
+- internal Renderer packet normalization boundary closure：
+  - [2026-05-02-p1-internal-renderer-packet-normalization-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-normalization-boundary-closure-review.md)
+
+- Renderer packet normalization next-boundary decision：
+  - [2026-05-02-p1-renderer-packet-normalization-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-normalization-next-boundary-decision.md)
+
+- Renderer packet normalization manifest：
+  - [2026-05-02-p1-renderer-packet-normalization-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-normalization-manifest.md)
+
+- internal Renderer packet normalization manifest stabilization closure：
+  - [2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md)
+
 - AI-native architecture radar future plan：
   - [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)
 
@@ -1341,17 +1476,19 @@
 
 下一步推荐：
 
-- `P1 internal Queue public submit Bool result hardening closure / next public submit result-boundary decision`
+- `P1 internal Renderer packet error taxonomy boundary bundle implementation`
 
 用途：
 
-- 基于 [2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-internal-queue-public-submit-bool-result-hardening-boundary-closure-review.md)，下一轮只做 docs-only decision，评估 `CjguiInternalQueuePublicSubmitNoQueueWriteGuarantee` 后的 downstream handoff / result-shape preflight / stabilization / rollback 方向。
-- 当前唯一允许 public symbol 是 `cjguiExperimentalQueueSubmitShellReady(): Bool`，并已由 [visibility manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-experimental-public-submit-shell-visibility-manifest.md) 固定；下一轮默认不允许新增第二个 public symbol，不允许 richer public API structured return，也不修改 Bool-only 签名。
-- 当前 endpoint 明确仍没有 stable public API compatibility promise；下一轮不得扩大 public surface，不得使用 `enqueue` 命名承诺真实 side effect，不得实现 public C ABI，不得 real enqueue，不得接受 raw pointer / native handle / platform object。
+- 基于 [2026-05-02-p1-renderer-packet-normalization-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-normalization-manifest.md)，下一轮只消费 normalization endpoint 并补 failure / degraded / blocked reason taxonomy。
+- 当前 endpoint 是 `CjguiInternalRendererPacketNormalizationResult` / `cjguiInternalExecuteDefaultRendererPacketNormalizationDraft()`。
+- 不得新增 normalization receipt / record / publication thin wrapper，也不得把 taxonomy result 解释成 backend packet readiness。
+- 不得做 sorting side effect、diff / patch、backend packet、command buffer、renderer state write 或 render permission。
+- P1 仍固定 full DisplayList / command list rebuild；下一轮不得直接接 Metal / AppKit / backend，不得创建 GPU device / CAMetalLayer / MTLDevice / command buffer，不得实现 actual drawing op、Widget / Layout / Text / IME / Accessibility，不得做 dirty-region / diff / patch / ECS，也不得读取 lower-level mutable facts。
 - 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage write、global mutable queue、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：
 
-- docs-only decision：internal Queue experimental public submit shell hardening closure / next public submit result-boundary decision。
+- runtime value boundary implementation：internal Renderer packet error taxonomy boundary。
 - 后续 implementation 必须继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-API-implementation / no-stable-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、module-level `var` / escaping in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

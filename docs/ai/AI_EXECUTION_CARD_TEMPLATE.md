@@ -35,6 +35,8 @@ runtime execution tail 已到 first internal execution attempt / post-attempt ou
 
 当 manifest 已经标记 canonical endpoint，执行卡不得继续默认授权同 owner 的 tail self-wrapping。下一张卡必须优先选择 downstream consumer / handoff integration、permission gate decision、milestone closure、tail consolidation，或真实边界前置卡。若仍要新增本地 value-stage，必须写清它承载的新 truth、为什么不能由现有 endpoint 表达，以及新增后的 exit 条件。
 
+当同一 runway 已连续出现两个以上 same-shape value boundary，执行卡必须包含 thin-wrapper review。若新 boundary 只是沿用相同 type / builder / default draft / open-defer-blocked 结构并替换名词，且无法说明新增 owner truth、consumer、gate、integration 或风险证据，默认不得继续实现，改走 milestone / manifest stabilization / consolidation。
+
 执行卡如果允许修改 `.cj` 文件，必须包含单文件体积 / owner split 检查。至少写明：
 
 - 本轮目标 `.cj` 文件当前行数档位：`<=1500` / `1500-3000` / `3000-8000` / `>8000 or near 1MB`。

@@ -271,3 +271,10 @@ public allowlist 不变，仍只有 `cjguiExperimentalQueueSubmitShellReady(): B
 - [2026-05-02-p1-internal-renderer-diagnostics-policy-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-diagnostics-policy-boundary-closure-review.md)
 
 当前 downstream endpoint 是 `CjguiInternalRendererDiagnosticsPolicyResult` / `cjguiInternalExecuteDefaultRendererDiagnosticsPolicyDraft()`。它仍只表达 internal value facts，不批准 diagnostics receipt / record wrapper、logging subsystem、telemetry、observer callback、public diagnostics、backend packet、command buffer、renderer state write 或 render permission。
+
+Diagnostics policy downstream manifest 已完成：
+
+- [2026-05-02-p1-renderer-diagnostics-policy-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-diagnostics-policy-manifest.md)
+- [2026-05-02-p1-internal-renderer-diagnostics-policy-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-diagnostics-policy-manifest-stabilization-closure-review.md)
+
+当前 next opening 已转向 `P1 internal Renderer diagnostics sink preflight decision`，仍为 docs-only preflight，不批准 logging subsystem、telemetry、observer callback、public diagnostics、file write、stdout、event publication 或 external artifact retention。

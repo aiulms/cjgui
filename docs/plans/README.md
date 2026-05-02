@@ -1463,6 +1463,33 @@
 - internal Renderer packet normalization manifest stabilization closure：
   - [2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md)
 
+- internal Renderer packet error taxonomy boundary closure：
+  - [2026-05-02-p1-internal-renderer-packet-error-taxonomy-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-error-taxonomy-boundary-closure-review.md)
+
+- Renderer packet error taxonomy next-boundary decision：
+  - [2026-05-02-p1-renderer-packet-error-taxonomy-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-error-taxonomy-next-boundary-decision.md)
+
+- Renderer packet error taxonomy manifest：
+  - [2026-05-02-p1-renderer-packet-error-taxonomy-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-error-taxonomy-manifest.md)
+
+- internal Renderer packet error taxonomy manifest stabilization closure：
+  - [2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md)
+
+- internal Renderer packet diagnostics boundary closure：
+  - [2026-05-02-p1-internal-renderer-packet-diagnostics-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-diagnostics-boundary-closure-review.md)
+
+- Renderer packet diagnostics next-boundary decision：
+  - [2026-05-02-p1-renderer-packet-diagnostics-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-diagnostics-next-boundary-decision.md)
+
+- Renderer packet diagnostics manifest：
+  - [2026-05-02-p1-renderer-packet-diagnostics-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-diagnostics-manifest.md)
+
+- internal Renderer packet diagnostics manifest stabilization closure：
+  - [2026-05-02-p1-internal-renderer-packet-diagnostics-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-diagnostics-manifest-stabilization-closure-review.md)
+
+- internal Renderer diagnostics policy boundary closure：
+  - [2026-05-02-p1-internal-renderer-diagnostics-policy-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-diagnostics-policy-boundary-closure-review.md)
+
 - AI-native architecture radar future plan：
   - [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)
 
@@ -1476,19 +1503,20 @@
 
 下一步推荐：
 
-- `P1 internal Renderer packet error taxonomy boundary bundle implementation`
+- `P1 internal Renderer diagnostics policy closure / next renderer diagnostics decision`
 
 用途：
 
-- 基于 [2026-05-02-p1-renderer-packet-normalization-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-normalization-manifest.md)，下一轮只消费 normalization endpoint 并补 failure / degraded / blocked reason taxonomy。
-- 当前 endpoint 是 `CjguiInternalRendererPacketNormalizationResult` / `cjguiInternalExecuteDefaultRendererPacketNormalizationDraft()`。
-- 不得新增 normalization receipt / record / publication thin wrapper，也不得把 taxonomy result 解释成 backend packet readiness。
+- 基于 [2026-05-02-p1-internal-renderer-diagnostics-policy-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-diagnostics-policy-boundary-closure-review.md)，下一轮判断 diagnostics policy endpoint 是否进入 manifest stabilization 或另有明确新增语义的 diagnostics runway。
+- 当前 endpoint 是 `CjguiInternalRendererDiagnosticsPolicyResult` / `cjguiInternalExecuteDefaultRendererDiagnosticsPolicyDraft()`。
+- 不得新增 diagnostics receipt / record / publication、diagnostics publication wrapper、backend readiness wrapper 或 policy wrapper。
+- 不得引入异常系统、公开错误入口、后端错误处理器、logging subsystem、telemetry、observer callback、外部通知入口或绘制失败回调。
 - 不得做 sorting side effect、diff / patch、backend packet、command buffer、renderer state write 或 render permission。
 - P1 仍固定 full DisplayList / command list rebuild；下一轮不得直接接 Metal / AppKit / backend，不得创建 GPU device / CAMetalLayer / MTLDevice / command buffer，不得实现 actual drawing op、Widget / Layout / Text / IME / Accessibility，不得做 dirty-region / diff / patch / ECS，也不得读取 lower-level mutable facts。
 - 继续禁止真实 action execution、AI public API、model provider / prompt / external agent、actual queue storage write、global mutable queue、enqueue side effect、drain、event loop、scheduler implementation、runtime cycle execution、global state write、public API / C ABI、Request+Report 双层和五件套 sanity。
 
 当前可执行动作：
 
-- runtime value boundary implementation：internal Renderer packet error taxonomy boundary。
+- docs-only decision：internal Renderer diagnostics policy closure / next renderer diagnostics decision。
 - 后续 implementation 必须继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-API-implementation / no-stable-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、module-level `var` / escaping in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

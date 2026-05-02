@@ -255,3 +255,37 @@ public allowlist 不变，仍只有 `cjguiExperimentalQueueSubmitShellReady(): B
 `P1 internal Renderer packet error taxonomy boundary bundle implementation`
 
 下一轮若实现，应保持 backend-agnostic value facts，只消费 `CjguiInternalRendererPacketNormalizationResult`，表达 normalization failure / degraded / blocked reason taxonomy。它不批准 backend packet、command buffer、sorting side effect、draw-call merge、GPU batching、render execution、diff / patch 或 public surface expansion。
+
+## Downstream Status
+
+Renderer packet error taxonomy boundary 已落地：
+
+- [2026-05-02-p1-internal-renderer-packet-error-taxonomy-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-error-taxonomy-boundary-closure-review.md)
+
+当前 downstream endpoint 是 `CjguiInternalRendererPacketErrorTaxonomyResult` / `cjguiInternalExecuteDefaultRendererPacketErrorTaxonomyDraft()`。它只消费 `CjguiInternalRendererPacketNormalizationResult`，表达 failure taxonomy / degraded reason / blocked reason / taxonomy result value facts；它不是异常系统、公开错误入口、后端错误处理器、外部通知入口、绘制失败回调、backend packet、command buffer、renderer state write 或 render permission。
+
+Renderer packet error taxonomy next-boundary decision 已完成：
+
+- [2026-05-02-p1-renderer-packet-error-taxonomy-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-error-taxonomy-next-boundary-decision.md)
+
+该 decision 判定 `CjguiInternalRendererPacketErrorTaxonomyResult` 已足够作为 taxonomy endpoint；下一步进入 error taxonomy manifest stabilization，而不是新增 taxonomy receipt / record / publication、diagnostics publication wrapper 或 backend readiness wrapper。
+
+Renderer packet error taxonomy manifest 已完成：
+
+- [2026-05-02-p1-renderer-packet-error-taxonomy-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-error-taxonomy-manifest.md)
+- [2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md)
+
+该 manifest 固定 `CjguiInternalRendererPacketErrorTaxonomyResult` / `cjguiInternalExecuteDefaultRendererPacketErrorTaxonomyDraft()` 为 taxonomy canonical endpoint。Same-shape Boundary Brake 生效：下一阶段不新增 taxonomy receipt / record / publication，而是进入 internal packet diagnostics boundary。
+
+Renderer packet diagnostics boundary 已完成：
+
+- [2026-05-02-p1-internal-renderer-packet-diagnostics-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-diagnostics-boundary-closure-review.md)
+
+该 boundary 将 taxonomy endpoint 投影为 `CjguiInternalRendererPacketDiagnosticsResult` / `cjguiInternalExecuteDefaultRendererPacketDiagnosticsDraft()`，只表达 internal diagnostics summary / severity / evidence / result value facts。它不是 public diagnostics、外部诊断写入、observer callback、backend error handler、render failure callback、backend packet、command buffer、renderer state write 或 render permission。
+
+Renderer packet diagnostics manifest 已完成：
+
+- [2026-05-02-p1-renderer-packet-diagnostics-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-diagnostics-manifest.md)
+- [2026-05-02-p1-internal-renderer-packet-diagnostics-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-diagnostics-manifest-stabilization-closure-review.md)
+
+该 manifest 固定 diagnostics endpoint，并明确它不是 diagnostics receipt / record / publication、logging subsystem、telemetry、observer callback、public diagnostics、backend packet、command buffer、renderer state write 或 render permission。

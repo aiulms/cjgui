@@ -241,3 +241,22 @@ Renderer packet normalization manifest 已完成：
 - [2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md)
 
 该 manifest 固定 `CjguiInternalRendererPacketNormalizationResult` / `cjguiInternalExecuteDefaultRendererPacketNormalizationDraft()` 为 normalization canonical endpoint。Same-shape Boundary Brake 生效：下一阶段不新增 normalization receipt / record / publication，而是进入 packet error taxonomy boundary。
+
+Renderer packet error taxonomy boundary 已落地：
+
+- [2026-05-02-p1-internal-renderer-packet-error-taxonomy-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-error-taxonomy-boundary-closure-review.md)
+
+当前 downstream endpoint 是 `CjguiInternalRendererPacketErrorTaxonomyResult` / `cjguiInternalExecuteDefaultRendererPacketErrorTaxonomyDraft()`。它在 normalization endpoint 后补 failure / degraded / blocked reason taxonomy；不新增 taxonomy receipt / record / publication，不引入异常系统、后端错误处理器、绘制失败回调或 public surface。
+
+Renderer packet error taxonomy next-boundary decision 已完成：
+
+- [2026-05-02-p1-renderer-packet-error-taxonomy-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-error-taxonomy-next-boundary-decision.md)
+
+该 decision 选择 error taxonomy manifest stabilization，继续防止 packet validation / normalization / taxonomy 后出现 receipt / record / publication 同构尾巴。
+
+Renderer packet error taxonomy manifest 已完成：
+
+- [2026-05-02-p1-renderer-packet-error-taxonomy-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-packet-error-taxonomy-manifest.md)
+- [2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md)
+
+当前 downstream endpoint 仍是 `CjguiInternalRendererPacketErrorTaxonomyResult` / `cjguiInternalExecuteDefaultRendererPacketErrorTaxonomyDraft()`。它已由 manifest 固定为 internal-only failure / degraded / blocked reason taxonomy facts；下一阶段进入 internal packet diagnostics boundary，而不是 taxonomy receipt / record / publication。

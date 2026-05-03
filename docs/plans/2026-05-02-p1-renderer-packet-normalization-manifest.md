@@ -289,3 +289,95 @@ Renderer packet diagnostics manifest 已完成：
 - [2026-05-02-p1-internal-renderer-packet-diagnostics-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-diagnostics-manifest-stabilization-closure-review.md)
 
 该 manifest 固定 diagnostics endpoint，并明确它不是 diagnostics receipt / record / publication、logging subsystem、telemetry、observer callback、public diagnostics、backend packet、command buffer、renderer state write 或 render permission。
+
+## Downstream Post-normalization Handoff Preflight
+
+Renderer command packet post-normalization handoff preflight 已完成：
+
+- [2026-05-03-p1-renderer-command-packet-post-normalization-handoff-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-packet-post-normalization-handoff-preflight-decision.md)
+
+Preflight 结论：当前没有足够 concrete downstream consumer / gate / integration evidence 来批准 post-normalization handoff implementation。现有 `runtime_renderer_handoff.cj` 只消费 `CjguiInternalRenderBatchingPacket`，canonical endpoint 是 `CjguiInternalRendererPacketHandoffReceipt`，属于旧 batching-packet handoff / backend no-render tail 起点；本轮不复用它，也不新建 handoff wrapper。
+
+新的 next opening 是：
+
+`P1 internal Renderer command packet ordering / material grouping hardening boundary bundle implementation`
+
+## Downstream Ordering / Grouping Hardening Boundary
+
+Renderer command packet ordering / material grouping hardening boundary 已落地：
+
+- [2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-hardening-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-hardening-boundary-closure-review.md)
+
+新增 owner file：
+
+- `runtime/cjgui/src/runtime_renderer_packet_ordering.cj`
+
+当前 downstream endpoint：
+
+- `CjguiInternalRendererPacketOrderingHardeningResult`
+- `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`
+
+该 endpoint 只消费 `CjguiInternalRendererPacketNormalizationResult`，表达 ordering basis / material grouping scope / hint preservation policy / no-sort-no-merge gate / hardening result value facts。它不是 normalization receipt / record / publication、post-normalization handoff wrapper、backend packet、command buffer、renderer state write、render permission、sorting side effect、draw-call merge 或 GPU batching。
+
+新的 next opening 是：
+
+`P1 internal Renderer command packet ordering / material grouping hardening closure / next renderer packet boundary decision`
+
+## Downstream Ordering / Grouping Next-boundary Decision
+
+Renderer command packet ordering / material grouping next-boundary decision 已完成：
+
+- [2026-05-03-p1-renderer-command-packet-ordering-material-grouping-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-packet-ordering-material-grouping-next-boundary-decision.md)
+
+Decision 结论：`CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()` 已足够作为当前 ordering / material grouping hardening endpoint。下一步应先做 manifest stabilization，固定 `runtime_renderer_packet_ordering.cj` owner / truth / canonical endpoint / stop-line，而不是新增 ordering receipt / record / publication、post-normalization handoff wrapper、backend readiness、command buffer readiness、renderer state write 或 render permission。
+
+新的 next opening 是：
+
+`P1 internal Renderer command packet ordering / material grouping manifest stabilization bundle implementation`
+
+## Downstream Ordering / Grouping Manifest
+
+Renderer command packet ordering / material grouping manifest stabilization 已完成：
+
+- [2026-05-03-p1-renderer-command-packet-ordering-material-grouping-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-packet-ordering-material-grouping-manifest.md)
+- [2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-manifest-stabilization-closure-review.md)
+
+该 manifest 固定 `runtime_renderer_packet_ordering.cj` owner / truth / canonical endpoint / stop-line。当前 downstream endpoint 是 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`；它只消费 `CjguiInternalRendererPacketNormalizationResult`，表达 ordering basis / material grouping scope / hint preservation policy / no-sort-no-merge gate / hardening result value facts。它不是 ordering receipt / record / publication、post-normalization handoff wrapper、backend readiness、command buffer readiness、renderer state write 或 render permission。
+
+新的 next opening 是：
+
+`P1 internal Renderer post-normalization packet integration preflight decision`
+
+## Downstream Post-normalization Integration Preflight
+
+Renderer post-normalization packet integration preflight 已完成：
+
+- [2026-05-03-p1-renderer-post-normalization-packet-integration-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-post-normalization-packet-integration-preflight-decision.md)
+
+Preflight 结论：ordering / material grouping hardening endpoint 后仍缺少足够 downstream owner / consumer / gate / integration evidence，因此不批准 runtime packet integration implementation、不复用旧 `runtime_renderer_handoff.cj` batching-packet receipt 语义、不新增 integration receipt / record / publication 或 backend readiness。
+
+新的 next opening 是：
+
+`P1 internal Renderer packet integration manifest / owner-truth preflight stabilization`
+
+## Downstream Integration Owner-truth Manifest
+
+Renderer packet integration owner-truth preflight manifest 已完成：
+
+- [2026-05-03-p1-renderer-packet-integration-owner-truth-preflight-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-packet-integration-owner-truth-preflight-manifest.md)
+- [2026-05-03-p1-internal-renderer-packet-integration-owner-truth-preflight-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-packet-integration-owner-truth-preflight-stabilization-closure-review.md)
+
+Manifest 结论：normalization -> ordering hardening 后仍没有足够 downstream owner / consumer / gate / integration evidence，因此不批准 runtime packet integration owner、不新增 integration receipt / record / publication、不复用旧 `runtime_renderer_handoff.cj` batching-packet receipt 语义。
+
+新的 next opening 是：
+
+`P1 internal Renderer packet owner-truth milestone stabilization bundle implementation`
+
+## Downstream Packet Owner-truth Milestone
+
+Renderer packet owner-truth milestone 已完成：
+
+- [2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md)
+- [2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md)
+
+Milestone 将 `CjguiInternalRendererPacketNormalizationResult` 固定为 command packet 非 diagnostics owner chain 的 normalization 层，并确认当前 canonical packet truth 已到 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`。它不批准 `runtime_renderer_packet_integration.cj`、post-normalization handoff wrapper、backend readiness wrapper、command buffer、render execution 或 renderer state write。

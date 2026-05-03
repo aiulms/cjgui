@@ -256,4 +256,33 @@ public allowlist 不变，仍只有 `cjguiExperimentalQueueSubmitShellReady(): B
 - `CjguiInternalRendererDiagnosticsNoOutputReadiness`
 - `cjguiInternalExecuteDefaultRendererDiagnosticsSinkPolicyDraft()`
 
-该 endpoint 仍只允许 internal value facts，不批准 logging subsystem、telemetry、observer callback、event bus、public diagnostics、file write、stdout / stderr、event publication、external artifact retention、backend packet、command buffer、renderer state write 或 render permission。当前 next opening 是 `P1 internal Renderer diagnostics sink policy closure / next diagnostics sink decision`。
+该 endpoint 仍只允许 internal value facts，不批准 logging subsystem、telemetry、observer callback、event bus、public diagnostics、file write、stdout / stderr、event publication、external artifact retention、backend packet、command buffer、renderer state write 或 render permission。
+
+`P1 internal Renderer diagnostics sink policy closure / next diagnostics sink decision` 已完成，decision 见：
+
+- [2026-05-02-p1-renderer-diagnostics-sink-policy-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-diagnostics-sink-policy-next-boundary-decision.md)
+
+当时 next opening 是 `P1 internal Renderer diagnostics sink policy manifest stabilization bundle implementation`。
+
+`P1 internal Renderer diagnostics sink policy manifest stabilization bundle implementation` 已完成，manifest / closure 见：
+
+- [2026-05-02-p1-renderer-diagnostics-sink-policy-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-renderer-diagnostics-sink-policy-manifest.md)
+- [2026-05-02-p1-internal-renderer-diagnostics-sink-policy-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-diagnostics-sink-policy-manifest-stabilization-closure-review.md)
+
+当前 downstream canonical endpoint 仍是：
+
+- `CjguiInternalRendererDiagnosticsNoOutputReadiness`
+- `cjguiInternalExecuteDefaultRendererDiagnosticsSinkPolicyDraft()`
+
+该 endpoint 已由 sink policy manifest 封账，只表示 no-output sink policy value facts；它不批准 logging subsystem、telemetry、observer callback、event bus、public diagnostics、file write、stdout / stderr、event publication、external artifact retention、backend packet、command buffer、renderer state write 或 render permission。
+
+当前 next opening 是 `P1 internal Renderer diagnostics output sink preflight decision`。
+
+## Pipeline Milestone Status
+
+Renderer local diagnostics no-output / no-op pipeline milestone 已完成：
+
+- [2026-05-03-p1-renderer-local-diagnostics-pipeline-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-local-diagnostics-pipeline-milestone-manifest.md)
+- [2026-05-03-p1-internal-renderer-local-diagnostics-pipeline-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-local-diagnostics-pipeline-milestone-stabilization-closure-review.md)
+
+Milestone 固定当前 canonical tail：`CjguiInternalRendererNoOpLocalOutputReadiness` / `cjguiInternalExecuteDefaultRendererRealLocalOutputNoOpDraft()`。后续 reopening 必须从 docs-only preflight 或 duplicate audit 开始；不得直接新增 diagnostics policy receipt / record / publication、真实 logging、telemetry、observer callback、event bus、public diagnostics、file / stdout / stderr sink 或 external artifact retention。

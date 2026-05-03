@@ -260,3 +260,19 @@ Renderer packet error taxonomy manifest 已完成：
 - [2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-error-taxonomy-manifest-stabilization-closure-review.md)
 
 当前 downstream endpoint 仍是 `CjguiInternalRendererPacketErrorTaxonomyResult` / `cjguiInternalExecuteDefaultRendererPacketErrorTaxonomyDraft()`。它已由 manifest 固定为 internal-only failure / degraded / blocked reason taxonomy facts；下一阶段进入 internal packet diagnostics boundary，而不是 taxonomy receipt / record / publication。
+
+Renderer command packet ordering / material grouping manifest 已完成：
+
+- [2026-05-03-p1-renderer-command-packet-ordering-material-grouping-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-packet-ordering-material-grouping-manifest.md)
+- [2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 固定 validation -> normalization 后的 ordering / material grouping hardening endpoint：`CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`。它仍是 backend-agnostic value facts，不是 receipt / record / publication、backend packet、command buffer、renderer state write、render execution、sorting side effect 或 draw-call merge / GPU batching。
+
+## Downstream Packet Owner-truth Milestone
+
+Renderer packet owner-truth milestone 已完成：
+
+- [2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md)
+- [2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md)
+
+Milestone 将 `CjguiInternalRendererCommandValidationResult` 固定为 command packet 非 diagnostics owner chain 的 validation 层。当前 canonical packet truth 是 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`；当前 evidence gap 是 downstream owner / consumer / gate / integration evidence 不足，不是 validation 失败。

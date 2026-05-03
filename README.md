@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-05-02
+最后更新：2026-05-03
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -70,7 +70,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 Renderer diagnostics sink policy boundary：[closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-diagnostics-sink-policy-boundary-closure-review.md) 已完成；当前 recommended next opening 是 `P1 internal Renderer diagnostics sink policy closure / next diagnostics sink decision`。当前 canonical endpoint 是 `CjguiInternalRendererDiagnosticsNoOutputReadiness` / `cjguiInternalExecuteDefaultRendererDiagnosticsSinkPolicyDraft()`；它只表示 sink intent / sink policy / privacy guard / lifecycle guard / no-output readiness facts，不是真实 logging / telemetry / observer callback / public diagnostics / file output / stdout / stderr / event bus / artifact retention。
+最新 Renderer command queue lifecycle manifest：[manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md) 与 [closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md) 已完成；当前 recommended next opening 是 `P1 internal Renderer drawable acquisition lifecycle preflight decision`。Manifest 固定 `runtime_renderer_command_queue.cj` owner / truth / canonical endpoint / stop-line，canonical endpoint 是 `CjguiInternalRendererNoCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererCommandQueueLifecycleDraft()`；它不是 command queue permission、backend readiness、command buffer permission、render permission 或 renderer state write。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 

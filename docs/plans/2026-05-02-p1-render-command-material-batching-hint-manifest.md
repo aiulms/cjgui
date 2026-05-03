@@ -309,3 +309,19 @@ Renderer packet normalization manifest 已完成：
 - [2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-packet-normalization-manifest-stabilization-closure-review.md)
 
 该 manifest 固定 normalization owner / truth / canonical endpoint / stop-line，并选择下一阶段进入 `P1 internal Renderer packet error taxonomy boundary bundle implementation`。下一阶段仍只做 backend-agnostic value facts，不进入 backend packet、command buffer、sorting side effect、draw-call merge、GPU batching、diff / patch 或 render execution。
+
+Renderer command packet ordering / material grouping manifest 已完成：
+
+- [2026-05-03-p1-renderer-command-packet-ordering-material-grouping-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-packet-ordering-material-grouping-manifest.md)
+- [2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-packet-ordering-material-grouping-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 固定 `runtime_renderer_packet_ordering.cj` owner / truth / canonical endpoint / stop-line。`CjguiInternalRendererPacketOrderingHardeningResult` 只表达 ordering basis / material grouping scope / hint preservation policy / no-sort-no-merge gate / hardening result value facts；它不执行排序，不做真实 draw-call merge / GPU batching，不改 packet，不接 backend / command buffer / renderer state write / render execution。
+
+## Downstream Packet Owner-truth Milestone
+
+Renderer packet owner-truth milestone 已完成：
+
+- [2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md)
+- [2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md)
+
+Milestone 将 `CjguiInternalRenderBatchingPacket` 固定为 command packet 非 diagnostics owner chain 的 material / batching hint 层，并将旧 `CjguiInternalRendererPacketHandoffReceipt` / backend no-render tail 标记为 legacy context。当前 canonical packet truth 是 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`；不批准复用旧 handoff receipt 作为 post-normalization integration evidence。

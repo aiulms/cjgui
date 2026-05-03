@@ -155,3 +155,12 @@ public symbol allowlist 未变：
 - 不实现真实 draw op 或真实 draw-call merge。
 - 不做 dirty-region / diff / patch。
 - 不触碰 `runtime_state.cj`。
+
+## Downstream Packet Owner-truth Milestone
+
+Renderer packet owner-truth milestone 已完成：
+
+- [2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-packet-owner-truth-milestone-manifest.md)
+- [2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-packet-owner-truth-milestone-stabilization-closure-review.md)
+
+Milestone 将 `CjguiInternalRenderCommandPacket` 固定为 command packet 非 diagnostics owner chain 的 RenderCommand shape 层。当前 canonical packet truth 是 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`；integration / backend-readiness evidence 暂不足，不批准 post-normalization handoff wrapper、receipt / record / publication、backend readiness wrapper 或 render execution。

@@ -278,3 +278,12 @@ Diagnostics policy downstream manifest 已完成：
 - [2026-05-02-p1-internal-renderer-diagnostics-policy-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-internal-renderer-diagnostics-policy-manifest-stabilization-closure-review.md)
 
 当前 next opening 已转向 `P1 internal Renderer diagnostics sink preflight decision`，仍为 docs-only preflight，不批准 logging subsystem、telemetry、observer callback、public diagnostics、file write、stdout、event publication 或 external artifact retention。
+
+## Pipeline Milestone Status
+
+Renderer local diagnostics no-output / no-op pipeline milestone 已完成：
+
+- [2026-05-03-p1-renderer-local-diagnostics-pipeline-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-local-diagnostics-pipeline-milestone-manifest.md)
+- [2026-05-03-p1-internal-renderer-local-diagnostics-pipeline-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-local-diagnostics-pipeline-milestone-stabilization-closure-review.md)
+
+Milestone 固定当前 canonical tail：`CjguiInternalRendererNoOpLocalOutputReadiness` / `cjguiInternalExecuteDefaultRendererRealLocalOutputNoOpDraft()`。后续 reopening 必须从 docs-only preflight 或 duplicate audit 开始；不得直接新增 diagnostics receipt / record / publication、真实 logging、telemetry、observer callback、event bus、public diagnostics、file / stdout / stderr sink 或 external artifact retention。

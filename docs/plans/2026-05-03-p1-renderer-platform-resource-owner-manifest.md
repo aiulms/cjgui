@@ -277,3 +277,11 @@ Renderer command queue lifecycle manifest stabilization 已完成：
 - [2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md)
 
 该 manifest 固定 `CjguiInternalRendererNoCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererCommandQueueLifecycleDraft()` 为 no-command-queue lifecycle endpoint；下一阶段只允许 docs-only drawable acquisition lifecycle preflight，不直接获取 drawable。
+
+## Downstream Drawable Acquisition Lifecycle Preflight
+
+Renderer drawable acquisition lifecycle preflight 已完成：
+
+- [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md)
+
+该 preflight 选择 `P1 internal Renderer drawable acquisition lifecycle value boundary bundle implementation` 作为下一阶段 opening。若下一轮实现，owner 必须只消费 `CjguiInternalRendererNoCommandQueueReadiness`，只输出 drawable acquisition lifecycle intent / drawable availability policy / acquisition timing guard / presentation ownership policy / no-drawable readiness value facts；不得获取 drawable，不得创建 `CAMetalLayer`、`CAMetalDrawable` / `MTLDrawable`、command buffer、render pass、encoder、native handle 或 raw pointer。

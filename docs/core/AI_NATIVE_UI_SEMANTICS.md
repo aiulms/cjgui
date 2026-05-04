@@ -1,6 +1,6 @@
 # AI 原生 UI 语义方向
 
-最后更新：2026-04-29
+最后更新：2026-05-04
 
 ## 1. 文档定位
 
@@ -316,6 +316,43 @@ AI action 不是可信 OS 输入。
 
 否则会与 “极致轻量的通用 GUI 框架” 目标冲突。
 
+### 9.6 Future semantic openings
+
+以下 future openings 已登记，但不自动开启：
+
+- `P1 semantic physical operability / occlusion gate preflight`
+- `P1 semantic interaction stability / pending gate preflight`
+- `P1 layout-derived semantic association preflight`
+
+它们分别处理：
+
+- AI action 是否拥有与人类一致的物理可操作边界；
+- AI 连续 action 是否必须等待 UI stable；
+- label / control / row / group / section 等关系能否从 Element / Layout 结构中自动推导。
+
+这些 openings 的共同 stop-line：
+
+- 不让 semantic tree 成为第二真相源。
+- 不让 AI 绕过 Action Router / app owner。
+- 不在没有 Element / Layout / Scene / hit-test owner truth 前实现语义推导。
+- 不把 `enabled`、`visible`、`stable` 或 `associated` 这类事实写成无 owner 的猜测。
+
+更详细 intake 见 [2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)。
+
+### 9.7 Foreign surface / browser-kernel containment
+
+CJGUI 不把浏览器作为宿主，也不把 WebView 作为主渲染管线。
+
+但远期可以把 browser kernel / WebView / Chromium / WebKit 作为可选 `foreign surface` 研究对象：
+
+- 它只能是可选 component / plugin，不进入默认 runtime 重量。
+- 它不能拥有系统窗口、CJGUI compositor、Action Router 或 app state truth。
+- 它不能直接接收 OS input；输入必须先经过 CJGUI focus / Action Router / coordinate gate。
+- 它不能把 DOM / accessibility tree 直接提升为 CJGUI semantic truth。
+- 它如果提供 texture、semantic 或 action evidence，必须标注 provenance，并经过 CJGUI owner gate。
+
+这个方向只作为未来兼容复杂富文本、Markdown preview、legacy SaaS 或 Web 文档的路线雷达，不批准当前实现 browser kernel integration。
+
 ## 10. 对当前阶段的影响
 
 当前阶段不实现 AI 原生 UI。
@@ -354,6 +391,7 @@ Element
 - 不做 Controller registry / Controller handle。
 - 不做 IPC。
 - 不实现 S-expression action protocol。
+- 不实现 browser kernel / WebView / foreign surface integration。
 - 不让 AI action 与 mouse / keyboard 形成第二套状态机。
 - 不为了 AI 便利把高频局部状态提升进全局状态树。
 - 未来若进入 action 设计，AI action 和鼠标键盘事件应能进入同一 owner-controlled event queue，而不是开后门。
@@ -419,4 +457,5 @@ Element
 - 把 “语义树不能成为第二真相源” 写入长期治理原则
 - 把 “局部状态快照 + 受限 Controller Handle” 写入未来 AI 跨组件协作的官方设计模式
 - 把物理可见性、时序稳定、空间语义、zero-trust action、IPC 边界列为 future semantic first slice 的必答问题
+- 把 foreign surface / browser-kernel containment 记录为远期可选 component 雷达，而不是当前实现任务
 - 把 S-expression 记录为未来 AI-authored action command 的 preferred north-star candidate，而不是当前实现任务

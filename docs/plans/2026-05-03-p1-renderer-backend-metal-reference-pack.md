@@ -269,6 +269,30 @@ Reference pack 已支撑 command queue lifecycle preflight：
 
 Command queue preflight 引用的 evidence 仍只证明 owner / ownership / creation guard / lifetime / no-command-queue 语义，不批准 `MTLCommandQueue` creation、command buffer creation / submission、drawable acquisition、render pass / encoder creation、backend implementation、render execution 或 renderer state write。
 
+## Downstream Encoder Lifecycle Preflight
+
+Reference pack 已支撑 renderer encoder lifecycle preflight：
+
+- [2026-05-03-p1-renderer-encoder-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-encoder-lifecycle-preflight-decision.md)
+
+Encoder preflight 引用的 evidence 仍只证明 encoding scope / pipeline binding guard / end-encoding / no-encoder 语义，不批准 `MTLRenderCommandEncoder` creation、pipeline state binding、resource binding、draw calls、backend implementation、render execution 或 renderer state write。下一步若进入 runtime owner，也只能是 internal value facts，不是真实 backend / Metal implementation。
+
+## Downstream Draw Call Lifecycle Preflight
+
+Reference pack 已支撑 renderer draw call lifecycle preflight：
+
+- [2026-05-03-p1-renderer-draw-call-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-draw-call-lifecycle-preflight-decision.md)
+
+Draw call preflight 引用的 evidence 仍只证明 draw command shape / geometry source / draw sequencing / no-draw-call 语义，不批准 render command encoder calls、pipeline state binding、vertex / index buffer binding、texture binding、draw calls、backend implementation、GPU submission、render execution 或 renderer state write。下一步若进入 runtime owner，也只能是 internal value facts，不是真实 backend / Metal implementation。
+
+## Downstream Pipeline State Lifecycle Preflight
+
+Reference pack 已支撑 renderer pipeline state lifecycle preflight：
+
+- [2026-05-04-p1-renderer-pipeline-state-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-pipeline-state-lifecycle-preflight-decision.md)
+
+Pipeline state preflight 引用的 evidence 仍只证明 shader role / descriptor policy / compatibility guard / no-pipeline-state 语义，不批准 `MTLRenderPipelineState` / `MTLRenderPipelineDescriptor` creation、shader library / function resolution、pipeline compilation、pipeline cache mutation、encoder binding、buffer / texture binding、draw calls、backend implementation、GPU submission、render execution 或 renderer state write。下一步若进入 runtime owner，也只能是 internal value facts，不是真实 backend / Metal implementation。
+
 ## Next Stage Candidate Comparison
 
 ### A. P1 internal Renderer backend-readiness preflight decision
@@ -362,3 +386,74 @@ Renderer platform resource owner next-boundary decision 已完成：
 - [2026-05-03-p1-renderer-platform-resource-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-platform-resource-owner-next-boundary-decision.md)
 
 该 decision 判定 `CjguiInternalRendererNoPlatformResourceReadiness` 足够作为当前 no-platform-resource endpoint。Reference pack 继续作为 future lifecycle preflight evidence，不批准 command queue creation、drawable acquisition、command buffer、render execution 或 renderer state write。
+
+## Downstream Drawable Acquisition Lifecycle Preflight
+
+Renderer drawable acquisition lifecycle preflight 已完成：
+
+- [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md)
+
+该 preflight 引用本 reference pack 中的 `CAMetalLayer` drawable pool、`nextDrawable()` availability / failure、late-bound acquisition、AppKit resize / backing scale / color 与 frame pacing evidence，判定下一步可以进入 internal-only drawable acquisition lifecycle value boundary。Reference pack 仍只是 docs evidence，不是 runtime input，不批准真实 drawable acquisition、`CAMetalLayer` / drawable object creation、command buffer、render pass、encoder、backend implementation、render execution 或 renderer state write。
+
+## Downstream Command Buffer Lifecycle Preflight
+
+Renderer command buffer lifecycle preflight 已完成：
+
+- [2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md)
+
+该 preflight 引用本 reference pack 中的 command buffer creation / encoding / commit / completion-failure phase、commit 后不可复用、presentation / completion relation 与 resource retention evidence，判定下一步可以进入 internal-only command buffer lifecycle value boundary。Reference pack 仍只是 docs evidence，不是 runtime input，不批准 `MTLCommandBuffer` creation / commit、command queue creation、drawable acquisition、render pass / encoder creation、backend implementation、render execution 或 renderer state write。
+
+## Downstream Command Buffer Lifecycle Manifest
+
+Renderer command buffer lifecycle manifest stabilization 已完成：
+
+- [2026-05-03-p1-renderer-command-buffer-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-manifest.md)
+- [2026-05-03-p1-internal-renderer-command-buffer-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-buffer-lifecycle-manifest-stabilization-closure-review.md)
+
+该 manifest 只使用本 reference pack 的 command buffer lifecycle evidence 来固定 no-command-buffer value endpoint；reference pack 仍不是 runtime input，不批准 render pass / encoder creation、backend implementation、render execution 或 renderer state write。下一步若进入 render pass lifecycle，只能先做 docs-only preflight。
+
+## Downstream Render Pass Lifecycle Preflight
+
+Renderer render pass lifecycle preflight 已完成：
+
+- [2026-05-03-p1-renderer-render-pass-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-render-pass-lifecycle-preflight-decision.md)
+
+该 preflight 引用本 reference pack 中的 render pass descriptor / attachment / load-store / target texture evidence，以及 command buffer、drawable、AppKit resize / scale / color-space evidence，判定下一步可以进入 internal-only render pass lifecycle value boundary。
+
+Reference pack 仍只是 docs evidence，不是 runtime input，不批准 `MTLRenderPassDescriptor` creation、render encoder creation、attachment object ownership、drawable texture exposure、backend implementation、render execution、draw call 或 renderer state write。
+
+## Downstream Render Execution Preflight
+
+Renderer render execution preflight 已完成：
+
+- [2026-05-04-p1-renderer-render-execution-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-render-execution-preflight-decision.md)
+
+该 preflight 使用本 reference pack 中的 command buffer commit / completion evidence、render pass / encoder lifecycle evidence、draw call / pipeline relation evidence、frame pacing evidence 与 resource ownership evidence，判定下一步可以进入 internal-only render execution no-op value boundary。Reference pack 仍只是 docs evidence，不是 runtime input，不批准真实 render execution、command buffer commit、GPU submission、encoder calls、draw calls、pipeline binding、backend implementation、callback registration、telemetry、event bus、logging 或 renderer state write。
+
+## Downstream Backend-readiness Revisit Preflight
+
+Renderer backend-readiness revisit preflight 已完成：
+
+- [2026-05-04-p1-renderer-backend-readiness-revisit-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-revisit-preflight-decision.md)
+
+该 preflight 引用本 reference pack 的 Metal / AppKit lifecycle evidence，并结合 platform resource owner、command queue、drawable acquisition、command buffer、render pass、encoder、draw call、pipeline state 与 render execution no-op manifests 重新评估 backend-readiness。
+
+结论：reference pack 已足以支撑 future backend-readiness 问题清单，但当前仍不批准 backend-readiness value boundary 或 backend implementation；主要缺口转为 backend object owner / lifecycle / acceptance gate truth。下一步只允许 docs-only `P1 internal Renderer backend object owner preflight decision`，不得创建 backend object、platform resource、command buffer、drawable、render pass、encoder、pipeline state、native handle 或 raw pointer，不得 GPU submission、render execution 或 renderer state write。
+
+## Downstream Backend Object Owner Preflight
+
+Renderer backend object owner preflight 已完成：
+
+- [2026-05-04-p1-renderer-backend-object-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-object-owner-preflight-decision.md)
+
+该 preflight 使用本 reference pack 的 resource ownership、command queue / command buffer lifecycle、drawable acquisition、render pass / encoder relation、pipeline / draw-call relation、frame pacing 与 no-draw / rollback evidence，判定下一步可以进入 internal-only backend object owner value boundary。
+
+## Downstream Frame Pacing Owner Preflight
+
+Renderer frame pacing owner preflight 已完成：
+
+- [2026-05-04-p1-renderer-frame-pacing-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-frame-pacing-owner-preflight-decision.md)
+
+该 preflight 使用本 reference pack 的 display refresh、drawable acquisition timing、AppKit resize / backing scale、frame pacing 与 backend object lifecycle evidence，判定下一步可以进入 internal-only frame pacing owner value boundary。Reference pack 仍只是 docs evidence，不是 runtime input；`CVDisplayLink`、`MTKView` draw loop、run loop 与 timer 只能作为 future reference concept，不批准 frame scheduler、display link、render loop、timer、backend / Metal / AppKit implementation、platform object creation、command buffer commit、GPU submission、render execution 或 renderer state write。
+
+Reference pack 仍只是 docs evidence，不是 runtime input，不批准 backend object creation、`MTLDevice` / `CAMetalLayer` creation、command queue、drawable、command buffer、render pass descriptor、encoder、pipeline state、native handle、raw pointer、command buffer commit、GPU submission、render execution、renderer state write 或 public surface expansion。

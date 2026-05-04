@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-05-03
+最后更新：2026-05-04
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -27,6 +27,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 - 想查历史决策：看 [docs/plans/README.md](docs/plans/README.md)。
 - 想看 GUI framework 行业排雷雷达：看 [gui-framework-pitfalls-intelligence.md](docs/research/gui-framework-pitfalls-intelligence.md)。它是按需雷达，不是每轮 implementation 的默认必读项。
 - 想看 AI-native GUI runtime 架构 intake：看 [ai-native-gui-runtime-architecture-intake.md](docs/research/ai-native-gui-runtime-architecture-intake.md)。它只在语义投影、Action Router、Hard / Soft Cycle、AI 协作边界前按需读取。
+- 想看 AI-native 物理可操作性、稳定门槛和可选 foreign surface / browser-kernel containment 雷达：看 [2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md](docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)。它只登记 future openings，不改变当前 renderer / backend-readiness runway。
 - 想看仓颉 1.1 owner / tooling / FFI 能力边界：看 [cangjie-1.1-owner-tooling-ffi-capability-intake.md](docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md)。它只在 owner 语言保证、FFI / platform bridge、debug / profiling / memory tooling 或未来语言能力迁移前按需读取。
 - 想看代数效应 / ECS / CRDT / Scene-DisplayList 这些未来架构雷达：看 [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)。它只记录未来规划，不改变当前 P1 implementation runway。
 - 想看文档分区：看 [docs/README.md](docs/README.md)。
@@ -70,7 +71,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 Renderer command queue lifecycle manifest：[manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md) 与 [closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md) 已完成；当前 recommended next opening 是 `P1 internal Renderer drawable acquisition lifecycle preflight decision`。Manifest 固定 `runtime_renderer_command_queue.cj` owner / truth / canonical endpoint / stop-line，canonical endpoint 是 `CjguiInternalRendererNoCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererCommandQueueLifecycleDraft()`；它不是 command queue permission、backend readiness、command buffer permission、render permission 或 renderer state write。
+最新 Renderer backend platform object owner next-boundary decision：[decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md) 已完成；`CjguiInternalRendererNoPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererBackendPlatformObjectOwnerDraft()` 已足够作为当前 no-platform-object endpoint。下一步选择 `P1 internal Renderer backend platform object owner manifest stabilization bundle implementation`，只固定 owner / truth / canonical endpoint / stop-line；继续禁止 platform object、native handle、raw pointer、`MTLDevice` / `CAMetalLayer`、command queue、drawable、command buffer、render pass、encoder、pipeline state、bridge / smoke / harness 修改、GPU submission、render execution、renderer state write、public API / C ABI。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 
@@ -376,6 +377,8 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
   - [GUI_PROJECT_DIRECTION.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_PROJECT_DIRECTION.md)
 - AI 原生 UI 语义方向在这里：
   - [AI_NATIVE_UI_SEMANTICS.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_NATIVE_UI_SEMANTICS.md)
+- AI-native physical operability / foreign surface 风险 intake 在这里：
+  - [2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)
 - AI Action Router 协议实验归档在这里：
   - [AI_ACTION_PROTOCOL_EXPERIMENT.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_ACTION_PROTOCOL_EXPERIMENT.md)
 - GUI 项目的治理总则在这里：

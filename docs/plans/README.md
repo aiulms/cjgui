@@ -1700,8 +1700,185 @@
 - internal Renderer command queue lifecycle manifest stabilization closure：
   - [2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md)
 
+- Renderer drawable acquisition lifecycle preflight decision：
+  - [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md)
+
+- internal Renderer drawable acquisition lifecycle value boundary closure：
+  - [2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-value-boundary-closure-review.md)
+
+- Renderer drawable acquisition lifecycle next-boundary decision：
+  - [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-next-boundary-decision.md)
+
+- Renderer drawable acquisition lifecycle manifest：
+  - [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md)
+
+- internal Renderer drawable acquisition lifecycle manifest stabilization closure：
+  - [2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer command buffer lifecycle preflight decision：
+  - [2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md)
+
+- internal Renderer command buffer lifecycle value boundary closure：
+  - [2026-05-03-p1-internal-renderer-command-buffer-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-buffer-lifecycle-value-boundary-closure-review.md)
+
+- Renderer command buffer lifecycle next-boundary decision：
+  - [2026-05-03-p1-renderer-command-buffer-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-next-boundary-decision.md)
+
+- Renderer command buffer lifecycle manifest：
+  - [2026-05-03-p1-renderer-command-buffer-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-manifest.md)
+
+- internal Renderer command buffer lifecycle manifest stabilization closure：
+  - [2026-05-03-p1-internal-renderer-command-buffer-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-buffer-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer render pass lifecycle preflight decision：
+  - [2026-05-03-p1-renderer-render-pass-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-render-pass-lifecycle-preflight-decision.md)
+
+- internal Renderer render pass lifecycle value boundary closure：
+  - [2026-05-03-p1-internal-renderer-render-pass-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-render-pass-lifecycle-value-boundary-closure-review.md)
+
+- Renderer render pass lifecycle next-boundary decision：
+  - [2026-05-03-p1-renderer-render-pass-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-render-pass-lifecycle-next-boundary-decision.md)
+
+- Renderer render pass lifecycle manifest：
+  - [2026-05-03-p1-renderer-render-pass-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-render-pass-lifecycle-manifest.md)
+
+- internal Renderer render pass lifecycle manifest stabilization closure：
+  - [2026-05-03-p1-internal-renderer-render-pass-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-render-pass-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer encoder lifecycle preflight decision：
+  - [2026-05-03-p1-renderer-encoder-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-encoder-lifecycle-preflight-decision.md)
+
+- internal Renderer encoder lifecycle value boundary closure：
+  - [2026-05-03-p1-internal-renderer-encoder-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-encoder-lifecycle-value-boundary-closure-review.md)
+
+- Renderer encoder lifecycle next-boundary decision：
+  - [2026-05-03-p1-renderer-encoder-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-encoder-lifecycle-next-boundary-decision.md)
+
+- Renderer encoder lifecycle manifest：
+  - [2026-05-03-p1-renderer-encoder-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-encoder-lifecycle-manifest.md)
+
+- internal Renderer encoder lifecycle manifest stabilization closure：
+  - [2026-05-03-p1-internal-renderer-encoder-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-encoder-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer draw call lifecycle preflight decision：
+  - [2026-05-03-p1-renderer-draw-call-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-draw-call-lifecycle-preflight-decision.md)
+
+- internal Renderer draw call lifecycle value boundary closure：
+  - [2026-05-03-p1-internal-renderer-draw-call-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-draw-call-lifecycle-value-boundary-closure-review.md)
+
+- Renderer draw call lifecycle next-boundary decision：
+  - [2026-05-04-p1-renderer-draw-call-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-draw-call-lifecycle-next-boundary-decision.md)
+
+- Renderer draw call lifecycle manifest：
+  - [2026-05-04-p1-renderer-draw-call-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-draw-call-lifecycle-manifest.md)
+
+- internal Renderer draw call lifecycle manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-draw-call-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-draw-call-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer pipeline state lifecycle preflight decision：
+  - [2026-05-04-p1-renderer-pipeline-state-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-pipeline-state-lifecycle-preflight-decision.md)
+
+- internal Renderer pipeline state lifecycle value boundary closure：
+  - [2026-05-04-p1-internal-renderer-pipeline-state-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-pipeline-state-lifecycle-value-boundary-closure-review.md)
+
+- Renderer pipeline state lifecycle next-boundary decision：
+  - [2026-05-04-p1-renderer-pipeline-state-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-pipeline-state-lifecycle-next-boundary-decision.md)
+
+- Renderer pipeline state lifecycle manifest：
+  - [2026-05-04-p1-renderer-pipeline-state-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-pipeline-state-lifecycle-manifest.md)
+
+- internal Renderer pipeline state lifecycle manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-pipeline-state-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-pipeline-state-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer render execution preflight decision：
+  - [2026-05-04-p1-renderer-render-execution-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-render-execution-preflight-decision.md)
+
+- internal Renderer render execution no-op boundary closure：
+  - [2026-05-04-p1-internal-renderer-render-execution-no-op-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-render-execution-no-op-boundary-closure-review.md)
+
+- Renderer render execution no-op next-boundary decision：
+  - [2026-05-04-p1-renderer-render-execution-no-op-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-render-execution-no-op-next-boundary-decision.md)
+
+- Renderer render execution no-op manifest：
+  - [2026-05-04-p1-renderer-render-execution-no-op-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-render-execution-no-op-manifest.md)
+
+- internal Renderer render execution no-op manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-render-execution-no-op-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-render-execution-no-op-manifest-stabilization-closure-review.md)
+
+- Renderer backend-readiness revisit preflight decision：
+  - [2026-05-04-p1-renderer-backend-readiness-revisit-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-revisit-preflight-decision.md)
+
+- Renderer backend object owner preflight decision：
+  - [2026-05-04-p1-renderer-backend-object-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-object-owner-preflight-decision.md)
+
+- internal Renderer backend object owner value boundary closure：
+  - [2026-05-04-p1-internal-renderer-backend-object-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-object-owner-value-boundary-closure-review.md)
+
+- Renderer backend object owner next-boundary decision：
+  - [2026-05-04-p1-renderer-backend-object-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-object-owner-next-boundary-decision.md)
+
+- Renderer backend object owner manifest：
+  - [2026-05-04-p1-renderer-backend-object-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-object-owner-manifest.md)
+
+- internal Renderer backend object owner manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-backend-object-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-object-owner-manifest-stabilization-closure-review.md)
+
+- Renderer frame pacing owner preflight decision：
+  - [2026-05-04-p1-renderer-frame-pacing-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-frame-pacing-owner-preflight-decision.md)
+
+- internal Renderer frame pacing owner value boundary closure：
+  - [2026-05-04-p1-internal-renderer-frame-pacing-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-frame-pacing-owner-value-boundary-closure-review.md)
+
+- Renderer frame pacing owner next-boundary decision：
+  - [2026-05-04-p1-renderer-frame-pacing-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-frame-pacing-owner-next-boundary-decision.md)
+
+- Renderer frame pacing owner manifest：
+  - [2026-05-04-p1-renderer-frame-pacing-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-frame-pacing-owner-manifest.md)
+
+- internal Renderer frame pacing owner manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-frame-pacing-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-frame-pacing-owner-manifest-stabilization-closure-review.md)
+
+- Renderer backend-readiness final preflight decision：
+  - [2026-05-04-p1-renderer-backend-readiness-final-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-final-preflight-decision.md)
+
+- internal Renderer backend-readiness value boundary closure：
+  - [2026-05-04-p1-internal-renderer-backend-readiness-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-readiness-value-boundary-closure-review.md)
+
+- Renderer backend-readiness next-boundary decision：
+  - [2026-05-04-p1-renderer-backend-readiness-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-next-boundary-decision.md)
+
+- Renderer backend-readiness manifest：
+  - [2026-05-04-p1-renderer-backend-readiness-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-manifest.md)
+
+- internal Renderer backend-readiness manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-backend-readiness-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-readiness-manifest-stabilization-closure-review.md)
+
+- Renderer backend-readiness branch milestone manifest：
+  - [2026-05-04-p1-renderer-backend-readiness-branch-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-branch-milestone-manifest.md)
+
+- internal Renderer backend-readiness branch milestone stabilization closure：
+  - [2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md)
+
+- Renderer real backend implementation preflight decision：
+  - [2026-05-04-p1-renderer-real-backend-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-real-backend-implementation-preflight-decision.md)
+
+- Renderer real backend first-slice owner preflight decision：
+  - [2026-05-04-p1-renderer-real-backend-first-slice-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-real-backend-first-slice-owner-preflight-decision.md)
+
+- Renderer backend platform object owner preflight decision：
+  - [2026-05-04-p1-renderer-backend-platform-object-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-preflight-decision.md)
+
+- internal Renderer backend platform object owner value boundary closure：
+  - [2026-05-04-p1-internal-renderer-backend-platform-object-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-value-boundary-closure-review.md)
+
+- Renderer backend platform object owner next-boundary decision：
+  - [2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md)
+
 - AI-native architecture radar future plan：
   - [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)
+
+- AI-native operability / foreign surface risk intake：
+  - [2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)
 
 - source comment sufficiency / owner header cleanup bundle：
   - [2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-source-comment-sufficiency-owner-header-cleanup-closure-review.md)
@@ -1713,17 +1890,66 @@
 
 下一步推荐：
 
-- `P1 internal Renderer drawable acquisition lifecycle preflight decision`
+- `P1 internal Renderer backend platform object owner manifest stabilization bundle implementation`
 
 用途：
 
+- [2026-05-04-p1-renderer-backend-readiness-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-manifest.md) 与 [2026-05-04-p1-internal-renderer-backend-readiness-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-readiness-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_backend_readiness.cj` owner / truth / canonical endpoint / stop-line。
+- [2026-05-04-p1-renderer-backend-readiness-branch-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-readiness-branch-milestone-manifest.md) 与 [2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md) 已完成，固定 renderer backend-readiness branch evidence chain / canonical tail / stop-line / reopening conditions。
+- [2026-05-04-p1-renderer-real-backend-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-real-backend-implementation-preflight-decision.md) 已完成，判定可以靠近真实 backend implementation，但第一刀仍必须继续拆成更窄 docs-only first-slice owner preflight，而不是直接实现。
+- [2026-05-04-p1-renderer-real-backend-first-slice-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-real-backend-first-slice-owner-preflight-decision.md) 已完成，选择下一轮 docs-only `P1 internal Renderer backend platform object owner preflight decision`，而不是 no-draw backend shell、Metal device-layer owner、command queue / drawable real lifecycle 或 command buffer commit / GPU submission。
+- [2026-05-04-p1-renderer-backend-platform-object-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-preflight-decision.md) 已完成，允许打开 backend platform object owner runway；下一步仍只能是 internal value boundary，不是真实 platform object creation。
+- [2026-05-04-p1-internal-renderer-backend-platform-object-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-value-boundary-closure-review.md) 已完成，新增 `runtime/cjgui/src/runtime_renderer_backend_platform_object.cj`，只消费 `CjguiInternalRendererNoBackendReadyReadiness`，canonical endpoint 是 `CjguiInternalRendererNoPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererBackendPlatformObjectOwnerDraft()`。
+- [2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoPlatformObjectReadiness` 已足够作为当前 no-platform-object endpoint，并选择下一步先做 backend platform object owner manifest stabilization。
+- Current backend-readiness endpoint 是 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()`。
+- Current runtime input 只消费 `CjguiInternalRendererNoStateWriteReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteNoWriteDraft()`；其他 renderer manifests 与 backend / Metal reference pack 只作为 docs evidence。
+- Current truth 仅限 backend readiness intent / platform lifecycle gate / execution admission gate / state visibility gate / no-backend-ready readiness value facts。
+- Same-shape Boundary Brake：不得把 no-platform-object endpoint 包成 platform object receipt / record / publication、native-handle readiness wrapper、backend implementation wrapper、Metal device readiness wrapper、backend-ready permission wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- 下一步必须 docs-only，固定 `runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line；仍禁止 backend implementation、platform object creation、native handle、raw pointer、command buffer commit、GPU submission、render execution、renderer state write、diagnostics / event bus / observer / telemetry 或 public API。
+- [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_drawable_acquisition.cj` owner / truth / canonical endpoint / stop-line。
 - [2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_command_queue.cj` owner / truth / canonical endpoint / stop-line。
 - Current canonical packet truth 是 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`。
 - Current platform resource owner endpoint 是 `CjguiInternalRendererNoPlatformResourceReadiness` / `cjguiInternalExecuteDefaultRendererPlatformResourceOwnerDraft()`。
 - Current command queue lifecycle endpoint 是 `CjguiInternalRendererNoCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererCommandQueueLifecycleDraft()`。
-- Input truth 只消费 `CjguiInternalRendererNoPlatformResourceReadiness`。
-- Output truth 只是 command queue lifecycle intent / lifecycle ownership policy / creation guard / lifetime policy / no-command-queue readiness value facts。
-- 下一轮必须 docs-only，评估 drawable acquisition owner / lifecycle / readiness runway；不得获取 drawable，不得创建 `CAMetalLayer`、command queue、command buffer、render pass、encoder、backend object、platform object、native handle 或 raw pointer。
+- Current drawable acquisition lifecycle endpoint 是 `CjguiInternalRendererNoDrawableReadiness` / `cjguiInternalExecuteDefaultRendererDrawableAcquisitionDraft()`。
+- Current drawable truth 只能是 drawable lifecycle intent / drawable availability policy / acquisition timing guard / presentation ownership policy / no-drawable readiness value facts。
+- [2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md) 已完成，允许打开 command buffer lifecycle runway，但下一步仍只能是 internal value boundary。
+- [2026-05-03-p1-internal-renderer-command-buffer-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-buffer-lifecycle-value-boundary-closure-review.md) 已完成，新增 `runtime/cjgui/src/runtime_renderer_command_buffer.cj`。
+- Current command buffer lifecycle endpoint 是 `CjguiInternalRendererNoCommandBufferReadiness` / `cjguiInternalExecuteDefaultRendererCommandBufferLifecycleDraft()`。
+- Current command buffer truth 只能是 command buffer lifecycle intent / creation policy / commit timing guard / single-use policy / no-command-buffer readiness value facts。
+- [2026-05-03-p1-renderer-command-buffer-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoCommandBufferReadiness` 已足够作为当前 no-command-buffer endpoint，下一步先做 manifest stabilization。
+- [2026-05-03-p1-renderer-command-buffer-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-command-buffer-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-buffer-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_command_buffer.cj` owner / truth / canonical endpoint / stop-line。
+- Reference evidence：Metal command buffer creation / encoding / commit / completion-failure phase、commit 后不可复用、presentation / completion relation 与 resource retention concerns 已足够支撑 value boundary，但不批准真实 command buffer。
+- [2026-05-03-p1-renderer-render-pass-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-render-pass-lifecycle-preflight-decision.md) 已完成，允许打开 render pass lifecycle runway，但下一步仍只能是 internal value boundary。
+- Current render pass preflight input 必须只消费 `CjguiInternalRendererNoCommandBufferReadiness` / `cjguiInternalExecuteDefaultRendererCommandBufferLifecycleDraft()`。
+- Current render pass preflight output truth 只能是 render pass lifecycle intent / attachment policy / load-store policy / clear-color policy / no-render-pass readiness value facts。
+- Reference evidence：`MTLRenderPassDescriptor` 描述 attachments / destinations，`MTLRenderCommandEncoder` 由 command buffer + descriptor 创建，attachments 承载 load / store actions 与 target textures；drawable size / color-space / resize relation 只能作为脱水 value facts。
+- [2026-05-03-p1-internal-renderer-render-pass-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-render-pass-lifecycle-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_render_pass.cj`，只消费 `CjguiInternalRendererNoCommandBufferReadiness`。
+- Current render pass lifecycle endpoint 是 `CjguiInternalRendererNoRenderPassReadiness` / `cjguiInternalExecuteDefaultRendererRenderPassLifecycleDraft()`。
+- Current render pass truth 只能是 render pass lifecycle intent / attachment policy / load-store policy / clear-color policy / no-render-pass readiness value facts。
+- [2026-05-03-p1-renderer-render-pass-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-render-pass-lifecycle-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoRenderPassReadiness` 已足够作为当前 no-render-pass endpoint。
+- [2026-05-03-p1-renderer-render-pass-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-render-pass-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-render-pass-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-render-pass-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_render_pass.cj` owner / truth / canonical endpoint / stop-line。
+- [2026-05-03-p1-renderer-encoder-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-encoder-lifecycle-preflight-decision.md) 已完成，允许打开 encoder lifecycle runway，但下一步仍只能是 internal value boundary。
+- Current encoder preflight input 必须只消费 `CjguiInternalRendererNoRenderPassReadiness` / `cjguiInternalExecuteDefaultRendererRenderPassLifecycleDraft()`。
+- Current encoder preflight output truth 只能是 encoder lifecycle intent / encoding scope policy / pipeline binding guard / end-encoding policy / no-encoder readiness value facts。
+- [2026-05-03-p1-internal-renderer-encoder-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-encoder-lifecycle-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_encoder.cj`。
+- Current encoder lifecycle endpoint 是 `CjguiInternalRendererNoEncoderReadiness` / `cjguiInternalExecuteDefaultRendererEncoderLifecycleDraft()`。
+- Current encoder truth 只能是 encoder lifecycle intent / encoding scope policy / pipeline binding guard / end-encoding policy / no-encoder readiness value facts。
+- [2026-05-03-p1-renderer-encoder-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-encoder-lifecycle-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoEncoderReadiness` 已足够作为当前 no-encoder endpoint。
+- [2026-05-03-p1-renderer-encoder-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-encoder-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-encoder-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-encoder-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_encoder.cj` owner / truth / canonical endpoint / stop-line。
+- 当前 encoder lifecycle endpoint 是 `CjguiInternalRendererNoEncoderReadiness` / `cjguiInternalExecuteDefaultRendererEncoderLifecycleDraft()`。
+- Current encoder truth 只能是 encoder lifecycle intent / encoding scope policy / pipeline binding guard / end-encoding policy / no-encoder readiness value facts。
+- [2026-05-03-p1-renderer-draw-call-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-draw-call-lifecycle-preflight-decision.md) 已完成，允许打开 draw call lifecycle runway，但下一步仍只能是 internal value boundary。
+- Current draw call preflight input 必须只消费 `CjguiInternalRendererNoEncoderReadiness` / `cjguiInternalExecuteDefaultRendererEncoderLifecycleDraft()`。
+- Current draw call preflight output truth 只能是 draw call lifecycle intent / draw command shape policy / geometry source policy / draw sequencing guard / no-draw-call readiness value facts。
+- [2026-05-03-p1-internal-renderer-draw-call-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-draw-call-lifecycle-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_draw_call.cj`。
+- Current draw call lifecycle endpoint 是 `CjguiInternalRendererNoDrawCallReadiness` / `cjguiInternalExecuteDefaultRendererDrawCallLifecycleDraft()`。
+- Current draw call truth 只能是 draw call lifecycle intent / draw command shape policy / geometry source policy / draw sequencing guard / no-draw-call readiness value facts。
+- [2026-05-04-p1-renderer-draw-call-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-draw-call-lifecycle-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoDrawCallReadiness` 已足够作为当前 no-draw-call endpoint。
+- [2026-05-04-p1-renderer-draw-call-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-draw-call-lifecycle-manifest.md) 与 [2026-05-04-p1-internal-renderer-draw-call-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-draw-call-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_draw_call.cj` owner / truth / canonical endpoint / stop-line。
+- [2026-05-04-p1-renderer-pipeline-state-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-pipeline-state-lifecycle-preflight-decision.md) 已完成，允许打开 pipeline state lifecycle runway，但下一步仍只能是 internal value boundary。
+- 下一轮建议新建 `runtime_renderer_pipeline_state.cj` 或等价 owner；只消费 `CjguiInternalRendererNoDrawCallReadiness`，只输出 pipeline state lifecycle intent / shader function policy / pipeline descriptor policy / pipeline compatibility guard / no-pipeline-state readiness value facts。
+- 下一轮不得创建 pipeline state、pipeline descriptor、shader library / function，不得绑定 pipeline，不得调用 encoder，不得执行 draw call，不得获取 drawable，不得创建 `MTLRenderPassDescriptor`、`MTLRenderCommandEncoder`、`MTLCommandBuffer`、`MTLCommandQueue`、`CAMetalLayer`、`CAMetalDrawable` / `MTLDrawable`、texture、attachment object、vertex / index buffer、backend object、platform object、native resource token 或 pointer-like resource。
 - 当前仍不批准 `MTLDevice` / `CAMetalLayer` / command queue / drawable / command buffer / render pass / render encoder、native handle、raw pointer、backend implementation、command buffer、render execution 或 renderer state write。
 - Reference pack 只提供硬依据，不是 runtime input，也不批准 backend implementation、platform resource implementation、command buffer、render execution 或 renderer state write。
 - 不得把 packet owner-truth milestone 直接解释成 backend readiness 或 Metal implementation permission。
@@ -1734,6 +1960,6 @@
 
 当前可执行动作：
 
-- docs-only preflight：Renderer drawable acquisition lifecycle preflight decision。
-- 后续若进入 implementation 或真实 output runway，必须先由新的 docs-only decision / preflight 批准，并继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-API-implementation / no-stable-public-surface stop-lines。
+- docs-only next-boundary decision：`P1 internal Renderer renderer state write no-write closure / next renderer state decision`。
+- 后续若进入 backend-readiness value boundary、真实 render execution、GPU submission、renderer state write、backend implementation 或 public surface，必须先由新的 docs-only decision / preflight 批准，并继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-API-implementation / no-stable-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、module-level `var` / escaping in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

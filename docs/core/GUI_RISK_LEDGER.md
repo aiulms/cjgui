@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目风险账本
 
-最后更新：2026-04-30
+最后更新：2026-05-04
 
 ## 用途
 
@@ -27,6 +27,13 @@
 - 性质：sidecar architecture intake / future risk radar。
 - 说明：该文档记录 AI-native GUI runtime 的外部架构提醒，包括 Hard / Soft Cycle、owner 编译期与运行时契约、semantic projection、Action Router、AI intent arbitration、三条生死线、owner 粒度 / cycle driver / Action Router 位置岔路、面向 AI 生成的长期 contract 思路和最小语义 demo。
 - 读取规则：它不是每轮 implementation 的默认必读项；仅在开启 semantic projection / semantic tree、Action Router、AI action protocol、controller handle、local state snapshot、Hard / Soft Cycle、input / animation fast path、最小控件 / 声明式 surface、渲染后端选择、AI generation contract / schema 或 AI-native semantic demo 前按需读取。
+
+### AI-native operability / foreign surface risk intake
+
+- 入口：[2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)
+- 性质：docs-only risk intake / future opening registry。
+- 说明：该文档把 physical operability、interaction stability、layout-derived semantic association 和 foreign surface / browser-kernel containment 显式登记为 future openings；它不批准 semantic tree、Action Router 新能力、browser kernel / WebView、layout / hit-test、IME、accessibility 或 public API implementation。
+- 读取规则：仅在开启 semantic physical operability、semantic stability / pending gate、layout-derived semantic association、foreign surface / browser-kernel containment、IME cursor rect bridge、accessibility semantic bridge 或 AI action operability gate 前按需读取。
 
 ### Cangjie 1.1 owner / tooling / FFI capability intake
 
@@ -639,6 +646,50 @@
 - 禁止 `eval`、macro、user-defined function、arbitrary symbol execution
 - Action Router protocol 必须另开 preflight，不能进入 app/window lifecycle first slice
 
+### 29. AI 物理可操作性绕过风险
+
+典型表现：
+
+- AI 只看 semantic tree 中的 `enabled: true`，不看物理可见性。
+- 被 Modal / Overlay 遮挡、在 ScrollView 可视区外、透明或被裁剪的控件仍可被 AI action 调用。
+- semantic action target 不校验 hit-test、z-order、clip、occlusion 或 stale generation。
+
+后果：
+
+- AI 获得人类没有的“隔山打牛”特权。
+- 业务状态出现人类界面不可能触发的转换。
+- 安全、审计和用户信任边界被破坏。
+
+当前防守规则：
+
+- `enabled` 不等于 physically operable。
+- 未来 semantic action eligibility 必须引用 layout / clip / z-order / occlusion / viewport / modal / hit-test 的脱水证据。
+- physical operability 需要独立 preflight；不得在 semantic tree first slice 中顺手实现。
+- Action Router 必须 fail closed：缺少物理可操作证据时默认拒绝或降级，而不是猜测可执行。
+
+### 30. Foreign surface / browser kernel 圈养失败风险
+
+典型表现：
+
+- 为了富文本或 Web 文档能力，把 WebView / browser kernel 当成宿主或主渲染管线。
+- 浏览器内核直接拥有窗口、输入事件、焦点、IME 或 semantic truth。
+- DOM / accessibility tree 被直接当成 CJGUI semantic tree。
+- browser kernel 作为默认依赖进入 runtime，破坏轻量目标。
+
+后果：
+
+- CJGUI 的渲染主权、交互主权和 AI action owner gate 被外部 surface 反向污染。
+- runtime 体积、进程模型、权限模型和 IPC failure 复杂度暴涨。
+- legacy Web truth 与 CJGUI app truth 形成第二真相源。
+
+当前防守规则：
+
+- CJGUI 不把浏览器作为宿主，不把 WebView 作为主渲染管线。
+- browser kernel 只能作为远期可选 `foreign surface` / component / plugin 雷达。
+- foreign surface 必须由 CJGUI host / compositor / Action Router / focus owner 圈养。
+- future preflight 必须先回答 texture handoff、input proxy、IME cursor rect sync、sandbox / IPC failure、semantic projection provenance 和 runtime weight。
+- 不得直接实现 browser kernel integration、WebView widget、Chromium / WebKit embedding 或 DOM semantic bridge。
+
 ## 六、当前项目的长期禁忌
 
 以下是当前项目的长期禁忌：
@@ -668,6 +719,8 @@
 - 因为选择自绘就忽略未来无障碍和 semantic bridge
 - 让 AI action command 绕过 typed AST / owner gateway 直接执行
 - 把 S-expression 当成 executable Lisp 而不是 data grammar
+- 让 AI action 调用物理上不可见、被遮挡、过期或不可 hit-test 的目标
+- 把 browser kernel / WebView 升格为 CJGUI host、主渲染管线、input owner 或 semantic truth owner
 
 ## 七、每次开工前的风险自问
 
@@ -695,5 +748,7 @@
 20. 这一步是否把 IME 的 final committed string 当成完整输入系统答案？
 21. 这一步是否让自绘路线忘记未来 accessibility / semantic bridge？
 22. 这一步是否让 AI action protocol 绕过 typed AST、validation 或 owner gateway？
+23. 这一步是否让 AI 拥有了人类当前物理界面不可执行的 action？
+24. 这一步是否把 optional foreign surface 变成了默认 runtime、host、input owner 或第二 semantic truth？
 
 如果这些问题里有 2 个以上答不稳，就应该先暂停，回到治理文档和思考框架。

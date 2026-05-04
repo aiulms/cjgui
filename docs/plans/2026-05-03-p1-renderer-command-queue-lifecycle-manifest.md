@@ -230,3 +230,50 @@ Backend-readiness 仍太容易变成 wrapper。等 command queue / drawable life
 `P1 internal Renderer drawable acquisition lifecycle preflight decision`
 
 下一轮必须 docs-only，不得获取 drawable，不得创建 `CAMetalLayer` / command queue / command buffer / render pass / encoder，不得 render，不得写 renderer state。
+
+## Downstream Drawable Acquisition Preflight
+
+Renderer drawable acquisition lifecycle preflight 已完成：
+
+- [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-preflight-decision.md)
+
+该 preflight 判定可以打开 drawable acquisition lifecycle runway，但下一步仍只能是 internal value boundary，不是真实 drawable acquisition。若下一轮实现，建议 owner 是 `runtime/cjgui/src/runtime_renderer_drawable_acquisition.cj`，只消费 `CjguiInternalRendererNoCommandQueueReadiness`，只输出 drawable acquisition lifecycle intent / drawable availability policy / acquisition timing guard / presentation ownership policy / no-drawable readiness value facts。
+
+Same-shape Boundary Brake 继续生效：不得把 no-command-queue endpoint 包成 drawable receipt / record / publication、backend-readiness wrapper 或 command buffer readiness wrapper；不得获取 drawable，不得创建 `CAMetalLayer`、`CAMetalDrawable` / `MTLDrawable`、command buffer、render pass、encoder、native handle 或 raw pointer。
+
+## Downstream Drawable Acquisition Value Boundary
+
+Renderer drawable acquisition lifecycle value boundary 已完成：
+
+- [2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-value-boundary-closure-review.md)
+
+该 boundary 新增 `runtime/cjgui/src/runtime_renderer_drawable_acquisition.cj`，只消费 `CjguiInternalRendererNoCommandQueueReadiness`，canonical endpoint 是 `CjguiInternalRendererNoDrawableReadiness` / `cjguiInternalExecuteDefaultRendererDrawableAcquisitionDraft()`。
+
+它不获取 drawable，不创建 `CAMetalLayer` / `CAMetalDrawable` / `MTLDrawable`、command buffer、render pass、encoder、native handle 或 raw pointer，不实现 backend / Metal / AppKit、render execution 或 renderer state write。下一步唯一 opening 是 docs-only `P1 internal Renderer drawable acquisition lifecycle closure / next drawable acquisition decision`。
+
+## Downstream Drawable Acquisition Next-Boundary Decision
+
+Renderer drawable acquisition lifecycle next-boundary decision 已完成：
+
+- [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-next-boundary-decision.md)
+
+该 decision 确认 `CjguiInternalRendererNoDrawableReadiness` 已是当前 no-drawable endpoint，并选择先做 drawable acquisition lifecycle manifest stabilization。Command buffer lifecycle / render pass lifecycle 继续暂缓，必须等 manifest 后再 docs-only 评估。
+
+## Downstream Drawable Acquisition Manifest
+
+Renderer drawable acquisition lifecycle manifest 已完成：
+
+- [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md)
+- [2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md)
+
+该 manifest 封账 no-drawable lifecycle endpoint，并把下一步限制为 docs-only command buffer lifecycle preflight；不批准 command buffer implementation、render pass lifecycle implementation 或 backend / Metal implementation。
+
+## Downstream Command Buffer Lifecycle Preflight
+
+Renderer command buffer lifecycle preflight 已完成：
+
+- [2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-buffer-lifecycle-preflight-decision.md)
+
+该 preflight 建立在 command queue lifecycle 与 drawable acquisition lifecycle 已封账的基础上，判定可以打开 command buffer lifecycle value boundary。Command queue manifest 仍只提供 no-command-queue / lifecycle ownership / creation guard / lifetime facts；下一 owner 必须只消费 `CjguiInternalRendererNoDrawableReadiness`，不得回退消费本 endpoint 形成 thin wrapper。
+
+不批准 `MTLCommandBuffer`、`MTLCommandQueue`、drawable、render pass、encoder、native handle、raw pointer、backend implementation、render execution 或 renderer state write。

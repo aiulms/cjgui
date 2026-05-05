@@ -331,3 +331,16 @@ Same-shape Boundary Brake 继续刹住 no-platform-object endpoint：不得新�
 唯一 next opening：
 
 `P1 internal Renderer backend platform object owner manifest stabilization bundle implementation`
+
+## Downstream Backend Platform Object Owner Manifest Stabilization
+
+Renderer backend platform object owner manifest stabilization 已完成：
+
+- [2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md)
+- [2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md)
+
+该 manifest stabilization 固定 `runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line，继续不批准 platform object creation、native handle / raw pointer、`MTLDevice` / `CAMetalLayer`、Metal / AppKit backend implementation、command buffer commit、GPU submission、render execution、renderer state write、public API 或 C ABI expansion。
+
+唯一 next opening：
+
+`P1 internal Renderer Metal device-layer owner preflight decision`

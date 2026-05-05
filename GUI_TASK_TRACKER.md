@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目任务账本
 
-最后更新：2026-05-04
+最后更新：2026-05-05
 
 本文件现在只做当前状态仪表盘，不再保存逐轮流水账。历史决策、closure、execution card 与 compaction 由 [docs/plans/README.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/README.md) 索引；本轮未新增 archive，因为被移除的 tracker 长历史已由 plans 索引与各 closure review 可追溯。
 
@@ -1006,10 +1006,318 @@
 - 候选结论：A backend platform object owner manifest stabilization 推荐；B Metal device-layer owner preflight、C no-draw backend shell preflight、D command queue / drawable real lifecycle preflight 均暂缓；F/G/H/I/J/K  receipt / record / publication、native-handle readiness wrapper、backend implementation wrapper、Metal device readiness wrapper、GPU-submission wrapper、render-permission wrapper、真实 implementation、public expansion 均拒绝。
 - Same-shape Boundary Brake 生效点：`NoPlatformObjectReadiness` 不再继续包装成 tail wrapper；当前 endpoint 只代表 backend platform object owner intent / native resource ownership policy / lifecycle teardown policy / confinement failure policy / no-platform-object readiness value facts，不是 platform object permission、native handle permission、Metal device permission、backend implementation permission、render permission、GPU submission permission 或 public API permission。
 
+最近 Renderer backend platform object owner manifest stabilization closure：
+
+- [2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md)
+- [2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md)
+- Manifest 结论：`runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line 已封账。
+- Canonical endpoint：`CjguiInternalRendererNoPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererBackendPlatformObjectOwnerDraft()`。
+- Current truth：backend platform object owner intent / native resource ownership policy / lifecycle teardown policy / confinement failure policy / no-platform-object readiness value facts。
+- Boundary：`NativeResourceOwnershipPolicy` 不创建 native handle / raw pointer；`LifecycleTeardownPolicy` 不执行 retain / release / destroy FFI 调用；`ConfinementFailurePolicy` 不隔离真实 platform resource failure，只表达 dehydrated failure facts；`NoPlatformObjectReadiness` 不是 platform object permission、native handle permission、Metal device permission、backend implementation permission、render permission、GPU submission permission 或 public API permission。
+- Same-shape Boundary Brake 生效点：拒绝 platform object receipt / record / publication、native-handle readiness wrapper、backend implementation wrapper、Metal device readiness wrapper、GPU-submission wrapper、render-permission wrapper；future Metal device-layer / no-draw backend shell / real platform object 必须先 docs-only preflight。
+
+最近 Renderer Metal device-layer owner preflight：
+
+- [2026-05-04-p1-renderer-metal-device-layer-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-preflight-decision.md)
+- Decision：允许打开 Metal device-layer owner runway；下一步选择 `P1 internal Renderer Metal device-layer owner value boundary bundle implementation`，仍只是 internal value facts，不是真实 `MTLDevice` / `CAMetalLayer` creation。
+- 默认候选 owner：`runtime/cjgui/src/runtime_renderer_metal_device_layer.cj`；runtime input 只建议消费 `CjguiInternalRendererNoPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererBackendPlatformObjectOwnerDraft()`。
+- Output truth 仅限 Metal device-layer owner intent / device selection policy / layer binding policy / scale-color-space policy / no-metal-device-layer-readiness value facts。
+- Boundary：Metal device-layer owner 不等于真实 `MTLDevice`，不等于真实 `CAMetalLayer`；不创建 device / layer / command queue / drawable，不持有 native handle / raw pointer，不调用 FFI / Objective-C / Metal API，不改 bridge / smoke / harness，不 GPU submission，不写 renderer state，不扩 public API。
+- 候选结论：A Metal device-layer owner value boundary 推荐；B no-draw backend shell、C command queue / drawable real lifecycle、D Metal reference hardening 暂缓；E/F/G/H/I/J/K 真实 implementation、public API / C ABI expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：不把 `CjguiInternalRendererNoPlatformObjectReadiness` 包成 Metal device-layer receipt / record / publication、native-handle readiness wrapper、device-ready permission wrapper、layer-ready permission wrapper、backend implementation wrapper 或 GPU-submission wrapper。
+
+最近 Renderer Metal device-layer owner value boundary closure：
+
+- [2026-05-04-p1-internal-renderer-metal-device-layer-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-metal-device-layer-owner-value-boundary-closure-review.md)
+- Boundary 结论：新增 `runtime/cjgui/src/runtime_renderer_metal_device_layer.cj`，只消费 `CjguiInternalRendererNoPlatformObjectReadiness`，canonical endpoint 是 `CjguiInternalRendererNoMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerOwnerDraft()`。
+- New truth：Metal device-layer owner intent / device selection policy / layer binding policy / scale-color-space policy / no-metal-device-layer-readiness value facts。
+- Same-shape Boundary Brake 生效点：新增 device selection / layer binding / scale-color-space / no-metal-device-layer-readiness 语义，不把 no-platform-object endpoint 包成 Metal device-layer receipt / record / publication、native-handle readiness wrapper、device-ready permission wrapper、layer-ready permission wrapper、backend implementation wrapper 或 GPU-submission wrapper。
+- Validation：GitNexus impact 对入口 symbols 返回 `UNKNOWN / not found`，按近期新增 owner 未索引记录，并以 source existence + build + scans 兜底；下一步进入 docs-only closure / next decision。
+
+最近 Renderer Metal device-layer owner next-boundary decision：
+
+- [2026-05-04-p1-renderer-metal-device-layer-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-next-boundary-decision.md)
+- Decision：`CjguiInternalRendererNoMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerOwnerDraft()` 已足够作为当前 no-metal-device-layer endpoint。
+- 候选结论：A Metal device-layer owner manifest stabilization 推荐；B no-draw backend shell preflight、C command queue / drawable real lifecycle preflight、D Metal reference hardening 均暂缓；E/F/G/H/I/J/K/L/M/N/O  receipt / record / publication、native-handle readiness wrapper、device-ready permission wrapper、layer-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、public API / C ABI expansion、direct `MTLDevice` / `CAMetalLayer` implementation、Objective-C / Metal / AppKit / FFI / bridge modification、command queue / drawable / command buffer implementation、renderer state write / render execution 均拒绝。
+- Same-shape Boundary Brake 生效点：`NoMetalDeviceLayerReadiness` 不再继续包装成 tail wrapper；当前 endpoint 只代表 Metal device-layer owner intent / device selection policy / layer binding policy / scale-color-space policy / no-metal-device-layer-readiness value facts，不是 `MTLDevice` permission、`CAMetalLayer` permission、platform object permission、native handle permission、backend implementation permission、GPU submission permission、render permission、renderer state write permission 或 public API permission。
+
+最近 Renderer Metal device-layer owner manifest stabilization closure：
+
+- [2026-05-04-p1-renderer-metal-device-layer-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-manifest.md)
+- [2026-05-04-p1-internal-renderer-metal-device-layer-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-metal-device-layer-owner-manifest-stabilization-closure-review.md)
+- Manifest 结论：`runtime_renderer_metal_device_layer.cj` owner / truth / canonical endpoint / stop-line 已封账。
+- Canonical endpoint：`CjguiInternalRendererNoMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerOwnerDraft()`。
+- Current truth：Metal device-layer owner intent / device selection policy / layer binding policy / scale-color-space policy / no-metal-device-layer-readiness value facts。
+- Boundary：`MetalDeviceSelectionPolicy` 不创建 `MTLDevice`；`MetalLayerBindingPolicy` 不创建 / 绑定 `CAMetalLayer`；`MetalScaleColorSpacePolicy` 不读取真实 display scale / color space，只表达 dehydrated policy facts；`NoMetalDeviceLayerReadiness` 不是 device / layer / platform object / native handle / backend implementation / GPU submission / render / renderer state write / public API permission。
+- Same-shape Boundary Brake 生效点：拒绝 Metal device-layer receipt / record / publication、native-handle readiness wrapper、device-ready permission wrapper、layer-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper；future no-draw backend shell / command queue-drawable real lifecycle / real Metal object 必须先 docs-only preflight。
+
+最近 Renderer no-draw backend shell preflight：
+
+- [2026-05-04-p1-renderer-no-draw-backend-shell-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-no-draw-backend-shell-preflight-decision.md)
+- Decision：允许打开 no-draw backend shell runway；下一步选择 `P1 internal Renderer no-draw backend shell value boundary bundle implementation`，仍只是 internal value facts，不是真实 backend shell implementation。
+- 默认候选 owner：`runtime/cjgui/src/runtime_renderer_no_draw_backend_shell.cj`；runtime input 只建议消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerOwnerDraft()`。
+- Output truth 仅限 no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell-readiness value facts。
+- Boundary：no-draw backend shell 不创建 backend shell object、backend object、platform object、native handle、raw pointer、`MTLDevice`、`CAMetalLayer`、command queue、drawable、command buffer、render pass、encoder 或 pipeline state；不调用 FFI / Objective-C / Metal / AppKit API，不改 bridge / smoke / harness，不 GPU submission，不 render execution，不写 renderer state，不扩 public API / C ABI。
+- 候选结论：A no-draw backend shell value boundary 推荐；B command queue / drawable real lifecycle、C backend shell reference hardening、D real platform object implementation preflight 均暂缓；E/F/G/H/I/J 直接 implementation、GPU submission、state write、public expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：不把 `CjguiInternalRendererNoMetalDeviceLayerReadiness` 包成 no-draw backend shell receipt / record / publication、backend-shell-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+
+最近 Renderer no-draw backend shell value boundary closure：
+
+- [2026-05-04-p1-internal-renderer-no-draw-backend-shell-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-no-draw-backend-shell-value-boundary-closure-review.md)
+- Boundary 结论：新增 `runtime/cjgui/src/runtime_renderer_no_draw_backend_shell.cj`，只消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness`，canonical endpoint 是 `CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`。
+- New truth：no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell-readiness value facts。
+- Same-shape Boundary Brake 生效点：新增 shell lifecycle / no-draw execution gate / teardown / no-backend-shell-readiness 语义，不把 no-metal-device-layer endpoint 包成 no-draw backend shell receipt / record / publication、backend-shell-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+
+最近 Renderer no-draw backend shell next-boundary decision：
+
+- [2026-05-04-p1-renderer-no-draw-backend-shell-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-no-draw-backend-shell-next-boundary-decision.md)
+- Decision：`CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()` 已足够作为当前 no-backend-shell endpoint。
+- 候选结论：A no-draw backend shell manifest stabilization 推荐；B command queue / drawable real lifecycle preflight、C real platform object implementation preflight、D command buffer commit / GPU submission preflight 均暂缓；E/F/G/H/I/J receipt / record / publication、backend-shell-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、public API / C ABI expansion 均拒绝。
+- Same-shape Boundary Brake 生效点：`NoBackendShellReadiness` 不再继续包装成 tail wrapper；当前 endpoint 只代表 no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell readiness value facts，不是 backend shell permission、backend implementation permission、backend object permission、platform object permission、GPU submission permission、render permission、renderer state write permission 或 public API permission。
+
+最近 Renderer no-draw backend shell manifest stabilization closure：
+
+- [2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md)
+- [2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md)
+- Manifest 结论：`runtime_renderer_no_draw_backend_shell.cj` owner / truth / canonical endpoint / stop-line 已封账。
+- Canonical endpoint：`CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`。
+- Current truth：no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell readiness value facts。
+- Boundary：`BackendShellLifecyclePolicy` 不创建 backend shell object / backend object；`NoDrawExecutionGate` 不执行 render、不提交 GPU work、不 commit command buffer；`ShellTeardownPolicy` 不执行真实 teardown / release / destroy；`NoBackendShellReadiness` 不是 backend shell / backend implementation / backend object / platform object / GPU submission / render / renderer state write / public API permission。
+- Same-shape Boundary Brake 生效点：拒绝 no-draw backend shell receipt / record / publication、backend-shell-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、platform-object wrapper；future command queue / drawable real lifecycle、real backend shell、GPU submission 或 render execution 必须先 docs-only preflight。
+
+最近 Renderer command queue / drawable real lifecycle preflight：
+
+- [2026-05-05-p1-renderer-command-queue-drawable-real-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-queue-drawable-real-lifecycle-preflight-decision.md)
+- Decision：允许打开 command queue / drawable real lifecycle runway，但必须拆成两个 owner / runway；下一步选择 docs-only `P1 internal Renderer real command queue lifecycle preflight decision`，不批准 combined queue/drawable value boundary。
+- Split：real command queue lifecycle 是更早硬前置，候选 owner 是 `runtime/cjgui/src/runtime_renderer_real_command_queue.cj`；real drawable lifecycle 暂缓，候选 owner 是 `runtime/cjgui/src/runtime_renderer_real_drawable_lifecycle.cj`。
+- Runtime input 建议只消费 `CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`；command queue / drawable manifests 与 backend / Metal reference pack 只作为 docs evidence。
+- Same-shape Boundary Brake 生效点：不把 `CjguiInternalRendererNoBackendShellReadiness` 包成 command queue / drawable receipt / record / publication、queue-ready permission wrapper、drawable-ready permission wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- Stop-line：不创建 `MTLCommandQueue`，不获取 drawable，不创建 command buffer / render pass / encoder / pipeline state，不调用 Metal / AppKit / Objective-C / FFI，不 commit / present / submit GPU work，不写 renderer state，不修改 bridge / smoke / harness。
+
+最近 Renderer real command queue lifecycle preflight：
+
+- [2026-05-05-p1-renderer-real-command-queue-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-preflight-decision.md)
+- Decision：允许打开 real command queue lifecycle runway；下一步选择 `P1 internal Renderer real command queue lifecycle value boundary bundle implementation`，仍只是 internal value facts，不是真实 `MTLCommandQueue` creation。
+- 默认候选 owner：`runtime/cjgui/src/runtime_renderer_real_command_queue.cj`；runtime input 只建议消费 `CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`。
+- Output truth 仅限 real command queue lifecycle intent / queue creation policy / queue ownership guard / queue teardown policy / no-real-command-queue-readiness value facts。
+- Same-shape Boundary Brake 生效点：不把 `CjguiInternalRendererNoBackendShellReadiness` 包成 real command queue receipt / record / publication、queue-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 command-buffer-ready wrapper。
+- Stop-line：不创建 `MTLCommandQueue`，不调用 `newCommandQueue` 或任何 Metal API，不持有 native handle / raw pointer，不创建 command buffer，不获取 drawable，不提交 GPU work，不修改 bridge / smoke / harness，不写 renderer state，不扩 public API。
+
+最近 Renderer real command queue lifecycle value boundary closure：
+
+- [2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-value-boundary-closure-review.md)
+- Landed owner：新增 `runtime/cjgui/src/runtime_renderer_real_command_queue.cj`，只消费 `CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`。
+- Canonical endpoint：`CjguiInternalRendererNoRealCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueLifecycleDraft()`。
+- New truth：real command queue lifecycle intent / queue creation policy / queue ownership guard / queue teardown policy / no-real-command-queue-readiness value facts。
+- Same-shape Boundary Brake 生效点：新增 queue creation policy / ownership guard / teardown policy / no-real-command-queue-readiness 语义，不把 no-backend-shell endpoint 包成 real command queue receipt / record / publication、queue-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 command-buffer-ready wrapper。
+
+最近 Renderer real command queue lifecycle next-boundary decision：
+
+- [2026-05-05-p1-renderer-real-command-queue-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-next-boundary-decision.md)
+- Decision：`CjguiInternalRendererNoRealCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueLifecycleDraft()` 已足够作为当前 no-real-command-queue endpoint。
+- 候选结论：A real command queue lifecycle manifest stabilization 推荐；B real drawable lifecycle preflight、C command buffer commit / GPU submission preflight、D real backend shell implementation preflight、E hardening 均暂缓；F/G/H/I/J/K/L/M/N/O direct implementation、permission wrapper、receipt / record / publication、public API / C ABI expansion 均拒绝。
+- Same-shape Boundary Brake 生效点：`NoRealCommandQueueReadiness` 不再继续包装成 tail wrapper；当前 endpoint 只代表 real command queue lifecycle intent / queue creation policy / ownership guard / teardown policy / no-real-command-queue-readiness value facts，不是 `MTLCommandQueue` permission、command buffer permission、GPU submission permission、backend implementation permission、render permission、renderer state write permission 或 public API permission。
+
+最近 Renderer real command queue lifecycle manifest stabilization closure：
+
+- [2026-05-05-p1-renderer-real-command-queue-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-manifest.md)
+- [2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-manifest-stabilization-closure-review.md)
+- Manifest 结论：`runtime_renderer_real_command_queue.cj` owner / truth / canonical endpoint / stop-line 已封账。
+- Canonical endpoint：`CjguiInternalRendererNoRealCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueLifecycleDraft()`。
+- Current truth：real command queue lifecycle intent / queue creation policy / queue ownership guard / queue teardown policy / no-real-command-queue-readiness value facts。
+- Boundary：`RealCommandQueueCreationPolicy` 不创建 `MTLCommandQueue`，不调用 `newCommandQueue`；`RealCommandQueueOwnershipGuard` 不持有 native handle / raw pointer；`RealCommandQueueTeardownPolicy` 不执行真实 release / destroy；`NoRealCommandQueueReadiness` 不是 `MTLCommandQueue` / command buffer / drawable / GPU submission / backend implementation / render / renderer state write / public API permission。
+- Same-shape Boundary Brake 生效点：拒绝 real command queue receipt / record / publication、queue-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper、render-permission wrapper；future real drawable lifecycle、command buffer commit / GPU submission 或 real backend shell implementation 必须先 docs-only preflight。
+
+最近 Renderer real drawable lifecycle preflight：
+
+- [2026-05-05-p1-renderer-real-drawable-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-preflight-decision.md)
+- Decision：允许打开 real drawable lifecycle runway；下一步选择 `P1 internal Renderer real drawable lifecycle value boundary bundle implementation`，仍只是 internal value facts，不是真实 drawable acquisition。
+- 默认候选 owner：`runtime/cjgui/src/runtime_renderer_real_drawable.cj`；runtime input 只建议消费 `CjguiInternalRendererNoRealCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueLifecycleDraft()`。
+- Output truth 仅限 real drawable lifecycle intent / drawable availability policy / drawable acquisition guard / presentation ownership policy / no-real-drawable-readiness value facts。
+- Same-shape Boundary Brake 生效点：不把 `CjguiInternalRendererNoRealCommandQueueReadiness` 包成 real drawable receipt / record / publication、drawable-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 command-buffer-ready wrapper。
+- Stop-line：不获取 drawable，不调用 `nextDrawable`，不持有 `CAMetalDrawable` / `MTLDrawable`，不创建 command buffer / render pass / encoder / pipeline state，不 present drawable，不调用 Metal / AppKit / Objective-C / FFI，不提交 GPU work，不改 bridge / smoke / harness，不写 renderer state，不扩 public API。
+
+最近 Renderer real drawable lifecycle value boundary closure：
+
+- [2026-05-05-p1-internal-renderer-real-drawable-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-lifecycle-value-boundary-closure-review.md)
+- Landed owner：新增 internal-only `runtime/cjgui/src/runtime_renderer_real_drawable.cj`，只消费 `CjguiInternalRendererNoRealCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueLifecycleDraft()`。
+- Canonical endpoint：`CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()`。
+- New truth：real drawable lifecycle intent / drawable availability policy / drawable acquisition guard / presentation ownership policy / no-real-drawable-readiness value facts。
+- Same-shape Boundary Brake 生效点：新增 drawable availability / acquisition guard / presentation ownership / no-real-drawable-readiness 语义，不把 no-real-command-queue endpoint 包成 real drawable receipt / record / publication、drawable-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 command-buffer-ready wrapper。
+- 继续禁止真实 drawable acquisition、`nextDrawable`、`CAMetalDrawable` / `MTLDrawable` 持有、command buffer / render pass / encoder / pipeline state、Metal / AppKit / Objective-C / FFI、present / commit / submit GPU work、render execution、renderer state write、public API / C ABI。
+
+最近 Renderer real drawable lifecycle next-boundary decision：
+
+- [2026-05-05-p1-renderer-real-drawable-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-next-boundary-decision.md)
+- Decision：`CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()` 已足够作为当前 no-real-drawable endpoint。
+- 候选结论：A real drawable lifecycle manifest stabilization 推荐；B command buffer commit / GPU submission preflight、C real backend shell implementation preflight、D real drawable hardening 均暂缓；E/F/G/H/I/J/K receipt / record / publication、permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper、render-permission wrapper、public API / C ABI expansion 均拒绝。
+- Same-shape Boundary Brake 生效点：`NoRealDrawableReadiness` 不再继续包装成 tail wrapper；当前 endpoint 只代表 real drawable lifecycle intent / drawable availability policy / acquisition guard / presentation ownership policy / no-real-drawable-readiness value facts，不是 drawable permission、command buffer permission、GPU submission permission、backend implementation permission、render permission、renderer state write permission 或 public API permission。
+
+最近 Renderer real drawable lifecycle manifest stabilization closure：
+
+- [2026-05-05-p1-renderer-real-drawable-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-manifest.md)
+- [2026-05-05-p1-internal-renderer-real-drawable-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-lifecycle-manifest-stabilization-closure-review.md)
+- Manifest 结论：`runtime_renderer_real_drawable.cj` owner / truth / canonical endpoint / stop-line 已封账。
+- Canonical endpoint：`CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()`。
+- Current truth：real drawable lifecycle intent / drawable availability policy / drawable acquisition guard / presentation ownership policy / no-real-drawable-readiness value facts。
+- Boundary：`RealDrawableAvailabilityPolicy` 不查询真实 drawable pool；`RealDrawableAcquisitionGuard` 不调用 `nextDrawable`，不获取 drawable；`RealDrawablePresentationOwnershipPolicy` 不 present drawable，不提交 command buffer；`NoRealDrawableReadiness` 不是 drawable / command buffer / GPU submission / backend implementation / render / renderer state write / public API permission。
+- Same-shape Boundary Brake 生效点：拒绝 real drawable receipt / record / publication、drawable-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper、render-permission wrapper；future command buffer commit / GPU submission、real backend shell implementation 或 real drawable acquisition 必须先 docs-only preflight。
+
+最近 Renderer command buffer commit / GPU submission preflight：
+
+- [2026-05-05-p1-renderer-command-buffer-commit-gpu-submission-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-buffer-commit-gpu-submission-preflight-decision.md)
+- Decision：允许打开 command buffer commit / GPU submission runway，但下一步仍只能是 internal value boundary，不是真实 command buffer creation、`commit`、`present`、`nextDrawable`、GPU submission、render execution 或 renderer state write。
+- 推荐 owner candidate：`runtime/cjgui/src/runtime_renderer_command_submission.cj`。
+- Runtime input：只建议消费 `CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()`。
+- Output truth：仅限 command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts。
+- 候选结论：A command buffer commit / GPU submission value boundary 推荐；B command buffer commit owner preflight、C drawable presentation owner preflight、D real backend shell implementation preflight、E render completion / frame completion tracking preflight 均暂缓；F/G/H/I/J/K direct implementation、permission wrapper、receipt / record / publication、public API / C ABI expansion 均拒绝。
+- Same-shape Boundary Brake 生效点：不得把 no-real-drawable endpoint 包成 command submission receipt / record / publication、GPU-submission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、backend implementation wrapper 或 render-permission wrapper；下一轮必须新增 commit policy / presentation gate / GPU submission failure / no-gpu-submission 语义。
+
+最近 Renderer command buffer commit / GPU submission value boundary closure：
+
+- [2026-05-05-p1-internal-renderer-command-submission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-command-submission-value-boundary-closure-review.md)
+- Landed owner：新增 internal-only `runtime/cjgui/src/runtime_renderer_command_submission.cj`。
+- Runtime input：只消费 `CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()`。
+- Canonical endpoint：`CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()`。
+- New truth：command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts。
+- Same-shape Boundary Brake 生效点：新增 commit policy / presentation gate / GPU submission failure / no-gpu-submission endpoint 语义，不把 no-real-drawable endpoint 包成 command submission receipt / record / publication、GPU-submission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、backend implementation wrapper 或 render-permission wrapper。
+- 继续禁止 command buffer creation、`commit`、`present`、`nextDrawable`、Metal / AppKit / Objective-C / FFI、GPU submission、render execution、renderer state write、public API / C ABI、module-level `var`、native handle 或 raw pointer。
+
+最近 Renderer command submission next-boundary decision：
+
+- [2026-05-05-p1-renderer-command-submission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-submission-next-boundary-decision.md)
+- Decision：`CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()` 已足够作为当前 no-gpu-submission endpoint。
+- Endpoint truth：只代表 command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts。
+- Non-truth：不是 command buffer permission、drawable present permission、GPU submission permission、render permission、backend implementation permission、renderer state write permission、public API permission 或 C ABI permission。
+- 候选结论：A command submission manifest stabilization 推荐；B real backend shell implementation preflight、C render completion / frame completion tracking preflight、D command submission hardening 均暂缓；E/F/G/H/I/J 真实 commit / present / submit / render / state write / public expansion / receipt record publication 均拒绝。
+- Same-shape Boundary Brake 生效点：`NoGpuSubmissionReadiness` 不再继续包装成 tail wrapper；拒绝 command submission receipt / record / publication、GPU-submission permission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、render-permission wrapper、backend implementation wrapper、renderer-state-write wrapper。
+
+最近 Renderer command submission manifest stabilization closure：
+
+- [2026-05-05-p1-renderer-command-submission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-submission-manifest.md)
+- [2026-05-05-p1-internal-renderer-command-submission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-command-submission-manifest-stabilization-closure-review.md)
+- Manifest 结论：`runtime_renderer_command_submission.cj` owner / truth / canonical endpoint / stop-line 已封账。
+- Canonical endpoint：`CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()`。
+- Current truth：command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts。
+- Boundary：`CommandBufferCommitPolicy` 不创建或 commit command buffer；`DrawablePresentationGate` 不 present drawable；`GpuSubmissionFailurePolicy` 不观察真实 GPU completion、不注册 callback；`NoGpuSubmissionReadiness` 不是 command buffer / drawable present / GPU submission / render / backend implementation / renderer state write / public API permission。
+- Same-shape Boundary Brake 生效点：拒绝 command submission receipt / record / publication、GPU-submission permission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、render-permission wrapper、backend implementation wrapper、renderer-state-write wrapper；future real backend shell implementation、completion tracking、real commit / present / submit 必须先 docs-only preflight。
+
+最近 Renderer real backend shell implementation preflight：
+
+- [2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md)
+- Decision：允许靠近 real backend shell implementation runway，但第一刀仍必须继续拆成更窄 docs-only first implementation slice preflight；本轮不批准 direct backend shell implementation。
+- Evidence：no-draw backend shell / backend platform object / Metal device-layer / real command queue / real drawable / command submission manifests 已形成 owner / lifecycle / teardown / failure / no-draw / no-submit value vocabulary，但都不是 backend implementation permission。
+- Smoke boundary：`labs/macos_bridge_smoke` 只能作为 feasibility / teardown / smoke evidence，不能升格为 runtime truth、backend shell owner truth、public ABI truth、renderer state write truth 或 visual baseline truth。
+- 候选结论：A backend shell first implementation slice preflight 谨慎推荐；B lifecycle hardening、C native resource bridge preflight 仅作备选；D/E render completion 或 command buffer commit 暂缓；F/G/H/I/J/K/L direct implementation、native handle、Metal / AppKit / FFI、GPU submission、renderer state write、public expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：不得把 `NoBackendShellReadiness`、`NoMetalDeviceLayerReadiness`、`NoPlatformObjectReadiness`、`NoRealCommandQueueReadiness`、`NoRealDrawableReadiness`、`NoGpuSubmissionReadiness` 或 milestone 包成 real backend shell receipt / record / publication、backend-ready permission wrapper、platform-object permission wrapper、native-handle wrapper、GPU-submission wrapper 或 render-permission wrapper。
+
+最近 Renderer backend shell first implementation slice preflight：
+
+- [2026-05-05-p1-renderer-backend-shell-first-implementation-slice-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-first-implementation-slice-preflight-decision.md)
+- Decision：选择 A `backend shell skeleton / no-resource implementation slice`；B native resource bridge preflight 暂缓，C platform object implementation preflight、D Metal device-layer implementation preflight、E/F/G command queue / drawable / GPU implementation preflight 均暂缓，H/I/J/K/L/M/N direct implementation、native handle、Metal / AppKit / FFI、GPU submission、renderer state write、public expansion、receipt / record / publication 均拒绝。
+- 第一实现切口 owner candidate：`runtime/cjgui/src/runtime_renderer_backend_shell_skeleton.cj`。
+- Runtime input candidate：只消费 `CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()`；`NoBackendShellReadiness`、`NoPlatformObjectReadiness`、`NoMetalDeviceLayerReadiness`、`NoRealCommandQueueReadiness`、`NoRealDrawableReadiness` 与 smoke 只作为 docs evidence。
+- 允许 truth：backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback / teardown confinement / no-resource readiness value facts。
+- Stop-line：不创建 backend shell object、backend object、platform object、native handle、raw pointer、`MTLDevice`、`CAMetalLayer`、`MTLCommandQueue`、drawable、command buffer、render pass、encoder、pipeline state；不调用 `commit`、`present`、`nextDrawable`、Metal / AppKit / Objective-C / FFI；不提交 GPU work，不执行 render，不写 renderer state，不扩 public API / C ABI。
+- Smoke boundary：`labs/macos_bridge_smoke` 只能作为 feasibility / teardown / smoke evidence，不能升格为 runtime truth、backend shell owner truth、public ABI truth、renderer state write truth 或 visual baseline truth。
+- Same-shape Boundary Brake 生效点：不得把现有 readiness endpoint 或 milestone 包成 backend-shell-ready permission wrapper、native-handle wrapper、platform-object wrapper、Metal-device wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication。
+
+最近 Renderer backend shell skeleton no-resource value boundary closure：
+
+- [2026-05-05-p1-internal-renderer-backend-shell-skeleton-no-resource-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-backend-shell-skeleton-no-resource-value-boundary-closure-review.md)
+- Runtime owner：新增 `runtime/cjgui/src/runtime_renderer_backend_shell_skeleton.cj`。
+- Runtime input：只消费 `CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()`。
+- Canonical endpoint：`CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()`。
+- New truth：backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback / teardown confinement / no-resource-backend-shell readiness value facts。
+- Boundary：不创建 backend shell object、backend object、platform object、native handle、raw pointer，不接 Metal / AppKit / Objective-C / FFI，不提交 GPU work，不执行 render，不写 renderer state，不扩 public API / C ABI。
+- GitNexus impact：两个入口 symbol 均为 `UNKNOWN / not found`，按近期新增 owner 未索引记录；通过 source / build / smoke / scans / detect_changes 兜底。
+- Same-shape Boundary Brake 生效点：新增 skeleton lifecycle envelope / no-resource guard / failure rollback / teardown confinement / no-resource-backend-shell 语义，不把 `NoGpuSubmissionReadiness` 包成 backend-shell-ready permission wrapper、native-handle wrapper、platform-object wrapper、Metal-device wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication。
+
+最近 Renderer backend shell skeleton next-boundary decision：
+
+- [2026-05-05-p1-renderer-backend-shell-skeleton-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-skeleton-next-boundary-decision.md)
+- Decision：`CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()` 已足够作为当前 no-resource-backend-shell endpoint。
+- Endpoint truth：只代表 backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback policy / teardown confinement policy / no-resource-backend-shell readiness value facts。
+- Non-truth：不是 backend shell implementation permission、native handle permission、platform object permission、Metal / AppKit bridge permission、GPU submission permission、render permission、renderer state write permission、public API permission 或 C ABI permission。
+- 候选结论：A backend shell skeleton manifest stabilization 推荐；B native resource bridge preflight、C platform object implementation preflight、D Metal device-layer implementation preflight、E render completion / frame completion tracking preflight、F lifecycle hardening 均暂缓；G/H/I/J/K/L/M direct implementation、native handle、Metal / AppKit / FFI、GPU submission、renderer state write、public expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：`NoResourceBackendShellReadiness` 不再继续包装成 tail wrapper；拒绝 backend-shell-ready permission wrapper、native-handle wrapper、platform-object wrapper、Metal-device wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+
+最近 Renderer backend shell skeleton manifest stabilization closure：
+
+- [2026-05-05-p1-renderer-backend-shell-skeleton-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-skeleton-manifest.md)
+- [2026-05-05-p1-internal-renderer-backend-shell-skeleton-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-backend-shell-skeleton-manifest-stabilization-closure-review.md)
+- Manifest 结论：`runtime_renderer_backend_shell_skeleton.cj` owner / truth / canonical endpoint / stop-line 已封账。
+- Canonical endpoint：`CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()`。
+- Current truth：backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback policy / teardown confinement policy / no-resource-backend-shell readiness value facts。
+- Boundary：`BackendShellLifecycleEnvelope` 不创建 backend shell object；`BackendShellNoResourceGuard` 不持有 native handle / raw pointer / platform object；`BackendShellFailureRollbackPolicy` 不执行真实 rollback callback；`BackendShellTeardownConfinementPolicy` 不调用 bridge、不执行 retain / release / destroy；`NoResourceBackendShellReadiness` 不是 backend shell implementation / native handle / platform object / Metal-AppKit bridge / GPU submission / render / renderer state write / public API permission。
+- Same-shape Boundary Brake 生效点：manifest 封账并拒绝 backend-shell-ready permission wrapper、native-handle wrapper、platform-object wrapper、Metal-device wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication；future native resource bridge、platform object implementation、Metal device-layer implementation、real backend shell implementation、GPU submission 或 renderer state write 必须先 docs-only preflight。
+
+最近 Renderer native resource bridge preflight：
+
+- [2026-05-05-p1-renderer-native-resource-bridge-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-preflight-decision.md)
+- Decision：允许打开 native resource bridge runway；下一步仍只能是 internal value boundary，不是真实 native bridge / FFI / handle implementation。
+- Owner candidate：`runtime/cjgui/src/runtime_renderer_native_resource_bridge.cj`。
+- Runtime input candidate：只消费 `CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()`；backend platform object manifest、Metal device-layer manifest、reference pack、risk ledger 与 smoke 只作为 docs evidence。
+- Output truth：native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts。
+- 候选结论：A native resource bridge value boundary 谨慎推荐；B native handle token preflight、C native teardown contract preflight 作为 fallback 备选但暂不选择；D/E/F platform object、Metal device-layer、real backend shell implementation preflight 暂缓；G/H/I/J/K/L/M/N/O direct native bridge、handle、C ABI、FFI、retain / release / destroy、Metal / AppKit、GPU submission、renderer state write、public expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：不得把 `NoResourceBackendShellReadiness`、`NoPlatformObjectReadiness`、`NoMetalDeviceLayerReadiness` 或 smoke evidence 包成 native bridge receipt / record / publication、native-handle permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+
+最近 Renderer native resource bridge value boundary closure：
+
+- [2026-05-05-p1-internal-renderer-native-resource-bridge-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-native-resource-bridge-value-boundary-closure-review.md)
+- Runtime owner：新增 `runtime/cjgui/src/runtime_renderer_native_resource_bridge.cj`。
+- Runtime input：只消费 `CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()`。
+- Canonical endpoint：`CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()`。
+- New truth：native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts。
+- Boundary：不创建 backend shell object、backend object、platform object、native handle、raw pointer，不新增 C ABI / FFI declaration，不调用 bridge / retain / release / destroy / Metal / AppKit / Objective-C / FFI，不提交 GPU work，不执行 render，不写 renderer state，不扩 public API。
+- GitNexus impact：两个入口 symbol 均为 `UNKNOWN / not found`，按近期新增 owner 未索引记录；通过 source / build / smoke / scans / detect_changes 兜底。
+- Same-shape Boundary Brake 生效点：新增 handle confinement / bridge call admission / teardown contract / no-native-resource-bridge 语义，不把 `NoResourceBackendShellReadiness`、`NoPlatformObjectReadiness`、`NoMetalDeviceLayerReadiness` 或 smoke evidence 包成 native bridge receipt / record / publication、native-handle permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+
+最近 Renderer native resource bridge next-boundary decision：
+
+- [2026-05-05-p1-renderer-native-resource-bridge-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-next-boundary-decision.md)
+- Decision：`CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()` 已足够作为当前 no-native-resource-bridge endpoint。
+- Endpoint truth：只代表 native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts。
+- Non-truth：不是 native bridge implementation permission、native handle permission、C ABI permission、FFI permission、platform object permission、Metal / AppKit bridge permission、GPU submission permission、render permission、renderer state write permission 或 public API permission。
+- 候选结论：A native resource bridge manifest stabilization 推荐；B platform object implementation preflight、C native handle token preflight、D native teardown contract hardening、E Metal device-layer implementation preflight、F real backend shell implementation preflight 均暂缓；G/H/I/J/K/L/M/N/O direct native bridge、handle、C ABI / FFI、retain / release / destroy、Metal / AppKit / Objective-C、GPU submission、renderer state write、public expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：`NoNativeResourceBridgeReadiness` 不再继续包装成 tail wrapper；拒绝 native bridge receipt / record / publication、native-handle permission wrapper、C-ABI permission wrapper、FFI permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper。
+
+最近 Renderer native resource bridge manifest stabilization closure：
+
+- [2026-05-05-p1-renderer-native-resource-bridge-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-manifest.md)
+- [2026-05-05-p1-internal-renderer-native-resource-bridge-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-native-resource-bridge-manifest-stabilization-closure-review.md)
+- Manifest 结论：固定 `runtime/cjgui/src/runtime_renderer_native_resource_bridge.cj` owner / truth / canonical endpoint / stop-line。
+- Canonical endpoint：`CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()`。
+- Current truth：native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts。
+- Boundary：`NativeHandleConfinementPolicy` 不创建、保存或暴露 native handle / raw pointer；`BridgeCallAdmissionGuard` 不调用 bridge、不新增 FFI declaration；`NativeTeardownContractPolicy` 不执行 retain / release / destroy；`NoNativeResourceBridgeReadiness` 不是 native bridge implementation、native handle、C ABI、FFI、platform object、Metal / AppKit bridge、GPU submission、render、renderer state write 或 public API permission。
+- 候选结论：A platform object implementation preflight 推荐；B native handle token preflight、C native teardown contract hardening、D Metal device-layer implementation preflight、E real backend shell implementation preflight 均暂缓；F/G/H/I/J/K/L/M/N direct native bridge、handle、C ABI / FFI、retain / release / destroy、Metal / AppKit / Objective-C、GPU submission、renderer state write、public expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：manifest 封账并拒绝 native bridge receipt / record / publication、native-handle permission wrapper、C-ABI permission wrapper、FFI permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper。future platform object implementation、native handle token、native teardown contract、Metal device-layer implementation 或真实 bridge / FFI 必须先 docs-only preflight。
+
+最近 Renderer platform object implementation preflight：
+
+- [2026-05-05-p1-renderer-platform-object-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-preflight-decision.md)
+- Decision：允许打开 platform object implementation runway；下一步仍不能直接创建真实 platform object，必须先做 internal value boundary / implementation admission facts。
+- Default owner candidate：`runtime/cjgui/src/runtime_renderer_platform_object_implementation_admission.cj`。
+- Runtime input candidate：只消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()`。
+- Output truth：platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。
+- Evidence：native resource bridge manifest 已封住 no-native-resource-bridge endpoint；backend platform object owner manifest 提供 native ownership / lifecycle teardown / confinement failure vocabulary；risk ledger 指出 FFI ownership、retain / release / destroy、dangling pointer、main-thread / AppKit 与 bridge optimism 风险；`labs/macos_bridge_smoke` 只作为 feasibility / teardown / smoke evidence，不升格 runtime truth。
+- 候选结论：A platform object implementation admission value boundary 谨慎推荐；B native handle token preflight、C native teardown contract preflight 作为 fallback 备选但暂不选择；D/E/F Metal device-layer、real backend shell、real command queue implementation preflight 暂缓；G/H/I/J/K/L/M/N/O direct platform object、native handle、C ABI / FFI、retain / release / destroy、Metal / AppKit / Objective-C、GPU submission、renderer state write、public expansion、receipt / record / publication 均拒绝。
+- Same-shape Boundary Brake 生效点：不得把 `NoNativeResourceBridgeReadiness`、`NoPlatformObjectReadiness`、`NoResourceBackendShellReadiness` 或 smoke evidence 包成 platform object implementation receipt / record / publication、platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+
+最近 Renderer platform object implementation admission value boundary closure：
+
+- [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md)
+- Added owner：`runtime/cjgui/src/runtime_renderer_platform_object_admission.cj`。
+- Runtime input：只消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()`。
+- Canonical endpoint：`CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`。
+- New truth：platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。
+- Boundary：不创建 backend shell object、backend object、platform object、native handle、raw pointer，不新增 C ABI / FFI declaration，不调用 bridge / retain / release / destroy / Metal / AppKit / Objective-C / FFI，不创建 `MTLDevice`、`CAMetalLayer`、`MTLCommandQueue`、drawable 或 command buffer，不提交 GPU work，不执行 render，不写 renderer state，不扩 public API。
+- Same-shape Boundary Brake 生效点：新增 implementation admission / native handle admission / lifecycle admission / teardown failure 语义，不把 `NoNativeResourceBridgeReadiness`、`NoPlatformObjectReadiness`、`NoResourceBackendShellReadiness` 或 smoke evidence 包成 platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication。
+
 ## 当前建议的下一步
 
-> `P1 internal Renderer backend platform object owner manifest stabilization bundle implementation`
+> `P1 internal Renderer platform object implementation admission closure / next platform object implementation decision`
 
-下一轮必须 docs-only，固定 `runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line；不得修改 `.cj`，不得创建 platform object、backend object、native handle、raw pointer、`MTLDevice`、`CAMetalLayer`、command queue、drawable、command buffer、render pass、encoder、pipeline state，不得修改 bridge / smoke / harness，不得 GPU submission、render execution、renderer state write、diagnostics / event bus / observer / telemetry 或 public API。
+下一轮必须 docs-only：确认 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()` 是否足够作为当前 no-platform-object-implementation endpoint，并决定是否进入 manifest stabilization。仍不得创建 platform object、native handle / raw pointer、C ABI / FFI declaration、bridge call、retain / release / destroy、Metal / AppKit / Objective-C object、GPU submission、render 或 renderer state write。
 
 本 opening 不批准真实 action side effect、public API implementation / C ABI、AI provider / prompt / external agent、event loop、queue / scheduler、platform callback、app run / shutdown、window create / close / destroy / release、多个 cycle execution、runtime global state write，或继续堆 pure wrapper / report / sanity 层。

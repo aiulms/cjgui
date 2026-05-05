@@ -1874,6 +1874,129 @@
 - Renderer backend platform object owner next-boundary decision：
   - [2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md)
 
+- Renderer backend platform object owner manifest：
+  - [2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md)
+
+- internal Renderer backend platform object owner manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md)
+
+- Renderer Metal device-layer owner preflight decision：
+  - [2026-05-04-p1-renderer-metal-device-layer-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-preflight-decision.md)
+
+- internal Renderer Metal device-layer owner value boundary closure：
+  - [2026-05-04-p1-internal-renderer-metal-device-layer-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-metal-device-layer-owner-value-boundary-closure-review.md)
+
+- Renderer Metal device-layer owner next-boundary decision：
+  - [2026-05-04-p1-renderer-metal-device-layer-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-next-boundary-decision.md)
+
+- Renderer Metal device-layer owner manifest：
+  - [2026-05-04-p1-renderer-metal-device-layer-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-manifest.md)
+
+- internal Renderer Metal device-layer owner manifest stabilization closure：
+  - [2026-05-04-p1-internal-renderer-metal-device-layer-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-metal-device-layer-owner-manifest-stabilization-closure-review.md)
+
+- Renderer no-draw backend shell preflight decision：
+  - [2026-05-04-p1-renderer-no-draw-backend-shell-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-no-draw-backend-shell-preflight-decision.md)
+
+- internal Renderer no-draw backend shell value boundary closure：
+  - [2026-05-04-p1-internal-renderer-no-draw-backend-shell-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-no-draw-backend-shell-value-boundary-closure-review.md)
+
+- Renderer no-draw backend shell next-boundary decision：
+  - [2026-05-04-p1-renderer-no-draw-backend-shell-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-no-draw-backend-shell-next-boundary-decision.md)
+
+- Renderer no-draw backend shell manifest：
+  - [2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md)
+
+- internal Renderer no-draw backend shell manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md)
+
+- Renderer command queue / drawable real lifecycle preflight decision：
+  - [2026-05-05-p1-renderer-command-queue-drawable-real-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-queue-drawable-real-lifecycle-preflight-decision.md)
+
+- Renderer real command queue lifecycle preflight decision：
+  - [2026-05-05-p1-renderer-real-command-queue-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-preflight-decision.md)
+
+- internal Renderer real command queue lifecycle value boundary closure：
+  - [2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-value-boundary-closure-review.md)
+
+- Renderer real command queue lifecycle next-boundary decision：
+  - [2026-05-05-p1-renderer-real-command-queue-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-next-boundary-decision.md)
+
+- Renderer real command queue lifecycle manifest：
+  - [2026-05-05-p1-renderer-real-command-queue-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-manifest.md)
+
+- internal Renderer real command queue lifecycle manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer real drawable lifecycle preflight decision：
+  - [2026-05-05-p1-renderer-real-drawable-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-preflight-decision.md)
+
+- internal Renderer real drawable lifecycle value boundary closure：
+  - [2026-05-05-p1-internal-renderer-real-drawable-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-lifecycle-value-boundary-closure-review.md)
+
+- Renderer real drawable lifecycle next-boundary decision：
+  - [2026-05-05-p1-renderer-real-drawable-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-next-boundary-decision.md)
+
+- Renderer real drawable lifecycle manifest：
+  - [2026-05-05-p1-renderer-real-drawable-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-manifest.md)
+
+- internal Renderer real drawable lifecycle manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-real-drawable-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-lifecycle-manifest-stabilization-closure-review.md)
+
+- Renderer command buffer commit / GPU submission preflight decision：
+  - [2026-05-05-p1-renderer-command-buffer-commit-gpu-submission-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-buffer-commit-gpu-submission-preflight-decision.md)
+
+- internal Renderer command submission value boundary closure：
+  - [2026-05-05-p1-internal-renderer-command-submission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-command-submission-value-boundary-closure-review.md)
+
+- Renderer command submission next-boundary decision：
+  - [2026-05-05-p1-renderer-command-submission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-submission-next-boundary-decision.md)
+
+- Renderer command submission manifest：
+  - [2026-05-05-p1-renderer-command-submission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-submission-manifest.md)
+
+- internal Renderer command submission manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-command-submission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-command-submission-manifest-stabilization-closure-review.md)
+
+- Renderer real backend shell implementation preflight decision：
+  - [2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md)
+
+- Renderer backend shell first implementation slice preflight decision：
+  - [2026-05-05-p1-renderer-backend-shell-first-implementation-slice-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-first-implementation-slice-preflight-decision.md)
+
+- internal Renderer backend shell skeleton no-resource value boundary closure：
+  - [2026-05-05-p1-internal-renderer-backend-shell-skeleton-no-resource-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-backend-shell-skeleton-no-resource-value-boundary-closure-review.md)
+
+- Renderer backend shell skeleton next-boundary decision：
+  - [2026-05-05-p1-renderer-backend-shell-skeleton-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-skeleton-next-boundary-decision.md)
+
+- Renderer backend shell skeleton manifest：
+  - [2026-05-05-p1-renderer-backend-shell-skeleton-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-skeleton-manifest.md)
+
+- internal Renderer backend shell skeleton manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-backend-shell-skeleton-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-backend-shell-skeleton-manifest-stabilization-closure-review.md)
+
+- Renderer native resource bridge preflight decision：
+  - [2026-05-05-p1-renderer-native-resource-bridge-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-preflight-decision.md)
+
+- internal Renderer native resource bridge value boundary closure：
+  - [2026-05-05-p1-internal-renderer-native-resource-bridge-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-native-resource-bridge-value-boundary-closure-review.md)
+
+- Renderer native resource bridge next-boundary decision：
+  - [2026-05-05-p1-renderer-native-resource-bridge-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-next-boundary-decision.md)
+
+- Renderer native resource bridge manifest：
+  - [2026-05-05-p1-renderer-native-resource-bridge-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-manifest.md)
+
+- internal Renderer native resource bridge manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-native-resource-bridge-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-native-resource-bridge-manifest-stabilization-closure-review.md)
+
+- Renderer platform object implementation preflight decision：
+  - [2026-05-05-p1-renderer-platform-object-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-preflight-decision.md)
+
+- internal Renderer platform object implementation admission value boundary closure：
+  - [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md)
+
 - AI-native architecture radar future plan：
   - [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)
 
@@ -1890,7 +2013,7 @@
 
 下一步推荐：
 
-- `P1 internal Renderer backend platform object owner manifest stabilization bundle implementation`
+- `P1 internal Renderer platform object implementation admission closure / next platform object implementation decision`
 
 用途：
 
@@ -1901,11 +2024,89 @@
 - [2026-05-04-p1-renderer-backend-platform-object-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-preflight-decision.md) 已完成，允许打开 backend platform object owner runway；下一步仍只能是 internal value boundary，不是真实 platform object creation。
 - [2026-05-04-p1-internal-renderer-backend-platform-object-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-value-boundary-closure-review.md) 已完成，新增 `runtime/cjgui/src/runtime_renderer_backend_platform_object.cj`，只消费 `CjguiInternalRendererNoBackendReadyReadiness`，canonical endpoint 是 `CjguiInternalRendererNoPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererBackendPlatformObjectOwnerDraft()`。
 - [2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoPlatformObjectReadiness` 已足够作为当前 no-platform-object endpoint，并选择下一步先做 backend platform object owner manifest stabilization。
-- Current backend-readiness endpoint 是 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()`。
-- Current runtime input 只消费 `CjguiInternalRendererNoStateWriteReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteNoWriteDraft()`；其他 renderer manifests 与 backend / Metal reference pack 只作为 docs evidence。
-- Current truth 仅限 backend readiness intent / platform lifecycle gate / execution admission gate / state visibility gate / no-backend-ready readiness value facts。
-- Same-shape Boundary Brake：不得把 no-platform-object endpoint 包成 platform object receipt / record / publication、native-handle readiness wrapper、backend implementation wrapper、Metal device readiness wrapper、backend-ready permission wrapper、GPU-submission wrapper 或 render-permission wrapper。
-- 下一步必须 docs-only，固定 `runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line；仍禁止 backend implementation、platform object creation、native handle、raw pointer、command buffer commit、GPU submission、render execution、renderer state write、diagnostics / event bus / observer / telemetry 或 public API。
+- [2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md) 与 [2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line。
+- [2026-05-04-p1-renderer-metal-device-layer-owner-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-preflight-decision.md) 已完成，允许打开 Metal device-layer owner runway；下一步仍只能是 internal value boundary，不是真实 `MTLDevice` / `CAMetalLayer` creation。
+- [2026-05-04-p1-internal-renderer-metal-device-layer-owner-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-metal-device-layer-owner-value-boundary-closure-review.md) 已完成，新增 `runtime/cjgui/src/runtime_renderer_metal_device_layer.cj`，只消费 `CjguiInternalRendererNoPlatformObjectReadiness`，canonical endpoint 是 `CjguiInternalRendererNoMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerOwnerDraft()`。
+- [2026-05-04-p1-renderer-metal-device-layer-owner-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoMetalDeviceLayerReadiness` 已足够作为当前 no-metal-device-layer endpoint，并选择下一步先做 Metal device-layer owner manifest stabilization。
+- [2026-05-04-p1-renderer-metal-device-layer-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-metal-device-layer-owner-manifest.md) 与 [2026-05-04-p1-internal-renderer-metal-device-layer-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-metal-device-layer-owner-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_metal_device_layer.cj` owner / truth / canonical endpoint / stop-line。
+- [2026-05-04-p1-renderer-no-draw-backend-shell-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-no-draw-backend-shell-preflight-decision.md) 已完成，允许打开 no-draw backend shell runway；下一步仍只能是 internal value boundary，不是真实 backend shell implementation。
+- [2026-05-04-p1-internal-renderer-no-draw-backend-shell-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-no-draw-backend-shell-value-boundary-closure-review.md) 已完成，新增 `runtime/cjgui/src/runtime_renderer_no_draw_backend_shell.cj`，只消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness`，canonical endpoint 是 `CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`。
+- [2026-05-04-p1-renderer-no-draw-backend-shell-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-no-draw-backend-shell-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoBackendShellReadiness` 已足够作为当前 no-backend-shell endpoint，并选择下一步先做 no-draw backend shell manifest stabilization。
+- [2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md) 与 [2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_no_draw_backend_shell.cj` owner / truth / canonical endpoint / stop-line。
+- Current no-draw backend shell truth 仅限 no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell-readiness value facts。
+- Same-shape Boundary Brake：不得把 no-backend-shell endpoint 包成 no-draw backend shell receipt / record / publication、backend-shell-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper 或 platform-object wrapper。
+- [2026-05-05-p1-renderer-command-queue-drawable-real-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-queue-drawable-real-lifecycle-preflight-decision.md) 已完成，允许打开 command queue / drawable real lifecycle runway，但必须拆成两个 owner / runway；下一步先做 docs-only `P1 internal Renderer real command queue lifecycle preflight decision`，real drawable lifecycle 暂缓，combined value boundary 暂缓并通常拒绝。
+- [2026-05-05-p1-renderer-real-command-queue-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-preflight-decision.md) 已完成，允许打开 real command queue lifecycle runway；下一步选择 internal-only `P1 internal Renderer real command queue lifecycle value boundary bundle implementation`，但仍只是 value facts，不是真实 `MTLCommandQueue` creation。
+- [2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime_renderer_real_command_queue.cj`，只消费 `CjguiInternalRendererNoBackendShellReadiness`，canonical endpoint 是 `CjguiInternalRendererNoRealCommandQueueReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueLifecycleDraft()`。
+- Current real command queue truth 仅限 real command queue lifecycle intent / queue creation policy / queue ownership guard / queue teardown policy / no-real-command-queue-readiness value facts。
+- Same-shape Boundary Brake：不得把 no-backend-shell endpoint 包成 real command queue receipt / record / publication、queue-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-renderer-real-command-queue-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoRealCommandQueueReadiness` 已足够作为当前 no-real-command-queue endpoint，并选择下一步先做 real command queue lifecycle manifest stabilization。
+- [2026-05-05-p1-renderer-real-command-queue-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-lifecycle-manifest.md) 与 [2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_real_command_queue.cj` owner / truth / canonical endpoint / stop-line。
+- Current real command queue truth 仅限 real command queue lifecycle intent / queue creation policy / queue ownership guard / queue teardown policy / no-real-command-queue-readiness value facts。
+- Same-shape Boundary Brake：不得把 no-real-command-queue endpoint 包成 real command queue receipt / record / publication、queue-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-renderer-real-drawable-lifecycle-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-preflight-decision.md) 已完成，允许打开 real drawable lifecycle runway；下一步选择 internal-only `P1 internal Renderer real drawable lifecycle value boundary bundle implementation`，但仍只是 value facts，不是真实 drawable acquisition。
+- Current recommended real drawable truth 仅限 real drawable lifecycle intent / drawable availability policy / drawable acquisition guard / presentation ownership policy / no-real-drawable-readiness value facts。
+- Same-shape Boundary Brake：不得把 no-real-command-queue endpoint 包成 real drawable receipt / record / publication、drawable-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-internal-renderer-real-drawable-lifecycle-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-lifecycle-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime_renderer_real_drawable.cj`，只消费 `CjguiInternalRendererNoRealCommandQueueReadiness`，canonical endpoint 是 `CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()`。
+- Current real drawable truth 仅限 real drawable lifecycle intent / drawable availability policy / drawable acquisition guard / presentation ownership policy / no-real-drawable-readiness value facts。
+- [2026-05-05-p1-renderer-real-drawable-lifecycle-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()` 已足够作为当前 no-real-drawable endpoint，并选择下一步先做 real drawable lifecycle manifest stabilization。
+- Same-shape Boundary Brake：不得把 no-real-drawable endpoint 包成 real drawable receipt / record / publication、drawable-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper、render-permission wrapper 或 public API / C ABI wrapper。
+- [2026-05-05-p1-renderer-real-drawable-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-lifecycle-manifest.md) 与 [2026-05-05-p1-internal-renderer-real-drawable-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_real_drawable.cj` owner / truth / canonical endpoint / stop-line。
+- Current real drawable truth 仅限 real drawable lifecycle intent / drawable availability policy / drawable acquisition guard / presentation ownership policy / no-real-drawable-readiness value facts。
+- Same-shape Boundary Brake：拒绝 real drawable receipt / record / publication、drawable-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、command-buffer-ready wrapper、render-permission wrapper；future command buffer commit / GPU submission、real backend shell implementation 或 real drawable acquisition 必须先 docs-only preflight。
+- [2026-05-05-p1-renderer-command-buffer-commit-gpu-submission-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-buffer-commit-gpu-submission-preflight-decision.md) 已完成，允许打开 command buffer commit / GPU submission runway，但下一步仍只能是 internal value boundary，不是真实 command buffer creation、`commit`、`present`、`nextDrawable`、GPU submission、render execution 或 renderer state write。
+- Recommended command submission truth 仅限 command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts。
+- Same-shape Boundary Brake：不得把 no-real-drawable endpoint 包成 command submission receipt / record / publication、GPU-submission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、backend implementation wrapper 或 render-permission wrapper；下一轮必须新增 commit policy / presentation gate / GPU submission failure / no-gpu-submission 语义。
+- [2026-05-05-p1-internal-renderer-command-submission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-command-submission-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_command_submission.cj`，只消费 `CjguiInternalRendererNoRealDrawableReadiness`，canonical endpoint 是 `CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()`。
+- Current command submission truth 仅限 command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts。
+- Same-shape Boundary Brake：新增 commit policy / presentation gate / GPU submission failure / no-gpu-submission endpoint 语义；不得把 no-real-drawable endpoint 包成 receipt / record / publication、GPU-submission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、backend implementation wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-renderer-command-submission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-submission-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()` 已足够作为当前 no-gpu-submission endpoint。
+- Current no-gpu-submission truth 仅限 command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts；它不是 command buffer permission、drawable present permission、GPU submission permission、render permission、backend implementation permission、renderer state write permission 或 public API permission。
+- Same-shape Boundary Brake：`NoGpuSubmissionReadiness` 不再继续包装成 tail wrapper；拒绝 command submission receipt / record / publication、GPU-submission permission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、render-permission wrapper、backend implementation wrapper、renderer-state-write wrapper。
+- [2026-05-05-p1-renderer-command-submission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-command-submission-manifest.md) 与 [2026-05-05-p1-internal-renderer-command-submission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-command-submission-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_command_submission.cj` owner / truth / canonical endpoint / stop-line。
+- Current no-gpu-submission manifest truth 仅限 command submission intent / command buffer commit policy / drawable presentation gate / GPU submission failure policy / no-gpu-submission readiness value facts；`CommandBufferCommitPolicy` 不创建或 commit command buffer，`DrawablePresentationGate` 不 present drawable，`GpuSubmissionFailurePolicy` 不观察真实 GPU completion 或注册 callback。
+- Same-shape Boundary Brake：manifest 封账并拒绝 command submission receipt / record / publication、GPU-submission permission wrapper、command-buffer-ready wrapper、drawable-present-ready wrapper、render-permission wrapper、backend implementation wrapper、renderer-state-write wrapper；future real backend shell implementation、completion tracking 或真实 commit / present / submit 必须先 docs-only preflight。
+- [2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md) 已完成，允许靠近 real backend shell implementation runway，但第一刀仍必须继续拆成更窄 docs-only first implementation slice preflight。
+- Evidence 结论：no-draw backend shell、backend platform object、Metal device-layer、real command queue、real drawable 与 command submission endpoints 只是 value facts / docs evidence，不是 backend implementation permission、GPU submission permission、renderer state write permission 或 public API permission；`labs/macos_bridge_smoke` 只能作为 feasibility / teardown / smoke evidence，不能升格为 runtime truth。
+- Same-shape Boundary Brake：不得把现有 readiness endpoint 或 milestone 包成 real backend shell receipt / record / publication、backend-ready permission wrapper、platform-object permission wrapper、native-handle wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-renderer-backend-shell-first-implementation-slice-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-first-implementation-slice-preflight-decision.md) 已完成，选择 A `backend shell skeleton / no-resource implementation slice` 作为第一实现切口。
+- 推荐 owner candidate 是 `runtime/cjgui/src/runtime_renderer_backend_shell_skeleton.cj`，runtime input candidate 只消费 `CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()`。
+- 允许 truth 仅限 backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback / teardown confinement / no-resource readiness value facts；不得创建 backend shell object、platform object、native handle、Metal / AppKit / Objective-C / FFI resource、command buffer / drawable / render pass / encoder / pipeline state，不得提交 GPU work，不得执行 render，不得写 renderer state 或扩 public API。
+- [2026-05-05-p1-internal-renderer-backend-shell-skeleton-no-resource-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-backend-shell-skeleton-no-resource-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_backend_shell_skeleton.cj`。
+- Canonical endpoint：`CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()`。
+- Current truth 仅限 backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback / teardown confinement / no-resource-backend-shell readiness value facts。
+- Same-shape Boundary Brake：新增 skeleton lifecycle envelope / no-resource guard / failure rollback / teardown confinement 语义，不把 `NoGpuSubmissionReadiness` 包成 backend-shell-ready permission wrapper、native-handle wrapper、platform-object wrapper、Metal-device wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication。
+- [2026-05-05-p1-renderer-backend-shell-skeleton-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-skeleton-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()` 已足够作为当前 no-resource-backend-shell endpoint。
+- Current endpoint 只代表 backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback policy / teardown confinement policy / no-resource-backend-shell readiness value facts；不是 backend shell implementation、native handle、platform object、Metal / AppKit bridge、GPU submission、render、renderer state write、public API 或 C ABI permission。
+- Same-shape Boundary Brake：`NoResourceBackendShellReadiness` 不再继续包装成 tail wrapper；拒绝 backend-shell-ready permission wrapper、native-handle wrapper、platform-object wrapper、Metal-device wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+- [2026-05-05-p1-renderer-backend-shell-skeleton-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-backend-shell-skeleton-manifest.md) 与 [2026-05-05-p1-internal-renderer-backend-shell-skeleton-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-backend-shell-skeleton-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_backend_shell_skeleton.cj` owner / truth / canonical endpoint / stop-line。
+- Current no-resource-backend-shell manifest truth 仅限 backend shell skeleton intent / lifecycle envelope / no-resource guard / failure rollback policy / teardown confinement policy / no-resource-backend-shell readiness value facts。
+- Boundary：`BackendShellLifecycleEnvelope` 不创建 backend shell object；`BackendShellNoResourceGuard` 不持有 native handle / raw pointer / platform object；`BackendShellFailureRollbackPolicy` 不执行真实 rollback callback；`BackendShellTeardownConfinementPolicy` 不调用 bridge、不执行 retain / release / destroy；`NoResourceBackendShellReadiness` 不是 backend shell implementation、native handle、platform object、Metal / AppKit bridge、GPU submission、render、renderer state write、public API 或 C ABI permission。
+- Same-shape Boundary Brake：manifest 封账并拒绝 backend-shell-ready permission wrapper、native-handle wrapper、platform-object wrapper、Metal-device wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+- [2026-05-05-p1-renderer-native-resource-bridge-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-preflight-decision.md) 已完成，允许打开 native resource bridge runway，但下一步仍只能是 internal value boundary，不是真实 native bridge / FFI / handle implementation。
+- Default owner candidate：`runtime/cjgui/src/runtime_renderer_native_resource_bridge.cj`；runtime input candidate 只消费 `CjguiInternalRendererNoResourceBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererBackendShellSkeletonDraft()`。
+- Output truth 仅限 native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts。
+- Same-shape Boundary Brake：不得把 no-resource-backend-shell、no-platform-object、no-metal-device-layer 或 smoke evidence 包成 native bridge receipt / record / publication、native-handle permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-internal-renderer-native-resource-bridge-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-native-resource-bridge-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_native_resource_bridge.cj`。
+- Canonical endpoint：`CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()`。
+- Current truth 仅限 native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts。
+- Same-shape Boundary Brake：新增 handle confinement / bridge call admission / teardown contract 语义，不把 no-resource-backend-shell、no-platform-object、no-metal-device-layer 或 smoke evidence 包成 native bridge receipt / record / publication、native-handle permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-renderer-native-resource-bridge-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()` 已足够作为当前 no-native-resource-bridge endpoint。
+- Endpoint truth 只代表 native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts；不是 native bridge implementation、native handle、C ABI、FFI、platform object、Metal / AppKit bridge、GPU submission、render、renderer state write 或 public API permission。
+- Same-shape Boundary Brake：`NoNativeResourceBridgeReadiness` 不再继续包装成 tail wrapper；拒绝 native bridge receipt / record / publication、native-handle permission wrapper、C-ABI permission wrapper、FFI permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper。
+- [2026-05-05-p1-renderer-native-resource-bridge-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-native-resource-bridge-manifest.md) 与 [2026-05-05-p1-internal-renderer-native-resource-bridge-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-native-resource-bridge-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_native_resource_bridge.cj` owner / truth / canonical endpoint / stop-line。
+- Manifest truth 仅限 native resource bridge intent / handle confinement policy / bridge call admission guard / native teardown contract policy / no-native-resource-bridge readiness value facts。
+- Boundary：`NativeHandleConfinementPolicy` 不创建、保存或暴露 native handle / raw pointer；`BridgeCallAdmissionGuard` 不调用 bridge、不新增 FFI declaration；`NativeTeardownContractPolicy` 不执行 retain / release / destroy；`NoNativeResourceBridgeReadiness` 不是 native bridge implementation、native handle、C ABI、FFI、platform object、Metal / AppKit bridge、GPU submission、render、renderer state write 或 public API permission。
+- Same-shape Boundary Brake：manifest 封账并拒绝 native bridge receipt / record / publication、native-handle permission wrapper、C-ABI permission wrapper、FFI permission wrapper、platform-object permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper。
+- [2026-05-05-p1-renderer-platform-object-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-preflight-decision.md) 已完成，允许打开 platform object implementation runway，但下一步仍不能直接创建真实 platform object。
+- Default owner candidate：`runtime/cjgui/src/runtime_renderer_platform_object_implementation_admission.cj`；runtime input candidate 只消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()`。
+- Output truth 仅限 platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。
+- Same-shape Boundary Brake：不得把 `NoNativeResourceBridgeReadiness`、`NoPlatformObjectReadiness`、`NoResourceBackendShellReadiness` 或 smoke evidence 包成 platform object implementation receipt / record / publication、platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_platform_object_admission.cj`。
+- Canonical endpoint：`CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`。
+- Current truth 仅限 platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。
+- Same-shape Boundary Brake：新增 implementation admission / native handle admission / lifecycle admission / teardown failure / no-platform-object-implementation 语义，不把 `NoNativeResourceBridgeReadiness`、`NoPlatformObjectReadiness`、`NoResourceBackendShellReadiness` 或 smoke evidence 包成 platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication。
+- 下一步进入 `P1 internal Renderer platform object implementation admission closure / next platform object implementation decision`。
 - [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_drawable_acquisition.cj` owner / truth / canonical endpoint / stop-line。
 - [2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_command_queue.cj` owner / truth / canonical endpoint / stop-line。
 - Current canonical packet truth 是 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`。

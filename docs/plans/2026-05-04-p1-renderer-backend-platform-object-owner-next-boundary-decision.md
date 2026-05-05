@@ -198,3 +198,16 @@ Same-shape Boundary Brake 在本 decision 生效。
 `P1 internal Renderer backend platform object owner manifest stabilization bundle implementation`
 
 下一轮仍必须 docs-only，固定 `runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line；不得创建 platform object、native handle、raw pointer、`MTLDevice` / `CAMetalLayer`、command queue、drawable、command buffer、render pass、encoder、pipeline state，不得修改 bridge / smoke / harness，不得 GPU submission、render execution、renderer state write 或 public API。
+
+## Downstream Backend Platform Object Owner Manifest Stabilization
+
+Renderer backend platform object owner manifest stabilization 已完成：
+
+- [2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-manifest.md)
+- [2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-platform-object-owner-manifest-stabilization-closure-review.md)
+
+该 manifest stabilization 固定 `runtime_renderer_backend_platform_object.cj` owner / truth / canonical endpoint / stop-line。`CjguiInternalRendererNoPlatformObjectReadiness` 继续只代表 backend platform object owner intent / native resource ownership policy / lifecycle teardown policy / confinement failure policy / no-platform-object readiness value facts，不代表 platform object permission、native handle permission、Metal device permission、backend implementation permission、render permission、GPU submission permission 或 public API permission。
+
+唯一 next opening：
+
+`P1 internal Renderer Metal device-layer owner preflight decision`

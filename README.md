@@ -1,6 +1,6 @@
 # CJGUI
 
-最后更新：2026-05-04
+最后更新：2026-05-05
 
 CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 实验项目。
 它的长期目标是探索一条上层尽量保持仓颉原生、底层通过极窄平台桥接接入窗口系统和渲染后端的桌面 GUI 路线。
@@ -71,7 +71,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 当前下一步以 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 的 `当前 next opening` 为准。
 
-最新 Renderer backend platform object owner next-boundary decision：[decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-backend-platform-object-owner-next-boundary-decision.md) 已完成；`CjguiInternalRendererNoPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererBackendPlatformObjectOwnerDraft()` 已足够作为当前 no-platform-object endpoint。下一步选择 `P1 internal Renderer backend platform object owner manifest stabilization bundle implementation`，只固定 owner / truth / canonical endpoint / stop-line；继续禁止 platform object、native handle、raw pointer、`MTLDevice` / `CAMetalLayer`、command queue、drawable、command buffer、render pass、encoder、pipeline state、bridge / smoke / harness 修改、GPU submission、render execution、renderer state write、public API / C ABI。
+最新 Renderer platform object implementation admission value boundary：[closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md) 已完成；新增 internal-only [runtime_renderer_platform_object_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_platform_object_admission.cj)，只消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness` / `cjguiInternalExecuteDefaultRendererNativeResourceBridgeDraft()`。canonical endpoint 是 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`；truth 仅限 platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。它不创建 platform object、native handle、raw pointer、C ABI / FFI declaration、bridge call、Metal / AppKit / Objective-C object、GPU submission、render、renderer state write 或 public API。唯一 next opening 是 `P1 internal Renderer platform object implementation admission closure / next platform object implementation decision`。
 
 阶段健康 checkpoint：[P1 runtime progress health checkpoint](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-29-p1-runtime-progress-health-checkpoint.md) 已记录当前推进节奏与模型债务。它只用于换会话、大方向判断或进入高风险边界前恢复上下文，不是每轮 implementation 必读项。
 

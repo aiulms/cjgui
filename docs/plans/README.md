@@ -1997,6 +1997,45 @@
 - internal Renderer platform object implementation admission value boundary closure：
   - [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-value-boundary-closure-review.md)
 
+- Renderer platform object implementation admission next-boundary decision：
+  - [2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md)
+
+- Renderer platform object implementation admission manifest：
+  - [2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md)
+
+- internal Renderer platform object implementation admission manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md)
+
+- Renderer Metal device-layer implementation preflight decision：
+  - [2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md)
+
+- internal Renderer Metal device-layer implementation admission value boundary closure：
+  - [2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-value-boundary-closure-review.md)
+
+- Renderer Metal device-layer implementation admission next-boundary decision：
+  - [2026-05-05-p1-renderer-metal-device-layer-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-next-boundary-decision.md)
+
+- Renderer Metal device-layer implementation admission manifest：
+  - [2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md)
+
+- internal Renderer Metal device-layer implementation admission manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md)
+
+- Renderer real command queue implementation preflight decision：
+  - [2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md)
+
+- internal Renderer real command queue implementation admission value boundary closure：
+  - [2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-value-boundary-closure-review.md)
+
+- Renderer real command queue implementation admission next-boundary decision：
+  - [2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md)
+
+- Renderer real command queue implementation admission manifest：
+  - [2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md)
+
+- internal Renderer real command queue implementation admission manifest stabilization closure：
+  - [2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md)
+
 - AI-native architecture radar future plan：
   - [2026-05-01-p1-ai-native-architecture-radar-future-plan.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-01-p1-ai-native-architecture-radar-future-plan.md)
 
@@ -2013,7 +2052,7 @@
 
 下一步推荐：
 
-- `P1 internal Renderer platform object implementation admission closure / next platform object implementation decision`
+- `P1 internal Renderer real drawable implementation preflight decision`
 
 用途：
 
@@ -2106,7 +2145,47 @@
 - Canonical endpoint：`CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`。
 - Current truth 仅限 platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。
 - Same-shape Boundary Brake：新增 implementation admission / native handle admission / lifecycle admission / teardown failure / no-platform-object-implementation 语义，不把 `NoNativeResourceBridgeReadiness`、`NoPlatformObjectReadiness`、`NoResourceBackendShellReadiness` 或 smoke evidence 包成 platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication。
-- 下一步进入 `P1 internal Renderer platform object implementation admission closure / next platform object implementation decision`。
+- [2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()` 已足够作为当前 no-platform-object-implementation endpoint。
+- Endpoint truth 只代表 platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts；不是 platform object implementation、native handle、C ABI、FFI、Metal / AppKit bridge、GPU submission、render、renderer state write 或 public API permission。
+- Same-shape Boundary Brake：`NoPlatformObjectImplementationReadiness` 不再继续包装成 tail wrapper；拒绝 platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+- [2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md) 与 [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_platform_object_admission.cj` owner / truth / canonical endpoint / stop-line。
+- Manifest truth 仅限 platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。
+- Boundary：`NativeHandleAdmissionPolicy` 不创建、保存或暴露 native handle / raw pointer；`PlatformObjectLifecycleAdmissionGuard` 不创建 platform object、不调用 bridge；`PlatformObjectTeardownFailurePolicy` 不执行 retain / release / destroy；`NoPlatformObjectImplementationReadiness` 不是 platform object implementation、native handle、C ABI、FFI、Metal / AppKit bridge、GPU submission、render、renderer state write 或 public API permission。
+- Same-shape Boundary Brake：manifest 封账并拒绝 platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+- [2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md) 已完成，允许打开 Metal device-layer implementation runway，但下一步仍不能直接创建真实 `MTLDevice` / `CAMetalLayer`。
+- Runtime input candidate 只消费 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`；output truth 仅限 Metal device-layer implementation intent / device creation admission policy / layer binding admission guard / scale-color-space admission policy / no-metal-device-layer-implementation readiness value facts。
+- Same-shape Boundary Brake：不得把 `NoPlatformObjectImplementationReadiness`、`NoNativeResourceBridgeReadiness`、`NoMetalDeviceLayerReadiness` 或 smoke evidence 包成 Metal device-layer implementation receipt / record / publication、device-ready permission wrapper、layer-ready permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、platform-object wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- [2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_metal_device_layer_admission.cj`。
+- Canonical endpoint：`CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerAdmissionDraft()`。
+- Current truth 仅限 Metal device-layer implementation intent / device creation admission policy / layer binding admission guard / scale-color-space admission policy / no-metal-device-layer-implementation readiness value facts。
+- Same-shape Boundary Brake：新增 device creation admission / layer binding admission / scale-color-space admission / no-metal-device-layer-implementation 语义，不把 `NoPlatformObjectImplementationReadiness`、`NoNativeResourceBridgeReadiness`、`NoMetalDeviceLayerReadiness` 或 smoke evidence 包成 device-ready permission wrapper、layer-ready permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、platform-object wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication。
+- [2026-05-05-p1-renderer-metal-device-layer-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-next-boundary-decision.md) 已完成，确认 `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerAdmissionDraft()` 已足够作为当前 no-metal-device-layer-implementation endpoint。
+- Endpoint truth 只代表 Metal device-layer implementation intent / device creation admission policy / layer binding admission guard / scale-color-space admission policy / no-metal-device-layer-implementation readiness value facts；不是 `MTLDevice`、`CAMetalLayer`、native handle、C ABI、FFI、platform object、GPU submission、render、renderer state write 或 public API permission。
+- Same-shape Boundary Brake：`NoMetalDeviceLayerImplementationReadiness` 不再继续包装成 tail wrapper；拒绝 device-ready permission wrapper、layer-ready permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、platform-object wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+- [2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md) 与 [2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_metal_device_layer_admission.cj` owner / truth / canonical endpoint / stop-line。
+- Manifest truth 仅限 Metal device-layer implementation intent / device creation admission policy / layer binding admission guard / scale-color-space admission policy / no-metal-device-layer-implementation readiness value facts。
+- Boundary：`MetalDeviceCreationAdmissionPolicy` 不创建 `MTLDevice`；`MetalLayerBindingAdmissionGuard` 不创建或绑定 `CAMetalLayer`；`MetalScaleColorSpaceAdmissionPolicy` 不查询真实 screen / layer / color space；`NoMetalDeviceLayerImplementationReadiness` 不是 `MTLDevice`、`CAMetalLayer`、native handle、C ABI、FFI、platform object、GPU submission、render、renderer state write 或 public API permission。
+- Same-shape Boundary Brake：manifest 封账并拒绝 device-ready permission wrapper、layer-ready permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、platform-object wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+- 下一步进入 docs-only `P1 internal Renderer real command queue implementation preflight decision`。
+- [2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md) 已完成，允许打开 real command queue implementation runway，但下一步仍不能创建真实 `MTLCommandQueue`。
+- Runtime input candidate 只消费 `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerAdmissionDraft()`；`CjguiInternalRendererNoRealCommandQueueReadiness`、`CjguiInternalRendererNoNativeResourceBridgeReadiness` 与 smoke evidence 只能作为 docs evidence。
+- Output truth 仅限 real command queue implementation intent / queue creation admission policy / queue ownership admission guard / queue teardown failure policy / no-real-command-queue-implementation readiness value facts。
+- Same-shape Boundary Brake：不得把 `NoMetalDeviceLayerImplementationReadiness`、`NoRealCommandQueueReadiness`、`NoNativeResourceBridgeReadiness` 或 smoke evidence 包成 command queue implementation receipt / record / publication、queue-ready permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
+- 下一步进入 `P1 internal Renderer real command queue implementation admission value boundary bundle implementation`。
+- [2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-value-boundary-closure-review.md) 已完成，新增 internal-only `runtime/cjgui/src/runtime_renderer_real_command_queue_admission.cj`。
+- Canonical endpoint：`CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()`。
+- Current truth 仅限 real command queue implementation intent / queue creation admission policy / queue ownership admission guard / queue teardown failure policy / no-real-command-queue-implementation readiness value facts。
+- Stop-line：不创建 `MTLCommandQueue`，不调用 `newCommandQueue`，不创建 drawable / command buffer / `MTLDevice` / `CAMetalLayer` / platform object，不新增 native handle / raw pointer / C ABI / FFI declaration，不调用 bridge / retain / release / destroy / Metal / AppKit / Objective-C，不提交 GPU work，不执行 render，不写 renderer state，不扩 public API，不新增 module-level `var`。
+- 下一步进入 docs-only `P1 internal Renderer real command queue implementation admission closure / next real command queue implementation decision`。
+- [2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md) 已完成，确认 no-real-command-queue-implementation endpoint 足够，不再继续包装成 tail wrapper。
+- 该 endpoint 不是 `MTLCommandQueue` permission、`newCommandQueue` permission、native handle permission、C ABI permission、FFI permission、command buffer permission、GPU submission permission、render permission、renderer state write permission 或 public API permission。
+- 下一步进入 docs-only `P1 internal Renderer real command queue implementation admission manifest stabilization bundle implementation`。
+- [2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md) 与 [2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_real_command_queue_admission.cj` owner / truth / canonical endpoint / default draft / stop-line。
+- Canonical endpoint：`CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()`。
+- Current truth 仅限 real command queue implementation intent / queue creation admission policy / queue ownership admission guard / queue teardown failure policy / no-real-command-queue-implementation readiness value facts。
+- Boundary：`RealCommandQueueCreationAdmissionPolicy` 不创建 `MTLCommandQueue`，不调用 `newCommandQueue`；`RealCommandQueueOwnershipAdmissionGuard` 不保存 native queue handle，不暴露 raw pointer；`RealCommandQueueTeardownFailurePolicy` 不执行 retain / release / destroy；`NoRealCommandQueueImplementationReadiness` 不是 `MTLCommandQueue`、`newCommandQueue`、native handle、C ABI、FFI、command buffer、GPU submission、render、renderer state write 或 public API permission。
+- Same-shape Boundary Brake：manifest 封账并拒绝 queue-ready permission wrapper、`newCommandQueue` permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、command-buffer permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+- 下一步进入 docs-only `P1 internal Renderer real drawable implementation preflight decision`。
 - [2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-drawable-acquisition-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-drawable-acquisition-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_drawable_acquisition.cj` owner / truth / canonical endpoint / stop-line。
 - [2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-command-queue-lifecycle-manifest.md) 与 [2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-internal-renderer-command-queue-lifecycle-manifest-stabilization-closure-review.md) 已完成，固定 `runtime_renderer_command_queue.cj` owner / truth / canonical endpoint / stop-line。
 - Current canonical packet truth 是 `CjguiInternalRendererPacketOrderingHardeningResult` / `cjguiInternalExecuteDefaultRendererPacketOrderingHardeningDraft()`。
@@ -2161,6 +2240,6 @@
 
 当前可执行动作：
 
-- docs-only next-boundary decision：`P1 internal Renderer renderer state write no-write closure / next renderer state decision`。
+- docs-only preflight：`P1 internal Renderer real drawable implementation preflight decision`。
 - 后续若进入 backend-readiness value boundary、真实 render execution、GPU submission、renderer state write、backend implementation 或 public surface，必须先由新的 docs-only decision / preflight 批准，并继续保护 no-real-execution / no-side-effect / no-queue-storage / no-enqueue / no-drain / no-provider / no-public-API-implementation / no-stable-public-surface stop-lines。
 - 仍不得接入 AppKit / Metal / Objective-C，不得暴露 platform object / native handle / raw pointer，不得实现 callback binding、真实 event loop、真实 loop iteration、真实 work execution、next-cycle execution、多个 cycle execution、runtime global state write、global mutable singleton、module-level `var` / escaping in-place mutation、改变既有 state field semantics、调用现有 state-changing transition functions、`while` loop / scheduling loop、queue / drain、scheduler、input processing、layout / render、app run / shutdown、window create / close / destroy / release、handle table / generation、public state publication、public runtime API、public C ABI，不得修改 `cjpm.toml` 或 `labs/macos_bridge_smoke`。

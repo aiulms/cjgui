@@ -161,6 +161,14 @@ Metal device-layer owner 与 backend platform object owner / backend readiness b
 
 [No-draw backend shell next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-no-draw-backend-shell-next-boundary-decision.md) 已确认 downstream no-backend-shell endpoint 足够，并选择下一步先做 no-draw backend shell manifest stabilization；command queue / drawable real lifecycle、real platform object implementation、command buffer commit / GPU submission 仍暂缓。
 
+[Metal device-layer implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md) 已在后续 implementation-admission runway 中引用本 manifest 作为 docs evidence，但没有把 `CjguiInternalRendererNoMetalDeviceLayerReadiness` 升格为 runtime input 或 device / layer permission。
+
+[Metal device-layer implementation admission value boundary closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-value-boundary-closure-review.md) 已新增 downstream owner `runtime_renderer_metal_device_layer_admission.cj`，只消费 `CjguiInternalRendererNoPlatformObjectImplementationReadiness`，并固定 downstream canonical endpoint `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerAdmissionDraft()`。
+
+[Metal device-layer implementation admission next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-next-boundary-decision.md) 已确认 downstream no-metal-device-layer-implementation endpoint 足够，并选择下一步做 Metal device-layer implementation admission manifest stabilization；device-ready wrapper、layer-ready wrapper、native-handle wrapper、C-ABI / FFI wrapper、GPU-submission wrapper、render-permission wrapper、receipt / record / publication 均拒绝。
+
+[Metal device-layer implementation admission manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md) 与 [Metal device-layer implementation admission manifest stabilization closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md) 已固定 downstream implementation admission owner / truth / canonical endpoint / stop-line，并选择下一步 docs-only real command queue implementation preflight；本 manifest 仍只是 upstream docs evidence，不变成 runtime input。
+
 ## Same-shape Boundary Brake
 
 Same-shape Boundary Brake 在本 manifest 生效。
@@ -298,6 +306,23 @@ Unique next opening:
 `P1 internal Renderer no-draw backend shell preflight decision`
 
 下一轮仍必须 docs-only。它只能评估 no-draw backend shell owner、backend lifecycle shell、no-device / no-layer fallback、teardown / failure path 与 smoke strategy；不得创建 backend object、platform object、native handle、raw pointer、`MTLDevice`、`CAMetalLayer`、command queue、drawable、command buffer、render pass、encoder、pipeline state，不得修改 bridge / smoke / harness，不得 GPU submission、render execution、renderer state write、public API 或 C ABI。
+
+## Downstream Metal Device-layer Implementation Preflight
+
+Renderer Metal device-layer implementation preflight 已完成：
+
+- [2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md)
+- [2026-05-05-p1-renderer-metal-device-layer-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-next-boundary-decision.md)
+- [2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md)
+- [2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 downstream preflight 使用本 manifest 作为 docs evidence：`CjguiInternalRendererNoMetalDeviceLayerReadiness` 提供 device selection policy、layer binding policy、scale-color-space policy 与 no-metal-device-layer vocabulary，但仍不授予 `MTLDevice` creation、`CAMetalLayer` creation / binding、native handle、raw pointer、C ABI、FFI declaration、bridge call、backend implementation、GPU submission、render execution 或 public API permission。
+
+Metal device-layer implementation preflight 的 runtime input candidate 只消费 downstream platform object implementation admission manifest 的 `CjguiInternalRendererNoPlatformObjectImplementationReadiness`；本 manifest 不作为 runtime input，不进入 implementation admission owner。
+
+唯一 downstream next opening：
+
+`P1 internal Renderer real command queue implementation preflight decision`
 
 ## Downstream No-draw Backend Shell Preflight
 

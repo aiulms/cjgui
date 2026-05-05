@@ -344,3 +344,34 @@ Same-shape Boundary Brake 继续刹住 no-native-resource-bridge / no-platform-o
 唯一 downstream next opening：
 
 `P1 internal Renderer platform object implementation admission closure / next platform object implementation decision`
+
+## Downstream Platform Object Implementation Admission Next-boundary Decision
+
+Renderer platform object implementation admission next-boundary decision 已完成：
+
+- [2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md)
+
+该 decision 确认 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()` 已足够作为当前 no-platform-object-implementation endpoint，并选择 `P1 internal Renderer platform object implementation admission manifest stabilization bundle implementation` 作为唯一 next opening。
+
+Same-shape Boundary Brake：`NoPlatformObjectImplementationReadiness` 不再继续包装成 tail wrapper；拒绝 platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+
+唯一 downstream next opening：
+
+`P1 internal Renderer platform object implementation admission manifest stabilization bundle implementation`
+
+## Downstream Platform Object Implementation Admission Manifest Stabilization
+
+Renderer platform object implementation admission manifest stabilization 已完成：
+
+- [2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md)
+- [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 manifest 固定 downstream owner file [runtime_renderer_platform_object_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_platform_object_admission.cj)，canonical endpoint 是 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`。
+
+Current truth 仅限 platform object implementation intent / native handle admission policy / platform object lifecycle admission guard / teardown failure policy / no-platform-object-implementation readiness value facts。`NativeHandleAdmissionPolicy` 不创建、保存或暴露 native handle / raw pointer；`PlatformObjectLifecycleAdmissionGuard` 不创建 platform object、不调用 bridge；`PlatformObjectTeardownFailurePolicy` 不执行 retain / release / destroy；`NoPlatformObjectImplementationReadiness` 不是 platform object implementation、native handle、C ABI、FFI、Metal / AppKit bridge、GPU submission、render、renderer state write 或 public API permission。
+
+Same-shape Boundary Brake 继续刹住 no-native-resource-bridge / no-platform-object endpoints：不得把它们包成 platform-object permission wrapper、native-handle permission wrapper、C-ABI / FFI permission wrapper、Metal-device permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper、renderer-state-write wrapper、receipt / record / publication。
+
+唯一 downstream next opening：
+
+`P1 internal Renderer Metal device-layer implementation preflight decision`

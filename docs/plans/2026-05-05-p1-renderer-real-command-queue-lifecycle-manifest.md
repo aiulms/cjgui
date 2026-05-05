@@ -110,6 +110,31 @@ Downstream command buffer commit / GPU submission preflight is now recorded in:
 
 That decision treats this manifest as docs evidence only, keeps `CjguiInternalRendererNoRealDrawableReadiness` as the sole runtime input candidate, and chooses a value-only command submission boundary next. It does not approve `MTLCommandQueue` creation, command buffer creation, drawable present, GPU submission, render execution or renderer state write.
 
+Downstream real command queue implementation preflight is now recorded in:
+
+- [2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md)
+
+That decision treats this manifest as command queue lifecycle docs evidence only. `CjguiInternalRendererNoRealCommandQueueReadiness` does not become runtime input, queue-ready permission, native-handle permission, C ABI / FFI permission, backend implementation permission, GPU submission permission, render permission, renderer state write permission or public API permission for the next admission slice. The chosen next opening is value-only real command queue implementation admission, not `MTLCommandQueue` creation or `newCommandQueue`.
+
+Downstream real command queue implementation admission value boundary closure is now recorded in:
+
+- [2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-value-boundary-closure-review.md)
+
+That closure treats this manifest as docs evidence only. `CjguiInternalRendererNoRealCommandQueueReadiness` remains a lifecycle endpoint and does not become runtime input, queue-ready permission, native-handle permission, C ABI / FFI permission, backend implementation permission, GPU submission permission, render permission, renderer state write permission or public API permission for the new admission owner. The new downstream endpoint is `CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()`, and it remains value-only: no `MTLCommandQueue`, no `newCommandQueue`, no command buffer creation and no GPU submission.
+
+Downstream real command queue implementation admission next-boundary decision is now recorded in:
+
+- [2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md)
+
+That decision keeps this manifest as lifecycle docs evidence only and confirms the downstream admission endpoint is sufficient. `CjguiInternalRendererNoRealCommandQueueReadiness` remains not a runtime input, not queue-ready permission, not `newCommandQueue` permission, not command-buffer permission, not native-handle permission, not GPU-submission permission, not render permission, not renderer-state-write permission and not public API permission for the next manifest stabilization.
+
+Downstream real command queue implementation admission manifest stabilization is now recorded in:
+
+- [2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md)
+- [2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md)
+
+That manifest keeps this lifecycle manifest as docs evidence only and fixes the downstream owner's endpoint as `CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()`. `CjguiInternalRendererNoRealCommandQueueReadiness` remains not a runtime input, not `MTLCommandQueue` permission, not `newCommandQueue` permission, not command-buffer permission, not GPU-submission permission, not render permission, not renderer-state-write permission and not public API permission. The downstream chain now points to `P1 internal Renderer real drawable implementation preflight decision`.
+
 ## Explicit Non-Truth
 
 The no-real-command-queue endpoint is not:

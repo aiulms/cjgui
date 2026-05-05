@@ -280,6 +280,12 @@ Downstream implementation admission value boundary is now complete:
 
 The new downstream canonical endpoint is `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`.
 
+Downstream platform object implementation admission next-boundary decision is now complete:
+
+- [2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md)
+
+The downstream no-platform-object-implementation endpoint is sufficient and now points to manifest stabilization, not platform object creation or native bridge implementation.
+
 ## Downstream Platform Object Implementation Preflight
 
 Renderer platform object implementation preflight 已完成：
@@ -295,3 +301,71 @@ Output truth 仅限 platform object implementation intent / native handle admiss
 唯一 next opening：
 
 `P1 internal Renderer platform object implementation admission value boundary bundle implementation`
+
+## Downstream Platform Object Implementation Admission Next-boundary Decision
+
+Renderer platform object implementation admission next-boundary decision 已完成：
+
+- [2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-next-boundary-decision.md)
+
+该 downstream decision 确认 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()` 已足够作为当前 no-platform-object-implementation endpoint。Native resource bridge manifest remains upstream evidence and does not become platform object permission, native handle permission, C ABI / FFI permission, GPU submission permission, render permission or public API permission.
+
+唯一 downstream next opening：
+
+`P1 internal Renderer platform object implementation admission manifest stabilization bundle implementation`
+
+## Downstream Platform Object Implementation Admission Manifest Stabilization
+
+Renderer platform object implementation admission manifest stabilization 已完成：
+
+- [2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-platform-object-implementation-admission-manifest.md)
+- [2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-platform-object-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 downstream manifest consumes only `CjguiInternalRendererNoNativeResourceBridgeReadiness` as runtime input and seals `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`.
+
+Native resource bridge remains upstream no-bridge / no-handle / no-C-ABI / no-FFI value evidence only. It does not become platform object implementation permission, native handle permission, C ABI / FFI permission, Metal / AppKit bridge permission, GPU submission permission, render permission, renderer state write permission or public API permission.
+
+唯一 downstream next opening：
+
+`P1 internal Renderer Metal device-layer implementation preflight decision`
+
+## Downstream Metal Device-layer Implementation Preflight
+
+Renderer Metal device-layer implementation preflight 已完成：
+
+- [2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-preflight-decision.md)
+
+该 downstream preflight uses platform object implementation admission as its runtime input candidate and keeps this native resource bridge manifest as upstream docs evidence only. `CjguiInternalRendererNoNativeResourceBridgeReadiness` does not become `MTLDevice` permission, `CAMetalLayer` permission, native handle permission, C ABI / FFI permission, Metal / AppKit bridge permission, GPU submission permission, render permission, renderer state write permission or public API permission.
+
+The downstream output truth is limited to Metal device-layer implementation intent / device creation admission policy / layer binding admission guard / scale-color-space admission policy / no-metal-device-layer-implementation readiness value facts.
+
+唯一 downstream next opening：
+
+`P1 internal Renderer Metal device-layer implementation admission value boundary bundle implementation`
+
+## Downstream Real Command Queue Implementation Preflight
+
+Renderer real command queue implementation preflight 已完成：
+
+- [2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-preflight-decision.md)
+
+该 downstream preflight uses the Metal device-layer implementation admission endpoint as its runtime input candidate and keeps this native resource bridge manifest as upstream docs evidence only. `CjguiInternalRendererNoNativeResourceBridgeReadiness` does not become runtime input, native handle permission, C ABI / FFI permission, platform object permission, Metal-device permission, command queue permission, GPU submission permission, render permission, renderer state write permission or public API permission.
+
+The downstream output truth is limited to real command queue implementation intent / queue creation admission policy / queue ownership admission guard / queue teardown failure policy / no-real-command-queue-implementation readiness value facts.
+
+Downstream real command queue implementation admission next-boundary decision is now complete:
+
+- [2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-next-boundary-decision.md)
+
+That downstream decision confirms `CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()` is sufficient as the current no-real-command-queue-implementation endpoint. This native resource bridge manifest remains docs evidence only; it does not become runtime input, native handle permission, C ABI / FFI permission, command queue permission, command buffer permission, GPU submission permission, render permission, renderer state write permission or public API permission.
+
+Downstream real command queue implementation admission manifest stabilization is now complete:
+
+- [2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-command-queue-implementation-admission-manifest.md)
+- [2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-command-queue-implementation-admission-manifest-stabilization-closure-review.md)
+
+That downstream manifest keeps this native resource bridge manifest as docs evidence only and seals `CjguiInternalRendererNoRealCommandQueueImplementationReadiness` as no-real-command-queue-implementation value facts. This manifest still does not become runtime input, native handle permission, C ABI / FFI permission, command queue permission, `newCommandQueue` permission, command buffer permission, GPU submission permission, render permission, renderer state write permission or public API permission.
+
+唯一 downstream next opening：
+
+`P1 internal Renderer real drawable implementation preflight decision`

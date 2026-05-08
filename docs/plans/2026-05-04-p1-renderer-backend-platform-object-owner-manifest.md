@@ -279,7 +279,7 @@ Command queue / drawable real lifecycle 必须晚于 device / layer owner prefli
 
 仅在明确 duplicate / self-wrapping evidence 出现时选择。当前需要 Metal device-layer owner preflight，不是 consolidation。
 
-## Decision
+## 决策结论
 
 This manifest stabilizes and closes the renderer backend platform object owner no-platform-object endpoint.
 
@@ -436,3 +436,78 @@ Same-shape Boundary Brake 继续刹住 no-platform-object / no-native-resource-b
 唯一 downstream next opening：
 
 `P1 internal Renderer Metal device-layer implementation preflight decision`
+
+## 下游真实 platform object 第一刀预检
+
+Renderer real backend platform object first implementation preflight decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-preflight-decision.md)
+
+该 downstream 回看本 manifest 的 native resource ownership、lifecycle teardown 与 confinement failure vocabulary 作为 planning evidence，并确认下一步只允许极窄 internal runtime owner shell。它不把 `CjguiInternalRendererNoPlatformObjectReadiness` 升格为 platform object permission、native handle permission、raw pointer permission、real retain / release / destroy permission、bridge modification permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice bundle`
+
+## 下游真实 platform object 第一刀切片闭环
+
+Renderer real backend platform object first implementation slice 已完成：
+
+- [2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-closure-review.md)
+- [runtime_renderer_backend_platform_object_real.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_backend_platform_object_real.cj)
+
+该 downstream owner 只把本 manifest 的 native resource ownership、lifecycle teardown 与 confinement failure vocabulary 作为 planning evidence；它不把 `CjguiInternalRendererNoPlatformObjectReadiness` 升格为 runtime input，也不授予 platform object permission、native handle permission、raw pointer permission、real retain / release / destroy permission、bridge modification permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice closure / next real backend platform object decision`
+
+## 下游真实 platform object 第一刀后续边界决策
+
+Renderer real backend platform object first implementation slice next-boundary decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-next-boundary-decision.md)
+
+该 downstream decision 确认 `CjguiInternalRendererNoRealBackendPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererRealBackendPlatformObjectShellDraft()` 足够作为当前 shell endpoint。它只把本 manifest 的 native resource ownership、lifecycle teardown 与 confinement failure vocabulary 作为 planning evidence，不把 `CjguiInternalRendererNoPlatformObjectReadiness` 升格为 runtime input，也不授予 platform object permission、native handle permission、raw pointer permission、real retain / release / destroy permission、bridge modification permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice manifest stabilization bundle implementation`
+
+## 下游真实 platform object 第一刀切片 manifest 稳定化
+
+Renderer real backend platform object first implementation slice manifest stabilization 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-manifest.md)
+- [2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 只把本 manifest 的 native resource ownership、lifecycle teardown 与 confinement failure vocabulary 作为 planning evidence，不把 `CjguiInternalRendererNoPlatformObjectReadiness` 升格为 runtime input、platform object permission、native handle permission、raw pointer permission、bridge modification permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object branch closure / next real platform object decision`
+
+## 下游真实 platform object 分支后续边界决策
+
+Renderer real backend platform object branch next-boundary decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-branch-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-branch-next-boundary-decision.md)
+
+该 downstream decision 继续把本 manifest 的 native resource ownership、lifecycle teardown 与 confinement failure vocabulary 作为 planning evidence，不把 `CjguiInternalRendererNoPlatformObjectReadiness` 升格为 runtime input、platform object permission、native handle permission、raw pointer permission、bridge modification permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native teardown contract hardening preflight decision`
+
+## 下游 native teardown 合约硬化 value boundary
+
+下游 native teardown contract hardening value boundary 已完成：
+
+- [native teardown contract hardening value boundary closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-native-teardown-contract-hardening-value-boundary-closure-review.md)
+- [runtime_renderer_native_teardown_contract.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_native_teardown_contract.cj)
+
+该 boundary 位于 real backend platform object shell 之后，唯一 runtime input 是 `CjguiInternalRendererNoRealBackendPlatformObjectReadiness`。它不改变本 manifest 的 `CjguiInternalRendererNoPlatformObjectReadiness` truth，也不把 backend platform object owner facts 升格为 native handle、C ABI / FFI、retain / release / destroy、Objective-C、Metal、AppKit、backend-ready、GPU submission、renderer state write 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer native teardown contract hardening closure / next native teardown decision`

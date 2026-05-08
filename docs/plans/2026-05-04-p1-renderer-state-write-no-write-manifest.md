@@ -296,3 +296,36 @@ Renderer backend-readiness branch milestone stabilization 已完成：
 - [2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md)
 
 该 milestone 将本 manifest 的 `CjguiInternalRendererNoStateWriteReadiness` 固定为 backend-readiness branch tail 的唯一 runtime upstream evidence。它不改变本 manifest 的 no-state-write stop-line，不批准真实 renderer state write、frame completion tracking、backend implementation、command buffer commit、GPU submission、render execution、public diagnostics 或 public API。
+
+## 下游 state write implementation 预检
+
+Renderer state write implementation preflight 已完成：
+
+- [2026-05-06-p1-renderer-state-write-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-state-write-implementation-preflight-decision.md)
+
+该 downstream 以 render execution implementation admission manifest 为直接入口，并把本 manifest 作为 state mutation / commit visibility / rollback state 的历史 no-write evidence。它不改变本 manifest 的 `CjguiInternalRendererNoStateWriteReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteNoWriteDraft()` 结论，不批准真实 renderer state write、`runtime_state.cj` 修改、module-level `var`、frame completion publication、diagnostics publication、render execution、GPU submission 或 public API。
+
+## 下游 state write implementation 取值边界
+
+Renderer state write implementation admission value boundary 已完成：
+
+- [2026-05-06-p1-internal-renderer-state-write-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-state-write-implementation-admission-value-boundary-closure-review.md)
+
+该 downstream 使用本 manifest 作为历史 no-write evidence，但不改变本 manifest 的 `CjguiInternalRendererNoStateWriteReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteNoWriteDraft()` 结论。新增 endpoint 是 implementation admission chain 的 `CjguiInternalRendererNoStateWriteImplementationReadiness`，它仍不批准真实 renderer state write、`runtime_state.cj` 修改、module-level `var`、frame completion publication、diagnostics publication、render execution、GPU submission 或 public API。
+
+## 下游 state write implementation 后续决策
+
+Renderer state write implementation admission closure / next decision 已完成：
+
+- [2026-05-06-p1-renderer-state-write-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-state-write-implementation-admission-next-boundary-decision.md)
+
+该 downstream 只确认 implementation admission chain 的 `CjguiInternalRendererNoStateWriteImplementationReadiness` 足够作为当前 no-renderer-state-write-implementation endpoint，并选择 manifest stabilization。它不改变本 manifest 的 `CjguiInternalRendererNoStateWriteReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteNoWriteDraft()` 历史结论，不批准真实 renderer state write、`runtime_state.cj` 修改、module-level `var`、frame completion publication、diagnostics publication、render execution、GPU submission 或 public API。
+
+## 下游 state write implementation manifest 封账
+
+Renderer state write implementation admission manifest stabilization 已完成：
+
+- [2026-05-06-p1-renderer-state-write-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-state-write-implementation-admission-manifest.md)
+- [2026-05-06-p1-internal-renderer-state-write-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-state-write-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 downstream 只把本 manifest 作为历史 no-write evidence，并固定 implementation admission chain 的 `CjguiInternalRendererNoStateWriteImplementationReadiness`。它不改变本 manifest 的 `CjguiInternalRendererNoStateWriteReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteNoWriteDraft()` 历史结论，不批准真实 renderer state write、`runtime_state.cj` 修改、module-level `var`、frame completion publication、diagnostics publication、render execution、GPU submission 或 public API。

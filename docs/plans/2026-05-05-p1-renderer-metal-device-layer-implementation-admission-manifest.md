@@ -107,6 +107,24 @@ Downstream real command queue implementation admission manifest stabilization is
 
 That manifest seals `CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()` as no-real-command-queue-implementation value facts. This manifest remains upstream device-layer implementation admission evidence only; it does not become queue-ready permission, `MTLCommandQueue` permission, `newCommandQueue` permission, command-buffer permission, GPU-submission permission, render permission, renderer-state-write permission or public API permission. The downstream chain now points to real drawable implementation preflight.
 
+Downstream real drawable implementation preflight is now recorded in:
+
+- [2026-05-05-p1-renderer-real-drawable-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-implementation-preflight-decision.md)
+
+That decision keeps this manifest as device-layer implementation admission evidence only. `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` remains not a runtime input, not layer-ready permission, not drawable-ready permission, not `nextDrawable` permission, not present permission, not command-buffer permission, not GPU-submission permission, not render permission, not renderer-state-write permission and not public API permission for the next real drawable admission slice.
+
+## 下游真实 Metal device-layer 第一刀预检
+
+下游 real Metal device-layer first implementation preflight decision 已完成：
+
+- [real Metal device-layer first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-metal-device-layer-first-implementation-preflight-decision.md)
+
+该 downstream decision 回看本 manifest 的 Metal device-layer implementation admission facts 作为 evidence，但不把 `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` 升格为 `MTLDevice` permission、`CAMetalLayer` permission、native handle permission、C ABI / FFI permission、command queue permission、drawable permission、command buffer permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real Metal device-layer first implementation slice bundle`
+
 ## Explicit Non-Truth
 
 The no-metal-device-layer-implementation endpoint is not:
@@ -291,12 +309,63 @@ Choose only if a future review finds drawable size, backing scale, pixel format,
 
 仅在发现明确 duplicate / low-value / self-wrapping evidence 时选择。
 
-## Decision
+## 当前封账结论
 
-`runtime/cjgui/src/runtime_renderer_metal_device_layer_admission.cj` is now the fixed Metal device-layer implementation admission owner for the current no-metal-device-layer-implementation endpoint.
+`runtime/cjgui/src/runtime_renderer_metal_device_layer_admission.cj` 是当前 no-metal-device-layer-implementation endpoint 的固定 Metal device-layer implementation admission owner。
 
-`CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerAdmissionDraft()` is the canonical tail for Metal device-layer implementation admission value facts. It is not permission to create `MTLDevice`, bind `CAMetalLayer`, hold native handles, add C ABI / FFI, call bridge code, submit GPU work, render, write renderer state or expose public API.
+`CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerAdmissionDraft()` 是 Metal device-layer implementation admission value facts 的 canonical tail。它不是创建 `MTLDevice`、绑定 `CAMetalLayer`、持有 native handle、新增 C ABI / FFI、调用 bridge code、提交 GPU work、render、写 renderer state 或暴露 public API 的 permission。
 
 唯一 downstream next opening：
 
-`P1 internal Renderer real drawable implementation preflight decision`
+`P1 internal Renderer real drawable implementation admission value boundary bundle implementation`
+
+## 下游真实 Metal device-layer 第一刀切片
+
+下游 real Metal device-layer first implementation slice 已完成：
+
+- [real Metal device-layer first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-metal-device-layer-first-implementation-preflight-decision.md)
+- [real Metal device-layer first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-metal-device-layer-first-implementation-slice-closure-review.md)
+- [runtime_renderer_metal_device_layer_real.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_metal_device_layer_real.cj)
+
+该 downstream slice 没有消费本 implementation admission endpoint 作为 runtime input；它只把本 manifest 作为 evidence，并把 `CjguiInternalRendererNoNativeTeardownImplementationReadiness` 作为唯一 runtime input。新的 canonical endpoint 是 `CjguiInternalRendererNoRealMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererRealMetalDeviceLayerShellDraft()`，仍不是 `MTLDevice` / `CAMetalLayer` creation permission、command queue permission、drawable permission、GPU submission permission、renderer state write permission、backend-ready truth 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real Metal device-layer first implementation slice closure / next real Metal device-layer decision`
+
+## 下游真实 Metal device-layer 切片后续边界决策
+
+下游 real Metal device-layer first implementation slice next-boundary decision 已完成：
+
+- [real Metal device-layer first implementation slice next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-metal-device-layer-first-implementation-slice-next-boundary-decision.md)
+
+该 downstream decision 继续把本 manifest 的 `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` 只作为 evidence，不作为 runtime input 或 device permission。它确认 downstream shell endpoint 足够，但由于 `cjpm build` 在上一轮未完成，下一步优先补 build verification follow-up，不把本 manifest、downstream shell 或 build gap 升格为 `MTLDevice` / `CAMetalLayer` creation permission、native bridge permission、command queue permission、drawable permission、GPU submission permission、renderer state write permission、backend-ready truth 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real Metal device-layer first implementation slice build verification follow-up`
+
+## 下游真实 Metal device-layer manifest 封账
+
+下游 real Metal device-layer first implementation slice manifest stabilization 已完成：
+
+- [real Metal device-layer first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-metal-device-layer-first-implementation-slice-manifest.md)
+- [real Metal device-layer first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-metal-device-layer-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 回看本 manifest 的 Metal device-layer implementation admission facts 作为 evidence，但不消费 `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` 作为 runtime input，也不把它升格为真实 `MTLDevice` permission、真实 `CAMetalLayer` permission、native handle permission、command queue permission、drawable permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real Metal device-layer branch closure / next real Metal device-layer decision`
+
+## 下游真实 Metal device-layer 分支后续边界决策
+
+下游 real Metal device-layer branch next-boundary decision 已完成：
+
+- [real Metal device-layer branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-metal-device-layer-branch-next-boundary-decision.md)
+
+该 downstream decision 回看本 manifest 的 Metal device-layer implementation admission facts 作为 evidence，但不消费 `CjguiInternalRendererNoMetalDeviceLayerImplementationReadiness` 作为 runtime input，也不把它升格为真实 `MTLDevice` permission、真实 `CAMetalLayer` permission、native handle permission、`MTLCommandQueue` permission、drawable permission、command buffer permission、GPU submission permission、renderer state write permission、backend ready truth 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real command queue first implementation preflight decision`

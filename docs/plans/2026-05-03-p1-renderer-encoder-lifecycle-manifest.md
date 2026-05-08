@@ -1,32 +1,32 @@
-# P1 Renderer encoder lifecycle manifest
+# P1 渲染器 encoder lifecycle manifest
 
 日期：2026-05-03
 
 状态：manifest stabilization
 
-## Purpose
+## 用途
 
 本 manifest 固定 `runtime_renderer_encoder.cj` 的 owner / truth / canonical endpoint / stop-line，并封账当前 no-encoder lifecycle endpoint。
 
 它不是 encoder implementation manifest，也不是 draw-call readiness manifest、pipeline-state readiness manifest 或 backend-readiness manifest。它只记录 encoder lifecycle intent、encoding scope policy、pipeline binding guard、end-encoding policy 与 no-encoder readiness 的 internal value facts。
 
-## Owner / Truth
+## Owner 与 truth
 
-Owner file：
+Owner 文件：
 
 - `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_encoder.cj`
 
-Canonical upstream endpoint：
+Canonical upstream endpoint 固定为：
 
 - `CjguiInternalRendererNoRenderPassReadiness`
 - `cjguiInternalExecuteDefaultRendererRenderPassLifecycleDraft()`
 
-Canonical endpoint：
+Canonical endpoint 固定为：
 
 - `CjguiInternalRendererNoEncoderReadiness`
 - `cjguiInternalExecuteDefaultRendererEncoderLifecycleDraft()`
 
-Current truth：
+当前 truth：
 
 - encoder lifecycle intent value facts。
 - encoding scope policy value facts。
@@ -34,7 +34,7 @@ Current truth：
 - end-encoding policy value facts。
 - no-encoder readiness value facts。
 
-## Current Pipeline
+## 当前 pipeline
 
 当前 encoder lifecycle value pipeline：
 
@@ -45,7 +45,7 @@ Current truth：
 5. `CjguiInternalRendererEndEncodingPolicy`
 6. `CjguiInternalRendererNoEncoderReadiness`
 
-Default draft：
+默认 draft：
 
 - `cjguiInternalExecuteDefaultRendererEncoderLifecycleDraft()`
 - 只调用 `cjguiInternalExecuteDefaultRendererRenderPassLifecycleDraft()`。
@@ -63,7 +63,7 @@ Default draft：
 - 不执行 render。
 - 不写 renderer state。
 
-## Value Semantics
+## Value 语义
 
 `CjguiInternalRendererEncoderLifecycleIntent` 只表达 future encoder lifecycle intent，不是 encoder implementation、backend readiness、draw-call readiness、pipeline-state readiness 或 render permission。
 
@@ -75,7 +75,7 @@ Default draft：
 
 `CjguiInternalRendererNoEncoderReadiness` 是当前 no-encoder lifecycle endpoint。Readiness 只表示该 internal value boundary 可以继续评估，不代表任何 side effect permission。
 
-## Relationship Facts
+## 关系事实
 
 Encoder 与 render pass / command buffer / draw call / pipeline state 的关系只能作为 dehydrated lifecycle facts 表达：
 
@@ -93,7 +93,7 @@ Encoder 与 render pass / command buffer / draw call / pipeline state 的关系�
 
 这些 facts 不能携带 `MTLRenderCommandEncoder`、pipeline state object、draw command object、`MTLRenderPassDescriptor`、command buffer、drawable、texture、attachment object、native handle、raw pointer、platform object、backend-local resource token、callback 或 renderer state write。
 
-## Explicit Non-Truth
+## 明确非事实
 
 `CjguiInternalRendererNoEncoderReadiness` 明确不是：
 
@@ -129,7 +129,7 @@ Encoder 与 render pass / command buffer / draw call / pipeline state 的关系�
 
 当前没有 `MTLRenderCommandEncoder`、pipeline state、draw call、render pass descriptor、command buffer、drawable、texture、attachment object、native handle 或 raw pointer。当前没有 backend implementation、render execution 或 renderer state write。
 
-## Same-shape Boundary Brake
+## 同构边界刹车（Same-shape Boundary Brake）
 
 Same-shape Boundary Brake 在本 manifest 生效。
 
@@ -146,7 +146,7 @@ Same-shape Boundary Brake 在本 manifest 生效。
 
 若未来靠近 draw call / pipeline state / platform lifecycle，必须先做 docs-only preflight，并引用 [2026-05-03-p1-renderer-backend-metal-reference-pack.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-backend-metal-reference-pack.md) 的具体 evidence。
 
-## Stop-line
+## 停止线（Stop-line）
 
 继续禁止：
 
@@ -183,7 +183,7 @@ Same-shape Boundary Brake 在本 manifest 生效。
 - no `runtime/cjgui/cjpm.toml` change。
 - no smoke / harness / native bridge / entry modifications。
 
-## Public Surface
+## 公共 surface
 
 public symbol allowlist 未变：
 
@@ -191,9 +191,9 @@ public symbol allowlist 未变：
 
 本 manifest 不批准第二个 public symbol、不修改 Bool-only signature、不新增 structured public return、不开放 public C ABI。
 
-## Next Stage Candidate Comparison
+## 下一阶段候选比较
 
-### A. P1 internal Renderer draw call lifecycle preflight decision
+### A. P1 internal Renderer draw call lifecycle preflight decision 推荐
 
 推荐为下一阶段 opening。
 
@@ -203,51 +203,51 @@ public symbol allowlist 未变：
 - Draw call lifecycle 必须仍保持 no-draw-call / no-render / no-platform-object 边界。
 - 该 preflight 不创建 encoder，不绑定 pipeline state，不绑定 resources，不发 draw call，不接 backend implementation。
 
-### B. P1 internal Renderer pipeline state lifecycle preflight decision
+### B. P1 internal Renderer pipeline state lifecycle preflight decision 暂缓
 
 暂缓。
 
 Pipeline state lifecycle 通常应等 draw call lifecycle preflight 后再拆。当前仍不得靠近 pipeline object creation、shader state、resource binding implementation 或 GPU submission。
 
-### C. Encoder lifecycle hardening
+### C. Encoder lifecycle hardening 暂缓
 
 暂缓。
 
 只有发现 encoding scope / pipeline binding guard / end-encoding 表达不足时才选。当前 manifest 未发现硬化缺口。
 
-### D. Backend-readiness preflight revisit
+### D. Backend-readiness preflight revisit 暂缓
 
 暂缓。
 
 Backend-readiness 仍太容易变成 wrapper。等 draw call / pipeline state lifecycle 进一步拆清后再评估。
 
-### E. Encoder / Metal implementation
+### E. Encoder / Metal implementation 拒绝
 
 拒绝。
 
-### F. Render execution / renderer state write / draw call implementation
+### F. Render execution / renderer state write / draw call implementation 拒绝
 
 拒绝。
 
-### G. Metal / AppKit / platform resource / native handle implementation
+### G. Metal / AppKit / platform resource / native handle implementation 拒绝
 
 拒绝。
 
-### H. Dirty-region / Widget / Layout / Text / IME / Accessibility
+### H. Dirty-region / Widget / Layout / Text / IME / Accessibility 暂缓
 
 暂缓。
 
-### I. Public surface expansion
+### I. Public surface expansion 拒绝
 
 拒绝。
 
-### J. Consolidation
+### J. Consolidation 暂缓
 
 暂缓。
 
 仅在发现明确 duplicate / low-value helper / self-wrapping evidence 时选择。当前没有这类 evidence。
 
-## Decision
+## 封账决定
 
 本 manifest 固定 `runtime_renderer_encoder.cj` owner / truth / canonical endpoint / stop-line，并封账 no-encoder lifecycle endpoint。
 
@@ -257,7 +257,7 @@ Backend-readiness 仍太容易变成 wrapper。等 draw call / pipeline state li
 
 下一轮必须 docs-only，不得创建 encoder，不得绑定 pipeline state，不得绑定 resources，不得发 draw call，不得创建 command buffer / render pass / drawable / platform object，不得接 backend / Metal / AppKit implementation，不得 render，不得写 renderer state。
 
-## Downstream Draw Call Lifecycle Preflight
+## 下游 draw call lifecycle preflight
 
 Renderer draw call lifecycle preflight 已完成：
 
@@ -267,7 +267,7 @@ Renderer draw call lifecycle preflight 已完成：
 
 Same-shape Boundary Brake 继续生效：不得把 no-encoder endpoint 包成 draw-call receipt / record / publication、backend-readiness wrapper、pipeline-state readiness wrapper 或 render permission wrapper；不得执行 draw call、调用 encoder、绑定 pipeline state、绑定 vertex / index buffer、绑定 texture、创建 command buffer / render pass / drawable / platform object，不得实现 backend / Metal / AppKit、render execution 或 renderer state write。
 
-## Downstream Draw Call Lifecycle Value Boundary
+## 下游 draw call lifecycle value boundary
 
 Renderer draw call lifecycle value boundary 已完成：
 
@@ -279,7 +279,7 @@ Renderer draw call lifecycle value boundary 已完成：
 
 `P1 internal Renderer draw call lifecycle closure / next draw call decision`
 
-## Downstream Draw Call Lifecycle Next Decision
+## 下游 draw call lifecycle next decision
 
 Renderer draw call lifecycle next-boundary decision 已完成：
 
@@ -287,7 +287,7 @@ Renderer draw call lifecycle next-boundary decision 已完成：
 
 该 decision 判定 `CjguiInternalRendererNoDrawCallReadiness` 已足够作为当前 no-draw-call endpoint；下一步选择 draw call lifecycle manifest stabilization，继续拒绝 draw-call receipt / record / publication、backend-readiness wrapper、pipeline-state readiness wrapper、render execution wrapper 或真实 draw call / Metal implementation。
 
-## Downstream Draw Call Lifecycle Manifest
+## 下游 draw call lifecycle manifest
 
 Renderer draw call lifecycle manifest stabilization 已完成：
 
@@ -296,7 +296,7 @@ Renderer draw call lifecycle manifest stabilization 已完成：
 
 该 manifest 固定 draw call lifecycle owner / truth / canonical endpoint / stop-line。`CjguiInternalRendererNoDrawCallReadiness` 仍只是 no-draw-call lifecycle endpoint，不是 pipeline binding permission、render execution permission、backend readiness 或 renderer state write。
 
-## Downstream Pipeline State Lifecycle Preflight
+## 下游 pipeline state lifecycle preflight
 
 Renderer pipeline state lifecycle preflight 已完成：
 
@@ -304,10 +304,42 @@ Renderer pipeline state lifecycle preflight 已完成：
 
 该 preflight 只允许下一步 internal value boundary，表达 pipeline state lifecycle intent / shader function policy / pipeline descriptor policy / pipeline compatibility guard / no-pipeline-state readiness value facts。它不批准 `MTLRenderPipelineState` / `MTLRenderPipelineDescriptor` creation、shader library / function resolution、pipeline binding、encoder call、draw call execution、backend implementation、render execution 或 renderer state write。
 
-## Downstream Render Execution Preflight
+## 下游 render execution preflight
 
 Renderer render execution preflight 已完成：
 
 - [2026-05-04-p1-renderer-render-execution-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-render-execution-preflight-decision.md)
 
 该 preflight 将 encoder lifecycle manifest 作为 docs evidence：encoding scope、pipeline binding guard、end-encoding policy 与 no-encoder facts 只能进入 render execution ordering / no-submit / completion observation vocabulary，不是 encoder call、end encoding permission、draw call permission、backend implementation、render execution implementation 或 renderer state write。
+
+## 下游 encoder implementation preflight
+
+Renderer encoder implementation preflight 已完成：
+
+- [2026-05-06-p1-renderer-encoder-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-encoder-implementation-preflight-decision.md)
+
+该 preflight 将本 manifest 作为 encoder lifecycle vocabulary evidence：encoding scope、pipeline binding guard、end-encoding policy 与 no-encoder facts 只能进入 encoder implementation admission vocabulary。`CjguiInternalRendererNoEncoderReadiness` 不是本轮 runtime input，也不是 encoder permission、`renderCommandEncoder` permission、`endEncoding` permission、pipeline-binding permission、GPU submission permission、render permission、renderer state write permission 或 public API permission。
+
+下游 encoder implementation admission value boundary 已完成：
+
+- [2026-05-06-p1-internal-renderer-encoder-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-encoder-implementation-admission-value-boundary-closure-review.md)
+- [runtime_renderer_encoder_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_encoder_admission.cj)
+
+该 owner 只将本 manifest 作为 vocabulary evidence，runtime input 仍只消费 `CjguiInternalRendererNoRenderPassImplementationReadiness`。`CjguiInternalRendererNoEncoderReadiness` 未升级为 encoder implementation permission，也未成为 runtime input。
+
+下游 encoder implementation admission next-boundary decision 已完成：
+
+- [2026-05-06-p1-renderer-encoder-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-encoder-implementation-admission-next-boundary-decision.md)
+
+该 decision 继续确认本 manifest 只是 encoder lifecycle vocabulary evidence。`CjguiInternalRendererNoEncoderReadiness` 不是 encoder implementation permission，也不能被包装成 `renderCommandEncoder` / `endEncoding` / pipeline-binding permission wrapper。
+
+下游 encoder implementation admission manifest stabilization 已完成：
+
+- [2026-05-06-p1-renderer-encoder-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-encoder-implementation-admission-manifest.md)
+- [2026-05-06-p1-internal-renderer-encoder-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-encoder-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 manifest 只将本 manifest 作为 lifecycle vocabulary evidence。`CjguiInternalRendererNoEncoderReadiness` 仍不是 implementation runtime input，也不是 encoder、`renderCommandEncoder`、`endEncoding`、pipeline binding、GPU submission、render 或 renderer state write permission。
+
+新的 downstream opening：
+
+`P1 internal Renderer pipeline state implementation preflight decision`

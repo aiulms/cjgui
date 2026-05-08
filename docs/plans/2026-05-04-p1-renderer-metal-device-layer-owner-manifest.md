@@ -169,6 +169,8 @@ Metal device-layer owner 与 backend platform object owner / backend readiness b
 
 [Metal device-layer implementation admission manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-metal-device-layer-implementation-admission-manifest.md) 与 [Metal device-layer implementation admission manifest stabilization closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-metal-device-layer-implementation-admission-manifest-stabilization-closure-review.md) 已固定 downstream implementation admission owner / truth / canonical endpoint / stop-line，并选择下一步 docs-only real command queue implementation preflight；本 manifest 仍只是 upstream docs evidence，不变成 runtime input。
 
+[Real Metal device-layer first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-metal-device-layer-first-implementation-preflight-decision.md) 已回看本 manifest 作为 owner vocabulary evidence，并选择下一步进入极窄 first implementation slice。该 decision 不把 `CjguiInternalRendererNoMetalDeviceLayerReadiness` 升格为 `MTLDevice` permission、`CAMetalLayer` permission、native handle permission、C ABI / FFI permission、command queue permission、drawable permission、GPU submission permission、renderer state write permission 或 public API permission。
+
 ## Same-shape Boundary Brake
 
 Same-shape Boundary Brake 在本 manifest 生效。
@@ -297,17 +299,17 @@ Command queue / drawable real lifecycle 应晚于 no-draw backend shell prefligh
 
 仅在明确 duplicate / self-wrapping evidence 出现时选择。当前需要 no-draw backend shell preflight，不是 consolidation。
 
-## Decision
+## 当前封账结论
 
-This manifest stabilizes and closes the renderer Metal device-layer owner no-metal-device-layer endpoint.
+本 manifest 稳定并封账 renderer Metal device-layer owner 的 no-metal-device-layer endpoint。
 
-Unique next opening:
+唯一后续入口：
 
 `P1 internal Renderer no-draw backend shell preflight decision`
 
 下一轮仍必须 docs-only。它只能评估 no-draw backend shell owner、backend lifecycle shell、no-device / no-layer fallback、teardown / failure path 与 smoke strategy；不得创建 backend object、platform object、native handle、raw pointer、`MTLDevice`、`CAMetalLayer`、command queue、drawable、command buffer、render pass、encoder、pipeline state，不得修改 bridge / smoke / harness，不得 GPU submission、render execution、renderer state write、public API 或 C ABI。
 
-## Downstream Metal Device-layer Implementation Preflight
+## 下游 Metal device-layer 实现预检
 
 Renderer Metal device-layer implementation preflight 已完成：
 
@@ -324,7 +326,7 @@ Metal device-layer implementation preflight 的 runtime input candidate 只消�
 
 `P1 internal Renderer real command queue implementation preflight decision`
 
-## Downstream No-draw Backend Shell Preflight
+## 下游 no-draw backend shell 预检
 
 Renderer no-draw backend shell preflight 已完成：
 
@@ -332,7 +334,7 @@ Renderer no-draw backend shell preflight 已完成：
 
 该 preflight 允许打开 no-draw backend shell runway，并选择 `P1 internal Renderer no-draw backend shell value boundary bundle implementation` 作为唯一 next opening。下一轮仍只是 internal value facts，不是真实 backend shell implementation。
 
-Default owner candidate 是 `runtime/cjgui/src/runtime_renderer_no_draw_backend_shell.cj`；runtime input 只建议消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerOwnerDraft()`。Output truth 仅限 no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell-readiness value facts。
+默认 owner candidate 是 `runtime/cjgui/src/runtime_renderer_no_draw_backend_shell.cj`；runtime input 只建议消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness` / `cjguiInternalExecuteDefaultRendererMetalDeviceLayerOwnerDraft()`。Output truth 仅限 no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell-readiness value facts。
 
 Same-shape Boundary Brake 继续刹住 no-metal-device-layer endpoint：不得把它包成 no-draw backend shell receipt / record / publication、backend-shell-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper 或 render-permission wrapper。
 
@@ -340,22 +342,22 @@ Same-shape Boundary Brake 继续刹住 no-metal-device-layer endpoint：不得�
 
 `P1 internal Renderer no-draw backend shell value boundary bundle implementation`
 
-## Downstream No-draw Backend Shell Manifest Stabilization
+## 下游 no-draw backend shell manifest 稳定化
 
 Renderer no-draw backend shell manifest stabilization 已完成：
 
 - [2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-no-draw-backend-shell-manifest.md)
 - [2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-no-draw-backend-shell-manifest-stabilization-closure-review.md)
 
-That manifest fixes `runtime_renderer_no_draw_backend_shell.cj` owner / truth / canonical endpoint / stop-line. Canonical endpoint is `CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`; current truth is no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell readiness value facts.
+该 manifest 固定 `runtime_renderer_no_draw_backend_shell.cj` owner / truth / canonical endpoint / stop-line。Canonical endpoint 是 `CjguiInternalRendererNoBackendShellReadiness` / `cjguiInternalExecuteDefaultRendererNoDrawBackendShellDraft()`；current truth 是 no-draw backend shell intent / backend shell lifecycle policy / no-draw execution gate / shell teardown policy / no-backend-shell readiness value facts。
 
-Same-shape Boundary Brake now also rejects no-draw backend shell receipt / record / publication, backend-shell-ready permission wrapper, backend implementation wrapper, GPU-submission wrapper, render-permission wrapper and platform-object wrapper.
+Same-shape Boundary Brake 同步拒绝 no-draw backend shell receipt / record / publication、backend-shell-ready permission wrapper、backend implementation wrapper、GPU-submission wrapper、render-permission wrapper 与 platform-object wrapper。
 
-Current downstream next opening:
+当前下游后续入口：
 
 `P1 internal Renderer command queue / drawable real lifecycle preflight decision`
 
-## Downstream Command Queue / Drawable Real Lifecycle Preflight
+## 下游 command queue / drawable 真实生命周期预检
 
 Renderer command queue / drawable real lifecycle preflight 已完成：
 
@@ -364,3 +366,42 @@ Renderer command queue / drawable real lifecycle preflight 已完成：
 该 preflight 判定 command queue / drawable real lifecycle runway 可以打开，但不批准 combined value boundary 或真实 `MTLCommandQueue` / drawable implementation。下一步先做 docs-only `P1 internal Renderer real command queue lifecycle preflight decision`；real drawable lifecycle 暂缓到 real command queue owner vocabulary 之后。
 
 Metal device-layer owner manifest 仍只是 upstream evidence：`CjguiInternalRendererNoMetalDeviceLayerReadiness` 不授予 `MTLDevice`、`CAMetalLayer`、command queue、drawable、command buffer、GPU submission、render execution、renderer state write、public API 或 C ABI permission。
+
+## 下游真实 Metal device-layer 第一刀切片
+
+下游 real Metal device-layer first implementation slice 已完成：
+
+- [real Metal device-layer first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-metal-device-layer-first-implementation-preflight-decision.md)
+- [real Metal device-layer first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-metal-device-layer-first-implementation-slice-closure-review.md)
+- [runtime_renderer_metal_device_layer_real.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_metal_device_layer_real.cj)
+
+该 downstream slice 只把本 owner manifest 作为 historical evidence，不消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness` 作为 runtime input。新的 shell endpoint `CjguiInternalRendererNoRealMetalDeviceLayerReadiness` 仍不是 `MTLDevice` / `CAMetalLayer` creation permission、Metal-ready wrapper、device-ready wrapper、layer-ready wrapper、backend-ready wrapper、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real Metal device-layer first implementation slice closure / next real Metal device-layer decision`
+
+## 下游真实 Metal device-layer manifest 封账
+
+下游 real Metal device-layer first implementation slice manifest stabilization 已完成：
+
+- [real Metal device-layer first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-metal-device-layer-first-implementation-slice-manifest.md)
+- [real Metal device-layer first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-metal-device-layer-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 只把本 owner manifest 作为 historical evidence，不消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness` 作为 runtime input，也不把它升格为真实 `MTLDevice` / `CAMetalLayer` creation permission、Metal-ready wrapper、device-ready wrapper、layer-ready wrapper、backend-ready wrapper、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real Metal device-layer branch closure / next real Metal device-layer decision`
+
+## 下游真实 Metal device-layer 分支后续边界决策
+
+下游 real Metal device-layer branch next-boundary decision 已完成：
+
+- [real Metal device-layer branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-metal-device-layer-branch-next-boundary-decision.md)
+
+该 downstream decision 只把本 owner manifest 作为 historical evidence，不消费 `CjguiInternalRendererNoMetalDeviceLayerReadiness` 作为 runtime input，也不把它升格为真实 `MTLDevice` / `CAMetalLayer` creation permission、Metal-ready wrapper、device-ready wrapper、layer-ready wrapper、`MTLCommandQueue` permission、drawable permission、GPU submission permission、renderer state write permission、backend-ready truth 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real command queue first implementation preflight decision`

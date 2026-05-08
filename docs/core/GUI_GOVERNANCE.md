@@ -1,6 +1,6 @@
 # 仓颉 GUI 项目治理总则
 
-最后更新：2026-05-02
+最后更新：2026-05-05
 
 性质：docs-only / governance gate / project rule
 状态：生效中
@@ -155,6 +155,23 @@
 - 如果继续实现，新的 exit 是什么；不能只写“下一轮继续 boundary decision”。
 
 如果无法证明新增边界不是 thin wrapper，默认选择 milestone / manifest stabilization / consolidation，而不是继续新增同构 owner file。
+
+### 1.15 文档语言与 owner 注释也是治理边界
+
+计划文档、closure review、manifest、README 同步段和 tracker 同步段默认使用中文写作。英文只用于代码符号、文件路径、API 名称、工具命令、上游资料标题和项目内固定治理术语，例如 `Same-shape Boundary Brake`、`owner`、`truth`、`stop-line`、`preflight`、`manifest`、`closure`、`next opening`。
+
+新增文档不得整段英文写作，不得把执行提示词里的 `Decision`、`Boundary`、`Verification`、`Next Opening` 等英文模板直接复制成章节标题。推荐使用 `决策结论`、`边界结论`、`候选比较`、`验证结果`、`唯一 next opening` 等中文标题。
+
+新增 `.cj` owner file 必须保留最小文件头维护注释，至少说明：
+
+- Owner：本文件负责的 owner 边界。
+- Truth：唯一 runtime input、canonical endpoint 和输出 truth 范围。
+- Stop-line：明确不创建、不调用、不写入的资源 / bridge / GPU / public surface。
+- Same-shape Boundary Brake：新增语义是什么，为什么不是上一层 readiness 的 permission wrapper / receipt / record / publication。
+
+注释默认使用中文，必要英文技术名词可以保留原文。不要给机械赋值、字段搬运或显然的构造器写空注释；重点应放在 owner、truth、fail-closed / inconsistent 分支、default draft / executor 和 stop-line 上。
+
+本规则的落地记录见 [P1 文档语言与 owner 注释风格护栏稳定化](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-doc-language-comment-style-guard-stabilization.md)。
 
 ## 2. GUI 项目中的三层治理
 

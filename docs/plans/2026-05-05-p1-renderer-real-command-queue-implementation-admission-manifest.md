@@ -268,3 +268,90 @@ Choose consolidation only if explicit duplicate / low-value / self-wrapping evid
 Unique next opening:
 
 `P1 internal Renderer real drawable implementation preflight decision`
+
+## 下游真实 drawable implementation admission
+
+Renderer real drawable implementation preflight 已记录在：
+
+- [2026-05-05-p1-renderer-real-drawable-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-implementation-preflight-decision.md)
+
+对应 value boundary closure 已记录在：
+
+- [2026-05-05-p1-internal-renderer-real-drawable-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-implementation-admission-value-boundary-closure-review.md)
+
+对应 next-boundary decision 已记录在：
+
+- [2026-05-06-p1-renderer-real-drawable-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-drawable-implementation-admission-next-boundary-decision.md)
+
+对应 manifest stabilization 已记录在：
+
+- [2026-05-06-p1-renderer-real-drawable-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-drawable-implementation-admission-manifest.md)
+- [2026-05-06-p1-internal-renderer-real-drawable-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-real-drawable-implementation-admission-manifest-stabilization-closure-review.md)
+
+该实现只把本 manifest 的 `CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()` 作为唯一 runtime input，并新增 value-only real drawable implementation admission boundary。它不批准 drawable acquisition、`nextDrawable`、drawable present、command buffer creation、native handle、C ABI、FFI declaration、bridge call、GPU submission、render execution、renderer state write 或 public API。
+
+该 manifest 确认下游 `CjguiInternalRendererNoRealDrawableImplementationReadiness` endpoint 只代表 real drawable implementation admission value facts，不是 drawable、`nextDrawable`、present、command buffer、GPU submission、render、renderer state write 或 public API permission。
+
+唯一 downstream next opening：
+
+`P1 internal Renderer real command buffer implementation preflight decision`
+
+下游 real command buffer implementation preflight 已记录在：
+
+- [2026-05-06-p1-renderer-real-command-buffer-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-command-buffer-implementation-preflight-decision.md)
+
+该 preflight 不把本 manifest 的 `CjguiInternalRendererNoRealCommandQueueImplementationReadiness` 作为 runtime input；它只作为 command queue relation docs evidence。下一步 runtime input candidate 只消费 `CjguiInternalRendererNoRealDrawableImplementationReadiness`，并只输出 real command buffer implementation intent / command buffer creation admission policy / single-use admission guard / command buffer failure policy / no-real-command-buffer-implementation readiness value facts。
+
+当前 downstream next opening：
+
+`P1 internal Renderer real command buffer implementation admission value boundary bundle implementation`
+
+## 下游真实 command queue 第一刀预检
+
+下游 real command queue first implementation preflight decision 已完成：
+
+- [real command queue first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-command-queue-first-implementation-preflight-decision.md)
+
+该 downstream decision 只把本 manifest 作为 command queue implementation admission vocabulary evidence。`CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()` 仍不是 runtime input for next owner、`MTLCommandQueue` permission、`newCommandQueue` permission、native handle permission、queue-ready permission、drawable permission、command buffer permission、GPU submission permission、renderer state write permission、backend ready truth 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer real command queue first implementation slice bundle`
+
+## 下游真实 command queue 第一刀切片
+
+下游 real command queue first implementation slice 已完成：
+
+- [real command queue first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-command-queue-first-implementation-slice-closure-review.md)
+- [runtime_renderer_command_queue_real.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_command_queue_real.cj)
+
+该 downstream slice 只把本 manifest 作为 command queue implementation admission vocabulary evidence。`CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()` 仍不是 downstream runtime input，也不是真实 `MTLCommandQueue` permission、`newCommandQueue` permission、native handle permission、queue-ready permission、drawable permission、command buffer permission、GPU submission permission、renderer state write permission、backend ready truth 或 public API permission。
+
+downstream endpoint 是 `CjguiInternalRendererNoRealCommandQueueShellReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueShellDraft()`，只消费 `CjguiInternalRendererNoRealMetalDeviceLayerReadiness`。
+
+新的下游后续入口：
+
+`P1 internal Renderer real command queue first implementation slice closure / next real command queue decision`
+
+## 下游真实 command queue 第一刀封账与 drawable 入口
+
+下游 real command queue first slice 已继续完成后续边界、manifest stabilization 与 branch closure：
+
+- [real command queue first implementation slice next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-command-queue-first-implementation-slice-next-boundary-decision.md)
+- [real command queue first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-command-queue-first-implementation-slice-manifest.md)
+- [real command queue first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-command-queue-first-implementation-slice-manifest-stabilization-closure-review.md)
+- [real command queue branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-command-queue-branch-next-boundary-decision.md)
+
+这些下游文档继续把本 manifest 作为 command queue implementation admission vocabulary evidence。`CjguiInternalRendererNoRealCommandQueueImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandQueueAdmissionDraft()` 仍不是 downstream runtime input，不是真实 `MTLCommandQueue`、`newCommandQueue`、native handle、drawable、command buffer、GPU submission、renderer state write、backend ready truth 或 public API permission。
+
+下游 real drawable first implementation preflight 与 first slice manifest stabilization 已完成：
+
+- [real drawable first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-drawable-first-implementation-preflight-decision.md)
+- [real drawable first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-drawable-first-implementation-slice-closure-review.md)
+- [real drawable first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-drawable-first-implementation-slice-manifest.md)
+
+当前 downstream endpoint 是 `CjguiInternalRendererNoRealDrawableShellReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableShellDraft()`。它只消费 `CjguiInternalRendererNoRealCommandQueueShellReadiness`，不获取 drawable，不调用 `nextDrawable` / `present`，不创建 command buffer，不提交 GPU work，不写 renderer state，不修改 native bridge / Objective-C / Metal / AppKit / FFI，不扩 C ABI / public API。
+
+新的 downstream next opening：
+
+`P1 internal Renderer real drawable branch closure / next real drawable decision`

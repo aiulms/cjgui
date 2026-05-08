@@ -290,3 +290,81 @@ Renderer backend-readiness branch milestone stabilization 已完成：
 - [2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-backend-readiness-branch-milestone-stabilization-closure-review.md)
 
 该 milestone 固定本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` 为 renderer backend-readiness branch canonical tail，并选择下一步 docs-only `P1 internal Renderer real backend implementation preflight decision`。它不改变本 manifest 的 no-backend-ready stop-line，不批准 backend implementation、platform object、command buffer commit、GPU submission、render execution、renderer state write、diagnostics / event bus / observer / telemetry 或 public API。
+
+## 下游 state write implementation 预检
+
+Renderer state write implementation preflight 已完成：
+
+- [2026-05-06-p1-renderer-state-write-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-state-write-implementation-preflight-decision.md)
+
+该 downstream 只把本 manifest 的 state visibility gate、no-publication stop-line 和 no-backend-ready evidence 作为 docs evidence。它不改变本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` 结论，不批准 renderer state write、frame completion publication、diagnostics / event bus / observer / telemetry、backend implementation、command buffer commit、GPU submission、render execution 或 public API。
+
+## 下游 state write implementation 取值边界
+
+Renderer state write implementation admission value boundary 已完成：
+
+- [2026-05-06-p1-internal-renderer-state-write-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-state-write-implementation-admission-value-boundary-closure-review.md)
+
+该 downstream 只把本 manifest 的 state visibility gate、no-publication stop-line 和 no-backend-ready evidence 作为 docs evidence，不改变本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` 结论。新增 no-renderer-state-write-implementation endpoint 不批准 renderer state write、frame completion publication、diagnostics / event bus / observer / telemetry、backend implementation、command buffer commit、GPU submission、render execution 或 public API。
+
+## 下游 state write implementation 后续决策
+
+Renderer state write implementation admission closure / next decision 已完成：
+
+- [2026-05-06-p1-renderer-state-write-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-state-write-implementation-admission-next-boundary-decision.md)
+
+该 downstream 只把本 manifest 的 state visibility gate、no-publication stop-line 和 no-backend-ready evidence 作为 docs evidence，并确认 state write implementation admission endpoint 足够封账。它不改变本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` 结论，不批准 renderer state write、frame completion publication、diagnostics / event bus / observer / telemetry、backend implementation、command buffer commit、GPU submission、render execution 或 public API。
+
+## 下游 state write implementation manifest 封账
+
+Renderer state write implementation admission manifest stabilization 已完成：
+
+- [2026-05-06-p1-renderer-state-write-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-state-write-implementation-admission-manifest.md)
+- [2026-05-06-p1-internal-renderer-state-write-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-state-write-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 downstream 只把本 manifest 的 state visibility gate、no-publication stop-line 和 no-backend-ready evidence 作为 docs evidence，并固定 no-renderer-state-write-implementation endpoint。它不改变本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` 结论，不批准 renderer state write、frame completion publication、diagnostics / event bus / observer / telemetry、backend implementation、command buffer commit、GPU submission、render execution 或 public API。
+
+## 下游 backend readiness finalization 预检
+
+Renderer backend readiness implementation finalization preflight 已完成：
+
+- [2026-05-07-p1-renderer-backend-readiness-implementation-finalization-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-backend-readiness-implementation-finalization-preflight-decision.md)
+
+该 downstream 只把本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()`、state visibility gate 与 no-publication stop-line 作为 docs evidence，并把最新 state write implementation admission endpoint 作为下一步 runtime input candidate。它不改变本 manifest 的 no-backend-ready endpoint，不批准 backend ready truth、backend-ready permission、backend object / platform object creation、native handle、renderer state write、public diagnostics / API、command buffer commit、GPU submission、render execution 或 public API expansion。
+
+## 下游 backend readiness finalization 取值边界
+
+Renderer backend readiness implementation finalization admission value boundary 已完成：
+
+- [2026-05-07-p1-internal-renderer-backend-readiness-implementation-finalization-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-backend-readiness-implementation-finalization-admission-value-boundary-closure-review.md)
+
+该 downstream 只把本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()`、state visibility gate 与 no-publication stop-line 作为 docs evidence；runtime input 仍来自最新 state write implementation admission endpoint。它不改变本 manifest 的 no-backend-ready endpoint，不批准 backend ready truth、backend-ready permission、backend object / platform object creation、native handle、renderer state write、public diagnostics / API、command buffer commit、GPU submission、render execution 或 public API expansion。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer backend readiness implementation admission closure / next backend readiness implementation decision`
+
+## 下游 backend readiness implementation 后续边界决策
+
+Renderer backend readiness implementation admission closure / next decision 已完成：
+
+- [2026-05-07-p1-renderer-backend-readiness-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-backend-readiness-implementation-admission-next-boundary-decision.md)
+
+该 downstream 只把本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()`、state visibility gate 与 no-publication stop-line 作为 docs evidence，并确认新的 no-backend-ready-implementation endpoint 足够封账。它不改变本 manifest 的 no-backend-ready endpoint，不批准 backend ready truth、backend-ready permission、backend object / platform object creation、native handle、renderer state write、public diagnostics / API、command buffer commit、GPU submission、render execution 或 public API expansion。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer backend readiness implementation admission manifest stabilization bundle implementation`
+
+## 下游 backend readiness implementation manifest 封账
+
+Renderer backend readiness implementation admission manifest stabilization 已完成：
+
+- [2026-05-07-p1-renderer-backend-readiness-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-backend-readiness-implementation-admission-manifest.md)
+- [2026-05-07-p1-internal-renderer-backend-readiness-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-backend-readiness-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 downstream 只把本 manifest 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()`、state visibility gate 与 no-publication stop-line 作为 docs evidence，不改变本 manifest 的 no-backend-ready endpoint，不批准 backend ready truth、backend-ready permission、backend object / platform object creation、native handle、renderer state write、public diagnostics / API、command buffer commit、GPU submission、render execution 或 public API expansion。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer backend readiness branch implementation milestone stabilization bundle implementation`

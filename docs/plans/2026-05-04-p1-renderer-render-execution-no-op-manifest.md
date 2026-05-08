@@ -191,6 +191,18 @@ public symbol allowlist 未变：
 
 本 manifest 不批准第二个 public symbol、不修改 Bool-only signature、不新增 structured public return、不开放 public C ABI。
 
+## 下游 implementation admission value boundary
+
+Render execution implementation admission value boundary 已在后续实现链中完成：
+
+- [render execution implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-preflight-decision.md)
+- [render execution implementation admission value boundary closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-render-execution-implementation-admission-value-boundary-closure-review.md)
+- [runtime_renderer_render_execution_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_render_execution_admission.cj)
+
+该 downstream 不把本 manifest 的 `CjguiInternalRendererNoRenderExecutionReadiness` 当成 runtime input，也不把旧 no-op endpoint 升格为 render execution permission。新的 runtime input 只消费 `CjguiInternalRendererNoDrawCallImplementationReadiness` / `cjguiInternalExecuteDefaultRendererDrawCallAdmissionDraft()`；canonical endpoint 是 `CjguiInternalRendererNoRenderExecutionImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRenderExecutionAdmissionDraft()`。
+
+该 downstream 只表达 render execution implementation intent / execution admission policy / completion observation admission guard / rollback admission policy / no-render-execution-implementation readiness value facts。它不执行 render，不提交 GPU work，不调用 `commit` / `present` / `nextDrawable`，不创建或提交 command buffer，不创建 encoder，不发出 draw call，不绑定 resource，不写 renderer state，不扩 public API。
+
 ## Next Stage Candidate Comparison
 
 ### A. P1 internal Renderer backend-readiness revisit preflight decision
@@ -307,6 +319,21 @@ Renderer state write preflight 已完成：
 - [2026-05-04-p1-renderer-state-write-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-state-write-preflight-decision.md)
 
 该 preflight 引用本 manifest 的 `CjguiInternalRendererNoRenderExecutionReadiness` 作为 docs evidence，而不是 runtime input。Render execution no-op facts 只能证明 no-submit / completion observation / rollback-no-draw vocabulary；不得被解释成 frame completion recording、renderer state mutation、command buffer commit、GPU submission、backend readiness 或 public diagnostics。下一步若实现 no-write value boundary，只能消费 `CjguiInternalRendererNoFrameSchedulerReadiness`。
+
+## 下游 render execution implementation preflight
+
+Renderer render execution implementation preflight 已完成：
+
+- [2026-05-06-p1-renderer-render-execution-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-preflight-decision.md)
+- [2026-05-06-p1-renderer-render-execution-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-admission-next-boundary-decision.md)
+- [2026-05-06-p1-renderer-render-execution-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-admission-manifest.md)
+- [2026-05-06-p1-internal-renderer-render-execution-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-render-execution-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 decision 引用本 manifest 固定的 `CjguiInternalRendererNoRenderExecutionReadiness` / `cjguiInternalExecuteDefaultRendererRenderExecutionNoOpDraft()` 作为 no-op lifecycle evidence，而不是 runtime input 或 render execution permission。新的 implementation admission runway 只允许从 draw call implementation admission endpoint 继续形成 execution admission / completion observation admission / rollback admission / no-render-execution-implementation readiness facts。
+
+本 manifest 仍不批准 render execution、command buffer commit、GPU submission、drawable present、encoder call、draw call、resource binding、renderer state write、public API 或 C ABI expansion。
+
+后续 next-boundary decision 已确认 implementation admission endpoint `CjguiInternalRendererNoRenderExecutionImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRenderExecutionAdmissionDraft()` 足够封账，manifest stabilization 已固定 downstream owner / truth / stop-line，并把当前 Renderer implementation admission 链的唯一后续入口转为 docs-only renderer state write implementation preflight。该 downstream 不改变本 no-op manifest 的 owner、truth、canonical endpoint 或 stop-line，也不把旧 no-op endpoint升格为 renderer state write permission。
 
 ## Validation
 

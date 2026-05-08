@@ -344,3 +344,65 @@ Renderer backend platform object owner manifest stabilization 已完成：
 唯一 next opening：
 
 `P1 internal Renderer Metal device-layer owner preflight decision`
+
+## 下游 backend readiness finalization 预检
+
+Renderer backend readiness implementation finalization preflight 已完成：
+
+- [2026-05-07-p1-renderer-backend-readiness-implementation-finalization-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-backend-readiness-implementation-finalization-preflight-decision.md)
+
+该 downstream 回看本 milestone 的 backend readiness branch evidence chain，并把它作为 docs evidence 参与下一步 finalization admission 判断。它不改变本 milestone 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` canonical tail，不批准 backend ready truth，不批准 backend object / platform object creation、native handle、C ABI / FFI、Metal / AppKit / Objective-C、renderer state write、command buffer commit、GPU submission、render execution、public diagnostics 或 public API。
+
+新的唯一后续入口：
+
+`P1 internal Renderer backend readiness implementation finalization admission value boundary bundle implementation`
+
+## 下游 backend readiness finalization 取值边界
+
+Renderer backend readiness implementation finalization admission value boundary 已完成：
+
+- [2026-05-07-p1-internal-renderer-backend-readiness-implementation-finalization-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-backend-readiness-implementation-finalization-admission-value-boundary-closure-review.md)
+
+该 downstream 回看本 milestone 的 backend readiness branch evidence chain，并把它作为 docs evidence 参与 finalization admission value facts。它不改变本 milestone 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` canonical tail，不批准 backend ready truth，不批准 backend object / platform object creation、native handle、C ABI / FFI、Metal / AppKit / Objective-C、renderer state write、command buffer commit、GPU submission、render execution、public diagnostics 或 public API。
+
+新的唯一后续入口：
+
+`P1 internal Renderer backend readiness implementation admission closure / next backend readiness implementation decision`
+
+## 下游 backend readiness implementation 后续边界决策
+
+Renderer backend readiness implementation admission closure / next decision 已完成：
+
+- [2026-05-07-p1-renderer-backend-readiness-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-backend-readiness-implementation-admission-next-boundary-decision.md)
+
+该 downstream 回看本 milestone 的 backend readiness branch evidence chain，并确认新的 no-backend-ready-implementation endpoint 足够封账。它不改变本 milestone 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` canonical tail，不批准 backend ready truth，不批准 backend object / platform object creation、native handle、C ABI / FFI、Metal / AppKit / Objective-C、renderer state write、command buffer commit、GPU submission、render execution、public diagnostics 或 public API。
+
+新的唯一后续入口：
+
+`P1 internal Renderer backend readiness implementation admission manifest stabilization bundle implementation`
+
+## 下游 backend readiness implementation manifest 封账
+
+Renderer backend readiness implementation admission manifest stabilization 已完成：
+
+- [2026-05-07-p1-renderer-backend-readiness-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-backend-readiness-implementation-admission-manifest.md)
+- [2026-05-07-p1-internal-renderer-backend-readiness-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-backend-readiness-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 downstream 回看本 milestone 的 backend readiness branch evidence chain，并固定 no-backend-ready-implementation endpoint 的 manifest facts。它不改变本 milestone 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` canonical tail，不批准 backend ready truth，不批准 backend object / platform object creation、native handle、C ABI / FFI、Metal / AppKit / Objective-C、renderer state write、command buffer commit、GPU submission、render execution、public diagnostics 或 public API。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer backend readiness branch implementation milestone stabilization bundle implementation`
+
+## 下游 backend readiness implementation branch milestone 封账
+
+Renderer backend readiness implementation branch milestone stabilization 已完成：
+
+- [2026-05-07-p1-renderer-backend-readiness-implementation-branch-milestone-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-backend-readiness-implementation-branch-milestone-manifest.md)
+- [2026-05-07-p1-internal-renderer-backend-readiness-implementation-branch-milestone-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-backend-readiness-implementation-branch-milestone-stabilization-closure-review.md)
+
+该 downstream 回看本 milestone 的 backend readiness branch evidence chain，并把新 implementation admission branch 固定为从 `CjguiInternalRendererNoNativeResourceBridgeReadiness` 到 `CjguiInternalRendererNoBackendReadyImplementationReadiness` 的 value / admission facts 串联。它不改变本 milestone 的 `CjguiInternalRendererNoBackendReadyReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessDraft()` canonical tail，不批准 backend ready truth，不批准 backend object / platform object creation、native handle、C ABI / FFI、Metal / AppKit / Objective-C、renderer state write、command buffer commit、GPU submission、render execution、public diagnostics 或 public API。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer backend readiness implementation branch milestone closure / next renderer branch decision`

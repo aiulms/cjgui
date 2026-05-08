@@ -104,6 +104,25 @@ Downstream command submission manifest stabilization is now recorded in:
 
 That manifest fixes the downstream `CjguiInternalRendererNoGpuSubmissionReadiness` endpoint and keeps this manifest's `CjguiInternalRendererNoRealDrawableReadiness` as the only runtime input. It does not approve command buffer creation, `commit`, `present`, `nextDrawable`, GPU submission, render execution, backend implementation, renderer state write or public API expansion.
 
+下游 real drawable implementation preflight 已记录在：
+
+- [2026-05-05-p1-renderer-real-drawable-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-drawable-implementation-preflight-decision.md)
+
+下游 value boundary closure 已记录在：
+
+- [2026-05-05-p1-internal-renderer-real-drawable-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-internal-renderer-real-drawable-implementation-admission-value-boundary-closure-review.md)
+
+下游 next-boundary decision 已记录在：
+
+- [2026-05-06-p1-renderer-real-drawable-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-drawable-implementation-admission-next-boundary-decision.md)
+
+下游 manifest stabilization 已记录在：
+
+- [2026-05-06-p1-renderer-real-drawable-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-drawable-implementation-admission-manifest.md)
+- [2026-05-06-p1-internal-renderer-real-drawable-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-real-drawable-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 implementation admission 只把本 manifest 作为 drawable vocabulary evidence。`CjguiInternalRendererNoRealDrawableReadiness` 仍不是 runtime input，不是 drawable-ready permission，不是 `nextDrawable` permission，不是 present permission，不是 command-buffer permission，不是 GPU-submission permission，不是 render permission，不是 renderer-state-write permission，也不是 public API permission。新增 owner 的唯一 runtime input 是 `CjguiInternalRendererNoRealCommandQueueImplementationReadiness`；当前 downstream next opening 已转为 docs-only real command buffer implementation preflight。
+
 ## Explicit Non-Truth
 
 The no-real-drawable endpoint is not:
@@ -243,3 +262,19 @@ This manifest stabilizes and closes the renderer real drawable no-real-drawable 
 Unique next opening:
 
 `P1 internal Renderer command buffer commit / GPU submission preflight decision`
+
+## 下游真实 drawable 第一刀 shell
+
+新的 real drawable first implementation runway 已从 real command queue first-slice shell 重新评估，并完成 docs-only preflight 与 runtime-local shell：
+
+- [real drawable first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-drawable-first-implementation-preflight-decision.md)
+- [real drawable first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-drawable-first-implementation-slice-closure-review.md)
+- [real drawable first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-drawable-first-implementation-slice-manifest.md)
+
+该 downstream shell 只把本 manifest 作为 drawable lifecycle vocabulary evidence。旧 `CjguiInternalRendererNoRealDrawableReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableLifecycleDraft()` 仍归本 lifecycle owner，不成为 downstream runtime input，也不是 drawable-ready、`nextDrawable`、present、command buffer、GPU submission、renderer state write、backend ready truth 或 public API permission。
+
+新的 downstream endpoint 是 `CjguiInternalRendererNoRealDrawableShellReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableShellDraft()`。它只消费 `CjguiInternalRendererNoRealCommandQueueShellReadiness`，不获取 drawable，不调用 `nextDrawable` / `present`，不创建 command buffer，不提交 GPU work，不写 renderer state，不修改 native bridge / Objective-C / Metal / AppKit / FFI，不扩 C ABI / public API。
+
+新的下游后续入口：
+
+`P1 internal Renderer real drawable branch closure / next real drawable decision`

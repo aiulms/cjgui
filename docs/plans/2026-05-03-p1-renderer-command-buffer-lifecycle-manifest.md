@@ -4,13 +4,13 @@
 
 状态：manifest stabilization
 
-## Purpose
+## 用途
 
 本 manifest 固定 `runtime_renderer_command_buffer.cj` 的 owner / truth / canonical endpoint / stop-line，并封账当前 no-command-buffer lifecycle endpoint。
 
 它不是 command buffer implementation manifest，也不是 backend-readiness manifest。它只记录 command buffer lifecycle intent、creation policy、commit timing guard、single-use policy 与 no-command-buffer readiness 的 internal value facts。
 
-## Owner / Truth
+## 所属 owner 与 truth
 
 Owner file：
 
@@ -34,7 +34,7 @@ Current truth：
 - command buffer single-use policy value facts。
 - no-command-buffer readiness value facts。
 
-## Current Pipeline
+## 当前管线
 
 当前 command buffer lifecycle value pipeline：
 
@@ -59,7 +59,7 @@ Default draft：
 - 不执行 render。
 - 不写 renderer state。
 
-## Value Semantics
+## 值语义
 
 `CjguiInternalRendererCommandBufferLifecycleIntent` 只表达 future command buffer lifecycle intent，不是 command buffer implementation，也不是 backend readiness wrapper。
 
@@ -71,7 +71,17 @@ Default draft：
 
 `CjguiInternalRendererNoCommandBufferReadiness` 是当前 no-command-buffer lifecycle endpoint。Readiness 只表示该 internal value boundary 可以继续评估，不代表任何 side effect permission。
 
-## Relationship Facts
+## 后续真实第一刀接入
+
+后续 real command buffer first-slice macro 已接入，但没有改变本 lifecycle manifest 的 endpoint 或 truth：
+
+- [real command buffer first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-command-buffer-first-implementation-preflight-decision.md)
+- [real command buffer first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-command-buffer-first-implementation-slice-closure-review.md)
+- [real command buffer first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-command-buffer-first-implementation-slice-manifest.md)
+
+新 shell endpoint `CjguiInternalRendererNoRealCommandBufferShellReadiness` 只消费 `CjguiInternalRendererNoRealDrawableShellReadiness`，不是本 lifecycle endpoint 的替代物，也不是 command buffer creation、`commandBuffer`、`commit`、render pass、encoder、GPU submission、renderer state write 或 public API permission。
+
+## 关系事实
 
 Command buffer 与 queue / drawable / render pass / frame pacing 的关系只能作为 dehydrated lifecycle facts 表达：
 
@@ -87,7 +97,7 @@ Command buffer 与 queue / drawable / render pass / frame pacing 的关系只能
 
 这些 facts 不能携带 `MTLCommandBuffer`、`MTLCommandQueue`、drawable、render pass、encoder、native handle、raw pointer、platform object、callback、backend-local resource token 或 renderer state write。
 
-## Explicit Non-Truth
+## 明确的非 truth
 
 `CjguiInternalRendererNoCommandBufferReadiness` 明确不是：
 
@@ -116,7 +126,7 @@ Command buffer 与 queue / drawable / render pass / frame pacing 的关系只能
 
 当前没有 `MTLCommandBuffer`、render pass、encoder、drawable、command queue、native handle 或 raw pointer。当前没有 backend implementation、render execution 或 renderer state write。
 
-## Same-shape Boundary Brake
+## 同构边界刹车（Same-shape Boundary Brake）
 
 Same-shape Boundary Brake 在本 manifest 生效。
 
@@ -132,7 +142,7 @@ Same-shape Boundary Brake 在本 manifest 生效。
 
 若未来靠近 render pass / encoder / platform lifecycle，必须先做 docs-only preflight，并引用 [2026-05-03-p1-renderer-backend-metal-reference-pack.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-03-p1-renderer-backend-metal-reference-pack.md) 的具体 evidence。
 
-## Stop-line
+## 停止线
 
 继续禁止：
 
@@ -164,7 +174,7 @@ Same-shape Boundary Brake 在本 manifest 生效。
 - no `runtime/cjgui/cjpm.toml` change。
 - no smoke / harness / native bridge / entry modifications。
 
-## Public Surface
+## 公共 surface
 
 public symbol allowlist 未变：
 
@@ -172,9 +182,9 @@ public symbol allowlist 未变：
 
 本 manifest 不批准第二个 public symbol、不修改 Bool-only signature、不新增 structured public return、不开放 public C ABI。
 
-## Next Stage Candidate Comparison
+## 下一阶段候选比较
 
-### A. P1 internal Renderer render pass lifecycle preflight decision
+### 候选 A：P1 internal Renderer render pass lifecycle preflight decision
 
 推荐为下一阶段 opening。
 
@@ -184,51 +194,51 @@ public symbol allowlist 未变：
 - Render pass lifecycle 必须仍保持 no-render-pass / no-encoder / no-render / no-platform-object 边界。
 - 该 preflight 不创建 render pass descriptor，不创建 render encoder，不提交 GPU work，不接 backend implementation。
 
-### B. P1 internal Renderer encoder lifecycle preflight decision
+### 候选 B：P1 internal Renderer encoder lifecycle preflight decision
 
 暂缓。
 
 Encoder lifecycle 通常应等 render pass lifecycle preflight 后再开。它更靠近 command encoding、pipeline state、resource binding 与 draw calls。
 
-### C. Command buffer lifecycle hardening
+### 候选 C：command buffer lifecycle hardening
 
 暂缓。
 
 只有发现 creation / commit timing / single-use / failure rollback 表达不足时才选。当前 manifest 未发现硬化缺口。
 
-### D. Backend-readiness preflight revisit
+### 候选 D：backend-readiness preflight revisit
 
 暂缓。
 
 Backend-readiness 仍太容易变成 wrapper。等 render pass / encoder lifecycle 进一步拆清后再评估。
 
-### E. Command buffer / Metal implementation
+### 候选 E：command buffer / Metal implementation
 
 拒绝。
 
-### F. Render execution / renderer state write
+### 候选 F：render execution / renderer state write
 
 拒绝。
 
-### G. Metal / AppKit / platform resource / native handle implementation
+### 候选 G：Metal / AppKit / platform resource / native handle implementation
 
 拒绝。
 
-### H. Dirty-region / Widget / Layout / Text / IME / Accessibility
+### 候选 H：Dirty-region / Widget / Layout / Text / IME / Accessibility
 
 暂缓。
 
-### I. Public surface expansion
+### 候选 I：public surface expansion
 
 拒绝。
 
-### J. Consolidation
+### 候选 J：consolidation
 
 暂缓。
 
 仅在发现明确 duplicate / low-value helper / self-wrapping evidence 时选择。当前没有这类 evidence。
 
-## Decision
+## 决策结论
 
 本 manifest 固定 `runtime_renderer_command_buffer.cj` owner / truth / canonical endpoint / stop-line，并封账 no-command-buffer lifecycle endpoint。
 
@@ -236,9 +246,41 @@ Backend-readiness 仍太容易变成 wrapper。等 render pass / encoder lifecyc
 
 `P1 internal Renderer render pass lifecycle preflight decision`
 
-下一轮必须 docs-only，不得创建 render pass，不得创建 encoder，不得创建 command buffer，不得获取 drawable，不得接 backend / Metal / AppKit implementation，不得 render，不得写 renderer state。
+## 下游真实 command buffer implementation preflight
 
-## Downstream Render Pass Lifecycle Preflight
+Renderer real command buffer implementation preflight 已记录在：
+
+- [2026-05-06-p1-renderer-real-command-buffer-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-command-buffer-implementation-preflight-decision.md)
+
+该 preflight 只把本 manifest 作为 command buffer lifecycle vocabulary evidence。`CjguiInternalRendererNoCommandBufferReadiness` 仍不是 runtime input，不是 command-buffer-ready permission，不是 `commandBuffer` permission，不是 `commit` permission，不是 GPU-submission permission，不是 render permission，也不是 renderer-state-write permission。
+
+新的 runtime input candidate 是 `CjguiInternalRendererNoRealDrawableImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealDrawableAdmissionDraft()`；output truth 只能是 real command buffer implementation intent / command buffer creation admission policy / single-use admission guard / command buffer failure policy / no-real-command-buffer-implementation readiness value facts。
+
+该 preflight 当时的 downstream next opening：
+
+`P1 internal Renderer real command buffer implementation admission manifest stabilization bundle implementation`
+
+该 downstream value boundary 已落地：
+
+- [2026-05-06-p1-internal-renderer-real-command-buffer-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-real-command-buffer-implementation-admission-value-boundary-closure-review.md)
+- [runtime_renderer_real_command_buffer_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_real_command_buffer_admission.cj)
+
+该 downstream 仍只把本 manifest 作为 vocabulary evidence；本 manifest 的 `CjguiInternalRendererNoCommandBufferReadiness` 不是 runtime input，也不是 command-buffer-ready permission。新的 endpoint 是 `CjguiInternalRendererNoRealCommandBufferImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandBufferAdmissionDraft()`，它仍不批准 command buffer creation、`commandBuffer`、`commit`、render pass / encoder / pipeline state、drawable acquisition、GPU submission、render execution 或 renderer state write。
+
+该 downstream next-boundary decision 已记录在：
+
+- [2026-05-06-p1-renderer-real-command-buffer-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-command-buffer-implementation-admission-next-boundary-decision.md)
+
+该 decision 确认 no-real-command-buffer-implementation endpoint 足够，并选择 docs-only manifest stabilization；本 manifest 仍只是 lifecycle vocabulary evidence，不升格为 implementation permission。
+
+该 downstream manifest stabilization 已完成：
+
+- [2026-05-06-p1-renderer-real-command-buffer-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-real-command-buffer-implementation-admission-manifest.md)
+- [2026-05-06-p1-internal-renderer-real-command-buffer-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-real-command-buffer-implementation-admission-manifest-stabilization-closure-review.md)
+
+该 manifest 继续只把本文件作为 command buffer lifecycle vocabulary evidence；`CjguiInternalRendererNoCommandBufferReadiness` 仍不是 runtime input，也不是 command-buffer-ready permission、`commandBuffer` permission、`commit` permission、GPU submission permission、render permission 或 renderer state write permission。新的 downstream opening 是 docs-only `P1 internal Renderer render pass implementation preflight decision`。
+
+## 下游 render pass lifecycle preflight
 
 Renderer render pass lifecycle preflight 已完成：
 
@@ -248,7 +290,7 @@ Renderer render pass lifecycle preflight 已完成：
 
 Same-shape Boundary Brake 继续生效：不得把 no-command-buffer endpoint 包成 render pass receipt / record / publication、backend-readiness wrapper、encoder readiness wrapper 或 render permission wrapper；不得创建或引用 `MTLRenderPassDescriptor`、`MTLRenderCommandEncoder`、`MTLCommandBuffer`、drawable、texture、attachment object、native handle 或 raw pointer，不得实现 backend / Metal / AppKit、render execution 或 renderer state write。
 
-## Downstream Render Pass Lifecycle Value Boundary
+## 下游 render pass lifecycle value boundary
 
 Renderer render pass lifecycle value boundary 已完成：
 
@@ -258,7 +300,7 @@ Renderer render pass lifecycle value boundary 已完成：
 
 该 downstream 不创建 `MTLRenderPassDescriptor`、encoder、drawable、texture、attachment object、command buffer、backend object、platform object、native handle 或 raw pointer，不实现 backend / Metal / AppKit、render execution 或 renderer state write。下一步进入 docs-only `P1 internal Renderer render pass lifecycle closure / next render pass decision`。
 
-## Downstream Render Pass Lifecycle Next-Boundary Decision
+## 下游 render pass lifecycle next-boundary decision
 
 Renderer render pass lifecycle next-boundary decision 已完成：
 
@@ -266,7 +308,7 @@ Renderer render pass lifecycle next-boundary decision 已完成：
 
 该 decision 确认 render pass lifecycle endpoint 已足够，下一步选择 docs-only manifest stabilization。Command buffer manifest 的 downstream stop-line 不变：不批准 render pass receipt / record / publication、backend-readiness wrapper、encoder readiness wrapper、render pass / Metal implementation、render execution 或 renderer state write。
 
-## Downstream Render Pass Lifecycle Manifest
+## 下游 render pass lifecycle manifest
 
 Renderer render pass lifecycle manifest stabilization 已完成：
 
@@ -275,7 +317,7 @@ Renderer render pass lifecycle manifest stabilization 已完成：
 
 该 manifest 封账 no-render-pass lifecycle endpoint，并选择 docs-only `P1 internal Renderer encoder lifecycle preflight decision` 作为唯一 next opening。Command buffer manifest 的 stop-line 继续禁止 backend-readiness wrapper、encoder readiness wrapper、render execution、renderer state write 或真实 Metal / AppKit implementation。
 
-## Downstream Encoder Lifecycle Preflight
+## 下游 encoder lifecycle preflight
 
 Renderer encoder lifecycle preflight 已完成：
 
@@ -283,7 +325,7 @@ Renderer encoder lifecycle preflight 已完成：
 
 该 preflight 只允许下一步进入 internal value boundary，不批准 encoder implementation。Command buffer manifest 的 downstream stop-line 不变：不批准 encoder receipt / record / publication、backend-readiness wrapper、draw call readiness wrapper、encoder / Metal implementation、render execution 或 renderer state write。
 
-## Downstream Render Execution Preflight
+## 下游 render execution preflight
 
 Renderer render execution preflight 已完成：
 

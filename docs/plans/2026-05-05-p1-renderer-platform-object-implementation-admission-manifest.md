@@ -266,7 +266,7 @@ Real platform object creation remains too early until implementation admission a
 
 仅在发现明确 duplicate / low-value / self-wrapping evidence 时选择。
 
-## Decision
+## 决策结论
 
 `runtime/cjgui/src/runtime_renderer_platform_object_admission.cj` is now the fixed platform object implementation admission owner for the current no-platform-object-implementation endpoint.
 
@@ -294,3 +294,55 @@ Output truth 仅限 Metal device-layer implementation intent / device creation a
 唯一 downstream next opening：
 
 `P1 internal Renderer real command queue implementation preflight decision`
+
+## 下游真实 platform object 第一刀预检
+
+Renderer real backend platform object first implementation preflight decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-preflight-decision.md)
+
+该 downstream 回看本 manifest 的 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()` 作为 planning evidence，确认下一步只可新增极窄 internal runtime owner shell。它不把本 manifest 升格为 platform object creation permission，不授权 native handle、raw pointer、C ABI、FFI declaration、bridge call、retain / release / destroy、Metal / AppKit / Objective-C、GPU submission、renderer state write 或 public API。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice bundle`
+
+## 下游真实 platform object 第一刀切片闭环
+
+Renderer real backend platform object first implementation slice 已完成：
+
+- [2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-closure-review.md)
+- [runtime_renderer_backend_platform_object_real.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_backend_platform_object_real.cj)
+
+该 downstream owner 只消费本 manifest 固定的 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPlatformObjectAdmissionDraft()`，canonical endpoint 是 `CjguiInternalRendererNoRealBackendPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererRealBackendPlatformObjectShellDraft()`。
+
+它只表达 owner-local shell intent / shell policy / teardown proof / failure policy / no-real-backend-platform-object readiness facts。本 manifest 仍不被升格为 platform object creation permission、native handle permission、C ABI / FFI permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice closure / next real backend platform object decision`
+
+## 下游真实 platform object 第一刀后续边界决策
+
+Renderer real backend platform object first implementation slice next-boundary decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-next-boundary-decision.md)
+
+该 downstream decision 确认 `CjguiInternalRendererNoRealBackendPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererRealBackendPlatformObjectShellDraft()` 足够作为当前 no-real-backend-platform-object shell endpoint。它仍只把本 manifest 固定的 `CjguiInternalRendererNoPlatformObjectImplementationReadiness` 作为 upstream runtime input，不把本 manifest 升格为 platform object creation permission、native handle permission、C ABI / FFI permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice manifest stabilization bundle implementation`
+
+## 下游真实 platform object 第一刀切片 manifest 稳定化
+
+Renderer real backend platform object first implementation slice manifest stabilization 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-manifest.md)
+- [2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 仍只消费本 manifest 固定的 `CjguiInternalRendererNoPlatformObjectImplementationReadiness`。它不把本 manifest 升格为 platform object creation permission、native handle permission、C ABI / FFI permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object branch closure / next real platform object decision`

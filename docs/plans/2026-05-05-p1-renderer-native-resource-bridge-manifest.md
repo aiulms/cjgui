@@ -264,7 +264,7 @@ Real backend shell implementation still needs platform object and native bridge 
 
 仅在发现明确 duplicate / low-value / self-wrapping evidence 时选择。
 
-## Decision
+## 决策结论
 
 `runtime/cjgui/src/runtime_renderer_native_resource_bridge.cj` is now the fixed native resource bridge owner for the current no-native-resource-bridge endpoint.
 
@@ -369,3 +369,117 @@ That downstream manifest keeps this native resource bridge manifest as docs evid
 唯一 downstream next opening：
 
 `P1 internal Renderer real drawable implementation preflight decision`
+
+## 下游真实 platform object 第一刀预检
+
+Renderer real backend platform object first implementation preflight decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-preflight-decision.md)
+
+该 downstream 回看本 manifest 的 native resource bridge facts 作为 planning evidence，但不把 `CjguiInternalRendererNoNativeResourceBridgeReadiness` 升格为 native handle permission、C ABI permission、FFI permission、bridge call permission、retain / release / destroy permission、platform object permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice bundle`
+
+## 下游真实 platform object 第一刀切片闭环
+
+Renderer real backend platform object first implementation slice 已完成：
+
+- [2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-closure-review.md)
+- [runtime_renderer_backend_platform_object_real.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_backend_platform_object_real.cj)
+
+该 downstream owner 不直接消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness`；它只把本 manifest 作为 upstream docs evidence，并以 platform object implementation admission endpoint 作为唯一 runtime input。
+
+该 downstream closure 不把 native resource bridge facts 升格为 native handle permission、C ABI permission、FFI permission、bridge call permission、retain / release / destroy permission、platform object permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice closure / next real backend platform object decision`
+
+## 下游真实 platform object 第一刀后续边界决策
+
+Renderer real backend platform object first implementation slice next-boundary decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-next-boundary-decision.md)
+
+该 downstream decision 确认 `CjguiInternalRendererNoRealBackendPlatformObjectReadiness` / `cjguiInternalExecuteDefaultRendererRealBackendPlatformObjectShellDraft()` 足够作为当前 no-real-backend-platform-object shell endpoint。它不直接消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness`，也不把 native resource bridge facts 升格为 native handle permission、C ABI permission、FFI permission、bridge call permission、retain / release / destroy permission、platform object permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object first implementation slice manifest stabilization bundle implementation`
+
+## 下游真实 platform object 第一刀切片 manifest 稳定化
+
+Renderer real backend platform object first implementation slice manifest stabilization 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-first-implementation-slice-manifest.md)
+- [2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-real-backend-platform-object-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 不直接消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness`，也不把 native resource bridge facts 升格为 native handle permission、C ABI permission、FFI permission、bridge call permission、retain / release / destroy permission、platform object permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend platform object branch closure / next real platform object decision`
+
+## 下游真实 platform object 分支后续边界决策
+
+Renderer real backend platform object branch next-boundary decision 已完成：
+
+- [2026-05-07-p1-renderer-real-backend-platform-object-branch-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-real-backend-platform-object-branch-next-boundary-decision.md)
+
+该 downstream decision 继续把本 native resource bridge manifest 作为 upstream docs evidence，不直接消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness`，也不把 native resource bridge facts 升格为 native handle permission、C ABI permission、FFI permission、bridge call permission、retain / release / destroy permission、platform object permission、Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native teardown contract hardening preflight decision`
+
+## 下游 native teardown 合约硬化预检
+
+Renderer native teardown contract hardening preflight decision 已完成：
+
+- [2026-05-07-p1-renderer-native-teardown-contract-hardening-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-native-teardown-contract-hardening-preflight-decision.md)
+
+该 downstream decision 判定本 manifest 中已有 native teardown contract policy 与 handle confinement facts 仍不足以直接授权 native bridge / Objective-C / Metal / AppKit implementation。它只选择下一步新增 internal-only teardown hardening value boundary facts，不把 `CjguiInternalRendererNoNativeResourceBridgeReadiness` 升格为 native handle permission、C ABI permission、FFI permission、bridge-ready permission、retain / release / destroy permission、Metal-ready permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native teardown contract hardening value boundary bundle implementation`
+
+## 下游 native teardown 合约硬化 value boundary
+
+Renderer native teardown contract hardening value boundary 已完成：
+
+- [native teardown contract hardening value boundary closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-native-teardown-contract-hardening-value-boundary-closure-review.md)
+- [runtime_renderer_native_teardown_contract.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_native_teardown_contract.cj)
+
+该 downstream owner 不消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness`，而是消费更下游 shell endpoint `CjguiInternalRendererNoRealBackendPlatformObjectReadiness`。它只表达 native teardown contract hardening intent、ownership release policy、teardown failure classification、main-thread confinement guard 与 no-native-teardown-implementation readiness facts；不把本 manifest 的 native resource bridge facts 升格为 native handle permission、C ABI / FFI permission、bridge-ready permission、retain / release / destroy permission、Metal-ready permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的下游后续入口：
+
+`P1 internal Renderer native teardown contract hardening closure / next native teardown decision`
+
+## 下游 native teardown 后续边界决策
+
+Renderer native teardown contract hardening closure / next decision 已完成：
+
+- [native teardown contract hardening next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-native-teardown-contract-hardening-next-boundary-decision.md)
+
+该 downstream decision 继续把本 native resource bridge manifest 作为 upstream docs evidence，不直接消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness`，也不把 native resource bridge facts 升格为 native bridge permission、C ABI / FFI permission、retain / release / destroy permission、native handle permission、Objective-C / Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native teardown contract hardening manifest stabilization bundle implementation`
+
+## 下游 native teardown manifest 稳定化
+
+Renderer native teardown contract hardening manifest stabilization 已完成：
+
+- [native teardown contract hardening manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-renderer-native-teardown-contract-hardening-manifest.md)
+- [native teardown contract hardening manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-native-teardown-contract-hardening-manifest-stabilization-closure-review.md)
+
+该 downstream manifest 继续把本 native resource bridge manifest 作为 upstream docs evidence，不直接消费 `CjguiInternalRendererNoNativeResourceBridgeReadiness`，也不把 native resource bridge facts 升格为 native bridge permission、C ABI / FFI permission、retain / release / destroy permission、native handle permission、Objective-C / Metal / AppKit permission、GPU submission permission、renderer state write permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real Metal device-layer first implementation preflight decision`

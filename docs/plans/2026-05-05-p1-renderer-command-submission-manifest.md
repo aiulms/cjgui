@@ -77,6 +77,10 @@ Command submission facts relate to upstream no-real-drawable facts only as dehyd
 - Command buffer lifecycle, render execution no-op, renderer state write no-write and backend / Metal reference pack remain vocabulary evidence only; they do not grant object creation, commit, present, submission, completion callback or state-write permission.
 - Future real backend shell implementation, render completion / frame completion tracking and real command buffer commit / drawable present / GPU submission require separate docs-only preflight before any implementation can be considered.
 
+后续 real command buffer first-slice macro 已新增 `CjguiInternalRendererNoRealCommandBufferShellReadiness` / `cjguiInternalExecuteDefaultRendererRealCommandBufferShellDraft()`，但它只表达 shell / denial / teardown / failure classification facts，不改变本 no-gpu-submission endpoint，也不授权 `commit`、`present`、`nextDrawable`、command buffer creation、GPU submission、render、renderer state write 或 public API。
+
+后续 real render pass first-slice macro 已新增 `CjguiInternalRendererNoRealRenderPassShellReadiness` / `cjguiInternalExecuteDefaultRendererRealRenderPassShellDraft()`，但它只表达 render pass shell / descriptor admission shell / attachment denial / encoder denial / teardown failure classification facts，不改变本 no-gpu-submission endpoint，也不授权 render pass descriptor creation、attachment / texture view、`renderCommandEncoder`、`endEncoding`、encoder、GPU submission、render、renderer state write 或 public API。
+
 Downstream real backend shell implementation preflight is now the only next opening after this manifest:
 
 - `P1 internal Renderer real backend shell implementation preflight decision`
@@ -86,6 +90,23 @@ Downstream real backend shell implementation preflight is now recorded in:
 - [2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-renderer-real-backend-shell-implementation-preflight-decision.md)
 
 That decision treats this manifest's `CjguiInternalRendererNoGpuSubmissionReadiness` as value-only no-gpu-submission evidence, not backend implementation permission. It chooses docs-only backend shell first implementation slice preflight next and does not approve command buffer creation, `commit`, `present`, `nextDrawable`, GPU submission, render execution, backend implementation, renderer state write or public API expansion.
+
+## 下游 render execution implementation admission
+
+Render execution implementation admission value boundary 已在后续实现链中完成：
+
+- [render execution implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-preflight-decision.md)
+- [render execution implementation admission value boundary closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-render-execution-implementation-admission-value-boundary-closure-review.md)
+- [render execution implementation admission next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-admission-next-boundary-decision.md)
+- [render execution implementation admission manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-admission-manifest.md)
+- [render execution implementation admission manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-render-execution-implementation-admission-manifest-stabilization-closure-review.md)
+- [runtime_renderer_render_execution_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_render_execution_admission.cj)
+
+该 downstream 只把本 manifest 的 `CjguiInternalRendererNoGpuSubmissionReadiness` 当成 docs evidence，不作为 runtime input，也不把 no-gpu-submission endpoint 升格为 command submission permission。新的 runtime input 只消费 `CjguiInternalRendererNoDrawCallImplementationReadiness` / `cjguiInternalExecuteDefaultRendererDrawCallAdmissionDraft()`；canonical endpoint 是 `CjguiInternalRendererNoRenderExecutionImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRenderExecutionAdmissionDraft()`。
+
+该 downstream 只表达 render execution implementation intent / execution admission policy / completion observation admission guard / rollback admission policy / no-render-execution-implementation readiness value facts。它不调用 `commit`、不调用 `present`、不调用 `nextDrawable`、不创建或提交 command buffer、不创建 encoder、不提交 GPU work、不执行 render、不写 renderer state、不扩 public API。
+
+Next-boundary decision 已确认 `CjguiInternalRendererNoRenderExecutionImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRenderExecutionAdmissionDraft()` 足够作为当前 no-render-execution-implementation endpoint，manifest stabilization 已固定 downstream owner / truth / stop-line，并把 Renderer implementation admission 链的唯一后续入口转为 docs-only renderer state write implementation preflight。该 downstream 不改变本 command submission manifest 的 owner、truth、canonical endpoint 或 stop-line。
 
 ## Explicit Non-Truth
 
@@ -263,3 +284,18 @@ It fixes `runtime_renderer_backend_shell_skeleton.cj` as the downstream no-resou
 Unique downstream next opening from that manifest:
 
 `P1 internal Renderer native resource bridge preflight decision`
+
+## 下游 render execution implementation preflight
+
+Renderer render execution implementation preflight 已完成：
+
+- [2026-05-06-p1-renderer-render-execution-implementation-preflight-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-preflight-decision.md)
+
+该 decision 引用本 manifest 的 `CjguiInternalRendererNoGpuSubmissionReadiness` / `cjguiInternalExecuteDefaultRendererCommandSubmissionDraft()` 作为 no-gpu-submission evidence，而不是 runtime input、command submission permission、`commit` permission、`present` permission、GPU submission permission、render permission 或 renderer state write permission。
+
+新的 implementation admission runway 只允许表达 execution admission / completion observation admission / rollback admission / no-render-execution-implementation readiness facts；仍不批准真实 command buffer commit、drawable present / acquisition、GPU submission、render execution、completion callback、renderer state write、public API 或 C ABI expansion。
+
+下游 manifest stabilization 已完成，当前只允许继续到 renderer state write implementation preflight：
+
+- [2026-05-06-p1-renderer-render-execution-implementation-admission-next-boundary-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-admission-next-boundary-decision.md)
+- [2026-05-06-p1-renderer-render-execution-implementation-admission-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-admission-manifest.md)

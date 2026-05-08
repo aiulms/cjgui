@@ -236,6 +236,17 @@ Renderer state write implementation admission manifest stabilization 已完成�
 
 该 downstream 只把本 manifest 固定的 `CjguiInternalRendererNoRenderExecutionImplementationReadiness` / `cjguiInternalExecuteDefaultRendererRenderExecutionAdmissionDraft()` 作为 runtime input evidence，并固定 no-renderer-state-write-implementation endpoint。它不改变本 manifest 的 no-render-execution-implementation 结论，不批准 render、GPU submission、command submission、presentation、completion callback、renderer state write、public diagnostics 或 public API。
 
+## 下游真实 render execution 第一切片
+
+real draw call branch closure 之后，真实 render execution 第一切片已作为独立 shell / dehydrated facts 链路接续：
+
+- [real draw call branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-draw-call-branch-next-boundary-decision.md)
+- [real render execution first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-render-execution-first-implementation-preflight-decision.md)
+- [real render execution first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-render-execution-first-implementation-slice-manifest.md)
+- [real render execution first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-render-execution-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream 不改变本 manifest 的 `CjguiInternalRendererNoRenderExecutionImplementationReadiness` historical admission endpoint，也不批准真实 render execution、GPU submission、command submission、presentation、completion callback、rollback callback、renderer state write、public diagnostics 或 public API。
+
 ## 验证记录
 
 本轮 docs-only 封账必须验证：

@@ -237,3 +237,18 @@ resource chain completeness hardening、backend readiness evidence reconciliatio
 ## 唯一后续入口
 
 `P1 internal Renderer backend readiness branch implementation milestone stabilization bundle implementation`
+
+## 下游 real backend readiness final shell
+
+后续 real first-slice 链已经从 platform object、native teardown、Metal device-layer、command queue、drawable、command buffer、render pass、encoder、pipeline state、draw call、render execution、state write 推进到 real backend readiness final shell：
+
+- [real state write branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-state-write-branch-next-boundary-decision.md)
+- [real backend readiness final shell preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-backend-readiness-final-shell-preflight-decision.md)
+- [real backend readiness final shell closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-backend-readiness-final-shell-closure-review.md)
+- [real backend readiness final shell manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-backend-readiness-final-shell-manifest.md)
+
+该 downstream 只把本 manifest 固定的 no-backend-ready-implementation admission facts 作为 historical admission evidence，并把 `CjguiInternalRendererNoRealStateWriteShellReadiness` 作为 runtime input 创建 no-real-backend-ready-shell facts。它不改变本 manifest 的 `CjguiInternalRendererNoBackendReadyImplementationReadiness` / `cjguiInternalExecuteDefaultRendererBackendReadinessFinalizationDraft()` 结论，不批准 backend ready truth、backend-ready permission、backend object / platform object creation、native handle、renderer state write、`runtime_state.cj` mutation、public diagnostics / API、render execution 或 GPU submission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend readiness shell branch reconciliation scan`

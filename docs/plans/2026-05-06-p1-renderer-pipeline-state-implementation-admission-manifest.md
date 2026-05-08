@@ -254,3 +254,18 @@ Renderer draw call implementation admission manifest stabilization 已完成：
 - [2026-05-06-p1-internal-renderer-draw-call-implementation-admission-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-draw-call-implementation-admission-manifest-stabilization-closure-review.md)
 
 该 manifest 固定 downstream [runtime_renderer_draw_call_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_draw_call_admission.cj) owner / truth / canonical endpoint / default draft / runtime input / stop-line。它只把本 manifest 的 `CjguiInternalRendererNoPipelineStateImplementationReadiness` / `cjguiInternalExecuteDefaultRendererPipelineStateAdmissionDraft()` 作为 runtime input，并输出 `CjguiInternalRendererNoDrawCallImplementationReadiness` / `cjguiInternalExecuteDefaultRendererDrawCallAdmissionDraft()`。它不把 no-pipeline-state-implementation endpoint 包成 draw-ready permission，也不批准 draw call、primitive command、resource binding、pipeline binding、GPU submission、render、renderer state write 或 public API permission。
+
+## 下游 real pipeline state first-slice macro
+
+real pipeline state first-slice macro 已完成：
+
+- [real encoder branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-branch-next-boundary-decision.md)
+- [real pipeline state first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-pipeline-state-first-implementation-preflight-decision.md)
+- [real pipeline state first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-pipeline-state-first-implementation-slice-closure-review.md)
+- [real pipeline state first implementation slice next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-pipeline-state-first-implementation-slice-next-boundary-decision.md)
+- [real pipeline state first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-pipeline-state-first-implementation-slice-manifest.md)
+- [real pipeline state first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-pipeline-state-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream 不消费 `CjguiInternalRendererNoPipelineStateImplementationReadiness`，而是把 real encoder shell endpoint `CjguiInternalRendererNoRealEncoderShellReadiness` 作为 runtime input，新增 `runtime/cjgui/src/runtime_renderer_pipeline_state_real.cj`，并固定 `CjguiInternalRendererNoRealPipelineStateShellReadiness` / `cjguiInternalExecuteDefaultRendererRealPipelineStateShellDraft()`。
+
+该 downstream 只表达 real pipeline state shell intent、shader function denial proof、pipeline descriptor denial proof、pipeline binding denial proof、compatibility failure classification 与 no-real-pipeline-state-shell readiness facts；不创建真实 pipeline state，不加载 / 编译 shader function，不创建 pipeline descriptor，不绑定 pipeline / buffer / texture / resource，不创建 encoder、GPU submission、render、renderer state write、backend ready truth 或 public API。

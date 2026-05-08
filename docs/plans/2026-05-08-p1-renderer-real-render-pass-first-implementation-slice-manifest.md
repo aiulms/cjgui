@@ -74,6 +74,19 @@
 - [render execution implementation admission manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-render-execution-implementation-admission-manifest.md)
 - [renderer state write implementation admission manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-renderer-state-write-implementation-admission-manifest.md)
 
+## 下游 real encoder 第一刀
+
+real encoder 第一刀已在本 manifest 下游完成 branch decision、preflight、owner shell、next-boundary 与 manifest stabilization：
+
+- [real render pass branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-render-pass-branch-next-boundary-decision.md)
+- [real encoder first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-first-implementation-preflight-decision.md)
+- [real encoder first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-encoder-first-implementation-slice-closure-review.md)
+- [real encoder first implementation slice next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-first-implementation-slice-next-boundary-decision.md)
+- [real encoder first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-first-implementation-slice-manifest.md)
+- [real encoder first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-encoder-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream 只消费 `CjguiInternalRendererNoRealRenderPassShellReadiness` 作为 upstream shell endpoint，不改变本 manifest 的 owner、runtime input、canonical endpoint、truth 或 stop-line，也不把 render pass shell 升格为 encoder、`renderCommandEncoder`、`endEncoding`、resource binding、GPU submission、renderer state write 或 public API permission。
+
 ## 唯一后续入口
 
 `P1 internal Renderer real render pass branch closure / next real render pass decision`

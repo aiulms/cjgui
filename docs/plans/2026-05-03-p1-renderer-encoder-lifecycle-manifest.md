@@ -343,3 +343,15 @@ Renderer encoder implementation preflight 已完成：
 新的 downstream opening：
 
 `P1 internal Renderer pipeline state implementation preflight decision`
+
+## 下游 real encoder 第一刀
+
+real encoder first-slice macro 已完成：
+
+- [real render pass branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-render-pass-branch-next-boundary-decision.md)
+- [real encoder first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-first-implementation-preflight-decision.md)
+- [real encoder first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-encoder-first-implementation-slice-closure-review.md)
+- [real encoder first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-first-implementation-slice-manifest.md)
+- [real encoder first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-encoder-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream 不把 `CjguiInternalRendererNoEncoderReadiness` 包装成真实 encoder readiness，也不把 lifecycle facts 当作 `renderCommandEncoder`、`endEncoding`、pipeline binding、GPU submission、render 或 renderer state write permission。real encoder first slice 的 runtime input 是 `CjguiInternalRendererNoRealRenderPassShellReadiness`，canonical endpoint 是 `CjguiInternalRendererNoRealEncoderShellReadiness` / `cjguiInternalExecuteDefaultRendererRealEncoderShellDraft()`。

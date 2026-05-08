@@ -261,6 +261,17 @@ plans 设计意图导航已建立，后续追踪 draw call 到 render execution 
 
 该导航只追加历史设计意图入口，不改变本 manifest 的 owner / truth / stop-line 或当前后续入口。
 
+## 下游真实 draw call 第一切片
+
+Renderer real draw call first-slice macro 已完成：
+
+- [real pipeline state branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-pipeline-state-branch-next-boundary-decision.md)
+- [real draw call first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-draw-call-first-implementation-preflight-decision.md)
+- [real draw call first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-draw-call-first-implementation-slice-closure-review.md)
+- [real draw call first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-draw-call-first-implementation-slice-manifest.md)
+
+这些文档新增 `runtime/cjgui/src/runtime_renderer_draw_call_real.cj`，但不改变本 manifest 固定的 `CjguiInternalRendererNoDrawCallImplementationReadiness`。real draw call first slice 只表达 shell / denial proof / ordering admission facts，不批准真实 draw call、primitive command invocation、geometry / resource binding、pipeline binding、GPU submission、render、renderer state write 或 public API permission。
+
 ## 验证记录
 
 本轮 docs-only 封账必须验证：

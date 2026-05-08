@@ -337,3 +337,18 @@ Renderer pipeline state implementation preflight 已完成：
 该 manifest 固定 implementation admission owner 的 current truth 与 stop-line。它仍只把本 manifest 作为 lifecycle vocabulary evidence，不消费 `CjguiInternalRendererNoPipelineStateReadiness`，也不授予 pipeline state、shader library / shader function、pipeline descriptor、pipeline binding、GPU submission、render、renderer state write 或 public API permission。
 
 新的唯一后续入口是 `P1 internal Renderer draw call implementation preflight decision`。
+
+## 下游 real pipeline state first-slice macro
+
+real pipeline state first-slice macro 已完成：
+
+- [real encoder branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-branch-next-boundary-decision.md)
+- [real pipeline state first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-pipeline-state-first-implementation-preflight-decision.md)
+- [real pipeline state first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-pipeline-state-first-implementation-slice-closure-review.md)
+- [real pipeline state first implementation slice next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-pipeline-state-first-implementation-slice-next-boundary-decision.md)
+- [real pipeline state first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-pipeline-state-first-implementation-slice-manifest.md)
+- [real pipeline state first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-pipeline-state-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream 只把本 manifest 作为 lifecycle vocabulary evidence，不消费 `CjguiInternalRendererNoPipelineStateReadiness`。真实 first slice 的 runtime input 是 `CjguiInternalRendererNoRealEncoderShellReadiness`，canonical endpoint 是 `CjguiInternalRendererNoRealPipelineStateShellReadiness` / `cjguiInternalExecuteDefaultRendererRealPipelineStateShellDraft()`。
+
+该 downstream 不把 lifecycle endpoint 包成 pipeline-ready、shader-ready、descriptor-ready、binding-ready、GPU-submission、render-permission、renderer-state-write、receipt、record 或 publication wrapper，也不创建真实 pipeline state、shader function、pipeline descriptor、pipeline binding、encoder、GPU submission、render、renderer state write 或 public API。

@@ -255,3 +255,15 @@ Draw call 更靠近 render execution、resource binding、command encoding 与 G
 - [2026-05-06-p1-internal-renderer-draw-call-implementation-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-internal-renderer-draw-call-implementation-admission-value-boundary-closure-review.md)
 
 该 closure 新增 [runtime_renderer_draw_call_admission.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_draw_call_admission.cj)。它不把本 manifest 的 `CjguiInternalRendererNoEncoderImplementationReadiness` 直接包装成 draw-ready permission；唯一 runtime input 是 pipeline state implementation admission endpoint，encoder admission endpoint 只作为 relation evidence。新增 truth 仅限 primitive command admission / geometry binding admission / draw ordering admission / no-draw-call-implementation value facts，不批准 draw call、resource binding、pipeline binding、encoder、command buffer、GPU submission、render 或 renderer state write。
+
+## 下游 real encoder 第一刀
+
+real encoder first-slice macro 已完成：
+
+- [real render pass branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-render-pass-branch-next-boundary-decision.md)
+- [real encoder first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-first-implementation-preflight-decision.md)
+- [real encoder first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-encoder-first-implementation-slice-closure-review.md)
+- [real encoder first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-encoder-first-implementation-slice-manifest.md)
+- [real encoder first implementation slice manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-encoder-first-implementation-slice-manifest-stabilization-closure-review.md)
+
+该 downstream 不复用本 manifest 的 `CjguiInternalRendererNoEncoderImplementationReadiness` 作为 runtime input；它只把本 manifest 的 no-encoder-implementation stop-line 作为 evidence，并由 `runtime/cjgui/src/runtime_renderer_encoder_real.cj` 消费 `CjguiInternalRendererNoRealRenderPassShellReadiness`。`CjguiInternalRendererNoRealEncoderShellReadiness` 只表达 real encoder shell / denial proof / teardown failure facts，不是真实 encoder、`renderCommandEncoder`、`endEncoding`、pipeline / buffer / texture / resource binding、GPU submission、render、renderer state write 或 public API permission。

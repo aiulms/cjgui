@@ -188,6 +188,14 @@ Same-shape Boundary Brake 在本 manifest 生效。
 - no `runtime/cjgui/cjpm.toml` change。
 - no smoke / harness / native bridge / entry modifications。
 
+## 下游 real state write 第一切片
+
+Real state write first-slice macro 已完成：
+
+- [2026-05-08-p1-renderer-real-state-write-first-implementation-slice-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-state-write-first-implementation-slice-manifest.md)
+
+该 downstream 只把本 manifest 作为 historical no-write evidence，不改变本 manifest 的 `CjguiInternalRendererNoStateWriteReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteNoWriteDraft()` 结论。新增 endpoint 是 `CjguiInternalRendererNoRealStateWriteShellReadiness`，它仍不批准真实 renderer state write、`runtime_state.cj` mutation、module-level mutable state、frame completion publication、diagnostics publication、backend ready truth、GPU submission、render execution 或 public API。
+
 ## Public Surface
 
 public symbol allowlist 未变：

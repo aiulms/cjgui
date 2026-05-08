@@ -263,3 +263,18 @@ Renderer real backend implementation planning reset decision 已完成：
 ## 唯一后续入口
 
 `P1 internal Renderer backend readiness implementation branch milestone closure / next renderer branch decision`
+
+## 下游 real backend readiness final shell
+
+后续真实资源 first-slice runway 已经完成到 real backend readiness final shell manifest stabilization：
+
+- [real state write branch next-boundary decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-state-write-branch-next-boundary-decision.md)
+- [real backend readiness final shell preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-backend-readiness-final-shell-preflight-decision.md)
+- [real backend readiness final shell closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-backend-readiness-final-shell-closure-review.md)
+- [real backend readiness final shell manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-backend-readiness-final-shell-manifest.md)
+
+该 downstream 只把本 milestone 的 no-backend-ready implementation admission chain 作为 historical evidence，并新增 `CjguiInternalRendererNoRealBackendReadyShellReadiness` / `cjguiInternalExecuteDefaultRendererRealBackendReadinessShellDraft()` 作为 real final shell endpoint。它不改变本 milestone 的 implementation admission branch tail，不创建 backend ready truth，不把 backend 标记为 ready，不创建 backend object / platform object / native handle，不写 renderer state，不触碰 `runtime_state.cj`，不执行 render，不提交 GPU work，不扩 public API。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer real backend readiness shell branch reconciliation scan`

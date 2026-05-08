@@ -457,3 +457,29 @@ Renderer frame pacing owner preflight 已完成：
 该 preflight 使用本 reference pack 的 display refresh、drawable acquisition timing、AppKit resize / backing scale、frame pacing 与 backend object lifecycle evidence，判定下一步可以进入 internal-only frame pacing owner value boundary。Reference pack 仍只是 docs evidence，不是 runtime input；`CVDisplayLink`、`MTKView` draw loop、run loop 与 timer 只能作为 future reference concept，不批准 frame scheduler、display link、render loop、timer、backend / Metal / AppKit implementation、platform object creation、command buffer commit、GPU submission、render execution 或 renderer state write。
 
 Reference pack 仍只是 docs evidence，不是 runtime input，不批准 backend object creation、`MTLDevice` / `CAMetalLayer` creation、command queue、drawable、command buffer、render pass descriptor、encoder、pipeline state、native handle、raw pointer、command buffer commit、GPU submission、render execution、renderer state write 或 public surface expansion。
+
+## 下游 native bridge 写集规划重置
+
+下游 [native bridge write-set planning reset decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-native-bridge-write-set-planning-reset-decision.md) 已完成。该 decision 只把本 reference pack 中的 Metal / AppKit resource order、command queue / drawable / command buffer lifecycle、main-thread / layer evidence 与 failure rollback evidence 作为正式 bridge surface contract 的规划输入。
+
+该 downstream decision 不把 reference pack 升格为 `MTLDevice` / `CAMetalLayer` / `MTLCommandQueue` permission、native bridge permission、C ABI / FFI permission、native handle permission、GPU submission permission、render permission、renderer state write permission、backend-ready permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge C ABI surface contract preflight decision`
+
+## 下游 C ABI surface contract 封账
+
+下游 [native bridge C ABI surface contract manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-c-abi-surface-contract-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-c-abi-surface-contract-manifest-stabilization-closure-review.md) 已完成。该 downstream 只把本 reference pack 中的 resource order、main-thread / layer evidence、failure rollback 与 smoke feasibility 作为 C ABI surface contract evidence，不把 reference pack 升格为 C ABI implementation permission、native bridge implementation permission、native handle permission、`MTLDevice` / `CAMetalLayer` / `MTLCommandQueue` permission、GPU submission permission、render permission、renderer state write permission、backend-ready permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native handle token ownership planning preflight decision`
+
+## 下游 native handle token ownership 封账
+
+下游 [native handle token ownership manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-handle-token-ownership-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-handle-token-ownership-manifest-stabilization-closure-review.md) 已完成。该 downstream 只把本 reference pack 中的 resource order、main-thread / layer evidence、failure rollback 与 smoke feasibility 作为 token ownership planning evidence，不把 reference pack 升格为 native handle permission、raw pointer permission、native pointer return permission、C ABI implementation permission、FFI permission、native bridge implementation permission、`MTLDevice` / `CAMetalLayer` / `MTLCommandQueue` permission、GPU submission permission、render permission、renderer state write permission、backend-ready permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge teardown implementation planning preflight decision`

@@ -339,6 +339,16 @@ Renderer draw call implementation admission manifest stabilization 已完成：
 
 新的唯一后续入口是 docs-only `P1 internal Renderer render execution implementation preflight decision`。下一步仍不批准真实 draw call、resource binding、pipeline binding、encoder、command buffer、GPU submission、render、renderer state write 或 public API permission。
 
+## 下游真实 draw call 第一切片
+
+Renderer real draw call first-slice macro 已完成：
+
+- [real draw call first implementation preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-draw-call-first-implementation-preflight-decision.md)
+- [real draw call first implementation slice closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-internal-renderer-real-draw-call-first-implementation-slice-closure-review.md)
+- [real draw call first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-draw-call-first-implementation-slice-manifest.md)
+
+该 first slice 使用 `CjguiInternalRendererNoRealPipelineStateShellReadiness` 作为 runtime input，不复用本 lifecycle manifest 的 `CjguiInternalRendererNoDrawCallReadiness`。本 lifecycle manifest 仍只是 vocabulary evidence，不是 draw-ready permission、primitive command permission、GPU submission permission、render permission、renderer state write permission 或 public API permission。
+
 ## 验证记录
 
 验证结果记录在 [2026-05-04-p1-internal-renderer-draw-call-lifecycle-manifest-stabilization-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-internal-renderer-draw-call-lifecycle-manifest-stabilization-closure-review.md)。

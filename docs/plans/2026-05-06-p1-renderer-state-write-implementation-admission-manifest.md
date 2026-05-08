@@ -218,6 +218,14 @@ Renderer backend readiness implementation finalization preflight 已完成：
 
 ## 下游 backend readiness finalization 取值边界
 
+## 下游 real state write 第一切片
+
+Real state write first-slice macro 已完成：
+
+- [2026-05-08-p1-renderer-real-state-write-first-implementation-slice-manifest.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-state-write-first-implementation-slice-manifest.md)
+
+该 downstream 只把本 manifest 作为 historical implementation admission evidence，不改变本 manifest 的 `CjguiInternalRendererNoStateWriteImplementationReadiness` / `cjguiInternalExecuteDefaultRendererStateWriteAdmissionDraft()` 结论。新增 real first-slice endpoint 是 `CjguiInternalRendererNoRealStateWriteShellReadiness`，唯一 runtime input 是 `CjguiInternalRendererNoRealRenderExecutionShellReadiness`；它仍不批准真实 renderer state write、`runtime_state.cj` mutation、module-level mutable state、public diagnostics、backend ready truth、GPU submission、render execution 或 public API。
+
 Renderer backend readiness implementation finalization admission value boundary 已完成：
 
 - [2026-05-07-p1-internal-renderer-backend-readiness-implementation-finalization-admission-value-boundary-closure-review.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-07-p1-internal-renderer-backend-readiness-implementation-finalization-admission-value-boundary-closure-review.md)

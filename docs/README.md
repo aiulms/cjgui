@@ -1,6 +1,6 @@
 # 仓颉 GUI 文档中心
 
-最后更新：2026-04-30
+最后更新：2026-05-09
 
 ## 1. 文档入口规则
 
@@ -49,6 +49,11 @@
 - [LOCAL_TOOLCHAIN_SETUP.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/LOCAL_TOOLCHAIN_SETUP.md)
 - [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)
 - [CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)
+- [CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md)
+
+说明：
+
+- [CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md) 是阶段性盘点入口，不是每轮 implementation 的默认必读上下文。
 
 ### 2.4 [plans](/Users/jiangxuanyang/Desktop/cangjie/docs/plans)
 

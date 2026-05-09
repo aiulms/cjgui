@@ -509,3 +509,23 @@ Renderer native teardown contract hardening manifest stabilization 已完成：
 新的 downstream 后续入口：
 
 `P1 internal Renderer native bridge teardown implementation planning preflight decision`
+
+## 下游 native bridge teardown implementation planning 封账
+
+下游 [native bridge teardown implementation planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-teardown-implementation-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-teardown-implementation-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续把本 manifest 的 native bridge intent、handle confinement、bridge call admission guard、teardown contract policy 与 no-native-resource-bridge readiness facts 作为 planning evidence，不直接消费本 endpoint。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeResourceBridgeReadiness` 升格为 native bridge implementation permission、destroy permission、retain / release permission、native handle permission、raw pointer permission、C ABI / FFI permission、bridge call permission、Objective-C / Metal / AppKit permission、GPU submission permission、renderer state write permission、backend-ready permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge first production write-set preflight decision`
+
+## 下游生产写集预检封账
+
+下游 [native bridge first production write-set preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-first-production-write-set-preflight-decision.md) 已完成。该 downstream 继续把本 manifest 的 native bridge intent、handle confinement、bridge call admission guard、teardown contract policy 与 no-native-resource-bridge readiness facts 作为 production bridge skeleton planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeResourceBridgeReadiness` 升格为 native bridge implementation permission、native handle permission、raw pointer permission、callable C ABI permission、FFI permission、bridge call permission、retain / release / destroy permission、Objective-C / Metal / AppKit permission、GPU submission permission、renderer state write permission、backend-ready permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer production native bridge skeleton write-set contract bundle`

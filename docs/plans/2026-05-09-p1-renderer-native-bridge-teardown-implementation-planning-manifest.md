@@ -79,3 +79,33 @@
 ## 唯一后续入口
 
 `P1 internal Renderer native bridge first production write-set preflight decision`
+
+## 下游生产写集预检封账
+
+下游 [native bridge first production write-set preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-first-production-write-set-preflight-decision.md) 已完成。该 downstream 继续使用本 manifest 的 destroy admission guard、token invalidation before destroy、double-destroy / dangling-token denial、main-thread destroy confinement 与 teardown failure classification 作为 production bridge skeleton planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeTeardownImplementationReadiness` 升格为 native bridge implementation permission、destroy permission、retain / release permission、native handle permission、raw pointer permission、native pointer return permission、callable C ABI permission、FFI permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer production native bridge skeleton write-set contract bundle`
+
+## 下游 skeleton 写集封账
+
+下游 [production native bridge skeleton write-set manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-production-native-bridge-skeleton-write-set-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-production-native-bridge-skeleton-write-set-manifest-stabilization-closure-review.md) 已完成。该 downstream 使用本 manifest 的 destroy admission guard、token invalidation before destroy、double-destroy / dangling-token denial、main-thread destroy confinement 与 teardown failure classification 作为 production bridge skeleton planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeTeardownImplementationReadiness` 升格为 native bridge implementation permission、destroy permission、retain / release permission、native handle permission、raw pointer permission、native pointer return permission、callable C ABI permission、FFI permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics、public API 或 build config modification permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge build system integration preflight decision`
+
+## 下游 callable C ABI planning 封账
+
+下游 [native bridge callable C ABI planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-callable-c-abi-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-callable-c-abi-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 destroy admission guard、token invalidation before destroy、double-destroy / dangling-token denial、main-thread destroy confinement 与 teardown failure classification 作为 callable no-resource guard 与 FFI separation 的 planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeTeardownImplementationReadiness` 升格为 destroy permission、retain / release permission、callable C ABI implementation permission、FFI permission、runtime `.cj` FFI declaration permission、native bridge implementation permission、native handle permission、raw pointer permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge callable C ABI first implementation preflight decision`

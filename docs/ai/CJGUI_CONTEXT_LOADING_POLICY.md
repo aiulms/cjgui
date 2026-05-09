@@ -1,6 +1,6 @@
 # CJGUI 上下文装载策略
 
-最后更新：2026-04-30
+最后更新：2026-05-09
 
 性质：AI context loading policy / anti-overload rule
 状态：生效中
@@ -55,6 +55,8 @@ AI 不应默认全文读取所有治理文档、所有 plans、所有参考仓�
 sidecar research 不是每轮 implementation 的默认必读上下文。
 
 例如 [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md) 只在相关高风险开口前按需读取，例如 event loop / queue / drain、renderer / invalidation / layout、Text / IME / Accessibility、platform handle / public API / C ABI、semantic tree / Action Router。它是排雷雷达，不是每轮执行的前置门槛。
+
+仓颉上游贡献雷达也不是每轮 implementation 的默认必读上下文。[CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md) 只在大阶段封账、上游贡献盘点、准备 issue / doc / example / package / tool 候选、或 closure 明确发现可贡献资产时读取。
 
 ### 1.4 上下文预算是任务边界的一部分
 
@@ -146,6 +148,7 @@ L1 的目标是回答：
 - 触碰 runtime execution tail、post-attempt boundary、继续新增 `Draft / Report / Request / Sanity`，或准备执行治理瘦身 / execution convergence：按需读 [2026-04-30-p1-runtime-governance-slimming-execution-pivot-decision.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-runtime-governance-slimming-execution-pivot-decision.md) 的相关章节；不要把全部历史 execution chain 文档加入默认必读清单。
 - 触碰仓颉 1.1 owner 语言保证、线性类型 / 借用检查等价能力判断、FFI handle / native object lifecycle、debug / profiling / memory tooling、platform bridge capability、或未来语言能力迁移：按需读 [cangjie-1.1-owner-tooling-ffi-capability-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md) 的相关章节；不要把它加入普通 runtime implementation 的默认必读清单。
 - 触碰仓颉语法、`cjpm`、`cjc`、FFI、SDK workaround，或准备仓颉上游 issue / 文档建议 / 能力反馈：读 [BUILD_FROM_ZERO.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/BUILD_FROM_ZERO.md)、[CANGJIE_ISSUE_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_ISSUE_LEDGER.md)，并按需读取 CangjieSkills。
+- 进入大阶段封账、上游贡献盘点、可发布样例 / package / tool 候选整理，或 closure 明确出现“可离开 CJGUI 独立解释”的贡献资产：按需读 [CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md)。普通 runtime / renderer implementation 不默认读取它。
 - 触碰 macOS bridge smoke：读 `[labs/macos_bridge_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/macos_bridge_smoke`) 的相关 README、脚本或 native 文件。
 - 触碰 C FFI smoke：读 `[labs/cffi_smoke]`(`/Users/jiangxuanyang/Desktop/cangjie/labs/cffi_smoke`) 的相关文件。
 
@@ -163,6 +166,7 @@ L2 不应整包装载，只读相关章节或相关文件。
 - 参考仓库源码。
 - `CangjieSkills` / `DocFlow` 全量内容。
 - Flutter / GPUI / WGPUI / Qt 等参考项目源码。
+- [CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md)，除非本轮是阶段封账、上游贡献盘点或明确整理贡献候选。
 
 这些内容是背景资产，不是每轮执行上下文。
 
@@ -236,6 +240,27 @@ L2 不应整包装载，只读相关章节或相关文件。
 - 是否需要准备 issue draft、文档建议、最小复现或能力反馈。
 
 这不是每轮 implementation 的默认阅读负担；只有出现仓颉语言 / SDK / FFI / toolchain / docs 信号时触发。
+
+### 3.5 大阶段封账 / 上游贡献盘点
+
+默认读取：
+
+- [README.md](/Users/jiangxuanyang/Desktop/cangjie/README.md)
+- [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 当前入口片段。
+- 当前阶段 closure / compaction / manifest。
+- [CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md](/Users/jiangxuanyang/Desktop/cangjie/docs/setup/CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md)
+
+触发条件：
+
+- 一个 renderer / runtime 大阶段封账。
+- 需要盘点可上游 issue / doc / example / package / tool 候选。
+- 准备把 `labs/*` smoke、治理工具或 `runtime/cjgui` 主包拆成独立资产。
+- closure 明确记录了可离开 CJGUI 独立解释的贡献资产。
+
+不默认读取：
+
+- 所有历史 plans。
+- `CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md` 之外的全部 setup 文档，除非要核对工具链或 issue 证据。
 
 ## 4. 架构 AI 下发任务时必须写清楚
 

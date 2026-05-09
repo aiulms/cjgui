@@ -103,3 +103,13 @@
 新的下游后续入口：
 
 `P1 internal Renderer native bridge teardown implementation planning preflight decision`
+
+## 下游 native bridge teardown implementation planning 封账
+
+下游 native bridge teardown implementation planning macro 已完成，新增 [runtime_renderer_native_bridge_teardown_plan.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_native_bridge_teardown_plan.cj)，并封账 [native bridge teardown implementation planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-teardown-implementation-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-teardown-implementation-planning-manifest-stabilization-closure-review.md)。
+
+该 downstream 经 native handle token ownership 链路继续使用本 closure 固定的 C ABI surface contract facts；不实现 C ABI / FFI，不修改 native bridge，不创建 native handle / raw pointer，不返回 native pointer，不调用 retain / release / destroy，不实现 destroy callback，不创建 backend ready truth，不写 renderer state，不扩 public API。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge first production write-set preflight decision`

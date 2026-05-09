@@ -91,3 +91,53 @@
 新的下游后续入口：
 
 `P1 internal Renderer native bridge teardown implementation planning preflight decision`
+
+## 下游 native bridge teardown implementation planning 封账
+
+下游 [native bridge teardown implementation planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-teardown-implementation-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-teardown-implementation-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 通过 native handle token ownership 链路继续使用本 manifest 的 surface intent、production write-set policy、category admission 与 native status dehydration facts 作为 planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeCAbiSurfaceReadiness` 升格为 native bridge implementation permission、C ABI implementation permission、FFI permission、destroy permission、native handle permission、raw pointer permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge first production write-set preflight decision`
+
+## 下游生产写集预检封账
+
+下游 [native bridge first production write-set preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-first-production-write-set-preflight-decision.md) 已完成。该 downstream 继续使用本 manifest 的 surface intent、production bridge write-set policy、C ABI category admission 与 native status dehydration facts 作为 planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeCAbiSurfaceReadiness` 升格为 native bridge implementation permission、callable C ABI permission、FFI permission、native handle permission、raw pointer permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer production native bridge skeleton write-set contract bundle`
+
+## 下游 skeleton 写集封账
+
+下游 [production native bridge skeleton write-set manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-production-native-bridge-skeleton-write-set-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-production-native-bridge-skeleton-write-set-manifest-stabilization-closure-review.md) 已完成。该 downstream 使用本 manifest 的 surface intent、production bridge write-set policy、C ABI category admission 与 native status dehydration facts 作为 planning evidence，只新增 production skeleton `.h` / `.m` 写集落点。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeCAbiSurfaceReadiness` 升格为 native bridge implementation permission、callable C ABI permission、FFI permission、native handle permission、raw pointer permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics、public API 或 build config modification permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge build system integration preflight decision`
+
+## 下游 callable C ABI planning 封账
+
+下游 [native bridge callable C ABI planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-callable-c-abi-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-callable-c-abi-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 surface intent、production bridge write-set policy、C ABI category admission 与 native status dehydration facts 作为 planning evidence，但只新增 runtime-local callable planning owner。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeCAbiSurfaceReadiness` 升格为 callable C ABI implementation permission、FFI permission、runtime `.cj` FFI declaration permission、native bridge implementation permission、native handle permission、raw pointer permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge runtime FFI syntax / link preflight decision`
+
+## 下游 callable C ABI 第一实现封账
+
+下游 [native bridge callable C ABI first implementation manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-callable-c-abi-first-implementation-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-callable-c-abi-first-implementation-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 surface intent、production bridge write-set policy、C ABI category admission 与 native status dehydration facts，但只新增 no-resource callable `C ABI` surface。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeCAbiSurfaceReadiness`、callable surface 或 skeleton compile 升格为 runtime FFI permission、runtime `.cj` FFI declaration permission、native bridge implementation permission、native handle permission、raw pointer permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+当前 downstream 后续入口：
+
+`P1 internal Renderer native bridge runtime FFI syntax / link preflight decision`

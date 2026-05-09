@@ -90,3 +90,13 @@
 ## 唯一后续入口
 
 `P1 internal Renderer native bridge teardown implementation planning preflight decision`
+
+## 下游 native bridge teardown implementation planning 封账
+
+下游 [native bridge teardown implementation planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-teardown-implementation-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-teardown-implementation-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 只把本 closure 固定的 token ownership、token invalidation / revocation、double-release denial 与 dangling pointer denial 作为 planning input。
+
+它不把 `CjguiInternalRendererNoNativeHandleTokenReadiness` 升格为 native bridge implementation permission、destroy permission、retain / release permission、native handle permission、raw pointer permission、native pointer return permission、C ABI implementation permission、FFI permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge first production write-set preflight decision`

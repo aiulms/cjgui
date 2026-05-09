@@ -18,7 +18,18 @@
 
 ## 验证记录
 
-最终宏包扫描将在本 closure 写入后执行并按结果补齐。若后续扫描发现问题，以最终总结和后续修复记录为准。
+- `source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh && cjpm build --target-dir /tmp/cjgui-renderer-native-bridge-teardown-planning-macro-target --skip-script`：通过；仅保留既有 unused warnings。
+- `labs/macos_bridge_smoke/scripts/verify_auto_close.sh`：通过，auto-close log assertions passed，并记录 `destroy complete`。
+- `git diff --check`：通过。
+- 新 runtime / docs no-index whitespace check：通过。
+- Markdown absolute link missing target check：通过，范围限定 project docs / README，避开 `reference_repos/`。
+- README / tracker / plans README / runtime README / design index / topic manifest reachability：通过。
+- Markdown 中文标题与中文正文抽查：通过。
+- protected path check：通过；`runtime_state.cj` 行数仍为 `10065`，`runtime_state.cj` 与 `labs/macos_bridge_smoke/native/*` 无 status diff。
+- comment-aware public declaration scan：通过，仍只有 `cjguiExperimentalQueueSubmitShellReady(): Bool`。
+- new owner header / stop-line scan：通过，文件头包含 Owner / Truth / Stop-line / Same-shape Boundary Brake，未发现 operative native bridge / Objective-C / Metal / AppKit / FFI / C ABI / native handle / raw pointer / retain / release / destroy / GPU / render / renderer state write / public API 越线。
+- native file forbidden scan：通过，未修改 `labs/macos_bridge_smoke/native/*`，未新增 production `.h` / `.m`。
+- GitNexus `detect_changes(scope=unstaged, repo=/Users/jiangxuanyang/Desktop/cangjie)`：risk `low`，`affected_count=0`，affected processes 为空；近期新增 owner 未产生已索引 changed symbols。
 
 ## 同步记录
 

@@ -78,3 +78,53 @@
 ## 唯一后续入口
 
 `P1 internal Renderer native bridge teardown implementation planning preflight decision`
+
+## 下游 native bridge teardown implementation planning 封账
+
+下游 [native bridge teardown implementation planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-teardown-implementation-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-teardown-implementation-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 只把 `CjguiInternalRendererNoNativeHandleTokenReadiness` 作为 runtime input，并输出 `CjguiInternalRendererNoNativeBridgeTeardownImplementationReadiness` / `cjguiInternalExecuteDefaultRendererNativeBridgeTeardownPlanDraft()`。
+
+该 downstream 不把本 manifest 的 token ownership facts 升格为 native bridge implementation permission、destroy permission、retain / release permission、native handle permission、raw pointer permission、native pointer return permission、C ABI implementation permission、FFI permission、Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge first production write-set preflight decision`
+
+## 下游生产写集预检封账
+
+下游 [native bridge first production write-set preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-first-production-write-set-preflight-decision.md) 已完成。该 downstream 继续使用本 manifest 的 opaque token admission、ownership domain、token invalidation / revocation、double-release / dangling pointer denial 与 no-native-handle-token facts 作为 production bridge skeleton planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeHandleTokenReadiness` 升格为 native handle permission、raw pointer permission、native pointer return permission、native bridge implementation permission、callable C ABI permission、FFI permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer production native bridge skeleton write-set contract bundle`
+
+## 下游 skeleton 写集封账
+
+下游 [production native bridge skeleton write-set manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-production-native-bridge-skeleton-write-set-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-production-native-bridge-skeleton-write-set-manifest-stabilization-closure-review.md) 已完成。该 downstream 使用本 manifest 的 opaque token admission、ownership domain、token invalidation / revocation、double-release / dangling pointer denial 与 no-native-handle-token facts 作为 production bridge skeleton planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeHandleTokenReadiness` 升格为 native handle permission、raw pointer permission、native pointer return permission、native bridge implementation permission、callable C ABI permission、FFI permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics、public API 或 build config modification permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge build system integration preflight decision`
+
+## 下游 callable C ABI planning 封账
+
+下游 [native bridge callable C ABI planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-callable-c-abi-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-callable-c-abi-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 opaque token admission、ownership domain、token invalidation / revocation、double-release / dangling pointer denial 与 no-native-handle-token facts 作为 no-resource callable guard 的 planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeHandleTokenReadiness` 升格为 native handle permission、raw pointer permission、native pointer return permission、callable C ABI implementation permission、FFI permission、runtime `.cj` FFI declaration permission、native bridge implementation permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge callable C ABI first implementation preflight decision`
+
+## 下游 native token callable 封账
+
+下游 [native bridge native token callable manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-native-token-callable-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-native-token-callable-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 opaque token admission、ownership domain、invalidation / revocation、double-release / dangling pointer denial 与 no-native-handle-token facts 作为 native token callable planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeHandleTokenReadiness` 升格为 native token C ABI permission、token table permission、native handle permission、raw pointer permission、native pointer return permission、native bridge implementation permission、FFI permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native token table ownership hardening preflight decision`

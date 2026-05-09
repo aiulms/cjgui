@@ -483,3 +483,23 @@ Reference pack 仍只是 docs evidence，不是 runtime input，不批准 backen
 新的 downstream 后续入口：
 
 `P1 internal Renderer native bridge teardown implementation planning preflight decision`
+
+## 下游 native bridge teardown implementation planning 封账
+
+下游 [native bridge teardown implementation planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-teardown-implementation-planning-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-bridge-teardown-implementation-planning-manifest-stabilization-closure-review.md) 已完成。该 downstream 只把本 reference pack 中的 resource order、main-thread / layer evidence、failure rollback 与 smoke feasibility 作为 teardown planning evidence。
+
+该 downstream 不把 reference pack 升格为 native bridge implementation permission、destroy permission、C ABI implementation permission、FFI permission、native handle permission、`MTLDevice` / `CAMetalLayer` / `MTLCommandQueue` permission、GPU submission permission、render permission、renderer state write permission、backend-ready permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge first production write-set preflight decision`
+
+## 下游生产写集预检封账
+
+下游 [native bridge first production write-set preflight decision](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-first-production-write-set-preflight-decision.md) 已完成。该 downstream 只把本 reference pack 中的 Metal / AppKit resource order、main-thread / layer evidence、failure rollback、command queue / drawable / command buffer lifecycle 与 smoke feasibility 作为 production bridge skeleton planning evidence。
+
+该 downstream 不把 reference pack 升格为 native bridge implementation permission、callable C ABI permission、FFI permission、native handle permission、`MTLDevice` / `CAMetalLayer` / `MTLCommandQueue` permission、GPU submission permission、render permission、renderer state write permission、backend-ready permission 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer production native bridge skeleton write-set contract bundle`

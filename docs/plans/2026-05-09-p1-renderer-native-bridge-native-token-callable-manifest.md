@@ -103,6 +103,22 @@ Default draft 产出：
 
 该入口只能评估 token table ownership、mutability、main-thread confinement、fail-closed validate / revoke 与 teardown compatibility；不得直接创建 native object、native handle、raw pointer、Metal / AppKit resource、destroy callback、public API 或 backend-ready truth。
 
+## 下游 token table ownership hardening 封账
+
+下游 [native token table ownership hardening manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-token-table-ownership-hardening-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-token-table-ownership-hardening-manifest-stabilization-closure-review.md) 已完成。该 downstream 只把 `CjguiInternalRendererNoNativeBridgeTokenCallableReadiness` 作为 runtime input，并输出 `CjguiInternalRendererNoNativeTokenTableOwnershipReadiness` / `cjguiInternalExecuteDefaultRendererNativeTokenTableOwnershipDraft()`。
+
+该 downstream 不把本 manifest 的 token callable planning facts 升格为 native token C ABI permission、token table implementation permission、native handle permission、raw pointer permission、native pointer return permission、native object permission、destroy permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge teardown callable preflight decision`
+
+## 下游 teardown callable 封账
+
+下游 [native bridge teardown callable manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-renderer-native-bridge-teardown-callable-manifest.md) 已完成。该 downstream 不直接消费本 manifest，而是通过 [native token table ownership hardening manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-token-table-ownership-hardening-manifest.md) 间接继承 opaque token、no-pointer token、table mutability denial 与 revoke-without-destroy facts。
+
+该 downstream 不把 native token callable planning facts 升格为 native teardown C ABI permission、token table implementation permission、destroy permission、native handle permission、native object permission、Metal / AppKit permission、public API 或 backend-ready permission。当前全局唯一后续入口已经转为 `P1 internal Renderer native bridge resource creation admission preflight decision`。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，native token callable 已 manifest stabilization。

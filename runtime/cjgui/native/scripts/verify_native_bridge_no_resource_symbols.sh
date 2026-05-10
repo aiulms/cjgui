@@ -13,13 +13,55 @@ HEADER_FILE="$NATIVE_DIR/cjgui_native_bridge.h"
 SOURCE_FILE="$NATIVE_DIR/cjgui_native_bridge.m"
 OUTPUT_DIR="$(mktemp -d /tmp/cjgui-native-bridge-no-resource-XXXXXX)"
 OBJECT_FILE="$OUTPUT_DIR/cjgui_native_bridge.o"
-ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_surface_version|cjgui_native_bridge_surface_capabilities|cjgui_native_bridge_status_ok|cjgui_native_bridge_no_resource_admission|cjgui_native_bridge_is_main_thread)$'
+ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_surface_version|cjgui_native_bridge_surface_capabilities|cjgui_native_bridge_status_ok|cjgui_native_bridge_no_resource_admission|cjgui_native_bridge_is_main_thread|cjgui_native_bridge_token_invalid|cjgui_native_bridge_token_table_capacity|cjgui_native_bridge_token_table_enabled|cjgui_native_bridge_token_classify|cjgui_native_bridge_token_issue|cjgui_native_bridge_token_revoke|cjgui_native_bridge_teardown_admission|cjgui_native_bridge_destroy_not_supported|cjgui_native_bridge_revoke_before_destroy_required|cjgui_native_bridge_double_destroy_classify|cjgui_native_bridge_appkit_import_available|cjgui_native_bridge_appkit_no_object_admission|cjgui_native_bridge_platform_object_create_still_blocked|cjgui_native_bridge_appkit_nswindow_class_available|cjgui_native_bridge_appkit_nsview_class_available|cjgui_native_bridge_appkit_class_lookup_no_object_admission|cjgui_native_bridge_platform_object_allocation_still_blocked|cjgui_native_bridge_appkit_platform_object_main_thread_required|cjgui_native_bridge_appkit_platform_object_main_thread_admitted|cjgui_native_bridge_appkit_platform_object_background_thread_denied|cjgui_native_bridge_appkit_platform_object_creation_still_blocked|cjgui_native_bridge_platform_object_create_no_object_admission|cjgui_native_bridge_platform_object_create_requires_main_thread|cjgui_native_bridge_platform_object_create_requires_token_contract|cjgui_native_bridge_platform_object_create_allocation_blocked|cjgui_native_bridge_nsview_table_capacity|cjgui_native_bridge_nsview_table_enabled|cjgui_native_bridge_nsview_table_empty|cjgui_native_bridge_nsview_table_token_classify|cjgui_native_bridge_nsview_table_allocation_still_blocked|cjgui_native_bridge_nsview_table_destroy_still_blocked|cjgui_native_bridge_nsview_create|cjgui_native_bridge_nsview_destroy|cjgui_native_bridge_nsview_token_classify|cjgui_native_bridge_nsview_table_occupied_count|cjgui_native_bridge_nsview_double_destroy_classify|cjgui_native_bridge_nsview_destroy_requires_main_thread|cjgui_native_bridge_quartzcore_import_available|cjgui_native_bridge_cametallayer_class_available|cjgui_native_bridge_cametallayer_no_attach_admission|cjgui_native_bridge_cametallayer_allocation_still_blocked|cjgui_native_bridge_cametallayer_device_binding_still_blocked)$'
 EXPECTED_SYMBOLS=(
   "cjgui_native_bridge_surface_version"
   "cjgui_native_bridge_surface_capabilities"
   "cjgui_native_bridge_status_ok"
   "cjgui_native_bridge_no_resource_admission"
   "cjgui_native_bridge_is_main_thread"
+  "cjgui_native_bridge_token_invalid"
+  "cjgui_native_bridge_token_table_capacity"
+  "cjgui_native_bridge_token_table_enabled"
+  "cjgui_native_bridge_token_classify"
+  "cjgui_native_bridge_token_issue"
+  "cjgui_native_bridge_token_revoke"
+  "cjgui_native_bridge_teardown_admission"
+  "cjgui_native_bridge_destroy_not_supported"
+  "cjgui_native_bridge_revoke_before_destroy_required"
+  "cjgui_native_bridge_double_destroy_classify"
+  "cjgui_native_bridge_appkit_import_available"
+  "cjgui_native_bridge_appkit_no_object_admission"
+  "cjgui_native_bridge_platform_object_create_still_blocked"
+  "cjgui_native_bridge_appkit_nswindow_class_available"
+  "cjgui_native_bridge_appkit_nsview_class_available"
+  "cjgui_native_bridge_appkit_class_lookup_no_object_admission"
+  "cjgui_native_bridge_platform_object_allocation_still_blocked"
+  "cjgui_native_bridge_appkit_platform_object_main_thread_required"
+  "cjgui_native_bridge_appkit_platform_object_main_thread_admitted"
+  "cjgui_native_bridge_appkit_platform_object_background_thread_denied"
+  "cjgui_native_bridge_appkit_platform_object_creation_still_blocked"
+  "cjgui_native_bridge_platform_object_create_no_object_admission"
+  "cjgui_native_bridge_platform_object_create_requires_main_thread"
+  "cjgui_native_bridge_platform_object_create_requires_token_contract"
+  "cjgui_native_bridge_platform_object_create_allocation_blocked"
+  "cjgui_native_bridge_nsview_table_capacity"
+  "cjgui_native_bridge_nsview_table_enabled"
+  "cjgui_native_bridge_nsview_table_empty"
+  "cjgui_native_bridge_nsview_table_token_classify"
+  "cjgui_native_bridge_nsview_table_allocation_still_blocked"
+  "cjgui_native_bridge_nsview_table_destroy_still_blocked"
+  "cjgui_native_bridge_nsview_create"
+  "cjgui_native_bridge_nsview_destroy"
+  "cjgui_native_bridge_nsview_token_classify"
+  "cjgui_native_bridge_nsview_table_occupied_count"
+  "cjgui_native_bridge_nsview_double_destroy_classify"
+  "cjgui_native_bridge_nsview_destroy_requires_main_thread"
+  "cjgui_native_bridge_quartzcore_import_available"
+  "cjgui_native_bridge_cametallayer_class_available"
+  "cjgui_native_bridge_cametallayer_no_attach_admission"
+  "cjgui_native_bridge_cametallayer_allocation_still_blocked"
+  "cjgui_native_bridge_cametallayer_device_binding_still_blocked"
 )
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -32,12 +74,12 @@ if [[ ! -f "$HEADER_FILE" || ! -f "$SOURCE_FILE" ]]; then
   exit 3
 fi
 
-if grep -E '#import <(Cocoa/Cocoa|Metal/Metal|QuartzCore/CAMetalLayer)\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
-  echo "cjgui native bridge no-resource symbols: production skeleton must not import AppKit / Metal frameworks" >&2
+if grep -E '#import <(Cocoa/Cocoa|Metal/Metal)\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge no-resource symbols: production skeleton must not import Cocoa / Metal frameworks" >&2
   exit 4
 fi
 
-if grep -E 'cjgui_app_run|cjgui_last_error|NSWindow|NSView|CAMetalLayer|MTLDevice|MTLCommandQueue|nextDrawable|commandBuffer|commit|present|retain|release|destroy' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSWindow|NSApplication|CALayer|CAMetalLayer)[[:space:]]+(alloc|new)\]|(NSWindow|NSApplication|CALayer|CAMetalLayer)[[:space:]]*\*|MTLDevice|MTLCommandQueue|nextDrawable|commandBuffer|commit|present|retain|release' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource symbols: production skeleton contains forbidden runtime/native behavior token" >&2
   exit 5
 fi
@@ -77,6 +119,7 @@ echo "cjgui native bridge no-resource symbols: sdkroot=$SDKROOT_VALUE"
 
 "$CLANG_BIN" \
   -fobjc-arc \
+  -fno-objc-msgsend-selector-stubs \
   -fmodules \
   -isysroot "$SDKROOT_VALUE" \
   -mmacosx-version-min=12.0 \
@@ -107,4 +150,4 @@ for expected_symbol in "${EXPECTED_SYMBOLS[@]}"; do
 done
 
 echo "cjgui native bridge no-resource symbols: passed"
-echo "cjgui native bridge no-resource symbols: no runtime FFI, no resource callable, no native object"
+echo "cjgui native bridge no-resource symbols: no public API, no pointer return, no layer allocation/attachment or Metal callable"

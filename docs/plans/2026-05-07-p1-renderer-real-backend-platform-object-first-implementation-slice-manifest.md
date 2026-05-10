@@ -110,6 +110,10 @@ M consolidation 仅在明确 duplicate / self-wrapping evidence 出现时选择
 
 `P1 internal Renderer native teardown contract hardening preflight decision`
 
+## 下游 NSView backend shell integration 接续
+
+下游 [NSView backend shell integration manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-renderer-platform-object-nsview-backend-shell-integration-manifest.md) 已完成，新增 [runtime_renderer_backend_nsview_platform_integration.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_backend_nsview_platform_integration.cj)，固定 `CjguiInternalRendererNoBackendNsViewPlatformIntegrationReadiness` / `cjguiInternalExecuteDefaultRendererBackendNsViewPlatformIntegrationDraft()`。该下游只把 token-backed `NSView` runtime-call evidence 接入 backend shell integration facts；不改变本清单的 real backend platform object shell stop-line，不授权 `CAMetalLayer` / Metal resource、backend-ready truth、renderer state write、GPU submission、render execution、public diagnostics 或 public API。
+
 ## 下游 native teardown 合约硬化预检
 
 下游 native teardown contract hardening preflight decision 已完成：

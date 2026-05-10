@@ -128,3 +128,13 @@
 新的 downstream 后续入口：
 
 `P1 internal Renderer native token table ownership hardening preflight decision`
+
+## 下游 token table ownership hardening 封账
+
+下游 [native token table ownership hardening manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-token-table-ownership-hardening-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-token-table-ownership-hardening-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 opaque token admission、ownership domain、invalidation / revocation、double-release / dangling pointer denial 与 no-native-handle-token facts 作为 token table ownership hardening evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeHandleTokenReadiness` 升格为 native token C ABI permission、token table implementation permission、native handle permission、raw pointer permission、native pointer return permission、native bridge implementation permission、destroy permission、FFI permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge teardown callable preflight decision`

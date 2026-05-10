@@ -95,6 +95,8 @@ Internal declaration 只证明 runtime 内部拥有 no-resource C ABI declaratio
 
 下游 [package config link route reconciliation scan](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-bridge-package-config-link-route-reconciliation-scan.md) 已完成。该 scan 确认本 manifest 固定的 internal-only `foreign func` declarations 仍只是 runtime internal declaration facts，不是 actual runtime FFI call owner、public API、resource callable、native object、Metal / AppKit、renderer state write 或 backend-ready truth；当前主线唯一后续入口已转为 `P1 internal Renderer native bridge internal no-resource runtime FFI call owner preflight decision`。
 
+下游 [NSView runtime FFI call owner manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-renderer-platform-object-nsview-runtime-ffi-call-owner-manifest.md) 已完成。该阶段复用同 package 已验证的 `foreign func` declaration 形态与 `CPointer<UInt64>` out-token 语法，但它仍保持 internal-only，不修改 `runtime/cjgui/cjpm.toml`，不新增 public API，不返回 pointer / handle / `Class` / `id`，不写 renderer state，也不把 runtime call facts 包装成 backend-ready truth。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，runtime internal FFI declaration first implementation 已 manifest stabilization。

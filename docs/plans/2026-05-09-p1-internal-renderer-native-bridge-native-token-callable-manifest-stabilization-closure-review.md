@@ -51,6 +51,16 @@
 
 下一轮若进入该入口，必须先解决 token table 是否允许、状态是否可变、ownership domain、main-thread confinement、fail-closed validate / revoke、teardown compatibility 与 no-pointer guarantee；不得直接进入 native object、pointer handle、destroy callback、resource callable、Metal / AppKit 或 public API。
 
+## 下游封账
+
+该入口已由 [native token table ownership hardening manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-token-table-ownership-hardening-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-token-table-ownership-hardening-manifest-stabilization-closure-review.md) 接续。下游 endpoint 是 `CjguiInternalRendererNoNativeTokenTableOwnershipReadiness` / `cjguiInternalExecuteDefaultRendererNativeTokenTableOwnershipDraft()`，只固定 bridge-local opaque token table policy、table mutability confinement、generation / epoch invalidation、revoke-before-destroy ordering 与 double-revoke / dangling-token failure classification facts。
+
+该 downstream 不是 token table implementation、native token C ABI、native object、pointer handle、destroy、Metal / AppKit、public API、renderer state write 或 backend-ready permission。当前全局唯一后续入口已经转为 `P1 internal Renderer native bridge teardown callable preflight decision`。
+
+## 下游 teardown callable 接续
+
+[native bridge teardown callable manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-renderer-native-bridge-teardown-callable-manifest.md) 已继续接续该链。它通过 token table ownership endpoint 间接继承本 manifest 的 opaque token / no-pointer / revoke-without-destroy facts，但没有新增 native teardown C ABI、token table implementation、destroy、native object、Metal / AppKit、public API、renderer state write 或 backend-ready truth。当前全局唯一后续入口已经转为 `P1 internal Renderer native bridge resource creation admission preflight decision`。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，native token callable planning value boundary 已完成 manifest 封账。

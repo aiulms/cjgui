@@ -109,3 +109,23 @@
 新的 downstream 后续入口：
 
 `P1 internal Renderer native bridge callable C ABI first implementation preflight decision`
+
+## 下游 token table ownership hardening 封账
+
+下游 [native token table ownership hardening manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-renderer-native-token-table-ownership-hardening-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-09-p1-internal-renderer-native-token-table-ownership-hardening-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 token invalidation before destroy、double-destroy / dangling-token denial、main-thread destroy confinement 与 teardown failure classification 作为 revoke-before-destroy ordering 与 dangling-token failure classification 的 planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeTeardownImplementationReadiness` 升格为 token table implementation permission、native token C ABI permission、native bridge implementation permission、destroy permission、retain / release permission、native handle permission、raw pointer permission、native pointer return permission、FFI permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge teardown callable preflight decision`
+
+## 下游 teardown callable 封账
+
+下游 [native bridge teardown callable manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-renderer-native-bridge-teardown-callable-manifest.md) 与 [manifest closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-internal-renderer-native-bridge-teardown-callable-manifest-stabilization-closure-review.md) 已完成。该 downstream 继续使用本 manifest 的 destroy admission guard、token invalidation before destroy、double-destroy / dangling-token denial、main-thread destroy confinement 与 teardown failure classification 作为 no-destroy callable policy 与 revoke-before-destroy callable policy 的 planning evidence。
+
+该 downstream 不把 `CjguiInternalRendererNoNativeBridgeTeardownImplementationReadiness` 升格为 native teardown C ABI permission、destroy permission、retain / release permission、token table implementation permission、native object permission、native handle permission、raw pointer permission、Objective-C / Metal / AppKit permission、backend-ready permission、GPU submission、render、renderer state write、public diagnostics 或 public API permission。
+
+新的 downstream 后续入口：
+
+`P1 internal Renderer native bridge resource creation admission preflight decision`

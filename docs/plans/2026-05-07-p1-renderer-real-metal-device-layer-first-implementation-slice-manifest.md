@@ -208,3 +208,12 @@ M consolidation 仅在明确 duplicate / self-wrapping evidence 出现时选择�
 新的下游后续入口：
 
 `P1 internal Renderer real drawable branch closure / next real drawable decision`
+
+## 下游 CAMetalLayer no-attach planning
+
+下游 `NSView` backend shell integration 之后，`CAMetalLayer` attachment planning 已完成：
+
+- [CAMetalLayer attachment planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-renderer-cametallayer-attachment-planning-manifest.md)
+- [CAMetalLayer attachment planning closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-internal-renderer-cametallayer-attachment-planning-stage-closure-review.md)
+
+该 downstream 只固定 no-attach planning facts，不复用本 manifest 的 real Metal device-layer shell 作为真实 `MTLDevice` / `CAMetalLayer` permission；不 import QuartzCore / Metal，不创建或 attach layer，不获取 drawable，不提交 GPU work，不写 renderer state，不发布 backend-ready truth。

@@ -21,7 +21,7 @@ PROBE_SOURCE="$OUTPUT_DIR/package_link_probe.cj"
 PROBE_EXECUTABLE="$OUTPUT_DIR/package_link_probe"
 KNOWN_GOOD_SDK="/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk"
 CANGJIE_RUNTIME_LIB_DIR="/Users/jiangxuanyang/cangjie-toolchains/cangjie/runtime/lib/darwin_aarch64_cjnative"
-ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_surface_version|cjgui_native_bridge_surface_capabilities|cjgui_native_bridge_status_ok|cjgui_native_bridge_no_resource_admission|cjgui_native_bridge_is_main_thread)$'
+ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_surface_version|cjgui_native_bridge_surface_capabilities|cjgui_native_bridge_status_ok|cjgui_native_bridge_no_resource_admission|cjgui_native_bridge_is_main_thread|cjgui_native_bridge_token_invalid|cjgui_native_bridge_token_table_capacity|cjgui_native_bridge_token_table_enabled|cjgui_native_bridge_token_classify|cjgui_native_bridge_token_issue|cjgui_native_bridge_token_revoke|cjgui_native_bridge_teardown_admission|cjgui_native_bridge_destroy_not_supported|cjgui_native_bridge_revoke_before_destroy_required|cjgui_native_bridge_double_destroy_classify|cjgui_native_bridge_appkit_import_available|cjgui_native_bridge_appkit_no_object_admission|cjgui_native_bridge_platform_object_create_still_blocked|cjgui_native_bridge_appkit_nswindow_class_available|cjgui_native_bridge_appkit_nsview_class_available|cjgui_native_bridge_appkit_class_lookup_no_object_admission|cjgui_native_bridge_platform_object_allocation_still_blocked|cjgui_native_bridge_appkit_platform_object_main_thread_required|cjgui_native_bridge_appkit_platform_object_main_thread_admitted|cjgui_native_bridge_appkit_platform_object_background_thread_denied|cjgui_native_bridge_appkit_platform_object_creation_still_blocked|cjgui_native_bridge_platform_object_create_no_object_admission|cjgui_native_bridge_platform_object_create_requires_main_thread|cjgui_native_bridge_platform_object_create_requires_token_contract|cjgui_native_bridge_platform_object_create_allocation_blocked|cjgui_native_bridge_nsview_table_capacity|cjgui_native_bridge_nsview_table_enabled|cjgui_native_bridge_nsview_table_empty|cjgui_native_bridge_nsview_table_token_classify|cjgui_native_bridge_nsview_table_allocation_still_blocked|cjgui_native_bridge_nsview_table_destroy_still_blocked|cjgui_native_bridge_nsview_create|cjgui_native_bridge_nsview_destroy|cjgui_native_bridge_nsview_token_classify|cjgui_native_bridge_nsview_table_occupied_count|cjgui_native_bridge_nsview_double_destroy_classify|cjgui_native_bridge_nsview_destroy_requires_main_thread|cjgui_native_bridge_quartzcore_import_available|cjgui_native_bridge_cametallayer_class_available|cjgui_native_bridge_cametallayer_no_attach_admission|cjgui_native_bridge_cametallayer_allocation_still_blocked|cjgui_native_bridge_cametallayer_device_binding_still_blocked)$'
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui native bridge package link probe: macOS is required" >&2
@@ -48,12 +48,12 @@ if grep -E 'cjgui_native_bridge|native/cjgui_native_bridge|link-option|compile-o
   exit 6
 fi
 
-if grep -E '#import <(Cocoa/Cocoa|Metal/Metal|QuartzCore/CAMetalLayer)\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
-  echo "cjgui native bridge package link probe: production skeleton must not import AppKit / Metal frameworks" >&2
+if grep -E '#import <(Cocoa/Cocoa|Metal/Metal)\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge package link probe: production skeleton must not import Cocoa / Metal frameworks" >&2
   exit 7
 fi
 
-if grep -E 'cjgui_app_run|cjgui_last_error|NSWindow|NSView|CAMetalLayer|MTLDevice|MTLCommandQueue|nextDrawable|commandBuffer|commit|present|retain|release|destroy' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSWindow|NSApplication|CALayer|CAMetalLayer)[[:space:]]+(alloc|new)\]|(NSWindow|NSApplication|CALayer|CAMetalLayer)[[:space:]]*\*|MTLDevice|MTLCommandQueue|nextDrawable|commandBuffer|commit|present|retain|release' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge package link probe: production skeleton contains forbidden runtime/native behavior token" >&2
   exit 8
 fi
@@ -111,6 +111,58 @@ foreign func cjgui_native_bridge_surface_capabilities(): UInt32
 foreign func cjgui_native_bridge_status_ok(): UInt32
 foreign func cjgui_native_bridge_no_resource_admission(): UInt32
 foreign func cjgui_native_bridge_is_main_thread(): Int32
+foreign func cjgui_native_bridge_token_invalid(): UInt64
+foreign func cjgui_native_bridge_token_table_capacity(): UInt32
+foreign func cjgui_native_bridge_token_table_enabled(): UInt32
+foreign func cjgui_native_bridge_token_classify(token: UInt64): Int32
+foreign func cjgui_native_bridge_token_issue(): UInt64
+foreign func cjgui_native_bridge_token_revoke(token: UInt64): Int32
+foreign func cjgui_native_bridge_teardown_admission(token: UInt64): Int32
+foreign func cjgui_native_bridge_destroy_not_supported(): Int32
+foreign func cjgui_native_bridge_revoke_before_destroy_required(): Int32
+foreign func cjgui_native_bridge_double_destroy_classify(token: UInt64): Int32
+foreign func cjgui_native_bridge_appkit_import_available(): Int32
+foreign func cjgui_native_bridge_appkit_no_object_admission(): Int32
+foreign func cjgui_native_bridge_platform_object_create_still_blocked(): Int32
+foreign func cjgui_native_bridge_appkit_nswindow_class_available(): Int32
+foreign func cjgui_native_bridge_appkit_nsview_class_available(): Int32
+foreign func cjgui_native_bridge_appkit_class_lookup_no_object_admission(): Int32
+foreign func cjgui_native_bridge_platform_object_allocation_still_blocked(): Int32
+foreign func cjgui_native_bridge_appkit_platform_object_main_thread_required():
+    Int32
+foreign func cjgui_native_bridge_appkit_platform_object_main_thread_admitted():
+    Int32
+foreign func cjgui_native_bridge_appkit_platform_object_background_thread_denied():
+    Int32
+foreign func cjgui_native_bridge_appkit_platform_object_creation_still_blocked():
+    Int32
+foreign func cjgui_native_bridge_platform_object_create_no_object_admission():
+    Int32
+foreign func cjgui_native_bridge_platform_object_create_requires_main_thread():
+    Int32
+foreign func cjgui_native_bridge_platform_object_create_requires_token_contract():
+    Int32
+foreign func cjgui_native_bridge_platform_object_create_allocation_blocked():
+    Int32
+foreign func cjgui_native_bridge_nsview_table_capacity(): UInt32
+foreign func cjgui_native_bridge_nsview_table_enabled(): UInt32
+foreign func cjgui_native_bridge_nsview_table_empty(): Int32
+foreign func cjgui_native_bridge_nsview_table_token_classify(token: UInt64):
+    Int32
+foreign func cjgui_native_bridge_nsview_table_allocation_still_blocked():
+    Int32
+foreign func cjgui_native_bridge_nsview_table_destroy_still_blocked():
+    Int32
+foreign func cjgui_native_bridge_nsview_create(outToken: CPointer<UInt64>):
+    Int32
+foreign func cjgui_native_bridge_nsview_destroy(token: UInt64): Int32
+foreign func cjgui_native_bridge_nsview_token_classify(token: UInt64): Int32
+foreign func cjgui_native_bridge_nsview_table_occupied_count(): UInt32
+foreign func cjgui_native_bridge_nsview_double_destroy_classify(
+    token: UInt64
+): Int32
+foreign func cjgui_native_bridge_nsview_destroy_requires_main_thread():
+    Int32
 
 main(): Int64 {
     println("cjgui native bridge package link probe: package_link_probe_requested=true")
@@ -131,6 +183,148 @@ main(): Int64 {
     let mainThreadValue = unsafe {
         cjgui_native_bridge_is_main_thread()
     }
+    let tokenInvalid = unsafe {
+        cjgui_native_bridge_token_invalid()
+    }
+    let tokenTableCapacity = unsafe {
+        cjgui_native_bridge_token_table_capacity()
+    }
+    let tokenTableEnabled = unsafe {
+        cjgui_native_bridge_token_table_enabled()
+    }
+    let tokenInvalidClass = unsafe {
+        cjgui_native_bridge_token_classify(tokenInvalid)
+    }
+    let tokenNonZeroClass = unsafe {
+        cjgui_native_bridge_token_classify(UInt64(1))
+    }
+    let issuedToken = unsafe {
+        cjgui_native_bridge_token_issue()
+    }
+    let issuedTokenClass = unsafe {
+        cjgui_native_bridge_token_classify(issuedToken)
+    }
+    let nsViewTableCapacity = unsafe {
+        cjgui_native_bridge_nsview_table_capacity()
+    }
+    let nsViewTableEnabled = unsafe {
+        cjgui_native_bridge_nsview_table_enabled()
+    }
+    let nsViewTableEmpty = unsafe {
+        cjgui_native_bridge_nsview_table_empty()
+    }
+    let nsViewTableTokenClass = unsafe {
+        cjgui_native_bridge_nsview_table_token_classify(issuedToken)
+    }
+    let nsViewTableAllocationBlocked = unsafe {
+        cjgui_native_bridge_nsview_table_allocation_still_blocked()
+    }
+    let nsViewTableDestroyBlocked = unsafe {
+        cjgui_native_bridge_nsview_table_destroy_still_blocked()
+    }
+    let nsViewOccupiedBefore = unsafe {
+        cjgui_native_bridge_nsview_table_occupied_count()
+    }
+    var createdNsViewToken = UInt64(0)
+    let nsViewCreateStatus = unsafe {
+        cjgui_native_bridge_nsview_create(inout createdNsViewToken)
+    }
+    let nsViewOccupiedAfterCreate = unsafe {
+        cjgui_native_bridge_nsview_table_occupied_count()
+    }
+    let nsViewTokenClass = unsafe {
+        cjgui_native_bridge_nsview_token_classify(createdNsViewToken)
+    }
+    let nsViewInvalidDestroy = unsafe {
+        cjgui_native_bridge_nsview_destroy(UInt64(0))
+    }
+    let nsViewDestroyRequiresMainThread = unsafe {
+        cjgui_native_bridge_nsview_destroy_requires_main_thread()
+    }
+    let nsViewDestroyStatus = unsafe {
+        cjgui_native_bridge_nsview_destroy(createdNsViewToken)
+    }
+    let nsViewOccupiedAfterDestroy = unsafe {
+        cjgui_native_bridge_nsview_table_occupied_count()
+    }
+    let nsViewDestroyedTokenClass = unsafe {
+        cjgui_native_bridge_nsview_token_classify(createdNsViewToken)
+    }
+    let nsViewDoubleDestroyStatus = unsafe {
+        cjgui_native_bridge_nsview_destroy(createdNsViewToken)
+    }
+    let nsViewDoubleDestroyClass = unsafe {
+        cjgui_native_bridge_nsview_double_destroy_classify(createdNsViewToken)
+    }
+    let validTeardownAdmission = unsafe {
+        cjgui_native_bridge_teardown_admission(issuedToken)
+    }
+    let revokeStatus = unsafe {
+        cjgui_native_bridge_token_revoke(issuedToken)
+    }
+    let revokedTokenClass = unsafe {
+        cjgui_native_bridge_token_classify(issuedToken)
+    }
+    let doubleRevokeStatus = unsafe {
+        cjgui_native_bridge_token_revoke(issuedToken)
+    }
+    let destroyNotSupported = unsafe {
+        cjgui_native_bridge_destroy_not_supported()
+    }
+    let revokeBeforeDestroyRequired = unsafe {
+        cjgui_native_bridge_revoke_before_destroy_required()
+    }
+    let doubleDestroyClass = unsafe {
+        cjgui_native_bridge_double_destroy_classify(issuedToken)
+    }
+    let danglingTeardownAdmission = unsafe {
+        cjgui_native_bridge_teardown_admission(issuedToken)
+    }
+    let appkitImportAvailable = unsafe {
+        cjgui_native_bridge_appkit_import_available()
+    }
+    let appkitNoObjectAdmission = unsafe {
+        cjgui_native_bridge_appkit_no_object_admission()
+    }
+    let platformObjectStillBlocked = unsafe {
+        cjgui_native_bridge_platform_object_create_still_blocked()
+    }
+    let nsWindowClassAvailable = unsafe {
+        cjgui_native_bridge_appkit_nswindow_class_available()
+    }
+    let nsViewClassAvailable = unsafe {
+        cjgui_native_bridge_appkit_nsview_class_available()
+    }
+    let classLookupNoObjectAdmission = unsafe {
+        cjgui_native_bridge_appkit_class_lookup_no_object_admission()
+    }
+    let platformObjectAllocationStillBlocked = unsafe {
+        cjgui_native_bridge_platform_object_allocation_still_blocked()
+    }
+    let appkitPlatformObjectMainThreadRequired = unsafe {
+        cjgui_native_bridge_appkit_platform_object_main_thread_required()
+    }
+    let appkitPlatformObjectMainThreadAdmitted = unsafe {
+        cjgui_native_bridge_appkit_platform_object_main_thread_admitted()
+    }
+    let appkitPlatformObjectBackgroundThreadDenied = unsafe {
+        cjgui_native_bridge_appkit_platform_object_background_thread_denied()
+    }
+    let appkitPlatformObjectCreationStillBlocked = unsafe {
+        cjgui_native_bridge_appkit_platform_object_creation_still_blocked()
+    }
+    let platformObjectCreateNoObjectAdmission = unsafe {
+        cjgui_native_bridge_platform_object_create_no_object_admission()
+    }
+    let platformObjectCreateRequiresMainThread = unsafe {
+        cjgui_native_bridge_platform_object_create_requires_main_thread()
+    }
+    let platformObjectCreateRequiresTokenContract = unsafe {
+        cjgui_native_bridge_platform_object_create_requires_token_contract()
+    }
+    let platformObjectCreateAllocationBlocked = unsafe {
+        cjgui_native_bridge_platform_object_create_allocation_blocked()
+    }
 
     let surfaceVersionObserved = surfaceVersion == UInt32(1)
     let capabilitiesObserved = surfaceCapabilities != UInt32(0)
@@ -139,12 +333,118 @@ main(): Int64 {
     let mainThreadQueryObserved =
         mainThreadValue == Int32(1) || mainThreadValue == Int32(0)
     let mainThreadObserved = mainThreadValue == Int32(1)
+    let tokenInvalidObserved = tokenInvalid == UInt64(0)
+    let tokenCapacityObserved = tokenTableCapacity == UInt32(8)
+    let tokenEnabledObserved = tokenTableEnabled == UInt32(1)
+    let tokenClassificationObserved =
+        tokenInvalidClass == Int32(0) && tokenNonZeroClass == Int32(-2)
+    let tokenIssueObserved = issuedToken != UInt64(0)
+    let tokenRevokeObserved =
+        issuedTokenClass == Int32(1) &&
+        revokeStatus == Int32(0) &&
+        revokedTokenClass == Int32(-2) &&
+        doubleRevokeStatus == Int32(-2)
+    let teardownAdmissionObserved =
+        validTeardownAdmission == Int32(-11) &&
+        destroyNotSupported == Int32(-10) &&
+        revokeBeforeDestroyRequired == Int32(-11) &&
+        doubleDestroyClass == Int32(-12) &&
+        danglingTeardownAdmission == Int32(-13)
+    let appkitImportObserved = appkitImportAvailable == Int32(20)
+    let appkitNoObjectObserved = appkitNoObjectAdmission == Int32(21)
+    let platformObjectStillBlockedObserved =
+        platformObjectStillBlocked == Int32(-20)
+    let nsWindowClassAvailableObserved = nsWindowClassAvailable == Int32(22)
+    let nsViewClassAvailableObserved = nsViewClassAvailable == Int32(23)
+    let classLookupNoObjectAdmissionObserved =
+        classLookupNoObjectAdmission == Int32(24)
+    let platformObjectAllocationStillBlockedObserved =
+        platformObjectAllocationStillBlocked == Int32(-21)
+    let appkitPlatformObjectMainThreadRequiredObserved =
+        appkitPlatformObjectMainThreadRequired == Int32(25)
+    let appkitPlatformObjectMainThreadAdmittedObserved =
+        appkitPlatformObjectMainThreadAdmitted == Int32(26)
+    let appkitPlatformObjectBackgroundThreadDeniedObserved =
+        appkitPlatformObjectBackgroundThreadDenied == Int32(-22)
+    let appkitPlatformObjectCreationStillBlockedObserved =
+        appkitPlatformObjectCreationStillBlocked == Int32(-23)
+    let platformObjectCreateNoObjectAdmissionObserved =
+        platformObjectCreateNoObjectAdmission == Int32(27)
+    let platformObjectCreateRequiresMainThreadObserved =
+        platformObjectCreateRequiresMainThread == Int32(28)
+    let platformObjectCreateRequiresTokenContractObserved =
+        platformObjectCreateRequiresTokenContract == Int32(29)
+    let platformObjectCreateAllocationBlockedObserved =
+        platformObjectCreateAllocationBlocked == Int32(-24)
+    let nsViewTableCapacityObserved = nsViewTableCapacity == UInt32(4)
+    let nsViewTableEnabledObserved = nsViewTableEnabled == UInt32(1)
+    let nsViewTableEmptyObserved = nsViewTableEmpty == Int32(30)
+    let nsViewTableTokenClassObserved =
+        nsViewTableTokenClass == Int32(-30)
+    let nsViewTableAllocationBlockedObserved =
+        nsViewTableAllocationBlocked == Int32(-31)
+    let nsViewTableDestroyBlockedObserved =
+        nsViewTableDestroyBlocked == Int32(-32)
+    let nsViewCreateObserved =
+        nsViewCreateStatus == Int32(0) &&
+        createdNsViewToken != UInt64(0) &&
+        createdNsViewToken < UInt64(4294967296)
+    let nsViewTokenValidObserved = nsViewTokenClass == Int32(40)
+    let nsViewDestroyObserved = nsViewDestroyStatus == Int32(0)
+    let nsViewDestroyedStaleObserved =
+        nsViewDestroyedTokenClass == Int32(-43)
+    let nsViewDoubleDestroyObserved =
+        nsViewDoubleDestroyStatus == Int32(-46) &&
+        nsViewDoubleDestroyClass == Int32(-46)
+    let nsViewInvalidDestroyObserved = nsViewInvalidDestroy == Int32(-42)
+    let nsViewDestroyRequiresMainThreadObserved =
+        nsViewDestroyRequiresMainThread == Int32(-41)
+    let nsViewOccupiedCountObserved =
+        nsViewOccupiedBefore == UInt32(0) &&
+        nsViewOccupiedAfterCreate == UInt32(1) &&
+        nsViewOccupiedAfterDestroy == UInt32(0)
     let success = surfaceVersionObserved &&
         capabilitiesObserved &&
         statusObserved &&
         noResourceAdmissionObserved &&
         mainThreadQueryObserved &&
-        mainThreadObserved
+        mainThreadObserved &&
+        tokenInvalidObserved &&
+        tokenCapacityObserved &&
+        tokenEnabledObserved &&
+        tokenClassificationObserved &&
+        tokenIssueObserved &&
+        tokenRevokeObserved &&
+        teardownAdmissionObserved &&
+        appkitImportObserved &&
+        appkitNoObjectObserved &&
+        platformObjectStillBlockedObserved &&
+        nsWindowClassAvailableObserved &&
+        nsViewClassAvailableObserved &&
+        classLookupNoObjectAdmissionObserved &&
+        platformObjectAllocationStillBlockedObserved &&
+        appkitPlatformObjectMainThreadRequiredObserved &&
+        appkitPlatformObjectMainThreadAdmittedObserved &&
+        appkitPlatformObjectBackgroundThreadDeniedObserved &&
+        appkitPlatformObjectCreationStillBlockedObserved &&
+        platformObjectCreateNoObjectAdmissionObserved &&
+        platformObjectCreateRequiresMainThreadObserved &&
+        platformObjectCreateRequiresTokenContractObserved &&
+        platformObjectCreateAllocationBlockedObserved &&
+        nsViewTableCapacityObserved &&
+        nsViewTableEnabledObserved &&
+        nsViewTableEmptyObserved &&
+        nsViewTableTokenClassObserved &&
+        nsViewTableAllocationBlockedObserved &&
+        nsViewTableDestroyBlockedObserved &&
+        nsViewCreateObserved &&
+        nsViewTokenValidObserved &&
+        nsViewDestroyObserved &&
+        nsViewDestroyedStaleObserved &&
+        nsViewDoubleDestroyObserved &&
+        nsViewInvalidDestroyObserved &&
+        nsViewDestroyRequiresMainThreadObserved &&
+        nsViewOccupiedCountObserved
 
     println("cjgui native bridge package link probe: surface_version_observed=${surfaceVersionObserved}")
     println("cjgui native bridge package link probe: capabilities_observed=${capabilitiesObserved}")
@@ -152,6 +452,42 @@ main(): Int64 {
     println("cjgui native bridge package link probe: no_resource_admission_observed=${noResourceAdmissionObserved}")
     println("cjgui native bridge package link probe: main_thread_query_observed=${mainThreadQueryObserved}")
     println("cjgui native bridge package link probe: main_thread_observed=${mainThreadObserved}")
+    println("cjgui native bridge package link probe: token_invalid_observed=${tokenInvalidObserved}")
+    println("cjgui native bridge package link probe: token_table_capacity_observed=${tokenCapacityObserved}")
+    println("cjgui native bridge package link probe: token_table_enabled_observed=${tokenEnabledObserved}")
+    println("cjgui native bridge package link probe: token_classification_observed=${tokenClassificationObserved}")
+    println("cjgui native bridge package link probe: token_issue_observed=${tokenIssueObserved}")
+    println("cjgui native bridge package link probe: token_revoke_observed=${tokenRevokeObserved}")
+    println("cjgui native bridge package link probe: teardown_admission_observed=${teardownAdmissionObserved}")
+    println("cjgui native bridge package link probe: appkit_import_observed=${appkitImportObserved}")
+    println("cjgui native bridge package link probe: appkit_no_object_admission_observed=${appkitNoObjectObserved}")
+    println("cjgui native bridge package link probe: platform_object_still_blocked_observed=${platformObjectStillBlockedObserved}")
+    println("cjgui native bridge package link probe: nswindow_class_available_observed=${nsWindowClassAvailableObserved}")
+    println("cjgui native bridge package link probe: nsview_class_available_observed=${nsViewClassAvailableObserved}")
+    println("cjgui native bridge package link probe: class_lookup_no_object_admission_observed=${classLookupNoObjectAdmissionObserved}")
+    println("cjgui native bridge package link probe: platform_object_allocation_still_blocked_observed=${platformObjectAllocationStillBlockedObserved}")
+    println("cjgui native bridge package link probe: appkit_platform_object_main_thread_required_observed=${appkitPlatformObjectMainThreadRequiredObserved}")
+    println("cjgui native bridge package link probe: appkit_platform_object_main_thread_admitted_observed=${appkitPlatformObjectMainThreadAdmittedObserved}")
+    println("cjgui native bridge package link probe: appkit_platform_object_background_thread_denied_observed=${appkitPlatformObjectBackgroundThreadDeniedObserved}")
+    println("cjgui native bridge package link probe: appkit_platform_object_creation_still_blocked_observed=${appkitPlatformObjectCreationStillBlockedObserved}")
+    println("cjgui native bridge package link probe: platform_object_create_no_object_admission_observed=${platformObjectCreateNoObjectAdmissionObserved}")
+    println("cjgui native bridge package link probe: platform_object_create_requires_main_thread_observed=${platformObjectCreateRequiresMainThreadObserved}")
+    println("cjgui native bridge package link probe: platform_object_create_requires_token_contract_observed=${platformObjectCreateRequiresTokenContractObserved}")
+    println("cjgui native bridge package link probe: platform_object_create_allocation_blocked_observed=${platformObjectCreateAllocationBlockedObserved}")
+    println("cjgui native bridge package link probe: nsview_table_capacity_observed=${nsViewTableCapacityObserved}")
+    println("cjgui native bridge package link probe: nsview_table_enabled_observed=${nsViewTableEnabledObserved}")
+    println("cjgui native bridge package link probe: nsview_table_empty_observed=${nsViewTableEmptyObserved}")
+    println("cjgui native bridge package link probe: nsview_table_token_class_observed=${nsViewTableTokenClassObserved}")
+    println("cjgui native bridge package link probe: nsview_table_allocation_blocked_observed=${nsViewTableAllocationBlockedObserved}")
+    println("cjgui native bridge package link probe: nsview_table_destroy_blocked_observed=${nsViewTableDestroyBlockedObserved}")
+    println("cjgui native bridge package link probe: nsview_create_observed=${nsViewCreateObserved}")
+    println("cjgui native bridge package link probe: nsview_token_valid_observed=${nsViewTokenValidObserved}")
+    println("cjgui native bridge package link probe: nsview_destroy_observed=${nsViewDestroyObserved}")
+    println("cjgui native bridge package link probe: nsview_destroyed_stale_observed=${nsViewDestroyedStaleObserved}")
+    println("cjgui native bridge package link probe: nsview_double_destroy_observed=${nsViewDoubleDestroyObserved}")
+    println("cjgui native bridge package link probe: nsview_invalid_destroy_observed=${nsViewInvalidDestroyObserved}")
+    println("cjgui native bridge package link probe: nsview_destroy_requires_main_thread_observed=${nsViewDestroyRequiresMainThreadObserved}")
+    println("cjgui native bridge package link probe: nsview_occupied_count_observed=${nsViewOccupiedCountObserved}")
 
     if (success) {
         println("cjgui native bridge package link probe: no_resource_symbols_linked=true")
@@ -173,6 +509,7 @@ echo "cjgui native bridge package link probe: compiling production no-resource s
 
 "$CLANG_BIN" \
   -fobjc-arc \
+  -fno-objc-msgsend-selector-stubs \
   -fmodules \
   -isysroot "$CJ_GUI_SDKROOT" \
   -mmacosx-version-min=12.0 \
@@ -189,6 +526,7 @@ cjc "$PROBE_SOURCE" \
   --sysroot "$CJ_GUI_SDKROOT" \
   -L "$OUTPUT_DIR" \
   -lcjgui_native_bridge_package_link_probe \
+  --link-options "-framework AppKit -framework QuartzCore -lobjc" \
   -o "$PROBE_EXECUTABLE"
 
 if [[ -d "$CANGJIE_RUNTIME_LIB_DIR" ]]; then

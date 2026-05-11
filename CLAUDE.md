@@ -12,6 +12,9 @@ Default rules for all new Cangjie live production tasks:
 - Do not use `npx gitnexus` for production commands. Use the Tool CLI absolute
   path:
   `node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js <command>`.
+- For CLI impact, the current Tool syntax uses a positional target:
+  `impact <symbol> --repo cangjie-live-codelattice`. Do not use
+  `impact --target <symbol>`; this flag is rejected by the current Tool CLI.
 - If `context`, `impact`, or `detect-changes` returns `UNKNOWN`, `0`, or cannot
   find the target, do not treat that as safe. Fall back to source reading,
   build/probe scripts, forbidden scans, and manifest/docs checks, then report
@@ -25,6 +28,7 @@ Recommended commands:
 
 ```bash
 node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js context init --repo cangjie-live-codelattice
+node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js impact init --repo cangjie-live-codelattice
 node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js detect-changes --repo cangjie-live-codelattice --scope all
 /Users/jiangxuanyang/Desktop/codelattice/scripts/cangjie-production-alias-check.sh --status
 ```
@@ -111,11 +115,14 @@ After committing code changes, the GitNexus index can become stale. Refresh the 
 For direct Tool CLI checks, use:
 
 ```bash
+node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js impact <target-symbol> --repo cangjie-live-codelattice
 node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js detect-changes --repo cangjie-live-codelattice --scope all
 ```
 
 Do not refresh or query production state through bare `cjgui`; it is deprecated
 because multiple legacy registry entries share that name.
+Do not use `impact --target`; the current CLI expects the target as a positional
+argument.
 
 ## CLI
 

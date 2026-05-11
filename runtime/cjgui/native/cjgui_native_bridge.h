@@ -3,10 +3,12 @@
  * Truth: 承载 internal native bridge C ABI、AppKit / QuartzCore class facts、
  * main-thread admission、token-backed NSView first slice、CAMetalLayer allocation
  * / table / create-destroy / NSView attachment first slice、Metal device binding
- * first slice 与内部 status taxonomy，
+ * first slice、MTLRenderPassDescriptor create/destroy first slice
+ * 与内部 status taxonomy，
  * 不是 public runtime API。
  * Stop-line: 不创建窗口、应用、drawable、绘制资源，
- * command buffer first slice 不 commit / present / encoder / render，
+ * command buffer / render pass descriptor first slice 不创建 encoder，
+ * 不 commit / present / render，
  * 不返回指针身份。
  * Same-shape Boundary Brake: callable surface 只是无副作用 native surface，不是 bridge-ready、backend-ready、render-ready 或 public API permission。
  */
@@ -72,7 +74,9 @@ typedef enum CjguiNativeBridgeSurfaceCapability {
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_COMMAND_QUEUE_CREATE_DESTROY =
         1u << 22,
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_COMMAND_BUFFER_CREATE_DESTROY =
-        1u << 23
+        1u << 23,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_RENDER_PASS_DESCRIPTOR_CREATE_DESTROY =
+        1u << 24
 } CjguiNativeBridgeSurfaceCapability;
 
 enum {
@@ -84,6 +88,7 @@ enum {
     CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_BITS = 16u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_MASK = 0xffffu
 };
@@ -273,6 +278,27 @@ typedef enum CjguiNativeBridgeCommandBufferLifecycleClassification {
     CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_QUEUE_TOKEN_NOT_BOUND = -193
 } CjguiNativeBridgeCommandBufferLifecycleClassification;
 
+typedef enum CjguiNativeBridgeRenderPassDescriptorLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_TOKEN_BOUND = 200,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_CREATE_MAIN_THREAD_REQUIRED =
+        -200,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_DESTROY_MAIN_THREAD_REQUIRED =
+        -201,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_INVALID_TOKEN_DENIED = -202,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_STALE_TOKEN_DENIED = -203,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_TOKEN_NOT_BOUND = -204,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_CAPACITY_EXHAUSTED = -205,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_DOUBLE_DESTROY_DENIED = -206,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_CREATION_FAILED = -207,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_OUT_TOKEN_REQUIRED = -208,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_COLOR_ATTACHMENT_STILL_BLOCKED =
+        -209,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_ENCODER_CREATION_STILL_BLOCKED =
+        -210,
+    CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_DRAWABLE_TEXTURE_STILL_BLOCKED =
+        -211
+} CjguiNativeBridgeRenderPassDescriptorLifecycleClassification;
+
 /*
  * callable 只返回 dehydrated integer facts，或通过 out-token 返回 opaque token。
  * 它们不返回 pointer，不扩 public runtime API，也不表示 backend ready。
@@ -423,6 +449,36 @@ int32_t cjgui_native_bridge_command_buffer_create_requires_main_thread(void);
 int32_t cjgui_native_bridge_command_buffer_destroy_requires_main_thread(void);
 int32_t cjgui_native_bridge_command_buffer_commit_still_blocked(void);
 int32_t cjgui_native_bridge_command_buffer_encoder_creation_still_blocked(void);
+uint32_t cjgui_native_bridge_render_pass_descriptor_table_capacity(void);
+uint32_t cjgui_native_bridge_render_pass_descriptor_table_enabled(void);
+uint32_t cjgui_native_bridge_render_pass_descriptor_table_occupied_count(void);
+int32_t cjgui_native_bridge_render_pass_descriptor_create(
+    uint64_t* out_descriptor_token
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_destroy(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_token_classify(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_double_destroy_classify(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_create_requires_main_thread(
+    void
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_destroy_requires_main_thread(
+    void
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_color_attachment_still_blocked(
+    void
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_encoder_creation_still_blocked(
+    void
+);
+int32_t cjgui_native_bridge_render_pass_descriptor_drawable_texture_still_blocked(
+    void
+);
 
 #ifdef __cplusplus
 }

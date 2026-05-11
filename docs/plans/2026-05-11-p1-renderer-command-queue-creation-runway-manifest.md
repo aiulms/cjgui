@@ -79,9 +79,10 @@
 - [Metal device binding 路线封账清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-metal-device-binding-runway-manifest.md)
 - [CAMetalLayer runtime attachment FFI call owner manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-cametallayer-runtime-attachment-ffi-call-owner-manifest.md)
 
-下游唯一接续：
+下游实际接续：
 
-- `P1 internal Renderer command buffer creation planning preflight decision`
+- [Command buffer creation runway manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-command-buffer-creation-runway-manifest.md)
+- [Command buffer creation runway closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-internal-renderer-command-buffer-creation-runway-stage-closure-review.md)
 
 ## 停止线
 

@@ -67,3 +67,7 @@
 - 本轮是否改变唯一 next opening：是，唯一后续入口更新为 `P1 internal Renderer command buffer creation planning preflight decision`。
 - 是否同步 topic manifest：是。
 - 已同步哪些 topic manifest：`renderer-implementation-admission-chain.md`、`renderer-backend-readiness-real-backend-runway.md`、`macos-bridge-verification-smoke.md`。
+
+## 下游接续记录
+
+该阶段已由 [Command buffer creation runway closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-internal-renderer-command-buffer-creation-runway-stage-closure-review.md) 与 [Command buffer creation runway manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-command-buffer-creation-runway-manifest.md) 接续。command queue 事实仍只作为 command buffer create / destroy 与 runtime internal call 的上游证据，不被解释成 encoder、`commit`、present、GPU submission、render、renderer state write 或 public API permission。

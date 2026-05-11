@@ -36,6 +36,10 @@
 
 该后续入口仍只能先评估 command buffer creation prerequisites，不代表允许调用 `commandBuffer`、创建 encoder、commit、present、GPU submission 或 render。
 
+## 下游接续记录
+
+该入口已由 [Command buffer creation runway manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-command-buffer-creation-runway-manifest.md) 与 [Command buffer creation runway closure](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-internal-renderer-command-buffer-creation-runway-stage-closure-review.md) 接续。command buffer 阶段的新 next opening 已转为 `P1 internal Renderer render pass descriptor planning preflight decision`。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，command queue runtime call owner 已具备封账条件。

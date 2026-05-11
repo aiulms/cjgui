@@ -3,7 +3,8 @@ set -euo pipefail
 # 中文维护注释：
 # 本脚本验证 command buffer runtime-adjacent FFI call path 与 runtime owner 存在。
 # stop-line：临时仓颉包只调用 command buffer create / classify / destroy，
-# 不 commit，不 present，不创建 encoder / render pass，不提交 GPU work，不执行 render。
+# 允许下游 descriptor C ABI 存在；不 commit，不 present，不创建 encoder，
+# 不提交 GPU work，不执行 render。
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NATIVE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PACKAGE_DIR="$(cd "$NATIVE_DIR/.." && pwd)"
@@ -70,7 +71,7 @@ for symbol in \
     exit 9
   fi
 done
-if grep -E 'MTLRenderCommandEncoder|renderCommandEncoder|MTLRenderPassDescriptor|renderPassDescriptor|commit]|presentDrawable|present]' "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'MTLRenderCommandEncoder|renderCommandEncoder|commit]|presentDrawable|present]' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui command buffer runtime call probe: forbidden encoder / submission path found" >&2
   exit 10
 fi

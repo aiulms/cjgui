@@ -2,8 +2,9 @@
 set -euo pipefail
 # 中文维护注释：
 # 本脚本验证 token-backed MTLCommandBuffer create/destroy first slice。
-# stop-line：允许 commandBuffer；不得 commit / present，不得创建 encoder /
-# render pass，不得提交 GPU work，不执行 render，不返回 native pointer。
+# stop-line：允许 commandBuffer；允许下游 MTLRenderPassDescriptor C ABI 存在；
+# 本 probe 不创建 descriptor，不得 commit / present，不得创建 encoder，
+# 不提交 GPU work，不执行 render，不返回 native pointer。
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NATIVE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 HEADER_PATH="${NATIVE_DIR}/cjgui_native_bridge.h"
@@ -39,8 +40,8 @@ for symbol in "${required_symbols[@]}"; do
     exit 1
   fi
 done
-if grep -Eq 'commit]|presentDrawable|present]|MTLRenderCommandEncoder|renderCommandEncoder|MTLRenderPassDescriptor|renderPassDescriptor|newRenderPipelineState|drawPrimitives|dispatchThreadgroups' "$SOURCE_PATH"; then
-  echo "forbidden commit / present / encoder / render pass / GPU path found" >&2
+if grep -Eq 'commit]|presentDrawable|present]|MTLRenderCommandEncoder|renderCommandEncoder|newRenderPipelineState|drawPrimitives|dispatchThreadgroups' "$SOURCE_PATH"; then
+  echo "forbidden commit / present / encoder / GPU path found" >&2
   exit 1
 fi
 if grep -Eq 'cjgui_native_bridge_[A-Za-z0-9_]+\([^;{)]*\)\s*\*|void\s*\*\s+cjgui_native_bridge_|id\s+cjgui_native_bridge_|Class\s+cjgui_native_bridge_|uintptr_t\s+cjgui_native_bridge_' "$HEADER_PATH"; then

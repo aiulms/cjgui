@@ -32,6 +32,8 @@
 
 `P1 internal Renderer CAMetalLayer allocation without attachment preflight decision`
 
+该 next opening 已由 [CAMetalLayer allocation/table runway manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-cametallayer-allocation-table-runway-manifest.md) 消费并接续；当前最新 downstream opening 是 `P1 internal Renderer CAMetalLayer NSView attach/detach preflight decision`。本 closure 的 stop-line 对 upstream no-attach owner 仍有效。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，macro bundle 从 attachment planning 推进到 no-attach class/runtime FFI call owner A 路线封账。

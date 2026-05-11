@@ -76,6 +76,8 @@
 
 `P1 internal Renderer CAMetalLayer allocation without attachment preflight decision`
 
+下游已由 [CAMetalLayer allocation/table runway manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-cametallayer-allocation-table-runway-manifest.md) 接续，当前最新 tail 已推进到 `CjguiInternalRendererNoCAMetalLayerCreateDestroyReadiness`；本 manifest 的 no-attach facts 仍只作为上游证据，不反向改写为 attach、Metal、drawable 或 backend-ready permission。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，`CAMetalLayer` no-attach class/runtime FFI call owner 已 manifest stabilization。

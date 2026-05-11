@@ -93,7 +93,7 @@ Return contract：
 
 `P1 internal Renderer platform object no-object AppKit class availability preflight decision`
 
-当前 canonical tail 以 [CAMetalLayer attachment planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-10-p1-renderer-cametallayer-attachment-planning-manifest.md) 为准，唯一后续入口转为 `P1 internal Renderer CAMetalLayer no-attach class/runtime FFI call owner preflight decision`。该入口只能先评估 no-attach class availability / runtime internal call owner；不得创建 `NSWindow` / `CAMetalLayer` / `CALayer`，不得设置 `NSView.layer` / `wantsLayer`，不得创建 `MTLDevice` / `MTLCommandQueue`，不得返回 native pointer / handle，不得新增 public API，不得写 renderer state，不得创建 backend-ready truth。
+当前 canonical tail 以 [CAMetalLayer runtime attachment FFI call owner manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-cametallayer-runtime-attachment-ffi-call-owner-manifest.md) 为准，唯一后续入口转为 `P1 internal Renderer Metal device binding planning preflight decision`。该入口只能先评估 Metal device binding planning；不得直接创建 `MTLDevice` / `MTLCommandQueue` / drawable，仍不得返回 native pointer / handle，不得新增 public API，不得写 renderer state，不得创建 backend-ready truth。
 
 ## 设计意图出口自检
 

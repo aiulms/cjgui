@@ -30,6 +30,8 @@
 
 下一阶段只能判断是否允许创建一个 `CAMetalLayer` 后立即释放 / 清理，且必须 main-thread、no attach、no Metal device、no drawable、no pointer return。若 allocation 需要 `NSView.layer` / `wantsLayer` / Metal device / pointer surface，必须停止。
 
+该下一阶段已由 [CAMetalLayer allocation/table runway manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-cametallayer-allocation-table-runway-manifest.md) 接续并封账到 token-backed create/destroy first slice；当前 downstream next opening 已转为 `P1 internal Renderer CAMetalLayer NSView attach/detach preflight decision`。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，no-attach class/runtime FFI call owner 已封账，下一阶段转入 allocation without attachment 预检。

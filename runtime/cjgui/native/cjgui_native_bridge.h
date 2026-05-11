@@ -1,9 +1,13 @@
 /*
  * Owner: production native bridge skeleton 写集。
- * Truth: 承载 internal native bridge C ABI、AppKit import / class availability /
- * main-thread admission / no-object creation boundary、token-backed NSView first slice
- * 与内部 status taxonomy，不是 public runtime API。
- * Stop-line: 不创建窗口、应用、图层对象、设备、队列、绘制资源，不返回指针身份。
+ * Truth: 承载 internal native bridge C ABI、AppKit / QuartzCore class facts、
+ * main-thread admission、token-backed NSView first slice、CAMetalLayer allocation
+ * / table / create-destroy / NSView attachment first slice、Metal device binding
+ * first slice 与内部 status taxonomy，
+ * 不是 public runtime API。
+ * Stop-line: 不创建窗口、应用、drawable、绘制资源，
+ * command buffer first slice 不 commit / present / encoder / render，
+ * 不返回指针身份。
  * Same-shape Boundary Brake: callable surface 只是无副作用 native surface，不是 bridge-ready、backend-ready、render-ready 或 public API permission。
  */
 #ifndef CJGUI_NATIVE_BRIDGE_H
@@ -52,7 +56,23 @@ typedef enum CjguiNativeBridgeSurfaceCapability {
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PLATFORM_OBJECT_NO_OBJECT_CREATION = 1u << 11,
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_NSVIEW_OBJECT_TABLE_SHELL = 1u << 12,
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_NSVIEW_CREATE_DESTROY = 1u << 13,
-    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_CAMETALLAYER_NO_ATTACH = 1u << 14
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_CAMETALLAYER_NO_ATTACH = 1u << 14,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_CAMETALLAYER_ALLOCATION = 1u << 15,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_CAMETALLAYER_OBJECT_TABLE = 1u << 16,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_CAMETALLAYER_CREATE_DESTROY =
+        1u << 17,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_CAMETALLAYER_NSVIEW_ATTACHMENT =
+        1u << 18,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_METAL_DEVICE_AVAILABILITY =
+        1u << 19,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_METAL_DEVICE_CREATE_DESTROY =
+        1u << 20,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_METAL_DEVICE_LAYER_BINDING =
+        1u << 21,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_COMMAND_QUEUE_CREATE_DESTROY =
+        1u << 22,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_COMMAND_BUFFER_CREATE_DESTROY =
+        1u << 23
 } CjguiNativeBridgeSurfaceCapability;
 
 enum {
@@ -60,6 +80,10 @@ enum {
     CJGUI_NATIVE_BRIDGE_TOKEN_INVALID = 0u,
     CJGUI_NATIVE_BRIDGE_TOKEN_TABLE_CAPACITY = 8u,
     CJGUI_NATIVE_BRIDGE_NSVIEW_TABLE_CAPACITY = 4u,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_TABLE_CAPACITY = 4u,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_BITS = 16u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_MASK = 0xffffu
 };
@@ -125,6 +149,130 @@ typedef enum CjguiNativeBridgeCAMetalLayerNoAttachClassification {
     CJGUI_NATIVE_BRIDGE_CAMETALLAYER_DEVICE_BINDING_STILL_BLOCKED = -51
 } CjguiNativeBridgeCAMetalLayerNoAttachClassification;
 
+typedef enum CjguiNativeBridgeCAMetalLayerAllocationClassification {
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ALLOCATION_FEASIBLE = 60,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ALLOCATION_NO_ATTACH_ADMISSION = 61,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ALLOCATION_FEASIBILITY_OBSERVED = 62,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ALLOCATION_MAIN_THREAD_REQUIRED = -60,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ALLOCATION_FAILED = -61,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ALLOCATION_DEVICE_BINDING_BLOCKED = -62
+} CjguiNativeBridgeCAMetalLayerAllocationClassification;
+
+typedef enum CjguiNativeBridgeCAMetalLayerTableClassification {
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_TABLE_EMPTY = 70,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_TABLE_TOKEN_NOT_BOUND = -70,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_TABLE_ALLOCATION_BLOCKED = -71,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_TABLE_DESTROY_BLOCKED = -72
+} CjguiNativeBridgeCAMetalLayerTableClassification;
+
+typedef enum CjguiNativeBridgeCAMetalLayerLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_TOKEN_BOUND = 80,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_CREATE_MAIN_THREAD_REQUIRED = -80,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_DESTROY_MAIN_THREAD_REQUIRED = -81,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_INVALID_TOKEN_DENIED = -82,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_STALE_TOKEN_DENIED = -83,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_TOKEN_NOT_BOUND = -84,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_CAPACITY_EXHAUSTED = -85,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_DOUBLE_DESTROY_DENIED = -86,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ALLOCATION_LIFECYCLE_FAILED = -87,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_OUT_TOKEN_REQUIRED = -88
+} CjguiNativeBridgeCAMetalLayerLifecycleClassification;
+
+typedef enum CjguiNativeBridgeCAMetalLayerAttachmentClassification {
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_ATTACHED = 90,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_NOT_ATTACHED = -90,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_MAIN_THREAD_REQUIRED = -91,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_INVALID_LAYER_TOKEN = -92,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_INVALID_VIEW_TOKEN = -93,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_STALE_LAYER_TOKEN = -94,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_STALE_VIEW_TOKEN = -95,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_DOUBLE_DETACH_DENIED = -96,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_DOUBLE_ATTACH_DENIED = -97,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_LAYER_TOKEN_NOT_BOUND = -98,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_VIEW_TOKEN_NOT_BOUND = -99,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_DEVICE_BINDING_BLOCKED = -100,
+    CJGUI_NATIVE_BRIDGE_CAMETALLAYER_ATTACHMENT_DETACH_BEFORE_DESTROY_REQUIRED =
+        -101
+} CjguiNativeBridgeCAMetalLayerAttachmentClassification;
+
+typedef enum CjguiNativeBridgeMetalDeviceAvailabilityClassification {
+    CJGUI_NATIVE_BRIDGE_METAL_IMPORT_AVAILABLE = 100,
+    CJGUI_NATIVE_BRIDGE_METAL_DEFAULT_DEVICE_AVAILABLE = 101,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_NO_COMMAND_QUEUE_ADMISSION = -110,
+    CJGUI_NATIVE_BRIDGE_METAL_DEFAULT_DEVICE_UNAVAILABLE = -111,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_CREATION_STILL_BLOCKED = -112
+} CjguiNativeBridgeMetalDeviceAvailabilityClassification;
+
+typedef enum CjguiNativeBridgeMetalDeviceLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_BOUND = 120,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_CREATE_MAIN_THREAD_REQUIRED = -120,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_DESTROY_MAIN_THREAD_REQUIRED = -121,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_INVALID_TOKEN_DENIED = -122,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_STALE_TOKEN_DENIED = -123,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_NOT_BOUND = -124,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_CAPACITY_EXHAUSTED = -125,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_DOUBLE_DESTROY_DENIED = -126,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_CREATION_FAILED = -127,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_OUT_TOKEN_REQUIRED = -128,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_COMMAND_QUEUE_STILL_BLOCKED = -129,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_COMMAND_QUEUE_DESTROY_BEFORE_DEVICE_REQUIRED =
+        -130
+} CjguiNativeBridgeMetalDeviceLifecycleClassification;
+
+typedef enum CjguiNativeBridgeMetalDeviceLayerBindingClassification {
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_BOUND = 140,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_NOT_BOUND = -140,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_BIND_MAIN_THREAD_REQUIRED = -141,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_INVALID_LAYER_TOKEN = -142,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_INVALID_DEVICE_TOKEN = -143,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_STALE_LAYER_TOKEN = -144,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_STALE_DEVICE_TOKEN = -145,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_DOUBLE_UNBIND_DENIED = -146,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_DOUBLE_BIND_DENIED = -147,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_TOKEN_NOT_BOUND = -148,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_DEVICE_TOKEN_NOT_BOUND = -149,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_DRAWABLE_STILL_BLOCKED = -150,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_LAYER_DETACH_BEFORE_DESTROY_REQUIRED =
+        -151
+} CjguiNativeBridgeMetalDeviceLayerBindingClassification;
+
+typedef enum CjguiNativeBridgeCommandQueueLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_TOKEN_BOUND = 160,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_CREATE_MAIN_THREAD_REQUIRED = -160,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_DESTROY_MAIN_THREAD_REQUIRED = -161,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_INVALID_TOKEN_DENIED = -162,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_STALE_TOKEN_DENIED = -163,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_TOKEN_NOT_BOUND = -164,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_CAPACITY_EXHAUSTED = -165,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_DOUBLE_DESTROY_DENIED = -166,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_CREATION_FAILED = -167,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_OUT_TOKEN_REQUIRED = -168,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_COMMAND_BUFFER_STILL_BLOCKED = -169,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_INVALID_DEVICE_TOKEN = -170,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_STALE_DEVICE_TOKEN = -171,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_DEVICE_TOKEN_NOT_BOUND = -172,
+    CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_COMMAND_BUFFER_DESTROY_BEFORE_QUEUE_REQUIRED =
+        -173
+} CjguiNativeBridgeCommandQueueLifecycleClassification;
+
+typedef enum CjguiNativeBridgeCommandBufferLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_TOKEN_BOUND = 180,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_CREATE_MAIN_THREAD_REQUIRED = -180,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_DESTROY_MAIN_THREAD_REQUIRED = -181,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_INVALID_TOKEN_DENIED = -182,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_STALE_TOKEN_DENIED = -183,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_TOKEN_NOT_BOUND = -184,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_CAPACITY_EXHAUSTED = -185,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_DOUBLE_DESTROY_DENIED = -186,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_CREATION_FAILED = -187,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_OUT_TOKEN_REQUIRED = -188,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_COMMIT_STILL_BLOCKED = -189,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_ENCODER_CREATION_STILL_BLOCKED = -190,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_INVALID_QUEUE_TOKEN = -191,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_STALE_QUEUE_TOKEN = -192,
+    CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_QUEUE_TOKEN_NOT_BOUND = -193
+} CjguiNativeBridgeCommandBufferLifecycleClassification;
+
 /*
  * callable 只返回 dehydrated integer facts，或通过 out-token 返回 opaque token。
  * 它们不返回 pointer，不扩 public runtime API，也不表示 backend ready。
@@ -176,6 +324,105 @@ int32_t cjgui_native_bridge_cametallayer_class_available(void);
 int32_t cjgui_native_bridge_cametallayer_no_attach_admission(void);
 int32_t cjgui_native_bridge_cametallayer_allocation_still_blocked(void);
 int32_t cjgui_native_bridge_cametallayer_device_binding_still_blocked(void);
+int32_t cjgui_native_bridge_cametallayer_allocation_feasible(void);
+int32_t cjgui_native_bridge_cametallayer_allocation_requires_main_thread(void);
+int32_t cjgui_native_bridge_cametallayer_allocation_no_attach_admission(void);
+int32_t cjgui_native_bridge_cametallayer_allocation_device_binding_blocked(void);
+int32_t cjgui_native_bridge_cametallayer_allocation_feasibility_probe(void);
+uint32_t cjgui_native_bridge_cametallayer_table_capacity(void);
+uint32_t cjgui_native_bridge_cametallayer_table_enabled(void);
+int32_t cjgui_native_bridge_cametallayer_table_empty(void);
+int32_t cjgui_native_bridge_cametallayer_table_token_classify(uint64_t token);
+int32_t cjgui_native_bridge_cametallayer_table_allocation_still_blocked(void);
+int32_t cjgui_native_bridge_cametallayer_table_destroy_still_blocked(void);
+int32_t cjgui_native_bridge_cametallayer_create(uint64_t* out_token);
+int32_t cjgui_native_bridge_cametallayer_destroy(uint64_t token);
+int32_t cjgui_native_bridge_cametallayer_token_classify(uint64_t token);
+uint32_t cjgui_native_bridge_cametallayer_table_occupied_count(void);
+int32_t cjgui_native_bridge_cametallayer_double_destroy_classify(uint64_t token);
+int32_t cjgui_native_bridge_cametallayer_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_cametallayer_attach_to_nsview(
+    uint64_t layer_token,
+    uint64_t view_token
+);
+int32_t cjgui_native_bridge_cametallayer_detach_from_nsview(
+    uint64_t layer_token,
+    uint64_t view_token
+);
+int32_t cjgui_native_bridge_cametallayer_attachment_classify(
+    uint64_t layer_token,
+    uint64_t view_token
+);
+int32_t cjgui_native_bridge_cametallayer_double_detach_classify(
+    uint64_t layer_token,
+    uint64_t view_token
+);
+int32_t cjgui_native_bridge_cametallayer_attach_requires_main_thread(void);
+int32_t
+cjgui_native_bridge_cametallayer_device_binding_after_attach_still_blocked(void);
+int32_t cjgui_native_bridge_metal_import_available(void);
+int32_t cjgui_native_bridge_metal_default_device_available(void);
+int32_t cjgui_native_bridge_metal_device_no_command_queue_admission(void);
+int32_t cjgui_native_bridge_metal_device_creation_still_blocked(void);
+uint32_t cjgui_native_bridge_metal_device_table_capacity(void);
+uint32_t cjgui_native_bridge_metal_device_table_enabled(void);
+uint32_t cjgui_native_bridge_metal_device_table_occupied_count(void);
+int32_t cjgui_native_bridge_metal_default_device_create(uint64_t* out_token);
+int32_t cjgui_native_bridge_metal_device_destroy(uint64_t token);
+int32_t cjgui_native_bridge_metal_device_token_classify(uint64_t token);
+int32_t cjgui_native_bridge_metal_device_double_destroy_classify(uint64_t token);
+int32_t cjgui_native_bridge_metal_device_create_requires_main_thread(void);
+int32_t cjgui_native_bridge_metal_device_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_metal_device_command_queue_still_blocked(void);
+int32_t cjgui_native_bridge_cametallayer_bind_metal_device(
+    uint64_t layer_token,
+    uint64_t device_token
+);
+int32_t cjgui_native_bridge_cametallayer_unbind_metal_device(
+    uint64_t layer_token,
+    uint64_t device_token
+);
+int32_t cjgui_native_bridge_cametallayer_device_binding_classify(
+    uint64_t layer_token,
+    uint64_t device_token
+);
+int32_t cjgui_native_bridge_cametallayer_double_unbind_device_classify(
+    uint64_t layer_token,
+    uint64_t device_token
+);
+int32_t cjgui_native_bridge_cametallayer_device_binding_requires_main_thread(void);
+int32_t cjgui_native_bridge_cametallayer_drawable_acquisition_still_blocked(void);
+uint32_t cjgui_native_bridge_command_queue_table_capacity(void);
+uint32_t cjgui_native_bridge_command_queue_table_enabled(void);
+uint32_t cjgui_native_bridge_command_queue_table_occupied_count(void);
+int32_t cjgui_native_bridge_command_queue_create(
+    uint64_t device_token,
+    uint64_t* out_queue_token
+);
+int32_t cjgui_native_bridge_command_queue_destroy(uint64_t queue_token);
+int32_t cjgui_native_bridge_command_queue_token_classify(uint64_t queue_token);
+int32_t
+cjgui_native_bridge_command_queue_double_destroy_classify(uint64_t queue_token);
+int32_t cjgui_native_bridge_command_queue_create_requires_main_thread(void);
+int32_t cjgui_native_bridge_command_queue_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_command_buffer_creation_still_blocked(void);
+uint32_t cjgui_native_bridge_command_buffer_table_capacity(void);
+uint32_t cjgui_native_bridge_command_buffer_table_enabled(void);
+uint32_t cjgui_native_bridge_command_buffer_table_occupied_count(void);
+int32_t cjgui_native_bridge_command_buffer_create(
+    uint64_t queue_token,
+    uint64_t* out_buffer_token
+);
+int32_t cjgui_native_bridge_command_buffer_destroy(uint64_t buffer_token);
+int32_t cjgui_native_bridge_command_buffer_token_classify(
+    uint64_t buffer_token
+);
+int32_t
+cjgui_native_bridge_command_buffer_double_destroy_classify(uint64_t buffer_token);
+int32_t cjgui_native_bridge_command_buffer_create_requires_main_thread(void);
+int32_t cjgui_native_bridge_command_buffer_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_command_buffer_commit_still_blocked(void);
+int32_t cjgui_native_bridge_command_buffer_encoder_creation_still_blocked(void);
 
 #ifdef __cplusplus
 }

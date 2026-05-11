@@ -6,9 +6,7 @@
 # Stop-line: 不修改 runtime/cjgui/cjpm.toml，不接 public API；本 probe 不触发
 # NSView create/destroy，不返回 native pointer / handle。
 # Same-shape Boundary Brake: no-resource call probe 只是 interop evidence，不是 backend-ready 或 runtime bridge permission。
-
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NATIVE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PACKAGE_DIR="$(cd "$NATIVE_DIR/.." && pwd)"
@@ -92,82 +90,66 @@ NSVIEW_CREATE_DESTROY_SYMBOLS=(
   "cjgui_native_bridge_nsview_double_destroy_classify"
   "cjgui_native_bridge_nsview_destroy_requires_main_thread"
 )
-
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui native bridge no-resource call probe: macOS is required" >&2
   exit 2
 fi
-
 if [[ ! -f "$DECLARATION_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime declaration owner $DECLARATION_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$CALL_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime no-resource call owner $CALL_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$MAIN_THREAD_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime main-thread call owner $MAIN_THREAD_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$TOKEN_SHELL_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime token table shell owner $TOKEN_SHELL_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$ISSUE_REVOKE_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime token table issue/revoke owner $ISSUE_REVOKE_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$TEARDOWN_ADMISSION_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime teardown admission owner $TEARDOWN_ADMISSION_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$APPKIT_IMPORT_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime AppKit import owner $APPKIT_IMPORT_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$APPKIT_CLASS_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime AppKit class availability owner $APPKIT_CLASS_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$APPKIT_MAIN_THREAD_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime AppKit main-thread admission owner $APPKIT_MAIN_THREAD_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$NO_OBJECT_CREATION_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime no-object creation owner $NO_OBJECT_CREATION_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$NSVIEW_OBJECT_TABLE_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime NSView object table owner $NSVIEW_OBJECT_TABLE_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$NSVIEW_CREATE_DESTROY_OWNER" ]]; then
   echo "cjgui native bridge no-resource call probe: missing runtime NSView create/destroy owner $NSVIEW_CREATE_DESTROY_OWNER" >&2
   exit 3
 fi
-
 if [[ ! -f "$PACKAGE_LINK_PROBE" ]]; then
   echo "cjgui native bridge no-resource call probe: missing package link probe $PACKAGE_LINK_PROBE" >&2
   exit 4
 fi
-
 if [[ ! -f "$HEADER_FILE" || ! -f "$SOURCE_FILE" ]]; then
   echo "cjgui native bridge no-resource call probe: missing production native skeleton" >&2
   exit 5
 fi
-
 for symbol in "${ALLOWED_SYMBOLS[@]}"; do
   if ! grep -E "foreign func ${symbol}\\(\\): UInt32" "$DECLARATION_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal foreign declaration for $symbol" >&2
@@ -178,7 +160,6 @@ for symbol in "${ALLOWED_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${ISSUE_REVOKE_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$ISSUE_REVOKE_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal token issue/revoke foreign declaration for $symbol" >&2
@@ -189,7 +170,6 @@ for symbol in "${ISSUE_REVOKE_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${TEARDOWN_ADMISSION_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$TEARDOWN_ADMISSION_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal teardown admission foreign declaration for $symbol" >&2
@@ -200,7 +180,6 @@ for symbol in "${TEARDOWN_ADMISSION_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${APPKIT_IMPORT_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$APPKIT_IMPORT_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal AppKit import foreign declaration for $symbol" >&2
@@ -211,7 +190,6 @@ for symbol in "${APPKIT_IMPORT_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${APPKIT_CLASS_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$APPKIT_CLASS_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal AppKit class availability foreign declaration for $symbol" >&2
@@ -222,7 +200,6 @@ for symbol in "${APPKIT_CLASS_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${APPKIT_MAIN_THREAD_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$APPKIT_MAIN_THREAD_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal AppKit main-thread admission foreign declaration for $symbol" >&2
@@ -233,7 +210,6 @@ for symbol in "${APPKIT_MAIN_THREAD_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${NO_OBJECT_CREATION_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$NO_OBJECT_CREATION_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal no-object creation foreign declaration for $symbol" >&2
@@ -244,7 +220,6 @@ for symbol in "${NO_OBJECT_CREATION_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${NSVIEW_OBJECT_TABLE_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$NSVIEW_OBJECT_TABLE_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal NSView object table foreign declaration for $symbol" >&2
@@ -255,7 +230,6 @@ for symbol in "${NSVIEW_OBJECT_TABLE_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 for symbol in "${NSVIEW_CREATE_DESTROY_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$NSVIEW_CREATE_DESTROY_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal NSView create/destroy foreign declaration for $symbol" >&2
@@ -266,17 +240,14 @@ for symbol in "${NSVIEW_CREATE_DESTROY_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 if ! grep -E "foreign func ${MAIN_THREAD_SYMBOL}\\(\\): Int32" "$MAIN_THREAD_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing internal foreign declaration for $MAIN_THREAD_SYMBOL" >&2
   exit 6
 fi
-
 if ! grep -F "${MAIN_THREAD_SYMBOL}()" "$MAIN_THREAD_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing internal owner call for $MAIN_THREAD_SYMBOL" >&2
   exit 6
 fi
-
 for symbol in "${TOKEN_SHELL_SYMBOLS[@]}"; do
   if ! grep -F "foreign func ${symbol}" "$TOKEN_SHELL_OWNER" >/dev/null 2>&1; then
     echo "cjgui native bridge no-resource call probe: missing internal token shell foreign declaration for $symbol" >&2
@@ -287,122 +258,98 @@ for symbol in "${TOKEN_SHELL_SYMBOLS[@]}"; do
     exit 6
   fi
 done
-
 if ! grep -F "CjguiInternalRendererNoNativeBridgeNoResourceRuntimeCallReadiness" "$CALL_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing runtime call readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererNativeBridgeNoResourceRuntimeCallDraft" "$CALL_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing runtime call default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoNativeBridgeMainThreadCallReadiness" "$MAIN_THREAD_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing main-thread call readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererNativeBridgeMainThreadCallDraft" "$MAIN_THREAD_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing main-thread call default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoNativeTokenTableShellReadiness" "$TOKEN_SHELL_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing token table shell readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererNativeTokenTableShellDraft" "$TOKEN_SHELL_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing token table shell default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoNativeTokenTableIssueRevokeReadiness" "$ISSUE_REVOKE_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing token table issue/revoke readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererNativeTokenTableIssueRevokeDraft" "$ISSUE_REVOKE_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing token table issue/revoke default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoNativeBridgeTeardownAdmissionCallReadiness" "$TEARDOWN_ADMISSION_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing teardown admission call readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererNativeBridgeTeardownAdmissionCallDraft" "$TEARDOWN_ADMISSION_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing teardown admission call default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoPlatformObjectAppKitImportReadiness" "$APPKIT_IMPORT_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing AppKit import readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererPlatformObjectAppKitImportDraft" "$APPKIT_IMPORT_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing AppKit import default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoPlatformObjectAppKitClassAvailabilityReadiness" "$APPKIT_CLASS_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing AppKit class availability readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererPlatformObjectAppKitClassAvailabilityDraft" "$APPKIT_CLASS_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing AppKit class availability default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoPlatformObjectAppKitMainThreadAdmissionReadiness" "$APPKIT_MAIN_THREAD_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing AppKit main-thread admission readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererPlatformObjectAppKitMainThreadAdmissionDraft" "$APPKIT_MAIN_THREAD_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing AppKit main-thread admission default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoPlatformObjectNoObjectCreationCallReadiness" "$NO_OBJECT_CREATION_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing no-object creation readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererPlatformObjectNoObjectCreationCallDraft" "$NO_OBJECT_CREATION_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing no-object creation default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoPlatformObjectNsViewObjectTableReadiness" "$NSVIEW_OBJECT_TABLE_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing NSView object table readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererPlatformObjectNsViewObjectTableDraft" "$NSVIEW_OBJECT_TABLE_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing NSView object table default draft" >&2
   exit 6
 fi
-
 if ! grep -F "CjguiInternalRendererNoPlatformObjectNsViewCreateDestroyReadiness" "$NSVIEW_CREATE_DESTROY_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing NSView create/destroy readiness endpoint" >&2
   exit 6
 fi
-
 if ! grep -F "cjguiInternalExecuteDefaultRendererPlatformObjectNsViewCreateDestroyDraft" "$NSVIEW_CREATE_DESTROY_OWNER" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: missing NSView create/destroy default draft" >&2
   exit 6
 fi
-
-if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSWindow|NSApplication|CALayer|CAMetalLayer)[[:space:]]+(alloc|new)\]|(NSWindow|NSApplication|CALayer|CAMetalLayer)[[:space:]]*\*|MTLDevice|MTLCommandQueue|nextDrawable|commandBuffer|commit|present|retain|release' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSWindow|NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSWindow|NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource call probe: production skeleton contains forbidden resource/native behavior token" >&2
   exit 7
 fi
-
 echo "cjgui native bridge no-resource call probe: requested=true"
 echo "cjgui native bridge no-resource call probe: repo=$REPO_DIR"
 echo "cjgui native bridge no-resource call probe: output=$OUTPUT_DIR"
@@ -420,9 +367,7 @@ echo "cjgui native bridge no-resource call probe: platform_object_no_object_crea
 echo "cjgui native bridge no-resource call probe: nsview_object_table_owner_call_source_observed=true"
 echo "cjgui native bridge no-resource call probe: nsview_create_destroy_owner_call_source_observed=true"
 echo "cjgui native bridge no-resource call probe: runtime_owner_call_executed_by_probe=false"
-
 zsh "$PACKAGE_LINK_PROBE" | tee "$PROBE_LOG"
-
 for observed_line in \
   "surface_version_observed=true" \
   "capabilities_observed=true" \
@@ -472,7 +417,6 @@ for observed_line in \
     exit 8
   fi
 done
-
 echo "cjgui native bridge no-resource call probe: surface_version_observed=true"
 echo "cjgui native bridge no-resource call probe: capabilities_observed=true"
 echo "cjgui native bridge no-resource call probe: status_ok_observed=true"

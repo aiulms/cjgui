@@ -1,9 +1,40 @@
+# Cangjie Live Code Intelligence Rules (Phase B)
+
+This live workspace uses the CodeLattice-backed GitNexus registry entry
+`cangjie-live-codelattice` for production code intelligence.
+
+Default rules for all new Cangjie live production tasks:
+
+- Use `cangjie-live-codelattice` for GitNexus `context`, `impact`, and
+  `detect-changes`.
+- Do not use bare `cjgui`. The registry currently has multiple legacy `cjgui`
+  entries, so that name is deprecated and ambiguous.
+- Do not use `npx gitnexus` for production commands. Use the Tool CLI absolute
+  path:
+  `node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js <command>`.
+- If `context`, `impact`, or `detect-changes` returns `UNKNOWN`, `0`, or cannot
+  find the target, do not treat that as safe. Fall back to source reading,
+  build/probe scripts, forbidden scans, and manifest/docs checks, then report
+  that the graph did not cover the target.
+- CodeLattice MCP is available as a sidecar for Cangjie/Rust language
+  intelligence (`project_overview`, `symbol_search`, `symbol_context`,
+  `production_assist`, `cache_prewarm`, `graph_overview`). It does not replace
+  the global GitNexus-RC MCP.
+
+Recommended commands:
+
+```bash
+node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js context init --repo cangjie-live-codelattice
+node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js detect-changes --repo cangjie-live-codelattice --scope all
+/Users/jiangxuanyang/Desktop/codelattice/scripts/cangjie-production-alias-check.sh --status
+```
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **cangjie** (3552 symbols, 3554 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed for live production use as **cangjie-live-codelattice**. Legacy `cangjie` / bare `cjgui` registry names are deprecated for new tasks. Use the GitNexus MCP tools to understand code, assess impact, and navigate safely, but prefer the registry entry `cangjie-live-codelattice`.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> If any GitNexus tool warns the index is stale, refresh the CodeLattice-backed live entry with `/Users/jiangxuanyang/Desktop/codelattice/scripts/cangjie-production-alias-check.sh --full`, or use the Tool CLI absolute path shown above. Do not use `npx gitnexus`.
 
 ## Always Do
 
@@ -17,7 +48,7 @@ This project is indexed by GitNexus as **cangjie** (3552 symbols, 3554 relations
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/cangjie/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/cangjie-live-codelattice/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -56,10 +87,10 @@ This project is indexed by GitNexus as **cangjie** (3552 symbols, 3554 relations
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/cangjie/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/cangjie/clusters` | All functional areas |
-| `gitnexus://repo/cangjie/processes` | All execution flows |
-| `gitnexus://repo/cangjie/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/cangjie-live-codelattice/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/cangjie-live-codelattice/clusters` | All functional areas |
+| `gitnexus://repo/cangjie-live-codelattice/processes` | All execution flows |
+| `gitnexus://repo/cangjie-live-codelattice/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 
@@ -71,21 +102,20 @@ Before completing any code modification task, verify:
 
 ## Keeping the Index Fresh
 
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
+After committing code changes, the GitNexus index can become stale. Refresh the CodeLattice-backed live entry with:
 
 ```bash
-npx gitnexus analyze
+/Users/jiangxuanyang/Desktop/codelattice/scripts/cangjie-production-alias-check.sh --full
 ```
 
-If the index previously included embeddings, preserve them by adding `--embeddings`:
+For direct Tool CLI checks, use:
 
 ```bash
-npx gitnexus analyze --embeddings
+node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js detect-changes --repo cangjie-live-codelattice --scope all
 ```
 
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
+Do not refresh or query production state through bare `cjgui`; it is deprecated
+because multiple legacy registry entries share that name.
 
 ## CLI
 

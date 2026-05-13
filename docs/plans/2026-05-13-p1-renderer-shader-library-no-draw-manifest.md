@@ -77,6 +77,10 @@ invalid / stale / not-bound device token、library token、function token 均 fa
 
 `P1 internal Renderer pipeline state create/destroy no-draw preflight decision`
 
+## 下游接续
+
+该入口已由 [pipeline state create/destroy no-draw manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-13-p1-renderer-pipeline-state-create-destroy-no-draw-manifest.md) 接续；下游只证明 token-backed `MTLRenderPipelineState` lifecycle 与 runtime-local call facts，不授予 encoder binding / draw / submit / render 权限。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，shader library/function no-draw first slice 已封账。

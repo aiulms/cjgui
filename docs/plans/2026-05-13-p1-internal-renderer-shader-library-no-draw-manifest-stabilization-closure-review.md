@@ -29,6 +29,10 @@
 
 阶段新增 probes 与 no-resource symbol probe 已通过；完整阶段验证结果记录在最终执行回执中。
 
+## 下游接续
+
+已由 [pipeline state create/destroy no-draw manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-13-p1-renderer-pipeline-state-create-destroy-no-draw-manifest.md) 接续。该接续只提升到 pipeline state lifecycle / runtime-local facts，不改变 encoder、draw、commit、present、GPU submission、render、public API 或 renderer state stop-line。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，shader library no-draw 已稳定封账。

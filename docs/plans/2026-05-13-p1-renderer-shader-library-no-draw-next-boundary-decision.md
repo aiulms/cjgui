@@ -17,6 +17,8 @@
 
 理由：shader source contract、token-backed `MTLLibrary`、vertex / fragment `MTLFunction` lookup、runtime internal call 与 cleanup facts 已成立；下一步可以评估 pipeline state no-draw create/destroy，但必须重新预检 shader function 与 pipeline descriptor 的绑定合同。
 
+下游已由 [pipeline state create/destroy no-draw manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-13-p1-renderer-pipeline-state-create-destroy-no-draw-manifest.md) 接续，且不改变本结论的 stop-line：shader facts 本身仍不授予 encoder、draw、submit、render 或 backend-ready truth。
+
 ## 继续禁止
 
 本结论不授予 pipeline state 创建权限，不授予 encoder / draw / commit / present / GPU submission / render 权限，不授予 renderer state write 或 backend-ready truth。

@@ -3004,15 +3004,6 @@ int32_t cjgui_native_bridge_pipeline_descriptor_token_classify(
         );
     }
 
-    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
-    int32_t bound_pipeline_state_slot =
-        pipeline_state_table_find_bound_descriptor_locked(descriptor_token);
-    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
-    if (bound_pipeline_state_slot >= 0) {
-        return
-            CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_PIPELINE_STATE_DESTROY_BEFORE_DESCRIPTOR_REQUIRED;
-    }
-
     pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
     int32_t slot_index =
         pipeline_descriptor_table_find_token_locked(descriptor_token);
@@ -3104,6 +3095,15 @@ int32_t cjgui_native_bridge_pipeline_descriptor_destroy(
         return pipeline_descriptor_status_from_classification(
             token_classification
         );
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t bound_pipeline_state_slot =
+        pipeline_state_table_find_bound_descriptor_locked(descriptor_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (bound_pipeline_state_slot >= 0) {
+        return
+            CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_PIPELINE_STATE_DESTROY_BEFORE_DESCRIPTOR_REQUIRED;
     }
 
     pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
@@ -3640,15 +3640,6 @@ int32_t cjgui_native_bridge_shader_function_token_classify(
         return shader_function_status_from_classification(token_classification);
     }
 
-    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
-    int32_t bound_pipeline_state_slot =
-        pipeline_state_table_find_bound_function_locked(function_token);
-    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
-    if (bound_pipeline_state_slot >= 0) {
-        return
-            CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_PIPELINE_STATE_DESTROY_BEFORE_FUNCTION_REQUIRED;
-    }
-
     pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
     int32_t slot_index =
         shader_function_table_find_token_locked(function_token);
@@ -3685,6 +3676,15 @@ int32_t cjgui_native_bridge_shader_function_destroy(uint64_t function_token) {
     }
     if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
         return shader_function_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t bound_pipeline_state_slot =
+        pipeline_state_table_find_bound_function_locked(function_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (bound_pipeline_state_slot >= 0) {
+        return
+            CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_PIPELINE_STATE_DESTROY_BEFORE_FUNCTION_REQUIRED;
     }
 
     pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
@@ -3748,4 +3748,309 @@ int32_t cjgui_native_bridge_shader_encoder_binding_still_blocked(void) {
 
 int32_t cjgui_native_bridge_shader_draw_still_blocked(void) {
     return CJGUI_NATIVE_BRIDGE_SHADER_DRAW_STILL_BLOCKED;
+}
+
+uint32_t cjgui_native_bridge_pipeline_state_table_capacity(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY;
+}
+
+uint32_t cjgui_native_bridge_pipeline_state_table_enabled(void) {
+    return 1u;
+}
+
+uint32_t cjgui_native_bridge_pipeline_state_table_occupied_count(void) {
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    uint32_t count = pipeline_state_table_occupied_count_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    return count;
+}
+
+int32_t cjgui_native_bridge_pipeline_state_token_classify(
+    uint64_t pipeline_state_token
+) {
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        pipeline_state_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return pipeline_state_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t slot_index =
+        pipeline_state_table_find_token_locked(pipeline_state_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (slot_index >= 0) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TOKEN_BOUND;
+    }
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TOKEN_NOT_BOUND;
+}
+
+int32_t cjgui_native_bridge_pipeline_state_create(
+    uint64_t device_token,
+    uint64_t descriptor_token,
+    uint64_t vertex_function_token,
+    uint64_t fragment_function_token,
+    uint64_t* out_pipeline_state_token
+) {
+    if (out_pipeline_state_token == 0) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_OUT_TOKEN_REQUIRED;
+    }
+    *out_pipeline_state_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CREATE_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t device_classification =
+        cjgui_native_bridge_metal_device_token_classify(device_token);
+    if (device_classification != CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_BOUND) {
+        return pipeline_state_device_status_from_classification(
+            device_classification
+        );
+    }
+
+    int32_t descriptor_classification =
+        cjgui_native_bridge_pipeline_descriptor_token_classify(
+            descriptor_token
+        );
+    if (descriptor_classification !=
+        CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_BOUND) {
+        return pipeline_state_descriptor_status_from_classification(
+            descriptor_classification
+        );
+    }
+
+    int32_t vertex_classification =
+        cjgui_native_bridge_shader_function_token_classify(
+            vertex_function_token
+        );
+    if (vertex_classification !=
+        CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_VERTEX_BOUND) {
+        int32_t mapped =
+            pipeline_state_vertex_function_status_from_classification(
+                vertex_classification
+            );
+        if (mapped == vertex_classification) {
+            return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_VERTEX_FUNCTION_KIND_REQUIRED;
+        }
+        return mapped;
+    }
+
+    int32_t fragment_classification =
+        cjgui_native_bridge_shader_function_token_classify(
+            fragment_function_token
+        );
+    if (fragment_classification !=
+        CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_FRAGMENT_BOUND) {
+        int32_t mapped =
+            pipeline_state_fragment_function_status_from_classification(
+                fragment_classification
+            );
+        if (mapped == fragment_classification) {
+            return
+                CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_FRAGMENT_FUNCTION_KIND_REQUIRED;
+        }
+        return mapped;
+    }
+
+    __strong id<MTLDevice> device = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_metal_device_table_mutex);
+    int32_t device_slot = metal_device_table_find_token_locked(device_token);
+    if (device_slot >= 0) {
+        device = g_cjgui_native_bridge_metal_device_table[device_slot].device;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_metal_device_table_mutex);
+    if (device == nil) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DEVICE_TOKEN_NOT_BOUND;
+    }
+
+    __strong MTLRenderPipelineDescriptor *descriptor = nil;
+    uint8_t descriptor_configured = 0u;
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    int32_t descriptor_slot =
+        pipeline_descriptor_table_find_token_locked(descriptor_token);
+    if (descriptor_slot >= 0) {
+        descriptor =
+            g_cjgui_native_bridge_pipeline_descriptor_table[descriptor_slot]
+                .descriptor;
+        descriptor_configured =
+            g_cjgui_native_bridge_pipeline_descriptor_table[descriptor_slot]
+                .configured;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    if (descriptor == nil) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESCRIPTOR_TOKEN_NOT_BOUND;
+    }
+    if (descriptor_configured != 1u) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESCRIPTOR_NOT_CONFIGURED;
+    }
+
+    __strong id<MTLFunction> vertex_function = nil;
+    __strong id<MTLFunction> fragment_function = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    int32_t vertex_slot =
+        shader_function_table_find_token_locked(vertex_function_token);
+    if (vertex_slot >= 0) {
+        vertex_function =
+            g_cjgui_native_bridge_shader_function_table[vertex_slot].function;
+    }
+    int32_t fragment_slot =
+        shader_function_table_find_token_locked(fragment_function_token);
+    if (fragment_slot >= 0) {
+        fragment_function =
+            g_cjgui_native_bridge_shader_function_table[fragment_slot].function;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    if (vertex_function == nil) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_VERTEX_FUNCTION_TOKEN_NOT_BOUND;
+    }
+    if (fragment_function == nil) {
+        return
+            CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_FRAGMENT_FUNCTION_TOKEN_NOT_BOUND;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t free_slot = pipeline_state_table_first_free_slot_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (free_slot < 0) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CAPACITY_EXHAUSTED;
+    }
+
+    uint64_t pipeline_state_token = cjgui_native_bridge_token_issue();
+    if (pipeline_state_token == CJGUI_NATIVE_BRIDGE_TOKEN_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CAPACITY_EXHAUSTED;
+    }
+
+    __strong id<MTLRenderPipelineState> pipeline_state = nil;
+    @autoreleasepool {
+        NSError *error = nil;
+        descriptor.vertexFunction = vertex_function;
+        descriptor.fragmentFunction = fragment_function;
+        pipeline_state =
+            [device newRenderPipelineStateWithDescriptor:descriptor
+                                                   error:&error];
+        (void)error;
+    }
+    if (pipeline_state == nil) {
+        (void)cjgui_native_bridge_token_revoke(pipeline_state_token);
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CREATION_FAILED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (g_cjgui_native_bridge_pipeline_state_table[free_slot].active != 0u) {
+        free_slot = pipeline_state_table_first_free_slot_locked();
+    }
+    if (free_slot < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+        (void)cjgui_native_bridge_token_revoke(pipeline_state_token);
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CAPACITY_EXHAUSTED;
+    }
+
+    g_cjgui_native_bridge_pipeline_state_table[free_slot].token =
+        pipeline_state_token;
+    g_cjgui_native_bridge_pipeline_state_table[free_slot].device_token =
+        device_token;
+    g_cjgui_native_bridge_pipeline_state_table[free_slot].descriptor_token =
+        descriptor_token;
+    g_cjgui_native_bridge_pipeline_state_table[free_slot].vertex_function_token =
+        vertex_function_token;
+    g_cjgui_native_bridge_pipeline_state_table[free_slot]
+        .fragment_function_token = fragment_function_token;
+    g_cjgui_native_bridge_pipeline_state_table[free_slot].pipeline_state =
+        pipeline_state;
+    g_cjgui_native_bridge_pipeline_state_table[free_slot].active = 1u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    *out_pipeline_state_token = pipeline_state_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)device_token;
+    (void)descriptor_token;
+    (void)vertex_function_token;
+    (void)fragment_function_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_pipeline_state_destroy(
+    uint64_t pipeline_state_token
+) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESTROY_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        pipeline_state_token
+    );
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_TOKEN_DENIED;
+    }
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DOUBLE_DESTROY_DENIED;
+    }
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return pipeline_state_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t slot_index =
+        pipeline_state_table_find_token_locked(pipeline_state_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TOKEN_NOT_BOUND;
+    }
+
+    g_cjgui_native_bridge_pipeline_state_table[slot_index].pipeline_state = nil;
+    g_cjgui_native_bridge_pipeline_state_table[slot_index].token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_pipeline_state_table[slot_index].device_token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_pipeline_state_table[slot_index].descriptor_token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_pipeline_state_table[slot_index].vertex_function_token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_pipeline_state_table[slot_index]
+        .fragment_function_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_pipeline_state_table[slot_index].active = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+
+    int32_t revoke_status =
+        cjgui_native_bridge_token_revoke(pipeline_state_token);
+    if (revoke_status != CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK) {
+        return revoke_status;
+    }
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)pipeline_state_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_pipeline_state_double_destroy_classify(
+    uint64_t pipeline_state_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_pipeline_state_token_classify(pipeline_state_token);
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DOUBLE_DESTROY_DENIED;
+    }
+    return classification;
+}
+
+int32_t cjgui_native_bridge_pipeline_state_create_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CREATE_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_pipeline_state_destroy_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESTROY_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_pipeline_state_encoder_binding_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_ENCODER_BINDING_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_pipeline_state_draw_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DRAW_STILL_BLOCKED;
 }

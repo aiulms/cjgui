@@ -41,6 +41,10 @@ GitNexus impact 对上游 endpoint、default draft 与新增 shader symbols 返�
 
 本轮仍禁止 `MTLRenderPipelineState`、render command encoder、`setRenderPipelineState`、draw、vertex buffer、`commit`、`present`、GPU submission、render、renderer state write、`runtime_state.cj`、`runtime/cjgui/cjpm.toml`、smoke native edits、public API 与 pointer / handle / `id` / `Class` return。
 
+## 下游接续
+
+已由 [pipeline state create/destroy no-draw manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-13-p1-renderer-pipeline-state-create-destroy-no-draw-manifest.md) 接续。该接续不反向改变本 closure：shader library no-draw 仍不是 encoder、draw、commit、present、GPU submission、render、backend-ready 或 renderer state write permission。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，shader library no-draw 从 preflight 进入 first slice 完成态。

@@ -73,4 +73,4 @@ GitNexus impact 对 `CjguiInternalRendererNoShaderLibraryRuntimeCallReadiness`�
 - 本轮是否改变 owner / truth / stop-line：允许新增 pipeline state owner 与 native C ABI；truth 仍是 internal no-draw facts，stop-line 继续禁止 encoder、pipeline binding、draw、commit、present、GPU submission、render、renderer state 与 public API。
 - 本轮是否改变唯一 next opening：目标为 `P1 internal Renderer pipeline state encoder binding blocker reconciliation decision`，需待 manifest 封账确认。
 - 是否同步 topic manifest：预检后将在 manifest stabilization 同步。
-- 已同步哪些 topic manifest：待同步 `renderer-implementation-admission-chain`、`renderer-backend-readiness-real-backend-runway`、`macos-bridge-verification-smoke`。
+- 已同步哪些 topic manifest：已在后续 manifest stabilization 中同步 `renderer-implementation-admission-chain`、`renderer-backend-readiness-real-backend-runway`、`macos-bridge-verification-smoke`。

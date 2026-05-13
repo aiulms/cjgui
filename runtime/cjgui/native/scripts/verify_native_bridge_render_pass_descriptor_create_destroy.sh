@@ -40,7 +40,7 @@ for symbol in "${required_symbols[@]}"; do
     exit 1
   fi
 done
-if grep -Eq 'renderCommandEncoder|MTLRenderCommandEncoder|drawPrimitives|commit]|presentDrawable|present]|newRenderPipelineState|dispatchThreadgroups' "$SOURCE_PATH"; then
+if grep -Eq 'renderCommandEncoder|MTLRenderCommandEncoder|drawPrimitives|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_PATH"; then
   echo "forbidden encoder / draw / commit / present / GPU path found" >&2
   exit 1
 fi

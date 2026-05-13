@@ -3,7 +3,7 @@ set -euo pipefail
 # 中文维护注释：
 # 本脚本验证 shader library/function runtime-adjacent FFI call path 与 runtime owner。
 # stop-line：临时仓颉包只调用 device -> library -> function lookup/classify/destroy；
-# 不创建 MTLRenderPipelineState，不创建 encoder，不 draw，不 commit，不 present，
+# 上游 shader runtime 调用路径不创建 encoder，不 draw，不 commit，不 present，
 # 不提交 GPU work，不执行 render。
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NATIVE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -61,8 +61,8 @@ if grep -E 'cjgui_native_bridge|native/cjgui_native_bridge|link-option|compile-o
   echo "cjgui shader runtime call probe: runtime cjpm.toml must not wire native bridge" >&2
   exit 7
 fi
-if grep -Eq 'newRenderPipelineState|MTLRenderPipelineState|renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_FILE"; then
-  echo "cjgui shader runtime call probe: forbidden pipeline / encoder / submit path found" >&2
+if grep -Eq 'renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_FILE"; then
+  echo "cjgui shader runtime call probe: forbidden encoder / submit path found" >&2
   exit 8
 fi
 if grep -E '^[[:space:]]*public[[:space:]]+(func|struct|class|enum|interface)' "$PLANNING_OWNER" "$SOURCE_OWNER" "$LIBRARY_OWNER" "$FUNCTION_OWNER" "$RUNTIME_OWNER" >/dev/null 2>&1; then

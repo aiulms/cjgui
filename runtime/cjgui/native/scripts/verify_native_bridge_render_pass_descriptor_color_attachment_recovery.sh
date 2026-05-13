@@ -46,7 +46,7 @@ if grep -Eq 'render_pass_descriptor_color_attachment_(configure|set|bind|runtime
   exit 1
 fi
 
-if grep -Eq 'renderCommandEncoder|MTLRenderCommandEncoder|drawPrimitives|drawIndexedPrimitives|presentDrawable|newRenderPipelineState|dispatchThreadgroups' "$SOURCE_PATH"; then
+if grep -Eq 'renderCommandEncoder|MTLRenderCommandEncoder|drawPrimitives|drawIndexedPrimitives|presentDrawable|dispatchThreadgroups' "$SOURCE_PATH"; then
   echo "forbidden encoder / draw / present / GPU path found" >&2
   exit 1
 fi

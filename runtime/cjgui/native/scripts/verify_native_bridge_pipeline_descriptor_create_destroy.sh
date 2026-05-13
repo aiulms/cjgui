@@ -44,8 +44,8 @@ for symbol in "${required_symbols[@]}"; do
     exit 1
   fi
 done
-if grep -Eq 'newRenderPipelineState|MTLRenderPipelineState|renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_PATH"; then
-  echo "forbidden pipeline state / encoder / draw / submit path found" >&2
+if grep -Eq 'renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_PATH"; then
+  echo "forbidden encoder / draw / submit path found" >&2
   exit 1
 fi
 if grep -Eq 'cjgui_native_bridge_[A-Za-z0-9_]+\([^;{)]*\)\s*\*|void\s*\*\s+cjgui_native_bridge_|id\s+cjgui_native_bridge_|Class\s+cjgui_native_bridge_|uintptr_t\s+cjgui_native_bridge_' "$HEADER_PATH"; then

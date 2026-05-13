@@ -3,7 +3,7 @@ set -euo pipefail
 # 中文维护注释：
 # 本脚本验证 shader library no-draw create/destroy first slice。
 # stop-line：只允许基于 token-backed MTLDevice 编译最小 shader library；
-# 不创建 MTLRenderPipelineState，不创建 encoder，不 draw，不创建 vertex buffer，
+# 上游 shader 调用路径不创建 encoder，不 draw，不创建 vertex buffer，
 # 不 commit，不 present，不提交 GPU work，不执行 render，不返回 native pointer。
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NATIVE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -42,8 +42,8 @@ for symbol in "${required_symbols[@]}"; do
     exit 1
   fi
 done
-if grep -Eq 'newRenderPipelineState|MTLRenderPipelineState|renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_PATH"; then
-  echo "forbidden pipeline state / encoder / draw / submit path found" >&2
+if grep -Eq 'renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_PATH"; then
+  echo "forbidden encoder / draw / submit path found" >&2
   exit 1
 fi
 if grep -Eq 'cjgui_native_bridge_[A-Za-z0-9_]+\([^;{)]*\)\s*\*|void\s*\*\s+cjgui_native_bridge_|id\s+cjgui_native_bridge_|Class\s+cjgui_native_bridge_|uintptr_t\s+cjgui_native_bridge_' "$HEADER_PATH"; then

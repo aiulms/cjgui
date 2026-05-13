@@ -51,6 +51,8 @@
 - 已由 [Drawable no-present acquisition 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-no-present-acquisition-manifest.md) 接续。
 - 当前唯一后续入口转为 `P1 internal Renderer command queue creation planning preflight decision`。
 
+后续已由 [production drawable texture lifetime 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-production-drawable-texture-lifetime-manifest.md) 复核：本 isolated visible-window probe 只证明 display-backed environment 可构造，不证明 production drawable texture lifetime、token-local release、stale classification 或 descriptor / drawable / layer / device cleanup 共同所有权。
+
 ## 停止线
 
 不 present，不调用 `presentDrawable` / `present`，不创建 command queue / command buffer / encoder，不提交 GPU work，不执行 render，不写 renderer state，不触碰 `runtime_state.cj`，不修改 `runtime/cjgui/cjpm.toml`，不修改 smoke native files，不新增 public API / diagnostics，不返回 native pointer / handle / `id` / `Class`，不把 isolated probe facts 解释成 backend-ready truth、drawable-ready truth、render permission、GPU submission permission 或 state write permission。

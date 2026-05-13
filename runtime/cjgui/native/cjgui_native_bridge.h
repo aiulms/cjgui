@@ -3,11 +3,15 @@
  * Truth: 承载 internal native bridge C ABI、AppKit / QuartzCore class facts、
  * main-thread admission、token-backed NSView first slice、CAMetalLayer allocation
  * / table / create-destroy / NSView attachment first slice、Metal device binding
- * first slice、MTLRenderPassDescriptor create/destroy first slice
+ * first slice、MTLRenderPassDescriptor create/destroy first slice、
+ * MTLRenderPipelineDescriptor no-draw create/config/destroy first slice、
+ * shader library / function no-draw create/lookup/destroy first slice、
+ * MTLRenderPipelineState no-draw create/destroy first slice
  * 与内部 status taxonomy，
  * 不是 public runtime API。
  * Stop-line: 不创建窗口、应用、drawable、绘制资源，
- * command buffer / render pass descriptor first slice 不创建 encoder，
+ * command buffer / render pass descriptor / pipeline descriptor / shader
+ * library / pipeline state first slice 不创建 encoder，不绑定 pipeline，不 draw，
  * 不 commit / present / render，
  * 不返回指针身份。
  * Same-shape Boundary Brake: callable surface 只是无副作用 native surface，不是 bridge-ready、backend-ready、render-ready 或 public API permission。
@@ -76,7 +80,15 @@ typedef enum CjguiNativeBridgeSurfaceCapability {
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_COMMAND_BUFFER_CREATE_DESTROY =
         1u << 23,
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_RENDER_PASS_DESCRIPTOR_CREATE_DESTROY =
-        1u << 24
+        1u << 24,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_DESCRIPTOR_CREATE_DESTROY =
+        1u << 25,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_LIBRARY_CREATE_DESTROY =
+        1u << 26,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_FUNCTION_LOOKUP =
+        1u << 27,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_STATE_CREATE_DESTROY =
+        1u << 28
 } CjguiNativeBridgeSurfaceCapability;
 
 enum {
@@ -89,6 +101,10 @@ enum {
     CJGUI_NATIVE_BRIDGE_COMMAND_QUEUE_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_COMMAND_BUFFER_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY = 4u,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_BITS = 16u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_MASK = 0xffffu
 };
@@ -221,7 +237,9 @@ typedef enum CjguiNativeBridgeMetalDeviceLifecycleClassification {
     CJGUI_NATIVE_BRIDGE_METAL_DEVICE_OUT_TOKEN_REQUIRED = -128,
     CJGUI_NATIVE_BRIDGE_METAL_DEVICE_COMMAND_QUEUE_STILL_BLOCKED = -129,
     CJGUI_NATIVE_BRIDGE_METAL_DEVICE_COMMAND_QUEUE_DESTROY_BEFORE_DEVICE_REQUIRED =
-        -130
+        -130,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_PIPELINE_STATE_DESTROY_BEFORE_DEVICE_REQUIRED =
+        -131
 } CjguiNativeBridgeMetalDeviceLifecycleClassification;
 
 typedef enum CjguiNativeBridgeMetalDeviceLayerBindingClassification {
@@ -298,6 +316,109 @@ typedef enum CjguiNativeBridgeRenderPassDescriptorLifecycleClassification {
     CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_DRAWABLE_TEXTURE_STILL_BLOCKED =
         -211
 } CjguiNativeBridgeRenderPassDescriptorLifecycleClassification;
+
+typedef enum CjguiNativeBridgePipelineDescriptorLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_BOUND = 220,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CONFIGURED = 221,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_COLOR_PIXEL_FORMAT_CONFIGURED = 222,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_SAMPLE_COUNT_CONFIGURED = 223,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CREATE_MAIN_THREAD_REQUIRED = -220,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_DESTROY_MAIN_THREAD_REQUIRED = -221,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_INVALID_TOKEN_DENIED = -222,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_STALE_TOKEN_DENIED = -223,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_NOT_BOUND = -224,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CAPACITY_EXHAUSTED = -225,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_DOUBLE_DESTROY_DENIED = -226,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CREATION_FAILED = -227,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_OUT_TOKEN_REQUIRED = -228,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CREATION_STILL_BLOCKED = -229,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_SHADER_LIBRARY_STILL_BLOCKED =
+        -230,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_VERTEX_FUNCTION_STILL_BLOCKED =
+        -231,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_FRAGMENT_FUNCTION_STILL_BLOCKED =
+        -232,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_BLENDING_STILL_BLOCKED = -233,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_ENCODER_BINDING_STILL_BLOCKED =
+        -234,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_INVALID_SAMPLE_COUNT = -235,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_COLOR_PIXEL_FORMAT_NOT_CONFIGURED =
+        -236,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_SAMPLE_COUNT_NOT_CONFIGURED =
+        -237,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CONFIGURE_MAIN_THREAD_REQUIRED =
+        -238,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_PIPELINE_STATE_DESTROY_BEFORE_DESCRIPTOR_REQUIRED =
+        -239
+} CjguiNativeBridgePipelineDescriptorLifecycleClassification;
+
+typedef enum CjguiNativeBridgeShaderLibraryLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_SHADER_SOURCE_CONTRACT_AVAILABLE = 240,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TOKEN_BOUND = 241,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_VERTEX_BOUND = 242,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_FRAGMENT_BOUND = 243,
+    CJGUI_NATIVE_BRIDGE_SHADER_SOURCE_VALIDATED = 244,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CREATE_MAIN_THREAD_REQUIRED = -240,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DESTROY_MAIN_THREAD_REQUIRED = -241,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_INVALID_TOKEN_DENIED = -242,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_STALE_TOKEN_DENIED = -243,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TOKEN_NOT_BOUND = -244,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CAPACITY_EXHAUSTED = -245,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DOUBLE_DESTROY_DENIED = -246,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CREATION_FAILED = -247,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_OUT_TOKEN_REQUIRED = -248,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_INVALID_DEVICE_TOKEN = -249,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_STALE_DEVICE_TOKEN = -250,
+    CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DEVICE_TOKEN_NOT_BOUND = -251,
+    CJGUI_NATIVE_BRIDGE_SHADER_PIPELINE_STATE_CREATION_STILL_BLOCKED = -252,
+    CJGUI_NATIVE_BRIDGE_SHADER_ENCODER_BINDING_STILL_BLOCKED = -253,
+    CJGUI_NATIVE_BRIDGE_SHADER_DRAW_STILL_BLOCKED = -254,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_MISSING = -255,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY_EXHAUSTED = -256,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_LOOKUP_MAIN_THREAD_REQUIRED = -257,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DESTROY_MAIN_THREAD_REQUIRED = -258,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_INVALID_LIBRARY_TOKEN = -259,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_STALE_LIBRARY_TOKEN = -260,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_LIBRARY_TOKEN_NOT_BOUND = -261,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_INVALID_TOKEN_DENIED = -262,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_STALE_TOKEN_DENIED = -263,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TOKEN_NOT_BOUND = -264,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DOUBLE_DESTROY_DENIED = -265,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_OUT_TOKEN_REQUIRED = -266,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DESTROY_BEFORE_LIBRARY_REQUIRED = -267,
+    CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_PIPELINE_STATE_DESTROY_BEFORE_FUNCTION_REQUIRED =
+        -268
+} CjguiNativeBridgeShaderLibraryLifecycleClassification;
+
+typedef enum CjguiNativeBridgePipelineStateLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TOKEN_BOUND = 260,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CREATE_MAIN_THREAD_REQUIRED = -280,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESTROY_MAIN_THREAD_REQUIRED = -281,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_TOKEN_DENIED = -282,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_TOKEN_DENIED = -283,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TOKEN_NOT_BOUND = -284,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CAPACITY_EXHAUSTED = -285,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DOUBLE_DESTROY_DENIED = -286,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CREATION_FAILED = -287,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_OUT_TOKEN_REQUIRED = -288,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_DEVICE_TOKEN = -289,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_DEVICE_TOKEN = -290,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DEVICE_TOKEN_NOT_BOUND = -291,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_DESCRIPTOR_TOKEN = -292,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_DESCRIPTOR_TOKEN = -293,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESCRIPTOR_TOKEN_NOT_BOUND = -294,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESCRIPTOR_NOT_CONFIGURED = -295,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_VERTEX_FUNCTION_TOKEN = -296,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_VERTEX_FUNCTION_TOKEN = -297,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_VERTEX_FUNCTION_TOKEN_NOT_BOUND = -298,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_VERTEX_FUNCTION_KIND_REQUIRED = -299,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_FRAGMENT_FUNCTION_TOKEN = -300,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_FRAGMENT_FUNCTION_TOKEN = -301,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_FRAGMENT_FUNCTION_TOKEN_NOT_BOUND = -302,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_FRAGMENT_FUNCTION_KIND_REQUIRED = -303,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_ENCODER_BINDING_STILL_BLOCKED = -304,
+    CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DRAW_STILL_BLOCKED = -305
+} CjguiNativeBridgePipelineStateLifecycleClassification;
 
 /*
  * callable 只返回 dehydrated integer facts，或通过 out-token 返回 opaque token。
@@ -479,6 +600,117 @@ int32_t cjgui_native_bridge_render_pass_descriptor_encoder_creation_still_blocke
 int32_t cjgui_native_bridge_render_pass_descriptor_drawable_texture_still_blocked(
     void
 );
+uint32_t cjgui_native_bridge_pipeline_descriptor_table_capacity(void);
+uint32_t cjgui_native_bridge_pipeline_descriptor_table_enabled(void);
+uint32_t cjgui_native_bridge_pipeline_descriptor_table_occupied_count(void);
+int32_t cjgui_native_bridge_pipeline_descriptor_create(
+    uint64_t* out_descriptor_token
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_destroy(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_token_classify(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_double_destroy_classify(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_create_requires_main_thread(
+    void
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_destroy_requires_main_thread(
+    void
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_configure_requires_main_thread(
+    void
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_configure_no_draw(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_color_pixel_format_classify(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_sample_count_classify(
+    uint64_t descriptor_token
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_shader_library_still_blocked(
+    void
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_vertex_function_still_blocked(
+    void
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_fragment_function_still_blocked(
+    void
+);
+int32_t cjgui_native_bridge_pipeline_descriptor_blending_still_blocked(void);
+int32_t cjgui_native_bridge_pipeline_descriptor_encoder_binding_still_blocked(
+    void
+);
+int32_t cjgui_native_bridge_pipeline_state_creation_still_blocked(void);
+int32_t cjgui_native_bridge_shader_source_contract_available(void);
+uint32_t cjgui_native_bridge_shader_library_table_capacity(void);
+uint32_t cjgui_native_bridge_shader_library_table_enabled(void);
+uint32_t cjgui_native_bridge_shader_library_table_occupied_count(void);
+int32_t cjgui_native_bridge_shader_library_create(
+    uint64_t device_token,
+    uint64_t* out_library_token
+);
+int32_t cjgui_native_bridge_shader_library_destroy(uint64_t library_token);
+int32_t cjgui_native_bridge_shader_library_token_classify(
+    uint64_t library_token
+);
+int32_t cjgui_native_bridge_shader_library_double_destroy_classify(
+    uint64_t library_token
+);
+int32_t cjgui_native_bridge_shader_library_create_requires_main_thread(void);
+int32_t cjgui_native_bridge_shader_library_destroy_requires_main_thread(void);
+uint32_t cjgui_native_bridge_shader_function_table_capacity(void);
+uint32_t cjgui_native_bridge_shader_function_table_enabled(void);
+uint32_t cjgui_native_bridge_shader_function_table_occupied_count(void);
+int32_t cjgui_native_bridge_shader_function_lookup_vertex(
+    uint64_t library_token,
+    uint64_t* out_function_token
+);
+int32_t cjgui_native_bridge_shader_function_lookup_fragment(
+    uint64_t library_token,
+    uint64_t* out_function_token
+);
+int32_t cjgui_native_bridge_shader_function_destroy(uint64_t function_token);
+int32_t cjgui_native_bridge_shader_function_token_classify(
+    uint64_t function_token
+);
+int32_t cjgui_native_bridge_shader_function_double_destroy_classify(
+    uint64_t function_token
+);
+int32_t cjgui_native_bridge_shader_function_lookup_requires_main_thread(void);
+int32_t cjgui_native_bridge_shader_function_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_shader_function_missing_classify(void);
+int32_t cjgui_native_bridge_shader_pipeline_state_creation_still_blocked(void);
+int32_t cjgui_native_bridge_shader_encoder_binding_still_blocked(void);
+int32_t cjgui_native_bridge_shader_draw_still_blocked(void);
+uint32_t cjgui_native_bridge_pipeline_state_table_capacity(void);
+uint32_t cjgui_native_bridge_pipeline_state_table_enabled(void);
+uint32_t cjgui_native_bridge_pipeline_state_table_occupied_count(void);
+int32_t cjgui_native_bridge_pipeline_state_create(
+    uint64_t device_token,
+    uint64_t descriptor_token,
+    uint64_t vertex_function_token,
+    uint64_t fragment_function_token,
+    uint64_t* out_pipeline_state_token
+);
+int32_t cjgui_native_bridge_pipeline_state_destroy(
+    uint64_t pipeline_state_token
+);
+int32_t cjgui_native_bridge_pipeline_state_token_classify(
+    uint64_t pipeline_state_token
+);
+int32_t cjgui_native_bridge_pipeline_state_double_destroy_classify(
+    uint64_t pipeline_state_token
+);
+int32_t cjgui_native_bridge_pipeline_state_create_requires_main_thread(void);
+int32_t cjgui_native_bridge_pipeline_state_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_pipeline_state_encoder_binding_still_blocked(void);
+int32_t cjgui_native_bridge_pipeline_state_draw_still_blocked(void);
 
 #ifdef __cplusplus
 }

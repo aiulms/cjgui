@@ -94,3 +94,9 @@
 - [real draw call first implementation slice manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-08-p1-renderer-real-draw-call-first-implementation-slice-manifest.md)
 
 这些下游文档只把 `CjguiInternalRendererNoRealPipelineStateShellReadiness` 作为 draw call shell planning evidence，不把它升格为真实 pipeline state、binding、GPU submission、render 或 public API permission。
+
+## 当前下游回流
+
+2026-05-11 的 [render command encoder 创建阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-creation-blocker-reconciliation-manifest.md) 已确认当前主线转向 `P1 internal Renderer pipeline state no-draw planning preflight decision`。该回流只能复用本 manifest 的 shader denial、descriptor denial、binding denial 与 compatibility failure vocabulary；不把 `CjguiInternalRendererNoRealPipelineStateShellReadiness` 升格为真实 pipeline state creation、encoder binding、draw、commit、present、GPU submission、render、renderer state write 或 public API permission。
+
+2026-05-12 的 [pipeline state no-draw planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-12-p1-renderer-pipeline-state-no-draw-planning-manifest.md) 已接续该回流，新增 `CjguiInternalRendererNoPipelineStateNoDrawPlanningReadiness`，但仍只记录 shader/library/function requirement、pipeline descriptor requirement、pipeline state create deferred、encoder binding blocked、draw blocked 与 GPU submission blocked facts；不创建真实 pipeline state，不创建 shader library / function 或 pipeline descriptor，不绑定 encoder。

@@ -238,6 +238,10 @@ Renderer draw call implementation admission value boundary 已完成：
 
 新增 truth 仅限 primitive command admission / geometry binding admission / draw ordering admission / no-draw-call-implementation value facts。它不是 pipeline-state endpoint 的 draw-ready wrapper，也不批准 draw call、primitive command invocation、geometry / resource binding、pipeline binding、GPU submission、render、renderer state write 或 public API permission。
 
+## 当前 no-draw 回流
+
+2026-05-12 的 [pipeline state no-draw planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-12-p1-renderer-pipeline-state-no-draw-planning-manifest.md) 已复用本 manifest 的 shader admission、descriptor admission 与 compatibility admission vocabulary。该回流只新增 `CjguiInternalRendererNoPipelineStateNoDrawPlanningReadiness` planning facts；不创建 shader library / function、pipeline descriptor、pipeline state 或 encoder，不调用 `setRenderPipelineState`，不 draw，不提交 GPU work，不执行 render。
+
 ## 下游 draw call implementation admission next-boundary decision
 
 Renderer draw call implementation admission next-boundary decision 已完成：
@@ -269,3 +273,9 @@ real pipeline state first-slice macro 已完成：
 该 downstream 不消费 `CjguiInternalRendererNoPipelineStateImplementationReadiness`，而是把 real encoder shell endpoint `CjguiInternalRendererNoRealEncoderShellReadiness` 作为 runtime input，新增 `runtime/cjgui/src/runtime_renderer_pipeline_state_real.cj`，并固定 `CjguiInternalRendererNoRealPipelineStateShellReadiness` / `cjguiInternalExecuteDefaultRendererRealPipelineStateShellDraft()`。
 
 该 downstream 只表达 real pipeline state shell intent、shader function denial proof、pipeline descriptor denial proof、pipeline binding denial proof、compatibility failure classification 与 no-real-pipeline-state-shell readiness facts；不创建真实 pipeline state，不加载 / 编译 shader function，不创建 pipeline descriptor，不绑定 pipeline / buffer / texture / resource，不创建 encoder、GPU submission、render、renderer state write、backend ready truth 或 public API。
+
+## 当前下游回流
+
+2026-05-11 的 [render command encoder 创建阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-creation-blocker-reconciliation-manifest.md) 已把主线转回 pipeline state no-draw planning preflight。该回流不是对本 admission owner 的 implementation approval，只说明在 encoder / drawable / color attachment 仍被阻塞时，可以先固定 shader / descriptor / compatibility contracts。
+
+下一步仍不得创建 pipeline state、shader library / shader function、pipeline descriptor、encoder、draw、commit、present、GPU submission、render、renderer state write 或 public API。

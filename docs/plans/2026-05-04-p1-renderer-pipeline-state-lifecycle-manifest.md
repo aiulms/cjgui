@@ -338,6 +338,10 @@ Renderer pipeline state implementation preflight 已完成：
 
 新的唯一后续入口是 `P1 internal Renderer draw call implementation preflight decision`。
 
+## 当前 no-draw 回流
+
+2026-05-12 的 [pipeline state no-draw planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-12-p1-renderer-pipeline-state-no-draw-planning-manifest.md) 已复用本 manifest 的 shader function policy、pipeline descriptor policy 与 compatibility guard vocabulary，但只固定 planning facts；它不创建 shader library / function、pipeline descriptor、pipeline state 或 encoder，不调用 `setRenderPipelineState`，不 draw，不 `commit` / `present`，不提交 GPU work，不执行 render。
+
 ## 下游 real pipeline state first-slice macro
 
 real pipeline state first-slice macro 已完成：
@@ -352,3 +356,9 @@ real pipeline state first-slice macro 已完成：
 该 downstream 只把本 manifest 作为 lifecycle vocabulary evidence，不消费 `CjguiInternalRendererNoPipelineStateReadiness`。真实 first slice 的 runtime input 是 `CjguiInternalRendererNoRealEncoderShellReadiness`，canonical endpoint 是 `CjguiInternalRendererNoRealPipelineStateShellReadiness` / `cjguiInternalExecuteDefaultRendererRealPipelineStateShellDraft()`。
 
 该 downstream 不把 lifecycle endpoint 包成 pipeline-ready、shader-ready、descriptor-ready、binding-ready、GPU-submission、render-permission、renderer-state-write、receipt、record 或 publication wrapper，也不创建真实 pipeline state、shader function、pipeline descriptor、pipeline binding、encoder、GPU submission、render、renderer state write 或 public API。
+
+## 当前下游回流
+
+2026-05-11 的 [render command encoder 创建阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-creation-blocker-reconciliation-manifest.md) 已确认 encoder creation 被 production drawable texture lifetime 与 `colorAttachments[0]` 双重缺口阻塞，并把主线转向 `P1 internal Renderer pipeline state no-draw planning preflight decision`。
+
+该回流只允许重新审视 pipeline state no-draw contract；不改变本 manifest 的 stop-line，不授权创建 pipeline state、shader library / shader function、pipeline descriptor、encoder、draw、commit、present、GPU submission、render、renderer state write 或 public API。

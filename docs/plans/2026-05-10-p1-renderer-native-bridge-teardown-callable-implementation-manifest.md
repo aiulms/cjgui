@@ -95,6 +95,8 @@ Return contract：
 
 当前 canonical tail 以 [CAMetalLayer runtime attachment FFI call owner manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-cametallayer-runtime-attachment-ffi-call-owner-manifest.md) 为准，唯一后续入口转为 `P1 internal Renderer Metal device binding planning preflight decision`。该入口只能先评估 Metal device binding planning；不得直接创建 `MTLDevice` / `MTLCommandQueue` / drawable，仍不得返回 native pointer / handle，不得新增 public API，不得写 renderer state，不得创建 backend-ready truth。
 
+后续 Renderer 路线已继续接到 [production drawable texture lifetime 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-production-drawable-texture-lifetime-manifest.md)，当前唯一入口转为 `P1 internal Renderer drawable texture lifetime implementation recovery decision`。该下游仍不改变本 no-destroy / revoke-before-destroy / fail-closed teardown 边界，也不授权 production drawable acquire / release、descriptor attachment、encoder、draw、commit、present、GPU submission、render 或 backend-ready truth。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，teardown callable implementation 已 manifest stabilization。

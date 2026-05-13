@@ -79,6 +79,6 @@ Runtime input：
 - 本轮是否改变主题状态：是，command buffer create / destroy 与 runtime internal FFI call owner 已完成。
 - 本轮是否改变 canonical tail / endpoint：是，tail 固定为 `CjguiInternalRendererNoCommandBufferRuntimeCallReadiness`。
 - 本轮是否改变 owner / truth / stop-line：是，owner 固定为 command buffer create / destroy 与 runtime call owners；truth 只到 local token lifecycle facts；stop-line 禁止 commit / present / encoder / render pass / GPU / render / state / public。
-- 本轮是否改变唯一 next opening：是，唯一 next opening 固定为 `P1 internal Renderer render pass descriptor planning preflight decision`。
+- 本轮是否改变唯一 next opening：是，当时唯一 next opening 固定为 `P1 internal Renderer render pass descriptor planning preflight decision`；现已由 [MTLRenderPassDescriptor 路线封账清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-runway-manifest.md) 接续。
 - 是否同步 topic manifest：需要并纳入本轮同步。
 - 已同步哪些 topic manifest：`renderer-implementation-admission-chain.md`、`renderer-backend-readiness-real-backend-runway.md`、`macos-bridge-verification-smoke.md`。

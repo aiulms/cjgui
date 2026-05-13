@@ -81,9 +81,16 @@
 - [Drawable no-present acquisition 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-no-present-acquisition-manifest.md)
 - [Metal device binding 路线封账清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-metal-device-binding-runway-manifest.md)
 
-下游唯一接续：
+下游已接续：
 
-- `P1 internal Renderer render pass descriptor planning preflight decision`
+- [MTLRenderPassDescriptor 路线封账清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-runway-manifest.md)
+- [render pass descriptor color attachment planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-color-attachment-manifest.md)
+- [render pass descriptor color attachment recovery 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-color-attachment-recovery-manifest.md)
+- [drawable texture lifetime implementation recovery 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-texture-lifetime-implementation-recovery-manifest.md)
+- [render command encoder no-submit planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-no-submit-planning-manifest.md)
+- [render command encoder 创建阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-creation-blocker-reconciliation-manifest.md)
+
+最新接续确认 command buffer runtime call facts 可作为 render command encoder no-submit planning 的唯一 runtime input，并进一步确认 encoder creation 仍被 production drawable texture lifetime 与 `colorAttachments[0]` 阻塞；当前已由 [pipeline state no-draw planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-12-p1-renderer-pipeline-state-no-draw-planning-manifest.md) 接续，但仍不创建 shader library / function、pipeline descriptor、pipeline state 或 encoder，不调用 `setRenderPipelineState` / `renderCommandEncoderWithDescriptor`，不 draw，不 `commit` / `present`，不提交 GPU work，不执行 render。
 
 ## 停止线
 
@@ -91,4 +98,4 @@
 
 ## 唯一后续入口
 
-`P1 internal Renderer render pass descriptor planning preflight decision`
+`P1 internal Renderer pipeline descriptor no-draw planning preflight decision`

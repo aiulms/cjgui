@@ -67,6 +67,12 @@
 
 本阶段已由 [Command queue creation 路线封账清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-command-queue-creation-runway-manifest.md) 接续。下游只打开 token-backed `MTLCommandQueue` create / classify / destroy 与 runtime-local FFI call facts；未创建 command buffer，未调用 `commandBuffer`，未创建 encoder，未 `commit` / `present`，未提交 GPU work，未执行 render，未写 renderer state。
 
+本阶段也作为 [render pass descriptor color attachment planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-color-attachment-manifest.md) 的上游证据被引用，但只证明 isolated no-present drawable acquisition 可观察；该证据不是 production drawable token / texture lifecycle，不能直接配置 production descriptor 的 `colorAttachments[0]`。
+
+本阶段还被 [render pass descriptor color attachment recovery 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-color-attachment-recovery-manifest.md) 复核为 blocker 证据：isolated no-present drawable 不足以证明 production descriptor / drawable / layer / device cleanup 共同所有权。
+
+本阶段进一步被 [production drawable texture lifetime 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-production-drawable-texture-lifetime-manifest.md) 复核为 planning 上游：isolated visible-window `nextDrawable` 只证明可观察性，不证明 production visible window semantics、drawable token-local acquire / classify / release、release fail-closed 或 cleanup co-ownership 已实现。
+
 ## 停止线
 
 不 present，不调用 `presentDrawable` / `present`，不创建 command queue / command buffer / encoder，不提交 GPU work，不执行 render，不写 renderer state，不触碰 `runtime_state.cj`，不修改 `runtime/cjgui/cjpm.toml`，不修改 smoke native files，不新增 public API / diagnostics，不返回 native pointer / handle / `id` / `Class`，不把 isolated no-present drawable acquisition facts 解释成 production backend-ready truth、render permission、GPU submission permission 或 state write permission。

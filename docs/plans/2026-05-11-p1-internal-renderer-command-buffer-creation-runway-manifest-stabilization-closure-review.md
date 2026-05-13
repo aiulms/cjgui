@@ -11,9 +11,13 @@
 - `CjguiInternalRendererNoCommandBufferRuntimeCallReadiness`
 - `cjguiInternalExecuteDefaultRendererCommandBufferRuntimeCallDraft()`
 
-当前唯一后续入口：
+当时唯一后续入口：
 
 - `P1 internal Renderer render pass descriptor planning preflight decision`
+
+下游已接续：
+
+- [MTLRenderPassDescriptor 路线封账清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-runway-manifest.md)
 
 ## 同步范围
 
@@ -46,6 +50,6 @@
 - 本轮是否改变主题状态：是，command buffer creation runway 已从 planning 进入 first slice 与 runtime internal call owner 封账。
 - 本轮是否改变 canonical tail / endpoint：是，tail 固定为 `CjguiInternalRendererNoCommandBufferRuntimeCallReadiness`。
 - 本轮是否改变 owner / truth / stop-line：是，owner 固定为 command buffer create / destroy 与 runtime call owners；truth 只到 command buffer token lifecycle dehydrated facts；stop-line 禁止 render pass / encoder / commit / present / GPU / render / state / public。
-- 本轮是否改变唯一 next opening：是，唯一 next opening 固定为 `P1 internal Renderer render pass descriptor planning preflight decision`。
+- 本轮是否改变唯一 next opening：是，当时唯一 next opening 固定为 `P1 internal Renderer render pass descriptor planning preflight decision`；现已由 render pass descriptor runway 接续。
 - 是否同步 topic manifest：是。
 - 已同步哪些 topic manifest：`renderer-implementation-admission-chain.md`、`renderer-backend-readiness-real-backend-runway.md`、`macos-bridge-verification-smoke.md`。

@@ -67,6 +67,8 @@ Probe 只做 planning consistency，固定：
 已接续下游：
 
 - [Drawable 可见窗口 probe 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-visible-window-acquisition-probe-manifest.md)
+- [render pass descriptor color attachment recovery 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-pass-descriptor-color-attachment-recovery-manifest.md)，只作为 environment prerequisite / blocker 证据，不升级为 production drawable texture lifecycle truth。
+- [production drawable texture lifetime 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-production-drawable-texture-lifetime-manifest.md)，只作为 production visible window semantics 与 display-backed layer ownership 缺口证据，不升级为 production `nextDrawable` 或 drawable texture lifetime implementation truth。
 
 当前唯一接续：
 

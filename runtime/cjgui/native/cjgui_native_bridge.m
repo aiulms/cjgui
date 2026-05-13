@@ -5,7 +5,11 @@
  * table / create-destroy / NSView attachment first slice、Metal device binding
  * first slice、MTLCommandQueue create/destroy first slice、
  * MTLCommandBuffer create/destroy first slice、
- * MTLRenderPassDescriptor create/destroy first slice 与确定性整数事实，
+ * MTLRenderPassDescriptor create/destroy first slice、
+ * MTLRenderPipelineDescriptor no-draw create/config/destroy first slice、
+ * shader library / function no-draw create/lookup/destroy first slice、
+ * MTLRenderPipelineState no-draw create/destroy first slice
+ * 与确定性整数事实，
  * 不是运行时 bridge truth。
  * Stop-line: 只允许 pthread 当前线程分类、bridge-local token facts、AppKit import /
  * class lookup / main-thread admission / no-object creation facts、fixed-capacity
@@ -13,9 +17,11 @@
  * allocation / table / create-destroy / controlled NSView attachment facts、
  * Metal device availability / table / layer binding facts、fixed-capacity
  * command queue token facts、command buffer token facts、render pass descriptor
- * token facts；不获取 drawable，
- * command buffer / render pass descriptor first slice 不 commit / present /
- * encoder / render，
+ * token facts、pipeline descriptor token/config facts、shader library /
+ * function token facts 与 pipeline state token facts；不获取 drawable，
+ * command buffer / render pass descriptor / pipeline descriptor / shader /
+ * pipeline state first slice 不创建或绑定 encoder，不 commit / present /
+ * draw / render，
  * 不返回 pointer。
  * Same-shape Boundary Brake: callable surface 不得被包装成 native bridge、Metal、backend、GPU、render 或 public API permission。
  */
@@ -49,8 +55,10 @@
  * create-destroy first slice 只创建未绑定 drawable 的 fixed-capacity layer token。
  * Metal device first slice 只绑定 default device 到 CAMetalLayer；command queue
  * first slice 只创建 / 销毁 MTLCommandQueue；command buffer first slice
- * 只创建 / 清空 MTLCommandBuffer token 与 MTLRenderPassDescriptor token，
- * 不 commit / present / encoder / render，不提交 GPU work。
+ * 只创建 / 清空 MTLCommandBuffer token、MTLRenderPassDescriptor token、
+ * no-draw MTLRenderPipelineDescriptor token、shader library / function token
+ * 与 no-draw MTLRenderPipelineState token，不 commit / present / encoder /
+ * draw / render，不提交 GPU work。
  */
 typedef struct CjguiNativeBridgeTokenTableEntry {
     uint32_t generation;
@@ -117,6 +125,46 @@ typedef struct CjguiNativeBridgeRenderPassDescriptorTableEntry {
     uint8_t active;
 } CjguiNativeBridgeRenderPassDescriptorTableEntry;
 
+typedef struct CjguiNativeBridgePipelineDescriptorTableEntry {
+    uint64_t token;
+#if defined(__APPLE__)
+    __strong MTLRenderPipelineDescriptor *descriptor;
+#endif
+    uint8_t active;
+    uint8_t configured;
+} CjguiNativeBridgePipelineDescriptorTableEntry;
+
+typedef struct CjguiNativeBridgeShaderLibraryTableEntry {
+    uint64_t token;
+    uint64_t device_token;
+#if defined(__APPLE__)
+    __strong id<MTLLibrary> library;
+#endif
+    uint8_t active;
+} CjguiNativeBridgeShaderLibraryTableEntry;
+
+typedef struct CjguiNativeBridgeShaderFunctionTableEntry {
+    uint64_t token;
+    uint64_t library_token;
+    uint8_t function_kind;
+#if defined(__APPLE__)
+    __strong id<MTLFunction> function;
+#endif
+    uint8_t active;
+} CjguiNativeBridgeShaderFunctionTableEntry;
+
+typedef struct CjguiNativeBridgePipelineStateTableEntry {
+    uint64_t token;
+    uint64_t device_token;
+    uint64_t descriptor_token;
+    uint64_t vertex_function_token;
+    uint64_t fragment_function_token;
+#if defined(__APPLE__)
+    __strong id<MTLRenderPipelineState> pipeline_state;
+#endif
+    uint8_t active;
+} CjguiNativeBridgePipelineStateTableEntry;
+
 static pthread_mutex_t g_cjgui_native_bridge_token_table_mutex =
     PTHREAD_MUTEX_INITIALIZER;
 static CjguiNativeBridgeTokenTableEntry
@@ -151,6 +199,26 @@ static pthread_mutex_t
 static CjguiNativeBridgeRenderPassDescriptorTableEntry
     g_cjgui_native_bridge_render_pass_descriptor_table
         [CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_TABLE_CAPACITY];
+static pthread_mutex_t g_cjgui_native_bridge_pipeline_descriptor_table_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+static CjguiNativeBridgePipelineDescriptorTableEntry
+    g_cjgui_native_bridge_pipeline_descriptor_table
+        [CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TABLE_CAPACITY];
+static pthread_mutex_t g_cjgui_native_bridge_shader_library_table_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+static CjguiNativeBridgeShaderLibraryTableEntry
+    g_cjgui_native_bridge_shader_library_table
+        [CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TABLE_CAPACITY];
+static pthread_mutex_t g_cjgui_native_bridge_shader_function_table_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+static CjguiNativeBridgeShaderFunctionTableEntry
+    g_cjgui_native_bridge_shader_function_table
+        [CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY];
+static pthread_mutex_t g_cjgui_native_bridge_pipeline_state_table_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+static CjguiNativeBridgePipelineStateTableEntry
+    g_cjgui_native_bridge_pipeline_state_table
+        [CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY];
 
 static uint64_t token_table_make_token(
     uint32_t slot_index,
@@ -484,6 +552,228 @@ static int32_t render_pass_descriptor_table_first_free_slot_locked(void) {
     return -1;
 }
 
+static uint32_t pipeline_descriptor_table_occupied_count_locked(void) {
+    uint32_t count = 0u;
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].active ==
+            1u) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int32_t pipeline_descriptor_table_find_token_locked(uint64_t token) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].token ==
+                token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t pipeline_descriptor_table_first_free_slot_locked(void) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].active ==
+            0u) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static uint32_t shader_library_table_occupied_count_locked(void) {
+    uint32_t count = 0u;
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_shader_library_table[slot_index].active ==
+            1u) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int32_t shader_library_table_find_token_locked(uint64_t token) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_shader_library_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_shader_library_table[slot_index].token ==
+                token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t shader_library_table_first_free_slot_locked(void) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_shader_library_table[slot_index].active ==
+            0u) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static uint32_t shader_function_table_occupied_count_locked(void) {
+    uint32_t count = 0u;
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_shader_function_table[slot_index].active ==
+            1u) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int32_t shader_function_table_find_token_locked(uint64_t token) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_shader_function_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_shader_function_table[slot_index].token ==
+                token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t shader_function_table_first_free_slot_locked(void) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_shader_function_table[slot_index].active ==
+            0u) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t shader_function_table_find_bound_library_locked(
+    uint64_t library_token
+) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_shader_function_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_shader_function_table[slot_index]
+                    .library_token == library_token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static uint32_t pipeline_state_table_occupied_count_locked(void) {
+    uint32_t count = 0u;
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_state_table[slot_index].active ==
+            1u) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int32_t pipeline_state_table_find_token_locked(uint64_t token) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_state_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_pipeline_state_table[slot_index].token ==
+                token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t pipeline_state_table_first_free_slot_locked(void) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_state_table[slot_index].active ==
+            0u) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t pipeline_state_table_find_bound_device_locked(
+    uint64_t device_token
+) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_state_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_pipeline_state_table[slot_index]
+                    .device_token == device_token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t pipeline_state_table_find_bound_descriptor_locked(
+    uint64_t descriptor_token
+) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_state_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_pipeline_state_table[slot_index]
+                    .descriptor_token == descriptor_token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t pipeline_state_table_find_bound_function_locked(
+    uint64_t function_token
+) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_pipeline_state_table[slot_index].active ==
+                1u &&
+            (g_cjgui_native_bridge_pipeline_state_table[slot_index]
+                     .vertex_function_token == function_token ||
+             g_cjgui_native_bridge_pipeline_state_table[slot_index]
+                     .fragment_function_token == function_token)) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
 static int32_t cametallayer_attachment_layer_status_from_classification(
     int32_t classification
 ) {
@@ -622,6 +912,165 @@ static int32_t render_pass_descriptor_status_from_classification(
     return classification;
 }
 
+static int32_t pipeline_descriptor_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_INVALID_TOKEN_DENIED;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_STALE_TOKEN_DENIED;
+    }
+    return classification;
+}
+
+static int32_t shader_library_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_INVALID_TOKEN_DENIED;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_STALE_TOKEN_DENIED;
+    }
+    return classification;
+}
+
+static int32_t shader_library_device_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_INVALID_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_INVALID_DEVICE_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_STALE_DEVICE_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_NOT_BOUND) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DEVICE_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
+static int32_t shader_function_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_INVALID_TOKEN_DENIED;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_STALE_TOKEN_DENIED;
+    }
+    return classification;
+}
+
+static int32_t shader_function_library_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_INVALID_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_INVALID_LIBRARY_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_STALE_LIBRARY_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TOKEN_NOT_BOUND) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_LIBRARY_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
+static int32_t pipeline_state_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_TOKEN_DENIED;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_TOKEN_DENIED;
+    }
+    return classification;
+}
+
+static int32_t pipeline_state_device_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_INVALID_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_DEVICE_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_DEVICE_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_NOT_BOUND) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DEVICE_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
+static int32_t pipeline_state_descriptor_status_from_classification(
+    int32_t classification
+) {
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_INVALID_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_DESCRIPTOR_TOKEN;
+    }
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_DESCRIPTOR_TOKEN;
+    }
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_NOT_BOUND) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DESCRIPTOR_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
+static int32_t pipeline_state_vertex_function_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_INVALID_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_VERTEX_FUNCTION_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_VERTEX_FUNCTION_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TOKEN_NOT_BOUND) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_VERTEX_FUNCTION_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
+static int32_t pipeline_state_fragment_function_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_INVALID_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_INVALID_FRAGMENT_FUNCTION_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_STALE_FRAGMENT_FUNCTION_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TOKEN_NOT_BOUND) {
+        return
+            CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_FRAGMENT_FUNCTION_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
+#if defined(__APPLE__)
+static NSString *shader_library_minimal_source_contract(void) {
+    return @"#include <metal_stdlib>\n"
+           "using namespace metal;\n"
+           "struct CjguiVertexOut { float4 position [[position]]; };\n"
+           "vertex CjguiVertexOut cjgui_vertex_main(uint vertexID [[vertex_id]]) {\n"
+           "  float2 positions[3] = { float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0) };\n"
+           "  CjguiVertexOut out;\n"
+           "  out.position = float4(positions[vertexID], 0.0, 1.0);\n"
+           "  return out;\n"
+           "}\n"
+           "fragment float4 cjgui_fragment_main() {\n"
+           "  return float4(0.08, 0.16, 0.20, 1.0);\n"
+           "}\n";
+}
+#endif
+
 uint32_t cjgui_native_bridge_surface_version(void) {
     return CJGUI_NATIVE_BRIDGE_SURFACE_VERSION;
 }
@@ -651,7 +1100,11 @@ uint32_t cjgui_native_bridge_surface_capabilities(void) {
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_METAL_DEVICE_LAYER_BINDING |
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_COMMAND_QUEUE_CREATE_DESTROY |
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_COMMAND_BUFFER_CREATE_DESTROY |
-        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_RENDER_PASS_DESCRIPTOR_CREATE_DESTROY;
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_RENDER_PASS_DESCRIPTOR_CREATE_DESTROY |
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_DESCRIPTOR_CREATE_DESTROY |
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_LIBRARY_CREATE_DESTROY |
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_FUNCTION_LOOKUP |
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_STATE_CREATE_DESTROY;
 }
 
 uint32_t cjgui_native_bridge_status_ok(void) {
@@ -1673,6 +2126,15 @@ int32_t cjgui_native_bridge_metal_device_destroy(uint64_t token) {
             CJGUI_NATIVE_BRIDGE_METAL_DEVICE_COMMAND_QUEUE_DESTROY_BEFORE_DEVICE_REQUIRED;
     }
 
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t bound_pipeline_state_slot =
+        pipeline_state_table_find_bound_device_locked(token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (bound_pipeline_state_slot >= 0) {
+        return
+            CJGUI_NATIVE_BRIDGE_METAL_DEVICE_PIPELINE_STATE_DESTROY_BEFORE_DEVICE_REQUIRED;
+    }
+
     pthread_mutex_lock(&g_cjgui_native_bridge_metal_device_table_mutex);
     int32_t slot_index = metal_device_table_find_token_locked(token);
     if (slot_index < 0) {
@@ -2513,4 +2975,777 @@ int32_t
 cjgui_native_bridge_render_pass_descriptor_drawable_texture_still_blocked(void) {
     return
         CJGUI_NATIVE_BRIDGE_RENDER_PASS_DESCRIPTOR_DRAWABLE_TEXTURE_STILL_BLOCKED;
+}
+
+uint32_t cjgui_native_bridge_pipeline_descriptor_table_capacity(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TABLE_CAPACITY;
+}
+
+uint32_t cjgui_native_bridge_pipeline_descriptor_table_enabled(void) {
+    return 1u;
+}
+
+uint32_t cjgui_native_bridge_pipeline_descriptor_table_occupied_count(void) {
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    uint32_t count = pipeline_descriptor_table_occupied_count_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    return count;
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_token_classify(
+    uint64_t descriptor_token
+) {
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        descriptor_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return pipeline_descriptor_status_from_classification(
+            token_classification
+        );
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t bound_pipeline_state_slot =
+        pipeline_state_table_find_bound_descriptor_locked(descriptor_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (bound_pipeline_state_slot >= 0) {
+        return
+            CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_PIPELINE_STATE_DESTROY_BEFORE_DESCRIPTOR_REQUIRED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    int32_t slot_index =
+        pipeline_descriptor_table_find_token_locked(descriptor_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    if (slot_index >= 0) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_BOUND;
+    }
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_NOT_BOUND;
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_create(
+    uint64_t* out_descriptor_token
+) {
+    if (out_descriptor_token == 0) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_OUT_TOKEN_REQUIRED;
+    }
+    *out_descriptor_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CREATE_MAIN_THREAD_REQUIRED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    int32_t free_slot = pipeline_descriptor_table_first_free_slot_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    if (free_slot < 0) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CAPACITY_EXHAUSTED;
+    }
+
+    uint64_t descriptor_token = cjgui_native_bridge_token_issue();
+    if (descriptor_token == CJGUI_NATIVE_BRIDGE_TOKEN_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CAPACITY_EXHAUSTED;
+    }
+
+    __strong MTLRenderPipelineDescriptor *descriptor =
+        [[MTLRenderPipelineDescriptor alloc] init];
+    if (descriptor == nil) {
+        (void)cjgui_native_bridge_token_revoke(descriptor_token);
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CREATION_FAILED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    if (g_cjgui_native_bridge_pipeline_descriptor_table[free_slot].active !=
+        0u) {
+        free_slot = pipeline_descriptor_table_first_free_slot_locked();
+    }
+    if (free_slot < 0) {
+        pthread_mutex_unlock(
+            &g_cjgui_native_bridge_pipeline_descriptor_table_mutex
+        );
+        (void)cjgui_native_bridge_token_revoke(descriptor_token);
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CAPACITY_EXHAUSTED;
+    }
+
+    g_cjgui_native_bridge_pipeline_descriptor_table[free_slot].token =
+        descriptor_token;
+    g_cjgui_native_bridge_pipeline_descriptor_table[free_slot].descriptor =
+        descriptor;
+    g_cjgui_native_bridge_pipeline_descriptor_table[free_slot].active = 1u;
+    g_cjgui_native_bridge_pipeline_descriptor_table[free_slot].configured = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    *out_descriptor_token = descriptor_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_destroy(
+    uint64_t descriptor_token
+) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return
+            CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_DESTROY_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        descriptor_token
+    );
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_INVALID_TOKEN_DENIED;
+    }
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_DOUBLE_DESTROY_DENIED;
+    }
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return pipeline_descriptor_status_from_classification(
+            token_classification
+        );
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    int32_t slot_index =
+        pipeline_descriptor_table_find_token_locked(descriptor_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(
+            &g_cjgui_native_bridge_pipeline_descriptor_table_mutex
+        );
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_NOT_BOUND;
+    }
+
+    g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].descriptor = nil;
+    g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].active = 0u;
+    g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].configured = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+
+    int32_t revoke_status = cjgui_native_bridge_token_revoke(descriptor_token);
+    if (revoke_status != CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK) {
+        return revoke_status;
+    }
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_double_destroy_classify(
+    uint64_t descriptor_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_pipeline_descriptor_token_classify(
+            descriptor_token
+        );
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_DOUBLE_DESTROY_DENIED;
+    }
+    return classification;
+}
+
+int32_t
+cjgui_native_bridge_pipeline_descriptor_create_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CREATE_MAIN_THREAD_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_pipeline_descriptor_destroy_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_DESTROY_MAIN_THREAD_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_pipeline_descriptor_configure_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CONFIGURE_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_configure_no_draw(
+    uint64_t descriptor_token
+) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return
+            CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_CONFIGURE_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        descriptor_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return pipeline_descriptor_status_from_classification(
+            token_classification
+        );
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    int32_t slot_index =
+        pipeline_descriptor_table_find_token_locked(descriptor_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(
+            &g_cjgui_native_bridge_pipeline_descriptor_table_mutex
+        );
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_NOT_BOUND;
+    }
+
+    MTLRenderPipelineDescriptor *descriptor =
+        g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].descriptor;
+    descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    descriptor.rasterSampleCount = 1u;
+    descriptor.vertexFunction = nil;
+    descriptor.fragmentFunction = nil;
+    descriptor.colorAttachments[0].blendingEnabled = NO;
+    g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].configured = 1u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_color_pixel_format_classify(
+    uint64_t descriptor_token
+) {
+#if defined(__APPLE__)
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        descriptor_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return pipeline_descriptor_status_from_classification(
+            token_classification
+        );
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    int32_t slot_index =
+        pipeline_descriptor_table_find_token_locked(descriptor_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(
+            &g_cjgui_native_bridge_pipeline_descriptor_table_mutex
+        );
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_NOT_BOUND;
+    }
+    MTLRenderPipelineDescriptor *descriptor =
+        g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].descriptor;
+    int32_t result =
+        descriptor.colorAttachments[0].pixelFormat == MTLPixelFormatBGRA8Unorm
+        ? CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_COLOR_PIXEL_FORMAT_CONFIGURED
+        : CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_COLOR_PIXEL_FORMAT_NOT_CONFIGURED;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    return result;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_sample_count_classify(
+    uint64_t descriptor_token
+) {
+#if defined(__APPLE__)
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        descriptor_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return pipeline_descriptor_status_from_classification(
+            token_classification
+        );
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    int32_t slot_index =
+        pipeline_descriptor_table_find_token_locked(descriptor_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(
+            &g_cjgui_native_bridge_pipeline_descriptor_table_mutex
+        );
+        return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_TOKEN_NOT_BOUND;
+    }
+    MTLRenderPipelineDescriptor *descriptor =
+        g_cjgui_native_bridge_pipeline_descriptor_table[slot_index].descriptor;
+    int32_t result =
+        descriptor.rasterSampleCount == 1u
+        ? CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_SAMPLE_COUNT_CONFIGURED
+        : CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_SAMPLE_COUNT_NOT_CONFIGURED;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_descriptor_table_mutex);
+    return result;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t
+cjgui_native_bridge_pipeline_descriptor_shader_library_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_SHADER_LIBRARY_STILL_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_pipeline_descriptor_vertex_function_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_VERTEX_FUNCTION_STILL_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_pipeline_descriptor_fragment_function_still_blocked(void) {
+    return
+        CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_FRAGMENT_FUNCTION_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_pipeline_descriptor_blending_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_BLENDING_STILL_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_pipeline_descriptor_encoder_binding_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_DESCRIPTOR_ENCODER_BINDING_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_pipeline_state_creation_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_CREATION_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_shader_source_contract_available(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_SOURCE_CONTRACT_AVAILABLE;
+}
+
+uint32_t cjgui_native_bridge_shader_library_table_capacity(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TABLE_CAPACITY;
+}
+
+uint32_t cjgui_native_bridge_shader_library_table_enabled(void) {
+    return 1u;
+}
+
+uint32_t cjgui_native_bridge_shader_library_table_occupied_count(void) {
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    uint32_t count = shader_library_table_occupied_count_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    return count;
+}
+
+int32_t cjgui_native_bridge_shader_library_token_classify(
+    uint64_t library_token
+) {
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        library_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return shader_library_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    int32_t slot_index =
+        shader_library_table_find_token_locked(library_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    if (slot_index >= 0) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TOKEN_BOUND;
+    }
+    return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TOKEN_NOT_BOUND;
+}
+
+int32_t cjgui_native_bridge_shader_library_create(
+    uint64_t device_token,
+    uint64_t* out_library_token
+) {
+    if (out_library_token == 0) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_OUT_TOKEN_REQUIRED;
+    }
+    *out_library_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CREATE_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t device_classification =
+        cjgui_native_bridge_metal_device_token_classify(device_token);
+    if (device_classification != CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_BOUND) {
+        return shader_library_device_status_from_classification(
+            device_classification
+        );
+    }
+
+    __strong id<MTLDevice> device = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_metal_device_table_mutex);
+    int32_t device_slot = metal_device_table_find_token_locked(device_token);
+    if (device_slot >= 0) {
+        device = g_cjgui_native_bridge_metal_device_table[device_slot].device;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_metal_device_table_mutex);
+    if (device == nil) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DEVICE_TOKEN_NOT_BOUND;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    int32_t free_slot = shader_library_table_first_free_slot_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    if (free_slot < 0) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CAPACITY_EXHAUSTED;
+    }
+
+    uint64_t library_token = cjgui_native_bridge_token_issue();
+    if (library_token == CJGUI_NATIVE_BRIDGE_TOKEN_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CAPACITY_EXHAUSTED;
+    }
+
+    __strong id<MTLLibrary> library = nil;
+    @autoreleasepool {
+        NSError *error = nil;
+        library = [device newLibraryWithSource:shader_library_minimal_source_contract()
+                                       options:nil
+                                         error:&error];
+        (void)error;
+    }
+    if (library == nil) {
+        (void)cjgui_native_bridge_token_revoke(library_token);
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CREATION_FAILED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    if (g_cjgui_native_bridge_shader_library_table[free_slot].active != 0u) {
+        free_slot = shader_library_table_first_free_slot_locked();
+    }
+    if (free_slot < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+        (void)cjgui_native_bridge_token_revoke(library_token);
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CAPACITY_EXHAUSTED;
+    }
+
+    g_cjgui_native_bridge_shader_library_table[free_slot].token = library_token;
+    g_cjgui_native_bridge_shader_library_table[free_slot].device_token =
+        device_token;
+    g_cjgui_native_bridge_shader_library_table[free_slot].library = library;
+    g_cjgui_native_bridge_shader_library_table[free_slot].active = 1u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    *out_library_token = library_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_shader_library_destroy(uint64_t library_token) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DESTROY_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        library_token
+    );
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_INVALID_TOKEN_DENIED;
+    }
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DOUBLE_DESTROY_DENIED;
+    }
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return shader_library_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    int32_t bound_function_slot =
+        shader_function_table_find_bound_library_locked(library_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    if (bound_function_slot >= 0) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DESTROY_BEFORE_LIBRARY_REQUIRED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    int32_t slot_index =
+        shader_library_table_find_token_locked(library_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TOKEN_NOT_BOUND;
+    }
+
+    g_cjgui_native_bridge_shader_library_table[slot_index].library = nil;
+    g_cjgui_native_bridge_shader_library_table[slot_index].token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_shader_library_table[slot_index].device_token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_shader_library_table[slot_index].active = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+
+    int32_t revoke_status = cjgui_native_bridge_token_revoke(library_token);
+    if (revoke_status != CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK) {
+        return revoke_status;
+    }
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_shader_library_double_destroy_classify(
+    uint64_t library_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_shader_library_token_classify(library_token);
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DOUBLE_DESTROY_DENIED;
+    }
+    return classification;
+}
+
+int32_t cjgui_native_bridge_shader_library_create_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_CREATE_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_shader_library_destroy_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_DESTROY_MAIN_THREAD_REQUIRED;
+}
+
+uint32_t cjgui_native_bridge_shader_function_table_capacity(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY;
+}
+
+uint32_t cjgui_native_bridge_shader_function_table_enabled(void) {
+    return 1u;
+}
+
+uint32_t cjgui_native_bridge_shader_function_table_occupied_count(void) {
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    uint32_t count = shader_function_table_occupied_count_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    return count;
+}
+
+static int32_t shader_function_lookup_with_name(
+    uint64_t library_token,
+    NSString *function_name,
+    uint8_t function_kind,
+    uint64_t* out_function_token
+) {
+    if (out_function_token == 0) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_OUT_TOKEN_REQUIRED;
+    }
+    *out_function_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_LOOKUP_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t library_classification =
+        cjgui_native_bridge_shader_library_token_classify(library_token);
+    if (library_classification !=
+        CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TOKEN_BOUND) {
+        return shader_function_library_status_from_classification(
+            library_classification
+        );
+    }
+
+    __strong id<MTLLibrary> library = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    int32_t library_slot =
+        shader_library_table_find_token_locked(library_token);
+    if (library_slot >= 0) {
+        library =
+            g_cjgui_native_bridge_shader_library_table[library_slot].library;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_library_table_mutex);
+    if (library == nil) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_LIBRARY_TOKEN_NOT_BOUND;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    int32_t free_slot = shader_function_table_first_free_slot_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    if (free_slot < 0) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY_EXHAUSTED;
+    }
+
+    uint64_t function_token = cjgui_native_bridge_token_issue();
+    if (function_token == CJGUI_NATIVE_BRIDGE_TOKEN_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY_EXHAUSTED;
+    }
+
+    __strong id<MTLFunction> function = [library newFunctionWithName:function_name];
+    if (function == nil) {
+        (void)cjgui_native_bridge_token_revoke(function_token);
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_MISSING;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    if (g_cjgui_native_bridge_shader_function_table[free_slot].active != 0u) {
+        free_slot = shader_function_table_first_free_slot_locked();
+    }
+    if (free_slot < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+        (void)cjgui_native_bridge_token_revoke(function_token);
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY_EXHAUSTED;
+    }
+
+    g_cjgui_native_bridge_shader_function_table[free_slot].token =
+        function_token;
+    g_cjgui_native_bridge_shader_function_table[free_slot].library_token =
+        library_token;
+    g_cjgui_native_bridge_shader_function_table[free_slot].function_kind =
+        function_kind;
+    g_cjgui_native_bridge_shader_function_table[free_slot].function = function;
+    g_cjgui_native_bridge_shader_function_table[free_slot].active = 1u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    *out_function_token = function_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_shader_function_lookup_vertex(
+    uint64_t library_token,
+    uint64_t* out_function_token
+) {
+#if defined(__APPLE__)
+    return shader_function_lookup_with_name(
+        library_token,
+        @"cjgui_vertex_main",
+        1u,
+        out_function_token
+    );
+#else
+    (void)library_token;
+    (void)out_function_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_shader_function_lookup_fragment(
+    uint64_t library_token,
+    uint64_t* out_function_token
+) {
+#if defined(__APPLE__)
+    return shader_function_lookup_with_name(
+        library_token,
+        @"cjgui_fragment_main",
+        2u,
+        out_function_token
+    );
+#else
+    (void)library_token;
+    (void)out_function_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_shader_function_token_classify(
+    uint64_t function_token
+) {
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        function_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return shader_function_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    int32_t bound_pipeline_state_slot =
+        pipeline_state_table_find_bound_function_locked(function_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_pipeline_state_table_mutex);
+    if (bound_pipeline_state_slot >= 0) {
+        return
+            CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_PIPELINE_STATE_DESTROY_BEFORE_FUNCTION_REQUIRED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    int32_t slot_index =
+        shader_function_table_find_token_locked(function_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TOKEN_NOT_BOUND;
+    }
+    uint8_t function_kind =
+        g_cjgui_native_bridge_shader_function_table[slot_index].function_kind;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    if (function_kind == 1u) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_VERTEX_BOUND;
+    }
+    if (function_kind == 2u) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_FRAGMENT_BOUND;
+    }
+    return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TOKEN_NOT_BOUND;
+}
+
+int32_t cjgui_native_bridge_shader_function_destroy(uint64_t function_token) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DESTROY_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        function_token
+    );
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_INVALID_TOKEN_DENIED;
+    }
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DOUBLE_DESTROY_DENIED;
+    }
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return shader_function_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_shader_function_table_mutex);
+    int32_t slot_index =
+        shader_function_table_find_token_locked(function_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TOKEN_NOT_BOUND;
+    }
+
+    g_cjgui_native_bridge_shader_function_table[slot_index].function = nil;
+    g_cjgui_native_bridge_shader_function_table[slot_index].token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_shader_function_table[slot_index].library_token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_shader_function_table[slot_index].function_kind = 0u;
+    g_cjgui_native_bridge_shader_function_table[slot_index].active = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_shader_function_table_mutex);
+
+    int32_t revoke_status = cjgui_native_bridge_token_revoke(function_token);
+    if (revoke_status != CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK) {
+        return revoke_status;
+    }
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_shader_function_double_destroy_classify(
+    uint64_t function_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_shader_function_token_classify(function_token);
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DOUBLE_DESTROY_DENIED;
+    }
+    return classification;
+}
+
+int32_t cjgui_native_bridge_shader_function_lookup_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_LOOKUP_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_shader_function_destroy_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_DESTROY_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_shader_function_missing_classify(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_MISSING;
+}
+
+int32_t cjgui_native_bridge_shader_pipeline_state_creation_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_PIPELINE_STATE_CREATION_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_shader_encoder_binding_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_ENCODER_BINDING_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_shader_draw_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_SHADER_DRAW_STILL_BLOCKED;
 }

@@ -84,6 +84,8 @@
 
 Metal device binding 后续又由 [Drawable acquisition 路线封账清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-acquisition-runway-manifest.md)、[Drawable acquisition recovery 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-acquisition-first-implementation-manifest.md) 与 [Drawable environment / window visibility planning 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-environment-window-visibility-manifest.md) 接续。当前下游仍只固定 environment / visibility planning facts，不调用 `nextDrawable`，不 present，不创建 command queue / command buffer / encoder。
 
+后续还由 [production drawable texture lifetime 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-production-drawable-texture-lifetime-manifest.md) 复核为 upstream evidence：attachment runtime facts 只证明 token-backed layer 可附着到 token-backed `NSView` 并 cleanup，不证明 production drawable texture lifetime、drawable release、descriptor cleanup co-ownership、color attachment、present、commit、GPU submission 或 render。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，`CAMetalLayer` route 已完成到 runtime internal attachment FFI call owner。

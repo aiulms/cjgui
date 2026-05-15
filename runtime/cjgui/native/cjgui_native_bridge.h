@@ -533,7 +533,35 @@ typedef enum CjguiNativeBridgeNsWindowHarnessLifecycleClassification {
     CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_EVENT_LOOP_DEFERRED = -424,
     CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_VISIBLE_ORDER_STILL_BLOCKED = -425,
     CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_DRAWABLE_STILL_BLOCKED = -426,
-    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_RENDER_STILL_BLOCKED = -427
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_RENDER_STILL_BLOCKED = -427,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_MAIN_THREAD_REQUIRED =
+        430,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_BOUNDED_RUN_LOOP_REQUIRED =
+        431,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_AUTO_CLOSE_REQUIRED =
+        432,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_TEARDOWN_BEFORE_VISIBLE_REQUIRED =
+        433,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_NON_USER_VISIBLE_REQUIRED =
+        434,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_ACCESSOR_BLOCKED =
+        -430,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_SINGLETON_CREATION_BLOCKED =
+        -431,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_HEADLESS_FAIL_CLOSED =
+        -432,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_ACTIVATION_POLICY_BLOCKED =
+        -433,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_ACTIVATION_BLOCKED =
+        -434,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_EVENT_LOOP_BLOCKED =
+        -435,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_VISIBLE_ORDER_STILL_BLOCKED =
+        -436,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_DRAWABLE_STILL_BLOCKED =
+        -437,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_RENDER_STILL_BLOCKED =
+        -438
 } CjguiNativeBridgeNsWindowHarnessLifecycleClassification;
 
 /*
@@ -934,6 +962,62 @@ int32_t cjgui_native_bridge_nsapplication_guard_headless_fail_closed(void);
 int32_t cjgui_native_bridge_nsapplication_guard_visible_order_still_blocked(void);
 int32_t cjgui_native_bridge_nsapplication_guard_drawable_still_blocked(void);
 int32_t cjgui_native_bridge_nsapplication_guard_render_still_blocked(void);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_accessor_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_singleton_creation_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_main_thread_required(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_bounded_run_loop_required(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_auto_close_required(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_headless_fail_closed(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_teardown_before_visible_required(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_non_user_visible_required(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_activation_policy_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_activation_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_event_loop_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_visible_order_still_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_drawable_still_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_guard_render_still_blocked(
+    void
+);
 
 #ifdef __cplusplus
 }

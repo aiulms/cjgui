@@ -66,3 +66,7 @@ pipeline state no-draw planning 可以独立推进，因为它可以先固定 co
 当前最新后续入口已转为：
 
 `P1 internal Renderer pipeline descriptor no-draw planning preflight decision`
+
+## 下游补充接续
+
+后续 pipeline descriptor no-draw、shader library no-draw、pipeline state create/destroy no-draw、vertex buffer no-submit、draw call no-submit 与 no-submit render pipeline branch milestone 已继续推进到 [No-submit 渲染管线分支里程碑清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-no-submit-render-pipeline-branch-milestone-manifest.md)，并由 production drawable texture lifetime first slice blocker refresh 与 [drawable texture lifetime implementation recovery manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-drawable-texture-lifetime-implementation-recovery-manifest.md) 接续。该补充接续确认：即使 token-backed `MTLRenderPipelineState` lifecycle、token-backed `MTLBuffer` lifecycle 与 draw input bundle facts 已成立，encoder binding 仍必须等待 render command encoder；而 render command encoder 仍受 production drawable texture lifetime 与 color attachment 缺口阻断。当前后续入口转为 `P1 internal Renderer visible-window production harness preflight decision`。

@@ -73,6 +73,8 @@
 
 本阶段进一步被 [production drawable texture lifetime 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-production-drawable-texture-lifetime-manifest.md) 复核为 planning 上游：isolated visible-window `nextDrawable` 只证明可观察性，不证明 production visible window semantics、drawable token-local acquire / classify / release、release fail-closed 或 cleanup co-ownership 已实现。
 
+本阶段又被 [production drawable texture lifetime first slice 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-production-drawable-texture-lifetime-first-slice-manifest.md) 复核为 blocker evidence：isolated no-present acquisition 仍不能作为 production runtime truth，不能直接打开 production drawable acquire / release C ABI。
+
 ## 停止线
 
 不 present，不调用 `presentDrawable` / `present`，不创建 command queue / command buffer / encoder，不提交 GPU work，不执行 render，不写 renderer state，不触碰 `runtime_state.cj`，不修改 `runtime/cjgui/cjpm.toml`，不修改 smoke native files，不新增 public API / diagnostics，不返回 native pointer / handle / `id` / `Class`，不把 isolated no-present drawable acquisition facts 解释成 production backend-ready truth、render permission、GPU submission permission 或 state write permission。

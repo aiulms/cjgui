@@ -45,7 +45,7 @@ if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge CAMetalLayer NSView attachment probe: forbidden framework import" >&2
   exit 4
 fi
-if grep -E 'nextDrawable|commit\]|presentDrawable|present\]|uintptr_t|void[[:space:]]*\*|__bridge|CFBridging|^[[:space:]]*(Class|id|CAMetalLayer[[:space:]]*\*)[[:space:]]+cjgui_' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'nextDrawable|commit\]|presentDrawable|present\]|uintptr_t|__bridge|CFBridging|^[[:space:]]*(Class|id|void[[:space:]]*\*|CAMetalLayer[[:space:]]*\*)[[:space:]]+cjgui_' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge CAMetalLayer NSView attachment probe: forbidden Metal / pointer return found" >&2
   exit 5
 fi

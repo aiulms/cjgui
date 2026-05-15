@@ -80,6 +80,10 @@ Draw call implementation admission facts 只把上游 no-pipeline-state-implemen
 - [draw call lifecycle manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-renderer-draw-call-lifecycle-manifest.md) 只提供 lifecycle vocabulary evidence；`CjguiInternalRendererNoDrawCallReadiness` 不是本 owner 的 runtime input，也不是 implementation permission。
 - [文档语言与 owner 注释风格护栏](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-doc-language-comment-style-guard-stabilization.md) 继续要求中文 Markdown 与后续 runtime owner 文件头维护注释。
 
+## 近线下游接续
+
+当前 native / runtime 主线已由 [绘制调用 no-submit 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-draw-call-no-submit-manifest.md) 接续。该下游只新增 still-blocked classification 与 draw input bundle facts，不把 `NoDrawCallImplementationReadiness` 或任何 admission facts 升格为 draw permission、encoder permission、binding permission、GPU submission permission、render permission、renderer state write permission 或 public API permission。
+
 ## 明确的非 truth
 
 `CjguiInternalRendererNoDrawCallImplementationReadiness` 不是：

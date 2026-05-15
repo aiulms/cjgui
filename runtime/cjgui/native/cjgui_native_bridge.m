@@ -8,7 +8,9 @@
  * MTLRenderPassDescriptor create/destroy first slice、
  * MTLRenderPipelineDescriptor no-draw create/config/destroy first slice、
  * shader library / function no-draw create/lookup/destroy first slice、
- * MTLRenderPipelineState no-draw create/destroy first slice
+ * MTLRenderPipelineState no-draw create/destroy first slice、
+ * MTLBuffer no-submit create/destroy/data-upload first slice 与 draw call
+ * no-submit still-blocked facts
  * 与确定性整数事实，
  * 不是运行时 bridge truth。
  * Stop-line: 只允许 pthread 当前线程分类、bridge-local token facts、AppKit import /
@@ -18,10 +20,12 @@
  * Metal device availability / table / layer binding facts、fixed-capacity
  * command queue token facts、command buffer token facts、render pass descriptor
  * token facts、pipeline descriptor token/config facts、shader library /
- * function token facts 与 pipeline state token facts；不获取 drawable，
+ * function token facts、pipeline state token facts、vertex buffer token facts 与
+ * draw call still-blocked facts；
+ * 不获取 drawable，
  * command buffer / render pass descriptor / pipeline descriptor / shader /
- * pipeline state first slice 不创建或绑定 encoder，不 commit / present /
- * draw / render，
+ * pipeline state / vertex buffer / draw call no-submit first slice 不创建或绑定 encoder，不调用
+ * setVertexBuffer，不 commit / present / draw / render，
  * 不返回 pointer。
  * Same-shape Boundary Brake: callable surface 不得被包装成 native bridge、Metal、backend、GPU、render 或 public API permission。
  */
@@ -39,6 +43,7 @@
 #define CJGUI_NATIVE_BRIDGE_HAS_QUARTZCORE_IMPORT 0
 #endif
 #include <pthread.h>
+#include <string.h>
 
 /*
  * 当前 callable 只暴露 no-resource status / capability / thread-classification /
@@ -56,9 +61,10 @@
  * Metal device first slice 只绑定 default device 到 CAMetalLayer；command queue
  * first slice 只创建 / 销毁 MTLCommandQueue；command buffer first slice
  * 只创建 / 清空 MTLCommandBuffer token、MTLRenderPassDescriptor token、
- * no-draw MTLRenderPipelineDescriptor token、shader library / function token
- * 与 no-draw MTLRenderPipelineState token，不 commit / present / encoder /
- * draw / render，不提交 GPU work。
+ * no-draw MTLRenderPipelineDescriptor token、shader library / function token、
+ * no-draw MTLRenderPipelineState token 与 no-submit MTLBuffer token，
+ * 不创建 encoder，不绑定 vertex buffer，不 commit / present / draw / render，
+ * 不提交 GPU work。
  */
 typedef struct CjguiNativeBridgeTokenTableEntry {
     uint32_t generation;
@@ -165,6 +171,16 @@ typedef struct CjguiNativeBridgePipelineStateTableEntry {
     uint8_t active;
 } CjguiNativeBridgePipelineStateTableEntry;
 
+typedef struct CjguiNativeBridgeVertexBufferTableEntry {
+    uint64_t token;
+    uint64_t device_token;
+#if defined(__APPLE__)
+    __strong id<MTLBuffer> buffer;
+#endif
+    uint8_t active;
+    uint8_t data_uploaded;
+} CjguiNativeBridgeVertexBufferTableEntry;
+
 static pthread_mutex_t g_cjgui_native_bridge_token_table_mutex =
     PTHREAD_MUTEX_INITIALIZER;
 static CjguiNativeBridgeTokenTableEntry
@@ -219,6 +235,11 @@ static pthread_mutex_t g_cjgui_native_bridge_pipeline_state_table_mutex =
 static CjguiNativeBridgePipelineStateTableEntry
     g_cjgui_native_bridge_pipeline_state_table
         [CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY];
+static pthread_mutex_t g_cjgui_native_bridge_vertex_buffer_table_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+static CjguiNativeBridgeVertexBufferTableEntry
+    g_cjgui_native_bridge_vertex_buffer_table
+        [CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY];
 
 static uint64_t token_table_make_token(
     uint32_t slot_index,
@@ -774,6 +795,61 @@ static int32_t pipeline_state_table_find_bound_function_locked(
     return -1;
 }
 
+static uint32_t vertex_buffer_table_occupied_count_locked(void) {
+    uint32_t count = 0u;
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_vertex_buffer_table[slot_index].active ==
+            1u) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int32_t vertex_buffer_table_find_token_locked(uint64_t token) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_vertex_buffer_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_vertex_buffer_table[slot_index].token ==
+                token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t vertex_buffer_table_first_free_slot_locked(void) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_vertex_buffer_table[slot_index].active ==
+            0u) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t vertex_buffer_table_find_bound_device_locked(
+    uint64_t device_token
+) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_vertex_buffer_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_vertex_buffer_table[slot_index].device_token ==
+                device_token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
 static int32_t cametallayer_attachment_layer_status_from_classification(
     int32_t classification
 ) {
@@ -1054,6 +1130,33 @@ static int32_t pipeline_state_fragment_function_status_from_classification(
     return classification;
 }
 
+static int32_t vertex_buffer_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_INVALID_TOKEN_DENIED;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_STALE_TOKEN_DENIED;
+    }
+    return classification;
+}
+
+static int32_t vertex_buffer_device_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_INVALID_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_INVALID_DEVICE_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_STALE_DEVICE_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_NOT_BOUND) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DEVICE_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
 #if defined(__APPLE__)
 static NSString *shader_library_minimal_source_contract(void) {
     return @"#include <metal_stdlib>\n"
@@ -1104,7 +1207,9 @@ uint32_t cjgui_native_bridge_surface_capabilities(void) {
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_DESCRIPTOR_CREATE_DESTROY |
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_LIBRARY_CREATE_DESTROY |
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_FUNCTION_LOOKUP |
-        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_STATE_CREATE_DESTROY;
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_STATE_CREATE_DESTROY |
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_CREATE_DESTROY |
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_DATA_UPLOAD;
 }
 
 uint32_t cjgui_native_bridge_status_ok(void) {
@@ -2133,6 +2238,15 @@ int32_t cjgui_native_bridge_metal_device_destroy(uint64_t token) {
     if (bound_pipeline_state_slot >= 0) {
         return
             CJGUI_NATIVE_BRIDGE_METAL_DEVICE_PIPELINE_STATE_DESTROY_BEFORE_DEVICE_REQUIRED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    int32_t bound_vertex_buffer_slot =
+        vertex_buffer_table_find_bound_device_locked(token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    if (bound_vertex_buffer_slot >= 0) {
+        return
+            CJGUI_NATIVE_BRIDGE_METAL_DEVICE_VERTEX_BUFFER_DESTROY_BEFORE_DEVICE_REQUIRED;
     }
 
     pthread_mutex_lock(&g_cjgui_native_bridge_metal_device_table_mutex);
@@ -4053,4 +4167,296 @@ int32_t cjgui_native_bridge_pipeline_state_encoder_binding_still_blocked(void) {
 
 int32_t cjgui_native_bridge_pipeline_state_draw_still_blocked(void) {
     return CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DRAW_STILL_BLOCKED;
+}
+
+uint32_t cjgui_native_bridge_vertex_buffer_table_capacity(void) {
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY;
+}
+
+uint32_t cjgui_native_bridge_vertex_buffer_table_enabled(void) {
+    return 1u;
+}
+
+uint32_t cjgui_native_bridge_vertex_buffer_table_occupied_count(void) {
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    uint32_t count = vertex_buffer_table_occupied_count_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    return count;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_token_classify(
+    uint64_t buffer_token
+) {
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        buffer_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return vertex_buffer_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    int32_t slot_index = vertex_buffer_table_find_token_locked(buffer_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    if (slot_index >= 0) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TOKEN_BOUND;
+    }
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TOKEN_NOT_BOUND;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_create(
+    uint64_t device_token,
+    uint64_t* out_buffer_token
+) {
+    if (out_buffer_token == 0) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_OUT_TOKEN_REQUIRED;
+    }
+    *out_buffer_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CREATE_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t device_classification =
+        cjgui_native_bridge_metal_device_token_classify(device_token);
+    if (device_classification != CJGUI_NATIVE_BRIDGE_METAL_DEVICE_TOKEN_BOUND) {
+        return vertex_buffer_device_status_from_classification(
+            device_classification
+        );
+    }
+
+    __strong id<MTLDevice> device = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_metal_device_table_mutex);
+    int32_t device_slot = metal_device_table_find_token_locked(device_token);
+    if (device_slot >= 0) {
+        device = g_cjgui_native_bridge_metal_device_table[device_slot].device;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_metal_device_table_mutex);
+    if (device == nil) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DEVICE_TOKEN_NOT_BOUND;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    int32_t free_slot = vertex_buffer_table_first_free_slot_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    if (free_slot < 0) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CAPACITY_EXHAUSTED;
+    }
+
+    uint64_t buffer_token = cjgui_native_bridge_token_issue();
+    if (buffer_token == CJGUI_NATIVE_BRIDGE_TOKEN_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CAPACITY_EXHAUSTED;
+    }
+
+    const NSUInteger vertex_buffer_length = (NSUInteger)(sizeof(float) * 18u);
+    __strong id<MTLBuffer> buffer =
+        [device newBufferWithLength:vertex_buffer_length
+                            options:MTLResourceStorageModeShared];
+    if (buffer == nil) {
+        (void)cjgui_native_bridge_token_revoke(buffer_token);
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CREATION_FAILED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    if (g_cjgui_native_bridge_vertex_buffer_table[free_slot].active != 0u) {
+        free_slot = vertex_buffer_table_first_free_slot_locked();
+    }
+    if (free_slot < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+        (void)cjgui_native_bridge_token_revoke(buffer_token);
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CAPACITY_EXHAUSTED;
+    }
+
+    g_cjgui_native_bridge_vertex_buffer_table[free_slot].token = buffer_token;
+    g_cjgui_native_bridge_vertex_buffer_table[free_slot].device_token =
+        device_token;
+    g_cjgui_native_bridge_vertex_buffer_table[free_slot].buffer = buffer;
+    g_cjgui_native_bridge_vertex_buffer_table[free_slot].active = 1u;
+    g_cjgui_native_bridge_vertex_buffer_table[free_slot].data_uploaded = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    *out_buffer_token = buffer_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)device_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_destroy(uint64_t buffer_token) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DESTROY_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        buffer_token
+    );
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_INVALID_TOKEN_DENIED;
+    }
+    if (token_classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DOUBLE_DESTROY_DENIED;
+    }
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return vertex_buffer_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    int32_t slot_index = vertex_buffer_table_find_token_locked(buffer_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TOKEN_NOT_BOUND;
+    }
+
+    g_cjgui_native_bridge_vertex_buffer_table[slot_index].buffer = nil;
+    g_cjgui_native_bridge_vertex_buffer_table[slot_index].token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_vertex_buffer_table[slot_index].device_token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_vertex_buffer_table[slot_index].active = 0u;
+    g_cjgui_native_bridge_vertex_buffer_table[slot_index].data_uploaded = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+
+    int32_t revoke_status = cjgui_native_bridge_token_revoke(buffer_token);
+    if (revoke_status != CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK) {
+        return revoke_status;
+    }
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)buffer_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_double_destroy_classify(
+    uint64_t buffer_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_vertex_buffer_token_classify(buffer_token);
+    if (classification == CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DOUBLE_DESTROY_DENIED;
+    }
+    return classification;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_upload_static_triangle(
+    uint64_t buffer_token
+) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_UPLOAD_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        buffer_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return vertex_buffer_status_from_classification(token_classification);
+    }
+
+    static const float vertices[18] = {
+        -0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f,
+         0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f,
+         0.0f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f
+    };
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    int32_t slot_index = vertex_buffer_table_find_token_locked(buffer_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TOKEN_NOT_BOUND;
+    }
+    id<MTLBuffer> buffer =
+        g_cjgui_native_bridge_vertex_buffer_table[slot_index].buffer;
+    if (buffer == nil || [buffer length] < sizeof(vertices)) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DATA_UPLOAD_FAILED;
+    }
+
+    /*
+     * 中文维护注释：contents 只用于本地瞬时写入固定三角形数据；
+     * 不保存 raw pointer，不返回 pointer，也不绑定 encoder。
+     */
+    void *contents = [buffer contents];
+    if (contents == NULL) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DATA_UPLOAD_FAILED;
+    }
+    memcpy(contents, vertices, sizeof(vertices));
+    g_cjgui_native_bridge_vertex_buffer_table[slot_index].data_uploaded = 1u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)buffer_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_data_classify(
+    uint64_t buffer_token
+) {
+#if defined(__APPLE__)
+    int32_t token_classification = cjgui_native_bridge_token_classify(
+        buffer_token
+    );
+    if (token_classification != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return vertex_buffer_status_from_classification(token_classification);
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    int32_t slot_index = vertex_buffer_table_find_token_locked(buffer_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TOKEN_NOT_BOUND;
+    }
+    uint8_t data_uploaded =
+        g_cjgui_native_bridge_vertex_buffer_table[slot_index].data_uploaded;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_vertex_buffer_table_mutex);
+    return data_uploaded == 1u ?
+        CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DATA_UPLOADED :
+        CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DATA_NOT_UPLOADED;
+#else
+    (void)buffer_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_create_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CREATE_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_destroy_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DESTROY_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_upload_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_UPLOAD_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_layout_position_color(void) {
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_LAYOUT_POSITION_COLOR;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_encoder_binding_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_ENCODER_BINDING_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_vertex_buffer_draw_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DRAW_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_draw_call_encoder_required(void) {
+    return CJGUI_NATIVE_BRIDGE_DRAW_CALL_ENCODER_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_draw_call_pipeline_binding_required(void) {
+    return CJGUI_NATIVE_BRIDGE_DRAW_CALL_PIPELINE_BINDING_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_draw_call_vertex_binding_required(void) {
+    return CJGUI_NATIVE_BRIDGE_DRAW_CALL_VERTEX_BINDING_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_draw_call_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_DRAW_CALL_STILL_BLOCKED;
 }

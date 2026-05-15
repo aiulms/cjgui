@@ -77,8 +77,9 @@ Render command encoder no-submit planning 可以先行，前提是下一阶段�
 
 - [render command encoder no-submit planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-no-submit-planning-manifest.md)
 - [render command encoder 创建阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-creation-blocker-reconciliation-manifest.md)
+- [pipeline state encoder 绑定阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-14-p1-renderer-pipeline-state-encoder-binding-blocker-reconciliation-manifest.md)
 
-该接续选择 A 后继续进入 blocker reconciliation：只新增 no-submit planning owner，不创建 encoder，不配置 color attachment，不绑定 drawable texture，也不新增 native C ABI；随后确认 production drawable texture lifetime 与 `colorAttachments[0]` 是 encoder creation 的双重缺口。
+该接续选择 A 后继续进入 blocker reconciliation：只新增 no-submit planning owner，不创建 encoder，不配置 color attachment，不绑定 drawable texture，也不新增 native C ABI；随后确认 production drawable texture lifetime 与 `colorAttachments[0]` 是 encoder creation 的双重缺口。后续 pipeline state encoder binding blocker reconciliation、vertex buffer no-submit、draw call no-submit 与 no-submit render pipeline branch milestone 均未解除 production drawable / color attachment blocker；当前主线已完成 [production drawable texture lifetime first slice blocker refresh](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-production-drawable-texture-lifetime-first-slice-manifest.md)，并由 [latest drawable texture lifetime implementation recovery manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-drawable-texture-lifetime-implementation-recovery-manifest.md) 确认 isolated visible-window no-present evidence 仍不能升格为 production runtime truth，唯一后续入口转为 `P1 internal Renderer visible-window production harness preflight decision`。
 
 ## 停止线
 
@@ -86,4 +87,4 @@ Render command encoder no-submit planning 可以先行，前提是下一阶段�
 
 ## 唯一后续入口
 
-`P1 internal Renderer pipeline state no-draw planning preflight decision`
+`P1 internal Renderer drawable texture lifetime implementation recovery decision`

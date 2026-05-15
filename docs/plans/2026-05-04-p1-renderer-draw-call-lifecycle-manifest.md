@@ -90,6 +90,10 @@ Draw call 与 encoder / pipeline binding / material grouping / render command pa
 - failure / no-draw fallback。
 - rollback expectation as value facts only。
 
+## 近线下游接续
+
+当前 native / runtime 主线已由 [绘制调用 no-submit 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-draw-call-no-submit-manifest.md) 接续。该下游只把 pipeline state runtime facts、vertex buffer runtime facts 与 encoder missing / binding blocked / draw blocked facts 聚合成 internal draw input bundle；它不改变本 lifecycle manifest 的 no-draw-call 语义，也不授权 encoder creation、`setRenderPipelineState`、`setVertexBuffer`、draw、commit、present、GPU submission 或 render。
+
 这些 facts 不能携带 `MTLRenderCommandEncoder`、pipeline state object、vertex buffer、index buffer、texture、command buffer、render pass descriptor、drawable、native handle、raw pointer、platform object、backend-local resource token、callback 或 renderer state write。
 
 Primitive kind / vertex-index source / instance count / draw order relation / material grouping hints 只作为 dehydrated lifecycle facts。它们不是 draw-call execution plan、encoder command stream、pipeline binding plan、buffer binding plan、texture binding plan 或 GPU submission plan。

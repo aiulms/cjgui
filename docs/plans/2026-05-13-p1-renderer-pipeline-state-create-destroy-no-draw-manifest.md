@@ -73,6 +73,10 @@ Runtime owner 只在函数局部创建 device / descriptor / library / functions
 
 `P1 internal Renderer pipeline state encoder binding blocker reconciliation decision`
 
+## 下游已接续
+
+本 manifest 已由 [pipeline state encoder 绑定阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-14-p1-renderer-pipeline-state-encoder-binding-blocker-reconciliation-manifest.md)、[vertex buffer no-submit 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-vertex-buffer-no-submit-manifest.md)、[绘制调用 no-submit 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-draw-call-no-submit-manifest.md)、[No-submit 渲染管线分支里程碑清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-no-submit-render-pipeline-branch-milestone-manifest.md) 与 [drawable texture lifetime implementation recovery manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-drawable-texture-lifetime-implementation-recovery-manifest.md) 接续。最新下游已完成 token-backed `MTLBuffer` lifecycle、static triangle data upload、draw input bundle、no-submit branch milestone 与 drawable lifetime recovery decision facts；当前主线转为 `P1 internal Renderer visible-window production harness preflight decision`。这些下游不改变 pipeline state runtime owner 的 no-draw truth，也不授权 production `nextDrawable`、color attachment、encoder creation、encoder binding、`setRenderPipelineState`、`setVertexBuffer`、draw、`commit` / `present`、GPU submission 或 render。
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是，pipeline state create/destroy no-draw first slice 已封账。

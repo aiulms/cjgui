@@ -55,7 +55,7 @@ if grep -E 'cjgui_native_bridge|native/cjgui_native_bridge|link-option|compile-o
   echo "cjgui pipeline descriptor runtime call probe: runtime cjpm.toml must not wire native bridge" >&2
   exit 7
 fi
-if grep -Eq 'renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_FILE"; then
+if grep -Ev '^[[:space:]]*(/\*|\*|//)' "$SOURCE_FILE" | grep -Eq 'renderCommandEncoder|setRenderPipelineState|setVertexBuffer|drawPrimitives|drawIndexedPrimitives|commit]|presentDrawable|present]|dispatchThreadgroups'; then
   echo "cjgui pipeline descriptor runtime call probe: forbidden encoder / submit path found" >&2
   exit 8
 fi

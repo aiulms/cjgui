@@ -6,12 +6,15 @@
  * first slice、MTLRenderPassDescriptor create/destroy first slice、
  * MTLRenderPipelineDescriptor no-draw create/config/destroy first slice、
  * shader library / function no-draw create/lookup/destroy first slice、
- * MTLRenderPipelineState no-draw create/destroy first slice
+ * MTLRenderPipelineState no-draw create/destroy first slice、
+ * MTLBuffer no-submit create/destroy/data-upload first slice、
+ * draw call no-submit still-blocked facts
  * 与内部 status taxonomy，
  * 不是 public runtime API。
  * Stop-line: 不创建窗口、应用、drawable、绘制资源，
  * command buffer / render pass descriptor / pipeline descriptor / shader
- * library / pipeline state first slice 不创建 encoder，不绑定 pipeline，不 draw，
+ * library / pipeline state / vertex buffer first slice 不创建 encoder，
+ * 不绑定 pipeline 或 vertex buffer，不 draw，
  * 不 commit / present / render，
  * 不返回指针身份。
  * Same-shape Boundary Brake: callable surface 只是无副作用 native surface，不是 bridge-ready、backend-ready、render-ready 或 public API permission。
@@ -88,7 +91,11 @@ typedef enum CjguiNativeBridgeSurfaceCapability {
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_FUNCTION_LOOKUP =
         1u << 27,
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_STATE_CREATE_DESTROY =
-        1u << 28
+        1u << 28,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_CREATE_DESTROY =
+        1u << 29,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_DATA_UPLOAD =
+        1u << 30
 } CjguiNativeBridgeSurfaceCapability;
 
 enum {
@@ -105,6 +112,7 @@ enum {
     CJGUI_NATIVE_BRIDGE_SHADER_LIBRARY_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY = 4u,
     CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_BITS = 16u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_MASK = 0xffffu
 };
@@ -239,7 +247,9 @@ typedef enum CjguiNativeBridgeMetalDeviceLifecycleClassification {
     CJGUI_NATIVE_BRIDGE_METAL_DEVICE_COMMAND_QUEUE_DESTROY_BEFORE_DEVICE_REQUIRED =
         -130,
     CJGUI_NATIVE_BRIDGE_METAL_DEVICE_PIPELINE_STATE_DESTROY_BEFORE_DEVICE_REQUIRED =
-        -131
+        -131,
+    CJGUI_NATIVE_BRIDGE_METAL_DEVICE_VERTEX_BUFFER_DESTROY_BEFORE_DEVICE_REQUIRED =
+        -132
 } CjguiNativeBridgeMetalDeviceLifecycleClassification;
 
 typedef enum CjguiNativeBridgeMetalDeviceLayerBindingClassification {
@@ -419,6 +429,37 @@ typedef enum CjguiNativeBridgePipelineStateLifecycleClassification {
     CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_ENCODER_BINDING_STILL_BLOCKED = -304,
     CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_DRAW_STILL_BLOCKED = -305
 } CjguiNativeBridgePipelineStateLifecycleClassification;
+
+typedef enum CjguiNativeBridgeVertexBufferLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TOKEN_BOUND = 300,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DATA_UPLOADED = 301,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_LAYOUT_POSITION_COLOR = 302,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CREATE_MAIN_THREAD_REQUIRED = -320,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DESTROY_MAIN_THREAD_REQUIRED = -321,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_UPLOAD_MAIN_THREAD_REQUIRED = -322,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_INVALID_TOKEN_DENIED = -323,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_STALE_TOKEN_DENIED = -324,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TOKEN_NOT_BOUND = -325,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CAPACITY_EXHAUSTED = -326,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DOUBLE_DESTROY_DENIED = -327,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_CREATION_FAILED = -328,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_OUT_TOKEN_REQUIRED = -329,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_INVALID_DEVICE_TOKEN = -330,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_STALE_DEVICE_TOKEN = -331,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DEVICE_TOKEN_NOT_BOUND = -332,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DATA_NOT_UPLOADED = -333,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DATA_UPLOAD_FAILED = -334,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_ENCODER_BINDING_STILL_BLOCKED = -335,
+    CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_DRAW_STILL_BLOCKED = -336
+} CjguiNativeBridgeVertexBufferLifecycleClassification;
+
+typedef enum CjguiNativeBridgeDrawCallNoSubmitClassification {
+    CJGUI_NATIVE_BRIDGE_DRAW_CALL_INPUT_BUNDLE_FACTS_READY = 320,
+    CJGUI_NATIVE_BRIDGE_DRAW_CALL_ENCODER_REQUIRED = -340,
+    CJGUI_NATIVE_BRIDGE_DRAW_CALL_PIPELINE_BINDING_REQUIRED = -341,
+    CJGUI_NATIVE_BRIDGE_DRAW_CALL_VERTEX_BINDING_REQUIRED = -342,
+    CJGUI_NATIVE_BRIDGE_DRAW_CALL_STILL_BLOCKED = -343
+} CjguiNativeBridgeDrawCallNoSubmitClassification;
 
 /*
  * callable 只返回 dehydrated integer facts，或通过 out-token 返回 opaque token。
@@ -711,6 +752,36 @@ int32_t cjgui_native_bridge_pipeline_state_create_requires_main_thread(void);
 int32_t cjgui_native_bridge_pipeline_state_destroy_requires_main_thread(void);
 int32_t cjgui_native_bridge_pipeline_state_encoder_binding_still_blocked(void);
 int32_t cjgui_native_bridge_pipeline_state_draw_still_blocked(void);
+uint32_t cjgui_native_bridge_vertex_buffer_table_capacity(void);
+uint32_t cjgui_native_bridge_vertex_buffer_table_enabled(void);
+uint32_t cjgui_native_bridge_vertex_buffer_table_occupied_count(void);
+int32_t cjgui_native_bridge_vertex_buffer_create(
+    uint64_t device_token,
+    uint64_t* out_buffer_token
+);
+int32_t cjgui_native_bridge_vertex_buffer_destroy(uint64_t buffer_token);
+int32_t cjgui_native_bridge_vertex_buffer_token_classify(
+    uint64_t buffer_token
+);
+int32_t cjgui_native_bridge_vertex_buffer_double_destroy_classify(
+    uint64_t buffer_token
+);
+int32_t cjgui_native_bridge_vertex_buffer_upload_static_triangle(
+    uint64_t buffer_token
+);
+int32_t cjgui_native_bridge_vertex_buffer_data_classify(
+    uint64_t buffer_token
+);
+int32_t cjgui_native_bridge_vertex_buffer_create_requires_main_thread(void);
+int32_t cjgui_native_bridge_vertex_buffer_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_vertex_buffer_upload_requires_main_thread(void);
+int32_t cjgui_native_bridge_vertex_buffer_layout_position_color(void);
+int32_t cjgui_native_bridge_vertex_buffer_encoder_binding_still_blocked(void);
+int32_t cjgui_native_bridge_vertex_buffer_draw_still_blocked(void);
+int32_t cjgui_native_bridge_draw_call_encoder_required(void);
+int32_t cjgui_native_bridge_draw_call_pipeline_binding_required(void);
+int32_t cjgui_native_bridge_draw_call_vertex_binding_required(void);
+int32_t cjgui_native_bridge_draw_call_still_blocked(void);
 
 #ifdef __cplusplus
 }

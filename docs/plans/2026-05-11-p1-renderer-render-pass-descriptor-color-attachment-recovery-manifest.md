@@ -72,7 +72,9 @@
 
 随后已由 [drawable texture lifetime implementation recovery manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-drawable-texture-lifetime-implementation-recovery-manifest.md) 接续。该恢复决策选择暂停 production drawable lifetime implementation，保留 visible-window production harness 为独立分支，并允许下一步只做 render command encoder no-submit planning；它不授权 color attachment、encoder creation、draw、`commit`、`present`、GPU submission、render、public API 或 renderer state write。
 
-随后又由 [render command encoder no-submit planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-no-submit-planning-manifest.md) 与 [render command encoder 创建阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-creation-blocker-reconciliation-manifest.md) 接续。该接续只记录 encoder creation blocker facts，并确认 production drawable texture lifetime 与 `colorAttachments[0]` 是双重缺口；不配置 color attachment，不绑定 drawable texture，不创建 encoder。
+随后又由 [render command encoder no-submit planning manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-no-submit-planning-manifest.md)、[render command encoder 创建阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-11-p1-renderer-render-command-encoder-creation-blocker-reconciliation-manifest.md)、[pipeline state encoder 绑定阻塞归因清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-14-p1-renderer-pipeline-state-encoder-binding-blocker-reconciliation-manifest.md) 与 [No-submit 渲染管线分支里程碑清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-no-submit-render-pipeline-branch-milestone-manifest.md) 接续。该接续只记录 encoder / binding / no-submit milestone facts，并确认 production drawable texture lifetime 与 `colorAttachments[0]` 是双重缺口；不配置 color attachment，不绑定 drawable texture，不创建 encoder，不绑定 pipeline。
+
+当前又由 [production drawable texture lifetime first slice 清单](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-production-drawable-texture-lifetime-first-slice-manifest.md) 与 [latest drawable texture lifetime implementation recovery manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-renderer-drawable-texture-lifetime-implementation-recovery-manifest.md) 复核：production drawable lifetime first slice 仍 blocked，因此 color attachment first slice 不能打开；当前唯一后续入口转为 `P1 internal Renderer visible-window production harness preflight decision`。
 
 ## 停止线
 
@@ -82,14 +84,8 @@
 
 当时唯一后续入口为：
 
-当时唯一后续入口为：
-
 `P1 internal Renderer production drawable texture lifetime preflight decision`
 
-当前已由 production drawable texture lifetime planning、implementation recovery、render command encoder no-submit planning 与 blocker reconciliation 接续；最新唯一后续入口为：
+当前已由 production drawable texture lifetime planning、implementation recovery、render command encoder no-submit planning、blocker reconciliation、pipeline descriptor no-draw、shader library no-draw、pipeline state create/destroy no-draw、pipeline state encoder binding blocker reconciliation、vertex buffer no-submit、draw call no-submit、no-submit branch milestone、production drawable texture lifetime first slice blocker refresh 与 latest implementation recovery decision 接续；当前主线唯一后续入口已转为：
 
-`P1 internal Renderer pipeline state no-draw planning preflight decision`
-
-该入口已由 production drawable texture lifetime planning、implementation recovery、no-submit planning 与 blocker reconciliation 接续；当前主线唯一后续入口已转为：
-
-`P1 internal Renderer pipeline state no-draw planning preflight decision`
+`P1 internal Renderer visible-window production harness preflight decision`

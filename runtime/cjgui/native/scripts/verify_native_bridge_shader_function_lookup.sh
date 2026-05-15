@@ -43,7 +43,7 @@ for symbol in "${required_symbols[@]}"; do
     exit 1
   fi
 done
-if grep -Eq 'renderCommandEncoder|setRenderPipelineState|drawPrimitives|drawIndexedPrimitives|newBuffer|commit]|presentDrawable|present]|dispatchThreadgroups' "$SOURCE_PATH"; then
+if grep -Ev '^[[:space:]]*(/\*|\*|//)' "$SOURCE_PATH" | grep -Eq 'renderCommandEncoder|setRenderPipelineState|setVertexBuffer|drawPrimitives|drawIndexedPrimitives|commit]|presentDrawable|present]|dispatchThreadgroups'; then
   echo "forbidden encoder / draw / submit path found" >&2
   exit 1
 fi

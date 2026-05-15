@@ -23,6 +23,7 @@ ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_surface_version|cjgui_nat
 PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_pipeline_descriptor_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|configure_requires_main_thread|configure_no_draw|color_pixel_format_classify|sample_count_classify|shader_library_still_blocked|vertex_function_still_blocked|fragment_function_still_blocked|blending_still_blocked|encoder_binding_still_blocked)|cjgui_native_bridge_pipeline_state_creation_still_blocked)$'
 VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_vertex_buffer_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|upload_static_triangle|data_classify|create_requires_main_thread|destroy_requires_main_thread|upload_requires_main_thread|layout_position_color|encoder_binding_still_blocked|draw_still_blocked)$'
 DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_draw_call_(encoder_required|pipeline_binding_required|vertex_binding_required|still_blocked)$'
+NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_nswindow_harness_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|next_drawable_still_blocked|command_buffer_still_blocked|render_encoder_still_blocked|present_still_blocked)$'
 SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui native bridge nsview object table probe: macOS is required" >&2
@@ -48,12 +49,186 @@ if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge nsview object table probe: production bridge must not import Cocoa / Metal" >&2
   exit 5
 fi
-if grep -E '\[[[:space:]]*(NSWindow|NSApplication|CALayer)[[:space:]]+(alloc|new|init)\]|^[[:space:]]*static[[:space:]]+(NSWindow|NSApplication|CALayer|Class|id)[[:space:]]|^[[:space:]]*(Class|id|void[[:space:]]*\*|uintptr_t)[[:space:]]+cjgui_|(NSWindow|NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain|__bridge|CFBridging' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E '\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new|init)\]|^[[:space:]]*static[[:space:]]+(NSApplication|CALayer|Class|id)[[:space:]]|^[[:space:]]*(Class|id|void[[:space:]]*\*|uintptr_t)[[:space:]]+cjgui_|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain|__bridge|CFBridging' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge nsview object table probe: forbidden allocation / storage / pointer token found" >&2
   exit 6
 fi
 while IFS= read -r callable_name; do
-  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+    echo "cjgui native bridge nsview object table probe: callable outside allowlist: $callable_name" >&2
+    exit 7
+  fi
+done < <(grep -Eoh 'cjgui_native_bridge_[A-Za-z0-9_]+[[:space:]]*\(' "$HEADER_FILE" "$SOURCE_FILE" 2>/dev/null | sed -E 's/[[:space:]]*[(]$//')
+if ! command -v cjc >/dev/null 2>&1; then
+  if [[ -f "/Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh" ]]; then
+    export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH:-}"
+    source "/Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh"
+  fi
+fi
+if ! command -v cjc >/dev/null 2>&1; then
+  echo "cjgui native bridge nsview object table probe: cjc not found" >&2
+  exit 8
+fi
+if command -v xcrun >/dev/null 2>&1; then
+  CLANG_BIN="$(xcrun --sdk macosx --find clang 2>/dev/null || true)"
+else
+  CLANG_BIN=""
+fi
+if [[ -z "${CLANG_BIN:-}" ]]; then
+  CLANG_BIN="$(command -v clang || true)"
+fi
+if [[ -z "${CLANG_BIN:-}" ]]; then
+  echo "cjgui native bridge nsview object table probe: clang not found" >&2
+  exit 9
+fi
+if [[ -z "${CJ_GUI_SDKROOT:-}" && -d "$KNOWN_GOOD_SDK" ]]; then
+  CJ_GUI_SDKROOT="$KNOWN_GOOD_SDK"
+elif [[ -z "${CJ_GUI_SDKROOT:-}" && -n "${SDKROOT:-}" && -d "$SDKROOT" ]]; then
+  CJ_GUI_SDKROOT="$SDKROOT"
+elif [[ -z "${CJ_GUI_SDKROOT:-}" ]] && command -v xcrun >/dev/null 2>&1; then
+  CJ_GUI_SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+fi
+if [[ -z "${CJ_GUI_SDKROOT:-}" || ! -d "$CJ_GUI_SDKROOT" ]]; then
+  echo "cjgui native bridge nsview object table probe: SDKROOT not found" >&2
+  exit 10
+fi
+cat > "$PROBE_SOURCE" <<'CJGUI_NATIVE_BRIDGE_NSVIEW_OBJECT_TABLE_PROBE'
+foreign func cjgui_native_bridge_token_issue(): UInt64
+foreign func cjgui_native_bridge_token_revoke(token: UInt64): Int32
+foreign func cjgui_native_bridge_nsview_table_capacity(): UInt32
+foreign func cjgui_native_bridge_nsview_table_enabled(): UInt32
+foreign func cjgui_native_bridge_nsview_table_empty(): Int32
+foreign func cjgui_native_bridge_nsview_table_token_classify(token: UInt64):
+    Int32
+foreign func cjgui_native_bridge_nsview_table_allocation_still_blocked():
+    Int32
+foreign func cjgui_native_bridge_nsview_table_destroy_still_blocked():
+    Int32
+main(): Int64 {
+    println("cjgui native bridge nsview object table probe: requested=true")
+    let capacity = unsafe {
+        cjgui_native_bridge_nsview_table_capacity()
+    }
+    let enabled = unsafe {
+        cjgui_native_bridge_nsview_table_enabled()
+    }
+    let empty = unsafe {
+        cjgui_native_bridge_nsview_table_empty()
+    }
+    let invalidTokenClass = unsafe {
+        cjgui_native_bridge_nsview_table_token_classify(UInt64(0))
+    }
+    let issuedToken = unsafe {
+        cjgui_native_bridge_token_issue()
+    }
+    let issuedTokenClass = unsafe {
+        cjgui_native_bridge_nsview_table_token_classify(issuedToken)
+    }
+    let allocationBlocked = unsafe {
+        cjgui_native_bridge_nsview_table_allocation_still_blocked()
+    }
+    let destroyBlocked = unsafe {
+        cjgui_native_bridge_nsview_table_destroy_still_blocked()
+    }
+    let revokeStatus = unsafe {
+        cjgui_native_bridge_token_revoke(issuedToken)
+    }
+    let revokedTokenClass = unsafe {
+        cjgui_native_bridge_nsview_table_token_classify(issuedToken)
+    }
+    let capacityObserved = capacity == UInt32(4)
+    let enabledObserved = enabled == UInt32(1)
+    let emptyObserved = empty == Int32(30)
+    let invalidTokenObserved = invalidTokenClass == Int32(0)
+    let tokenNotBoundObserved =
+        issuedToken != UInt64(0) && issuedTokenClass == Int32(-30)
+    let allocationBlockedObserved = allocationBlocked == Int32(-31)
+    let destroyBlockedObserved = destroyBlocked == Int32(-32)
+    let revokeObserved =
+        revokeStatus == Int32(0) && revokedTokenClass == Int32(-2)
+    let success = capacityObserved &&
+        enabledObserved &&
+        emptyObserved &&
+        invalidTokenObserved &&
+        tokenNotBoundObserved &&
+        allocationBlockedObserved &&
+        destroyBlockedObserved &&
+        revokeObserved
+    println("cjgui native bridge nsview object table probe: table_capacity_observed=${capacityObserved}")
+    println("cjgui native bridge nsview object table probe: table_enabled_observed=${enabledObserved}")
+    println("cjgui native bridge nsview object table probe: table_empty_observed=${emptyObserved}")
+    println("cjgui native bridge nsview object table probe: invalid_token_fail_closed_observed=${invalidTokenObserved}")
+    println("cjgui native bridge nsview object table probe: token_not_bound_observed=${tokenNotBoundObserved}")
+    println("cjgui native bridge nsview object table probe: allocation_blocked_observed=${allocationBlockedObserved}")
+    println("cjgui native bridge nsview object table probe: destroy_blocked_observed=${destroyBlockedObserved}")
+    println("cjgui native bridge nsview object table probe: revoke_observed=${revokeObserved}")
+    println("cjgui native bridge nsview object table probe: nsview_allocated_by_probe=false")
+    println("cjgui native bridge nsview object table probe: nsview_saved_by_probe=false")
+    println("cjgui native bridge nsview object table probe: pointer_returned=false")
+    println("cjgui native bridge nsview object table probe: native_handle_returned=false")
+    println("cjgui native bridge nsview object table probe: metal_import_allowed=true")
+    if (success) {
+        println("cjgui native bridge nsview object table probe: success=true reason=none")
+        return 0
+    }
+    println("cjgui native bridge nsview object table probe: success=false reason=value_mismatch")
+    return 1
+}
+CJGUI_NATIVE_BRIDGE_NSVIEW_OBJECT_TABLE_PROBE
+echo "cjgui native bridge nsview object table probe: output=$OUTPUT_DIR"
+echo "cjgui native bridge nsview object table probe: sdkroot=$CJ_GUI_SDKROOT"
+echo "cjgui native bridge nsview object table probe: compiling production bridge"
+"$CLANG_BIN" \
+  -fobjc-arc \
+  -fno-objc-msgsend-selector-stubs \
+  -fmodules \
+  -isysroot "$CJ_GUI_SDKROOT" \
+  -mmacosx-version-min=12.0 \
+  -c "$SOURCE_FILE" \
+  -o "$OBJECT_FILE"
+ar rcs "$STATIC_LIB" "$OBJECT_FILE"
+cjc "$PROBE_SOURCE" \
+  --sysroot "$CJ_GUI_SDKROOT" \
+  -L "$OUTPUT_DIR" \
+  -lcjgui_native_bridge_nsview_object_table_probe \
+  --link-options "-framework AppKit -framework QuartzCore -framework Metal -lobjc" \
+  -o "$PROBE_EXECUTABLE"
+if [[ -d "$CANGJIE_RUNTIME_LIB_DIR" ]]; then
+  export DYLD_LIBRARY_PATH="$CANGJIE_RUNTIME_LIB_DIR:${DYLD_LIBRARY_PATH:-}"
+fi
+"$PROBE_EXECUTABLE"
+
+SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "cjgui native bridge nsview object table probe: macOS is required" >&2
+  exit 2
+fi
+if [[ ! -f "$HEADER_FILE" || ! -f "$SOURCE_FILE" ]]; then
+  echo "cjgui native bridge nsview object table probe: missing production native bridge" >&2
+  exit 3
+fi
+for symbol in \
+  "cjgui_native_bridge_nsview_table_capacity" \
+  "cjgui_native_bridge_nsview_table_enabled" \
+  "cjgui_native_bridge_nsview_table_empty" \
+  "cjgui_native_bridge_nsview_table_token_classify" \
+  "cjgui_native_bridge_nsview_table_allocation_still_blocked" \
+  "cjgui_native_bridge_nsview_table_destroy_still_blocked"; do
+  if ! grep -F "$symbol" "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+    echo "cjgui native bridge nsview object table probe: missing callable $symbol" >&2
+    exit 4
+  fi
+done
+if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge nsview object table probe: production bridge must not import Cocoa / Metal" >&2
+  exit 5
+fi
+if grep -E '\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new|init)\]|^[[:space:]]*static[[:space:]]+(NSApplication|CALayer|Class|id)[[:space:]]|^[[:space:]]*(Class|id|void[[:space:]]*\*|uintptr_t)[[:space:]]+cjgui_|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain|__bridge|CFBridging' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge nsview object table probe: forbidden allocation / storage / pointer token found" >&2
+  exit 6
+fi
+while IFS= read -r callable_name; do
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
     echo "cjgui native bridge nsview object table probe: callable outside allowlist: $callable_name" >&2
     exit 7
   fi

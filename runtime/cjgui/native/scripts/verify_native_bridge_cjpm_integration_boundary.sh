@@ -18,6 +18,7 @@ ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_surface_version|cjgui_nat
 PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_pipeline_descriptor_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|configure_requires_main_thread|configure_no_draw|color_pixel_format_classify|sample_count_classify|shader_library_still_blocked|vertex_function_still_blocked|fragment_function_still_blocked|blending_still_blocked|encoder_binding_still_blocked)|cjgui_native_bridge_pipeline_state_creation_still_blocked)$'
 VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_vertex_buffer_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|upload_static_triangle|data_classify|create_requires_main_thread|destroy_requires_main_thread|upload_requires_main_thread|layout_position_color|encoder_binding_still_blocked|draw_still_blocked)$'
 DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_draw_call_(encoder_required|pipeline_binding_required|vertex_binding_required|still_blocked)$'
+NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_nswindow_harness_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|next_drawable_still_blocked|command_buffer_still_blocked|render_encoder_still_blocked|present_still_blocked)$'
 SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui native bridge cjpm boundary: missing $CJPM_TOML" >&2
@@ -43,12 +44,64 @@ if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge cjpm boundary: production skeleton must not import Metal framework" >&2
   exit 7
 fi
-if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSWindow|NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSWindow|NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge cjpm boundary: production skeleton contains forbidden runtime/native behavior token" >&2
   exit 8
 fi
 while IFS= read -r callable_name; do
-  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+    echo "cjgui native bridge cjpm boundary: callable symbol is outside no-resource allowlist: $callable_name" >&2
+    exit 9
+  fi
+done < <(grep -Eoh 'cjgui_native_bridge_[A-Za-z0-9_]+[[:space:]]*\(' "$HEADER_FILE" "$SOURCE_FILE" 2>/dev/null | sed -E 's/[[:space:]]*[(]$//')
+if ! command -v cjpm >/dev/null 2>&1; then
+  echo "cjgui native bridge cjpm boundary: cjpm not found; source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh first" >&2
+  exit 10
+fi
+echo "cjgui native bridge cjpm boundary: repo=$REPO_DIR"
+echo "cjgui native bridge cjpm boundary: package=$PACKAGE_DIR"
+echo "cjgui native bridge cjpm boundary: target=$TARGET_DIR"
+echo "cjgui native bridge cjpm boundary: running cjpm build without scripts"
+(
+  cd "$PACKAGE_DIR"
+  cjpm build --target-dir "$TARGET_DIR" --skip-script
+)
+echo "cjgui native bridge cjpm boundary: running isolated production skeleton compile"
+"$SKELETON_PROBE"
+echo "cjgui native bridge cjpm boundary: passed"
+echo "cjgui native bridge cjpm boundary: no cjpm native source inclusion, no runtime package config mutation, no public API or pointer-return C ABI"
+
+SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "cjgui native bridge cjpm boundary: missing $CJPM_TOML" >&2
+  exit 2
+fi
+if [[ ! -f "$HEADER_FILE" || ! -f "$SOURCE_FILE" ]]; then
+  echo "cjgui native bridge cjpm boundary: missing production native skeleton" >&2
+  exit 3
+fi
+if [[ ! -x "$SKELETON_PROBE" ]]; then
+  echo "cjgui native bridge cjpm boundary: missing executable skeleton probe $SKELETON_PROBE" >&2
+  exit 4
+fi
+if grep -E '^\s*\[ffi\.c\]' "$CJPM_TOML" >/dev/null 2>&1; then
+  echo "cjgui native bridge cjpm boundary: cjpm.toml must not declare ffi.c for this slice" >&2
+  exit 5
+fi
+if grep -E 'cjgui_native_bridge|native/cjgui_native_bridge|link-option|compile-option' "$CJPM_TOML" >/dev/null 2>&1; then
+  echo "cjgui native bridge cjpm boundary: cjpm.toml must not wire production native skeleton yet" >&2
+  exit 6
+fi
+if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge cjpm boundary: production skeleton must not import Metal framework" >&2
+  exit 7
+fi
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge cjpm boundary: production skeleton contains forbidden runtime/native behavior token" >&2
+  exit 8
+fi
+while IFS= read -r callable_name; do
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
     echo "cjgui native bridge cjpm boundary: callable symbol is outside no-resource allowlist: $callable_name" >&2
     exit 9
   fi

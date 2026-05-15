@@ -2,8 +2,9 @@
 set -euo pipefail
 # 中文维护注释：
 # 范围：本脚本只验证 isolated visible-window no-present nextDrawable acquisition。
-# 停止线：production runtime 不创建窗口语义；probe 不 present，不创建 command queue /
-# encoder，不提交 GPU work，不执行 render，不返回 native pointer。
+# 停止线：production runtime 只允许 token-backed NSWindow harness first slice；
+# probe 不 present，不创建 command queue / encoder，不提交 GPU work，不执行 render，
+# 不返回 native pointer。
 # Same-shape Boundary Brake: isolated drawable facts 不是 production backend-ready truth。
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui drawable no-present acquisition probe: macOS is required" >&2
@@ -43,7 +44,7 @@ if grep -Eq 'nextDrawable|presentDrawable|present]|MTLRenderCommandEncoder|rende
   echo "forbidden drawable presentation / command submission path found in production bridge" >&2
   exit 1
 fi
-if grep -Eq 'NSWindow[[:space:]]*\*[^;=]*=[[:space:]]*\[NSWindow|\[NSWindow[[:space:]]+(alloc|new)\]|NSApplication[[:space:]]+sharedApplication|makeKeyAndOrderFront|orderFront' "$SOURCE_PATH"; then
+if grep -Eq 'NSApplication[[:space:]]+sharedApplication|makeKeyAndOrderFront|orderFront' "$SOURCE_PATH"; then
   echo "forbidden production visible window / application creation path found" >&2
   exit 1
 fi

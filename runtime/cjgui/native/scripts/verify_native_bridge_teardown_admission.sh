@@ -20,6 +20,7 @@ ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_surface_version|cjgui_nat
 PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_pipeline_descriptor_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|configure_requires_main_thread|configure_no_draw|color_pixel_format_classify|sample_count_classify|shader_library_still_blocked|vertex_function_still_blocked|fragment_function_still_blocked|blending_still_blocked|encoder_binding_still_blocked)|cjgui_native_bridge_pipeline_state_creation_still_blocked)$'
 VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_vertex_buffer_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|upload_static_triangle|data_classify|create_requires_main_thread|destroy_requires_main_thread|upload_requires_main_thread|layout_position_color|encoder_binding_still_blocked|draw_still_blocked)$'
 DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_draw_call_(encoder_required|pipeline_binding_required|vertex_binding_required|still_blocked)$'
+NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_nswindow_harness_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|next_drawable_still_blocked|command_buffer_still_blocked|render_encoder_still_blocked|present_still_blocked)$'
 SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui native bridge teardown admission probe: macOS is required" >&2
@@ -33,12 +34,163 @@ if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge teardown admission probe: production bridge must not import Cocoa / Metal frameworks" >&2
   exit 4
 fi
-if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSWindow|NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSWindow|NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain|uintptr_t|__bridge|CFBridging|^[[:space:]]*void[[:space:]]*\*[[:space:]]+cjgui_' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain|uintptr_t|__bridge|CFBridging|^[[:space:]]*void[[:space:]]*\*[[:space:]]+cjgui_' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge teardown admission probe: forbidden resource/native behavior token found" >&2
   exit 5
 fi
 while IFS= read -r callable_name; do
-  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+    echo "cjgui native bridge teardown admission probe: callable outside allowlist: $callable_name" >&2
+    exit 6
+  fi
+done < <(grep -Eoh 'cjgui_native_bridge_[A-Za-z0-9_]+[[:space:]]*\(' "$HEADER_FILE" "$SOURCE_FILE" 2>/dev/null | sed -E 's/[[:space:]]*[(]$//')
+if ! command -v cjc >/dev/null 2>&1; then
+  if [[ -f "/Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh" ]]; then
+    export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH:-}"
+    source "/Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh"
+  fi
+fi
+if ! command -v cjc >/dev/null 2>&1; then
+  echo "cjgui native bridge teardown admission probe: cjc not found" >&2
+  exit 7
+fi
+if command -v xcrun >/dev/null 2>&1; then
+  CLANG_BIN="$(xcrun --sdk macosx --find clang 2>/dev/null || true)"
+else
+  CLANG_BIN=""
+fi
+if [[ -z "${CLANG_BIN:-}" ]]; then
+  CLANG_BIN="$(command -v clang || true)"
+fi
+if [[ -z "${CLANG_BIN:-}" ]]; then
+  echo "cjgui native bridge teardown admission probe: clang not found" >&2
+  exit 8
+fi
+if [[ -z "${CJ_GUI_SDKROOT:-}" && -d "$KNOWN_GOOD_SDK" ]]; then
+  CJ_GUI_SDKROOT="$KNOWN_GOOD_SDK"
+elif [[ -z "${CJ_GUI_SDKROOT:-}" && -n "${SDKROOT:-}" && -d "$SDKROOT" ]]; then
+  CJ_GUI_SDKROOT="$SDKROOT"
+elif [[ -z "${CJ_GUI_SDKROOT:-}" ]] && command -v xcrun >/dev/null 2>&1; then
+  CJ_GUI_SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+fi
+if [[ -z "${CJ_GUI_SDKROOT:-}" || ! -d "$CJ_GUI_SDKROOT" ]]; then
+  echo "cjgui native bridge teardown admission probe: SDKROOT not found" >&2
+  exit 9
+fi
+cat > "$PROBE_SOURCE" <<'CJGUI_NATIVE_BRIDGE_TEARDOWN_ADMISSION_PROBE'
+foreign func cjgui_native_bridge_token_invalid(): UInt64
+foreign func cjgui_native_bridge_token_issue(): UInt64
+foreign func cjgui_native_bridge_token_revoke(token: UInt64): Int32
+foreign func cjgui_native_bridge_teardown_admission(token: UInt64): Int32
+foreign func cjgui_native_bridge_destroy_not_supported(): Int32
+foreign func cjgui_native_bridge_revoke_before_destroy_required(): Int32
+foreign func cjgui_native_bridge_double_destroy_classify(token: UInt64): Int32
+main(): Int64 {
+    println("cjgui native bridge teardown admission probe: requested=true")
+    let invalidToken = unsafe {
+        cjgui_native_bridge_token_invalid()
+    }
+    let invalidAdmission = unsafe {
+        cjgui_native_bridge_teardown_admission(invalidToken)
+    }
+    let destroyNotSupported = unsafe {
+        cjgui_native_bridge_destroy_not_supported()
+    }
+    let revokeBeforeDestroyRequired = unsafe {
+        cjgui_native_bridge_revoke_before_destroy_required()
+    }
+    let issuedToken = unsafe {
+        cjgui_native_bridge_token_issue()
+    }
+    let validAdmission = unsafe {
+        cjgui_native_bridge_teardown_admission(issuedToken)
+    }
+    let revokeStatus = unsafe {
+        cjgui_native_bridge_token_revoke(issuedToken)
+    }
+    let doubleDestroyClass = unsafe {
+        cjgui_native_bridge_double_destroy_classify(issuedToken)
+    }
+    let danglingAdmission = unsafe {
+        cjgui_native_bridge_teardown_admission(issuedToken)
+    }
+    let destroyNotSupportedObserved = destroyNotSupported == Int32(-10)
+    let revokeBeforeDestroyObserved =
+        revokeBeforeDestroyRequired == Int32(-11)
+    let invalidAdmissionObserved = invalidAdmission == Int32(-13)
+    let validAdmissionObserved =
+        issuedToken != UInt64(0) && validAdmission == Int32(-11)
+    let revokeObserved = revokeStatus == Int32(0)
+    let doubleDestroyObserved = doubleDestroyClass == Int32(-12)
+    let danglingAdmissionObserved = danglingAdmission == Int32(-13)
+    let success = destroyNotSupportedObserved &&
+        revokeBeforeDestroyObserved &&
+        invalidAdmissionObserved &&
+        validAdmissionObserved &&
+        revokeObserved &&
+        doubleDestroyObserved &&
+        danglingAdmissionObserved
+    println("cjgui native bridge teardown admission probe: destroy_not_supported_observed=${destroyNotSupportedObserved}")
+    println("cjgui native bridge teardown admission probe: revoke_before_destroy_required_observed=${revokeBeforeDestroyObserved}")
+    println("cjgui native bridge teardown admission probe: invalid_token_fail_closed_observed=${invalidAdmissionObserved}")
+    println("cjgui native bridge teardown admission probe: valid_token_admission_observed=${validAdmissionObserved}")
+    println("cjgui native bridge teardown admission probe: revoke_observed=${revokeObserved}")
+    println("cjgui native bridge teardown admission probe: double_destroy_denial_observed=${doubleDestroyObserved}")
+    println("cjgui native bridge teardown admission probe: dangling_token_denial_observed=${danglingAdmissionObserved}")
+    println("cjgui native bridge teardown admission probe: actual_destroy_invoked=false")
+    println("cjgui native bridge teardown admission probe: retain_release_invoked=false")
+    println("cjgui native bridge teardown admission probe: public_api_modified=false")
+    println("cjgui native bridge teardown admission probe: native_object_created=false")
+    if (success) {
+        println("cjgui native bridge teardown admission probe: success=true reason=none")
+        return 0
+    }
+    println("cjgui native bridge teardown admission probe: success=false reason=value_mismatch")
+    return 1
+}
+CJGUI_NATIVE_BRIDGE_TEARDOWN_ADMISSION_PROBE
+echo "cjgui native bridge teardown admission probe: output=$OUTPUT_DIR"
+echo "cjgui native bridge teardown admission probe: sdkroot=$CJ_GUI_SDKROOT"
+echo "cjgui native bridge teardown admission probe: compiling production no-resource bridge"
+"$CLANG_BIN" \
+  -fobjc-arc \
+  -fno-objc-msgsend-selector-stubs \
+  -fmodules \
+  -isysroot "$CJ_GUI_SDKROOT" \
+  -mmacosx-version-min=12.0 \
+  -c "$SOURCE_FILE" \
+  -o "$OBJECT_FILE"
+ar rcs "$STATIC_LIB" "$OBJECT_FILE"
+cjc "$PROBE_SOURCE" \
+  --sysroot "$CJ_GUI_SDKROOT" \
+  -L "$OUTPUT_DIR" \
+  -lcjgui_native_bridge_teardown_admission_probe \
+  --link-options "-framework AppKit -framework QuartzCore -framework Metal -lobjc" \
+  -o "$PROBE_EXECUTABLE"
+if [[ -d "$CANGJIE_RUNTIME_LIB_DIR" ]]; then
+  export DYLD_LIBRARY_PATH="$CANGJIE_RUNTIME_LIB_DIR:${DYLD_LIBRARY_PATH:-}"
+fi
+"$PROBE_EXECUTABLE"
+
+SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "cjgui native bridge teardown admission probe: macOS is required" >&2
+  exit 2
+fi
+if [[ ! -f "$HEADER_FILE" || ! -f "$SOURCE_FILE" ]]; then
+  echo "cjgui native bridge teardown admission probe: missing production native bridge" >&2
+  exit 3
+fi
+if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge teardown admission probe: production bridge must not import Cocoa / Metal frameworks" >&2
+  exit 4
+fi
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain|uintptr_t|__bridge|CFBridging|^[[:space:]]*void[[:space:]]*\*[[:space:]]+cjgui_' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge teardown admission probe: forbidden resource/native behavior token found" >&2
+  exit 5
+fi
+while IFS= read -r callable_name; do
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
     echo "cjgui native bridge teardown admission probe: callable outside allowlist: $callable_name" >&2
     exit 6
   fi

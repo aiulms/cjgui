@@ -31,7 +31,7 @@ if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge nsview allocation feasibility probe: production bridge must not import Cocoa / Metal" >&2
   exit 5
 fi
-if grep -E '\[[[:space:]]*(NSWindow|NSApplication|CALayer)[[:space:]]+(alloc|new|init)\]|^[[:space:]]*static[[:space:]]+(NSWindow|NSApplication|CALayer|Class|id)[[:space:]]|^[[:space:]]*(Class|id|void[[:space:]]*\*|uintptr_t)[[:space:]]+cjgui_|nextDrawable|commit\]|presentDrawable|present\]' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E '\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new|init)\]|^[[:space:]]*static[[:space:]]+(NSApplication|CALayer|Class|id)[[:space:]]|^[[:space:]]*(Class|id|void[[:space:]]*\*|uintptr_t)[[:space:]]+cjgui_|nextDrawable|commit\]|presentDrawable|present\]' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge nsview allocation feasibility probe: production bridge contains forbidden allocation / storage / pointer token" >&2
   exit 6
 fi
@@ -110,7 +110,7 @@ int main(void) {
     return 1;
 }
 CJGUI_NATIVE_BRIDGE_NSVIEW_ALLOCATION_FEASIBILITY_PROBE
-if grep -E '#import <Metal/Metal\.h>|NSWindow|NSApplication|CALayer|uintptr_t|return[[:space:]]+temporaryView' "$PROBE_SOURCE" >/dev/null 2>&1; then
+if grep -E '#import <Metal/Metal\.h>|NSApplication|CALayer|uintptr_t|return[[:space:]]+temporaryView' "$PROBE_SOURCE" >/dev/null 2>&1; then
   echo "cjgui native bridge nsview allocation feasibility probe: temporary source crossed object / pointer stop-line" >&2
   exit 9
 fi

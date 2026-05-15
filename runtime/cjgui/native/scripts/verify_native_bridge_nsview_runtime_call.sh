@@ -62,7 +62,7 @@ if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge nsview runtime call probe: forbidden framework import" >&2
   exit 9
 fi
-if grep -E '\[[[:space:]]*(NSWindow|NSApplication|CALayer)[[:space:]]+(alloc|new|init)\]|^[[:space:]]*(Class|id|void[[:space:]]*\*|uintptr_t)[[:space:]]+cjgui_|nextDrawable|commit\]|presentDrawable|present\]|__bridge|CFBridging' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E '\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new|init)\]|^[[:space:]]*(Class|id|void[[:space:]]*\*|uintptr_t)[[:space:]]+cjgui_|nextDrawable|commit\]|presentDrawable|present\]|__bridge|CFBridging' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge nsview runtime call probe: forbidden object / pointer / GPU token found" >&2
   exit 10
 fi

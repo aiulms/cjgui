@@ -87,6 +87,7 @@ EXPECTED_SYMBOLS=(
 PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_pipeline_descriptor_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|configure_requires_main_thread|configure_no_draw|color_pixel_format_classify|sample_count_classify|shader_library_still_blocked|vertex_function_still_blocked|fragment_function_still_blocked|blending_still_blocked|encoder_binding_still_blocked)|cjgui_native_bridge_pipeline_state_creation_still_blocked)$'
 VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_vertex_buffer_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|upload_static_triangle|data_classify|create_requires_main_thread|destroy_requires_main_thread|upload_requires_main_thread|layout_position_color|encoder_binding_still_blocked|draw_still_blocked)$'
 DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_draw_call_(encoder_required|pipeline_binding_required|vertex_binding_required|still_blocked)$'
+NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?cjgui_native_bridge_nswindow_harness_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|next_drawable_still_blocked|command_buffer_still_blocked|render_encoder_still_blocked|present_still_blocked)$'
 SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui native bridge no-resource symbols: macOS is required for Objective-C symbol probe" >&2
@@ -100,12 +101,12 @@ if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource symbols: production skeleton must not import Cocoa / Metal frameworks" >&2
   exit 4
 fi
-if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSWindow|NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSWindow|NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
   echo "cjgui native bridge no-resource symbols: production skeleton contains forbidden runtime/native behavior token" >&2
   exit 5
 fi
 while IFS= read -r callable_name; do
-  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
     echo "cjgui native bridge no-resource symbols: callable is outside allowlist: $callable_name" >&2
     exit 6
   fi
@@ -146,7 +147,82 @@ fi
 SYMBOL_LIST="$OUTPUT_DIR/cjgui_native_bridge.symbols"
 while IFS= read -r symbol_name; do
   if [[ "$symbol_name" == _cjgui_* || "$symbol_name" == cjgui_* ]]; then
-    if [[ ! "$symbol_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+    if [[ ! "$symbol_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+      echo "cjgui native bridge no-resource symbols: object exports forbidden symbol: $symbol_name" >&2
+      exit 10
+    fi
+    echo "${symbol_name#_}" >> "$SYMBOL_LIST"
+  fi
+done < <(nm -g "$OBJECT_FILE" | awk '{print $NF}')
+for expected_symbol in "${EXPECTED_SYMBOLS[@]}"; do
+  if ! grep -Fx "$expected_symbol" "$SYMBOL_LIST" >/dev/null 2>&1; then
+    echo "cjgui native bridge no-resource symbols: missing symbol $expected_symbol" >&2
+    exit 11
+  fi
+done
+echo "cjgui native bridge no-resource symbols: passed"
+echo "cjgui native bridge no-resource symbols: no public API, no pointer return, no commit/present/render callable, no pointer-return public surface"
+
+SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX='^_?(cjgui_native_bridge_shader_(source_contract_available|library_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread)|function_(table_capacity|table_enabled|table_occupied_count|lookup_vertex|lookup_fragment|destroy|token_classify|double_destroy_classify|lookup_requires_main_thread|destroy_requires_main_thread|missing_classify)|pipeline_state_creation_still_blocked|encoder_binding_still_blocked|draw_still_blocked)|cjgui_native_bridge_pipeline_state_(table_capacity|table_enabled|table_occupied_count|create|destroy|token_classify|double_destroy_classify|create_requires_main_thread|destroy_requires_main_thread|encoder_binding_still_blocked|draw_still_blocked))$'
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "cjgui native bridge no-resource symbols: macOS is required for Objective-C symbol probe" >&2
+  exit 2
+fi
+if [[ ! -f "$HEADER_FILE" || ! -f "$SOURCE_FILE" ]]; then
+  echo "cjgui native bridge no-resource symbols: missing production native skeleton" >&2
+  exit 3
+fi
+if grep -E '#import <Cocoa/Cocoa\.h>' "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge no-resource symbols: production skeleton must not import Cocoa / Metal frameworks" >&2
+  exit 4
+fi
+if grep -E 'cjgui_app_run|cjgui_last_error|\[[[:space:]]*(NSApplication|CALayer)[[:space:]]+(alloc|new)\]|(NSApplication|CALayer)[[:space:]]*\*|nextDrawable|commit\]|presentDrawable|present\]|\[[^]]+[[:space:]]+(retain|release)\]|CFRelease|CFRetain' "$HEADER_FILE" "$SOURCE_FILE" >/dev/null 2>&1; then
+  echo "cjgui native bridge no-resource symbols: production skeleton contains forbidden runtime/native behavior token" >&2
+  exit 5
+fi
+while IFS= read -r callable_name; do
+  if [[ -n "$callable_name" && ! "$callable_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$callable_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
+    echo "cjgui native bridge no-resource symbols: callable is outside allowlist: $callable_name" >&2
+    exit 6
+  fi
+done < <(grep -Eoh 'cjgui_native_bridge_[A-Za-z0-9_]+[[:space:]]*\(' "$HEADER_FILE" "$SOURCE_FILE" 2>/dev/null | sed -E 's/[[:space:]]*[(]$//')
+if command -v xcrun >/dev/null 2>&1; then
+  CLANG_BIN="$(xcrun --sdk macosx --find clang 2>/dev/null || true)"
+  SDKROOT_VALUE="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)}"
+else
+  CLANG_BIN=""
+  SDKROOT_VALUE="${SDKROOT:-}"
+fi
+if [[ -z "${CLANG_BIN:-}" ]]; then
+  CLANG_BIN="$(command -v clang || true)"
+fi
+if [[ -z "${CLANG_BIN:-}" ]]; then
+  echo "cjgui native bridge no-resource symbols: clang not found" >&2
+  exit 7
+fi
+if [[ -z "${SDKROOT_VALUE:-}" || ! -d "$SDKROOT_VALUE" ]]; then
+  echo "cjgui native bridge no-resource symbols: SDKROOT not found; set SDKROOT or install macOS SDK" >&2
+  exit 8
+fi
+echo "cjgui native bridge no-resource symbols: source=$SOURCE_FILE"
+echo "cjgui native bridge no-resource symbols: object=$OBJECT_FILE"
+echo "cjgui native bridge no-resource symbols: sdkroot=$SDKROOT_VALUE"
+"$CLANG_BIN" \
+  -fobjc-arc \
+  -fno-objc-msgsend-selector-stubs \
+  -fmodules \
+  -isysroot "$SDKROOT_VALUE" \
+  -mmacosx-version-min=12.0 \
+  -c "$SOURCE_FILE" \
+  -o "$OBJECT_FILE"
+if ! command -v nm >/dev/null 2>&1; then
+  echo "cjgui native bridge no-resource symbols: nm not found" >&2
+  exit 9
+fi
+SYMBOL_LIST="$OUTPUT_DIR/cjgui_native_bridge.symbols"
+while IFS= read -r symbol_name; do
+  if [[ "$symbol_name" == _cjgui_* || "$symbol_name" == cjgui_* ]]; then
+    if [[ ! "$symbol_name" =~ $ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $PIPELINE_DESCRIPTOR_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $SHADER_LIBRARY_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $VERTEX_BUFFER_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $DRAW_CALL_ALLOWED_CALLABLE_SYMBOL_REGEX && ! "$symbol_name" =~ $NSWINDOW_HARNESS_ALLOWED_CALLABLE_SYMBOL_REGEX ]]; then
       echo "cjgui native bridge no-resource symbols: object exports forbidden symbol: $symbol_name" >&2
       exit 10
     fi

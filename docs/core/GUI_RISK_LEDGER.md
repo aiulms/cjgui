@@ -28,6 +28,13 @@
 - 说明：该文档记录 AI-native GUI runtime 的外部架构提醒，包括 Hard / Soft Cycle、owner 编译期与运行时契约、semantic projection、Action Router、AI intent arbitration、三条生死线、owner 粒度 / cycle driver / Action Router 位置岔路、面向 AI 生成的长期 contract 思路和最小语义 demo。
 - 读取规则：它不是每轮 implementation 的默认必读项；仅在开启 semantic projection / semantic tree、Action Router、AI action protocol、controller handle、local state snapshot、Hard / Soft Cycle、input / animation fast path、最小控件 / 声明式 surface、渲染后端选择、AI generation contract / schema 或 AI-native semantic demo 前按需读取。
 
+### AI-native generated UI / semantic UI spec north-star intake
+
+- 入口：[2026-05-15-p1-ai-native-generated-ui-semantic-spec-north-star-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-ai-native-generated-ui-semantic-spec-north-star-intake.md)
+- 性质：docs-only north-star intake / future opening registry。
+- 说明：该文档把 AI 生成 UI、semantic UI spec、AI-native WYSIWYG、preview / diff / reject loop 和 widget schema capability gate 显式登记为 future radar；它不批准 semantic tree、Action Router 新能力、public DSL、widget generator、AI provider、prompt runtime、preview runtime、renderer implementation 或 public API implementation。
+- 读取规则：仅在开启 AI generation contract / schema、semantic UI spec、AI-authored widget schema、generated UI preview / diff / reject loop、AI-native WYSIWYG、public DSL 或 semantic projection gate 前按需读取。
+
 ### AI-native operability / foreign surface risk intake
 
 - 入口：[2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)

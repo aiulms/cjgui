@@ -9,20 +9,23 @@
  * MTLRenderPipelineDescriptor no-draw create/config/destroy first slice、
  * shader library / function no-draw create/lookup/destroy first slice、
  * MTLRenderPipelineState no-draw create/destroy first slice、
- * MTLBuffer no-submit create/destroy/data-upload first slice 与 draw call
- * no-submit still-blocked facts
+ * MTLBuffer no-submit create/destroy/data-upload first slice、draw call
+ * no-submit still-blocked facts 与 token-backed NSWindow harness create/destroy
+ * first slice
  * 与确定性整数事实，
  * 不是运行时 bridge truth。
  * Stop-line: 只允许 pthread 当前线程分类、bridge-local token facts、AppKit import /
  * class lookup / main-thread admission / no-object creation facts、fixed-capacity
- * NSView token table first slice，以及 QuartzCore / CAMetalLayer no-attach /
+ * NSView token table first slice、token-backed NSWindow harness create/destroy
+ * first slice，以及 QuartzCore / CAMetalLayer no-attach /
  * allocation / table / create-destroy / controlled NSView attachment facts、
  * Metal device availability / table / layer binding facts、fixed-capacity
  * command queue token facts、command buffer token facts、render pass descriptor
  * token facts、pipeline descriptor token/config facts、shader library /
  * function token facts、pipeline state token facts、vertex buffer token facts 与
  * draw call still-blocked facts；
- * 不获取 drawable，
+ * NSWindow harness 只创建 / 销毁不可见窗口对象，不 order front，不创建
+ * NSApplication，不获取 drawable，
  * command buffer / render pass descriptor / pipeline descriptor / shader /
  * pipeline state / vertex buffer / draw call no-submit first slice 不创建或绑定 encoder，不调用
  * setVertexBuffer，不 commit / present / draw / render，
@@ -48,7 +51,8 @@
 /*
  * 当前 callable 只暴露 no-resource status / capability / thread-classification /
  * token / import / class lookup / main-thread admission / no-object creation / NSView
- * token-backed first-slice facts / CAMetalLayer no-attach / allocation /
+ * token-backed first-slice facts / NSWindow harness token-backed facts /
+ * CAMetalLayer no-attach / allocation /
  * table / create-destroy / NSView attachment facts / Metal device binding facts /
  * command queue create-destroy facts / command buffer create-destroy facts /
  * render pass descriptor create-destroy facts。
@@ -56,6 +60,8 @@
  * teardown admission 只做 fail-closed 分类，不执行真实 native 生命周期。
  * AppKit import / class availability / main-thread admission boundary 只证明 no-object facts 可观察。
  * NSView first slice 只在 main thread 创建 / 清空固定容量 table entry，不创建 window / layer / Metal。
+ * NSWindow harness first slice 只创建不可见 NSWindow token 并销毁，不 order front、
+ * 不创建 NSApplication，不接入 layer / drawable / command buffer / encoder / present。
  * QuartzCore / CAMetalLayer no-attach boundary 只做 class lookup；allocation /
  * create-destroy first slice 只创建未绑定 drawable 的 fixed-capacity layer token。
  * Metal device first slice 只绑定 default device 到 CAMetalLayer；command queue
@@ -84,6 +90,14 @@ typedef struct CjguiNativeBridgeNsViewTableEntry {
 #endif
     uint8_t active;
 } CjguiNativeBridgeNsViewTableEntry;
+
+typedef struct CjguiNativeBridgeNsWindowHarnessTableEntry {
+    uint64_t token;
+#if defined(__APPLE__)
+    __strong NSWindow *window;
+#endif
+    uint8_t active;
+} CjguiNativeBridgeNsWindowHarnessTableEntry;
 
 typedef struct CjguiNativeBridgeCAMetalLayerTableEntry {
     uint64_t token;
@@ -189,6 +203,11 @@ static pthread_mutex_t g_cjgui_native_bridge_nsview_table_mutex =
     PTHREAD_MUTEX_INITIALIZER;
 static CjguiNativeBridgeNsViewTableEntry
     g_cjgui_native_bridge_nsview_table[CJGUI_NATIVE_BRIDGE_NSVIEW_TABLE_CAPACITY];
+static pthread_mutex_t g_cjgui_native_bridge_nswindow_harness_table_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+static CjguiNativeBridgeNsWindowHarnessTableEntry
+    g_cjgui_native_bridge_nswindow_harness_table
+        [CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TABLE_CAPACITY];
 static pthread_mutex_t g_cjgui_native_bridge_cametallayer_table_mutex =
     PTHREAD_MUTEX_INITIALIZER;
 static CjguiNativeBridgeCAMetalLayerTableEntry
@@ -315,6 +334,45 @@ static int32_t nsview_table_first_free_slot_locked(void) {
          slot_index < CJGUI_NATIVE_BRIDGE_NSVIEW_TABLE_CAPACITY;
          slot_index++) {
         if (g_cjgui_native_bridge_nsview_table[slot_index].active == 0u) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static uint32_t nswindow_harness_table_occupied_count_locked(void) {
+    uint32_t count = 0u;
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_nswindow_harness_table[slot_index].active ==
+            1u) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int32_t nswindow_harness_table_find_token_locked(uint64_t token) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_nswindow_harness_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_nswindow_harness_table[slot_index].token ==
+                token) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t nswindow_harness_table_first_free_slot_locked(void) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_nswindow_harness_table[slot_index].active ==
+            0u) {
             return (int32_t)slot_index;
         }
     }
@@ -1142,6 +1200,18 @@ static int32_t vertex_buffer_status_from_classification(
     return classification;
 }
 
+static int32_t nswindow_harness_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_INVALID_TOKEN_DENIED;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_STALE) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_STALE_TOKEN_DENIED;
+    }
+    return classification;
+}
+
 static int32_t vertex_buffer_device_status_from_classification(
     int32_t classification
 ) {
@@ -1209,7 +1279,8 @@ uint32_t cjgui_native_bridge_surface_capabilities(void) {
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_SHADER_FUNCTION_LOOKUP |
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_PIPELINE_STATE_CREATE_DESTROY |
         CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_CREATE_DESTROY |
-        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_DATA_UPLOAD;
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_DATA_UPLOAD |
+        CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_NSWINDOW_HARNESS_CREATE_DESTROY;
 }
 
 uint32_t cjgui_native_bridge_status_ok(void) {
@@ -1597,6 +1668,186 @@ int32_t cjgui_native_bridge_nsview_double_destroy_classify(uint64_t token) {
 
 int32_t cjgui_native_bridge_nsview_destroy_requires_main_thread(void) {
     return CJGUI_NATIVE_BRIDGE_NSVIEW_DESTROY_MAIN_THREAD_REQUIRED;
+}
+
+uint32_t cjgui_native_bridge_nswindow_harness_table_capacity(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TABLE_CAPACITY;
+}
+
+uint32_t cjgui_native_bridge_nswindow_harness_table_enabled(void) {
+    return 1u;
+}
+
+uint32_t cjgui_native_bridge_nswindow_harness_table_occupied_count(void) {
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    uint32_t count = nswindow_harness_table_occupied_count_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    return count;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_token_classify(
+    uint64_t window_token
+) {
+    int32_t token_classification =
+        cjgui_native_bridge_token_classify(window_token);
+    int32_t status =
+        nswindow_harness_status_from_classification(token_classification);
+    if (status != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return status;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    int32_t slot_index =
+        nswindow_harness_table_find_token_locked(window_token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    if (slot_index >= 0) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_BOUND;
+    }
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_NOT_BOUND;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_create(
+    uint64_t* out_window_token
+) {
+    if (out_window_token == 0) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_OUT_TOKEN_REQUIRED;
+    }
+    *out_window_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CREATE_MAIN_THREAD_REQUIRED;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    int32_t free_slot = nswindow_harness_table_first_free_slot_locked();
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    if (free_slot < 0) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CAPACITY_EXHAUSTED;
+    }
+
+    uint64_t token = cjgui_native_bridge_token_issue();
+    if (token == CJGUI_NATIVE_BRIDGE_TOKEN_INVALID) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CAPACITY_EXHAUSTED;
+    }
+
+    NSRect content_rect = NSMakeRect(0.0, 0.0, 160.0, 120.0);
+    NSWindow *window = [[NSWindow alloc]
+        initWithContentRect:content_rect
+                  styleMask:NSWindowStyleMaskTitled
+                    backing:NSBackingStoreBuffered
+                      defer:YES];
+    if (window == nil) {
+        (void)cjgui_native_bridge_token_revoke(token);
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CREATION_FAILED;
+    }
+    [window setReleasedWhenClosed:NO];
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    if (g_cjgui_native_bridge_nswindow_harness_table[free_slot].active != 0u) {
+        free_slot = nswindow_harness_table_first_free_slot_locked();
+    }
+    if (free_slot < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+        [window close];
+        (void)cjgui_native_bridge_token_revoke(token);
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CAPACITY_EXHAUSTED;
+    }
+
+    g_cjgui_native_bridge_nswindow_harness_table[free_slot].token = token;
+    g_cjgui_native_bridge_nswindow_harness_table[free_slot].window = window;
+    g_cjgui_native_bridge_nswindow_harness_table[free_slot].active = 1u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    *out_window_token = token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_destroy(uint64_t window_token) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_DESTROY_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t token_classification =
+        cjgui_native_bridge_token_classify(window_token);
+    int32_t status =
+        nswindow_harness_status_from_classification(token_classification);
+    if (status == CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_DOUBLE_DESTROY_DENIED;
+    }
+    if (status != CJGUI_NATIVE_BRIDGE_TOKEN_CLASS_VALID) {
+        return status;
+    }
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    int32_t slot_index =
+        nswindow_harness_table_find_token_locked(window_token);
+    if (slot_index < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_NOT_BOUND;
+    }
+
+    NSWindow *window =
+        g_cjgui_native_bridge_nswindow_harness_table[slot_index].window;
+    g_cjgui_native_bridge_nswindow_harness_table[slot_index].window = nil;
+    g_cjgui_native_bridge_nswindow_harness_table[slot_index].token =
+        CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_nswindow_harness_table[slot_index].active = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+
+    if (window != nil) {
+        [window orderOut:nil];
+        [window close];
+    }
+
+    int32_t revoke_status = cjgui_native_bridge_token_revoke(window_token);
+    if (revoke_status != CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK) {
+        return revoke_status;
+    }
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)window_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_double_destroy_classify(
+    uint64_t window_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_nswindow_harness_token_classify(window_token);
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_STALE_TOKEN_DENIED) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_DOUBLE_DESTROY_DENIED;
+    }
+    return classification;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_create_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CREATE_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_destroy_requires_main_thread(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_DESTROY_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_next_drawable_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_NEXT_DRAWABLE_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_command_buffer_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_COMMAND_BUFFER_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_render_encoder_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_RENDER_ENCODER_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_present_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_PRESENT_STILL_BLOCKED;
 }
 
 int32_t cjgui_native_bridge_quartzcore_import_available(void) {

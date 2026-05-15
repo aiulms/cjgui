@@ -8,10 +8,12 @@
  * shader library / function no-draw create/lookup/destroy first slice、
  * MTLRenderPipelineState no-draw create/destroy first slice、
  * MTLBuffer no-submit create/destroy/data-upload first slice、
- * draw call no-submit still-blocked facts
+ * draw call no-submit still-blocked facts、token-backed NSWindow harness
+ * create/destroy first slice
  * 与内部 status taxonomy，
  * 不是 public runtime API。
- * Stop-line: 不创建窗口、应用、drawable、绘制资源，
+ * Stop-line: 只允许 token-backed NSWindow harness 创建 / 销毁不可见窗口对象；
+ * 不创建应用、drawable、绘制资源，
  * command buffer / render pass descriptor / pipeline descriptor / shader
  * library / pipeline state / vertex buffer first slice 不创建 encoder，
  * 不绑定 pipeline 或 vertex buffer，不 draw，
@@ -95,7 +97,9 @@ typedef enum CjguiNativeBridgeSurfaceCapability {
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_CREATE_DESTROY =
         1u << 29,
     CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_VERTEX_BUFFER_DATA_UPLOAD =
-        1u << 30
+        1u << 30,
+    CJGUI_NATIVE_BRIDGE_SURFACE_CAPABILITY_NSWINDOW_HARNESS_CREATE_DESTROY =
+        1u << 31
 } CjguiNativeBridgeSurfaceCapability;
 
 enum {
@@ -113,6 +117,7 @@ enum {
     CJGUI_NATIVE_BRIDGE_SHADER_FUNCTION_TABLE_CAPACITY = 4u,
     CJGUI_NATIVE_BRIDGE_PIPELINE_STATE_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_VERTEX_BUFFER_TABLE_CAPACITY = 2u,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TABLE_CAPACITY = 2u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_BITS = 16u,
     CJGUI_NATIVE_BRIDGE_TOKEN_SLOT_MASK = 0xffffu
 };
@@ -461,6 +466,23 @@ typedef enum CjguiNativeBridgeDrawCallNoSubmitClassification {
     CJGUI_NATIVE_BRIDGE_DRAW_CALL_STILL_BLOCKED = -343
 } CjguiNativeBridgeDrawCallNoSubmitClassification;
 
+typedef enum CjguiNativeBridgeNsWindowHarnessLifecycleClassification {
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_BOUND = 360,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CREATE_MAIN_THREAD_REQUIRED = -360,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_DESTROY_MAIN_THREAD_REQUIRED = -361,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_INVALID_TOKEN_DENIED = -362,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_STALE_TOKEN_DENIED = -363,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_NOT_BOUND = -364,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CAPACITY_EXHAUSTED = -365,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_DOUBLE_DESTROY_DENIED = -366,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CREATION_FAILED = -367,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_OUT_TOKEN_REQUIRED = -368,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_NEXT_DRAWABLE_STILL_BLOCKED = -369,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_COMMAND_BUFFER_STILL_BLOCKED = -370,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_RENDER_ENCODER_STILL_BLOCKED = -371,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_PRESENT_STILL_BLOCKED = -372
+} CjguiNativeBridgeNsWindowHarnessLifecycleClassification;
+
 /*
  * callable 只返回 dehydrated integer facts，或通过 out-token 返回 opaque token。
  * 它们不返回 pointer，不扩 public runtime API，也不表示 backend ready。
@@ -782,6 +804,23 @@ int32_t cjgui_native_bridge_draw_call_encoder_required(void);
 int32_t cjgui_native_bridge_draw_call_pipeline_binding_required(void);
 int32_t cjgui_native_bridge_draw_call_vertex_binding_required(void);
 int32_t cjgui_native_bridge_draw_call_still_blocked(void);
+uint32_t cjgui_native_bridge_nswindow_harness_table_capacity(void);
+uint32_t cjgui_native_bridge_nswindow_harness_table_enabled(void);
+uint32_t cjgui_native_bridge_nswindow_harness_table_occupied_count(void);
+int32_t cjgui_native_bridge_nswindow_harness_create(uint64_t* out_window_token);
+int32_t cjgui_native_bridge_nswindow_harness_destroy(uint64_t window_token);
+int32_t
+cjgui_native_bridge_nswindow_harness_token_classify(uint64_t window_token);
+int32_t
+cjgui_native_bridge_nswindow_harness_double_destroy_classify(
+    uint64_t window_token
+);
+int32_t cjgui_native_bridge_nswindow_harness_create_requires_main_thread(void);
+int32_t cjgui_native_bridge_nswindow_harness_destroy_requires_main_thread(void);
+int32_t cjgui_native_bridge_nswindow_harness_next_drawable_still_blocked(void);
+int32_t cjgui_native_bridge_nswindow_harness_command_buffer_still_blocked(void);
+int32_t cjgui_native_bridge_nswindow_harness_render_encoder_still_blocked(void);
+int32_t cjgui_native_bridge_nswindow_harness_present_still_blocked(void);
 
 #ifdef __cplusplus
 }

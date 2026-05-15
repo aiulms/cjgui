@@ -2,8 +2,8 @@
 set -euo pipefail
 # 中文维护注释：
 # 范围：本脚本验证 isolated visible-window environment probe facts。
-# 停止线：production runtime 不创建 NSWindow；isolated probe 不调用 nextDrawable，
-# 不 present，不创建 command queue / encoder，不提交 GPU work，
+# 停止线：production runtime 只允许 token-backed NSWindow harness first slice；
+# isolated probe 不调用 nextDrawable，不 present，不创建 command queue / encoder，不提交 GPU work，
 # 不返回 native pointer。
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "cjgui drawable visible-window environment probe: macOS is required" >&2
@@ -43,7 +43,7 @@ if grep -Eq 'nextDrawable|presentDrawable|present]|MTLRenderCommandEncoder|rende
   echo "forbidden drawable / command submission path found in production bridge" >&2
   exit 1
 fi
-if grep -Eq 'NSWindow[[:space:]]*\*[^;=]*=[[:space:]]*\[NSWindow|\[NSWindow[[:space:]]+(alloc|new)\]|NSApplication[[:space:]]+sharedApplication|makeKeyAndOrderFront|orderFront' "$SOURCE_PATH"; then
+if grep -Eq 'NSApplication[[:space:]]+sharedApplication|makeKeyAndOrderFront|orderFront' "$SOURCE_PATH"; then
   echo "forbidden production visible window / application creation path found" >&2
   exit 1
 fi

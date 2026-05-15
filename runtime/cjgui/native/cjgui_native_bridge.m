@@ -13,14 +13,14 @@
  * no-submit still-blocked facts、token-backed NSWindow harness create/destroy
  * first slice、NSWindow content-view attachment first slice、
  * visible-order native guard no-side-effect facts、NSApplication native guard
- * no-side-effect facts
+ * no-side-effect facts、shared-application accessor call containment facts
  * 与确定性整数事实，
  * 不是运行时 bridge truth。
  * Stop-line: 只允许 pthread 当前线程分类、bridge-local token facts、AppKit import /
  * class lookup / main-thread admission / no-object creation facts、fixed-capacity
  * NSView token table first slice、token-backed NSWindow harness create/destroy
  * first slice、NSWindow content-view token wiring、visible-order guard facts、
- * NSApplication guard facts，
+ * NSApplication guard facts、accessor call containment facts，
  * 以及 QuartzCore / CAMetalLayer no-attach /
  * allocation / table / create-destroy / controlled NSView attachment facts、
  * Metal device availability / table / layer binding facts、fixed-capacity
@@ -2452,6 +2452,134 @@ cjgui_native_bridge_nsapplication_shared_application_guard_render_still_blocked(
 ) {
     return
         CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_GUARD_RENDER_STILL_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_accessor_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_ACCESSOR_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_no_singleton_accessor_call(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_NO_SINGLETON_ACCESSOR_CALL;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_singleton_creation_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_SINGLETON_CREATION_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_main_thread_required(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_MAIN_THREAD_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_bounded_run_loop_required(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_BOUNDED_RUN_LOOP_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_auto_close_required(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_AUTO_CLOSE_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_teardown_before_visible_required(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_TEARDOWN_BEFORE_VISIBLE_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_non_user_visible_required(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_NON_USER_VISIBLE_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_application_side_effect_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_APPLICATION_SIDE_EFFECT_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_activation_policy_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_ACTIVATION_POLICY_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_activation_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_ACTIVATION_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_event_loop_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_EVENT_LOOP_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_visible_order_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_VISIBLE_ORDER_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_drawable_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_DRAWABLE_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_render_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_RENDER_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_backend_ready_truth_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSAPPLICATION_SHARED_APPLICATION_ACCESSOR_CALL_CONTAINMENT_BACKEND_READY_TRUTH_BLOCKED;
 }
 
 int32_t cjgui_native_bridge_quartzcore_import_available(void) {

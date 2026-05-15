@@ -10,21 +10,26 @@
  * shader library / function no-draw create/lookup/destroy first slice、
  * MTLRenderPipelineState no-draw create/destroy first slice、
  * MTLBuffer no-submit create/destroy/data-upload first slice、draw call
- * no-submit still-blocked facts 与 token-backed NSWindow harness create/destroy
- * first slice
+ * no-submit still-blocked facts、token-backed NSWindow harness create/destroy
+ * first slice、NSWindow content-view attachment first slice、
+ * visible-order native guard no-side-effect facts、NSApplication native guard
+ * no-side-effect facts
  * 与确定性整数事实，
  * 不是运行时 bridge truth。
  * Stop-line: 只允许 pthread 当前线程分类、bridge-local token facts、AppKit import /
  * class lookup / main-thread admission / no-object creation facts、fixed-capacity
  * NSView token table first slice、token-backed NSWindow harness create/destroy
- * first slice，以及 QuartzCore / CAMetalLayer no-attach /
+ * first slice、NSWindow content-view token wiring、visible-order guard facts、
+ * NSApplication guard facts，
+ * 以及 QuartzCore / CAMetalLayer no-attach /
  * allocation / table / create-destroy / controlled NSView attachment facts、
  * Metal device availability / table / layer binding facts、fixed-capacity
  * command queue token facts、command buffer token facts、render pass descriptor
  * token facts、pipeline descriptor token/config facts、shader library /
  * function token facts、pipeline state token facts、vertex buffer token facts 与
  * draw call still-blocked facts；
- * NSWindow harness 只创建 / 销毁不可见窗口对象，不 order front，不创建
+ * NSWindow harness 只创建 / 销毁不可见窗口对象并允许 contentView token wiring，
+ * 不 order front，不创建
  * NSApplication，不获取 drawable，
  * command buffer / render pass descriptor / pipeline descriptor / shader /
  * pipeline state / vertex buffer / draw call no-submit first slice 不创建或绑定 encoder，不调用
@@ -93,10 +98,12 @@ typedef struct CjguiNativeBridgeNsViewTableEntry {
 
 typedef struct CjguiNativeBridgeNsWindowHarnessTableEntry {
     uint64_t token;
+    uint64_t attached_content_view_token;
 #if defined(__APPLE__)
     __strong NSWindow *window;
 #endif
     uint8_t active;
+    uint8_t content_view_attached;
 } CjguiNativeBridgeNsWindowHarnessTableEntry;
 
 typedef struct CjguiNativeBridgeCAMetalLayerTableEntry {
@@ -373,6 +380,24 @@ static int32_t nswindow_harness_table_first_free_slot_locked(void) {
          slot_index++) {
         if (g_cjgui_native_bridge_nswindow_harness_table[slot_index].active ==
             0u) {
+            return (int32_t)slot_index;
+        }
+    }
+    return -1;
+}
+
+static int32_t nswindow_harness_table_find_content_view_locked(
+    uint64_t view_token
+) {
+    for (uint32_t slot_index = 0u;
+         slot_index < CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TABLE_CAPACITY;
+         slot_index++) {
+        if (g_cjgui_native_bridge_nswindow_harness_table[slot_index].active ==
+                1u &&
+            g_cjgui_native_bridge_nswindow_harness_table[slot_index]
+                    .content_view_attached == 1u &&
+            g_cjgui_native_bridge_nswindow_harness_table[slot_index]
+                    .attached_content_view_token == view_token) {
             return (int32_t)slot_index;
         }
     }
@@ -1212,6 +1237,45 @@ static int32_t nswindow_harness_status_from_classification(
     return classification;
 }
 
+static int32_t nswindow_content_view_window_status_from_classification(
+    int32_t classification
+) {
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_INVALID_TOKEN_DENIED) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_INVALID_WINDOW_TOKEN;
+    }
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_STALE_TOKEN_DENIED) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_STALE_WINDOW_TOKEN;
+    }
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_NOT_BOUND) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_WINDOW_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
+static int32_t nswindow_content_view_view_status_from_classification(
+    int32_t classification
+) {
+    if (classification == CJGUI_NATIVE_BRIDGE_NSVIEW_INVALID_TOKEN_DENIED) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_INVALID_VIEW_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_NSVIEW_STALE_TOKEN_DENIED) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_STALE_VIEW_TOKEN;
+    }
+    if (classification == CJGUI_NATIVE_BRIDGE_NSVIEW_TOKEN_NOT_BOUND) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_VIEW_TOKEN_NOT_BOUND;
+    }
+    return classification;
+}
+
 static int32_t vertex_buffer_device_status_from_classification(
     int32_t classification
 ) {
@@ -1635,6 +1699,15 @@ int32_t cjgui_native_bridge_nsview_destroy(uint64_t token) {
         return token_classification;
     }
 
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    int32_t attached_window_slot =
+        nswindow_harness_table_find_content_view_locked(token);
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    if (attached_window_slot >= 0) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DETACH_BEFORE_VIEW_DESTROY_REQUIRED;
+    }
+
     pthread_mutex_lock(&g_cjgui_native_bridge_nsview_table_mutex);
     int32_t slot_index = nsview_table_find_token_locked(token);
     if (slot_index < 0) {
@@ -1755,8 +1828,12 @@ int32_t cjgui_native_bridge_nswindow_harness_create(
     }
 
     g_cjgui_native_bridge_nswindow_harness_table[free_slot].token = token;
+    g_cjgui_native_bridge_nswindow_harness_table[free_slot]
+        .attached_content_view_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
     g_cjgui_native_bridge_nswindow_harness_table[free_slot].window = window;
     g_cjgui_native_bridge_nswindow_harness_table[free_slot].active = 1u;
+    g_cjgui_native_bridge_nswindow_harness_table[free_slot]
+        .content_view_attached = 0u;
     pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
     *out_window_token = token;
     return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
@@ -1789,13 +1866,23 @@ int32_t cjgui_native_bridge_nswindow_harness_destroy(uint64_t window_token) {
         pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
         return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_NOT_BOUND;
     }
+    if (g_cjgui_native_bridge_nswindow_harness_table[slot_index]
+            .content_view_attached == 1u) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DETACH_BEFORE_WINDOW_DESTROY_REQUIRED;
+    }
 
     NSWindow *window =
         g_cjgui_native_bridge_nswindow_harness_table[slot_index].window;
+    g_cjgui_native_bridge_nswindow_harness_table[slot_index]
+        .attached_content_view_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
     g_cjgui_native_bridge_nswindow_harness_table[slot_index].window = nil;
     g_cjgui_native_bridge_nswindow_harness_table[slot_index].token =
         CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
     g_cjgui_native_bridge_nswindow_harness_table[slot_index].active = 0u;
+    g_cjgui_native_bridge_nswindow_harness_table[slot_index]
+        .content_view_attached = 0u;
     pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
 
     if (window != nil) {
@@ -1848,6 +1935,411 @@ int32_t cjgui_native_bridge_nswindow_harness_render_encoder_still_blocked(void) 
 
 int32_t cjgui_native_bridge_nswindow_harness_present_still_blocked(void) {
     return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_PRESENT_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_content_view_attach(
+    uint64_t window_token,
+    uint64_t view_token
+) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACH_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t window_classification =
+        cjgui_native_bridge_nswindow_harness_token_classify(window_token);
+    if (window_classification !=
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_BOUND) {
+        return nswindow_content_view_window_status_from_classification(
+            window_classification
+        );
+    }
+
+    int32_t view_classification =
+        cjgui_native_bridge_nsview_token_classify(view_token);
+    if (view_classification != CJGUI_NATIVE_BRIDGE_NSVIEW_TOKEN_BOUND) {
+        return nswindow_content_view_view_status_from_classification(
+            view_classification
+        );
+    }
+
+    __strong NSView *view = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_nsview_table_mutex);
+    int32_t view_slot = nsview_table_find_token_locked(view_token);
+    if (view_slot >= 0) {
+        view = g_cjgui_native_bridge_nsview_table[view_slot].view;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nsview_table_mutex);
+    if (view == nil) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_VIEW_TOKEN_NOT_BOUND;
+    }
+
+    __strong NSWindow *window = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    int32_t window_slot =
+        nswindow_harness_table_find_token_locked(window_token);
+    int32_t attached_view_slot =
+        nswindow_harness_table_find_content_view_locked(view_token);
+    if (window_slot >= 0) {
+        if (g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+                    .content_view_attached == 1u ||
+            (attached_view_slot >= 0 && attached_view_slot != window_slot)) {
+            pthread_mutex_unlock(
+                &g_cjgui_native_bridge_nswindow_harness_table_mutex
+            );
+            return
+                CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DOUBLE_ATTACH_DENIED;
+        }
+        window =
+            g_cjgui_native_bridge_nswindow_harness_table[window_slot].window;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    if (window == nil) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_WINDOW_TOKEN_NOT_BOUND;
+    }
+
+    window.contentView = view;
+
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    window_slot = nswindow_harness_table_find_token_locked(window_token);
+    if (window_slot < 0) {
+        pthread_mutex_unlock(
+            &g_cjgui_native_bridge_nswindow_harness_table_mutex
+        );
+        if (window.contentView == view) {
+            window.contentView = nil;
+        }
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_WINDOW_TOKEN_NOT_BOUND;
+    }
+    if (g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+            .content_view_attached == 1u) {
+        pthread_mutex_unlock(
+            &g_cjgui_native_bridge_nswindow_harness_table_mutex
+        );
+        if (window.contentView == view) {
+            window.contentView = nil;
+        }
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DOUBLE_ATTACH_DENIED;
+    }
+
+    g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+        .attached_content_view_token = view_token;
+    g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+        .content_view_attached = 1u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)window_token;
+    (void)view_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t cjgui_native_bridge_nswindow_harness_content_view_detach(
+    uint64_t window_token,
+    uint64_t view_token
+) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACH_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t window_classification =
+        cjgui_native_bridge_nswindow_harness_token_classify(window_token);
+    if (window_classification !=
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_BOUND) {
+        return nswindow_content_view_window_status_from_classification(
+            window_classification
+        );
+    }
+
+    int32_t view_classification =
+        cjgui_native_bridge_nsview_token_classify(view_token);
+    if (view_classification != CJGUI_NATIVE_BRIDGE_NSVIEW_TOKEN_BOUND) {
+        return nswindow_content_view_view_status_from_classification(
+            view_classification
+        );
+    }
+
+    __strong NSView *view = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_nsview_table_mutex);
+    int32_t view_slot = nsview_table_find_token_locked(view_token);
+    if (view_slot >= 0) {
+        view = g_cjgui_native_bridge_nsview_table[view_slot].view;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nsview_table_mutex);
+    if (view == nil) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_VIEW_TOKEN_NOT_BOUND;
+    }
+
+    __strong NSWindow *window = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    int32_t window_slot =
+        nswindow_harness_table_find_token_locked(window_token);
+    if (window_slot < 0) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_WINDOW_TOKEN_NOT_BOUND;
+    }
+    if (g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+                .content_view_attached != 1u ||
+        g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+                .attached_content_view_token != view_token) {
+        pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DOUBLE_DETACH_DENIED;
+    }
+    window = g_cjgui_native_bridge_nswindow_harness_table[window_slot].window;
+    g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+        .attached_content_view_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+        .content_view_attached = 0u;
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+
+    if (window != nil && window.contentView == view) {
+        window.contentView = nil;
+    }
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_OK;
+#else
+    (void)window_token;
+    (void)view_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_attachment_classify(
+    uint64_t window_token,
+    uint64_t view_token
+) {
+#if defined(__APPLE__)
+    if (pthread_main_np() != 1) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACH_MAIN_THREAD_REQUIRED;
+    }
+
+    int32_t window_classification =
+        cjgui_native_bridge_nswindow_harness_token_classify(window_token);
+    if (window_classification !=
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_TOKEN_BOUND) {
+        return nswindow_content_view_window_status_from_classification(
+            window_classification
+        );
+    }
+
+    int32_t view_classification =
+        cjgui_native_bridge_nsview_token_classify(view_token);
+    if (view_classification != CJGUI_NATIVE_BRIDGE_NSVIEW_TOKEN_BOUND) {
+        return nswindow_content_view_view_status_from_classification(
+            view_classification
+        );
+    }
+
+    __strong NSView *view = nil;
+    pthread_mutex_lock(&g_cjgui_native_bridge_nsview_table_mutex);
+    int32_t view_slot = nsview_table_find_token_locked(view_token);
+    if (view_slot >= 0) {
+        view = g_cjgui_native_bridge_nsview_table[view_slot].view;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nsview_table_mutex);
+    if (view == nil) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_VIEW_TOKEN_NOT_BOUND;
+    }
+
+    __strong NSWindow *window = nil;
+    uint8_t content_view_attached = 0u;
+    uint64_t attached_content_view_token = CJGUI_NATIVE_BRIDGE_TOKEN_INVALID;
+    pthread_mutex_lock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    int32_t window_slot =
+        nswindow_harness_table_find_token_locked(window_token);
+    if (window_slot >= 0) {
+        window =
+            g_cjgui_native_bridge_nswindow_harness_table[window_slot].window;
+        content_view_attached =
+            g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+                .content_view_attached;
+        attached_content_view_token =
+            g_cjgui_native_bridge_nswindow_harness_table[window_slot]
+                .attached_content_view_token;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nswindow_harness_table_mutex);
+    if (window == nil) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_WINDOW_TOKEN_NOT_BOUND;
+    }
+
+    if (content_view_attached == 1u &&
+        attached_content_view_token == view_token &&
+        window.contentView == view) {
+        return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACHED;
+    }
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_NOT_ATTACHED;
+#else
+    (void)window_token;
+    (void)view_token;
+    return CJGUI_NATIVE_BRIDGE_SKELETON_STATUS_RESOURCE_DENIED;
+#endif
+}
+
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_double_attach_classify(
+    uint64_t window_token,
+    uint64_t view_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_nswindow_harness_content_view_attachment_classify(
+            window_token,
+            view_token
+        );
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACHED) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DOUBLE_ATTACH_DENIED;
+    }
+    return classification;
+}
+
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_double_detach_classify(
+    uint64_t window_token,
+    uint64_t view_token
+) {
+    int32_t classification =
+        cjgui_native_bridge_nswindow_harness_content_view_attachment_classify(
+            window_token,
+            view_token
+        );
+    if (classification ==
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_NOT_ATTACHED) {
+        return
+            CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DOUBLE_DETACH_DENIED;
+    }
+    return classification;
+}
+
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_attach_requires_main_thread(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACH_MAIN_THREAD_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_visible_order_still_blocked(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_VISIBLE_ORDER_STILL_BLOCKED;
+}
+
+int32_t
+cjgui_native_bridge_nswindow_visible_order_application_ownership_required(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_APPLICATION_OWNERSHIP_REQUIRED;
+}
+
+int32_t
+cjgui_native_bridge_nswindow_visible_order_application_creation_deferred(
+    void
+) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_APPLICATION_CREATION_DEFERRED;
+}
+
+int32_t cjgui_native_bridge_nswindow_visible_order_activation_deferred(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_ACTIVATION_DEFERRED;
+}
+
+int32_t
+cjgui_native_bridge_nswindow_visible_order_bounded_run_loop_required(void) {
+    return
+        CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_BOUNDED_RUN_LOOP_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nswindow_visible_order_auto_close_required(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_AUTO_CLOSE_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nswindow_visible_order_headless_fail_closed(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_HEADLESS_FAIL_CLOSED;
+}
+
+int32_t cjgui_native_bridge_nswindow_visible_order_content_view_required(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_CONTENT_VIEW_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nswindow_visible_order_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nswindow_visible_order_drawable_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_DRAWABLE_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nswindow_visible_order_render_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_RENDER_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_ownership_required(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_OWNERSHIP_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_main_thread_required(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_MAIN_THREAD_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_creation_deferred(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_CREATION_DEFERRED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_activation_deferred(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_ACTIVATION_DEFERRED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_guard_activation_policy_deferred(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_ACTIVATION_POLICY_DEFERRED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_event_loop_deferred(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_EVENT_LOOP_DEFERRED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_guard_bounded_run_loop_required(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_BOUNDED_RUN_LOOP_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_auto_close_required(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_AUTO_CLOSE_REQUIRED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_headless_fail_closed(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_HEADLESS_FAIL_CLOSED;
+}
+
+int32_t
+cjgui_native_bridge_nsapplication_guard_visible_order_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_VISIBLE_ORDER_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_drawable_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_DRAWABLE_STILL_BLOCKED;
+}
+
+int32_t cjgui_native_bridge_nsapplication_guard_render_still_blocked(void) {
+    return CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_RENDER_STILL_BLOCKED;
 }
 
 int32_t cjgui_native_bridge_quartzcore_import_available(void) {

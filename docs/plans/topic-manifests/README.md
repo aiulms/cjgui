@@ -58,6 +58,7 @@ topic manifest 不要求每轮机械更新；但只要状态、tail、stop-line 
 - [RenderCommand material / batching hint manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-render-command-material-batching-hint-manifest.md)
 - [AI-native operability / foreign surface intake](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)
 - [AI-native generated UI / semantic UI spec north-star intake](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-ai-native-generated-ui-semantic-spec-north-star-intake.md)
+- [AI Action Protocol workflow / EDN-like grammar correction note](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-ai-action-protocol-workflow-edn-like-grammar-correction-note.md)
 - [doc language guard stabilization](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-doc-language-comment-style-guard-stabilization.md)
 - [GUI governance](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_GOVERNANCE.md)
 

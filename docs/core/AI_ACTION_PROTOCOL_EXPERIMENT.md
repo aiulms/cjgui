@@ -212,6 +212,8 @@ S-expression 在本项目中必须是 data grammar，不是 executable Lisp。
 
 本文件补充 [AI_NATIVE_UI_SEMANTICS.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_NATIVE_UI_SEMANTICS.md)。
 
+Workflow / EDN-like grammar 的补充纠偏见 [P1 AI Action Protocol Workflow / EDN-like Grammar Correction Note](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-ai-action-protocol-workflow-edn-like-grammar-correction-note.md)。该 note 固定两个口径：workflow layer 未来只能作为受控 proposal producer / adapter / requestor，不能拥有 UI truth 或绕过 Action Gateway；S-expression 未来可评估 restricted S-expression / EDN-like data grammar，但不得采用完整 EDN、`eval`、macro、reader extension、tagged literal、user-defined function 或 arbitrary symbol execution。
+
 现有原则不变：
 
 - semantic tree 不能成为第二真相源。
@@ -244,6 +246,10 @@ S-expression 在本项目中必须是 data grammar，不是 executable Lisp。
 未来可登记：
 
 > `P1 AI action protocol S-expression preflight`
+
+或在进入 grammar 细化时登记：
+
+> `P1 AI action protocol restricted S-expression / EDN-like grammar preflight`
 
 该 preflight 应在满足以下条件后再打开：
 

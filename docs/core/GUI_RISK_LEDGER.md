@@ -35,6 +35,13 @@
 - 说明：该文档把 AI 生成 UI、semantic UI spec、AI-native WYSIWYG、preview / diff / reject loop 和 widget schema capability gate 显式登记为 future radar；它不批准 semantic tree、Action Router 新能力、public DSL、widget generator、AI provider、prompt runtime、preview runtime、renderer implementation 或 public API implementation。
 - 读取规则：仅在开启 AI generation contract / schema、semantic UI spec、AI-authored widget schema、generated UI preview / diff / reject loop、AI-native WYSIWYG、public DSL 或 semantic projection gate 前按需读取。
 
+### AI Action Protocol workflow / EDN-like grammar correction note
+
+- 入口：[2026-05-15-p1-ai-action-protocol-workflow-edn-like-grammar-correction-note.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-ai-action-protocol-workflow-edn-like-grammar-correction-note.md)
+- 性质：docs-only correction note / future protocol guard。
+- 说明：该文档固定 workflow layer 未来只能作为受控 proposal producer / adapter / requestor，不能拥有 UI truth 或绕过 Action Gateway；restricted S-expression / EDN-like grammar 只是未来 data grammar 候选，不批准完整 EDN、macro、`eval`、reader extension、tagged literal、workflow runtime、public DSL、renderer implementation 或 public API implementation。
+- 读取规则：仅在开启 AI action protocol grammar、workflow proposal producer、Action Gateway adapter、typed `ActionRequest` surface、audit trail / rollback workflow 或 semantic UI spec action integration 前按需读取。
+
 ### AI-native operability / foreign surface risk intake
 
 - 入口：[2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)

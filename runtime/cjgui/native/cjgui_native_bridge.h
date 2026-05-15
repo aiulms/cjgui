@@ -9,10 +9,14 @@
  * MTLRenderPipelineState no-draw create/destroy first slice、
  * MTLBuffer no-submit create/destroy/data-upload first slice、
  * draw call no-submit still-blocked facts、token-backed NSWindow harness
- * create/destroy first slice
+ * create/destroy first slice、NSWindow content-view attachment first slice、
+ * visible-order native guard no-side-effect facts、NSApplication native guard
+ * no-side-effect facts
  * 与内部 status taxonomy，
  * 不是 public runtime API。
- * Stop-line: 只允许 token-backed NSWindow harness 创建 / 销毁不可见窗口对象；
+ * Stop-line: 只允许 token-backed NSWindow harness 创建 / 销毁不可见窗口对象，
+ * 以及不可见 NSWindow.contentView token wiring、visible-order guard facts 与
+ * NSApplication guard facts；
  * 不创建应用、drawable、绘制资源，
  * command buffer / render pass descriptor / pipeline descriptor / shader
  * library / pipeline state / vertex buffer first slice 不创建 encoder，
@@ -480,7 +484,56 @@ typedef enum CjguiNativeBridgeNsWindowHarnessLifecycleClassification {
     CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_NEXT_DRAWABLE_STILL_BLOCKED = -369,
     CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_COMMAND_BUFFER_STILL_BLOCKED = -370,
     CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_RENDER_ENCODER_STILL_BLOCKED = -371,
-    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_PRESENT_STILL_BLOCKED = -372
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_PRESENT_STILL_BLOCKED = -372,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACHED = 380,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_NOT_ATTACHED = -380,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_ATTACH_MAIN_THREAD_REQUIRED =
+        -381,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_INVALID_WINDOW_TOKEN =
+        -382,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_STALE_WINDOW_TOKEN =
+        -383,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_WINDOW_TOKEN_NOT_BOUND =
+        -384,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_INVALID_VIEW_TOKEN =
+        -385,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_STALE_VIEW_TOKEN = -386,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_VIEW_TOKEN_NOT_BOUND =
+        -387,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DOUBLE_ATTACH_DENIED =
+        -388,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DOUBLE_DETACH_DENIED =
+        -389,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DETACH_BEFORE_WINDOW_DESTROY_REQUIRED =
+        -390,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_DETACH_BEFORE_VIEW_DESTROY_REQUIRED =
+        -391,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_HARNESS_CONTENT_VIEW_VISIBLE_ORDER_STILL_BLOCKED =
+        -392,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_APPLICATION_OWNERSHIP_REQUIRED =
+        400,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_BOUNDED_RUN_LOOP_REQUIRED = 401,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_AUTO_CLOSE_REQUIRED = 402,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_HEADLESS_FAIL_CLOSED = -400,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_APPLICATION_CREATION_DEFERRED =
+        -401,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_ACTIVATION_DEFERRED = -402,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_CONTENT_VIEW_REQUIRED = -403,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_STILL_BLOCKED = -404,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_DRAWABLE_STILL_BLOCKED = -405,
+    CJGUI_NATIVE_BRIDGE_NSWINDOW_VISIBLE_ORDER_RENDER_STILL_BLOCKED = -406,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_OWNERSHIP_REQUIRED = 420,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_MAIN_THREAD_REQUIRED = 421,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_BOUNDED_RUN_LOOP_REQUIRED = 422,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_AUTO_CLOSE_REQUIRED = 423,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_HEADLESS_FAIL_CLOSED = -420,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_CREATION_DEFERRED = -421,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_ACTIVATION_DEFERRED = -422,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_ACTIVATION_POLICY_DEFERRED = -423,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_EVENT_LOOP_DEFERRED = -424,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_VISIBLE_ORDER_STILL_BLOCKED = -425,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_DRAWABLE_STILL_BLOCKED = -426,
+    CJGUI_NATIVE_BRIDGE_NSAPPLICATION_GUARD_RENDER_STILL_BLOCKED = -427
 } CjguiNativeBridgeNsWindowHarnessLifecycleClassification;
 
 /*
@@ -821,6 +874,66 @@ int32_t cjgui_native_bridge_nswindow_harness_next_drawable_still_blocked(void);
 int32_t cjgui_native_bridge_nswindow_harness_command_buffer_still_blocked(void);
 int32_t cjgui_native_bridge_nswindow_harness_render_encoder_still_blocked(void);
 int32_t cjgui_native_bridge_nswindow_harness_present_still_blocked(void);
+int32_t cjgui_native_bridge_nswindow_harness_content_view_attach(
+    uint64_t window_token,
+    uint64_t view_token
+);
+int32_t cjgui_native_bridge_nswindow_harness_content_view_detach(
+    uint64_t window_token,
+    uint64_t view_token
+);
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_attachment_classify(
+    uint64_t window_token,
+    uint64_t view_token
+);
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_double_attach_classify(
+    uint64_t window_token,
+    uint64_t view_token
+);
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_double_detach_classify(
+    uint64_t window_token,
+    uint64_t view_token
+);
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_attach_requires_main_thread(
+    void
+);
+int32_t
+cjgui_native_bridge_nswindow_harness_content_view_visible_order_still_blocked(
+    void
+);
+int32_t
+cjgui_native_bridge_nswindow_visible_order_application_ownership_required(
+    void
+);
+int32_t
+cjgui_native_bridge_nswindow_visible_order_application_creation_deferred(
+    void
+);
+int32_t cjgui_native_bridge_nswindow_visible_order_activation_deferred(void);
+int32_t
+cjgui_native_bridge_nswindow_visible_order_bounded_run_loop_required(void);
+int32_t cjgui_native_bridge_nswindow_visible_order_auto_close_required(void);
+int32_t cjgui_native_bridge_nswindow_visible_order_headless_fail_closed(void);
+int32_t cjgui_native_bridge_nswindow_visible_order_content_view_required(void);
+int32_t cjgui_native_bridge_nswindow_visible_order_still_blocked(void);
+int32_t cjgui_native_bridge_nswindow_visible_order_drawable_still_blocked(void);
+int32_t cjgui_native_bridge_nswindow_visible_order_render_still_blocked(void);
+int32_t cjgui_native_bridge_nsapplication_guard_ownership_required(void);
+int32_t cjgui_native_bridge_nsapplication_guard_main_thread_required(void);
+int32_t cjgui_native_bridge_nsapplication_guard_creation_deferred(void);
+int32_t cjgui_native_bridge_nsapplication_guard_activation_deferred(void);
+int32_t cjgui_native_bridge_nsapplication_guard_activation_policy_deferred(void);
+int32_t cjgui_native_bridge_nsapplication_guard_event_loop_deferred(void);
+int32_t cjgui_native_bridge_nsapplication_guard_bounded_run_loop_required(void);
+int32_t cjgui_native_bridge_nsapplication_guard_auto_close_required(void);
+int32_t cjgui_native_bridge_nsapplication_guard_headless_fail_closed(void);
+int32_t cjgui_native_bridge_nsapplication_guard_visible_order_still_blocked(void);
+int32_t cjgui_native_bridge_nsapplication_guard_drawable_still_blocked(void);
+int32_t cjgui_native_bridge_nsapplication_guard_render_still_blocked(void);
 
 #ifdef __cplusplus
 }

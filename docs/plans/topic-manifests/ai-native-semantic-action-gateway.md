@@ -17,6 +17,7 @@
 - material / batching hint manifest 固定 material key、z-order、clip、batch key hint、ordering hint 和 backend-agnostic batching packet。
 - Action Router 是 zero-trust gateway，AI action 不得绕过 App Owner。
 - AI-native generated UI 北极星已登记：未来 AI 应在有限、类型化、可组合的 UI spec / widget schema / action schema 空间中生成 proposal，并通过 preview / diff / reject / explain 回到 owner-controlled path。
+- Workflow / EDN-like grammar 纠偏已登记：workflow layer 未来只能作为受控 proposal producer / adapter / requestor；Action Gateway 与 App Owner 仍是 action admission 和 UI truth 的权威边界；future grammar 只能是 restricted S-expression / EDN-like data grammar，不是完整 EDN、Lisp runtime 或 macro surface。
 
 ## 未落地与明确禁止
 
@@ -37,12 +38,13 @@ Scene / Renderer input 与 RenderCommand 链只提供 dehydrated renderer facts�
 - [RenderCommand material / batching hint manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-02-p1-render-command-material-batching-hint-manifest.md)
 - [Action Router manifest](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-04-30-p1-action-router-manifest.md)
 - [AI-native generated UI / semantic UI spec north-star intake](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-ai-native-generated-ui-semantic-spec-north-star-intake.md)
+- [AI Action Protocol workflow / EDN-like grammar correction note](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-ai-action-protocol-workflow-edn-like-grammar-correction-note.md)
 - [AI-native operability / foreign surface intake](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-04-p1-ai-native-operability-foreign-surface-risk-intake.md)
 - [doc language guard stabilization](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-05-p1-doc-language-comment-style-guard-stabilization.md)
 
 ## 下次开 gate 前必须读取
 
-开 semantic projection、AI action eligibility、AI generation contract、semantic UI spec、widget schema、AI-native WYSIWYG、generated UI preview / diff / reject loop、physical operability、stable / pending、layout-derived semantics、dirty region、IME cursor rect 或 A11y semantic projection gate 前，必须读取本 manifest、AI-native generated UI north-star intake、AI-native operability intake、Action Router manifest 和 Scene / Renderer input manifest。
+开 semantic projection、AI action eligibility、AI action protocol grammar、workflow proposal producer、AI generation contract、semantic UI spec、widget schema、AI-native WYSIWYG、generated UI preview / diff / reject loop、physical operability、stable / pending、layout-derived semantics、dirty region、IME cursor rect 或 A11y semantic projection gate 前，必须读取本 manifest、AI-native generated UI north-star intake、AI Action Protocol workflow / EDN-like grammar correction note、AI-native operability intake、Action Router manifest 和 Scene / Renderer input manifest。
 
 ## 推荐下一步
 
@@ -55,6 +57,8 @@ Scene / Renderer input 与 RenderCommand 链只提供 dehydrated renderer facts�
 - 空间邻近关系可由 layout / group / section 自动推导，但缺失证据时必须降级。
 - AI 生成 UI 只能生成可验证 proposal / patch，不能绕过 owner truth、Action Router、schema validation 或 human / app owner acceptance。
 - semantic UI spec 不能成为第二 truth source，也不能被误读为当前 public DSL、widget generator、prompt runtime 或 AI provider permission。
+- Workflow layer 不能被误读为 Action Gateway 下游权力中心、UI truth owner、batch approval engine、rollback authority 或 renderer state writer；它未来至多是受控 proposal producer / adapter / requestor。
+- restricted S-expression / EDN-like grammar 不能被误读为完整 EDN、可执行 Lisp、macro system、reader extension、tagged literal、user-defined function 或 arbitrary symbol execution permission。
 - 自绘路线未来要关注 dirty region、IME cursor rect 和 A11y semantic projection，但这些都不是当前 Renderer permission。
 
 ## 维护备注

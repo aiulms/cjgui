@@ -129,9 +129,19 @@ Alias status：
 
 ## Git Status
 
-本轮没有 stage、commit、push。当前 HEAD `70f3406 chore: add renderer singleton witness truth readiness artifacts` 已存在，不是本轮自动化所做。
+本轮 automation 没有 stage、commit、push。
 
-报告写入后的工作树状态：9 个 tracked modified navigation files、45 个 untracked docs / owner / probe / report files、0 staged/index changes。
+报告初次写入时观测到 HEAD `70f3406 chore: add renderer singleton witness truth readiness artifacts`、9 个 tracked modified navigation files、45 个 untracked docs / owner / probe / report files、0 staged/index changes。
+
+收口复核时发现外部状态变化：HEAD 已前进到 `7b54ff4 chore: add renderer singleton readiness truth evidence artifacts`（author / committer: `aiulms <aiulms@163.com>`，commit time: 2026-05-16T19:56:51+0800），并且 stage 47-53 docs / owner / probe artifacts 已被纳入该提交；该提交不是本轮 automation 执行的 stage/commit/push。
+
+本条 git status correction 写入后，最终本地状态应只剩本 report 文件的 tracked unstaged correction，0 staged/index changes，0 untracked files。
+
+Final correction check：
+
+- `detect-changes --repo cangjie-live-codelattice --scope unstaged` returned `No changes detected` for the remaining report-only correction.
+- Alias status: branch `main`, HEAD `7b54ff4`, Modified 1 file, Untracked 0 files, Dirty 1 total, Stable window GREEN.
+- Final git status: `M docs/plans/2026-05-16-p1-renderer-automation-stage-report-53.md`, 0 staged/index changes, 0 untracked files.
 
 ## Human Intervention
 

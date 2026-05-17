@@ -12,7 +12,9 @@
 
 每轮 gate、closure、manifest 或 milestone 完成后，应按 [设计意图导航出口协议](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-06-p1-design-intent-navigation-exit-protocol.md) 执行出口自检。
 
-只要本轮改变以下任一项，就必须同步对应 topic manifest：
+自动化执行期间还应按 [P1 自动化文档预算治理](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-17-p1-automation-documentation-budget-governance.md) 节流同步：D1 普通阶段不要求每轮改 topic manifest，可在下一份 D2 compact manifest 或 D3 hard gate 中批量接入；D3 hard gate、D4 路线切换、public surface / protected path / stop-line 扩张仍必须同步。
+
+D2 / D3 / D4 若改变以下任一项，就必须同步对应 topic manifest；D1 普通阶段可在 automation report 中说明延后同步：
 
 - 主题当前状态。
 - canonical tail / canonical endpoint。
@@ -28,7 +30,7 @@
 - protected path policy。
 - docs language / owner comment governance。
 
-topic manifest 不要求每轮机械更新；但只要状态、tail、stop-line 或 next opening 变化，就必须更新。若判断不需要同步，closure 应写明理由。
+topic manifest 不要求每轮机械更新；但 D2 / D3 / D4 若改变状态、tail、stop-line 或 next opening，就必须更新。若 D1 判断不需要同步，automation report 应写明“延后到下一 D2 / D3 同步”。
 
 ## 主题入口
 
@@ -66,5 +68,5 @@ topic manifest 不要求每轮机械更新；但只要状态、tail、stop-line 
 
 - 新主题出现时，优先新增一个 topic manifest，并从 [DESIGN_INTENT_INDEX.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/DESIGN_INTENT_INDEX.md) 链入。
 - 主题状态变化时，只同步主题摘要、关键原文链、当前 endpoint 和禁止误读点。
-- 每轮 closure 若不需要同步 topic manifest，应记录“设计意图出口自检”并说明理由。
+- 每轮 closure / automation report 若不需要同步 topic manifest，应记录“设计意图出口自检”并说明理由；D1 阶段可延后到下一 D2 / D3。
 - 不移动历史 plans，不重排目录结构，不把 topic manifest 变成新的 runtime truth。

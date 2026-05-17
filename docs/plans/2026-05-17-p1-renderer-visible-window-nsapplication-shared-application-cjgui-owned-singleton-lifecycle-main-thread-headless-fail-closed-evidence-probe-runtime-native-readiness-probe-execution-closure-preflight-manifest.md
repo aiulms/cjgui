@@ -1,0 +1,26 @@
+# P1 Renderer visible-window NSApplication shared-application CJGUI-owned singleton lifecycle main-thread headless fail-closed evidence probe runtime native-readiness probe execution closure preflight manifest
+
+状态：manifest / stage 78 / internal-only owner
+
+## Manifest
+
+Stage 78 将 runtime native-readiness probe execution first slice readiness 收束成 runtime native-readiness probe execution closure preflight readiness。
+
+## Canonical endpoint
+
+- endpoint：`CjguiInternalRendererVisibleWindowNsApplicationSharedApplicationCjguiOwnedSingletonLifecycleMainThreadHeadlessFailClosedEvidenceProbeRuntimeNativeReadinessProbeExecutionClosurePreflightReadiness`
+- default draft：`cjguiInternalExecuteDefaultRendererVisibleWindowNsApplicationSharedApplicationCjguiOwnedSingletonLifecycleMainThreadHeadlessFailClosedEvidenceProbeRuntimeNativeReadinessProbeExecutionClosurePreflightDraft()`
+- runtime input：`CjguiInternalRendererVisibleWindowNsApplicationSharedApplicationCjguiOwnedSingletonLifecycleMainThreadHeadlessFailClosedEvidenceProbeRuntimeNativeReadinessProbeExecutionFirstSliceReadiness`
+
+## Files
+
+- owner：[runtime_renderer_visible_window_nsapplication_shared_application_cjgui_owned_singleton_lifecycle_main_thread_headless_fail_closed_evidence_probe_runtime_native_readiness_probe_execution_closure_preflight.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_renderer_visible_window_nsapplication_shared_application_cjgui_owned_singleton_lifecycle_main_thread_headless_fail_closed_evidence_probe_runtime_native_readiness_probe_execution_closure_preflight.cj)
+- owner probe：[verify_renderer_visible_window_nsapplication_shared_application_cjgui_owned_singleton_lifecycle_main_thread_headless_fail_closed_evidence_probe_runtime_native_readiness_probe_execution_closure_preflight_owner.sh](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/scripts/verify_renderer_visible_window_nsapplication_shared_application_cjgui_owned_singleton_lifecycle_main_thread_headless_fail_closed_evidence_probe_runtime_native_readiness_probe_execution_closure_preflight_owner.sh)
+
+## Stop-line
+
+不授权 runtime native probe execution、application singleton accessor、native bridge expansion、production singleton owner implementation、cleanup / teardown execution、activation、event loop、visible order、drawable、render、public API、production public C ABI、renderer state write、`runtime_state.cj` write 或 `runtime/cjgui/cjpm.toml` change。
+
+## 当前唯一 next opening
+
+`P1 internal Renderer visible-window production harness NSApplication shared-application CJGUI-owned singleton lifecycle main-thread confinement and headless fail-closed evidence probe runtime native-readiness probe execution closure value boundary / no-accessor no-bridge-expansion no-runtime-execution owner decision`

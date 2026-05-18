@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="840" viewBox="0 0 1400 840" role="img" aria-labelledby="title desc">
     <title id="title">CJGUI 技术架构</title>
-    <desc id="desc">CJGUI 的 AI 原生 GUI runtime、受控动作入口、仓颉 runtime、Renderer、AppKit Metal 桥接和工程保障说明。</desc>
+    <desc id="desc">CJGUI 将传统 UI 开发通道、AI 语义建议通道、Owner 受控入口、仓颉 runtime 和 AppKit Metal 渲染底座分层展示。</desc>
     <defs>
         <style>
             text {
@@ -9,164 +9,98 @@
             }
             .title { font-size: 42px; font-weight: 700; }
             .subtitle { font-size: 19px; font-weight: 500; fill: #4b5563; }
-            .layer { font-size: 26px; font-weight: 700; }
-            .h1 { font-size: 27px; font-weight: 700; }
-            .h2 { font-size: 23px; font-weight: 700; }
-            .body { font-size: 18px; font-weight: 500; }
-            .small { font-size: 15px; font-weight: 500; }
-            .solid { fill: #ffffff; stroke: #243041; stroke-width: 2.4; }
-            .blue { fill: #eef6ff; stroke: #2563eb; stroke-width: 2.6; }
+            .section { font-size: 26px; font-weight: 700; }
+            .h1 { font-size: 26px; font-weight: 700; }
+            .h2 { font-size: 21px; font-weight: 700; }
+            .body { font-size: 17px; font-weight: 500; }
+            .small { font-size: 14px; font-weight: 500; }
+            .note { font-size: 15px; font-weight: 500; fill: #6b7280; }
+            .solid { fill: #ffffff; stroke: #243041; stroke-width: 2.3; }
+            .blue { fill: #eef6ff; stroke: #2563eb; stroke-width: 2.5; }
             .green { fill: #f0fdf4; stroke: #16a34a; stroke-width: 2.4; }
+            .orange { fill: #fff7ed; stroke: #ea580c; stroke-width: 2.4; }
             .gray { fill: #f9fafb; stroke: #243041; stroke-width: 2.1; }
-            .future { fill: #ffffff; stroke: #243041; stroke-width: 2.4; stroke-dasharray: 12 8; }
-            .guard { fill: #fff7ed; stroke: #ea580c; stroke-width: 2.4; }
-            .line { stroke: #243041; stroke-width: 2.2; }
-            .dash-line { stroke: #243041; stroke-width: 2.2; stroke-dasharray: 14 10; }
-            .note { fill: #6b7280; font-size: 15px; font-weight: 500; }
+            .future { fill: #ffffff; stroke: #243041; stroke-width: 2.3; stroke-dasharray: 12 8; }
+            .dash { stroke: #243041; stroke-width: 2.2; stroke-dasharray: 14 10; }
+            .arrow { fill: none; stroke: #6b7280; stroke-width: 3.4; marker-end: url(#arrow); }
+            .blocked { fill: none; stroke: #dc2626; stroke-width: 3; stroke-dasharray: 10 7; }
         </style>
+        <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M2,2 L10,6 L2,10 Z" fill="#6b7280"/>
+        </marker>
     </defs>
 
-    <rect width="1400" height="820" fill="#ffffff"/>
-
+    <rect width="1400" height="840" fill="#ffffff"/>
     <text x="42" y="56" class="title">CJGUI 技术架构</text>
-    <text x="42" y="88" class="subtitle">目标：用仓颉掌控 GUI runtime 和原生渲染底座，让 AI 能通过受控语义和可审计动作参与 UI。</text>
+    <text x="42" y="88" class="subtitle">AI 是一等协作者，但不能越权；传统 UI runtime 和原生渲染管线仍然是底座。</text>
 
-    <!-- 左侧层级标签 -->
-    <text x="82" y="160" class="layer">使用层</text>
-    <text x="82" y="272" class="layer">表达层</text>
-    <text x="56" y="392" class="layer">运行时层</text>
-    <text x="30" y="548" class="layer">渲染桥接层</text>
-    <text x="82" y="720" class="layer">平台层</text>
+    <!-- 顶部两条入口 -->
+    <rect x="110" y="126" width="520" height="118" rx="18" class="blue"/>
+    <text x="370" y="164" text-anchor="middle" class="h1">传统开发通道</text>
+    <text x="370" y="195" text-anchor="middle" class="body">仓颉业务代码 / 组件 API / 应用状态</text>
+    <text x="370" y="222" text-anchor="middle" class="small">普通开发者不需要理解 Metal / C ABI</text>
 
-    <line x1="28" y1="206" x2="1068" y2="206" class="dash-line"/>
-    <line x1="28" y1="326" x2="1068" y2="326" class="dash-line"/>
-    <line x1="28" y1="486" x2="1068" y2="486" class="dash-line"/>
-    <line x1="28" y1="670" x2="1068" y2="670" class="dash-line"/>
+    <rect x="770" y="126" width="520" height="118" rx="18" class="future"/>
+    <text x="1030" y="164" text-anchor="middle" class="h1">AI 语义建议通道</text>
+    <text x="1030" y="195" text-anchor="middle" class="body">Semantic Proposal / Generated UI / Workflow Suggestion</text>
+    <text x="1030" y="222" text-anchor="middle" class="small">AI 提建议，不直接改 UI truth，不直接操作 GPU</text>
 
-    <!-- 主体框 -->
-    <rect x="230" y="118" width="820" height="622" rx="18" class="solid"/>
+    <!-- AI cannot bypass -->
+    <path d="M1030 244 C1030 278 960 286 902 292" class="arrow"/>
+    <path d="M1068 250 C1148 332 1148 520 1036 592" class="blocked"/>
+    <text x="1154" y="418" class="small" fill="#dc2626">禁止直连 Renderer / Metal</text>
 
-    <!-- 使用层 -->
-    <rect x="275" y="100" width="730" height="78" rx="30" class="blue"/>
-    <text x="640" y="134" text-anchor="middle" class="h1">AI 原生应用 / 仓颉业务模块</text>
-    <text x="640" y="162" text-anchor="middle" class="body">人类意图、业务状态、AI 生成 UI 请求、可审计 Action 请求</text>
+    <path d="M370 244 C370 276 444 286 502 292" class="arrow"/>
 
-    <!-- 表达层 -->
-    <rect x="230" y="178" width="820" height="82" class="future"/>
-    <text x="640" y="211" text-anchor="middle" class="h1">未来语义表达层</text>
-    <text x="640" y="240" text-anchor="middle" class="body">Semantic UI Spec / Generated UI / Preview-Diff-Reject-Explain</text>
+    <!-- Owner acceptance gate -->
+    <rect x="330" y="292" width="740" height="96" rx="18" class="orange"/>
+    <text x="700" y="329" text-anchor="middle" class="h1">Owner-controlled Action Gateway</text>
+    <text x="700" y="357" text-anchor="middle" class="body">Preview / Diff / Reject / Explain / Accept</text>
+    <text x="700" y="381" text-anchor="middle" class="small">只有被 owner 接受的变更，才进入 UI runtime</text>
 
-    <rect x="230" y="260" width="820" height="76" class="blue"/>
-    <text x="640" y="292" text-anchor="middle" class="h1">受控动作入口：Action Gateway</text>
-    <text x="640" y="320" text-anchor="middle" class="body">schema / scope / evidence / owner acceptance，AI 不直接改 UI truth</text>
+    <path d="M700 388 L700 436" class="arrow"/>
 
-    <!-- 运行时层 -->
-    <rect x="230" y="336" width="164" height="78" class="gray"/>
-    <text x="312" y="368" text-anchor="middle" class="h2">App</text>
-    <text x="312" y="395" text-anchor="middle" class="body">Lifecycle</text>
+    <!-- Runtime -->
+    <rect x="155" y="436" width="1090" height="112" rx="16" class="green"/>
+    <text x="700" y="472" text-anchor="middle" class="h1">仓颉 UI Runtime</text>
+    <text x="700" y="501" text-anchor="middle" class="body">App Lifecycle / Window Lifecycle / Runtime State / Action Router / Queue Boundary</text>
+    <text x="700" y="527" text-anchor="middle" class="small">传统 UI 和 AI 接受后的变更，统一进入这条 runtime 管线</text>
 
-    <rect x="394" y="336" width="164" height="78" class="gray"/>
-    <text x="476" y="368" text-anchor="middle" class="h2">Window</text>
-    <text x="476" y="395" text-anchor="middle" class="body">Lifecycle</text>
+    <path d="M700 548 L700 596" class="arrow"/>
 
-    <rect x="558" y="336" width="164" height="78" class="gray"/>
-    <text x="640" y="368" text-anchor="middle" class="h2">Runtime</text>
-    <text x="640" y="395" text-anchor="middle" class="body">State</text>
+    <!-- Renderer input -->
+    <rect x="155" y="596" width="1090" height="96" rx="16" class="gray"/>
+    <text x="700" y="632" text-anchor="middle" class="h1">Renderer 输入层</text>
+    <text x="700" y="661" text-anchor="middle" class="body">Scene / RenderCommand / Layout Result / Result Envelope</text>
+    <text x="700" y="684" text-anchor="middle" class="small">这里是框架内部可验证表示，不是 AI 直接生成的 GPU 指令</text>
 
-    <rect x="722" y="336" width="164" height="78" class="gray"/>
-    <text x="804" y="368" text-anchor="middle" class="h2">Action</text>
-    <text x="804" y="395" text-anchor="middle" class="body">Router</text>
+    <path d="M700 692 L700 724" class="arrow"/>
 
-    <rect x="886" y="336" width="164" height="78" class="gray"/>
-    <text x="968" y="368" text-anchor="middle" class="h2">Queue</text>
-    <text x="968" y="395" text-anchor="middle" class="body">Boundary</text>
+    <!-- Native renderer base -->
+    <rect x="155" y="724" width="1090" height="76" rx="16" class="solid"/>
+    <text x="700" y="755" text-anchor="middle" class="h1">原生渲染底座：极窄 C ABI + Token Table + AppKit / CAMetalLayer / Metal</text>
+    <text x="700" y="783" text-anchor="middle" class="body">NSWindow / NSView / Drawable / Command Queue / Command Buffer / Render Pass / Encoder / Pipeline / Draw / Commit</text>
 
-    <rect x="230" y="414" width="410" height="84" class="green"/>
-    <text x="435" y="448" text-anchor="middle" class="h1">Renderer Admission</text>
-    <text x="435" y="477" text-anchor="middle" class="body">owner truth / stop-line / readiness</text>
+    <!-- Side notes -->
+    <rect x="80" y="292" width="205" height="96" rx="14" class="blue"/>
+    <text x="182" y="326" text-anchor="middle" class="h2">开发者视角</text>
+    <text x="182" y="356" text-anchor="middle" class="small">写仓颉 UI / 状态</text>
+    <text x="182" y="378" text-anchor="middle" class="small">不碰底层图形管线</text>
 
-    <rect x="640" y="414" width="410" height="84" class="green"/>
-    <text x="845" y="448" text-anchor="middle" class="h1">Result Envelope</text>
-    <text x="845" y="477" text-anchor="middle" class="body">bounded probe / failure classification / evidence</text>
+    <rect x="1115" y="292" width="205" height="96" rx="14" class="future"/>
+    <text x="1218" y="326" text-anchor="middle" class="h2">AI 视角</text>
+    <text x="1218" y="356" text-anchor="middle" class="small">生成 proposal</text>
+    <text x="1218" y="378" text-anchor="middle" class="small">等待 owner 接受</text>
 
-    <!-- 渲染桥接层 -->
-    <rect x="230" y="498" width="164" height="82" class="solid"/>
-    <text x="312" y="532" text-anchor="middle" class="h2">极窄</text>
-    <text x="312" y="558" text-anchor="middle" class="body">C ABI</text>
+    <rect x="80" y="596" width="205" height="96" rx="14" class="future"/>
+    <text x="182" y="630" text-anchor="middle" class="h2">未来方向</text>
+    <text x="182" y="660" text-anchor="middle" class="small">语义树 / 可解释 UI</text>
+    <text x="182" y="682" text-anchor="middle" class="small">AI-native WYSIWYG</text>
 
-    <rect x="394" y="498" width="164" height="82" class="solid"/>
-    <text x="476" y="532" text-anchor="middle" class="h2">Token</text>
-    <text x="476" y="558" text-anchor="middle" class="body">Table</text>
+    <rect x="1115" y="596" width="205" height="96" rx="14" class="future"/>
+    <text x="1218" y="630" text-anchor="middle" class="h2">工程保障</text>
+    <text x="1218" y="660" text-anchor="middle" class="small">GitNexus / Probe</text>
+    <text x="1218" y="682" text-anchor="middle" class="small">只是研发工具</text>
 
-    <rect x="558" y="498" width="164" height="82" class="solid"/>
-    <text x="640" y="532" text-anchor="middle" class="h2">AppKit</text>
-    <text x="640" y="558" text-anchor="middle" class="body">Window / View</text>
-
-    <rect x="722" y="498" width="164" height="82" class="solid"/>
-    <text x="804" y="532" text-anchor="middle" class="h2">CAMetalLayer</text>
-    <text x="804" y="558" text-anchor="middle" class="body">Drawable</text>
-
-    <rect x="886" y="498" width="164" height="82" class="solid"/>
-    <text x="968" y="532" text-anchor="middle" class="h2">Metal</text>
-    <text x="968" y="558" text-anchor="middle" class="body">Device</text>
-
-    <rect x="230" y="580" width="117" height="84" class="solid"/>
-    <text x="288" y="613" text-anchor="middle" class="body">Command</text>
-    <text x="288" y="639" text-anchor="middle" class="body">Queue</text>
-
-    <rect x="347" y="580" width="117" height="84" class="solid"/>
-    <text x="405" y="613" text-anchor="middle" class="body">Command</text>
-    <text x="405" y="639" text-anchor="middle" class="body">Buffer</text>
-
-    <rect x="464" y="580" width="132" height="84" class="solid"/>
-    <text x="530" y="613" text-anchor="middle" class="body">Render Pass</text>
-    <text x="530" y="639" text-anchor="middle" class="body">Descriptor</text>
-
-    <rect x="596" y="580" width="112" height="84" class="solid"/>
-    <text x="652" y="613" text-anchor="middle" class="body">Encoder</text>
-    <text x="652" y="639" text-anchor="middle" class="small">bounded</text>
-
-    <rect x="708" y="580" width="118" height="84" class="solid"/>
-    <text x="767" y="613" text-anchor="middle" class="body">Pipeline</text>
-    <text x="767" y="639" text-anchor="middle" class="small">state/buffer</text>
-
-    <rect x="826" y="580" width="112" height="84" class="solid"/>
-    <text x="882" y="613" text-anchor="middle" class="body">Draw</text>
-    <text x="882" y="639" text-anchor="middle" class="small">first slice</text>
-
-    <rect x="938" y="580" width="112" height="84" class="future"/>
-    <text x="994" y="613" text-anchor="middle" class="body">Commit</text>
-    <text x="994" y="639" text-anchor="middle" class="small">next</text>
-
-    <!-- 平台层 -->
-    <rect x="230" y="664" width="410" height="76" class="blue"/>
-    <text x="435" y="696" text-anchor="middle" class="h1">macOS first</text>
-    <text x="435" y="723" text-anchor="middle" class="body">AppKit + Metal</text>
-
-    <rect x="640" y="664" width="410" height="76" class="future"/>
-    <text x="845" y="696" text-anchor="middle" class="h1">未来平台层</text>
-    <text x="845" y="723" text-anchor="middle" class="body">鸿蒙 / Linux / Windows / 其他后端按证据接入</text>
-
-    <!-- 右侧工程保障说明 -->
-    <rect x="1100" y="132" width="250" height="520" rx="22" class="future"/>
-    <text x="1225" y="176" text-anchor="middle" class="h1">工程保障</text>
-    <text x="1225" y="204" text-anchor="middle" class="small">不是框架对外模块</text>
-
-    <line x1="1122" y1="232" x2="1328" y2="232" class="dash-line"/>
-    <text x="1225" y="274" text-anchor="middle" class="h2">代码智能</text>
-    <text x="1225" y="304" text-anchor="middle" class="body">GitNexus</text>
-    <text x="1225" y="332" text-anchor="middle" class="body">CodeLattice</text>
-    <text x="1225" y="360" text-anchor="middle" class="small">查调用关系 / 影响面</text>
-
-    <line x1="1122" y1="392" x2="1328" y2="392" class="dash-line"/>
-    <text x="1225" y="434" text-anchor="middle" class="h2">验证链路</text>
-    <text x="1225" y="464" text-anchor="middle" class="body">Probe / Smoke</text>
-    <text x="1225" y="492" text-anchor="middle" class="body">Build / Scan</text>
-    <text x="1225" y="520" text-anchor="middle" class="small">证明每一步没越界</text>
-
-    <line x1="1122" y1="552" x2="1328" y2="552" class="dash-line"/>
-    <text x="1225" y="594" text-anchor="middle" class="h2">阶段留痕</text>
-    <text x="1225" y="624" text-anchor="middle" class="body">Stage Report</text>
-
-    <text x="230" y="785" class="note">说明：右侧是研发保障工具，不是 CJGUI 运行时或 public API。当前首页图只表达主线方向，不表示所有能力已经稳定可用。</text>
+    <text x="155" y="824" class="note">关键边界：AI 不直接写 Metal / Render Pass / C ABI；底层复杂性由 CJGUI 框架封装，普通开发者和 AI 面向高层语义与受控动作入口。</text>
 </svg>

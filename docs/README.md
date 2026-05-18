@@ -82,7 +82,7 @@ research 文档是按需雷达，不是每轮 implementation 的默认必读上�
 
 当前包括：
 
-- [cjgui-architecture.svg](/Users/jiangxuanyang/Desktop/cangjie/docs/assets/cjgui-architecture.svg)
+- [cjgui-architecture-ai-native.svg](/Users/jiangxuanyang/Desktop/cangjie/docs/assets/cjgui-architecture-ai-native.svg)
 
 ## 3. 新文档放置规则
 

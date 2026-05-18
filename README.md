@@ -11,7 +11,7 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 ## 技术架构
 
-![CJGUI 技术架构](docs/assets/cjgui-architecture.svg)
+![CJGUI 技术架构](docs/assets/cjgui-architecture-ai-native.svg)
 
 这张图只表达当前 CJGUI 的主线方向：上层保持仓颉原生和 AI-native 协作边界，底层先以 macOS AppKit / Metal 打通第一条可验证渲染链路；虚线部分是未来表达层、跨平台层和 AI 工具链雷达，不代表当前已经提供稳定 public API。
 

@@ -33,6 +33,15 @@ mkdir -p "$TMP_DIR"
 : > "$DRAW_CALL_LOG"
 : > "$COMMAND_PIPELINE_PACKET"
 
+# 维护注释：下游 native probe 使用 mktemp -d "$TMPDIR/..."，所以这里必须
+# 预创建每个 child TMPDIR，避免把环境隔离误分类为 native probe 失败。
+mkdir -p \
+  "$TMP_DIR/visible-window" \
+  "$TMP_DIR/render-pass" \
+  "$TMP_DIR/pipeline-descriptor" \
+  "$TMP_DIR/drawable-texture" \
+  "$TMP_DIR/draw-call"
+
 for script in "$JOIN_SUITE_SCRIPT" "$VISIBLE_WINDOW_PROBE" \
   "$RENDER_PASS_DESCRIPTOR_PROBE" "$PIPELINE_DESCRIPTOR_PROBE" \
   "$DRAWABLE_TEXTURE_LIFETIME_PROBE" "$DRAW_CALL_BLOCKED_PROBE"; do

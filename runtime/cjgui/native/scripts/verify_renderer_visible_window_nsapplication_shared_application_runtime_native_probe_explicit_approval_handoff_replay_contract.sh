@@ -84,42 +84,59 @@ fi
 handoff_packet="$(grep -Eo '^handoff_packet=[^[:space:]]+' "$audit_packet" | tail -1 | cut -d= -f2-)"
 rerun_packet="$(grep -Eo '^rerun_packet=[^[:space:]]+' "$audit_packet" | tail -1 | cut -d= -f2-)"
 source_build_packet="$(grep -Eo '^source_build_packet=[^[:space:]]+' "$audit_packet" | tail -1 | cut -d= -f2-)"
-for packet in "$handoff_packet" "$rerun_packet" "$source_build_packet"; do
-  if [[ -z "$packet" || ! -f "$packet" ]]; then
-    echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: missing nested packet $packet" >&2
-    exit 9
-  fi
-done
+deep_suite_packet_replay="$(grep -Eo '^deep_suite_packet_replay=(true|false)' "$audit_packet" | tail -1 | cut -d= -f2-)"
+if [[ "$deep_suite_packet_replay" == "true" ]]; then
+  for packet in "$handoff_packet" "$rerun_packet" "$source_build_packet"; do
+    if [[ -z "$packet" || ! -f "$packet" ]]; then
+      echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: missing nested packet $packet" >&2
+      exit 9
+    fi
+  done
 
-for packet in "$handoff_packet" "$rerun_packet" "$source_build_packet"; do
-  for fact in \
-    "required_next_actor=human_operator" \
-    "required_shell=explicitly_approved_shell" \
-    "code_failure_domain=false" \
+  for packet in "$handoff_packet" "$rerun_packet" "$source_build_packet"; do
+    for fact in \
+      "required_next_actor=human_operator" \
+      "required_shell=explicitly_approved_shell" \
+      "code_failure_domain=false" \
+      "runtime_native_probe_execution=false" \
+      "human_approved_d3_execution_consumed=false" \
+      "application_singleton_accessor_call=false" \
+      "native_bridge_expansion=false" \
+      "production_public_c_abi_added=false" \
+      "renderer_state_write=false"; do
+      if ! grep -F "$fact" "$packet" >/dev/null 2>&1; then
+        echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: missing nested fact $fact in $packet" >&2
+        exit 10
+      fi
+    done
+  done
+
+  if ! grep -F "handoff_packet_ready=true" "$handoff_packet" >/dev/null 2>&1; then
+    echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: handoff packet not ready" >&2
+    exit 11
+  fi
+  if ! grep -F "two_pass_mesh_rerun_contract_passed=true" "$rerun_packet" >/dev/null 2>&1; then
+    echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: rerun packet not ready" >&2
+    exit 12
+  fi
+  if ! grep -F "source_build_guard_passed=true" "$source_build_packet" >/dev/null 2>&1; then
+    echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: source/build packet not ready" >&2
+    exit 13
+  fi
+else
+  handoff_script="$SCRIPT_DIR/verify_renderer_visible_window_nsapplication_shared_application_runtime_native_probe_explicit_approval_evidence_handoff_packet.sh"
+  for token in \
+    "route_classification=runtime_native_probe_explicit_approval_evidence_handoff_packet" \
+    "handoff_packet_ready=true" \
+    "CJGUI_EXPLICIT_APPROVAL_RERUN_PACKET" \
+    "CJGUI_EXPLICIT_APPROVAL_SOURCE_BUILD_PACKET" \
     "runtime_native_probe_execution=false" \
-    "human_approved_d3_execution_consumed=false" \
-    "application_singleton_accessor_call=false" \
-    "native_bridge_expansion=false" \
-    "production_public_c_abi_added=false" \
-    "renderer_state_write=false"; do
-    if ! grep -F "$fact" "$packet" >/dev/null 2>&1; then
-      echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: missing nested fact $fact in $packet" >&2
+    "human_approved_d3_execution_consumed=false"; do
+    if ! grep -F "$token" "$handoff_script" >/dev/null 2>&1; then
+      echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: missing shallow handoff token $token" >&2
       exit 10
     fi
   done
-done
-
-if ! grep -F "handoff_packet_ready=true" "$handoff_packet" >/dev/null 2>&1; then
-  echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: handoff packet not ready" >&2
-  exit 11
-fi
-if ! grep -F "two_pass_mesh_rerun_contract_passed=true" "$rerun_packet" >/dev/null 2>&1; then
-  echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: rerun packet not ready" >&2
-  exit 12
-fi
-if ! grep -F "source_build_guard_passed=true" "$source_build_packet" >/dev/null 2>&1; then
-  echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: source/build packet not ready" >&2
-  exit 13
 fi
 
 if git -C "$REPO_DIR" diff --name-only -- runtime/cjgui/cjpm.toml runtime/cjgui/src/runtime_state.cj | grep . >/dev/null 2>&1; then
@@ -136,7 +153,9 @@ fi
   echo "handoff_packet=$handoff_packet"
   echo "rerun_packet=$rerun_packet"
   echo "source_build_packet=$source_build_packet"
+  echo "deep_suite_packet_replay=${deep_suite_packet_replay:-false}"
   echo "nested_packet_stop_lines_consistent=true"
+  echo "handoff_script_replay_contract_audited=true"
   echo "required_next_actor=human_operator"
   echo "required_shell=explicitly_approved_shell"
   echo "approved_runtime_native_probe_execution_admitted=false"
@@ -158,7 +177,9 @@ echo "cjgui renderer NSApplication runtime native probe explicit approval handof
 echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: handoff_replay_packet_path=$HANDOFF_REPLAY_PACKET"
 echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: audit_packet=$audit_packet"
 echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: handoff_packet=$handoff_packet"
+echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: deep_suite_packet_replay=${deep_suite_packet_replay:-false}"
 echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: nested_packet_stop_lines_consistent=true"
+echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: handoff_script_replay_contract_audited=true"
 echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: required_next_actor=human_operator"
 echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: required_shell=explicitly_approved_shell"
 echo "cjgui renderer NSApplication runtime native probe explicit approval handoff replay contract: code_failure_domain=false"

@@ -1,7 +1,9 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 # 中文维护注释：
-# 范围：本脚本验证 isolated visible-window environment probe facts。
+# 范围：本脚本验证 isolated visible-window environment probe facts，并输出
+# 可复核 result envelope。Metal device 为 nil 时必须显式分类，不能把
+# nil-equality 解释成 device-bound / display-backed truth。
 # 停止线：production runtime 只允许 token-backed NSWindow harness first slice；
 # isolated probe 不调用 nextDrawable，不 present，不创建 command queue / encoder，不提交 GPU work，
 # 不返回 native pointer。
@@ -121,6 +123,7 @@ int main(void) {
     NSView *view = [[NSView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 160.0, 120.0)];
     CAMetalLayer *layer = [CAMetalLayer layer];
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    int isolated_metal_device_available = device != nil;
     if (window == nil || view == nil || layer == nil || device == nil) {
       failures += 1;
     }
@@ -140,10 +143,12 @@ int main(void) {
     int isolated_window_visible = window.isVisible ? 1 : 0;
     int isolated_view_attached = view.window == window ? 1 : 0;
     int isolated_layer_attached = view.layer == layer ? 1 : 0;
-    int isolated_device_bound = layer.device == device ? 1 : 0;
+    int isolated_device_bound =
+        isolated_metal_device_available && layer.device == device ? 1 : 0;
     int display_backed_layer =
         isolated_window_visible && isolated_view_attached &&
-        isolated_layer_attached && isolated_device_bound &&
+        isolated_layer_attached && isolated_metal_device_available &&
+        isolated_device_bound &&
         layer.drawableSize.width > 0.0 && layer.drawableSize.height > 0.0;
     if (!main_thread_observed || !isolated_window_created ||
         !isolated_window_visible || !isolated_view_attached ||
@@ -176,6 +181,10 @@ int main(void) {
         "cametallayer table count after", layer_count_after);
     failures += expect_zero_u32(
         "metal device table count after", device_count_after);
+    const char *visible_window_environment_failure_domain =
+        failures == 0 ? "none" :
+        (!isolated_metal_device_available ?
+            "metal_device_unavailable" : "probe_state_mismatch");
     printf("drawable_visible_window_probe_route=isolated_visible_window_environment\n");
     printf("isolated_visible_window_probe_executed=true\n");
     printf("production_window_created=false\n");
@@ -187,6 +196,8 @@ int main(void) {
            isolated_view_attached ? "true" : "false");
     printf("isolated_cametallayer_attached_observed=%s\n",
            isolated_layer_attached ? "true" : "false");
+    printf("isolated_metal_device_available=%s\n",
+           isolated_metal_device_available ? "true" : "false");
     printf("isolated_metal_device_bound_observed=%s\n",
            isolated_device_bound ? "true" : "false");
     printf("display_backed_layer_observed=%s\n",
@@ -212,6 +223,9 @@ int main(void) {
     printf("view_table_occupied_after=%u\n", view_count_after);
     printf("layer_table_occupied_after=%u\n", layer_count_after);
     printf("device_table_occupied_after=%u\n", device_count_after);
+    printf("failure_count=%d\n", failures);
+    printf("visible_window_environment_failure_domain=%s\n",
+           visible_window_environment_failure_domain);
     printf("drawable_visible_window_probe=%s\n",
            failures == 0 ? "passed" : "failed");
     printf("drawable_environment_visibility_probe=%s\n",

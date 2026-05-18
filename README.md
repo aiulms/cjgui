@@ -9,6 +9,12 @@ CJGUI 是一个围绕仓颉语言（Cangjie）的原生 GUI runtime / framework 
 
 这还不是可用的 GUI 框架，也不提供稳定 public API。现阶段更像一个有严格边界和审计记录的系统编程实验室：已经把 app lifecycle、window lifecycle、platform adapter、runtime state、Action Router、handoff、queue boundary、renderer admission 和 real backend shell 的 stop-line 逐步讲清楚，但仍刻意不越线到真实 GPU submission、真实 render execution、public C ABI 或稳定 toolkit surface。
 
+## 技术架构
+
+![CJGUI 技术架构](docs/assets/cjgui-architecture.svg)
+
+这张图只表达当前 CJGUI 的主线方向：上层保持仓颉原生和 AI-native 协作边界，底层先以 macOS AppKit / Metal 打通第一条可验证渲染链路；虚线部分是未来表达层、跨平台层和 AI 工具链雷达，不代表当前已经提供稳定 public API。
+
 ## 当前推进到哪里
 
 本节只保留当前快照和可追溯 evidence map。自动化执行默认读取最新 bullet、最近 report / compact manifest 与当前 next opening；下面的旧阶段长链只在排查冲突、追溯 owner / truth / stop-line 或确认路线来源时按需读取。

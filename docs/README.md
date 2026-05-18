@@ -1,6 +1,6 @@
 # 仓颉 GUI 文档中心
 
-最后更新：2026-05-09
+最后更新：2026-05-18
 
 ## 1. 文档入口规则
 
@@ -74,6 +74,15 @@ research 文档是按需雷达，不是每轮 implementation 的默认必读上�
 - [gui-framework-pitfalls-intelligence.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/gui-framework-pitfalls-intelligence.md)
 - [ai-native-gui-runtime-architecture-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/ai-native-gui-runtime-architecture-intake.md)
 - [cangjie-1.1-owner-tooling-ffi-capability-intake.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/cangjie-1.1-owner-tooling-ffi-capability-intake.md)
+- [cjmp-reference-radar.md](/Users/jiangxuanyang/Desktop/cangjie/docs/research/cjmp-reference-radar.md)
+
+### 2.6 [assets](/Users/jiangxuanyang/Desktop/cangjie/docs/assets)
+
+放根 README、长期文档和 GitCode 首页可直接引用的图像资源。
+
+当前包括：
+
+- [cjgui-architecture.svg](/Users/jiangxuanyang/Desktop/cangjie/docs/assets/cjgui-architecture.svg)
 
 ## 3. 新文档放置规则
 
@@ -82,6 +91,7 @@ research 文档是按需雷达，不是每轮 implementation 的默认必读上�
 - 环境、构建、工具链、本地资料、仓颉上游倒推与贡献账本：放 `docs/setup/`
 - 单次任务计划、preflight、gate、closure：放 `docs/plans/`
 - sidecar research、行业排雷、架构风险情报：放 `docs/research/`
+- 根 README、长期文档可复用的图像资源：放 `docs/assets/`
 - 只有总入口和当前任务账本可以留在根目录
 
 如果一个新文档不知道该放哪里，先不要创建，应该先在 [GUI_TASK_TRACKER.md](/Users/jiangxuanyang/Desktop/cangjie/GUI_TASK_TRACKER.md) 或本文件里补职责说明。

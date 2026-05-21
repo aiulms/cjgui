@@ -185,7 +185,9 @@ fi
   grep -E '^bounded_present_scheduling_executed=' "$packet" | tail -1
   grep -E '^current_shell_present_scheduling_ready=' "$packet" | tail -1
   grep -E '^drawable_present_scheduled=' "$packet" | tail -1
+  grep -E '^present_called=' "$packet" | tail -1
   grep -E '^gpu_work_submitted=' "$packet" | tail -1
+  grep -E '^bounded_gpu_submission_completed=' "$packet" | tail -1
   echo "first_frame_observed=false"
   echo "production_render_truth=false"
   echo "result_envelope_promoted_to_production_truth=false"

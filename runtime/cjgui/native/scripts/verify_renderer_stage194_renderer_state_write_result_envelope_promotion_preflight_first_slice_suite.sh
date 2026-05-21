@@ -1,0 +1,197 @@
+#!/usr/bin/env zsh
+#
+# 维护注释：stage194 focused suite 验证 executor result envelope ->
+# promotion preflight token-candidate ledger。
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
+TMP_DIR="${CJGUI_STAGE194_TMPDIR:-/tmp/cjgui-stage194-renderer-state-write-result-envelope-promotion-preflight-suite-$$}"
+PS_SHIM_DIR="$TMP_DIR/ps-shim"
+CLANG_CACHE_DIR="$TMP_DIR/clang-cache"
+BUILD_TARGET_DIR="$TMP_DIR/target"
+OWNER_SCRIPT="$SCRIPT_DIR/verify_renderer_stage194_renderer_state_write_result_envelope_promotion_preflight_first_slice_owner.sh"
+PACKET_SCRIPT="$SCRIPT_DIR/verify_renderer_stage194_renderer_state_write_result_envelope_promotion_preflight_first_slice_packet.sh"
+OWNER_SRC="$ROOT_DIR/src/runtime_renderer_stage194_renderer_state_write_result_envelope_promotion_preflight_first_slice.cj"
+OWNER_LOG="$TMP_DIR/owner.log"
+PACKET_LOG="$TMP_DIR/packet.log"
+BUILD_LOG="$TMP_DIR/cjpm-build.log"
+SUITE_PACKET="$TMP_DIR/stage194-renderer-state-write-result-envelope-promotion-preflight-first-slice-suite.packet"
+
+mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$CLANG_CACHE_DIR" "$BUILD_TARGET_DIR"
+: > "$OWNER_LOG"
+: > "$PACKET_LOG"
+: > "$BUILD_LOG"
+: > "$SUITE_PACKET"
+
+cat > "$PS_SHIM_DIR/ps" <<'EOF'
+#!/usr/bin/env sh
+echo zsh
+EOF
+chmod +x "$PS_SHIM_DIR/ps"
+
+ensure_toolchain() {
+  if command -v cjpm >/dev/null 2>&1 && command -v cjc >/dev/null 2>&1; then
+    return
+  fi
+  if [[ -f "/Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh" ]]; then
+    export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH:-}"
+    export PATH="$PS_SHIM_DIR:$PATH"
+    set +u
+    source "/Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh"
+    set -u
+  fi
+}
+
+require_file_fact() {
+  local file="$1"
+  local fact="$2"
+  if ! grep -F "$fact" "$file" >/dev/null 2>&1; then
+    echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: missing fact $fact in $file" >&2
+    exit 5
+  fi
+}
+
+fact_value() {
+  local file="$1"
+  local key="$2"
+  grep -E "^${key}=" "$file" | tail -1 | cut -d= -f2- || true
+}
+
+for script in "$OWNER_SCRIPT" "$PACKET_SCRIPT"; do
+  if [[ ! -x "$script" ]]; then
+    echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: missing executable script $script" >&2
+    exit 3
+  fi
+  if ! zsh -n "$script"; then
+    echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: syntax check failed $script" >&2
+    exit 4
+  fi
+done
+
+if ! zsh "$OWNER_SCRIPT" > "$OWNER_LOG" 2>&1; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: owner probe failed" >&2
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: log=$OWNER_LOG" >&2
+  exit 6
+fi
+for fact in \
+  "stage194_renderer_state_write_result_envelope_promotion_preflight_owner_present=true" \
+  "renderer_state_write_result_envelope_promotion_preflight_materialized=true" \
+  "dry_run_executor_result_envelope_bound_to_promotion_preflight=true" \
+  "result_envelope_promotion_token_candidate_ledger_materialized=true" \
+  "missing_production_predicate_ledger_materialized=true" \
+  "stage195_renderer_state_write_admission_join_decision_input_prepared=true" \
+  "result_envelope_promotion_preflight_non_production=true" \
+  "result_envelope_promotion_token=false" \
+  "renderer_state_write=false" \
+  "runtime_state_write=false"; do
+  require_file_fact "$OWNER_LOG" "$fact"
+done
+
+if ! zsh "$PACKET_SCRIPT" > "$PACKET_LOG" 2>&1; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: packet failed" >&2
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: log=$PACKET_LOG" >&2
+  exit 7
+fi
+packet="$(grep -Eo 'result_envelope_promotion_preflight_packet_path=[^[:space:]]+' "$PACKET_LOG" | tail -1 | cut -d= -f2-)"
+if [[ -z "$packet" || ! -f "$packet" ]]; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: missing packet" >&2
+  exit 8
+fi
+for fact in \
+  "stage194_renderer_state_write_result_envelope_promotion_preflight_packet_passed=true" \
+  "stage193_dry_run_executor_result_consumed=true" \
+  "renderer_state_write_result_envelope_promotion_preflight_ready=true" \
+  "renderer_state_write_result_envelope_promotion_preflight_source_ready=true" \
+  "renderer_state_write_result_envelope_promotion_preflight_runtime_admitted=false" \
+  "renderer_state_write_result_envelope_promotion_preflight_materialized=true" \
+  "dry_run_executor_result_envelope_bound_to_promotion_preflight=true" \
+  "result_envelope_promotion_token_candidate_ledger_materialized=true" \
+  "missing_production_predicate_ledger_materialized=true" \
+  "stage195_renderer_state_write_admission_join_decision_input_prepared=true" \
+  "result_envelope_promotion_preflight_non_production=true" \
+  "result_envelope_promotion_token=false" \
+  "renderer_state_write=false" \
+  "runtime_state_write=false"; do
+  require_file_fact "$packet" "$fact"
+done
+
+route="$(fact_value "$packet" "renderer_state_write_result_envelope_promotion_preflight_route_classification")"
+if [[ "$route" != "renderer_state_write_result_envelope_promotion_preflight_ready_token_candidate_only" ]]; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: unexpected route $route" >&2
+  exit 9
+fi
+
+if [[ ! -f "$OWNER_SRC" ]]; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: missing source owner $OWNER_SRC" >&2
+  exit 10
+fi
+if grep -E 'foreign[[:space:]]+func|public[[:space:]]+(func|struct|class|enum|let|var)' "$OWNER_SRC" >/dev/null 2>&1; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: public or foreign declaration found" >&2
+  exit 11
+fi
+if sed '/^[[:space:]]*\/\//d;/^[[:space:]]*\/\*/d;/^[[:space:]]*\*/d' "$OWNER_SRC" \
+  | grep -E 'sharedApplication|setActivationPolicy|activateIgnoringOtherApps|makeKeyAndOrderFront|orderFront|nextDrawable|renderCommandEncoder|setRenderPipelineState|setVertexBuffer|drawPrimitives|drawIndexedPrimitives|presentDrawable|present\]|commit\]|waitUntilCompleted|screencapture|CGWindow|CGDisplay|CGImage|CGBitmapContext|NSWindow[[:space:]]*\*|NSView[[:space:]]*\*|CAMetalLayer[[:space:]]*\*|MTLCommandQueue|MTLCommandBuffer|MTLRenderCommandEncoder|MTLRenderPipelineState|MTLBuffer' >/dev/null 2>&1; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: forbidden native/render token found in owner" >&2
+  exit 12
+fi
+
+if git -C "$REPO_DIR" diff --name-only -- runtime/cjgui/cjpm.toml runtime/cjgui/src/runtime_state.cj runtime/cjgui/native/cjgui_native_bridge.h runtime/cjgui/native/cjgui_native_bridge.m | grep . >/dev/null 2>&1; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: protected production bridge/state path modified" >&2
+  exit 13
+fi
+
+ensure_toolchain
+if ! command -v cjpm >/dev/null 2>&1; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: cjpm unavailable" >&2
+  exit 14
+fi
+if ! (
+  cd "$ROOT_DIR" &&
+  env CLANG_MODULE_CACHE_PATH="$CLANG_CACHE_DIR" cjpm build --target-dir "$BUILD_TARGET_DIR" --skip-script
+) > "$BUILD_LOG" 2>&1; then
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: runtime package build failed" >&2
+  echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: log=$BUILD_LOG" >&2
+  exit 15
+fi
+
+{
+  echo "stage194_renderer_state_write_result_envelope_promotion_preflight_suite_version=1"
+  echo "owner_log=$OWNER_LOG"
+  echo "packet_log=$PACKET_LOG"
+  echo "renderer_state_write_result_envelope_promotion_preflight_packet=$packet"
+  echo "build_log=$BUILD_LOG"
+  echo "stage194_owner_probe_passed=true"
+  echo "stage194_renderer_state_write_result_envelope_promotion_preflight_packet_passed=true"
+  echo "runtime_package_build_passed=true"
+  echo "stage194_public_foreign_scan_passed=true"
+  echo "stage194_forbidden_native_render_token_scan_passed=true"
+  echo "stage194_protected_path_scan_passed=true"
+  echo "renderer_state_write_result_envelope_promotion_preflight_route_classification=$route"
+  echo "renderer_state_write_result_envelope_promotion_preflight_ready=true"
+  echo "renderer_state_write_result_envelope_promotion_preflight_source_ready=true"
+  echo "renderer_state_write_result_envelope_promotion_preflight_runtime_admitted=false"
+  echo "renderer_state_write_result_envelope_promotion_preflight_materialized=true"
+  echo "dry_run_executor_result_envelope_bound_to_promotion_preflight=true"
+  echo "result_envelope_promotion_token_candidate_ledger_materialized=true"
+  echo "missing_production_predicate_ledger_materialized=true"
+  echo "stage195_renderer_state_write_admission_join_decision_input_prepared=true"
+  echo "result_envelope_promotion_preflight_non_production=true"
+  echo "result_envelope_promotion_token=false"
+  echo "production_render_truth=false"
+  echo "backend_ready_truth=false"
+  echo "semantic_runtime_admission=false"
+  echo "visibility_published=false"
+  echo "renderer_state_write=false"
+  echo "runtime_state_write=false"
+  echo "native_bridge_expansion=false"
+  echo "production_public_c_abi_added=false"
+  echo "cjpm_toml_change=false"
+  echo "next_route=stage195_renderer_state_write_admission_join_decision_after_result_envelope_promotion_preflight"
+  echo "stage194_renderer_state_write_result_envelope_promotion_preflight_suite_passed=true"
+} > "$SUITE_PACKET"
+
+echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: route_classification=stage194_renderer_state_write_result_envelope_promotion_preflight_suite"
+echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: suite_packet_path=$SUITE_PACKET"
+echo "cjgui stage194 renderer_state write result-envelope promotion preflight suite: renderer_state_write=false"

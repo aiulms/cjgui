@@ -1,6 +1,6 @@
 # 仓颉 GUI 文档中心
 
-最后更新：2026-05-18
+最后更新：2026-05-21
 
 ## 1. 文档入口规则
 
@@ -23,6 +23,7 @@
 - [GUI_THINKING_FRAMEWORK.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_THINKING_FRAMEWORK.md)
 - [GUI_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_GOVERNANCE.md)
 - [GUI_RISK_LEDGER.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/GUI_RISK_LEDGER.md)
+- [CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md)
 - [AI_NATIVE_UI_SEMANTICS.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_NATIVE_UI_SEMANTICS.md)
 - [AI_ACTION_PROTOCOL_EXPERIMENT.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/AI_ACTION_PROTOCOL_EXPERIMENT.md)
 - [HUMAN_COLLABORATION_GOVERNANCE.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/HUMAN_COLLABORATION_GOVERNANCE.md)

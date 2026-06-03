@@ -34,7 +34,49 @@ AI Action Protocol workflow / EDN-like grammar 纠偏已记录为 docs-only futu
 
 UI 框架完整性方向尺已记录在 [CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md](/Users/jiangxuanyang/Desktop/cangjie/docs/core/CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md)。它是长期验收 compass，不是硬 gate；用于提醒后续自动化在 Renderer / envelope / guard 主线自洽时，仍要向真实应用、组件、输入、状态、样式和 AI-native generated UI 能力收敛。
 
-最新 automation stage report：[2026-05-28-p1-renderer-automation-stage-report-688.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-28-p1-renderer-automation-stage-report-688.md)。本轮作为 replay host text edit field model -> text edit state dry-run -> text edit render/result surface -> shared text input runtime contract four-slice convergence package，stage685 消费 stage684 runtime contract，并生成 shared text edit field model、text value、selection、caret、validation preview、submit affordance 与四个 demo field models；stage686 消费 stage685 readiness，并生成 shared text edit operation ledger、insert/delete/submit/focus move dry-run、state delta dry-run 与四个 demo state receipts；stage687 消费 stage686 readiness，并生成 text-run / caret-selection / validation / focus / submit render-result refresh 与四个 demo surfaces；stage688 消费 stage687 readiness，并生成 shared text input runtime contract/helper、shared execution receipt contract、`field_model_operation_state_render_result_runtime` cycle order、四个 runtime surfaces 与 `stage689_replay_host_text_input_demo_host_integration_after_stage688`。final chain 确认 `stage687_replay_host_text_edit_render_result_surface_consumed=true`、`stage686_replay_host_text_edit_state_dry_run_consumed_transitively=true`、`stage685_replay_host_text_edit_field_model_consumed_transitively=true`、`stage684_replay_action_state_render_host_inspection_runtime_contract_consumed_transitively=true`、`shared_replay_host_text_input_runtime_contract_materialized=true`、`shared_replay_host_text_input_runtime_helper_materialized=true`、`shared_replay_host_text_input_execution_receipt_contract_materialized=true`、`cycle_order_field_model_operation_state_render_result_runtime_materialized=true`、`todo_replay_host_text_input_runtime_surface_materialized=true`、`settings_replay_host_text_input_runtime_surface_materialized=true`、`ai_generated_settings_replay_host_text_input_runtime_surface_materialized=true`、`chat_composer_replay_host_text_input_runtime_surface_materialized=true`、`future_per_demo_text_input_runtime_template_need_reduced=true`、`production_render_truth=false`、`backend_ready_truth=false`、`owner_acceptance_granted=false`、`action_dispatch=false`、`state_update_committed=false`、`visibility_publication_admitted=false`、`renderer_submission=false`、`renderer_state_write=false`、`runtime_state_write=false`。当前 next opening 是 `stage689_replay_host_text_input_demo_host_integration_after_stage688`。本轮不扩 topic manifest 长流水。
+最新 automation stage report：[2026-06-01-p1-renderer-automation-stage-report-776.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-01-p1-renderer-automation-stage-report-776.md)。本轮作为 preview component API commit admission dry-run -> denial / rollback receipt -> host inspection surface -> shared commit admission runtime manager four-slice convergence package，stage773 消费 stage772 owner acceptance decision runtime manager 并生成 non-committing commit admission dry-run、accepted/rejected admission candidates、owner decision -> commit admission bridge 与四个 demo admission surfaces，stage774 消费 stage773 readiness 并生成 denial / rollback / compatibility / owner-reject receipts 与四个 demo receipt surfaces，stage775 消费 stage774 readiness 并生成 host inspection rows、result surface refresh、rollback snapshot preview、semantic diff、focus handoff、RenderCommand refresh preview 与四个 demo inspection surfaces，stage776 消费 stage775 host inspection surface 并抽出 shared preview component API commit admission runtime manager/runtime contract/execution receipt contract 与四个 demo runtime surfaces。final chain 确认 `shared_preview_component_api_commit_admission_runtime_manager_materialized=true`、`preview_component_api_commit_admission_runtime_contract_materialized=true`、`preview_component_api_commit_admission_execution_receipt_contract_materialized=true`、`future_per_demo_commit_admission_template_need_reduced=true`、`new_public_surface_added=false`、`stable_public_api_added=false`、`public_c_abi_added=false`、`owner_acceptance_granted=false`、`preview_component_api_commit_committed=false`、`renderer_submission=false`、`renderer_state_write=false`、`runtime_state_write=false`。当前 next opening 是 `stage777_preview_component_api_state_store_commit_boundary_after_stage776`。本轮不扩 topic manifest 长流水。
+
+上一份 automation stage report：[2026-06-01-p1-renderer-automation-stage-report-772.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-01-p1-renderer-automation-stage-report-772.md)。当前 next opening 已由 stage773-776 接续。
+
+上一份 automation stage report：[2026-05-30-p1-renderer-automation-stage-report-768.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-30-p1-renderer-automation-stage-report-768.md)。当前 next opening 已由 stage769-772 接续。
+
+上一份 automation stage report：[2026-05-30-p1-renderer-automation-stage-report-764.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-30-p1-renderer-automation-stage-report-764.md)。当前 next opening 已由 stage765-768 接续。
+
+上一份 automation stage report：[2026-05-30-p1-renderer-automation-stage-report-760.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-30-p1-renderer-automation-stage-report-760.md)。当前 next opening 已由 stage761-764 接续。
+
+上一份 automation stage report：[2026-05-30-p1-renderer-automation-stage-report-756.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-30-p1-renderer-automation-stage-report-756.md)。当前 next opening 已由 stage757-760 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-752.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-752.md)。当前 next opening 已由 stage753-756 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-748.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-748.md)。当前 next opening 已由 stage749-752 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-744.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-744.md)。当前 next opening 已由 stage745-748 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-740.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-740.md)。当前 next opening 已由 stage741-744 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-736.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-736.md)。当前 next opening 已由 stage737-740 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-732.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-732.md)。当前 next opening 已由 stage733-736 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-728.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-728.md)。当前 next opening 已由 stage729-732 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-724.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-724.md)。当前 next opening 已由 stage725-728 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-720.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-720.md)。当前 next opening 已由 stage721-724 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-716.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-716.md)。当前 next opening 已由 stage717-720 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-712.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-712.md)。当前 next opening 已由 stage713-716 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-708.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-708.md)。当前 next opening 已由 stage709-712 接续。
+
+上一份 automation stage report：[2026-05-29-p1-renderer-automation-stage-report-704.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-29-p1-renderer-automation-stage-report-704.md)。当前 next opening 已由 stage705-708 接续。
+
+上一份 automation stage report：[2026-05-28-p1-renderer-automation-stage-report-700.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-28-p1-renderer-automation-stage-report-700.md)。当前 next opening 已由 stage701-704 接续。
+
+上一份 automation stage report：[2026-05-28-p1-renderer-automation-stage-report-692.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-28-p1-renderer-automation-stage-report-692.md)。当前 next opening 已由 stage693-696 接续。
+
+上一份 automation stage report：[2026-05-28-p1-renderer-automation-stage-report-688.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-28-p1-renderer-automation-stage-report-688.md)。当前 next opening 已由 stage689-692 接续。
 
 上一份 automation stage report：[2026-05-28-p1-renderer-automation-stage-report-684.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-28-p1-renderer-automation-stage-report-684.md)。当前 next opening 已由 stage685-688 接续。
 

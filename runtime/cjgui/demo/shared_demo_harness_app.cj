@@ -1,6 +1,6 @@
 package cjgui_shared_demo_harness_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import std.collection.*
 
 // 中文维护注释：这是独立 shared demo harness demo app，不属于 runtime_renderer_stage* owner 链。
@@ -11,7 +11,7 @@ class SharedDemoHarnessState {
     let harnessName: String
     let servedDemo: String
     private var actions = ArrayList<String>()
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
     var itemCount: Int64
     var firstTitle: String
     var firstDone: Bool
@@ -19,7 +19,14 @@ class SharedDemoHarnessState {
     init() {
         this.harnessName = "shared_demo_harness"
         this.servedDemo = "todo"
-        this.uiState = CjguiExperimentalDemoUiStateCore("todo_list", "neutral_list", "", "todo_input")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "shared_demo_harness",
+            "items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list",
+            "todo_list",
+            "neutral_list",
+            "",
+            "todo_input"
+        )
         this.itemCount = 0
         this.firstTitle = "<none>"
         this.firstDone = false
@@ -30,16 +37,18 @@ class SharedDemoHarnessState {
         itemCount = 1
         firstTitle = title
         firstDone = false
-        uiState.typeInput(title)
-        uiState.moveFocus("todo_first_item")
-        uiState.applyStyle("active_list")
+        componentSession.typeInput(title)
+        componentSession.moveFocus("todo_first_item")
+        componentSession.applyStyle("active_list")
+        componentSession.recordComponentAction("todo_input", "shared_demo_harness.add_todo", businessState())
     }
 
     func completeTodo() {
         actions.add("complete_todo")
         firstDone = true
-        uiState.moveFocus("todo_first_item")
-        uiState.applyStyle("completed_accent")
+        componentSession.moveFocus("todo_first_item")
+        componentSession.applyStyle("completed_accent")
+        componentSession.recordComponentAction("todo_item", "shared_demo_harness.complete_todo", businessState())
     }
 
     func actionCount(): Int64 {
@@ -47,36 +56,66 @@ class SharedDemoHarnessState {
     }
 
     func businessState(): String {
-        return "items=${itemCount};first=${firstTitle};first_done=${firstDone};focus=${uiState.focus()};style=${uiState.style()}"
+        return "items=${itemCount};first=${firstTitle};first_done=${firstDone};focus=${componentSession.focus()};style=${componentSession.style()}"
     }
 
     func domainSummary(): String {
-        return "harness=${harnessName};served=${servedDemo};actions=${actions.size};focus=${uiState.focus()};style=${uiState.style()}"
+        return "harness=${harnessName};served=${servedDemo};actions=${actions.size};focus=${componentSession.focus()};style=${componentSession.style()}"
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
 main(): Int64 {
     let harness = SharedDemoHarnessState()
     let before = harness.businessState()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("shared_demo_harness", before)
     harness.addTodo("Write shared CJGUI harness")
-    sharedTrace.recordAction("shared_demo_harness.add_todo", harness.businessState())
     harness.completeTodo()
     let after = harness.businessState()
-    sharedTrace.recordAction("shared_demo_harness.complete_todo", after)
     let stateReadbackOk = before == "items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list" &&
         after == "items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent" &&
         harness.sharedUiState() == "layout=todo_list;style=completed_accent;input=Write shared CJGUI harness;focus=todo_first_item" &&
         harness.actionCount() == 2 &&
-        sharedTrace.before() == before &&
-        sharedTrace.after() == after &&
-        sharedTrace.actions() == "shared_demo_harness.add_todo,shared_demo_harness.complete_todo" &&
-        sharedTrace.writes() == 2
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, harness.domainSummary(), stateReadbackOk)
+        harness.sharedBefore() == before &&
+        harness.sharedAfter() == after &&
+        harness.sharedActions() == "shared_demo_harness.add_todo,shared_demo_harness.complete_todo" &&
+        harness.sharedWrites() == 2 &&
+        harness.sharedComponentActions() == "todo_input:shared_demo_harness.add_todo,todo_item:shared_demo_harness.complete_todo"
+    let apiOutput = harness.buildSharedOutput(harness.domainSummary(), stateReadbackOk)
     let outputOk = stateReadbackOk &&
         apiOutput.demoName == "shared_demo_harness" &&
         apiOutput.beforeState == before &&
@@ -96,11 +135,13 @@ main(): Int64 {
     println("cjgui shared demo harness app: state_after=${after}")
     println("cjgui shared demo harness app: state_readback=${outputOk}")
     println("cjgui shared demo harness app: public_api_consumed=true")
-    println("cjgui shared demo harness app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui shared demo harness app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui shared demo harness app: public_api_output=${apiOutput.summary}")
-    println("cjgui shared demo harness app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui shared demo harness app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui shared demo harness app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui shared demo harness app: shared_support_output=${harness.sharedSupportOutput()}")
     println("cjgui shared demo harness app: shared_state_core=${harness.sharedUiState()}")
+    println("cjgui shared demo harness app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui shared demo harness app: shared_component_action_output=${harness.sharedComponentActionSummary()}")
 
     if (outputOk) {
         return 0

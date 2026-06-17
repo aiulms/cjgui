@@ -1,6 +1,6 @@
 package cjgui_reusable_component_contract_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -8,24 +8,29 @@ import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimen
 
 class ReusableComponentContractState {
     let contractName: String
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
     var componentCount: Int64
     var componentKinds: String
     var reusedDemoCount: Int64
     var reusedDemos: String
-    var actionTrace: String
     var todoTitle: String
     var fileSelection: String
     var aiAcceptedScreen: String
 
     init() {
         this.contractName = "reusable_component_contract"
-        this.uiState = CjguiExperimentalDemoUiStateCore("single_column", "neutral_list", "<empty>", "todo_input")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "reusable_component_contract",
+            "components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input",
+            "single_column",
+            "neutral_list",
+            "<empty>",
+            "todo_input"
+        )
         this.componentCount = 1
         this.componentKinds = "task_row"
         this.reusedDemoCount = 1
         this.reusedDemos = "todo"
-        this.actionTrace = "idle"
         this.todoTitle = "<empty>"
         this.fileSelection = "<none>"
         this.aiAcceptedScreen = "<none>"
@@ -38,53 +43,45 @@ class ReusableComponentContractState {
         reusedDemoCount += 1
     }
 
-    private func appendAction(action: String) {
-        if (actionTrace == "idle") {
-            actionTrace = action
-        } else {
-            actionTrace = "${actionTrace},${action}"
-        }
-    }
-
     func attachFileBrowserRow() {
         appendComponent("file_row", "file_browser")
-        appendAction("register_file_row")
+        componentSession.recordComponentAction("file_row", "register_file_row", businessState())
     }
 
     func attachAiGeneratedForm() {
         appendComponent("ai_form", "ai_generated_ui")
-        appendAction("register_ai_form")
+        componentSession.recordComponentAction("ai_form", "register_ai_form", businessState())
     }
 
     func runTodoAdd(title: String) {
         todoTitle = title
-        uiState.applyLayout("todo_list")
-        uiState.applyStyle("task_row_active")
-        uiState.typeInput(title)
-        uiState.moveFocus("todo_first_item")
-        appendAction("todo_add")
+        componentSession.applyLayout("todo_list")
+        componentSession.applyStyle("task_row_active")
+        componentSession.typeInput(title)
+        componentSession.moveFocus("todo_first_item")
+        componentSession.recordComponentAction("task_row", "todo_add", businessState())
     }
 
     func runFileSelect(path: String) {
         fileSelection = path
-        uiState.applyLayout("split_detail")
-        uiState.applyStyle("file_row_selected")
-        uiState.typeInput("filter:src")
-        uiState.moveFocus("file_detail_pane")
-        appendAction("file_select")
+        componentSession.applyLayout("split_detail")
+        componentSession.applyStyle("file_row_selected")
+        componentSession.typeInput("filter:src")
+        componentSession.moveFocus("file_detail_pane")
+        componentSession.recordComponentAction("file_row", "file_select", businessState())
     }
 
     func runAiAccept(screen: String) {
         aiAcceptedScreen = screen
-        uiState.applyLayout("split_detail")
-        uiState.applyStyle("sage_panel")
-        uiState.typeInput("filter:src,username")
-        uiState.moveFocus("save_button")
-        appendAction("ai_accept")
+        componentSession.applyLayout("split_detail")
+        componentSession.applyStyle("sage_panel")
+        componentSession.typeInput("filter:src,username")
+        componentSession.moveFocus("save_button")
+        componentSession.recordComponentAction("ai_form", "ai_accept", businessState())
     }
 
     func businessState(): String {
-        return "components=${componentCount};demos=${reusedDemos};todo=${todoTitle};file=${fileSelection};ai=${aiAcceptedScreen};layout=${uiState.layout()};style=${uiState.style()};input=${uiState.textInput()};focus=${uiState.focus()}"
+        return "components=${componentCount};demos=${reusedDemos};todo=${todoTitle};file=${fileSelection};ai=${aiAcceptedScreen};layout=${componentSession.layout()};style=${componentSession.style()};input=${componentSession.textInput()};focus=${componentSession.focus()}"
     }
 
     func domainSummary(
@@ -96,33 +93,75 @@ class ReusableComponentContractState {
         focusBefore: String,
         readbackOk: Bool
     ): String {
-        return "contract=reusable_component_contract;components=${componentKinds};reused_count=${reusedDemoCount};reused=${reusedDemos};component_count=${componentCount};layout=${layoutBefore}->${uiState.layout()};style=${styleBefore}->${uiState.style()};input=${inputBefore}->${uiState.textInput()};focus=${focusBefore}->${uiState.focus()};readback=${readbackOk};before=${beforeState};after=${afterState}"
+        return "contract=reusable_component_contract;components=${componentKinds};reused_count=${reusedDemoCount};reused=${reusedDemos};component_count=${componentCount};layout=${layoutBefore}->${componentSession.layout()};style=${styleBefore}->${componentSession.style()};input=${inputBefore}->${componentSession.textInput()};focus=${focusBefore}->${componentSession.focus()};readback=${readbackOk};before=${beforeState};after=${afterState}"
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func layout(): String {
+        return componentSession.layout()
+    }
+
+    func style(): String {
+        return componentSession.style()
+    }
+
+    func textInput(): String {
+        return componentSession.textInput()
+    }
+
+    func focus(): String {
+        return componentSession.focus()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
 main(): Int64 {
     let contract = ReusableComponentContractState()
     let before = contract.businessState()
-    let layoutBefore = contract.uiState.layout()
-    let styleBefore = contract.uiState.style()
-    let inputBefore = contract.uiState.textInput()
-    let focusBefore = contract.uiState.focus()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("reusable_component_contract", before)
+    let layoutBefore = contract.layout()
+    let styleBefore = contract.style()
+    let inputBefore = contract.textInput()
+    let focusBefore = contract.focus()
 
     contract.attachFileBrowserRow()
-    sharedTrace.recordAction("register_file_row", contract.businessState())
     contract.attachAiGeneratedForm()
-    sharedTrace.recordAction("register_ai_form", contract.businessState())
     contract.runTodoAdd("buy_milk")
-    sharedTrace.recordAction("todo_add", contract.businessState())
     contract.runFileSelect("src/main.cj")
-    sharedTrace.recordAction("file_select", contract.businessState())
     contract.runAiAccept("settings_profile_form")
-    sharedTrace.recordAction("ai_accept", contract.businessState())
 
     let after = contract.businessState()
     let readbackOk = before == "components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input" &&
@@ -130,7 +169,11 @@ main(): Int64 {
         contract.componentKinds == "task_row,file_row,ai_form" &&
         contract.reusedDemoCount == 3 &&
         contract.sharedUiState() == "layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button" &&
-        contract.actionTrace == "register_file_row,register_ai_form,todo_add,file_select,ai_accept"
+        contract.sharedBefore() == before &&
+        contract.sharedAfter() == after &&
+        contract.sharedActions() == "register_file_row,register_ai_form,todo_add,file_select,ai_accept" &&
+        contract.sharedWrites() == 5 &&
+        contract.sharedComponentActions() == "file_row:register_file_row,ai_form:register_ai_form,task_row:todo_add,file_row:file_select,ai_form:ai_accept"
     let domainSummary = contract.domainSummary(
         before,
         after,
@@ -140,7 +183,7 @@ main(): Int64 {
         focusBefore,
         readbackOk
     )
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, domainSummary, readbackOk)
+    let apiOutput = contract.buildSharedOutput(domainSummary, readbackOk)
     let outputOk = readbackOk &&
         apiOutput.demoName == "reusable_component_contract" &&
         apiOutput.beforeState == before &&
@@ -161,11 +204,13 @@ main(): Int64 {
     println("cjgui reusable component contract app: state_after=${after}")
     println("cjgui reusable component contract app: state_readback=${readbackOk}")
     println("cjgui reusable component contract app: public_api_consumed=true")
-    println("cjgui reusable component contract app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui reusable component contract app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui reusable component contract app: public_api_output=${apiOutput.summary}")
-    println("cjgui reusable component contract app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui reusable component contract app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui reusable component contract app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui reusable component contract app: shared_support_output=${contract.sharedSupportOutput()}")
     println("cjgui reusable component contract app: shared_state_core=${contract.sharedUiState()}")
+    println("cjgui reusable component contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui reusable component contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
 
     if (outputOk) {
         return 0

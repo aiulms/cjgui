@@ -1,6 +1,6 @@
 package cjgui_shared_layout_style_input_focus_contract_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -8,55 +8,98 @@ import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimen
 
 class SharedLayoutStyleInputFocusContractState {
     let contractName: String
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
 
     init() {
         this.contractName = "shared_layout_style_input_focus"
-        this.uiState = CjguiExperimentalDemoUiStateCore("single_column", "neutral_list", "<empty>", "todo_input")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "shared_layout_style_input_focus_contract",
+            "layout=single_column;style=neutral_list;input=<empty>;focus=todo_input",
+            "single_column",
+            "neutral_list",
+            "<empty>",
+            "todo_input"
+        )
     }
 
     func applyLayout(kind: String) {
-        uiState.applyLayout(kind)
+        componentSession.applyLayout(kind)
+        componentSession.recordComponentAction("layout_contract", "shared_layout_style_input_focus.apply_layout", businessState())
     }
 
     func applyStyle(token: String) {
-        uiState.applyStyle(token)
+        componentSession.applyStyle(token)
+        componentSession.recordComponentAction("style_contract", "shared_layout_style_input_focus.apply_style", businessState())
     }
 
     func typeInput(text: String) {
-        uiState.typeInput(text)
+        componentSession.typeInput(text)
+        componentSession.recordComponentAction("text_input_contract", "shared_layout_style_input_focus.type_input", businessState())
     }
 
     func moveFocus(target: String) {
-        uiState.moveFocus(target)
+        componentSession.moveFocus(target)
+        componentSession.recordComponentAction("focus_contract", "shared_layout_style_input_focus.move_focus", businessState())
     }
 
     func businessState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
     }
 
     func domainSummary(layoutBefore: String, styleBefore: String, inputBefore: String, focusBefore: String): String {
-        return "contract=${contractName};layout=${layoutBefore}->${uiState.layout()};style=${styleBefore}->${uiState.style()};input=${inputBefore}->${uiState.textInput()};focus=${focusBefore}->${uiState.focus()}"
+        return "contract=${contractName};layout=${layoutBefore}->${componentSession.layout()};style=${styleBefore}->${componentSession.style()};input=${inputBefore}->${componentSession.textInput()};focus=${focusBefore}->${componentSession.focus()}"
     }
 
     func layout(): String {
-        return uiState.layout()
+        return componentSession.layout()
     }
 
     func style(): String {
-        return uiState.style()
+        return componentSession.style()
     }
 
     func textInput(): String {
-        return uiState.textInput()
+        return componentSession.textInput()
     }
 
     func focus(): String {
-        return uiState.focus()
+        return componentSession.focus()
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
@@ -67,18 +110,13 @@ main(): Int64 {
     let styleBefore = contract.style()
     let inputBefore = contract.textInput()
     let focusBefore = contract.focus()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("shared_layout_style_input_focus_contract", before)
 
     contract.applyLayout("split_detail")
-    sharedTrace.recordAction("shared_layout_style_input_focus.apply_layout", contract.businessState())
     contract.applyStyle("focus_accent")
-    sharedTrace.recordAction("shared_layout_style_input_focus.apply_style", contract.businessState())
     contract.typeInput("main")
-    sharedTrace.recordAction("shared_layout_style_input_focus.type_input", contract.businessState())
     contract.moveFocus("file_filter")
 
     let after = contract.businessState()
-    sharedTrace.recordAction("shared_layout_style_input_focus.move_focus", after)
     let layoutAfter = contract.layout()
     let styleAfter = contract.style()
     let inputAfter = contract.textInput()
@@ -90,12 +128,13 @@ main(): Int64 {
         inputAfter == "main" &&
         focusAfter == "file_filter" &&
         contract.sharedUiState() == "layout=split_detail;style=focus_accent;input=main;focus=file_filter" &&
-        sharedTrace.before() == before &&
-        sharedTrace.after() == after &&
-        sharedTrace.actions() == "shared_layout_style_input_focus.apply_layout,shared_layout_style_input_focus.apply_style,shared_layout_style_input_focus.type_input,shared_layout_style_input_focus.move_focus" &&
-        sharedTrace.writes() == 4
+        contract.sharedBefore() == before &&
+        contract.sharedAfter() == after &&
+        contract.sharedActions() == "shared_layout_style_input_focus.apply_layout,shared_layout_style_input_focus.apply_style,shared_layout_style_input_focus.type_input,shared_layout_style_input_focus.move_focus" &&
+        contract.sharedWrites() == 4 &&
+        contract.sharedComponentActions() == "layout_contract:shared_layout_style_input_focus.apply_layout,style_contract:shared_layout_style_input_focus.apply_style,text_input_contract:shared_layout_style_input_focus.type_input,focus_contract:shared_layout_style_input_focus.move_focus"
     let domainSummary = contract.domainSummary(layoutBefore, styleBefore, inputBefore, focusBefore)
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, domainSummary, stateReadbackOk)
+    let apiOutput = contract.buildSharedOutput(domainSummary, stateReadbackOk)
     let outputOk = stateReadbackOk &&
         apiOutput.demoName == "shared_layout_style_input_focus_contract" &&
         apiOutput.beforeState == before &&
@@ -114,11 +153,13 @@ main(): Int64 {
     println("cjgui shared layout-style-input-focus contract app: state_after=${after}")
     println("cjgui shared layout-style-input-focus contract app: state_readback=${outputOk}")
     println("cjgui shared layout-style-input-focus contract app: public_api_consumed=true")
-    println("cjgui shared layout-style-input-focus contract app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui shared layout-style-input-focus contract app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui shared layout-style-input-focus contract app: public_api_output=${apiOutput.summary}")
-    println("cjgui shared layout-style-input-focus contract app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui shared layout-style-input-focus contract app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui shared layout-style-input-focus contract app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui shared layout-style-input-focus contract app: shared_support_output=${contract.sharedSupportOutput()}")
     println("cjgui shared layout-style-input-focus contract app: shared_state_core=${contract.sharedUiState()}")
+    println("cjgui shared layout-style-input-focus contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui shared layout-style-input-focus contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
 
     if (outputOk) {
         return 0

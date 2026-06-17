@@ -1,6 +1,6 @@
 package cjgui_reusable_component_contract_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -8,6 +8,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimen
 
 class ReusableComponentContractState {
     let contractName: String
+    let uiState: CjguiExperimentalDemoUiStateCore
     var componentCount: Int64
     var componentKinds: String
     var reusedDemoCount: Int64
@@ -16,13 +17,10 @@ class ReusableComponentContractState {
     var todoTitle: String
     var fileSelection: String
     var aiAcceptedScreen: String
-    var layoutMode: String
-    var styleToken: String
-    var inputText: String
-    var focusTarget: String
 
     init() {
         this.contractName = "reusable_component_contract"
+        this.uiState = CjguiExperimentalDemoUiStateCore("single_column", "neutral_list", "<empty>", "todo_input")
         this.componentCount = 1
         this.componentKinds = "task_row"
         this.reusedDemoCount = 1
@@ -31,10 +29,6 @@ class ReusableComponentContractState {
         this.todoTitle = "<empty>"
         this.fileSelection = "<none>"
         this.aiAcceptedScreen = "<none>"
-        this.layoutMode = "single_column"
-        this.styleToken = "neutral_list"
-        this.inputText = "<empty>"
-        this.focusTarget = "todo_input"
     }
 
     private func appendComponent(kind: String, demo: String) {
@@ -64,33 +58,33 @@ class ReusableComponentContractState {
 
     func runTodoAdd(title: String) {
         todoTitle = title
-        layoutMode = "todo_list"
-        styleToken = "task_row_active"
-        inputText = title
-        focusTarget = "todo_first_item"
+        uiState.applyLayout("todo_list")
+        uiState.applyStyle("task_row_active")
+        uiState.typeInput(title)
+        uiState.moveFocus("todo_first_item")
         appendAction("todo_add")
     }
 
     func runFileSelect(path: String) {
         fileSelection = path
-        layoutMode = "split_detail"
-        styleToken = "file_row_selected"
-        inputText = "filter:src"
-        focusTarget = "file_detail_pane"
+        uiState.applyLayout("split_detail")
+        uiState.applyStyle("file_row_selected")
+        uiState.typeInput("filter:src")
+        uiState.moveFocus("file_detail_pane")
         appendAction("file_select")
     }
 
     func runAiAccept(screen: String) {
         aiAcceptedScreen = screen
-        layoutMode = "split_detail"
-        styleToken = "sage_panel"
-        inputText = "filter:src,username"
-        focusTarget = "save_button"
+        uiState.applyLayout("split_detail")
+        uiState.applyStyle("sage_panel")
+        uiState.typeInput("filter:src,username")
+        uiState.moveFocus("save_button")
         appendAction("ai_accept")
     }
 
     func businessState(): String {
-        return "components=${componentCount};demos=${reusedDemos};todo=${todoTitle};file=${fileSelection};ai=${aiAcceptedScreen};layout=${layoutMode};style=${styleToken};input=${inputText};focus=${focusTarget}"
+        return "components=${componentCount};demos=${reusedDemos};todo=${todoTitle};file=${fileSelection};ai=${aiAcceptedScreen};layout=${uiState.layout()};style=${uiState.style()};input=${uiState.textInput()};focus=${uiState.focus()}"
     }
 
     func domainSummary(
@@ -102,17 +96,21 @@ class ReusableComponentContractState {
         focusBefore: String,
         readbackOk: Bool
     ): String {
-        return "contract=reusable_component_contract;components=${componentKinds};reused_count=${reusedDemoCount};reused=${reusedDemos};component_count=${componentCount};layout=${layoutBefore}->${layoutMode};style=${styleBefore}->${styleToken};input=${inputBefore}->${inputText};focus=${focusBefore}->${focusTarget};readback=${readbackOk};before=${beforeState};after=${afterState}"
+        return "contract=reusable_component_contract;components=${componentKinds};reused_count=${reusedDemoCount};reused=${reusedDemos};component_count=${componentCount};layout=${layoutBefore}->${uiState.layout()};style=${styleBefore}->${uiState.style()};input=${inputBefore}->${uiState.textInput()};focus=${focusBefore}->${uiState.focus()};readback=${readbackOk};before=${beforeState};after=${afterState}"
+    }
+
+    func sharedUiState(): String {
+        return uiState.summary()
     }
 }
 
 main(): Int64 {
     let contract = ReusableComponentContractState()
     let before = contract.businessState()
-    let layoutBefore = contract.layoutMode
-    let styleBefore = contract.styleToken
-    let inputBefore = contract.inputText
-    let focusBefore = contract.focusTarget
+    let layoutBefore = contract.uiState.layout()
+    let styleBefore = contract.uiState.style()
+    let inputBefore = contract.uiState.textInput()
+    let focusBefore = contract.uiState.focus()
     let sharedTrace = CjguiExperimentalDemoInteractionTrace("reusable_component_contract", before)
 
     contract.attachFileBrowserRow()
@@ -131,6 +129,7 @@ main(): Int64 {
         after == "components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button" &&
         contract.componentKinds == "task_row,file_row,ai_form" &&
         contract.reusedDemoCount == 3 &&
+        contract.sharedUiState() == "layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button" &&
         contract.actionTrace == "register_file_row,register_ai_form,todo_add,file_select,ai_accept"
     let domainSummary = contract.domainSummary(
         before,
@@ -166,6 +165,7 @@ main(): Int64 {
     println("cjgui reusable component contract app: public_api_output=${apiOutput.summary}")
     println("cjgui reusable component contract app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui reusable component contract app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui reusable component contract app: shared_state_core=${contract.sharedUiState()}")
 
     if (outputOk) {
         return 0

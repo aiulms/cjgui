@@ -1,6 +1,6 @@
 package cjgui_ai_generated_ui_shared_contract_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI shared contract demo app，不属于 runtime_renderer_stage* owner 链。
@@ -10,28 +10,22 @@ import std.collection.*
 class AiGeneratedUiSharedContractState {
     let contractName: String
     let layoutKind: String
+    let uiState: CjguiExperimentalDemoUiStateCore
     private var componentIds = ArrayList<String>()
     var accepted: Bool
     var acceptedScreen: String
     var diffSummary: String
     var explainText: String
-    var layoutMode: String
-    var styleToken: String
-    var inputText: String
-    var focusTarget: String
     var interactionTrace: String
 
     init() {
         this.contractName = "ai_generated_ui_shared_contract"
         this.layoutKind = "ai_form_preview"
+        this.uiState = CjguiExperimentalDemoUiStateCore("single_column", "neutral_wireframe", "<empty>", "preview_card")
         this.accepted = false
         this.acceptedScreen = "draft_settings_form"
         this.diffSummary = "pending_review"
         this.explainText = "awaiting owner review"
-        this.layoutMode = "single_column"
-        this.styleToken = "neutral_wireframe"
-        this.inputText = "<empty>"
-        this.focusTarget = "preview_card"
         this.interactionTrace = "idle"
         componentIds.add("title")
         componentIds.add("theme_toggle")
@@ -51,13 +45,13 @@ class AiGeneratedUiSharedContractState {
 
     func previewDiff(summary: String) {
         diffSummary = summary
-        focusTarget = "diff_panel"
+        uiState.moveFocus("diff_panel")
         appendInteraction("preview_diff")
     }
 
     func explain(text: String) {
         explainText = text
-        focusTarget = "explain_panel"
+        uiState.moveFocus("explain_panel")
         appendInteraction("explain_changes")
     }
 
@@ -66,15 +60,15 @@ class AiGeneratedUiSharedContractState {
         acceptedScreen = screen
         componentIds.add("username_field")
         componentIds.add("save_button")
-        layoutMode = "split_detail"
-        styleToken = "sage_panel"
-        inputText = "username"
-        focusTarget = "generated_form"
+        uiState.applyLayout("split_detail")
+        uiState.applyStyle("sage_panel")
+        uiState.typeInput("username")
+        uiState.moveFocus("generated_form")
         appendInteraction("accept_refresh")
     }
 
     func moveFocus(target: String) {
-        focusTarget = target
+        uiState.moveFocus(target)
         appendInteraction("move_focus")
     }
 
@@ -83,7 +77,7 @@ class AiGeneratedUiSharedContractState {
     }
 
     func businessState(): String {
-        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};layout=${layoutMode};style=${styleToken};input=${inputText};focus=${focusTarget}"
+        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};layout=${uiState.layout()};style=${uiState.style()};input=${uiState.textInput()};focus=${uiState.focus()}"
     }
 
     func domainSummary(
@@ -93,17 +87,21 @@ class AiGeneratedUiSharedContractState {
         focusBefore: String,
         readbackOk: Bool
     ): String {
-        return "contract=ai_generated_ui_shared_contract;screen=${acceptedScreen};components=${componentIds.size};diff=${diffSummary};explain=${explainText};layout=${layoutBefore}->${layoutMode};style=${styleBefore}->${styleToken};input=${inputBefore}->${inputText};focus=${focusBefore}->${focusTarget};layout_kind=${layoutKind};readback=${readbackOk}"
+        return "contract=ai_generated_ui_shared_contract;screen=${acceptedScreen};components=${componentIds.size};diff=${diffSummary};explain=${explainText};layout=${layoutBefore}->${uiState.layout()};style=${styleBefore}->${uiState.style()};input=${inputBefore}->${uiState.textInput()};focus=${focusBefore}->${uiState.focus()};layout_kind=${layoutKind};readback=${readbackOk}"
+    }
+
+    func sharedUiState(): String {
+        return uiState.summary()
     }
 }
 
 main(): Int64 {
     let contract = AiGeneratedUiSharedContractState()
     let before = contract.businessState()
-    let layoutBefore = contract.layoutMode
-    let styleBefore = contract.styleToken
-    let inputBefore = contract.inputText
-    let focusBefore = contract.focusTarget
+    let layoutBefore = contract.uiState.layout()
+    let styleBefore = contract.uiState.style()
+    let inputBefore = contract.uiState.textInput()
+    let focusBefore = contract.uiState.focus()
     let sharedTrace = CjguiExperimentalDemoInteractionTrace("ai_generated_ui_shared_contract", before)
 
     contract.generateSpec()
@@ -121,6 +119,7 @@ main(): Int64 {
     let readbackOk = before == "components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card" &&
         after == "components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button" &&
         contract.componentCount() == 4 &&
+        contract.sharedUiState() == "layout=split_detail;style=sage_panel;input=username;focus=save_button" &&
         contract.interactionTrace == "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus"
     let domainSummary = contract.domainSummary(
         layoutBefore,
@@ -152,6 +151,7 @@ main(): Int64 {
     println("cjgui ai-generated-ui shared contract app: public_api_output=${apiOutput.summary}")
     println("cjgui ai-generated-ui shared contract app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui ai-generated-ui shared contract app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui ai-generated-ui shared contract app: shared_state_core=${contract.sharedUiState()}")
 
     if (outputOk) {
         return 0

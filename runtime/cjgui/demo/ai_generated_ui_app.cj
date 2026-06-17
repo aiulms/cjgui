@@ -1,6 +1,6 @@
 package cjgui_ai_generated_ui_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -9,49 +9,45 @@ import std.collection.*
 
 class AiGeneratedUiState {
     let demoName: String
-    let layoutKind: String
+    let uiState: CjguiExperimentalDemoUiStateCore
     private var componentIds = ArrayList<String>()
     var accepted: Bool
     var acceptedScreen: String
     var diffSummary: String
     var explainText: String
-    var focusTarget: String
-    var styleToken: String
 
     init() {
         this.demoName = "ai_generated_ui"
-        this.layoutKind = "ai_form_preview"
+        this.uiState = CjguiExperimentalDemoUiStateCore("ai_form_preview", "neutral_wireframe", "<empty>", "preview_card")
         this.accepted = false
         this.acceptedScreen = "draft_settings_form"
         this.diffSummary = "pending_review"
         this.explainText = "awaiting owner review"
-        this.focusTarget = "preview_card"
-        this.styleToken = "neutral_wireframe"
         componentIds.add("title")
         componentIds.add("theme_toggle")
     }
 
     func previewDiff(summary: String) {
         diffSummary = summary
-        focusTarget = "diff_panel"
+        uiState.moveFocus("diff_panel")
     }
 
     func explain(text: String) {
         explainText = text
-        focusTarget = "explain_panel"
+        uiState.moveFocus("explain_panel")
     }
 
     func acceptAndRefresh(screen: String, style: String) {
         accepted = true
         acceptedScreen = screen
-        styleToken = style
+        uiState.applyStyle(style)
         componentIds.add("username_field")
         componentIds.add("save_button")
-        focusTarget = "generated_form"
+        uiState.moveFocus("generated_form")
     }
 
     func moveFocus(target: String) {
-        focusTarget = target
+        uiState.moveFocus(target)
     }
 
     func componentCount(): Int64 {
@@ -59,11 +55,15 @@ class AiGeneratedUiState {
     }
 
     func businessState(): String {
-        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};focus=${focusTarget};style=${styleToken}"
+        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};focus=${uiState.focus()};style=${uiState.style()}"
     }
 
     func domainSummary(): String {
-        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};explain=${explainText};focus=${focusTarget};layout=${layoutKind};style=${styleToken}"
+        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};explain=${explainText};focus=${uiState.focus()};layout=${uiState.layout()};style=${uiState.style()}"
+    }
+
+    func sharedUiState(): String {
+        return uiState.summary()
     }
 }
 
@@ -83,6 +83,7 @@ main(): Int64 {
     let stateReadbackOk = before == "components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe" &&
         after == "components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel" &&
         generatedUi.componentCount() == 4 &&
+        generatedUi.sharedUiState() == "layout=ai_form_preview;style=sage_panel;input=<empty>;focus=save_button" &&
         sharedTrace.before() == before &&
         sharedTrace.after() == after &&
         sharedTrace.actions() == "ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus" &&
@@ -111,6 +112,7 @@ main(): Int64 {
     println("cjgui ai generated ui demo app: public_api_output=${apiOutput.summary}")
     println("cjgui ai generated ui demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui ai generated ui demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui ai generated ui demo app: shared_state_core=${generatedUi.sharedUiState()}")
 
     if (readbackOk) {
         return 0

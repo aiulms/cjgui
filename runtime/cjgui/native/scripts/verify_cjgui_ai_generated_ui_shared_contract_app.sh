@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/ai_generated_ui_shared_contract_app.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 TMP_DIR="${CJGUI_AI_GENERATED_UI_SHARED_CONTRACT_TMPDIR:-/private/tmp/cjgui-ai-generated-ui-shared-contract-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -58,7 +59,7 @@ require_output_line() {
   fi
 }
 
-for source_file in "$DEMO_SRC" "$SUPPORT_SRC" "$OUTPUT_SUPPORT_SRC"; do
+for source_file in "$DEMO_SRC" "$SUPPORT_SRC" "$OUTPUT_SUPPORT_SRC" "$UI_STATE_CORE_SRC"; do
   if [[ ! -f "$source_file" ]]; then
     echo "cjgui AI-generated UI shared contract app verification: missing source $source_file" >&2
     exit 2
@@ -70,14 +71,17 @@ require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoUiStateCore" "$UI_STATE_CORE_SRC"
+require_source_line "public func applyLayout" "$UI_STATE_CORE_SRC"
+require_source_line "public func applyStyle" "$UI_STATE_CORE_SRC"
+require_source_line "public func typeInput" "$UI_STATE_CORE_SRC"
+require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "package cjgui_ai_generated_ui_shared_contract_demo" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoUiStateCore" "$DEMO_SRC"
 require_source_line "class AiGeneratedUiSharedContractState" "$DEMO_SRC"
 require_source_line "var accepted: Bool" "$DEMO_SRC"
-require_source_line "var layoutMode: String" "$DEMO_SRC"
-require_source_line "var styleToken: String" "$DEMO_SRC"
-require_source_line "var inputText: String" "$DEMO_SRC"
-require_source_line "var focusTarget: String" "$DEMO_SRC"
+require_source_line "let uiState: CjguiExperimentalDemoUiStateCore" "$DEMO_SRC"
+require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
@@ -155,6 +159,7 @@ CJGUI_AI_GENERATED_UI_SHARED_CONTRACT_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -176,6 +181,7 @@ require_output_line "cjgui ai-generated-ui shared contract app: public_api_name=
 require_output_line "cjgui ai-generated-ui shared contract app: public_api_output=demo=ai_generated_ui_shared_contract;readback=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;summary=contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;layout_kind=ai_form_preview;readback=true"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_support_output=demo=ai_generated_ui_shared_contract;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button"
+require_output_line "cjgui ai-generated-ui shared contract app: shared_state_core=layout=split_detail;style=sage_panel;input=username;focus=save_button"
 
 echo "cjgui_ai_generated_ui_shared_contract_app_compiled=true"
 echo "cjgui_ai_generated_ui_shared_contract_app_ran=true"
@@ -190,9 +196,11 @@ echo "ai_generated_ui_shared_contract_legacy_output_api_direct_consumption=false
 echo "ai_generated_ui_shared_contract_existing_ai_api_consumed=false"
 echo "ai_generated_ui_shared_contract_existing_shared_contract_api_consumed=false"
 echo "ai_generated_ui_shared_contract_owner_local_write_readback=true"
-echo "ai_generated_ui_shared_contract_state_write_scope=AiGeneratedUiSharedContractState.componentIds,accepted,acceptedScreen,diffSummary,explainText,layoutMode,styleToken,inputText,focusTarget,interactionTrace"
+echo "ai_generated_ui_shared_contract_state_write_scope=AiGeneratedUiSharedContractState.componentIds,accepted,acceptedScreen,diffSummary,explainText,uiState,interactionTrace"
 echo "ai_generated_ui_shared_contract_shared_support_imported=true"
 echo "ai_generated_ui_shared_contract_shared_support_name=CjguiExperimentalDemoInteractionTrace"
+echo "ai_generated_ui_shared_contract_shared_state_core_imported=true"
+echo "ai_generated_ui_shared_contract_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "ai_generated_ui_shared_contract_runtime_state_write=false"
 echo "ai_generated_ui_shared_contract_renderer_state_write=false"
 echo "ai_generated_ui_shared_contract_public_c_abi_added=false"

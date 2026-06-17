@@ -45,12 +45,12 @@
 
 ## CJGUI 最小 UI framework 转场证据
 
-- 最新 Settings demo 转场报告：[2026-06-17-p1-cjgui-minimal-ui-framework-demo-app-stage-report.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-17-p1-cjgui-minimal-ui-framework-demo-app-stage-report.md)。
+- 最新 demo app 转场报告：[2026-06-17-p1-cjgui-minimal-ui-framework-demo-app-stage-report.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-17-p1-cjgui-minimal-ui-framework-demo-app-stage-report.md)。
 - Demo 进度看板：[CJGUI_DEMO_PROGRESS.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/CJGUI_DEMO_PROGRESS.md)。
-- 当前白名单事实：Settings 从 `scaffolded` 前进到 `runnable`，代码证据是 [settings_app.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/demo/settings_app.cj)、[runtime_cjgui_experimental_settings_demo_api.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_cjgui_experimental_settings_demo_api.cj) 与 [verify_cjgui_settings_demo_app.sh](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/scripts/verify_cjgui_settings_demo_app.sh)。
-- API / State 事实：Settings demo 消费 `cjguiExperimentalBuildSettingsDemoOutput(...): CjguiExperimentalSettingsDemoOutput`，并通过 `SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,focusTarget` owner-local vars 执行 toggle / select / update / focus 写入 readback；Todo demo 仍保持 `runnable`。
+- 当前白名单事实：Todo、Settings、Chat、FileBrowser 与 AI-generated UI 独立 demo 均已达到 `runnable`。本轮新增 AI-generated UI 代码证据 [ai_generated_ui_app.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/demo/ai_generated_ui_app.cj)、[runtime_cjgui_experimental_ai_generated_ui_demo_api.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/runtime_cjgui_experimental_ai_generated_ui_demo_api.cj) 与 [verify_cjgui_ai_generated_ui_demo_app.sh](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/scripts/verify_cjgui_ai_generated_ui_demo_app.sh)，并收口 FileBrowser 代码证据 [file_browser_app.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/demo/file_browser_app.cj) 与 [verify_cjgui_file_browser_demo_app.sh](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/scripts/verify_cjgui_file_browser_demo_app.sh)。
+- API / State 事实：AI-generated UI demo 消费 `cjguiExperimentalBuildAiGeneratedUiDemoOutput(...): CjguiExperimentalAiGeneratedUiDemoOutput`，并通过 `AiGeneratedUiState.componentIds,accepted,acceptedScreen,diffSummary,explainText,focusTarget,styleToken` owner-local state 执行 generate / preview / explain / accept refresh / focus 写入 readback；FileBrowser demo 消费 `cjguiExperimentalBuildFileBrowserDemoOutput(...): CjguiExperimentalFileBrowserDemoOutput` 并完成 tree selection / detail refresh readback。
 - 边界事实：demo 输出只保留业务 before / after、interaction、state readback 与 API output；`runtime_state.cj` / renderer state 仍未写入，public C ABI 未扩展。
-- 后续入口：`P1 CJGUI Chat scaffolded demo app first slice`。
+- 后续入口：`P1 CJGUI shared demo harness first slice`。
 
 ## Renderer 最新落点
 

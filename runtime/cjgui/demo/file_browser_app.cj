@@ -1,6 +1,6 @@
 package cjgui_file_browser_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -21,7 +21,7 @@ class FileBrowserEntry {
 
 class FileBrowserState {
     let demoName: String
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
     private var entries = ArrayList<FileBrowserEntry>()
     var selectedPath: String
     var selectedKind: String
@@ -31,7 +31,14 @@ class FileBrowserState {
 
     init() {
         this.demoName = "file_browser"
-        this.uiState = CjguiExperimentalDemoUiStateCore("tree_detail_split", "tree_detail", "", "tree")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "file_browser",
+            "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree",
+            "tree_detail_split",
+            "tree_detail",
+            "",
+            "tree"
+        )
         this.selectedPath = "/workspace"
         this.selectedKind = "folder"
         this.detailTitle = "workspace"
@@ -44,32 +51,37 @@ class FileBrowserState {
 
     func expand(path: String) {
         expandedPath = path
-        uiState.applyStyle("folder_expanded")
-        uiState.moveFocus("tree")
+        componentSession.applyStyle("folder_expanded")
+        componentSession.moveFocus("tree")
+        componentSession.recordComponentAction("folder_tree", "file_browser.expand_folder", businessState())
     }
 
     func applyFilter(query: String) {
-        uiState.typeInput(query)
-        uiState.applyStyle("filter_active")
-        uiState.moveFocus("tree_filter")
+        componentSession.typeInput(query)
+        componentSession.applyStyle("filter_active")
+        componentSession.moveFocus("tree_filter")
+        componentSession.recordComponentAction("tree_filter", "file_browser.filter_entries", businessState())
     }
 
     func selectEntry(path: String, kind: String) {
         selectedPath = path
         selectedKind = kind
-        uiState.applyStyle("file_selected")
-        uiState.moveFocus("tree")
+        componentSession.applyStyle("file_selected")
+        componentSession.moveFocus("tree")
+        componentSession.recordComponentAction("file_row", "file_browser.select_file", businessState())
     }
 
     func refreshDetail(title: String, preview: String) {
         detailTitle = title
         detailPreview = preview
-        uiState.applyStyle("detail_ready")
-        uiState.moveFocus("detail_pane")
+        componentSession.applyStyle("detail_ready")
+        componentSession.moveFocus("detail_pane")
+        componentSession.recordComponentAction("detail_pane", "file_browser.refresh_detail", businessState())
     }
 
     func moveFocus(target: String) {
-        uiState.moveFocus(target)
+        componentSession.moveFocus(target)
+        componentSession.recordComponentAction(target, "file_browser.move_focus", businessState())
     }
 
     func itemCount(): Int64 {
@@ -77,44 +89,71 @@ class FileBrowserState {
     }
 
     func businessState(): String {
-        return "items=${entries.size};expanded=${expandedPath};selected=${selectedPath}:${selectedKind};detail=${detailTitle};filter=${uiState.textInput()};focus=${uiState.focus()}"
+        return "items=${entries.size};expanded=${expandedPath};selected=${selectedPath}:${selectedKind};detail=${detailTitle};filter=${componentSession.textInput()};focus=${componentSession.focus()}"
     }
 
     func summary(): String {
-        return "demo=${demoName};layout=${uiState.layout()};${businessState()}"
+        return "demo=${demoName};layout=${componentSession.layout()};${businessState()}"
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
 main(): Int64 {
     let browser = FileBrowserState()
     let before = browser.businessState()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("file_browser", before)
     browser.expand("/workspace/src")
-    sharedTrace.recordAction("file_browser.expand_folder", browser.businessState())
     browser.applyFilter("main")
-    sharedTrace.recordAction("file_browser.filter_entries", browser.businessState())
     browser.selectEntry("/workspace/src/main.cj", "file")
-    sharedTrace.recordAction("file_browser.select_file", browser.businessState())
     browser.refreshDetail("main.cj", "package cjgui_file_browser_demo")
-    sharedTrace.recordAction("file_browser.refresh_detail", browser.businessState())
     browser.moveFocus("detail_pane")
     let after = browser.businessState()
-    sharedTrace.recordAction("file_browser.move_focus", after)
     let summary = browser.summary()
     let stateReadbackOk = before == "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree" &&
         after == "items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane" &&
         browser.itemCount() == 3 &&
-        sharedTrace.before() == before &&
-        sharedTrace.after() == after &&
-        sharedTrace.actions() == "file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus" &&
-        sharedTrace.writes() == 5 &&
+        browser.sharedBefore() == before &&
+        browser.sharedAfter() == after &&
+        browser.sharedActions() == "file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus" &&
+        browser.sharedWrites() == 5 &&
+        browser.sharedComponentActions() == "folder_tree:file_browser.expand_folder,tree_filter:file_browser.filter_entries,file_row:file_browser.select_file,detail_pane:file_browser.refresh_detail,detail_pane:file_browser.move_focus" &&
         browser.sharedUiState() == "layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane" &&
         summary == "demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
+    let apiOutput = browser.buildSharedOutput(summary, stateReadbackOk)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "file_browser" &&
         apiOutput.beforeState == before &&
@@ -134,11 +173,13 @@ main(): Int64 {
     println("cjgui file browser demo app: state_after=${after}")
     println("cjgui file browser demo app: state_readback=${readbackOk}")
     println("cjgui file browser demo app: public_api_consumed=true")
-    println("cjgui file browser demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui file browser demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui file browser demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui file browser demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui file browser demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui file browser demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui file browser demo app: shared_support_output=${browser.sharedSupportOutput()}")
     println("cjgui file browser demo app: shared_state_core=${browser.sharedUiState()}")
+    println("cjgui file browser demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui file browser demo app: shared_component_action_output=${browser.sharedComponentActionSummary()}")
 
     if (readbackOk) {
         return 0

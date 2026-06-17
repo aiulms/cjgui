@@ -1,6 +1,6 @@
 package cjgui_ai_generated_ui_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -9,7 +9,7 @@ import std.collection.*
 
 class AiGeneratedUiState {
     let demoName: String
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
     private var componentIds = ArrayList<String>()
     var accepted: Bool
     var acceptedScreen: String
@@ -18,7 +18,14 @@ class AiGeneratedUiState {
 
     init() {
         this.demoName = "ai_generated_ui"
-        this.uiState = CjguiExperimentalDemoUiStateCore("ai_form_preview", "neutral_wireframe", "<empty>", "preview_card")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "ai_generated_ui",
+            "components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe",
+            "ai_form_preview",
+            "neutral_wireframe",
+            "<empty>",
+            "preview_card"
+        )
         this.accepted = false
         this.acceptedScreen = "draft_settings_form"
         this.diffSummary = "pending_review"
@@ -29,25 +36,29 @@ class AiGeneratedUiState {
 
     func previewDiff(summary: String) {
         diffSummary = summary
-        uiState.moveFocus("diff_panel")
+        componentSession.moveFocus("diff_panel")
+        componentSession.recordComponentAction("diff_panel", "ai_generated_ui.preview_diff", businessState())
     }
 
     func explain(text: String) {
         explainText = text
-        uiState.moveFocus("explain_panel")
+        componentSession.moveFocus("explain_panel")
+        componentSession.recordComponentAction("explain_panel", "ai_generated_ui.explain_changes", businessState())
     }
 
     func acceptAndRefresh(screen: String, style: String) {
         accepted = true
         acceptedScreen = screen
-        uiState.applyStyle(style)
+        componentSession.applyStyle(style)
         componentIds.add("username_field")
         componentIds.add("save_button")
-        uiState.moveFocus("generated_form")
+        componentSession.moveFocus("generated_form")
+        componentSession.recordComponentAction("generated_form", "ai_generated_ui.accept_refresh", businessState())
     }
 
     func moveFocus(target: String) {
-        uiState.moveFocus(target)
+        componentSession.moveFocus(target)
+        componentSession.recordComponentAction(target, "ai_generated_ui.move_focus", businessState())
     }
 
     func componentCount(): Int64 {
@@ -55,40 +66,68 @@ class AiGeneratedUiState {
     }
 
     func businessState(): String {
-        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};focus=${uiState.focus()};style=${uiState.style()}"
+        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};focus=${componentSession.focus()};style=${componentSession.style()}"
     }
 
     func domainSummary(): String {
-        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};explain=${explainText};focus=${uiState.focus()};layout=${uiState.layout()};style=${uiState.style()}"
+        return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};diff=${diffSummary};explain=${explainText};focus=${componentSession.focus()};layout=${componentSession.layout()};style=${componentSession.style()}"
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
 main(): Int64 {
     let generatedUi = AiGeneratedUiState()
     let before = generatedUi.businessState()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("ai_generated_ui", before)
     generatedUi.previewDiff("added_username_field,enabled_save_button")
-    sharedTrace.recordAction("ai_generated_ui.preview_diff", generatedUi.businessState())
     generatedUi.explain("owner accepted generated settings form refresh")
-    sharedTrace.recordAction("ai_generated_ui.explain_changes", generatedUi.businessState())
     generatedUi.acceptAndRefresh("settings_profile_form", "sage_panel")
-    sharedTrace.recordAction("ai_generated_ui.accept_refresh", generatedUi.businessState())
     generatedUi.moveFocus("save_button")
     let after = generatedUi.businessState()
-    sharedTrace.recordAction("ai_generated_ui.move_focus", after)
     let stateReadbackOk = before == "components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe" &&
         after == "components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel" &&
         generatedUi.componentCount() == 4 &&
         generatedUi.sharedUiState() == "layout=ai_form_preview;style=sage_panel;input=<empty>;focus=save_button" &&
-        sharedTrace.before() == before &&
-        sharedTrace.after() == after &&
-        sharedTrace.actions() == "ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus" &&
-        sharedTrace.writes() == 4
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, generatedUi.domainSummary(), stateReadbackOk)
+        generatedUi.sharedBefore() == before &&
+        generatedUi.sharedAfter() == after &&
+        generatedUi.sharedActions() == "ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus" &&
+        generatedUi.sharedWrites() == 4 &&
+        generatedUi.sharedComponentActions() == "diff_panel:ai_generated_ui.preview_diff,explain_panel:ai_generated_ui.explain_changes,generated_form:ai_generated_ui.accept_refresh,save_button:ai_generated_ui.move_focus"
+    let apiOutput = generatedUi.buildSharedOutput(generatedUi.domainSummary(), stateReadbackOk)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "ai_generated_ui" &&
         apiOutput.beforeState == before &&
@@ -108,11 +147,13 @@ main(): Int64 {
     println("cjgui ai generated ui demo app: state_after=${after}")
     println("cjgui ai generated ui demo app: state_readback=${readbackOk}")
     println("cjgui ai generated ui demo app: public_api_consumed=true")
-    println("cjgui ai generated ui demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui ai generated ui demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui ai generated ui demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui ai generated ui demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui ai generated ui demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui ai generated ui demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui ai generated ui demo app: shared_support_output=${generatedUi.sharedSupportOutput()}")
     println("cjgui ai generated ui demo app: shared_state_core=${generatedUi.sharedUiState()}")
+    println("cjgui ai generated ui demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui ai generated ui demo app: shared_component_action_output=${generatedUi.sharedComponentActionSummary()}")
 
     if (readbackOk) {
         return 0

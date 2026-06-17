@@ -1,6 +1,6 @@
 package cjgui_shared_multi_demo_harness_demo
 
-import cjgui.*
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -21,7 +21,6 @@ class SharedMultiDemoHarnessState {
     var fileFilterText: String
     var focusTarget: String
     var styleToken: String
-    var interactionTrace: String
     var focusRoute: String
     var styleRoute: String
 
@@ -40,7 +39,6 @@ class SharedMultiDemoHarnessState {
         this.fileFilterText = ""
         this.focusTarget = "todo_input"
         this.styleToken = "neutral_list"
-        this.interactionTrace = "idle"
         this.focusRoute = "todo_input"
         this.styleRoute = "neutral_list"
     }
@@ -54,12 +52,7 @@ class SharedMultiDemoHarnessState {
         servedDemoCount += 1
     }
 
-    private func appendAction(name: String) {
-        if (interactionTrace == "idle") {
-            interactionTrace = name
-        } else {
-            interactionTrace = "${interactionTrace},${name}"
-        }
+    private func appendAction() {
         actionCount += 1
     }
 
@@ -73,39 +66,47 @@ class SharedMultiDemoHarnessState {
         styleToken = style
     }
 
-    func runTodoAddComplete(title: String) {
+    func addTodo(title: String) {
         appendServedDemo("todo")
-        appendAction("todo_add")
+        appendAction()
         todoItemCount = 1
         todoFirstTitle = title
         todoFirstDone = false
         appendFocus("todo_first_item")
         appendStyle("todo_active_list")
+    }
 
-        appendAction("todo_complete")
+    func completeTodo() {
+        appendAction()
         todoFirstDone = true
         appendFocus("todo_first_item")
         appendStyle("todo_completed_accent")
     }
 
-    func runFileBrowserSelect(query: String, path: String, title: String) {
+    func expandFileBrowser() {
         appendServedDemo("file_browser")
-        appendAction("file_expand")
+        appendAction()
         fileExpandedPath = "/workspace/src"
         appendFocus("file_tree")
+    }
 
-        appendAction("file_filter")
+    func filterFiles(query: String) {
+        appendAction()
         fileFilterText = query
         appendFocus("file_filter")
+    }
 
-        appendAction("file_select")
+    func selectFile(path: String, title: String) {
+        appendAction()
         fileSelectedPath = path
         fileSelectedKind = "file"
         fileDetailTitle = title
         appendFocus("file_detail_pane")
         appendStyle("split_detail_accent")
+    }
 
-        appendAction("file_focus")
+    func focusFileDetail() {
+        appendAction()
         appendFocus("file_detail_pane")
     }
 
@@ -113,50 +114,47 @@ class SharedMultiDemoHarnessState {
         return "todo_items=${todoItemCount};todo_first=${todoFirstTitle};todo_done=${todoFirstDone};file_selected=${fileSelectedPath}:${fileSelectedKind};file_filter=${fileFilterText};focus=${focusTarget};style=${styleToken}"
     }
 
-    func buildHarnessOutput(
-        beforeState: String,
-        afterState: String,
-        readbackOk: Bool
-    ): CjguiExperimentalSharedMultiDemoHarnessOutput {
-        return cjguiExperimentalBuildSharedMultiDemoHarnessOutput(
-            servedDemoCount,
-            servedDemos,
-            actionCount,
-            beforeState,
-            afterState,
-            interactionTrace,
-            focusRoute,
-            styleRoute,
-            readbackOk
-        )
+    func domainSummary(): String {
+        return "harness=${harnessName};served_count=${servedDemoCount};served=${servedDemos};actions=${actionCount};focus_route=${focusRoute};style_route=${styleRoute}"
     }
 }
 
 main(): Int64 {
     let harness = SharedMultiDemoHarnessState()
     let before = harness.businessState()
-    harness.runTodoAddComplete("Write shared multi-demo harness")
-    harness.runFileBrowserSelect("main", "/workspace/src/main.cj", "main.cj")
+    let sharedTrace = CjguiExperimentalDemoInteractionTrace("shared_multi_demo_harness", before)
+    harness.addTodo("Write shared multi-demo harness")
+    sharedTrace.recordAction("shared_multi_demo_harness.todo_add", harness.businessState())
+    harness.completeTodo()
+    sharedTrace.recordAction("shared_multi_demo_harness.todo_complete", harness.businessState())
+    harness.expandFileBrowser()
+    sharedTrace.recordAction("shared_multi_demo_harness.file_expand", harness.businessState())
+    harness.filterFiles("main")
+    sharedTrace.recordAction("shared_multi_demo_harness.file_filter", harness.businessState())
+    harness.selectFile("/workspace/src/main.cj", "main.cj")
+    sharedTrace.recordAction("shared_multi_demo_harness.file_select", harness.businessState())
+    harness.focusFileDetail()
     let after = harness.businessState()
-    let readbackOk = before == "todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list" &&
+    sharedTrace.recordAction("shared_multi_demo_harness.file_focus", after)
+    let stateReadbackOk = before == "todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list" &&
         after == "todo_items=1;todo_first=Write shared multi-demo harness;todo_done=true;file_selected=/workspace/src/main.cj:file;file_filter=main;focus=file_detail_pane;style=split_detail_accent" &&
         harness.servedDemoCount == 2 &&
         harness.servedDemos == "todo,file_browser" &&
         harness.actionCount == 6 &&
-        harness.interactionTrace == "todo_add,todo_complete,file_expand,file_filter,file_select,file_focus"
-    let apiOutput = harness.buildHarnessOutput(before, after, readbackOk)
-    let outputOk = readbackOk &&
-        apiOutput.harnessName == "shared_multi_demo_harness" &&
-        apiOutput.servedDemoCount == 2 &&
-        apiOutput.servedDemos == "todo,file_browser" &&
-        apiOutput.actionCount == 6 &&
+        sharedTrace.before() == before &&
+        sharedTrace.after() == after &&
+        sharedTrace.actions() == "shared_multi_demo_harness.todo_add,shared_multi_demo_harness.todo_complete,shared_multi_demo_harness.file_expand,shared_multi_demo_harness.file_filter,shared_multi_demo_harness.file_select,shared_multi_demo_harness.file_focus" &&
+        sharedTrace.writes() == 6
+    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, harness.domainSummary(), stateReadbackOk)
+    let outputOk = stateReadbackOk &&
+        apiOutput.demoName == "shared_multi_demo_harness" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
-        apiOutput.interactionTrace == "todo_add,todo_complete,file_expand,file_filter,file_select,file_focus" &&
-        apiOutput.focusRoute == "todo_input->todo_first_item->todo_first_item->file_tree->file_filter->file_detail_pane->file_detail_pane" &&
-        apiOutput.styleRoute == "neutral_list->todo_active_list->todo_completed_accent->split_detail_accent" &&
+        apiOutput.actionTrace == "shared_multi_demo_harness.todo_add,shared_multi_demo_harness.todo_complete,shared_multi_demo_harness.file_expand,shared_multi_demo_harness.file_filter,shared_multi_demo_harness.file_select,shared_multi_demo_harness.file_focus" &&
+        apiOutput.writeCount == 6 &&
+        apiOutput.domainSummary == harness.domainSummary() &&
         apiOutput.readbackOk &&
-        apiOutput.summary == "harness=shared_multi_demo_harness;served_count=2;served=todo,file_browser;actions=6;before=todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list;after=todo_items=1;todo_first=Write shared multi-demo harness;todo_done=true;file_selected=/workspace/src/main.cj:file;file_filter=main;focus=file_detail_pane;style=split_detail_accent;interaction=todo_add,todo_complete,file_expand,file_filter,file_select,file_focus;focus_route=todo_input->todo_first_item->todo_first_item->file_tree->file_filter->file_detail_pane->file_detail_pane;style_route=neutral_list->todo_active_list->todo_completed_accent->split_detail_accent;readback=true"
+        apiOutput.summary == "demo=shared_multi_demo_harness;readback=true;writes=6;actions=shared_multi_demo_harness.todo_add,shared_multi_demo_harness.todo_complete,shared_multi_demo_harness.file_expand,shared_multi_demo_harness.file_filter,shared_multi_demo_harness.file_select,shared_multi_demo_harness.file_focus;before=todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list;after=todo_items=1;todo_first=Write shared multi-demo harness;todo_done=true;file_selected=/workspace/src/main.cj:file;file_filter=main;focus=file_detail_pane;style=split_detail_accent;summary=harness=shared_multi_demo_harness;served_count=2;served=todo,file_browser;actions=6;focus_route=todo_input->todo_first_item->todo_first_item->file_tree->file_filter->file_detail_pane->file_detail_pane;style_route=neutral_list->todo_active_list->todo_completed_accent->split_detail_accent"
 
     println("cjgui shared multi-demo harness app: demo=shared_multi_demo_harness")
     println("cjgui shared multi-demo harness app: status_before=not_started")
@@ -166,10 +164,12 @@ main(): Int64 {
     println("cjgui shared multi-demo harness app: interaction=run_todo_add_complete,run_file_browser_select")
     println("cjgui shared multi-demo harness app: state_before=${before}")
     println("cjgui shared multi-demo harness app: state_after=${after}")
-    println("cjgui shared multi-demo harness app: state_readback=${readbackOk}")
+    println("cjgui shared multi-demo harness app: state_readback=${outputOk}")
     println("cjgui shared multi-demo harness app: public_api_consumed=true")
-    println("cjgui shared multi-demo harness app: public_api_name=cjguiExperimentalBuildSharedMultiDemoHarnessOutput")
+    println("cjgui shared multi-demo harness app: public_api_name=CjguiExperimentalDemoOutputBuilder")
     println("cjgui shared multi-demo harness app: public_api_output=${apiOutput.summary}")
+    println("cjgui shared multi-demo harness app: shared_support=CjguiExperimentalDemoInteractionTrace")
+    println("cjgui shared multi-demo harness app: shared_support_output=${sharedTrace.summary()}")
 
     if (outputOk) {
         return 0

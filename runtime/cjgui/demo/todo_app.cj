@@ -1,7 +1,6 @@
 package cjgui_todo_demo
 
-import cjgui.{CjguiExperimentalTodoDemoOutput, cjguiExperimentalBuildTodoDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -12,13 +11,11 @@ class TodoDemoItem {
     let id: Int64
     let title: String
     var isDone: Bool
-    let apiOutput: CjguiExperimentalTodoDemoOutput
 
-    init(id: Int64, title: String, isDone: Bool, apiOutput: CjguiExperimentalTodoDemoOutput) {
+    init(id: Int64, title: String, isDone: Bool) {
         this.id = id
         this.title = title
         this.isDone = isDone
-        this.apiOutput = apiOutput
     }
 }
 
@@ -31,8 +28,7 @@ class TodoList {
     func add(title: String): Int64 {
         let id = nextId
         nextId += 1
-        let apiOutput = cjguiExperimentalBuildTodoDemoOutput(title, false)
-        items.add(TodoDemoItem(id, title, false, apiOutput))
+        items.add(TodoDemoItem(id, title, false))
         return id
     }
 
@@ -64,13 +60,6 @@ class TodoList {
         return items[0].isDone
     }
 
-    func firstApiSummary(): String {
-        if (items.size == 0) {
-            return "<none>"
-        }
-        return items[0].apiOutput.summary
-    }
-
     func summary(): String {
         if (items.size == 0) {
             return "items=0;first=<none>;first_done=false"
@@ -89,25 +78,27 @@ main(): Int64 {
     let completed = todos.complete(createdId)
     let afterComplete = todos.summary()
     sharedTrace.recordAction("todo.complete", afterComplete)
-    let apiOutput = cjguiExperimentalBuildTodoDemoOutput(todos.firstTitle(), todos.firstDone())
-    let readbackOk = before == "items=0;first=<none>;first_done=false" &&
+    let stateReadbackOk = before == "items=0;first=<none>;first_done=false" &&
         afterAdd == "items=1;first=Write first CJGUI todo;first_done=false" &&
         afterComplete == "items=1;first=Write first CJGUI todo;first_done=true" &&
         sharedTrace.before() == before &&
         sharedTrace.after() == afterComplete &&
         sharedTrace.actions() == "todo.add,todo.complete" &&
         sharedTrace.writes() == 2 &&
-        todos.firstApiSummary() == "items=1;first=Write first CJGUI todo;first_done=false" &&
-        apiOutput.demoName == "todo" &&
-        apiOutput.itemCount == 1 &&
-        apiOutput.completedCount == 1 &&
-        apiOutput.firstTitle == "Write first CJGUI todo" &&
-        apiOutput.firstDone &&
-        apiOutput.summary == "items=1;first=Write first CJGUI todo;first_done=true" &&
         todos.count() == 1 &&
         todos.firstTitle() == "Write first CJGUI todo" &&
         todos.firstDone() &&
         completed
+    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, afterComplete, stateReadbackOk)
+    let readbackOk = stateReadbackOk &&
+        apiOutput.demoName == "todo" &&
+        apiOutput.beforeState == before &&
+        apiOutput.afterState == afterComplete &&
+        apiOutput.actionTrace == "todo.add,todo.complete" &&
+        apiOutput.writeCount == 2 &&
+        apiOutput.domainSummary == afterComplete &&
+        apiOutput.readbackOk &&
+        apiOutput.summary == "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true"
 
     println("cjgui todo demo app: demo=todo")
     println("cjgui todo demo app: status_before=state_writable")
@@ -117,7 +108,7 @@ main(): Int64 {
     println("cjgui todo demo app: summary_after_add=${afterAdd}")
     println("cjgui todo demo app: summary_after_complete=${afterComplete}")
     println("cjgui todo demo app: public_api_consumed=true")
-    println("cjgui todo demo app: public_api_name=cjguiExperimentalBuildTodoDemoOutput")
+    println("cjgui todo demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
     println("cjgui todo demo app: public_api_output=${apiOutput.summary}")
     println("cjgui todo demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui todo demo app: shared_support_output=${sharedTrace.summary()}")

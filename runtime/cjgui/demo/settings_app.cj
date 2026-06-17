@@ -1,7 +1,6 @@
 package cjgui_settings_demo
 
-import cjgui.{CjguiExperimentalSettingsDemoOutput, cjguiExperimentalBuildSettingsDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -50,16 +49,6 @@ class SettingsPanelState {
         return "demo=${demoName};layout=${layoutKind};controls=${controlsSummary};${businessState()}"
     }
 
-    func buildApiOutput(): CjguiExperimentalSettingsDemoOutput {
-        return cjguiExperimentalBuildSettingsDemoOutput(
-            layoutKind,
-            selectedTheme,
-            autoSaveEnabled,
-            selectedTheme,
-            usernameValue,
-            focusTarget
-        )
-    }
 }
 
 main(): Int64 {
@@ -76,23 +65,23 @@ main(): Int64 {
     let after = panel.businessState()
     sharedTrace.recordAction("settings.move_focus", after)
     let summary = panel.summary()
-    let apiOutput = panel.buildApiOutput()
-    let readbackOk = before == "autosave=false;theme=light;username=owner;focus=username_field" &&
+    let stateReadbackOk = before == "autosave=false;theme=light;username=owner;focus=username_field" &&
         after == "autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
         sharedTrace.before() == before &&
         sharedTrace.after() == after &&
         sharedTrace.actions() == "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus" &&
         sharedTrace.writes() == 4 &&
-        summary == "demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
+        summary == "demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
+    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
+    let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "settings" &&
-        apiOutput.sectionCount == 3 &&
-        apiOutput.layoutKind == "sectioned_form" &&
-        apiOutput.themeName == "dark" &&
-        apiOutput.autoSaveEnabled &&
-        apiOutput.selectedTheme == "dark" &&
-        apiOutput.usernameValue == "owner-updated" &&
-        apiOutput.focusTarget == "theme_select" &&
-        apiOutput.summary == "layout=sectioned_form;theme=dark;autosave=true;selected=dark;username=owner-updated;focus=theme_select"
+        apiOutput.beforeState == before &&
+        apiOutput.afterState == after &&
+        apiOutput.actionTrace == "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus" &&
+        apiOutput.writeCount == 4 &&
+        apiOutput.domainSummary == summary &&
+        apiOutput.readbackOk &&
+        apiOutput.summary == "demo=settings;readback=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;summary=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 
     println("cjgui settings demo app: demo=settings")
     println("cjgui settings demo app: status_before=scaffolded")
@@ -107,7 +96,7 @@ main(): Int64 {
     println("cjgui settings demo app: state_readback=${readbackOk}")
     println("cjgui settings demo app: summary_after=${summary}")
     println("cjgui settings demo app: public_api_consumed=true")
-    println("cjgui settings demo app: public_api_name=cjguiExperimentalBuildSettingsDemoOutput")
+    println("cjgui settings demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
     println("cjgui settings demo app: public_api_output=${apiOutput.summary}")
     println("cjgui settings demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui settings demo app: shared_support_output=${sharedTrace.summary()}")

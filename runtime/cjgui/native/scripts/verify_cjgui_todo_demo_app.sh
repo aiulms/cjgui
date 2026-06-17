@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 #
 # Focused verification for the independent CJGUI Todo demo app.
-# Scope: compile and run runtime/cjgui/demo/todo_app.cj against a temporary package built from the production Todo demo API source.
+# Scope: compile and run runtime/cjgui/demo/todo_app.cj against temporary packages built from shared demo support sources.
 # Stop-line: no runtime_state / renderer_state write, no native bridge call, no public C ABI expansion.
 set -euo pipefail
 
@@ -11,6 +11,7 @@ REPO_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_todo_demo_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 TMP_DIR="${CJGUI_TODO_DEMO_TMPDIR:-/private/tmp/cjgui-todo-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -56,20 +57,14 @@ if [[ ! -f "$DEMO_SRC" ]]; then
   exit 2
 fi
 
-if [[ ! -f "$API_SRC" ]]; then
-  echo "cjgui todo demo app verification: missing API source $API_SRC" >&2
-  exit 2
-fi
-
 if [[ ! -f "$SUPPORT_SRC" ]]; then
   echo "cjgui todo demo app verification: missing shared support source $SUPPORT_SRC" >&2
   exit 2
 fi
 
-if ! grep -F "public class CjguiExperimentalTodoDemoOutput" "$API_SRC" >/dev/null 2>&1 || \
-   ! grep -F "public func cjguiExperimentalBuildTodoDemoOutput" "$API_SRC" >/dev/null 2>&1; then
-  echo "cjgui todo demo app verification: missing non-Bool public Todo demo API declaration" >&2
-  exit 4
+if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
+  echo "cjgui todo demo app verification: missing shared output support source $OUTPUT_SUPPORT_SRC" >&2
+  exit 2
 fi
 
 if ! grep -F "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC" >/dev/null 2>&1 || \
@@ -78,15 +73,27 @@ if ! grep -F "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
   exit 4
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared output builder declaration" >&2
+  exit 4
+fi
+
 if ! grep -F "main(): Int64" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing demo main" >&2
   exit 3
 fi
 
-if ! grep -F "import cjgui.{CjguiExperimentalTodoDemoOutput, cjguiExperimentalBuildTodoDemoOutput}" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "cjguiExperimentalBuildTodoDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
-  echo "cjgui todo demo app verification: missing non-Bool public API consumption" >&2
+if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared output builder consumption" >&2
+  exit 4
+fi
+
+if grep -F "cjguiExperimentalBuildTodoDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "CjguiExperimentalTodoDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: demo must not directly consume legacy Todo output API" >&2
   exit 4
 fi
 
@@ -153,8 +160,8 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_TODO_API_TOML
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_TODO_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
-cp "$API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_todo_demo_api.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -172,8 +179,8 @@ require_line "cjgui todo demo app: summary_before=items=0;first=<none>;first_don
 require_line "cjgui todo demo app: summary_after_add=items=1;first=Write first CJGUI todo;first_done=false"
 require_line "cjgui todo demo app: summary_after_complete=items=1;first=Write first CJGUI todo;first_done=true"
 require_line "cjgui todo demo app: public_api_consumed=true"
-require_line "cjgui todo demo app: public_api_name=cjguiExperimentalBuildTodoDemoOutput"
-require_line "cjgui todo demo app: public_api_output=items=1;first=Write first CJGUI todo;first_done=true"
+require_line "cjgui todo demo app: public_api_name=CjguiExperimentalDemoOutputBuilder"
+require_line "cjgui todo demo app: public_api_output=demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true"
 require_line "cjgui todo demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_line "cjgui todo demo app: shared_support_output=demo=todo;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true"
 require_line "cjgui todo demo app: owner_local_write_readback=true"
@@ -190,7 +197,9 @@ echo "todo_demo_progress_after=runnable"
 echo "todo_main_entry_executed=true"
 echo "todo_focused_verifier=verify_cjgui_todo_demo_app"
 echo "todo_non_bool_public_api_consumed=true"
-echo "todo_public_api_name=cjguiExperimentalBuildTodoDemoOutput"
+echo "todo_public_api_name=CjguiExperimentalDemoOutputBuilder"
+echo "todo_public_api_return=CjguiExperimentalDemoOutput"
+echo "todo_legacy_output_api_direct_consumption=false"
 echo "todo_owner_local_write_readback=true"
 echo "todo_state_write_scope=TodoList.items,nextId"
 echo "todo_shared_support_imported=true"

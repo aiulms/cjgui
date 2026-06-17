@@ -1,6 +1,7 @@
 package cjgui_chat_demo
 
-import cjgui.*
+import cjgui.{CjguiExperimentalChatDemoOutput, cjguiExperimentalBuildChatDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -83,14 +84,23 @@ class ChatThreadState {
 main(): Int64 {
     let thread = ChatThreadState()
     let before = thread.businessState()
+    let sharedTrace = CjguiExperimentalDemoInteractionTrace("chat", before)
     thread.updateComposer("Ship Chat demo")
+    sharedTrace.recordAction("chat.type_message", thread.businessState())
     let sent = thread.sendComposer("owner")
+    sharedTrace.recordAction("chat.send_message", thread.businessState())
     thread.appendMessage("assistant", "Chat demo received")
+    sharedTrace.recordAction("chat.append_reply", thread.businessState())
     thread.moveFocus("message_list")
     let after = thread.businessState()
+    sharedTrace.recordAction("chat.move_focus", after)
     let apiOutput = thread.buildApiOutput()
     let readbackOk = before == "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer" &&
         after == "messages=3;last=assistant:Chat demo received;composer=;focus=message_list" &&
+        sharedTrace.before() == before &&
+        sharedTrace.after() == after &&
+        sharedTrace.actions() == "chat.type_message,chat.send_message,chat.append_reply,chat.move_focus" &&
+        sharedTrace.writes() == 4 &&
         sent &&
         thread.messageCount() == 3 &&
         apiOutput.demoName == "chat" &&
@@ -113,6 +123,8 @@ main(): Int64 {
     println("cjgui chat demo app: public_api_consumed=true")
     println("cjgui chat demo app: public_api_name=cjguiExperimentalBuildChatDemoOutput")
     println("cjgui chat demo app: public_api_output=${apiOutput.summary}")
+    println("cjgui chat demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
+    println("cjgui chat demo app: shared_support_output=${sharedTrace.summary()}")
 
     if (readbackOk) {
         return 0

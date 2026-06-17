@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_chat_demo_api.cj"
+SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 TMP_DIR="${CJGUI_CHAT_DEMO_TMPDIR:-/private/tmp/cjgui-chat-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -16,7 +17,7 @@ PROBE_PACKAGE_DIR="$TMP_DIR/package"
 PROBE_API_PACKAGE_DIR="$TMP_DIR/cjgui-api"
 OUTPUT_LOG="$TMP_DIR/chat-demo-output.log"
 
-mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src"
+mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src/demo_support"
 : > "$OUTPUT_LOG"
 
 cat > "$PS_SHIM_DIR/ps" <<'EOF'
@@ -67,11 +68,19 @@ if [[ ! -f "$API_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$SUPPORT_SRC" ]]; then
+  echo "cjgui chat demo app verification: missing shared support source $SUPPORT_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalChatDemoOutput" "$API_SRC"
 require_source_line "public func cjguiExperimentalBuildChatDemoOutput" "$API_SRC"
 require_source_line "public let summary: String" "$API_SRC"
+require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
+require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "package cjgui_chat_demo" "$DEMO_SRC"
-require_source_line "import cjgui.*" "$DEMO_SRC"
+require_source_line "import cjgui.{CjguiExperimentalChatDemoOutput, cjguiExperimentalBuildChatDemoOutput}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}" "$DEMO_SRC"
 require_source_line "class ChatThreadState" "$DEMO_SRC"
 require_source_line "private var messages" "$DEMO_SRC"
 require_source_line "var composerText: String" "$DEMO_SRC"
@@ -79,6 +88,8 @@ require_source_line "var focusTarget: String" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalChatDemoOutput" "$DEMO_SRC"
 require_source_line "cjguiExperimentalBuildChatDemoOutput" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
+require_source_line "sharedTrace.recordAction" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: status_before=not_started" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: status_after=runnable" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: state_before=" "$DEMO_SRC"
@@ -141,6 +152,7 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_CHAT_API_TOML
 CJGUI_CHAT_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_chat_demo_api.cj"
+cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -161,6 +173,8 @@ require_output_line "cjgui chat demo app: state_readback=true"
 require_output_line "cjgui chat demo app: public_api_consumed=true"
 require_output_line "cjgui chat demo app: public_api_name=cjguiExperimentalBuildChatDemoOutput"
 require_output_line "cjgui chat demo app: public_api_output=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;layout=threaded_chat"
+require_output_line "cjgui chat demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
+require_output_line "cjgui chat demo app: shared_support_output=demo=chat;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
 
 echo "cjgui_chat_demo_app_compiled=true"
 echo "cjgui_chat_demo_app_ran=true"
@@ -173,6 +187,8 @@ echo "chat_public_api_name=cjguiExperimentalBuildChatDemoOutput"
 echo "chat_public_api_return=CjguiExperimentalChatDemoOutput"
 echo "chat_owner_local_write_readback=true"
 echo "chat_state_write_scope=ChatThreadState.messages,composerText,focusTarget,lastSender,lastText"
+echo "chat_shared_support_imported=true"
+echo "chat_shared_support_name=CjguiExperimentalDemoInteractionTrace"
 echo "chat_runtime_state_write=false"
 echo "chat_renderer_state_write=false"
 echo "chat_public_c_abi_added=false"

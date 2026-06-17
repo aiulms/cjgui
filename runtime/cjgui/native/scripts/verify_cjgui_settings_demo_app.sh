@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 #
 # Focused verification for the independent CJGUI Settings demo app.
-# Scope: compile and run runtime/cjgui/demo/settings_app.cj against a temporary package built from the production Settings demo API source.
+# Scope: compile and run runtime/cjgui/demo/settings_app.cj against temporary packages built from shared demo support sources.
 # Stop-line: no runtime_state / renderer_state write, no native bridge call, no public C ABI expansion.
 set -euo pipefail
 
@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_settings_demo_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 TMP_DIR="${CJGUI_SETTINGS_DEMO_TMPDIR:-/private/tmp/cjgui-settings-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -63,42 +64,46 @@ if [[ ! -f "$DEMO_SRC" ]]; then
   exit 2
 fi
 
-if [[ ! -f "$API_SRC" ]]; then
-  echo "cjgui settings demo app verification: missing API source $API_SRC" >&2
-  exit 2
-fi
-
 if [[ ! -f "$SUPPORT_SRC" ]]; then
   echo "cjgui settings demo app verification: missing shared support source $SUPPORT_SRC" >&2
   exit 2
 fi
 
-require_source_line "public class CjguiExperimentalSettingsDemoOutput" "$API_SRC"
-require_source_line "public func cjguiExperimentalBuildSettingsDemoOutput" "$API_SRC"
-require_source_line "public let summary: String" "$API_SRC"
+if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
+  echo "cjgui settings demo app verification: missing shared output support source $OUTPUT_SUPPORT_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
 require_source_line "package cjgui_settings_demo" "$DEMO_SRC"
-require_source_line "import cjgui.{CjguiExperimentalSettingsDemoOutput, cjguiExperimentalBuildSettingsDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
 require_source_line "class SettingsPanelState" "$DEMO_SRC"
 require_source_line "var selectedTheme: String" "$DEMO_SRC"
 require_source_line "var usernameValue: String" "$DEMO_SRC"
 require_source_line "var focusTarget: String" "$DEMO_SRC"
 require_source_line "var autoSaveEnabled: Bool" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
-require_source_line "CjguiExperimentalSettingsDemoOutput" "$DEMO_SRC"
-require_source_line "cjguiExperimentalBuildSettingsDemoOutput" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
 require_source_line "sharedTrace.recordAction" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: status_before=scaffolded" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: status_after=runnable" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: state_before=" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: state_after=" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: state_readback=" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: public_api_consumed=true" "$DEMO_SRC"
-require_source_line "cjgui settings demo app: public_api_name=cjguiExperimentalBuildSettingsDemoOutput" "$DEMO_SRC"
+require_source_line "cjgui settings demo app: public_api_name=CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: public_api_output=" "$DEMO_SRC"
+
+if grep -F "cjguiExperimentalBuildSettingsDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "CjguiExperimentalSettingsDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui settings demo app verification: demo must not directly consume legacy Settings output API" >&2
+  exit 10
+fi
 
 if grep -E 'foreign[[:space:]]+func|cjgui_native_bridge_|public[[:space:]]+(func|class|struct|enum|let|var)' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui settings demo app verification: forbidden runtime/native/public token in settings demo source" >&2
@@ -152,8 +157,8 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_SETTINGS_API_TOML
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_SETTINGS_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
-cp "$API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_settings_demo_api.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -176,8 +181,8 @@ require_output_line "cjgui settings demo app: state_after=autosave=true;theme=da
 require_output_line "cjgui settings demo app: state_readback=true"
 require_output_line "cjgui settings demo app: summary_after=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: public_api_consumed=true"
-require_output_line "cjgui settings demo app: public_api_name=cjguiExperimentalBuildSettingsDemoOutput"
-require_output_line "cjgui settings demo app: public_api_output=layout=sectioned_form;theme=dark;autosave=true;selected=dark;username=owner-updated;focus=theme_select"
+require_output_line "cjgui settings demo app: public_api_name=CjguiExperimentalDemoOutputBuilder"
+require_output_line "cjgui settings demo app: public_api_output=demo=settings;readback=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;summary=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_output_line "cjgui settings demo app: shared_support_output=demo=settings;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: public_api_available=true"
@@ -189,8 +194,9 @@ echo "settings_demo_progress_after=runnable"
 echo "settings_demo_has_main=true"
 echo "settings_demo_deterministic_business_output=true"
 echo "settings_non_bool_public_api_consumed=true"
-echo "settings_public_api_name=cjguiExperimentalBuildSettingsDemoOutput"
-echo "settings_public_api_return=CjguiExperimentalSettingsDemoOutput"
+echo "settings_public_api_name=CjguiExperimentalDemoOutputBuilder"
+echo "settings_public_api_return=CjguiExperimentalDemoOutput"
+echo "settings_legacy_output_api_direct_consumption=false"
 echo "settings_owner_local_write_readback=true"
 echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,focusTarget"
 echo "settings_shared_support_imported=true"

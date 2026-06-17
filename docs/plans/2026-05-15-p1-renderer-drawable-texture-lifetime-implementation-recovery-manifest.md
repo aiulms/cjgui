@@ -64,6 +64,8 @@ Production drawable texture lifetime 仍缺：
 
 ## 本轮未打开事项
 
+本清单不是 runtime truth，也不授予 production drawable acquisition、color attachment、encoder、present、render、GPU submission、renderer state write、backend-ready truth 或 public API 权限。Isolated probe 只保留为 feasibility evidence，不得被解释为 production runtime ownership。
+
 - 未打开 production drawable acquire / classify / release。
 - 未打开 render pass descriptor color attachment。
 - 未打开 render command encoder creation。

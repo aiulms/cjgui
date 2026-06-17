@@ -1,6 +1,6 @@
 # CJGUI demo 进度看板
 
-最后更新：2026-06-17（10 个独立 runnable demo 全部接入 shared component/action session）
+最后更新：2026-06-17（代表 demo-specific Output API 第一切片已退役）
 
 本看板只记录有代码证据的 demo app 进度。`runtime_renderer_stage*_internal_*_demo_*` owner / probe 不算独立 demo app；只有 `runtime/cjgui/demo/*_app.cj` 这类带 `main`、确定性输出或状态读回的文件才能推进状态。
 
@@ -31,11 +31,11 @@
 
 - 白名单 1：shared support 子包 [runtime_cjgui_experimental_demo_interaction_trace.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj)、[runtime_cjgui_experimental_demo_output_builder.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj)、[runtime_cjgui_experimental_demo_ui_state_core.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj) 与 [runtime_cjgui_experimental_demo_component_action_session.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj) 已被 10 个 demo 真实 import / 调用。
 - 白名单 2：`CjguiExperimentalDemoComponentActionSession` 现在覆盖 Todo、Settings、Chat、FileBrowser、AI-generated UI、Shared demo harness、Shared multi-demo harness、Shared layout/style/input/focus contract、AI-generated UI shared contract 与 Reusable component contract，统一承载 component action route、shared UI state core、interaction trace 与 `CjguiExperimentalDemoOutput` build。
-- 白名单 3：当前 10 个独立 demo app 全部通过 session 间接产出 shared `CjguiExperimentalDemoOutput`；旧 per-demo output API 文件仅保留为 compatibility artifact，当前 demo app 不再直接消费它们。
+- 白名单 3：当前 10 个独立 demo app 全部通过 session 间接产出 shared `CjguiExperimentalDemoOutput`；Todo、Settings、Chat、FileBrowser 与 AI-generated UI 五个代表 per-demo output API public declarations 已退役为 tombstone，当前 demo app 不再直接消费它们。
 - 白名单 4：focused verifier 必须实际编译并运行 demo 二进制，校验业务 before -> after / readback 输出；本看板不把仅 grep、仅 build 或脚本空通过当作 `runnable`。
 - 白名单 5：shared UI state core 仍覆盖 10 个 demo 的 layout / style / text input / focus owner-local 状态，focused verifier 继续回显 `*_shared_state_core_imported=true`。
-- API 收敛里程碑：当前 10 个独立 runnable demo 共用 `CjguiExperimentalDemoComponentActionSession` 作为 demo-host component/action/output 主路径。下一步不应继续新增同构 output wrapper，而应评估旧 demo-specific Output API compatibility artifact 的退役路线。
-- 下一步最高价值目标：`P1 CJGUI legacy demo-specific Output API retirement preflight for shared DemoOutput path`。
+- API 收敛里程碑：当前 10 个独立 runnable demo 共用 `CjguiExperimentalDemoComponentActionSession` 作为 demo-host component/action/output 主路径，且 5 个代表 demo-specific Output API public declarations 已从 package surface 退役。
+- 下一步最高价值目标：`P1 CJGUI shared/contract legacy Output API retirement second slice`。
 
 ## 边界
 

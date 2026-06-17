@@ -11,6 +11,7 @@ DEMO_SRC="$ROOT_DIR/demo/shared_demo_harness_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_shared_demo_harness_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 TMP_DIR="${CJGUI_SHARED_DEMO_HARNESS_TMPDIR:-/private/tmp/cjgui-shared-demo-harness-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -74,20 +75,31 @@ if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$UI_STATE_CORE_SRC" ]]; then
+  echo "cjgui shared demo harness app verification: missing shared UI state core source $UI_STATE_CORE_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoUiStateCore" "$UI_STATE_CORE_SRC"
+require_source_line "public func applyStyle" "$UI_STATE_CORE_SRC"
+require_source_line "public func typeInput" "$UI_STATE_CORE_SRC"
+require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "package cjgui_shared_demo_harness_demo" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}" "$DEMO_SRC"
 require_source_line "class SharedDemoHarnessState" "$DEMO_SRC"
 require_source_line "private var actions" "$DEMO_SRC"
 require_source_line "var itemCount: Int64" "$DEMO_SRC"
-require_source_line "var focusTarget: String" "$DEMO_SRC"
+require_source_line "let uiState: CjguiExperimentalDemoUiStateCore" "$DEMO_SRC"
+require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoUiStateCore" "$DEMO_SRC"
 require_source_line "sharedTrace.recordAction" "$DEMO_SRC"
 require_source_line "cjgui shared demo harness app: status_before=not_started" "$DEMO_SRC"
 require_source_line "cjgui shared demo harness app: status_after=runnable" "$DEMO_SRC"
@@ -160,6 +172,7 @@ CJGUI_SHARED_DEMO_HARNESS_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -182,6 +195,7 @@ require_output_line "cjgui shared demo harness app: public_api_name=CjguiExperim
 require_output_line "cjgui shared demo harness app: public_api_output=demo=shared_demo_harness;readback=true;writes=2;actions=shared_demo_harness.add_todo,shared_demo_harness.complete_todo;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;summary=harness=shared_demo_harness;served=todo;actions=2;focus=todo_first_item;style=completed_accent"
 require_output_line "cjgui shared demo harness app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_output_line "cjgui shared demo harness app: shared_support_output=demo=shared_demo_harness;writes=2;actions=shared_demo_harness.add_todo,shared_demo_harness.complete_todo;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent"
+require_output_line "cjgui shared demo harness app: shared_state_core=layout=todo_list;style=completed_accent;input=Write shared CJGUI harness;focus=todo_first_item"
 
 echo "cjgui_shared_demo_harness_app_compiled=true"
 echo "cjgui_shared_demo_harness_app_ran=true"
@@ -195,9 +209,11 @@ echo "shared_demo_harness_public_api_name=CjguiExperimentalDemoOutputBuilder"
 echo "shared_demo_harness_public_api_return=CjguiExperimentalDemoOutput"
 echo "shared_demo_harness_legacy_output_api_direct_consumption=false"
 echo "shared_demo_harness_owner_local_write_readback=true"
-echo "shared_demo_harness_state_write_scope=SharedDemoHarnessState.actions,itemCount,firstTitle,firstDone,focusTarget,styleToken"
+echo "shared_demo_harness_state_write_scope=SharedDemoHarnessState.actions,itemCount,firstTitle,firstDone,uiState"
 echo "shared_demo_harness_shared_support_imported=true"
 echo "shared_demo_harness_shared_support_name=CjguiExperimentalDemoInteractionTrace"
+echo "shared_demo_harness_shared_state_core_imported=true"
+echo "shared_demo_harness_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "shared_demo_harness_runtime_state_write=false"
 echo "shared_demo_harness_renderer_state_write=false"
 echo "shared_demo_harness_public_c_abi_added=false"

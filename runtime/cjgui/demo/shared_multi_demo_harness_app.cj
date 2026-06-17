@@ -1,6 +1,6 @@
 package cjgui_shared_multi_demo_harness_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -19,13 +19,13 @@ class SharedMultiDemoHarnessState {
     var fileSelectedKind: String
     var fileDetailTitle: String
     var fileFilterText: String
-    var focusTarget: String
-    var styleToken: String
+    let uiState: CjguiExperimentalDemoUiStateCore
     var focusRoute: String
     var styleRoute: String
 
     init() {
         this.harnessName = "shared_multi_demo_harness"
+        this.uiState = CjguiExperimentalDemoUiStateCore("multi_demo_harness", "neutral_list", "", "todo_input")
         this.servedDemoCount = 0
         this.servedDemos = ""
         this.actionCount = 0
@@ -37,8 +37,6 @@ class SharedMultiDemoHarnessState {
         this.fileSelectedKind = "folder"
         this.fileDetailTitle = "workspace"
         this.fileFilterText = ""
-        this.focusTarget = "todo_input"
-        this.styleToken = "neutral_list"
         this.focusRoute = "todo_input"
         this.styleRoute = "neutral_list"
     }
@@ -58,12 +56,12 @@ class SharedMultiDemoHarnessState {
 
     private func appendFocus(target: String) {
         focusRoute = "${focusRoute}->${target}"
-        focusTarget = target
+        uiState.moveFocus(target)
     }
 
     private func appendStyle(style: String) {
         styleRoute = "${styleRoute}->${style}"
-        styleToken = style
+        uiState.applyStyle(style)
     }
 
     func addTodo(title: String) {
@@ -93,6 +91,7 @@ class SharedMultiDemoHarnessState {
     func filterFiles(query: String) {
         appendAction()
         fileFilterText = query
+        uiState.typeInput(query)
         appendFocus("file_filter")
     }
 
@@ -111,11 +110,15 @@ class SharedMultiDemoHarnessState {
     }
 
     func businessState(): String {
-        return "todo_items=${todoItemCount};todo_first=${todoFirstTitle};todo_done=${todoFirstDone};file_selected=${fileSelectedPath}:${fileSelectedKind};file_filter=${fileFilterText};focus=${focusTarget};style=${styleToken}"
+        return "todo_items=${todoItemCount};todo_first=${todoFirstTitle};todo_done=${todoFirstDone};file_selected=${fileSelectedPath}:${fileSelectedKind};file_filter=${fileFilterText};focus=${uiState.focus()};style=${uiState.style()}"
     }
 
     func domainSummary(): String {
         return "harness=${harnessName};served_count=${servedDemoCount};served=${servedDemos};actions=${actionCount};focus_route=${focusRoute};style_route=${styleRoute}"
+    }
+
+    func sharedUiState(): String {
+        return uiState.summary()
     }
 }
 
@@ -141,6 +144,7 @@ main(): Int64 {
         harness.servedDemoCount == 2 &&
         harness.servedDemos == "todo,file_browser" &&
         harness.actionCount == 6 &&
+        harness.sharedUiState() == "layout=multi_demo_harness;style=split_detail_accent;input=main;focus=file_detail_pane" &&
         sharedTrace.before() == before &&
         sharedTrace.after() == after &&
         sharedTrace.actions() == "shared_multi_demo_harness.todo_add,shared_multi_demo_harness.todo_complete,shared_multi_demo_harness.file_expand,shared_multi_demo_harness.file_filter,shared_multi_demo_harness.file_select,shared_multi_demo_harness.file_focus" &&
@@ -170,6 +174,7 @@ main(): Int64 {
     println("cjgui shared multi-demo harness app: public_api_output=${apiOutput.summary}")
     println("cjgui shared multi-demo harness app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui shared multi-demo harness app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui shared multi-demo harness app: shared_state_core=${harness.sharedUiState()}")
 
     if (outputOk) {
         return 0

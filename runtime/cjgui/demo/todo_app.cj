@@ -1,6 +1,6 @@
 package cjgui_todo_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -22,13 +22,19 @@ class TodoDemoItem {
 class TodoList {
     private var nextId: Int64 = 1
     private var items = ArrayList<TodoDemoItem>()
+    let uiState: CjguiExperimentalDemoUiStateCore
 
-    init() {}
+    init() {
+        this.uiState = CjguiExperimentalDemoUiStateCore("todo_list", "neutral_list", "", "todo_input")
+    }
 
     func add(title: String): Int64 {
         let id = nextId
         nextId += 1
         items.add(TodoDemoItem(id, title, false))
+        uiState.typeInput(title)
+        uiState.moveFocus("todo_first_item")
+        uiState.applyStyle("active_list")
         return id
     }
 
@@ -36,6 +42,8 @@ class TodoList {
         for (item in items) {
             if (item.id == id) {
                 item.isDone = true
+                uiState.moveFocus("todo_first_item")
+                uiState.applyStyle("completed_accent")
                 return true
             }
         }
@@ -66,6 +74,10 @@ class TodoList {
         }
         return "items=${items.size};first=${items[0].title};first_done=${items[0].isDone}"
     }
+
+    func sharedUiState(): String {
+        return uiState.summary()
+    }
 }
 
 main(): Int64 {
@@ -88,6 +100,7 @@ main(): Int64 {
         todos.count() == 1 &&
         todos.firstTitle() == "Write first CJGUI todo" &&
         todos.firstDone() &&
+        todos.sharedUiState() == "layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item" &&
         completed
     let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, afterComplete, stateReadbackOk)
     let readbackOk = stateReadbackOk &&
@@ -112,6 +125,7 @@ main(): Int64 {
     println("cjgui todo demo app: public_api_output=${apiOutput.summary}")
     println("cjgui todo demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui todo demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui todo demo app: shared_state_core=${todos.sharedUiState()}")
     println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
 
     if (readbackOk) {

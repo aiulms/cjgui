@@ -1,6 +1,6 @@
 package cjgui_shared_layout_style_input_focus_contract_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -8,51 +8,65 @@ import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimen
 
 class SharedLayoutStyleInputFocusContractState {
     let contractName: String
-    var layoutMode: String
-    var styleToken: String
-    var inputText: String
-    var focusTarget: String
+    let uiState: CjguiExperimentalDemoUiStateCore
 
     init() {
         this.contractName = "shared_layout_style_input_focus"
-        this.layoutMode = "single_column"
-        this.styleToken = "neutral_list"
-        this.inputText = "<empty>"
-        this.focusTarget = "todo_input"
+        this.uiState = CjguiExperimentalDemoUiStateCore("single_column", "neutral_list", "<empty>", "todo_input")
     }
 
     func applyLayout(kind: String) {
-        layoutMode = kind
+        uiState.applyLayout(kind)
     }
 
     func applyStyle(token: String) {
-        styleToken = token
+        uiState.applyStyle(token)
     }
 
     func typeInput(text: String) {
-        inputText = text
+        uiState.typeInput(text)
     }
 
     func moveFocus(target: String) {
-        focusTarget = target
+        uiState.moveFocus(target)
     }
 
     func businessState(): String {
-        return "layout=${layoutMode};style=${styleToken};input=${inputText};focus=${focusTarget}"
+        return uiState.summary()
     }
 
     func domainSummary(layoutBefore: String, styleBefore: String, inputBefore: String, focusBefore: String): String {
-        return "contract=${contractName};layout=${layoutBefore}->${layoutMode};style=${styleBefore}->${styleToken};input=${inputBefore}->${inputText};focus=${focusBefore}->${focusTarget}"
+        return "contract=${contractName};layout=${layoutBefore}->${uiState.layout()};style=${styleBefore}->${uiState.style()};input=${inputBefore}->${uiState.textInput()};focus=${focusBefore}->${uiState.focus()}"
+    }
+
+    func layout(): String {
+        return uiState.layout()
+    }
+
+    func style(): String {
+        return uiState.style()
+    }
+
+    func textInput(): String {
+        return uiState.textInput()
+    }
+
+    func focus(): String {
+        return uiState.focus()
+    }
+
+    func sharedUiState(): String {
+        return uiState.summary()
     }
 }
 
 main(): Int64 {
     let contract = SharedLayoutStyleInputFocusContractState()
     let before = contract.businessState()
-    let layoutBefore = contract.layoutMode
-    let styleBefore = contract.styleToken
-    let inputBefore = contract.inputText
-    let focusBefore = contract.focusTarget
+    let layoutBefore = contract.layout()
+    let styleBefore = contract.style()
+    let inputBefore = contract.textInput()
+    let focusBefore = contract.focus()
     let sharedTrace = CjguiExperimentalDemoInteractionTrace("shared_layout_style_input_focus_contract", before)
 
     contract.applyLayout("split_detail")
@@ -65,16 +79,17 @@ main(): Int64 {
 
     let after = contract.businessState()
     sharedTrace.recordAction("shared_layout_style_input_focus.move_focus", after)
-    let layoutAfter = contract.layoutMode
-    let styleAfter = contract.styleToken
-    let inputAfter = contract.inputText
-    let focusAfter = contract.focusTarget
+    let layoutAfter = contract.layout()
+    let styleAfter = contract.style()
+    let inputAfter = contract.textInput()
+    let focusAfter = contract.focus()
     let stateReadbackOk = before == "layout=single_column;style=neutral_list;input=<empty>;focus=todo_input" &&
         after == "layout=split_detail;style=focus_accent;input=main;focus=file_filter" &&
         layoutAfter == "split_detail" &&
         styleAfter == "focus_accent" &&
         inputAfter == "main" &&
         focusAfter == "file_filter" &&
+        contract.sharedUiState() == "layout=split_detail;style=focus_accent;input=main;focus=file_filter" &&
         sharedTrace.before() == before &&
         sharedTrace.after() == after &&
         sharedTrace.actions() == "shared_layout_style_input_focus.apply_layout,shared_layout_style_input_focus.apply_style,shared_layout_style_input_focus.type_input,shared_layout_style_input_focus.move_focus" &&
@@ -103,6 +118,7 @@ main(): Int64 {
     println("cjgui shared layout-style-input-focus contract app: public_api_output=${apiOutput.summary}")
     println("cjgui shared layout-style-input-focus contract app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui shared layout-style-input-focus contract app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui shared layout-style-input-focus contract app: shared_state_core=${contract.sharedUiState()}")
 
     if (outputOk) {
         return 0

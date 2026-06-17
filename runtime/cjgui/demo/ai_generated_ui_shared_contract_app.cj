@@ -1,6 +1,6 @@
 package cjgui_ai_generated_ui_shared_contract_demo
 
-import cjgui.*
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI shared contract demo app，不属于 runtime_renderer_stage* owner 链。
@@ -86,66 +86,14 @@ class AiGeneratedUiSharedContractState {
         return "components=${componentIds.size};accepted=${accepted};screen=${acceptedScreen};layout=${layoutMode};style=${styleToken};input=${inputText};focus=${focusTarget}"
     }
 
-    func buildAiOutput(): CjguiExperimentalAiGeneratedUiDemoOutput {
-        return cjguiExperimentalBuildAiGeneratedUiDemoOutput(
-            componentIds.size,
-            accepted,
-            acceptedScreen,
-            diffSummary,
-            explainText,
-            focusTarget,
-            layoutKind,
-            styleToken
-        )
-    }
-
-    func buildSharedContractOutput(
+    func domainSummary(
         layoutBefore: String,
         styleBefore: String,
         inputBefore: String,
         focusBefore: String,
         readbackOk: Bool
-    ): CjguiExperimentalSharedLayoutStyleInputFocusContractOutput {
-        return cjguiExperimentalBuildSharedLayoutStyleInputFocusContractOutput(
-            layoutBefore,
-            layoutMode,
-            styleBefore,
-            styleToken,
-            inputBefore,
-            inputText,
-            focusBefore,
-            focusTarget,
-            interactionTrace,
-            readbackOk
-        )
-    }
-
-    func buildIntegrationOutput(
-        aiOutput: CjguiExperimentalAiGeneratedUiDemoOutput,
-        sharedOutput: CjguiExperimentalSharedLayoutStyleInputFocusContractOutput,
-        layoutBefore: String,
-        styleBefore: String,
-        inputBefore: String,
-        focusBefore: String,
-        readbackOk: Bool
-    ): CjguiExperimentalAiGeneratedUiSharedContractOutput {
-        return cjguiExperimentalBuildAiGeneratedUiSharedContractOutput(
-            acceptedScreen,
-            componentIds.size,
-            diffSummary,
-            explainText,
-            layoutBefore,
-            layoutMode,
-            styleBefore,
-            styleToken,
-            inputBefore,
-            inputText,
-            focusBefore,
-            focusTarget,
-            aiOutput.summary,
-            sharedOutput.summary,
-            readbackOk
-        )
+    ): String {
+        return "contract=ai_generated_ui_shared_contract;screen=${acceptedScreen};components=${componentIds.size};diff=${diffSummary};explain=${explainText};layout=${layoutBefore}->${layoutMode};style=${styleBefore}->${styleToken};input=${inputBefore}->${inputText};focus=${focusBefore}->${focusTarget};layout_kind=${layoutKind};readback=${readbackOk}"
     }
 }
 
@@ -156,63 +104,41 @@ main(): Int64 {
     let styleBefore = contract.styleToken
     let inputBefore = contract.inputText
     let focusBefore = contract.focusTarget
+    let sharedTrace = CjguiExperimentalDemoInteractionTrace("ai_generated_ui_shared_contract", before)
 
     contract.generateSpec()
+    sharedTrace.recordAction("generate_spec", contract.businessState())
     contract.previewDiff("added_username_field,enabled_save_button")
+    sharedTrace.recordAction("preview_diff", contract.businessState())
     contract.explain("owner accepted generated settings form refresh")
+    sharedTrace.recordAction("explain_changes", contract.businessState())
     contract.acceptRefresh("settings_profile_form")
+    sharedTrace.recordAction("accept_refresh", contract.businessState())
     contract.moveFocus("save_button")
+    sharedTrace.recordAction("move_focus", contract.businessState())
 
     let after = contract.businessState()
     let readbackOk = before == "components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card" &&
         after == "components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button" &&
         contract.componentCount() == 4 &&
         contract.interactionTrace == "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus"
-    let aiOutput = contract.buildAiOutput()
-    let sharedOutput = contract.buildSharedContractOutput(
+    let domainSummary = contract.domainSummary(
         layoutBefore,
         styleBefore,
         inputBefore,
         focusBefore,
         readbackOk
     )
-    let integrationOutput = contract.buildIntegrationOutput(
-        aiOutput,
-        sharedOutput,
-        layoutBefore,
-        styleBefore,
-        inputBefore,
-        focusBefore,
-        readbackOk
-    )
+    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, domainSummary, readbackOk)
     let outputOk = readbackOk &&
-        aiOutput.demoName == "ai_generated_ui" &&
-        aiOutput.componentCount == 4 &&
-        aiOutput.accepted &&
-        aiOutput.acceptedScreen == "settings_profile_form" &&
-        aiOutput.diffSummary == "added_username_field,enabled_save_button" &&
-        aiOutput.explainText == "owner accepted generated settings form refresh" &&
-        aiOutput.focusTarget == "save_button" &&
-        aiOutput.layoutKind == "ai_form_preview" &&
-        aiOutput.styleToken == "sage_panel" &&
-        sharedOutput.contractName == "shared_layout_style_input_focus" &&
-        sharedOutput.layoutBefore == "single_column" &&
-        sharedOutput.layoutAfter == "split_detail" &&
-        sharedOutput.styleBefore == "neutral_wireframe" &&
-        sharedOutput.styleAfter == "sage_panel" &&
-        sharedOutput.inputBefore == "<empty>" &&
-        sharedOutput.inputAfter == "username" &&
-        sharedOutput.focusBefore == "preview_card" &&
-        sharedOutput.focusAfter == "save_button" &&
-        integrationOutput.contractName == "ai_generated_ui_shared_contract" &&
-        integrationOutput.componentCount == 4 &&
-        integrationOutput.acceptedScreen == "settings_profile_form" &&
-        integrationOutput.layoutAfter == "split_detail" &&
-        integrationOutput.styleAfter == "sage_panel" &&
-        integrationOutput.inputAfter == "username" &&
-        integrationOutput.focusAfter == "save_button" &&
-        integrationOutput.readbackOk &&
-        integrationOutput.summary == "contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;ai_summary=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;focus=save_button;layout=ai_form_preview;style=sage_panel;shared_contract=contract=shared_layout_style_input_focus;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;interaction=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;readback=true;readback=true"
+        apiOutput.demoName == "ai_generated_ui_shared_contract" &&
+        apiOutput.beforeState == before &&
+        apiOutput.afterState == after &&
+        apiOutput.actionTrace == "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus" &&
+        apiOutput.writeCount == 5 &&
+        apiOutput.domainSummary == domainSummary &&
+        apiOutput.readbackOk &&
+        apiOutput.summary == "demo=ai_generated_ui_shared_contract;readback=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;summary=contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;layout_kind=ai_form_preview;readback=true"
 
     println("cjgui ai-generated-ui shared contract app: demo=ai_generated_ui_shared_contract")
     println("cjgui ai-generated-ui shared contract app: status_before=not_started")
@@ -222,8 +148,10 @@ main(): Int64 {
     println("cjgui ai-generated-ui shared contract app: state_after=${after}")
     println("cjgui ai-generated-ui shared contract app: state_readback=${readbackOk}")
     println("cjgui ai-generated-ui shared contract app: public_api_consumed=true")
-    println("cjgui ai-generated-ui shared contract app: public_api_name=cjguiExperimentalBuildAiGeneratedUiSharedContractOutput")
-    println("cjgui ai-generated-ui shared contract app: public_api_output=${integrationOutput.summary}")
+    println("cjgui ai-generated-ui shared contract app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui ai-generated-ui shared contract app: public_api_output=${apiOutput.summary}")
+    println("cjgui ai-generated-ui shared contract app: shared_support=CjguiExperimentalDemoInteractionTrace")
+    println("cjgui ai-generated-ui shared contract app: shared_support_output=${sharedTrace.summary()}")
 
     if (outputOk) {
         return 0

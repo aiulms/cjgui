@@ -1,6 +1,6 @@
 package cjgui_reusable_component_contract_demo
 
-import cjgui.*
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -93,7 +93,7 @@ class ReusableComponentContractState {
         return "components=${componentCount};demos=${reusedDemos};todo=${todoTitle};file=${fileSelection};ai=${aiAcceptedScreen};layout=${layoutMode};style=${styleToken};input=${inputText};focus=${focusTarget}"
     }
 
-    func buildContractOutput(
+    func domainSummary(
         beforeState: String,
         afterState: String,
         layoutBefore: String,
@@ -101,25 +101,8 @@ class ReusableComponentContractState {
         inputBefore: String,
         focusBefore: String,
         readbackOk: Bool
-    ): CjguiExperimentalReusableComponentContractOutput {
-        return cjguiExperimentalBuildReusableComponentContractOutput(
-            componentKinds,
-            reusedDemoCount,
-            reusedDemos,
-            componentCount,
-            beforeState,
-            afterState,
-            actionTrace,
-            layoutBefore,
-            layoutMode,
-            styleBefore,
-            styleToken,
-            inputBefore,
-            inputText,
-            focusBefore,
-            focusTarget,
-            readbackOk
-        )
+    ): String {
+        return "contract=reusable_component_contract;components=${componentKinds};reused_count=${reusedDemoCount};reused=${reusedDemos};component_count=${componentCount};layout=${layoutBefore}->${layoutMode};style=${styleBefore}->${styleToken};input=${inputBefore}->${inputText};focus=${focusBefore}->${focusTarget};readback=${readbackOk};before=${beforeState};after=${afterState}"
     }
 }
 
@@ -130,12 +113,18 @@ main(): Int64 {
     let styleBefore = contract.styleToken
     let inputBefore = contract.inputText
     let focusBefore = contract.focusTarget
+    let sharedTrace = CjguiExperimentalDemoInteractionTrace("reusable_component_contract", before)
 
     contract.attachFileBrowserRow()
+    sharedTrace.recordAction("register_file_row", contract.businessState())
     contract.attachAiGeneratedForm()
+    sharedTrace.recordAction("register_ai_form", contract.businessState())
     contract.runTodoAdd("buy_milk")
+    sharedTrace.recordAction("todo_add", contract.businessState())
     contract.runFileSelect("src/main.cj")
+    sharedTrace.recordAction("file_select", contract.businessState())
     contract.runAiAccept("settings_profile_form")
+    sharedTrace.recordAction("ai_accept", contract.businessState())
 
     let after = contract.businessState()
     let readbackOk = before == "components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input" &&
@@ -143,7 +132,7 @@ main(): Int64 {
         contract.componentKinds == "task_row,file_row,ai_form" &&
         contract.reusedDemoCount == 3 &&
         contract.actionTrace == "register_file_row,register_ai_form,todo_add,file_select,ai_accept"
-    let apiOutput = contract.buildContractOutput(
+    let domainSummary = contract.domainSummary(
         before,
         after,
         layoutBefore,
@@ -152,25 +141,16 @@ main(): Int64 {
         focusBefore,
         readbackOk
     )
+    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, domainSummary, readbackOk)
     let outputOk = readbackOk &&
-        apiOutput.contractName == "reusable_component_contract" &&
-        apiOutput.componentKinds == "task_row,file_row,ai_form" &&
-        apiOutput.reusedDemoCount == 3 &&
-        apiOutput.reusedDemos == "todo,file_browser,ai_generated_ui" &&
-        apiOutput.componentCount == 3 &&
+        apiOutput.demoName == "reusable_component_contract" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
         apiOutput.actionTrace == "register_file_row,register_ai_form,todo_add,file_select,ai_accept" &&
-        apiOutput.layoutBefore == "single_column" &&
-        apiOutput.layoutAfter == "split_detail" &&
-        apiOutput.styleBefore == "neutral_list" &&
-        apiOutput.styleAfter == "sage_panel" &&
-        apiOutput.inputBefore == "<empty>" &&
-        apiOutput.inputAfter == "filter:src,username" &&
-        apiOutput.focusBefore == "todo_input" &&
-        apiOutput.focusAfter == "save_button" &&
+        apiOutput.writeCount == 5 &&
+        apiOutput.domainSummary == domainSummary &&
         apiOutput.readbackOk &&
-        apiOutput.summary == "contract=reusable_component_contract;components=task_row,file_row,ai_form;reused_count=3;reused=todo,file_browser,ai_generated_ui;component_count=3;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;layout=single_column->split_detail;style=neutral_list->sage_panel;input=<empty>->filter:src,username;focus=todo_input->save_button;readback=true"
+        apiOutput.summary == "demo=reusable_component_contract;readback=true;writes=5;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;summary=contract=reusable_component_contract;components=task_row,file_row,ai_form;reused_count=3;reused=todo,file_browser,ai_generated_ui;component_count=3;layout=single_column->split_detail;style=neutral_list->sage_panel;input=<empty>->filter:src,username;focus=todo_input->save_button;readback=true;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
 
     println("cjgui reusable component contract app: demo=reusable_component_contract")
     println("cjgui reusable component contract app: status_before=not_started")
@@ -182,8 +162,10 @@ main(): Int64 {
     println("cjgui reusable component contract app: state_after=${after}")
     println("cjgui reusable component contract app: state_readback=${readbackOk}")
     println("cjgui reusable component contract app: public_api_consumed=true")
-    println("cjgui reusable component contract app: public_api_name=cjguiExperimentalBuildReusableComponentContractOutput")
+    println("cjgui reusable component contract app: public_api_name=CjguiExperimentalDemoOutputBuilder")
     println("cjgui reusable component contract app: public_api_output=${apiOutput.summary}")
+    println("cjgui reusable component contract app: shared_support=CjguiExperimentalDemoInteractionTrace")
+    println("cjgui reusable component contract app: shared_support_output=${sharedTrace.summary()}")
 
     if (outputOk) {
         return 0

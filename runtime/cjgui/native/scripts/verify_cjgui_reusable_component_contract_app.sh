@@ -8,7 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/reusable_component_contract_app.cj"
-CONTRACT_API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_reusable_component_contract_api.cj"
+SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 TMP_DIR="${CJGUI_REUSABLE_COMPONENT_CONTRACT_TMPDIR:-/private/tmp/cjgui-reusable-component-contract-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -16,7 +17,7 @@ PROBE_PACKAGE_DIR="$TMP_DIR/package"
 PROBE_API_PACKAGE_DIR="$TMP_DIR/cjgui-api"
 OUTPUT_LOG="$TMP_DIR/reusable-component-contract-output.log"
 
-mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src"
+mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src/demo_support"
 : > "$OUTPUT_LOG"
 
 cat > "$PS_SHIM_DIR/ps" <<'EOF'
@@ -57,21 +58,20 @@ require_output_line() {
   fi
 }
 
-for source_file in "$DEMO_SRC" "$CONTRACT_API_SRC"; do
+for source_file in "$DEMO_SRC" "$SUPPORT_SRC" "$OUTPUT_SUPPORT_SRC"; do
   if [[ ! -f "$source_file" ]]; then
     echo "cjgui reusable component contract app verification: missing source $source_file" >&2
     exit 2
   fi
 done
 
-require_source_line "public class CjguiExperimentalReusableComponentContractOutput" "$CONTRACT_API_SRC"
-require_source_line "public func cjguiExperimentalBuildReusableComponentContractOutput" "$CONTRACT_API_SRC"
-require_source_line "public let componentKinds: String" "$CONTRACT_API_SRC"
-require_source_line "public let reusedDemoCount: Int64" "$CONTRACT_API_SRC"
-require_source_line "public let beforeState: String" "$CONTRACT_API_SRC"
-require_source_line "public let afterState: String" "$CONTRACT_API_SRC"
+require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
+require_source_line "public func recordAction" "$SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
 require_source_line "package cjgui_reusable_component_contract_demo" "$DEMO_SRC"
-require_source_line "import cjgui.*" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
 require_source_line "class ReusableComponentContractState" "$DEMO_SRC"
 require_source_line "var componentCount: Int64" "$DEMO_SRC"
 require_source_line "var componentKinds: String" "$DEMO_SRC"
@@ -81,16 +81,23 @@ require_source_line "func runTodoAdd" "$DEMO_SRC"
 require_source_line "func runFileSelect" "$DEMO_SRC"
 require_source_line "func runAiAccept" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
-require_source_line "CjguiExperimentalReusableComponentContractOutput" "$DEMO_SRC"
-require_source_line "cjguiExperimentalBuildReusableComponentContractOutput" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
 require_source_line "cjgui reusable component contract app: status_before=not_started" "$DEMO_SRC"
 require_source_line "cjgui reusable component contract app: status_after=runnable" "$DEMO_SRC"
 require_source_line "cjgui reusable component contract app: state_before=" "$DEMO_SRC"
 require_source_line "cjgui reusable component contract app: state_after=" "$DEMO_SRC"
 require_source_line "cjgui reusable component contract app: state_readback=" "$DEMO_SRC"
 require_source_line "cjgui reusable component contract app: public_api_consumed=true" "$DEMO_SRC"
-require_source_line "cjgui reusable component contract app: public_api_name=cjguiExperimentalBuildReusableComponentContractOutput" "$DEMO_SRC"
+require_source_line "cjgui reusable component contract app: public_api_name=CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
 require_source_line "cjgui reusable component contract app: public_api_output=" "$DEMO_SRC"
+require_source_line "cjgui reusable component contract app: shared_support=CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
+
+if grep -F "cjguiExperimentalBuildReusableComponentContractOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "CjguiExperimentalReusableComponentContractOutput" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui reusable component contract app verification: demo still directly consumes legacy reusable component output API" >&2
+  exit 10
+fi
 
 if grep -E 'foreign[[:space:]]+func|cjgui_native_bridge_|public[[:space:]]+(func|class|struct|enum|let|var)' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui reusable component contract app verification: forbidden runtime/native/public token in demo source" >&2
@@ -144,7 +151,8 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_REUSABLE_COMPONENT_CONTRACT_API
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_REUSABLE_COMPONENT_CONTRACT_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
-cp "$CONTRACT_API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_reusable_component_contract_api.cj"
+cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -164,8 +172,10 @@ require_output_line "cjgui reusable component contract app: state_before=compone
 require_output_line "cjgui reusable component contract app: state_after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
 require_output_line "cjgui reusable component contract app: state_readback=true"
 require_output_line "cjgui reusable component contract app: public_api_consumed=true"
-require_output_line "cjgui reusable component contract app: public_api_name=cjguiExperimentalBuildReusableComponentContractOutput"
-require_output_line "cjgui reusable component contract app: public_api_output=contract=reusable_component_contract;components=task_row,file_row,ai_form;reused_count=3;reused=todo,file_browser,ai_generated_ui;component_count=3;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;layout=single_column->split_detail;style=neutral_list->sage_panel;input=<empty>->filter:src,username;focus=todo_input->save_button;readback=true"
+require_output_line "cjgui reusable component contract app: public_api_name=CjguiExperimentalDemoOutputBuilder"
+require_output_line "cjgui reusable component contract app: public_api_output=demo=reusable_component_contract;readback=true;writes=5;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;summary=contract=reusable_component_contract;components=task_row,file_row,ai_form;reused_count=3;reused=todo,file_browser,ai_generated_ui;component_count=3;layout=single_column->split_detail;style=neutral_list->sage_panel;input=<empty>->filter:src,username;focus=todo_input->save_button;readback=true;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
+require_output_line "cjgui reusable component contract app: shared_support=CjguiExperimentalDemoInteractionTrace"
+require_output_line "cjgui reusable component contract app: shared_support_output=demo=reusable_component_contract;writes=5;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
 
 echo "cjgui_reusable_component_contract_app_compiled=true"
 echo "cjgui_reusable_component_contract_app_ran=true"
@@ -174,10 +184,13 @@ echo "reusable_component_contract_progress_after=runnable"
 echo "reusable_component_contract_has_main=true"
 echo "reusable_component_contract_deterministic_business_output=true"
 echo "reusable_component_contract_non_bool_public_api_consumed=true"
-echo "reusable_component_contract_public_api_name=cjguiExperimentalBuildReusableComponentContractOutput"
-echo "reusable_component_contract_public_api_return=CjguiExperimentalReusableComponentContractOutput"
+echo "reusable_component_contract_public_api_name=CjguiExperimentalDemoOutputBuilder"
+echo "reusable_component_contract_public_api_return=CjguiExperimentalDemoOutput"
+echo "reusable_component_contract_legacy_output_api_direct_consumption=false"
 echo "reusable_component_contract_owner_local_write_readback=true"
 echo "reusable_component_contract_state_write_scope=ReusableComponentContractState.componentCount,componentKinds,reusedDemoCount,reusedDemos,actionTrace,todoTitle,fileSelection,aiAcceptedScreen,layoutMode,styleToken,inputText,focusTarget"
+echo "reusable_component_contract_shared_support_imported=true"
+echo "reusable_component_contract_shared_support_name=CjguiExperimentalDemoInteractionTrace"
 echo "reusable_component_contract_runtime_state_write=false"
 echo "reusable_component_contract_renderer_state_write=false"
 echo "reusable_component_contract_public_c_abi_added=false"

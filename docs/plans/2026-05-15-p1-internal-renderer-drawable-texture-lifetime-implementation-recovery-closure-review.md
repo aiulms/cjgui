@@ -39,13 +39,13 @@
 
 ## 验证记录
 
-- `git diff --check`：通过。
-- Markdown absolute link check：检查项目 docs / README 范围内 2010 个 Markdown 文件、18682 个项目绝对链接，missing target 数量为 `0`。
+- `git diff --check`：2026-06-17 复跑通过。
+- Markdown absolute link check：2026-06-17 复跑检查项目 docs / README 范围内 2022 个 Markdown 文件、18873 个项目绝对链接，missing target 数量为 `0`。
 - Reachability：README、tracker、plans README、runtime README、DESIGN_INTENT_INDEX 与三个 topic manifest 均能检索到本轮 recovery decision / closure / manifest 或 `visible-window production harness preflight` 接续。
 - 中文标题与正文抽查：本轮 decision / closure / manifest 主标题均为中文，正文抽查包含中文说明。
 - protected path scan：`runtime/cjgui/src/runtime_state.cj` 仍为 `10065` 行；`runtime_state.cj`、`runtime/cjgui/cjpm.toml`、production native bridge 与 smoke native files 在本阶段未出现 diff。
-- public declaration scan：本阶段没有新增 `.cj` 或 public API；当前工作树扫描会看到其他未跟踪 Todo / Settings / Chat demo API 与既有 experimental Bool API，不能归因到本 recovery 阶段。
-- GitNexus `detect-changes --repo cangjie-live-codelattice --scope unstaged`：返回 12 files / 3 symbols / affected processes `0` / risk `low`；图谱只识别 README 标题级改动，未覆盖所有未跟踪文件，按源码和 docs scan 兜底。
+- public declaration scan：2026-06-17 复跑 `git diff -- '*.cj' | rg '^\+.*public'` 无匹配；本阶段没有新增 `.cj` 或 public API。
+- GitNexus `detect-changes --repo cangjie-live-codelattice --scope unstaged`：2026-06-17 复跑返回 14 files / 2 symbols / affected processes `0` / risk `low`；图谱只识别 README 标题级改动，未覆盖当前工作树所有未提交文件，按源码和 docs scan 兜底。
 - 本轮未运行 `cjpm build` / smoke：本阶段为 docs-only recovery，未修改 `.cj`、native 或 script。
 
 ## 后续入口

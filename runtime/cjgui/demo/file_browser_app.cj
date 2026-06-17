@@ -1,6 +1,6 @@
 package cjgui_file_browser_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -21,26 +21,22 @@ class FileBrowserEntry {
 
 class FileBrowserState {
     let demoName: String
-    let layoutKind: String
+    let uiState: CjguiExperimentalDemoUiStateCore
     private var entries = ArrayList<FileBrowserEntry>()
     var selectedPath: String
     var selectedKind: String
     var detailTitle: String
     var detailPreview: String
     var expandedPath: String
-    var focusedPane: String
-    var filterText: String
 
     init() {
         this.demoName = "file_browser"
-        this.layoutKind = "tree_detail_split"
+        this.uiState = CjguiExperimentalDemoUiStateCore("tree_detail_split", "tree_detail", "", "tree")
         this.selectedPath = "/workspace"
         this.selectedKind = "folder"
         this.detailTitle = "workspace"
         this.detailPreview = "3 items"
         this.expandedPath = "/workspace"
-        this.focusedPane = "tree"
-        this.filterText = ""
         entries.add(FileBrowserEntry("/workspace", "workspace", "folder"))
         entries.add(FileBrowserEntry("/workspace/src", "src", "folder"))
         entries.add(FileBrowserEntry("/workspace/src/main.cj", "main.cj", "file"))
@@ -48,28 +44,32 @@ class FileBrowserState {
 
     func expand(path: String) {
         expandedPath = path
-        focusedPane = "tree"
+        uiState.applyStyle("folder_expanded")
+        uiState.moveFocus("tree")
     }
 
     func applyFilter(query: String) {
-        filterText = query
-        focusedPane = "tree_filter"
+        uiState.typeInput(query)
+        uiState.applyStyle("filter_active")
+        uiState.moveFocus("tree_filter")
     }
 
     func selectEntry(path: String, kind: String) {
         selectedPath = path
         selectedKind = kind
-        focusedPane = "tree"
+        uiState.applyStyle("file_selected")
+        uiState.moveFocus("tree")
     }
 
     func refreshDetail(title: String, preview: String) {
         detailTitle = title
         detailPreview = preview
-        focusedPane = "detail_pane"
+        uiState.applyStyle("detail_ready")
+        uiState.moveFocus("detail_pane")
     }
 
     func moveFocus(target: String) {
-        focusedPane = target
+        uiState.moveFocus(target)
     }
 
     func itemCount(): Int64 {
@@ -77,11 +77,15 @@ class FileBrowserState {
     }
 
     func businessState(): String {
-        return "items=${entries.size};expanded=${expandedPath};selected=${selectedPath}:${selectedKind};detail=${detailTitle};filter=${filterText};focus=${focusedPane}"
+        return "items=${entries.size};expanded=${expandedPath};selected=${selectedPath}:${selectedKind};detail=${detailTitle};filter=${uiState.textInput()};focus=${uiState.focus()}"
     }
 
     func summary(): String {
-        return "demo=${demoName};layout=${layoutKind};${businessState()}"
+        return "demo=${demoName};layout=${uiState.layout()};${businessState()}"
+    }
+
+    func sharedUiState(): String {
+        return uiState.summary()
     }
 }
 
@@ -108,6 +112,7 @@ main(): Int64 {
         sharedTrace.after() == after &&
         sharedTrace.actions() == "file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus" &&
         sharedTrace.writes() == 5 &&
+        browser.sharedUiState() == "layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane" &&
         summary == "demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
     let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
     let readbackOk = stateReadbackOk &&
@@ -133,6 +138,7 @@ main(): Int64 {
     println("cjgui file browser demo app: public_api_output=${apiOutput.summary}")
     println("cjgui file browser demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui file browser demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui file browser demo app: shared_state_core=${browser.sharedUiState()}")
 
     if (readbackOk) {
         return 0

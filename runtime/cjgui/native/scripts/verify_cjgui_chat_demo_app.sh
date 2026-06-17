@@ -11,6 +11,7 @@ DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_chat_demo_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 TMP_DIR="${CJGUI_CHAT_DEMO_TMPDIR:-/private/tmp/cjgui-chat-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -74,17 +75,26 @@ if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$UI_STATE_CORE_SRC" ]]; then
+  echo "cjgui chat demo app verification: missing shared UI state core source $UI_STATE_CORE_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoUiStateCore" "$UI_STATE_CORE_SRC"
+require_source_line "public func applyStyle" "$UI_STATE_CORE_SRC"
+require_source_line "public func typeInput" "$UI_STATE_CORE_SRC"
+require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "package cjgui_chat_demo" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}" "$DEMO_SRC"
 require_source_line "class ChatThreadState" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoUiStateCore" "$DEMO_SRC"
 require_source_line "private var messages" "$DEMO_SRC"
-require_source_line "var composerText: String" "$DEMO_SRC"
-require_source_line "var focusTarget: String" "$DEMO_SRC"
+require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
@@ -158,6 +168,7 @@ CJGUI_CHAT_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -180,6 +191,7 @@ require_output_line "cjgui chat demo app: public_api_name=CjguiExperimentalDemoO
 require_output_line "cjgui chat demo app: public_api_output=demo=chat;readback=true;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;summary=demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
 require_output_line "cjgui chat demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_output_line "cjgui chat demo app: shared_support_output=demo=chat;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
+require_output_line "cjgui chat demo app: shared_state_core=layout=threaded_chat;style=assistant_reply;input=;focus=message_list"
 
 echo "cjgui_chat_demo_app_compiled=true"
 echo "cjgui_chat_demo_app_ran=true"
@@ -192,9 +204,11 @@ echo "chat_public_api_name=CjguiExperimentalDemoOutputBuilder"
 echo "chat_public_api_return=CjguiExperimentalDemoOutput"
 echo "chat_legacy_output_api_direct_consumption=false"
 echo "chat_owner_local_write_readback=true"
-echo "chat_state_write_scope=ChatThreadState.messages,composerText,focusTarget,lastSender,lastText"
+echo "chat_state_write_scope=ChatThreadState.messages,uiState,lastSender,lastText"
 echo "chat_shared_support_imported=true"
 echo "chat_shared_support_name=CjguiExperimentalDemoInteractionTrace"
+echo "chat_shared_state_core_imported=true"
+echo "chat_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "chat_runtime_state_write=false"
 echo "chat_renderer_state_write=false"
 echo "chat_public_c_abi_added=false"

@@ -1,6 +1,6 @@
 package cjgui_chat_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -19,45 +19,46 @@ class ChatMessage {
 
 class ChatThreadState {
     let demoName: String
-    let layoutKind: String
+    let uiState: CjguiExperimentalDemoUiStateCore
     private var messages = ArrayList<ChatMessage>()
-    var composerText: String
-    var focusTarget: String
     var lastSender: String
     var lastText: String
 
     init() {
         this.demoName = "chat"
-        this.layoutKind = "threaded_chat"
-        this.composerText = ""
-        this.focusTarget = "composer"
+        this.uiState = CjguiExperimentalDemoUiStateCore("threaded_chat", "chat_thread", "", "composer")
         this.lastSender = "assistant"
         this.lastText = "Welcome to CJGUI"
         messages.add(ChatMessage(lastSender, lastText))
     }
 
     func updateComposer(text: String) {
-        composerText = text
-        focusTarget = "composer"
+        uiState.typeInput(text)
+        uiState.moveFocus("composer")
     }
 
     func appendMessage(sender: String, text: String) {
         messages.add(ChatMessage(sender, text))
         lastSender = sender
         lastText = text
+        if (sender == "assistant") {
+            uiState.applyStyle("assistant_reply")
+        } else {
+            uiState.applyStyle("owner_message")
+        }
     }
 
     func sendComposer(sender: String): Bool {
-        if (composerText == "") {
+        if (uiState.textInput() == "") {
             return false
         }
-        appendMessage(sender, composerText)
-        composerText = ""
+        appendMessage(sender, uiState.textInput())
+        uiState.typeInput("")
         return true
     }
 
     func moveFocus(target: String) {
-        focusTarget = target
+        uiState.moveFocus(target)
     }
 
     func messageCount(): Int64 {
@@ -65,11 +66,15 @@ class ChatThreadState {
     }
 
     func businessState(): String {
-        return "messages=${messages.size};last=${lastSender}:${lastText};composer=${composerText};focus=${focusTarget}"
+        return "messages=${messages.size};last=${lastSender}:${lastText};composer=${uiState.textInput()};focus=${uiState.focus()}"
     }
 
     func summary(): String {
-        return "demo=${demoName};layout=${layoutKind};${businessState()}"
+        return "demo=${demoName};layout=${uiState.layout()};${businessState()}"
+    }
+
+    func sharedUiState(): String {
+        return uiState.summary()
     }
 }
 
@@ -93,6 +98,7 @@ main(): Int64 {
         sharedTrace.after() == after &&
         sharedTrace.actions() == "chat.type_message,chat.send_message,chat.append_reply,chat.move_focus" &&
         sharedTrace.writes() == 4 &&
+        thread.sharedUiState() == "layout=threaded_chat;style=assistant_reply;input=;focus=message_list" &&
         sent &&
         thread.messageCount() == 3 &&
         summary == "demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
@@ -120,6 +126,7 @@ main(): Int64 {
     println("cjgui chat demo app: public_api_output=${apiOutput.summary}")
     println("cjgui chat demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui chat demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui chat demo app: shared_state_core=${thread.sharedUiState()}")
 
     if (readbackOk) {
         return 0

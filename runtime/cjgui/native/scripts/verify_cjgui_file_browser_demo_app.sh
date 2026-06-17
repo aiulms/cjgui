@@ -11,6 +11,7 @@ DEMO_SRC="$ROOT_DIR/demo/file_browser_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_file_browser_demo_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 TMP_DIR="${CJGUI_FILE_BROWSER_DEMO_TMPDIR:-/private/tmp/cjgui-file-browser-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -74,18 +75,28 @@ if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$UI_STATE_CORE_SRC" ]]; then
+  echo "cjgui file browser demo app verification: missing shared UI state core source $UI_STATE_CORE_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoUiStateCore" "$UI_STATE_CORE_SRC"
+require_source_line "public func applyStyle" "$UI_STATE_CORE_SRC"
+require_source_line "public func typeInput" "$UI_STATE_CORE_SRC"
+require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "package cjgui_file_browser_demo" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}" "$DEMO_SRC"
 require_source_line "class FileBrowserState" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoUiStateCore" "$DEMO_SRC"
 require_source_line "private var entries" "$DEMO_SRC"
 require_source_line "var selectedPath: String" "$DEMO_SRC"
 require_source_line "var expandedPath: String" "$DEMO_SRC"
-require_source_line "var focusedPane: String" "$DEMO_SRC"
+require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
@@ -159,6 +170,7 @@ CJGUI_FILE_BROWSER_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -181,6 +193,7 @@ require_output_line "cjgui file browser demo app: public_api_name=CjguiExperimen
 require_output_line "cjgui file browser demo app: public_api_output=demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
 require_output_line "cjgui file browser demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_output_line "cjgui file browser demo app: shared_support_output=demo=file_browser;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
+require_output_line "cjgui file browser demo app: shared_state_core=layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane"
 
 echo "cjgui_file_browser_demo_app_compiled=true"
 echo "cjgui_file_browser_demo_app_ran=true"
@@ -193,9 +206,11 @@ echo "file_browser_public_api_name=CjguiExperimentalDemoOutputBuilder"
 echo "file_browser_public_api_return=CjguiExperimentalDemoOutput"
 echo "file_browser_legacy_output_api_direct_consumption=false"
 echo "file_browser_owner_local_write_readback=true"
-echo "file_browser_state_write_scope=FileBrowserState.entries,selectedPath,selectedKind,detailTitle,detailPreview,expandedPath,focusedPane,filterText"
+echo "file_browser_state_write_scope=FileBrowserState.entries,selectedPath,selectedKind,detailTitle,detailPreview,expandedPath,uiState"
 echo "file_browser_shared_support_imported=true"
 echo "file_browser_shared_support_name=CjguiExperimentalDemoInteractionTrace"
+echo "file_browser_shared_state_core_imported=true"
+echo "file_browser_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "file_browser_runtime_state_write=false"
 echo "file_browser_renderer_state_write=false"
 echo "file_browser_public_c_abi_added=false"

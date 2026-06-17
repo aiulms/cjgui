@@ -1,6 +1,6 @@
 package cjgui_settings_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -8,20 +8,18 @@ import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimen
 
 class SettingsPanelState {
     let demoName: String
-    let layoutKind: String
+    let uiState: CjguiExperimentalDemoUiStateCore
     let controlsSummary: String
     var selectedTheme: String
     var usernameValue: String
-    var focusTarget: String
     var autoSaveEnabled: Bool
 
     init() {
         this.demoName = "settings"
-        this.layoutKind = "sectioned_form"
+        this.uiState = CjguiExperimentalDemoUiStateCore("sectioned_form", "theme_light", "owner", "username_field")
         this.controlsSummary = "toggle:auto_save,select:theme,text:username"
         this.selectedTheme = "light"
         this.usernameValue = "owner"
-        this.focusTarget = "username_field"
         this.autoSaveEnabled = false
     }
 
@@ -31,24 +29,29 @@ class SettingsPanelState {
 
     func selectTheme(theme: String) {
         selectedTheme = theme
+        uiState.applyStyle("theme_${theme}")
     }
 
     func updateUsername(username: String) {
         usernameValue = username
+        uiState.typeInput(username)
     }
 
     func moveFocus(target: String) {
-        focusTarget = target
+        uiState.moveFocus(target)
     }
 
     func businessState(): String {
-        return "autosave=${autoSaveEnabled};theme=${selectedTheme};username=${usernameValue};focus=${focusTarget}"
+        return "autosave=${autoSaveEnabled};theme=${selectedTheme};username=${usernameValue};focus=${uiState.focus()}"
     }
 
     func summary(): String {
-        return "demo=${demoName};layout=${layoutKind};controls=${controlsSummary};${businessState()}"
+        return "demo=${demoName};layout=${uiState.layout()};controls=${controlsSummary};${businessState()}"
     }
 
+    func sharedUiState(): String {
+        return uiState.summary()
+    }
 }
 
 main(): Int64 {
@@ -71,6 +74,7 @@ main(): Int64 {
         sharedTrace.after() == after &&
         sharedTrace.actions() == "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus" &&
         sharedTrace.writes() == 4 &&
+        panel.sharedUiState() == "layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select" &&
         summary == "demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
     let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
     let readbackOk = stateReadbackOk &&
@@ -100,6 +104,7 @@ main(): Int64 {
     println("cjgui settings demo app: public_api_output=${apiOutput.summary}")
     println("cjgui settings demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui settings demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui settings demo app: shared_state_core=${panel.sharedUiState()}")
     println("cjgui settings demo app: public_api_available=true")
 
     if (readbackOk) {

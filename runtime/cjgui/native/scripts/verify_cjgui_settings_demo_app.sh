@@ -11,6 +11,7 @@ DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_settings_demo_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 TMP_DIR="${CJGUI_SETTINGS_DEMO_TMPDIR:-/private/tmp/cjgui-settings-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -74,18 +75,28 @@ if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$UI_STATE_CORE_SRC" ]]; then
+  echo "cjgui settings demo app verification: missing shared UI state core source $UI_STATE_CORE_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
 require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoUiStateCore" "$UI_STATE_CORE_SRC"
+require_source_line "public func applyStyle" "$UI_STATE_CORE_SRC"
+require_source_line "public func typeInput" "$UI_STATE_CORE_SRC"
+require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "package cjgui_settings_demo" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}" "$DEMO_SRC"
 require_source_line "class SettingsPanelState" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoUiStateCore" "$DEMO_SRC"
 require_source_line "var selectedTheme: String" "$DEMO_SRC"
 require_source_line "var usernameValue: String" "$DEMO_SRC"
-require_source_line "var focusTarget: String" "$DEMO_SRC"
 require_source_line "var autoSaveEnabled: Bool" "$DEMO_SRC"
+require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
 require_source_line "sharedTrace.recordAction" "$DEMO_SRC"
@@ -159,6 +170,7 @@ CJGUI_SETTINGS_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
+cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -185,6 +197,7 @@ require_output_line "cjgui settings demo app: public_api_name=CjguiExperimentalD
 require_output_line "cjgui settings demo app: public_api_output=demo=settings;readback=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;summary=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_output_line "cjgui settings demo app: shared_support_output=demo=settings;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select"
+require_output_line "cjgui settings demo app: shared_state_core=layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: public_api_available=true"
 
 echo "cjgui_settings_demo_app_compiled=true"
@@ -198,9 +211,11 @@ echo "settings_public_api_name=CjguiExperimentalDemoOutputBuilder"
 echo "settings_public_api_return=CjguiExperimentalDemoOutput"
 echo "settings_legacy_output_api_direct_consumption=false"
 echo "settings_owner_local_write_readback=true"
-echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,focusTarget"
+echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,uiState"
 echo "settings_shared_support_imported=true"
 echo "settings_shared_support_name=CjguiExperimentalDemoInteractionTrace"
+echo "settings_shared_state_core_imported=true"
+echo "settings_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "settings_runtime_state_write=false"
 echo "settings_renderer_state_write=false"
 echo "settings_public_c_abi_added=false"

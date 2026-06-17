@@ -1,4 +1,4 @@
-# Drawable texture lifetime 实现恢复清单
+# 可绘制纹理生命周期实现恢复清单
 
 ## 清单状态
 
@@ -77,11 +77,15 @@ Production drawable texture lifetime 仍缺：
 
 `P1 internal Renderer visible-window production harness preflight decision`
 
+## 封账复核
+
+- [Drawable texture lifetime 实现恢复封账复核](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-05-15-p1-internal-renderer-drawable-texture-lifetime-implementation-recovery-closure-review.md)
+
 ## 设计意图出口自检
 
 - 本轮是否改变主题状态：是。drawable lifetime recovery 明确拆出 visible-window production harness 分支。
 - 本轮是否改变 canonical tail / endpoint：否。没有新增 endpoint。
 - 本轮是否改变 owner / truth / stop-line：是。truth 固定 isolated probe 仅为 feasibility evidence；stop-line 继续禁止 production `nextDrawable` 与 color attachment。
 - 本轮是否改变唯一 next opening：是。唯一后续入口转为 `P1 internal Renderer visible-window production harness preflight decision`。
-- 是否同步 topic manifest：需要同步。
-- 已同步哪些 topic manifest：计划同步 `renderer-implementation-admission-chain.md`、`renderer-backend-readiness-real-backend-runway.md` 与 `macos-bridge-verification-smoke.md`。
+- 是否同步 topic manifest：是。
+- 已同步哪些 topic manifest：`renderer-implementation-admission-chain.md`、`renderer-backend-readiness-real-backend-runway.md` 与 `macos-bridge-verification-smoke.md`。

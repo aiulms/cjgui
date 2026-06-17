@@ -1,4 +1,4 @@
-# Drawable texture lifetime 实现恢复裁定
+# 可绘制纹理生命周期实现恢复裁定
 
 ## 本轮裁定
 
@@ -102,5 +102,5 @@ No-submit branch 已足够作为非显示链 milestone。
 - 本轮是否改变 canonical tail / endpoint：否。未新增 owner，仍引用 drawable lifetime planning tail 与 no-submit milestone tail。
 - 本轮是否改变 owner / truth / stop-line：是。truth 增加“isolated evidence 不能升格，下一步必须先证明 visible-window production harness”；stop-line 继续禁止 production `nextDrawable`。
 - 本轮是否改变唯一 next opening：是。唯一后续入口转为 `P1 internal Renderer visible-window production harness preflight decision`。
-- 是否同步 topic manifest：需要同步。
-- 已同步哪些 topic manifest：计划同步 `renderer-implementation-admission-chain.md`、`renderer-backend-readiness-real-backend-runway.md` 与 `macos-bridge-verification-smoke.md`。
+- 是否同步 topic manifest：是。
+- 已同步哪些 topic manifest：`renderer-implementation-admission-chain.md`、`renderer-backend-readiness-real-backend-runway.md` 与 `macos-bridge-verification-smoke.md`。

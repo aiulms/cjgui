@@ -1,6 +1,7 @@
 package cjgui_settings_demo
 
-import cjgui.*
+import cjgui.{CjguiExperimentalSettingsDemoOutput, cjguiExperimentalBuildSettingsDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -64,15 +65,24 @@ class SettingsPanelState {
 main(): Int64 {
     let panel = SettingsPanelState()
     let before = panel.businessState()
+    let sharedTrace = CjguiExperimentalDemoInteractionTrace("settings", before)
     panel.toggleAutoSave()
+    sharedTrace.recordAction("settings.toggle_auto_save", panel.businessState())
     panel.selectTheme("dark")
+    sharedTrace.recordAction("settings.select_theme", panel.businessState())
     panel.updateUsername("owner-updated")
+    sharedTrace.recordAction("settings.update_username", panel.businessState())
     panel.moveFocus("theme_select")
     let after = panel.businessState()
+    sharedTrace.recordAction("settings.move_focus", after)
     let summary = panel.summary()
     let apiOutput = panel.buildApiOutput()
     let readbackOk = before == "autosave=false;theme=light;username=owner;focus=username_field" &&
         after == "autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
+        sharedTrace.before() == before &&
+        sharedTrace.after() == after &&
+        sharedTrace.actions() == "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus" &&
+        sharedTrace.writes() == 4 &&
         summary == "demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
         apiOutput.demoName == "settings" &&
         apiOutput.sectionCount == 3 &&
@@ -99,6 +109,8 @@ main(): Int64 {
     println("cjgui settings demo app: public_api_consumed=true")
     println("cjgui settings demo app: public_api_name=cjguiExperimentalBuildSettingsDemoOutput")
     println("cjgui settings demo app: public_api_output=${apiOutput.summary}")
+    println("cjgui settings demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
+    println("cjgui settings demo app: shared_support_output=${sharedTrace.summary()}")
     println("cjgui settings demo app: public_api_available=true")
 
     if (readbackOk) {

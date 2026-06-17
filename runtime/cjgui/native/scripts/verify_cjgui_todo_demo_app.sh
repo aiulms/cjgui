@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REPO_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_todo_demo_api.cj"
+SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 TMP_DIR="${CJGUI_TODO_DEMO_TMPDIR:-/private/tmp/cjgui-todo-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -18,7 +19,7 @@ PROBE_API_PACKAGE_DIR="$TMP_DIR/cjgui-api"
 OUTPUT_LOG="$TMP_DIR/todo-demo-output.log"
 EXECUTABLE="$BUILD_DIR/cjgui_todo_demo_app"
 
-mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src"
+mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src/demo_support"
 : > "$OUTPUT_LOG"
 
 cat > "$PS_SHIM_DIR/ps" <<'EOF'
@@ -60,9 +61,20 @@ if [[ ! -f "$API_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$SUPPORT_SRC" ]]; then
+  echo "cjgui todo demo app verification: missing shared support source $SUPPORT_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalTodoDemoOutput" "$API_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func cjguiExperimentalBuildTodoDemoOutput" "$API_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing non-Bool public Todo demo API declaration" >&2
+  exit 4
+fi
+
+if ! grep -F "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func recordAction" "$SUPPORT_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared interaction trace support declaration" >&2
   exit 4
 fi
 
@@ -71,9 +83,16 @@ if ! grep -F "main(): Int64" "$DEMO_SRC" >/dev/null 2>&1; then
   exit 3
 fi
 
-if ! grep -F "import cjgui.*" "$DEMO_SRC" >/dev/null 2>&1 || \
+if ! grep -F "import cjgui.{CjguiExperimentalTodoDemoOutput, cjguiExperimentalBuildTodoDemoOutput}" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "cjguiExperimentalBuildTodoDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing non-Bool public API consumption" >&2
+  exit 4
+fi
+
+if ! grep -F "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "sharedTrace.recordAction" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared interaction trace consumption" >&2
   exit 4
 fi
 
@@ -135,6 +154,7 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_TODO_API_TOML
 CJGUI_TODO_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_todo_demo_api.cj"
+cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -154,6 +174,8 @@ require_line "cjgui todo demo app: summary_after_complete=items=1;first=Write fi
 require_line "cjgui todo demo app: public_api_consumed=true"
 require_line "cjgui todo demo app: public_api_name=cjguiExperimentalBuildTodoDemoOutput"
 require_line "cjgui todo demo app: public_api_output=items=1;first=Write first CJGUI todo;first_done=true"
+require_line "cjgui todo demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
+require_line "cjgui todo demo app: shared_support_output=demo=todo;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true"
 require_line "cjgui todo demo app: owner_local_write_readback=true"
 
 if grep -E 'println\("cjgui todo demo app: (runtime_state_write|renderer_state_write|visibility_published|public_c_abi_added)=' "$DEMO_SRC" >/dev/null 2>&1; then
@@ -171,6 +193,8 @@ echo "todo_non_bool_public_api_consumed=true"
 echo "todo_public_api_name=cjguiExperimentalBuildTodoDemoOutput"
 echo "todo_owner_local_write_readback=true"
 echo "todo_state_write_scope=TodoList.items,nextId"
+echo "todo_shared_support_imported=true"
+echo "todo_shared_support_name=CjguiExperimentalDemoInteractionTrace"
 echo "todo_runtime_state_write=false"
 echo "todo_renderer_state_write=false"
 echo "todo_public_api_available=true"

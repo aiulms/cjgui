@@ -1,6 +1,7 @@
 package cjgui_todo_demo
 
-import cjgui.*
+import cjgui.{CjguiExperimentalTodoDemoOutput, cjguiExperimentalBuildTodoDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -81,14 +82,21 @@ class TodoList {
 main(): Int64 {
     let todos = TodoList()
     let before = todos.summary()
+    let sharedTrace = CjguiExperimentalDemoInteractionTrace("todo", before)
     let createdId = todos.add("Write first CJGUI todo")
     let afterAdd = todos.summary()
+    sharedTrace.recordAction("todo.add", afterAdd)
     let completed = todos.complete(createdId)
     let afterComplete = todos.summary()
+    sharedTrace.recordAction("todo.complete", afterComplete)
     let apiOutput = cjguiExperimentalBuildTodoDemoOutput(todos.firstTitle(), todos.firstDone())
     let readbackOk = before == "items=0;first=<none>;first_done=false" &&
         afterAdd == "items=1;first=Write first CJGUI todo;first_done=false" &&
         afterComplete == "items=1;first=Write first CJGUI todo;first_done=true" &&
+        sharedTrace.before() == before &&
+        sharedTrace.after() == afterComplete &&
+        sharedTrace.actions() == "todo.add,todo.complete" &&
+        sharedTrace.writes() == 2 &&
         todos.firstApiSummary() == "items=1;first=Write first CJGUI todo;first_done=false" &&
         apiOutput.demoName == "todo" &&
         apiOutput.itemCount == 1 &&
@@ -111,6 +119,8 @@ main(): Int64 {
     println("cjgui todo demo app: public_api_consumed=true")
     println("cjgui todo demo app: public_api_name=cjguiExperimentalBuildTodoDemoOutput")
     println("cjgui todo demo app: public_api_output=${apiOutput.summary}")
+    println("cjgui todo demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
+    println("cjgui todo demo app: shared_support_output=${sharedTrace.summary()}")
     println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
 
     if (readbackOk) {

@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_settings_demo_api.cj"
+SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 TMP_DIR="${CJGUI_SETTINGS_DEMO_TMPDIR:-/private/tmp/cjgui-settings-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -16,7 +17,7 @@ PROBE_PACKAGE_DIR="$TMP_DIR/package"
 PROBE_API_PACKAGE_DIR="$TMP_DIR/cjgui-api"
 OUTPUT_LOG="$TMP_DIR/settings-demo-output.log"
 
-mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src"
+mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src/demo_support"
 : > "$OUTPUT_LOG"
 
 cat > "$PS_SHIM_DIR/ps" <<'EOF'
@@ -67,11 +68,19 @@ if [[ ! -f "$API_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$SUPPORT_SRC" ]]; then
+  echo "cjgui settings demo app verification: missing shared support source $SUPPORT_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalSettingsDemoOutput" "$API_SRC"
 require_source_line "public func cjguiExperimentalBuildSettingsDemoOutput" "$API_SRC"
 require_source_line "public let summary: String" "$API_SRC"
+require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
+require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "package cjgui_settings_demo" "$DEMO_SRC"
-require_source_line "import cjgui.*" "$DEMO_SRC"
+require_source_line "import cjgui.{CjguiExperimentalSettingsDemoOutput, cjguiExperimentalBuildSettingsDemoOutput}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}" "$DEMO_SRC"
 require_source_line "class SettingsPanelState" "$DEMO_SRC"
 require_source_line "var selectedTheme: String" "$DEMO_SRC"
 require_source_line "var usernameValue: String" "$DEMO_SRC"
@@ -80,6 +89,8 @@ require_source_line "var autoSaveEnabled: Bool" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalSettingsDemoOutput" "$DEMO_SRC"
 require_source_line "cjguiExperimentalBuildSettingsDemoOutput" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
+require_source_line "sharedTrace.recordAction" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: status_before=scaffolded" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: status_after=runnable" "$DEMO_SRC"
 require_source_line "cjgui settings demo app: state_before=" "$DEMO_SRC"
@@ -142,6 +153,7 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_SETTINGS_API_TOML
 CJGUI_SETTINGS_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_settings_demo_api.cj"
+cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -166,6 +178,8 @@ require_output_line "cjgui settings demo app: summary_after=demo=settings;layout
 require_output_line "cjgui settings demo app: public_api_consumed=true"
 require_output_line "cjgui settings demo app: public_api_name=cjguiExperimentalBuildSettingsDemoOutput"
 require_output_line "cjgui settings demo app: public_api_output=layout=sectioned_form;theme=dark;autosave=true;selected=dark;username=owner-updated;focus=theme_select"
+require_output_line "cjgui settings demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
+require_output_line "cjgui settings demo app: shared_support_output=demo=settings;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: public_api_available=true"
 
 echo "cjgui_settings_demo_app_compiled=true"
@@ -179,6 +193,8 @@ echo "settings_public_api_name=cjguiExperimentalBuildSettingsDemoOutput"
 echo "settings_public_api_return=CjguiExperimentalSettingsDemoOutput"
 echo "settings_owner_local_write_readback=true"
 echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,focusTarget"
+echo "settings_shared_support_imported=true"
+echo "settings_shared_support_name=CjguiExperimentalDemoInteractionTrace"
 echo "settings_runtime_state_write=false"
 echo "settings_renderer_state_write=false"
 echo "settings_public_c_abi_added=false"

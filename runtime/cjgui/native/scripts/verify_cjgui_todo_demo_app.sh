@@ -13,6 +13,7 @@ API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_todo_demo_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
+COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 TMP_DIR="${CJGUI_TODO_DEMO_TMPDIR:-/private/tmp/cjgui-todo-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -73,6 +74,11 @@ if [[ ! -f "$UI_STATE_CORE_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$COMPONENT_ACTION_SESSION_SRC" ]]; then
+  echo "cjgui todo demo app verification: missing shared component action session source $COMPONENT_ACTION_SESSION_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func recordAction" "$SUPPORT_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared interaction trace support declaration" >&2
@@ -95,14 +101,21 @@ if ! grep -F "public class CjguiExperimentalDemoUiStateCore" "$UI_STATE_CORE_SRC
   exit 4
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoComponentActionSession" "$COMPONENT_ACTION_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func recordComponentAction" "$COMPONENT_ACTION_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared component action session declaration" >&2
+  exit 4
+fi
+
 if ! grep -F "main(): Int64" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing demo main" >&2
   exit 3
 fi
 
-if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "CjguiExperimentalDemoUiStateCore" "$DEMO_SRC" >/dev/null 2>&1 || \
+if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "buildSharedOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "sharedUiState()" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared output builder consumption" >&2
   exit 4
@@ -114,9 +127,9 @@ if grep -F "cjguiExperimentalBuildTodoDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 ||
   exit 4
 fi
 
-if ! grep -F "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "sharedTrace.recordAction" "$DEMO_SRC" >/dev/null 2>&1; then
-  echo "cjgui todo demo app verification: missing shared interaction trace consumption" >&2
+if ! grep -F "componentSession.recordComponentAction" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "sharedComponentActions()" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared component action session consumption" >&2
   exit 4
 fi
 
@@ -180,6 +193,7 @@ cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
+cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -197,11 +211,13 @@ require_line "cjgui todo demo app: summary_before=items=0;first=<none>;first_don
 require_line "cjgui todo demo app: summary_after_add=items=1;first=Write first CJGUI todo;first_done=false"
 require_line "cjgui todo demo app: summary_after_complete=items=1;first=Write first CJGUI todo;first_done=true"
 require_line "cjgui todo demo app: public_api_consumed=true"
-require_line "cjgui todo demo app: public_api_name=CjguiExperimentalDemoOutputBuilder"
+require_line "cjgui todo demo app: public_api_name=CjguiExperimentalDemoComponentActionSession"
 require_line "cjgui todo demo app: public_api_output=demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true"
-require_line "cjgui todo demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
+require_line "cjgui todo demo app: shared_support=CjguiExperimentalDemoComponentActionSession"
 require_line "cjgui todo demo app: shared_support_output=demo=todo;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true"
 require_line "cjgui todo demo app: shared_state_core=layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item"
+require_line "cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
+require_line "cjgui todo demo app: shared_component_action_output=demo=todo;component_actions=todo_input:todo.add,todo_item:todo.complete;ui=layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item"
 require_line "cjgui todo demo app: owner_local_write_readback=true"
 
 if grep -E 'println\("cjgui todo demo app: (runtime_state_write|renderer_state_write|visibility_published|public_c_abi_added)=' "$DEMO_SRC" >/dev/null 2>&1; then
@@ -216,15 +232,17 @@ echo "todo_demo_progress_after=runnable"
 echo "todo_main_entry_executed=true"
 echo "todo_focused_verifier=verify_cjgui_todo_demo_app"
 echo "todo_non_bool_public_api_consumed=true"
-echo "todo_public_api_name=CjguiExperimentalDemoOutputBuilder"
+echo "todo_public_api_name=CjguiExperimentalDemoComponentActionSession"
 echo "todo_public_api_return=CjguiExperimentalDemoOutput"
 echo "todo_legacy_output_api_direct_consumption=false"
 echo "todo_owner_local_write_readback=true"
-echo "todo_state_write_scope=TodoList.items,nextId,uiState"
+echo "todo_state_write_scope=TodoList.items,nextId,componentSession"
 echo "todo_shared_support_imported=true"
-echo "todo_shared_support_name=CjguiExperimentalDemoInteractionTrace"
+echo "todo_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "todo_shared_state_core_imported=true"
 echo "todo_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
+echo "todo_shared_component_action_session_imported=true"
+echo "todo_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
 echo "todo_runtime_state_write=false"
 echo "todo_renderer_state_write=false"
 echo "todo_public_api_available=true"

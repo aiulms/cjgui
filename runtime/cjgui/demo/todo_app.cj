@@ -1,6 +1,6 @@
 package cjgui_todo_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -22,19 +22,27 @@ class TodoDemoItem {
 class TodoList {
     private var nextId: Int64 = 1
     private var items = ArrayList<TodoDemoItem>()
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
 
     init() {
-        this.uiState = CjguiExperimentalDemoUiStateCore("todo_list", "neutral_list", "", "todo_input")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "todo",
+            "items=0;first=<none>;first_done=false",
+            "todo_list",
+            "neutral_list",
+            "",
+            "todo_input"
+        )
     }
 
     func add(title: String): Int64 {
         let id = nextId
         nextId += 1
         items.add(TodoDemoItem(id, title, false))
-        uiState.typeInput(title)
-        uiState.moveFocus("todo_first_item")
-        uiState.applyStyle("active_list")
+        componentSession.typeInput(title)
+        componentSession.moveFocus("todo_first_item")
+        componentSession.applyStyle("active_list")
+        componentSession.recordComponentAction("todo_input", "todo.add", summary())
         return id
     }
 
@@ -42,8 +50,9 @@ class TodoList {
         for (item in items) {
             if (item.id == id) {
                 item.isDone = true
-                uiState.moveFocus("todo_first_item")
-                uiState.applyStyle("completed_accent")
+                componentSession.moveFocus("todo_first_item")
+                componentSession.applyStyle("completed_accent")
+                componentSession.recordComponentAction("todo_item", "todo.complete", summary())
                 return true
             }
         }
@@ -76,33 +85,63 @@ class TodoList {
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
 main(): Int64 {
     let todos = TodoList()
     let before = todos.summary()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("todo", before)
     let createdId = todos.add("Write first CJGUI todo")
     let afterAdd = todos.summary()
-    sharedTrace.recordAction("todo.add", afterAdd)
     let completed = todos.complete(createdId)
     let afterComplete = todos.summary()
-    sharedTrace.recordAction("todo.complete", afterComplete)
     let stateReadbackOk = before == "items=0;first=<none>;first_done=false" &&
         afterAdd == "items=1;first=Write first CJGUI todo;first_done=false" &&
         afterComplete == "items=1;first=Write first CJGUI todo;first_done=true" &&
-        sharedTrace.before() == before &&
-        sharedTrace.after() == afterComplete &&
-        sharedTrace.actions() == "todo.add,todo.complete" &&
-        sharedTrace.writes() == 2 &&
+        todos.sharedBefore() == before &&
+        todos.sharedAfter() == afterComplete &&
+        todos.sharedActions() == "todo.add,todo.complete" &&
+        todos.sharedWrites() == 2 &&
+        todos.sharedComponentActions() == "todo_input:todo.add,todo_item:todo.complete" &&
         todos.count() == 1 &&
         todos.firstTitle() == "Write first CJGUI todo" &&
         todos.firstDone() &&
         todos.sharedUiState() == "layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item" &&
         completed
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, afterComplete, stateReadbackOk)
+    let apiOutput = todos.buildSharedOutput(afterComplete, stateReadbackOk)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "todo" &&
         apiOutput.beforeState == before &&
@@ -121,11 +160,13 @@ main(): Int64 {
     println("cjgui todo demo app: summary_after_add=${afterAdd}")
     println("cjgui todo demo app: summary_after_complete=${afterComplete}")
     println("cjgui todo demo app: public_api_consumed=true")
-    println("cjgui todo demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui todo demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui todo demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui todo demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui todo demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui todo demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui todo demo app: shared_support_output=${todos.sharedSupportOutput()}")
     println("cjgui todo demo app: shared_state_core=${todos.sharedUiState()}")
+    println("cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui todo demo app: shared_component_action_output=${todos.sharedComponentActionSummary()}")
     println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
 
     if (readbackOk) {

@@ -1,6 +1,6 @@
 package cjgui_settings_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -8,7 +8,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimen
 
 class SettingsPanelState {
     let demoName: String
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
     let controlsSummary: String
     var selectedTheme: String
     var usernameValue: String
@@ -16,7 +16,14 @@ class SettingsPanelState {
 
     init() {
         this.demoName = "settings"
-        this.uiState = CjguiExperimentalDemoUiStateCore("sectioned_form", "theme_light", "owner", "username_field")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "settings",
+            "autosave=false;theme=light;username=owner;focus=username_field",
+            "sectioned_form",
+            "theme_light",
+            "owner",
+            "username_field"
+        )
         this.controlsSummary = "toggle:auto_save,select:theme,text:username"
         this.selectedTheme = "light"
         this.usernameValue = "owner"
@@ -25,58 +32,90 @@ class SettingsPanelState {
 
     func toggleAutoSave() {
         autoSaveEnabled = !autoSaveEnabled
+        componentSession.recordComponentAction("auto_save_toggle", "settings.toggle_auto_save", businessState())
     }
 
     func selectTheme(theme: String) {
         selectedTheme = theme
-        uiState.applyStyle("theme_${theme}")
+        componentSession.applyStyle("theme_${theme}")
+        componentSession.recordComponentAction("theme_select", "settings.select_theme", businessState())
     }
 
     func updateUsername(username: String) {
         usernameValue = username
-        uiState.typeInput(username)
+        componentSession.typeInput(username)
+        componentSession.recordComponentAction("username_field", "settings.update_username", businessState())
     }
 
     func moveFocus(target: String) {
-        uiState.moveFocus(target)
+        componentSession.moveFocus(target)
+        componentSession.recordComponentAction(target, "settings.move_focus", businessState())
     }
 
     func businessState(): String {
-        return "autosave=${autoSaveEnabled};theme=${selectedTheme};username=${usernameValue};focus=${uiState.focus()}"
+        return "autosave=${autoSaveEnabled};theme=${selectedTheme};username=${usernameValue};focus=${componentSession.focus()}"
     }
 
     func summary(): String {
-        return "demo=${demoName};layout=${uiState.layout()};controls=${controlsSummary};${businessState()}"
+        return "demo=${demoName};layout=${componentSession.layout()};controls=${controlsSummary};${businessState()}"
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
 main(): Int64 {
     let panel = SettingsPanelState()
     let before = panel.businessState()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("settings", before)
     panel.toggleAutoSave()
-    sharedTrace.recordAction("settings.toggle_auto_save", panel.businessState())
     panel.selectTheme("dark")
-    sharedTrace.recordAction("settings.select_theme", panel.businessState())
     panel.updateUsername("owner-updated")
-    sharedTrace.recordAction("settings.update_username", panel.businessState())
     panel.moveFocus("theme_select")
     let after = panel.businessState()
-    sharedTrace.recordAction("settings.move_focus", after)
     let summary = panel.summary()
     let stateReadbackOk = before == "autosave=false;theme=light;username=owner;focus=username_field" &&
         after == "autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
-        sharedTrace.before() == before &&
-        sharedTrace.after() == after &&
-        sharedTrace.actions() == "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus" &&
-        sharedTrace.writes() == 4 &&
+        panel.sharedBefore() == before &&
+        panel.sharedAfter() == after &&
+        panel.sharedActions() == "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus" &&
+        panel.sharedWrites() == 4 &&
+        panel.sharedComponentActions() == "auto_save_toggle:settings.toggle_auto_save,theme_select:settings.select_theme,username_field:settings.update_username,theme_select:settings.move_focus" &&
         panel.sharedUiState() == "layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select" &&
         summary == "demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
+    let apiOutput = panel.buildSharedOutput(summary, stateReadbackOk)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "settings" &&
         apiOutput.beforeState == before &&
@@ -100,11 +139,13 @@ main(): Int64 {
     println("cjgui settings demo app: state_readback=${readbackOk}")
     println("cjgui settings demo app: summary_after=${summary}")
     println("cjgui settings demo app: public_api_consumed=true")
-    println("cjgui settings demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui settings demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui settings demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui settings demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui settings demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui settings demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui settings demo app: shared_support_output=${panel.sharedSupportOutput()}")
     println("cjgui settings demo app: shared_state_core=${panel.sharedUiState()}")
+    println("cjgui settings demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui settings demo app: shared_component_action_output=${panel.sharedComponentActionSummary()}")
     println("cjgui settings demo app: public_api_available=true")
 
     if (readbackOk) {

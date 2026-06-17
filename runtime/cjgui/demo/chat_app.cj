@@ -1,6 +1,6 @@
 package cjgui_chat_demo
 
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder, CjguiExperimentalDemoUiStateCore}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -19,46 +19,61 @@ class ChatMessage {
 
 class ChatThreadState {
     let demoName: String
-    let uiState: CjguiExperimentalDemoUiStateCore
+    let componentSession: CjguiExperimentalDemoComponentActionSession
     private var messages = ArrayList<ChatMessage>()
     var lastSender: String
     var lastText: String
 
     init() {
         this.demoName = "chat"
-        this.uiState = CjguiExperimentalDemoUiStateCore("threaded_chat", "chat_thread", "", "composer")
+        this.componentSession = CjguiExperimentalDemoComponentActionSession(
+            "chat",
+            "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer",
+            "threaded_chat",
+            "chat_thread",
+            "",
+            "composer"
+        )
         this.lastSender = "assistant"
         this.lastText = "Welcome to CJGUI"
         messages.add(ChatMessage(lastSender, lastText))
     }
 
     func updateComposer(text: String) {
-        uiState.typeInput(text)
-        uiState.moveFocus("composer")
+        componentSession.typeInput(text)
+        componentSession.moveFocus("composer")
+        componentSession.recordComponentAction("composer", "chat.type_message", businessState())
     }
 
-    func appendMessage(sender: String, text: String) {
+    func appendMessage(sender: String, text: String, action: String) {
         messages.add(ChatMessage(sender, text))
         lastSender = sender
         lastText = text
         if (sender == "assistant") {
-            uiState.applyStyle("assistant_reply")
+            componentSession.applyStyle("assistant_reply")
         } else {
-            uiState.applyStyle("owner_message")
+            componentSession.applyStyle("owner_message")
         }
+        componentSession.recordComponentAction("message_list", action, businessState())
     }
 
     func sendComposer(sender: String): Bool {
-        if (uiState.textInput() == "") {
+        if (componentSession.textInput() == "") {
             return false
         }
-        appendMessage(sender, uiState.textInput())
-        uiState.typeInput("")
+        let message = componentSession.textInput()
+        messages.add(ChatMessage(sender, message))
+        lastSender = sender
+        lastText = message
+        componentSession.applyStyle("owner_message")
+        componentSession.typeInput("")
+        componentSession.recordComponentAction("send_button", "chat.send_message", businessState())
         return true
     }
 
     func moveFocus(target: String) {
-        uiState.moveFocus(target)
+        componentSession.moveFocus(target)
+        componentSession.recordComponentAction(target, "chat.move_focus", businessState())
     }
 
     func messageCount(): Int64 {
@@ -66,43 +81,71 @@ class ChatThreadState {
     }
 
     func businessState(): String {
-        return "messages=${messages.size};last=${lastSender}:${lastText};composer=${uiState.textInput()};focus=${uiState.focus()}"
+        return "messages=${messages.size};last=${lastSender}:${lastText};composer=${componentSession.textInput()};focus=${componentSession.focus()}"
     }
 
     func summary(): String {
-        return "demo=${demoName};layout=${uiState.layout()};${businessState()}"
+        return "demo=${demoName};layout=${componentSession.layout()};${businessState()}"
     }
 
     func sharedUiState(): String {
-        return uiState.summary()
+        return componentSession.uiStateSummary()
+    }
+
+    func sharedSupportOutput(): String {
+        return componentSession.traceSummary()
+    }
+
+    func sharedComponentActions(): String {
+        return componentSession.componentActions()
+    }
+
+    func sharedComponentActionSummary(): String {
+        return componentSession.componentActionSummary()
+    }
+
+    func sharedActions(): String {
+        return componentSession.actions()
+    }
+
+    func sharedWrites(): Int64 {
+        return componentSession.writes()
+    }
+
+    func sharedBefore(): String {
+        return componentSession.before()
+    }
+
+    func sharedAfter(): String {
+        return componentSession.after()
+    }
+
+    func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
+        return componentSession.buildOutput(domainSummary, readbackOk)
     }
 }
 
 main(): Int64 {
     let thread = ChatThreadState()
     let before = thread.businessState()
-    let sharedTrace = CjguiExperimentalDemoInteractionTrace("chat", before)
     thread.updateComposer("Ship Chat demo")
-    sharedTrace.recordAction("chat.type_message", thread.businessState())
     let sent = thread.sendComposer("owner")
-    sharedTrace.recordAction("chat.send_message", thread.businessState())
-    thread.appendMessage("assistant", "Chat demo received")
-    sharedTrace.recordAction("chat.append_reply", thread.businessState())
+    thread.appendMessage("assistant", "Chat demo received", "chat.append_reply")
     thread.moveFocus("message_list")
     let after = thread.businessState()
-    sharedTrace.recordAction("chat.move_focus", after)
     let summary = thread.summary()
     let stateReadbackOk = before == "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer" &&
         after == "messages=3;last=assistant:Chat demo received;composer=;focus=message_list" &&
-        sharedTrace.before() == before &&
-        sharedTrace.after() == after &&
-        sharedTrace.actions() == "chat.type_message,chat.send_message,chat.append_reply,chat.move_focus" &&
-        sharedTrace.writes() == 4 &&
+        thread.sharedBefore() == before &&
+        thread.sharedAfter() == after &&
+        thread.sharedActions() == "chat.type_message,chat.send_message,chat.append_reply,chat.move_focus" &&
+        thread.sharedWrites() == 4 &&
+        thread.sharedComponentActions() == "composer:chat.type_message,send_button:chat.send_message,message_list:chat.append_reply,message_list:chat.move_focus" &&
         thread.sharedUiState() == "layout=threaded_chat;style=assistant_reply;input=;focus=message_list" &&
         sent &&
         thread.messageCount() == 3 &&
         summary == "demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
-    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
+    let apiOutput = thread.buildSharedOutput(summary, stateReadbackOk)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "chat" &&
         apiOutput.beforeState == before &&
@@ -122,11 +165,13 @@ main(): Int64 {
     println("cjgui chat demo app: state_after=${after}")
     println("cjgui chat demo app: state_readback=${readbackOk}")
     println("cjgui chat demo app: public_api_consumed=true")
-    println("cjgui chat demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
+    println("cjgui chat demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
     println("cjgui chat demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui chat demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
-    println("cjgui chat demo app: shared_support_output=${sharedTrace.summary()}")
+    println("cjgui chat demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui chat demo app: shared_support_output=${thread.sharedSupportOutput()}")
     println("cjgui chat demo app: shared_state_core=${thread.sharedUiState()}")
+    println("cjgui chat demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
+    println("cjgui chat demo app: shared_component_action_output=${thread.sharedComponentActionSummary()}")
 
     if (readbackOk) {
         return 0

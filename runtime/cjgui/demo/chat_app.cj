@@ -1,7 +1,6 @@
 package cjgui_chat_demo
 
-import cjgui.{CjguiExperimentalChatDemoOutput, cjguiExperimentalBuildChatDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -69,15 +68,8 @@ class ChatThreadState {
         return "messages=${messages.size};last=${lastSender}:${lastText};composer=${composerText};focus=${focusTarget}"
     }
 
-    func buildApiOutput(): CjguiExperimentalChatDemoOutput {
-        return cjguiExperimentalBuildChatDemoOutput(
-            messages.size,
-            lastSender,
-            lastText,
-            composerText,
-            focusTarget,
-            layoutKind
-        )
+    func summary(): String {
+        return "demo=${demoName};layout=${layoutKind};${businessState()}"
     }
 }
 
@@ -94,8 +86,8 @@ main(): Int64 {
     thread.moveFocus("message_list")
     let after = thread.businessState()
     sharedTrace.recordAction("chat.move_focus", after)
-    let apiOutput = thread.buildApiOutput()
-    let readbackOk = before == "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer" &&
+    let summary = thread.summary()
+    let stateReadbackOk = before == "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer" &&
         after == "messages=3;last=assistant:Chat demo received;composer=;focus=message_list" &&
         sharedTrace.before() == before &&
         sharedTrace.after() == after &&
@@ -103,14 +95,17 @@ main(): Int64 {
         sharedTrace.writes() == 4 &&
         sent &&
         thread.messageCount() == 3 &&
+        summary == "demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
+    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
+    let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "chat" &&
-        apiOutput.messageCount == 3 &&
-        apiOutput.lastSender == "assistant" &&
-        apiOutput.lastText == "Chat demo received" &&
-        apiOutput.composerText == "" &&
-        apiOutput.focusTarget == "message_list" &&
-        apiOutput.layoutKind == "threaded_chat" &&
-        apiOutput.summary == "messages=3;last=assistant:Chat demo received;composer=;focus=message_list;layout=threaded_chat"
+        apiOutput.beforeState == before &&
+        apiOutput.afterState == after &&
+        apiOutput.actionTrace == "chat.type_message,chat.send_message,chat.append_reply,chat.move_focus" &&
+        apiOutput.writeCount == 4 &&
+        apiOutput.domainSummary == summary &&
+        apiOutput.readbackOk &&
+        apiOutput.summary == "demo=chat;readback=true;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;summary=demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
 
     println("cjgui chat demo app: demo=chat")
     println("cjgui chat demo app: status_before=not_started")
@@ -121,7 +116,7 @@ main(): Int64 {
     println("cjgui chat demo app: state_after=${after}")
     println("cjgui chat demo app: state_readback=${readbackOk}")
     println("cjgui chat demo app: public_api_consumed=true")
-    println("cjgui chat demo app: public_api_name=cjguiExperimentalBuildChatDemoOutput")
+    println("cjgui chat demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
     println("cjgui chat demo app: public_api_output=${apiOutput.summary}")
     println("cjgui chat demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
     println("cjgui chat demo app: shared_support_output=${sharedTrace.summary()}")

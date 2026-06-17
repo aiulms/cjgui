@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 #
 # Focused verification for the independent CJGUI Chat demo app.
-# Scope: compile and run runtime/cjgui/demo/chat_app.cj against a temporary package built from the production Chat demo API source.
+# Scope: compile and run runtime/cjgui/demo/chat_app.cj against temporary packages built from shared demo support sources.
 # Stop-line: no runtime_state / renderer_state write, no native bridge call, no public C ABI expansion.
 set -euo pipefail
 
@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_chat_demo_api.cj"
 SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 TMP_DIR="${CJGUI_CHAT_DEMO_TMPDIR:-/private/tmp/cjgui-chat-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -63,32 +64,30 @@ if [[ ! -f "$DEMO_SRC" ]]; then
   exit 2
 fi
 
-if [[ ! -f "$API_SRC" ]]; then
-  echo "cjgui chat demo app verification: missing API source $API_SRC" >&2
-  exit 2
-fi
-
 if [[ ! -f "$SUPPORT_SRC" ]]; then
   echo "cjgui chat demo app verification: missing shared support source $SUPPORT_SRC" >&2
   exit 2
 fi
 
-require_source_line "public class CjguiExperimentalChatDemoOutput" "$API_SRC"
-require_source_line "public func cjguiExperimentalBuildChatDemoOutput" "$API_SRC"
-require_source_line "public let summary: String" "$API_SRC"
+if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
+  echo "cjgui chat demo app verification: missing shared output support source $OUTPUT_SUPPORT_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
 require_source_line "package cjgui_chat_demo" "$DEMO_SRC"
-require_source_line "import cjgui.{CjguiExperimentalChatDemoOutput, cjguiExperimentalBuildChatDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
 require_source_line "class ChatThreadState" "$DEMO_SRC"
 require_source_line "private var messages" "$DEMO_SRC"
 require_source_line "var composerText: String" "$DEMO_SRC"
 require_source_line "var focusTarget: String" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
-require_source_line "CjguiExperimentalChatDemoOutput" "$DEMO_SRC"
-require_source_line "cjguiExperimentalBuildChatDemoOutput" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
 require_source_line "sharedTrace.recordAction" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: status_before=not_started" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: status_after=runnable" "$DEMO_SRC"
@@ -96,8 +95,14 @@ require_source_line "cjgui chat demo app: state_before=" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: state_after=" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: state_readback=" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: public_api_consumed=true" "$DEMO_SRC"
-require_source_line "cjgui chat demo app: public_api_name=cjguiExperimentalBuildChatDemoOutput" "$DEMO_SRC"
+require_source_line "cjgui chat demo app: public_api_name=CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
 require_source_line "cjgui chat demo app: public_api_output=" "$DEMO_SRC"
+
+if grep -F "cjguiExperimentalBuildChatDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "CjguiExperimentalChatDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui chat demo app verification: demo must not directly consume legacy Chat output API" >&2
+  exit 10
+fi
 
 if grep -E 'foreign[[:space:]]+func|cjgui_native_bridge_|public[[:space:]]+(func|class|struct|enum|let|var)' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui chat demo app verification: forbidden runtime/native/public token in chat demo source" >&2
@@ -151,8 +156,8 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_CHAT_API_TOML
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_CHAT_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
-cp "$API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_chat_demo_api.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -171,8 +176,8 @@ require_output_line "cjgui chat demo app: state_before=messages=1;last=assistant
 require_output_line "cjgui chat demo app: state_after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
 require_output_line "cjgui chat demo app: state_readback=true"
 require_output_line "cjgui chat demo app: public_api_consumed=true"
-require_output_line "cjgui chat demo app: public_api_name=cjguiExperimentalBuildChatDemoOutput"
-require_output_line "cjgui chat demo app: public_api_output=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;layout=threaded_chat"
+require_output_line "cjgui chat demo app: public_api_name=CjguiExperimentalDemoOutputBuilder"
+require_output_line "cjgui chat demo app: public_api_output=demo=chat;readback=true;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;summary=demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
 require_output_line "cjgui chat demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
 require_output_line "cjgui chat demo app: shared_support_output=demo=chat;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
 
@@ -183,8 +188,9 @@ echo "chat_demo_progress_after=runnable"
 echo "chat_demo_has_main=true"
 echo "chat_demo_deterministic_business_output=true"
 echo "chat_non_bool_public_api_consumed=true"
-echo "chat_public_api_name=cjguiExperimentalBuildChatDemoOutput"
-echo "chat_public_api_return=CjguiExperimentalChatDemoOutput"
+echo "chat_public_api_name=CjguiExperimentalDemoOutputBuilder"
+echo "chat_public_api_return=CjguiExperimentalDemoOutput"
+echo "chat_legacy_output_api_direct_consumption=false"
 echo "chat_owner_local_write_readback=true"
 echo "chat_state_write_scope=ChatThreadState.messages,composerText,focusTarget,lastSender,lastText"
 echo "chat_shared_support_imported=true"

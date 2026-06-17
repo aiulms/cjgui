@@ -1,6 +1,6 @@
 package cjgui_file_browser_demo
 
-import cjgui.*
+import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -56,9 +56,13 @@ class FileBrowserState {
         focusedPane = "tree_filter"
     }
 
-    func selectEntry(path: String, kind: String, title: String, preview: String) {
+    func selectEntry(path: String, kind: String) {
         selectedPath = path
         selectedKind = kind
+        focusedPane = "tree"
+    }
+
+    func refreshDetail(title: String, preview: String) {
         detailTitle = title
         detailPreview = preview
         focusedPane = "detail_pane"
@@ -76,42 +80,45 @@ class FileBrowserState {
         return "items=${entries.size};expanded=${expandedPath};selected=${selectedPath}:${selectedKind};detail=${detailTitle};filter=${filterText};focus=${focusedPane}"
     }
 
-    func buildApiOutput(): CjguiExperimentalFileBrowserDemoOutput {
-        return cjguiExperimentalBuildFileBrowserDemoOutput(
-            entries.size,
-            selectedPath,
-            selectedKind,
-            detailTitle,
-            filterText,
-            focusedPane,
-            expandedPath,
-            layoutKind
-        )
+    func summary(): String {
+        return "demo=${demoName};layout=${layoutKind};${businessState()}"
     }
 }
 
 main(): Int64 {
     let browser = FileBrowserState()
     let before = browser.businessState()
+    let sharedTrace = CjguiExperimentalDemoInteractionTrace("file_browser", before)
     browser.expand("/workspace/src")
+    sharedTrace.recordAction("file_browser.expand_folder", browser.businessState())
     browser.applyFilter("main")
-    browser.selectEntry("/workspace/src/main.cj", "file", "main.cj", "package cjgui_file_browser_demo")
+    sharedTrace.recordAction("file_browser.filter_entries", browser.businessState())
+    browser.selectEntry("/workspace/src/main.cj", "file")
+    sharedTrace.recordAction("file_browser.select_file", browser.businessState())
+    browser.refreshDetail("main.cj", "package cjgui_file_browser_demo")
+    sharedTrace.recordAction("file_browser.refresh_detail", browser.businessState())
     browser.moveFocus("detail_pane")
     let after = browser.businessState()
-    let apiOutput = browser.buildApiOutput()
-    let readbackOk = before == "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree" &&
+    sharedTrace.recordAction("file_browser.move_focus", after)
+    let summary = browser.summary()
+    let stateReadbackOk = before == "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree" &&
         after == "items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane" &&
         browser.itemCount() == 3 &&
+        sharedTrace.before() == before &&
+        sharedTrace.after() == after &&
+        sharedTrace.actions() == "file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus" &&
+        sharedTrace.writes() == 5 &&
+        summary == "demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
+    let apiOutput = CjguiExperimentalDemoOutputBuilder().buildFromTrace(sharedTrace, summary, stateReadbackOk)
+    let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "file_browser" &&
-        apiOutput.itemCount == 3 &&
-        apiOutput.selectedPath == "/workspace/src/main.cj" &&
-        apiOutput.selectedKind == "file" &&
-        apiOutput.detailTitle == "main.cj" &&
-        apiOutput.filterText == "main" &&
-        apiOutput.focusedPane == "detail_pane" &&
-        apiOutput.expandedPath == "/workspace/src" &&
-        apiOutput.layoutKind == "tree_detail_split" &&
-        apiOutput.summary == "items=3;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;expanded=/workspace/src;layout=tree_detail_split"
+        apiOutput.beforeState == before &&
+        apiOutput.afterState == after &&
+        apiOutput.actionTrace == "file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus" &&
+        apiOutput.writeCount == 5 &&
+        apiOutput.domainSummary == summary &&
+        apiOutput.readbackOk &&
+        apiOutput.summary == "demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
 
     println("cjgui file browser demo app: demo=file_browser")
     println("cjgui file browser demo app: status_before=not_started")
@@ -122,8 +129,10 @@ main(): Int64 {
     println("cjgui file browser demo app: state_after=${after}")
     println("cjgui file browser demo app: state_readback=${readbackOk}")
     println("cjgui file browser demo app: public_api_consumed=true")
-    println("cjgui file browser demo app: public_api_name=cjguiExperimentalBuildFileBrowserDemoOutput")
+    println("cjgui file browser demo app: public_api_name=CjguiExperimentalDemoOutputBuilder")
     println("cjgui file browser demo app: public_api_output=${apiOutput.summary}")
+    println("cjgui file browser demo app: shared_support=CjguiExperimentalDemoInteractionTrace")
+    println("cjgui file browser demo app: shared_support_output=${sharedTrace.summary()}")
 
     if (readbackOk) {
         return 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 #
 # Focused verification for the independent CJGUI FileBrowser demo app.
-# Scope: compile and run runtime/cjgui/demo/file_browser_app.cj against a temporary package built from the production FileBrowser demo API source.
+# Scope: compile and run runtime/cjgui/demo/file_browser_app.cj against temporary packages built from shared demo support sources.
 # Stop-line: no runtime_state / renderer_state write, no native bridge call, no public C ABI expansion.
 set -euo pipefail
 
@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEMO_SRC="$ROOT_DIR/demo/file_browser_app.cj"
 API_SRC="$ROOT_DIR/src/runtime_cjgui_experimental_file_browser_demo_api.cj"
+SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 TMP_DIR="${CJGUI_FILE_BROWSER_DEMO_TMPDIR:-/private/tmp/cjgui-file-browser-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -16,7 +18,7 @@ PROBE_PACKAGE_DIR="$TMP_DIR/package"
 PROBE_API_PACKAGE_DIR="$TMP_DIR/cjgui-api"
 OUTPUT_LOG="$TMP_DIR/file-browser-demo-output.log"
 
-mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src"
+mkdir -p "$TMP_DIR" "$PS_SHIM_DIR" "$BUILD_DIR" "$PROBE_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src" "$PROBE_API_PACKAGE_DIR/src/demo_support"
 : > "$OUTPUT_LOG"
 
 cat > "$PS_SHIM_DIR/ps" <<'EOF'
@@ -62,33 +64,46 @@ if [[ ! -f "$DEMO_SRC" ]]; then
   exit 2
 fi
 
-if [[ ! -f "$API_SRC" ]]; then
-  echo "cjgui file browser demo app verification: missing API source $API_SRC" >&2
+if [[ ! -f "$SUPPORT_SRC" ]]; then
+  echo "cjgui file browser demo app verification: missing shared support source $SUPPORT_SRC" >&2
   exit 2
 fi
 
-require_source_line "public class CjguiExperimentalFileBrowserDemoOutput" "$API_SRC"
-require_source_line "public func cjguiExperimentalBuildFileBrowserDemoOutput" "$API_SRC"
-require_source_line "public let selectedPath: String" "$API_SRC"
-require_source_line "public let summary: String" "$API_SRC"
+if [[ ! -f "$OUTPUT_SUPPORT_SRC" ]]; then
+  echo "cjgui file browser demo app verification: missing shared output support source $OUTPUT_SUPPORT_SRC" >&2
+  exit 2
+fi
+
+require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
+require_source_line "public func recordAction" "$SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public class CjguiExperimentalDemoOutputBuilder" "$OUTPUT_SUPPORT_SRC"
+require_source_line "public func buildFromTrace" "$OUTPUT_SUPPORT_SRC"
 require_source_line "package cjgui_file_browser_demo" "$DEMO_SRC"
-require_source_line "import cjgui.*" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoInteractionTrace, CjguiExperimentalDemoOutputBuilder}" "$DEMO_SRC"
 require_source_line "class FileBrowserState" "$DEMO_SRC"
 require_source_line "private var entries" "$DEMO_SRC"
 require_source_line "var selectedPath: String" "$DEMO_SRC"
 require_source_line "var expandedPath: String" "$DEMO_SRC"
 require_source_line "var focusedPane: String" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
-require_source_line "CjguiExperimentalFileBrowserDemoOutput" "$DEMO_SRC"
-require_source_line "cjguiExperimentalBuildFileBrowserDemoOutput" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoInteractionTrace" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
+require_source_line "sharedTrace.recordAction" "$DEMO_SRC"
 require_source_line "cjgui file browser demo app: status_before=not_started" "$DEMO_SRC"
 require_source_line "cjgui file browser demo app: status_after=runnable" "$DEMO_SRC"
 require_source_line "cjgui file browser demo app: state_before=" "$DEMO_SRC"
 require_source_line "cjgui file browser demo app: state_after=" "$DEMO_SRC"
 require_source_line "cjgui file browser demo app: state_readback=" "$DEMO_SRC"
 require_source_line "cjgui file browser demo app: public_api_consumed=true" "$DEMO_SRC"
-require_source_line "cjgui file browser demo app: public_api_name=cjguiExperimentalBuildFileBrowserDemoOutput" "$DEMO_SRC"
+require_source_line "cjgui file browser demo app: public_api_name=CjguiExperimentalDemoOutputBuilder" "$DEMO_SRC"
 require_source_line "cjgui file browser demo app: public_api_output=" "$DEMO_SRC"
+
+if grep -F "cjguiExperimentalBuildFileBrowserDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "CjguiExperimentalFileBrowserDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui file browser demo app verification: demo must not directly consume legacy FileBrowser output API" >&2
+  exit 10
+fi
 
 if grep -E 'foreign[[:space:]]+func|cjgui_native_bridge_|public[[:space:]]+(func|class|struct|enum|let|var)' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui file browser demo app verification: forbidden runtime/native/public token in file browser demo source" >&2
@@ -142,7 +157,8 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_FILE_BROWSER_API_TOML
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_FILE_BROWSER_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
-cp "$API_SRC" "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_experimental_file_browser_demo_api.cj"
+cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
+cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -161,8 +177,10 @@ require_output_line "cjgui file browser demo app: state_before=items=3;expanded=
 require_output_line "cjgui file browser demo app: state_after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
 require_output_line "cjgui file browser demo app: state_readback=true"
 require_output_line "cjgui file browser demo app: public_api_consumed=true"
-require_output_line "cjgui file browser demo app: public_api_name=cjguiExperimentalBuildFileBrowserDemoOutput"
-require_output_line "cjgui file browser demo app: public_api_output=items=3;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;expanded=/workspace/src;layout=tree_detail_split"
+require_output_line "cjgui file browser demo app: public_api_name=CjguiExperimentalDemoOutputBuilder"
+require_output_line "cjgui file browser demo app: public_api_output=demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
+require_output_line "cjgui file browser demo app: shared_support=CjguiExperimentalDemoInteractionTrace"
+require_output_line "cjgui file browser demo app: shared_support_output=demo=file_browser;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
 
 echo "cjgui_file_browser_demo_app_compiled=true"
 echo "cjgui_file_browser_demo_app_ran=true"
@@ -171,10 +189,13 @@ echo "file_browser_demo_progress_after=runnable"
 echo "file_browser_demo_has_main=true"
 echo "file_browser_demo_deterministic_business_output=true"
 echo "file_browser_non_bool_public_api_consumed=true"
-echo "file_browser_public_api_name=cjguiExperimentalBuildFileBrowserDemoOutput"
-echo "file_browser_public_api_return=CjguiExperimentalFileBrowserDemoOutput"
+echo "file_browser_public_api_name=CjguiExperimentalDemoOutputBuilder"
+echo "file_browser_public_api_return=CjguiExperimentalDemoOutput"
+echo "file_browser_legacy_output_api_direct_consumption=false"
 echo "file_browser_owner_local_write_readback=true"
 echo "file_browser_state_write_scope=FileBrowserState.entries,selectedPath,selectedKind,detailTitle,detailPreview,expandedPath,focusedPane,filterText"
+echo "file_browser_shared_support_imported=true"
+echo "file_browser_shared_support_name=CjguiExperimentalDemoInteractionTrace"
 echo "file_browser_runtime_state_write=false"
 echo "file_browser_renderer_state_write=false"
 echo "file_browser_public_c_abi_added=false"

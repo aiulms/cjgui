@@ -13,6 +13,7 @@ SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interact
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 TMP_DIR="${CJGUI_SHARED_LAYOUT_STYLE_INPUT_FOCUS_CONTRACT_TMPDIR:-/private/tmp/cjgui-shared-layout-style-input-focus-contract-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -86,6 +87,11 @@ if [[ ! -f "$COMPONENT_ACTION_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
+  echo "cjgui shared layout/style/input/focus contract app verification: missing shared commit session source $COMMIT_SESSION_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -99,10 +105,17 @@ require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "public class CjguiExperimentalDemoComponentActionSession" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
+require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_shared_layout_style_input_focus_contract_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
 require_source_line "class SharedLayoutStyleInputFocusContractState" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
+require_source_line "commitSharedState" "$DEMO_SRC"
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "sharedComponentActions()" "$DEMO_SRC"
@@ -178,10 +191,16 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_SHARED_LAYOUT_STYLE_INPUT_FOCUS
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_SHARED_LAYOUT_STYLE_INPUT_FOCUS_CONTRACT_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
+cat > "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_demo_support_root.cj" <<'CJGUI_DEMO_SUPPORT_ROOT'
+package cjgui
+
+// 中文维护注释：临时 verifier package root shim；demo_support 子包承载真实 experimental API，禁止新增 public 声明。
+CJGUI_DEMO_SUPPORT_ROOT
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -206,6 +225,11 @@ require_output_line "cjgui shared layout-style-input-focus contract app: shared_
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_state_core=layout=split_detail;style=focus_accent;input=main;focus=file_filter"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_component_action_output=demo=shared_layout_style_input_focus_contract;component_actions=layout_contract:shared_layout_style_input_focus.apply_layout,style_contract:shared_layout_style_input_focus.apply_style,text_input_contract:shared_layout_style_input_focus.type_input,focus_contract:shared_layout_style_input_focus.move_focus;ui=layout=split_detail;style=focus_accent;input=main;focus=file_filter"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_output=demo=shared_layout_style_input_focus_contract;component=focus_contract;action=shared_layout_style_input_focus.commit_contract_flow;committed=true;readback=true;writes=1;before=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=layout=split_detail;style=focus_accent;input=main;focus=file_filter;readback_state=layout=split_detail;style=focus_accent;input=main;focus=file_filter;rollback_state=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;not_published=true"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_readback=layout=split_detail;style=focus_accent;input=main;focus=file_filter"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_rollback_boundary=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_not_published=true"
 
 echo "cjgui_shared_layout_style_input_focus_contract_app_compiled=true"
 echo "cjgui_shared_layout_style_input_focus_contract_app_ran=true"
@@ -225,6 +249,11 @@ echo "shared_layout_style_input_focus_contract_shared_state_core_imported=true"
 echo "shared_layout_style_input_focus_contract_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "shared_layout_style_input_focus_contract_shared_component_action_session_imported=true"
 echo "shared_layout_style_input_focus_contract_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "shared_layout_style_input_focus_contract_shared_commit_session_imported=true"
+echo "shared_layout_style_input_focus_contract_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
+echo "shared_layout_style_input_focus_contract_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
+echo "shared_layout_style_input_focus_contract_shared_commit_readback=true"
+echo "shared_layout_style_input_focus_contract_shared_commit_not_published=true"
 echo "shared_layout_style_input_focus_contract_runtime_state_write=false"
 echo "shared_layout_style_input_focus_contract_renderer_state_write=false"
 echo "shared_layout_style_input_focus_contract_public_c_abi_added=false"

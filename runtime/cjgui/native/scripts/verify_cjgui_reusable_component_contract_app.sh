@@ -12,6 +12,7 @@ SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interact
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 TMP_DIR="${CJGUI_REUSABLE_COMPONENT_CONTRACT_TMPDIR:-/private/tmp/cjgui-reusable-component-contract-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -60,7 +61,7 @@ require_output_line() {
   fi
 }
 
-for source_file in "$DEMO_SRC" "$SUPPORT_SRC" "$OUTPUT_SUPPORT_SRC" "$UI_STATE_CORE_SRC" "$COMPONENT_ACTION_SESSION_SRC"; do
+for source_file in "$DEMO_SRC" "$SUPPORT_SRC" "$OUTPUT_SUPPORT_SRC" "$UI_STATE_CORE_SRC" "$COMPONENT_ACTION_SESSION_SRC" "$COMMIT_SESSION_SRC"; do
   if [[ ! -f "$source_file" ]]; then
     echo "cjgui reusable component contract app verification: missing source $source_file" >&2
     exit 2
@@ -80,15 +81,22 @@ require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "public class CjguiExperimentalDemoComponentActionSession" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
+require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_reusable_component_contract_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
 require_source_line "class ReusableComponentContractState" "$DEMO_SRC"
 require_source_line "var componentCount: Int64" "$DEMO_SRC"
 require_source_line "var componentKinds: String" "$DEMO_SRC"
 require_source_line "var reusedDemoCount: Int64" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
+require_source_line "commitSharedState" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "sharedComponentActions()" "$DEMO_SRC"
 require_source_line "buildSharedOutput" "$DEMO_SRC"
@@ -165,10 +173,16 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_REUSABLE_COMPONENT_CONTRACT_API
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_REUSABLE_COMPONENT_CONTRACT_API_TOML
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
+cat > "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_demo_support_root.cj" <<'CJGUI_DEMO_SUPPORT_ROOT'
+package cjgui
+
+// 中文维护注释：临时 verifier package root shim；demo_support 子包承载真实 experimental API，禁止新增 public 声明。
+CJGUI_DEMO_SUPPORT_ROOT
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -195,6 +209,11 @@ require_output_line "cjgui reusable component contract app: shared_support_outpu
 require_output_line "cjgui reusable component contract app: shared_state_core=layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
 require_output_line "cjgui reusable component contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui reusable component contract app: shared_component_action_output=demo=reusable_component_contract;component_actions=file_row:register_file_row,ai_form:register_ai_form,task_row:todo_add,file_row:file_select,ai_form:ai_accept;ui=layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
+require_output_line "cjgui reusable component contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui reusable component contract app: shared_commit_output=demo=reusable_component_contract;component=ai_form;action=reusable_component_contract.commit_reuse_flow;committed=true;readback=true;writes=1;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;readback_state=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;rollback_state=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;not_published=true"
+require_output_line "cjgui reusable component contract app: shared_commit_readback=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
+require_output_line "cjgui reusable component contract app: shared_commit_rollback_boundary=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
+require_output_line "cjgui reusable component contract app: shared_commit_not_published=true"
 
 echo "cjgui_reusable_component_contract_app_compiled=true"
 echo "cjgui_reusable_component_contract_app_ran=true"
@@ -214,6 +233,11 @@ echo "reusable_component_contract_shared_state_core_imported=true"
 echo "reusable_component_contract_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "reusable_component_contract_shared_component_action_session_imported=true"
 echo "reusable_component_contract_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "reusable_component_contract_shared_commit_session_imported=true"
+echo "reusable_component_contract_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
+echo "reusable_component_contract_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
+echo "reusable_component_contract_shared_commit_readback=true"
+echo "reusable_component_contract_shared_commit_not_published=true"
 echo "reusable_component_contract_runtime_state_write=false"
 echo "reusable_component_contract_renderer_state_write=false"
 echo "reusable_component_contract_public_c_abi_added=false"

@@ -1,6 +1,7 @@
 package cjgui_shared_layout_style_input_focus_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -9,6 +10,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 class SharedLayoutStyleInputFocusContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
 
     init() {
         this.contractName = "shared_layout_style_input_focus"
@@ -19,6 +21,10 @@ class SharedLayoutStyleInputFocusContractState {
             "neutral_list",
             "<empty>",
             "todo_input"
+        )
+        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+            "shared_layout_style_input_focus_contract",
+            "layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
         )
     }
 
@@ -101,6 +107,18 @@ class SharedLayoutStyleInputFocusContractState {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
+
+    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
+        return commitSession.commitComponentAction(componentId, action, afterState)
+    }
+
+    func commitReadback(): String {
+        return commitSession.readback()
+    }
+
+    func commitRollbackBoundary(): String {
+        return commitSession.rollbackBoundary()
+    }
 }
 
 main(): Int64 {
@@ -135,6 +153,7 @@ main(): Int64 {
         contract.sharedComponentActions() == "layout_contract:shared_layout_style_input_focus.apply_layout,style_contract:shared_layout_style_input_focus.apply_style,text_input_contract:shared_layout_style_input_focus.type_input,focus_contract:shared_layout_style_input_focus.move_focus"
     let domainSummary = contract.domainSummary(layoutBefore, styleBefore, inputBefore, focusBefore)
     let apiOutput = contract.buildSharedOutput(domainSummary, stateReadbackOk)
+    let commitResult = contract.commitSharedState("focus_contract", "shared_layout_style_input_focus.commit_contract_flow", after)
     let outputOk = stateReadbackOk &&
         apiOutput.demoName == "shared_layout_style_input_focus_contract" &&
         apiOutput.beforeState == before &&
@@ -143,7 +162,21 @@ main(): Int64 {
         apiOutput.writeCount == 4 &&
         apiOutput.domainSummary == domainSummary &&
         apiOutput.readbackOk &&
-        apiOutput.summary == "demo=shared_layout_style_input_focus_contract;readback=true;writes=4;actions=shared_layout_style_input_focus.apply_layout,shared_layout_style_input_focus.apply_style,shared_layout_style_input_focus.type_input,shared_layout_style_input_focus.move_focus;before=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=layout=split_detail;style=focus_accent;input=main;focus=file_filter;summary=contract=shared_layout_style_input_focus;layout=single_column->split_detail;style=neutral_list->focus_accent;input=<empty>->main;focus=todo_input->file_filter"
+        apiOutput.summary == "demo=shared_layout_style_input_focus_contract;readback=true;writes=4;actions=shared_layout_style_input_focus.apply_layout,shared_layout_style_input_focus.apply_style,shared_layout_style_input_focus.type_input,shared_layout_style_input_focus.move_focus;before=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=layout=split_detail;style=focus_accent;input=main;focus=file_filter;summary=contract=shared_layout_style_input_focus;layout=single_column->split_detail;style=neutral_list->focus_accent;input=<empty>->main;focus=todo_input->file_filter" &&
+        commitResult.demoName == "shared_layout_style_input_focus_contract" &&
+        commitResult.componentId == "focus_contract" &&
+        commitResult.action == "shared_layout_style_input_focus.commit_contract_flow" &&
+        commitResult.beforeState == before &&
+        commitResult.afterState == after &&
+        commitResult.readbackState == after &&
+        commitResult.rollbackState == before &&
+        commitResult.writeCount == 1 &&
+        commitResult.committed &&
+        commitResult.readbackOk &&
+        commitResult.rollbackAvailable &&
+        commitResult.notPublished &&
+        contract.commitReadback() == after &&
+        contract.commitRollbackBoundary() == before
 
     println("cjgui shared layout-style-input-focus contract app: demo=shared_layout_style_input_focus_contract")
     println("cjgui shared layout-style-input-focus contract app: status_before=not_started")
@@ -160,6 +193,11 @@ main(): Int64 {
     println("cjgui shared layout-style-input-focus contract app: shared_state_core=${contract.sharedUiState()}")
     println("cjgui shared layout-style-input-focus contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui shared layout-style-input-focus contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
+    println("cjgui shared layout-style-input-focus contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui shared layout-style-input-focus contract app: shared_commit_output=${commitResult.summary}")
+    println("cjgui shared layout-style-input-focus contract app: shared_commit_readback=${contract.commitReadback()}")
+    println("cjgui shared layout-style-input-focus contract app: shared_commit_rollback_boundary=${contract.commitRollbackBoundary()}")
+    println("cjgui shared layout-style-input-focus contract app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (outputOk) {
         return 0

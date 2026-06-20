@@ -1,6 +1,7 @@
 package cjgui_ai_generated_ui_shared_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI shared contract demo app，不属于 runtime_renderer_stage* owner 链。
@@ -11,6 +12,7 @@ class AiGeneratedUiSharedContractState {
     let contractName: String
     let layoutKind: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
     private var componentIds = ArrayList<String>()
     var accepted: Bool
     var acceptedScreen: String
@@ -27,6 +29,10 @@ class AiGeneratedUiSharedContractState {
             "neutral_wireframe",
             "<empty>",
             "preview_card"
+        )
+        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+            "ai_generated_ui_shared_contract",
+            "components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card"
         )
         this.accepted = false
         this.acceptedScreen = "draft_settings_form"
@@ -138,6 +144,18 @@ class AiGeneratedUiSharedContractState {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
+
+    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
+        return commitSession.commitComponentAction(componentId, action, afterState)
+    }
+
+    func commitReadback(): String {
+        return commitSession.readback()
+    }
+
+    func commitRollbackBoundary(): String {
+        return commitSession.rollbackBoundary()
+    }
 }
 
 main(): Int64 {
@@ -172,6 +190,11 @@ main(): Int64 {
         readbackOk
     )
     let apiOutput = contract.buildSharedOutput(domainSummary, readbackOk)
+    let commitResult = contract.commitSharedState(
+        "save_button",
+        "ai_generated_ui_shared_contract.commit_accept_refresh",
+        after
+    )
     let outputOk = readbackOk &&
         apiOutput.demoName == "ai_generated_ui_shared_contract" &&
         apiOutput.beforeState == before &&
@@ -180,7 +203,21 @@ main(): Int64 {
         apiOutput.writeCount == 5 &&
         apiOutput.domainSummary == domainSummary &&
         apiOutput.readbackOk &&
-        apiOutput.summary == "demo=ai_generated_ui_shared_contract;readback=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;summary=contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;layout_kind=ai_form_preview;readback=true"
+        apiOutput.summary == "demo=ai_generated_ui_shared_contract;readback=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;summary=contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;layout_kind=ai_form_preview;readback=true" &&
+        commitResult.demoName == "ai_generated_ui_shared_contract" &&
+        commitResult.componentId == "save_button" &&
+        commitResult.action == "ai_generated_ui_shared_contract.commit_accept_refresh" &&
+        commitResult.beforeState == before &&
+        commitResult.afterState == after &&
+        commitResult.readbackState == after &&
+        commitResult.rollbackState == before &&
+        commitResult.writeCount == 1 &&
+        commitResult.committed &&
+        commitResult.readbackOk &&
+        commitResult.rollbackAvailable &&
+        commitResult.notPublished &&
+        contract.commitReadback() == after &&
+        contract.commitRollbackBoundary() == before
 
     println("cjgui ai-generated-ui shared contract app: demo=ai_generated_ui_shared_contract")
     println("cjgui ai-generated-ui shared contract app: status_before=not_started")
@@ -197,6 +234,11 @@ main(): Int64 {
     println("cjgui ai-generated-ui shared contract app: shared_state_core=${contract.sharedUiState()}")
     println("cjgui ai-generated-ui shared contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui ai-generated-ui shared contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
+    println("cjgui ai-generated-ui shared contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui ai-generated-ui shared contract app: shared_commit_output=${commitResult.summary}")
+    println("cjgui ai-generated-ui shared contract app: shared_commit_readback=${contract.commitReadback()}")
+    println("cjgui ai-generated-ui shared contract app: shared_commit_rollback_boundary=${contract.commitRollbackBoundary()}")
+    println("cjgui ai-generated-ui shared contract app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (outputOk) {
         return 0

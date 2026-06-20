@@ -1,6 +1,7 @@
 package cjgui_reusable_component_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -9,6 +10,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 class ReusableComponentContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
     var componentCount: Int64
     var componentKinds: String
     var reusedDemoCount: Int64
@@ -26,6 +28,10 @@ class ReusableComponentContractState {
             "neutral_list",
             "<empty>",
             "todo_input"
+        )
+        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+            "reusable_component_contract",
+            "components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
         )
         this.componentCount = 1
         this.componentKinds = "task_row"
@@ -147,6 +153,18 @@ class ReusableComponentContractState {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
+
+    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
+        return commitSession.commitComponentAction(componentId, action, afterState)
+    }
+
+    func commitReadback(): String {
+        return commitSession.readback()
+    }
+
+    func commitRollbackBoundary(): String {
+        return commitSession.rollbackBoundary()
+    }
 }
 
 main(): Int64 {
@@ -184,6 +202,7 @@ main(): Int64 {
         readbackOk
     )
     let apiOutput = contract.buildSharedOutput(domainSummary, readbackOk)
+    let commitResult = contract.commitSharedState("ai_form", "reusable_component_contract.commit_reuse_flow", after)
     let outputOk = readbackOk &&
         apiOutput.demoName == "reusable_component_contract" &&
         apiOutput.beforeState == before &&
@@ -192,7 +211,21 @@ main(): Int64 {
         apiOutput.writeCount == 5 &&
         apiOutput.domainSummary == domainSummary &&
         apiOutput.readbackOk &&
-        apiOutput.summary == "demo=reusable_component_contract;readback=true;writes=5;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;summary=contract=reusable_component_contract;components=task_row,file_row,ai_form;reused_count=3;reused=todo,file_browser,ai_generated_ui;component_count=3;layout=single_column->split_detail;style=neutral_list->sage_panel;input=<empty>->filter:src,username;focus=todo_input->save_button;readback=true;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
+        apiOutput.summary == "demo=reusable_component_contract;readback=true;writes=5;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;summary=contract=reusable_component_contract;components=task_row,file_row,ai_form;reused_count=3;reused=todo,file_browser,ai_generated_ui;component_count=3;layout=single_column->split_detail;style=neutral_list->sage_panel;input=<empty>->filter:src,username;focus=todo_input->save_button;readback=true;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button" &&
+        commitResult.demoName == "reusable_component_contract" &&
+        commitResult.componentId == "ai_form" &&
+        commitResult.action == "reusable_component_contract.commit_reuse_flow" &&
+        commitResult.beforeState == before &&
+        commitResult.afterState == after &&
+        commitResult.readbackState == after &&
+        commitResult.rollbackState == before &&
+        commitResult.writeCount == 1 &&
+        commitResult.committed &&
+        commitResult.readbackOk &&
+        commitResult.rollbackAvailable &&
+        commitResult.notPublished &&
+        contract.commitReadback() == after &&
+        contract.commitRollbackBoundary() == before
 
     println("cjgui reusable component contract app: demo=reusable_component_contract")
     println("cjgui reusable component contract app: status_before=not_started")
@@ -211,6 +244,11 @@ main(): Int64 {
     println("cjgui reusable component contract app: shared_state_core=${contract.sharedUiState()}")
     println("cjgui reusable component contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui reusable component contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
+    println("cjgui reusable component contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui reusable component contract app: shared_commit_output=${commitResult.summary}")
+    println("cjgui reusable component contract app: shared_commit_readback=${contract.commitReadback()}")
+    println("cjgui reusable component contract app: shared_commit_rollback_boundary=${contract.commitRollbackBoundary()}")
+    println("cjgui reusable component contract app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (outputOk) {
         return 0

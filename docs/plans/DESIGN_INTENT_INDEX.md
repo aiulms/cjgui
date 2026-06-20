@@ -51,7 +51,7 @@
 - API / State 事实：`CjguiExperimentalDemoInteractionTrace` 保存 demo name、before state、after state、action trace 与 write count；`CjguiExperimentalDemoOutputBuilder` 从 shared trace 生成 `CjguiExperimentalDemoOutput`，承载 before / after / action / write count / domain summary / readback facts；`CjguiExperimentalDemoUiStateCore` 承载 layout / style / text input / focus owner-local 状态与 shared action helper；`CjguiExperimentalDemoComponentActionSession` 将 component id、action name、after state、UI state core 与 output build 串成同一 demo-host primitive；`CjguiExperimentalDemoOwnerLocalCommitSession` 与 `CjguiExperimentalDemoCommitResult` 仍是 shared harness 内部 commit/readback/rollback primitive；`CjguiExperimentalDemoCommitHarness` 已在当前全部 10 个 runnable demo 中承担 shared result/readback/rollback 校验，减少 demo-local wrapper 并成为 demo-facing commit output 模型。当前 demo app 不再直接消费 per-demo 或 shared/contract legacy Output API。
 - 边界事实：demo 输出只保留业务 before / after、interaction、state readback、shared API output 与 `CjguiExperimentalDemoCommitHarness` commit evidence；`runtime_state.cj` / renderer state 仍未写入，public C ABI 未扩展。
 - 最新 report：[shared commit harness-only demo surface cleanup](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-commit-harness-only-demo-surface-cleanup-report.md)。
-- 后续入口：`P1 CJGUI shared demo_support demo-facing commit evidence naming cleanup`。
+- 后续入口：`P1 CJGUI shared demo_support demo run harness first slice`。
 
 ## Renderer 最新落点
 

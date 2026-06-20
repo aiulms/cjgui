@@ -105,23 +105,6 @@ class SettingsPanelState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func buildRunResult(
-        statusBefore: String,
-        statusAfter: String,
-        output: CjguiExperimentalDemoOutput,
-        commitResult: CjguiExperimentalDemoCommitResult,
-        commitReadbackOk: Bool
-    ): CjguiExperimentalDemoRunResult {
-        return runHarness.finishRun(
-            statusBefore,
-            statusAfter,
-            output,
-            sharedComponentActionSummary(),
-            sharedUiState(),
-            commitResult,
-            commitReadbackOk
-        )
-    }
 
 }
 
@@ -155,7 +138,14 @@ main(): Int64 {
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=settings;readback=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;summary=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
         panel.commitHarness.resultMatches(commitResult, "theme_select", "settings.commit_preferences", before, after)
-    let runResult = panel.buildRunResult("scaffolded", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let runResult = panel.runHarness.finishCommittedSessionRun(
+        "scaffolded",
+        "runnable",
+        apiOutput,
+        panel.componentSession,
+        commitResult,
+        commitReadbackOk
+    )
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui settings demo app: demo=settings")

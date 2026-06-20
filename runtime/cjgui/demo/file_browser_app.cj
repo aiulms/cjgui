@@ -141,23 +141,6 @@ class FileBrowserState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func buildRunResult(
-        statusBefore: String,
-        statusAfter: String,
-        output: CjguiExperimentalDemoOutput,
-        commitResult: CjguiExperimentalDemoCommitResult,
-        commitReadbackOk: Bool
-    ): CjguiExperimentalDemoRunResult {
-        return runHarness.finishRun(
-            statusBefore,
-            statusAfter,
-            output,
-            sharedComponentActionSummary(),
-            sharedUiState(),
-            commitResult,
-            commitReadbackOk
-        )
-    }
 
 }
 
@@ -193,7 +176,14 @@ main(): Int64 {
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane" &&
         browser.commitHarness.resultMatches(commitResult, "detail_pane", "file_browser.commit_detail", before, after)
-    let runResult = browser.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let runResult = browser.runHarness.finishCommittedSessionRun(
+        "not_started",
+        "runnable",
+        apiOutput,
+        browser.componentSession,
+        commitResult,
+        commitReadbackOk
+    )
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui file browser demo app: demo=file_browser")

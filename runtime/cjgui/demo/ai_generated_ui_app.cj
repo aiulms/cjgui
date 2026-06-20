@@ -118,23 +118,6 @@ class AiGeneratedUiState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func buildRunResult(
-        statusBefore: String,
-        statusAfter: String,
-        output: CjguiExperimentalDemoOutput,
-        commitResult: CjguiExperimentalDemoCommitResult,
-        commitReadbackOk: Bool
-    ): CjguiExperimentalDemoRunResult {
-        return runHarness.finishRun(
-            statusBefore,
-            statusAfter,
-            output,
-            sharedComponentActionSummary(),
-            sharedUiState(),
-            commitResult,
-            commitReadbackOk
-        )
-    }
 }
 
 main(): Int64 {
@@ -176,7 +159,14 @@ main(): Int64 {
             before,
             after
         )
-    let runResult = generatedUi.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let runResult = generatedUi.runHarness.finishCommittedSessionRun(
+        "not_started",
+        "runnable",
+        apiOutput,
+        generatedUi.componentSession,
+        commitResult,
+        commitReadbackOk
+    )
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui ai generated ui demo app: demo=ai_generated_ui")

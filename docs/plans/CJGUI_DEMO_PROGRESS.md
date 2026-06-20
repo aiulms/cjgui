@@ -1,6 +1,6 @@
 # CJGUI demo 进度看板
 
-最后更新：2026-06-20（shared demo run harness coverage expansion）
+最后更新：2026-06-20（shared demo run harness API shape cleanup）
 
 本看板只记录有代码证据的 demo app 进度。`runtime_renderer_stage*_internal_*_demo_*` owner / probe 不算独立 demo app；只有 `runtime/cjgui/demo/*_app.cj` 这类带 `main`、确定性输出或状态读回的文件才能推进状态。
 
@@ -36,8 +36,9 @@
 - 白名单 5：shared UI state core 仍覆盖 10 个 demo 的 layout / style / text input / focus owner-local 状态，focused verifier 继续回显 `*_shared_state_core_imported=true`。
 - API 收敛里程碑：当前 10 个独立 runnable demo 共用 `CjguiExperimentalDemoComponentActionSession` 作为 demo-host component/action/output 主路径，全部 10 组 legacy Output API public declarations 已从 package surface 退役为 tombstone；当前 10 个 runnable demo 已共用 `CjguiExperimentalDemoCommitHarness` 作为 demo-host commit/readback/result 校验主路径，demo output 不再暴露底层 commit session，aggregate verifier 回显 `cjgui_shared_demo_commit_demo_count=10`、`cjgui_shared_demo_commit_demo_output_harness_only=true` 与 `cjgui_shared_demo_commit_harness_internal_primitive=CjguiExperimentalDemoOwnerLocalCommitSession`。
 - Run harness coverage expansion：当前 10 个独立 runnable demo 已共用 `CjguiExperimentalDemoRunHarness` / `CjguiExperimentalDemoRunResult`，把 shared output + commit result 汇总为 demo-host run result；aggregate verifier [verify_cjgui_shared_demo_run_harness.sh](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/scripts/verify_cjgui_shared_demo_run_harness.sh) 实际编译并运行 10 个 demo binary，回显 `cjgui_shared_demo_run_demo_count=10`、`cjgui_shared_demo_run_binary_execution=true`、`cjgui_shared_demo_run_readback=true` 与 `cjgui_shared_demo_run_not_published=true`。
+- Run harness API shape cleanup：`CjguiExperimentalDemoRunHarness.finishCommittedSessionRun(...)` 现在直接消费 `CjguiExperimentalDemoComponentActionSession`、`CjguiExperimentalDemoOutput` 与 `CjguiExperimentalDemoCommitResult`，把 component/action summary 与 UI state summary 组装下沉到 shared run harness；当前 10 个独立 runnable demo 已删除 demo-local `buildRunResult` wrapper 并调用同一 shared session API。aggregate verifier 回显 `cjgui_shared_demo_run_harness_boilerplate_reduced=true`、`cjgui_shared_demo_run_session_api=finishCommittedSessionRun`、`cjgui_shared_demo_run_demo_count=10`、`cjgui_shared_demo_run_binary_execution=true`、`cjgui_shared_demo_run_readback=true` 与 `cjgui_shared_demo_run_not_published=true`；10 个 focused demo verifier 继续实际编译并运行 demo binary。
 - 证据命名收敛：focused verifier 不再回显 `*_shared_commit_session_imported=true` 或 `*_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession`；底层 commit session 只作为 `*_shared_commit_harness_internal_primitive_*` 证据出现，避免把 implementation primitive 误读成 demo-facing API。
-- 下一步最高价值目标：`P1 CJGUI shared demo_support demo run harness boilerplate reduction and API shape cleanup`。
+- 下一步最高价值目标：`P1 CJGUI shared demo_support demo run result reporter/output rendering cleanup`。
 
 ## 边界
 

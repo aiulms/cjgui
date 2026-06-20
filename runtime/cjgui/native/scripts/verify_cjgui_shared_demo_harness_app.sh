@@ -119,6 +119,7 @@ require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
 require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
 require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
+require_source_line "public func finishCommittedSessionRun" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_shared_demo_harness_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
@@ -130,8 +131,12 @@ require_source_line "let componentSession: CjguiExperimentalDemoComponentActionS
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
 require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
-require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "finishCommittedSessionRun" "$DEMO_SRC"
 require_source_line "runResult.runnable" "$DEMO_SRC"
+if grep -F "func buildRunResult(" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo harness app verification: demo-local buildRunResult wrapper must be retired" >&2
+  exit 13
+fi
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "sharedComponentActions()" "$DEMO_SRC"

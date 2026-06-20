@@ -91,6 +91,7 @@ require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
 require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
 require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
+require_source_line "public func finishCommittedSessionRun" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_ai_generated_ui_shared_contract_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
@@ -99,8 +100,12 @@ require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
 require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
-require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "finishCommittedSessionRun" "$DEMO_SRC"
 require_source_line "runResult.runnable" "$DEMO_SRC"
+if grep -F "func buildRunResult(" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui AI-generated UI shared contract app verification: demo-local buildRunResult wrapper must be retired" >&2
+  exit 13
+fi
 require_source_line "class AiGeneratedUiSharedContractState" "$DEMO_SRC"
 require_source_line "var accepted: Bool" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"

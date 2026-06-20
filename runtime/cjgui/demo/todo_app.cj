@@ -129,23 +129,6 @@ class TodoList {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func buildRunResult(
-        statusBefore: String,
-        statusAfter: String,
-        output: CjguiExperimentalDemoOutput,
-        commitResult: CjguiExperimentalDemoCommitResult,
-        commitReadbackOk: Bool
-    ): CjguiExperimentalDemoRunResult {
-        return runHarness.finishRun(
-            statusBefore,
-            statusAfter,
-            output,
-            sharedComponentActionSummary(),
-            sharedUiState(),
-            commitResult,
-            commitReadbackOk
-        )
-    }
 }
 
 main(): Int64 {
@@ -180,7 +163,14 @@ main(): Int64 {
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true" &&
         todos.commitHarness.resultMatches(commitResult, "todo_item", "todo.commit_complete", before, afterComplete)
-    let runResult = todos.buildRunResult("state_writable", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let runResult = todos.runHarness.finishCommittedSessionRun(
+        "state_writable",
+        "runnable",
+        apiOutput,
+        todos.componentSession,
+        commitResult,
+        commitReadbackOk
+    )
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui todo demo app: demo=todo")

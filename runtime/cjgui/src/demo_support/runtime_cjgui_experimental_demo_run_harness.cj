@@ -122,4 +122,24 @@ public class CjguiExperimentalDemoRunHarness {
             summary
         )
     }
+
+    /// 用 shared component/action session 直接完成 run 汇总，避免每个 demo 重复包装 component/ui facts。
+    public func finishCommittedSessionRun(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        componentSession: CjguiExperimentalDemoComponentActionSession,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            componentSession.componentActionSummary(),
+            componentSession.uiStateSummary(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
 }

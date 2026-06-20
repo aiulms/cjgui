@@ -157,23 +157,6 @@ class ReusableComponentContractState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func buildRunResult(
-        statusBefore: String,
-        statusAfter: String,
-        output: CjguiExperimentalDemoOutput,
-        commitResult: CjguiExperimentalDemoCommitResult,
-        commitReadbackOk: Bool
-    ): CjguiExperimentalDemoRunResult {
-        return runHarness.finishRun(
-            statusBefore,
-            statusAfter,
-            output,
-            sharedComponentActionSummary(),
-            sharedUiState(),
-            commitResult,
-            commitReadbackOk
-        )
-    }
 
 }
 
@@ -233,7 +216,14 @@ main(): Int64 {
             before,
             after
         )
-    let runResult = contract.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let runResult = contract.runHarness.finishCommittedSessionRun(
+        "not_started",
+        "runnable",
+        apiOutput,
+        contract.componentSession,
+        commitResult,
+        commitReadbackOk
+    )
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui reusable component contract app: demo=reusable_component_contract")

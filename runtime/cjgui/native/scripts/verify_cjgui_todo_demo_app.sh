@@ -132,7 +132,8 @@ fi
 
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
-   ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1; then
+   ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func finishCommittedSessionRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared run harness declaration" >&2
   exit 4
 fi
@@ -146,7 +147,7 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "buildSharedOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "buildRunResult" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "finishCommittedSessionRun" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC" >/dev/null 2>&1 || \
@@ -155,6 +156,11 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "sharedUiState()" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared output builder consumption" >&2
   exit 4
+fi
+
+if grep -F "func buildRunResult(" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: demo-local buildRunResult wrapper must be retired" >&2
+  exit 13
 fi
 
 if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \

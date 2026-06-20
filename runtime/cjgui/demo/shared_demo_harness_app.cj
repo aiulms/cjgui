@@ -108,23 +108,6 @@ class SharedDemoHarnessState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func buildRunResult(
-        statusBefore: String,
-        statusAfter: String,
-        output: CjguiExperimentalDemoOutput,
-        commitResult: CjguiExperimentalDemoCommitResult,
-        commitReadbackOk: Bool
-    ): CjguiExperimentalDemoRunResult {
-        return runHarness.finishRun(
-            statusBefore,
-            statusAfter,
-            output,
-            sharedComponentActionSummary(),
-            sharedUiState(),
-            commitResult,
-            commitReadbackOk
-        )
-    }
 
 }
 
@@ -165,7 +148,14 @@ main(): Int64 {
             before,
             after
         )
-    let runResult = harness.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let runResult = harness.runHarness.finishCommittedSessionRun(
+        "not_started",
+        "runnable",
+        apiOutput,
+        harness.componentSession,
+        commitResult,
+        commitReadbackOk
+    )
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared demo harness app: demo=shared_demo_harness")

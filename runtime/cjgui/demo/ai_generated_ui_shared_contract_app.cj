@@ -148,23 +148,6 @@ class AiGeneratedUiSharedContractState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func buildRunResult(
-        statusBefore: String,
-        statusAfter: String,
-        output: CjguiExperimentalDemoOutput,
-        commitResult: CjguiExperimentalDemoCommitResult,
-        commitReadbackOk: Bool
-    ): CjguiExperimentalDemoRunResult {
-        return runHarness.finishRun(
-            statusBefore,
-            statusAfter,
-            output,
-            sharedComponentActionSummary(),
-            sharedUiState(),
-            commitResult,
-            commitReadbackOk
-        )
-    }
 
 }
 
@@ -221,7 +204,14 @@ main(): Int64 {
             before,
             after
         )
-    let runResult = contract.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let runResult = contract.runHarness.finishCommittedSessionRun(
+        "not_started",
+        "runnable",
+        apiOutput,
+        contract.componentSession,
+        commitResult,
+        commitReadbackOk
+    )
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui ai-generated-ui shared contract app: demo=ai_generated_ui_shared_contract")

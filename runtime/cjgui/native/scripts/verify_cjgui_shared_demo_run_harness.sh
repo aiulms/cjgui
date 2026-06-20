@@ -8,6 +8,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
+TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
+SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
+CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
+FILE_BROWSER_DEMO_SRC="$ROOT_DIR/demo/file_browser_app.cj"
+AI_GENERATED_UI_DEMO_SRC="$ROOT_DIR/demo/ai_generated_ui_app.cj"
+SHARED_DEMO_HARNESS_SRC="$ROOT_DIR/demo/shared_demo_harness_app.cj"
+SHARED_MULTI_DEMO_HARNESS_SRC="$ROOT_DIR/demo/shared_multi_demo_harness_app.cj"
+SHARED_LAYOUT_STYLE_INPUT_FOCUS_SRC="$ROOT_DIR/demo/shared_layout_style_input_focus_contract_app.cj"
+AI_GENERATED_UI_SHARED_CONTRACT_SRC="$ROOT_DIR/demo/ai_generated_ui_shared_contract_app.cj"
+REUSABLE_COMPONENT_CONTRACT_SRC="$ROOT_DIR/demo/reusable_component_contract_app.cj"
 TODO_VERIFIER="$SCRIPT_DIR/verify_cjgui_todo_demo_app.sh"
 SETTINGS_VERIFIER="$SCRIPT_DIR/verify_cjgui_settings_demo_app.sh"
 CHAT_VERIFIER="$SCRIPT_DIR/verify_cjgui_chat_demo_app.sh"
@@ -71,10 +81,29 @@ fi
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func finishCommittedSessionRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoComponentActionSession" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "notPublished" "$RUN_HARNESS_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo run harness verification: missing expected run harness declarations" >&2
   exit 3
 fi
+
+for demo_src in \
+  "$TODO_DEMO_SRC" \
+  "$SETTINGS_DEMO_SRC" \
+  "$CHAT_DEMO_SRC" \
+  "$FILE_BROWSER_DEMO_SRC" \
+  "$AI_GENERATED_UI_DEMO_SRC" \
+  "$SHARED_DEMO_HARNESS_SRC" \
+  "$SHARED_MULTI_DEMO_HARNESS_SRC" \
+  "$SHARED_LAYOUT_STYLE_INPUT_FOCUS_SRC" \
+  "$AI_GENERATED_UI_SHARED_CONTRACT_SRC" \
+  "$REUSABLE_COMPONENT_CONTRACT_SRC"; do
+  if grep -F "func buildRunResult(" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local buildRunResult wrapper remains in $demo_src" >&2
+    exit 4
+  fi
+done
 
 CJGUI_TODO_DEMO_TMPDIR="$TMP_DIR/todo-tmp" "$TODO_VERIFIER" > "$TODO_LOG"
 CJGUI_SETTINGS_DEMO_TMPDIR="$TMP_DIR/settings-tmp" "$SETTINGS_VERIFIER" > "$SETTINGS_LOG"
@@ -106,6 +135,8 @@ echo "cjgui_shared_demo_run_demos=todo,settings,chat,file_browser,ai_generated_u
 echo "cjgui_shared_demo_run_binary_execution=true"
 echo "cjgui_shared_demo_run_readback=true"
 echo "cjgui_shared_demo_run_not_published=true"
+echo "cjgui_shared_demo_run_harness_boilerplate_reduced=true"
+echo "cjgui_shared_demo_run_session_api=finishCommittedSessionRun"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"
 echo "cjgui_shared_demo_run_public_c_abi_added=false"

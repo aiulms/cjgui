@@ -14,6 +14,7 @@ OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_o
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 TMP_DIR="${CJGUI_FILE_BROWSER_DEMO_TMPDIR:-/private/tmp/cjgui-file-browser-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -92,6 +93,11 @@ if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$RUN_HARNESS_SRC" ]]; then
+  echo "cjgui file browser demo app verification: missing shared run harness source $RUN_HARNESS_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -110,13 +116,21 @@ require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_S
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
+require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
+require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
+require_source_line "notPublished" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_file_browser_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC"
 require_source_line "class FileBrowserState" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
+require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "runResult.runnable" "$DEMO_SRC"
 require_source_line "private var entries" "$DEMO_SRC"
 require_source_line "var selectedPath: String" "$DEMO_SRC"
 require_source_line "var expandedPath: String" "$DEMO_SRC"
@@ -209,6 +223,7 @@ cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -246,6 +261,10 @@ require_output_line "cjgui file browser demo app: shared_commit_output=demo=file
 require_output_line "cjgui file browser demo app: shared_commit_readback=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
 require_output_line "cjgui file browser demo app: shared_commit_rollback_boundary=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree"
 require_output_line "cjgui file browser demo app: shared_commit_not_published=true"
+require_output_line "cjgui file browser demo app: shared_run_harness=CjguiExperimentalDemoRunHarness"
+require_output_line "cjgui file browser demo app: shared_run_result=demo=file_browser;status=not_started->runnable;readback=true;commit_readback=true;not_published=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;domain=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
+require_output_line "cjgui file browser demo app: shared_run_readback=true"
+require_output_line "cjgui file browser demo app: shared_run_not_published=true"
 
 echo "cjgui_file_browser_demo_app_compiled=true"
 echo "cjgui_file_browser_demo_app_ran=true"
@@ -272,6 +291,11 @@ echo "file_browser_shared_commit_harness_internal_primitive_name=CjguiExperiment
 echo "file_browser_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
 echo "file_browser_shared_commit_readback=true"
 echo "file_browser_shared_commit_not_published=true"
+echo "file_browser_shared_run_harness_imported=true"
+echo "file_browser_shared_run_harness=CjguiExperimentalDemoRunHarness"
+echo "file_browser_shared_run_result=CjguiExperimentalDemoRunResult"
+echo "file_browser_shared_run_readback=true"
+echo "file_browser_shared_run_not_published=true"
 echo "file_browser_runtime_state_write=false"
 echo "file_browser_renderer_state_write=false"
 echo "file_browser_public_c_abi_added=false"

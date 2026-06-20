@@ -1,7 +1,8 @@
 package cjgui_file_browser_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -24,6 +25,7 @@ class FileBrowserState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let commitHarness: CjguiExperimentalDemoCommitHarness
+    let runHarness: CjguiExperimentalDemoRunHarness
     private var entries = ArrayList<FileBrowserEntry>()
     var selectedPath: String
     var selectedKind: String
@@ -45,6 +47,7 @@ class FileBrowserState {
             "file_browser",
             "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree"
         )
+        this.runHarness = CjguiExperimentalDemoRunHarness("file_browser")
         this.selectedPath = "/workspace"
         this.selectedKind = "folder"
         this.detailTitle = "workspace"
@@ -138,6 +141,24 @@ class FileBrowserState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
+    func buildRunResult(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return runHarness.finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            sharedComponentActionSummary(),
+            sharedUiState(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
+
 }
 
 main(): Int64 {
@@ -162,7 +183,7 @@ main(): Int64 {
         summary == "demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
     let apiOutput = browser.buildSharedOutput(summary, stateReadbackOk)
     let commitResult = browser.commitHarness.commitComponentAction("detail_pane", "file_browser.commit_detail", after)
-    let readbackOk = stateReadbackOk &&
+    let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "file_browser" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
@@ -172,6 +193,8 @@ main(): Int64 {
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane" &&
         browser.commitHarness.resultMatches(commitResult, "detail_pane", "file_browser.commit_detail", before, after)
+    let runResult = browser.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui file browser demo app: demo=file_browser")
     println("cjgui file browser demo app: status_before=not_started")
@@ -194,6 +217,10 @@ main(): Int64 {
     println("cjgui file browser demo app: shared_commit_readback=${browser.commitHarness.readback()}")
     println("cjgui file browser demo app: shared_commit_rollback_boundary=${browser.commitHarness.rollbackBoundary()}")
     println("cjgui file browser demo app: shared_commit_not_published=${commitResult.notPublished}")
+    println("cjgui file browser demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
+    println("cjgui file browser demo app: shared_run_result=${runResult.summary}")
+    println("cjgui file browser demo app: shared_run_readback=${runResult.runnable}")
+    println("cjgui file browser demo app: shared_run_not_published=${runResult.notPublished}")
 
     if (readbackOk) {
         return 0

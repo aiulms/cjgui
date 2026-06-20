@@ -14,6 +14,7 @@ OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_o
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 TMP_DIR="${CJGUI_AI_GENERATED_UI_DEMO_TMPDIR:-/private/tmp/cjgui-ai-generated-ui-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -92,6 +93,11 @@ if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$RUN_HARNESS_SRC" ]]; then
+  echo "cjgui ai generated ui demo app verification: missing shared run harness source $RUN_HARNESS_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -111,12 +117,20 @@ require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_S
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
+require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
+require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
+require_source_line "notPublished" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_ai_generated_ui_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
+require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "runResult.runnable" "$DEMO_SRC"
 require_source_line "class AiGeneratedUiState" "$DEMO_SRC"
 require_source_line "private var componentIds" "$DEMO_SRC"
 require_source_line "var accepted: Bool" "$DEMO_SRC"
@@ -211,6 +225,7 @@ cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -248,6 +263,10 @@ require_output_line "cjgui ai generated ui demo app: shared_commit_output=demo=a
 require_output_line "cjgui ai generated ui demo app: shared_commit_readback=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel"
 require_output_line "cjgui ai generated ui demo app: shared_commit_rollback_boundary=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe"
 require_output_line "cjgui ai generated ui demo app: shared_commit_not_published=true"
+require_output_line "cjgui ai generated ui demo app: shared_run_harness=CjguiExperimentalDemoRunHarness"
+require_output_line "cjgui ai generated ui demo app: shared_run_result=demo=ai_generated_ui;status=not_started->runnable;readback=true;commit_readback=true;not_published=true;writes=4;actions=ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus;before=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe;after=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel;domain=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;focus=save_button;layout=ai_form_preview;style=sage_panel"
+require_output_line "cjgui ai generated ui demo app: shared_run_readback=true"
+require_output_line "cjgui ai generated ui demo app: shared_run_not_published=true"
 
 echo "cjgui_ai_generated_ui_demo_app_compiled=true"
 echo "cjgui_ai_generated_ui_demo_app_ran=true"
@@ -274,6 +293,11 @@ echo "ai_generated_ui_shared_commit_harness_internal_primitive_name=CjguiExperim
 echo "ai_generated_ui_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
 echo "ai_generated_ui_shared_commit_readback=true"
 echo "ai_generated_ui_shared_commit_not_published=true"
+echo "ai_generated_ui_shared_run_harness_imported=true"
+echo "ai_generated_ui_shared_run_harness=CjguiExperimentalDemoRunHarness"
+echo "ai_generated_ui_shared_run_result=CjguiExperimentalDemoRunResult"
+echo "ai_generated_ui_shared_run_readback=true"
+echo "ai_generated_ui_shared_run_not_published=true"
 echo "ai_generated_ui_runtime_state_write=false"
 echo "ai_generated_ui_renderer_state_write=false"
 echo "ai_generated_ui_public_c_abi_added=false"

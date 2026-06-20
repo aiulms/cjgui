@@ -1,7 +1,8 @@
 package cjgui_ai_generated_ui_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -12,6 +13,7 @@ class AiGeneratedUiState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let commitHarness: CjguiExperimentalDemoCommitHarness
+    let runHarness: CjguiExperimentalDemoRunHarness
     private var componentIds = ArrayList<String>()
     var accepted: Bool
     var acceptedScreen: String
@@ -32,6 +34,7 @@ class AiGeneratedUiState {
             "ai_generated_ui",
             "components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe"
         )
+        this.runHarness = CjguiExperimentalDemoRunHarness("ai_generated_ui")
         this.accepted = false
         this.acceptedScreen = "draft_settings_form"
         this.diffSummary = "pending_review"
@@ -114,6 +117,24 @@ class AiGeneratedUiState {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
+
+    func buildRunResult(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return runHarness.finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            sharedComponentActionSummary(),
+            sharedUiState(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
 }
 
 main(): Int64 {
@@ -139,7 +160,7 @@ main(): Int64 {
         "ai_generated_ui.commit_accept_refresh",
         after
     )
-    let readbackOk = stateReadbackOk &&
+    let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "ai_generated_ui" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
@@ -155,6 +176,8 @@ main(): Int64 {
             before,
             after
         )
+    let runResult = generatedUi.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui ai generated ui demo app: demo=ai_generated_ui")
     println("cjgui ai generated ui demo app: status_before=not_started")
@@ -177,6 +200,10 @@ main(): Int64 {
     println("cjgui ai generated ui demo app: shared_commit_readback=${generatedUi.commitHarness.readback()}")
     println("cjgui ai generated ui demo app: shared_commit_rollback_boundary=${generatedUi.commitHarness.rollbackBoundary()}")
     println("cjgui ai generated ui demo app: shared_commit_not_published=${commitResult.notPublished}")
+    println("cjgui ai generated ui demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
+    println("cjgui ai generated ui demo app: shared_run_result=${runResult.summary}")
+    println("cjgui ai generated ui demo app: shared_run_readback=${runResult.runnable}")
+    println("cjgui ai generated ui demo app: shared_run_not_published=${runResult.notPublished}")
 
     if (readbackOk) {
         return 0

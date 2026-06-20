@@ -5,6 +5,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -167,18 +168,18 @@ main(): Int64 {
     )
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui todo demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui todo demo app")
+    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui todo demo app: demo=todo")
-    println("cjgui todo demo app: status_before=state_writable")
-    println("cjgui todo demo app: status_after=runnable")
-    println("cjgui todo demo app: interaction=add_todo,complete_todo")
-    println("cjgui todo demo app: summary_before=${before}")
-    println("cjgui todo demo app: summary_after_add=${afterAdd}")
-    println("cjgui todo demo app: summary_after_complete=${afterComplete}")
+    businessReporter.printStatusTransition("state_writable", "runnable")
+    businessReporter.printTextFact("interaction", "add_todo,complete_todo")
+    businessReporter.printTextFact("summary_before", before)
+    businessReporter.printTextFact("summary_after_add", afterAdd)
+    businessReporter.printTextFact("summary_after_complete", afterComplete)
     proofReporter.printSharedPrimitiveProof(apiOutput, todos.componentSession, commitResult, todos.commitHarness)
     runReporter.printRunResult(runResult)
-    println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
+    businessReporter.printBoolFact("owner_local_write_readback", readbackOk)
 
     if (readbackOk) {
         return 0

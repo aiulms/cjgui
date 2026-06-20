@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
 PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
+BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -90,6 +91,11 @@ if [[ ! -f "$PROOF_REPORTER_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$BUSINESS_REPORTER_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing business snapshot reporter source $BUSINESS_REPORTER_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -120,6 +126,16 @@ if ! grep -F "public class CjguiExperimentalDemoProofReporter" "$PROOF_REPORTER_
   exit 3
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoBusinessSnapshotReporter" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printStatusTransition" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printTextFact" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printBoolFact" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "status_before=" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F 'println("${outputPrefix}: ${name}=${value}")' "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected business snapshot reporter declarations" >&2
+  exit 3
+fi
+
 for demo_src in \
   "$TODO_DEMO_SRC" \
   "$SETTINGS_DEMO_SRC" \
@@ -145,12 +161,23 @@ for demo_src in \
     echo "cjgui shared demo run harness verification: demo must use shared proof reporter in $demo_src" >&2
     exit 4
   fi
+  if ! grep -F "CjguiExperimentalDemoBusinessSnapshotReporter" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "businessReporter.printStatusTransition" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "businessReporter.printTextFact" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "businessReporter.printBoolFact" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo must use shared business snapshot reporter in $demo_src" >&2
+    exit 4
+  fi
   if grep -F 'println("cjgui ' "$demo_src" | grep -F "shared_run_" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local shared_run println remains in $demo_src" >&2
     exit 4
   fi
   if grep -E 'println\("cjgui .*: (public_api_consumed|public_api_name|public_api_output|shared_support|shared_support_output|shared_state_core|shared_component_action_model|shared_component_action_output|shared_commit_harness|shared_commit_output|shared_commit_readback|shared_commit_rollback_boundary|shared_commit_not_published)=' "$demo_src" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local shared proof println remains in $demo_src" >&2
+    exit 4
+  fi
+  if grep -E 'println\("cjgui .*: (status_before|status_after|layout|controls|interaction|state_before|state_after|state_readback|summary_before|summary_after|summary_after_add|summary_after_complete|served_demo|served_demos|served_demo_count|reused_demos|component_kinds|owner_local_write_readback|public_api_available)=' "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local business snapshot println remains in $demo_src" >&2
     exit 4
   fi
 done
@@ -195,6 +222,10 @@ echo "cjgui_shared_demo_proof_reporter=CjguiExperimentalDemoProofReporter"
 echo "cjgui_shared_demo_proof_reporter_demo_count=10"
 echo "cjgui_shared_demo_public_component_commit_output_rendering_shared=true"
 echo "cjgui_shared_demo_local_shared_proof_println_retired=true"
+echo "cjgui_shared_demo_business_snapshot_reporter=CjguiExperimentalDemoBusinessSnapshotReporter"
+echo "cjgui_shared_demo_business_snapshot_reporter_demo_count=10"
+echo "cjgui_shared_demo_business_snapshot_output_rendering_shared=true"
+echo "cjgui_shared_demo_local_business_snapshot_println_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"
 echo "cjgui_shared_demo_run_public_c_abi_added=false"

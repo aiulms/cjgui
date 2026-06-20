@@ -5,6 +5,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI shared contract demo app，不属于 runtime_renderer_stage* owner 链。
@@ -208,15 +209,15 @@ main(): Int64 {
     )
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui ai-generated-ui shared contract app")
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui ai-generated-ui shared contract app")
+    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui ai-generated-ui shared contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui ai-generated-ui shared contract app: demo=ai_generated_ui_shared_contract")
-    println("cjgui ai-generated-ui shared contract app: status_before=not_started")
-    println("cjgui ai-generated-ui shared contract app: status_after=runnable")
-    println("cjgui ai-generated-ui shared contract app: interaction=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
-    println("cjgui ai-generated-ui shared contract app: state_before=${before}")
-    println("cjgui ai-generated-ui shared contract app: state_after=${after}")
-    println("cjgui ai-generated-ui shared contract app: state_readback=${readbackOk}")
+    businessReporter.printStatusTransition("not_started", "runnable")
+    businessReporter.printTextFact("interaction", "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
+    businessReporter.printTextFact("state_before", before)
+    businessReporter.printTextFact("state_after", after)
+    businessReporter.printBoolFact("state_readback", readbackOk)
     proofReporter.printSharedPrimitiveProof(apiOutput, contract.componentSession, commitResult, contract.commitHarness)
     runReporter.printRunResult(runResult)
 

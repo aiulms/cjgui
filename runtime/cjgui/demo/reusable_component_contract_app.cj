@@ -5,6 +5,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -220,17 +221,17 @@ main(): Int64 {
     )
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui reusable component contract app")
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui reusable component contract app")
+    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui reusable component contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui reusable component contract app: demo=reusable_component_contract")
-    println("cjgui reusable component contract app: status_before=not_started")
-    println("cjgui reusable component contract app: status_after=runnable")
-    println("cjgui reusable component contract app: reused_demos=todo,file_browser,ai_generated_ui")
-    println("cjgui reusable component contract app: component_kinds=task_row,file_row,ai_form")
-    println("cjgui reusable component contract app: interaction=register_file_row,register_ai_form,todo_add,file_select,ai_accept")
-    println("cjgui reusable component contract app: state_before=${before}")
-    println("cjgui reusable component contract app: state_after=${after}")
-    println("cjgui reusable component contract app: state_readback=${readbackOk}")
+    businessReporter.printStatusTransition("not_started", "runnable")
+    businessReporter.printTextFact("reused_demos", "todo,file_browser,ai_generated_ui")
+    businessReporter.printTextFact("component_kinds", "task_row,file_row,ai_form")
+    businessReporter.printTextFact("interaction", "register_file_row,register_ai_form,todo_add,file_select,ai_accept")
+    businessReporter.printTextFact("state_before", before)
+    businessReporter.printTextFact("state_after", after)
+    businessReporter.printBoolFact("state_readback", readbackOk)
     proofReporter.printSharedPrimitiveProof(apiOutput, contract.componentSession, commitResult, contract.commitHarness)
     runReporter.printRunResult(runResult)
 

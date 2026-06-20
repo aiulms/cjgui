@@ -18,6 +18,7 @@ COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_o
 RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
 PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
+BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 TMP_DIR="${CJGUI_TODO_DEMO_TMPDIR:-/private/tmp/cjgui-todo-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -140,6 +141,14 @@ if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/
   exit 4
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoBusinessSnapshotReporter" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printStatusTransition" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printTextFact" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printBoolFact" "$BUSINESS_REPORTER_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared business snapshot reporter declaration" >&2
+  exit 4
+fi
+
 if ! grep -F "main(): Int64" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing demo main" >&2
   exit 3
@@ -149,7 +158,11 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoProofReporter" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoBusinessSnapshotReporter" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "proofReporter.printSharedPrimitiveProof(apiOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "businessReporter.printStatusTransition" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "businessReporter.printTextFact" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "businessReporter.printBoolFact" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "buildSharedOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "finishCommittedSessionRun" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC" >/dev/null 2>&1 || \
@@ -256,6 +269,7 @@ cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 cp "$RUN_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
 cp "$PROOF_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
+cp "$BUSINESS_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

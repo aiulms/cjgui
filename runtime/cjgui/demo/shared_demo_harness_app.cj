@@ -5,6 +5,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 shared demo harness demo app，不属于 runtime_renderer_stage* owner 链。
@@ -152,16 +153,16 @@ main(): Int64 {
     )
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared demo harness app")
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared demo harness app")
+    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui shared demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared demo harness app: demo=shared_demo_harness")
-    println("cjgui shared demo harness app: status_before=not_started")
-    println("cjgui shared demo harness app: status_after=runnable")
-    println("cjgui shared demo harness app: served_demo=todo")
-    println("cjgui shared demo harness app: interaction=run_todo_add_complete")
-    println("cjgui shared demo harness app: state_before=${before}")
-    println("cjgui shared demo harness app: state_after=${after}")
-    println("cjgui shared demo harness app: state_readback=${outputOk}")
+    businessReporter.printStatusTransition("not_started", "runnable")
+    businessReporter.printTextFact("served_demo", "todo")
+    businessReporter.printTextFact("interaction", "run_todo_add_complete")
+    businessReporter.printTextFact("state_before", before)
+    businessReporter.printTextFact("state_after", after)
+    businessReporter.printBoolFact("state_readback", outputOk)
     proofReporter.printSharedPrimitiveProof(apiOutput, harness.componentSession, commitResult, harness.commitHarness)
     runReporter.printRunResult(runResult)
 

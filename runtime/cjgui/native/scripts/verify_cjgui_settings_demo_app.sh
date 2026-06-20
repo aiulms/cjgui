@@ -13,6 +13,7 @@ SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interact
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 TMP_DIR="${CJGUI_SETTINGS_DEMO_TMPDIR:-/private/tmp/cjgui-settings-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -86,6 +87,11 @@ if [[ ! -f "$COMPONENT_ACTION_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
+  echo "cjgui settings demo app verification: missing shared commit session source $COMMIT_SESSION_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -98,10 +104,17 @@ require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "public class CjguiExperimentalDemoComponentActionSession" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
+require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_settings_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
 require_source_line "class SettingsPanelState" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
+require_source_line "commitSharedState" "$DEMO_SRC"
 require_source_line "var selectedTheme: String" "$DEMO_SRC"
 require_source_line "var usernameValue: String" "$DEMO_SRC"
 require_source_line "var autoSaveEnabled: Bool" "$DEMO_SRC"
@@ -176,11 +189,17 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_SETTINGS_API_TOML
   src-dir = "src"
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_SETTINGS_API_TOML
+cat > "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_demo_support_root.cj" <<'CJGUI_DEMO_SUPPORT_ROOT'
+package cjgui
+
+// 中文维护注释：临时 verifier package root shim；demo_support 子包承载真实 experimental API，禁止新增 public 声明。
+CJGUI_DEMO_SUPPORT_ROOT
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -210,6 +229,11 @@ require_output_line "cjgui settings demo app: shared_support_output=demo=setting
 require_output_line "cjgui settings demo app: shared_state_core=layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui settings demo app: shared_component_action_output=demo=settings;component_actions=auto_save_toggle:settings.toggle_auto_save,theme_select:settings.select_theme,username_field:settings.update_username,theme_select:settings.move_focus;ui=layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select"
+require_output_line "cjgui settings demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui settings demo app: shared_commit_output=demo=settings;component=theme_select;action=settings.commit_preferences;committed=true;readback=true;writes=1;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;readback_state=autosave=true;theme=dark;username=owner-updated;focus=theme_select;rollback_state=autosave=false;theme=light;username=owner;focus=username_field;not_published=true"
+require_output_line "cjgui settings demo app: shared_commit_readback=autosave=true;theme=dark;username=owner-updated;focus=theme_select"
+require_output_line "cjgui settings demo app: shared_commit_rollback_boundary=autosave=false;theme=light;username=owner;focus=username_field"
+require_output_line "cjgui settings demo app: shared_commit_not_published=true"
 require_output_line "cjgui settings demo app: public_api_available=true"
 
 echo "cjgui_settings_demo_app_compiled=true"
@@ -223,13 +247,18 @@ echo "settings_public_api_name=CjguiExperimentalDemoComponentActionSession"
 echo "settings_public_api_return=CjguiExperimentalDemoOutput"
 echo "settings_legacy_output_api_direct_consumption=false"
 echo "settings_owner_local_write_readback=true"
-echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,componentSession"
+echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,componentSession,commitSession"
 echo "settings_shared_support_imported=true"
 echo "settings_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "settings_shared_state_core_imported=true"
 echo "settings_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "settings_shared_component_action_session_imported=true"
 echo "settings_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "settings_shared_commit_session_imported=true"
+echo "settings_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
+echo "settings_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
+echo "settings_shared_commit_readback=true"
+echo "settings_shared_commit_not_published=true"
 echo "settings_runtime_state_write=false"
 echo "settings_renderer_state_write=false"
 echo "settings_public_c_abi_added=false"

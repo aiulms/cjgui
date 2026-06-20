@@ -187,6 +187,11 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_CHAT_API_TOML
   src-dir = "src"
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_CHAT_API_TOML
+cat > "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_demo_support_root.cj" <<'CJGUI_DEMO_SUPPORT_ROOT'
+package cjgui
+
+// 中文维护注释：临时 verifier package root shim；demo_support 子包承载真实 experimental API，禁止新增 public 声明。
+CJGUI_DEMO_SUPPORT_ROOT
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"

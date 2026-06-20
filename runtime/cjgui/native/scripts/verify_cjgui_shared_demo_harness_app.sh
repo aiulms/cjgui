@@ -13,6 +13,7 @@ SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interact
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 TMP_DIR="${CJGUI_SHARED_DEMO_HARNESS_TMPDIR:-/private/tmp/cjgui-shared-demo-harness-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -86,6 +87,11 @@ if [[ ! -f "$COMPONENT_ACTION_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
+  echo "cjgui shared demo harness app verification: missing shared commit session source $COMMIT_SESSION_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -98,12 +104,19 @@ require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "public class CjguiExperimentalDemoComponentActionSession" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
+require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_shared_demo_harness_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
 require_source_line "class SharedDemoHarnessState" "$DEMO_SRC"
 require_source_line "private var actions" "$DEMO_SRC"
 require_source_line "var itemCount: Int64" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
+require_source_line "commitSharedState" "$DEMO_SRC"
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "sharedComponentActions()" "$DEMO_SRC"
@@ -179,11 +192,17 @@ cat > "$PROBE_API_PACKAGE_DIR/cjpm.toml" <<CJGUI_SHARED_DEMO_HARNESS_API_TOML
   src-dir = "src"
   compile-option = "--sysroot $CJ_GUI_SDKROOT"
 CJGUI_SHARED_DEMO_HARNESS_API_TOML
+cat > "$PROBE_API_PACKAGE_DIR/src/runtime_cjgui_demo_support_root.cj" <<'CJGUI_DEMO_SUPPORT_ROOT'
+package cjgui
+
+// 中文维护注释：临时 verifier package root shim；demo_support 子包承载真实 experimental API，禁止新增 public 声明。
+CJGUI_DEMO_SUPPORT_ROOT
 cp "$DEMO_SRC" "$PROBE_PACKAGE_DIR/src/main.cj"
 cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj"
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -209,6 +228,11 @@ require_output_line "cjgui shared demo harness app: shared_support_output=demo=s
 require_output_line "cjgui shared demo harness app: shared_state_core=layout=todo_list;style=completed_accent;input=Write shared CJGUI harness;focus=todo_first_item"
 require_output_line "cjgui shared demo harness app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui shared demo harness app: shared_component_action_output=demo=shared_demo_harness;component_actions=todo_input:shared_demo_harness.add_todo,todo_item:shared_demo_harness.complete_todo;ui=layout=todo_list;style=completed_accent;input=Write shared CJGUI harness;focus=todo_first_item"
+require_output_line "cjgui shared demo harness app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui shared demo harness app: shared_commit_output=demo=shared_demo_harness;component=todo_item;action=shared_demo_harness.commit_todo_flow;committed=true;readback=true;writes=1;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;readback_state=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;rollback_state=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;not_published=true"
+require_output_line "cjgui shared demo harness app: shared_commit_readback=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent"
+require_output_line "cjgui shared demo harness app: shared_commit_rollback_boundary=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list"
+require_output_line "cjgui shared demo harness app: shared_commit_not_published=true"
 
 echo "cjgui_shared_demo_harness_app_compiled=true"
 echo "cjgui_shared_demo_harness_app_ran=true"
@@ -222,13 +246,18 @@ echo "shared_demo_harness_public_api_name=CjguiExperimentalDemoComponentActionSe
 echo "shared_demo_harness_public_api_return=CjguiExperimentalDemoOutput"
 echo "shared_demo_harness_legacy_output_api_direct_consumption=false"
 echo "shared_demo_harness_owner_local_write_readback=true"
-echo "shared_demo_harness_state_write_scope=SharedDemoHarnessState.actions,itemCount,firstTitle,firstDone,componentSession"
+echo "shared_demo_harness_state_write_scope=SharedDemoHarnessState.actions,itemCount,firstTitle,firstDone,componentSession,commitSession"
 echo "shared_demo_harness_shared_support_imported=true"
 echo "shared_demo_harness_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "shared_demo_harness_shared_state_core_imported=true"
 echo "shared_demo_harness_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "shared_demo_harness_shared_component_action_session_imported=true"
 echo "shared_demo_harness_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "shared_demo_harness_shared_commit_session_imported=true"
+echo "shared_demo_harness_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
+echo "shared_demo_harness_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
+echo "shared_demo_harness_shared_commit_readback=true"
+echo "shared_demo_harness_shared_commit_not_published=true"
 echo "shared_demo_harness_runtime_state_write=false"
 echo "shared_demo_harness_renderer_state_write=false"
 echo "shared_demo_harness_public_c_abi_added=false"

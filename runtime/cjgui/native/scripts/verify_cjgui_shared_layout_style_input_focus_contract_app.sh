@@ -236,7 +236,11 @@ require_output_line "cjgui shared layout-style-input-focus contract app: shared_
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_state_core=layout=split_detail;style=focus_accent;input=main;focus=file_filter"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_component_action_output=demo=shared_layout_style_input_focus_contract;component_actions=layout_contract:shared_layout_style_input_focus.apply_layout,style_contract:shared_layout_style_input_focus.apply_style,text_input_contract:shared_layout_style_input_focus.type_input,focus_contract:shared_layout_style_input_focus.move_focus;ui=layout=split_detail;style=focus_accent;input=main;focus=file_filter"
-require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui shared layout-style-input-focus contract app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_output=demo=shared_layout_style_input_focus_contract;component=focus_contract;action=shared_layout_style_input_focus.commit_contract_flow;committed=true;readback=true;writes=1;before=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=layout=split_detail;style=focus_accent;input=main;focus=file_filter;readback_state=layout=split_detail;style=focus_accent;input=main;focus=file_filter;rollback_state=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;not_published=true"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_readback=layout=split_detail;style=focus_accent;input=main;focus=file_filter"

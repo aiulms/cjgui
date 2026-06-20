@@ -236,7 +236,11 @@ require_output_line "cjgui file browser demo app: shared_support_output=demo=fil
 require_output_line "cjgui file browser demo app: shared_state_core=layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane"
 require_output_line "cjgui file browser demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui file browser demo app: shared_component_action_output=demo=file_browser;component_actions=folder_tree:file_browser.expand_folder,tree_filter:file_browser.filter_entries,file_row:file_browser.select_file,detail_pane:file_browser.refresh_detail,detail_pane:file_browser.move_focus;ui=layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane"
-require_output_line "cjgui file browser demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui file browser demo app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui file browser demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui file browser demo app: shared_commit_output=demo=file_browser;component=detail_pane;action=file_browser.commit_detail;committed=true;readback=true;writes=1;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;readback_state=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;rollback_state=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;not_published=true"
 require_output_line "cjgui file browser demo app: shared_commit_readback=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"

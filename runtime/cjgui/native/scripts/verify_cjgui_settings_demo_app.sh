@@ -240,7 +240,11 @@ require_output_line "cjgui settings demo app: shared_support_output=demo=setting
 require_output_line "cjgui settings demo app: shared_state_core=layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui settings demo app: shared_component_action_output=demo=settings;component_actions=auto_save_toggle:settings.toggle_auto_save,theme_select:settings.select_theme,username_field:settings.update_username,theme_select:settings.move_focus;ui=layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select"
-require_output_line "cjgui settings demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui settings demo app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui settings demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui settings demo app: shared_commit_output=demo=settings;component=theme_select;action=settings.commit_preferences;committed=true;readback=true;writes=1;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;readback_state=autosave=true;theme=dark;username=owner-updated;focus=theme_select;rollback_state=autosave=false;theme=light;username=owner;focus=username_field;not_published=true"
 require_output_line "cjgui settings demo app: shared_commit_readback=autosave=true;theme=dark;username=owner-updated;focus=theme_select"

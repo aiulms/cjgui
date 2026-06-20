@@ -252,7 +252,11 @@ require_line "cjgui todo demo app: shared_support_output=demo=todo;writes=2;acti
 require_line "cjgui todo demo app: shared_state_core=layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item"
 require_line "cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_line "cjgui todo demo app: shared_component_action_output=demo=todo;component_actions=todo_input:todo.add,todo_item:todo.complete;ui=layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item"
-require_line "cjgui todo demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_line "cjgui todo demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_line "cjgui todo demo app: shared_commit_output=demo=todo;component=todo_item;action=todo.commit_complete;committed=true;readback=true;writes=1;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;readback_state=items=1;first=Write first CJGUI todo;first_done=true;rollback_state=items=0;first=<none>;first_done=false;not_published=true"
 require_line "cjgui todo demo app: shared_commit_readback=items=1;first=Write first CJGUI todo;first_done=true"

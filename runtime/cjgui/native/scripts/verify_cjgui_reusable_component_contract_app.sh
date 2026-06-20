@@ -220,7 +220,11 @@ require_output_line "cjgui reusable component contract app: shared_support_outpu
 require_output_line "cjgui reusable component contract app: shared_state_core=layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
 require_output_line "cjgui reusable component contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui reusable component contract app: shared_component_action_output=demo=reusable_component_contract;component_actions=file_row:register_file_row,ai_form:register_ai_form,task_row:todo_add,file_row:file_select,ai_form:ai_accept;ui=layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
-require_output_line "cjgui reusable component contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui reusable component contract app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui reusable component contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui reusable component contract app: shared_commit_output=demo=reusable_component_contract;component=ai_form;action=reusable_component_contract.commit_reuse_flow;committed=true;readback=true;writes=1;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;readback_state=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;rollback_state=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;not_published=true"
 require_output_line "cjgui reusable component contract app: shared_commit_readback=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"

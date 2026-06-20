@@ -155,7 +155,6 @@ main(): Int64 {
     println("cjgui settings demo app: shared_state_core=${panel.sharedUiState()}")
     println("cjgui settings demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui settings demo app: shared_component_action_output=${panel.sharedComponentActionSummary()}")
-    println("cjgui settings demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui settings demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui settings demo app: shared_commit_output=${commitResult.summary}")
     println("cjgui settings demo app: shared_commit_readback=${panel.commitHarness.readback()}")

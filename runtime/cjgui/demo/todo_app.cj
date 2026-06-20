@@ -175,7 +175,6 @@ main(): Int64 {
     println("cjgui todo demo app: shared_state_core=${todos.sharedUiState()}")
     println("cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui todo demo app: shared_component_action_output=${todos.sharedComponentActionSummary()}")
-    println("cjgui todo demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui todo demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui todo demo app: shared_commit_output=${commitResult.summary}")
     println("cjgui todo demo app: shared_commit_readback=${todos.commitHarness.readback()}")

@@ -172,7 +172,6 @@ main(): Int64 {
     println("cjgui ai generated ui demo app: shared_state_core=${generatedUi.sharedUiState()}")
     println("cjgui ai generated ui demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui ai generated ui demo app: shared_component_action_output=${generatedUi.sharedComponentActionSummary()}")
-    println("cjgui ai generated ui demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui ai generated ui demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui ai generated ui demo app: shared_commit_output=${commitResult.summary}")
     println("cjgui ai generated ui demo app: shared_commit_readback=${generatedUi.commitHarness.readback()}")

@@ -181,7 +181,6 @@ main(): Int64 {
     println("cjgui chat demo app: shared_state_core=${thread.sharedUiState()}")
     println("cjgui chat demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui chat demo app: shared_component_action_output=${thread.sharedComponentActionSummary()}")
-    println("cjgui chat demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui chat demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui chat demo app: shared_commit_output=${commitResult.summary}")
     println("cjgui chat demo app: shared_commit_readback=${thread.commitHarness.readback()}")

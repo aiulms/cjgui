@@ -230,7 +230,6 @@ main(): Int64 {
     println("cjgui reusable component contract app: shared_state_core=${contract.sharedUiState()}")
     println("cjgui reusable component contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui reusable component contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
-    println("cjgui reusable component contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui reusable component contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui reusable component contract app: shared_commit_output=${commitResult.summary}")
     println("cjgui reusable component contract app: shared_commit_readback=${contract.commitHarness.readback()}")

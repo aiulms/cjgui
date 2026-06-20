@@ -234,7 +234,11 @@ require_output_line "cjgui chat demo app: shared_support_output=demo=chat;writes
 require_output_line "cjgui chat demo app: shared_state_core=layout=threaded_chat;style=assistant_reply;input=;focus=message_list"
 require_output_line "cjgui chat demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui chat demo app: shared_component_action_output=demo=chat;component_actions=composer:chat.type_message,send_button:chat.send_message,message_list:chat.append_reply,message_list:chat.move_focus;ui=layout=threaded_chat;style=assistant_reply;input=;focus=message_list"
-require_output_line "cjgui chat demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui chat demo app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui chat demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui chat demo app: shared_commit_output=demo=chat;component=message_list;action=chat.commit_thread;committed=true;readback=true;writes=1;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;readback_state=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;rollback_state=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;not_published=true"
 require_output_line "cjgui chat demo app: shared_commit_readback=messages=3;last=assistant:Chat demo received;composer=;focus=message_list"

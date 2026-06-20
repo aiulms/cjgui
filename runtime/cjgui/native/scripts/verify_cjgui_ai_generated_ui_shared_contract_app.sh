@@ -217,7 +217,11 @@ require_output_line "cjgui ai-generated-ui shared contract app: shared_support_o
 require_output_line "cjgui ai-generated-ui shared contract app: shared_state_core=layout=split_detail;style=sage_panel;input=username;focus=save_button"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_component_action_output=demo=ai_generated_ui_shared_contract;component_actions=spec_generator:generate_spec,diff_panel:preview_diff,explain_panel:explain_changes,generated_form:accept_refresh,save_button:move_focus;ui=layout=split_detail;style=sage_panel;input=username;focus=save_button"
-require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui ai-generated-ui shared contract app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_output=demo=ai_generated_ui_shared_contract;component=save_button;action=ai_generated_ui_shared_contract.commit_accept_refresh;committed=true;readback=true;writes=1;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;readback_state=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;rollback_state=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;not_published=true"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_readback=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button"

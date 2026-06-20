@@ -189,7 +189,6 @@ main(): Int64 {
     println("cjgui file browser demo app: shared_state_core=${browser.sharedUiState()}")
     println("cjgui file browser demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui file browser demo app: shared_component_action_output=${browser.sharedComponentActionSummary()}")
-    println("cjgui file browser demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui file browser demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui file browser demo app: shared_commit_output=${commitResult.summary}")
     println("cjgui file browser demo app: shared_commit_readback=${browser.commitHarness.readback()}")

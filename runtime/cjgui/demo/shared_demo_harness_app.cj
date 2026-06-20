@@ -161,7 +161,6 @@ main(): Int64 {
     println("cjgui shared demo harness app: shared_state_core=${harness.sharedUiState()}")
     println("cjgui shared demo harness app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui shared demo harness app: shared_component_action_output=${harness.sharedComponentActionSummary()}")
-    println("cjgui shared demo harness app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui shared demo harness app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui shared demo harness app: shared_commit_output=${commitResult.summary}")
     println("cjgui shared demo harness app: shared_commit_readback=${harness.commitHarness.readback()}")

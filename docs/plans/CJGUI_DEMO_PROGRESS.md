@@ -1,6 +1,6 @@
 # CJGUI demo 进度看板
 
-最后更新：2026-06-20（shared commit harness 覆盖扩展）
+最后更新：2026-06-20（shared commit harness-only demo surface cleanup）
 
 本看板只记录有代码证据的 demo app 进度。`runtime_renderer_stage*_internal_*_demo_*` owner / probe 不算独立 demo app；只有 `runtime/cjgui/demo/*_app.cj` 这类带 `main`、确定性输出或状态读回的文件才能推进状态。
 
@@ -29,13 +29,13 @@
 
 ## 本轮白名单证据
 
-- 白名单 1：shared support 子包 [runtime_cjgui_experimental_demo_interaction_trace.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj)、[runtime_cjgui_experimental_demo_output_builder.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj)、[runtime_cjgui_experimental_demo_ui_state_core.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj)、[runtime_cjgui_experimental_demo_component_action_session.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj) 与 [runtime_cjgui_experimental_demo_owner_local_commit_session.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj) 已被代表 demo 真实 import / 调用；当前 `CjguiExperimentalDemoCommitHarness` 覆盖全部 10 个 runnable demo，底层 `CjguiExperimentalDemoOwnerLocalCommitSession` 仍作为 shared harness 内部 session primitive。
+- 白名单 1：shared support 子包 [runtime_cjgui_experimental_demo_interaction_trace.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj)、[runtime_cjgui_experimental_demo_output_builder.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj)、[runtime_cjgui_experimental_demo_ui_state_core.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj)、[runtime_cjgui_experimental_demo_component_action_session.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj) 与 [runtime_cjgui_experimental_demo_owner_local_commit_session.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj) 已被代表 demo 真实 import / 调用；当前 `CjguiExperimentalDemoCommitHarness` 覆盖全部 10 个 runnable demo，底层 `CjguiExperimentalDemoOwnerLocalCommitSession` 仍作为 shared harness 内部 session primitive，但不再作为 demo-facing output model。
 - 白名单 2：`CjguiExperimentalDemoComponentActionSession` 现在覆盖 Todo、Settings、Chat、FileBrowser、AI-generated UI、Shared demo harness、Shared multi-demo harness、Shared layout/style/input/focus contract、AI-generated UI shared contract 与 Reusable component contract，统一承载 component action route、shared UI state core、interaction trace 与 `CjguiExperimentalDemoOutput` build。
 - 白名单 3：当前 10 个独立 demo app 全部通过 session 间接产出 shared `CjguiExperimentalDemoOutput`；Todo、Settings、Chat、FileBrowser、AI-generated UI、Shared demo harness、Shared multi-demo harness、Shared layout/style/input/focus contract、AI-generated UI shared contract 与 Reusable component contract 的 10 组 legacy Output API public declarations 已退役为 tombstone，当前 demo app 不再直接消费它们。
 - 白名单 4：focused verifier 必须实际编译并运行 demo 二进制，校验业务 before -> after / readback 输出；本看板不把仅 grep、仅 build 或脚本空通过当作 `runnable`。
 - 白名单 5：shared UI state core 仍覆盖 10 个 demo 的 layout / style / text input / focus owner-local 状态，focused verifier 继续回显 `*_shared_state_core_imported=true`。
-- API 收敛里程碑：当前 10 个独立 runnable demo 共用 `CjguiExperimentalDemoComponentActionSession` 作为 demo-host component/action/output 主路径，全部 10 组 legacy Output API public declarations 已从 package surface 退役为 tombstone；当前 10 个 runnable demo 已共用 `CjguiExperimentalDemoCommitHarness` 作为 demo-host commit/readback/result 校验主路径，aggregate verifier 回显 `cjgui_shared_demo_commit_demo_count=10`。
-- 下一步最高价值目标：`P1 CJGUI shared demo_support commit harness-only demo surface cleanup`。
+- API 收敛里程碑：当前 10 个独立 runnable demo 共用 `CjguiExperimentalDemoComponentActionSession` 作为 demo-host component/action/output 主路径，全部 10 组 legacy Output API public declarations 已从 package surface 退役为 tombstone；当前 10 个 runnable demo 已共用 `CjguiExperimentalDemoCommitHarness` 作为 demo-host commit/readback/result 校验主路径，demo output 不再暴露底层 commit session，aggregate verifier 回显 `cjgui_shared_demo_commit_demo_count=10` 与 `cjgui_shared_demo_commit_demo_output_harness_only=true`。
+- 下一步最高价值目标：`P1 CJGUI shared demo_support demo-facing commit evidence naming cleanup`。
 
 ## 边界
 

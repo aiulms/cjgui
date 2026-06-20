@@ -239,7 +239,11 @@ require_output_line "cjgui shared demo harness app: shared_support_output=demo=s
 require_output_line "cjgui shared demo harness app: shared_state_core=layout=todo_list;style=completed_accent;input=Write shared CJGUI harness;focus=todo_first_item"
 require_output_line "cjgui shared demo harness app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui shared demo harness app: shared_component_action_output=demo=shared_demo_harness;component_actions=todo_input:shared_demo_harness.add_todo,todo_item:shared_demo_harness.complete_todo;ui=layout=todo_list;style=completed_accent;input=Write shared CJGUI harness;focus=todo_first_item"
-require_output_line "cjgui shared demo harness app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui shared demo harness app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui shared demo harness app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui shared demo harness app: shared_commit_output=demo=shared_demo_harness;component=todo_item;action=shared_demo_harness.commit_todo_flow;committed=true;readback=true;writes=1;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;readback_state=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;rollback_state=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;not_published=true"
 require_output_line "cjgui shared demo harness app: shared_commit_readback=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent"

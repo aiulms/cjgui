@@ -238,7 +238,11 @@ require_output_line "cjgui ai generated ui demo app: shared_support_output=demo=
 require_output_line "cjgui ai generated ui demo app: shared_state_core=layout=ai_form_preview;style=sage_panel;input=<empty>;focus=save_button"
 require_output_line "cjgui ai generated ui demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui ai generated ui demo app: shared_component_action_output=demo=ai_generated_ui;component_actions=diff_panel:ai_generated_ui.preview_diff,explain_panel:ai_generated_ui.explain_changes,generated_form:ai_generated_ui.accept_refresh,save_button:ai_generated_ui.move_focus;ui=layout=ai_form_preview;style=sage_panel;input=<empty>;focus=save_button"
-require_output_line "cjgui ai generated ui demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+if grep -F "shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession" "$OUTPUT_LOG" >/dev/null 2>&1; then
+  echo "cjgui ai generated ui demo app verification: demo output must expose shared commit harness, not primitive session" >&2
+  cat "$OUTPUT_LOG" >&2
+  exit 21
+fi
 require_output_line "cjgui ai generated ui demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui ai generated ui demo app: shared_commit_output=demo=ai_generated_ui;component=save_button;action=ai_generated_ui.commit_accept_refresh;committed=true;readback=true;writes=1;before=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe;after=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel;readback_state=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel;rollback_state=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe;not_published=true"
 require_output_line "cjgui ai generated ui demo app: shared_commit_readback=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel"

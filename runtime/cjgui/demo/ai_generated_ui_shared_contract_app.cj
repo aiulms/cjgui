@@ -216,7 +216,6 @@ main(): Int64 {
     println("cjgui ai-generated-ui shared contract app: shared_state_core=${contract.sharedUiState()}")
     println("cjgui ai-generated-ui shared contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui ai-generated-ui shared contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
-    println("cjgui ai-generated-ui shared contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
     println("cjgui ai-generated-ui shared contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui ai-generated-ui shared contract app: shared_commit_output=${commitResult.summary}")
     println("cjgui ai-generated-ui shared contract app: shared_commit_readback=${contract.commitHarness.readback()}")

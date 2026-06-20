@@ -1,8 +1,9 @@
 package cjgui_settings_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
@@ -74,16 +75,8 @@ class SettingsPanelState {
         return componentSession.uiStateSummary()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -147,6 +140,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui settings demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui settings demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
@@ -162,19 +156,7 @@ main(): Int64 {
     println("cjgui settings demo app: state_after=${after}")
     println("cjgui settings demo app: state_readback=${readbackOk}")
     println("cjgui settings demo app: summary_after=${summary}")
-    println("cjgui settings demo app: public_api_consumed=true")
-    println("cjgui settings demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui settings demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui settings demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui settings demo app: shared_support_output=${panel.sharedSupportOutput()}")
-    println("cjgui settings demo app: shared_state_core=${panel.sharedUiState()}")
-    println("cjgui settings demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui settings demo app: shared_component_action_output=${panel.sharedComponentActionSummary()}")
-    println("cjgui settings demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui settings demo app: shared_commit_output=${commitResult.summary}")
-    println("cjgui settings demo app: shared_commit_readback=${panel.commitHarness.readback()}")
-    println("cjgui settings demo app: shared_commit_rollback_boundary=${panel.commitHarness.rollbackBoundary()}")
-    println("cjgui settings demo app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, panel.componentSession, commitResult, panel.commitHarness)
     runReporter.printRunResult(runResult)
     println("cjgui settings demo app: public_api_available=true")
 

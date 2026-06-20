@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
+PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -84,6 +85,11 @@ if [[ ! -f "$RUN_REPORTER_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$PROOF_REPORTER_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing proof reporter source $PROOF_REPORTER_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -101,6 +107,16 @@ if ! grep -F "public class CjguiExperimentalDemoRunResultReporter" "$RUN_REPORTE
    ! grep -F 'shared_run_readback=${runResult.runnable}' "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
    ! grep -F 'shared_run_not_published=${runResult.notPublished}' "$RUN_REPORTER_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo run harness verification: missing expected run result reporter declarations" >&2
+  exit 3
+fi
+
+if ! grep -F "public class CjguiExperimentalDemoProofReporter" "$PROOF_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printSharedPrimitiveProof" "$PROOF_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public_api_consumed=true" "$PROOF_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "shared_support=CjguiExperimentalDemoComponentActionSession" "$PROOF_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "shared_component_action_model=CjguiExperimentalDemoComponentActionSession" "$PROOF_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "shared_commit_harness=CjguiExperimentalDemoCommitHarness" "$PROOF_REPORTER_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected proof reporter declarations" >&2
   exit 3
 fi
 
@@ -124,8 +140,17 @@ for demo_src in \
     echo "cjgui shared demo run harness verification: demo must use shared run result reporter in $demo_src" >&2
     exit 4
   fi
+  if ! grep -F "CjguiExperimentalDemoProofReporter" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "proofReporter.printSharedPrimitiveProof(apiOutput" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo must use shared proof reporter in $demo_src" >&2
+    exit 4
+  fi
   if grep -F 'println("cjgui ' "$demo_src" | grep -F "shared_run_" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local shared_run println remains in $demo_src" >&2
+    exit 4
+  fi
+  if grep -E 'println\("cjgui .*: (public_api_consumed|public_api_name|public_api_output|shared_support|shared_support_output|shared_state_core|shared_component_action_model|shared_component_action_output|shared_commit_harness|shared_commit_output|shared_commit_readback|shared_commit_rollback_boundary|shared_commit_not_published)=' "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local shared proof println remains in $demo_src" >&2
     exit 4
   fi
 done
@@ -166,6 +191,10 @@ echo "cjgui_shared_demo_run_result_reporter=CjguiExperimentalDemoRunResultReport
 echo "cjgui_shared_demo_run_result_reporter_demo_count=10"
 echo "cjgui_shared_demo_run_result_output_rendering_shared=true"
 echo "cjgui_shared_demo_run_local_shared_run_println_retired=true"
+echo "cjgui_shared_demo_proof_reporter=CjguiExperimentalDemoProofReporter"
+echo "cjgui_shared_demo_proof_reporter_demo_count=10"
+echo "cjgui_shared_demo_public_component_commit_output_rendering_shared=true"
+echo "cjgui_shared_demo_local_shared_proof_println_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"
 echo "cjgui_shared_demo_run_public_c_abi_added=false"

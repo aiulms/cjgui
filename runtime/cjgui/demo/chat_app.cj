@@ -1,8 +1,9 @@
 package cjgui_chat_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
@@ -102,16 +103,8 @@ class ChatThreadState {
         return componentSession.uiStateSummary()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -177,6 +170,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui chat demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui chat demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
@@ -188,19 +182,7 @@ main(): Int64 {
     println("cjgui chat demo app: state_before=${before}")
     println("cjgui chat demo app: state_after=${after}")
     println("cjgui chat demo app: state_readback=${readbackOk}")
-    println("cjgui chat demo app: public_api_consumed=true")
-    println("cjgui chat demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui chat demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui chat demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui chat demo app: shared_support_output=${thread.sharedSupportOutput()}")
-    println("cjgui chat demo app: shared_state_core=${thread.sharedUiState()}")
-    println("cjgui chat demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui chat demo app: shared_component_action_output=${thread.sharedComponentActionSummary()}")
-    println("cjgui chat demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui chat demo app: shared_commit_output=${commitResult.summary}")
-    println("cjgui chat demo app: shared_commit_readback=${thread.commitHarness.readback()}")
-    println("cjgui chat demo app: shared_commit_rollback_boundary=${thread.commitHarness.rollbackBoundary()}")
-    println("cjgui chat demo app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, thread.componentSession, commitResult, thread.commitHarness)
     runReporter.printRunResult(runResult)
 
     if (readbackOk) {

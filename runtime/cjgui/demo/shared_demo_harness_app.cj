@@ -1,8 +1,9 @@
 package cjgui_shared_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
@@ -77,16 +78,8 @@ class SharedDemoHarnessState {
         return componentSession.uiStateSummary()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -158,6 +151,7 @@ main(): Int64 {
         commitReadbackOk
     )
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared demo harness app")
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared demo harness app: demo=shared_demo_harness")
@@ -168,19 +162,7 @@ main(): Int64 {
     println("cjgui shared demo harness app: state_before=${before}")
     println("cjgui shared demo harness app: state_after=${after}")
     println("cjgui shared demo harness app: state_readback=${outputOk}")
-    println("cjgui shared demo harness app: public_api_consumed=true")
-    println("cjgui shared demo harness app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui shared demo harness app: public_api_output=${apiOutput.summary}")
-    println("cjgui shared demo harness app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui shared demo harness app: shared_support_output=${harness.sharedSupportOutput()}")
-    println("cjgui shared demo harness app: shared_state_core=${harness.sharedUiState()}")
-    println("cjgui shared demo harness app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui shared demo harness app: shared_component_action_output=${harness.sharedComponentActionSummary()}")
-    println("cjgui shared demo harness app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui shared demo harness app: shared_commit_output=${commitResult.summary}")
-    println("cjgui shared demo harness app: shared_commit_readback=${harness.commitHarness.readback()}")
-    println("cjgui shared demo harness app: shared_commit_rollback_boundary=${harness.commitHarness.rollbackBoundary()}")
-    println("cjgui shared demo harness app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, harness.componentSession, commitResult, harness.commitHarness)
     runReporter.printRunResult(runResult)
 
     if (outputOk) {

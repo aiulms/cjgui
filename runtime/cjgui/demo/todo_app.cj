@@ -1,8 +1,9 @@
 package cjgui_todo_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
@@ -98,16 +99,8 @@ class TodoList {
         return componentSession.uiStateSummary()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -172,6 +165,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui todo demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
@@ -182,19 +176,7 @@ main(): Int64 {
     println("cjgui todo demo app: summary_before=${before}")
     println("cjgui todo demo app: summary_after_add=${afterAdd}")
     println("cjgui todo demo app: summary_after_complete=${afterComplete}")
-    println("cjgui todo demo app: public_api_consumed=true")
-    println("cjgui todo demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui todo demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui todo demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui todo demo app: shared_support_output=${todos.sharedSupportOutput()}")
-    println("cjgui todo demo app: shared_state_core=${todos.sharedUiState()}")
-    println("cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui todo demo app: shared_component_action_output=${todos.sharedComponentActionSummary()}")
-    println("cjgui todo demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui todo demo app: shared_commit_output=${commitResult.summary}")
-    println("cjgui todo demo app: shared_commit_readback=${todos.commitHarness.readback()}")
-    println("cjgui todo demo app: shared_commit_rollback_boundary=${todos.commitHarness.rollbackBoundary()}")
-    println("cjgui todo demo app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, todos.componentSession, commitResult, todos.commitHarness)
     runReporter.printRunResult(runResult)
     println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
 

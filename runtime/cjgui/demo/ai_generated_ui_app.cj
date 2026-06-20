@@ -1,8 +1,9 @@
 package cjgui_ai_generated_ui_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
@@ -87,16 +88,8 @@ class AiGeneratedUiState {
         return componentSession.uiStateSummary()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -168,6 +161,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui ai generated ui demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui ai generated ui demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
@@ -179,19 +173,7 @@ main(): Int64 {
     println("cjgui ai generated ui demo app: state_before=${before}")
     println("cjgui ai generated ui demo app: state_after=${after}")
     println("cjgui ai generated ui demo app: state_readback=${readbackOk}")
-    println("cjgui ai generated ui demo app: public_api_consumed=true")
-    println("cjgui ai generated ui demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui ai generated ui demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui ai generated ui demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui ai generated ui demo app: shared_support_output=${generatedUi.sharedSupportOutput()}")
-    println("cjgui ai generated ui demo app: shared_state_core=${generatedUi.sharedUiState()}")
-    println("cjgui ai generated ui demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui ai generated ui demo app: shared_component_action_output=${generatedUi.sharedComponentActionSummary()}")
-    println("cjgui ai generated ui demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui ai generated ui demo app: shared_commit_output=${commitResult.summary}")
-    println("cjgui ai generated ui demo app: shared_commit_readback=${generatedUi.commitHarness.readback()}")
-    println("cjgui ai generated ui demo app: shared_commit_rollback_boundary=${generatedUi.commitHarness.rollbackBoundary()}")
-    println("cjgui ai generated ui demo app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, generatedUi.componentSession, commitResult, generatedUi.commitHarness)
     runReporter.printRunResult(runResult)
 
     if (readbackOk) {

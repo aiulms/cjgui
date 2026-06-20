@@ -16,6 +16,7 @@ COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimen
 COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
+PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 TMP_DIR="${CJGUI_AI_GENERATED_UI_DEMO_TMPDIR:-/private/tmp/cjgui-ai-generated-ui-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -125,8 +126,8 @@ require_source_line "public func finishCommittedSessionRun" "$RUN_HARNESS_SRC"
 require_source_line "notPublished" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_ai_generated_ui_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
 require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
@@ -152,9 +153,8 @@ require_source_line "cjgui ai generated ui demo app: status_after=runnable" "$DE
 require_source_line "cjgui ai generated ui demo app: state_before=" "$DEMO_SRC"
 require_source_line "cjgui ai generated ui demo app: state_after=" "$DEMO_SRC"
 require_source_line "cjgui ai generated ui demo app: state_readback=" "$DEMO_SRC"
-require_source_line "cjgui ai generated ui demo app: public_api_consumed=true" "$DEMO_SRC"
-require_source_line "cjgui ai generated ui demo app: public_api_name=CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
-require_source_line "cjgui ai generated ui demo app: public_api_output=" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoProofReporter" "$DEMO_SRC"
+require_source_line "proofReporter.printSharedPrimitiveProof(apiOutput" "$DEMO_SRC"
 
 if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F "func commitReadback" "$DEMO_SRC" >/dev/null 2>&1 || \
@@ -233,6 +233,7 @@ cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runt
 cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 cp "$RUN_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
+cp "$PROOF_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

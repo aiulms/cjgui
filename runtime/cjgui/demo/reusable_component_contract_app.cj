@@ -1,8 +1,9 @@
 package cjgui_reusable_component_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
@@ -126,16 +127,8 @@ class ReusableComponentContractState {
         return componentSession.focus()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -226,6 +219,7 @@ main(): Int64 {
         commitReadbackOk
     )
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui reusable component contract app")
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui reusable component contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui reusable component contract app: demo=reusable_component_contract")
@@ -237,19 +231,7 @@ main(): Int64 {
     println("cjgui reusable component contract app: state_before=${before}")
     println("cjgui reusable component contract app: state_after=${after}")
     println("cjgui reusable component contract app: state_readback=${readbackOk}")
-    println("cjgui reusable component contract app: public_api_consumed=true")
-    println("cjgui reusable component contract app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui reusable component contract app: public_api_output=${apiOutput.summary}")
-    println("cjgui reusable component contract app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui reusable component contract app: shared_support_output=${contract.sharedSupportOutput()}")
-    println("cjgui reusable component contract app: shared_state_core=${contract.sharedUiState()}")
-    println("cjgui reusable component contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui reusable component contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
-    println("cjgui reusable component contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui reusable component contract app: shared_commit_output=${commitResult.summary}")
-    println("cjgui reusable component contract app: shared_commit_readback=${contract.commitHarness.readback()}")
-    println("cjgui reusable component contract app: shared_commit_rollback_boundary=${contract.commitHarness.rollbackBoundary()}")
-    println("cjgui reusable component contract app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, contract.componentSession, commitResult, contract.commitHarness)
     runReporter.printRunResult(runResult)
 
     if (outputOk) {

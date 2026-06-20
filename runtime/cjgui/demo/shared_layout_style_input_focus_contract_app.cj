@@ -1,8 +1,9 @@
 package cjgui_shared_layout_style_input_focus_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
@@ -80,16 +81,8 @@ class SharedLayoutStyleInputFocusContractState {
         return componentSession.uiStateSummary()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -177,6 +170,7 @@ main(): Int64 {
         commitReadbackOk
     )
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared layout-style-input-focus contract app")
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared layout-style-input-focus contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared layout-style-input-focus contract app: demo=shared_layout_style_input_focus_contract")
@@ -186,19 +180,7 @@ main(): Int64 {
     println("cjgui shared layout-style-input-focus contract app: state_before=${before}")
     println("cjgui shared layout-style-input-focus contract app: state_after=${after}")
     println("cjgui shared layout-style-input-focus contract app: state_readback=${outputOk}")
-    println("cjgui shared layout-style-input-focus contract app: public_api_consumed=true")
-    println("cjgui shared layout-style-input-focus contract app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui shared layout-style-input-focus contract app: public_api_output=${apiOutput.summary}")
-    println("cjgui shared layout-style-input-focus contract app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui shared layout-style-input-focus contract app: shared_support_output=${contract.sharedSupportOutput()}")
-    println("cjgui shared layout-style-input-focus contract app: shared_state_core=${contract.sharedUiState()}")
-    println("cjgui shared layout-style-input-focus contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui shared layout-style-input-focus contract app: shared_component_action_output=${contract.sharedComponentActionSummary()}")
-    println("cjgui shared layout-style-input-focus contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui shared layout-style-input-focus contract app: shared_commit_output=${commitResult.summary}")
-    println("cjgui shared layout-style-input-focus contract app: shared_commit_readback=${contract.commitHarness.readback()}")
-    println("cjgui shared layout-style-input-focus contract app: shared_commit_rollback_boundary=${contract.commitHarness.rollbackBoundary()}")
-    println("cjgui shared layout-style-input-focus contract app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, contract.componentSession, commitResult, contract.commitHarness)
     runReporter.printRunResult(runResult)
 
     if (outputOk) {

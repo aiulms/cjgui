@@ -1,8 +1,9 @@
 package cjgui_file_browser_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
-import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
@@ -110,16 +111,8 @@ class FileBrowserState {
         return componentSession.uiStateSummary()
     }
 
-    func sharedSupportOutput(): String {
-        return componentSession.traceSummary()
-    }
-
     func sharedComponentActions(): String {
         return componentSession.componentActions()
-    }
-
-    func sharedComponentActionSummary(): String {
-        return componentSession.componentActionSummary()
     }
 
     func sharedActions(): String {
@@ -185,6 +178,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui file browser demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui file browser demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
@@ -196,19 +190,7 @@ main(): Int64 {
     println("cjgui file browser demo app: state_before=${before}")
     println("cjgui file browser demo app: state_after=${after}")
     println("cjgui file browser demo app: state_readback=${readbackOk}")
-    println("cjgui file browser demo app: public_api_consumed=true")
-    println("cjgui file browser demo app: public_api_name=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui file browser demo app: public_api_output=${apiOutput.summary}")
-    println("cjgui file browser demo app: shared_support=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui file browser demo app: shared_support_output=${browser.sharedSupportOutput()}")
-    println("cjgui file browser demo app: shared_state_core=${browser.sharedUiState()}")
-    println("cjgui file browser demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
-    println("cjgui file browser demo app: shared_component_action_output=${browser.sharedComponentActionSummary()}")
-    println("cjgui file browser demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
-    println("cjgui file browser demo app: shared_commit_output=${commitResult.summary}")
-    println("cjgui file browser demo app: shared_commit_readback=${browser.commitHarness.readback()}")
-    println("cjgui file browser demo app: shared_commit_rollback_boundary=${browser.commitHarness.rollbackBoundary()}")
-    println("cjgui file browser demo app: shared_commit_not_published=${commitResult.notPublished}")
+    proofReporter.printSharedPrimitiveProof(apiOutput, browser.componentSession, commitResult, browser.commitHarness)
     runReporter.printRunResult(runResult)
 
     if (readbackOk) {

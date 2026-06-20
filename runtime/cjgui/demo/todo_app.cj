@@ -1,6 +1,7 @@
 package cjgui_todo_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -23,6 +24,7 @@ class TodoList {
     private var nextId: Int64 = 1
     private var items = ArrayList<TodoDemoItem>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
 
     init() {
         this.componentSession = CjguiExperimentalDemoComponentActionSession(
@@ -32,6 +34,10 @@ class TodoList {
             "neutral_list",
             "",
             "todo_input"
+        )
+        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+            "todo",
+            "items=0;first=<none>;first_done=false"
         )
     }
 
@@ -119,6 +125,18 @@ class TodoList {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
+
+    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
+        return commitSession.commitComponentAction(componentId, action, afterState)
+    }
+
+    func commitReadback(): String {
+        return commitSession.readback()
+    }
+
+    func commitRollbackBoundary(): String {
+        return commitSession.rollbackBoundary()
+    }
 }
 
 main(): Int64 {
@@ -142,6 +160,7 @@ main(): Int64 {
         todos.sharedUiState() == "layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item" &&
         completed
     let apiOutput = todos.buildSharedOutput(afterComplete, stateReadbackOk)
+    let commitResult = todos.commitSharedState("todo_item", "todo.commit_complete", afterComplete)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "todo" &&
         apiOutput.beforeState == before &&
@@ -150,7 +169,21 @@ main(): Int64 {
         apiOutput.writeCount == 2 &&
         apiOutput.domainSummary == afterComplete &&
         apiOutput.readbackOk &&
-        apiOutput.summary == "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true"
+        apiOutput.summary == "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true" &&
+        commitResult.demoName == "todo" &&
+        commitResult.componentId == "todo_item" &&
+        commitResult.action == "todo.commit_complete" &&
+        commitResult.beforeState == before &&
+        commitResult.afterState == afterComplete &&
+        commitResult.readbackState == afterComplete &&
+        commitResult.rollbackState == before &&
+        commitResult.writeCount == 1 &&
+        commitResult.committed &&
+        commitResult.readbackOk &&
+        commitResult.rollbackAvailable &&
+        commitResult.notPublished &&
+        todos.commitReadback() == afterComplete &&
+        todos.commitRollbackBoundary() == before
 
     println("cjgui todo demo app: demo=todo")
     println("cjgui todo demo app: status_before=state_writable")
@@ -167,6 +200,11 @@ main(): Int64 {
     println("cjgui todo demo app: shared_state_core=${todos.sharedUiState()}")
     println("cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui todo demo app: shared_component_action_output=${todos.sharedComponentActionSummary()}")
+    println("cjgui todo demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui todo demo app: shared_commit_output=${commitResult.summary}")
+    println("cjgui todo demo app: shared_commit_readback=${todos.commitReadback()}")
+    println("cjgui todo demo app: shared_commit_rollback_boundary=${todos.commitRollbackBoundary()}")
+    println("cjgui todo demo app: shared_commit_not_published=${commitResult.notPublished}")
     println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
 
     if (readbackOk) {

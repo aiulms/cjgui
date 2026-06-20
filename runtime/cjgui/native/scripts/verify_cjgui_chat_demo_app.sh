@@ -13,6 +13,7 @@ SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interact
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 TMP_DIR="${CJGUI_CHAT_DEMO_TMPDIR:-/private/tmp/cjgui-chat-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -86,6 +87,11 @@ if [[ ! -f "$COMPONENT_ACTION_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
+  echo "cjgui chat demo app verification: missing shared commit session source $COMMIT_SESSION_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -98,10 +104,17 @@ require_source_line "public func moveFocus" "$UI_STATE_CORE_SRC"
 require_source_line "public class CjguiExperimentalDemoComponentActionSession" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
+require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_chat_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
 require_source_line "class ChatThreadState" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
+require_source_line "commitSharedState" "$DEMO_SRC"
 require_source_line "private var messages" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
@@ -179,6 +192,7 @@ cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experim
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -204,6 +218,11 @@ require_output_line "cjgui chat demo app: shared_support_output=demo=chat;writes
 require_output_line "cjgui chat demo app: shared_state_core=layout=threaded_chat;style=assistant_reply;input=;focus=message_list"
 require_output_line "cjgui chat demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui chat demo app: shared_component_action_output=demo=chat;component_actions=composer:chat.type_message,send_button:chat.send_message,message_list:chat.append_reply,message_list:chat.move_focus;ui=layout=threaded_chat;style=assistant_reply;input=;focus=message_list"
+require_output_line "cjgui chat demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui chat demo app: shared_commit_output=demo=chat;component=message_list;action=chat.commit_thread;committed=true;readback=true;writes=1;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;readback_state=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;rollback_state=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;not_published=true"
+require_output_line "cjgui chat demo app: shared_commit_readback=messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
+require_output_line "cjgui chat demo app: shared_commit_rollback_boundary=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer"
+require_output_line "cjgui chat demo app: shared_commit_not_published=true"
 
 echo "cjgui_chat_demo_app_compiled=true"
 echo "cjgui_chat_demo_app_ran=true"
@@ -223,6 +242,11 @@ echo "chat_shared_state_core_imported=true"
 echo "chat_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "chat_shared_component_action_session_imported=true"
 echo "chat_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "chat_shared_commit_session_imported=true"
+echo "chat_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
+echo "chat_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
+echo "chat_shared_commit_readback=true"
+echo "chat_shared_commit_not_published=true"
 echo "chat_runtime_state_write=false"
 echo "chat_renderer_state_write=false"
 echo "chat_public_c_abi_added=false"

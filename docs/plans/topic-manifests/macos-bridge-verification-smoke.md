@@ -6,6 +6,10 @@
 
 本主题记录 `labs/macos_bridge_smoke`、AppKit / Metal bridge boundary、auto-close smoke、用户可见窗口截图、Metal readback 和 verification harness 的证据角色。
 
+## CJGUI demo_support 维护备注
+
+2026-06-20 的 CJGUI shared demo_support commit/write/readback 第一切片已记录在 [commit/write/readback report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-commit-write-readback-first-slice-report.md)。该切片不修改 smoke native files，不调用 native bridge，不新增 public C ABI；Todo、Chat、FileBrowser 的 owner-local commit/readback verifier 只证明 demo-host in-memory facts，不把任何 smoke / isolated / demo evidence 升级为 production AppKit / Metal truth。
+
 ## 当前状态
 
 macOS smoke 已证明本机可以通过 C ABI / Objective-C shim 打开窗口、执行最小 Metal 清屏、自动关闭、输出 capability / lifecycle / frame metadata / render stats，并在 smoke-only 范围内完成截图与 readback feasibility evidence。native bridge write-set planning reset、C ABI surface contract manifest、native handle token ownership manifest、native bridge teardown implementation planning manifest、first production write-set preflight、production native bridge skeleton write-set manifest、native bridge build integration planning manifest 与 native bridge build probe manifest 已把这些证据重新定位为正式 bridge planning / probe evidence，而不是 runtime implementation permission。

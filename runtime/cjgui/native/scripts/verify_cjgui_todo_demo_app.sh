@@ -14,6 +14,7 @@ SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interact
 OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 TMP_DIR="${CJGUI_TODO_DEMO_TMPDIR:-/private/tmp/cjgui-todo-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -79,6 +80,11 @@ if [[ ! -f "$COMPONENT_ACTION_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
+  echo "cjgui todo demo app verification: missing shared commit session source $COMMIT_SESSION_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func recordAction" "$SUPPORT_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared interaction trace support declaration" >&2
@@ -108,14 +114,25 @@ if ! grep -F "public class CjguiExperimentalDemoComponentActionSession" "$COMPON
   exit 4
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func commitComponentAction" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func rollbackBoundary" "$COMMIT_SESSION_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared owner-local commit session declaration" >&2
+  exit 4
+fi
+
 if ! grep -F "main(): Int64" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing demo main" >&2
   exit 3
 fi
 
 if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "buildSharedOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "sharedUiState()" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared output builder consumption" >&2
   exit 4
@@ -194,6 +211,7 @@ cp "$SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experim
 cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj"
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
+cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -218,6 +236,11 @@ require_line "cjgui todo demo app: shared_support_output=demo=todo;writes=2;acti
 require_line "cjgui todo demo app: shared_state_core=layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item"
 require_line "cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_line "cjgui todo demo app: shared_component_action_output=demo=todo;component_actions=todo_input:todo.add,todo_item:todo.complete;ui=layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item"
+require_line "cjgui todo demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_line "cjgui todo demo app: shared_commit_output=demo=todo;component=todo_item;action=todo.commit_complete;committed=true;readback=true;writes=1;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;readback_state=items=1;first=Write first CJGUI todo;first_done=true;rollback_state=items=0;first=<none>;first_done=false;not_published=true"
+require_line "cjgui todo demo app: shared_commit_readback=items=1;first=Write first CJGUI todo;first_done=true"
+require_line "cjgui todo demo app: shared_commit_rollback_boundary=items=0;first=<none>;first_done=false"
+require_line "cjgui todo demo app: shared_commit_not_published=true"
 require_line "cjgui todo demo app: owner_local_write_readback=true"
 
 if grep -E 'println\("cjgui todo demo app: (runtime_state_write|renderer_state_write|visibility_published|public_c_abi_added)=' "$DEMO_SRC" >/dev/null 2>&1; then
@@ -243,6 +266,11 @@ echo "todo_shared_state_core_imported=true"
 echo "todo_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "todo_shared_component_action_session_imported=true"
 echo "todo_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "todo_shared_commit_session_imported=true"
+echo "todo_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
+echo "todo_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
+echo "todo_shared_commit_readback=true"
+echo "todo_shared_commit_not_published=true"
 echo "todo_runtime_state_write=false"
 echo "todo_renderer_state_write=false"
 echo "todo_public_api_available=true"

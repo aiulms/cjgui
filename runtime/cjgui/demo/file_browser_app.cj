@@ -1,6 +1,7 @@
 package cjgui_file_browser_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -22,6 +23,7 @@ class FileBrowserEntry {
 class FileBrowserState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
     private var entries = ArrayList<FileBrowserEntry>()
     var selectedPath: String
     var selectedKind: String
@@ -38,6 +40,10 @@ class FileBrowserState {
             "tree_detail",
             "",
             "tree"
+        )
+        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+            "file_browser",
+            "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree"
         )
         this.selectedPath = "/workspace"
         this.selectedKind = "folder"
@@ -131,6 +137,18 @@ class FileBrowserState {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
+
+    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
+        return commitSession.commitComponentAction(componentId, action, afterState)
+    }
+
+    func commitReadback(): String {
+        return commitSession.readback()
+    }
+
+    func commitRollbackBoundary(): String {
+        return commitSession.rollbackBoundary()
+    }
 }
 
 main(): Int64 {
@@ -154,6 +172,7 @@ main(): Int64 {
         browser.sharedUiState() == "layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane" &&
         summary == "demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
     let apiOutput = browser.buildSharedOutput(summary, stateReadbackOk)
+    let commitResult = browser.commitSharedState("detail_pane", "file_browser.commit_detail", after)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "file_browser" &&
         apiOutput.beforeState == before &&
@@ -162,7 +181,21 @@ main(): Int64 {
         apiOutput.writeCount == 5 &&
         apiOutput.domainSummary == summary &&
         apiOutput.readbackOk &&
-        apiOutput.summary == "demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
+        apiOutput.summary == "demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane" &&
+        commitResult.demoName == "file_browser" &&
+        commitResult.componentId == "detail_pane" &&
+        commitResult.action == "file_browser.commit_detail" &&
+        commitResult.beforeState == before &&
+        commitResult.afterState == after &&
+        commitResult.readbackState == after &&
+        commitResult.rollbackState == before &&
+        commitResult.writeCount == 1 &&
+        commitResult.committed &&
+        commitResult.readbackOk &&
+        commitResult.rollbackAvailable &&
+        commitResult.notPublished &&
+        browser.commitReadback() == after &&
+        browser.commitRollbackBoundary() == before
 
     println("cjgui file browser demo app: demo=file_browser")
     println("cjgui file browser demo app: status_before=not_started")
@@ -180,6 +213,11 @@ main(): Int64 {
     println("cjgui file browser demo app: shared_state_core=${browser.sharedUiState()}")
     println("cjgui file browser demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui file browser demo app: shared_component_action_output=${browser.sharedComponentActionSummary()}")
+    println("cjgui file browser demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui file browser demo app: shared_commit_output=${commitResult.summary}")
+    println("cjgui file browser demo app: shared_commit_readback=${browser.commitReadback()}")
+    println("cjgui file browser demo app: shared_commit_rollback_boundary=${browser.commitRollbackBoundary()}")
+    println("cjgui file browser demo app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (readbackOk) {
         return 0

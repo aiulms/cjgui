@@ -3,6 +3,7 @@ package cjgui_ai_generated_ui_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -167,6 +168,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui ai generated ui demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui ai generated ui demo app: demo=ai_generated_ui")
@@ -190,10 +192,7 @@ main(): Int64 {
     println("cjgui ai generated ui demo app: shared_commit_readback=${generatedUi.commitHarness.readback()}")
     println("cjgui ai generated ui demo app: shared_commit_rollback_boundary=${generatedUi.commitHarness.rollbackBoundary()}")
     println("cjgui ai generated ui demo app: shared_commit_not_published=${commitResult.notPublished}")
-    println("cjgui ai generated ui demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
-    println("cjgui ai generated ui demo app: shared_run_result=${runResult.summary}")
-    println("cjgui ai generated ui demo app: shared_run_readback=${runResult.runnable}")
-    println("cjgui ai generated ui demo app: shared_run_not_published=${runResult.notPublished}")
+    runReporter.printRunResult(runResult)
 
     if (readbackOk) {
         return 0

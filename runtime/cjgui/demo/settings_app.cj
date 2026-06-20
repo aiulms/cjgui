@@ -3,6 +3,7 @@ package cjgui_settings_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -146,6 +147,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui settings demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui settings demo app: demo=settings")
@@ -173,10 +175,7 @@ main(): Int64 {
     println("cjgui settings demo app: shared_commit_readback=${panel.commitHarness.readback()}")
     println("cjgui settings demo app: shared_commit_rollback_boundary=${panel.commitHarness.rollbackBoundary()}")
     println("cjgui settings demo app: shared_commit_not_published=${commitResult.notPublished}")
-    println("cjgui settings demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
-    println("cjgui settings demo app: shared_run_result=${runResult.summary}")
-    println("cjgui settings demo app: shared_run_readback=${runResult.runnable}")
-    println("cjgui settings demo app: shared_run_not_published=${runResult.notPublished}")
+    runReporter.printRunResult(runResult)
     println("cjgui settings demo app: public_api_available=true")
 
     if (readbackOk) {

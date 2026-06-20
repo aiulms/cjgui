@@ -3,6 +3,7 @@ package cjgui_todo_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -171,6 +172,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui todo demo app: demo=todo")
@@ -193,10 +195,7 @@ main(): Int64 {
     println("cjgui todo demo app: shared_commit_readback=${todos.commitHarness.readback()}")
     println("cjgui todo demo app: shared_commit_rollback_boundary=${todos.commitHarness.rollbackBoundary()}")
     println("cjgui todo demo app: shared_commit_not_published=${commitResult.notPublished}")
-    println("cjgui todo demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
-    println("cjgui todo demo app: shared_run_result=${runResult.summary}")
-    println("cjgui todo demo app: shared_run_readback=${runResult.runnable}")
-    println("cjgui todo demo app: shared_run_not_published=${runResult.notPublished}")
+    runReporter.printRunResult(runResult)
     println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
 
     if (readbackOk) {

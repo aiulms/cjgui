@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
+RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -78,6 +79,11 @@ if [[ ! -f "$RUN_HARNESS_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$RUN_REPORTER_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing run result reporter source $RUN_REPORTER_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -85,6 +91,16 @@ if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/
    ! grep -F "CjguiExperimentalDemoComponentActionSession" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "notPublished" "$RUN_HARNESS_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo run harness verification: missing expected run harness declarations" >&2
+  exit 3
+fi
+
+if ! grep -F "public class CjguiExperimentalDemoRunResultReporter" "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printRunResult" "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "shared_run_harness=CjguiExperimentalDemoRunHarness" "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F 'shared_run_result=${runResult.summary}' "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F 'shared_run_readback=${runResult.runnable}' "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F 'shared_run_not_published=${runResult.notPublished}' "$RUN_REPORTER_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected run result reporter declarations" >&2
   exit 3
 fi
 
@@ -101,6 +117,15 @@ for demo_src in \
   "$REUSABLE_COMPONENT_CONTRACT_SRC"; do
   if grep -F "func buildRunResult(" "$demo_src" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local buildRunResult wrapper remains in $demo_src" >&2
+    exit 4
+  fi
+  if ! grep -F "CjguiExperimentalDemoRunResultReporter" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "runReporter.printRunResult(runResult)" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo must use shared run result reporter in $demo_src" >&2
+    exit 4
+  fi
+  if grep -F 'println("cjgui ' "$demo_src" | grep -F "shared_run_" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local shared_run println remains in $demo_src" >&2
     exit 4
   fi
 done
@@ -137,6 +162,10 @@ echo "cjgui_shared_demo_run_readback=true"
 echo "cjgui_shared_demo_run_not_published=true"
 echo "cjgui_shared_demo_run_harness_boilerplate_reduced=true"
 echo "cjgui_shared_demo_run_session_api=finishCommittedSessionRun"
+echo "cjgui_shared_demo_run_result_reporter=CjguiExperimentalDemoRunResultReporter"
+echo "cjgui_shared_demo_run_result_reporter_demo_count=10"
+echo "cjgui_shared_demo_run_result_output_rendering_shared=true"
+echo "cjgui_shared_demo_run_local_shared_run_println_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"
 echo "cjgui_shared_demo_run_public_c_abi_added=false"

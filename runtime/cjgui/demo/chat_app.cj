@@ -3,6 +3,7 @@ package cjgui_chat_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -176,6 +177,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui chat demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui chat demo app: demo=chat")
@@ -199,10 +201,7 @@ main(): Int64 {
     println("cjgui chat demo app: shared_commit_readback=${thread.commitHarness.readback()}")
     println("cjgui chat demo app: shared_commit_rollback_boundary=${thread.commitHarness.rollbackBoundary()}")
     println("cjgui chat demo app: shared_commit_not_published=${commitResult.notPublished}")
-    println("cjgui chat demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
-    println("cjgui chat demo app: shared_run_result=${runResult.summary}")
-    println("cjgui chat demo app: shared_run_readback=${runResult.runnable}")
-    println("cjgui chat demo app: shared_run_not_published=${runResult.notPublished}")
+    runReporter.printRunResult(runResult)
 
     if (readbackOk) {
         return 0

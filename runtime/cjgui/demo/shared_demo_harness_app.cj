@@ -3,6 +3,7 @@ package cjgui_shared_demo_harness_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 shared demo harness demo app，不属于 runtime_renderer_stage* owner 链。
@@ -156,6 +157,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared demo harness app: demo=shared_demo_harness")
@@ -179,10 +181,7 @@ main(): Int64 {
     println("cjgui shared demo harness app: shared_commit_readback=${harness.commitHarness.readback()}")
     println("cjgui shared demo harness app: shared_commit_rollback_boundary=${harness.commitHarness.rollbackBoundary()}")
     println("cjgui shared demo harness app: shared_commit_not_published=${commitResult.notPublished}")
-    println("cjgui shared demo harness app: shared_run_harness=CjguiExperimentalDemoRunHarness")
-    println("cjgui shared demo harness app: shared_run_result=${runResult.summary}")
-    println("cjgui shared demo harness app: shared_run_readback=${runResult.runnable}")
-    println("cjgui shared demo harness app: shared_run_not_published=${runResult.notPublished}")
+    runReporter.printRunResult(runResult)
 
     if (outputOk) {
         return 0

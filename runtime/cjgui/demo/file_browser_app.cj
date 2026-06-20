@@ -3,6 +3,7 @@ package cjgui_file_browser_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -184,6 +185,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui file browser demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui file browser demo app: demo=file_browser")
@@ -207,10 +209,7 @@ main(): Int64 {
     println("cjgui file browser demo app: shared_commit_readback=${browser.commitHarness.readback()}")
     println("cjgui file browser demo app: shared_commit_rollback_boundary=${browser.commitHarness.rollbackBoundary()}")
     println("cjgui file browser demo app: shared_commit_not_published=${commitResult.notPublished}")
-    println("cjgui file browser demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
-    println("cjgui file browser demo app: shared_run_result=${runResult.summary}")
-    println("cjgui file browser demo app: shared_run_readback=${runResult.runnable}")
-    println("cjgui file browser demo app: shared_run_not_published=${runResult.notPublished}")
+    runReporter.printRunResult(runResult)
 
     if (readbackOk) {
         return 0

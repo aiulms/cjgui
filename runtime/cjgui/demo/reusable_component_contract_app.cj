@@ -3,6 +3,7 @@ package cjgui_reusable_component_contract_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -224,6 +225,7 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
+    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui reusable component contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui reusable component contract app: demo=reusable_component_contract")
@@ -248,10 +250,7 @@ main(): Int64 {
     println("cjgui reusable component contract app: shared_commit_readback=${contract.commitHarness.readback()}")
     println("cjgui reusable component contract app: shared_commit_rollback_boundary=${contract.commitHarness.rollbackBoundary()}")
     println("cjgui reusable component contract app: shared_commit_not_published=${commitResult.notPublished}")
-    println("cjgui reusable component contract app: shared_run_harness=CjguiExperimentalDemoRunHarness")
-    println("cjgui reusable component contract app: shared_run_result=${runResult.summary}")
-    println("cjgui reusable component contract app: shared_run_readback=${runResult.runnable}")
-    println("cjgui reusable component contract app: shared_run_not_published=${runResult.notPublished}")
+    runReporter.printRunResult(runResult)
 
     if (outputOk) {
         return 0

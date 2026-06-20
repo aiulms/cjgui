@@ -8,6 +8,8 @@
 
 ## CJGUI demo_support 维护备注
 
+2026-06-20 的 CJGUI shared demo_support demo run result reporter 输出渲染清理已记录在 [reporter cleanup report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-demo-run-result-reporter-output-rendering-cleanup-report.md)。该切片只让当前 10 个 runnable demo 共用 stdout proof renderer；它不改变本 manifest 的 real backend runway，不授权 Metal / AppKit resource creation、drawable acquisition、command buffer、GPU submission、renderer state write 或 backend-ready truth。
+
 2026-06-20 的 CJGUI shared demo_support commit/write/readback 第一切片已记录在 [commit/write/readback report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-commit-write-readback-first-slice-report.md)。该切片只让 Todo、Chat、FileBrowser 三个 demo 消费 owner-local in-memory commit/readback facts；它不改变本 manifest 的 real backend runway，不授权 Metal / AppKit resource creation、drawable acquisition、command buffer、GPU submission、renderer state write 或 backend-ready truth。
 
 ## 当前状态

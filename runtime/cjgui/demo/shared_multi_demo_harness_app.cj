@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -227,9 +228,10 @@ main(): Int64 {
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared multi-demo harness app")
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared multi-demo harness app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui shared multi-demo harness app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui shared multi-demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui shared multi-demo harness app: demo=shared_multi_demo_harness")
+    metadataReporter.printDemoIdentity("shared_multi_demo_harness")
     businessReporter.printStatusTransition("not_started", "runnable")
     businessReporter.printTextFact("served_demos", "todo,file_browser")
     businessReporter.printTextFact("served_demo_count", "2")

@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -182,9 +183,10 @@ main(): Int64 {
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui file browser demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui file browser demo app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui file browser demo app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui file browser demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui file browser demo app: demo=file_browser")
+    metadataReporter.printDemoIdentity("file_browser")
     businessReporter.printStatusTransition("not_started", "runnable")
     businessReporter.printTextFact("layout", "tree_detail_split")
     businessReporter.printTextFact("interaction", "expand_folder,filter_entries,select_file,refresh_detail,move_focus")

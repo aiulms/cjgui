@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -144,12 +145,13 @@ main(): Int64 {
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui settings demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui settings demo app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui settings demo app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui settings demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui settings demo app: demo=settings")
+    metadataReporter.printDemoIdentity("settings")
     businessReporter.printStatusTransition("scaffolded", "runnable")
-    println("cjgui settings demo app: main_declared=true")
-    println("cjgui settings demo app: deterministic_output=true")
+    metadataReporter.printStaticBoolFact("main_declared", true)
+    metadataReporter.printStaticBoolFact("deterministic_output", true)
     businessReporter.printTextFact("layout", "sectioned_form")
     businessReporter.printTextFact("controls", "toggle:auto_save,select:theme,text:username")
     businessReporter.printTextFact("interaction", "toggle_auto_save,select_theme,update_username,move_focus")

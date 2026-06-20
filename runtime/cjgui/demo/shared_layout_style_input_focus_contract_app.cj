@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -173,9 +174,10 @@ main(): Int64 {
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared layout-style-input-focus contract app")
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared layout-style-input-focus contract app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui shared layout-style-input-focus contract app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui shared layout-style-input-focus contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui shared layout-style-input-focus contract app: demo=shared_layout_style_input_focus_contract")
+    metadataReporter.printDemoIdentity("shared_layout_style_input_focus_contract")
     businessReporter.printStatusTransition("not_started", "runnable")
     businessReporter.printTextFact("interaction", "apply_layout,apply_style,type_input,move_focus")
     businessReporter.printTextFact("state_before", before)

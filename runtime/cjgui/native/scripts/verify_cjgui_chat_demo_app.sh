@@ -18,6 +18,7 @@ RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_
 RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
 PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
+METADATA_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
 TMP_DIR="${CJGUI_CHAT_DEMO_TMPDIR:-/private/tmp/cjgui-chat-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -128,6 +129,9 @@ require_source_line "public class CjguiExperimentalDemoBusinessSnapshotReporter"
 require_source_line "public func printStatusTransition" "$BUSINESS_REPORTER_SRC"
 require_source_line "public func printTextFact" "$BUSINESS_REPORTER_SRC"
 require_source_line "public func printBoolFact" "$BUSINESS_REPORTER_SRC"
+require_source_line "public class CjguiExperimentalDemoMetadataReporter" "$METADATA_REPORTER_SRC"
+require_source_line "public func printDemoIdentity" "$METADATA_REPORTER_SRC"
+require_source_line "public func printStaticBoolFact" "$METADATA_REPORTER_SRC"
 require_source_line "package cjgui_chat_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
@@ -154,7 +158,14 @@ require_source_line "CjguiExperimentalDemoBusinessSnapshotReporter" "$DEMO_SRC"
 require_source_line "businessReporter.printStatusTransition" "$DEMO_SRC"
 require_source_line "businessReporter.printTextFact" "$DEMO_SRC"
 require_source_line "businessReporter.printBoolFact" "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoMetadataReporter" "$DEMO_SRC"
+require_source_line 'metadataReporter.printDemoIdentity("chat")' "$DEMO_SRC"
 require_source_line "proofReporter.printSharedPrimitiveProof(apiOutput" "$DEMO_SRC"
+
+if grep -E 'println\("cjgui .*: (demo|main_declared|deterministic_output)=' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui chat demo app verification: demo-local metadata println remains" >&2
+  exit 14
+fi
 
 if grep -F "cjguiExperimentalBuildChatDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F "CjguiExperimentalChatDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
@@ -235,6 +246,7 @@ cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_exp
 cp "$RUN_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
 cp "$PROOF_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 cp "$BUSINESS_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
+cp "$METADATA_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

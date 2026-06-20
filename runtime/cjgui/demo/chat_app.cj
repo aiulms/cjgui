@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -174,9 +175,10 @@ main(): Int64 {
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui chat demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui chat demo app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui chat demo app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui chat demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui chat demo app: demo=chat")
+    metadataReporter.printDemoIdentity("chat")
     businessReporter.printStatusTransition("not_started", "runnable")
     businessReporter.printTextFact("layout", "threaded_chat")
     businessReporter.printTextFact("interaction", "type_message,send_message,append_reply,move_focus")

@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -169,9 +170,10 @@ main(): Int64 {
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui todo demo app")
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui todo demo app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui todo demo app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui todo demo app: demo=todo")
+    metadataReporter.printDemoIdentity("todo")
     businessReporter.printStatusTransition("state_writable", "runnable")
     businessReporter.printTextFact("interaction", "add_todo,complete_todo")
     businessReporter.printTextFact("summary_before", before)

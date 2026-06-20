@@ -11,6 +11,7 @@ RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_
 RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_result_reporter.cj"
 PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
+METADATA_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -96,6 +97,11 @@ if [[ ! -f "$BUSINESS_REPORTER_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$METADATA_REPORTER_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing metadata reporter source $METADATA_REPORTER_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -136,6 +142,14 @@ if ! grep -F "public class CjguiExperimentalDemoBusinessSnapshotReporter" "$BUSI
   exit 3
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoMetadataReporter" "$METADATA_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printDemoIdentity" "$METADATA_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printStaticBoolFact" "$METADATA_REPORTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F 'println("${outputPrefix}: demo=${demoName}")' "$METADATA_REPORTER_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected metadata reporter declarations" >&2
+  exit 3
+fi
+
 for demo_src in \
   "$TODO_DEMO_SRC" \
   "$SETTINGS_DEMO_SRC" \
@@ -168,6 +182,11 @@ for demo_src in \
     echo "cjgui shared demo run harness verification: demo must use shared business snapshot reporter in $demo_src" >&2
     exit 4
   fi
+  if ! grep -F "CjguiExperimentalDemoMetadataReporter" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "metadataReporter.printDemoIdentity" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo must use shared metadata reporter in $demo_src" >&2
+    exit 4
+  fi
   if grep -F 'println("cjgui ' "$demo_src" | grep -F "shared_run_" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local shared_run println remains in $demo_src" >&2
     exit 4
@@ -178,6 +197,10 @@ for demo_src in \
   fi
   if grep -E 'println\("cjgui .*: (status_before|status_after|layout|controls|interaction|state_before|state_after|state_readback|summary_before|summary_after|summary_after_add|summary_after_complete|served_demo|served_demos|served_demo_count|reused_demos|component_kinds|owner_local_write_readback|public_api_available)=' "$demo_src" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local business snapshot println remains in $demo_src" >&2
+    exit 4
+  fi
+  if grep -E 'println\("cjgui .*: (demo|main_declared|deterministic_output)=' "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local metadata println remains in $demo_src" >&2
     exit 4
   fi
 done
@@ -226,6 +249,10 @@ echo "cjgui_shared_demo_business_snapshot_reporter=CjguiExperimentalDemoBusiness
 echo "cjgui_shared_demo_business_snapshot_reporter_demo_count=10"
 echo "cjgui_shared_demo_business_snapshot_output_rendering_shared=true"
 echo "cjgui_shared_demo_local_business_snapshot_println_retired=true"
+echo "cjgui_shared_demo_metadata_reporter=CjguiExperimentalDemoMetadataReporter"
+echo "cjgui_shared_demo_metadata_reporter_demo_count=10"
+echo "cjgui_shared_demo_metadata_output_rendering_shared=true"
+echo "cjgui_shared_demo_local_metadata_println_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"
 echo "cjgui_shared_demo_run_public_c_abi_added=false"

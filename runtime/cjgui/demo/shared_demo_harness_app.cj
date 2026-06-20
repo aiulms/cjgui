@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 shared demo harness demo app，不属于 runtime_renderer_stage* owner 链。
@@ -154,9 +155,10 @@ main(): Int64 {
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared demo harness app")
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared demo harness app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui shared demo harness app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui shared demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui shared demo harness app: demo=shared_demo_harness")
+    metadataReporter.printDemoIdentity("shared_demo_harness")
     businessReporter.printStatusTransition("not_started", "runnable")
     businessReporter.printTextFact("served_demo", "todo")
     businessReporter.printTextFact("interaction", "run_todo_add_complete")

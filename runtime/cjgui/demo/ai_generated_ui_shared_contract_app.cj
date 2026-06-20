@@ -6,6 +6,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
 import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI shared contract demo app，不属于 runtime_renderer_stage* owner 链。
@@ -210,9 +211,10 @@ main(): Int64 {
     let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui ai-generated-ui shared contract app")
     let proofReporter = CjguiExperimentalDemoProofReporter("cjgui ai-generated-ui shared contract app")
     let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui ai-generated-ui shared contract app")
+    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui ai-generated-ui shared contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
-    println("cjgui ai-generated-ui shared contract app: demo=ai_generated_ui_shared_contract")
+    metadataReporter.printDemoIdentity("ai_generated_ui_shared_contract")
     businessReporter.printStatusTransition("not_started", "runnable")
     businessReporter.printTextFact("interaction", "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
     businessReporter.printTextFact("state_before", before)

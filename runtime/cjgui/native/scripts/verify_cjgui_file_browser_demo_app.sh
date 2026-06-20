@@ -106,15 +106,17 @@ require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSI
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC"
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
+require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_file_browser_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
 require_source_line "class FileBrowserState" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
-require_source_line "commitSharedState" "$DEMO_SRC"
+require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
 require_source_line "private var entries" "$DEMO_SRC"
 require_source_line "var selectedPath: String" "$DEMO_SRC"
 require_source_line "var expandedPath: String" "$DEMO_SRC"
@@ -135,6 +137,13 @@ require_source_line "cjgui file browser demo app: public_api_output=" "$DEMO_SRC
 if grep -F "cjguiExperimentalBuildFileBrowserDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F "CjguiExperimentalFileBrowserDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui file browser demo app verification: demo must not directly consume legacy FileBrowser output API" >&2
+  exit 10
+fi
+
+if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitReadback" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitRollbackBoundary" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui file browser demo app verification: demo must use shared commit harness instead of local commit wrappers" >&2
   exit 10
 fi
 
@@ -228,6 +237,7 @@ require_output_line "cjgui file browser demo app: shared_state_core=layout=tree_
 require_output_line "cjgui file browser demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui file browser demo app: shared_component_action_output=demo=file_browser;component_actions=folder_tree:file_browser.expand_folder,tree_filter:file_browser.filter_entries,file_row:file_browser.select_file,detail_pane:file_browser.refresh_detail,detail_pane:file_browser.move_focus;ui=layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane"
 require_output_line "cjgui file browser demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui file browser demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui file browser demo app: shared_commit_output=demo=file_browser;component=detail_pane;action=file_browser.commit_detail;committed=true;readback=true;writes=1;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;readback_state=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;rollback_state=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;not_published=true"
 require_output_line "cjgui file browser demo app: shared_commit_readback=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
 require_output_line "cjgui file browser demo app: shared_commit_rollback_boundary=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree"
@@ -244,13 +254,15 @@ echo "file_browser_public_api_name=CjguiExperimentalDemoComponentActionSession"
 echo "file_browser_public_api_return=CjguiExperimentalDemoOutput"
 echo "file_browser_legacy_output_api_direct_consumption=false"
 echo "file_browser_owner_local_write_readback=true"
-echo "file_browser_state_write_scope=FileBrowserState.entries,selectedPath,selectedKind,detailTitle,detailPreview,expandedPath,componentSession"
+echo "file_browser_state_write_scope=FileBrowserState.entries,selectedPath,selectedKind,detailTitle,detailPreview,expandedPath,componentSession,commitHarness"
 echo "file_browser_shared_support_imported=true"
 echo "file_browser_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "file_browser_shared_state_core_imported=true"
 echo "file_browser_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "file_browser_shared_component_action_session_imported=true"
 echo "file_browser_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "file_browser_shared_commit_harness_imported=true"
+echo "file_browser_shared_commit_harness_name=CjguiExperimentalDemoCommitHarness"
 echo "file_browser_shared_commit_session_imported=true"
 echo "file_browser_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
 echo "file_browser_shared_commit_result_name=CjguiExperimentalDemoCommitResult"

@@ -60,7 +60,9 @@ fi
 
 if ! grep -F "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func commitComponentAction" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func resultMatches" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "not_published" "$COMMIT_SESSION_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo commit verification: missing expected commit support declarations" >&2
   exit 3
@@ -82,12 +84,15 @@ require_line "todo_shared_commit_harness_imported=true" "$TODO_LOG"
 require_line "todo_shared_commit_readback=true" "$TODO_LOG"
 require_line "todo_shared_commit_not_published=true" "$TODO_LOG"
 require_line "settings_shared_commit_session_imported=true" "$SETTINGS_LOG"
+require_line "settings_shared_commit_harness_imported=true" "$SETTINGS_LOG"
 require_line "settings_shared_commit_readback=true" "$SETTINGS_LOG"
 require_line "settings_shared_commit_not_published=true" "$SETTINGS_LOG"
 require_line "chat_shared_commit_session_imported=true" "$CHAT_LOG"
+require_line "chat_shared_commit_harness_imported=true" "$CHAT_LOG"
 require_line "chat_shared_commit_readback=true" "$CHAT_LOG"
 require_line "chat_shared_commit_not_published=true" "$CHAT_LOG"
 require_line "file_browser_shared_commit_session_imported=true" "$FILE_BROWSER_LOG"
+require_line "file_browser_shared_commit_harness_imported=true" "$FILE_BROWSER_LOG"
 require_line "file_browser_shared_commit_readback=true" "$FILE_BROWSER_LOG"
 require_line "file_browser_shared_commit_not_published=true" "$FILE_BROWSER_LOG"
 require_line "ai_generated_ui_shared_commit_session_imported=true" "$AI_GENERATED_UI_LOG"
@@ -95,18 +100,23 @@ require_line "ai_generated_ui_shared_commit_harness_imported=true" "$AI_GENERATE
 require_line "ai_generated_ui_shared_commit_readback=true" "$AI_GENERATED_UI_LOG"
 require_line "ai_generated_ui_shared_commit_not_published=true" "$AI_GENERATED_UI_LOG"
 require_line "shared_demo_harness_shared_commit_session_imported=true" "$SHARED_DEMO_HARNESS_LOG"
+require_line "shared_demo_harness_shared_commit_harness_imported=true" "$SHARED_DEMO_HARNESS_LOG"
 require_line "shared_demo_harness_shared_commit_readback=true" "$SHARED_DEMO_HARNESS_LOG"
 require_line "shared_demo_harness_shared_commit_not_published=true" "$SHARED_DEMO_HARNESS_LOG"
 require_line "shared_multi_demo_harness_shared_commit_session_imported=true" "$SHARED_MULTI_DEMO_HARNESS_LOG"
+require_line "shared_multi_demo_harness_shared_commit_harness_imported=true" "$SHARED_MULTI_DEMO_HARNESS_LOG"
 require_line "shared_multi_demo_harness_shared_commit_readback=true" "$SHARED_MULTI_DEMO_HARNESS_LOG"
 require_line "shared_multi_demo_harness_shared_commit_not_published=true" "$SHARED_MULTI_DEMO_HARNESS_LOG"
 require_line "shared_layout_style_input_focus_contract_shared_commit_session_imported=true" "$SHARED_LAYOUT_STYLE_INPUT_FOCUS_CONTRACT_LOG"
+require_line "shared_layout_style_input_focus_contract_shared_commit_harness_imported=true" "$SHARED_LAYOUT_STYLE_INPUT_FOCUS_CONTRACT_LOG"
 require_line "shared_layout_style_input_focus_contract_shared_commit_readback=true" "$SHARED_LAYOUT_STYLE_INPUT_FOCUS_CONTRACT_LOG"
 require_line "shared_layout_style_input_focus_contract_shared_commit_not_published=true" "$SHARED_LAYOUT_STYLE_INPUT_FOCUS_CONTRACT_LOG"
 require_line "ai_generated_ui_shared_contract_shared_commit_session_imported=true" "$AI_GENERATED_UI_SHARED_CONTRACT_LOG"
+require_line "ai_generated_ui_shared_contract_shared_commit_harness_imported=true" "$AI_GENERATED_UI_SHARED_CONTRACT_LOG"
 require_line "ai_generated_ui_shared_contract_shared_commit_readback=true" "$AI_GENERATED_UI_SHARED_CONTRACT_LOG"
 require_line "ai_generated_ui_shared_contract_shared_commit_not_published=true" "$AI_GENERATED_UI_SHARED_CONTRACT_LOG"
 require_line "reusable_component_contract_shared_commit_session_imported=true" "$REUSABLE_COMPONENT_CONTRACT_LOG"
+require_line "reusable_component_contract_shared_commit_harness_imported=true" "$REUSABLE_COMPONENT_CONTRACT_LOG"
 require_line "reusable_component_contract_shared_commit_readback=true" "$REUSABLE_COMPONENT_CONTRACT_LOG"
 require_line "reusable_component_contract_shared_commit_not_published=true" "$REUSABLE_COMPONENT_CONTRACT_LOG"
 

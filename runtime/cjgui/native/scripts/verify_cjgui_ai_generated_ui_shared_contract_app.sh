@@ -83,18 +83,20 @@ require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSI
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC"
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
+require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_ai_generated_ui_shared_contract_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
+require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
 require_source_line "class AiGeneratedUiSharedContractState" "$DEMO_SRC"
 require_source_line "var accepted: Bool" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
-require_source_line "commitSharedState" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "sharedComponentActions()" "$DEMO_SRC"
 require_source_line "buildSharedOutput" "$DEMO_SRC"
@@ -117,6 +119,13 @@ if grep -F "cjguiExperimentalBuildAiGeneratedUiDemoOutput" "$DEMO_SRC" >/dev/nul
    grep -F "cjguiExperimentalBuildAiGeneratedUiSharedContractOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F "CjguiExperimentalAiGeneratedUiSharedContractOutput" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui AI-generated UI shared contract app verification: demo still directly consumes legacy shared contract output API" >&2
+  exit 10
+fi
+
+if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitReadback" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitRollbackBoundary" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui AI-generated UI shared contract app verification: demo must use shared commit harness instead of local commit wrappers" >&2
   exit 10
 fi
 
@@ -209,6 +218,7 @@ require_output_line "cjgui ai-generated-ui shared contract app: shared_state_cor
 require_output_line "cjgui ai-generated-ui shared contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_component_action_output=demo=ai_generated_ui_shared_contract;component_actions=spec_generator:generate_spec,diff_panel:preview_diff,explain_panel:explain_changes,generated_form:accept_refresh,save_button:move_focus;ui=layout=split_detail;style=sage_panel;input=username;focus=save_button"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_output=demo=ai_generated_ui_shared_contract;component=save_button;action=ai_generated_ui_shared_contract.commit_accept_refresh;committed=true;readback=true;writes=1;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;readback_state=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;rollback_state=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;not_published=true"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_readback=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_rollback_boundary=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card"
@@ -227,13 +237,15 @@ echo "ai_generated_ui_shared_contract_legacy_output_api_direct_consumption=false
 echo "ai_generated_ui_shared_contract_existing_ai_api_consumed=false"
 echo "ai_generated_ui_shared_contract_existing_shared_contract_api_consumed=false"
 echo "ai_generated_ui_shared_contract_owner_local_write_readback=true"
-echo "ai_generated_ui_shared_contract_state_write_scope=AiGeneratedUiSharedContractState.componentIds,accepted,acceptedScreen,diffSummary,explainText,componentSession"
+echo "ai_generated_ui_shared_contract_state_write_scope=AiGeneratedUiSharedContractState.componentIds,accepted,acceptedScreen,diffSummary,explainText,componentSession,commitHarness"
 echo "ai_generated_ui_shared_contract_shared_support_imported=true"
 echo "ai_generated_ui_shared_contract_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "ai_generated_ui_shared_contract_shared_state_core_imported=true"
 echo "ai_generated_ui_shared_contract_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "ai_generated_ui_shared_contract_shared_component_action_session_imported=true"
 echo "ai_generated_ui_shared_contract_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "ai_generated_ui_shared_contract_shared_commit_harness_imported=true"
+echo "ai_generated_ui_shared_contract_shared_commit_harness_name=CjguiExperimentalDemoCommitHarness"
 echo "ai_generated_ui_shared_contract_shared_commit_session_imported=true"
 echo "ai_generated_ui_shared_contract_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
 echo "ai_generated_ui_shared_contract_shared_commit_result_name=CjguiExperimentalDemoCommitResult"

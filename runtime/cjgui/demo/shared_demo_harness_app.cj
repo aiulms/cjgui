@@ -1,7 +1,7 @@
 package cjgui_shared_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import std.collection.*
 
 // 中文维护注释：这是独立 shared demo harness demo app，不属于 runtime_renderer_stage* owner 链。
@@ -13,7 +13,7 @@ class SharedDemoHarnessState {
     let servedDemo: String
     private var actions = ArrayList<String>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
-    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
+    let commitHarness: CjguiExperimentalDemoCommitHarness
     var itemCount: Int64
     var firstTitle: String
     var firstDone: Bool
@@ -29,7 +29,7 @@ class SharedDemoHarnessState {
             "",
             "todo_input"
         )
-        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+        this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "shared_demo_harness",
             "items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list"
         )
@@ -105,17 +105,6 @@ class SharedDemoHarnessState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
-        return commitSession.commitComponentAction(componentId, action, afterState)
-    }
-
-    func commitReadback(): String {
-        return commitSession.readback()
-    }
-
-    func commitRollbackBoundary(): String {
-        return commitSession.rollbackBoundary()
-    }
 }
 
 main(): Int64 {
@@ -134,7 +123,11 @@ main(): Int64 {
         harness.sharedWrites() == 2 &&
         harness.sharedComponentActions() == "todo_input:shared_demo_harness.add_todo,todo_item:shared_demo_harness.complete_todo"
     let apiOutput = harness.buildSharedOutput(harness.domainSummary(), stateReadbackOk)
-    let commitResult = harness.commitSharedState("todo_item", "shared_demo_harness.commit_todo_flow", after)
+    let commitResult = harness.commitHarness.commitComponentAction(
+        "todo_item",
+        "shared_demo_harness.commit_todo_flow",
+        after
+    )
     let outputOk = stateReadbackOk &&
         apiOutput.demoName == "shared_demo_harness" &&
         apiOutput.beforeState == before &&
@@ -144,20 +137,13 @@ main(): Int64 {
         apiOutput.domainSummary == harness.domainSummary() &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=shared_demo_harness;readback=true;writes=2;actions=shared_demo_harness.add_todo,shared_demo_harness.complete_todo;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;summary=harness=shared_demo_harness;served=todo;actions=2;focus=todo_first_item;style=completed_accent" &&
-        commitResult.demoName == "shared_demo_harness" &&
-        commitResult.componentId == "todo_item" &&
-        commitResult.action == "shared_demo_harness.commit_todo_flow" &&
-        commitResult.beforeState == before &&
-        commitResult.afterState == after &&
-        commitResult.readbackState == after &&
-        commitResult.rollbackState == before &&
-        commitResult.writeCount == 1 &&
-        commitResult.committed &&
-        commitResult.readbackOk &&
-        commitResult.rollbackAvailable &&
-        commitResult.notPublished &&
-        harness.commitReadback() == after &&
-        harness.commitRollbackBoundary() == before
+        harness.commitHarness.resultMatches(
+            commitResult,
+            "todo_item",
+            "shared_demo_harness.commit_todo_flow",
+            before,
+            after
+        )
 
     println("cjgui shared demo harness app: demo=shared_demo_harness")
     println("cjgui shared demo harness app: status_before=not_started")
@@ -176,9 +162,10 @@ main(): Int64 {
     println("cjgui shared demo harness app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui shared demo harness app: shared_component_action_output=${harness.sharedComponentActionSummary()}")
     println("cjgui shared demo harness app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui shared demo harness app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui shared demo harness app: shared_commit_output=${commitResult.summary}")
-    println("cjgui shared demo harness app: shared_commit_readback=${harness.commitReadback()}")
-    println("cjgui shared demo harness app: shared_commit_rollback_boundary=${harness.commitRollbackBoundary()}")
+    println("cjgui shared demo harness app: shared_commit_readback=${harness.commitHarness.readback()}")
+    println("cjgui shared demo harness app: shared_commit_rollback_boundary=${harness.commitHarness.rollbackBoundary()}")
     println("cjgui shared demo harness app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (outputOk) {

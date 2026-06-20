@@ -106,15 +106,17 @@ require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSI
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC"
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
+require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_chat_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
 require_source_line "class ChatThreadState" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
-require_source_line "commitSharedState" "$DEMO_SRC"
+require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
 require_source_line "private var messages" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
@@ -133,6 +135,13 @@ require_source_line "cjgui chat demo app: public_api_output=" "$DEMO_SRC"
 if grep -F "cjguiExperimentalBuildChatDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F "CjguiExperimentalChatDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui chat demo app verification: demo must not directly consume legacy Chat output API" >&2
+  exit 10
+fi
+
+if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitReadback" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitRollbackBoundary" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui chat demo app verification: demo must use shared commit harness instead of local commit wrappers" >&2
   exit 10
 fi
 
@@ -226,6 +235,7 @@ require_output_line "cjgui chat demo app: shared_state_core=layout=threaded_chat
 require_output_line "cjgui chat demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui chat demo app: shared_component_action_output=demo=chat;component_actions=composer:chat.type_message,send_button:chat.send_message,message_list:chat.append_reply,message_list:chat.move_focus;ui=layout=threaded_chat;style=assistant_reply;input=;focus=message_list"
 require_output_line "cjgui chat demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui chat demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui chat demo app: shared_commit_output=demo=chat;component=message_list;action=chat.commit_thread;committed=true;readback=true;writes=1;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;readback_state=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;rollback_state=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;not_published=true"
 require_output_line "cjgui chat demo app: shared_commit_readback=messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
 require_output_line "cjgui chat demo app: shared_commit_rollback_boundary=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer"
@@ -242,13 +252,15 @@ echo "chat_public_api_name=CjguiExperimentalDemoComponentActionSession"
 echo "chat_public_api_return=CjguiExperimentalDemoOutput"
 echo "chat_legacy_output_api_direct_consumption=false"
 echo "chat_owner_local_write_readback=true"
-echo "chat_state_write_scope=ChatThreadState.messages,componentSession,lastSender,lastText"
+echo "chat_state_write_scope=ChatThreadState.messages,componentSession,commitHarness,lastSender,lastText"
 echo "chat_shared_support_imported=true"
 echo "chat_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "chat_shared_state_core_imported=true"
 echo "chat_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "chat_shared_component_action_session_imported=true"
 echo "chat_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "chat_shared_commit_harness_imported=true"
+echo "chat_shared_commit_harness_name=CjguiExperimentalDemoCommitHarness"
 echo "chat_shared_commit_session_imported=true"
 echo "chat_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
 echo "chat_shared_commit_result_name=CjguiExperimentalDemoCommitResult"

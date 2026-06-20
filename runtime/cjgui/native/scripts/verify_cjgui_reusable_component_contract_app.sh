@@ -83,20 +83,22 @@ require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSI
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC"
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
+require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_reusable_component_contract_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
+require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
 require_source_line "class ReusableComponentContractState" "$DEMO_SRC"
 require_source_line "var componentCount: Int64" "$DEMO_SRC"
 require_source_line "var componentKinds: String" "$DEMO_SRC"
 require_source_line "var reusedDemoCount: Int64" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
-require_source_line "commitSharedState" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "sharedComponentActions()" "$DEMO_SRC"
 require_source_line "buildSharedOutput" "$DEMO_SRC"
@@ -118,6 +120,13 @@ require_source_line "cjgui reusable component contract app: shared_component_act
 if grep -F "cjguiExperimentalBuildReusableComponentContractOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F "CjguiExperimentalReusableComponentContractOutput" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui reusable component contract app verification: demo still directly consumes legacy reusable component output API" >&2
+  exit 10
+fi
+
+if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitReadback" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitRollbackBoundary" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui reusable component contract app verification: demo must use shared commit harness instead of local commit wrappers" >&2
   exit 10
 fi
 
@@ -212,6 +221,7 @@ require_output_line "cjgui reusable component contract app: shared_state_core=la
 require_output_line "cjgui reusable component contract app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui reusable component contract app: shared_component_action_output=demo=reusable_component_contract;component_actions=file_row:register_file_row,ai_form:register_ai_form,task_row:todo_add,file_row:file_select,ai_form:ai_accept;ui=layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
 require_output_line "cjgui reusable component contract app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui reusable component contract app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui reusable component contract app: shared_commit_output=demo=reusable_component_contract;component=ai_form;action=reusable_component_contract.commit_reuse_flow;committed=true;readback=true;writes=1;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;readback_state=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;rollback_state=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;not_published=true"
 require_output_line "cjgui reusable component contract app: shared_commit_readback=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button"
 require_output_line "cjgui reusable component contract app: shared_commit_rollback_boundary=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
@@ -228,13 +238,15 @@ echo "reusable_component_contract_public_api_name=CjguiExperimentalDemoComponent
 echo "reusable_component_contract_public_api_return=CjguiExperimentalDemoOutput"
 echo "reusable_component_contract_legacy_output_api_direct_consumption=false"
 echo "reusable_component_contract_owner_local_write_readback=true"
-echo "reusable_component_contract_state_write_scope=ReusableComponentContractState.componentCount,componentKinds,reusedDemoCount,reusedDemos,todoTitle,fileSelection,aiAcceptedScreen,componentSession"
+echo "reusable_component_contract_state_write_scope=ReusableComponentContractState.componentCount,componentKinds,reusedDemoCount,reusedDemos,todoTitle,fileSelection,aiAcceptedScreen,componentSession,commitHarness"
 echo "reusable_component_contract_shared_support_imported=true"
 echo "reusable_component_contract_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "reusable_component_contract_shared_state_core_imported=true"
 echo "reusable_component_contract_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "reusable_component_contract_shared_component_action_session_imported=true"
 echo "reusable_component_contract_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "reusable_component_contract_shared_commit_harness_imported=true"
+echo "reusable_component_contract_shared_commit_harness_name=CjguiExperimentalDemoCommitHarness"
 echo "reusable_component_contract_shared_commit_session_imported=true"
 echo "reusable_component_contract_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
 echo "reusable_component_contract_shared_commit_result_name=CjguiExperimentalDemoCommitResult"

@@ -106,15 +106,17 @@ require_source_line "public func recordComponentAction" "$COMPONENT_ACTION_SESSI
 require_source_line "public func buildOutput" "$COMPONENT_ACTION_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC"
 require_source_line "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC"
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
+require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
 require_source_line "package cjgui_settings_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
 require_source_line "class SettingsPanelState" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC"
-require_source_line "commitSharedState" "$DEMO_SRC"
+require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
 require_source_line "var selectedTheme: String" "$DEMO_SRC"
 require_source_line "var usernameValue: String" "$DEMO_SRC"
 require_source_line "var autoSaveEnabled: Bool" "$DEMO_SRC"
@@ -135,6 +137,13 @@ require_source_line "cjgui settings demo app: public_api_output=" "$DEMO_SRC"
 if grep -F "cjguiExperimentalBuildSettingsDemoOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F "CjguiExperimentalSettingsDemoOutput" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui settings demo app verification: demo must not directly consume legacy Settings output API" >&2
+  exit 10
+fi
+
+if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitReadback" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitRollbackBoundary" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui settings demo app verification: demo must use shared commit harness instead of local commit wrappers" >&2
   exit 10
 fi
 
@@ -232,6 +241,7 @@ require_output_line "cjgui settings demo app: shared_state_core=layout=sectioned
 require_output_line "cjgui settings demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_output_line "cjgui settings demo app: shared_component_action_output=demo=settings;component_actions=auto_save_toggle:settings.toggle_auto_save,theme_select:settings.select_theme,username_field:settings.update_username,theme_select:settings.move_focus;ui=layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_output_line "cjgui settings demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_output_line "cjgui settings demo app: shared_commit_output=demo=settings;component=theme_select;action=settings.commit_preferences;committed=true;readback=true;writes=1;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;readback_state=autosave=true;theme=dark;username=owner-updated;focus=theme_select;rollback_state=autosave=false;theme=light;username=owner;focus=username_field;not_published=true"
 require_output_line "cjgui settings demo app: shared_commit_readback=autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: shared_commit_rollback_boundary=autosave=false;theme=light;username=owner;focus=username_field"
@@ -249,13 +259,15 @@ echo "settings_public_api_name=CjguiExperimentalDemoComponentActionSession"
 echo "settings_public_api_return=CjguiExperimentalDemoOutput"
 echo "settings_legacy_output_api_direct_consumption=false"
 echo "settings_owner_local_write_readback=true"
-echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,componentSession,commitSession"
+echo "settings_state_write_scope=SettingsPanelState.autoSaveEnabled,selectedTheme,usernameValue,componentSession,commitHarness"
 echo "settings_shared_support_imported=true"
 echo "settings_shared_support_name=CjguiExperimentalDemoComponentActionSession"
 echo "settings_shared_state_core_imported=true"
 echo "settings_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "settings_shared_component_action_session_imported=true"
 echo "settings_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "settings_shared_commit_harness_imported=true"
+echo "settings_shared_commit_harness_name=CjguiExperimentalDemoCommitHarness"
 echo "settings_shared_commit_session_imported=true"
 echo "settings_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
 echo "settings_shared_commit_result_name=CjguiExperimentalDemoCommitResult"

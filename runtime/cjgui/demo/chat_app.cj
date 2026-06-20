@@ -1,7 +1,7 @@
 package cjgui_chat_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -21,7 +21,7 @@ class ChatMessage {
 class ChatThreadState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
-    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
+    let commitHarness: CjguiExperimentalDemoCommitHarness
     private var messages = ArrayList<ChatMessage>()
     var lastSender: String
     var lastText: String
@@ -36,7 +36,7 @@ class ChatThreadState {
             "",
             "composer"
         )
-        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+        this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "chat",
             "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer"
         )
@@ -130,17 +130,6 @@ class ChatThreadState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
-        return commitSession.commitComponentAction(componentId, action, afterState)
-    }
-
-    func commitReadback(): String {
-        return commitSession.readback()
-    }
-
-    func commitRollbackBoundary(): String {
-        return commitSession.rollbackBoundary()
-    }
 }
 
 main(): Int64 {
@@ -164,7 +153,7 @@ main(): Int64 {
         thread.messageCount() == 3 &&
         summary == "demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
     let apiOutput = thread.buildSharedOutput(summary, stateReadbackOk)
-    let commitResult = thread.commitSharedState("message_list", "chat.commit_thread", after)
+    let commitResult = thread.commitHarness.commitComponentAction("message_list", "chat.commit_thread", after)
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "chat" &&
         apiOutput.beforeState == before &&
@@ -174,20 +163,7 @@ main(): Int64 {
         apiOutput.domainSummary == summary &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=chat;readback=true;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;summary=demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list" &&
-        commitResult.demoName == "chat" &&
-        commitResult.componentId == "message_list" &&
-        commitResult.action == "chat.commit_thread" &&
-        commitResult.beforeState == before &&
-        commitResult.afterState == after &&
-        commitResult.readbackState == after &&
-        commitResult.rollbackState == before &&
-        commitResult.writeCount == 1 &&
-        commitResult.committed &&
-        commitResult.readbackOk &&
-        commitResult.rollbackAvailable &&
-        commitResult.notPublished &&
-        thread.commitReadback() == after &&
-        thread.commitRollbackBoundary() == before
+        thread.commitHarness.resultMatches(commitResult, "message_list", "chat.commit_thread", before, after)
 
     println("cjgui chat demo app: demo=chat")
     println("cjgui chat demo app: status_before=not_started")
@@ -206,9 +182,10 @@ main(): Int64 {
     println("cjgui chat demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui chat demo app: shared_component_action_output=${thread.sharedComponentActionSummary()}")
     println("cjgui chat demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui chat demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui chat demo app: shared_commit_output=${commitResult.summary}")
-    println("cjgui chat demo app: shared_commit_readback=${thread.commitReadback()}")
-    println("cjgui chat demo app: shared_commit_rollback_boundary=${thread.commitRollbackBoundary()}")
+    println("cjgui chat demo app: shared_commit_readback=${thread.commitHarness.readback()}")
+    println("cjgui chat demo app: shared_commit_rollback_boundary=${thread.commitHarness.rollbackBoundary()}")
     println("cjgui chat demo app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (readbackOk) {

@@ -1,7 +1,7 @@
 package cjgui_shared_multi_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -21,7 +21,7 @@ class SharedMultiDemoHarnessState {
     var fileDetailTitle: String
     var fileFilterText: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
-    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
+    let commitHarness: CjguiExperimentalDemoCommitHarness
     var focusRoute: String
     var styleRoute: String
 
@@ -35,7 +35,7 @@ class SharedMultiDemoHarnessState {
             "",
             "todo_input"
         )
-        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+        this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "shared_multi_demo_harness",
             "todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list"
         )
@@ -172,17 +172,6 @@ class SharedMultiDemoHarnessState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
-    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
-        return commitSession.commitComponentAction(componentId, action, afterState)
-    }
-
-    func commitReadback(): String {
-        return commitSession.readback()
-    }
-
-    func commitRollbackBoundary(): String {
-        return commitSession.rollbackBoundary()
-    }
 }
 
 main(): Int64 {
@@ -207,7 +196,11 @@ main(): Int64 {
         harness.sharedWrites() == 6 &&
         harness.sharedComponentActions() == "todo_input:shared_multi_demo_harness.todo_add,todo_item:shared_multi_demo_harness.todo_complete,file_tree:shared_multi_demo_harness.file_expand,file_filter:shared_multi_demo_harness.file_filter,file_row:shared_multi_demo_harness.file_select,file_detail_pane:shared_multi_demo_harness.file_focus"
     let apiOutput = harness.buildSharedOutput(harness.domainSummary(), stateReadbackOk)
-    let commitResult = harness.commitSharedState("file_detail_pane", "shared_multi_demo_harness.commit_multi_flow", after)
+    let commitResult = harness.commitHarness.commitComponentAction(
+        "file_detail_pane",
+        "shared_multi_demo_harness.commit_multi_flow",
+        after
+    )
     let outputOk = stateReadbackOk &&
         apiOutput.demoName == "shared_multi_demo_harness" &&
         apiOutput.beforeState == before &&
@@ -217,20 +210,13 @@ main(): Int64 {
         apiOutput.domainSummary == harness.domainSummary() &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=shared_multi_demo_harness;readback=true;writes=6;actions=shared_multi_demo_harness.todo_add,shared_multi_demo_harness.todo_complete,shared_multi_demo_harness.file_expand,shared_multi_demo_harness.file_filter,shared_multi_demo_harness.file_select,shared_multi_demo_harness.file_focus;before=todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list;after=todo_items=1;todo_first=Write shared multi-demo harness;todo_done=true;file_selected=/workspace/src/main.cj:file;file_filter=main;focus=file_detail_pane;style=split_detail_accent;summary=harness=shared_multi_demo_harness;served_count=2;served=todo,file_browser;actions=6;focus_route=todo_input->todo_first_item->todo_first_item->file_tree->file_filter->file_detail_pane->file_detail_pane;style_route=neutral_list->todo_active_list->todo_completed_accent->split_detail_accent" &&
-        commitResult.demoName == "shared_multi_demo_harness" &&
-        commitResult.componentId == "file_detail_pane" &&
-        commitResult.action == "shared_multi_demo_harness.commit_multi_flow" &&
-        commitResult.beforeState == before &&
-        commitResult.afterState == after &&
-        commitResult.readbackState == after &&
-        commitResult.rollbackState == before &&
-        commitResult.writeCount == 1 &&
-        commitResult.committed &&
-        commitResult.readbackOk &&
-        commitResult.rollbackAvailable &&
-        commitResult.notPublished &&
-        harness.commitReadback() == after &&
-        harness.commitRollbackBoundary() == before
+        harness.commitHarness.resultMatches(
+            commitResult,
+            "file_detail_pane",
+            "shared_multi_demo_harness.commit_multi_flow",
+            before,
+            after
+        )
 
     println("cjgui shared multi-demo harness app: demo=shared_multi_demo_harness")
     println("cjgui shared multi-demo harness app: status_before=not_started")
@@ -250,9 +236,10 @@ main(): Int64 {
     println("cjgui shared multi-demo harness app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui shared multi-demo harness app: shared_component_action_output=${harness.sharedComponentActionSummary()}")
     println("cjgui shared multi-demo harness app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui shared multi-demo harness app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui shared multi-demo harness app: shared_commit_output=${commitResult.summary}")
-    println("cjgui shared multi-demo harness app: shared_commit_readback=${harness.commitReadback()}")
-    println("cjgui shared multi-demo harness app: shared_commit_rollback_boundary=${harness.commitRollbackBoundary()}")
+    println("cjgui shared multi-demo harness app: shared_commit_readback=${harness.commitHarness.readback()}")
+    println("cjgui shared multi-demo harness app: shared_commit_rollback_boundary=${harness.commitHarness.rollbackBoundary()}")
     println("cjgui shared multi-demo harness app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (outputOk) {

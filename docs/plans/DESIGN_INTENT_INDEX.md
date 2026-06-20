@@ -45,12 +45,12 @@
 
 ## CJGUI 最小 UI framework 转场证据
 
-- 最新 demo app 转场报告：[2026-06-17-p1-cjgui-legacy-demo-output-api-retirement-first-slice-report.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-17-p1-cjgui-legacy-demo-output-api-retirement-first-slice-report.md)。
+- 最新 demo app 转场报告：[2026-06-20-p1-cjgui-shared-contract-legacy-output-api-retirement-second-slice-report.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-contract-legacy-output-api-retirement-second-slice-report.md)。
 - Demo 进度看板：[CJGUI_DEMO_PROGRESS.md](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/CJGUI_DEMO_PROGRESS.md)。
 - 当前白名单事实：shared support 子包现在包含 [runtime_cjgui_experimental_demo_interaction_trace.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_interaction_trace.cj)、[runtime_cjgui_experimental_demo_output_builder.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_output_builder.cj)、[runtime_cjgui_experimental_demo_ui_state_core.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj) 与 [runtime_cjgui_experimental_demo_component_action_session.cj](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj)。当前 10 个独立 runnable demo 已真实 import `CjguiExperimentalDemoComponentActionSession`，通过同一 shared session 记录 component/action route、读回 UI state core，并产出 `CjguiExperimentalDemoOutput`；focused verifier 回显 `*_shared_component_action_session_imported=true` 与 `*_shared_state_core_imported=true`。
-- API / State 事实：`CjguiExperimentalDemoInteractionTrace` 保存 demo name、before state、after state、action trace 与 write count；`CjguiExperimentalDemoOutputBuilder` 从 shared trace 生成 `CjguiExperimentalDemoOutput`，承载 before / after / action / write count / domain summary / readback facts；`CjguiExperimentalDemoUiStateCore` 承载 layout / style / text input / focus owner-local 状态与 shared action helper；`CjguiExperimentalDemoComponentActionSession` 将 component id、action name、after state、UI state core 与 output build 串成同一 demo-host primitive。当前 demo app 不再直接消费 per-demo Output API。
+- API / State 事实：`CjguiExperimentalDemoInteractionTrace` 保存 demo name、before state、after state、action trace 与 write count；`CjguiExperimentalDemoOutputBuilder` 从 shared trace 生成 `CjguiExperimentalDemoOutput`，承载 before / after / action / write count / domain summary / readback facts；`CjguiExperimentalDemoUiStateCore` 承载 layout / style / text input / focus owner-local 状态与 shared action helper；`CjguiExperimentalDemoComponentActionSession` 将 component id、action name、after state、UI state core 与 output build 串成同一 demo-host primitive。当前 demo app 不再直接消费 per-demo 或 shared/contract legacy Output API。
 - 边界事实：demo 输出只保留业务 before / after、interaction、state readback 与 API output；`runtime_state.cj` / renderer state 仍未写入，public C ABI 未扩展。
-- 后续入口：`P1 CJGUI shared/contract legacy Output API retirement second slice`。
+- 后续入口：`P1 CJGUI shared demo_support commit/write/readback primitive expansion first slice`。
 
 ## Renderer 最新落点
 

@@ -1,7 +1,8 @@
 package cjgui_shared_layout_style_input_focus_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -11,6 +12,7 @@ class SharedLayoutStyleInputFocusContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let commitHarness: CjguiExperimentalDemoCommitHarness
+    let runHarness: CjguiExperimentalDemoRunHarness
 
     init() {
         this.contractName = "shared_layout_style_input_focus"
@@ -26,6 +28,7 @@ class SharedLayoutStyleInputFocusContractState {
             "shared_layout_style_input_focus_contract",
             "layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
         )
+        this.runHarness = CjguiExperimentalDemoRunHarness("shared_layout_style_input_focus_contract")
     }
 
     func applyLayout(kind: String) {
@@ -108,6 +111,24 @@ class SharedLayoutStyleInputFocusContractState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
+    func buildRunResult(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return runHarness.finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            sharedComponentActionSummary(),
+            sharedUiState(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
+
 }
 
 main(): Int64 {
@@ -147,7 +168,7 @@ main(): Int64 {
         "shared_layout_style_input_focus.commit_contract_flow",
         after
     )
-    let outputOk = stateReadbackOk &&
+    let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "shared_layout_style_input_focus_contract" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
@@ -163,6 +184,8 @@ main(): Int64 {
             before,
             after
         )
+    let runResult = contract.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared layout-style-input-focus contract app: demo=shared_layout_style_input_focus_contract")
     println("cjgui shared layout-style-input-focus contract app: status_before=not_started")
@@ -184,6 +207,10 @@ main(): Int64 {
     println("cjgui shared layout-style-input-focus contract app: shared_commit_readback=${contract.commitHarness.readback()}")
     println("cjgui shared layout-style-input-focus contract app: shared_commit_rollback_boundary=${contract.commitHarness.rollbackBoundary()}")
     println("cjgui shared layout-style-input-focus contract app: shared_commit_not_published=${commitResult.notPublished}")
+    println("cjgui shared layout-style-input-focus contract app: shared_run_harness=CjguiExperimentalDemoRunHarness")
+    println("cjgui shared layout-style-input-focus contract app: shared_run_result=${runResult.summary}")
+    println("cjgui shared layout-style-input-focus contract app: shared_run_readback=${runResult.runnable}")
+    println("cjgui shared layout-style-input-focus contract app: shared_run_not_published=${runResult.notPublished}")
 
     if (outputOk) {
         return 0

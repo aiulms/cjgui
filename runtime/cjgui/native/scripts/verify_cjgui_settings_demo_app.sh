@@ -14,6 +14,7 @@ OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_o
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 TMP_DIR="${CJGUI_SETTINGS_DEMO_TMPDIR:-/private/tmp/cjgui-settings-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -92,6 +93,11 @@ if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$RUN_HARNESS_SRC" ]]; then
+  echo "cjgui settings demo app verification: missing shared run harness source $RUN_HARNESS_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -110,13 +116,20 @@ require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_S
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
+require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
+require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_settings_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC"
 require_source_line "class SettingsPanelState" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
+require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "runResult.runnable" "$DEMO_SRC"
 require_source_line "var selectedTheme: String" "$DEMO_SRC"
 require_source_line "var usernameValue: String" "$DEMO_SRC"
 require_source_line "var autoSaveEnabled: Bool" "$DEMO_SRC"
@@ -209,6 +222,7 @@ cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -250,6 +264,10 @@ require_output_line "cjgui settings demo app: shared_commit_output=demo=settings
 require_output_line "cjgui settings demo app: shared_commit_readback=autosave=true;theme=dark;username=owner-updated;focus=theme_select"
 require_output_line "cjgui settings demo app: shared_commit_rollback_boundary=autosave=false;theme=light;username=owner;focus=username_field"
 require_output_line "cjgui settings demo app: shared_commit_not_published=true"
+require_output_line "cjgui settings demo app: shared_run_harness=CjguiExperimentalDemoRunHarness"
+require_output_line "cjgui settings demo app: shared_run_result=demo=settings;status=scaffolded->runnable;readback=true;commit_readback=true;not_published=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus"
+require_output_line "cjgui settings demo app: shared_run_readback=true"
+require_output_line "cjgui settings demo app: shared_run_not_published=true"
 require_output_line "cjgui settings demo app: public_api_available=true"
 
 echo "cjgui_settings_demo_app_compiled=true"
@@ -277,6 +295,11 @@ echo "settings_shared_commit_harness_internal_primitive_name=CjguiExperimentalDe
 echo "settings_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
 echo "settings_shared_commit_readback=true"
 echo "settings_shared_commit_not_published=true"
+echo "settings_shared_run_harness_imported=true"
+echo "settings_shared_run_harness=CjguiExperimentalDemoRunHarness"
+echo "settings_shared_run_result=CjguiExperimentalDemoRunResult"
+echo "settings_shared_run_readback=true"
+echo "settings_shared_run_not_published=true"
 echo "settings_runtime_state_write=false"
 echo "settings_renderer_state_write=false"
 echo "settings_public_c_abi_added=false"

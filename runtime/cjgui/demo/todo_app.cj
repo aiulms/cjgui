@@ -1,7 +1,8 @@
 package cjgui_todo_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -25,6 +26,7 @@ class TodoList {
     private var items = ArrayList<TodoDemoItem>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let commitHarness: CjguiExperimentalDemoCommitHarness
+    let runHarness: CjguiExperimentalDemoRunHarness
 
     init() {
         this.componentSession = CjguiExperimentalDemoComponentActionSession(
@@ -39,6 +41,7 @@ class TodoList {
             "todo",
             "items=0;first=<none>;first_done=false"
         )
+        this.runHarness = CjguiExperimentalDemoRunHarness("todo")
     }
 
     func add(title: String): Int64 {
@@ -125,6 +128,24 @@ class TodoList {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
+
+    func buildRunResult(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return runHarness.finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            sharedComponentActionSummary(),
+            sharedUiState(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
 }
 
 main(): Int64 {
@@ -149,7 +170,7 @@ main(): Int64 {
         completed
     let apiOutput = todos.buildSharedOutput(afterComplete, stateReadbackOk)
     let commitResult = todos.commitHarness.commitComponentAction("todo_item", "todo.commit_complete", afterComplete)
-    let readbackOk = stateReadbackOk &&
+    let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "todo" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == afterComplete &&
@@ -159,6 +180,8 @@ main(): Int64 {
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true" &&
         todos.commitHarness.resultMatches(commitResult, "todo_item", "todo.commit_complete", before, afterComplete)
+    let runResult = todos.buildRunResult("state_writable", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let readbackOk = commitReadbackOk && runResult.runnable
 
     println("cjgui todo demo app: demo=todo")
     println("cjgui todo demo app: status_before=state_writable")
@@ -180,6 +203,10 @@ main(): Int64 {
     println("cjgui todo demo app: shared_commit_readback=${todos.commitHarness.readback()}")
     println("cjgui todo demo app: shared_commit_rollback_boundary=${todos.commitHarness.rollbackBoundary()}")
     println("cjgui todo demo app: shared_commit_not_published=${commitResult.notPublished}")
+    println("cjgui todo demo app: shared_run_harness=CjguiExperimentalDemoRunHarness")
+    println("cjgui todo demo app: shared_run_result=${runResult.summary}")
+    println("cjgui todo demo app: shared_run_readback=${runResult.runnable}")
+    println("cjgui todo demo app: shared_run_not_published=${runResult.notPublished}")
     println("cjgui todo demo app: owner_local_write_readback=${readbackOk}")
 
     if (readbackOk) {

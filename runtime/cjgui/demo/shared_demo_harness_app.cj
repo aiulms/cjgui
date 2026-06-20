@@ -1,7 +1,8 @@
 package cjgui_shared_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
 import std.collection.*
 
 // 中文维护注释：这是独立 shared demo harness demo app，不属于 runtime_renderer_stage* owner 链。
@@ -14,6 +15,7 @@ class SharedDemoHarnessState {
     private var actions = ArrayList<String>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let commitHarness: CjguiExperimentalDemoCommitHarness
+    let runHarness: CjguiExperimentalDemoRunHarness
     var itemCount: Int64
     var firstTitle: String
     var firstDone: Bool
@@ -33,6 +35,7 @@ class SharedDemoHarnessState {
             "shared_demo_harness",
             "items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list"
         )
+        this.runHarness = CjguiExperimentalDemoRunHarness("shared_demo_harness")
         this.itemCount = 0
         this.firstTitle = "<none>"
         this.firstDone = false
@@ -105,6 +108,24 @@ class SharedDemoHarnessState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
+    func buildRunResult(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return runHarness.finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            sharedComponentActionSummary(),
+            sharedUiState(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
+
 }
 
 main(): Int64 {
@@ -128,7 +149,7 @@ main(): Int64 {
         "shared_demo_harness.commit_todo_flow",
         after
     )
-    let outputOk = stateReadbackOk &&
+    let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "shared_demo_harness" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
@@ -144,6 +165,8 @@ main(): Int64 {
             before,
             after
         )
+    let runResult = harness.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared demo harness app: demo=shared_demo_harness")
     println("cjgui shared demo harness app: status_before=not_started")
@@ -166,6 +189,10 @@ main(): Int64 {
     println("cjgui shared demo harness app: shared_commit_readback=${harness.commitHarness.readback()}")
     println("cjgui shared demo harness app: shared_commit_rollback_boundary=${harness.commitHarness.rollbackBoundary()}")
     println("cjgui shared demo harness app: shared_commit_not_published=${commitResult.notPublished}")
+    println("cjgui shared demo harness app: shared_run_harness=CjguiExperimentalDemoRunHarness")
+    println("cjgui shared demo harness app: shared_run_result=${runResult.summary}")
+    println("cjgui shared demo harness app: shared_run_readback=${runResult.runnable}")
+    println("cjgui shared demo harness app: shared_run_not_published=${runResult.notPublished}")
 
     if (outputOk) {
         return 0

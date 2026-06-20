@@ -13,6 +13,7 @@ OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_o
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 TMP_DIR="${CJGUI_AI_GENERATED_UI_SHARED_CONTRACT_TMPDIR:-/private/tmp/cjgui-ai-generated-ui-shared-contract-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -61,7 +62,7 @@ require_output_line() {
   fi
 }
 
-for source_file in "$DEMO_SRC" "$SUPPORT_SRC" "$OUTPUT_SUPPORT_SRC" "$UI_STATE_CORE_SRC" "$COMPONENT_ACTION_SESSION_SRC" "$COMMIT_SESSION_SRC"; do
+for source_file in "$DEMO_SRC" "$SUPPORT_SRC" "$OUTPUT_SUPPORT_SRC" "$UI_STATE_CORE_SRC" "$COMPONENT_ACTION_SESSION_SRC" "$COMMIT_SESSION_SRC" "$RUN_HARNESS_SRC"; do
   if [[ ! -f "$source_file" ]]; then
     echo "cjgui AI-generated UI shared contract app verification: missing source $source_file" >&2
     exit 2
@@ -87,12 +88,19 @@ require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_S
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
+require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
+require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_ai_generated_ui_shared_contract_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
+require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "runResult.runnable" "$DEMO_SRC"
 require_source_line "class AiGeneratedUiSharedContractState" "$DEMO_SRC"
 require_source_line "var accepted: Bool" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
@@ -191,6 +199,7 @@ cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -227,6 +236,10 @@ require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_ou
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_readback=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_rollback_boundary=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card"
 require_output_line "cjgui ai-generated-ui shared contract app: shared_commit_not_published=true"
+require_output_line "cjgui ai-generated-ui shared contract app: shared_run_harness=CjguiExperimentalDemoRunHarness"
+require_output_line "cjgui ai-generated-ui shared contract app: shared_run_result=demo=ai_generated_ui_shared_contract;status=not_started->runnable;readback=true;commit_readback=true;not_published=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus"
+require_output_line "cjgui ai-generated-ui shared contract app: shared_run_readback=true"
+require_output_line "cjgui ai-generated-ui shared contract app: shared_run_not_published=true"
 
 echo "cjgui_ai_generated_ui_shared_contract_app_compiled=true"
 echo "cjgui_ai_generated_ui_shared_contract_app_ran=true"
@@ -255,6 +268,11 @@ echo "ai_generated_ui_shared_contract_shared_commit_harness_internal_primitive_n
 echo "ai_generated_ui_shared_contract_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
 echo "ai_generated_ui_shared_contract_shared_commit_readback=true"
 echo "ai_generated_ui_shared_contract_shared_commit_not_published=true"
+echo "ai_generated_ui_shared_contract_shared_run_harness_imported=true"
+echo "ai_generated_ui_shared_contract_shared_run_harness=CjguiExperimentalDemoRunHarness"
+echo "ai_generated_ui_shared_contract_shared_run_result=CjguiExperimentalDemoRunResult"
+echo "ai_generated_ui_shared_contract_shared_run_readback=true"
+echo "ai_generated_ui_shared_contract_shared_run_not_published=true"
 echo "ai_generated_ui_shared_contract_runtime_state_write=false"
 echo "ai_generated_ui_shared_contract_renderer_state_write=false"
 echo "ai_generated_ui_shared_contract_public_c_abi_added=false"

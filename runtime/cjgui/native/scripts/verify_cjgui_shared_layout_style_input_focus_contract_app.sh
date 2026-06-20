@@ -14,6 +14,7 @@ OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_o
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 TMP_DIR="${CJGUI_SHARED_LAYOUT_STYLE_INPUT_FOCUS_CONTRACT_TMPDIR:-/private/tmp/cjgui-shared-layout-style-input-focus-contract-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -92,6 +93,11 @@ if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$RUN_HARNESS_SRC" ]]; then
+  echo "cjgui shared layout/style/input/focus contract app verification: missing shared run harness source $RUN_HARNESS_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -111,13 +117,20 @@ require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_S
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
+require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
+require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_shared_layout_style_input_focus_contract_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC"
 require_source_line "class SharedLayoutStyleInputFocusContractState" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
+require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "runResult.runnable" "$DEMO_SRC"
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
 require_source_line "sharedUiState()" "$DEMO_SRC"
 require_source_line "sharedComponentActions()" "$DEMO_SRC"
@@ -210,6 +223,7 @@ cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -246,6 +260,10 @@ require_output_line "cjgui shared layout-style-input-focus contract app: shared_
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_readback=layout=split_detail;style=focus_accent;input=main;focus=file_filter"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_rollback_boundary=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
 require_output_line "cjgui shared layout-style-input-focus contract app: shared_commit_not_published=true"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_run_harness=CjguiExperimentalDemoRunHarness"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_run_result=demo=shared_layout_style_input_focus_contract;status=not_started->runnable;readback=true;commit_readback=true;not_published=true;writes=4;actions=shared_layout_style_input_focus.apply_layout,shared_layout_style_input_focus.apply_style,shared_layout_style_input_focus.type_input,shared_layout_style_input_focus.move_focus"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_run_readback=true"
+require_output_line "cjgui shared layout-style-input-focus contract app: shared_run_not_published=true"
 
 echo "cjgui_shared_layout_style_input_focus_contract_app_compiled=true"
 echo "cjgui_shared_layout_style_input_focus_contract_app_ran=true"
@@ -272,6 +290,11 @@ echo "shared_layout_style_input_focus_contract_shared_commit_harness_internal_pr
 echo "shared_layout_style_input_focus_contract_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
 echo "shared_layout_style_input_focus_contract_shared_commit_readback=true"
 echo "shared_layout_style_input_focus_contract_shared_commit_not_published=true"
+echo "shared_layout_style_input_focus_contract_shared_run_harness_imported=true"
+echo "shared_layout_style_input_focus_contract_shared_run_harness=CjguiExperimentalDemoRunHarness"
+echo "shared_layout_style_input_focus_contract_shared_run_result=CjguiExperimentalDemoRunResult"
+echo "shared_layout_style_input_focus_contract_shared_run_readback=true"
+echo "shared_layout_style_input_focus_contract_shared_run_not_published=true"
 echo "shared_layout_style_input_focus_contract_runtime_state_write=false"
 echo "shared_layout_style_input_focus_contract_renderer_state_write=false"
 echo "shared_layout_style_input_focus_contract_public_c_abi_added=false"

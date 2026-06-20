@@ -1,7 +1,8 @@
 package cjgui_reusable_component_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -11,6 +12,7 @@ class ReusableComponentContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let commitHarness: CjguiExperimentalDemoCommitHarness
+    let runHarness: CjguiExperimentalDemoRunHarness
     var componentCount: Int64
     var componentKinds: String
     var reusedDemoCount: Int64
@@ -33,6 +35,7 @@ class ReusableComponentContractState {
             "reusable_component_contract",
             "components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
         )
+        this.runHarness = CjguiExperimentalDemoRunHarness("reusable_component_contract")
         this.componentCount = 1
         this.componentKinds = "task_row"
         this.reusedDemoCount = 1
@@ -154,6 +157,24 @@ class ReusableComponentContractState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
+    func buildRunResult(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return runHarness.finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            sharedComponentActionSummary(),
+            sharedUiState(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
+
 }
 
 main(): Int64 {
@@ -196,7 +217,7 @@ main(): Int64 {
         "reusable_component_contract.commit_reuse_flow",
         after
     )
-    let outputOk = readbackOk &&
+    let commitReadbackOk = readbackOk &&
         apiOutput.demoName == "reusable_component_contract" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
@@ -212,6 +233,8 @@ main(): Int64 {
             before,
             after
         )
+    let runResult = contract.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui reusable component contract app: demo=reusable_component_contract")
     println("cjgui reusable component contract app: status_before=not_started")
@@ -235,6 +258,10 @@ main(): Int64 {
     println("cjgui reusable component contract app: shared_commit_readback=${contract.commitHarness.readback()}")
     println("cjgui reusable component contract app: shared_commit_rollback_boundary=${contract.commitHarness.rollbackBoundary()}")
     println("cjgui reusable component contract app: shared_commit_not_published=${commitResult.notPublished}")
+    println("cjgui reusable component contract app: shared_run_harness=CjguiExperimentalDemoRunHarness")
+    println("cjgui reusable component contract app: shared_run_result=${runResult.summary}")
+    println("cjgui reusable component contract app: shared_run_readback=${runResult.runnable}")
+    println("cjgui reusable component contract app: shared_run_not_published=${runResult.notPublished}")
 
     if (outputOk) {
         return 0

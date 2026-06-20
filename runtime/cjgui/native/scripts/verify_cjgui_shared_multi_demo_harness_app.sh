@@ -14,6 +14,7 @@ OUTPUT_SUPPORT_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_o
 UI_STATE_CORE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 COMPONENT_ACTION_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 COMMIT_SESSION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+RUN_HARNESS_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 TMP_DIR="${CJGUI_SHARED_MULTI_DEMO_HARNESS_TMPDIR:-/private/tmp/cjgui-shared-multi-demo-harness-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -92,6 +93,11 @@ if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$RUN_HARNESS_SRC" ]]; then
+  echo "cjgui shared multi-demo harness app verification: missing shared run harness source $RUN_HARNESS_SRC" >&2
+  exit 2
+fi
+
 require_source_line "public class CjguiExperimentalDemoInteractionTrace" "$SUPPORT_SRC"
 require_source_line "public func recordAction" "$SUPPORT_SRC"
 require_source_line "public class CjguiExperimentalDemoOutput" "$OUTPUT_SUPPORT_SRC"
@@ -110,16 +116,23 @@ require_source_line "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_S
 require_source_line "public func commitComponentAction" "$COMMIT_SESSION_SRC"
 require_source_line "public func rollbackBoundary" "$COMMIT_SESSION_SRC"
 require_source_line "public func resultMatches" "$COMMIT_SESSION_SRC"
+require_source_line "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC"
+require_source_line "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC"
+require_source_line "public func finishRun" "$RUN_HARNESS_SRC"
 require_source_line "package cjgui_shared_multi_demo_harness_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
-require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}" "$DEMO_SRC"
+require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}" "$DEMO_SRC"
 require_source_line "class SharedMultiDemoHarnessState" "$DEMO_SRC"
 require_source_line "var servedDemos: String" "$DEMO_SRC"
 require_source_line "var todoItemCount: Int64" "$DEMO_SRC"
 require_source_line "var fileSelectedPath: String" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
+require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
 require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
+require_source_line "buildRunResult" "$DEMO_SRC"
+require_source_line "runResult.runnable" "$DEMO_SRC"
 require_source_line "componentSession.recordComponentAction" "$DEMO_SRC"
 require_source_line "var focusRoute: String" "$DEMO_SRC"
 require_source_line "var styleRoute: String" "$DEMO_SRC"
@@ -215,6 +228,7 @@ cp "$OUTPUT_SUPPORT_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$UI_STATE_CORE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj"
 cp "$COMPONENT_ACTION_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj"
 cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_owner_local_commit_session.cj"
+cp "$RUN_HARNESS_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_run_harness.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
@@ -253,6 +267,10 @@ require_output_line "cjgui shared multi-demo harness app: shared_commit_output=d
 require_output_line "cjgui shared multi-demo harness app: shared_commit_readback=todo_items=1;todo_first=Write shared multi-demo harness;todo_done=true;file_selected=/workspace/src/main.cj:file;file_filter=main;focus=file_detail_pane;style=split_detail_accent"
 require_output_line "cjgui shared multi-demo harness app: shared_commit_rollback_boundary=todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list"
 require_output_line "cjgui shared multi-demo harness app: shared_commit_not_published=true"
+require_output_line "cjgui shared multi-demo harness app: shared_run_harness=CjguiExperimentalDemoRunHarness"
+require_output_line "cjgui shared multi-demo harness app: shared_run_result=demo=shared_multi_demo_harness;status=not_started->runnable;readback=true;commit_readback=true;not_published=true;writes=6;actions=shared_multi_demo_harness.todo_add,shared_multi_demo_harness.todo_complete,shared_multi_demo_harness.file_expand,shared_multi_demo_harness.file_filter,shared_multi_demo_harness.file_select,shared_multi_demo_harness.file_focus"
+require_output_line "cjgui shared multi-demo harness app: shared_run_readback=true"
+require_output_line "cjgui shared multi-demo harness app: shared_run_not_published=true"
 
 echo "cjgui_shared_multi_demo_harness_app_compiled=true"
 echo "cjgui_shared_multi_demo_harness_app_ran=true"
@@ -281,6 +299,11 @@ echo "shared_multi_demo_harness_shared_commit_harness_internal_primitive_name=Cj
 echo "shared_multi_demo_harness_shared_commit_result_name=CjguiExperimentalDemoCommitResult"
 echo "shared_multi_demo_harness_shared_commit_readback=true"
 echo "shared_multi_demo_harness_shared_commit_not_published=true"
+echo "shared_multi_demo_harness_shared_run_harness_imported=true"
+echo "shared_multi_demo_harness_shared_run_harness=CjguiExperimentalDemoRunHarness"
+echo "shared_multi_demo_harness_shared_run_result=CjguiExperimentalDemoRunResult"
+echo "shared_multi_demo_harness_shared_run_readback=true"
+echo "shared_multi_demo_harness_shared_run_not_published=true"
 echo "shared_multi_demo_harness_runtime_state_write=false"
 echo "shared_multi_demo_harness_renderer_state_write=false"
 echo "shared_multi_demo_harness_public_c_abi_added=false"

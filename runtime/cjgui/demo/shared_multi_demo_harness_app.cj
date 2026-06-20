@@ -1,7 +1,8 @@
 package cjgui_shared_multi_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness, CjguiExperimentalDemoCommitResult}
+import cjgui.demo_support.{CjguiExperimentalDemoRunHarness, CjguiExperimentalDemoRunResult}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -22,6 +23,7 @@ class SharedMultiDemoHarnessState {
     var fileFilterText: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let commitHarness: CjguiExperimentalDemoCommitHarness
+    let runHarness: CjguiExperimentalDemoRunHarness
     var focusRoute: String
     var styleRoute: String
 
@@ -39,6 +41,7 @@ class SharedMultiDemoHarnessState {
             "shared_multi_demo_harness",
             "todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list"
         )
+        this.runHarness = CjguiExperimentalDemoRunHarness("shared_multi_demo_harness")
         this.servedDemoCount = 0
         this.servedDemos = ""
         this.actionCount = 0
@@ -172,6 +175,24 @@ class SharedMultiDemoHarnessState {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
 
+    func buildRunResult(
+        statusBefore: String,
+        statusAfter: String,
+        output: CjguiExperimentalDemoOutput,
+        commitResult: CjguiExperimentalDemoCommitResult,
+        commitReadbackOk: Bool
+    ): CjguiExperimentalDemoRunResult {
+        return runHarness.finishRun(
+            statusBefore,
+            statusAfter,
+            output,
+            sharedComponentActionSummary(),
+            sharedUiState(),
+            commitResult,
+            commitReadbackOk
+        )
+    }
+
 }
 
 main(): Int64 {
@@ -201,7 +222,7 @@ main(): Int64 {
         "shared_multi_demo_harness.commit_multi_flow",
         after
     )
-    let outputOk = stateReadbackOk &&
+    let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "shared_multi_demo_harness" &&
         apiOutput.beforeState == before &&
         apiOutput.afterState == after &&
@@ -217,6 +238,8 @@ main(): Int64 {
             before,
             after
         )
+    let runResult = harness.buildRunResult("not_started", "runnable", apiOutput, commitResult, commitReadbackOk)
+    let outputOk = commitReadbackOk && runResult.runnable
 
     println("cjgui shared multi-demo harness app: demo=shared_multi_demo_harness")
     println("cjgui shared multi-demo harness app: status_before=not_started")
@@ -240,6 +263,10 @@ main(): Int64 {
     println("cjgui shared multi-demo harness app: shared_commit_readback=${harness.commitHarness.readback()}")
     println("cjgui shared multi-demo harness app: shared_commit_rollback_boundary=${harness.commitHarness.rollbackBoundary()}")
     println("cjgui shared multi-demo harness app: shared_commit_not_published=${commitResult.notPublished}")
+    println("cjgui shared multi-demo harness app: shared_run_harness=CjguiExperimentalDemoRunHarness")
+    println("cjgui shared multi-demo harness app: shared_run_result=${runResult.summary}")
+    println("cjgui shared multi-demo harness app: shared_run_readback=${runResult.runnable}")
+    println("cjgui shared multi-demo harness app: shared_run_not_published=${runResult.notPublished}")
 
     if (outputOk) {
         return 0

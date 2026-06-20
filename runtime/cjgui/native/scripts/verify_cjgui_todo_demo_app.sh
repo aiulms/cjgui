@@ -116,8 +116,10 @@ fi
 
 if ! grep -F "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func commitComponentAction" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
-   ! grep -F "public func rollbackBoundary" "$COMMIT_SESSION_SRC" >/dev/null 2>&1; then
+   ! grep -F "public func rollbackBoundary" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func resultMatches" "$COMMIT_SESSION_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared owner-local commit session declaration" >&2
   exit 4
 fi
@@ -128,13 +130,20 @@ if ! grep -F "main(): Int64" "$DEMO_SRC" >/dev/null 2>&1; then
 fi
 
 if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "buildSharedOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "CjguiExperimentalDemoOwnerLocalCommitSession" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "commitHarness.resultMatches" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "sharedUiState()" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared output builder consumption" >&2
+  exit 4
+fi
+
+if grep -F "func commitSharedState" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitReadback" "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F "func commitRollbackBoundary" "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: demo must use shared commit harness instead of local commit wrappers" >&2
   exit 4
 fi
 
@@ -220,8 +229,10 @@ cp "$COMMIT_SESSION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script
-  if [[ -d "${CANGJIE_HOME:-}/runtime/lib/darwin_x86_64_cjnative" ]]; then
-    export DYLD_LIBRARY_PATH="${CANGJIE_HOME}/runtime/lib/darwin_x86_64_cjnative:${DYLD_LIBRARY_PATH:-}"
+  CANGJIE_RUNTIME_DYLIB="$(find "${CANGJIE_HOME:-}/runtime/lib" -maxdepth 2 -name libcangjie-runtime.dylib -print -quit 2>/dev/null || true)"
+  if [[ -n "$CANGJIE_RUNTIME_DYLIB" ]]; then
+    CANGJIE_RUNTIME_LIB_DIR="$(dirname "$CANGJIE_RUNTIME_DYLIB")"
+    export DYLD_LIBRARY_PATH="${CANGJIE_RUNTIME_LIB_DIR}:${DYLD_LIBRARY_PATH:-}"
   fi
   "$BUILD_DIR/cjpm-target/release/bin/main" > "$OUTPUT_LOG"
 )
@@ -242,6 +253,7 @@ require_line "cjgui todo demo app: shared_state_core=layout=todo_list;style=comp
 require_line "cjgui todo demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession"
 require_line "cjgui todo demo app: shared_component_action_output=demo=todo;component_actions=todo_input:todo.add,todo_item:todo.complete;ui=layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item"
 require_line "cjgui todo demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession"
+require_line "cjgui todo demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness"
 require_line "cjgui todo demo app: shared_commit_output=demo=todo;component=todo_item;action=todo.commit_complete;committed=true;readback=true;writes=1;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;readback_state=items=1;first=Write first CJGUI todo;first_done=true;rollback_state=items=0;first=<none>;first_done=false;not_published=true"
 require_line "cjgui todo demo app: shared_commit_readback=items=1;first=Write first CJGUI todo;first_done=true"
 require_line "cjgui todo demo app: shared_commit_rollback_boundary=items=0;first=<none>;first_done=false"
@@ -271,6 +283,8 @@ echo "todo_shared_state_core_imported=true"
 echo "todo_shared_state_core_name=CjguiExperimentalDemoUiStateCore"
 echo "todo_shared_component_action_session_imported=true"
 echo "todo_shared_component_action_session_name=CjguiExperimentalDemoComponentActionSession"
+echo "todo_shared_commit_harness_imported=true"
+echo "todo_shared_commit_harness_name=CjguiExperimentalDemoCommitHarness"
 echo "todo_shared_commit_session_imported=true"
 echo "todo_shared_commit_session_name=CjguiExperimentalDemoOwnerLocalCommitSession"
 echo "todo_shared_commit_result_name=CjguiExperimentalDemoCommitResult"

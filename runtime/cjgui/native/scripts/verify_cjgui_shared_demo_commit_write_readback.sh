@@ -78,6 +78,7 @@ CJGUI_AI_GENERATED_UI_SHARED_CONTRACT_TMPDIR="$TMP_DIR/ai-generated-ui-shared-co
 CJGUI_REUSABLE_COMPONENT_CONTRACT_TMPDIR="$TMP_DIR/reusable-component-contract-tmp" "$REUSABLE_COMPONENT_CONTRACT_VERIFIER" > "$REUSABLE_COMPONENT_CONTRACT_LOG"
 
 require_line "todo_shared_commit_session_imported=true" "$TODO_LOG"
+require_line "todo_shared_commit_harness_imported=true" "$TODO_LOG"
 require_line "todo_shared_commit_readback=true" "$TODO_LOG"
 require_line "todo_shared_commit_not_published=true" "$TODO_LOG"
 require_line "settings_shared_commit_session_imported=true" "$SETTINGS_LOG"
@@ -90,6 +91,7 @@ require_line "file_browser_shared_commit_session_imported=true" "$FILE_BROWSER_L
 require_line "file_browser_shared_commit_readback=true" "$FILE_BROWSER_LOG"
 require_line "file_browser_shared_commit_not_published=true" "$FILE_BROWSER_LOG"
 require_line "ai_generated_ui_shared_commit_session_imported=true" "$AI_GENERATED_UI_LOG"
+require_line "ai_generated_ui_shared_commit_harness_imported=true" "$AI_GENERATED_UI_LOG"
 require_line "ai_generated_ui_shared_commit_readback=true" "$AI_GENERATED_UI_LOG"
 require_line "ai_generated_ui_shared_commit_not_published=true" "$AI_GENERATED_UI_LOG"
 require_line "shared_demo_harness_shared_commit_session_imported=true" "$SHARED_DEMO_HARNESS_LOG"
@@ -110,6 +112,7 @@ require_line "reusable_component_contract_shared_commit_not_published=true" "$RE
 
 echo "cjgui_shared_demo_commit_write_readback_verified=true"
 echo "cjgui_shared_demo_commit_primitive=CjguiExperimentalDemoOwnerLocalCommitSession"
+echo "cjgui_shared_demo_commit_harness=CjguiExperimentalDemoCommitHarness"
 echo "cjgui_shared_demo_commit_result=CjguiExperimentalDemoCommitResult"
 echo "cjgui_shared_demo_commit_demo_count=10"
 echo "cjgui_shared_demo_commit_demos=todo,settings,chat,file_browser,ai_generated_ui,shared_demo_harness,shared_multi_demo_harness,shared_layout_style_input_focus_contract,ai_generated_ui_shared_contract,reusable_component_contract"

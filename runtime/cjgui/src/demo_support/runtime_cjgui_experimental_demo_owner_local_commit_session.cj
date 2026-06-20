@@ -125,3 +125,63 @@ public class CjguiExperimentalDemoOwnerLocalCommitSession {
         return writeCount
     }
 }
+
+/// Experimental demo support API：组合 owner-local commit session 与通用 result 校验，减少 demo-local wrapper。
+public class CjguiExperimentalDemoCommitHarness {
+    /// Demo 名称保持 public，方便 verifier 证明多个 demo 消费同一个 shared commit harness。
+    public let demoName: String
+    let session: CjguiExperimentalDemoOwnerLocalCommitSession
+
+    public init(demoName: String, initialState: String) {
+        this.demoName = demoName
+        this.session = CjguiExperimentalDemoOwnerLocalCommitSession(demoName, initialState)
+    }
+
+    /// 提交一次 demo-host owner-local 状态变更；不发布 renderer/runtime truth。
+    public func commitComponentAction(
+        componentId: String,
+        action: String,
+        afterState: String
+    ): CjguiExperimentalDemoCommitResult {
+        return session.commitComponentAction(componentId, action, afterState)
+    }
+
+    /// 用 shared 规则校验 commit result、readback 与 rollback boundary 是否自洽。
+    public func resultMatches(
+        result: CjguiExperimentalDemoCommitResult,
+        componentId: String,
+        action: String,
+        beforeState: String,
+        afterState: String
+    ): Bool {
+        return result.demoName == demoName &&
+            result.componentId == componentId &&
+            result.action == action &&
+            result.beforeState == beforeState &&
+            result.afterState == afterState &&
+            result.readbackState == afterState &&
+            result.rollbackState == beforeState &&
+            result.writeCount == writes() &&
+            result.committed &&
+            result.readbackOk &&
+            result.rollbackAvailable &&
+            result.notPublished &&
+            readback() == afterState &&
+            rollbackBoundary() == beforeState
+    }
+
+    /// 读回 session 当前 owner-local 状态；不读取 renderer/runtime 状态。
+    public func readback(): String {
+        return session.readback()
+    }
+
+    /// 读回上一份 rollback boundary；不执行真实回滚发布。
+    public func rollbackBoundary(): String {
+        return session.rollbackBoundary()
+    }
+
+    /// 返回当前 session-local commit 次数。
+    public func writes(): Int64 {
+        return session.writes()
+    }
+}

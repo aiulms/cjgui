@@ -1,7 +1,7 @@
 package cjgui_ai_generated_ui_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoCommitResult, CjguiExperimentalDemoOwnerLocalCommitSession}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -11,7 +11,7 @@ import std.collection.*
 class AiGeneratedUiState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
-    let commitSession: CjguiExperimentalDemoOwnerLocalCommitSession
+    let commitHarness: CjguiExperimentalDemoCommitHarness
     private var componentIds = ArrayList<String>()
     var accepted: Bool
     var acceptedScreen: String
@@ -28,7 +28,7 @@ class AiGeneratedUiState {
             "<empty>",
             "preview_card"
         )
-        this.commitSession = CjguiExperimentalDemoOwnerLocalCommitSession(
+        this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "ai_generated_ui",
             "components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe"
         )
@@ -114,18 +114,6 @@ class AiGeneratedUiState {
     func buildSharedOutput(domainSummary: String, readbackOk: Bool): CjguiExperimentalDemoOutput {
         return componentSession.buildOutput(domainSummary, readbackOk)
     }
-
-    func commitSharedState(componentId: String, action: String, afterState: String): CjguiExperimentalDemoCommitResult {
-        return commitSession.commitComponentAction(componentId, action, afterState)
-    }
-
-    func commitReadback(): String {
-        return commitSession.readback()
-    }
-
-    func commitRollbackBoundary(): String {
-        return commitSession.rollbackBoundary()
-    }
 }
 
 main(): Int64 {
@@ -146,7 +134,11 @@ main(): Int64 {
         generatedUi.sharedWrites() == 4 &&
         generatedUi.sharedComponentActions() == "diff_panel:ai_generated_ui.preview_diff,explain_panel:ai_generated_ui.explain_changes,generated_form:ai_generated_ui.accept_refresh,save_button:ai_generated_ui.move_focus"
     let apiOutput = generatedUi.buildSharedOutput(generatedUi.domainSummary(), stateReadbackOk)
-    let commitResult = generatedUi.commitSharedState("save_button", "ai_generated_ui.commit_accept_refresh", after)
+    let commitResult = generatedUi.commitHarness.commitComponentAction(
+        "save_button",
+        "ai_generated_ui.commit_accept_refresh",
+        after
+    )
     let readbackOk = stateReadbackOk &&
         apiOutput.demoName == "ai_generated_ui" &&
         apiOutput.beforeState == before &&
@@ -156,20 +148,13 @@ main(): Int64 {
         apiOutput.domainSummary == generatedUi.domainSummary() &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=ai_generated_ui;readback=true;writes=4;actions=ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus;before=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe;after=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel;summary=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;focus=save_button;layout=ai_form_preview;style=sage_panel" &&
-        commitResult.demoName == "ai_generated_ui" &&
-        commitResult.componentId == "save_button" &&
-        commitResult.action == "ai_generated_ui.commit_accept_refresh" &&
-        commitResult.beforeState == before &&
-        commitResult.afterState == after &&
-        commitResult.readbackState == after &&
-        commitResult.rollbackState == before &&
-        commitResult.writeCount == 1 &&
-        commitResult.committed &&
-        commitResult.readbackOk &&
-        commitResult.rollbackAvailable &&
-        commitResult.notPublished &&
-        generatedUi.commitReadback() == after &&
-        generatedUi.commitRollbackBoundary() == before
+        generatedUi.commitHarness.resultMatches(
+            commitResult,
+            "save_button",
+            "ai_generated_ui.commit_accept_refresh",
+            before,
+            after
+        )
 
     println("cjgui ai generated ui demo app: demo=ai_generated_ui")
     println("cjgui ai generated ui demo app: status_before=not_started")
@@ -188,9 +173,10 @@ main(): Int64 {
     println("cjgui ai generated ui demo app: shared_component_action_model=CjguiExperimentalDemoComponentActionSession")
     println("cjgui ai generated ui demo app: shared_component_action_output=${generatedUi.sharedComponentActionSummary()}")
     println("cjgui ai generated ui demo app: shared_commit_model=CjguiExperimentalDemoOwnerLocalCommitSession")
+    println("cjgui ai generated ui demo app: shared_commit_harness=CjguiExperimentalDemoCommitHarness")
     println("cjgui ai generated ui demo app: shared_commit_output=${commitResult.summary}")
-    println("cjgui ai generated ui demo app: shared_commit_readback=${generatedUi.commitReadback()}")
-    println("cjgui ai generated ui demo app: shared_commit_rollback_boundary=${generatedUi.commitRollbackBoundary()}")
+    println("cjgui ai generated ui demo app: shared_commit_readback=${generatedUi.commitHarness.readback()}")
+    println("cjgui ai generated ui demo app: shared_commit_rollback_boundary=${generatedUi.commitHarness.rollbackBoundary()}")
     println("cjgui ai generated ui demo app: shared_commit_not_published=${commitResult.notPublished}")
 
     if (readbackOk) {

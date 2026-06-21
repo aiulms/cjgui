@@ -16,6 +16,8 @@
 
 ## 固定边界
 
+本轮不是 runtime truth，只是 docs-only / evidence-first recovery 复核；isolated probe 继续只作为 feasibility evidence 保留。
+
 - 不授权 production drawable acquisition。
 - 不授权 render pass descriptor color attachment。
 - 不授权 render command encoder。

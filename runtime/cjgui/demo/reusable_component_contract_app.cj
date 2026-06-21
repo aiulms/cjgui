@@ -1,6 +1,7 @@
 package cjgui_reusable_component_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -57,12 +58,18 @@ class ReusableComponentContractState {
 
     func attachFileBrowserRow() {
         appendComponent("file_row", "file_browser")
-        componentSession.recordComponentAction("file_row", "register_file_row", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("file_row", "register_file_row"),
+            businessState()
+        )
     }
 
     func attachAiGeneratedForm() {
         appendComponent("ai_form", "ai_generated_ui")
-        componentSession.recordComponentAction("ai_form", "register_ai_form", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("ai_form", "register_ai_form"),
+            businessState()
+        )
     }
 
     func runTodoAdd(title: String) {
@@ -71,7 +78,10 @@ class ReusableComponentContractState {
         componentSession.applyStyle("task_row_active")
         componentSession.typeInput(title)
         componentSession.moveFocus("todo_first_item")
-        componentSession.recordComponentAction("task_row", "todo_add", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("task_row", "todo_add"),
+            businessState()
+        )
     }
 
     func runFileSelect(path: String) {
@@ -80,7 +90,10 @@ class ReusableComponentContractState {
         componentSession.applyStyle("file_row_selected")
         componentSession.typeInput("filter:src")
         componentSession.moveFocus("file_detail_pane")
-        componentSession.recordComponentAction("file_row", "file_select", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("file_row", "file_select"),
+            businessState()
+        )
     }
 
     func runAiAccept(screen: String) {
@@ -89,7 +102,10 @@ class ReusableComponentContractState {
         componentSession.applyStyle("sage_panel")
         componentSession.typeInput("filter:src,username")
         componentSession.moveFocus("save_button")
-        componentSession.recordComponentAction("ai_form", "ai_accept", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("ai_form", "ai_accept"),
+            businessState()
+        )
     }
 
     func businessState(): String {

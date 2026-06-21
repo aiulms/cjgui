@@ -3,6 +3,35 @@
 // Stop-line: 只保存 demo process-local in-memory 状态，不写 runtime_state / renderer_state，不调用 native bridge。
 package cjgui.demo_support
 
+/// Experimental demo support API：组件身份与动作名称的 typed route value。
+public class CjguiExperimentalDemoComponentActionRoute {
+    /// 组件标识保持脱水字符串，避免把 demo route 误解为 renderer handle。
+    public let componentId: String
+    /// 动作名称保持脱水字符串，供 existing trace/output 兼容消费。
+    public let action: String
+
+    /// 创建只承载脱水 component/action 字符串的 route value。
+    public init(componentId: String, action: String) {
+        this.componentId = componentId
+        this.action = action
+    }
+
+    /// 转换为现有 component id 字符串。
+    public func componentIdValue(): String {
+        return componentId
+    }
+
+    /// 转换为现有 action 字符串。
+    public func actionValue(): String {
+        return action
+    }
+
+    /// 转换为现有 `component:action` route fact。
+    public func routeValue(): String {
+        return "${componentId}:${action}"
+    }
+}
+
 /// Experimental demo support API：把 component action、UI state core 与 output builder 组合成可复用 demo-host session。
 public class CjguiExperimentalDemoComponentActionSession {
     /// Demo 名称保持 public，方便 verifier/readback 证明哪个 app 消费了 shared session。
@@ -48,12 +77,16 @@ public class CjguiExperimentalDemoComponentActionSession {
 
     /// 同时记录业务 action 顺序与 component/action route，不暴露 renderer state。
     public func recordComponentAction(componentId: String, action: String, afterState: String) {
-        trace.recordAction(action, afterState)
-        let componentAction = "${componentId}:${action}"
+        recordComponentActionRoute(CjguiExperimentalDemoComponentActionRoute(componentId, action), afterState)
+    }
+
+    /// 通过 typed route value 记录 component/action，减少 demo-local 裸字符串三参入口。
+    public func recordComponentActionRoute(route: CjguiExperimentalDemoComponentActionRoute, afterState: String) {
+        trace.recordAction(route.actionValue(), afterState)
         if (componentActionTrace == "idle") {
-            componentActionTrace = componentAction
+            componentActionTrace = route.routeValue()
         } else {
-            componentActionTrace = "${componentActionTrace},${componentAction}"
+            componentActionTrace = "${componentActionTrace},${route.routeValue()}"
         }
     }
 

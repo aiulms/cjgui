@@ -1,6 +1,7 @@
 package cjgui_shared_layout_style_input_focus_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -35,22 +36,37 @@ class SharedLayoutStyleInputFocusContractState {
 
     func applyLayout(kind: String) {
         componentSession.applyLayout(kind)
-        componentSession.recordComponentAction("layout_contract", "shared_layout_style_input_focus.apply_layout", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("layout_contract", "shared_layout_style_input_focus.apply_layout"),
+            businessState()
+        )
     }
 
     func applyStyle(token: String) {
         componentSession.applyStyle(token)
-        componentSession.recordComponentAction("style_contract", "shared_layout_style_input_focus.apply_style", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("style_contract", "shared_layout_style_input_focus.apply_style"),
+            businessState()
+        )
     }
 
     func typeInput(text: String) {
         componentSession.typeInput(text)
-        componentSession.recordComponentAction("text_input_contract", "shared_layout_style_input_focus.type_input", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute(
+                "text_input_contract",
+                "shared_layout_style_input_focus.type_input"
+            ),
+            businessState()
+        )
     }
 
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
-        componentSession.recordComponentAction("focus_contract", "shared_layout_style_input_focus.move_focus", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("focus_contract", "shared_layout_style_input_focus.move_focus"),
+            businessState()
+        )
     }
 
     func businessState(): String {

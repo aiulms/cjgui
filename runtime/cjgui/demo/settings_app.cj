@@ -1,6 +1,7 @@
 package cjgui_settings_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -44,24 +45,36 @@ class SettingsPanelState {
 
     func toggleAutoSave() {
         autoSaveEnabled = !autoSaveEnabled
-        componentSession.recordComponentAction("auto_save_toggle", "settings.toggle_auto_save", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("auto_save_toggle", "settings.toggle_auto_save"),
+            businessState()
+        )
     }
 
     func selectTheme(theme: String) {
         selectedTheme = theme
         componentSession.applyStyle("theme_${theme}")
-        componentSession.recordComponentAction("theme_select", "settings.select_theme", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("theme_select", "settings.select_theme"),
+            businessState()
+        )
     }
 
     func updateUsername(username: String) {
         usernameValue = username
         componentSession.typeInput(username)
-        componentSession.recordComponentAction("username_field", "settings.update_username", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("username_field", "settings.update_username"),
+            businessState()
+        )
     }
 
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
-        componentSession.recordComponentAction(target, "settings.move_focus", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute(target, "settings.move_focus"),
+            businessState()
+        )
     }
 
     func businessState(): String {

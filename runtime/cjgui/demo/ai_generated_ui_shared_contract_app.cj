@@ -1,6 +1,7 @@
 package cjgui_ai_generated_ui_shared_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -48,19 +49,28 @@ class AiGeneratedUiSharedContractState {
     }
 
     func generateSpec() {
-        componentSession.recordComponentAction("spec_generator", "generate_spec", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("spec_generator", "generate_spec"),
+            businessState()
+        )
     }
 
     func previewDiff(summary: String) {
         diffSummary = summary
         componentSession.moveFocus("diff_panel")
-        componentSession.recordComponentAction("diff_panel", "preview_diff", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("diff_panel", "preview_diff"),
+            businessState()
+        )
     }
 
     func explain(text: String) {
         explainText = text
         componentSession.moveFocus("explain_panel")
-        componentSession.recordComponentAction("explain_panel", "explain_changes", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("explain_panel", "explain_changes"),
+            businessState()
+        )
     }
 
     func acceptRefresh(screen: String) {
@@ -72,12 +82,18 @@ class AiGeneratedUiSharedContractState {
         componentSession.applyStyle("sage_panel")
         componentSession.typeInput("username")
         componentSession.moveFocus("generated_form")
-        componentSession.recordComponentAction("generated_form", "accept_refresh", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("generated_form", "accept_refresh"),
+            businessState()
+        )
     }
 
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
-        componentSession.recordComponentAction("save_button", "move_focus", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("save_button", "move_focus"),
+            businessState()
+        )
     }
 
     func componentCount(): Int64 {

@@ -1,6 +1,7 @@
 package cjgui_file_browser_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -65,14 +66,20 @@ class FileBrowserState {
         expandedPath = path
         componentSession.applyStyle("folder_expanded")
         componentSession.moveFocus("tree")
-        componentSession.recordComponentAction("folder_tree", "file_browser.expand_folder", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("folder_tree", "file_browser.expand_folder"),
+            businessState()
+        )
     }
 
     func applyFilter(query: String) {
         componentSession.typeInput(query)
         componentSession.applyStyle("filter_active")
         componentSession.moveFocus("tree_filter")
-        componentSession.recordComponentAction("tree_filter", "file_browser.filter_entries", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("tree_filter", "file_browser.filter_entries"),
+            businessState()
+        )
     }
 
     func selectEntry(path: String, kind: String) {
@@ -80,7 +87,10 @@ class FileBrowserState {
         selectedKind = kind
         componentSession.applyStyle("file_selected")
         componentSession.moveFocus("tree")
-        componentSession.recordComponentAction("file_row", "file_browser.select_file", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("file_row", "file_browser.select_file"),
+            businessState()
+        )
     }
 
     func refreshDetail(title: String, preview: String) {
@@ -88,12 +98,18 @@ class FileBrowserState {
         detailPreview = preview
         componentSession.applyStyle("detail_ready")
         componentSession.moveFocus("detail_pane")
-        componentSession.recordComponentAction("detail_pane", "file_browser.refresh_detail", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("detail_pane", "file_browser.refresh_detail"),
+            businessState()
+        )
     }
 
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
-        componentSession.recordComponentAction(target, "file_browser.move_focus", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute(target, "file_browser.move_focus"),
+            businessState()
+        )
     }
 
     func itemCount(): Int64 {

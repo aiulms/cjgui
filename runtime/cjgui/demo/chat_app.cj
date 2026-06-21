@@ -1,6 +1,7 @@
 package cjgui_chat_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -54,7 +55,10 @@ class ChatThreadState {
     func updateComposer(text: String) {
         componentSession.typeInput(text)
         componentSession.moveFocus("composer")
-        componentSession.recordComponentAction("composer", "chat.type_message", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("composer", "chat.type_message"),
+            businessState()
+        )
     }
 
     func appendMessage(sender: String, text: String, action: String) {
@@ -66,7 +70,10 @@ class ChatThreadState {
         } else {
             componentSession.applyStyle("owner_message")
         }
-        componentSession.recordComponentAction("message_list", action, businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("message_list", action),
+            businessState()
+        )
     }
 
     func sendComposer(sender: String): Bool {
@@ -79,13 +86,19 @@ class ChatThreadState {
         lastText = message
         componentSession.applyStyle("owner_message")
         componentSession.typeInput("")
-        componentSession.recordComponentAction("send_button", "chat.send_message", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("send_button", "chat.send_message"),
+            businessState()
+        )
         return true
     }
 
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
-        componentSession.recordComponentAction(target, "chat.move_focus", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute(target, "chat.move_focus"),
+            businessState()
+        )
     }
 
     func messageCount(): Int64 {

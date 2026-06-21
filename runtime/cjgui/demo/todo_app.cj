@@ -1,6 +1,7 @@
 package cjgui_todo_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -54,7 +55,10 @@ class TodoList {
         componentSession.typeInput(title)
         componentSession.moveFocus("todo_first_item")
         componentSession.applyStyle("active_list")
-        componentSession.recordComponentAction("todo_input", "todo.add", summary())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("todo_input", "todo.add"),
+            summary()
+        )
         return id
     }
 
@@ -64,7 +68,10 @@ class TodoList {
                 item.isDone = true
                 componentSession.moveFocus("todo_first_item")
                 componentSession.applyStyle("completed_accent")
-                componentSession.recordComponentAction("todo_item", "todo.complete", summary())
+                componentSession.recordComponentActionRoute(
+                    CjguiExperimentalDemoComponentActionRoute("todo_item", "todo.complete"),
+                    summary()
+                )
                 return true
             }
         }

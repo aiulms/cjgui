@@ -148,6 +148,15 @@ if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/
   exit 3
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoComponentActionRoute" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func recordComponentActionRoute" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func componentIdValue" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func actionValue" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func routeValue" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing component action route value model declarations" >&2
+  exit 3
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResultReporter" "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func printRunResult" "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "shared_run_harness=CjguiExperimentalDemoRunHarness" "$RUN_REPORTER_SRC" >/dev/null 2>&1 || \
@@ -278,6 +287,7 @@ reuse_semantic_evidence_count="$(grep -R "evidenceBuilder.addReusableComponentEv
 interaction_semantic_evidence_count="$(grep -R "evidenceBuilder.addInteractionEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 state_readback_semantic_evidence_count="$(grep -R "evidenceBuilder.addStateReadbackEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 owner_local_write_semantic_evidence_count="$(grep -R "evidenceBuilder.addOwnerLocalWriteReadbackEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+component_action_route_usage_count="$(grep -R "componentSession.recordComponentActionRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 if [ "$layout_semantic_evidence_count" -lt 4 ] || \
    [ "$served_semantic_evidence_count" -lt 2 ] || \
    [ "$reuse_semantic_evidence_count" -lt 1 ]; then
@@ -289,6 +299,16 @@ if [ "$interaction_semantic_evidence_count" -lt 10 ] || \
    [ "$state_readback_semantic_evidence_count" -lt 9 ] || \
    [ "$owner_local_write_semantic_evidence_count" -lt 1 ]; then
   echo "cjgui shared demo run harness verification: semantic interaction/state evidence model is not shared across expected demos" >&2
+  exit 4
+fi
+
+if [ "$component_action_route_usage_count" -lt 41 ]; then
+  echo "cjgui shared demo run harness verification: component action route value model is not shared across expected demos" >&2
+  exit 4
+fi
+
+if grep -R "componentSession.recordComponentAction(" "$ROOT_DIR/demo" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: demo-local direct component/action string recording remains" >&2
   exit 4
 fi
 
@@ -319,6 +339,8 @@ for demo_src in \
   fi
   if ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "CjguiExperimentalDemoEvidenceSectionBuilder" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "CjguiExperimentalDemoComponentActionRoute" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "componentSession.recordComponentActionRoute" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidenceBuilder.addInteractionEvidence" "$demo_src" >/dev/null 2>&1 || \
      ! grep -E "evidenceBuilder.add(StateReadbackEvidence|OwnerLocalWriteReadbackEvidence)" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "let evidenceSection = evidenceBuilder.buildSection" "$demo_src" >/dev/null 2>&1 || \
@@ -445,6 +467,9 @@ echo "cjgui_shared_demo_semantic_interaction_evidence_demo_count=$interaction_se
 echo "cjgui_shared_demo_semantic_state_readback_evidence_demo_count=$state_readback_semantic_evidence_count"
 echo "cjgui_shared_demo_semantic_owner_local_write_evidence_demo_count=$owner_local_write_semantic_evidence_count"
 echo "cjgui_shared_demo_string_interaction_state_fact_preset_calls_retired=true"
+echo "cjgui_shared_demo_component_action_route_model=CjguiExperimentalDemoComponentActionRoute"
+echo "cjgui_shared_demo_component_action_route_usage_count=$component_action_route_usage_count"
+echo "cjgui_shared_demo_direct_component_action_string_recording_retired=true"
 echo "cjgui_shared_demo_direct_domain_fact_wiring_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"

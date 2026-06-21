@@ -1,6 +1,7 @@
 package cjgui_shared_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -52,7 +53,10 @@ class SharedDemoHarnessState {
         componentSession.typeInput(title)
         componentSession.moveFocus("todo_first_item")
         componentSession.applyStyle("active_list")
-        componentSession.recordComponentAction("todo_input", "shared_demo_harness.add_todo", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("todo_input", "shared_demo_harness.add_todo"),
+            businessState()
+        )
     }
 
     func completeTodo() {
@@ -60,7 +64,10 @@ class SharedDemoHarnessState {
         firstDone = true
         componentSession.moveFocus("todo_first_item")
         componentSession.applyStyle("completed_accent")
-        componentSession.recordComponentAction("todo_item", "shared_demo_harness.complete_todo", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("todo_item", "shared_demo_harness.complete_todo"),
+            businessState()
+        )
     }
 
     func actionCount(): Int64 {

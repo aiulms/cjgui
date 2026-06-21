@@ -1,6 +1,7 @@
 package cjgui_shared_multi_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -91,7 +92,10 @@ class SharedMultiDemoHarnessState {
         todoFirstDone = false
         appendFocus("todo_first_item")
         appendStyle("todo_active_list")
-        componentSession.recordComponentAction("todo_input", "shared_multi_demo_harness.todo_add", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("todo_input", "shared_multi_demo_harness.todo_add"),
+            businessState()
+        )
     }
 
     func completeTodo() {
@@ -99,7 +103,10 @@ class SharedMultiDemoHarnessState {
         todoFirstDone = true
         appendFocus("todo_first_item")
         appendStyle("todo_completed_accent")
-        componentSession.recordComponentAction("todo_item", "shared_multi_demo_harness.todo_complete", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("todo_item", "shared_multi_demo_harness.todo_complete"),
+            businessState()
+        )
     }
 
     func expandFileBrowser() {
@@ -107,7 +114,10 @@ class SharedMultiDemoHarnessState {
         appendAction()
         fileExpandedPath = "/workspace/src"
         appendFocus("file_tree")
-        componentSession.recordComponentAction("file_tree", "shared_multi_demo_harness.file_expand", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("file_tree", "shared_multi_demo_harness.file_expand"),
+            businessState()
+        )
     }
 
     func filterFiles(query: String) {
@@ -115,7 +125,10 @@ class SharedMultiDemoHarnessState {
         fileFilterText = query
         componentSession.typeInput(query)
         appendFocus("file_filter")
-        componentSession.recordComponentAction("file_filter", "shared_multi_demo_harness.file_filter", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("file_filter", "shared_multi_demo_harness.file_filter"),
+            businessState()
+        )
     }
 
     func selectFile(path: String, title: String) {
@@ -125,13 +138,19 @@ class SharedMultiDemoHarnessState {
         fileDetailTitle = title
         appendFocus("file_detail_pane")
         appendStyle("split_detail_accent")
-        componentSession.recordComponentAction("file_row", "shared_multi_demo_harness.file_select", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("file_row", "shared_multi_demo_harness.file_select"),
+            businessState()
+        )
     }
 
     func focusFileDetail() {
         appendAction()
         appendFocus("file_detail_pane")
-        componentSession.recordComponentAction("file_detail_pane", "shared_multi_demo_harness.file_focus", businessState())
+        componentSession.recordComponentActionRoute(
+            CjguiExperimentalDemoComponentActionRoute("file_detail_pane", "shared_multi_demo_harness.file_focus"),
+            businessState()
+        )
     }
 
     func businessState(): String {

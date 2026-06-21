@@ -14,6 +14,7 @@ BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_dem
 METADATA_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
 EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_presenter.cj"
 EVIDENCE_PROFILE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
+EVIDENCE_SECTION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -114,6 +115,11 @@ if [[ ! -f "$EVIDENCE_PROFILE_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$EVIDENCE_SECTION_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing evidence section source $EVIDENCE_SECTION_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -164,6 +170,7 @@ fi
 
 if ! grep -F "public class CjguiExperimentalDemoEvidencePresenter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func printEvidenceProfile" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printEvidenceSection" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func printSharedExecutionProof" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoMetadataReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoBusinessSnapshotReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
@@ -180,6 +187,14 @@ if ! grep -F "public class CjguiExperimentalDemoEvidenceProfile" "$EVIDENCE_PROF
    ! grep -F "public func textFactCount" "$EVIDENCE_PROFILE_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func boolFactCount" "$EVIDENCE_PROFILE_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo run harness verification: missing expected evidence profile declarations" >&2
+  exit 3
+fi
+
+if ! grep -F "public class CjguiExperimentalDemoEvidenceSection" "$EVIDENCE_SECTION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func profileFactCount" "$EVIDENCE_SECTION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoOutput" "$EVIDENCE_SECTION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoRunResult" "$EVIDENCE_SECTION_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected evidence section declarations" >&2
   exit 3
 fi
 
@@ -200,14 +215,15 @@ for demo_src in \
   fi
   if ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "CjguiExperimentalDemoEvidenceProfile" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "CjguiExperimentalDemoEvidenceSection" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidenceProfile.addTextFact" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidenceProfile.addBoolFact" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "evidencePresenter.printEvidenceProfile(evidenceProfile)" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "evidencePresenter.printSharedExecutionProof(apiOutput" "$demo_src" >/dev/null 2>&1; then
-    echo "cjgui shared demo run harness verification: demo must use shared evidence profile presenter in $demo_src" >&2
+     ! grep -F "let evidenceSection = CjguiExperimentalDemoEvidenceSection" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidencePresenter.printEvidenceSection(evidenceSection)" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo must use shared typed evidence section in $demo_src" >&2
     exit 4
   fi
-  if grep -E 'evidencePresenter\.print(DemoIdentity|StatusTransition|TextFact|BoolFact|StaticBoolFact)' "$demo_src" >/dev/null 2>&1; then
+  if grep -E 'evidencePresenter\.print(DemoIdentity|StatusTransition|TextFact|BoolFact|StaticBoolFact|EvidenceProfile|SharedExecutionProof)' "$demo_src" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local presenter fact sequence remains in $demo_src" >&2
     exit 4
   fi
@@ -288,6 +304,10 @@ echo "cjgui_shared_demo_evidence_profile=CjguiExperimentalDemoEvidenceProfile"
 echo "cjgui_shared_demo_evidence_profile_demo_count=10"
 echo "cjgui_shared_demo_evidence_profile_business_fact_batching_shared=true"
 echo "cjgui_shared_demo_direct_presenter_fact_sequence_retired=true"
+echo "cjgui_shared_demo_evidence_section=CjguiExperimentalDemoEvidenceSection"
+echo "cjgui_shared_demo_evidence_section_demo_count=10"
+echo "cjgui_shared_demo_evidence_section_typed_execution_batching_shared=true"
+echo "cjgui_shared_demo_direct_profile_and_proof_calls_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"

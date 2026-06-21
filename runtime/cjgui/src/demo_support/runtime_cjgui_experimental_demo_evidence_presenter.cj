@@ -1,5 +1,5 @@
 // 中文维护注释：这是 CJGUI minimal UI framework demo 复用用的 experimental evidence presenter。
-// Scope: 为多个独立 demo 编排 metadata / business / proof / run result reporter，减少 demo-local reporter wiring 与 fact 调用序列。
+// Scope: 为多个独立 demo 编排 typed evidence section，减少 demo-local reporter wiring 与 fact/proof 调用序列。
 // Stop-line: 只打印 demo process-local 脱水证据，不写 runtime_state / renderer_state，不调用 native bridge，不扩 public C ABI。
 package cjgui.demo_support
 
@@ -55,6 +55,18 @@ public class CjguiExperimentalDemoEvidencePresenter {
         for (fact in profile.boolFacts) {
             printBoolFact(fact.name, fact.value)
         }
+    }
+
+    /// 输出完整 typed evidence section，统一 profile batching 与 shared execution proof。
+    public func printEvidenceSection(section: CjguiExperimentalDemoEvidenceSection) {
+        printEvidenceProfile(section.profile)
+        printSharedExecutionProof(
+            section.output,
+            section.componentSession,
+            section.commitResult,
+            section.commitHarness,
+            section.runResult
+        )
     }
 
     /// 输出 shared primitive proof 与 shared run result，减少每个 demo 的 reporter 尾部编排重复。

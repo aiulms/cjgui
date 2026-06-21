@@ -3,7 +3,7 @@ package cjgui_shared_multi_demo_harness_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -232,8 +232,15 @@ main(): Int64 {
     evidenceProfile.addTextFact("state_after", after)
     evidenceProfile.addBoolFact("state_readback", outputOk)
 
-    evidencePresenter.printEvidenceProfile(evidenceProfile)
-    evidencePresenter.printSharedExecutionProof(apiOutput, harness.componentSession, commitResult, harness.commitHarness, runResult)
+    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
+        evidenceProfile,
+        apiOutput,
+        harness.componentSession,
+        commitResult,
+        harness.commitHarness,
+        runResult
+    )
+    evidencePresenter.printEvidenceSection(evidenceSection)
 
     if (outputOk) {
         return 0

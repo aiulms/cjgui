@@ -59,3 +59,7 @@
 `P1 CJGUI shared demo_support typed evidence section contract for component/action/readback batching`
 
 原因：profile 已经把每个 demo 的 text / bool / static facts 批量交给 shared presenter；下一步可以把 component action、commit/readback、shared run proof 进一步分成 typed evidence section，减少 demo-local “先构造 profile、再手动补 shared proof 参数”的尾部编排。
+
+## 下游已接续
+
+已由 [typed evidence section report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-21-p1-cjgui-shared-demo-support-typed-evidence-section-contract-report.md) 接续。该下游新增 `CjguiExperimentalDemoEvidenceSection` 与 `printEvidenceSection(...)`，当前 10 个 runnable demo 已共用 shared typed evidence section，下一步转为 `P1 CJGUI shared demo_support evidence section builder for profile/run assembly`。

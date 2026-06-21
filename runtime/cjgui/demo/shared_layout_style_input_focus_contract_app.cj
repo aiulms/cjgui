@@ -3,7 +3,7 @@ package cjgui_shared_layout_style_input_focus_contract_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -180,8 +180,15 @@ main(): Int64 {
     evidenceProfile.addTextFact("state_after", after)
     evidenceProfile.addBoolFact("state_readback", outputOk)
 
-    evidencePresenter.printEvidenceProfile(evidenceProfile)
-    evidencePresenter.printSharedExecutionProof(apiOutput, contract.componentSession, commitResult, contract.commitHarness, runResult)
+    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
+        evidenceProfile,
+        apiOutput,
+        contract.componentSession,
+        commitResult,
+        contract.commitHarness,
+        runResult
+    )
+    evidencePresenter.printEvidenceSection(evidenceSection)
 
     if (outputOk) {
         return 0

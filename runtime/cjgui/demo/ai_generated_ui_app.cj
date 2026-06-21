@@ -3,7 +3,7 @@ package cjgui_ai_generated_ui_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -169,8 +169,15 @@ main(): Int64 {
     evidenceProfile.addTextFact("state_after", after)
     evidenceProfile.addBoolFact("state_readback", readbackOk)
 
-    evidencePresenter.printEvidenceProfile(evidenceProfile)
-    evidencePresenter.printSharedExecutionProof(apiOutput, generatedUi.componentSession, commitResult, generatedUi.commitHarness, runResult)
+    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
+        evidenceProfile,
+        apiOutput,
+        generatedUi.componentSession,
+        commitResult,
+        generatedUi.commitHarness,
+        runResult
+    )
+    evidencePresenter.printEvidenceSection(evidenceSection)
 
     if (readbackOk) {
         return 0

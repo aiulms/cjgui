@@ -3,7 +3,7 @@ package cjgui_todo_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -173,8 +173,15 @@ main(): Int64 {
     evidenceProfile.addTextFact("summary_after_complete", afterComplete)
     evidenceProfile.addBoolFact("owner_local_write_readback", readbackOk)
 
-    evidencePresenter.printEvidenceProfile(evidenceProfile)
-    evidencePresenter.printSharedExecutionProof(apiOutput, todos.componentSession, commitResult, todos.commitHarness, runResult)
+    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
+        evidenceProfile,
+        apiOutput,
+        todos.componentSession,
+        commitResult,
+        todos.commitHarness,
+        runResult
+    )
+    evidencePresenter.printEvidenceSection(evidenceSection)
 
     if (readbackOk) {
         return 0

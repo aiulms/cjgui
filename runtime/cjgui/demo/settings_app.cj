@@ -3,7 +3,7 @@ package cjgui_settings_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -153,8 +153,15 @@ main(): Int64 {
     evidenceProfile.addTextFact("summary_after", summary)
     evidenceProfile.addBoolFact("public_api_available", true)
 
-    evidencePresenter.printEvidenceProfile(evidenceProfile)
-    evidencePresenter.printSharedExecutionProof(apiOutput, panel.componentSession, commitResult, panel.commitHarness, runResult)
+    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
+        evidenceProfile,
+        apiOutput,
+        panel.componentSession,
+        commitResult,
+        panel.commitHarness,
+        runResult
+    )
+    evidencePresenter.printEvidenceSection(evidenceSection)
 
     if (readbackOk) {
         return 0

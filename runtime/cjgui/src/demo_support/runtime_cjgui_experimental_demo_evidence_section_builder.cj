@@ -78,6 +78,31 @@ public class CjguiExperimentalDemoEvidenceSectionBuilder {
         addTextFact("component_kinds", componentKinds)
     }
 
+    /// 追加布局语义 evidence，统一从 typed value 脱水到 layout fact。
+    public func addLayoutEvidence(value: CjguiExperimentalDemoLayoutEvidence) {
+        addLayoutFact(value.factValue())
+    }
+
+    /// 追加控件语义 evidence，统一从 typed value 脱水到 controls fact。
+    public func addControlsEvidence(value: CjguiExperimentalDemoControlsEvidence) {
+        addControlsFact(value.factValue())
+    }
+
+    /// 追加单 demo harness 服务语义 evidence，统一从 typed value 脱水到 served_demo fact。
+    public func addServedDemoEvidence(value: CjguiExperimentalDemoServedDemoEvidence) {
+        addServedDemoFact(value.servedDemoValue())
+    }
+
+    /// 追加多 demo harness 服务语义 evidence，统一从 typed value 脱水到 served_demos fact bundle。
+    public func addServedDemosEvidence(value: CjguiExperimentalDemoServedDemosEvidence) {
+        addServedDemosFacts(value.servedDemosValue(), value.servedDemoCountValue())
+    }
+
+    /// 追加可复用组件语义 evidence，统一从 typed value 脱水到 reuse fact bundle。
+    public func addReusableComponentEvidence(value: CjguiExperimentalDemoReusableComponentEvidence) {
+        addReusableComponentFacts(value.reusedDemosValue(), value.componentKindsValue())
+    }
+
     /// Builder 内部 profile fact 规模，供 verifier 防止空壳化。
     public func profileFactCount(): Int64 {
         return profile.staticBoolFactCount() + profile.textFactCount() + profile.boolFactCount()

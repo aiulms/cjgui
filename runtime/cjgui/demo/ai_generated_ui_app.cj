@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoLayoutEvidence}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -163,7 +164,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui ai generated ui demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("ai_generated_ui", "not_started", "runnable")
-    evidenceBuilder.addLayoutFact("ai_form_preview")
+    evidenceBuilder.addLayoutEvidence(CjguiExperimentalDemoLayoutEvidence("ai_form_preview"))
     evidenceBuilder.addInteractionFact("generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
     evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 

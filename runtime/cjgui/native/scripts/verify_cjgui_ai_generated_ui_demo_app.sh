@@ -23,6 +23,7 @@ EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_de
 EVIDENCE_PROFILE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 EVIDENCE_SECTION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 EVIDENCE_SECTION_BUILDER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
+DOMAIN_EVIDENCE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_domain_evidence.cj"
 TMP_DIR="${CJGUI_AI_GENERATED_UI_DEMO_TMPDIR:-/private/tmp/cjgui-ai-generated-ui-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -189,7 +190,7 @@ require_source_line "buildSharedOutput" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidencePresenter" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidenceSectionBuilder" "$DEMO_SRC"
 require_source_line 'CjguiExperimentalDemoEvidenceSectionBuilder("ai_generated_ui", "not_started", "runnable")' "$DEMO_SRC"
-require_source_line 'evidenceBuilder.addLayoutFact("ai_form_preview")' "$DEMO_SRC"
+require_source_line 'evidenceBuilder.addLayoutEvidence(CjguiExperimentalDemoLayoutEvidence("ai_form_preview"))' "$DEMO_SRC"
 require_source_line "evidenceBuilder.addInteractionFact" "$DEMO_SRC"
 if ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui demo verification: demo must use shared evidence fact presets in $DEMO_SRC" >&2
@@ -207,6 +208,11 @@ fi
 
 if grep -F 'evidenceBuilder.addTextFact("layout"' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui ai generated UI demo app verification: demo-local layout fact wiring remains" >&2
+  exit 4
+fi
+
+if grep -E 'evidenceBuilder\.addLayoutFact\(' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui ai generated UI demo app verification: string layout preset call remains" >&2
   exit 4
 fi
 
@@ -315,6 +321,7 @@ cp "$EVIDENCE_PRESENTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cj
 cp "$EVIDENCE_PROFILE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 cp "$EVIDENCE_SECTION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 cp "$EVIDENCE_SECTION_BUILDER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
+cp "$DOMAIN_EVIDENCE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_domain_evidence.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

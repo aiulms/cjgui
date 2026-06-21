@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoReusableComponentEvidence}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -220,7 +221,9 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui reusable component contract app")
     let outputOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("reusable_component_contract", "not_started", "runnable")
-    evidenceBuilder.addReusableComponentFacts("todo,file_browser,ai_generated_ui", "task_row,file_row,ai_form")
+    evidenceBuilder.addReusableComponentEvidence(
+        CjguiExperimentalDemoReusableComponentEvidence("todo,file_browser,ai_generated_ui", "task_row,file_row,ai_form")
+    )
     evidenceBuilder.addInteractionFact("register_file_row,register_ai_form,todo_add,file_select,ai_accept")
     evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 

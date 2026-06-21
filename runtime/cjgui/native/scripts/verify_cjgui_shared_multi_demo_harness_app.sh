@@ -23,6 +23,7 @@ EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_de
 EVIDENCE_PROFILE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 EVIDENCE_SECTION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 EVIDENCE_SECTION_BUILDER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
+DOMAIN_EVIDENCE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_domain_evidence.cj"
 TMP_DIR="${CJGUI_SHARED_MULTI_DEMO_HARNESS_TMPDIR:-/private/tmp/cjgui-shared-multi-demo-harness-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -189,7 +190,7 @@ require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidencePresenter" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidenceSectionBuilder" "$DEMO_SRC"
 require_source_line 'CjguiExperimentalDemoEvidenceSectionBuilder("shared_multi_demo_harness", "not_started", "runnable")' "$DEMO_SRC"
-require_source_line 'evidenceBuilder.addServedDemosFacts("todo,file_browser", "2")' "$DEMO_SRC"
+require_source_line 'evidenceBuilder.addServedDemosEvidence(CjguiExperimentalDemoServedDemosEvidence("todo,file_browser", "2"))' "$DEMO_SRC"
 require_source_line "evidenceBuilder.addInteractionFact" "$DEMO_SRC"
 if ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui demo verification: demo must use shared evidence fact presets in $DEMO_SRC" >&2
@@ -208,6 +209,11 @@ fi
 if grep -F 'evidenceBuilder.addTextFact("served_demos"' "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F 'evidenceBuilder.addTextFact("served_demo_count"' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui shared multi-demo harness app verification: demo-local served_demos fact wiring remains" >&2
+  exit 4
+fi
+
+if grep -E 'evidenceBuilder\.addServedDemosFacts\(' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared multi-demo harness app verification: string served_demos preset call remains" >&2
   exit 4
 fi
 
@@ -316,6 +322,7 @@ cp "$EVIDENCE_PRESENTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cj
 cp "$EVIDENCE_PROFILE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 cp "$EVIDENCE_SECTION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 cp "$EVIDENCE_SECTION_BUILDER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
+cp "$DOMAIN_EVIDENCE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_domain_evidence.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

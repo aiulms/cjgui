@@ -23,6 +23,7 @@ EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_de
 EVIDENCE_PROFILE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 EVIDENCE_SECTION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 EVIDENCE_SECTION_BUILDER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
+DOMAIN_EVIDENCE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_domain_evidence.cj"
 TMP_DIR="${CJGUI_SETTINGS_DEMO_TMPDIR:-/private/tmp/cjgui-settings-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -189,8 +190,8 @@ require_source_line "CjguiExperimentalDemoEvidenceSectionBuilder" "$DEMO_SRC"
 require_source_line 'CjguiExperimentalDemoEvidenceSectionBuilder("settings", "scaffolded", "runnable")' "$DEMO_SRC"
 require_source_line 'evidenceBuilder.addStaticBoolFact("main_declared", true)' "$DEMO_SRC"
 require_source_line 'evidenceBuilder.addStaticBoolFact("deterministic_output", true)' "$DEMO_SRC"
-require_source_line 'evidenceBuilder.addLayoutFact("sectioned_form")' "$DEMO_SRC"
-require_source_line 'evidenceBuilder.addControlsFact("toggle:auto_save,select:theme,text:username")' "$DEMO_SRC"
+require_source_line 'evidenceBuilder.addLayoutEvidence(CjguiExperimentalDemoLayoutEvidence("sectioned_form"))' "$DEMO_SRC"
+require_source_line 'evidenceBuilder.addControlsEvidence(CjguiExperimentalDemoControlsEvidence("toggle:auto_save,select:theme,text:username"))' "$DEMO_SRC"
 require_source_line "evidenceBuilder.addInteractionFact" "$DEMO_SRC"
 if ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui demo verification: demo must use shared evidence fact presets in $DEMO_SRC" >&2
@@ -209,6 +210,11 @@ fi
 if grep -F 'evidenceBuilder.addTextFact("layout"' "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F 'evidenceBuilder.addTextFact("controls"' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui settings demo app verification: demo-local layout/controls fact wiring remains" >&2
+  exit 4
+fi
+
+if grep -E 'evidenceBuilder\.add(LayoutFact|ControlsFact)\(' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui settings demo app verification: string layout/controls preset call remains" >&2
   exit 4
 fi
 
@@ -317,6 +323,7 @@ cp "$EVIDENCE_PRESENTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cj
 cp "$EVIDENCE_PROFILE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 cp "$EVIDENCE_SECTION_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 cp "$EVIDENCE_SECTION_BUILDER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
+cp "$DOMAIN_EVIDENCE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_domain_evidence.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

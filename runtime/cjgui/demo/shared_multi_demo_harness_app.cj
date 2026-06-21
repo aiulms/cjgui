@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoServedDemosEvidence}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -225,7 +226,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui shared multi-demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("shared_multi_demo_harness", "not_started", "runnable")
-    evidenceBuilder.addServedDemosFacts("todo,file_browser", "2")
+    evidenceBuilder.addServedDemosEvidence(CjguiExperimentalDemoServedDemosEvidence("todo,file_browser", "2"))
     evidenceBuilder.addInteractionFact("run_todo_add_complete,run_file_browser_select")
     evidenceBuilder.addStateReadbackFacts(before, after, outputOk)
 

@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoLayoutEvidence}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -180,7 +181,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui file browser demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("file_browser", "not_started", "runnable")
-    evidenceBuilder.addLayoutFact("tree_detail_split")
+    evidenceBuilder.addLayoutEvidence(CjguiExperimentalDemoLayoutEvidence("tree_detail_split"))
     evidenceBuilder.addInteractionFact("expand_folder,filter_entries,select_file,refresh_detail,move_focus")
     evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 

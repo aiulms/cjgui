@@ -85,7 +85,7 @@ No-submit branch 已足够作为非显示链 milestone。
 
 本轮只做 recovery decision，不新增 runtime owner，不新增 native C ABI，不新增 probe，不修改 package config。
 
-本轮 CodeLattice 可用，但只提供 static-only project exploration：`runtime/cjgui` compact explore 返回 single-project / `sourceFileCount=1110` / `symbolCount=0` / stale baseline，且未执行 runtime、build 或 probe；一次 workspace-level ask 还被 router 误导到 `reference_repos` Rust 项目。因此 CodeLattice 只作为图谱覆盖缺口记录，不作为安全证明。本轮仍以已封账 manifests、README / tracker / plans index / topic manifest reachability、Markdown link scan、public / protected path scan 与 GitNexus detect-changes 作为 docs-only 兜底证据。
+本轮 CodeLattice 可用，但只提供 static-only project exploration：`runtime/cjgui` compact overview 返回 single-project / `sourceFileCount=1015` / `symbolCount=0` / stale baseline，且未执行 runtime、build 或 probe。因此 CodeLattice 只作为图谱覆盖缺口记录，不作为安全证明。本轮仍以已封账 manifests、README / tracker / plans index / topic manifest reachability、Markdown link scan、public / protected path scan 与 GitNexus detect-changes 作为 docs-only 兜底证据。
 
 本轮不授予：
 

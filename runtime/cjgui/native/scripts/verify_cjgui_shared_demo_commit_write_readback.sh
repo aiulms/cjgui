@@ -79,13 +79,35 @@ if [[ ! -f "$COMMIT_SESSION_SRC" ]]; then
 fi
 
 if ! grep -F "public class CjguiExperimentalDemoCommitResult" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoCommitActionRoute" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoCommitActionRouteCatalog" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoOwnerLocalCommitSession" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoCommitHarness" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func commitComponentAction" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func commitComponentActionRoute" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func resultMatches" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func resultMatchesRoute" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func componentIdValue" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func actionValue" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func routeValue" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "not_published" "$COMMIT_SESSION_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo commit verification: missing expected commit support declarations" >&2
   exit 3
+fi
+
+commit_action_route_usage_count="$(grep -R "commitHarness.commitComponentActionRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+commit_action_route_match_usage_count="$(grep -R "commitHarness.resultMatchesRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+commit_action_route_catalog_usage_count="$(grep -R "commitRouteCatalog\\." "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+if [ "$commit_action_route_usage_count" -lt 10 ] || \
+   [ "$commit_action_route_match_usage_count" -lt 10 ] || \
+   [ "$commit_action_route_catalog_usage_count" -lt 10 ]; then
+  echo "cjgui shared demo commit verification: commit action route catalog is not shared across expected demos" >&2
+  exit 4
+fi
+
+if grep -R "commitHarness.commitComponentAction(" "$ROOT_DIR/demo" >/dev/null 2>&1; then
+  echo "cjgui shared demo commit verification: demo-local direct commit component/action string call remains" >&2
+  exit 4
 fi
 
 CJGUI_TODO_DEMO_TMPDIR="$TMP_DIR/todo-tmp" "$TODO_VERIFIER" > "$TODO_LOG"
@@ -144,6 +166,12 @@ echo "cjgui_shared_demo_commit_write_readback_verified=true"
 echo "cjgui_shared_demo_commit_harness_internal_primitive=CjguiExperimentalDemoOwnerLocalCommitSession"
 echo "cjgui_shared_demo_commit_harness=CjguiExperimentalDemoCommitHarness"
 echo "cjgui_shared_demo_commit_result=CjguiExperimentalDemoCommitResult"
+echo "cjgui_shared_demo_commit_action_route_model=CjguiExperimentalDemoCommitActionRoute"
+echo "cjgui_shared_demo_commit_action_route_catalog=CjguiExperimentalDemoCommitActionRouteCatalog"
+echo "cjgui_shared_demo_commit_action_route_usage_count=$commit_action_route_usage_count"
+echo "cjgui_shared_demo_commit_action_route_match_usage_count=$commit_action_route_match_usage_count"
+echo "cjgui_shared_demo_commit_action_route_catalog_usage_count=$commit_action_route_catalog_usage_count"
+echo "cjgui_shared_demo_direct_commit_component_action_string_call_retired=true"
 echo "cjgui_shared_demo_commit_demo_count=10"
 echo "cjgui_shared_demo_commit_demos=todo,settings,chat,file_browser,ai_generated_ui,shared_demo_harness,shared_multi_demo_harness,shared_layout_style_input_focus_contract,ai_generated_ui_shared_contract,reusable_component_contract"
 echo "cjgui_shared_demo_commit_demo_output_harness_only=true"

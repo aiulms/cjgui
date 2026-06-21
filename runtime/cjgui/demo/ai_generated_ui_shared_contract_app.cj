@@ -2,6 +2,7 @@ package cjgui_ai_generated_ui_shared_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -17,6 +18,7 @@ class AiGeneratedUiSharedContractState {
     let layoutKind: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var componentIds = ArrayList<String>()
@@ -37,6 +39,7 @@ class AiGeneratedUiSharedContractState {
             "preview_card"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "ai_generated_ui_shared_contract",
             "components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card"
@@ -195,11 +198,8 @@ main(): Int64 {
         readbackOk
     )
     let apiOutput = contract.buildSharedOutput(domainSummary, readbackOk)
-    let commitResult = contract.commitHarness.commitComponentAction(
-        "save_button",
-        "ai_generated_ui_shared_contract.commit_accept_refresh",
-        after
-    )
+    let commitRoute = contract.commitRouteCatalog.aiGeneratedUiSharedContractCommitAcceptRefresh()
+    let commitResult = contract.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = readbackOk &&
         apiOutput.demoName == "ai_generated_ui_shared_contract" &&
         apiOutput.beforeState == before &&
@@ -209,13 +209,7 @@ main(): Int64 {
         apiOutput.domainSummary == domainSummary &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=ai_generated_ui_shared_contract;readback=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;summary=contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;layout_kind=ai_form_preview;readback=true" &&
-        contract.commitHarness.resultMatches(
-            commitResult,
-            "save_button",
-            "ai_generated_ui_shared_contract.commit_accept_refresh",
-            before,
-            after
-        )
+        contract.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = contract.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

@@ -2,6 +2,7 @@ package cjgui_shared_layout_style_input_focus_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -15,6 +16,7 @@ class SharedLayoutStyleInputFocusContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
 
@@ -29,6 +31,7 @@ class SharedLayoutStyleInputFocusContractState {
             "todo_input"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "shared_layout_style_input_focus_contract",
             "layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
@@ -155,11 +158,8 @@ main(): Int64 {
         contract.sharedComponentActions() == "layout_contract:shared_layout_style_input_focus.apply_layout,style_contract:shared_layout_style_input_focus.apply_style,text_input_contract:shared_layout_style_input_focus.type_input,focus_contract:shared_layout_style_input_focus.move_focus"
     let domainSummary = contract.domainSummary(layoutBefore, styleBefore, inputBefore, focusBefore)
     let apiOutput = contract.buildSharedOutput(domainSummary, stateReadbackOk)
-    let commitResult = contract.commitHarness.commitComponentAction(
-        "focus_contract",
-        "shared_layout_style_input_focus.commit_contract_flow",
-        after
-    )
+    let commitRoute = contract.commitRouteCatalog.sharedLayoutStyleInputFocusCommitContractFlow()
+    let commitResult = contract.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "shared_layout_style_input_focus_contract" &&
         apiOutput.beforeState == before &&
@@ -169,13 +169,7 @@ main(): Int64 {
         apiOutput.domainSummary == domainSummary &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=shared_layout_style_input_focus_contract;readback=true;writes=4;actions=shared_layout_style_input_focus.apply_layout,shared_layout_style_input_focus.apply_style,shared_layout_style_input_focus.type_input,shared_layout_style_input_focus.move_focus;before=layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=layout=split_detail;style=focus_accent;input=main;focus=file_filter;summary=contract=shared_layout_style_input_focus;layout=single_column->split_detail;style=neutral_list->focus_accent;input=<empty>->main;focus=todo_input->file_filter" &&
-        contract.commitHarness.resultMatches(
-            commitResult,
-            "focus_contract",
-            "shared_layout_style_input_focus.commit_contract_flow",
-            before,
-            after
-        )
+        contract.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = contract.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

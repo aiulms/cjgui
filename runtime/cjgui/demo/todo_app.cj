@@ -2,6 +2,7 @@ package cjgui_todo_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -30,6 +31,7 @@ class TodoList {
     private var items = ArrayList<TodoDemoItem>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
 
@@ -43,6 +45,7 @@ class TodoList {
             "todo_input"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "todo",
             "items=0;first=<none>;first_done=false"
@@ -156,7 +159,8 @@ main(): Int64 {
         todos.sharedUiState() == "layout=todo_list;style=completed_accent;input=Write first CJGUI todo;focus=todo_first_item" &&
         completed
     let apiOutput = todos.buildSharedOutput(afterComplete, stateReadbackOk)
-    let commitResult = todos.commitHarness.commitComponentAction("todo_item", "todo.commit_complete", afterComplete)
+    let commitRoute = todos.commitRouteCatalog.todoCommitComplete()
+    let commitResult = todos.commitHarness.commitComponentActionRoute(commitRoute, afterComplete)
     let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "todo" &&
         apiOutput.beforeState == before &&
@@ -166,7 +170,7 @@ main(): Int64 {
         apiOutput.domainSummary == afterComplete &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true" &&
-        todos.commitHarness.resultMatches(commitResult, "todo_item", "todo.commit_complete", before, afterComplete)
+        todos.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, afterComplete)
     let runResult = todos.runHarness.finishCommittedSessionRun(
         "state_writable",
         "runnable",

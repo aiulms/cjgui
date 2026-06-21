@@ -2,6 +2,7 @@ package cjgui_shared_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -19,6 +20,7 @@ class SharedDemoHarnessState {
     private var actions = ArrayList<String>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     var itemCount: Int64
@@ -37,6 +39,7 @@ class SharedDemoHarnessState {
             "todo_input"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "shared_demo_harness",
             "items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list"
@@ -131,11 +134,8 @@ main(): Int64 {
         harness.sharedWrites() == 2 &&
         harness.sharedComponentActions() == "todo_input:shared_demo_harness.add_todo,todo_item:shared_demo_harness.complete_todo"
     let apiOutput = harness.buildSharedOutput(harness.domainSummary(), stateReadbackOk)
-    let commitResult = harness.commitHarness.commitComponentAction(
-        "todo_item",
-        "shared_demo_harness.commit_todo_flow",
-        after
-    )
+    let commitRoute = harness.commitRouteCatalog.sharedDemoHarnessCommitTodoFlow()
+    let commitResult = harness.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "shared_demo_harness" &&
         apiOutput.beforeState == before &&
@@ -145,13 +145,7 @@ main(): Int64 {
         apiOutput.domainSummary == harness.domainSummary() &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=shared_demo_harness;readback=true;writes=2;actions=shared_demo_harness.add_todo,shared_demo_harness.complete_todo;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;summary=harness=shared_demo_harness;served=todo;actions=2;focus=todo_first_item;style=completed_accent" &&
-        harness.commitHarness.resultMatches(
-            commitResult,
-            "todo_item",
-            "shared_demo_harness.commit_todo_flow",
-            before,
-            after
-        )
+        harness.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = harness.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

@@ -63,6 +63,95 @@ public class CjguiExperimentalDemoCommitResult {
     }
 }
 
+/// Experimental demo support API：owner-local commit 使用的 typed component/action route value。
+public class CjguiExperimentalDemoCommitActionRoute {
+    /// 组件标识保持脱水字符串，避免把 commit route 误解为 renderer handle。
+    public let componentId: String
+    /// 动作名称保持脱水字符串，供 commit result / readback 兼容消费。
+    public let action: String
+
+    /// 创建只承载脱水 component/action 字符串的 commit route value。
+    public init(componentId: String, action: String) {
+        this.componentId = componentId
+        this.action = action
+    }
+
+    /// 转换为现有 component id 字符串。
+    public func componentIdValue(): String {
+        return componentId
+    }
+
+    /// 转换为现有 action 字符串。
+    public func actionValue(): String {
+        return action
+    }
+
+    /// 转换为现有 `component:action` route fact。
+    public func routeValue(): String {
+        return "${componentId}:${action}"
+    }
+}
+
+/// Experimental demo support API：集中维护 runnable demos 复用的 owner-local commit route spelling。
+public class CjguiExperimentalDemoCommitActionRouteCatalog {
+    /// Catalog 无状态；实例化是为了让 demo 以 shared primitive 形式复用命名 commit route。
+    public init() {}
+
+    func route(componentId: String, action: String): CjguiExperimentalDemoCommitActionRoute {
+        return CjguiExperimentalDemoCommitActionRoute(componentId, action)
+    }
+
+    /// Todo demo 的完成条目 commit route。
+    public func todoCommitComplete(): CjguiExperimentalDemoCommitActionRoute {
+        return route("todo_item", "todo.commit_complete")
+    }
+
+    /// Settings demo 的偏好提交 commit route。
+    public func settingsCommitPreferences(): CjguiExperimentalDemoCommitActionRoute {
+        return route("theme_select", "settings.commit_preferences")
+    }
+
+    /// Chat demo 的 thread 提交 commit route。
+    public func chatCommitThread(): CjguiExperimentalDemoCommitActionRoute {
+        return route("message_list", "chat.commit_thread")
+    }
+
+    /// FileBrowser demo 的 detail 提交 commit route。
+    public func fileBrowserCommitDetail(): CjguiExperimentalDemoCommitActionRoute {
+        return route("detail_pane", "file_browser.commit_detail")
+    }
+
+    /// AI-generated UI demo 的 accept refresh 提交 commit route。
+    public func aiGeneratedUiCommitAcceptRefresh(): CjguiExperimentalDemoCommitActionRoute {
+        return route("save_button", "ai_generated_ui.commit_accept_refresh")
+    }
+
+    /// Shared demo harness 的 Todo flow commit route。
+    public func sharedDemoHarnessCommitTodoFlow(): CjguiExperimentalDemoCommitActionRoute {
+        return route("todo_item", "shared_demo_harness.commit_todo_flow")
+    }
+
+    /// Shared multi-demo harness 的 multi flow commit route。
+    public func sharedMultiDemoHarnessCommitMultiFlow(): CjguiExperimentalDemoCommitActionRoute {
+        return route("file_detail_pane", "shared_multi_demo_harness.commit_multi_flow")
+    }
+
+    /// Shared layout/style/input/focus contract 的 contract flow commit route。
+    public func sharedLayoutStyleInputFocusCommitContractFlow(): CjguiExperimentalDemoCommitActionRoute {
+        return route("focus_contract", "shared_layout_style_input_focus.commit_contract_flow")
+    }
+
+    /// AI-generated UI shared contract 的 accept refresh commit route。
+    public func aiGeneratedUiSharedContractCommitAcceptRefresh(): CjguiExperimentalDemoCommitActionRoute {
+        return route("save_button", "ai_generated_ui_shared_contract.commit_accept_refresh")
+    }
+
+    /// Reusable component contract 的 reuse flow commit route。
+    public func reusableComponentContractCommitReuseFlow(): CjguiExperimentalDemoCommitActionRoute {
+        return route("ai_form", "reusable_component_contract.commit_reuse_flow")
+    }
+}
+
 /// Experimental demo support API：只在 demo host 内存中提交、读回并保留回滚边界。
 public class CjguiExperimentalDemoOwnerLocalCommitSession {
     /// Demo 名称保持 public，方便 verifier/readback 证明哪个 app 消费了 shared commit session。
@@ -110,6 +199,14 @@ public class CjguiExperimentalDemoOwnerLocalCommitSession {
         )
     }
 
+    /// 用 shared commit route value 提交一次 demo-host owner-local 状态变更。
+    public func commitComponentActionRoute(
+        route: CjguiExperimentalDemoCommitActionRoute,
+        afterState: String
+    ): CjguiExperimentalDemoCommitResult {
+        return commitComponentAction(route.componentIdValue(), route.actionValue(), afterState)
+    }
+
     /// 读回 session 当前 owner-local 状态；不读取 renderer/runtime 状态。
     public func readback(): String {
         return currentState
@@ -146,6 +243,14 @@ public class CjguiExperimentalDemoCommitHarness {
         return session.commitComponentAction(componentId, action, afterState)
     }
 
+    /// 用 shared commit route value 提交一次 demo-host owner-local 状态变更。
+    public func commitComponentActionRoute(
+        route: CjguiExperimentalDemoCommitActionRoute,
+        afterState: String
+    ): CjguiExperimentalDemoCommitResult {
+        return session.commitComponentActionRoute(route, afterState)
+    }
+
     /// 用 shared 规则校验 commit result、readback 与 rollback boundary 是否自洽。
     public func resultMatches(
         result: CjguiExperimentalDemoCommitResult,
@@ -168,6 +273,16 @@ public class CjguiExperimentalDemoCommitHarness {
             result.notPublished &&
             readback() == afterState &&
             rollbackBoundary() == beforeState
+    }
+
+    /// 用 shared commit route value 校验 commit result、readback 与 rollback boundary 是否自洽。
+    public func resultMatchesRoute(
+        result: CjguiExperimentalDemoCommitResult,
+        route: CjguiExperimentalDemoCommitActionRoute,
+        beforeState: String,
+        afterState: String
+    ): Bool {
+        return resultMatches(result, route.componentIdValue(), route.actionValue(), beforeState, afterState)
     }
 
     /// 读回 session 当前 owner-local 状态；不读取 renderer/runtime 状态。

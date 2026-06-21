@@ -2,6 +2,7 @@ package cjgui_chat_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -27,6 +28,7 @@ class ChatThreadState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var messages = ArrayList<ChatMessage>()
@@ -44,6 +46,7 @@ class ChatThreadState {
             "composer"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "chat",
             "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer"
@@ -167,7 +170,8 @@ main(): Int64 {
         thread.messageCount() == 3 &&
         summary == "demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list"
     let apiOutput = thread.buildSharedOutput(summary, stateReadbackOk)
-    let commitResult = thread.commitHarness.commitComponentAction("message_list", "chat.commit_thread", after)
+    let commitRoute = thread.commitRouteCatalog.chatCommitThread()
+    let commitResult = thread.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "chat" &&
         apiOutput.beforeState == before &&
@@ -177,7 +181,7 @@ main(): Int64 {
         apiOutput.domainSummary == summary &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=chat;readback=true;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;summary=demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list" &&
-        thread.commitHarness.resultMatches(commitResult, "message_list", "chat.commit_thread", before, after)
+        thread.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = thread.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

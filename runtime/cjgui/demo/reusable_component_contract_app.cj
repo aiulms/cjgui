@@ -2,6 +2,7 @@ package cjgui_reusable_component_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -16,6 +17,7 @@ class ReusableComponentContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     var componentCount: Int64
@@ -37,6 +39,7 @@ class ReusableComponentContractState {
             "todo_input"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "reusable_component_contract",
             "components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
@@ -208,11 +211,8 @@ main(): Int64 {
         readbackOk
     )
     let apiOutput = contract.buildSharedOutput(domainSummary, readbackOk)
-    let commitResult = contract.commitHarness.commitComponentAction(
-        "ai_form",
-        "reusable_component_contract.commit_reuse_flow",
-        after
-    )
+    let commitRoute = contract.commitRouteCatalog.reusableComponentContractCommitReuseFlow()
+    let commitResult = contract.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = readbackOk &&
         apiOutput.demoName == "reusable_component_contract" &&
         apiOutput.beforeState == before &&
@@ -222,13 +222,7 @@ main(): Int64 {
         apiOutput.domainSummary == domainSummary &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=reusable_component_contract;readback=true;writes=5;actions=register_file_row,register_ai_form,todo_add,file_select,ai_accept;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button;summary=contract=reusable_component_contract;components=task_row,file_row,ai_form;reused_count=3;reused=todo,file_browser,ai_generated_ui;component_count=3;layout=single_column->split_detail;style=neutral_list->sage_panel;input=<empty>->filter:src,username;focus=todo_input->save_button;readback=true;before=components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input;after=components=3;demos=todo,file_browser,ai_generated_ui;todo=buy_milk;file=src/main.cj;ai=settings_profile_form;layout=split_detail;style=sage_panel;input=filter:src,username;focus=save_button" &&
-        contract.commitHarness.resultMatches(
-            commitResult,
-            "ai_form",
-            "reusable_component_contract.commit_reuse_flow",
-            before,
-            after
-        )
+        contract.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = contract.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

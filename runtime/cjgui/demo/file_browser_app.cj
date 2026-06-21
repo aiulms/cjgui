@@ -2,6 +2,7 @@ package cjgui_file_browser_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -29,6 +30,7 @@ class FileBrowserState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var entries = ArrayList<FileBrowserEntry>()
@@ -49,6 +51,7 @@ class FileBrowserState {
             "tree"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "file_browser",
             "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree"
@@ -178,7 +181,8 @@ main(): Int64 {
         browser.sharedUiState() == "layout=tree_detail_split;style=detail_ready;input=main;focus=detail_pane" &&
         summary == "demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane"
     let apiOutput = browser.buildSharedOutput(summary, stateReadbackOk)
-    let commitResult = browser.commitHarness.commitComponentAction("detail_pane", "file_browser.commit_detail", after)
+    let commitRoute = browser.commitRouteCatalog.fileBrowserCommitDetail()
+    let commitResult = browser.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "file_browser" &&
         apiOutput.beforeState == before &&
@@ -188,7 +192,7 @@ main(): Int64 {
         apiOutput.domainSummary == summary &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=file_browser;readback=true;writes=5;actions=file_browser.expand_folder,file_browser.filter_entries,file_browser.select_file,file_browser.refresh_detail,file_browser.move_focus;before=items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree;after=items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane;summary=demo=file_browser;layout=tree_detail_split;items=3;expanded=/workspace/src;selected=/workspace/src/main.cj:file;detail=main.cj;filter=main;focus=detail_pane" &&
-        browser.commitHarness.resultMatches(commitResult, "detail_pane", "file_browser.commit_detail", before, after)
+        browser.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = browser.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

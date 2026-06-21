@@ -2,6 +2,7 @@ package cjgui_settings_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -16,6 +17,7 @@ class SettingsPanelState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     let controlsSummary: String
@@ -34,6 +36,7 @@ class SettingsPanelState {
             "username_field"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "settings",
             "autosave=false;theme=light;username=owner;focus=username_field"
@@ -137,7 +140,8 @@ main(): Int64 {
         panel.sharedUiState() == "layout=sectioned_form;style=theme_dark;input=owner-updated;focus=theme_select" &&
         summary == "demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select"
     let apiOutput = panel.buildSharedOutput(summary, stateReadbackOk)
-    let commitResult = panel.commitHarness.commitComponentAction("theme_select", "settings.commit_preferences", after)
+    let commitRoute = panel.commitRouteCatalog.settingsCommitPreferences()
+    let commitResult = panel.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "settings" &&
         apiOutput.beforeState == before &&
@@ -147,7 +151,7 @@ main(): Int64 {
         apiOutput.domainSummary == summary &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=settings;readback=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;summary=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
-        panel.commitHarness.resultMatches(commitResult, "theme_select", "settings.commit_preferences", before, after)
+        panel.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = panel.runHarness.finishCommittedSessionRun(
         "scaffolded",
         "runnable",

@@ -2,6 +2,7 @@ package cjgui_ai_generated_ui_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -17,6 +18,7 @@ class AiGeneratedUiState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
     let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
+    let commitRouteCatalog: CjguiExperimentalDemoCommitActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var componentIds = ArrayList<String>()
@@ -36,6 +38,7 @@ class AiGeneratedUiState {
             "preview_card"
         )
         this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
+        this.commitRouteCatalog = CjguiExperimentalDemoCommitActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "ai_generated_ui",
             "components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe"
@@ -148,11 +151,8 @@ main(): Int64 {
         generatedUi.sharedWrites() == 4 &&
         generatedUi.sharedComponentActions() == "diff_panel:ai_generated_ui.preview_diff,explain_panel:ai_generated_ui.explain_changes,generated_form:ai_generated_ui.accept_refresh,save_button:ai_generated_ui.move_focus"
     let apiOutput = generatedUi.buildSharedOutput(generatedUi.domainSummary(), stateReadbackOk)
-    let commitResult = generatedUi.commitHarness.commitComponentAction(
-        "save_button",
-        "ai_generated_ui.commit_accept_refresh",
-        after
-    )
+    let commitRoute = generatedUi.commitRouteCatalog.aiGeneratedUiCommitAcceptRefresh()
+    let commitResult = generatedUi.commitHarness.commitComponentActionRoute(commitRoute, after)
     let commitReadbackOk = stateReadbackOk &&
         apiOutput.demoName == "ai_generated_ui" &&
         apiOutput.beforeState == before &&
@@ -162,13 +162,7 @@ main(): Int64 {
         apiOutput.domainSummary == generatedUi.domainSummary() &&
         apiOutput.readbackOk &&
         apiOutput.summary == "demo=ai_generated_ui;readback=true;writes=4;actions=ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus;before=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe;after=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel;summary=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;focus=save_button;layout=ai_form_preview;style=sage_panel" &&
-        generatedUi.commitHarness.resultMatches(
-            commitResult,
-            "save_button",
-            "ai_generated_ui.commit_accept_refresh",
-            before,
-            after
-        )
+        generatedUi.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
     let runResult = generatedUi.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

@@ -89,6 +89,8 @@ No-submit branch 已足够作为非显示链 milestone。
 
 本轮不授予：
 
+也就是说，本轮明确不授权 production drawable acquisition、color attachment、encoder、present、render 或 renderer state write。
+
 - production drawable acquisition permission
 - color attachment permission
 - render command encoder permission

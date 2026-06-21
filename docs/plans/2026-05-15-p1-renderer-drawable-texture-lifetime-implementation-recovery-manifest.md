@@ -66,7 +66,7 @@ Production drawable texture lifetime 仍缺：
 
 ## 本轮未打开事项
 
-本清单不是 runtime truth，也不授予 production drawable acquisition、color attachment、encoder、present、render、GPU submission、renderer state write、backend-ready truth 或 public API 权限。Isolated probe 只保留为 feasibility evidence，不得被解释为 production runtime ownership。
+本清单不是 runtime truth，也不授予 production drawable acquisition、color attachment、encoder、present、render、GPU submission、renderer state write、backend-ready truth 或 public API 权限。Isolated visible-window probe 只保留为 feasibility evidence，不得被解释为 production runtime ownership。
 
 CodeLattice 本轮可调用但仅给出 static-only / low-confidence 项目级证据；`runtime/cjgui` compact explore 未执行 runtime、build 或 probe，也未形成可替代 source reading 的 symbol proof。后续若进入 visible-window production harness，应继续用 source reading、focused probes、bounded cleanup evidence、protected path scan 与 GitNexus detect-changes 兜底。
 

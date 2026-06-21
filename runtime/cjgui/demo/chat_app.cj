@@ -3,10 +3,7 @@ package cjgui_chat_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -172,21 +169,17 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
-    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui chat demo app")
-    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui chat demo app")
-    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui chat demo app")
-    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui chat demo app")
+    let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui chat demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    metadataReporter.printDemoIdentity("chat")
-    businessReporter.printStatusTransition("not_started", "runnable")
-    businessReporter.printTextFact("layout", "threaded_chat")
-    businessReporter.printTextFact("interaction", "type_message,send_message,append_reply,move_focus")
-    businessReporter.printTextFact("state_before", before)
-    businessReporter.printTextFact("state_after", after)
-    businessReporter.printBoolFact("state_readback", readbackOk)
-    proofReporter.printSharedPrimitiveProof(apiOutput, thread.componentSession, commitResult, thread.commitHarness)
-    runReporter.printRunResult(runResult)
+    evidencePresenter.printDemoIdentity("chat")
+    evidencePresenter.printStatusTransition("not_started", "runnable")
+    evidencePresenter.printTextFact("layout", "threaded_chat")
+    evidencePresenter.printTextFact("interaction", "type_message,send_message,append_reply,move_focus")
+    evidencePresenter.printTextFact("state_before", before)
+    evidencePresenter.printTextFact("state_after", after)
+    evidencePresenter.printBoolFact("state_readback", readbackOk)
+    evidencePresenter.printSharedExecutionProof(apiOutput, thread.componentSession, commitResult, thread.commitHarness, runResult)
 
     if (readbackOk) {
         return 0

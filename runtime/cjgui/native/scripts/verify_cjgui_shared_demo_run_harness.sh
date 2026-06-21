@@ -12,6 +12,7 @@ RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run
 PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 METADATA_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
+EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_presenter.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -102,6 +103,11 @@ if [[ ! -f "$METADATA_REPORTER_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$EVIDENCE_PRESENTER_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing evidence presenter source $EVIDENCE_PRESENTER_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -150,6 +156,16 @@ if ! grep -F "public class CjguiExperimentalDemoMetadataReporter" "$METADATA_REP
   exit 3
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoEvidencePresenter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printSharedExecutionProof" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoMetadataReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoBusinessSnapshotReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoProofReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoRunResultReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected evidence presenter declarations" >&2
+  exit 3
+fi
+
 for demo_src in \
   "$TODO_DEMO_SRC" \
   "$SETTINGS_DEMO_SRC" \
@@ -165,26 +181,17 @@ for demo_src in \
     echo "cjgui shared demo run harness verification: demo-local buildRunResult wrapper remains in $demo_src" >&2
     exit 4
   fi
-  if ! grep -F "CjguiExperimentalDemoRunResultReporter" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "runReporter.printRunResult(runResult)" "$demo_src" >/dev/null 2>&1; then
-    echo "cjgui shared demo run harness verification: demo must use shared run result reporter in $demo_src" >&2
+  if ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidencePresenter.printDemoIdentity" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidencePresenter.printStatusTransition" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidencePresenter.printTextFact" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidencePresenter.printBoolFact" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidencePresenter.printSharedExecutionProof(apiOutput" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo must use shared evidence presenter in $demo_src" >&2
     exit 4
   fi
-  if ! grep -F "CjguiExperimentalDemoProofReporter" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "proofReporter.printSharedPrimitiveProof(apiOutput" "$demo_src" >/dev/null 2>&1; then
-    echo "cjgui shared demo run harness verification: demo must use shared proof reporter in $demo_src" >&2
-    exit 4
-  fi
-  if ! grep -F "CjguiExperimentalDemoBusinessSnapshotReporter" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "businessReporter.printStatusTransition" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "businessReporter.printTextFact" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "businessReporter.printBoolFact" "$demo_src" >/dev/null 2>&1; then
-    echo "cjgui shared demo run harness verification: demo must use shared business snapshot reporter in $demo_src" >&2
-    exit 4
-  fi
-  if ! grep -F "CjguiExperimentalDemoMetadataReporter" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "metadataReporter.printDemoIdentity" "$demo_src" >/dev/null 2>&1; then
-    echo "cjgui shared demo run harness verification: demo must use shared metadata reporter in $demo_src" >&2
+  if grep -E 'CjguiExperimentalDemo(ProofReporter|RunResultReporter|BusinessSnapshotReporter|MetadataReporter)|proofReporter|runReporter|businessReporter|metadataReporter' "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local direct reporter wiring remains in $demo_src" >&2
     exit 4
   fi
   if grep -F 'println("cjgui ' "$demo_src" | grep -F "shared_run_" >/dev/null 2>&1; then
@@ -253,6 +260,10 @@ echo "cjgui_shared_demo_metadata_reporter=CjguiExperimentalDemoMetadataReporter"
 echo "cjgui_shared_demo_metadata_reporter_demo_count=10"
 echo "cjgui_shared_demo_metadata_output_rendering_shared=true"
 echo "cjgui_shared_demo_local_metadata_println_retired=true"
+echo "cjgui_shared_demo_evidence_presenter=CjguiExperimentalDemoEvidencePresenter"
+echo "cjgui_shared_demo_evidence_presenter_demo_count=10"
+echo "cjgui_shared_demo_evidence_presenter_output_orchestration_shared=true"
+echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"
 echo "cjgui_shared_demo_run_public_c_abi_added=false"

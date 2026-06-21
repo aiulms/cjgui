@@ -3,10 +3,7 @@ package cjgui_settings_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -142,26 +139,22 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
-    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui settings demo app")
-    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui settings demo app")
-    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui settings demo app")
-    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui settings demo app")
+    let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui settings demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    metadataReporter.printDemoIdentity("settings")
-    businessReporter.printStatusTransition("scaffolded", "runnable")
-    metadataReporter.printStaticBoolFact("main_declared", true)
-    metadataReporter.printStaticBoolFact("deterministic_output", true)
-    businessReporter.printTextFact("layout", "sectioned_form")
-    businessReporter.printTextFact("controls", "toggle:auto_save,select:theme,text:username")
-    businessReporter.printTextFact("interaction", "toggle_auto_save,select_theme,update_username,move_focus")
-    businessReporter.printTextFact("state_before", before)
-    businessReporter.printTextFact("state_after", after)
-    businessReporter.printBoolFact("state_readback", readbackOk)
-    businessReporter.printTextFact("summary_after", summary)
-    proofReporter.printSharedPrimitiveProof(apiOutput, panel.componentSession, commitResult, panel.commitHarness)
-    runReporter.printRunResult(runResult)
-    businessReporter.printBoolFact("public_api_available", true)
+    evidencePresenter.printDemoIdentity("settings")
+    evidencePresenter.printStatusTransition("scaffolded", "runnable")
+    evidencePresenter.printStaticBoolFact("main_declared", true)
+    evidencePresenter.printStaticBoolFact("deterministic_output", true)
+    evidencePresenter.printTextFact("layout", "sectioned_form")
+    evidencePresenter.printTextFact("controls", "toggle:auto_save,select:theme,text:username")
+    evidencePresenter.printTextFact("interaction", "toggle_auto_save,select_theme,update_username,move_focus")
+    evidencePresenter.printTextFact("state_before", before)
+    evidencePresenter.printTextFact("state_after", after)
+    evidencePresenter.printBoolFact("state_readback", readbackOk)
+    evidencePresenter.printTextFact("summary_after", summary)
+    evidencePresenter.printSharedExecutionProof(apiOutput, panel.componentSession, commitResult, panel.commitHarness, runResult)
+    evidencePresenter.printBoolFact("public_api_available", true)
 
     if (readbackOk) {
         return 0

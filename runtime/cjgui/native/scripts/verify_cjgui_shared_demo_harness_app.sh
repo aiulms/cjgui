@@ -19,6 +19,7 @@ RUN_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_run
 PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 METADATA_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
+EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_presenter.cj"
 TMP_DIR="${CJGUI_SHARED_DEMO_HARNESS_TMPDIR:-/private/tmp/cjgui-shared-demo-harness-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -131,6 +132,10 @@ require_source_line "public func printBoolFact" "$BUSINESS_REPORTER_SRC"
 require_source_line "public class CjguiExperimentalDemoMetadataReporter" "$METADATA_REPORTER_SRC"
 require_source_line "public func printDemoIdentity" "$METADATA_REPORTER_SRC"
 require_source_line "public func printStaticBoolFact" "$METADATA_REPORTER_SRC"
+require_source_line "public class CjguiExperimentalDemoEvidencePresenter" "$EVIDENCE_PRESENTER_SRC"
+require_source_line "public func printSharedExecutionProof" "$EVIDENCE_PRESENTER_SRC"
+require_source_line "CjguiExperimentalDemoProofReporter" "$EVIDENCE_PRESENTER_SRC"
+require_source_line "CjguiExperimentalDemoRunResultReporter" "$EVIDENCE_PRESENTER_SRC"
 require_source_line "package cjgui_shared_demo_harness_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC"
@@ -154,15 +159,18 @@ require_source_line "sharedComponentActions()" "$DEMO_SRC"
 require_source_line "buildSharedOutput" "$DEMO_SRC"
 require_source_line "main(): Int64" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
-require_source_line 'businessReporter.printTextFact("served_demo", "todo")' "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoProofReporter" "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoBusinessSnapshotReporter" "$DEMO_SRC"
-require_source_line "businessReporter.printStatusTransition" "$DEMO_SRC"
-require_source_line "businessReporter.printTextFact" "$DEMO_SRC"
-require_source_line "businessReporter.printBoolFact" "$DEMO_SRC"
-require_source_line "CjguiExperimentalDemoMetadataReporter" "$DEMO_SRC"
-require_source_line 'metadataReporter.printDemoIdentity("shared_demo_harness")' "$DEMO_SRC"
-require_source_line "proofReporter.printSharedPrimitiveProof(apiOutput" "$DEMO_SRC"
+require_source_line 'evidencePresenter.printTextFact("served_demo", "todo")' "$DEMO_SRC"
+require_source_line "CjguiExperimentalDemoEvidencePresenter" "$DEMO_SRC"
+require_source_line "evidencePresenter.printStatusTransition" "$DEMO_SRC"
+require_source_line "evidencePresenter.printTextFact" "$DEMO_SRC"
+require_source_line "evidencePresenter.printBoolFact" "$DEMO_SRC"
+require_source_line 'evidencePresenter.printDemoIdentity("shared_demo_harness")' "$DEMO_SRC"
+require_source_line "evidencePresenter.printSharedExecutionProof(apiOutput" "$DEMO_SRC"
+
+if grep -E 'CjguiExperimentalDemo(ProofReporter|RunResultReporter|BusinessSnapshotReporter|MetadataReporter)|proofReporter|runReporter|businessReporter|metadataReporter' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo harness app verification: demo-local direct reporter wiring must stay retired" >&2
+  exit 10
+fi
 
 if grep -E 'println\("cjgui .*: (demo|main_declared|deterministic_output)=' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo harness app verification: demo-local metadata println remains" >&2
@@ -249,6 +257,7 @@ cp "$RUN_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_ex
 cp "$PROOF_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_proof_reporter.cj"
 cp "$BUSINESS_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 cp "$METADATA_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
+cp "$EVIDENCE_PRESENTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_presenter.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

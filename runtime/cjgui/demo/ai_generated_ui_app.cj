@@ -3,10 +3,7 @@ package cjgui_ai_generated_ui_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -163,21 +160,17 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
-    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui ai generated ui demo app")
-    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui ai generated ui demo app")
-    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui ai generated ui demo app")
-    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui ai generated ui demo app")
+    let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui ai generated ui demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    metadataReporter.printDemoIdentity("ai_generated_ui")
-    businessReporter.printStatusTransition("not_started", "runnable")
-    businessReporter.printTextFact("layout", "ai_form_preview")
-    businessReporter.printTextFact("interaction", "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
-    businessReporter.printTextFact("state_before", before)
-    businessReporter.printTextFact("state_after", after)
-    businessReporter.printBoolFact("state_readback", readbackOk)
-    proofReporter.printSharedPrimitiveProof(apiOutput, generatedUi.componentSession, commitResult, generatedUi.commitHarness)
-    runReporter.printRunResult(runResult)
+    evidencePresenter.printDemoIdentity("ai_generated_ui")
+    evidencePresenter.printStatusTransition("not_started", "runnable")
+    evidencePresenter.printTextFact("layout", "ai_form_preview")
+    evidencePresenter.printTextFact("interaction", "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
+    evidencePresenter.printTextFact("state_before", before)
+    evidencePresenter.printTextFact("state_after", after)
+    evidencePresenter.printBoolFact("state_readback", readbackOk)
+    evidencePresenter.printSharedExecutionProof(apiOutput, generatedUi.componentSession, commitResult, generatedUi.commitHarness, runResult)
 
     if (readbackOk) {
         return 0

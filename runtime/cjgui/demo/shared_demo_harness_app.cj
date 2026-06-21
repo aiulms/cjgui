@@ -3,10 +3,7 @@ package cjgui_shared_demo_harness_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
 import std.collection.*
 
 // 中文维护注释：这是独立 shared demo harness demo app，不属于 runtime_renderer_stage* owner 链。
@@ -152,21 +149,17 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
-    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared demo harness app")
-    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared demo harness app")
-    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui shared demo harness app")
-    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui shared demo harness app")
+    let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui shared demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
 
-    metadataReporter.printDemoIdentity("shared_demo_harness")
-    businessReporter.printStatusTransition("not_started", "runnable")
-    businessReporter.printTextFact("served_demo", "todo")
-    businessReporter.printTextFact("interaction", "run_todo_add_complete")
-    businessReporter.printTextFact("state_before", before)
-    businessReporter.printTextFact("state_after", after)
-    businessReporter.printBoolFact("state_readback", outputOk)
-    proofReporter.printSharedPrimitiveProof(apiOutput, harness.componentSession, commitResult, harness.commitHarness)
-    runReporter.printRunResult(runResult)
+    evidencePresenter.printDemoIdentity("shared_demo_harness")
+    evidencePresenter.printStatusTransition("not_started", "runnable")
+    evidencePresenter.printTextFact("served_demo", "todo")
+    evidencePresenter.printTextFact("interaction", "run_todo_add_complete")
+    evidencePresenter.printTextFact("state_before", before)
+    evidencePresenter.printTextFact("state_after", after)
+    evidencePresenter.printBoolFact("state_readback", outputOk)
+    evidencePresenter.printSharedExecutionProof(apiOutput, harness.componentSession, commitResult, harness.commitHarness, runResult)
 
     if (outputOk) {
         return 0

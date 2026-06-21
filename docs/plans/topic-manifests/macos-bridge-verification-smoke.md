@@ -8,6 +8,8 @@
 
 ## CJGUI demo_support 维护备注
 
+2026-06-21 的 CJGUI shared demo_support demo evidence presenter 收敛已记录在 [evidence presenter consolidation report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-21-p1-cjgui-shared-demo-support-demo-evidence-presenter-consolidation-report.md)。该切片不修改 smoke native files，不调用 native bridge，不新增 public C ABI；10 个 focused demo verifier 只证明 demo-host stdout evidence presenter 复用，不把任何 smoke / isolated / demo evidence 升级为 production AppKit / Metal truth。
+
 2026-06-20 的 CJGUI shared demo_support demo run result reporter 输出渲染清理已记录在 [reporter cleanup report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-demo-run-result-reporter-output-rendering-cleanup-report.md)。该切片不修改 smoke native files，不调用 native bridge，不新增 public C ABI；10 个 focused demo verifier 只证明 demo-host stdout proof renderer 复用，不把任何 smoke / isolated / demo evidence 升级为 production AppKit / Metal truth。
 
 2026-06-20 的 CJGUI shared demo_support commit/write/readback 第一切片已记录在 [commit/write/readback report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-commit-write-readback-first-slice-report.md)。该切片不修改 smoke native files，不调用 native bridge，不新增 public C ABI；Todo、Chat、FileBrowser 的 owner-local commit/readback verifier 只证明 demo-host in-memory facts，不把任何 smoke / isolated / demo evidence 升级为 production AppKit / Metal truth。

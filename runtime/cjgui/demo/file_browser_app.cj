@@ -3,10 +3,7 @@ package cjgui_file_browser_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -180,21 +177,17 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
-    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui file browser demo app")
-    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui file browser demo app")
-    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui file browser demo app")
-    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui file browser demo app")
+    let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui file browser demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
 
-    metadataReporter.printDemoIdentity("file_browser")
-    businessReporter.printStatusTransition("not_started", "runnable")
-    businessReporter.printTextFact("layout", "tree_detail_split")
-    businessReporter.printTextFact("interaction", "expand_folder,filter_entries,select_file,refresh_detail,move_focus")
-    businessReporter.printTextFact("state_before", before)
-    businessReporter.printTextFact("state_after", after)
-    businessReporter.printBoolFact("state_readback", readbackOk)
-    proofReporter.printSharedPrimitiveProof(apiOutput, browser.componentSession, commitResult, browser.commitHarness)
-    runReporter.printRunResult(runResult)
+    evidencePresenter.printDemoIdentity("file_browser")
+    evidencePresenter.printStatusTransition("not_started", "runnable")
+    evidencePresenter.printTextFact("layout", "tree_detail_split")
+    evidencePresenter.printTextFact("interaction", "expand_folder,filter_entries,select_file,refresh_detail,move_focus")
+    evidencePresenter.printTextFact("state_before", before)
+    evidencePresenter.printTextFact("state_after", after)
+    evidencePresenter.printBoolFact("state_readback", readbackOk)
+    evidencePresenter.printSharedExecutionProof(apiOutput, browser.componentSession, commitResult, browser.commitHarness, runResult)
 
     if (readbackOk) {
         return 0

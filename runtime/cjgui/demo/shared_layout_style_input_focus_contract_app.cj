@@ -3,10 +3,7 @@ package cjgui_shared_layout_style_input_focus_contract_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoProofReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoRunResultReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoBusinessSnapshotReporter}
-import cjgui.demo_support.{CjguiExperimentalDemoMetadataReporter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -171,20 +168,16 @@ main(): Int64 {
         commitResult,
         commitReadbackOk
     )
-    let runReporter = CjguiExperimentalDemoRunResultReporter("cjgui shared layout-style-input-focus contract app")
-    let proofReporter = CjguiExperimentalDemoProofReporter("cjgui shared layout-style-input-focus contract app")
-    let businessReporter = CjguiExperimentalDemoBusinessSnapshotReporter("cjgui shared layout-style-input-focus contract app")
-    let metadataReporter = CjguiExperimentalDemoMetadataReporter("cjgui shared layout-style-input-focus contract app")
+    let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui shared layout-style-input-focus contract app")
     let outputOk = commitReadbackOk && runResult.runnable
 
-    metadataReporter.printDemoIdentity("shared_layout_style_input_focus_contract")
-    businessReporter.printStatusTransition("not_started", "runnable")
-    businessReporter.printTextFact("interaction", "apply_layout,apply_style,type_input,move_focus")
-    businessReporter.printTextFact("state_before", before)
-    businessReporter.printTextFact("state_after", after)
-    businessReporter.printBoolFact("state_readback", outputOk)
-    proofReporter.printSharedPrimitiveProof(apiOutput, contract.componentSession, commitResult, contract.commitHarness)
-    runReporter.printRunResult(runResult)
+    evidencePresenter.printDemoIdentity("shared_layout_style_input_focus_contract")
+    evidencePresenter.printStatusTransition("not_started", "runnable")
+    evidencePresenter.printTextFact("interaction", "apply_layout,apply_style,type_input,move_focus")
+    evidencePresenter.printTextFact("state_before", before)
+    evidencePresenter.printTextFact("state_after", after)
+    evidencePresenter.printBoolFact("state_readback", outputOk)
+    evidencePresenter.printSharedExecutionProof(apiOutput, contract.componentSession, commitResult, contract.commitHarness, runResult)
 
     if (outputOk) {
         return 0

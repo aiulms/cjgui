@@ -10,6 +10,8 @@
 
 ## CJGUI demo_support 维护备注
 
+2026-06-21 的 CJGUI shared demo_support demo evidence presenter 收敛已记录在 [evidence presenter consolidation report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-21-p1-cjgui-shared-demo-support-demo-evidence-presenter-consolidation-report.md)。该切片新增 `CjguiExperimentalDemoEvidencePresenter`，让当前 10 个 runnable demo 共用 metadata / business snapshot / proof / run result stdout evidence presenter，并退役 demo-local direct reporter wiring；它不改变本 manifest 的 Renderer implementation canonical tail，不授权 encoder、draw、commit、present、render、renderer state write、native bridge 或 backend-ready truth。
+
 2026-06-20 的 CJGUI shared demo_support demo run result reporter 输出渲染清理已记录在 [reporter cleanup report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-demo-run-result-reporter-output-rendering-cleanup-report.md)。该切片新增 `CjguiExperimentalDemoRunResultReporter`，让当前 10 个 runnable demo 共用 shared run stdout proof renderer，并退役 demo-local `shared_run_*` println 模板；它不改变本 manifest 的 Renderer implementation canonical tail，不授权 encoder、draw、commit、present、render、renderer state write、native bridge 或 backend-ready truth。
 
 2026-06-20 的 CJGUI shared demo_support commit/write/readback 第一切片已记录在 [commit/write/readback report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-20-p1-cjgui-shared-demo-support-commit-write-readback-first-slice-report.md)。该切片新增 `CjguiExperimentalDemoOwnerLocalCommitSession` / `CjguiExperimentalDemoCommitResult` 并让 Todo、Chat、FileBrowser 三个 demo 消费 owner-local commit/readback facts；它不改变本 manifest 的 Renderer implementation canonical tail，不授权 encoder、draw、commit、present、render、renderer state write、native bridge 或 backend-ready truth。

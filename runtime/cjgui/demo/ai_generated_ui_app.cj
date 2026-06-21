@@ -164,10 +164,8 @@ main(): Int64 {
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("ai_generated_ui", "not_started", "runnable")
     evidenceBuilder.addTextFact("layout", "ai_form_preview")
-    evidenceBuilder.addTextFact("interaction", "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
-    evidenceBuilder.addTextFact("state_before", before)
-    evidenceBuilder.addTextFact("state_after", after)
-    evidenceBuilder.addBoolFact("state_readback", readbackOk)
+    evidenceBuilder.addInteractionFact("generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
+    evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

@@ -167,11 +167,8 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("todo", "state_writable", "runnable")
-    evidenceBuilder.addTextFact("interaction", "add_todo,complete_todo")
-    evidenceBuilder.addTextFact("summary_before", before)
-    evidenceBuilder.addTextFact("summary_after_add", afterAdd)
-    evidenceBuilder.addTextFact("summary_after_complete", afterComplete)
-    evidenceBuilder.addBoolFact("owner_local_write_readback", readbackOk)
+    evidenceBuilder.addInteractionFact("add_todo,complete_todo")
+    evidenceBuilder.addOwnerLocalWriteReadbackFacts(before, afterAdd, afterComplete, readbackOk)
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

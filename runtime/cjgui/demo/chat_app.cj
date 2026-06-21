@@ -173,10 +173,8 @@ main(): Int64 {
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("chat", "not_started", "runnable")
     evidenceBuilder.addTextFact("layout", "threaded_chat")
-    evidenceBuilder.addTextFact("interaction", "type_message,send_message,append_reply,move_focus")
-    evidenceBuilder.addTextFact("state_before", before)
-    evidenceBuilder.addTextFact("state_after", after)
-    evidenceBuilder.addBoolFact("state_readback", readbackOk)
+    evidenceBuilder.addInteractionFact("type_message,send_message,append_reply,move_focus")
+    evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

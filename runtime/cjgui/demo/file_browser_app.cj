@@ -181,10 +181,8 @@ main(): Int64 {
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("file_browser", "not_started", "runnable")
     evidenceBuilder.addTextFact("layout", "tree_detail_split")
-    evidenceBuilder.addTextFact("interaction", "expand_folder,filter_entries,select_file,refresh_detail,move_focus")
-    evidenceBuilder.addTextFact("state_before", before)
-    evidenceBuilder.addTextFact("state_after", after)
-    evidenceBuilder.addBoolFact("state_readback", readbackOk)
+    evidenceBuilder.addInteractionFact("expand_folder,filter_entries,select_file,refresh_detail,move_focus")
+    evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

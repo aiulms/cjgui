@@ -153,10 +153,8 @@ main(): Int64 {
     let outputOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("shared_demo_harness", "not_started", "runnable")
     evidenceBuilder.addTextFact("served_demo", "todo")
-    evidenceBuilder.addTextFact("interaction", "run_todo_add_complete")
-    evidenceBuilder.addTextFact("state_before", before)
-    evidenceBuilder.addTextFact("state_after", after)
-    evidenceBuilder.addBoolFact("state_readback", outputOk)
+    evidenceBuilder.addInteractionFact("run_todo_add_complete")
+    evidenceBuilder.addStateReadbackFacts(before, after, outputOk)
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

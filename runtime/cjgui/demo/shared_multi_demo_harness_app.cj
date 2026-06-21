@@ -227,10 +227,8 @@ main(): Int64 {
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("shared_multi_demo_harness", "not_started", "runnable")
     evidenceBuilder.addTextFact("served_demos", "todo,file_browser")
     evidenceBuilder.addTextFact("served_demo_count", "2")
-    evidenceBuilder.addTextFact("interaction", "run_todo_add_complete,run_file_browser_select")
-    evidenceBuilder.addTextFact("state_before", before)
-    evidenceBuilder.addTextFact("state_after", after)
-    evidenceBuilder.addBoolFact("state_readback", outputOk)
+    evidenceBuilder.addInteractionFact("run_todo_add_complete,run_file_browser_select")
+    evidenceBuilder.addStateReadbackFacts(before, after, outputOk)
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

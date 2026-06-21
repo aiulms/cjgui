@@ -175,10 +175,8 @@ main(): Int64 {
         "not_started",
         "runnable"
     )
-    evidenceBuilder.addTextFact("interaction", "apply_layout,apply_style,type_input,move_focus")
-    evidenceBuilder.addTextFact("state_before", before)
-    evidenceBuilder.addTextFact("state_after", after)
-    evidenceBuilder.addBoolFact("state_readback", outputOk)
+    evidenceBuilder.addInteractionFact("apply_layout,apply_style,type_input,move_focus")
+    evidenceBuilder.addStateReadbackFacts(before, after, outputOk)
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

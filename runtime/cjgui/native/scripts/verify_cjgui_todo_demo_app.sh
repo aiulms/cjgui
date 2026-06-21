@@ -189,6 +189,9 @@ fi
 if ! grep -F "public class CjguiExperimentalDemoEvidenceSectionBuilder" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addTextFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addBoolFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addInteractionFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addStateReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addOwnerLocalWriteReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func buildSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared evidence section builder declaration" >&2
   exit 4
@@ -205,8 +208,8 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidenceSectionBuilder" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F 'CjguiExperimentalDemoEvidenceSectionBuilder("todo", "state_writable", "runnable")' "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "evidenceBuilder.addTextFact" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "evidenceBuilder.addBoolFact" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "evidenceBuilder.addInteractionFact" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "let evidenceSection = evidenceBuilder.buildSection" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "evidencePresenter.printEvidenceSection(evidenceSection)" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "buildSharedOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
@@ -218,6 +221,13 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "runResult.runnable" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "sharedUiState()" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared output builder consumption" >&2
+  exit 4
+fi
+
+if grep -F 'evidenceBuilder.addTextFact("interaction"' "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F 'evidenceBuilder.addBoolFact("state_readback"' "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F 'evidenceBuilder.addBoolFact("owner_local_write_readback"' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui demo verification: demo-local interaction/state readback fact wiring remains in $DEMO_SRC" >&2
   exit 4
 fi
 

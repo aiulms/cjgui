@@ -208,6 +208,9 @@ if ! grep -F "public class CjguiExperimentalDemoEvidenceSectionBuilder" "$EVIDEN
    ! grep -F "public func addStaticBoolFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addTextFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addBoolFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addInteractionFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addStateReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addOwnerLocalWriteReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func buildSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidenceProfile" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidenceSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1; then
@@ -232,11 +235,17 @@ for demo_src in \
   fi
   if ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "CjguiExperimentalDemoEvidenceSectionBuilder" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "evidenceBuilder.addTextFact" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "evidenceBuilder.addBoolFact" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidenceBuilder.addInteractionFact" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "let evidenceSection = evidenceBuilder.buildSection" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidencePresenter.printEvidenceSection(evidenceSection)" "$demo_src" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo must use shared evidence section builder in $demo_src" >&2
+    exit 4
+  fi
+  if grep -F 'evidenceBuilder.addTextFact("interaction"' "$demo_src" >/dev/null 2>&1 || \
+     grep -F 'evidenceBuilder.addBoolFact("state_readback"' "$demo_src" >/dev/null 2>&1 || \
+     grep -F 'evidenceBuilder.addBoolFact("owner_local_write_readback"' "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local interaction/state readback fact wiring remains in $demo_src" >&2
     exit 4
   fi
   if grep -F "CjguiExperimentalDemoEvidenceProfile(" "$demo_src" >/dev/null 2>&1 || \
@@ -333,6 +342,11 @@ echo "cjgui_shared_demo_evidence_section_builder=CjguiExperimentalDemoEvidenceSe
 echo "cjgui_shared_demo_evidence_section_builder_demo_count=10"
 echo "cjgui_shared_demo_evidence_section_builder_profile_run_assembly_shared=true"
 echo "cjgui_shared_demo_direct_profile_and_section_constructors_retired=true"
+echo "cjgui_shared_demo_evidence_fact_presets=CjguiExperimentalDemoEvidenceSectionBuilder"
+echo "cjgui_shared_demo_evidence_fact_preset_demo_count=10"
+echo "cjgui_shared_demo_interaction_fact_preset_shared=true"
+echo "cjgui_shared_demo_state_readback_fact_bundle_shared=true"
+echo "cjgui_shared_demo_direct_interaction_state_readback_fact_calls_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"

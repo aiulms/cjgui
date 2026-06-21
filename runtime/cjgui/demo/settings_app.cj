@@ -146,10 +146,8 @@ main(): Int64 {
     evidenceBuilder.addStaticBoolFact("deterministic_output", true)
     evidenceBuilder.addTextFact("layout", "sectioned_form")
     evidenceBuilder.addTextFact("controls", "toggle:auto_save,select:theme,text:username")
-    evidenceBuilder.addTextFact("interaction", "toggle_auto_save,select_theme,update_username,move_focus")
-    evidenceBuilder.addTextFact("state_before", before)
-    evidenceBuilder.addTextFact("state_after", after)
-    evidenceBuilder.addBoolFact("state_readback", readbackOk)
+    evidenceBuilder.addInteractionFact("toggle_auto_save,select_theme,update_username,move_focus")
+    evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
     evidenceBuilder.addTextFact("summary_after", summary)
     evidenceBuilder.addBoolFact("public_api_available", true)
 

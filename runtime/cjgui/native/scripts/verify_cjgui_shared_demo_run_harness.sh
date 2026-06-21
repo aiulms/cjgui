@@ -15,6 +15,7 @@ METADATA_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_dem
 EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_presenter.cj"
 EVIDENCE_PROFILE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 EVIDENCE_SECTION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
+EVIDENCE_SECTION_BUILDER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -120,6 +121,11 @@ if [[ ! -f "$EVIDENCE_SECTION_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$EVIDENCE_SECTION_BUILDER_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing evidence section builder source $EVIDENCE_SECTION_BUILDER_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -198,6 +204,17 @@ if ! grep -F "public class CjguiExperimentalDemoEvidenceSection" "$EVIDENCE_SECT
   exit 3
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoEvidenceSectionBuilder" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addStaticBoolFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addTextFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addBoolFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func buildSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoEvidenceProfile" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoEvidenceSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected evidence section builder declarations" >&2
+  exit 3
+fi
+
 for demo_src in \
   "$TODO_DEMO_SRC" \
   "$SETTINGS_DEMO_SRC" \
@@ -214,13 +231,17 @@ for demo_src in \
     exit 4
   fi
   if ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "CjguiExperimentalDemoEvidenceProfile" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "CjguiExperimentalDemoEvidenceSection" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "evidenceProfile.addTextFact" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "evidenceProfile.addBoolFact" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "let evidenceSection = CjguiExperimentalDemoEvidenceSection" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "CjguiExperimentalDemoEvidenceSectionBuilder" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidenceBuilder.addTextFact" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidenceBuilder.addBoolFact" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "let evidenceSection = evidenceBuilder.buildSection" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidencePresenter.printEvidenceSection(evidenceSection)" "$demo_src" >/dev/null 2>&1; then
-    echo "cjgui shared demo run harness verification: demo must use shared typed evidence section in $demo_src" >&2
+    echo "cjgui shared demo run harness verification: demo must use shared evidence section builder in $demo_src" >&2
+    exit 4
+  fi
+  if grep -F "CjguiExperimentalDemoEvidenceProfile(" "$demo_src" >/dev/null 2>&1 || \
+     grep -F "let evidenceSection = CjguiExperimentalDemoEvidenceSection" "$demo_src" >/dev/null 2>&1; then
+    echo "cjgui shared demo run harness verification: demo-local direct profile/section constructor remains in $demo_src" >&2
     exit 4
   fi
   if grep -E 'evidencePresenter\.print(DemoIdentity|StatusTransition|TextFact|BoolFact|StaticBoolFact|EvidenceProfile|SharedExecutionProof)' "$demo_src" >/dev/null 2>&1; then
@@ -308,6 +329,10 @@ echo "cjgui_shared_demo_evidence_section=CjguiExperimentalDemoEvidenceSection"
 echo "cjgui_shared_demo_evidence_section_demo_count=10"
 echo "cjgui_shared_demo_evidence_section_typed_execution_batching_shared=true"
 echo "cjgui_shared_demo_direct_profile_and_proof_calls_retired=true"
+echo "cjgui_shared_demo_evidence_section_builder=CjguiExperimentalDemoEvidenceSectionBuilder"
+echo "cjgui_shared_demo_evidence_section_builder_demo_count=10"
+echo "cjgui_shared_demo_evidence_section_builder_profile_run_assembly_shared=true"
+echo "cjgui_shared_demo_direct_profile_and_section_constructors_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"

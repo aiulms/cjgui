@@ -3,7 +3,7 @@ package cjgui_todo_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -166,15 +166,14 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
-    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("todo", "state_writable", "runnable")
-    evidenceProfile.addTextFact("interaction", "add_todo,complete_todo")
-    evidenceProfile.addTextFact("summary_before", before)
-    evidenceProfile.addTextFact("summary_after_add", afterAdd)
-    evidenceProfile.addTextFact("summary_after_complete", afterComplete)
-    evidenceProfile.addBoolFact("owner_local_write_readback", readbackOk)
+    let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("todo", "state_writable", "runnable")
+    evidenceBuilder.addTextFact("interaction", "add_todo,complete_todo")
+    evidenceBuilder.addTextFact("summary_before", before)
+    evidenceBuilder.addTextFact("summary_after_add", afterAdd)
+    evidenceBuilder.addTextFact("summary_after_complete", afterComplete)
+    evidenceBuilder.addBoolFact("owner_local_write_readback", readbackOk)
 
-    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
-        evidenceProfile,
+    let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,
         todos.componentSession,
         commitResult,

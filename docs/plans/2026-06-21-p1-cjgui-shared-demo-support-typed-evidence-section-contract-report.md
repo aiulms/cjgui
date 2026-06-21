@@ -59,3 +59,9 @@ Aggregate verifier 新增并回显：
 `P1 CJGUI shared demo_support evidence section builder for profile/run assembly`
 
 原因：typed section 已经统一 profile 与 shared execution proof，但每个 demo 仍手写 profile + section assembly。下一步可以把 section builder / factory 下沉到 `demo_support`，继续减少 demo-local 尾部模板，同时保留各 demo 的业务 facts 与 before / after / readback 证据。
+
+## 下游接续
+
+已由 [shared demo evidence section builder report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-21-p1-cjgui-shared-demo-support-evidence-section-builder-report.md) 接续；当前全部 10 个 runnable demo 已改为通过 `CjguiExperimentalDemoEvidenceSectionBuilder` 统一创建 profile、追加 facts 并生成 typed section。当前下一步转为：
+
+`P1 CJGUI shared demo_support evidence fact bundle presets for state/readback/interaction facts`

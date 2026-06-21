@@ -3,7 +3,7 @@ package cjgui_reusable_component_contract_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 
 // 中文维护注释：这是独立 reusable component contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一组件合同能复用到 Todo、FileBrowser 与 AI-generated UI 三条业务流。
@@ -219,16 +219,15 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui reusable component contract app")
     let outputOk = commitReadbackOk && runResult.runnable
-    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("reusable_component_contract", "not_started", "runnable")
-    evidenceProfile.addTextFact("reused_demos", "todo,file_browser,ai_generated_ui")
-    evidenceProfile.addTextFact("component_kinds", "task_row,file_row,ai_form")
-    evidenceProfile.addTextFact("interaction", "register_file_row,register_ai_form,todo_add,file_select,ai_accept")
-    evidenceProfile.addTextFact("state_before", before)
-    evidenceProfile.addTextFact("state_after", after)
-    evidenceProfile.addBoolFact("state_readback", readbackOk)
+    let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("reusable_component_contract", "not_started", "runnable")
+    evidenceBuilder.addTextFact("reused_demos", "todo,file_browser,ai_generated_ui")
+    evidenceBuilder.addTextFact("component_kinds", "task_row,file_row,ai_form")
+    evidenceBuilder.addTextFact("interaction", "register_file_row,register_ai_form,todo_add,file_select,ai_accept")
+    evidenceBuilder.addTextFact("state_before", before)
+    evidenceBuilder.addTextFact("state_after", after)
+    evidenceBuilder.addBoolFact("state_readback", readbackOk)
 
-    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
-        evidenceProfile,
+    let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,
         contract.componentSession,
         commitResult,

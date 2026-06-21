@@ -3,7 +3,7 @@ package cjgui_shared_multi_demo_harness_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile, CjguiExperimentalDemoEvidenceSection}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 
 // 中文维护注释：这是独立 shared multi-demo harness demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证同一 harness 能服务 Todo 与 FileBrowser 两条业务流，并输出 before / after / readback。
@@ -224,16 +224,15 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui shared multi-demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
-    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("shared_multi_demo_harness", "not_started", "runnable")
-    evidenceProfile.addTextFact("served_demos", "todo,file_browser")
-    evidenceProfile.addTextFact("served_demo_count", "2")
-    evidenceProfile.addTextFact("interaction", "run_todo_add_complete,run_file_browser_select")
-    evidenceProfile.addTextFact("state_before", before)
-    evidenceProfile.addTextFact("state_after", after)
-    evidenceProfile.addBoolFact("state_readback", outputOk)
+    let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("shared_multi_demo_harness", "not_started", "runnable")
+    evidenceBuilder.addTextFact("served_demos", "todo,file_browser")
+    evidenceBuilder.addTextFact("served_demo_count", "2")
+    evidenceBuilder.addTextFact("interaction", "run_todo_add_complete,run_file_browser_select")
+    evidenceBuilder.addTextFact("state_before", before)
+    evidenceBuilder.addTextFact("state_after", after)
+    evidenceBuilder.addBoolFact("state_readback", outputOk)
 
-    let evidenceSection = CjguiExperimentalDemoEvidenceSection(
-        evidenceProfile,
+    let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,
         harness.componentSession,
         commitResult,

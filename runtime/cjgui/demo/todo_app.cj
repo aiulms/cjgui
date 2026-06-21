@@ -3,7 +3,7 @@ package cjgui_todo_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -166,15 +166,15 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
+    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("todo", "state_writable", "runnable")
+    evidenceProfile.addTextFact("interaction", "add_todo,complete_todo")
+    evidenceProfile.addTextFact("summary_before", before)
+    evidenceProfile.addTextFact("summary_after_add", afterAdd)
+    evidenceProfile.addTextFact("summary_after_complete", afterComplete)
+    evidenceProfile.addBoolFact("owner_local_write_readback", readbackOk)
 
-    evidencePresenter.printDemoIdentity("todo")
-    evidencePresenter.printStatusTransition("state_writable", "runnable")
-    evidencePresenter.printTextFact("interaction", "add_todo,complete_todo")
-    evidencePresenter.printTextFact("summary_before", before)
-    evidencePresenter.printTextFact("summary_after_add", afterAdd)
-    evidencePresenter.printTextFact("summary_after_complete", afterComplete)
+    evidencePresenter.printEvidenceProfile(evidenceProfile)
     evidencePresenter.printSharedExecutionProof(apiOutput, todos.componentSession, commitResult, todos.commitHarness, runResult)
-    evidencePresenter.printBoolFact("owner_local_write_readback", readbackOk)
 
     if (readbackOk) {
         return 0

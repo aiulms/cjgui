@@ -3,7 +3,7 @@ package cjgui_chat_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
 import std.collection.*
 
 // 中文维护注释：这是独立 Chat demo app，不属于 runtime_renderer_stage* owner 链。
@@ -171,14 +171,14 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui chat demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
+    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("chat", "not_started", "runnable")
+    evidenceProfile.addTextFact("layout", "threaded_chat")
+    evidenceProfile.addTextFact("interaction", "type_message,send_message,append_reply,move_focus")
+    evidenceProfile.addTextFact("state_before", before)
+    evidenceProfile.addTextFact("state_after", after)
+    evidenceProfile.addBoolFact("state_readback", readbackOk)
 
-    evidencePresenter.printDemoIdentity("chat")
-    evidencePresenter.printStatusTransition("not_started", "runnable")
-    evidencePresenter.printTextFact("layout", "threaded_chat")
-    evidencePresenter.printTextFact("interaction", "type_message,send_message,append_reply,move_focus")
-    evidencePresenter.printTextFact("state_before", before)
-    evidencePresenter.printTextFact("state_after", after)
-    evidencePresenter.printBoolFact("state_readback", readbackOk)
+    evidencePresenter.printEvidenceProfile(evidenceProfile)
     evidencePresenter.printSharedExecutionProof(apiOutput, thread.componentSession, commitResult, thread.commitHarness, runResult)
 
     if (readbackOk) {

@@ -43,6 +43,8 @@
 
 ## 后续入口
 
+该入口已由 [shared demo evidence profile batching report](/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-06-21-p1-cjgui-shared-demo-support-demo-evidence-profile-contract-batching-report.md) 接续；当前 10 个 runnable demo 已迁移到 `CjguiExperimentalDemoEvidenceProfile` 与 `printEvidenceProfile(...)`。
+
 下一步建议进入：
 
 `P1 CJGUI shared demo_support demo evidence profile contract for business fact batching`

@@ -21,6 +21,7 @@ PROOF_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_p
 BUSINESS_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 METADATA_REPORTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
 EVIDENCE_PRESENTER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_presenter.cj"
+EVIDENCE_PROFILE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 TMP_DIR="${CJGUI_TODO_DEMO_TMPDIR:-/private/tmp/cjgui-todo-demo-app}"
 PS_SHIM_DIR="$TMP_DIR/ps-shim"
 BUILD_DIR="$TMP_DIR/build"
@@ -159,10 +160,19 @@ if ! grep -F "public class CjguiExperimentalDemoMetadataReporter" "$METADATA_REP
 fi
 
 if ! grep -F "public class CjguiExperimentalDemoEvidencePresenter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func printEvidenceProfile" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func printSharedExecutionProof" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoProofReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoRunResultReporter" "$EVIDENCE_PRESENTER_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared evidence presenter declaration" >&2
+  exit 4
+fi
+
+if ! grep -F "public class CjguiExperimentalDemoEvidenceProfile" "$EVIDENCE_PROFILE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addStaticBoolFact" "$EVIDENCE_PROFILE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addTextFact" "$EVIDENCE_PROFILE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addBoolFact" "$EVIDENCE_PROFILE_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: missing shared evidence profile declaration" >&2
   exit 4
 fi
 
@@ -175,11 +185,12 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "CjguiExperimentalDemoEvidenceProfile" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F 'CjguiExperimentalDemoEvidenceProfile("todo", "state_writable", "runnable")' "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "evidenceProfile.addTextFact" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "evidenceProfile.addBoolFact" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "evidencePresenter.printEvidenceProfile(evidenceProfile)" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "evidencePresenter.printSharedExecutionProof(apiOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "evidencePresenter.printStatusTransition" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "evidencePresenter.printTextFact" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "evidencePresenter.printBoolFact" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F 'evidencePresenter.printDemoIdentity("todo")' "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "buildSharedOutput" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "finishCommittedSessionRun" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC" >/dev/null 2>&1 || \
@@ -189,6 +200,11 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "runResult.runnable" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "sharedUiState()" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared output builder consumption" >&2
+  exit 4
+fi
+
+if grep -E 'evidencePresenter\.print(DemoIdentity|StatusTransition|TextFact|BoolFact|StaticBoolFact)' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui todo demo app verification: demo-local presenter fact sequence must stay retired" >&2
   exit 4
 fi
 
@@ -299,6 +315,7 @@ cp "$PROOF_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_
 cp "$BUSINESS_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_business_snapshot_reporter.cj"
 cp "$METADATA_REPORTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_metadata_reporter.cj"
 cp "$EVIDENCE_PRESENTER_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_presenter.cj"
+cp "$EVIDENCE_PROFILE_SRC" "$PROBE_API_PACKAGE_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_profile.cj"
 (
   cd "$PROBE_PACKAGE_DIR"
   cjpm build --target-dir "$BUILD_DIR/cjpm-target" --skip-script

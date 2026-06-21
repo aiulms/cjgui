@@ -3,7 +3,7 @@ package cjgui_ai_generated_ui_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
 import std.collection.*
 
 // 中文维护注释：这是独立 AI-generated UI demo app，不属于 runtime_renderer_stage* owner 链。
@@ -162,14 +162,14 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui ai generated ui demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
+    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("ai_generated_ui", "not_started", "runnable")
+    evidenceProfile.addTextFact("layout", "ai_form_preview")
+    evidenceProfile.addTextFact("interaction", "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
+    evidenceProfile.addTextFact("state_before", before)
+    evidenceProfile.addTextFact("state_after", after)
+    evidenceProfile.addBoolFact("state_readback", readbackOk)
 
-    evidencePresenter.printDemoIdentity("ai_generated_ui")
-    evidencePresenter.printStatusTransition("not_started", "runnable")
-    evidencePresenter.printTextFact("layout", "ai_form_preview")
-    evidencePresenter.printTextFact("interaction", "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
-    evidencePresenter.printTextFact("state_before", before)
-    evidencePresenter.printTextFact("state_after", after)
-    evidencePresenter.printBoolFact("state_readback", readbackOk)
+    evidencePresenter.printEvidenceProfile(evidenceProfile)
     evidencePresenter.printSharedExecutionProof(apiOutput, generatedUi.componentSession, commitResult, generatedUi.commitHarness, runResult)
 
     if (readbackOk) {

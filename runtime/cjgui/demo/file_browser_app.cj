@@ -3,7 +3,7 @@ package cjgui_file_browser_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
 import std.collection.*
 
 // 中文维护注释：这是独立 FileBrowser demo app，不属于 runtime_renderer_stage* owner 链。
@@ -179,14 +179,14 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui file browser demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
+    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("file_browser", "not_started", "runnable")
+    evidenceProfile.addTextFact("layout", "tree_detail_split")
+    evidenceProfile.addTextFact("interaction", "expand_folder,filter_entries,select_file,refresh_detail,move_focus")
+    evidenceProfile.addTextFact("state_before", before)
+    evidenceProfile.addTextFact("state_after", after)
+    evidenceProfile.addBoolFact("state_readback", readbackOk)
 
-    evidencePresenter.printDemoIdentity("file_browser")
-    evidencePresenter.printStatusTransition("not_started", "runnable")
-    evidencePresenter.printTextFact("layout", "tree_detail_split")
-    evidencePresenter.printTextFact("interaction", "expand_folder,filter_entries,select_file,refresh_detail,move_focus")
-    evidencePresenter.printTextFact("state_before", before)
-    evidencePresenter.printTextFact("state_after", after)
-    evidencePresenter.printBoolFact("state_readback", readbackOk)
+    evidencePresenter.printEvidenceProfile(evidenceProfile)
     evidencePresenter.printSharedExecutionProof(apiOutput, browser.componentSession, commitResult, browser.commitHarness, runResult)
 
     if (readbackOk) {

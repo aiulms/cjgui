@@ -3,7 +3,7 @@ package cjgui_settings_demo
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
-import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter}
+import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceProfile}
 
 // 中文维护注释：这是独立 Settings demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 Settings demo 消费 CJGUI experimental 非 Bool public API，并执行 owner-local 状态写入读回。
@@ -141,20 +141,20 @@ main(): Int64 {
     )
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui settings demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
+    let evidenceProfile = CjguiExperimentalDemoEvidenceProfile("settings", "scaffolded", "runnable")
+    evidenceProfile.addStaticBoolFact("main_declared", true)
+    evidenceProfile.addStaticBoolFact("deterministic_output", true)
+    evidenceProfile.addTextFact("layout", "sectioned_form")
+    evidenceProfile.addTextFact("controls", "toggle:auto_save,select:theme,text:username")
+    evidenceProfile.addTextFact("interaction", "toggle_auto_save,select_theme,update_username,move_focus")
+    evidenceProfile.addTextFact("state_before", before)
+    evidenceProfile.addTextFact("state_after", after)
+    evidenceProfile.addBoolFact("state_readback", readbackOk)
+    evidenceProfile.addTextFact("summary_after", summary)
+    evidenceProfile.addBoolFact("public_api_available", true)
 
-    evidencePresenter.printDemoIdentity("settings")
-    evidencePresenter.printStatusTransition("scaffolded", "runnable")
-    evidencePresenter.printStaticBoolFact("main_declared", true)
-    evidencePresenter.printStaticBoolFact("deterministic_output", true)
-    evidencePresenter.printTextFact("layout", "sectioned_form")
-    evidencePresenter.printTextFact("controls", "toggle:auto_save,select:theme,text:username")
-    evidencePresenter.printTextFact("interaction", "toggle_auto_save,select_theme,update_username,move_focus")
-    evidencePresenter.printTextFact("state_before", before)
-    evidencePresenter.printTextFact("state_after", after)
-    evidencePresenter.printBoolFact("state_readback", readbackOk)
-    evidencePresenter.printTextFact("summary_after", summary)
+    evidencePresenter.printEvidenceProfile(evidenceProfile)
     evidencePresenter.printSharedExecutionProof(apiOutput, panel.componentSession, commitResult, panel.commitHarness, runResult)
-    evidencePresenter.printBoolFact("public_api_available", true)
 
     if (readbackOk) {
         return 0

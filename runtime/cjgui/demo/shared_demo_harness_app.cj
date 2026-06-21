@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitReadbackExpectation}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 import cjgui.demo_support.{CjguiExperimentalDemoServedDemoEvidence}
@@ -136,16 +137,22 @@ main(): Int64 {
     let apiOutput = harness.buildSharedOutput(harness.domainSummary(), stateReadbackOk)
     let commitRoute = harness.commitRouteCatalog.sharedDemoHarnessCommitTodoFlow()
     let commitResult = harness.commitHarness.commitComponentActionRoute(commitRoute, after)
-    let commitReadbackOk = stateReadbackOk &&
-        apiOutput.demoName == "shared_demo_harness" &&
-        apiOutput.beforeState == before &&
-        apiOutput.afterState == after &&
-        apiOutput.actionTrace == "shared_demo_harness.add_todo,shared_demo_harness.complete_todo" &&
-        apiOutput.writeCount == 2 &&
-        apiOutput.domainSummary == harness.domainSummary() &&
-        apiOutput.readbackOk &&
-        apiOutput.summary == "demo=shared_demo_harness;readback=true;writes=2;actions=shared_demo_harness.add_todo,shared_demo_harness.complete_todo;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;summary=harness=shared_demo_harness;served=todo;actions=2;focus=todo_first_item;style=completed_accent" &&
-        harness.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
+    let commitExpectation = CjguiExperimentalDemoCommitReadbackExpectation(
+        before,
+        after,
+        "shared_demo_harness.add_todo,shared_demo_harness.complete_todo",
+        2,
+        harness.domainSummary(),
+        "demo=shared_demo_harness;readback=true;writes=2;actions=shared_demo_harness.add_todo,shared_demo_harness.complete_todo;before=items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list;after=items=1;first=Write shared CJGUI harness;first_done=true;focus=todo_first_item;style=completed_accent;summary=harness=shared_demo_harness;served=todo;actions=2;focus=todo_first_item;style=completed_accent",
+        stateReadbackOk
+    )
+    let commitAssertion = harness.commitHarness.assertCommitReadbackRoute(
+        commitResult,
+        commitRoute,
+        apiOutput,
+        commitExpectation
+    )
+    let commitReadbackOk = commitAssertion.isSatisfied()
     let runResult = harness.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

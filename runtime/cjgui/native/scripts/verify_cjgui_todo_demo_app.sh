@@ -219,7 +219,7 @@ if ! grep -F "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSes
    ! grep -F "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC" >/dev/null 2>&1 || \
-   ! grep -F "commitHarness.resultMatches" "$DEMO_SRC" >/dev/null 2>&1 || \
+   ! grep -F "commitHarness.assertCommitReadbackRoute" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "runResult.runnable" "$DEMO_SRC" >/dev/null 2>&1 || \
    ! grep -F "sharedUiState()" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui todo demo app verification: missing shared output builder consumption" >&2

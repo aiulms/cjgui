@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitReadbackExpectation}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentInteractionEvidence, CjguiExperimentalDemoStateReadbackEvidence}
@@ -200,16 +201,22 @@ main(): Int64 {
     let apiOutput = contract.buildSharedOutput(domainSummary, readbackOk)
     let commitRoute = contract.commitRouteCatalog.aiGeneratedUiSharedContractCommitAcceptRefresh()
     let commitResult = contract.commitHarness.commitComponentActionRoute(commitRoute, after)
-    let commitReadbackOk = readbackOk &&
-        apiOutput.demoName == "ai_generated_ui_shared_contract" &&
-        apiOutput.beforeState == before &&
-        apiOutput.afterState == after &&
-        apiOutput.actionTrace == "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus" &&
-        apiOutput.writeCount == 5 &&
-        apiOutput.domainSummary == domainSummary &&
-        apiOutput.readbackOk &&
-        apiOutput.summary == "demo=ai_generated_ui_shared_contract;readback=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;summary=contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;layout_kind=ai_form_preview;readback=true" &&
-        contract.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
+    let commitExpectation = CjguiExperimentalDemoCommitReadbackExpectation(
+        before,
+        after,
+        "generate_spec,preview_diff,explain_changes,accept_refresh,move_focus",
+        5,
+        domainSummary,
+        "demo=ai_generated_ui_shared_contract;readback=true;writes=5;actions=generate_spec,preview_diff,explain_changes,accept_refresh,move_focus;before=components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card;after=components=4;accepted=true;screen=settings_profile_form;layout=split_detail;style=sage_panel;input=username;focus=save_button;summary=contract=ai_generated_ui_shared_contract;screen=settings_profile_form;components=4;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;layout=single_column->split_detail;style=neutral_wireframe->sage_panel;input=<empty>->username;focus=preview_card->save_button;layout_kind=ai_form_preview;readback=true",
+        readbackOk
+    )
+    let commitAssertion = contract.commitHarness.assertCommitReadbackRoute(
+        commitResult,
+        commitRoute,
+        apiOutput,
+        commitExpectation
+    )
+    let commitReadbackOk = commitAssertion.isSatisfied()
     let runResult = contract.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

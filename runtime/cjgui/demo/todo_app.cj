@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitReadbackExpectation}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 import cjgui.demo_support.{CjguiExperimentalDemoComponentInteractionEvidence}
@@ -161,16 +162,22 @@ main(): Int64 {
     let apiOutput = todos.buildSharedOutput(afterComplete, stateReadbackOk)
     let commitRoute = todos.commitRouteCatalog.todoCommitComplete()
     let commitResult = todos.commitHarness.commitComponentActionRoute(commitRoute, afterComplete)
-    let commitReadbackOk = stateReadbackOk &&
-        apiOutput.demoName == "todo" &&
-        apiOutput.beforeState == before &&
-        apiOutput.afterState == afterComplete &&
-        apiOutput.actionTrace == "todo.add,todo.complete" &&
-        apiOutput.writeCount == 2 &&
-        apiOutput.domainSummary == afterComplete &&
-        apiOutput.readbackOk &&
-        apiOutput.summary == "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true" &&
-        todos.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, afterComplete)
+    let commitExpectation = CjguiExperimentalDemoCommitReadbackExpectation(
+        before,
+        afterComplete,
+        "todo.add,todo.complete",
+        2,
+        afterComplete,
+        "demo=todo;readback=true;writes=2;actions=todo.add,todo.complete;before=items=0;first=<none>;first_done=false;after=items=1;first=Write first CJGUI todo;first_done=true;summary=items=1;first=Write first CJGUI todo;first_done=true",
+        stateReadbackOk
+    )
+    let commitAssertion = todos.commitHarness.assertCommitReadbackRoute(
+        commitResult,
+        commitRoute,
+        apiOutput,
+        commitExpectation
+    )
+    let commitReadbackOk = commitAssertion.isSatisfied()
     let runResult = todos.runHarness.finishCommittedSessionRun(
         "state_writable",
         "runnable",

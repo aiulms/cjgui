@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitReadbackExpectation}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 import cjgui.demo_support.{CjguiExperimentalDemoLayoutEvidence}
@@ -153,16 +154,22 @@ main(): Int64 {
     let apiOutput = generatedUi.buildSharedOutput(generatedUi.domainSummary(), stateReadbackOk)
     let commitRoute = generatedUi.commitRouteCatalog.aiGeneratedUiCommitAcceptRefresh()
     let commitResult = generatedUi.commitHarness.commitComponentActionRoute(commitRoute, after)
-    let commitReadbackOk = stateReadbackOk &&
-        apiOutput.demoName == "ai_generated_ui" &&
-        apiOutput.beforeState == before &&
-        apiOutput.afterState == after &&
-        apiOutput.actionTrace == "ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus" &&
-        apiOutput.writeCount == 4 &&
-        apiOutput.domainSummary == generatedUi.domainSummary() &&
-        apiOutput.readbackOk &&
-        apiOutput.summary == "demo=ai_generated_ui;readback=true;writes=4;actions=ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus;before=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe;after=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel;summary=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;focus=save_button;layout=ai_form_preview;style=sage_panel" &&
-        generatedUi.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
+    let commitExpectation = CjguiExperimentalDemoCommitReadbackExpectation(
+        before,
+        after,
+        "ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus",
+        4,
+        generatedUi.domainSummary(),
+        "demo=ai_generated_ui;readback=true;writes=4;actions=ai_generated_ui.preview_diff,ai_generated_ui.explain_changes,ai_generated_ui.accept_refresh,ai_generated_ui.move_focus;before=components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe;after=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;focus=save_button;style=sage_panel;summary=components=4;accepted=true;screen=settings_profile_form;diff=added_username_field,enabled_save_button;explain=owner accepted generated settings form refresh;focus=save_button;layout=ai_form_preview;style=sage_panel",
+        stateReadbackOk
+    )
+    let commitAssertion = generatedUi.commitHarness.assertCommitReadbackRoute(
+        commitResult,
+        commitRoute,
+        apiOutput,
+        commitExpectation
+    )
+    let commitReadbackOk = commitAssertion.isSatisfied()
     let runResult = generatedUi.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

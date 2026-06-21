@@ -171,8 +171,12 @@ fi
 
 if ! grep -F "public class CjguiExperimentalDemoCommitActionRoute" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoCommitActionRouteCatalog" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoCommitReadbackExpectation" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoCommitReadbackAssertion" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func commitComponentActionRoute" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func resultMatchesRoute" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func assertCommitReadbackRoute" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func isSatisfied" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func componentIdValue" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func actionValue" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func routeValue" "$COMMIT_SESSION_SRC" >/dev/null 2>&1 || \
@@ -318,7 +322,9 @@ owner_local_write_semantic_evidence_count="$(grep -R "evidenceBuilder.addOwnerLo
 component_action_route_usage_count="$(grep -R "componentSession.recordComponentActionRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 component_action_route_catalog_usage_count="$(grep -R "routeCatalog\\." "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 commit_action_route_usage_count="$(grep -R "commitHarness.commitComponentActionRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
-commit_action_route_match_usage_count="$(grep -R "commitHarness.resultMatchesRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+commit_readback_assertion_usage_count="$(grep -R "commitHarness.assertCommitReadbackRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+commit_readback_expectation_usage_count="$(grep -R "CjguiExperimentalDemoCommitReadbackExpectation(" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+commit_action_route_match_direct_usage_count="$({ grep -R "commitHarness.resultMatchesRoute" "$ROOT_DIR/demo" || true; } | wc -l | tr -d ' ')"
 commit_action_route_catalog_usage_count="$(grep -R "commitRouteCatalog\\." "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 if [ "$layout_semantic_evidence_count" -lt 4 ] || \
    [ "$served_semantic_evidence_count" -lt 2 ] || \
@@ -345,9 +351,15 @@ if [ "$component_action_route_catalog_usage_count" -lt 41 ]; then
 fi
 
 if [ "$commit_action_route_usage_count" -lt 10 ] || \
-   [ "$commit_action_route_match_usage_count" -lt 10 ] || \
+   [ "$commit_readback_assertion_usage_count" -lt 10 ] || \
+   [ "$commit_readback_expectation_usage_count" -lt 10 ] || \
    [ "$commit_action_route_catalog_usage_count" -lt 10 ]; then
-  echo "cjgui shared demo run harness verification: commit action route catalog is not shared across expected demos" >&2
+  echo "cjgui shared demo run harness verification: commit readback assertion contract is not shared across expected demos" >&2
+  exit 4
+fi
+
+if [ "$commit_action_route_match_direct_usage_count" -ne 0 ]; then
+  echo "cjgui shared demo run harness verification: demo-local direct commit resultMatchesRoute call remains" >&2
   exit 4
 fi
 
@@ -401,7 +413,8 @@ for demo_src in \
      ! grep -F "commitRouteCatalog" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "componentSession.recordComponentActionRoute" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "commitHarness.commitComponentActionRoute" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "commitHarness.resultMatchesRoute" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "commitHarness.assertCommitReadbackRoute" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "CjguiExperimentalDemoCommitReadbackExpectation" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidenceBuilder.addInteractionEvidence" "$demo_src" >/dev/null 2>&1 || \
      ! grep -E "evidenceBuilder.add(StateReadbackEvidence|OwnerLocalWriteReadbackEvidence)" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "let evidenceSection = evidenceBuilder.buildSection" "$demo_src" >/dev/null 2>&1 || \
@@ -534,12 +547,16 @@ echo "cjgui_shared_demo_component_action_route_catalog=CjguiExperimentalDemoComp
 echo "cjgui_shared_demo_component_action_route_catalog_usage_count=$component_action_route_catalog_usage_count"
 echo "cjgui_shared_demo_commit_action_route_model=CjguiExperimentalDemoCommitActionRoute"
 echo "cjgui_shared_demo_commit_action_route_usage_count=$commit_action_route_usage_count"
-echo "cjgui_shared_demo_commit_action_route_match_usage_count=$commit_action_route_match_usage_count"
+echo "cjgui_shared_demo_commit_readback_expectation=CjguiExperimentalDemoCommitReadbackExpectation"
+echo "cjgui_shared_demo_commit_readback_assertion=CjguiExperimentalDemoCommitReadbackAssertion"
+echo "cjgui_shared_demo_commit_readback_assertion_usage_count=$commit_readback_assertion_usage_count"
+echo "cjgui_shared_demo_commit_readback_expectation_usage_count=$commit_readback_expectation_usage_count"
 echo "cjgui_shared_demo_commit_action_route_catalog=CjguiExperimentalDemoCommitActionRouteCatalog"
 echo "cjgui_shared_demo_commit_action_route_catalog_usage_count=$commit_action_route_catalog_usage_count"
 echo "cjgui_shared_demo_direct_component_action_string_recording_retired=true"
 echo "cjgui_shared_demo_direct_component_action_route_constructor_retired=true"
 echo "cjgui_shared_demo_direct_commit_component_action_string_call_retired=true"
+echo "cjgui_shared_demo_direct_commit_result_matches_route_call_retired=true"
 echo "cjgui_shared_demo_direct_domain_fact_wiring_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"

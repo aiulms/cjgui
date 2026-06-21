@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitReadbackExpectation}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 import cjgui.demo_support.{CjguiExperimentalDemoLayoutEvidence}
@@ -172,16 +173,22 @@ main(): Int64 {
     let apiOutput = thread.buildSharedOutput(summary, stateReadbackOk)
     let commitRoute = thread.commitRouteCatalog.chatCommitThread()
     let commitResult = thread.commitHarness.commitComponentActionRoute(commitRoute, after)
-    let commitReadbackOk = stateReadbackOk &&
-        apiOutput.demoName == "chat" &&
-        apiOutput.beforeState == before &&
-        apiOutput.afterState == after &&
-        apiOutput.actionTrace == "chat.type_message,chat.send_message,chat.append_reply,chat.move_focus" &&
-        apiOutput.writeCount == 4 &&
-        apiOutput.domainSummary == summary &&
-        apiOutput.readbackOk &&
-        apiOutput.summary == "demo=chat;readback=true;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;summary=demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list" &&
-        thread.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
+    let commitExpectation = CjguiExperimentalDemoCommitReadbackExpectation(
+        before,
+        after,
+        "chat.type_message,chat.send_message,chat.append_reply,chat.move_focus",
+        4,
+        summary,
+        "demo=chat;readback=true;writes=4;actions=chat.type_message,chat.send_message,chat.append_reply,chat.move_focus;before=messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer;after=messages=3;last=assistant:Chat demo received;composer=;focus=message_list;summary=demo=chat;layout=threaded_chat;messages=3;last=assistant:Chat demo received;composer=;focus=message_list",
+        stateReadbackOk
+    )
+    let commitAssertion = thread.commitHarness.assertCommitReadbackRoute(
+        commitResult,
+        commitRoute,
+        apiOutput,
+        commitExpectation
+    )
+    let commitReadbackOk = commitAssertion.isSatisfied()
     let runResult = thread.runHarness.finishCommittedSessionRun(
         "not_started",
         "runnable",

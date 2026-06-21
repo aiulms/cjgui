@@ -172,7 +172,7 @@ require_source_line "var itemCount: Int64" "$DEMO_SRC"
 require_source_line "let componentSession: CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "let commitHarness: CjguiExperimentalDemoCommitHarness" "$DEMO_SRC"
 require_source_line "let runHarness: CjguiExperimentalDemoRunHarness" "$DEMO_SRC"
-require_source_line "commitHarness.resultMatches" "$DEMO_SRC"
+require_source_line "commitHarness.assertCommitReadbackRoute" "$DEMO_SRC"
 require_source_line "finishCommittedSessionRun" "$DEMO_SRC"
 require_source_line "runResult.runnable" "$DEMO_SRC"
 if grep -F "func buildRunResult(" "$DEMO_SRC" >/dev/null 2>&1; then

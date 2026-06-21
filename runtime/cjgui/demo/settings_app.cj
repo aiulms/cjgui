@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
+import cjgui.demo_support.{CjguiExperimentalDemoCommitReadbackExpectation}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
 import cjgui.demo_support.{CjguiExperimentalDemoLayoutEvidence, CjguiExperimentalDemoControlsEvidence}
@@ -142,16 +143,22 @@ main(): Int64 {
     let apiOutput = panel.buildSharedOutput(summary, stateReadbackOk)
     let commitRoute = panel.commitRouteCatalog.settingsCommitPreferences()
     let commitResult = panel.commitHarness.commitComponentActionRoute(commitRoute, after)
-    let commitReadbackOk = stateReadbackOk &&
-        apiOutput.demoName == "settings" &&
-        apiOutput.beforeState == before &&
-        apiOutput.afterState == after &&
-        apiOutput.actionTrace == "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus" &&
-        apiOutput.writeCount == 4 &&
-        apiOutput.domainSummary == summary &&
-        apiOutput.readbackOk &&
-        apiOutput.summary == "demo=settings;readback=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;summary=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select" &&
-        panel.commitHarness.resultMatchesRoute(commitResult, commitRoute, before, after)
+    let commitExpectation = CjguiExperimentalDemoCommitReadbackExpectation(
+        before,
+        after,
+        "settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus",
+        4,
+        summary,
+        "demo=settings;readback=true;writes=4;actions=settings.toggle_auto_save,settings.select_theme,settings.update_username,settings.move_focus;before=autosave=false;theme=light;username=owner;focus=username_field;after=autosave=true;theme=dark;username=owner-updated;focus=theme_select;summary=demo=settings;layout=sectioned_form;controls=toggle:auto_save,select:theme,text:username;autosave=true;theme=dark;username=owner-updated;focus=theme_select",
+        stateReadbackOk
+    )
+    let commitAssertion = panel.commitHarness.assertCommitReadbackRoute(
+        commitResult,
+        commitRoute,
+        apiOutput,
+        commitExpectation
+    )
+    let commitReadbackOk = commitAssertion.isSatisfied()
     let runResult = panel.runHarness.finishCommittedSessionRun(
         "scaffolded",
         "runnable",

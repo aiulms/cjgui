@@ -4,6 +4,8 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentInteractionEvidence}
+import cjgui.demo_support.{CjguiExperimentalDemoOwnerLocalWriteReadbackEvidence}
 import std.collection.*
 
 // 中文维护注释：这是独立 Todo demo app，不属于 runtime_renderer_stage* owner 链。
@@ -167,8 +169,10 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui todo demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("todo", "state_writable", "runnable")
-    evidenceBuilder.addInteractionFact("add_todo,complete_todo")
-    evidenceBuilder.addOwnerLocalWriteReadbackFacts(before, afterAdd, afterComplete, readbackOk)
+    evidenceBuilder.addInteractionEvidence(CjguiExperimentalDemoComponentInteractionEvidence("add_todo,complete_todo"))
+    evidenceBuilder.addOwnerLocalWriteReadbackEvidence(
+        CjguiExperimentalDemoOwnerLocalWriteReadbackEvidence(before, afterAdd, afterComplete, readbackOk)
+    )
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

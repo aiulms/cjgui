@@ -103,6 +103,26 @@ public class CjguiExperimentalDemoEvidenceSectionBuilder {
         addReusableComponentFacts(value.reusedDemosValue(), value.componentKindsValue())
     }
 
+    /// 追加组件交互语义 evidence，统一从 typed value 脱水到 interaction fact。
+    public func addInteractionEvidence(value: CjguiExperimentalDemoComponentInteractionEvidence) {
+        addInteractionFact(value.interactionValue())
+    }
+
+    /// 追加状态读回语义 evidence，统一从 typed value 脱水到 state readback fact bundle。
+    public func addStateReadbackEvidence(value: CjguiExperimentalDemoStateReadbackEvidence) {
+        addStateReadbackFacts(value.stateBeforeValue(), value.stateAfterValue(), value.readbackOkValue())
+    }
+
+    /// 追加 owner-local 写入读回语义 evidence，统一从 typed value 脱水到 write readback fact bundle。
+    public func addOwnerLocalWriteReadbackEvidence(value: CjguiExperimentalDemoOwnerLocalWriteReadbackEvidence) {
+        addOwnerLocalWriteReadbackFacts(
+            value.summaryBeforeValue(),
+            value.summaryAfterAddValue(),
+            value.summaryAfterCompleteValue(),
+            value.readbackOkValue()
+        )
+    }
+
     /// Builder 内部 profile fact 规模，供 verifier 防止空壳化。
     public func profileFactCount(): Int64 {
         return profile.staticBoolFactCount() + profile.textFactCount() + profile.boolFactCount()

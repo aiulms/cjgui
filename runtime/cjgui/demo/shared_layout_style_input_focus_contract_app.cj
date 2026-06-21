@@ -4,6 +4,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExp
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentInteractionEvidence, CjguiExperimentalDemoStateReadbackEvidence}
 
 // 中文维护注释：这是独立 shared layout/style/input/focus contract demo app，不属于 runtime_renderer_stage* owner 链。
 // Scope: 验证 shared harness 能表达 layout/style/text input/focus 四类交互合同，并输出 before / after / readback。
@@ -175,8 +176,10 @@ main(): Int64 {
         "not_started",
         "runnable"
     )
-    evidenceBuilder.addInteractionFact("apply_layout,apply_style,type_input,move_focus")
-    evidenceBuilder.addStateReadbackFacts(before, after, outputOk)
+    evidenceBuilder.addInteractionEvidence(
+        CjguiExperimentalDemoComponentInteractionEvidence("apply_layout,apply_style,type_input,move_focus")
+    )
+    evidenceBuilder.addStateReadbackEvidence(CjguiExperimentalDemoStateReadbackEvidence(before, after, outputOk))
 
     let evidenceSection = evidenceBuilder.buildSection(
         apiOutput,

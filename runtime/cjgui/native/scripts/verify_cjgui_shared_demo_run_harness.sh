@@ -17,6 +17,7 @@ EVIDENCE_PROFILE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo
 EVIDENCE_SECTION_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section.cj"
 EVIDENCE_SECTION_BUILDER_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_evidence_section_builder.cj"
 DOMAIN_EVIDENCE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_domain_evidence.cj"
+INTERACTION_STATE_EVIDENCE_SRC="$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_interaction_state_evidence.cj"
 TODO_DEMO_SRC="$ROOT_DIR/demo/todo_app.cj"
 SETTINGS_DEMO_SRC="$ROOT_DIR/demo/settings_app.cj"
 CHAT_DEMO_SRC="$ROOT_DIR/demo/chat_app.cj"
@@ -132,6 +133,11 @@ if [[ ! -f "$DOMAIN_EVIDENCE_SRC" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$INTERACTION_STATE_EVIDENCE_SRC" ]]; then
+  echo "cjgui shared demo run harness verification: missing semantic interaction/state evidence source $INTERACTION_STATE_EVIDENCE_SRC" >&2
+  exit 2
+fi
+
 if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public class CjguiExperimentalDemoRunHarness" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func finishRun" "$RUN_HARNESS_SRC" >/dev/null 2>&1 || \
@@ -227,6 +233,9 @@ if ! grep -F "public class CjguiExperimentalDemoEvidenceSectionBuilder" "$EVIDEN
    ! grep -F "public func addServedDemoEvidence" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addServedDemosEvidence" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addReusableComponentEvidence" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addInteractionEvidence" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addStateReadbackEvidence" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addOwnerLocalWriteReadbackEvidence" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func buildSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidenceProfile" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidenceSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1; then
@@ -249,13 +258,37 @@ if ! grep -F "public class CjguiExperimentalDemoLayoutEvidence" "$DOMAIN_EVIDENC
   exit 3
 fi
 
+if ! grep -F "public class CjguiExperimentalDemoComponentInteractionEvidence" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoStateReadbackEvidence" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoOwnerLocalWriteReadbackEvidence" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func interactionValue" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func stateBeforeValue" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func stateAfterValue" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func readbackOkValue" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func summaryBeforeValue" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func summaryAfterAddValue" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func summaryAfterCompleteValue" "$INTERACTION_STATE_EVIDENCE_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: missing expected semantic interaction/state evidence declarations" >&2
+  exit 3
+fi
+
 layout_semantic_evidence_count="$(grep -R "evidenceBuilder.addLayoutEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 served_semantic_evidence_count="$(grep -R -E "evidenceBuilder.addServedDemo(Evidence|sEvidence)" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 reuse_semantic_evidence_count="$(grep -R "evidenceBuilder.addReusableComponentEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+interaction_semantic_evidence_count="$(grep -R "evidenceBuilder.addInteractionEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+state_readback_semantic_evidence_count="$(grep -R "evidenceBuilder.addStateReadbackEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+owner_local_write_semantic_evidence_count="$(grep -R "evidenceBuilder.addOwnerLocalWriteReadbackEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 if [ "$layout_semantic_evidence_count" -lt 4 ] || \
    [ "$served_semantic_evidence_count" -lt 2 ] || \
    [ "$reuse_semantic_evidence_count" -lt 1 ]; then
   echo "cjgui shared demo run harness verification: semantic domain evidence model is not shared across expected demos" >&2
+  exit 4
+fi
+
+if [ "$interaction_semantic_evidence_count" -lt 10 ] || \
+   [ "$state_readback_semantic_evidence_count" -lt 9 ] || \
+   [ "$owner_local_write_semantic_evidence_count" -lt 1 ]; then
+  echo "cjgui shared demo run harness verification: semantic interaction/state evidence model is not shared across expected demos" >&2
   exit 4
 fi
 
@@ -286,14 +319,17 @@ for demo_src in \
   fi
   if ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "CjguiExperimentalDemoEvidenceSectionBuilder" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -F "evidenceBuilder.addInteractionFact" "$demo_src" >/dev/null 2>&1 || \
-     ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "evidenceBuilder.addInteractionEvidence" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -E "evidenceBuilder.add(StateReadbackEvidence|OwnerLocalWriteReadbackEvidence)" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "let evidenceSection = evidenceBuilder.buildSection" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidencePresenter.printEvidenceSection(evidenceSection)" "$demo_src" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo must use shared evidence section builder in $demo_src" >&2
     exit 4
   fi
-  if grep -F 'evidenceBuilder.addTextFact("interaction"' "$demo_src" >/dev/null 2>&1 || \
+  if grep -F 'evidenceBuilder.addInteractionFact' "$demo_src" >/dev/null 2>&1 || \
+     grep -F 'evidenceBuilder.addStateReadbackFacts' "$demo_src" >/dev/null 2>&1 || \
+     grep -F 'evidenceBuilder.addOwnerLocalWriteReadbackFacts' "$demo_src" >/dev/null 2>&1 || \
+     grep -F 'evidenceBuilder.addTextFact("interaction"' "$demo_src" >/dev/null 2>&1 || \
      grep -F 'evidenceBuilder.addBoolFact("state_readback"' "$demo_src" >/dev/null 2>&1 || \
      grep -F 'evidenceBuilder.addBoolFact("owner_local_write_readback"' "$demo_src" >/dev/null 2>&1; then
     echo "cjgui shared demo run harness verification: demo-local interaction/state readback fact wiring remains in $demo_src" >&2
@@ -404,6 +440,11 @@ echo "cjgui_shared_demo_semantic_layout_evidence_demo_count=$layout_semantic_evi
 echo "cjgui_shared_demo_semantic_served_evidence_demo_count=$served_semantic_evidence_count"
 echo "cjgui_shared_demo_semantic_reuse_evidence_demo_count=$reuse_semantic_evidence_count"
 echo "cjgui_shared_demo_string_domain_fact_preset_calls_retired=true"
+echo "cjgui_shared_demo_semantic_interaction_state_evidence_model=CjguiExperimentalDemoInteractionStateEvidence"
+echo "cjgui_shared_demo_semantic_interaction_evidence_demo_count=$interaction_semantic_evidence_count"
+echo "cjgui_shared_demo_semantic_state_readback_evidence_demo_count=$state_readback_semantic_evidence_count"
+echo "cjgui_shared_demo_semantic_owner_local_write_evidence_demo_count=$owner_local_write_semantic_evidence_count"
+echo "cjgui_shared_demo_string_interaction_state_fact_preset_calls_retired=true"
 echo "cjgui_shared_demo_direct_domain_fact_wiring_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"

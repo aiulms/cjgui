@@ -4,6 +4,8 @@
 
 本轮选择 A：`recovery decision only`，确认 production drawable lifetime 暂停，并把 visible-window ownership / bounded run loop / display backing / cleanup co-ownership 拆成独立后续分支。
 
+2026-06-21 复核补记：在 `production drawable texture lifetime first slice` 再次停在 A 路线后，本结论仍成立。现有 isolated visible-window / no-present `nextDrawable` evidence 只能证明 feasibility，不能证明 production runtime 拥有 visible-window harness、bounded run loop、display-backed layer 与 drawable cleanup co-ownership；因此本轮不打开 production drawable acquire / classify / release，也不把 color attachment、encoder、present 或 render 解释为可用。
+
 唯一后续入口：
 
 `P1 internal Renderer visible-window production harness preflight decision`
@@ -82,6 +84,8 @@ No-submit branch 已足够作为非显示链 milestone。
 ## 本轮不是 runtime truth
 
 本轮只做 recovery decision，不新增 runtime owner，不新增 native C ABI，不新增 probe，不修改 package config。
+
+本轮 CodeLattice 可用，但只提供 static-only project exploration：`runtime/cjgui` compact explore 返回 single-project / `sourceFileCount=1110` / `symbolCount=0` / stale baseline，且未执行 runtime、build 或 probe；一次 workspace-level ask 还被 router 误导到 `reference_repos` Rust 项目。因此 CodeLattice 只作为图谱覆盖缺口记录，不作为安全证明。本轮仍以已封账 manifests、README / tracker / plans index / topic manifest reachability、Markdown link scan、public / protected path scan 与 GitNexus detect-changes 作为 docs-only 兜底证据。
 
 本轮不授予：
 

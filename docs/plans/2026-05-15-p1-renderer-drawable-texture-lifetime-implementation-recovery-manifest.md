@@ -6,6 +6,8 @@
 
 本清单固定 production drawable texture lifetime first slice 再次停止后的恢复结论：不继续硬推 drawable acquire / classify / release，而是把 visible-window production harness 拆为独立后续分支。
 
+2026-06-21 复核补记：本轮重新核对 first-slice manifest / closure / next-boundary、visible-window probe、drawable no-present acquisition、no-submit branch milestone、color attachment recovery、Metal device binding 与 `CAMetalLayer` runtime attachment manifests 后，清单状态不变。当前仍不新增 runtime owner、production native C ABI、probe 或 package route；唯一后续入口继续固定为 `P1 internal Renderer visible-window production harness preflight decision`。
+
 ## 路线选择
 
 选择 A：
@@ -65,6 +67,8 @@ Production drawable texture lifetime 仍缺：
 ## 本轮未打开事项
 
 本清单不是 runtime truth，也不授予 production drawable acquisition、color attachment、encoder、present、render、GPU submission、renderer state write、backend-ready truth 或 public API 权限。Isolated probe 只保留为 feasibility evidence，不得被解释为 production runtime ownership。
+
+CodeLattice 本轮可调用但仅给出 static-only / low-confidence 项目级证据；`runtime/cjgui` compact explore 未执行 runtime、build 或 probe，也未形成可替代 source reading 的 symbol proof。后续若进入 visible-window production harness，应继续用 source reading、focused probes、bounded cleanup evidence、protected path scan 与 GitNexus detect-changes 兜底。
 
 - 未打开 production drawable acquire / classify / release。
 - 未打开 render pass descriptor color attachment。

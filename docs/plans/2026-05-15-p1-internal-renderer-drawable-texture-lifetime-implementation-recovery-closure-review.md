@@ -39,14 +39,15 @@
 
 ## 验证记录
 
-- 2026-06-20 本轮复核补记：重新读取 production drawable texture lifetime first slice、旧 drawable lifetime planning / recovery、drawable no-present、visible-window probe、no-submit milestone、color attachment recovery、Metal device binding 与 `CAMetalLayer` runtime attachment manifests 后，确认本阶段仍选择 A：暂停 production drawable lifetime implementation，并把 visible-window production harness 拆成独立后续分支。
-- `git diff --check`：2026-06-20 复跑通过。
-- Markdown absolute link check：2026-06-20 复跑检查项目 docs / README 范围内 5008 个 Markdown 文件、19009 个项目绝对链接，missing target 数量为 `0`。
-- Reachability：README、tracker、plans README、runtime README、DESIGN_INTENT_INDEX 与三个 topic manifest 均能检索到本轮 recovery decision / closure / manifest 或 `visible-window production harness preflight` 接续。
-- 中文标题与正文抽查：2026-06-20 复跑确认本轮 decision / closure / manifest 主标题均为中文，正文抽查包含中文说明，并且均包含“设计意图出口自检”。
-- public declaration scan：2026-06-20 复跑 `git diff -- '*.cj' | rg '^\+.*public'` 无匹配；本轮没有新增 `.cj` 或 public API。
-- protected path scan：2026-06-20 复跑确认 `runtime/cjgui/src/runtime_state.cj` 仍为 `10065` 行；`runtime_state.cj`、`runtime/cjgui/cjpm.toml`、production native bridge 与 smoke native files 在本阶段没有 diff。
-- GitNexus `detect-changes --repo cangjie-live-codelattice --scope unstaged`：2026-06-20 复跑返回 `No changes detected.`。本轮仍以文档读取、链接 / reachability / public / protected scans 作为 docs-only 兜底。
+- 2026-06-21 本轮复核补记：CodeLattice 可调用，但本阶段只获得 static-only / low-confidence 项目级 evidence；`runtime/cjgui` compact explore 返回 single-project、`sourceFileCount=1110`、`symbolCount=0`、stale baseline，且没有执行 runtime/build/probe。本阶段为 docs-only recovery，没有执行 per-symbol implementation impact，也没有新增 runtime/native/script；复核仍以 first-slice manifest / closure / next-boundary、visible-window probe、drawable no-present acquisition、no-submit milestone、color attachment recovery、Metal device binding 与 `CAMetalLayer` runtime attachment manifests 为证据，并用 Markdown / reachability / public / protected scans 与 GitNexus detect-changes 兜底。
+- 2026-06-21 本轮复核补记：重新读取 production drawable texture lifetime first slice、旧 drawable lifetime planning / recovery、drawable no-present、visible-window probe、no-submit milestone、color attachment recovery、Metal device binding 与 `CAMetalLayer` runtime attachment manifests 后，确认本阶段仍选择 A：暂停 production drawable lifetime implementation，并把 visible-window production harness 拆成独立后续分支。
+- `git diff --check`：2026-06-21 复跑通过。
+- Markdown absolute link check：2026-06-21 本轮复跑检查项目 docs / README 范围内 5017 个 Markdown 文件、19065 个项目绝对链接，missing target 数量为 `0`。
+- Reachability：2026-06-21 复跑确认 README、tracker、plans README、runtime README、DESIGN_INTENT_INDEX 与三个 topic manifest 均能 4/4 检索到本轮 recovery decision / closure / manifest 与完整后续入口 `P1 internal Renderer visible-window production harness preflight decision`。
+- 中文标题与正文抽查：2026-06-21 复跑确认本轮 decision / closure / manifest 主标题均为中文，正文抽查包含中文说明，并且均包含“设计意图出口自检”。
+- public declaration scan：2026-06-21 复跑本 docs-only stage 的 tracked `.cj` diff scan，`public class|func|interface|struct|enum|let|var` 新增数量为 `0`；本轮没有新增 `.cj` 或 public API。
+- protected path scan：2026-06-21 复跑确认 `runtime/cjgui/src/runtime_state.cj` 仍为 `10065` 行；`runtime_state.cj`、`runtime/cjgui/cjpm.toml`、production native bridge 与 smoke native files 在本阶段没有 diff。
+- GitNexus `detect-changes --repo cangjie-live-codelattice --scope unstaged`：2026-06-21 复跑返回 changed files `7`、changed symbols `2`、affected processes `0`、risk `low`；CLI 输出同样为 `Changes: 7 files, 2 symbols` / `Affected processes: 0` / `Risk level: low`。图谱只识别 README 标题级 symbols，本轮仍以文档读取、链接 / reachability / public / protected scans 作为 docs-only 兜底。
 - 本轮未运行 `cjpm build` / smoke：本阶段为 docs-only recovery；没有修改 `.cj`、native 或 script。
 - `git diff --check`：2026-06-17 复跑通过。
 - Markdown absolute link check：2026-06-17 复跑检查项目 docs / README 范围内 2025 个 Markdown 文件、17308 个项目绝对链接，missing target 数量为 `0`。

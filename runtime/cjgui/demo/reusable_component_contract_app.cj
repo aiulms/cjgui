@@ -220,8 +220,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui reusable component contract app")
     let outputOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("reusable_component_contract", "not_started", "runnable")
-    evidenceBuilder.addTextFact("reused_demos", "todo,file_browser,ai_generated_ui")
-    evidenceBuilder.addTextFact("component_kinds", "task_row,file_row,ai_form")
+    evidenceBuilder.addReusableComponentFacts("todo,file_browser,ai_generated_ui", "task_row,file_row,ai_form")
     evidenceBuilder.addInteractionFact("register_file_row,register_ai_form,todo_add,file_select,ai_accept")
     evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 

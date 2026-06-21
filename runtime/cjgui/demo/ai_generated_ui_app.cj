@@ -163,7 +163,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui ai generated ui demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("ai_generated_ui", "not_started", "runnable")
-    evidenceBuilder.addTextFact("layout", "ai_form_preview")
+    evidenceBuilder.addLayoutFact("ai_form_preview")
     evidenceBuilder.addInteractionFact("generate_spec,preview_diff,explain_changes,accept_refresh,move_focus")
     evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 

@@ -180,7 +180,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui file browser demo app")
     let readbackOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("file_browser", "not_started", "runnable")
-    evidenceBuilder.addTextFact("layout", "tree_detail_split")
+    evidenceBuilder.addLayoutFact("tree_detail_split")
     evidenceBuilder.addInteractionFact("expand_folder,filter_entries,select_file,refresh_detail,move_focus")
     evidenceBuilder.addStateReadbackFacts(before, after, readbackOk)
 

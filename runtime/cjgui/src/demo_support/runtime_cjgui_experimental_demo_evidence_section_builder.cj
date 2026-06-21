@@ -51,6 +51,33 @@ public class CjguiExperimentalDemoEvidenceSectionBuilder {
         addBoolFact("owner_local_write_readback", readbackOk)
     }
 
+    /// 追加布局事实，统一 layout evidence key。
+    public func addLayoutFact(value: String) {
+        addTextFact("layout", value)
+    }
+
+    /// 追加控件事实，统一 controls evidence key。
+    public func addControlsFact(value: String) {
+        addTextFact("controls", value)
+    }
+
+    /// 追加单 demo harness 服务事实，统一 served_demo evidence key。
+    public func addServedDemoFact(value: String) {
+        addTextFact("served_demo", value)
+    }
+
+    /// 追加多 demo harness 服务事实束，保持 served_demos / served_demo_count 输出顺序。
+    public func addServedDemosFacts(servedDemos: String, servedDemoCount: String) {
+        addTextFact("served_demos", servedDemos)
+        addTextFact("served_demo_count", servedDemoCount)
+    }
+
+    /// 追加可复用组件合同事实束，保持 reused_demos / component_kinds 输出顺序。
+    public func addReusableComponentFacts(reusedDemos: String, componentKinds: String) {
+        addTextFact("reused_demos", reusedDemos)
+        addTextFact("component_kinds", componentKinds)
+    }
+
     /// Builder 内部 profile fact 规模，供 verifier 防止空壳化。
     public func profileFactCount(): Int64 {
         return profile.staticBoolFactCount() + profile.textFactCount() + profile.boolFactCount()

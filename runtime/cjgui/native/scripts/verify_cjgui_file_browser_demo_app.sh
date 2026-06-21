@@ -155,6 +155,11 @@ require_source_line "public func addBoolFact" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func addInteractionFact" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func addStateReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func addOwnerLocalWriteReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addLayoutFact" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addControlsFact" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addServedDemoFact" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addServedDemosFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addReusableComponentFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func buildSection" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "package cjgui_file_browser_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
@@ -182,6 +187,7 @@ require_source_line "buildSharedOutput" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidencePresenter" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidenceSectionBuilder" "$DEMO_SRC"
 require_source_line 'CjguiExperimentalDemoEvidenceSectionBuilder("file_browser", "not_started", "runnable")' "$DEMO_SRC"
+require_source_line 'evidenceBuilder.addLayoutFact("tree_detail_split")' "$DEMO_SRC"
 require_source_line "evidenceBuilder.addInteractionFact" "$DEMO_SRC"
 if ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui demo verification: demo must use shared evidence fact presets in $DEMO_SRC" >&2
@@ -194,6 +200,11 @@ if grep -F 'evidenceBuilder.addTextFact("interaction"' "$DEMO_SRC" >/dev/null 2>
    grep -F 'evidenceBuilder.addBoolFact("state_readback"' "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F 'evidenceBuilder.addBoolFact("owner_local_write_readback"' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui demo verification: demo-local interaction/state readback fact wiring remains in $DEMO_SRC" >&2
+  exit 4
+fi
+
+if grep -F 'evidenceBuilder.addTextFact("layout"' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui file browser demo app verification: demo-local layout fact wiring remains" >&2
   exit 4
 fi
 

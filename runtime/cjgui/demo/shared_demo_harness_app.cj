@@ -152,7 +152,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui shared demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("shared_demo_harness", "not_started", "runnable")
-    evidenceBuilder.addTextFact("served_demo", "todo")
+    evidenceBuilder.addServedDemoFact("todo")
     evidenceBuilder.addInteractionFact("run_todo_add_complete")
     evidenceBuilder.addStateReadbackFacts(before, after, outputOk)
 

@@ -154,6 +154,11 @@ require_source_line "public func addBoolFact" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func addInteractionFact" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func addStateReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func addOwnerLocalWriteReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addLayoutFact" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addControlsFact" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addServedDemoFact" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addServedDemosFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
+require_source_line "public func addReusableComponentFacts" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "public func buildSection" "$EVIDENCE_SECTION_BUILDER_SRC"
 require_source_line "package cjgui_shared_multi_demo_harness_demo" "$DEMO_SRC"
 require_source_line "import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}" "$DEMO_SRC"
@@ -184,7 +189,7 @@ require_source_line "CjguiExperimentalDemoComponentActionSession" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidencePresenter" "$DEMO_SRC"
 require_source_line "CjguiExperimentalDemoEvidenceSectionBuilder" "$DEMO_SRC"
 require_source_line 'CjguiExperimentalDemoEvidenceSectionBuilder("shared_multi_demo_harness", "not_started", "runnable")' "$DEMO_SRC"
-require_source_line 'evidenceBuilder.addTextFact("served_demos", "todo,file_browser")' "$DEMO_SRC"
+require_source_line 'evidenceBuilder.addServedDemosFacts("todo,file_browser", "2")' "$DEMO_SRC"
 require_source_line "evidenceBuilder.addInteractionFact" "$DEMO_SRC"
 if ! grep -E "evidenceBuilder.add(StateReadbackFacts|OwnerLocalWriteReadbackFacts)" "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui demo verification: demo must use shared evidence fact presets in $DEMO_SRC" >&2
@@ -197,6 +202,12 @@ if grep -F 'evidenceBuilder.addTextFact("interaction"' "$DEMO_SRC" >/dev/null 2>
    grep -F 'evidenceBuilder.addBoolFact("state_readback"' "$DEMO_SRC" >/dev/null 2>&1 || \
    grep -F 'evidenceBuilder.addBoolFact("owner_local_write_readback"' "$DEMO_SRC" >/dev/null 2>&1; then
   echo "cjgui demo verification: demo-local interaction/state readback fact wiring remains in $DEMO_SRC" >&2
+  exit 4
+fi
+
+if grep -F 'evidenceBuilder.addTextFact("served_demos"' "$DEMO_SRC" >/dev/null 2>&1 || \
+   grep -F 'evidenceBuilder.addTextFact("served_demo_count"' "$DEMO_SRC" >/dev/null 2>&1; then
+  echo "cjgui shared multi-demo harness app verification: demo-local served_demos fact wiring remains" >&2
   exit 4
 fi
 

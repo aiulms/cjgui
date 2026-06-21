@@ -211,11 +211,31 @@ if ! grep -F "public class CjguiExperimentalDemoEvidenceSectionBuilder" "$EVIDEN
    ! grep -F "public func addInteractionFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addStateReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func addOwnerLocalWriteReadbackFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addLayoutFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addControlsFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addServedDemoFact" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addServedDemosFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
+   ! grep -F "public func addReusableComponentFacts" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "public func buildSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidenceProfile" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1 || \
    ! grep -F "CjguiExperimentalDemoEvidenceSection" "$EVIDENCE_SECTION_BUILDER_SRC" >/dev/null 2>&1; then
   echo "cjgui shared demo run harness verification: missing expected evidence section builder declarations" >&2
   exit 3
+fi
+
+layout_fact_preset_count="$(grep -R "evidenceBuilder.addLayoutFact" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+served_fact_preset_count="$(grep -R -E "evidenceBuilder.addServedDemo(Fact|sFacts)" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+reuse_fact_preset_count="$(grep -R "evidenceBuilder.addReusableComponentFacts" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+if [ "$layout_fact_preset_count" -lt 4 ] || \
+   [ "$served_fact_preset_count" -lt 2 ] || \
+   [ "$reuse_fact_preset_count" -lt 1 ]; then
+  echo "cjgui shared demo run harness verification: domain evidence fact presets are not shared across expected demos" >&2
+  exit 4
+fi
+
+if grep -R -E 'evidenceBuilder\.addTextFact\("(layout|controls|served_demo|served_demos|served_demo_count|reused_demos|component_kinds)"' "$ROOT_DIR/demo" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: demo-local domain fact wiring remains" >&2
+  exit 4
 fi
 
 for demo_src in \
@@ -347,6 +367,11 @@ echo "cjgui_shared_demo_evidence_fact_preset_demo_count=10"
 echo "cjgui_shared_demo_interaction_fact_preset_shared=true"
 echo "cjgui_shared_demo_state_readback_fact_bundle_shared=true"
 echo "cjgui_shared_demo_direct_interaction_state_readback_fact_calls_retired=true"
+echo "cjgui_shared_demo_domain_fact_presets=CjguiExperimentalDemoEvidenceSectionBuilder"
+echo "cjgui_shared_demo_domain_fact_preset_layout_demo_count=$layout_fact_preset_count"
+echo "cjgui_shared_demo_domain_fact_preset_served_demo_count=$served_fact_preset_count"
+echo "cjgui_shared_demo_domain_fact_preset_reuse_demo_count=$reuse_fact_preset_count"
+echo "cjgui_shared_demo_direct_domain_fact_wiring_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"
 echo "cjgui_shared_demo_run_renderer_state_write=false"

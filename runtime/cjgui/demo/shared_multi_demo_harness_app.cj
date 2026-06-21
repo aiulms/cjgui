@@ -225,8 +225,7 @@ main(): Int64 {
     let evidencePresenter = CjguiExperimentalDemoEvidencePresenter("cjgui shared multi-demo harness app")
     let outputOk = commitReadbackOk && runResult.runnable
     let evidenceBuilder = CjguiExperimentalDemoEvidenceSectionBuilder("shared_multi_demo_harness", "not_started", "runnable")
-    evidenceBuilder.addTextFact("served_demos", "todo,file_browser")
-    evidenceBuilder.addTextFact("served_demo_count", "2")
+    evidenceBuilder.addServedDemosFacts("todo,file_browser", "2")
     evidenceBuilder.addInteractionFact("run_todo_add_complete,run_file_browser_select")
     evidenceBuilder.addStateReadbackFacts(before, after, outputOk)
 

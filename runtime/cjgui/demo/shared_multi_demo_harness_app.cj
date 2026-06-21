@@ -1,7 +1,7 @@
 package cjgui_shared_multi_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -26,6 +26,7 @@ class SharedMultiDemoHarnessState {
     var fileDetailTitle: String
     var fileFilterText: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     var focusRoute: String
@@ -41,6 +42,7 @@ class SharedMultiDemoHarnessState {
             "",
             "todo_input"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "shared_multi_demo_harness",
             "todo_items=0;todo_first=<none>;todo_done=false;file_selected=/workspace:folder;file_filter=;focus=todo_input;style=neutral_list"
@@ -93,7 +95,7 @@ class SharedMultiDemoHarnessState {
         appendFocus("todo_first_item")
         appendStyle("todo_active_list")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("todo_input", "shared_multi_demo_harness.todo_add"),
+            routeCatalog.sharedMultiDemoHarnessTodoAdd(),
             businessState()
         )
     }
@@ -104,7 +106,7 @@ class SharedMultiDemoHarnessState {
         appendFocus("todo_first_item")
         appendStyle("todo_completed_accent")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("todo_item", "shared_multi_demo_harness.todo_complete"),
+            routeCatalog.sharedMultiDemoHarnessTodoComplete(),
             businessState()
         )
     }
@@ -115,7 +117,7 @@ class SharedMultiDemoHarnessState {
         fileExpandedPath = "/workspace/src"
         appendFocus("file_tree")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("file_tree", "shared_multi_demo_harness.file_expand"),
+            routeCatalog.sharedMultiDemoHarnessFileExpand(),
             businessState()
         )
     }
@@ -126,7 +128,7 @@ class SharedMultiDemoHarnessState {
         componentSession.typeInput(query)
         appendFocus("file_filter")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("file_filter", "shared_multi_demo_harness.file_filter"),
+            routeCatalog.sharedMultiDemoHarnessFileFilter(),
             businessState()
         )
     }
@@ -139,7 +141,7 @@ class SharedMultiDemoHarnessState {
         appendFocus("file_detail_pane")
         appendStyle("split_detail_accent")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("file_row", "shared_multi_demo_harness.file_select"),
+            routeCatalog.sharedMultiDemoHarnessFileSelect(),
             businessState()
         )
     }
@@ -148,7 +150,7 @@ class SharedMultiDemoHarnessState {
         appendAction()
         appendFocus("file_detail_pane")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("file_detail_pane", "shared_multi_demo_harness.file_focus"),
+            routeCatalog.sharedMultiDemoHarnessFileFocus(),
             businessState()
         )
     }

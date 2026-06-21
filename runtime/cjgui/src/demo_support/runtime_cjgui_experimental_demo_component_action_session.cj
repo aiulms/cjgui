@@ -32,6 +32,221 @@ public class CjguiExperimentalDemoComponentActionRoute {
     }
 }
 
+/// Experimental demo support API：集中维护 runnable demos 复用的 component/action route spelling。
+public class CjguiExperimentalDemoComponentActionRouteCatalog {
+    /// Catalog 无状态；实例化是为了让 demo 以 shared primitive 形式复用命名 route。
+    public init() {}
+
+    func route(componentId: String, action: String): CjguiExperimentalDemoComponentActionRoute {
+        return CjguiExperimentalDemoComponentActionRoute(componentId, action)
+    }
+
+    /// Todo demo 的新增条目 route。
+    public func todoAdd(): CjguiExperimentalDemoComponentActionRoute {
+        return route("todo_input", "todo.add")
+    }
+
+    /// Todo demo 的完成条目 route。
+    public func todoComplete(): CjguiExperimentalDemoComponentActionRoute {
+        return route("todo_item", "todo.complete")
+    }
+
+    /// Settings demo 的 auto-save toggle route。
+    public func settingsToggleAutoSave(): CjguiExperimentalDemoComponentActionRoute {
+        return route("auto_save_toggle", "settings.toggle_auto_save")
+    }
+
+    /// Settings demo 的 theme selection route。
+    public func settingsSelectTheme(): CjguiExperimentalDemoComponentActionRoute {
+        return route("theme_select", "settings.select_theme")
+    }
+
+    /// Settings demo 的 username update route。
+    public func settingsUpdateUsername(): CjguiExperimentalDemoComponentActionRoute {
+        return route("username_field", "settings.update_username")
+    }
+
+    /// Settings demo 的 focus movement route，保留动态 target 但固定 action spelling。
+    public func settingsMoveFocus(target: String): CjguiExperimentalDemoComponentActionRoute {
+        return route(target, "settings.move_focus")
+    }
+
+    /// Chat demo 的 composer typing route。
+    public func chatTypeMessage(): CjguiExperimentalDemoComponentActionRoute {
+        return route("composer", "chat.type_message")
+    }
+
+    /// Chat demo 的 assistant reply append route。
+    public func chatAppendReply(): CjguiExperimentalDemoComponentActionRoute {
+        return route("message_list", "chat.append_reply")
+    }
+
+    /// Chat demo 的 send message route。
+    public func chatSendMessage(): CjguiExperimentalDemoComponentActionRoute {
+        return route("send_button", "chat.send_message")
+    }
+
+    /// Chat demo 的 focus movement route，保留动态 target 但固定 action spelling。
+    public func chatMoveFocus(target: String): CjguiExperimentalDemoComponentActionRoute {
+        return route(target, "chat.move_focus")
+    }
+
+    /// FileBrowser demo 的 folder expansion route。
+    public func fileBrowserExpandFolder(): CjguiExperimentalDemoComponentActionRoute {
+        return route("folder_tree", "file_browser.expand_folder")
+    }
+
+    /// FileBrowser demo 的 filter route。
+    public func fileBrowserFilterEntries(): CjguiExperimentalDemoComponentActionRoute {
+        return route("tree_filter", "file_browser.filter_entries")
+    }
+
+    /// FileBrowser demo 的 file selection route。
+    public func fileBrowserSelectFile(): CjguiExperimentalDemoComponentActionRoute {
+        return route("file_row", "file_browser.select_file")
+    }
+
+    /// FileBrowser demo 的 detail refresh route。
+    public func fileBrowserRefreshDetail(): CjguiExperimentalDemoComponentActionRoute {
+        return route("detail_pane", "file_browser.refresh_detail")
+    }
+
+    /// FileBrowser demo 的 focus movement route，保留动态 target 但固定 action spelling。
+    public func fileBrowserMoveFocus(target: String): CjguiExperimentalDemoComponentActionRoute {
+        return route(target, "file_browser.move_focus")
+    }
+
+    /// AI-generated UI demo 的 diff preview route。
+    public func aiGeneratedUiPreviewDiff(): CjguiExperimentalDemoComponentActionRoute {
+        return route("diff_panel", "ai_generated_ui.preview_diff")
+    }
+
+    /// AI-generated UI demo 的 explanation route。
+    public func aiGeneratedUiExplainChanges(): CjguiExperimentalDemoComponentActionRoute {
+        return route("explain_panel", "ai_generated_ui.explain_changes")
+    }
+
+    /// AI-generated UI demo 的 accept refresh route。
+    public func aiGeneratedUiAcceptRefresh(): CjguiExperimentalDemoComponentActionRoute {
+        return route("generated_form", "ai_generated_ui.accept_refresh")
+    }
+
+    /// AI-generated UI demo 的 focus movement route，保留动态 target 但固定 action spelling。
+    public func aiGeneratedUiMoveFocus(target: String): CjguiExperimentalDemoComponentActionRoute {
+        return route(target, "ai_generated_ui.move_focus")
+    }
+
+    /// Shared demo harness 的 add todo route。
+    public func sharedDemoHarnessAddTodo(): CjguiExperimentalDemoComponentActionRoute {
+        return route("todo_input", "shared_demo_harness.add_todo")
+    }
+
+    /// Shared demo harness 的 complete todo route。
+    public func sharedDemoHarnessCompleteTodo(): CjguiExperimentalDemoComponentActionRoute {
+        return route("todo_item", "shared_demo_harness.complete_todo")
+    }
+
+    /// Shared multi-demo harness 的 todo add route。
+    public func sharedMultiDemoHarnessTodoAdd(): CjguiExperimentalDemoComponentActionRoute {
+        return route("todo_input", "shared_multi_demo_harness.todo_add")
+    }
+
+    /// Shared multi-demo harness 的 todo complete route。
+    public func sharedMultiDemoHarnessTodoComplete(): CjguiExperimentalDemoComponentActionRoute {
+        return route("todo_item", "shared_multi_demo_harness.todo_complete")
+    }
+
+    /// Shared multi-demo harness 的 file expand route。
+    public func sharedMultiDemoHarnessFileExpand(): CjguiExperimentalDemoComponentActionRoute {
+        return route("file_tree", "shared_multi_demo_harness.file_expand")
+    }
+
+    /// Shared multi-demo harness 的 file filter route。
+    public func sharedMultiDemoHarnessFileFilter(): CjguiExperimentalDemoComponentActionRoute {
+        return route("file_filter", "shared_multi_demo_harness.file_filter")
+    }
+
+    /// Shared multi-demo harness 的 file select route。
+    public func sharedMultiDemoHarnessFileSelect(): CjguiExperimentalDemoComponentActionRoute {
+        return route("file_row", "shared_multi_demo_harness.file_select")
+    }
+
+    /// Shared multi-demo harness 的 file focus route。
+    public func sharedMultiDemoHarnessFileFocus(): CjguiExperimentalDemoComponentActionRoute {
+        return route("file_detail_pane", "shared_multi_demo_harness.file_focus")
+    }
+
+    /// Shared layout/style/input/focus contract 的 layout route。
+    public func sharedLayoutStyleInputFocusApplyLayout(): CjguiExperimentalDemoComponentActionRoute {
+        return route("layout_contract", "shared_layout_style_input_focus.apply_layout")
+    }
+
+    /// Shared layout/style/input/focus contract 的 style route。
+    public func sharedLayoutStyleInputFocusApplyStyle(): CjguiExperimentalDemoComponentActionRoute {
+        return route("style_contract", "shared_layout_style_input_focus.apply_style")
+    }
+
+    /// Shared layout/style/input/focus contract 的 text input route。
+    public func sharedLayoutStyleInputFocusTypeInput(): CjguiExperimentalDemoComponentActionRoute {
+        return route("text_input_contract", "shared_layout_style_input_focus.type_input")
+    }
+
+    /// Shared layout/style/input/focus contract 的 focus route。
+    public func sharedLayoutStyleInputFocusMoveFocus(): CjguiExperimentalDemoComponentActionRoute {
+        return route("focus_contract", "shared_layout_style_input_focus.move_focus")
+    }
+
+    /// AI-generated UI shared contract 的 spec generation route。
+    public func aiGeneratedUiSharedContractGenerateSpec(): CjguiExperimentalDemoComponentActionRoute {
+        return route("spec_generator", "generate_spec")
+    }
+
+    /// AI-generated UI shared contract 的 diff preview route。
+    public func aiGeneratedUiSharedContractPreviewDiff(): CjguiExperimentalDemoComponentActionRoute {
+        return route("diff_panel", "preview_diff")
+    }
+
+    /// AI-generated UI shared contract 的 explanation route。
+    public func aiGeneratedUiSharedContractExplainChanges(): CjguiExperimentalDemoComponentActionRoute {
+        return route("explain_panel", "explain_changes")
+    }
+
+    /// AI-generated UI shared contract 的 accept refresh route。
+    public func aiGeneratedUiSharedContractAcceptRefresh(): CjguiExperimentalDemoComponentActionRoute {
+        return route("generated_form", "accept_refresh")
+    }
+
+    /// AI-generated UI shared contract 的 focus movement route。
+    public func aiGeneratedUiSharedContractMoveFocus(): CjguiExperimentalDemoComponentActionRoute {
+        return route("save_button", "move_focus")
+    }
+
+    /// Reusable component contract 的 file row registration route。
+    public func reusableComponentContractRegisterFileRow(): CjguiExperimentalDemoComponentActionRoute {
+        return route("file_row", "register_file_row")
+    }
+
+    /// Reusable component contract 的 AI form registration route。
+    public func reusableComponentContractRegisterAiForm(): CjguiExperimentalDemoComponentActionRoute {
+        return route("ai_form", "register_ai_form")
+    }
+
+    /// Reusable component contract 的 Todo add route。
+    public func reusableComponentContractTodoAdd(): CjguiExperimentalDemoComponentActionRoute {
+        return route("task_row", "todo_add")
+    }
+
+    /// Reusable component contract 的 file select route。
+    public func reusableComponentContractFileSelect(): CjguiExperimentalDemoComponentActionRoute {
+        return route("file_row", "file_select")
+    }
+
+    /// Reusable component contract 的 AI accept route。
+    public func reusableComponentContractAiAccept(): CjguiExperimentalDemoComponentActionRoute {
+        return route("ai_form", "ai_accept")
+    }
+}
+
 /// Experimental demo support API：把 component action、UI state core 与 output builder 组合成可复用 demo-host session。
 public class CjguiExperimentalDemoComponentActionSession {
     /// Demo 名称保持 public，方便 verifier/readback 证明哪个 app 消费了 shared session。

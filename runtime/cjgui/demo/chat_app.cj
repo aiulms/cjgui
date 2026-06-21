@@ -1,7 +1,7 @@
 package cjgui_chat_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -26,6 +26,7 @@ class ChatMessage {
 class ChatThreadState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var messages = ArrayList<ChatMessage>()
@@ -42,6 +43,7 @@ class ChatThreadState {
             "",
             "composer"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "chat",
             "messages=1;last=assistant:Welcome to CJGUI;composer=;focus=composer"
@@ -56,12 +58,12 @@ class ChatThreadState {
         componentSession.typeInput(text)
         componentSession.moveFocus("composer")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("composer", "chat.type_message"),
+            routeCatalog.chatTypeMessage(),
             businessState()
         )
     }
 
-    func appendMessage(sender: String, text: String, action: String) {
+    func appendMessage(sender: String, text: String) {
         messages.add(ChatMessage(sender, text))
         lastSender = sender
         lastText = text
@@ -71,7 +73,7 @@ class ChatThreadState {
             componentSession.applyStyle("owner_message")
         }
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("message_list", action),
+            routeCatalog.chatAppendReply(),
             businessState()
         )
     }
@@ -87,7 +89,7 @@ class ChatThreadState {
         componentSession.applyStyle("owner_message")
         componentSession.typeInput("")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("send_button", "chat.send_message"),
+            routeCatalog.chatSendMessage(),
             businessState()
         )
         return true
@@ -96,7 +98,7 @@ class ChatThreadState {
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute(target, "chat.move_focus"),
+            routeCatalog.chatMoveFocus(target),
             businessState()
         )
     }
@@ -149,7 +151,7 @@ main(): Int64 {
     let before = thread.businessState()
     thread.updateComposer("Ship Chat demo")
     let sent = thread.sendComposer("owner")
-    thread.appendMessage("assistant", "Chat demo received", "chat.append_reply")
+    thread.appendMessage("assistant", "Chat demo received")
     thread.moveFocus("message_list")
     let after = thread.businessState()
     let summary = thread.summary()

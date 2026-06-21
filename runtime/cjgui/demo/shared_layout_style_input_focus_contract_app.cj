@@ -1,7 +1,7 @@
 package cjgui_shared_layout_style_input_focus_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -14,6 +14,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentInteractionEvidence, Cj
 class SharedLayoutStyleInputFocusContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
 
@@ -27,6 +28,7 @@ class SharedLayoutStyleInputFocusContractState {
             "<empty>",
             "todo_input"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "shared_layout_style_input_focus_contract",
             "layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
@@ -37,7 +39,7 @@ class SharedLayoutStyleInputFocusContractState {
     func applyLayout(kind: String) {
         componentSession.applyLayout(kind)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("layout_contract", "shared_layout_style_input_focus.apply_layout"),
+            routeCatalog.sharedLayoutStyleInputFocusApplyLayout(),
             businessState()
         )
     }
@@ -45,7 +47,7 @@ class SharedLayoutStyleInputFocusContractState {
     func applyStyle(token: String) {
         componentSession.applyStyle(token)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("style_contract", "shared_layout_style_input_focus.apply_style"),
+            routeCatalog.sharedLayoutStyleInputFocusApplyStyle(),
             businessState()
         )
     }
@@ -53,10 +55,7 @@ class SharedLayoutStyleInputFocusContractState {
     func typeInput(text: String) {
         componentSession.typeInput(text)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute(
-                "text_input_contract",
-                "shared_layout_style_input_focus.type_input"
-            ),
+            routeCatalog.sharedLayoutStyleInputFocusTypeInput(),
             businessState()
         )
     }
@@ -64,7 +63,7 @@ class SharedLayoutStyleInputFocusContractState {
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("focus_contract", "shared_layout_style_input_focus.move_focus"),
+            routeCatalog.sharedLayoutStyleInputFocusMoveFocus(),
             businessState()
         )
     }

@@ -1,7 +1,7 @@
 package cjgui_todo_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -29,6 +29,7 @@ class TodoList {
     private var nextId: Int64 = 1
     private var items = ArrayList<TodoDemoItem>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
 
@@ -41,6 +42,7 @@ class TodoList {
             "",
             "todo_input"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "todo",
             "items=0;first=<none>;first_done=false"
@@ -56,7 +58,7 @@ class TodoList {
         componentSession.moveFocus("todo_first_item")
         componentSession.applyStyle("active_list")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("todo_input", "todo.add"),
+            routeCatalog.todoAdd(),
             summary()
         )
         return id
@@ -69,7 +71,7 @@ class TodoList {
                 componentSession.moveFocus("todo_first_item")
                 componentSession.applyStyle("completed_accent")
                 componentSession.recordComponentActionRoute(
-                    CjguiExperimentalDemoComponentActionRoute("todo_item", "todo.complete"),
+                    routeCatalog.todoComplete(),
                     summary()
                 )
                 return true

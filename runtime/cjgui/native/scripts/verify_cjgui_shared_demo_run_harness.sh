@@ -149,10 +149,16 @@ if ! grep -F "public class CjguiExperimentalDemoRunResult" "$RUN_HARNESS_SRC" >/
 fi
 
 if ! grep -F "public class CjguiExperimentalDemoComponentActionRoute" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public class CjguiExperimentalDemoComponentActionRouteCatalog" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
    ! grep -F "public func recordComponentActionRoute" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
    ! grep -F "public func componentIdValue" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
    ! grep -F "public func actionValue" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
-   ! grep -F "public func routeValue" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1; then
+   ! grep -F "public func routeValue" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func todoAdd" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func settingsMoveFocus" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func chatAppendReply" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func fileBrowserSelectFile" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1 || \
+   ! grep -F "public func aiGeneratedUiAcceptRefresh" "$ROOT_DIR/src/demo_support/runtime_cjgui_experimental_demo_component_action_session.cj" >/dev/null 2>&1; then
   echo "cjgui shared demo run harness verification: missing component action route value model declarations" >&2
   exit 3
 fi
@@ -288,6 +294,7 @@ interaction_semantic_evidence_count="$(grep -R "evidenceBuilder.addInteractionEv
 state_readback_semantic_evidence_count="$(grep -R "evidenceBuilder.addStateReadbackEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 owner_local_write_semantic_evidence_count="$(grep -R "evidenceBuilder.addOwnerLocalWriteReadbackEvidence" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 component_action_route_usage_count="$(grep -R "componentSession.recordComponentActionRoute" "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
+component_action_route_catalog_usage_count="$(grep -R "routeCatalog\\." "$ROOT_DIR/demo" | wc -l | tr -d ' ')"
 if [ "$layout_semantic_evidence_count" -lt 4 ] || \
    [ "$served_semantic_evidence_count" -lt 2 ] || \
    [ "$reuse_semantic_evidence_count" -lt 1 ]; then
@@ -307,8 +314,18 @@ if [ "$component_action_route_usage_count" -lt 41 ]; then
   exit 4
 fi
 
+if [ "$component_action_route_catalog_usage_count" -lt 41 ]; then
+  echo "cjgui shared demo run harness verification: component action route catalog is not shared across expected demos" >&2
+  exit 4
+fi
+
 if grep -R "componentSession.recordComponentAction(" "$ROOT_DIR/demo" >/dev/null 2>&1; then
   echo "cjgui shared demo run harness verification: demo-local direct component/action string recording remains" >&2
+  exit 4
+fi
+
+if grep -R "CjguiExperimentalDemoComponentActionRoute(" "$ROOT_DIR/demo" >/dev/null 2>&1; then
+  echo "cjgui shared demo run harness verification: demo-local component action route constructor remains" >&2
   exit 4
 fi
 
@@ -340,6 +357,8 @@ for demo_src in \
   if ! grep -F "CjguiExperimentalDemoEvidencePresenter" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "CjguiExperimentalDemoEvidenceSectionBuilder" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "CjguiExperimentalDemoComponentActionRoute" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "CjguiExperimentalDemoComponentActionRouteCatalog" "$demo_src" >/dev/null 2>&1 || \
+     ! grep -F "routeCatalog" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "componentSession.recordComponentActionRoute" "$demo_src" >/dev/null 2>&1 || \
      ! grep -F "evidenceBuilder.addInteractionEvidence" "$demo_src" >/dev/null 2>&1 || \
      ! grep -E "evidenceBuilder.add(StateReadbackEvidence|OwnerLocalWriteReadbackEvidence)" "$demo_src" >/dev/null 2>&1 || \
@@ -469,7 +488,10 @@ echo "cjgui_shared_demo_semantic_owner_local_write_evidence_demo_count=$owner_lo
 echo "cjgui_shared_demo_string_interaction_state_fact_preset_calls_retired=true"
 echo "cjgui_shared_demo_component_action_route_model=CjguiExperimentalDemoComponentActionRoute"
 echo "cjgui_shared_demo_component_action_route_usage_count=$component_action_route_usage_count"
+echo "cjgui_shared_demo_component_action_route_catalog=CjguiExperimentalDemoComponentActionRouteCatalog"
+echo "cjgui_shared_demo_component_action_route_catalog_usage_count=$component_action_route_catalog_usage_count"
 echo "cjgui_shared_demo_direct_component_action_string_recording_retired=true"
+echo "cjgui_shared_demo_direct_component_action_route_constructor_retired=true"
 echo "cjgui_shared_demo_direct_domain_fact_wiring_retired=true"
 echo "cjgui_shared_demo_direct_reporter_wiring_retired=true"
 echo "cjgui_shared_demo_run_runtime_state_write=false"

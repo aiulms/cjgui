@@ -1,7 +1,7 @@
 package cjgui_reusable_component_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -15,6 +15,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentInteractionEvidence, Cj
 class ReusableComponentContractState {
     let contractName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     var componentCount: Int64
@@ -35,6 +36,7 @@ class ReusableComponentContractState {
             "<empty>",
             "todo_input"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "reusable_component_contract",
             "components=1;demos=todo;todo=<empty>;file=<none>;ai=<none>;layout=single_column;style=neutral_list;input=<empty>;focus=todo_input"
@@ -59,7 +61,7 @@ class ReusableComponentContractState {
     func attachFileBrowserRow() {
         appendComponent("file_row", "file_browser")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("file_row", "register_file_row"),
+            routeCatalog.reusableComponentContractRegisterFileRow(),
             businessState()
         )
     }
@@ -67,7 +69,7 @@ class ReusableComponentContractState {
     func attachAiGeneratedForm() {
         appendComponent("ai_form", "ai_generated_ui")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("ai_form", "register_ai_form"),
+            routeCatalog.reusableComponentContractRegisterAiForm(),
             businessState()
         )
     }
@@ -79,7 +81,7 @@ class ReusableComponentContractState {
         componentSession.typeInput(title)
         componentSession.moveFocus("todo_first_item")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("task_row", "todo_add"),
+            routeCatalog.reusableComponentContractTodoAdd(),
             businessState()
         )
     }
@@ -91,7 +93,7 @@ class ReusableComponentContractState {
         componentSession.typeInput("filter:src")
         componentSession.moveFocus("file_detail_pane")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("file_row", "file_select"),
+            routeCatalog.reusableComponentContractFileSelect(),
             businessState()
         )
     }
@@ -103,7 +105,7 @@ class ReusableComponentContractState {
         componentSession.typeInput("filter:src,username")
         componentSession.moveFocus("save_button")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("ai_form", "ai_accept"),
+            routeCatalog.reusableComponentContractAiAccept(),
             businessState()
         )
     }

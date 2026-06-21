@@ -1,7 +1,7 @@
 package cjgui_ai_generated_ui_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -16,6 +16,7 @@ import std.collection.*
 class AiGeneratedUiState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var componentIds = ArrayList<String>()
@@ -34,6 +35,7 @@ class AiGeneratedUiState {
             "<empty>",
             "preview_card"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "ai_generated_ui",
             "components=2;accepted=false;screen=draft_settings_form;diff=pending_review;focus=preview_card;style=neutral_wireframe"
@@ -51,7 +53,7 @@ class AiGeneratedUiState {
         diffSummary = summary
         componentSession.moveFocus("diff_panel")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("diff_panel", "ai_generated_ui.preview_diff"),
+            routeCatalog.aiGeneratedUiPreviewDiff(),
             businessState()
         )
     }
@@ -60,7 +62,7 @@ class AiGeneratedUiState {
         explainText = text
         componentSession.moveFocus("explain_panel")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("explain_panel", "ai_generated_ui.explain_changes"),
+            routeCatalog.aiGeneratedUiExplainChanges(),
             businessState()
         )
     }
@@ -73,7 +75,7 @@ class AiGeneratedUiState {
         componentIds.add("save_button")
         componentSession.moveFocus("generated_form")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("generated_form", "ai_generated_ui.accept_refresh"),
+            routeCatalog.aiGeneratedUiAcceptRefresh(),
             businessState()
         )
     }
@@ -81,7 +83,7 @@ class AiGeneratedUiState {
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute(target, "ai_generated_ui.move_focus"),
+            routeCatalog.aiGeneratedUiMoveFocus(target),
             businessState()
         )
     }

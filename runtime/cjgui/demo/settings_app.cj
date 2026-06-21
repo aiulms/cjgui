@@ -1,7 +1,7 @@
 package cjgui_settings_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -15,6 +15,7 @@ import cjgui.demo_support.{CjguiExperimentalDemoComponentInteractionEvidence, Cj
 class SettingsPanelState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     let controlsSummary: String
@@ -32,6 +33,7 @@ class SettingsPanelState {
             "owner",
             "username_field"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "settings",
             "autosave=false;theme=light;username=owner;focus=username_field"
@@ -46,7 +48,7 @@ class SettingsPanelState {
     func toggleAutoSave() {
         autoSaveEnabled = !autoSaveEnabled
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("auto_save_toggle", "settings.toggle_auto_save"),
+            routeCatalog.settingsToggleAutoSave(),
             businessState()
         )
     }
@@ -55,7 +57,7 @@ class SettingsPanelState {
         selectedTheme = theme
         componentSession.applyStyle("theme_${theme}")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("theme_select", "settings.select_theme"),
+            routeCatalog.settingsSelectTheme(),
             businessState()
         )
     }
@@ -64,7 +66,7 @@ class SettingsPanelState {
         usernameValue = username
         componentSession.typeInput(username)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("username_field", "settings.update_username"),
+            routeCatalog.settingsUpdateUsername(),
             businessState()
         )
     }
@@ -72,7 +74,7 @@ class SettingsPanelState {
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute(target, "settings.move_focus"),
+            routeCatalog.settingsMoveFocus(target),
             businessState()
         )
     }

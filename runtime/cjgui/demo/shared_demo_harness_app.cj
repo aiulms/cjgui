@@ -1,7 +1,7 @@
 package cjgui_shared_demo_harness_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -18,6 +18,7 @@ class SharedDemoHarnessState {
     let servedDemo: String
     private var actions = ArrayList<String>()
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     var itemCount: Int64
@@ -35,6 +36,7 @@ class SharedDemoHarnessState {
             "",
             "todo_input"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "shared_demo_harness",
             "items=0;first=<none>;first_done=false;focus=todo_input;style=neutral_list"
@@ -54,7 +56,7 @@ class SharedDemoHarnessState {
         componentSession.moveFocus("todo_first_item")
         componentSession.applyStyle("active_list")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("todo_input", "shared_demo_harness.add_todo"),
+            routeCatalog.sharedDemoHarnessAddTodo(),
             businessState()
         )
     }
@@ -65,7 +67,7 @@ class SharedDemoHarnessState {
         componentSession.moveFocus("todo_first_item")
         componentSession.applyStyle("completed_accent")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("todo_item", "shared_demo_harness.complete_todo"),
+            routeCatalog.sharedDemoHarnessCompleteTodo(),
             businessState()
         )
     }

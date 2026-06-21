@@ -1,7 +1,7 @@
 package cjgui_ai_generated_ui_shared_contract_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -16,6 +16,7 @@ class AiGeneratedUiSharedContractState {
     let contractName: String
     let layoutKind: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var componentIds = ArrayList<String>()
@@ -35,6 +36,7 @@ class AiGeneratedUiSharedContractState {
             "<empty>",
             "preview_card"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "ai_generated_ui_shared_contract",
             "components=2;accepted=false;screen=draft_settings_form;layout=single_column;style=neutral_wireframe;input=<empty>;focus=preview_card"
@@ -50,7 +52,7 @@ class AiGeneratedUiSharedContractState {
 
     func generateSpec() {
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("spec_generator", "generate_spec"),
+            routeCatalog.aiGeneratedUiSharedContractGenerateSpec(),
             businessState()
         )
     }
@@ -59,7 +61,7 @@ class AiGeneratedUiSharedContractState {
         diffSummary = summary
         componentSession.moveFocus("diff_panel")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("diff_panel", "preview_diff"),
+            routeCatalog.aiGeneratedUiSharedContractPreviewDiff(),
             businessState()
         )
     }
@@ -68,7 +70,7 @@ class AiGeneratedUiSharedContractState {
         explainText = text
         componentSession.moveFocus("explain_panel")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("explain_panel", "explain_changes"),
+            routeCatalog.aiGeneratedUiSharedContractExplainChanges(),
             businessState()
         )
     }
@@ -83,7 +85,7 @@ class AiGeneratedUiSharedContractState {
         componentSession.typeInput("username")
         componentSession.moveFocus("generated_form")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("generated_form", "accept_refresh"),
+            routeCatalog.aiGeneratedUiSharedContractAcceptRefresh(),
             businessState()
         )
     }
@@ -91,7 +93,7 @@ class AiGeneratedUiSharedContractState {
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("save_button", "move_focus"),
+            routeCatalog.aiGeneratedUiSharedContractMoveFocus(),
             businessState()
         )
     }

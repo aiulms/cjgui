@@ -1,7 +1,7 @@
 package cjgui_file_browser_demo
 
 import cjgui.demo_support.{CjguiExperimentalDemoComponentActionSession, CjguiExperimentalDemoOutput}
-import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRoute}
+import cjgui.demo_support.{CjguiExperimentalDemoComponentActionRouteCatalog}
 import cjgui.demo_support.{CjguiExperimentalDemoCommitHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoRunHarness}
 import cjgui.demo_support.{CjguiExperimentalDemoEvidencePresenter, CjguiExperimentalDemoEvidenceSectionBuilder}
@@ -28,6 +28,7 @@ class FileBrowserEntry {
 class FileBrowserState {
     let demoName: String
     let componentSession: CjguiExperimentalDemoComponentActionSession
+    let routeCatalog: CjguiExperimentalDemoComponentActionRouteCatalog
     let commitHarness: CjguiExperimentalDemoCommitHarness
     let runHarness: CjguiExperimentalDemoRunHarness
     private var entries = ArrayList<FileBrowserEntry>()
@@ -47,6 +48,7 @@ class FileBrowserState {
             "",
             "tree"
         )
+        this.routeCatalog = CjguiExperimentalDemoComponentActionRouteCatalog()
         this.commitHarness = CjguiExperimentalDemoCommitHarness(
             "file_browser",
             "items=3;expanded=/workspace;selected=/workspace:folder;detail=workspace;filter=;focus=tree"
@@ -67,7 +69,7 @@ class FileBrowserState {
         componentSession.applyStyle("folder_expanded")
         componentSession.moveFocus("tree")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("folder_tree", "file_browser.expand_folder"),
+            routeCatalog.fileBrowserExpandFolder(),
             businessState()
         )
     }
@@ -77,7 +79,7 @@ class FileBrowserState {
         componentSession.applyStyle("filter_active")
         componentSession.moveFocus("tree_filter")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("tree_filter", "file_browser.filter_entries"),
+            routeCatalog.fileBrowserFilterEntries(),
             businessState()
         )
     }
@@ -88,7 +90,7 @@ class FileBrowserState {
         componentSession.applyStyle("file_selected")
         componentSession.moveFocus("tree")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("file_row", "file_browser.select_file"),
+            routeCatalog.fileBrowserSelectFile(),
             businessState()
         )
     }
@@ -99,7 +101,7 @@ class FileBrowserState {
         componentSession.applyStyle("detail_ready")
         componentSession.moveFocus("detail_pane")
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute("detail_pane", "file_browser.refresh_detail"),
+            routeCatalog.fileBrowserRefreshDetail(),
             businessState()
         )
     }
@@ -107,7 +109,7 @@ class FileBrowserState {
     func moveFocus(target: String) {
         componentSession.moveFocus(target)
         componentSession.recordComponentActionRoute(
-            CjguiExperimentalDemoComponentActionRoute(target, "file_browser.move_focus"),
+            routeCatalog.fileBrowserMoveFocus(target),
             businessState()
         )
     }

@@ -1,5 +1,10 @@
 # CJGUI 最小运行时 skeleton
 
+> **当前活跃方向**：四周内在真实 AppKit/Metal 窗口中运行 Todo demo。
+> stage 145–892 已冻结并退出活跃源码树。
+> 详见 [ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md) 和
+> [归档清单](../../docs/archive/cjgui-stage-145-892-manifest.md)。
+
 日期：2026-04-26
 
 状态：minimal package skeleton / internal lifecycle boundary surface

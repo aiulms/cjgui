@@ -1,0 +1,15 @@
+[package]
+cjc-version = "1.1.3"
+name = "adaptive_layout_public_consumer"
+version = "0.0.0"
+output-type = "executable"
+src-dir = "src"
+link-option = "-framework AppKit -framework Metal -framework MetalKit -framework QuartzCore -lobjc -headerpad_max_install_names"
+
+[dependencies]
+cjgui = { path = "${CJGUI_ROOT}" }
+cjgui_shared_operation_core = { path = "../../shared_operation_core" }
+
+[ffi.c]
+cjgui_internal_renderer = { path = "./.cjgui/native/lib" }
+cjgui_macos_application_launcher = { path = "./.cjgui/native/lib" }

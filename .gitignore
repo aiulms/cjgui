@@ -35,6 +35,14 @@ obj/
 *.exe
 *.app/
 
+# CJGUI local framework-consumption/build products.  Native source lives in
+# `runtime/cjgui/native/`; the nested `native/lib/` folders and `.cjgui/`
+# mirrors contain generated object archives, launchers and fingerprints.
+__pycache__/
+runtime/cjgui/**/.cjgui/
+runtime/cjgui/**/native/lib/
+runtime/cjgui/independent_consumer_tmp_20260913/
+
 # External repository mirrors and reference checkouts.
 # Keep these managed by their own Git repos unless we deliberately add submodules.
 reference_repos/

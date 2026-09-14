@@ -1,0 +1,4 @@
+target/
+native/lib/
+__pycache__/
+*.pyc

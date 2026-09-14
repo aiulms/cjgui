@@ -1,5 +1,8 @@
 # GUI Framework Pitfalls Intelligence
 
+> 2026-09-12 接续说明：本文件的工程教训继续有效，原日期和分节保留供追溯。下文 `Current Guardrail`、`Future Watchpoint` 中引用旧 opening、execution card、docs-only preflight 或禁止真实窗口/渲染/输入/public 实验的语句是历史治理状态，不控制当前开发。当前授权与规则以 AGENTS.md 和用户已下发阶段为准。指导 AI 在相关阶段按需读工程风险与源码，把适用教训及已有落点/欠项带入阶段提示词；不要求执行 AI 全篇考古或新增审批。
+> 当前语义：已有授权允许操作屏外对象，可见范围不等于权限范围；真正风险是越权或绕过业务条件。文末关于停留在 internal summary 的历史判断不适用，当前要交付真实框架行为，保留必要工程边界。
+
 日期：2026-04-28
 
 性质：research sidecar / governance review / architecture risk radar

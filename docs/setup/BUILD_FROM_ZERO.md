@@ -1,6 +1,6 @@
 # 从零构建手册
 
-最后更新：2026-04-25
+最后更新：2026-09-13
 
 ## 1. 文档定位
 
@@ -19,15 +19,17 @@
 当前验证环境：
 
 - macOS arm64
-- Cangjie Compiler `1.1.0`
+- Cangjie Compiler `1.1.3 (cjnative)`
 - 目标：`aarch64-apple-darwin`
-- 兼容 SDK：`/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk`
+- 默认 SDK：`/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk`（本机为 26.5）
+- 保留对照 SDK：`/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk`
 - Homebrew libffi：`/opt/homebrew/opt/libffi`
 
 注意：
 
 - 不要修改系统 `MacOSX.sdk` symlink。
-- 当前默认 `MacOSX26.4.sdk` 会导致仓颉 1.1.0 链接最小程序失败。
+- 在 1.1.3 且不设置 `SDKROOT`/`CJ_GUI_SDKROOT` 时，hello、C FFI、AppKit/Metal bridge 与
+  CJGUI normal bundle 已在本机默认 SDK 上复验。15.4 是可显式选择的回退对照，不再是默认值。
 
 ## 3. 前置依赖
 
@@ -39,9 +41,11 @@
 xcode-select -p
 ```
 
-确认兼容 SDK 存在：
+确认当前默认 SDK；若需要复现旧工具链或作对照，再确认 15.4 SDK：
 
 ```bash
+xcrun --sdk macosx --show-sdk-path
+xcrun --sdk macosx --show-sdk-version
 ls /Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
 ```
 
@@ -50,13 +54,13 @@ ls /Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
 当前项目使用：
 
 ```bash
-/Users/jiangxuanyang/cangjie-toolchains/cangjie
+/Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3
 ```
 
 每次新 shell 先执行：
 
 ```bash
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh
+source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
 ```
 
 验证：
@@ -91,9 +95,8 @@ export PKG_CONFIG_PATH="/opt/homebrew/opt/libffi/lib/pkgconfig:$PKG_CONFIG_PATH"
 ## 4. 统一环境变量
 
 ```bash
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh
-export CJ_GUI_SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
-export SDKROOT="$CJ_GUI_SDKROOT"
+unset SDKROOT CJ_GUI_SDKROOT
+source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
 ```
 
 ## 5. 验证 hello
@@ -110,7 +113,7 @@ main(): Int64 {
 编译：
 
 ```bash
-cjc hello.cj --sysroot "$CJ_GUI_SDKROOT" -o hello
+cjc hello.cj -o hello
 ./hello
 ```
 
@@ -175,15 +178,24 @@ Cangjie: cjgui_app_run returned 0
 
 ## 8. 常见失败
 
-### 8.1 `libSystem.tbd is incompatible with arm64`
+### 8.1 `libSystem.tbd is incompatible with arm64`（旧 1.1.0 对照）
 
 原因：
 
-- 使用了默认 `MacOSX26.4.sdk`。
+- 使用旧 1.1.0 工具链与当时的默认 26.x SDK。1.1.3 的当前默认 SDK 验收见本章开头，
+  不能把这条历史故障当作新工具链失败。
 
 解决：
 
 ```bash
+export CJ_GUI_SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
+export SDKROOT="$CJ_GUI_SDKROOT"
+```
+
+如确有旧工具链兼容需求，可在该进程显式回退：
+
+```bash
+source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh
 export CJ_GUI_SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
 export SDKROOT="$CJ_GUI_SDKROOT"
 ```
@@ -197,7 +209,7 @@ export SDKROOT="$CJ_GUI_SDKROOT"
 解决：
 
 ```bash
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh
+source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
 ```
 
 ### 8.3 GUI 自动截图失败

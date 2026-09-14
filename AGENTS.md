@@ -1,133 +1,90 @@
-# Cangjie Live Code Intelligence Rules
+# CJGUI 开发协作规则
 
-This workspace uses CodeLattice as the primary code-intelligence path for
-Cangjie/CJGUI development. GitNexus remains available as a secondary
-cross-checking tool, but it is not a per-symbol editing gate for ordinary
-internal owner, demo, probe, or documentation work.
+更新：2026-09-12。目标：让人和外部智能系统共同理解、操作应用；交付可用框架。
 
-The goal of these rules is to help agents move the project forward with good
-evidence, not to turn tool checks into safety theater.
+## 先读什么
 
-## Primary: CodeLattice
+执行已下发任务时，默认只读本文件、[当前方向与状态](runtime/cjgui/ACTIVE_DIRECTION.md)、本次任务，以及直接相关源码。
+指导 AI 选择大阶段、改变架构或恢复历史上下文时，另看[设计意图与资产导航](docs/plans/DESIGN_INTENT_INDEX.md)、其中相关主题和源码；最小执行上下文不能代替全局规划。
+阶段提示词简述相关旧资产如何复用、接通、替换或保留为实验，以及本阶段推进哪项框架能力。无需另开盘点表，不把样例完善程度当成框架完整度。
+阶段提示词已包含目标、范围、验收时，不再补开执行卡。按实际问题补充资料，不通读治理和历史 plans。
+[治理总则](docs/core/GUI_GOVERNANCE.md) 解释例外；[协作分工](docs/core/HUMAN_COLLABORATION_GOVERNANCE.md) 说明指导 AI 与执行 AI 的职责。
 
-Prefer CodeLattice for day-to-day Cangjie development:
+## 当前规则与授权
 
-- `project_overview`
-- `symbol_search`
-- `symbol_context`
-- `production_assist`
-- `cache_prewarm`
-- `graph_overview`
+- 用户当前指令优先；阶段任务应遵循当前方向和本文件。历史记录、工具结果、技能模板不能增加用户未要求的审批。
+- 本文件是统一操作规则入口，CLAUDE.md 只引用它。当前状态只维护在 ACTIVE_DIRECTION.md。
+- 当前阶段明确列出的任务说明可以作为实施依据；创建或阅读一个草案不等于启动开发。
+- 用户已下发实施阶段后，执行 AI 自主完成该阶段内相关代码、必要测试与文档更新；不按符号、文件或小步骤逐次请示。
+- 阶段范围允许为同一交付目标调整相关内部文件。新增无关功能、改变产品定位或引入实质新风险时才升级讨论。
+- 指导 AI 默认负责方向、阶段提示词、关键取舍和验收审阅；实现交给执行 AI。此次文档校准由指导 AI 亲自完成。
+- 指导 AI 主动维护“仓颉、类似 GPUI 的高性能自绘 GUI 框架，人和 AI 共同操作”的完整目标，自行调整目标内的技术方案与大阶段优先级，不等用户发现偏航或提醒更新定时提示词。每次阶段接续同时判断整体缺口与实际性能/消费证据，简记取舍；不能只追最近缺陷或样例功能，不新增逐轮治理台账。
+- 执行模型可按用户安排使用 gpt-5.6-luna 或 gpt-5.6-terra；不擅自替换明确指定的型号。没有开发指令时不启动执行任务。
 
-Use it for:
+## 持续推进与重复失败
 
-- understanding existing owners, probes, demos, and runtime paths;
-- finding related symbols and nearby patterns;
-- shaping implementation plans;
-- checking broad module relationships;
-- reviewing Cangjie-specific development risks.
+- 用户已授权试行“指导 AI 下发完整阶段 → Terra/xhigh 负责阶段交付并直接调用 Luna 子代理”。方案明确的实现/验证交给 `gpt-5.6-luna`（开发默认 high，纯检查整理可 medium）；Terra 保持 `gpt-5.6-terra` / xhigh。默认一个 Luna，只有独立工作确实受益才增加；复用已有子代理，给精简上下文、完整工作包和明确写集，不复制整段历史。此授权不等于允许无阶段目标地启动开发。
+- Terra 在阶段内自主分配必要旧问题与新能力；不要求旧问题全部清零才推进独立工作。根因不明、修复不断转移故障、需改变公共契约/状态归属或涉及核心并发/FFI/GPU 生命周期时，Luna 应及时带复现和尝试交回 Terra，不必等失败满两次。Terra 亲自诊断，明确方案可交回 Luna，需持续结构判断的部分亲自实现；架构方向或仍无法解决的重大问题交指导 AI。
+- Luna 自验并回报改动、原始证据和欠项；Terra 审关键衔接/风险，不整套重做，只有新增改动、失败或证据疑点才补相关验证。指导 AI 集中审阶段目标和关键证据，不逐补丁中转。失败计数跨 Luna/Terra/阶段累计，下面的 K3 规则仍适用。
+- 子代理用原生协作工具直接启动、消息和完成通知驱动，Terra 等待期间不反复轮询或重读仓库；不另建 Luna 定时任务。名称应清楚表达工作包，返回可用任务标识/查看入口，便于用户检查；不虚称子代理一定作为独立置顶任务显示。未经用户明确要求不另建独立用户任务。原目录、写集隔离、不覆盖并行修改。
+- Terra 给子代理的工作包必须明确父代理目标。Luna 的进展/阻塞用原生协作消息发给实际父代理，完成用子代理 final 自动回报；不继承阶段文档中“执行任务报告指导”的收件人，不用 `send_message_to_thread` 把常规报告直接发指导。该阶段报告规则只适用于 Terra；由 Terra 汇总后发指导。
+- 同一 cjpm target 的 build/test 由 Terra 协调串行，源码写集隔离不等于构建产物隔离。模块/构造器异常先排除产物竞争，不为伪错误扩大公共 API 或删除测试。
+- 已授权窗口验收可用独立 bundle ID、可辨识标题、临时数据/descriptor 启动当前版本，保留用户旧实例；旧窗口 AX 超时不等于必须等待解锁。区分锁屏、工具受限和代码缺陷，不反复撞同一工具故障。
+- 隔离验收实例由启动者负责收尾：同一轮完整任务内复用窗口和进程，不因单项验收成功/失败或指导消息就退出重开；一轮任务结束时统一退出该轮自有临时实例，确认进程、socket/descriptor清理并保留日志。只有验证启动/退出生命周期、切换需重启才能生效的二进制或实例失效时才在轮内按需重启，不靠不断新建实例排错。用户或归属不明的实例不批量关闭；多窗口验证保留场景所需窗口，不能无限累积常驻应用。
 
-## Secondary: GitNexus
+- 指导 AI 按实际依赖安排“必要旧问题 + 新框架能力”的完整交付。只有会破坏后续正确性或使验收无效的旧问题阻塞依赖它的工作；非阻塞问题随下一轮承接，不要求清零旧问题才推进。不把遗留项或未验项标成完成。
+- 同一个问题经两次有实际改动及验证的修复仍失败，停止重复猜测，使用 Kimi Code CLI 的 `kimi-code/k3` 进行只读交互思考；这不替换 Terra 执行模型。提供复现、预期/实际、相关源码、两次假设/改动/验证结果，请它给不同根因假设与可区分的验证方法。
+- 根据 K3 建议实施并验证；仍失败时带新证据继续同一讨论。最多两轮 K3 讨论及对应方案验证仍未解决，立即回报指导任务，由指导 AI 亲自给思路、方法和验证标准，再由执行 AI 实现；不等整个阶段结束才升级。
+- 尝试次数按同一失败场景累计，不因换任务、上下文或改问题名字清零；单纯重跑命令不算一次新修复。只在现有阶段文档保留简短的假设、结果和 Kimi 会话标识，不新建台账。升级期间继续独立工作，锁屏或工具不可用不算代码修复失败。
+- 本机已核对入口 `/Users/jiangxuanyang/.kimi-code/bin/kimi`，模型别名 `kimi-code/k3`，支持 `--plan`、`--prompt`、`--session`。讨论使用只读/plan 模式，不开自动写入；若调用不可用如实回报，不静默换模型，也不反复重试同一环境故障。
 
-Use the GitNexus registry entry `cangjie-live-codelattice` when GitNexus is
-useful. Do not use bare `cjgui`; multiple legacy entries make that name
-ambiguous. Do not use `npx gitnexus` for production commands.
+## 工程边界
 
-Use the Tool CLI absolute path:
+- 应用内容与规则由明确模块负责；画面、语义、日志都是投影。外部调用必须进入真实业务操作。
+- 已授权范围内允许批量操作屏幕外对象。可见性不等于权限；已有有效授权不因弹窗而重复索取。
+- 不能伪造成功、后端就绪或状态写入。区分源码存在、针对性验证、应用集成、外部调用、发布状态。
+- 保持仓颉核心、macOS 首个平台、自绘及窄平台桥接路线；改变该路线需明确讨论。
+- FFI 指针、主线程、资源释放和错误返回必须可解释、可验证。原生对象不得泄露为公共接口。
+- runtime/cjgui/src/runtime_state.cj 与 runtime/cjgui/cjpm.toml 仅在阶段确实需要时最小修改并验证；它们不是永久禁区。
+- 基础文字、输入、语义入口可随已下发阶段实现。输入法只做系统集成：复用系统组合输入、候选窗口与定位服务，处理文本框的组合态、提交/取消、焦点及外部修改交错；不自研输入法引擎、词库、候选生成/排序或语言模型，不以“完整 IME”名义扩张范围。系统输入法自身缺陷记录反馈，不能在框架内无限补造；富文本、多平台只在对应阶段需要时开展。
+- 不复活 stage145–892，不创建 stage893 或同构 Bool 审计链。清理历史代码只处理影响当前交付的部分。
+- 不覆盖其他任务的改动；先检查工作区。未经用户要求不 stage、commit、push，不切换分支或清理不明进程。
+- 遇到长期 workaround、重复跨层故障或工具链问题，按[设计意图导航的反馈入口](docs/plans/DESIGN_INTENT_INDEX.md#问题反馈如何接回主线)查已有记录并留下复现、影响与移除条件；普通修复不逐轮填写无问题声明，对外提交另按用户授权。
 
-```bash
-node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js <command>
-```
+## 代码理解工具
 
-Recommended commands:
+优先 CodeLattice 的项目概览、符号搜索、上下文与变更分析；使用工具实际提供的名称。
+常用 MCP 入口为 codelattice_project、codelattice_symbol、codelattice_change_review。
+GitNexus 作为辅助，仓库名固定为 cangjie-live-codelattice；不要用裸 cjgui 或 npx gitnexus。
 
-```bash
-node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js context init --repo cangjie-live-codelattice
-node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js impact <symbol> --repo cangjie-live-codelattice
-node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js detect-changes --repo cangjie-live-codelattice --scope all
-/Users/jiangxuanyang/Desktop/codelattice/scripts/cangjie-production-alias-check.sh --status
-```
+    node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js context init --repo cangjie-live-codelattice
+    node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js impact <symbol> --repo cangjie-live-codelattice
+    node /Users/jiangxuanyang/Desktop/GitNexus-RC-Tool/gitnexus/dist/cli/index.js detect-changes --repo cangjie-live-codelattice --scope all
 
-For CLI impact, the current Tool syntax uses a positional target:
+impact 使用位置参数，不用 --target。普通内部改动不要求逐符号 impact。
+公共契约、native/FFI、运行状态、渲染提交、跨模块变更需检查影响范围。
+UNKNOWN、not found、0 affected 或旧索引只是图覆盖不足；用源码、构建、真实行为验证补证。
+广泛生产变更若报告 HIGH/CRITICAL，先暂停相关变更并说明风险，核实是否为有效影响。
+旧索引标签不单独构成永久阻塞；若真实重大风险未解决，交由指导 AI / 用户决定。
+图分析不能当运行成功或发布证明。
 
-```bash
-impact <symbol> --repo cangjie-live-codelattice
-```
+## 完成前验证
 
-Do not use `impact --target <symbol>`; that flag is rejected by the current
-Tool CLI.
+按改动风险验证，不因阶段内部每一个小步重复整套检查：
 
-## When Impact Analysis Matters
+| 改动 | 必要证据 |
+| --- | --- |
+| 仅文档 | 差异与本地链接检查、规则冲突检查、确认源码未改 |
+| runtime/native/脚本 | 相关针对性测试或探针、cjpm build --skip-script、git diff --check、公共声明/受保护路径/禁止行为扫描 |
+| 可见交互 | 正常应用入口的真实输入、状态更新、窗口反馈；不能只靠 stdout 或硬编码请求 |
+| 对外能力 | 真实外部调用与应用状态、画面的对应结果；模拟客户端与真实模型分别标记 |
+| 公共 API | 签名、稳定性等级、实际消费样例、声明扫描 |
+| 实际状态写入 | 改哪里、前后状态、读回、失败/撤回边界；如实记录 runtime_state / renderer_state 是否被写 |
 
-Do not require GitNexus impact before every ordinary internal edit. For
-routine internal owner, demo, focused probe, suite, and documentation updates,
-source reading plus focused verification is enough.
+工具链不在 PATH 时：
 
-Prefer CodeLattice and, when useful, GitNexus impact/context for higher-risk
-changes:
+    source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
 
-- adding or changing public API;
-- changing public C ABI or native bridge code;
-- changing `runtime/cjgui/src/runtime_state.cj`;
-- changing `runtime/cjgui/cjpm.toml`;
-- changing renderer submission, runtime state write, backend-ready truth, or
-  production truth paths;
-- broad shared executor, manager, resolver, or demo runtime changes that affect
-  several demos or runtime paths;
-- cross-module refactors, renames, or file moves.
-
-If GitNexus returns `UNKNOWN`, `not found`, `0 affected`, or otherwise misses a
-fresh Cangjie symbol, treat that as graph non-coverage. It is neither a safety
-proof nor an automatic blocker. Fall back to source reading, focused probes,
-builds, scans, and report the graph gap.
-
-If impact analysis reports HIGH or CRITICAL risk for a broad production change,
-stop and summarize the risk before proceeding.
-
-## Verification Before Finishing
-
-For code or script changes, run verification appropriate to the risk. At
-minimum for CJGUI runtime/native/script work:
-
-- related focused probes or suites;
-- `cjpm build --skip-script`;
-- `git diff --check`;
-- public/protected/forbidden scans.
-
-If `cjpm` is not in `PATH`, source the Cangjie toolchain first:
-
-```bash
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh
-```
-
-For public API changes, also report:
-
-- API signature;
-- stability level;
-- demo proof or consumption path;
-- public declaration scan result.
-
-For owner-local commit/write work, also report:
-
-- write scope;
-- before/after state;
-- readback evidence;
-- rollback or not-published boundary;
-- whether `runtime_state` and `renderer_state` stayed unwritten.
-
-## Safety Lines
-
-Default behavior:
-
-- do not stage, commit, or push unless the user explicitly asks;
-- do not treat isolated probe evidence as production truth;
-- do not make unverified `runtime_state` or `renderer_state` writes;
-- do not make unverified production truth or backend-ready truth upgrades;
-- do not expand public C ABI casually;
-- do not modify `runtime/cjgui/src/runtime_state.cj` or
-  `runtime/cjgui/cjpm.toml` unless the task clearly requires it, and then keep
-  the change minimal and fully verified.
-
-Tool results are supporting evidence. Final safety and progress conclusions
-should come from code understanding, focused probes, builds, scans, and clear
-handoff notes.
+找不到适用检查脚本时，用有针对性的源码扫描说明范围；不要为补齐模板发明脚本。
+旧脚本如果只断言已退役文案或审计包装，应定位并报告冲突，不能机械恢复旧规则，也不能静默跳过真实行为检查。
+阶段未完成时报告剩余能力和具体阻塞，不把局部绿色当整体完成。

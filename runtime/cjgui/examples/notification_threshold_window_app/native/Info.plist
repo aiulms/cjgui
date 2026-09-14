@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleDisplayName</key><string>CJGUI 通知阈值</string>
+  <key>CFBundleExecutable</key><string>CJGUINotificationThreshold</string>
+  <key>CFBundleIdentifier</key><string>org.cangjie.cjgui.notification-threshold.example</string>
+  <key>CFBundleName</key><string>CJGUI Notification Threshold</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.0.0</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict></plist>

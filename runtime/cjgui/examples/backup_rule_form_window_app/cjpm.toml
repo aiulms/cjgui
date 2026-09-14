@@ -1,0 +1,16 @@
+[package]
+cjc-version = "1.1.3"
+name = "cjgui_backup_rule_form_window_app"
+version = "0.0.0"
+output-type = "executable"
+src-dir = "src"
+link-option = "-framework AppKit -framework Metal -framework MetalKit -framework QuartzCore -lobjc -headerpad_max_install_names"
+
+[dependencies]
+cjgui = { path = "../.." }
+cjgui_shared_operation_core = { path = "../../shared_operation_core" }
+cjgui_backup_rule_application = { path = "../backup_rule_application" }
+
+[ffi.c]
+cjgui_internal_renderer = { path = "./native/lib" }
+cjgui_shared_operation_launcher = { path = "./native/lib" }

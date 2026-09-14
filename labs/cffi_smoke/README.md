@@ -1,6 +1,6 @@
 # C FFI Smoke Test
 
-最后更新：2026-04-25
+最后更新：2026-09-13
 
 用途：
 
@@ -10,7 +10,8 @@
 
 ## 结构
 
-- `scripts/env.sh`：统一设置仓颉 SDK、`SDKROOT` 和 `libffi` 相关环境变量。
+- `scripts/env.sh`：默认设置仓颉 1.1.3、`xcrun` 当前 SDK 和 `libffi` 相关环境变量；可用
+  `CJGUI_CANGJIE_HOME` 或 `CJ_GUI_SDKROOT` 显式回退。
 - `native/c_math_smoke.c`：一个最小 C 函数。
 - `src/main.cj`：仓颉 `foreign` 声明和调用。
 - `scripts/build_and_run.sh`：编译 C 静态库，编译仓颉程序并运行。
@@ -29,7 +30,8 @@ C FFI result: 42
 
 ## 当前结论
 
-仓颉调用 C 的最小链路已通过。
+仓颉 1.1.3 已在本机默认 SDK 通过该最小链路（`C FFI result: 42`）。该结论只证明
+C 静态库的编译/链接/调用，不证明 AppKit/Metal GUI 或发布状态。
 
 后续可以在这个基础上继续验证：
 

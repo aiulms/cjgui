@@ -256,11 +256,12 @@ CJGUI 也是仓颉语言、工具链和 FFI 能力的长期压力测试场。
 
 ### CJ-20260425-001：默认 `MacOSX26.4.sdk` 导致仓颉 1.1.0 macOS arm64 最小程序链接失败
 
-- 状态：`UPSTREAM_REPORTED`
+- 状态：`LOCAL_1_1_3_VERIFIED_UPSTREAM_ISSUE_OPEN`
+- 最新核对（2026-09-13）：上游 #859 中仓颉 Committer liujiajie 称 1.1.3 已修复，并指向[官方 1.1.3 下载](https://cangjie-lang.cn/download/1.1.3)；页面仍为“已开启”，未显示关联 PR。已下载官方 mac-aarch64 包并核对 SHA-256 `7eff8d3b9119535cf3d05cb81526c5df391137dce908d744449f4edb99da3199`，安装到独立的 `/Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3`，未替换旧 1.1.0 路径。清除 `SDKROOT`/`CJ_GUI_SDKROOT` 后，`cjc --version` 为 1.1.3，`xcrun` 默认 SDK 为 `MacOSX.sdk`（26.5）。本机已通过默认 SDK hello、C FFI（结果 42）、实际 AppKit/Metal bridge、CJGUI core build，以及新编译签名的 Adaptive normal bundle 的启动、公开 GET/SET/readback、过期 CAS 拒绝和正常关闭/descriptor 清理。上游状态仍未闭合，不能据本机验证替上游关闭 issue。
 - 优先级：`P1`
 - 影响范围：链接 / SDK 兼容 / 本机工具链
 - 首次发现日期：2026-04-25
-- 影响版本：Cangjie Compiler 1.1.0，macOS arm64 SDK 包
+- 影响版本：Cangjie Compiler 1.1.0，macOS arm64 SDK 包；1.1.3 已在本机默认 SDK 验证通过
 - 平台：macOS 26.4.1 / Darwin 25.4.0 / arm64 / Command Line Tools
 - 现象：使用默认 macOS SDK 链接最小仓颉程序失败。
 - 预期：最小 `hello.cj` 可以在默认 Command Line Tools SDK 配置下编译和链接。
@@ -332,7 +333,7 @@ Hello, clang
 - `-B /Library/Developer/CommandLineTools/usr/bin` 没有让 `cjc` 改用系统 `ld`。
 - 通过 `--link-options "-syslibroot ...MacOSX15.4.sdk"` 追加 syslibroot 不能覆盖 `cjc` 已选择的 `MacOSX26.4.sdk`，仍失败。
 
-- workaround：
+- 历史 workaround / 可显式回退：
 
 ```bash
 export CJ_GUI_SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
@@ -341,25 +342,28 @@ cjc hello.cj -o hello
 ./hello
 ```
 
-- 当前判断：更像仓颉 1.1.0 自带 `ld64.lld 15.0.4` 与 `MacOSX26.4.sdk` 的 `libSystem.tbd` / target 表达不兼容，而不是仓颉源码用法错误。仍需上游确认这是已知限制、期望用户固定旧 SDK，还是需要升级 bundled linker / TAPI 支持。
-- workaround 移除条件：升级仓颉 SDK / bundled linker / macOS SDK 后，默认 `SDKROOT` 下最小 `hello.cj` 可直接 `cjc hello.cj -o hello` 并运行。
+- 当前判断：这是 1.1.0 与当时默认 26.4 SDK 的历史兼容故障；不能从 1.1.0 推断 1.1.3 失败。本机 1.1.3 在当前 26.5 默认 SDK 已满足 hello、FFI、bridge 与 normal GUI 的分层验证，但 issue 的上游关闭、其他 macOS/SDK 组合和发布验收仍未知。
+- workaround 移除条件：**本机项目默认**已满足：1.1.3 在默认 `SDKROOT` 下最小 `hello.cj` 可直接 `cjc hello.cj -o hello` 并运行，且 FFI/normal GUI 已通过。15.4 仍保留为显式覆盖回退，而非默认；上游 issue 是否关闭仍由维护者决定。
 - 是否适合提交上游：是。
 - 上游目标仓库：`Cangjie/cangjie_compiler`
 - 上游贡献类型：bug / repro / tooling
-- CJGUI 临时决策：继续 workaround；CJGUI 本地构建默认显式使用已验证 macOS SDK，避免阻塞 runtime 主线。
+- CJGUI 当前决策：项目入口使用 1.1.3，normal runner 默认采用 `xcrun --sdk macosx --show-sdk-path`；`CJ_GUI_SDKROOT` 或有效 `SDKROOT` 仍可显式选择 15.4。旧全局工具链不被覆盖。
 - 上游提交材料路径：本条目内 “上游 issue 草稿”。
 - 上游链接：[Cangjie/cangjie_compiler#859](https://gitcode.com/Cangjie/cangjie_compiler/issues/859)
 - 下次复查日期：下次升级仓颉 SDK 或 Xcode Command Line Tools 后。
 - 复查命令：
 
 ```bash
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie/envsetup.sh
+unset SDKROOT CJ_GUI_SDKROOT
+source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
 cd /tmp/cangjie-sdk-issue-repro-20260425
 cjc hello.cj -o hello
 ./hello
 ```
 
 - 结论更新记录：
+- 2026-09-13：确认维护者的1.1.3修复声明及官方mac-aarch64包入口；安排[工具链与技能配套升级](../plans/2026-09-13-cangjie-113-skills-upgrade.md)，未替换当前编译器或删除SDK workaround。
+- 2026-09-13：按官方 SHA-256 安装并显式验证 1.1.3。默认 26.5 SDK 的 hello、C FFI、AppKit/Metal bridge、CJGUI core 和 Adaptive normal bundle 均通过；项目默认改为 1.1.3/默认 SDK，旧 1.1.0 与 15.4 显式回退保留，上游 issue 未关闭。
   - 2026-04-25：记录为疑似上游 / SDK 兼容问题，当前采用 `MacOSX15.4.sdk` workaround。
   - 2026-04-25：补充系统性排查。默认 SDK 失败、指定 `SDKROOT=MacOSX15.4.sdk` 成功；系统 clang + Apple ld 使用默认 SDK 成功；`MacOSX26.4.sdk` 的 `libSystem.tbd` 不再列出 `arm64-macos`，仓颉 bundled `ld64.lld 15.0.4` 无法接受该组合。
   - 2026-04-25：已提交到 GitCode，上游 issue 为 [#859](https://gitcode.com/Cangjie/cangjie_compiler/issues/859)。

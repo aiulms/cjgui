@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="560" viewBox="0 0 1440 560" role="img" aria-labelledby="title description">
+  <title id="title">CJGUI — 同一份应用，人和 AI 共同参与</title>
+  <desc id="description">仓颉自绘 GUI 框架。概念图以可视界面和结构化接口连接同一份应用内容。开发预览，macOS 优先，Apache 2.0。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101e23"/><stop offset="1" stop-color="#071216"/></linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#23373d"/><stop offset="1" stop-color="#13252b"/></linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#b9e4da" stroke-opacity=".045"/></pattern>
+    <style>
+      text { font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .mono { font-family: "SFMono-Regular", Consolas, monospace; letter-spacing: 2px; }
+      .muted { fill: #a9c0c5; }
+      .accent { fill: #a1f0d0; }
+    </style>
+  </defs>
+  <rect width="1440" height="560" rx="24" fill="url(#bg)"/>
+  <rect width="1440" height="560" rx="24" fill="url(#grid)"/>
+  <path d="M752 58V456" stroke="#42636a" stroke-opacity=".5"/>
+  <g fill="none" stroke="#44616a" stroke-opacity=".35">
+    <circle cx="1113" cy="251" r="216"/><circle cx="1113" cy="251" r="181"/>
+  </g>
+  <rect x="64" y="53" width="8" height="8" rx="2" fill="#a1f0d0"/>
+  <text x="87" y="65" class="mono muted" font-size="15">CANGJIE · DESKTOP · OPEN SOURCE</text>
+  <text x="59" y="211" fill="#f4f8f6" font-size="126" font-weight="700" letter-spacing="-7">CJGUI<tspan fill="#a1f0d0">.</tspan></text>
+  <text x="64" y="284" fill="#edf5f2" font-size="38" font-weight="600">同一份应用，</text>
+  <text x="64" y="339" fill="#edf5f2" font-size="38" font-weight="600">人和 AI 共同参与。</text>
+  <text x="66" y="391" class="muted" font-size="21">仓颉自绘 GUI 框架 · 面向低延迟交互</text>
+  <g transform="translate(825 76)">
+    <text x="0" y="0" class="mono accent" font-size="13">01 / VISUAL INTERFACE</text>
+    <rect y="19" width="318" height="127" rx="12" fill="url(#panel)" stroke="#577880"/>
+    <path d="M0 48H318" stroke="#577880" stroke-opacity=".7"/>
+    <circle cx="17" cy="34" r="3" fill="#a1f0d0"/>
+    <circle cx="29" cy="34" r="3" fill="#738f95"/>
+    <circle cx="41" cy="34" r="3" fill="#738f95"/>
+    <rect x="17" y="64" width="66" height="64" rx="5" fill="#365059"/>
+    <rect x="96" y="65" width="126" height="7" rx="3" fill="#d7e8e4"/>
+    <rect x="96" y="83" width="197" height="5" rx="2" fill="#617d85"/>
+    <rect x="96" y="99" width="156" height="5" rx="2" fill="#617d85"/>
+    <rect x="248" y="113" width="45" height="14" rx="4" fill="#a1f0d0"/>
+    <text x="338" y="72" fill="#e9f4ef" font-size="20" font-weight="600">看见</text>
+    <text x="338" y="101" class="muted" font-size="14">选择与编辑</text>
+  </g>
+  <path d="M984 222V251H1065" fill="none" stroke="#a1f0d0" stroke-width="2"/>
+  <path d="M1224 368V278H1195" fill="none" stroke="#a1f0d0" stroke-width="2"/>
+  <rect x="967" y="239" width="238" height="52" rx="26" fill="#a1f0d0"/>
+  <text x="1086" y="272" text-anchor="middle" fill="#102b26" font-size="20" font-weight="700">同一份应用内容</text>
+  <g transform="translate(953 334)">
+    <text x="0" y="-16" class="mono accent" font-size="13">02 / STRUCTURED INTERFACE</text>
+    <rect width="350" height="103" rx="12" fill="url(#panel)" stroke="#577880"/>
+    <text x="20" y="31" fill="#a1f0d0" font-family="monospace" font-size="17">{ objects, context, actions }</text>
+    <path d="M20 46H329" stroke="#48646b"/>
+    <text x="20" y="76" fill="#d8e8e2" font-size="17">理解 · 修改 · 交换</text>
+    <circle cx="324" cy="70" r="5" fill="#a1f0d0"/>
+    <text x="-124" y="38" fill="#e9f4ef" font-size="20" font-weight="600">参与</text>
+    <text x="-124" y="67" class="muted" font-size="14">授权与接续</text>
+  </g>
+  <path d="M64 466H1376" stroke="#3a565e"/>
+  <text x="64" y="513" class="mono muted" font-size="15">CANGJIE / METAL / macOS</text>
+  <rect x="948" y="490" width="190" height="32" rx="16" fill="#203b3b"/>
+  <text x="1043" y="511" text-anchor="middle" fill="#a1f0d0" font-size="13" letter-spacing="1">DEVELOPER PREVIEW</text>
+  <text x="1170" y="511" class="mono muted" font-size="14">APACHE 2.0</text>
+</svg>

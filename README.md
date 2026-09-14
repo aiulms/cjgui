@@ -15,9 +15,9 @@
 
 ## 演示：人和 AI 接续编辑同一份文档
 
-![同一份仓颉文档：界面编辑、公开接口调用演示与界面续接](docs/assets/demo/cjgui-shared-document-real-demo.gif)
+![同一份仓颉文档：界面编辑、公开接口调用演示与界面续接](https://raw.githubusercontent.com/aiulms/cjgui/main/docs/assets/demo/cjgui-shared-document-real-demo.gif)
 
-*26 秒真实录制、未加速（GIF 为 880px/10fps 衍生版，[MP4 原片](docs/assets/demo/cjgui-shared-document-real-demo.mp4)与[素材说明](docs/assets/demo/README.md)）：窗口内编辑先把文档推进到 `v13`；外部调用方使用应用签发的 descriptor，通过公开接口以版本 CAS 追加一段文本，窗口显示"已同步外部文档：`v14`"；窗口内继续键入到 `v20`，外部再从公开接口读回同一版本。双方始终操作同一份应用状态，互不覆盖。*
+*26 秒真实录制、未加速（GIF 为 880px/10fps 衍生版，经 GitHub 镜像分发；[MP4 原片](docs/assets/demo/cjgui-shared-document-real-demo.mp4)与[素材说明](docs/assets/demo/README.md)在仓库内）：窗口内编辑先把文档推进到 `v13`；外部调用方使用应用签发的 descriptor，通过公开接口以版本 CAS 追加一段文本，窗口显示"已同步外部文档：`v14`"；窗口内继续键入到 `v20`，外部再从公开接口读回同一版本。双方始终操作同一份应用状态，互不覆盖。*
 
 <details>
 <summary>分步截图（视频无法自动播放的环境）</summary>

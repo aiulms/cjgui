@@ -2,7 +2,7 @@
 
 This is an experimental source preview, not a released SDK or ABI promise.
 It contains only the five Cangjie files that implement the current public
-composable-window surface, the four shared-operation core files needed by
+composable-window surface, the seven shared-operation core files needed by
 the optional connection, the narrow macOS native sources, two bundled raster
 resources, the normal runner, and small application templates.
 
@@ -23,5 +23,7 @@ validate an independent preview build, clear inherited
 this preview. The variable remains a supported explicit developer override.
 
 Source origin: `runtime/cjgui` in the exporting checkout. This checkout does
-not provide a separate license file in the exported scope; the preview grants
-no additional license and must retain the source project's applicable terms.
+provide `LICENSE` and `NOTICE` at the repository root. The exporter copies
+their unchanged text to the preview root, `framework/cjgui`, and
+`framework/cjgui/shared_operation_core` so either package remains accompanied
+by the source project's Apache-2.0 terms when copied independently.

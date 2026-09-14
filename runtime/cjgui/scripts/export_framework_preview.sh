@@ -9,12 +9,21 @@ fi
 DESTINATION="$1"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPOSITORY_ROOT="$(cd "$RUNTIME_DIR/../.." && pwd)"
 if [[ -e "$DESTINATION" ]]; then
   print -u2 -- "cjgui preview: destination already exists: $DESTINATION"
   exit 2
 fi
 DESTINATION_PARENT="$(cd "$(dirname "$DESTINATION")" && pwd)"
 DESTINATION="$DESTINATION_PARENT/$(basename "$DESTINATION")"
+typeset -a LICENSE_FILES
+LICENSE_FILES=(LICENSE NOTICE)
+for license_file in "${LICENSE_FILES[@]}"; do
+  if [[ ! -f "$REPOSITORY_ROOT/$license_file" ]]; then
+    print -u2 -- "cjgui preview: required source license file is missing: $REPOSITORY_ROOT/$license_file"
+    exit 1
+  fi
+done
 STAGING_DIR="$(mktemp -d "$DESTINATION_PARENT/.$(basename "$DESTINATION").cjgui-preview.XXXXXX")"
 cleanup() { rm -rf "$STAGING_DIR"; }
 trap cleanup EXIT HUP INT TERM
@@ -24,6 +33,13 @@ mkdir -p "$FRAMEWORK_DIR"
 cp "$RUNTIME_DIR/cjpm.toml" "$FRAMEWORK_DIR/cjpm.toml"
 mkdir -p "$FRAMEWORK_DIR/src" "$FRAMEWORK_DIR/shared_operation_core/src" "$FRAMEWORK_DIR/native" \
   "$FRAMEWORK_DIR/resources" "$FRAMEWORK_DIR/scripts" "$FRAMEWORK_DIR/templates"
+# Preview consumers may copy either package independently. Keep the source
+# license and notice with the preview root and both package roots.
+for license_file in "${LICENSE_FILES[@]}"; do
+  cp "$REPOSITORY_ROOT/$license_file" "$STAGING_DIR/$license_file"
+  cp "$REPOSITORY_ROOT/$license_file" "$FRAMEWORK_DIR/$license_file"
+  cp "$REPOSITORY_ROOT/$license_file" "$FRAMEWORK_DIR/shared_operation_core/$license_file"
+done
 
 # Keep only the implementation that backs today's public composable-window
 # surface. Historical internal probes and unrelated runtime sketches are not

@@ -13,6 +13,29 @@
   <a href="LICENSE">Apache 2.0</a>
 </p>
 
+## 演示：人和 AI 接续编辑同一份文档
+
+![同一份仓颉文档：界面编辑、公开接口调用演示与界面续接](docs/assets/demo/cjgui-shared-document-real-demo.mp4)
+
+*26 秒真实录制、未加速：窗口内编辑先把文档推进到 `v13`；外部调用方使用应用签发的 descriptor，通过公开接口以版本 CAS 追加一段文本，窗口显示"已同步外部文档：`v14`"；窗口内继续键入到 `v20`，外部再从公开接口读回同一版本。双方始终操作同一份应用状态，互不覆盖。原始 MOV 录制、分步截图与真实性边界见[素材说明](docs/assets/demo/README.md)。*
+
+<details>
+<summary>分步截图（视频无法自动播放的环境）</summary>
+
+1. **界面编辑**：在原生文本框键入，窗口把内容、选区与版本回读为文档 `v3`。
+
+   ![界面编辑](docs/assets/demo/cjgui-demo-01-ui-edit.png)
+
+2. **公开接口调用**：界面键入推进到 `v13` 后，descriptor-gated `REPLACE_RANGE` 以该版本追加文本，窗口显示"已同步外部文档：`v14`"。
+
+   ![公开接口调用](docs/assets/demo/cjgui-demo-02-public-interface-sync.png)
+
+3. **界面续接**：同一文本框继续键入到 `v20`，外部读回同一文档的版本 `20`、长度 `208`。
+
+   ![界面续接](docs/assets/demo/cjgui-demo-03-ui-continuation.png)
+
+</details>
+
 ## 一个框架，两种参与方式
 
 CJGUI 是一个面向人和 AI 共同工作的**仓颉自绘 GUI 框架**。人通过窗口选择和编辑，AI 通过结构化对象、上下文与授权动作参与；双方操作同一份应用内容，接续彼此的工作。

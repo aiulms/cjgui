@@ -36,6 +36,70 @@ func recordsKeepStableIdsAndDraftsAcrossSelectionUndoAndRedo(): Unit {
 }
 
 @Test
+func structuredRuleTransferUsesCopyOwnerForSameDomainAndPreservesSource(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("可复制规则", true, 14, "logs", "transfer-source").applied, true)
+    let sourceId = domain.selectedRecordId()
+    if (let Some(offer) <- domain.selectedRecordTransferOfferFromHuman()) {
+        @Assert(offer.format.identifier, CjguiRuleSetEditingDomain.transferFormatIdentifier)
+        let result = domain.acceptTransferFromHuman(offer)
+        @Assert(result.applied, true)
+        @Assert(result.reason, "copied")
+        @Assert(domain.snapshot().records.size, 2)
+        @Assert(domain.snapshot().recordById(sourceId).label, "可复制规则")
+        @Assert(domain.selectedRecordId() != sourceId, true)
+        @Assert(domain.snapshot().recordById(domain.selectedRecordId()).retentionCount, 14)
+    } else {
+        @Assert(false, true)
+    }
+}
+
+@Test
+func structuredRuleTransferUsesCreateOwnerForForeignExternalOfferAndCas(): Unit {
+    let source = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(source.createRecordFromHuman("外部导入规则", false, 21, "tmp", "transfer-foreign-source").applied, true)
+    let target = CjguiRuleSetEditingDomain.newUntitled()
+    let before = target.snapshot().version
+    if (let Some(offer) <- source.selectedRecordTransferOfferFromHuman()) {
+        let applied = target.acceptTransferFromExternal(offer, before, "transfer-request-1")
+        @Assert(applied.applied, true)
+        @Assert(applied.reason, "created")
+        @Assert(target.snapshot().records.size, 1)
+        @Assert(target.snapshot().recordById(target.selectedRecordId()).label, "外部导入规则")
+
+        let retry = target.acceptTransferFromExternal(offer, before, "transfer-request-1")
+        @Assert(retry.applied, true)
+        @Assert(retry.reason, "already_applied_request")
+        @Assert(target.snapshot().records.size, 1)
+
+        let stale = target.acceptTransferFromExternal(offer, before, "transfer-request-2")
+        @Assert(stale.applied, false)
+        @Assert(stale.isVersionConflict, true)
+        @Assert(stale.reason, "version_conflict")
+        @Assert(target.snapshot().records.size, 1)
+    } else {
+        @Assert(false, true)
+    }
+}
+
+@Test
+func malformedStructuredRuleTransferDoesNotMutateOwner(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    let malformed = CjguiSharedOperationTransferOffer.create(
+        "COPY", "rule_record", "foreign", 1, CjguiRuleSetEditingDomain.transferFormat(),
+        "CJGUI_RULE_RECORD/1\nnot-a-record")
+    if (let Some(offer) <- malformed) {
+        let result = domain.acceptTransferFromHuman(offer)
+        @Assert(result.applied, false)
+        @Assert(result.reason, "invalid_structured_payload")
+        @Assert(domain.snapshot().version, 0)
+        @Assert(domain.snapshot().records.size, 0)
+    } else {
+        @Assert(false, true)
+    }
+}
+
+@Test
 func queuedDetailIntentKeepsItsOriginalRecordWhenSelectionChanges(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("记录A", true, 7, "cache", "create-a").applied, true)
@@ -391,4 +455,43 @@ func splitSizeUsesTheExistingRuleSetOwnerCasAndRejectsAStaleExternalWrite(): Uni
         }
     }
     @Assert(hasPublishedValue, true)
+}
+
+/// The declared retention boundary lives in one place: the shared field binding
+/// carries it and the owner's draft validation enforces it. Configuring a
+/// different boundary moves both together; a value outside it is refused with a
+/// named reason and no partial write, a value inside it applies.
+@Test
+func declaredRetentionBoundaryDrivesBindingAndOwnerValidation(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newWithRetentionRange(minimum: 365, maximum: 730)
+    var declaredMinimum: Int64 = -1
+    var declaredMaximum: Int64 = -1
+    for (descriptor in domain.formBinding().allFields()) {
+        if (descriptor.resourceId == CjguiRuleSetEditingDomain.formRetentionResourceId) {
+            declaredMinimum = descriptor.minimum
+            declaredMaximum = descriptor.maximum
+        }
+    }
+    @Assert(declaredMinimum, 365)
+    @Assert(declaredMaximum, 730)
+    @Assert(domain.createRecordFromHuman("边界规则", true, 400, "cache", "bound-create").applied, true)
+    let recordId = domain.selectedRecordId()
+    // Out of the declared boundary: the apply is refused with the field's own
+    // reason, the applied value stays, and the draft is kept for correction.
+    @Assert(domain.editTextForCollectionItemFromHuman(recordId,
+        CjguiRuleSetEditingDomain.formRetentionResourceId, "100", 3, 3).applied, true)
+    let refused = domain.applyDraftForCollectionItemFromHuman(recordId,
+        domain.draftVersionForCollectionItem(recordId), domain.baseAppliedVersionForCollectionItem(recordId))
+    @Assert(refused.applied, false)
+    @Assert(refused.reason, "invalid_draft")
+    @Assert(domain.snapshot().recordById(recordId).retentionCount, 400)
+    let refusedField = domain.formSnapshot().fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId)
+    @Assert(refusedField.validationError, "retention_count_out_of_range")
+    @Assert(refusedField.draftText, "100")
+    // Inside the declared boundary the same path applies.
+    @Assert(domain.editTextForCollectionItemFromHuman(recordId,
+        CjguiRuleSetEditingDomain.formRetentionResourceId, "500", 3, 3).applied, true)
+    @Assert(domain.applyDraftForCollectionItemFromHuman(recordId,
+        domain.draftVersionForCollectionItem(recordId), domain.baseAppliedVersionForCollectionItem(recordId)).applied, true)
+    @Assert(domain.snapshot().recordById(recordId).retentionCount, 500)
 }

@@ -36,6 +36,9 @@ public let CJGUI_COMPOSABLE_UI_SPLIT_HANDLE: Int64 = 13
 /// A scalar slider is a value projection. Its owner remains the consumer's
 /// domain; the framework only normalizes pointer/keyboard geometry.
 public let CJGUI_COMPOSABLE_UI_SLIDER: Int64 = 14
+/// A bounded public vector component. Its immutable Geometry value remains
+/// Cangjie-owned; native receives only the existing copied scene projection.
+public let CJGUI_COMPOSABLE_UI_VECTOR_GRAPHIC: Int64 = 15
 /// Horizontal inset shared by the component layout content width and the
 /// native AppKit text drawing rectangle. The native bridge applies 7pt on
 /// each side, so text measurement must reserve 14pt before wrapping.
@@ -461,6 +464,136 @@ public class CjguiComposableUiStyle {
     }
 }
 
+/// A paint-only override for one interaction state.  The optional fields are
+/// intentionally limited to the properties that can change without a layout
+/// pass; geometry, typography and content metrics remain owned by the base
+/// `CjguiComposableUiStyle`.
+public class CjguiComposableUiPaintStyle {
+    public let background: Option<CjguiComposableUiColor>
+    public let border: Option<CjguiComposableUiColor>
+    public let textColor: Option<CjguiComposableUiColor>
+    public let borderWidth: Option<Int64>
+    public init(
+        background!: Option<CjguiComposableUiColor> = None,
+        border!: Option<CjguiComposableUiColor> = None,
+        textColor!: Option<CjguiComposableUiColor> = None,
+        borderWidth!: Option<Int64> = None
+    ) {
+        this.background = background
+        this.border = border
+        this.textColor = textColor
+        this.borderWidth = borderWidth
+    }
+}
+
+/// Framework-owned interaction bits are projected from identity, hit
+/// testing, focus and pointer capture.  Only SELECTED and CHECKED may be
+/// supplied by an application owner; the other bits are filtered here so an
+/// owner cannot create a second interaction state machine.
+public class CjguiComposableUiInteractionState {
+    public static let NONE: Int64 = 0
+    public static let HOVER: Int64 = 1
+    public static let PRESSED: Int64 = 2
+    public static let FOCUSED: Int64 = 4
+    public static let DISABLED: Int64 = 8
+    public static let SELECTED: Int64 = 16
+    public static let CHECKED: Int64 = 32
+    private static let OWNER_MASK: Int64 = SELECTED | CHECKED
+
+    public static func ownerBits(value: Int64): Int64 {
+        return value & OWNER_MASK
+    }
+}
+
+/// Paint state composition for a component.  Resolution is deterministic:
+/// base -> normal -> selected -> checked -> focused -> hover -> pressed ->
+/// disabled.  Each state only replaces fields it declares, so a component
+/// can opt into one paint detail without disturbing another state or any
+/// layout/typography field.
+public class CjguiComposableUiInteractionStyle {
+    public let normal: CjguiComposableUiPaintStyle
+    public let hover: CjguiComposableUiPaintStyle
+    public let pressed: CjguiComposableUiPaintStyle
+    public let focused: CjguiComposableUiPaintStyle
+    public let disabled: CjguiComposableUiPaintStyle
+    public let selected: CjguiComposableUiPaintStyle
+    public let checked: CjguiComposableUiPaintStyle
+
+    public init(
+        normal!: CjguiComposableUiPaintStyle = CjguiComposableUiPaintStyle(),
+        hover!: CjguiComposableUiPaintStyle = CjguiComposableUiPaintStyle(),
+        pressed!: CjguiComposableUiPaintStyle = CjguiComposableUiPaintStyle(),
+        focused!: CjguiComposableUiPaintStyle = CjguiComposableUiPaintStyle(),
+        disabled!: CjguiComposableUiPaintStyle = CjguiComposableUiPaintStyle(),
+        selected!: CjguiComposableUiPaintStyle = CjguiComposableUiPaintStyle(),
+        checked!: CjguiComposableUiPaintStyle = CjguiComposableUiPaintStyle()
+    ) {
+        this.normal = normal
+        this.hover = hover
+        this.pressed = pressed
+        this.focused = focused
+        this.disabled = disabled
+        this.selected = selected
+        this.checked = checked
+    }
+
+    private static func applyPaint(base: CjguiComposableUiStyle,
+        paint: CjguiComposableUiPaintStyle): CjguiComposableUiStyle {
+        let background = if (let Some(value) <- paint.background) { value } else { base.background }
+        let border = if (let Some(value) <- paint.border) { value } else { base.border }
+        let textColor = if (let Some(value) <- paint.textColor) { value } else { base.textColor }
+        let borderWidth = if (let Some(value) <- paint.borderWidth) { value } else { base.borderWidth }
+        return CjguiComposableUiStyle(
+            background: background,
+            border: border,
+            textColor: textColor,
+            padding: base.padding,
+            gap: base.gap,
+            fixedWidth: base.fixedWidth,
+            fixedHeight: base.fixedHeight,
+            growX: base.growX,
+            growY: base.growY,
+            borderWidth: borderWidth,
+            fontSize: base.fontSize,
+            fontWeight: base.fontWeight,
+            fontFamily: base.fontFamily,
+            minWidth: base.minWidth,
+            maxWidth: base.maxWidth,
+            idealWidth: base.idealWidth,
+            minHeight: base.minHeight,
+            maxHeight: base.maxHeight,
+            idealHeight: base.idealHeight,
+            alignX: base.alignX,
+            alignY: base.alignY,
+            cornerRadius: base.cornerRadius,
+            clipsContent: base.clipsContent
+        )
+    }
+
+    public func resolve(base: CjguiComposableUiStyle, state: Int64): CjguiComposableUiStyle {
+        var result = CjguiComposableUiInteractionStyle.applyPaint(base, normal)
+        if ((state & CjguiComposableUiInteractionState.SELECTED) != 0) {
+            result = CjguiComposableUiInteractionStyle.applyPaint(result, selected)
+        }
+        if ((state & CjguiComposableUiInteractionState.CHECKED) != 0) {
+            result = CjguiComposableUiInteractionStyle.applyPaint(result, checked)
+        }
+        if ((state & CjguiComposableUiInteractionState.FOCUSED) != 0) {
+            result = CjguiComposableUiInteractionStyle.applyPaint(result, focused)
+        }
+        if ((state & CjguiComposableUiInteractionState.HOVER) != 0) {
+            result = CjguiComposableUiInteractionStyle.applyPaint(result, hover)
+        }
+        if ((state & CjguiComposableUiInteractionState.PRESSED) != 0) {
+            result = CjguiComposableUiInteractionStyle.applyPaint(result, pressed)
+        }
+        if ((state & CjguiComposableUiInteractionState.DISABLED) != 0) {
+            result = CjguiComposableUiInteractionStyle.applyPaint(result, disabled)
+        }
+        return result
+    }
+}
+
 /// The application can reuse one of these immutable style collections across
 /// windows. Theme selection changes data in the Cangjie tree; native receives
 /// only the final, copied component style.
@@ -471,14 +604,32 @@ public class CjguiComposableUiTheme {
     public let body: CjguiComposableUiStyle
     public let input: CjguiComposableUiStyle
     public let primaryAction: CjguiComposableUiStyle
+    public let pageInteraction: CjguiComposableUiInteractionStyle
+    public let cardInteraction: CjguiComposableUiInteractionStyle
+    public let headingInteraction: CjguiComposableUiInteractionStyle
+    public let bodyInteraction: CjguiComposableUiInteractionStyle
+    public let inputInteraction: CjguiComposableUiInteractionStyle
+    public let primaryActionInteraction: CjguiComposableUiInteractionStyle
     public init(page: CjguiComposableUiStyle, card: CjguiComposableUiStyle, heading: CjguiComposableUiStyle,
-        body: CjguiComposableUiStyle, input: CjguiComposableUiStyle, primaryAction: CjguiComposableUiStyle) {
+        body: CjguiComposableUiStyle, input: CjguiComposableUiStyle, primaryAction: CjguiComposableUiStyle,
+        pageInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        cardInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        headingInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        bodyInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        inputInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        primaryActionInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle()) {
         this.page = page
         this.card = card
         this.heading = heading
         this.body = body
         this.input = input
         this.primaryAction = primaryAction
+        this.pageInteraction = pageInteraction
+        this.cardInteraction = cardInteraction
+        this.headingInteraction = headingInteraction
+        this.bodyInteraction = bodyInteraction
+        this.inputInteraction = inputInteraction
+        this.primaryActionInteraction = primaryActionInteraction
     }
     public static func beaconDark(): CjguiComposableUiTheme {
         return CjguiComposableUiTheme(
@@ -491,7 +642,46 @@ public class CjguiComposableUiTheme {
             CjguiComposableUiStyle(fixedHeight: 42, background: CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0),
                 border: CjguiComposableUiColor(0.42, 0.56, 0.80, 1.0)),
             CjguiComposableUiStyle(fixedHeight: 34, background: CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0),
-                border: CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0), fontWeight: 1)
+                border: CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0), fontWeight: 1),
+            inputInteraction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.42, 0.56, 0.80, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.12, 0.16, 0.24, 1.0))),
+                hover: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.90, 0.94, 1.0, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.36, 0.62, 0.96, 1.0))),
+                pressed: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.84, 0.90, 1.0, 1.0))),
+                focused: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.24, 0.72, 1.0, 1.0)), borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.34, 0.39, 0.48, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.28, 0.32, 0.40, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.60, 0.64, 0.72, 1.0))),
+                selected: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.22, 0.36, 0.58, 1.0))),
+                checked: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.32, 0.88, 0.68, 1.0)))),
+            primaryActionInteraction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0))),
+                hover: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.28, 0.56, 0.94, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.52, 0.74, 1.0, 1.0))),
+                pressed: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.12, 0.30, 0.68, 1.0))),
+                focused: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.62, 0.86, 1.0, 1.0)), borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.24, 0.28, 0.36, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.28, 0.34, 0.44, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.56, 0.62, 0.72, 1.0))),
+                selected: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.30, 0.60, 0.92, 1.0))),
+                checked: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.44, 0.94, 0.78, 1.0))))
         )
     }
     public static func paperLight(): CjguiComposableUiTheme {
@@ -506,7 +696,46 @@ public class CjguiComposableUiTheme {
                 border: CjguiComposableUiColor(0.64, 0.68, 0.75, 1.0)),
             CjguiComposableUiStyle(fixedHeight: 30, background: CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0),
                 border: CjguiComposableUiColor(0.12, 0.32, 0.68, 1.0),
-                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0), fontWeight: 1)
+                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0), fontWeight: 1),
+            inputInteraction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.64, 0.68, 0.75, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.18, 0.22, 0.30, 1.0))),
+                hover: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.38, 0.54, 0.86, 1.0))),
+                pressed: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.90, 0.94, 1.0, 1.0))),
+                focused: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.18, 0.42, 0.84, 1.0)), borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.88, 0.89, 0.92, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.76, 0.78, 0.82, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.52, 0.54, 0.60, 1.0))),
+                selected: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.84, 0.90, 1.0, 1.0))),
+                checked: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.12, 0.62, 0.38, 1.0)))),
+            primaryActionInteraction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.12, 0.32, 0.68, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0))),
+                hover: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.28, 0.56, 0.94, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.18, 0.40, 0.84, 1.0))),
+                pressed: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.14, 0.34, 0.70, 1.0))),
+                focused: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.10, 0.26, 0.62, 1.0)), borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.72, 0.74, 0.78, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.64, 0.66, 0.70, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.86, 0.87, 0.90, 1.0))),
+                selected: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.34, 0.58, 0.92, 1.0))),
+                checked: CjguiComposableUiPaintStyle(
+                    border: Some(CjguiComposableUiColor(0.10, 0.52, 0.30, 1.0))))
         )
     }
 }
@@ -1581,6 +1810,12 @@ public class CjguiComposableUiNode {
     public let imageResourceVersion: Int64
     public let imageContentMode: Int64
     public let style: CjguiComposableUiStyle
+    /// Paint-only state declarations live with the Cangjie component. Native
+    /// receives only the resolved style of one accepted scene generation.
+    public let interactionStyle: CjguiComposableUiInteractionStyle
+    /// The application owns only selected/checked data. Hover, pressed,
+    /// focus and disabled are derived by the framework at projection time.
+    public let ownerInteractionState: Int64
     /// Enabled controls can receive UI intents. Read-only applies only to
     /// editable field kinds and is distinct from invisible/absent nodes.
     public let isEnabled: Bool
@@ -1657,7 +1892,10 @@ public class CjguiComposableUiNode {
         pointerControlRole!: String = "", pointerControlAxis!: Int64 = CjguiComposableUiSplitAxis.HORIZONTAL,
         pointerControlMinimum!: Int64 = 0, pointerControlMaximum!: Int64 = 0, pointerControlStep!: Int64 = 1,
         pointerControlHandleThickness!: Int64 = 8, pointerControlFirstSize!: Int64 = 0,
-        pointerControlSecondMinimum!: Int64 = 0, identity!: ?CjguiComposableUiIdentity = None) {
+        pointerControlSecondMinimum!: Int64 = 0,
+        interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
+        identity!: ?CjguiComposableUiIdentity = None) {
         this.nodeId = nodeId
         this.semanticId = semanticId
         this.nodeKind = nodeKind
@@ -1686,6 +1924,8 @@ public class CjguiComposableUiNode {
             1
         }
         this.style = style
+        this.interactionStyle = interactionStyle
+        this.ownerInteractionState = CjguiComposableUiInteractionState.ownerBits(ownerInteractionState)
         this.scrollOffset = if (scrollOffset < 0) {
             0
         } else {
@@ -1934,6 +2174,7 @@ public class CjguiComposableUiNode {
             pointerControlMinimum: pointerControlMinimum, pointerControlMaximum: pointerControlMaximum,
             pointerControlStep: pointerControlStep, pointerControlHandleThickness: pointerControlHandleThickness,
             pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
+            interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
             identity: scopedIdentityValue)
         var ownsVirtualChildren = false
         if (let Some(_) <- virtualListSourceValue) { ownsVirtualChildren = true }
@@ -2142,6 +2383,44 @@ public class CjguiComposableUiIdentityRegistry {
     public func candidateCount(): Int64 {
         return candidateEntries.size
     }
+
+    /// Resolve a reference only while the current candidate is completely
+    /// prepared.  Consumers such as command declarations use this after
+    /// layout, before the candidate becomes visible, and must never cause a
+    /// second identity-allocation pass merely to obtain a target node.
+    func candidateNodeIdForReference(reference: CjguiComposableUiNodeReference): Int64 {
+        if (!candidatePreparedValue || !reference.isValid()) {
+            return -1
+        }
+        if (let Some(identity) <- reference.scopedIdentity()) {
+            if (let Some(index) <- candidateByKey.get(identity.canonicalKey())) {
+                return candidateEntries[index].nodeId
+            }
+            return -1
+        }
+        let manualNodeId = reference.manualNodeId()
+        if (let Some(_) <- candidateManualNodeIds.get(manualNodeId)) {
+            return manualNodeId
+        }
+        return -1
+    }
+
+    /// Resolve a reference against the accepted mapping.  This deliberately
+    /// has no candidate fallback: delayed menu and shortcut callbacks may
+    /// only address the generation currently owned by the accepted scene.
+    func acceptedNodeIdForReference(reference: CjguiComposableUiNodeReference): Int64 {
+        if (!reference.isValid()) {
+            return -1
+        }
+        if (let Some(identity) <- reference.scopedIdentity()) {
+            if (let Some(index) <- acceptedByKey.get(identity.canonicalKey())) {
+                return acceptedEntries[index].nodeId
+            }
+            return -1
+        }
+        return reference.manualNodeId()
+    }
+
     public func liveRetainedStringBytes(): Int64 {
         return retainedIdentityStringBytes(acceptedEntries)
     }
@@ -2335,15 +2614,17 @@ public class CjguiComposableUiIdentityRegistry {
 }
 
 public func cjguiComposableVertical(nodeId: Int64, semanticId: String, style: CjguiComposableUiStyle,
-    inputScopeId!: String = "", layoutReuseKey!: String = ""): CjguiComposableUiNode {
+    inputScopeId!: String = "", layoutReuseKey!: String = "",
+    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, style,
-        inputScopeId: inputScopeId, layoutReuseKey: layoutReuseKey)
+        inputScopeId: inputScopeId, layoutReuseKey: layoutReuseKey, identity: identity)
 }
 
 public func cjguiComposableHorizontal(nodeId: Int64, semanticId: String, style: CjguiComposableUiStyle,
-    inputScopeId!: String = "", layoutReuseKey!: String = ""): CjguiComposableUiNode {
+    inputScopeId!: String = "", layoutReuseKey!: String = "",
+    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_HORIZONTAL, "", "", "", -1, style,
-        inputScopeId: inputScopeId, layoutReuseKey: layoutReuseKey)
+        inputScopeId: inputScopeId, layoutReuseKey: layoutReuseKey, identity: identity)
 }
 
 /// Compose a split view from two ordinary child subtrees. The generated
@@ -2508,7 +2789,9 @@ public func cjguiComposableScopedActionRow(scope: CjguiComposableUiIdentityScope
 /// on every declaration; this helper retains no mutable slider value.
 public func cjguiComposableSlider(nodeId: Int64, semanticId: String, value: Int64, minimum: Int64, maximum: Int64,
     step: Int64, style: CjguiComposableUiStyle, operationActionName!: String = "SET_SLIDER_VALUE",
-    operationResourceId!: Int64 = -1): CjguiComposableUiNode {
+    operationResourceId!: Int64 = -1,
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     let upper = if (maximum >= minimum) {
         maximum
     } else {
@@ -2522,39 +2805,50 @@ public func cjguiComposableSlider(nodeId: Int64, semanticId: String, value: Int6
             step
         } else {
             1
-        })
+        }, interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState)
 }
 
 public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String, style: CjguiComposableUiStyle,
-    resourceId!: Int64 = -1, fieldId!: String = "", displayValueRole!: String = "", operationResourceId!: Int64 = -1): CjguiComposableUiNode {
+    resourceId!: Int64 = -1, fieldId!: String = "", displayValueRole!: String = "", operationResourceId!: Int64 = -1,
+    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT, "", value, "", resourceId, style,
-        fieldId: fieldId, operationResourceId: operationResourceId, displayValueRole: displayValueRole)
+        fieldId: fieldId, operationResourceId: operationResourceId, displayValueRole: displayValueRole,
+        identity: identity)
 }
 
 public func cjguiComposableButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
     resourceId: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true, operationActionName!: String = "",
-    operationResourceId!: Int64 = -1): CjguiComposableUiNode {
+    operationResourceId!: Int64 = -1,
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
+    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_BUTTON, label, label, actionName, resourceId,
-        style, enabled: enabled, operationActionName: operationActionName, operationResourceId: operationResourceId)
+        style, enabled: enabled, operationActionName: operationActionName, operationResourceId: operationResourceId,
+        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, identity: identity)
 }
 
 public func cjguiComposableTextInput(nodeId: Int64, semanticId: String, label: String, value: String, resourceId: Int64,
     style: CjguiComposableUiStyle, enabled!: Bool = true, readOnly!: Bool = false, fieldId!: String = "",
-    operationActionName!: String = "", operationResourceId!: Int64 = -1, displayValueRole!: String = "draft"): CjguiComposableUiNode {
+    operationActionName!: String = "", operationResourceId!: Int64 = -1, displayValueRole!: String = "draft",
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT_INPUT, label, value, "EDIT_TEXT",
         resourceId, style, enabled: enabled, readOnly: readOnly, fieldId: fieldId,
         operationActionName: operationActionName, operationResourceId: operationResourceId,
-        displayValueRole: displayValueRole)
+        displayValueRole: displayValueRole, interactionStyle: interactionStyle,
+        ownerInteractionState: ownerInteractionState)
 }
 
 public func cjguiComposableIntegerInput(nodeId: Int64, semanticId: String, label: String, value: String,
     resourceId: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true, readOnly!: Bool = false,
     fieldId!: String = "", operationActionName!: String = "", operationResourceId!: Int64 = -1,
-    displayValueRole!: String = "draft"): CjguiComposableUiNode {
+    displayValueRole!: String = "draft", interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_INTEGER_INPUT, label, value, "EDIT_INTEGER",
         resourceId, style, enabled: enabled, readOnly: readOnly, fieldId: fieldId,
         operationActionName: operationActionName, operationResourceId: operationResourceId,
-        displayValueRole: displayValueRole)
+        displayValueRole: displayValueRole, interactionStyle: interactionStyle,
+        ownerInteractionState: ownerInteractionState)
 }
 /// Composes an ordinary multi-line plain-text editor into the same layout,
 /// focus, event and semantic-projection path as existing inputs. Its value is
@@ -2562,22 +2856,28 @@ public func cjguiComposableIntegerInput(nodeId: Int64, semanticId: String, label
 public func cjguiComposableMultilineTextInput(nodeId: Int64, semanticId: String, label: String, value: String,
     resourceId: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true, readOnly!: Bool = false,
     fieldId!: String = "", operationActionName!: String = "", operationResourceId!: Int64 = -1,
-    displayValueRole!: String = "document", tabInsertsText!: Bool = false): CjguiComposableUiNode {
+    displayValueRole!: String = "document", tabInsertsText!: Bool = false,
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, label, value,
         "EDIT_MULTILINE_TEXT", resourceId, style, enabled: enabled, readOnly: readOnly, fieldId: fieldId,
         operationActionName: operationActionName, operationResourceId: operationResourceId,
-        displayValueRole: displayValueRole, tabInsertsText: tabInsertsText)
+        displayValueRole: displayValueRole, tabInsertsText: tabInsertsText, interactionStyle: interactionStyle,
+        ownerInteractionState: ownerInteractionState)
 }
 
 public func cjguiComposableBooleanInput(nodeId: Int64, semanticId: String, label: String, value: Bool,
     resourceId: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true, fieldId!: String = "",
-    operationActionName!: String = "", operationResourceId!: Int64 = -1, displayValueRole!: String = "draft"): CjguiComposableUiNode {
+    operationActionName!: String = "", operationResourceId!: Int64 = -1, displayValueRole!: String = "draft",
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT, label, if (value) {
         "true"
     } else {
         "false"
     }, "EDIT_BOOLEAN", resourceId, style, enabled: enabled, fieldId: fieldId, operationActionName: operationActionName,
-        operationResourceId: operationResourceId, displayValueRole: displayValueRole)
+        operationResourceId: operationResourceId, displayValueRole: displayValueRole,
+        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState)
 }
 
 /// Compose one application-owned form descriptor and its current field
@@ -2840,7 +3140,12 @@ public class CjguiComposableUiLayoutNode {
     /// exact clip must use `clipConstraints()`; native receives every entry.
     public let clipCornerRadius: Int64
     private let resolvedClipConstraints: ArrayList<CjguiComposableUiClipConstraint>
+    /// The immutable declaration is retained separately from the currently
+    /// resolved paint so interaction-only presentation can reuse geometry.
+    public let declaredStyle: CjguiComposableUiStyle
     public let style: CjguiComposableUiStyle
+    public let interactionStyle: CjguiComposableUiInteractionStyle
+    public let ownerInteractionState: Int64
     /// A non-empty scope traps native focus navigation to a currently visible
     /// layer. It is derived during Cangjie layout, never guessed by AppKit.
     public let inputScopeId: String
@@ -2848,7 +3153,8 @@ public class CjguiComposableUiLayoutNode {
     public let layerKind: String
     public init(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect, clip: CjguiComposableUiRect,
         inputScopeId!: String = "", clipCornerRadius!: Int64 = 0,
-        clipConstraints!: ArrayList<CjguiComposableUiClipConstraint> = ArrayList<CjguiComposableUiClipConstraint>()) {
+        clipConstraints!: ArrayList<CjguiComposableUiClipConstraint> = ArrayList<CjguiComposableUiClipConstraint>(),
+        resolvedPaintStyle!: Option<CjguiComposableUiStyle> = None) {
         this.nodeId = node.nodeId
         this.semanticId = node.semanticId
         this.nodeKind = node.nodeKind
@@ -2883,7 +3189,10 @@ public class CjguiComposableUiLayoutNode {
             clipCornerRadius
         }
         this.resolvedClipConstraints = ArrayList<CjguiComposableUiClipConstraint>(clipConstraints)
-        this.style = node.style
+        this.declaredStyle = node.style
+        this.style = if (let Some(value) <- resolvedPaintStyle) { value } else { node.style }
+        this.interactionStyle = node.interactionStyle
+        this.ownerInteractionState = node.ownerInteractionState
         this.inputScopeId = if (node.layerId().size > 0) {
             node.layerId()
         } else {
@@ -2904,10 +3213,33 @@ public class CjguiComposableUiLayoutNode {
             CJGUI_COMPOSABLE_UI_INTEGER_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT || nodeKind ==
             CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_LAYER_BACKDROP || nodeKind ==
             CJGUI_COMPOSABLE_UI_SCROLL_AREA || nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE || nodeKind ==
-            CJGUI_COMPOSABLE_UI_SLIDER
+            CJGUI_COMPOSABLE_UI_SLIDER || (nodeKind == CJGUI_COMPOSABLE_UI_VECTOR_GRAPHIC && actionName.size > 0)
     }
     public func clipConstraints(): ArrayList<CjguiComposableUiClipConstraint> {
         return ArrayList<CjguiComposableUiClipConstraint>(resolvedClipConstraints)
+    }
+    /// Create a paint-only snapshot for an already resolved layout node. This
+    /// deliberately rebuilds no geometry or text metrics: every structural
+    /// field is copied verbatim and callers supply only a style produced by
+    /// `CjguiComposableUiInteractionStyle.resolve`.
+    public func withResolvedPaintStyle(resolvedStyle: CjguiComposableUiStyle): CjguiComposableUiLayoutNode {
+        let projectionNode = CjguiComposableUiNode(
+            nodeId, semanticId, nodeKind, label, value, actionName, resourceId, declaredStyle,
+            enabled: isEnabled, readOnly: isReadOnly, fieldId: fieldId,
+            operationActionName: operationActionName, operationResourceId: operationResourceId,
+            displayValueRole: displayValueRole, imageResourcePath: imageResourcePath,
+            imageResourceId: imageResourceId, imageResourceVersion: imageResourceVersion,
+            imageContentMode: imageContentMode, tabInsertsText: tabInsertsText,
+            layerId: layerId, layerKind: layerKind, inputScopeId: inputScopeId,
+            pointerControlRole: pointerControlRole, pointerControlAxis: pointerControlAxis,
+            pointerControlMinimum: pointerControlMinimum, pointerControlMaximum: pointerControlMaximum,
+            pointerControlStep: pointerControlStep, pointerControlHandleThickness: pointerControlHandleThickness,
+            pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
+            interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState)
+        return CjguiComposableUiLayoutNode(
+            projectionNode, bounds, clip, inputScopeId: inputScopeId,
+            clipCornerRadius: clipCornerRadius, clipConstraints: resolvedClipConstraints,
+            resolvedPaintStyle: Some(resolvedStyle))
     }
     public func containsResolvedClip(x: Int64, y: Int64): Bool {
         if (!clip.contains(x, y)) {

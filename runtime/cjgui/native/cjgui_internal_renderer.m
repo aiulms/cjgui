@@ -18,6 +18,7 @@
 #import <mach/mach.h>
 #import <objc/runtime.h>
 #import <simd/simd.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
@@ -31,6 +32,19 @@
 // deterministic and no AppKit/Metal session table can grow without bound.
 static const NSUInteger kCjguiSessionCapacity = 4;
 static const NSTimeInterval kCjguiPumpTimeoutMaxSeconds = 0.016; // 16 ms bound
+
+// This is an operator-controlled diagnostic only. It deliberately logs before
+// destination filtering so a failed cross-window drag can distinguish "AppKit
+// never dispatched to this view" from a type/hit/identity rejection without
+// changing any drag, FIFO or owner behavior.
+static BOOL CjguiDataTransferTraceEnabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("CJGUI_DATA_TRANSFER_TRACE");
+        enabled = value && strcmp(value, "1") == 0 ? 1 : 0;
+    }
+    return enabled != 0;
+}
 
 #ifdef CJGUI_INTERNAL_TESTING
 static uint64_t CjguiMonotonicMicros(void) {
@@ -52,11 +66,26 @@ enum { CJGUI_INTERNAL_COMPOSABLE_CLIP_CONSTRAINT_CAPACITY = 4 };
 // Apple documents a 4 KiB upper bound for setVertexBytes. This renderer uses
 // it only for short-lived shape data, so split consecutive shape commands at
 // that byte boundary rather than retaining a Metal buffer across frames. A
-// rectangle contributes six vertices and must remain whole to preserve its
-// triangles and painter ordering.
+// triangle batches must remain whole to preserve painter ordering. Ordinary
+// rectangles contribute six vertices; bounded vector geometry may contribute
+// more but still splits only at complete-triangle boundaries.
 enum {
     CJGUI_INTERNAL_METAL_SET_VERTEX_BYTES_CAPACITY = 4 * 1024,
-    CJGUI_INTERNAL_COMPOSABLE_SHAPE_VERTICES_PER_NODE = 6,
+    CJGUI_INTERNAL_COMPOSABLE_VECTOR_MAX_POINTS = 12,
+    CJGUI_INTERNAL_COMPOSABLE_VECTOR_ELLIPSE_SEGMENTS = 32,
+};
+
+enum {
+    CJGUI_INTERNAL_VECTOR_LINE = 1,
+    CJGUI_INTERNAL_VECTOR_POLYLINE = 2,
+    CJGUI_INTERNAL_VECTOR_ELLIPSE = 3,
+    CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON = 4,
+    CJGUI_INTERNAL_VECTOR_CAP_BUTT = 1,
+    CJGUI_INTERNAL_VECTOR_CAP_ROUND = 2,
+    CJGUI_INTERNAL_VECTOR_CAP_SQUARE = 3,
+    CJGUI_INTERNAL_VECTOR_JOIN_MITER = 1,
+    CJGUI_INTERNAL_VECTOR_JOIN_BEVEL = 2,
+    CJGUI_INTERNAL_VECTOR_JOIN_ROUND = 3,
 };
 
 #ifdef CJGUI_INTERNAL_TESTING
@@ -88,9 +117,40 @@ typedef struct CJGuiInternalMetalVertex {
     vector_float4 clipCount;
     float cornerRadius;
     float borderWidth;
+    // Shapes emitted for vector geometry already have exact triangle bounds;
+    // the fragment still applies the shared rounded clip chain, but bypasses
+    // the rectangle signed-distance/border calculation below.
+    float isVectorShape;
+    float vectorPadding;
     vector_float4 fill;
     vector_float4 border;
 } CJGuiInternalMetalVertex;
+
+typedef struct CjguiInternalComposableVectorPoint {
+    double x;
+    double y;
+} CjguiInternalComposableVectorPoint;
+
+typedef struct CjguiInternalComposableVectorGeometry {
+    uint32_t kind;
+    uint32_t pointCount;
+    uint32_t cap;
+    uint32_t join;
+    double viewBoxWidth;
+    double viewBoxHeight;
+    double strokeWidth;
+    double fillRed, fillGreen, fillBlue, fillAlpha;
+    double strokeRed, strokeGreen, strokeBlue, strokeAlpha;
+    CjguiInternalComposableVectorPoint center;
+    double radiusX;
+    double radiusY;
+    CjguiInternalComposableVectorPoint points[CJGUI_INTERNAL_COMPOSABLE_VECTOR_MAX_POINTS];
+    // Ear clipping is performed once when the copied scene payload changes.
+    // Each triplet indexes `points`; a 12-point simple polygon has at most
+    // ten triangles, so this remains a fixed 30-byte bound.
+    uint8_t triangleIndices[(CJGUI_INTERNAL_COMPOSABLE_VECTOR_MAX_POINTS - 2) * 3];
+    uint32_t triangleIndexCount;
+} CjguiInternalComposableVectorGeometry;
 
 typedef struct CJGuiInternalMetalTextureVertex {
     vector_float2 position;
@@ -132,6 +192,15 @@ static BOOL CjguiColorByteMatches(uint8_t actual, uint8_t expected) {
 @property(nonatomic, assign) uint64_t frameIndex;
 @property(nonatomic, strong) id<MTLRenderPipelineState> composablePipeline;
 @property(nonatomic, strong) id<MTLRenderPipelineState> composableImagePipeline;
+@property(nonatomic, strong) id<MTLRenderPipelineState> composableVectorPipeline;
+// Ordinary form/text/image scenes render directly to the drawable. A vector
+// scene selects the matching reusable 4x states below for that frame only;
+// a sample-count mismatch is not valid Metal pipeline reuse.
+@property(nonatomic, strong) id<MTLRenderPipelineState> composableMultisamplePipeline;
+@property(nonatomic, strong) id<MTLRenderPipelineState> composableMultisampleImagePipeline;
+@property(nonatomic, strong) id<MTLRenderPipelineState> composableMultisampleVectorPipeline;
+@property(nonatomic, strong) id<MTLTexture> composableMultisampleTexture;
+@property(nonatomic, assign) BOOL composableUsesMultisampling;
 @property(nonatomic, strong) NSArray<CJGuiInternalComposableSceneNode *> *composableNodes;
 #ifdef CJGUI_INTERNAL_TESTING
 // A probe may select a controlled backing scale only to exercise the normal
@@ -153,6 +222,29 @@ static BOOL CjguiColorByteMatches(uint8_t actual, uint8_t expected) {
 // Wall time inside CjguiEncodeComposableNodes for this submitted frame. It is
 // CPU encoder work only: it excludes command-buffer completion and display.
 @property(nonatomic, assign) uint64_t testComposableEncoderCpuMicros;
+// Direct per-frame native spans. The final readback field records only an
+// explicit synchronous diagnostic wait, never asynchronous Metal completion.
+@property(nonatomic, assign) uint64_t testComposableNextDrawableMicros;
+@property(nonatomic, assign) uint64_t testComposableCommandBufferMicros;
+@property(nonatomic, assign) uint64_t testComposablePresentMicros;
+@property(nonatomic, assign) uint64_t testComposableCommitMicros;
+@property(nonatomic, assign) uint64_t testComposableReadbackWaitMicros;
+@property(nonatomic, assign) uint8_t testComposableReadbackWaited;
+// These scalar diagnostics describe attachment ownership, lazy pipeline
+// construction and accepted-node local vector preparation. They are not GPU
+// completion or physical presentation timings.
+@property(nonatomic, assign) uint8_t testComposableRenderSampleCount;
+@property(nonatomic, assign) uint64_t testComposableMultisampleAttachmentBytes;
+@property(nonatomic, assign) uint64_t testComposablePipelineBuildCount;
+@property(nonatomic, assign) uint64_t testComposableVectorGeometryPreparationCount;
+@property(nonatomic, assign) uint64_t testComposableVectorGeometryPreparedBytes;
+// Latest-frame submission facts for the compact resident vector buffers.
+// Uploads occur only when topology changes; reuses are ordinary paint/layout
+// draws of a previously accepted immutable buffer.
+@property(nonatomic, assign) uint32_t testComposableVectorDrawCount;
+@property(nonatomic, assign) uint32_t testComposableVectorBufferUploadCount;
+@property(nonatomic, assign) uint32_t testComposableVectorBufferReuseCount;
+@property(nonatomic, assign) uint64_t testComposableVectorBufferUploadBytes;
 // Text preparation is deliberately reported apart from command encoding:
 // an AppKit bitmap raster and `replaceRegion` are real work with different
 // owners and neither implies a completed/presented Metal frame.
@@ -268,6 +360,13 @@ static void CjguiRecordTextWork(CJGuiInternalMetalView *metalView,
     self.commandQueue = nil;
     self.device = nil;
     self.composableImagePipeline = nil;
+    self.composablePipeline = nil;
+    self.composableVectorPipeline = nil;
+    self.composableMultisampleImagePipeline = nil;
+    self.composableMultisamplePipeline = nil;
+    self.composableMultisampleVectorPipeline = nil;
+    self.composableMultisampleTexture = nil;
+    self.composableUsesMultisampling = NO;
 }
 
 - (BOOL)encodeComposableNodes:(id<MTLRenderCommandEncoder>)encoder drawableSize:(CGSize)drawableSize {
@@ -298,6 +397,7 @@ static void CjguiRecordTextWork(CJGuiInternalMetalView *metalView,
 @end
 @class CJGuiInternalSession;
 @class CJGuiInternalComposableImageResource;
+@class CJGuiInternalComposableImageResourceDomain;
 static CJGuiInternalSession *CjguiLookupSession(uint64_t token);
 
 static const NSUInteger kCjguiPendingInteractionCapacity = 64;
@@ -312,6 +412,12 @@ static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *sessi
                                                      uint32_t kind,
                                                      CJGuiInternalComposableSceneNode *node,
                                                      NSPoint point);
+static void CjguiRebuildComposableCommandMenuForKeyWindow(void);
+static CJGuiInternalSession *CjguiComposableCommandMenuKeySession(void);
+static BOOL CjguiComposableActiveScopeDeclaresShortcut(CJGuiInternalSession *session, NSString *shortcut);
+#ifdef CJGUI_INTERNAL_TESTING
+static uint64_t gCjguiComposableCommandMenuRebuildCount;
+#endif
 static uint64_t CjguiComposableNodeIdAtIndex(CJGuiInternalSession *session, uint32_t nodeIndex);
 static int64_t CjguiComposableNodeResourceIdAtIndex(CJGuiInternalSession *session, uint32_t nodeIndex);
 static uint32_t CjguiComposableNodeKindAtIndex(CJGuiInternalSession *session, uint32_t nodeIndex);
@@ -328,7 +434,12 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 @property(nonatomic, assign) uint32_t nodeKind;
 @property(nonatomic, assign) int64_t pointerX;
 @property(nonatomic, assign) int64_t pointerY;
+@property(nonatomic, assign) int64_t modifierFlags;
 @property(nonatomic, copy) NSString *formText;
+@property(nonatomic, copy) NSString *dataTransferFormat;
+@property(nonatomic, copy) NSString *dataTransferSourceKind;
+@property(nonatomic, copy) NSString *dataTransferSourceIdentity;
+@property(nonatomic, assign) int64_t dataTransferSourceId;
 - (instancetype)initWithKind:(uint32_t)kind recordIndex:(uint32_t)recordIndex
               selectionStart:(uint32_t)selectionStart selectionEnd:(uint32_t)selectionEnd
                     formText:(NSString *)formText nodeId:(uint64_t)nodeId
@@ -356,9 +467,344 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
     self.pointerX = 0;
     self.pointerY = 0;
     self.formText = [formText copy] ?: @"";
+    self.dataTransferFormat = @"";
+    self.dataTransferSourceKind = @"";
+    self.dataTransferSourceIdentity = @"";
+    self.dataTransferSourceId = -1;
     return self;
 }
 
+@end
+
+// A retained item is a native coordination record, never application state:
+// its copied scalar identity must still resolve against the current committed
+// scene before a paste/drop can enter the FIFO.
+#ifdef CJGUI_INTERNAL_TESTING
+#include <pthread.h>
+// The ARC pool push/pop entry points live in libobjc but are not declared by
+// the public SDK headers; test-only pool boundaries need them explicitly.
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *pool);
+// Transfer-object lifecycle ledger (test-only, C-style: the file is ObjC).
+// observation ids are sequential from 1, so fixed arrays indexed by id
+// represent the sets. R tracks filled-object releases only; placeholder
+// releases are tracked separately so they can never mask a filled leak.
+// Observation ids above the capacity invalidate the ledger explicitly.
+#define CJGUI_TRANSFER_LEDGER_CAPACITY 4096
+static pthread_mutex_t gTransferLedgerMutex = PTHREAD_MUTEX_INITIALIZER;
+static BOOL gTransferLedgerA[CJGUI_TRANSFER_LEDGER_CAPACITY + 1];
+static BOOL gTransferLedgerF[CJGUI_TRANSFER_LEDGER_CAPACITY + 1];
+static BOOL gTransferLedgerR[CJGUI_TRANSFER_LEDGER_CAPACITY + 1];
+static BOOL gTransferLedgerPlaceholderR[CJGUI_TRANSFER_LEDGER_CAPACITY + 1];
+static unsigned gTransferLedgerReleaseCount[CJGUI_TRANSFER_LEDGER_CAPACITY + 1];
+static BOOL gTransferLedgerOverflow = NO;
+static id gTransferLedgerRetained = nil;
+static unsigned long long gTransferLedgerRetainedId = 0;
+
+static BOOL CjguiTransferLedgerIdInRange(unsigned long long observationId) {
+    if (observationId >= 1 && observationId <= CJGUI_TRANSFER_LEDGER_CAPACITY) {
+        return YES;
+    }
+    gTransferLedgerOverflow = YES;
+    return NO;
+}
+
+void CjguiTransferLedgerMaybeRetainFilled(unsigned long long observationId, id object);
+
+void CjguiTransferLedgerRecordInit(unsigned long long observationId) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    if (CjguiTransferLedgerIdInRange(observationId)) {
+        gTransferLedgerA[observationId] = YES;
+    }
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+}
+
+void CjguiTransferLedgerRecordFill(unsigned long long observationId) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    if (CjguiTransferLedgerIdInRange(observationId)) {
+        gTransferLedgerF[observationId] = YES;
+    }
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+}
+
+void CjguiTransferLedgerRecordRelease(unsigned long long observationId) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    if (CjguiTransferLedgerIdInRange(observationId)) {
+        gTransferLedgerReleaseCount[observationId] += 1;
+        gTransferLedgerR[observationId] = YES;
+    }
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+}
+
+void CjguiTransferLedgerRecordPlaceholderRelease(unsigned long long observationId) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    if (CjguiTransferLedgerIdInRange(observationId)) {
+        gTransferLedgerPlaceholderR[observationId] = YES;
+    }
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+}
+
+// Negative-control target: parsed once from CJGUI_TRANSFER_LEAK_TEST=<N>.
+// Unset disables the hook; a set-but-invalid value is a configuration error.
+static long long gTransferLeakTarget = -2;  // -2 = unparsed
+static unsigned long long gTransferFillCounter = 0;
+static id gTransferLedgerRetainedObject = nil;  // the deliberate strong retain
+
+long long CjguiTransferLedgerPrepareLeak(void) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    if (gTransferLeakTarget != -2) {
+        long long value = gTransferLeakTarget;
+        pthread_mutex_unlock(&gTransferLedgerMutex);
+        return value;
+    }
+    const char *raw = getenv("CJGUI_TRANSFER_LEAK_TEST");
+    if (!raw) {
+        gTransferLeakTarget = 0;
+    } else {
+        char *end = NULL;
+        long long parsed = strtoll(raw, &end, 10);
+        if (end == raw || *end != '\0' || parsed <= 0) {
+            // 0, empty and malformed values are configuration errors, not a
+            // silent disable.
+            pthread_mutex_unlock(&gTransferLedgerMutex);
+            return -1;
+        }
+        gTransferLeakTarget = parsed;
+    }
+    long long value = gTransferLeakTarget;
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+    return value;
+}
+
+// Called by the item on its first fill. The Nth filled object is retained
+// strongly for the negative control; no other object is ever retained.
+void CjguiTransferLedgerMaybeRetainFilled(unsigned long long observationId, id object) {
+    long long target = CjguiTransferLedgerPrepareLeak();
+    if (target <= 0) {
+        return;
+    }
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    gTransferFillCounter += 1;
+    if (gTransferFillCounter == (unsigned long long)target) {
+        gTransferLedgerRetainedObject = object;
+        gTransferLedgerRetainedId = observationId;
+    }
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+}
+
+// Drops the deliberate retain outside the ledger lock: the local strong
+// reference keeps the object alive while the global is cleared, so ARC's
+// release of the global cannot run dealloc (and re-enter the lock) here.
+void CjguiTransferLedgerDropRetain(void) {
+    id local = nil;
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    local = gTransferLedgerRetainedObject;
+    gTransferLedgerRetainedObject = nil;
+    gTransferLedgerRetainedId = 0;
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+    local = nil;  // the retained object's dealloc runs here, outside the lock
+}
+
+unsigned long long CjguiTransferLedgerRetainedId(void) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    unsigned long long value = gTransferLedgerRetainedId;
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+    return value;
+}
+
+// Verdict: 0 = pass; 1 = filled object(s) not released; 2 = double release;
+// 3 = ledger capacity overflow (observation invalid).
+int CjguiTransferLedgerJudge(void) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    unsigned initialized = 0;
+    unsigned filled = 0;
+    unsigned released = 0;
+    unsigned doubleReleased = 0;
+    unsigned placeholdersAlive = 0;
+    unsigned long long retainedId = gTransferLedgerRetainedId;
+    BOOL overflow = gTransferLedgerOverflow;
+    char filledNotReleased[768];
+    char placeholderNotReleased[768];
+    filledNotReleased[0] = '\0';
+    placeholderNotReleased[0] = '\0';
+    for (unsigned long long id = 1; id <= CJGUI_TRANSFER_LEDGER_CAPACITY; ++id) {
+        if (gTransferLedgerA[id]) initialized += 1;
+        if (gTransferLedgerF[id]) filled += 1;
+        if (gTransferLedgerR[id]) released += 1;
+        if (gTransferLedgerReleaseCount[id] > 1) doubleReleased += 1;
+        if (gTransferLedgerF[id] && !gTransferLedgerR[id]) {
+            char chunk[24];
+            snprintf(chunk, sizeof(chunk), "%llu ", (unsigned long long)id);
+            strncat(filledNotReleased, chunk, sizeof(filledNotReleased) - strlen(filledNotReleased) - 1);
+        }
+        if (gTransferLedgerA[id] && !gTransferLedgerF[id] && !gTransferLedgerPlaceholderR[id]) {
+            placeholdersAlive += 1;
+            char chunk[24];
+            snprintf(chunk, sizeof(chunk), "%llu ", (unsigned long long)id);
+            strncat(placeholderNotReleased, chunk,
+                    sizeof(placeholderNotReleased) - strlen(placeholderNotReleased) - 1);
+        }
+    }
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+
+    int verdict = 0;
+    if (overflow) {
+        verdict = 3;
+    } else if (doubleReleased > 0) {
+        verdict = 2;
+    } else if (strlen(filledNotReleased) > 0) {
+        verdict = 1;
+    }
+    // A dropped leak target is normal after the negative control releases it;
+    // "the target was never hit" shows up as a balanced first judge in leak
+    // mode, which the probe treats as a configuration/report failure.
+    NSLog(@"cjgui: LEDGER initialized=%u filled=%u released=%u double=%u "
+          @"filledNotReleased=[%s] placeholdersAlive=%u placeholderNotReleased=[%s] "
+          @"retained=%llu leakTarget=%lld verdict=%d",
+          initialized, filled, released, doubleReleased, filledNotReleased,
+          placeholdersAlive, placeholderNotReleased,
+          (unsigned long long)retainedId, gTransferLeakTarget, verdict);
+    return verdict;
+}
+
+// Real autorelease-pool boundaries for the test probe. Push/pop must run on
+// the same thread; popping from another thread is a test error, not a silent
+// drain of an unknown pool.
+static void *gTransferTestPool = NULL;
+static pthread_t gTransferTestPoolThread;
+
+int cjgui_internal_renderer_test_pool_begin(void) {
+    if (gTransferTestPool != NULL) {
+        return -1;  // already inside a test pool
+    }
+    gTransferTestPoolThread = pthread_self();
+    gTransferTestPool = objc_autoreleasePoolPush();
+    return 0;
+}
+
+int cjgui_internal_renderer_test_pool_end(void) {
+    if (gTransferTestPool == NULL) {
+        return -1;
+    }
+    if (!pthread_equal(gTransferTestPoolThread, pthread_self())) {
+        return -2;  // wrong thread: never drain another thread's pool
+    }
+    void *pool = gTransferTestPool;
+    gTransferTestPool = NULL;
+    objc_autoreleasePoolPop(pool);
+    return 0;
+}
+
+int cjgui_internal_renderer_test_transfer_lifecycle_prepare(void) {
+    return (int)CjguiTransferLedgerPrepareLeak();
+}
+
+int cjgui_internal_renderer_test_transfer_lifecycle_verify(void) {
+    return CjguiTransferLedgerJudge();
+}
+
+void cjgui_internal_renderer_test_transfer_lifecycle_release_leak(void) {
+    CjguiTransferLedgerDropRetain();
+}
+
+// Test-only ledger boundary driver. It feeds the real ledger/judge with one
+// observation at a time so the capacity edge, the placeholder-release case and
+// double release can be judged by the same CjguiTransferLedgerJudge the
+// production lifecycle uses. Returns 0 when the id was in range, 3 when the
+// observation was out of range (the ledger marks the whole judge invalid).
+void cjgui_internal_renderer_test_transfer_ledger_reset(void) {
+    pthread_mutex_lock(&gTransferLedgerMutex);
+    memset(gTransferLedgerA, 0, sizeof(gTransferLedgerA));
+    memset(gTransferLedgerF, 0, sizeof(gTransferLedgerF));
+    memset(gTransferLedgerR, 0, sizeof(gTransferLedgerR));
+    memset(gTransferLedgerPlaceholderR, 0, sizeof(gTransferLedgerPlaceholderR));
+    memset(gTransferLedgerReleaseCount, 0, sizeof(gTransferLedgerReleaseCount));
+    gTransferLedgerOverflow = NO;
+    gTransferLedgerRetainedObject = nil;
+    gTransferLedgerRetainedId = 0;
+    gTransferFillCounter = 0;
+    pthread_mutex_unlock(&gTransferLedgerMutex);
+}
+
+int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long observationId, int operation) {
+    int inRange = (observationId >= 1 && observationId <= CJGUI_TRANSFER_LEDGER_CAPACITY) ? 0 : 3;
+    switch (operation) {
+        case 0: CjguiTransferLedgerRecordInit(observationId); break;
+        case 1: CjguiTransferLedgerRecordFill(observationId); break;
+        case 2: CjguiTransferLedgerRecordRelease(observationId); break;
+        case 3: CjguiTransferLedgerRecordPlaceholderRelease(observationId); break;
+        default: return 2;
+    }
+    return inRange;
+}
+
+#endif  // CJGUI_INTERNAL_TESTING
+
+@interface CJGuiInternalComposableDataTransferItem : NSObject
+@property(nonatomic, assign) CjguiInternalRendererComposableDataTransferItem item;
+#ifdef CJGUI_INTERNAL_TESTING
+@property(nonatomic, assign) unsigned long long observationId;
+@property(nonatomic, assign) BOOL observationFilled;
+#endif
+@property(nonatomic, copy) NSString *format;
+@property(nonatomic, copy) NSString *payload;
+@property(nonatomic, copy) NSString *sourceKind;
+@property(nonatomic, copy) NSString *sourceIdentity;
+@end
+
+@implementation CJGuiInternalComposableDataTransferItem
+#ifdef CJGUI_INTERNAL_TESTING
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        static atomic_ullong observationSeq;
+        _observationId = atomic_fetch_add(&observationSeq, 1) + 1;
+        CjguiTransferLedgerRecordInit(_observationId);
+    }
+    return self;
+}
+
+// First fill of a placeholder: the tracked object now carries a real
+// declaration and enters the filled set. The negative-control env may retain
+// exactly this object; the strong reference is released on demand.
+- (void)markObservationFilled {
+    if (_observationFilled) return;
+    _observationFilled = YES;
+    CjguiTransferLedgerRecordFill(_observationId);
+    CjguiTransferLedgerMaybeRetainFilled(_observationId, self);
+}
+
+- (void)dealloc {
+    if (_observationFilled) {
+        CjguiTransferLedgerRecordRelease(_observationId);
+    } else {
+        CjguiTransferLedgerRecordPlaceholderRelease(_observationId);
+    }
+}
+#endif
+@end
+
+// A command menu is a native projection of one accepted Cangjie command
+// declaration.  It intentionally owns only copied presentation scalars; the
+// semantic target, availability recheck and controller event remain in the
+// Cangjie window.
+@interface CJGuiInternalComposableCommandMenuItem : NSObject
+@property(nonatomic, copy) NSString *commandId;
+@property(nonatomic, copy) NSString *title;
+@property(nonatomic, copy) NSString *menuGroup;
+@property(nonatomic, copy) NSString *shortcut;
+@property(nonatomic, assign) uint32_t menuSection;
+@property(nonatomic, assign) uint64_t focusScope;
+@property(nonatomic, assign) BOOL enabled;
+@property(nonatomic, assign) BOOL checked;
+@end
+
+@implementation CJGuiInternalComposableCommandMenuItem
+@end
+
+@interface CJGuiInternalComposableCommandMenuDispatcher : NSObject
++ (instancetype)sharedDispatcher;
+- (void)invokeComposableCommand:(id)sender;
 @end
 
 // These are concrete macOS accessibility elements, not a parallel data model.
@@ -378,6 +824,9 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 @property(nonatomic, strong) NSApplication *app;
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) CJGuiInternalMetalView *view;
+// Modifier flags of the pointer event currently being routed; the pointer
+// enqueue path copies them onto each queued intent.
+@property(nonatomic, assign) int64_t pointerModifierFlags;
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property(nonatomic, strong) CJGuiInternalSharedOperationOverlay *sharedOperationOverlay;
@@ -389,14 +838,24 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableSceneNode *> *composableNodes;
 @property(nonatomic, assign) uint64_t composableSceneVersion;
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableSceneNode *> *stagedComposableNodes;
-@property(nonatomic, strong) NSMutableDictionary<NSString *, id<MTLTexture>> *composableImageTextureCache;
-// Resource records are scalars plus retained Metal textures.  They never
-// cross the framework ABI.  Loading itself may finish off-main, but every
-// record/cache/queue mutation below is confined to the AppKit main thread.
-@property(nonatomic, strong) NSMutableDictionary<NSString *, CJGuiInternalComposableImageResource *> *composableImageResources;
-@property(nonatomic, strong) NSMutableDictionary<NSString *, MTKTextureLoader *> *composableImageLoaders;
-@property(nonatomic, strong) NSMutableArray<NSString *> *composableImagePendingKeys;
-@property(nonatomic, assign) uint64_t composableImageAccessClock;
+// The data-transfer table is staged and promoted with the immutable scene.
+// It retains only declared bounded UTF-8 values, never an owner callback,
+// Cangjie pointer or AppKit pasteboard/drag object.
+@property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableDataTransferItem *> *composableDataTransferItems;
+@property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableDataTransferItem *> *stagedComposableDataTransferItems;
+@property(nonatomic, assign) uint64_t composableDataTransferVersion;
+@property(nonatomic, assign) uint64_t stagedComposableDataTransferVersion;
+// Native menu objects are rebuilt only from this scalar projection. They do
+// not retain a controller or an action callback; selection re-enters the
+// bounded Cangjie FIFO by stable command id.
+@property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableCommandMenuItem *> *composableCommandMenuItems;
+@property(nonatomic, assign) uint64_t composableCommandMenuVersion;
+@property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableCommandMenuItem *> *stagedComposableCommandMenuItems;
+@property(nonatomic, assign) uint64_t stagedComposableCommandMenuVersion;
+// Resource records, reusable textures, loader slots and queue capacity belong
+// to the bounded application+Metal-device domain.  A window retains only its
+// scalar completion epoch and its committed/staged node references.
+@property(nonatomic, strong) CJGuiInternalComposableImageResourceDomain *composableImageDomain;
 @property(nonatomic, assign) uint64_t composableImageResourceCompletionVersion;
 @property(nonatomic, assign) uint32_t composableImageDecodeCount;
 #ifdef CJGUI_INTERNAL_TESTING
@@ -444,6 +903,10 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 // Metal command buffer finishes.  They never mean that an AppKit overlay drew
 // or a person saw pixels.
 @property(nonatomic, assign) uint64_t sessionGeneration;
+// Native-only fixed table token. It is never exported through the public
+// Cangjie component API; resource-domain subscriptions retain this scalar
+// together with `sessionGeneration` to reject slot reuse.
+@property(nonatomic, assign) uint64_t rendererSessionToken;
 @property(nonatomic, assign) uint64_t observedMetalCompletionFrameIndex;
 @property(nonatomic, assign) uint64_t observedMetalFailureFrameIndex;
 @property(nonatomic, assign) int64_t observedMetalGpuDurationMicros;
@@ -452,6 +915,13 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalQueuedInteraction *> *pendingInteractions;
 @property(nonatomic, copy) NSString *pumpedFormText;
 @property(nonatomic, copy) NSData *pumpedFormTextUtf8;
+@property(nonatomic, copy) NSString *pumpedDataTransferFormat;
+@property(nonatomic, copy) NSData *pumpedDataTransferFormatUtf8;
+@property(nonatomic, copy) NSString *pumpedDataTransferSourceKind;
+@property(nonatomic, copy) NSData *pumpedDataTransferSourceKindUtf8;
+@property(nonatomic, copy) NSString *pumpedDataTransferSourceIdentity;
+@property(nonatomic, copy) NSData *pumpedDataTransferSourceIdentityUtf8;
+@property(nonatomic, assign) int64_t pumpedDataTransferSourceId;
 @property(nonatomic, assign) BOOL pendingInputQueueFullNotice;
 #ifdef CJGUI_INTERNAL_TESTING
 @property(nonatomic, assign) BOOL testDrawablePixelPending;
@@ -475,6 +945,23 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 @property(nonatomic, assign) uint32_t testComposableLastPumpedKind;
 @property(nonatomic, assign) uint64_t testComposableLastPumpedNodeId;
 @property(nonatomic, assign) uint64_t testComposableLastPumpedProjectionVersion;
+// Data-transfer test observability counts only values that the ordinary
+// destination/copy callbacks copied. It never points into a Cangjie owner or
+// retains an AppKit dragging object.
+@property(nonatomic, assign) uint64_t testDataTransferReadCount;
+@property(nonatomic, assign) uint64_t testDataTransferReadBytes;
+@property(nonatomic, assign) uint64_t testDataTransferReadPeakBytes;
+@property(nonatomic, assign) uint64_t testDataTransferParseCount;
+@property(nonatomic, assign) uint64_t testDataTransferParseBytes;
+@property(nonatomic, assign) uint64_t testDataTransferParsePeakBytes;
+@property(nonatomic, assign) uint64_t testDataTransferSourceWriteCount;
+@property(nonatomic, assign) uint64_t testDataTransferSourceWriteBytes;
+@property(nonatomic, assign) uint64_t testDataTransferSourceWritePeakBytes;
+@property(nonatomic, assign) uint64_t testDataTransferSourcePeakBytes;
+@property(nonatomic, assign) uint64_t testDataTransferAcceptedPeakBytes;
+@property(nonatomic, assign) uint64_t testDataTransferCandidatePeakBytes;
+@property(nonatomic, assign) uint32_t testDataTransferFifoPeakEvents;
+@property(nonatomic, assign) uint64_t testDataTransferFifoPeakBytes;
 // A retained AX element is test-only evidence for stale-object rejection.
 // It remains an Objective-C object inside the native test binary; no handle
 // can cross the Cangjie framework boundary.
@@ -490,12 +977,19 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
     self.pendingInteractions = [NSMutableArray array];
     self.composableNodes = [NSMutableArray array];
     self.stagedComposableNodes = [NSMutableArray array];
-    self.composableImageTextureCache = [NSMutableDictionary dictionary];
-    self.composableImageResources = [NSMutableDictionary dictionary];
-    self.composableImageLoaders = [NSMutableDictionary dictionary];
-    self.composableImagePendingKeys = [NSMutableArray array];
+    self.composableDataTransferItems = [NSMutableArray array];
+    self.stagedComposableDataTransferItems = [NSMutableArray array];
+    self.composableCommandMenuItems = [NSMutableArray array];
+    self.stagedComposableCommandMenuItems = [NSMutableArray array];
     self.pumpedFormText = @"";
     self.pumpedFormTextUtf8 = [NSData dataWithBytes:"" length:1];
+    self.pumpedDataTransferFormat = @"";
+    self.pumpedDataTransferFormatUtf8 = [NSData dataWithBytes:"" length:1];
+    self.pumpedDataTransferSourceKind = @"";
+    self.pumpedDataTransferSourceKindUtf8 = [NSData dataWithBytes:"" length:1];
+    self.pumpedDataTransferSourceIdentity = @"";
+    self.pumpedDataTransferSourceIdentityUtf8 = [NSData dataWithBytes:"" length:1];
+    self.pumpedDataTransferSourceId = -1;
     self.observedMetalGpuDurationMicros = -1;
     return self;
 }
@@ -516,6 +1010,12 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
         NSLog(@"cjgui: close requested: window");
     }
     NSLog(@"cjgui: window will close");
+    CjguiRebuildComposableCommandMenuForKeyWindow();
+}
+
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    (void)notification;
+    CjguiRebuildComposableCommandMenuForKeyWindow();
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification {
@@ -546,6 +1046,48 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 }
 
 @end
+
+// The fixed session table is also the only application-domain membership
+// index. Resource helpers use it for bounded, non-retaining inspection of
+// live sessions; no process-global application-data dictionary is created.
+static CJGuiInternalSession *gCjguiSessions[4];
+static BOOL gCjguiSessionOccupied[4];
+static uint64_t gCjguiNextSessionGeneration = 1;
+static char CJGuiSessionWindowAssociationKey;
+static BOOL gCjguiMainThreadDispatchEnabled;
+// Standard Quit may reach AppKit several times before the Cangjie application
+// worker gets its next bounded turn. Retain only one process-level intent;
+// completion is acknowledged by that owner after it accepts or rejects.
+static _Atomic(bool) gCjguiApplicationExitRequestPending;
+static _Atomic(bool) gCjguiApplicationExitRequestWasUnkeyed;
+static _Atomic(uint32_t) gCjguiApplicationExitLifecycleOwnerCount;
+
+// Modifier state belongs to the pointer gesture that produced an intent, not
+// to the session. An activation queued by a mouse press/complete carries the
+// modifiers observed for that gesture; a keyboard or accessibility activation
+// carries none, so it can never inherit the Command/Shift of an earlier mouse
+// click. `session.pointerModifierFlags` is still refreshed by every pointer
+// event, and only pointer-originated enqueues copy it onto their own intent.
+static void CjguiStampPointerModifiersOnQueuedInteraction(CJGuiInternalSession *session,
+                                                          uint32_t kind, uint32_t nodeIndex) {
+    if (!session || session.destroyed) return;
+    CJGuiInternalQueuedInteraction *last = session.pendingInteractions.lastObject;
+    if (!last || last.kind != kind || last.recordIndex != nodeIndex) return;
+    last.modifierFlags = session.pointerModifierFlags;
+}
+
+// The same rule for keyboard-produced intents: a navigation/select-all queued
+// by a keyDown carries the modifiers observed on THAT key event (Shift extends
+// a range, Command selects all), while a programmatic or accessibility enqueue
+// keeps zero and can never inherit an earlier gesture's state.
+static void CjguiStampKeyboardModifiersOnQueuedInteraction(CJGuiInternalSession *session,
+                                                           uint32_t kind, uint32_t nodeIndex,
+                                                           NSEventModifierFlags flags) {
+    if (!session || session.destroyed) return;
+    CJGuiInternalQueuedInteraction *last = session.pendingInteractions.lastObject;
+    if (!last || last.kind != kind || last.recordIndex != nodeIndex) return;
+    last.modifierFlags = (int64_t)flags;
+}
 
 // Consecutive text notifications for one field are a single logical input
 // stream and may be coalesced. No focus, button, checkbox or cross-field
@@ -580,6 +1122,9 @@ static BOOL CjguiEnqueueInteraction(CJGuiInternalSession *session,
         session.pendingInputQueueFullNotice = YES;
         return NO;
     }
+    // Ordinary form input may arrive from a mouse click as well as from the
+    // keyboard/AX proxy; it carries no pointer-gesture modifiers.
+    interaction.modifierFlags = 0;
     [session.pendingInteractions addObject:interaction];
     return YES;
 }
@@ -621,6 +1166,10 @@ static BOOL CjguiEnqueueComposableInteraction(CJGuiInternalSession *session,
                                                      formText:text nodeId:nodeId projectionVersion:session.composableSceneVersion
                                                    resourceId:resourceId nodeKind:nodeKind];
     if (!interaction) { session.pendingInputQueueFullNotice = YES; return NO; }
+    // Non-pointer enqueue: a keyboard/AX activation, focus transfer or
+    // declared shortcut must not inherit an earlier mouse gesture's modifiers.
+    // Pointer-originated intents are stamped by their own handler.
+    interaction.modifierFlags = 0;
     [session.pendingInteractions addObject:interaction];
 #ifdef CJGUI_INTERNAL_TESTING
     session.testComposableLastEnqueuedKind = kind;
@@ -631,6 +1180,75 @@ static BOOL CjguiEnqueueComposableInteraction(CJGuiInternalSession *session,
 #endif
     return YES;
 }
+
+#ifdef CJGUI_INTERNAL_TESTING
+static uint64_t CjguiTestUtf8ByteCount(NSString *value) {
+    NSData *bytes = [(value ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
+    return bytes ? (uint64_t)bytes.length : 0;
+}
+
+static BOOL CjguiTestIsDataTransferKind(uint32_t kind) {
+    return kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_COPY ||
+        kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_PASTE ||
+        kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP;
+}
+
+static uint64_t CjguiTestTransferItemRetainedBytes(CJGuiInternalComposableDataTransferItem *item) {
+    if (!item) return 0;
+    return CjguiTestUtf8ByteCount(item.format) + CjguiTestUtf8ByteCount(item.payload) +
+        CjguiTestUtf8ByteCount(item.sourceKind) + CjguiTestUtf8ByteCount(item.sourceIdentity);
+}
+
+static uint64_t CjguiTestTransferSourcePayloadBytes(NSArray<CJGuiInternalComposableDataTransferItem *> *items) {
+    uint64_t total = 0;
+    for (CJGuiInternalComposableDataTransferItem *item in items) {
+        if (item.item.role == CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE) {
+            total += CjguiTestUtf8ByteCount(item.payload);
+        }
+    }
+    return total;
+}
+
+static uint64_t CjguiTestTransferDeclarationBytes(NSArray<CJGuiInternalComposableDataTransferItem *> *items) {
+    uint64_t total = 0;
+    for (CJGuiInternalComposableDataTransferItem *item in items) {
+        total += CjguiTestTransferItemRetainedBytes(item);
+    }
+    return total;
+}
+
+static uint64_t CjguiTestTransferFifoBytes(CJGuiInternalSession *session, uint32_t *outEvents) {
+    uint64_t total = 0;
+    uint32_t events = 0;
+    if (session) {
+        for (CJGuiInternalQueuedInteraction *interaction in session.pendingInteractions) {
+            if (!CjguiTestIsDataTransferKind(interaction.kind)) continue;
+            events += 1;
+            total += CjguiTestUtf8ByteCount(interaction.formText) +
+                CjguiTestUtf8ByteCount(interaction.dataTransferFormat) +
+                CjguiTestUtf8ByteCount(interaction.dataTransferSourceKind) +
+                CjguiTestUtf8ByteCount(interaction.dataTransferSourceIdentity);
+        }
+    }
+    if (outEvents) *outEvents = events;
+    return total;
+}
+
+static void CjguiUpdateTestDataTransferRetentionPeaks(CJGuiInternalSession *session) {
+    if (!session) return;
+    uint64_t source = CjguiTestTransferSourcePayloadBytes(session.composableDataTransferItems);
+    uint64_t accepted = CjguiTestTransferDeclarationBytes(session.composableDataTransferItems);
+    uint64_t candidate = CjguiTestTransferDeclarationBytes(session.stagedComposableDataTransferItems);
+    uint32_t fifoEvents = 0;
+    uint64_t fifoBytes = CjguiTestTransferFifoBytes(session, &fifoEvents);
+    session.testDataTransferSourcePeakBytes = MAX(session.testDataTransferSourcePeakBytes, source);
+    session.testDataTransferAcceptedPeakBytes = MAX(session.testDataTransferAcceptedPeakBytes, accepted);
+    session.testDataTransferCandidatePeakBytes = MAX(session.testDataTransferCandidatePeakBytes, candidate);
+    session.testDataTransferFifoPeakEvents = (uint32_t)MIN(UINT32_MAX,
+        MAX((NSUInteger)session.testDataTransferFifoPeakEvents, (NSUInteger)fifoEvents));
+    session.testDataTransferFifoPeakBytes = MAX(session.testDataTransferFifoPeakBytes, fifoBytes);
+}
+#endif
 
 // ---- generic composable-scene data and native projection ----
 
@@ -693,10 +1311,234 @@ typedef NS_ENUM(uint32_t, CjguiComposableImageResourceState) {
 @property(nonatomic, copy) NSArray<NSValue *> *textMarkedRects;
 @property(nonatomic, assign) NSRect textCaretRect;
 @property(nonatomic, assign) uint32_t index;
+// Parsed once from the existing copied `value` string. The retained struct is
+// pure scalar geometry, not a Cangjie pointer, Metal buffer or AppKit object.
+@property(nonatomic, assign) BOOL hasVectorGeometry;
+@property(nonatomic, assign) CjguiInternalComposableVectorGeometry vectorGeometry;
+// Accepted-node cache: local fill/stroke triangles only. It intentionally
+// excludes paint, layout, clip and backing scale so a color/local projection
+// update can reuse preparation while the normal encoder reapplies its current
+// transform and clip chain.
+@property(nonatomic, copy) NSData *vectorPreparedTriangles;
+@property(nonatomic, assign) BOOL hasVectorPreparedGeometry;
+@property(nonatomic, assign) CjguiInternalComposableVectorGeometry vectorPreparedGeometry;
+// The buffer is native-only and COW-shared with an unchanged accepted node.
+// `present_clear` retains its submitted node array through command-buffer
+// completion, so a later geometry replacement cannot release an in-flight
+// buffer generation.
+@property(nonatomic, strong) id<MTLBuffer> vectorPreparedVertexBuffer;
+@property(nonatomic, assign) NSUInteger vectorPreparedVertexCount;
+@property(nonatomic, assign) NSUInteger vectorPreparedVertexBytes;
 @end
 
 @implementation CJGuiInternalComposableSceneNode
 @end
+
+static const double CjguiComposableVectorEpsilon = 1.0e-9;
+static const double CjguiComposableVectorMiterLimit = 4.0;
+
+static BOOL CjguiComposableVectorFiniteUnit(double value) {
+    return isfinite(value) && value >= 0.0 && value <= 1.0;
+}
+
+static BOOL CjguiComposableVectorParseDouble(NSString *token, double *outValue) {
+    if (!token || !outValue) return NO;
+    const char *bytes = token.UTF8String;
+    if (!bytes || bytes[0] == '\0') return NO;
+    char *end = NULL;
+    double value = strtod(bytes, &end);
+    if (!end || end == bytes || *end != '\0' || !isfinite(value)) return NO;
+    *outValue = value;
+    return YES;
+}
+
+static BOOL CjguiComposableVectorParseUInt(NSString *token, uint32_t *outValue) {
+    double value = 0.0;
+    if (!outValue || !CjguiComposableVectorParseDouble(token, &value) || value < 0.0 ||
+        value > (double)UINT32_MAX || floor(value) != value) return NO;
+    *outValue = (uint32_t)value;
+    return YES;
+}
+
+static double CjguiComposableVectorCross(CjguiInternalComposableVectorPoint a,
+                                         CjguiInternalComposableVectorPoint b,
+                                         CjguiInternalComposableVectorPoint c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+static BOOL CjguiComposableVectorSamePoint(CjguiInternalComposableVectorPoint a,
+                                           CjguiInternalComposableVectorPoint b) {
+    return a.x == b.x && a.y == b.y;
+}
+
+static BOOL CjguiComposableVectorPointInViewBox(CjguiInternalComposableVectorPoint point,
+                                                CjguiInternalComposableVectorGeometry geometry) {
+    return isfinite(point.x) && isfinite(point.y) && point.x >= 0.0 && point.y >= 0.0 &&
+        point.x <= geometry.viewBoxWidth && point.y <= geometry.viewBoxHeight;
+}
+
+static BOOL CjguiComposableVectorBetween(double value, double first, double second) {
+    return value >= MIN(first, second) && value <= MAX(first, second);
+}
+
+static BOOL CjguiComposableVectorSegmentsIntersect(CjguiInternalComposableVectorPoint a,
+                                                   CjguiInternalComposableVectorPoint b,
+                                                   CjguiInternalComposableVectorPoint c,
+                                                   CjguiInternalComposableVectorPoint d) {
+    double abC = CjguiComposableVectorCross(a, b, c);
+    double abD = CjguiComposableVectorCross(a, b, d);
+    double cdA = CjguiComposableVectorCross(c, d, a);
+    double cdB = CjguiComposableVectorCross(c, d, b);
+    if (fabs(abC) <= CjguiComposableVectorEpsilon && CjguiComposableVectorBetween(c.x, a.x, b.x) &&
+        CjguiComposableVectorBetween(c.y, a.y, b.y)) return YES;
+    if (fabs(abD) <= CjguiComposableVectorEpsilon && CjguiComposableVectorBetween(d.x, a.x, b.x) &&
+        CjguiComposableVectorBetween(d.y, a.y, b.y)) return YES;
+    if (fabs(cdA) <= CjguiComposableVectorEpsilon && CjguiComposableVectorBetween(a.x, c.x, d.x) &&
+        CjguiComposableVectorBetween(a.y, c.y, d.y)) return YES;
+    if (fabs(cdB) <= CjguiComposableVectorEpsilon && CjguiComposableVectorBetween(b.x, c.x, d.x) &&
+        CjguiComposableVectorBetween(b.y, c.y, d.y)) return YES;
+    return ((abC > 0.0 && abD < 0.0) || (abC < 0.0 && abD > 0.0)) &&
+        ((cdA > 0.0 && cdB < 0.0) || (cdA < 0.0 && cdB > 0.0));
+}
+
+static BOOL CjguiComposableVectorPointInTriangle(CjguiInternalComposableVectorPoint point,
+                                                 CjguiInternalComposableVectorPoint a,
+                                                 CjguiInternalComposableVectorPoint b,
+                                                 CjguiInternalComposableVectorPoint c,
+                                                 double winding) {
+    double first = CjguiComposableVectorCross(a, b, point) * winding;
+    double second = CjguiComposableVectorCross(b, c, point) * winding;
+    double third = CjguiComposableVectorCross(c, a, point) * winding;
+    return first >= -CjguiComposableVectorEpsilon && second >= -CjguiComposableVectorEpsilon &&
+        third >= -CjguiComposableVectorEpsilon;
+}
+
+static BOOL CjguiComposableVectorTriangulate(CjguiInternalComposableVectorGeometry *geometry) {
+    if (!geometry || geometry->kind != CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON ||
+        geometry->pointCount < 3 || geometry->pointCount > CJGUI_INTERNAL_COMPOSABLE_VECTOR_MAX_POINTS) return NO;
+    double signedArea = 0.0;
+    for (uint32_t index = 0; index < geometry->pointCount; index++) {
+        uint32_t next = index + 1 == geometry->pointCount ? 0 : index + 1;
+        signedArea += geometry->points[index].x * geometry->points[next].y -
+            geometry->points[next].x * geometry->points[index].y;
+    }
+    if (fabs(signedArea) <= CjguiComposableVectorEpsilon) return NO;
+    double winding = signedArea > 0.0 ? 1.0 : -1.0;
+    uint8_t remaining[CJGUI_INTERNAL_COMPOSABLE_VECTOR_MAX_POINTS] = {0};
+    uint32_t remainingCount = geometry->pointCount;
+    for (uint32_t index = 0; index < remainingCount; index++) remaining[index] = (uint8_t)index;
+    geometry->triangleIndexCount = 0;
+    while (remainingCount > 3) {
+        BOOL foundEar = NO;
+        for (uint32_t position = 0; position < remainingCount; position++) {
+            uint32_t before = position == 0 ? remainingCount - 1 : position - 1;
+            uint32_t after = position + 1 == remainingCount ? 0 : position + 1;
+            uint8_t first = remaining[before];
+            uint8_t middle = remaining[position];
+            uint8_t last = remaining[after];
+            CjguiInternalComposableVectorPoint a = geometry->points[first];
+            CjguiInternalComposableVectorPoint b = geometry->points[middle];
+            CjguiInternalComposableVectorPoint c = geometry->points[last];
+            if (CjguiComposableVectorCross(a, b, c) * winding <= CjguiComposableVectorEpsilon) continue;
+            BOOL containsOther = NO;
+            for (uint32_t candidate = 0; candidate < remainingCount; candidate++) {
+                uint8_t candidateIndex = remaining[candidate];
+                if (candidateIndex == first || candidateIndex == middle || candidateIndex == last) continue;
+                if (CjguiComposableVectorPointInTriangle(geometry->points[candidateIndex], a, b, c, winding)) {
+                    containsOther = YES;
+                    break;
+                }
+            }
+            if (containsOther) continue;
+            if (geometry->triangleIndexCount + 3 > sizeof(geometry->triangleIndices)) return NO;
+            geometry->triangleIndices[geometry->triangleIndexCount++] = first;
+            geometry->triangleIndices[geometry->triangleIndexCount++] = middle;
+            geometry->triangleIndices[geometry->triangleIndexCount++] = last;
+            for (uint32_t shift = position; shift + 1 < remainingCount; shift++) remaining[shift] = remaining[shift + 1];
+            remainingCount -= 1;
+            foundEar = YES;
+            break;
+        }
+        if (!foundEar) return NO;
+    }
+    if (geometry->triangleIndexCount + 3 > sizeof(geometry->triangleIndices)) return NO;
+    geometry->triangleIndices[geometry->triangleIndexCount++] = remaining[0];
+    geometry->triangleIndices[geometry->triangleIndexCount++] = remaining[1];
+    geometry->triangleIndices[geometry->triangleIndexCount++] = remaining[2];
+    return YES;
+}
+
+static BOOL CjguiParseComposableVectorGeometry(NSString *payload,
+                                               CjguiInternalComposableVectorGeometry *outGeometry) {
+    if (!payload || !outGeometry) return NO;
+    NSArray<NSString *> *parts = [payload componentsSeparatedByString:@";"];
+    if (parts.count < 20 || ![parts[0] isEqualToString:@"cg1"]) return NO;
+    CjguiInternalComposableVectorGeometry geometry = {0};
+    if (!CjguiComposableVectorParseUInt(parts[1], &geometry.kind) ||
+        !CjguiComposableVectorParseDouble(parts[2], &geometry.viewBoxWidth) ||
+        !CjguiComposableVectorParseDouble(parts[3], &geometry.viewBoxHeight) ||
+        !CjguiComposableVectorParseDouble(parts[4], &geometry.strokeWidth) ||
+        !CjguiComposableVectorParseUInt(parts[5], &geometry.cap) ||
+        !CjguiComposableVectorParseUInt(parts[6], &geometry.join) ||
+        !CjguiComposableVectorParseDouble(parts[7], &geometry.fillRed) ||
+        !CjguiComposableVectorParseDouble(parts[8], &geometry.fillGreen) ||
+        !CjguiComposableVectorParseDouble(parts[9], &geometry.fillBlue) ||
+        !CjguiComposableVectorParseDouble(parts[10], &geometry.fillAlpha) ||
+        !CjguiComposableVectorParseDouble(parts[11], &geometry.strokeRed) ||
+        !CjguiComposableVectorParseDouble(parts[12], &geometry.strokeGreen) ||
+        !CjguiComposableVectorParseDouble(parts[13], &geometry.strokeBlue) ||
+        !CjguiComposableVectorParseDouble(parts[14], &geometry.strokeAlpha) ||
+        !CjguiComposableVectorParseDouble(parts[15], &geometry.center.x) ||
+        !CjguiComposableVectorParseDouble(parts[16], &geometry.center.y) ||
+        !CjguiComposableVectorParseDouble(parts[17], &geometry.radiusX) ||
+        !CjguiComposableVectorParseDouble(parts[18], &geometry.radiusY) ||
+        !CjguiComposableVectorParseUInt(parts[19], &geometry.pointCount)) return NO;
+    if (geometry.kind < CJGUI_INTERNAL_VECTOR_LINE || geometry.kind > CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON ||
+        geometry.viewBoxWidth <= 0.0 || geometry.viewBoxHeight <= 0.0 || geometry.strokeWidth < 0.0 ||
+        geometry.cap < CJGUI_INTERNAL_VECTOR_CAP_BUTT || geometry.cap > CJGUI_INTERNAL_VECTOR_CAP_SQUARE ||
+        geometry.join < CJGUI_INTERNAL_VECTOR_JOIN_MITER || geometry.join > CJGUI_INTERNAL_VECTOR_JOIN_ROUND ||
+        !CjguiComposableVectorFiniteUnit(geometry.fillRed) || !CjguiComposableVectorFiniteUnit(geometry.fillGreen) ||
+        !CjguiComposableVectorFiniteUnit(geometry.fillBlue) || !CjguiComposableVectorFiniteUnit(geometry.fillAlpha) ||
+        !CjguiComposableVectorFiniteUnit(geometry.strokeRed) || !CjguiComposableVectorFiniteUnit(geometry.strokeGreen) ||
+        !CjguiComposableVectorFiniteUnit(geometry.strokeBlue) || !CjguiComposableVectorFiniteUnit(geometry.strokeAlpha)) return NO;
+    if (geometry.pointCount > CJGUI_INTERNAL_COMPOSABLE_VECTOR_MAX_POINTS ||
+        parts.count != 20 + geometry.pointCount * 2) return NO;
+    for (uint32_t index = 0; index < geometry.pointCount; index++) {
+        if (!CjguiComposableVectorParseDouble(parts[20 + index * 2], &geometry.points[index].x) ||
+            !CjguiComposableVectorParseDouble(parts[21 + index * 2], &geometry.points[index].y) ||
+            !CjguiComposableVectorPointInViewBox(geometry.points[index], geometry)) return NO;
+        if (index > 0 && CjguiComposableVectorSamePoint(geometry.points[index - 1], geometry.points[index])) return NO;
+    }
+    BOOL fillVisible = geometry.fillAlpha > 0.0;
+    BOOL strokeVisible = geometry.strokeAlpha > 0.0;
+    if ((strokeVisible && geometry.strokeWidth <= 0.0) || (!fillVisible && !strokeVisible)) return NO;
+    if (geometry.kind == CJGUI_INTERNAL_VECTOR_ELLIPSE) {
+        if (geometry.pointCount != 1 || !CjguiComposableVectorPointInViewBox(geometry.center, geometry) ||
+            geometry.radiusX <= 0.0 || geometry.radiusY <= 0.0 || geometry.center.x - geometry.radiusX < 0.0 ||
+            geometry.center.y - geometry.radiusY < 0.0 || geometry.center.x + geometry.radiusX > geometry.viewBoxWidth ||
+            geometry.center.y + geometry.radiusY > geometry.viewBoxHeight) return NO;
+    } else {
+        uint32_t minimum = geometry.kind == CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON ? 3u : 2u;
+        if (geometry.pointCount < minimum || (geometry.kind == CJGUI_INTERNAL_VECTOR_LINE && geometry.pointCount != 2)) return NO;
+        if ((geometry.kind == CJGUI_INTERNAL_VECTOR_LINE || geometry.kind == CJGUI_INTERNAL_VECTOR_POLYLINE) &&
+            !strokeVisible) return NO;
+        if (geometry.kind == CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON) {
+            if (CjguiComposableVectorSamePoint(geometry.points[0], geometry.points[geometry.pointCount - 1])) return NO;
+            for (uint32_t index = 0; index < geometry.pointCount; index++) {
+                uint32_t next = index + 1 == geometry.pointCount ? 0 : index + 1;
+                for (uint32_t other = index + 1; other < geometry.pointCount; other++) {
+                    if (other == index + 1 || (index == 0 && other == geometry.pointCount - 1)) continue;
+                    uint32_t nextOther = other + 1 == geometry.pointCount ? 0 : other + 1;
+                    if (CjguiComposableVectorSegmentsIntersect(geometry.points[index], geometry.points[next],
+                                                               geometry.points[other], geometry.points[nextOther])) return NO;
+                }
+            }
+            if (!CjguiComposableVectorTriangulate(&geometry)) return NO;
+        }
+    }
+    *outGeometry = geometry;
+    return YES;
+}
 
 static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *session,
                                                      uint32_t kind,
@@ -716,6 +1558,7 @@ static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *sessi
         last.nodeKind == nodeKind && last.projectionVersion == session.composableSceneVersion) {
         last.pointerX = (int64_t)llround(point.x);
         last.pointerY = (int64_t)llround(point.y);
+        last.modifierFlags = session.pointerModifierFlags;
         return YES;
     }
     if (session.pendingInteractions.count >= kCjguiPendingInteractionCapacity) {
@@ -733,6 +1576,7 @@ static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *sessi
     }
     interaction.pointerX = (int64_t)llround(point.x);
     interaction.pointerY = (int64_t)llround(point.y);
+    interaction.modifierFlags = session.pointerModifierFlags;
     [session.pendingInteractions addObject:interaction];
 #ifdef CJGUI_INTERNAL_TESTING
     session.testComposableLastEnqueuedKind = kind;
@@ -757,12 +1601,80 @@ static void CjguiClearComposableTextDecorations(CJGuiInternalComposableSceneNode
 @property(nonatomic, assign) uint32_t state;
 @property(nonatomic, assign) uint64_t lastAccess;
 @property(nonatomic, strong) id<MTLTexture> texture;
+// Every subscriber is only a slot token plus that session's non-reusable
+// generation.  The application domain never retains an NSWindow/session, so
+// a closed window cannot be revived by a late loader callback.
+@property(nonatomic, strong) NSMutableArray *subscribers;
+// Explicit preparation may start real work before a candidate scene is
+// accepted. Requesters are therefore distinct from committed subscribers:
+// they may lead a bounded load, but never receive a completion invalidation.
+@property(nonatomic, strong) NSMutableArray *requesters;
+@property(nonatomic, assign) uint64_t loadGeneration;
+@property(nonatomic, assign) uint64_t loadSessionToken;
+@property(nonatomic, assign) uint64_t loadSessionGeneration;
 #ifdef CJGUI_INTERNAL_TESTING
 @property(nonatomic, assign) uint64_t launchMicros;
 #endif
 @end
 
 @implementation CJGuiInternalComposableImageResource
+- (instancetype)init {
+    self = [super init];
+    if (!self) return nil;
+    self.subscribers = [NSMutableArray array];
+    self.requesters = [NSMutableArray array];
+    return self;
+}
+@end
+
+@interface CJGuiInternalComposableImageSubscription : NSObject
+@property(nonatomic, assign) uint64_t sessionToken;
+@property(nonatomic, assign) uint64_t sessionGeneration;
+// A direct public prepare request is independent of a staged scene candidate.
+// It is retained across a later scene commit and released with its session.
+@property(nonatomic, assign) BOOL explicitPreload;
+@end
+
+@implementation CJGuiInternalComposableImageSubscription
+@end
+
+// This is deliberately a finite native application resource domain, not a
+// process-wide cache keyed by application data. Domains are associated with
+// NSApplication and partitioned by the exact MTLDevice. At most the existing
+// fixed session capacity can be live, while per-domain cache/record/queue
+// limits remain the established 8 / 32MiB / 4 / 16 / 64 limits.
+@interface CJGuiInternalComposableImageResourceDomain : NSObject
+@property(nonatomic, strong) id<MTLDevice> device;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, id<MTLTexture>> *textureCache;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, CJGuiInternalComposableImageResource *> *resources;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, MTKTextureLoader *> *loaders;
+@property(nonatomic, strong) NSMutableArray<NSString *> *pendingKeys;
+@property(nonatomic, assign) uint64_t accessClock;
+@property(nonatomic, assign) NSUInteger sessionCount;
+@property(nonatomic, assign) BOOL destroyed;
+#ifdef CJGUI_INTERNAL_TESTING
+@property(nonatomic, assign) uint64_t testPathResolveMicros;
+@property(nonatomic, assign) uint64_t testCacheHitCount;
+@property(nonatomic, assign) uint64_t testActualLoadCount;
+@property(nonatomic, assign) uint64_t testActualDecodeCount;
+@property(nonatomic, assign) uint64_t testAsyncTotalMicros;
+@property(nonatomic, assign) uint32_t testPeakInFlight;
+@property(nonatomic, assign) uint32_t testPeakPending;
+#endif
+- (instancetype)initWithDevice:(id<MTLDevice>)device;
+@end
+
+@implementation CJGuiInternalComposableImageResourceDomain
+- (instancetype)initWithDevice:(id<MTLDevice>)device {
+    self = [super init];
+    if (!self || !device) return nil;
+    self.device = device;
+    self.textureCache = [NSMutableDictionary dictionary];
+    self.resources = [NSMutableDictionary dictionary];
+    self.loaders = [NSMutableDictionary dictionary];
+    self.pendingKeys = [NSMutableArray array];
+    return self;
+}
 @end
 
 static NSString *CjguiComposableImageResolvedPath(NSString *resourcePath) {
@@ -806,10 +1718,66 @@ static id<MTLTexture> CjguiComposableImageBoundTexture(CJGuiInternalSession *ses
     return nil;
 }
 
-static uint64_t CjguiComposableImageNextAccess(CJGuiInternalSession *session) {
-    if (!session) return 0;
-    if (session.composableImageAccessClock < UINT64_MAX) session.composableImageAccessClock += 1;
-    return session.composableImageAccessClock;
+// Reusable-cache eviction removes only the cache's own strong reference. A
+// texture retained by a committed/staged node is still a safe application
+// domain source for another window on the same device; scanning the fixed
+// session table avoids turning that eviction into a duplicate decode.
+static id<MTLTexture> CjguiComposableImageDomainBoundTexture(
+    CJGuiInternalComposableImageResourceDomain *domain, NSString *cacheKey) {
+    if (!domain || cacheKey.length == 0) return nil;
+    for (NSUInteger index = 0; index < kCjguiSessionCapacity; index++) {
+        CJGuiInternalSession *session = gCjguiSessions[index];
+        if (!session || session.destroyed || session.composableImageDomain != domain) continue;
+        id<MTLTexture> texture = CjguiComposableImageBoundTexture(session, cacheKey);
+        if (texture) return texture;
+    }
+    return nil;
+}
+
+static CJGuiInternalComposableImageResourceDomain *CjguiComposableImageDomainForSession(
+    CJGuiInternalSession *session) {
+    if (!session || session.destroyed) return nil;
+    CJGuiInternalComposableImageResourceDomain *domain = session.composableImageDomain;
+    if (!domain || domain.destroyed || domain.device != session.device) return nil;
+    return domain;
+}
+
+static uint64_t CjguiComposableImageNextAccess(CJGuiInternalComposableImageResourceDomain *domain) {
+    if (!domain) return 0;
+    if (domain.accessClock < UINT64_MAX) domain.accessClock += 1;
+    return domain.accessClock;
+}
+
+static void CjguiSubscribeComposableImageResource(CJGuiInternalSession *session,
+                                                   CJGuiInternalComposableImageResource *resource) {
+    if (!session || session.destroyed || !resource || session.rendererSessionToken == 0) return;
+    for (CJGuiInternalComposableImageSubscription *subscriber in resource.subscribers) {
+        if (subscriber.sessionToken == session.rendererSessionToken &&
+            subscriber.sessionGeneration == session.sessionGeneration) return;
+    }
+    CJGuiInternalComposableImageSubscription *subscriber = [[CJGuiInternalComposableImageSubscription alloc] init];
+    subscriber.sessionToken = session.rendererSessionToken;
+    subscriber.sessionGeneration = session.sessionGeneration;
+    [resource.subscribers addObject:subscriber];
+}
+
+static void CjguiRequestComposableImageResource(CJGuiInternalSession *session,
+                                                 CJGuiInternalComposableImageResource *resource,
+                                                 BOOL explicitPreload) {
+    if (!session || session.destroyed || !resource || session.rendererSessionToken == 0) return;
+    for (CJGuiInternalComposableImageSubscription *requester in resource.requesters) {
+        if (requester.sessionToken == session.rendererSessionToken &&
+            requester.sessionGeneration == session.sessionGeneration) {
+            // A later scene request must not downgrade an explicit preload.
+            requester.explicitPreload = requester.explicitPreload || explicitPreload;
+            return;
+        }
+    }
+    CJGuiInternalComposableImageSubscription *requester = [[CJGuiInternalComposableImageSubscription alloc] init];
+    requester.sessionToken = session.rendererSessionToken;
+    requester.sessionGeneration = session.sessionGeneration;
+    requester.explicitPreload = explicitPreload;
+    [resource.requesters addObject:requester];
 }
 
 static NSUInteger CjguiComposableImageTextureBytes(id<MTLTexture> texture) {
@@ -821,173 +1789,360 @@ static NSUInteger CjguiComposableImageTextureBytes(id<MTLTexture> texture) {
     return pixels > NSUIntegerMax / 4 ? NSUIntegerMax : pixels * 4;
 }
 
-static NSMutableSet<NSString *> *CjguiComposableImageProtectedKeys(CJGuiInternalSession *session,
-                                                                     BOOL preserveSceneReferences) {
-    NSMutableSet<NSString *> *keys = [NSMutableSet set];
-    // Before the next scene commit, referenced loading nodes have only a key
-    // and still need the completion cache entry to obtain their texture. Once
-    // commit has copied the texture directly into its nodes, those keys must
-    // no longer pin a duplicate cache reference forever.
-    if (preserveSceneReferences) {
-        for (CJGuiInternalComposableSceneNode *node in session.composableNodes) {
-            if (node.imageTextureCacheKey.length > 0) [keys addObject:node.imageTextureCacheKey];
-        }
-        for (CJGuiInternalComposableSceneNode *node in session.stagedComposableNodes) {
-            if (node.imageTextureCacheKey.length > 0) [keys addObject:node.imageTextureCacheKey];
-        }
-    }
-    [keys addObjectsFromArray:session.composableImageLoaders.allKeys];
-    [keys addObjectsFromArray:session.composableImagePendingKeys];
-    return keys;
-}
-
-static void CjguiPruneComposableImageTextureCache(CJGuiInternalSession *session, BOOL preserveSceneReferences) {
-    if (!session) return;
-    NSMutableSet<NSString *> *protectedKeys = CjguiComposableImageProtectedKeys(session, preserveSceneReferences);
-    NSUInteger totalBytes = 0;
-    for (id<MTLTexture> texture in session.composableImageTextureCache.allValues) {
-        NSUInteger bytes = CjguiComposableImageTextureBytes(texture);
-        totalBytes = bytes > NSUIntegerMax - totalBytes ? NSUIntegerMax : totalBytes + bytes;
-    }
-    while (session.composableImageTextureCache.count > CjguiComposableImageTextureCacheCapacity ||
-           totalBytes > CjguiComposableImageTextureCacheByteCapacity) {
-        NSString *victim = nil;
-        uint64_t oldest = UINT64_MAX;
-        for (NSString *key in session.composableImageTextureCache) {
-            if ([protectedKeys containsObject:key]) continue;
-            CJGuiInternalComposableImageResource *resource = session.composableImageResources[key];
-            uint64_t access = resource ? resource.lastAccess : 0;
-            if (!victim || access < oldest) { victim = key; oldest = access; }
-        }
-        // All remaining keys are in-flight/pending and cannot safely lose the
-        // cache entry before their completion path has resolved.
-        if (!victim) break;
-        id<MTLTexture> texture = session.composableImageTextureCache[victim];
-        NSUInteger bytes = CjguiComposableImageTextureBytes(texture);
-        [session.composableImageTextureCache removeObjectForKey:victim];
-        CJGuiInternalComposableImageResource *resource = session.composableImageResources[victim];
-        if (resource) { resource.texture = nil; resource.state = CjguiComposableImageResourceUnrequested; }
-        totalBytes = bytes > totalBytes ? 0 : totalBytes - bytes;
-    }
-    while (session.composableImageResources.count > CjguiComposableImageRecordCapacity) {
-        NSString *victim = nil;
-        uint64_t oldest = UINT64_MAX;
-        for (NSString *key in session.composableImageResources) {
-            if ([protectedKeys containsObject:key] || session.composableImageTextureCache[key]) continue;
-            CJGuiInternalComposableImageResource *resource = session.composableImageResources[key];
-            if (!victim || resource.lastAccess < oldest) { victim = key; oldest = resource.lastAccess; }
-        }
-        if (!victim) break;
-        [session.composableImageResources removeObjectForKey:victim];
-    }
-}
-
-static void CjguiStartNextComposableImageLoads(CJGuiInternalSession *session, uint64_t sessionToken);
-
-// Busy records consume no pending slot. A loader completion revisits visible
-// declarations in their stable scene order and admits as many as the bounded
-// queue can hold. Explicit preloads that are not referenced stay visibly
-// `busy` for their caller to retry; no timer or unbounded side queue exists.
-static void CjguiPromoteReferencedBusyImageResources(CJGuiInternalSession *session) {
-    if (!session || session.composableImagePendingKeys.count >= CjguiComposableImagePendingCapacity) return;
-    NSMutableSet<NSString *> *seen = [NSMutableSet set];
-    NSArray<NSArray<CJGuiInternalComposableSceneNode *> *> *nodeSets = @[
-        session.stagedComposableNodes ?: @[], session.composableNodes ?: @[]
-    ];
-    for (NSArray<CJGuiInternalComposableSceneNode *> *nodes in nodeSets) {
-        for (CJGuiInternalComposableSceneNode *node in nodes) {
-            NSString *cacheKey = node.imageTextureCacheKey;
-            if (cacheKey.length == 0 || [seen containsObject:cacheKey]) continue;
-            [seen addObject:cacheKey];
-            CJGuiInternalComposableImageResource *resource = session.composableImageResources[cacheKey];
-            if (!resource || resource.state != CjguiComposableImageResourceBusy) continue;
-            resource.state = CjguiComposableImageResourceLoading;
-            resource.lastAccess = CjguiComposableImageNextAccess(session);
-            [session.composableImagePendingKeys addObject:cacheKey];
-#ifdef CJGUI_INTERNAL_TESTING
-            session.testComposableImagePeakPending = (uint32_t)MIN(
-                UINT32_MAX, MAX((NSUInteger)session.testComposableImagePeakPending, session.composableImagePendingKeys.count));
-#endif
-            if (session.composableImagePendingKeys.count >= CjguiComposableImagePendingCapacity) return;
-        }
-    }
-}
-
 static BOOL CjguiComposableImageKeyIsReferenced(CJGuiInternalSession *session, NSString *cacheKey) {
     if (!session || cacheKey.length == 0) return NO;
     for (CJGuiInternalComposableSceneNode *node in session.composableNodes) {
         if ([node.imageTextureCacheKey isEqualToString:cacheKey]) return YES;
     }
-    for (CJGuiInternalComposableSceneNode *node in session.stagedComposableNodes) {
-        if ([node.imageTextureCacheKey isEqualToString:cacheKey]) return YES;
+    return NO;
+}
+
+static NSMutableSet<NSString *> *CjguiComposableImageProtectedKeys(
+    CJGuiInternalComposableImageResourceDomain *domain, BOOL preserveSceneReferences) {
+    NSMutableSet<NSString *> *keys = [NSMutableSet set];
+    if (!domain) return keys;
+    if (preserveSceneReferences) {
+        for (NSUInteger index = 0; index < kCjguiSessionCapacity; index++) {
+            CJGuiInternalSession *session = gCjguiSessions[index];
+            if (!session || session.destroyed || session.composableImageDomain != domain) continue;
+            for (CJGuiInternalComposableSceneNode *node in session.composableNodes) {
+                if (node.imageTextureCacheKey.length > 0) [keys addObject:node.imageTextureCacheKey];
+            }
+            for (CJGuiInternalComposableSceneNode *node in session.stagedComposableNodes) {
+                if (node.imageTextureCacheKey.length > 0) [keys addObject:node.imageTextureCacheKey];
+            }
+        }
+    }
+    [keys addObjectsFromArray:domain.loaders.allKeys];
+    [keys addObjectsFromArray:domain.pendingKeys];
+    return keys;
+}
+
+static void CjguiPruneComposableImageTextureCache(CJGuiInternalComposableImageResourceDomain *domain,
+                                                   BOOL preserveSceneReferences) {
+    if (!domain || domain.destroyed) return;
+    NSMutableSet<NSString *> *protectedKeys = CjguiComposableImageProtectedKeys(domain, preserveSceneReferences);
+    NSUInteger totalBytes = 0;
+    for (id<MTLTexture> texture in domain.textureCache.allValues) {
+        NSUInteger bytes = CjguiComposableImageTextureBytes(texture);
+        totalBytes = bytes > NSUIntegerMax - totalBytes ? NSUIntegerMax : totalBytes + bytes;
+    }
+    while (domain.textureCache.count > CjguiComposableImageTextureCacheCapacity ||
+           totalBytes > CjguiComposableImageTextureCacheByteCapacity) {
+        NSString *victim = nil;
+        uint64_t oldest = UINT64_MAX;
+        for (NSString *key in domain.textureCache) {
+            if ([protectedKeys containsObject:key]) continue;
+            CJGuiInternalComposableImageResource *resource = domain.resources[key];
+            uint64_t access = resource ? resource.lastAccess : 0;
+            if (!victim || access < oldest) { victim = key; oldest = access; }
+        }
+        if (!victim) break;
+        id<MTLTexture> texture = domain.textureCache[victim];
+        NSUInteger bytes = CjguiComposableImageTextureBytes(texture);
+        [domain.textureCache removeObjectForKey:victim];
+        CJGuiInternalComposableImageResource *resource = domain.resources[victim];
+        if (resource) { resource.texture = nil; resource.state = CjguiComposableImageResourceUnrequested; }
+        totalBytes = bytes > totalBytes ? 0 : totalBytes - bytes;
+    }
+    while (domain.resources.count > CjguiComposableImageRecordCapacity) {
+        NSString *victim = nil;
+        uint64_t oldest = UINT64_MAX;
+        for (NSString *key in domain.resources) {
+            if ([protectedKeys containsObject:key] || domain.textureCache[key]) continue;
+            CJGuiInternalComposableImageResource *resource = domain.resources[key];
+            if (!victim || resource.lastAccess < oldest) { victim = key; oldest = resource.lastAccess; }
+        }
+        if (!victim) break;
+        [domain.resources removeObjectForKey:victim];
+    }
+}
+
+static void CjguiStartNextComposableImageLoads(CJGuiInternalComposableImageResourceDomain *domain);
+
+static void CjguiEnqueueComposableImageResource(CJGuiInternalComposableImageResourceDomain *domain,
+                                                 CJGuiInternalComposableImageResource *resource) {
+    if (!domain || !resource) return;
+    if (domain.pendingKeys.count >= CjguiComposableImagePendingCapacity) {
+        resource.state = CjguiComposableImageResourceBusy;
+        return;
+    }
+    if (![domain.pendingKeys containsObject:resource.cacheKey]) [domain.pendingKeys addObject:resource.cacheKey];
+    resource.state = CjguiComposableImageResourceLoading;
+#ifdef CJGUI_INTERNAL_TESTING
+    domain.testPeakPending = (uint32_t)MIN(UINT32_MAX, MAX((NSUInteger)domain.testPeakPending, domain.pendingKeys.count));
+#endif
+}
+
+static BOOL CjguiComposableImageHasExplicitPreloadForSession(
+    CJGuiInternalSession *session, CJGuiInternalComposableImageResource *resource) {
+    if (!session || !resource) return NO;
+    for (CJGuiInternalComposableImageSubscription *requester in resource.requesters) {
+        if (requester.sessionToken == session.rendererSessionToken &&
+            requester.sessionGeneration == session.sessionGeneration && requester.explicitPreload) {
+            return YES;
+        }
     }
     return NO;
 }
 
-static void CjguiCompleteComposableImageLoad(uint64_t sessionToken, uint64_t generation, NSString *cacheKey,
-                                             id<MTLTexture> texture, NSError *error) {
-    CJGuiInternalSession *session = CjguiLookupSession(sessionToken);
-    if (!session || session.destroyed || session.sessionGeneration != generation) return;
-    [session.composableImageLoaders removeObjectForKey:cacheKey];
-    CJGuiInternalComposableImageResource *resource = session.composableImageResources[cacheKey];
-    if (!resource || resource.state != CjguiComposableImageResourceLoading) {
-        CjguiStartNextComposableImageLoads(session, sessionToken);
+// Promote busy demand from a current/staged scene or an explicit public
+// preload in this exact domain.  Scan fixed sessions rather than retaining a
+// window from the resource domain; stable slot order bounds progression across
+// windows.  Candidate-scoped requesters are reconciled separately at commit
+// or rollback, while explicit preloads remain eligible until session close.
+static void CjguiPromoteReferencedBusyImageResources(CJGuiInternalComposableImageResourceDomain *domain) {
+    if (!domain || domain.pendingKeys.count >= CjguiComposableImagePendingCapacity) return;
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSUInteger index = 0; index < kCjguiSessionCapacity; index++) {
+        CJGuiInternalSession *session = gCjguiSessions[index];
+        if (!session || session.destroyed || session.composableImageDomain != domain) continue;
+        NSArray<NSArray<CJGuiInternalComposableSceneNode *> *> *nodeSets = @[
+            session.stagedComposableNodes ?: @[], session.composableNodes ?: @[]
+        ];
+        for (NSArray<CJGuiInternalComposableSceneNode *> *nodes in nodeSets) {
+            for (CJGuiInternalComposableSceneNode *node in nodes) {
+                NSString *cacheKey = node.imageTextureCacheKey;
+                if (cacheKey.length == 0 || [seen containsObject:cacheKey]) continue;
+                [seen addObject:cacheKey];
+                CJGuiInternalComposableImageResource *resource = domain.resources[cacheKey];
+                if (!resource || resource.state != CjguiComposableImageResourceBusy) continue;
+                resource.lastAccess = CjguiComposableImageNextAccess(domain);
+                CjguiEnqueueComposableImageResource(domain, resource);
+                if (domain.pendingKeys.count >= CjguiComposableImagePendingCapacity) return;
+            }
+        }
+        // A public prepare may intentionally run before there is a scene node.
+        // Once a queued item starts, such overflow requests must not remain
+        // permanently busy merely because no current/staged node references
+        // them yet. Sort the bounded record keys for deterministic selection.
+        NSArray<NSString *> *resourceKeys = [domain.resources.allKeys sortedArrayUsingSelector:@selector(compare:)];
+        for (NSString *cacheKey in resourceKeys) {
+            if ([seen containsObject:cacheKey]) continue;
+            CJGuiInternalComposableImageResource *resource = domain.resources[cacheKey];
+            if (!resource || resource.state != CjguiComposableImageResourceBusy ||
+                !CjguiComposableImageHasExplicitPreloadForSession(session, resource)) continue;
+            [seen addObject:cacheKey];
+            resource.lastAccess = CjguiComposableImageNextAccess(domain);
+            CjguiEnqueueComposableImageResource(domain, resource);
+            if (domain.pendingKeys.count >= CjguiComposableImagePendingCapacity) return;
+        }
+    }
+}
+
+static void CjguiRemoveComposableImageSubscriptions(CJGuiInternalSession *session) {
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(session);
+    if (!domain || session.rendererSessionToken == 0) return;
+    for (CJGuiInternalComposableImageResource *resource in domain.resources.allValues) {
+        [resource.subscribers removeObjectsAtIndexes:[resource.subscribers indexesOfObjectsPassingTest:
+            ^BOOL(CJGuiInternalComposableImageSubscription *subscriber, NSUInteger index, BOOL *stop) {
+                (void)index; (void)stop;
+                return subscriber.sessionToken == session.rendererSessionToken &&
+                    subscriber.sessionGeneration == session.sessionGeneration;
+            }]];
+        [resource.requesters removeObjectsAtIndexes:[resource.requesters indexesOfObjectsPassingTest:
+            ^BOOL(CJGuiInternalComposableImageSubscription *requester, NSUInteger index, BOOL *stop) {
+                (void)index; (void)stop;
+                return requester.sessionToken == session.rendererSessionToken &&
+                    requester.sessionGeneration == session.sessionGeneration;
+            }]];
+    }
+}
+
+// Rebuild one session's scene-owned demand from its accepted native scene.
+// Candidate-scoped requesters are cleared with subscribers, but an explicit
+// public preload remains live until its owning session closes.  Do not call
+// this from configure/set, where staged candidate nodes have not yet crossed
+// the native acceptance boundary.
+static void CjguiRestoreAcceptedComposableImageDemand(CJGuiInternalSession *session) {
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(session);
+    if (!domain || session.rendererSessionToken == 0) return;
+    for (CJGuiInternalComposableImageResource *resource in domain.resources.allValues) {
+        [resource.subscribers removeObjectsAtIndexes:[resource.subscribers indexesOfObjectsPassingTest:
+            ^BOOL(CJGuiInternalComposableImageSubscription *subscriber, NSUInteger index, BOOL *stop) {
+                (void)index; (void)stop;
+                return subscriber.sessionToken == session.rendererSessionToken &&
+                    subscriber.sessionGeneration == session.sessionGeneration;
+            }]];
+        [resource.requesters removeObjectsAtIndexes:[resource.requesters indexesOfObjectsPassingTest:
+            ^BOOL(CJGuiInternalComposableImageSubscription *requester, NSUInteger index, BOOL *stop) {
+                (void)index; (void)stop;
+                return requester.sessionToken == session.rendererSessionToken &&
+                    requester.sessionGeneration == session.sessionGeneration &&
+                    !requester.explicitPreload;
+            }]];
+    }
+    for (CJGuiInternalComposableSceneNode *node in session.composableNodes) {
+        if (node.node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE || node.imageTextureCacheKey.length == 0) continue;
+        CJGuiInternalComposableImageResource *resource = domain.resources[node.imageTextureCacheKey];
+        if (resource) {
+            CjguiSubscribeComposableImageResource(session, resource);
+            CjguiRequestComposableImageResource(session, resource, NO);
+        }
+    }
+    CjguiStartNextComposableImageLoads(domain);
+}
+
+// Called after a native scene replacement commits, and after native present
+// rollback has restored the prior accepted scene.  Both paths have the same
+// durable owner: `composableNodes`, never the staged candidate.
+static void CjguiReconcileCommittedComposableImageSubscribers(CJGuiInternalSession *session) {
+    CjguiRestoreAcceptedComposableImageDemand(session);
+}
+
+static void CjguiNotifyComposableImageSubscribers(CJGuiInternalComposableImageResourceDomain *domain,
+                                                  CJGuiInternalComposableImageResource *resource) {
+    if (!domain || !resource) return;
+    for (NSInteger index = (NSInteger)resource.subscribers.count - 1; index >= 0; index--) {
+        CJGuiInternalComposableImageSubscription *subscriber = resource.subscribers[(NSUInteger)index];
+        CJGuiInternalSession *session = CjguiLookupSession(subscriber.sessionToken);
+        if (!session || session.destroyed || session.composableImageDomain != domain ||
+            session.sessionGeneration != subscriber.sessionGeneration) {
+            [resource.subscribers removeObjectAtIndex:(NSUInteger)index];
+            continue;
+        }
+        if (CjguiComposableImageKeyIsReferenced(session, resource.cacheKey) &&
+            session.composableImageResourceCompletionVersion < UINT64_MAX) {
+            session.composableImageResourceCompletionVersion += 1;
+        }
+    }
+}
+
+static CJGuiInternalSession *CjguiComposableImageLiveLaunchSession(
+    CJGuiInternalComposableImageResourceDomain *domain, CJGuiInternalComposableImageResource *resource) {
+    if (!domain || !resource) return nil;
+    for (NSInteger index = (NSInteger)resource.requesters.count - 1; index >= 0; index--) {
+        CJGuiInternalComposableImageSubscription *requester = resource.requesters[(NSUInteger)index];
+        CJGuiInternalSession *session = CjguiLookupSession(requester.sessionToken);
+        if (!session || session.destroyed || session.composableImageDomain != domain ||
+            session.sessionGeneration != requester.sessionGeneration) {
+            [resource.requesters removeObjectAtIndex:(NSUInteger)index];
+            continue;
+        }
+#ifdef CJGUI_INTERNAL_TESTING
+        if (session.testComposableImageLaunchGateHeld) continue;
+#endif
+        return session;
+    }
+    return nil;
+}
+
+// A held test gate pauses an otherwise live requester; it is not equivalent to
+// the requester having gone away.  Keep this check separate from launch
+// selection so an unstarted orphan can be removed without cancelling a live,
+// deliberately paused request.
+static BOOL CjguiComposableImageHasLiveRequester(
+    CJGuiInternalComposableImageResourceDomain *domain, CJGuiInternalComposableImageResource *resource) {
+    if (!domain || !resource) return NO;
+    BOOL hasLiveRequester = NO;
+    for (NSInteger index = (NSInteger)resource.requesters.count - 1; index >= 0; index--) {
+        CJGuiInternalComposableImageSubscription *requester = resource.requesters[(NSUInteger)index];
+        CJGuiInternalSession *session = CjguiLookupSession(requester.sessionToken);
+        if (!session || session.destroyed || session.composableImageDomain != domain ||
+            session.sessionGeneration != requester.sessionGeneration) {
+            [resource.requesters removeObjectAtIndex:(NSUInteger)index];
+            continue;
+        }
+        hasLiveRequester = YES;
+    }
+    return hasLiveRequester;
+}
+
+static void CjguiCompleteComposableImageLoad(CJGuiInternalComposableImageResourceDomain *domain,
+                                             CJGuiInternalComposableImageResource *resource,
+                                             uint64_t loadGeneration, id<MTLTexture> texture, NSError *error) {
+    if (!domain || domain.destroyed || !resource || resource.loadGeneration != loadGeneration ||
+        domain.resources[resource.cacheKey] != resource) return;
+    [domain.loaders removeObjectForKey:resource.cacheKey];
+    if (resource.state != CjguiComposableImageResourceLoading) {
+        CjguiStartNextComposableImageLoads(domain);
         return;
     }
+    CJGuiInternalSession *launchSession = CjguiLookupSession(resource.loadSessionToken);
+    if (!launchSession || launchSession.destroyed || launchSession.composableImageDomain != domain ||
+        launchSession.sessionGeneration != resource.loadSessionGeneration) launchSession = nil;
 #ifdef CJGUI_INTERNAL_TESTING
     if (resource.launchMicros > 0 && CjguiMonotonicMicros() >= resource.launchMicros) {
-        session.testComposableImageAsyncTotalMicros += CjguiMonotonicMicros() - resource.launchMicros;
+        uint64_t elapsed = CjguiMonotonicMicros() - resource.launchMicros;
+        if (launchSession) launchSession.testComposableImageAsyncTotalMicros += elapsed;
+        domain.testAsyncTotalMicros += UINT64_MAX - domain.testAsyncTotalMicros < elapsed ? 0 : elapsed;
     }
 #endif
-    resource.lastAccess = CjguiComposableImageNextAccess(session);
+    resource.lastAccess = CjguiComposableImageNextAccess(domain);
     if (texture) {
         resource.texture = texture;
         resource.state = CjguiComposableImageResourceReady;
-        session.composableImageTextureCache[cacheKey] = texture;
-        if (session.composableImageDecodeCount < UINT32_MAX) session.composableImageDecodeCount += 1;
+        domain.textureCache[resource.cacheKey] = texture;
+        if (launchSession && launchSession.composableImageDecodeCount < UINT32_MAX) {
+            launchSession.composableImageDecodeCount += 1;
+        }
+#ifdef CJGUI_INTERNAL_TESTING
+        if (domain.testActualDecodeCount < UINT64_MAX) domain.testActualDecodeCount += 1;
+#endif
         NSLog(@"cjgui: composable image preparation ready path=%@", resource.resolvedPath);
     } else {
         resource.texture = nil;
         resource.state = CjguiComposableImageResourceFailed;
         NSLog(@"cjgui: composable image texture load failed path=%@ error=%@", resource.resolvedPath, error);
     }
-    // A completed preload that no live/candidate scene references is already
-    // cached; it must not wake an otherwise-idle normal window. A matching
-    // later controller revision will obtain it synchronously from the cache.
-    if (CjguiComposableImageKeyIsReferenced(session, cacheKey) &&
-        session.composableImageResourceCompletionVersion < UINT64_MAX) {
-        session.composableImageResourceCompletionVersion += 1;
-    }
-    CjguiPruneComposableImageTextureCache(session, YES);
-    CjguiStartNextComposableImageLoads(session, sessionToken);
+    CjguiNotifyComposableImageSubscribers(domain, resource);
+    CjguiPruneComposableImageTextureCache(domain, YES);
+    CjguiStartNextComposableImageLoads(domain);
 }
 
-static void CjguiStartNextComposableImageLoads(CJGuiInternalSession *session, uint64_t sessionToken) {
-    if (!session || session.destroyed || !session.device) return;
-#ifdef CJGUI_INTERNAL_TESTING
-    if (session.testComposableImageLaunchGateHeld) return;
-#endif
-    CjguiPromoteReferencedBusyImageResources(session);
-    while (session.composableImageLoaders.count < CjguiComposableImageInFlightCapacity &&
-           session.composableImagePendingKeys.count > 0) {
-        NSString *cacheKey = session.composableImagePendingKeys.firstObject;
-        [session.composableImagePendingKeys removeObjectAtIndex:0];
-        CJGuiInternalComposableImageResource *resource = session.composableImageResources[cacheKey];
-        if (!resource || resource.state != CjguiComposableImageResourceLoading ||
-            session.composableImageLoaders[cacheKey]) continue;
-        MTKTextureLoader *loader = [[MTKTextureLoader alloc] initWithDevice:session.device];
+static void CjguiStartNextComposableImageLoads(CJGuiInternalComposableImageResourceDomain *domain) {
+    if (!domain || domain.destroyed || !domain.device) return;
+    CjguiPromoteReferencedBusyImageResources(domain);
+    while (domain.loaders.count < CjguiComposableImageInFlightCapacity && domain.pendingKeys.count > 0) {
+        CJGuiInternalComposableImageResource *resource = nil;
+        CJGuiInternalSession *launchSession = nil;
+        NSUInteger pendingCount = domain.pendingKeys.count;
+        while (pendingCount-- > 0) {
+            NSString *cacheKey = domain.pendingKeys.firstObject;
+            [domain.pendingKeys removeObjectAtIndex:0];
+            CJGuiInternalComposableImageResource *candidate = domain.resources[cacheKey];
+            if (!candidate || candidate.state != CjguiComposableImageResourceLoading || domain.loaders[cacheKey]) continue;
+            CJGuiInternalSession *candidateSession = CjguiComposableImageLiveLaunchSession(domain, candidate);
+            if (!candidateSession) {
+                if (!CjguiComposableImageHasLiveRequester(domain, candidate)) {
+                    // No native loader has been started for this record.  Its
+                    // owner closed before launch, so release the queue slot and
+                    // record rather than treating a full queue as live demand.
+                    candidate.state = CjguiComposableImageResourceUnrequested;
+                    candidate.loadSessionToken = 0;
+                    candidate.loadSessionGeneration = 0;
+                    [domain.resources removeObjectForKey:cacheKey];
+                    continue;
+                }
+                [domain.pendingKeys addObject:cacheKey];
+                continue;
+            }
+            resource = candidate;
+            launchSession = candidateSession;
+            break;
+        }
+        if (!resource || !launchSession) break;
+        MTKTextureLoader *loader = [[MTKTextureLoader alloc] initWithDevice:domain.device];
         if (!loader) {
             resource.state = CjguiComposableImageResourceFailed;
-            if (session.composableImageResourceCompletionVersion < UINT64_MAX) session.composableImageResourceCompletionVersion += 1;
+            CjguiNotifyComposableImageSubscribers(domain, resource);
             continue;
         }
-        const uint64_t generation = session.sessionGeneration;
-        session.composableImageLoaders[cacheKey] = loader;
+        if (resource.loadGeneration < UINT64_MAX) resource.loadGeneration += 1;
+        if (resource.loadGeneration == 0) resource.loadGeneration = 1;
+        const uint64_t loadGeneration = resource.loadGeneration;
+        resource.loadSessionToken = launchSession.rendererSessionToken;
+        resource.loadSessionGeneration = launchSession.sessionGeneration;
+        domain.loaders[resource.cacheKey] = loader;
 #ifdef CJGUI_INTERNAL_TESTING
         resource.launchMicros = CjguiMonotonicMicros();
-        if (session.testComposableImageAsyncLaunchCount < UINT64_MAX) session.testComposableImageAsyncLaunchCount += 1;
-        session.testComposableImagePeakInFlight = (uint32_t)MIN(
-            UINT32_MAX, MAX((NSUInteger)session.testComposableImagePeakInFlight, session.composableImageLoaders.count));
+        if (launchSession.testComposableImageAsyncLaunchCount < UINT64_MAX) {
+            launchSession.testComposableImageAsyncLaunchCount += 1;
+        }
+        domain.testActualLoadCount += domain.testActualLoadCount < UINT64_MAX ? 1 : 0;
+        domain.testPeakInFlight = (uint32_t)MIN(UINT32_MAX, MAX((NSUInteger)domain.testPeakInFlight, domain.loaders.count));
+        launchSession.testComposableImagePeakInFlight = (uint32_t)MIN(
+            UINT32_MAX, MAX((NSUInteger)launchSession.testComposableImagePeakInFlight, domain.loaders.count));
 #endif
         NSURL *url = [NSURL fileURLWithPath:resource.resolvedPath];
         NSLog(@"cjgui: composable image preparation started path=%@", resource.resolvedPath);
@@ -995,99 +2150,69 @@ static void CjguiStartNextComposableImageLoads(CJGuiInternalSession *session, ui
                                     options:@{ MTKTextureLoaderOptionSRGB: @NO,
                                                MTKTextureLoaderOptionGenerateMipmaps: @NO }
                           completionHandler:^(id<MTLTexture> texture, NSError *error) {
-            // The existing bounded AppKit pump runs the main run-loop mode;
-            // place the completion on that exact mode rather than requiring
-            // a second resource loop or a periodic poll.
             CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{
-                CjguiCompleteComposableImageLoad(sessionToken, generation, cacheKey, texture, error);
+                CjguiCompleteComposableImageLoad(domain, resource, loadGeneration, texture, error);
             });
             CFRunLoopWakeUp(CFRunLoopGetMain());
         }];
     }
-    CjguiPromoteReferencedBusyImageResources(session);
+    CjguiPromoteReferencedBusyImageResources(domain);
 }
 
 static uint32_t CjguiPrepareComposableImageResourceOnMain(CJGuiInternalSession *session, uint64_t sessionToken,
                                                           NSString *resourcePath, NSString *resourceId,
                                                           uint64_t resourceVersion, BOOL retriesFailed,
+                                                          BOOL explicitPreload,
                                                           NSString **outCacheKey) {
     if (outCacheKey) *outCacheKey = nil;
-    if (!session || session.destroyed || !session.device) return CjguiComposableImageResourceFailed;
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(session);
+    if (!domain || session.rendererSessionToken != sessionToken) return CjguiComposableImageResourceFailed;
     NSString *resolved = nil;
 #ifdef CJGUI_INTERNAL_TESTING
     uint64_t resolveStarted = CjguiMonotonicMicros();
 #endif
     NSString *cacheKey = CjguiComposableImageCacheKey(resourcePath, resourceId, resourceVersion, &resolved);
 #ifdef CJGUI_INTERNAL_TESTING
-    session.testComposableImagePathResolveMicros += CjguiMonotonicMicros() - resolveStarted;
+    uint64_t resolveElapsed = CjguiMonotonicMicros() - resolveStarted;
+    session.testComposableImagePathResolveMicros += resolveElapsed;
+    domain.testPathResolveMicros += UINT64_MAX - domain.testPathResolveMicros < resolveElapsed ? 0 : resolveElapsed;
 #endif
     if (!cacheKey) return CjguiComposableImageResourceFailed;
     if (outCacheKey) *outCacheKey = cacheKey;
-    CJGuiInternalComposableImageResource *resource = session.composableImageResources[cacheKey];
-    id<MTLTexture> cached = session.composableImageTextureCache[cacheKey];
-    if (cached) {
-        if (!resource) {
-            resource = [[CJGuiInternalComposableImageResource alloc] init];
-            resource.cacheKey = cacheKey; resource.resolvedPath = resolved;
-            session.composableImageResources[cacheKey] = resource;
-        }
-        resource.texture = cached;
-        resource.state = CjguiComposableImageResourceReady;
-        resource.lastAccess = CjguiComposableImageNextAccess(session);
-#ifdef CJGUI_INTERNAL_TESTING
-        if (session.testComposableImageCacheHitCount < UINT64_MAX) session.testComposableImageCacheHitCount += 1;
-#endif
-        return resource.state;
-    }
-    id<MTLTexture> boundTexture = CjguiComposableImageBoundTexture(session, cacheKey);
-    if (boundTexture) {
-        if (!resource) {
-            resource = [[CJGuiInternalComposableImageResource alloc] init];
-            resource.cacheKey = cacheKey; resource.resolvedPath = resolved;
-            session.composableImageResources[cacheKey] = resource;
-        }
-        // This texture remains owned by a scene node, not by the reusable
-        // cache/record. Its key can therefore be ready without consuming
-        // cache budget or triggering a duplicate decode.
-        resource.texture = nil;
-        resource.state = CjguiComposableImageResourceReady;
-        resource.lastAccess = CjguiComposableImageNextAccess(session);
-        return resource.state;
-    }
+    CJGuiInternalComposableImageResource *resource = domain.resources[cacheKey];
+    id<MTLTexture> cached = domain.textureCache[cacheKey];
     if (!resource) {
         resource = [[CJGuiInternalComposableImageResource alloc] init];
-        resource.cacheKey = cacheKey; resource.resolvedPath = resolved;
-        resource.state = CjguiComposableImageResourceLoading;
-        resource.lastAccess = CjguiComposableImageNextAccess(session);
-        session.composableImageResources[cacheKey] = resource;
-        if (session.composableImagePendingKeys.count < CjguiComposableImagePendingCapacity) {
-            [session.composableImagePendingKeys addObject:cacheKey];
-#ifdef CJGUI_INTERNAL_TESTING
-            session.testComposableImagePeakPending = (uint32_t)MIN(
-                UINT32_MAX, MAX((NSUInteger)session.testComposableImagePeakPending, session.composableImagePendingKeys.count));
-#endif
-        } else {
-            resource.state = CjguiComposableImageResourceBusy;
-        }
-    } else {
-        resource.lastAccess = CjguiComposableImageNextAccess(session);
-        if (resource.state == CjguiComposableImageResourceUnrequested ||
-            resource.state == CjguiComposableImageResourceBusy ||
-            (retriesFailed && resource.state == CjguiComposableImageResourceFailed)) {
-            resource.state = CjguiComposableImageResourceLoading;
-            if (session.composableImagePendingKeys.count < CjguiComposableImagePendingCapacity) {
-                [session.composableImagePendingKeys addObject:cacheKey];
-#ifdef CJGUI_INTERNAL_TESTING
-                session.testComposableImagePeakPending = (uint32_t)MIN(
-                    UINT32_MAX, MAX((NSUInteger)session.testComposableImagePeakPending, session.composableImagePendingKeys.count));
-#endif
-            } else {
-                resource.state = CjguiComposableImageResourceBusy;
-            }
-        }
+        resource.cacheKey = cacheKey;
+        resource.resolvedPath = resolved;
+        domain.resources[cacheKey] = resource;
     }
-    CjguiStartNextComposableImageLoads(session, sessionToken);
-    CjguiPruneComposableImageTextureCache(session, NO);
+    CjguiRequestComposableImageResource(session, resource, explicitPreload);
+    if (cached) {
+        resource.texture = cached;
+        resource.state = CjguiComposableImageResourceReady;
+        resource.lastAccess = CjguiComposableImageNextAccess(domain);
+#ifdef CJGUI_INTERNAL_TESTING
+        if (session.testComposableImageCacheHitCount < UINT64_MAX) session.testComposableImageCacheHitCount += 1;
+        if (domain.testCacheHitCount < UINT64_MAX) domain.testCacheHitCount += 1;
+#endif
+        return resource.state;
+    }
+    id<MTLTexture> boundTexture = CjguiComposableImageDomainBoundTexture(domain, cacheKey);
+    if (boundTexture) {
+        resource.texture = nil;
+        resource.state = CjguiComposableImageResourceReady;
+        resource.lastAccess = CjguiComposableImageNextAccess(domain);
+        return resource.state;
+    }
+    resource.lastAccess = CjguiComposableImageNextAccess(domain);
+    if (resource.state == CjguiComposableImageResourceUnrequested ||
+        resource.state == CjguiComposableImageResourceBusy ||
+        (retriesFailed && resource.state == CjguiComposableImageResourceFailed)) {
+        CjguiEnqueueComposableImageResource(domain, resource);
+    }
+    CjguiStartNextComposableImageLoads(domain);
+    CjguiPruneComposableImageTextureCache(domain, NO);
     return resource.state;
 }
 
@@ -1097,11 +2222,12 @@ static id<MTLTexture> CjguiComposableImageTexture(CJGuiInternalSession *session,
                                                   uint32_t *outState) {
     NSString *cacheKey = nil;
     uint32_t state = CjguiPrepareComposableImageResourceOnMain(session, sessionToken, resourcePath, resourceId,
-                                                               resourceVersion, NO, &cacheKey);
+                                                               resourceVersion, NO, NO, &cacheKey);
     if (outState) *outState = state;
     if (outCacheKey) *outCacheKey = cacheKey;
     if (!cacheKey || state != CjguiComposableImageResourceReady) return nil;
-    return session.composableImageTextureCache[cacheKey] ?: CjguiComposableImageBoundTexture(session, cacheKey);
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(session);
+    return domain.textureCache[cacheKey] ?: CjguiComposableImageDomainBoundTexture(domain, cacheKey);
 }
 
 // A source-verified image frame is useful after a dynamic resource or
@@ -1320,6 +2446,14 @@ static CJGuiInternalComposableSceneNode *CjguiCloneComposableSceneNode(
     copy.textTexture = source.textTexture;
     copy.textTextureByteCount = source.textTextureByteCount;
     copy.textTextureRect = source.textTextureRect;
+    copy.hasVectorGeometry = source.hasVectorGeometry;
+    copy.vectorGeometry = source.vectorGeometry;
+    copy.vectorPreparedTriangles = source.vectorPreparedTriangles;
+    copy.hasVectorPreparedGeometry = source.hasVectorPreparedGeometry;
+    copy.vectorPreparedGeometry = source.vectorPreparedGeometry;
+    copy.vectorPreparedVertexBuffer = source.vectorPreparedVertexBuffer;
+    copy.vectorPreparedVertexCount = source.vectorPreparedVertexCount;
+    copy.vectorPreparedVertexBytes = source.vectorPreparedVertexBytes;
     copy.textSelectionRects = [source.textSelectionRects copy] ?: @[];
     copy.textMarkedRects = [source.textMarkedRects copy] ?: @[];
     copy.textCaretRect = source.textCaretRect;
@@ -1345,6 +2479,168 @@ static int64_t CjguiComposableNodeResourceIdAtIndex(CJGuiInternalSession *sessio
 static uint32_t CjguiComposableNodeKindAtIndex(CJGuiInternalSession *session, uint32_t nodeIndex) {
     if (!session || nodeIndex >= session.composableNodes.count) return 0;
     return session.composableNodes[nodeIndex].node.nodeKind;
+}
+
+static CJGuiInternalComposableDataTransferItem *CjguiComposableDataTransferItemForNode(
+    CJGuiInternalSession *session, uint64_t nodeId, int64_t resourceId,
+    uint32_t nodeKind, uint32_t role) {
+    if (!session || session.destroyed || session.composableDataTransferVersion != session.composableSceneVersion) {
+        return nil;
+    }
+    for (CJGuiInternalComposableDataTransferItem *candidate in session.composableDataTransferItems) {
+        CjguiInternalRendererComposableDataTransferItem item = candidate.item;
+        if (item.nodeId == nodeId && item.resourceId == resourceId && item.nodeKind == nodeKind &&
+            item.projectionVersion == session.composableSceneVersion && item.role == role) {
+            return candidate;
+        }
+    }
+    return nil;
+}
+
+static NSPasteboardType CjguiPasteboardTypeForDataTransferFormat(NSString *format) {
+    if ([format isEqualToString:@"text/plain"]) return NSPasteboardTypeString;
+    NSData *bytes = [format dataUsingEncoding:NSUTF8StringEncoding];
+    if (!bytes || bytes.length == 0) return nil;
+    // NSPasteboardType is a UTI, not an RFC 2046 MIME string.  Preserve the
+    // complete declared identifier in a private, valid UTI rather than
+    // casting `application/vnd…` directly (which AppKit rejects). Hex is
+    // intentionally injective over the already bounded ASCII format value,
+    // so two declared structured formats can never alias one pasteboard type.
+    NSMutableString *type = [NSMutableString stringWithString:@"org.cangjie.cjgui.transfer.f"];
+    const uint8_t *raw = bytes.bytes;
+    for (NSUInteger index = 0; index < bytes.length; index++) {
+        [type appendFormat:@"%02x", (unsigned int)raw[index]];
+    }
+    return (NSPasteboardType)type;
+}
+
+
+// This private type carries only copied source provenance alongside the
+// declared public payload type. It is never decoded as a command, used as an
+// authorization token, or retained past the FIFO event; the receiving owner
+// still validates the immutable offer and its own CAS boundary.
+static NSPasteboardType const kCjguiDataTransferSourceMetadataType = @"org.cangjie.cjgui.transfer-source";
+
+static NSData *CjguiDataTransferSourceMetadata(CJGuiInternalComposableDataTransferItem *item) {
+    if (!item || item.sourceKind.length == 0 || item.sourceIdentity.length == 0 || item.item.sourceId < 0) return nil;
+    NSDictionary *metadata = @{ @"kind": item.sourceKind, @"identity": item.sourceIdentity,
+                                @"id": @(item.item.sourceId), @"format": item.format ?: @"" };
+    NSError *error = nil;
+    return [NSPropertyListSerialization dataWithPropertyList:metadata format:NSPropertyListBinaryFormat_v1_0
+                                                      options:0 error:&error];
+}
+
+static void CjguiReadDataTransferSourceMetadata(NSPasteboard *pasteboard, NSString *format,
+                                                NSString **outKind, NSString **outIdentity, int64_t *outId) {
+    if (outKind) *outKind = @"external_pasteboard";
+    if (outIdentity) *outIdentity = @"macos";
+    if (outId) *outId = 0;
+    NSData *data = [pasteboard dataForType:kCjguiDataTransferSourceMetadataType];
+    if (!data || data.length > 1024) return;
+    NSError *error = nil;
+    id value = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:nil error:&error];
+    if (![value isKindOfClass:[NSDictionary class]]) return;
+    NSDictionary *metadata = (NSDictionary *)value;
+    NSString *kind = metadata[@"kind"];
+    NSString *identity = metadata[@"identity"];
+    NSNumber *identifier = metadata[@"id"];
+    NSString *metadataFormat = metadata[@"format"];
+    if (![kind isKindOfClass:[NSString class]] || ![identity isKindOfClass:[NSString class]] ||
+        ![identifier isKindOfClass:[NSNumber class]] || ![metadataFormat isEqualToString:format] ||
+        kind.length == 0 || kind.length > 128 || identity.length == 0 || identity.length > 256 ||
+        identifier.longLongValue < 0) return;
+    if (outKind) *outKind = [kind copy];
+    if (outIdentity) *outIdentity = [identity copy];
+    if (outId) *outId = identifier.longLongValue;
+}
+
+static BOOL CjguiEnqueueComposableDataTransferInteraction(
+    CJGuiInternalSession *session, uint32_t kind,
+    CJGuiInternalComposableDataTransferItem *item, NSString *payload,
+    NSString *sourceKind, NSString *sourceIdentity, int64_t sourceId) {
+    if (!session || !item || !payload) return NO;
+    for (CJGuiInternalComposableSceneNode *node in session.composableNodes) {
+        if (node.node.nodeId != item.item.nodeId || node.node.resourceId != item.item.resourceId ||
+            node.node.nodeKind != item.item.nodeKind) continue;
+        if (!CjguiEnqueueComposableInteraction(session, kind, node.index, payload, NSMakeRange(0, 0))) return NO;
+        CJGuiInternalQueuedInteraction *queued = session.pendingInteractions.lastObject;
+        if (!queued || queued.kind != kind || queued.nodeId != item.item.nodeId ||
+            queued.projectionVersion != session.composableSceneVersion) return NO;
+        queued.dataTransferFormat = [item.format copy] ?: @"";
+        queued.dataTransferSourceKind = [sourceKind copy] ?: @"external_pasteboard";
+        queued.dataTransferSourceIdentity = [sourceIdentity copy] ?: @"macos";
+        queued.dataTransferSourceId = sourceId >= 0 ? sourceId : 0;
+#ifdef CJGUI_INTERNAL_TESTING
+        CjguiUpdateTestDataTransferRetentionPeaks(session);
+#endif
+        return YES;
+    }
+    return NO;
+}
+
+static CjguiInternalRendererStatus CjguiCopyComposableDataTransferItem(
+    CJGuiInternalSession *session, CJGuiInternalComposableDataTransferItem *item) {
+    if (!session || !item || item.item.role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    NSData *payload = [item.payload dataUsingEncoding:NSUTF8StringEncoding];
+    if (!payload || payload.length > item.item.maximumPayloadBytes) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+#ifdef CJGUI_INTERNAL_TESTING
+    session.testDataTransferSourceWriteCount += 1;
+    session.testDataTransferSourceWriteBytes += (uint64_t)payload.length;
+    session.testDataTransferSourceWritePeakBytes = MAX(session.testDataTransferSourceWritePeakBytes,
+        (uint64_t)payload.length);
+#endif
+    NSPasteboardItem *pasteboardItem = [[NSPasteboardItem alloc] init];
+    NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
+    if (!pasteboardItem || !type) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    [pasteboardItem setData:payload forType:type];
+    NSData *metadata = CjguiDataTransferSourceMetadata(item);
+    if (metadata) [pasteboardItem setData:metadata forType:kCjguiDataTransferSourceMetadataType];
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    if (![pasteboard clearContents] || ![pasteboard writeObjects:@[pasteboardItem]]) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    return CjguiEnqueueComposableDataTransferInteraction(session,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_COPY, item, item.payload,
+        item.sourceKind, item.sourceIdentity, item.item.sourceId)
+        ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+}
+
+static CjguiInternalRendererStatus CjguiReadComposableDataTransferItem(
+    CJGuiInternalSession *session, CJGuiInternalComposableDataTransferItem *item,
+    NSPasteboard *pasteboard, uint32_t kind) {
+    if (!session || !item || !pasteboard || item.item.role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
+    NSData *data = [pasteboard dataForType:type];
+    if (!data || data.length > item.item.maximumPayloadBytes) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+#ifdef CJGUI_INTERNAL_TESTING
+    session.testDataTransferReadCount += 1;
+    session.testDataTransferReadBytes += (uint64_t)data.length;
+    session.testDataTransferReadPeakBytes = MAX(session.testDataTransferReadPeakBytes, (uint64_t)data.length);
+#endif
+    NSString *payload = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!payload) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+#ifdef CJGUI_INTERNAL_TESTING
+    session.testDataTransferParseCount += 1;
+    session.testDataTransferParseBytes += (uint64_t)data.length;
+    session.testDataTransferParsePeakBytes = MAX(session.testDataTransferParsePeakBytes, (uint64_t)data.length);
+#endif
+    NSString *sourceKind = nil;
+    NSString *sourceIdentity = nil;
+    int64_t sourceId = 0;
+    CjguiReadDataTransferSourceMetadata(pasteboard, item.format, &sourceKind, &sourceIdentity, &sourceId);
+    return CjguiEnqueueComposableDataTransferInteraction(session, kind, item, payload,
+                                                         sourceKind, sourceIdentity, sourceId)
+        ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
 }
 
 static NSFont *CjguiComposableFont(CJGuiInternalComposableSceneNode *node);
@@ -1407,6 +2703,523 @@ static void CjguiAppendMetalShape(NSMutableData *batch, CGFloat pointWidth, CGFl
     [batch appendBytes:vertices length:sizeof(vertices)];
 }
 
+static CjguiInternalComposableVectorPoint CjguiComposableVectorPoint(double x, double y) {
+    return (CjguiInternalComposableVectorPoint){ x, y };
+}
+
+static CjguiInternalComposableVectorPoint CjguiComposableVectorAdd(CjguiInternalComposableVectorPoint left,
+                                                                    CjguiInternalComposableVectorPoint right) {
+    return CjguiComposableVectorPoint(left.x + right.x, left.y + right.y);
+}
+
+static CjguiInternalComposableVectorPoint CjguiComposableVectorSubtract(CjguiInternalComposableVectorPoint left,
+                                                                         CjguiInternalComposableVectorPoint right) {
+    return CjguiComposableVectorPoint(left.x - right.x, left.y - right.y);
+}
+
+static CjguiInternalComposableVectorPoint CjguiComposableVectorScale(CjguiInternalComposableVectorPoint point,
+                                                                      double scalar) {
+    return CjguiComposableVectorPoint(point.x * scalar, point.y * scalar);
+}
+
+static double CjguiComposableVectorLength(CjguiInternalComposableVectorPoint point) {
+    return hypot(point.x, point.y);
+}
+
+static BOOL CjguiComposableVectorUnitDirection(CjguiInternalComposableVectorPoint start,
+                                               CjguiInternalComposableVectorPoint end,
+                                               CjguiInternalComposableVectorPoint *outDirection) {
+    if (!outDirection) return NO;
+    CjguiInternalComposableVectorPoint delta = CjguiComposableVectorSubtract(end, start);
+    double length = CjguiComposableVectorLength(delta);
+    if (!isfinite(length) || length <= CjguiComposableVectorEpsilon) return NO;
+    *outDirection = CjguiComposableVectorScale(delta, 1.0 / length);
+    return YES;
+}
+
+static void CjguiAppendMetalVectorTriangle(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                           CjguiInternalRendererComposableNode value,
+                                           CjguiInternalComposableVectorGeometry geometry,
+                                           CjguiInternalComposableVectorPoint first,
+                                           CjguiInternalComposableVectorPoint second,
+                                           CjguiInternalComposableVectorPoint third,
+                                           vector_float4 fill) {
+    if (!batch || fill.w <= 0.0 || geometry.viewBoxWidth <= 0.0 || geometry.viewBoxHeight <= 0.0 ||
+        pointWidth <= 0.0 || pointHeight <= 0.0) return;
+    CjguiInternalComposableVectorPoint local[3] = { first, second, third };
+    CJGuiInternalMetalVertex vertices[3] = {0};
+    for (uint32_t index = 0; index < 3; index++) {
+        double sceneX = (double)value.x + local[index].x * (double)value.width / geometry.viewBoxWidth;
+        double sceneY = (double)value.y + local[index].y * (double)value.height / geometry.viewBoxHeight;
+        vertices[index].position = (vector_float2){ -1.0f + (float)(2.0 * sceneX / pointWidth),
+            1.0f - (float)(2.0 * sceneY / pointHeight) };
+        vertices[index].scenePoint = (vector_float2){ (float)sceneX, (float)sceneY };
+        vertices[index].localPoint = (vector_float2){ (float)(sceneX - (double)value.x),
+            (float)(sceneY - (double)value.y) };
+        vertices[index].size = (vector_float2){ (float)value.width, (float)value.height };
+        CjguiPopulateMetalClipChain(vertices[index].clips, &vertices[index].clipRadii, &vertices[index].clipCount, value);
+        vertices[index].cornerRadius = 0.0f;
+        vertices[index].borderWidth = 0.0f;
+        vertices[index].isVectorShape = 1.0f;
+        vertices[index].vectorPadding = 0.0f;
+        vertices[index].fill = fill;
+        vertices[index].border = (vector_float4){ 0, 0, 0, 0 };
+    }
+    [batch appendBytes:vertices length:sizeof(vertices)];
+}
+
+static void CjguiAppendMetalVectorQuad(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                       CjguiInternalRendererComposableNode value,
+                                       CjguiInternalComposableVectorGeometry geometry,
+                                       CjguiInternalComposableVectorPoint first,
+                                       CjguiInternalComposableVectorPoint second,
+                                       CjguiInternalComposableVectorPoint third,
+                                       CjguiInternalComposableVectorPoint fourth,
+                                       vector_float4 fill) {
+    CjguiAppendMetalVectorTriangle(batch, pointWidth, pointHeight, value, geometry, first, second, third, fill);
+    CjguiAppendMetalVectorTriangle(batch, pointWidth, pointHeight, value, geometry, second, fourth, third, fill);
+}
+
+static void CjguiAppendMetalVectorStrokeSegment(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                                CjguiInternalRendererComposableNode value,
+                                                CjguiInternalComposableVectorGeometry geometry,
+                                                CjguiInternalComposableVectorPoint start,
+                                                CjguiInternalComposableVectorPoint end,
+                                                double halfWidth, vector_float4 stroke) {
+    CjguiInternalComposableVectorPoint direction = {0};
+    if (stroke.w <= 0.0 || halfWidth <= 0.0 ||
+        !CjguiComposableVectorUnitDirection(start, end, &direction)) return;
+    CjguiInternalComposableVectorPoint normal = CjguiComposableVectorPoint(-direction.y * halfWidth,
+                                                                             direction.x * halfWidth);
+    CjguiAppendMetalVectorQuad(batch, pointWidth, pointHeight, value, geometry,
+        CjguiComposableVectorAdd(start, normal), CjguiComposableVectorSubtract(start, normal),
+        CjguiComposableVectorAdd(end, normal), CjguiComposableVectorSubtract(end, normal), stroke);
+}
+
+static BOOL CjguiComposableVectorLineIntersection(CjguiInternalComposableVectorPoint point,
+                                                  CjguiInternalComposableVectorPoint direction,
+                                                  CjguiInternalComposableVectorPoint otherPoint,
+                                                  CjguiInternalComposableVectorPoint otherDirection,
+                                                  CjguiInternalComposableVectorPoint *outIntersection) {
+    if (!outIntersection) return NO;
+    double denominator = direction.x * otherDirection.y - direction.y * otherDirection.x;
+    if (fabs(denominator) <= CjguiComposableVectorEpsilon) return NO;
+    CjguiInternalComposableVectorPoint difference = CjguiComposableVectorSubtract(otherPoint, point);
+    double ratio = (difference.x * otherDirection.y - difference.y * otherDirection.x) / denominator;
+    *outIntersection = CjguiComposableVectorAdd(point, CjguiComposableVectorScale(direction, ratio));
+    return isfinite(outIntersection->x) && isfinite(outIntersection->y);
+}
+
+static void CjguiAppendMetalVectorJoin(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                      CjguiInternalRendererComposableNode value,
+                                      CjguiInternalComposableVectorGeometry geometry,
+                                      CjguiInternalComposableVectorPoint previous,
+                                      CjguiInternalComposableVectorPoint current,
+                                      CjguiInternalComposableVectorPoint next,
+                                      double halfWidth, vector_float4 stroke) {
+    CjguiInternalComposableVectorPoint beforeDirection = {0};
+    CjguiInternalComposableVectorPoint afterDirection = {0};
+    if (stroke.w <= 0.0 || halfWidth <= 0.0 ||
+        !CjguiComposableVectorUnitDirection(previous, current, &beforeDirection) ||
+        !CjguiComposableVectorUnitDirection(current, next, &afterDirection)) return;
+    double turn = beforeDirection.x * afterDirection.y - beforeDirection.y * afterDirection.x;
+    if (fabs(turn) <= CjguiComposableVectorEpsilon) return;
+    CjguiInternalComposableVectorPoint beforeNormal = CjguiComposableVectorPoint(-beforeDirection.y * halfWidth,
+                                                                                   beforeDirection.x * halfWidth);
+    CjguiInternalComposableVectorPoint afterNormal = CjguiComposableVectorPoint(-afterDirection.y * halfWidth,
+                                                                                  afterDirection.x * halfWidth);
+    CjguiInternalComposableVectorPoint outerBefore = turn > 0.0
+        ? CjguiComposableVectorSubtract(current, beforeNormal) : CjguiComposableVectorAdd(current, beforeNormal);
+    CjguiInternalComposableVectorPoint outerAfter = turn > 0.0
+        ? CjguiComposableVectorSubtract(current, afterNormal) : CjguiComposableVectorAdd(current, afterNormal);
+    if (geometry.join == CJGUI_INTERNAL_VECTOR_JOIN_ROUND) {
+        double startAngle = atan2(outerBefore.y - current.y, outerBefore.x - current.x);
+        double endAngle = atan2(outerAfter.y - current.y, outerAfter.x - current.x);
+        double delta = endAngle - startAngle;
+        if (turn > 0.0) {
+            while (delta < 0.0) delta += 2.0 * M_PI;
+        } else {
+            while (delta > 0.0) delta -= 2.0 * M_PI;
+        }
+        uint32_t segments = (uint32_t)MIN(8.0, MAX(1.0, ceil(fabs(delta) / (M_PI / 6.0))));
+        CjguiInternalComposableVectorPoint previousArc = outerBefore;
+        for (uint32_t index = 1; index <= segments; index++) {
+            double angle = startAngle + delta * (double)index / (double)segments;
+            CjguiInternalComposableVectorPoint currentArc = CjguiComposableVectorPoint(
+                current.x + cos(angle) * halfWidth, current.y + sin(angle) * halfWidth);
+            CjguiAppendMetalVectorTriangle(batch, pointWidth, pointHeight, value, geometry,
+                                            current, previousArc, currentArc, stroke);
+            previousArc = currentArc;
+        }
+        return;
+    }
+    if (geometry.join == CJGUI_INTERNAL_VECTOR_JOIN_MITER) {
+        CjguiInternalComposableVectorPoint miter = {0};
+        if (CjguiComposableVectorLineIntersection(outerBefore, beforeDirection, outerAfter, afterDirection, &miter) &&
+            CjguiComposableVectorLength(CjguiComposableVectorSubtract(miter, current)) <=
+                halfWidth * CjguiComposableVectorMiterLimit) {
+            CjguiAppendMetalVectorTriangle(batch, pointWidth, pointHeight, value, geometry,
+                                            outerBefore, miter, outerAfter, stroke);
+            return;
+        }
+    }
+    CjguiAppendMetalVectorTriangle(batch, pointWidth, pointHeight, value, geometry,
+                                    current, outerBefore, outerAfter, stroke);
+}
+
+static void CjguiAppendMetalVectorCap(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                     CjguiInternalRendererComposableNode value,
+                                     CjguiInternalComposableVectorGeometry geometry,
+                                     CjguiInternalComposableVectorPoint center,
+                                     CjguiInternalComposableVectorPoint direction,
+                                     BOOL startCap, double halfWidth, vector_float4 stroke) {
+    if (stroke.w <= 0.0 || halfWidth <= 0.0 || geometry.cap == CJGUI_INTERNAL_VECTOR_CAP_BUTT) return;
+    CjguiInternalComposableVectorPoint outward = startCap ? CjguiComposableVectorScale(direction, -1.0) : direction;
+    if (geometry.cap == CJGUI_INTERNAL_VECTOR_CAP_SQUARE) {
+        CjguiAppendMetalVectorStrokeSegment(batch, pointWidth, pointHeight, value, geometry,
+            CjguiComposableVectorAdd(center, CjguiComposableVectorScale(outward, halfWidth)), center, halfWidth, stroke);
+        return;
+    }
+    double base = atan2(outward.y, outward.x);
+    CjguiInternalComposableVectorPoint prior = CjguiComposableVectorPoint(
+        center.x + cos(base - M_PI / 2.0) * halfWidth, center.y + sin(base - M_PI / 2.0) * halfWidth);
+    for (uint32_t index = 1; index <= 8; index++) {
+        double angle = base - M_PI / 2.0 + M_PI * (double)index / 8.0;
+        CjguiInternalComposableVectorPoint next = CjguiComposableVectorPoint(
+            center.x + cos(angle) * halfWidth, center.y + sin(angle) * halfWidth);
+        CjguiAppendMetalVectorTriangle(batch, pointWidth, pointHeight, value, geometry, center, prior, next, stroke);
+        prior = next;
+    }
+}
+
+static void CjguiAppendMetalVectorOpenStroke(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                             CjguiInternalRendererComposableNode value,
+                                             CjguiInternalComposableVectorGeometry geometry,
+                                             vector_float4 stroke) {
+    if (geometry.pointCount < 2 || stroke.w <= 0.0 || geometry.strokeWidth <= 0.0) return;
+    double halfWidth = geometry.strokeWidth / 2.0;
+    for (uint32_t index = 0; index + 1 < geometry.pointCount; index++) {
+        CjguiAppendMetalVectorStrokeSegment(batch, pointWidth, pointHeight, value, geometry,
+            geometry.points[index], geometry.points[index + 1], halfWidth, stroke);
+    }
+    for (uint32_t index = 1; index + 1 < geometry.pointCount; index++) {
+        CjguiAppendMetalVectorJoin(batch, pointWidth, pointHeight, value, geometry,
+            geometry.points[index - 1], geometry.points[index], geometry.points[index + 1], halfWidth, stroke);
+    }
+    CjguiInternalComposableVectorPoint firstDirection = {0};
+    CjguiInternalComposableVectorPoint lastDirection = {0};
+    if (CjguiComposableVectorUnitDirection(geometry.points[0], geometry.points[1], &firstDirection)) {
+        CjguiAppendMetalVectorCap(batch, pointWidth, pointHeight, value, geometry,
+            geometry.points[0], firstDirection, YES, halfWidth, stroke);
+    }
+    if (CjguiComposableVectorUnitDirection(geometry.points[geometry.pointCount - 2],
+                                           geometry.points[geometry.pointCount - 1], &lastDirection)) {
+        CjguiAppendMetalVectorCap(batch, pointWidth, pointHeight, value, geometry,
+            geometry.points[geometry.pointCount - 1], lastDirection, NO, halfWidth, stroke);
+    }
+}
+
+static void CjguiAppendMetalVectorClosedStroke(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                               CjguiInternalRendererComposableNode value,
+                                               CjguiInternalComposableVectorGeometry geometry,
+                                               const CjguiInternalComposableVectorPoint *points,
+                                               uint32_t pointCount, vector_float4 stroke) {
+    if (!points || pointCount < 3 || stroke.w <= 0.0 || geometry.strokeWidth <= 0.0) return;
+    double halfWidth = geometry.strokeWidth / 2.0;
+    for (uint32_t index = 0; index < pointCount; index++) {
+        uint32_t next = index + 1 == pointCount ? 0 : index + 1;
+        CjguiAppendMetalVectorStrokeSegment(batch, pointWidth, pointHeight, value, geometry,
+            points[index], points[next], halfWidth, stroke);
+    }
+    for (uint32_t index = 0; index < pointCount; index++) {
+        uint32_t previous = index == 0 ? pointCount - 1 : index - 1;
+        uint32_t next = index + 1 == pointCount ? 0 : index + 1;
+        CjguiAppendMetalVectorJoin(batch, pointWidth, pointHeight, value, geometry,
+            points[previous], points[index], points[next], halfWidth, stroke);
+    }
+}
+
+enum { CjguiPreparedVectorPaintFill = 1, CjguiPreparedVectorPaintStroke = 2 };
+
+typedef struct CjguiInternalPreparedVectorTriangle {
+    CjguiInternalComposableVectorPoint first;
+    CjguiInternalComposableVectorPoint second;
+    CjguiInternalComposableVectorPoint third;
+    uint8_t paint;
+} CjguiInternalPreparedVectorTriangle;
+
+// Local vector topology is immutable between geometry changes. Store only a
+// point and paint selector in the resident GPU buffer; layout, clip and paint
+// values stay in a small per-draw uniform so a local paint/layout update does
+// not rewrite every expanded triangle vertex.
+typedef struct CJGuiInternalMetalVectorVertex {
+    vector_float2 localPoint;
+    uint32_t paint;
+    uint32_t padding;
+} CJGuiInternalMetalVectorVertex;
+
+typedef struct CJGuiInternalMetalVectorUniform {
+    vector_float4 nodeRect;
+    // x/y are the declared vector viewBox; z/w are the current point extent.
+    vector_float4 viewBoxAndPointExtent;
+    vector_float4 clips[CJGUI_INTERNAL_COMPOSABLE_CLIP_CONSTRAINT_CAPACITY];
+    vector_float4 clipRadii;
+    vector_float4 clipCount;
+    vector_float4 fill;
+    vector_float4 stroke;
+} CJGuiInternalMetalVectorUniform;
+
+static void CjguiAppendPreparedVectorTriangle(NSMutableData *triangles,
+                                              CjguiInternalComposableVectorPoint first,
+                                              CjguiInternalComposableVectorPoint second,
+                                              CjguiInternalComposableVectorPoint third,
+                                              uint8_t paint) {
+    if (!triangles) return;
+    CjguiInternalPreparedVectorTriangle triangle = { first, second, third, paint };
+    [triangles appendBytes:&triangle length:sizeof(triangle)];
+}
+
+static void CjguiAppendPreparedVectorQuad(NSMutableData *triangles,
+                                          CjguiInternalComposableVectorPoint first,
+                                          CjguiInternalComposableVectorPoint second,
+                                          CjguiInternalComposableVectorPoint third,
+                                          CjguiInternalComposableVectorPoint fourth,
+                                          uint8_t paint) {
+    CjguiAppendPreparedVectorTriangle(triangles, first, second, third, paint);
+    CjguiAppendPreparedVectorTriangle(triangles, third, second, fourth, paint);
+}
+
+static void CjguiAppendPreparedVectorStrokeSegment(NSMutableData *triangles,
+                                                    CjguiInternalComposableVectorPoint start,
+                                                    CjguiInternalComposableVectorPoint end,
+                                                    double halfWidth) {
+    CjguiInternalComposableVectorPoint direction = {0};
+    if (halfWidth <= 0.0 || !CjguiComposableVectorUnitDirection(start, end, &direction)) return;
+    CjguiInternalComposableVectorPoint normal = CjguiComposableVectorPoint(-direction.y * halfWidth,
+                                                                             direction.x * halfWidth);
+    CjguiAppendPreparedVectorQuad(triangles, CjguiComposableVectorAdd(start, normal),
+                                  CjguiComposableVectorSubtract(start, normal),
+                                  CjguiComposableVectorAdd(end, normal),
+                                  CjguiComposableVectorSubtract(end, normal), CjguiPreparedVectorPaintStroke);
+}
+
+static void CjguiAppendPreparedVectorJoin(NSMutableData *triangles,
+                                          CjguiInternalComposableVectorGeometry geometry,
+                                          CjguiInternalComposableVectorPoint previous,
+                                          CjguiInternalComposableVectorPoint current,
+                                          CjguiInternalComposableVectorPoint next,
+                                          double halfWidth) {
+    CjguiInternalComposableVectorPoint beforeDirection = {0}, afterDirection = {0};
+    if (halfWidth <= 0.0 || !CjguiComposableVectorUnitDirection(previous, current, &beforeDirection) ||
+        !CjguiComposableVectorUnitDirection(current, next, &afterDirection)) return;
+    double turn = beforeDirection.x * afterDirection.y - beforeDirection.y * afterDirection.x;
+    if (fabs(turn) <= CjguiComposableVectorEpsilon) return;
+    CjguiInternalComposableVectorPoint beforeNormal = CjguiComposableVectorPoint(-beforeDirection.y * halfWidth,
+                                                                                   beforeDirection.x * halfWidth);
+    CjguiInternalComposableVectorPoint afterNormal = CjguiComposableVectorPoint(-afterDirection.y * halfWidth,
+                                                                                  afterDirection.x * halfWidth);
+    CjguiInternalComposableVectorPoint outerBefore = turn > 0.0
+        ? CjguiComposableVectorSubtract(current, beforeNormal) : CjguiComposableVectorAdd(current, beforeNormal);
+    CjguiInternalComposableVectorPoint outerAfter = turn > 0.0
+        ? CjguiComposableVectorSubtract(current, afterNormal) : CjguiComposableVectorAdd(current, afterNormal);
+    if (geometry.join == CJGUI_INTERNAL_VECTOR_JOIN_ROUND) {
+        double startAngle = atan2(outerBefore.y - current.y, outerBefore.x - current.x);
+        double endAngle = atan2(outerAfter.y - current.y, outerAfter.x - current.x);
+        double delta = endAngle - startAngle;
+        if (turn > 0.0) while (delta < 0.0) delta += 2.0 * M_PI;
+        else while (delta > 0.0) delta -= 2.0 * M_PI;
+        uint32_t segments = (uint32_t)MIN(8.0, MAX(1.0, ceil(fabs(delta) / (M_PI / 6.0))));
+        CjguiInternalComposableVectorPoint previousArc = outerBefore;
+        for (uint32_t index = 1; index <= segments; index++) {
+            double angle = startAngle + delta * (double)index / (double)segments;
+            CjguiInternalComposableVectorPoint currentArc = CjguiComposableVectorPoint(
+                current.x + cos(angle) * halfWidth, current.y + sin(angle) * halfWidth);
+            CjguiAppendPreparedVectorTriangle(triangles, current, previousArc, currentArc, CjguiPreparedVectorPaintStroke);
+            previousArc = currentArc;
+        }
+        return;
+    }
+    if (geometry.join == CJGUI_INTERNAL_VECTOR_JOIN_MITER) {
+        CjguiInternalComposableVectorPoint miter = {0};
+        if (CjguiComposableVectorLineIntersection(outerBefore, beforeDirection, outerAfter, afterDirection, &miter) &&
+            CjguiComposableVectorLength(CjguiComposableVectorSubtract(miter, current)) <= halfWidth * CjguiComposableVectorMiterLimit) {
+            CjguiAppendPreparedVectorTriangle(triangles, outerBefore, miter, outerAfter, CjguiPreparedVectorPaintStroke);
+            return;
+        }
+    }
+    CjguiAppendPreparedVectorTriangle(triangles, current, outerBefore, outerAfter, CjguiPreparedVectorPaintStroke);
+}
+
+static void CjguiAppendPreparedVectorCap(NSMutableData *triangles,
+                                         CjguiInternalComposableVectorGeometry geometry,
+                                         CjguiInternalComposableVectorPoint center,
+                                         CjguiInternalComposableVectorPoint direction,
+                                         BOOL startCap, double halfWidth) {
+    if (halfWidth <= 0.0 || geometry.cap == CJGUI_INTERNAL_VECTOR_CAP_BUTT) return;
+    CjguiInternalComposableVectorPoint outward = startCap ? CjguiComposableVectorScale(direction, -1.0) : direction;
+    if (geometry.cap == CJGUI_INTERNAL_VECTOR_CAP_SQUARE) {
+        CjguiAppendPreparedVectorStrokeSegment(triangles,
+            CjguiComposableVectorAdd(center, CjguiComposableVectorScale(outward, halfWidth)), center, halfWidth);
+        return;
+    }
+    double base = atan2(outward.y, outward.x);
+    CjguiInternalComposableVectorPoint prior = CjguiComposableVectorPoint(
+        center.x + cos(base - M_PI / 2.0) * halfWidth, center.y + sin(base - M_PI / 2.0) * halfWidth);
+    for (uint32_t index = 1; index <= 8; index++) {
+        double angle = base - M_PI / 2.0 + M_PI * (double)index / 8.0;
+        CjguiInternalComposableVectorPoint next = CjguiComposableVectorPoint(
+            center.x + cos(angle) * halfWidth, center.y + sin(angle) * halfWidth);
+        CjguiAppendPreparedVectorTriangle(triangles, center, prior, next, CjguiPreparedVectorPaintStroke);
+        prior = next;
+    }
+}
+
+static void CjguiAppendPreparedVectorOpenStroke(NSMutableData *triangles,
+                                                CjguiInternalComposableVectorGeometry geometry) {
+    if (geometry.pointCount < 2 || geometry.strokeWidth <= 0.0) return;
+    double halfWidth = geometry.strokeWidth / 2.0;
+    for (uint32_t index = 0; index + 1 < geometry.pointCount; index++)
+        CjguiAppendPreparedVectorStrokeSegment(triangles, geometry.points[index], geometry.points[index + 1], halfWidth);
+    for (uint32_t index = 1; index + 1 < geometry.pointCount; index++)
+        CjguiAppendPreparedVectorJoin(triangles, geometry, geometry.points[index - 1], geometry.points[index], geometry.points[index + 1], halfWidth);
+    CjguiInternalComposableVectorPoint firstDirection = {0}, lastDirection = {0};
+    if (CjguiComposableVectorUnitDirection(geometry.points[0], geometry.points[1], &firstDirection))
+        CjguiAppendPreparedVectorCap(triangles, geometry, geometry.points[0], firstDirection, YES, halfWidth);
+    if (CjguiComposableVectorUnitDirection(geometry.points[geometry.pointCount - 2], geometry.points[geometry.pointCount - 1], &lastDirection))
+        CjguiAppendPreparedVectorCap(triangles, geometry, geometry.points[geometry.pointCount - 1], lastDirection, NO, halfWidth);
+}
+
+static void CjguiAppendPreparedVectorClosedStroke(NSMutableData *triangles,
+                                                  CjguiInternalComposableVectorGeometry geometry,
+                                                  const CjguiInternalComposableVectorPoint *points,
+                                                  uint32_t pointCount) {
+    if (!points || pointCount < 3 || geometry.strokeWidth <= 0.0) return;
+    double halfWidth = geometry.strokeWidth / 2.0;
+    for (uint32_t index = 0; index < pointCount; index++) {
+        uint32_t next = index + 1 == pointCount ? 0 : index + 1;
+        CjguiAppendPreparedVectorStrokeSegment(triangles, points[index], points[next], halfWidth);
+    }
+    for (uint32_t index = 0; index < pointCount; index++) {
+        uint32_t previous = index == 0 ? pointCount - 1 : index - 1;
+        uint32_t next = index + 1 == pointCount ? 0 : index + 1;
+        CjguiAppendPreparedVectorJoin(triangles, geometry, points[previous], points[index], points[next], halfWidth);
+    }
+}
+
+static BOOL CjguiComposableVectorPreparationGeometryEquals(CjguiInternalComposableVectorGeometry first,
+                                                            CjguiInternalComposableVectorGeometry second) {
+    if (first.kind != second.kind || first.pointCount != second.pointCount || first.cap != second.cap || first.join != second.join ||
+        first.viewBoxWidth != second.viewBoxWidth || first.viewBoxHeight != second.viewBoxHeight ||
+        first.strokeWidth != second.strokeWidth || first.center.x != second.center.x || first.center.y != second.center.y ||
+        first.radiusX != second.radiusX || first.radiusY != second.radiusY ||
+        first.triangleIndexCount != second.triangleIndexCount) return NO;
+    return memcmp(first.points, second.points, sizeof(CjguiInternalComposableVectorPoint) * first.pointCount) == 0 &&
+        memcmp(first.triangleIndices, second.triangleIndices, first.triangleIndexCount) == 0;
+}
+
+static NSData *CjguiComposablePreparedVectorTrianglesForNode(CJGuiInternalMetalView *metalView,
+                                                              CJGuiInternalComposableSceneNode *node) {
+    if (!node || !node.hasVectorGeometry) return nil;
+    CjguiInternalComposableVectorGeometry geometry = node.vectorGeometry;
+    if (node.vectorPreparedTriangles && node.hasVectorPreparedGeometry &&
+        CjguiComposableVectorPreparationGeometryEquals(node.vectorPreparedGeometry, geometry)) return node.vectorPreparedTriangles;
+    NSMutableData *triangles = [NSMutableData data];
+    if (!triangles) return nil;
+    if (geometry.kind == CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON) {
+        for (uint32_t index = 0; index + 2 < geometry.triangleIndexCount; index += 3) {
+            uint8_t first = geometry.triangleIndices[index], second = geometry.triangleIndices[index + 1], third = geometry.triangleIndices[index + 2];
+            if (first < geometry.pointCount && second < geometry.pointCount && third < geometry.pointCount)
+                CjguiAppendPreparedVectorTriangle(triangles, geometry.points[first], geometry.points[second], geometry.points[third], CjguiPreparedVectorPaintFill);
+        }
+    } else if (geometry.kind == CJGUI_INTERNAL_VECTOR_ELLIPSE) {
+        CjguiInternalComposableVectorPoint ring[CJGUI_INTERNAL_COMPOSABLE_VECTOR_ELLIPSE_SEGMENTS] = {0};
+        for (uint32_t index = 0; index < CJGUI_INTERNAL_COMPOSABLE_VECTOR_ELLIPSE_SEGMENTS; index++) {
+            double angle = 2.0 * M_PI * (double)index / (double)CJGUI_INTERNAL_COMPOSABLE_VECTOR_ELLIPSE_SEGMENTS;
+            ring[index] = CjguiComposableVectorPoint(geometry.center.x + cos(angle) * geometry.radiusX,
+                                                      geometry.center.y + sin(angle) * geometry.radiusY);
+        }
+        for (uint32_t index = 0; index < CJGUI_INTERNAL_COMPOSABLE_VECTOR_ELLIPSE_SEGMENTS; index++) {
+            uint32_t next = index + 1 == CJGUI_INTERNAL_COMPOSABLE_VECTOR_ELLIPSE_SEGMENTS ? 0 : index + 1;
+            CjguiAppendPreparedVectorTriangle(triangles, geometry.center, ring[index], ring[next], CjguiPreparedVectorPaintFill);
+        }
+        CjguiAppendPreparedVectorClosedStroke(triangles, geometry, ring, CJGUI_INTERNAL_COMPOSABLE_VECTOR_ELLIPSE_SEGMENTS);
+    }
+    if (geometry.kind == CJGUI_INTERNAL_VECTOR_LINE || geometry.kind == CJGUI_INTERNAL_VECTOR_POLYLINE)
+        CjguiAppendPreparedVectorOpenStroke(triangles, geometry);
+    else if (geometry.kind == CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON)
+        CjguiAppendPreparedVectorClosedStroke(triangles, geometry, geometry.points, geometry.pointCount);
+    node.vectorPreparedTriangles = triangles;
+    // A new topology must never retain the prior topology's GPU allocation.
+    // The old COW node is retained by an in-flight command buffer if needed.
+    node.vectorPreparedVertexBuffer = nil;
+    node.vectorPreparedVertexCount = 0;
+    node.vectorPreparedVertexBytes = 0;
+    node.vectorPreparedGeometry = geometry;
+    node.hasVectorPreparedGeometry = YES;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (metalView && metalView.testComposableVectorGeometryPreparationCount < UINT64_MAX)
+        metalView.testComposableVectorGeometryPreparationCount += 1;
+    if (metalView && triangles.length <= UINT64_MAX - metalView.testComposableVectorGeometryPreparedBytes)
+        metalView.testComposableVectorGeometryPreparedBytes += triangles.length;
+#endif
+    return triangles;
+}
+
+static id<MTLBuffer> CjguiComposableVectorVertexBufferForNode(CJGuiInternalMetalView *metalView,
+                                                               CJGuiInternalComposableSceneNode *node,
+                                                               BOOL *outUploaded) {
+    if (outUploaded) *outUploaded = NO;
+    if (!metalView || !metalView.device || !node || !node.hasVectorGeometry) return nil;
+    NSData *prepared = CjguiComposablePreparedVectorTrianglesForNode(metalView, node);
+    if (!prepared || prepared.length % sizeof(CjguiInternalPreparedVectorTriangle) != 0) return nil;
+    NSUInteger triangleCount = prepared.length / sizeof(CjguiInternalPreparedVectorTriangle);
+    if (triangleCount == 0 || triangleCount > NSUIntegerMax / 3u) return nil;
+    NSUInteger vertexCount = triangleCount * 3u;
+    if (vertexCount > NSUIntegerMax / sizeof(CJGuiInternalMetalVectorVertex)) return nil;
+    NSUInteger byteCount = vertexCount * sizeof(CJGuiInternalMetalVectorVertex);
+    // Every currently supported geometry is bounded to twelve logical points
+    // and 32 ellipse segments. Keep the native allocation cap explicit even
+    // if future parser limits drift; the 1,024-node scene limit then bounds a
+    // whole accepted scene to at most 16 MiB of resident vector buffers.
+    if (byteCount == 0 || byteCount > 16u * 1024u) return nil;
+    if (node.vectorPreparedVertexBuffer && node.vectorPreparedVertexCount == vertexCount &&
+        node.vectorPreparedVertexBytes == byteCount) {
+#ifdef CJGUI_INTERNAL_TESTING
+        if (metalView.testComposableVectorBufferReuseCount < UINT32_MAX)
+            metalView.testComposableVectorBufferReuseCount += 1;
+#endif
+        return node.vectorPreparedVertexBuffer;
+    }
+    NSMutableData *vertices = [NSMutableData dataWithLength:byteCount];
+    if (!vertices) return nil;
+    const CjguiInternalPreparedVectorTriangle *triangles = prepared.bytes;
+    CJGuiInternalMetalVectorVertex *target = vertices.mutableBytes;
+    for (NSUInteger index = 0; index < triangleCount; index++) {
+        const CjguiInternalPreparedVectorTriangle triangle = triangles[index];
+        const NSUInteger base = index * 3u;
+        target[base] = (CJGuiInternalMetalVectorVertex){
+            { (float)triangle.first.x, (float)triangle.first.y }, triangle.paint, 0 };
+        target[base + 1u] = (CJGuiInternalMetalVectorVertex){
+            { (float)triangle.second.x, (float)triangle.second.y }, triangle.paint, 0 };
+        target[base + 2u] = (CJGuiInternalMetalVectorVertex){
+            { (float)triangle.third.x, (float)triangle.third.y }, triangle.paint, 0 };
+    }
+    id<MTLBuffer> buffer = [metalView.device newBufferWithBytes:vertices.bytes length:byteCount
+                                                         options:MTLResourceStorageModeShared];
+    if (!buffer) return nil;
+    node.vectorPreparedVertexBuffer = buffer;
+    node.vectorPreparedVertexCount = vertexCount;
+    node.vectorPreparedVertexBytes = byteCount;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (metalView.testComposableVectorBufferUploadCount < UINT32_MAX)
+        metalView.testComposableVectorBufferUploadCount += 1;
+    metalView.testComposableVectorBufferUploadBytes = byteCount > UINT64_MAX - metalView.testComposableVectorBufferUploadBytes
+        ? UINT64_MAX : metalView.testComposableVectorBufferUploadBytes + byteCount;
+#endif
+    if (outUploaded) *outUploaded = YES;
+    return buffer;
+}
+
 // Decorations are regular scene rectangles with the text node's resolved
 // clip chain. They deliberately do not become public nodes or textures:
 // their sole owner is the active native input projection.
@@ -1434,7 +3247,10 @@ static vector_float4 CjguiMetalColorFromNSColor(NSColor *color) {
 }
 
 static BOOL CjguiEnsureComposableImagePipeline(CJGuiInternalMetalView *metalView) {
-    if (metalView.composableImagePipeline) return YES;
+    BOOL usesMultisampling = metalView.composableUsesMultisampling;
+    id<MTLRenderPipelineState> existing = usesMultisampling
+        ? metalView.composableMultisampleImagePipeline : metalView.composableImagePipeline;
+    if (existing) return YES;
     NSError *error = nil;
     NSString *source = @"#include <metal_stdlib>\nusing namespace metal;\n"
         "struct Vertex { float2 position; float2 texCoord; float2 scenePoint; float4 clips[4]; float4 clipRadii; float4 clipCount; float4 nodeRect; float nodeCornerRadius; };\n"
@@ -1448,13 +3264,92 @@ static BOOL CjguiEnsureComposableImagePipeline(CJGuiInternalMetalView *metalView
     descriptor.vertexFunction = [library newFunctionWithName:@"cjgui_image_vertex"];
     descriptor.fragmentFunction = [library newFunctionWithName:@"cjgui_image_fragment"];
     descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    descriptor.sampleCount = usesMultisampling ? 4 : 1;
     descriptor.colorAttachments[0].blendingEnabled = YES;
     descriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
     descriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
     descriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
     descriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-    metalView.composableImagePipeline = [metalView.device newRenderPipelineStateWithDescriptor:descriptor error:&error];
-    if (!metalView.composableImagePipeline) { NSLog(@"cjgui: composable image pipeline failed %@", error); return NO; }
+    id<MTLRenderPipelineState> pipeline = [metalView.device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    if (!pipeline) { NSLog(@"cjgui: composable image pipeline failed %@", error); return NO; }
+    if (usesMultisampling) metalView.composableMultisampleImagePipeline = pipeline;
+    else metalView.composableImagePipeline = pipeline;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (metalView.testComposablePipelineBuildCount < UINT64_MAX) metalView.testComposablePipelineBuildCount += 1;
+#endif
+    return YES;
+}
+
+static BOOL CjguiEnsureComposableVectorPipeline(CJGuiInternalMetalView *metalView) {
+    if (!metalView || !metalView.device) return NO;
+    BOOL usesMultisampling = metalView.composableUsesMultisampling;
+    id<MTLRenderPipelineState> existing = usesMultisampling
+        ? metalView.composableMultisampleVectorPipeline : metalView.composableVectorPipeline;
+    if (existing) return YES;
+    NSError *error = nil;
+    NSString *source = @"#include <metal_stdlib>\nusing namespace metal;\n"
+        "struct VectorVertex { float2 localPoint; uint paint; uint padding; };\n"
+        "struct VectorUniform { float4 nodeRect; float4 viewBoxAndPointExtent; float4 clips[4]; float4 clipRadii; float4 clipCount; float4 fill; float4 stroke; };\n"
+        "struct VectorOut { float4 position [[position]]; float2 point; float4 clip0; float4 clip1; float4 clip2; float4 clip3; float4 clipRadii; float4 clipCount; float4 color; };\n"
+        "float roundedDistance(float2 point, float2 origin, float2 size, float radius) { float r=min(max(radius,0.0),min(size.x,size.y)*0.5); float2 q=abs((point-origin)-size*0.5)-(size*0.5-r); return length(max(q,float2(0.0)))+min(max(q.x,q.y),0.0)-r; }\n"
+        "vertex VectorOut cjgui_vector_vertex(uint i [[vertex_id]], const device VectorVertex *v [[buffer(0)]], constant VectorUniform &u [[buffer(1)]]) { VectorOut o; float2 point=u.nodeRect.xy+(v[i].localPoint/u.viewBoxAndPointExtent.xy)*u.nodeRect.zw; o.position=float4(-1.0+2.0*point.x/u.viewBoxAndPointExtent.z,1.0-2.0*point.y/u.viewBoxAndPointExtent.w,0,1); o.point=point; o.clip0=u.clips[0]; o.clip1=u.clips[1]; o.clip2=u.clips[2]; o.clip3=u.clips[3]; o.clipRadii=u.clipRadii; o.clipCount=u.clipCount; o.color=v[i].paint==1u?u.fill:u.stroke; return o; }\n"
+        "fragment float4 cjgui_vector_fragment(VectorOut in [[stage_in]]) { for(uint j=0;j<uint(in.clipCount.x);j++) { float4 clip=j==0?in.clip0:(j==1?in.clip1:(j==2?in.clip2:in.clip3)); if (roundedDistance(in.point,clip.xy,clip.zw,in.clipRadii[j])>0.0) discard_fragment(); } return in.color; }\n";
+    id<MTLLibrary> library = [metalView.device newLibraryWithSource:source options:nil error:&error];
+    if (!library) { NSLog(@"cjgui: composable vector metal library failed %@", error); return NO; }
+    MTLRenderPipelineDescriptor *descriptor = [[MTLRenderPipelineDescriptor alloc] init];
+    descriptor.vertexFunction = [library newFunctionWithName:@"cjgui_vector_vertex"];
+    descriptor.fragmentFunction = [library newFunctionWithName:@"cjgui_vector_fragment"];
+    descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    descriptor.sampleCount = usesMultisampling ? 4 : 1;
+    descriptor.colorAttachments[0].blendingEnabled = YES;
+    descriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+    descriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    descriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+    descriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    id<MTLRenderPipelineState> pipeline = [metalView.device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    if (!pipeline) { NSLog(@"cjgui: composable vector metal pipeline failed %@", error); return NO; }
+    if (usesMultisampling) metalView.composableMultisampleVectorPipeline = pipeline;
+    else metalView.composableVectorPipeline = pipeline;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (metalView.testComposablePipelineBuildCount < UINT64_MAX) metalView.testComposablePipelineBuildCount += 1;
+#endif
+    return YES;
+}
+
+static BOOL CjguiEncodeMetalVectorShape(id<MTLRenderCommandEncoder> encoder,
+                                        CGFloat pointWidth, CGFloat pointHeight,
+                                        CJGuiInternalMetalView *metalView,
+                                        CJGuiInternalComposableSceneNode *node) {
+    if (!encoder || !metalView || !node || !node.hasVectorGeometry || pointWidth <= 0.0 || pointHeight <= 0.0) return NO;
+    CjguiInternalComposableVectorGeometry geometry = node.vectorGeometry;
+    if (geometry.viewBoxWidth <= 0.0 || geometry.viewBoxHeight <= 0.0) return NO;
+    if (geometry.fillAlpha <= 0.0 && geometry.strokeAlpha <= 0.0) return YES;
+    if (!CjguiEnsureComposableVectorPipeline(metalView)) return NO;
+    BOOL uploaded = NO;
+    id<MTLBuffer> buffer = CjguiComposableVectorVertexBufferForNode(metalView, node, &uploaded);
+    if (!buffer || node.vectorPreparedVertexCount == 0) return NO;
+    CjguiInternalRendererComposableNode value = node.node;
+    CJGuiInternalMetalVectorUniform uniform = {0};
+    uniform.nodeRect = (vector_float4){ (float)value.x, (float)value.y, (float)value.width, (float)value.height };
+    uniform.viewBoxAndPointExtent = (vector_float4){ (float)geometry.viewBoxWidth, (float)geometry.viewBoxHeight,
+                                                      (float)pointWidth, (float)pointHeight };
+    CjguiPopulateMetalClipChain(uniform.clips, &uniform.clipRadii, &uniform.clipCount, value);
+    uniform.fill = (vector_float4){ (float)geometry.fillRed, (float)geometry.fillGreen,
+                                    (float)geometry.fillBlue, (float)geometry.fillAlpha };
+    uniform.stroke = (vector_float4){ (float)geometry.strokeRed, (float)geometry.strokeGreen,
+                                      (float)geometry.strokeBlue, (float)geometry.strokeAlpha };
+    id<MTLRenderPipelineState> pipeline = metalView.composableUsesMultisampling
+        ? metalView.composableMultisampleVectorPipeline : metalView.composableVectorPipeline;
+    if (!pipeline) return NO;
+    [encoder setRenderPipelineState:pipeline];
+    [encoder setVertexBuffer:buffer offset:0 atIndex:0];
+    [encoder setVertexBytes:&uniform length:sizeof(uniform) atIndex:1];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:node.vectorPreparedVertexCount];
+#ifdef CJGUI_INTERNAL_TESTING
+    if (metalView.testComposableVectorDrawCount < UINT32_MAX)
+        metalView.testComposableVectorDrawCount += 1;
+#endif
+    (void)uploaded;
     return YES;
 }
 
@@ -1494,9 +3389,16 @@ static NSString *CjguiComposableGpuTextValueWithActiveValue(CJGuiInternalComposa
                                                              NSString *activeValue) {
     if (!node) return @"";
     NSString *value = activeValue ?: node.value ?: @"";
-    return node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ||
-        node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT ? value :
-        (node.label.length > 0 ? [NSString stringWithFormat:@"%@ %@", node.label, value] : value);
+    uint32_t kind = node.node.nodeKind;
+    if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) return value;
+    // Buttons carry their visible action in both projection fields: label is
+    // the semantic name and value remains the ordinary display value.  Paint
+    // it once when those fields agree, without changing either the accessible
+    // label/value pair or distinct form-control label/value rendering.
+    if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON && node.label.length > 0 &&
+        [node.label isEqualToString:value]) return value;
+    return node.label.length > 0 ? [NSString stringWithFormat:@"%@ %@", node.label, value] : value;
 }
 
 static NSString *CjguiComposableGpuTextValue(CJGuiInternalComposableSceneNode *node) {
@@ -1846,21 +3748,29 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
     metalView.testComposableShapeVertexBytes = 0;
     metalView.testComposableMaxShapeBatchVertexBytes = 0;
     metalView.testComposableShapeVertexStride = (uint32_t)sizeof(CJGuiInternalMetalVertex);
+    metalView.testComposableVectorDrawCount = 0;
+    metalView.testComposableVectorBufferUploadCount = 0;
+    metalView.testComposableVectorBufferReuseCount = 0;
+    metalView.testComposableVectorBufferUploadBytes = 0;
 #endif
-    if (!metalView.composablePipeline) {
+    BOOL usesMultisampling = metalView.composableUsesMultisampling;
+    id<MTLRenderPipelineState> scenePipeline = usesMultisampling
+        ? metalView.composableMultisamplePipeline : metalView.composablePipeline;
+    if (!scenePipeline) {
         NSError *error = nil;
         NSString *source = @"#include <metal_stdlib>\nusing namespace metal;\n"
-            "struct Vertex { float2 position; float2 scenePoint; float2 localPoint; float2 size; float4 clips[4]; float4 clipRadii; float4 clipCount; float cornerRadius; float borderWidth; float4 fill; float4 border; };\n"
-            "struct Out { float4 position [[position]]; float2 scenePoint; float2 localPoint; float2 size; float4 clip0; float4 clip1; float4 clip2; float4 clip3; float4 clipRadii; float4 clipCount; float cornerRadius; float borderWidth; float4 fill; float4 border; };\n"
+            "struct Vertex { float2 position; float2 scenePoint; float2 localPoint; float2 size; float4 clips[4]; float4 clipRadii; float4 clipCount; float cornerRadius; float borderWidth; float isVectorShape; float vectorPadding; float4 fill; float4 border; };\n"
+            "struct Out { float4 position [[position]]; float2 scenePoint; float2 localPoint; float2 size; float4 clip0; float4 clip1; float4 clip2; float4 clip3; float4 clipRadii; float4 clipCount; float cornerRadius; float borderWidth; float isVectorShape; float4 fill; float4 border; };\n"
             "float roundedDistance(float2 point, float2 origin, float2 size, float radius) { float r=min(max(radius,0.0),min(size.x,size.y)*0.5); float2 q=abs((point-origin)-size*0.5)-(size*0.5-r); return length(max(q,float2(0.0)))+min(max(q.x,q.y),0.0)-r; }\n"
-            "vertex Out cjgui_scene_vertex(uint i [[vertex_id]], const device Vertex *v [[buffer(0)]]) { Out o; o.position=float4(v[i].position,0,1); o.scenePoint=v[i].scenePoint; o.localPoint=v[i].localPoint; o.size=v[i].size; o.clip0=v[i].clips[0]; o.clip1=v[i].clips[1]; o.clip2=v[i].clips[2]; o.clip3=v[i].clips[3]; o.clipRadii=v[i].clipRadii; o.clipCount=v[i].clipCount; o.cornerRadius=v[i].cornerRadius; o.borderWidth=v[i].borderWidth; o.fill=v[i].fill; o.border=v[i].border; return o; }\n"
-            "fragment float4 cjgui_scene_fragment(Out in [[stage_in]]) { for(uint j=0;j<uint(in.clipCount.x);j++) { float4 clip=j==0?in.clip0:(j==1?in.clip1:(j==2?in.clip2:in.clip3)); if (roundedDistance(in.scenePoint,clip.xy,clip.zw,in.clipRadii[j])>0.0) discard_fragment(); } float outer=roundedDistance(in.localPoint,float2(0.0),in.size,in.cornerRadius); if (outer>0.0) discard_fragment(); if (in.borderWidth>0.0 && in.border.a>0.0) { float2 innerSize=max(in.size-float2(in.borderWidth*2.0),float2(0.0)); float innerRadius=max(0.0,in.cornerRadius-in.borderWidth); float inner=roundedDistance(in.localPoint-float2(in.borderWidth),float2(0.0),innerSize,innerRadius); if (inner>0.0) return in.border; } return in.fill; }\n";
+            "vertex Out cjgui_scene_vertex(uint i [[vertex_id]], const device Vertex *v [[buffer(0)]]) { Out o; o.position=float4(v[i].position,0,1); o.scenePoint=v[i].scenePoint; o.localPoint=v[i].localPoint; o.size=v[i].size; o.clip0=v[i].clips[0]; o.clip1=v[i].clips[1]; o.clip2=v[i].clips[2]; o.clip3=v[i].clips[3]; o.clipRadii=v[i].clipRadii; o.clipCount=v[i].clipCount; o.cornerRadius=v[i].cornerRadius; o.borderWidth=v[i].borderWidth; o.isVectorShape=v[i].isVectorShape; o.fill=v[i].fill; o.border=v[i].border; return o; }\n"
+            "fragment float4 cjgui_scene_fragment(Out in [[stage_in]]) { for(uint j=0;j<uint(in.clipCount.x);j++) { float4 clip=j==0?in.clip0:(j==1?in.clip1:(j==2?in.clip2:in.clip3)); if (roundedDistance(in.scenePoint,clip.xy,clip.zw,in.clipRadii[j])>0.0) discard_fragment(); } if (in.isVectorShape>0.5) return in.fill; float outer=roundedDistance(in.localPoint,float2(0.0),in.size,in.cornerRadius); if (outer>0.0) discard_fragment(); if (in.borderWidth>0.0 && in.border.a>0.0) { float2 innerSize=max(in.size-float2(in.borderWidth*2.0),float2(0.0)); float innerRadius=max(0.0,in.cornerRadius-in.borderWidth); float inner=roundedDistance(in.localPoint-float2(in.borderWidth),float2(0.0),innerSize,innerRadius); if (inner>0.0) return in.border; } return in.fill; }\n";
         id<MTLLibrary> library = [metalView.device newLibraryWithSource:source options:nil error:&error];
         if (!library) { NSLog(@"cjgui: composable metal library failed %@", error); return NO; }
         MTLRenderPipelineDescriptor *descriptor = [[MTLRenderPipelineDescriptor alloc] init];
         descriptor.vertexFunction = [library newFunctionWithName:@"cjgui_scene_vertex"];
         descriptor.fragmentFunction = [library newFunctionWithName:@"cjgui_scene_fragment"];
         descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+        descriptor.sampleCount = usesMultisampling ? 4 : 1;
         // Scene rectangles carry ordinary, non-premultiplied RGBA values from
         // the public Cangjie style.  They must compose in painter order just
         // like image texels, rather than overwriting the drawable with their
@@ -1870,22 +3780,29 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
         descriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
         descriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
         descriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-        metalView.composablePipeline = [metalView.device newRenderPipelineStateWithDescriptor:descriptor error:&error];
-        if (!metalView.composablePipeline) { NSLog(@"cjgui: composable metal pipeline failed %@", error); return NO; }
+        scenePipeline = [metalView.device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+        if (!scenePipeline) { NSLog(@"cjgui: composable metal pipeline failed %@", error); return NO; }
+        if (usesMultisampling) metalView.composableMultisamplePipeline = scenePipeline;
+        else metalView.composablePipeline = scenePipeline;
+#ifdef CJGUI_INTERNAL_TESTING
+        if (metalView.testComposablePipelineBuildCount < UINT64_MAX) metalView.testComposablePipelineBuildCount += 1;
+#endif
     }
     CGFloat pointWidth = MAX(1.0, metalView.bounds.size.width);
     CGFloat pointHeight = MAX(1.0, metalView.bounds.size.height);
     CGFloat scaleX = drawableSize.width / pointWidth;
     CGFloat scaleY = drawableSize.height / pointHeight;
-    [encoder setRenderPipelineState:metalView.composablePipeline];
+    [encoder setRenderPipelineState:scenePipeline];
     // Consecutive shape commands share one pipeline and vertex submission.
     // Texture nodes are explicit painter-order boundaries; we flush before
     // them rather than globally sorting by resource or alpha.
     NSMutableData *shapeBatch = [NSMutableData data];
+    // Keep the historical six-vertex alignment: it preserves complete
+    // rectangle submissions and is also a multiple of three, so vector
+    // triangles never split across a `setVertexBytes` boundary.
     const NSUInteger maxShapeVerticesPerUpload =
-        ((NSUInteger)CJGUI_INTERNAL_METAL_SET_VERTEX_BYTES_CAPACITY / sizeof(CJGuiInternalMetalVertex) /
-         CJGUI_INTERNAL_COMPOSABLE_SHAPE_VERTICES_PER_NODE) * CJGUI_INTERNAL_COMPOSABLE_SHAPE_VERTICES_PER_NODE;
-    if (maxShapeVerticesPerUpload < CJGUI_INTERNAL_COMPOSABLE_SHAPE_VERTICES_PER_NODE) {
+        ((NSUInteger)CJGUI_INTERNAL_METAL_SET_VERTEX_BYTES_CAPACITY / sizeof(CJGuiInternalMetalVertex) / 6u) * 6u;
+    if (maxShapeVerticesPerUpload < 6u) {
         NSLog(@"cjgui: composable shape vertex exceeds Metal setVertexBytes capacity");
         return NO;
     }
@@ -1904,7 +3821,7 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
                 ? UINT64_MAX : metalView.testComposableShapeVertexBytes + bytes;
             metalView.testComposableMaxShapeBatchVertexBytes = MAX(metalView.testComposableMaxShapeBatchVertexBytes, bytes);
 #endif
-            [encoder setRenderPipelineState:metalView.composablePipeline];
+            [encoder setRenderPipelineState:scenePipeline];
             [encoder setVertexBytes:batchBytes + vertexOffset * sizeof(CJGuiInternalMetalVertex) length:byteCount atIndex:0];
             [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertexCount];
             vertexOffset += vertexCount;
@@ -1929,6 +3846,15 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
         vector_float4 border = { (float)value.borderRed, (float)value.borderGreen, (float)value.borderBlue, (float)value.borderAlpha };
         NSUInteger shapeBytesBefore = shapeBatch.length;
         CjguiAppendMetalShape(shapeBatch, pointWidth, pointHeight, value, fill, border);
+        // A vector's immutable local topology lives in its own retained Metal
+        // buffer. Flush preceding generic shapes at this exact painter-order
+        // boundary, then bind only the compact topology plus one small node
+        // uniform; never expand it into 176-byte generic vertices each frame.
+        if (node.hasVectorGeometry) {
+            if (!flushShapeBatch()) return NO;
+            if (!CjguiEncodeMetalVectorShape(encoder, pointWidth, pointHeight, metalView, node)) return NO;
+            [encoder setRenderPipelineState:scenePipeline];
+        }
 #ifdef CJGUI_INTERNAL_TESTING
         if (shapeBatch.length > shapeBytesBefore && metalView.testComposableShapeNodeCount < UINT32_MAX) {
             metalView.testComposableShapeNodeCount += 1;
@@ -1954,7 +3880,8 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
             }
             if (node.textTexture && !flushShapeBatch()) return NO;
             if (node.textTexture && !CjguiEnsureComposableImagePipeline(metalView)) return NO;
-            if (node.textTexture) [encoder setRenderPipelineState:metalView.composableImagePipeline];
+            if (node.textTexture) [encoder setRenderPipelineState:usesMultisampling
+                ? metalView.composableMultisampleImagePipeline : metalView.composableImagePipeline];
 #ifdef CJGUI_INTERNAL_TESTING
             if (node.textTexture && metalView.testComposableTextureDrawCount < UINT32_MAX) metalView.testComposableTextureDrawCount += 1;
 #endif
@@ -1964,14 +3891,14 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
                                         NSMinX(textureRect), NSMinY(textureRect),
                                         NSWidth(textureRect), NSHeight(textureRect), node.textTexture, value, YES);
             }
-            if (node.textTexture) [encoder setRenderPipelineState:metalView.composablePipeline];
+            if (node.textTexture) [encoder setRenderPipelineState:scenePipeline];
             vector_float4 foregroundFill = CjguiMetalColorFromNSColor(NSColor.keyboardFocusIndicatorColor);
             for (NSValue *valueRect in node.textMarkedRects) {
                 CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, value, valueRect.rectValue, foregroundFill);
             }
             CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, value, node.textCaretRect, foregroundFill);
             if (shapeBatch.length > decorationsBefore && !flushShapeBatch()) return NO;
-            [encoder setRenderPipelineState:metalView.composablePipeline];
+            [encoder setRenderPipelineState:scenePipeline];
         }
         if (value.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE && node.imageTexture) {
             if (!flushShapeBatch()) return NO;
@@ -1982,7 +3909,8 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
                                                         : MIN((CGFloat)value.width / sourceWidth, (CGFloat)value.height / sourceHeight);
             CGFloat drawWidth = sourceWidth * scale;
             CGFloat drawHeight = sourceHeight * scale;
-            [encoder setRenderPipelineState:metalView.composableImagePipeline];
+            [encoder setRenderPipelineState:usesMultisampling
+                ? metalView.composableMultisampleImagePipeline : metalView.composableImagePipeline];
 #ifdef CJGUI_INTERNAL_TESTING
             if (metalView.testComposableTextureDrawCount < UINT32_MAX) metalView.testComposableTextureDrawCount += 1;
 #endif
@@ -1990,7 +3918,7 @@ static BOOL CjguiEncodeComposableNodes(id view, id<MTLRenderCommandEncoder> enco
                                     value.x + ((CGFloat)value.width - drawWidth) / 2.0,
                                     value.y + ((CGFloat)value.height - drawHeight) / 2.0,
                                     drawWidth, drawHeight, node.imageTexture, value, NO);
-            [encoder setRenderPipelineState:metalView.composablePipeline];
+            [encoder setRenderPipelineState:scenePipeline];
         }
     }
     return flushShapeBatch();
@@ -2042,6 +3970,98 @@ static BOOL CjguiPointInRoundedRect(NSPoint point, NSRect rect, CGFloat requeste
 static BOOL CjguiPointInComposableNodeClip(NSPoint point, CJGuiInternalComposableSceneNode *node, NSView *view) {
     (void)view;
     return node && CjguiComposablePointInClipChain(point.x, point.y, node.node);
+}
+
+static BOOL CjguiComposableVectorPointInSimplePolygon(CjguiInternalComposableVectorPoint point,
+                                                      const CjguiInternalComposableVectorPoint *points,
+                                                      uint32_t pointCount) {
+    if (!points || pointCount < 3) return NO;
+    BOOL inside = NO;
+    for (uint32_t index = 0, previous = pointCount - 1; index < pointCount; previous = index++) {
+        CjguiInternalComposableVectorPoint start = points[previous];
+        CjguiInternalComposableVectorPoint end = points[index];
+        if (fabs(CjguiComposableVectorCross(start, end, point)) <= CjguiComposableVectorEpsilon &&
+            CjguiComposableVectorBetween(point.x, start.x, end.x) &&
+            CjguiComposableVectorBetween(point.y, start.y, end.y)) return YES;
+        BOOL crosses = ((start.y > point.y) != (end.y > point.y));
+        if (crosses && point.x < (end.x - start.x) * (point.y - start.y) / (end.y - start.y) + start.x) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+static BOOL CjguiComposableVectorPointNearSegment(CjguiInternalComposableVectorPoint point,
+                                                  CjguiInternalComposableVectorPoint start,
+                                                  CjguiInternalComposableVectorPoint end,
+                                                  double halfWidth, uint32_t cap,
+                                                  BOOL startCap, BOOL endCap) {
+    if (halfWidth <= 0.0) return NO;
+    CjguiInternalComposableVectorPoint direction = {0};
+    if (!CjguiComposableVectorUnitDirection(start, end, &direction)) return NO;
+    CjguiInternalComposableVectorPoint delta = CjguiComposableVectorSubtract(point, start);
+    double length = CjguiComposableVectorLength(CjguiComposableVectorSubtract(end, start));
+    double along = delta.x * direction.x + delta.y * direction.y;
+    double across = fabs(delta.x * -direction.y + delta.y * direction.x);
+    if (along >= 0.0 && along <= length && across <= halfWidth) return YES;
+    if (cap == CJGUI_INTERNAL_VECTOR_CAP_SQUARE) {
+        if (startCap && along >= -halfWidth && along < 0.0 && across <= halfWidth) return YES;
+        if (endCap && along > length && along <= length + halfWidth && across <= halfWidth) return YES;
+    }
+    if (cap == CJGUI_INTERNAL_VECTOR_CAP_ROUND) {
+        if (startCap && along < 0.0 && CjguiComposableVectorLength(delta) <= halfWidth) return YES;
+        CjguiInternalComposableVectorPoint endDelta = CjguiComposableVectorSubtract(point, end);
+        if (endCap && along > length && CjguiComposableVectorLength(endDelta) <= halfWidth) return YES;
+    }
+    return NO;
+}
+
+static BOOL CjguiComposableVectorContainsPoint(CJGuiInternalComposableSceneNode *node, NSPoint point) {
+    if (!node || !node.hasVectorGeometry) return NO;
+    CjguiInternalRendererComposableNode value = node.node;
+    CjguiInternalComposableVectorGeometry geometry = node.vectorGeometry;
+    if (value.width <= 0 || value.height <= 0 || geometry.viewBoxWidth <= 0.0 || geometry.viewBoxHeight <= 0.0) return NO;
+    CjguiInternalComposableVectorPoint local = CjguiComposableVectorPoint(
+        ((double)point.x - (double)value.x) * geometry.viewBoxWidth / (double)value.width,
+        ((double)point.y - (double)value.y) * geometry.viewBoxHeight / (double)value.height);
+    BOOL fillVisible = geometry.fillAlpha > 0.0;
+    BOOL strokeVisible = geometry.strokeAlpha > 0.0 && geometry.strokeWidth > 0.0;
+    if (geometry.kind == CJGUI_INTERNAL_VECTOR_ELLIPSE) {
+        double normalizedX = (local.x - geometry.center.x) / geometry.radiusX;
+        double normalizedY = (local.y - geometry.center.y) / geometry.radiusY;
+        double normalizedDistance = normalizedX * normalizedX + normalizedY * normalizedY;
+        if (fillVisible && normalizedDistance <= 1.0) return YES;
+        if (strokeVisible) {
+            double radial = sqrt(MAX(0.0, normalizedDistance));
+            return fabs(radial - 1.0) * MIN(geometry.radiusX, geometry.radiusY) <= geometry.strokeWidth / 2.0;
+        }
+        return NO;
+    }
+    if (geometry.kind == CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON && fillVisible &&
+        CjguiComposableVectorPointInSimplePolygon(local, geometry.points, geometry.pointCount)) return YES;
+    if (!strokeVisible || geometry.pointCount < 2) return NO;
+    double halfWidth = geometry.strokeWidth / 2.0;
+    if (geometry.kind == CJGUI_INTERNAL_VECTOR_SIMPLE_POLYGON) {
+        for (uint32_t index = 0; index < geometry.pointCount; index++) {
+            uint32_t next = index + 1 == geometry.pointCount ? 0 : index + 1;
+            if (CjguiComposableVectorPointNearSegment(local, geometry.points[index], geometry.points[next],
+                                                       halfWidth, CJGUI_INTERNAL_VECTOR_CAP_BUTT, NO, NO)) return YES;
+        }
+        return NO;
+    }
+    for (uint32_t index = 0; index + 1 < geometry.pointCount; index++) {
+        if (CjguiComposableVectorPointNearSegment(local, geometry.points[index], geometry.points[index + 1], halfWidth,
+                                                   geometry.cap, index == 0, index + 2 == geometry.pointCount)) return YES;
+    }
+    return NO;
+}
+
+static BOOL CjguiComposableNodeContainsPoint(CJGuiInternalComposableSceneNode *node, NSPoint point, NSView *view) {
+    if (!node || !NSPointInRect(point, CjguiComposableRect(node, view))) return NO;
+    if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC) {
+        return CjguiComposableVectorContainsPoint(node, point);
+    }
+    return YES;
 }
 
 static void CjguiClipComposableNode(CJGuiInternalComposableSceneNode *node, NSView *view) {
@@ -2186,6 +4206,12 @@ static BOOL CjguiComposableNodeAcceptsPointerCapture(uint32_t kind) {
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER;
 }
 
+static BOOL CjguiComposableNodeIsPressable(uint32_t kind) {
+    return kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC;
+}
+
 static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSceneNode *node) {
     if (!node) return NO;
     // Disabled controls remain discoverable so an assistive client can tell
@@ -2297,7 +4323,7 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 @end
 #endif
 
-@interface CJGuiInternalComposableSceneOverlay : NSView <NSTextViewDelegate>
+@interface CJGuiInternalComposableSceneOverlay : NSView <NSTextViewDelegate, NSDraggingSource, NSDraggingDestination>
 @property(nonatomic, weak) CJGuiInternalSession *session;
 @property(nonatomic, strong) NSArray<CJGuiInternalComposableSceneNode *> *nodes;
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableAccessibilityAction *> *accessibilityActions;
@@ -2314,6 +4340,9 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 // NSApplication reached this production responder; it is never projected or
 // exposed through the framework API.
 @property(nonatomic, assign) uint64_t testKeyDownReceiptCount;
+// This is set only around the production source-drag handoff so the native
+// trace can distinguish an actual AppKit session from a press cancellation.
+@property(nonatomic, assign) BOOL testDataTransferDragSessionBegan;
 #endif
 // The platform text service remains the input/IME adapter. Its visible
 // viewport is never the document surface; this offset belongs to the
@@ -2387,6 +4416,24 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 @property(nonatomic, assign) uint32_t pointerCaptureNodeKind;
 @property(nonatomic, assign) CGFloat pointerCaptureX;
 @property(nonatomic, assign) CGFloat pointerCaptureY;
+// Press/hover identities are native routing facts only. They decide which
+// copied event identity reaches Cangjie; visual state is recomputed in the
+// Cangjie window projection and never owned by this overlay.
+@property(nonatomic, assign) uint64_t hoveredNodeId;
+@property(nonatomic, assign) int64_t hoveredResourceId;
+@property(nonatomic, assign) uint32_t hoveredNodeKind;
+@property(nonatomic, assign) uint64_t pressedNodeId;
+@property(nonatomic, assign) int64_t pressedResourceId;
+@property(nonatomic, assign) uint32_t pressedNodeKind;
+@property(nonatomic, assign) BOOL pressedCancelled;
+@property(nonatomic, assign) CGFloat pressedX;
+@property(nonatomic, assign) CGFloat pressedY;
+// Drag destination preview uses the existing hover interaction route. These
+// copied ids are only enough to issue a paired leave when the AppKit session
+// exits, cancels or the accepted scene replaces the target.
+@property(nonatomic, assign) uint64_t dataTransferHoverNodeId;
+@property(nonatomic, assign) int64_t dataTransferHoverResourceId;
+@property(nonatomic, assign) uint32_t dataTransferHoverNodeKind;
 // Draw progress is recorded by the self-drawn AppKit overlay itself. It does
 // not imply Metal completion or that a human has visually perceived a frame.
 @property(nonatomic, assign) uint64_t lastDrawnProjectionVersion;
@@ -2416,6 +4463,22 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 - (void)cancelPointerCapture;
 - (void)cancelPointerCaptureForPlatformLoss;
 - (CJGuiInternalComposableSceneNode *)capturedPointerNode;
+- (CJGuiInternalComposableSceneNode *)hoveredPressableNode;
+- (CJGuiInternalComposableSceneNode *)pressedPressableNode;
+- (void)clearPressRouting;
+- (void)updateHoverAtPoint:(NSPoint)point;
+- (void)clearHoverAtPoint:(NSPoint)point;
+- (void)beginPressForNode:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point;
+- (void)cancelPressAtPoint:(NSPoint)point;
+- (void)completePressAtPoint:(NSPoint)point;
+- (void)cancelPressForPlatformLoss;
+- (BOOL)beginDataTransferDragForNode:(CJGuiInternalComposableSceneNode *)node event:(NSEvent *)event;
+- (CJGuiInternalComposableDataTransferItem *)dataTransferItemForNode:(CJGuiInternalComposableSceneNode *)node
+                                                                 role:(uint32_t)role;
+- (CJGuiInternalComposableSceneNode *)dataTransferTargetAtPoint:(NSPoint)point
+                                                       pasteboard:(NSPasteboard *)pasteboard;
+- (void)setDataTransferHoverTarget:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point;
+- (void)clearDataTransferHoverAtPoint:(NSPoint)point;
 - (CJGuiInternalComposableSceneNode *)nodeAtPoint:(NSPoint)point;
 - (void)setText:(NSString *)text forNode:(CJGuiInternalComposableSceneNode *)node;
 - (void)positionInputProxyForNode:(CJGuiInternalComposableSceneNode *)node;
@@ -2456,7 +4519,8 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     CJGuiInternalComposableSceneNode *node = [self currentNode];
     uint32_t kind = node ? node.node.nodeKind : 0;
     if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT) return NSAccessibilityStaticTextRole;
-    if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON) return NSAccessibilityButtonRole;
+    if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC) return NSAccessibilityButtonRole;
     if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) return NSAccessibilityCheckBoxRole;
     if (CjguiComposableNodeIsTextInput(kind)) return NSAccessibilityTextFieldRole;
     return NSAccessibilityGroupRole;
@@ -2584,6 +4648,8 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     self.multilineLayoutFullLayoutCount = 0;
     self.draggingNodeId = 0; self.draggingNodeResourceId = -1;
     self.draggingProjectionVersion = 0; self.draggingAnchor = 0;
+    self.dataTransferHoverNodeId = 0; self.dataTransferHoverResourceId = -1;
+    self.dataTransferHoverNodeKind = 0;
     self.lastDrawnProjectionVersion = 0;
     self.inputScrollProxy = [[NSScrollView alloc] initWithFrame:NSMakeRect(-2, -2, 1, 1)];
     self.inputScrollProxy.drawsBackground = NO;
@@ -2627,6 +4693,9 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 #endif
     self.inputScrollProxy.documentView = self.inputProxy;
     [self addSubview:self.inputScrollProxy];
+    // `setNodesFromProjection` replaces this conservative initial type set
+    // with the formats declared by the accepted Cangjie scene.
+    [self registerForDraggedTypes:@[NSPasteboardTypeString]];
     return self;
 }
 - (BOOL)isFlipped { return YES; }
@@ -2650,7 +4719,9 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     CJGuiInternalComposableSceneNode *live = [self accessibilityLiveNodeForNode:node];
     if (!live || live.node.isInteractive == 0 || live.node.isReadOnly != 0) return NO;
     uint32_t kind = live.node.nodeKind;
-    if (kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON && kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT &&
+    if (kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON &&
+        kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC &&
+        kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT &&
         !CjguiComposableNodeIsTextInput(kind)) return NO;
     // Modal focus is established by the Cangjie layer owner when its scene is
     // committed. An AX action may not bypass that visible input boundary to
@@ -2678,7 +4749,9 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     CJGuiInternalComposableSceneNode *live = [self accessibilityLiveNodeForNode:node];
     if (!live || ![self accessibilityNodeIsActionable:live]) return NO;
     uint32_t kind = live.node.nodeKind;
-    if (kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON && kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) return NO;
+    if (kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON &&
+        kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC &&
+        kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) return NO;
     [self mouseDownForNode:live];
     return YES;
 }
@@ -2846,12 +4919,50 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
         }
     }
     self.nodes = nextNodes;
+    // AppKit needs the concrete type list up front, while Cangjie owns which
+    // stable node may accept it. Replacing this list at the same committed
+    // scene boundary prevents a retired target from accepting a later drop.
+    [self unregisterDraggedTypes];
+    NSMutableArray<NSPasteboardType> *dragTypes = [NSMutableArray array];
+    for (CJGuiInternalComposableDataTransferItem *item in self.session.composableDataTransferItems) {
+        if (item.item.role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET) continue;
+        NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
+        if (type && ![dragTypes containsObject:type]) [dragTypes addObject:type];
+    }
+    if (dragTypes.count == 0) [dragTypes addObject:NSPasteboardTypeString];
+    [self registerForDraggedTypes:dragTypes];
+    if (CjguiDataTransferTraceEnabled()) {
+        NSRect frame = self.window ? self.window.frame : NSZeroRect;
+        NSLog(@"cjgui: transfer target registration window=%ld frame=%.1f,%.1f,%.1f,%.1f types=%@ scene=%llu",
+              (long)(self.window ? self.window.windowNumber : 0), frame.origin.x, frame.origin.y, frame.size.width,
+              frame.size.height, dragTypes, (unsigned long long)self.session.composableSceneVersion);
+    }
     // A replacement projection may delete, disable or rebind the captured
     // target. Native then releases platform routing immediately; Cangjie
     // reconciles and emits the owner-visible cancel from its retained stable
     // capture record, so no raw native object crosses that boundary.
     if (self.pointerCaptureActive && ![self capturedPointerNode]) {
         [self cancelPointerCapture];
+    }
+    if (self.hoveredNodeId != 0 && ![self hoveredPressableNode]) {
+        self.hoveredNodeId = 0; self.hoveredResourceId = -1; self.hoveredNodeKind = 0;
+    }
+    if (self.pressedNodeId != 0 && ![self pressedPressableNode]) {
+        [self clearPressRouting];
+    }
+    if (self.dataTransferHoverNodeId != 0) {
+        CJGuiInternalComposableSceneNode *hover = nil;
+        for (CJGuiInternalComposableSceneNode *node in self.nodes) {
+            if (node.node.nodeId == self.dataTransferHoverNodeId &&
+                node.node.resourceId == self.dataTransferHoverResourceId &&
+                node.node.nodeKind == self.dataTransferHoverNodeKind) {
+                hover = node;
+                break;
+            }
+        }
+        if (!hover || ![self dataTransferItemForNode:hover role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET]) {
+            [self clearDataTransferHoverAtPoint:NSZeroPoint];
+        }
     }
     // Scroll offsets are local interaction state. Once a multiline identity
     // leaves the projection it must not keep a stale entry alive, nor be
@@ -2997,6 +5108,38 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
                     self.activeTextKnownContentHeight = 0.0;
                 }
             }
+        } else if (previousActive && !CjguiComposableNodeIsTextInput(previousActive.node.nodeKind) &&
+                   [self survivingScrollScopeForRemovedNode:previousActive]) {
+            // The focused non-text control (a tree/list row) left the projection
+            // - for example a keyboard collapse removed exactly the focused row.
+            // Re-anchor the native focus to the surviving list/scroll scope that
+            // contained it instead of dropping every later key: the owner keeps
+            // its own model focus, and without a native focus the very next
+            // arrow key would be discarded before it reached that model.
+            CJGuiInternalComposableSceneNode *scope = [self survivingScrollScopeForRemovedNode:previousActive];
+            self.activeNodeIndex = scope.index;
+            self.activeNodeId = scope.node.nodeId;
+            self.activeNodeResourceId = scope.node.resourceId;
+            self.activeNodeKind = scope.node.nodeKind;
+            self.activeProjectionVersion = scope.node.projectionVersion;
+            self.applyingProjection = YES;
+            if (self.inputProxy.hasMarkedText) [(CJGuiInternalComposableInputProxy *)self.inputProxy cancelMarkedText];
+            self.inputProxy.editable = NO;
+            self.inputProxy.string = @""; self.inputProxy.selectedRange = NSMakeRange(0, 0);
+            self.applyingProjection = NO;
+            self.activeTextLayoutSignature = nil;
+            self.activeTextFallbackRunsDirty = NO;
+            self.activeTextFallbackNeedsFullRefresh = NO;
+            self.activeTextFallbackHasDirtyRange = NO;
+            self.activeTextFallbackHasPendingEdit = NO;
+            self.activeTextBaseFont = nil;
+            self.inputProxyAssignedBaseFont = nil;
+            self.activeTextTextureRetryKey = nil;
+            self.activeTextTextureRetryCount = 0;
+            self.activeTextTexturePreparationFailed = NO;
+            self.activeTextLayoutNeedsVisibleGlyphs = NO;
+            self.activeTextHasExactContentHeight = NO;
+            self.activeTextKnownContentHeight = 0.0;
         } else {
             self.activeNodeIndex = NSNotFound; self.activeNodeId = 0; self.activeProjectionVersion = 0;
             self.activeNodeResourceId = -1; self.activeNodeKind = 0;
@@ -3025,9 +5168,19 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     [self refreshGpuTextForActiveInput];
     [self setNeedsDisplay:YES];
 }
+// The surviving list/scroll scope that contained a node of the previous
+// projection, or nil when nothing of that scope remains. Used to keep keyboard
+// navigation alive when the focused row itself was removed by the same update.
+- (CJGuiInternalComposableSceneNode *)survivingScrollScopeForRemovedNode:(CJGuiInternalComposableSceneNode *)node {
+    if (!node) return nil;
+    NSRect rect = CjguiComposableRect(node, self);
+    if (NSIsEmptyRect(rect)) return nil;
+    return [self scrollNodeContainingPoint:NSMakePoint(NSMidX(rect), NSMidY(rect))];
+}
+
 - (CJGuiInternalComposableSceneNode *)nodeAtPoint:(NSPoint)point {
     for (CJGuiInternalComposableSceneNode *node in [self.nodes reverseObjectEnumerator]) {
-        if (node.node.isInteractive && NSPointInRect(point, CjguiComposableRect(node, self)) &&
+        if (node.node.isInteractive && CjguiComposableNodeContainsPoint(node, point, self) &&
             CjguiPointInComposableNodeClip(point, node, self)) return node;
     }
     return nil;
@@ -3089,14 +5242,15 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     BOOL isSameNode = self.activeNodeId == node.node.nodeId && self.activeNodeResourceId == node.node.resourceId &&
         self.activeNodeKind == node.node.nodeKind;
     CJGuiInternalComposableSceneNode *previousActive = nil;
-    if (!isSameNode) {
-        for (CJGuiInternalComposableSceneNode *candidate in self.nodes) {
-            if (candidate.node.nodeId == self.activeNodeId && candidate.node.resourceId == self.activeNodeResourceId &&
-                candidate.node.nodeKind == self.activeNodeKind) {
-                previousActive = candidate;
-                break;
-            }
+    for (CJGuiInternalComposableSceneNode *candidate in self.nodes) {
+        if (candidate.node.nodeId == self.activeNodeId && candidate.node.resourceId == self.activeNodeResourceId &&
+            candidate.node.nodeKind == self.activeNodeKind) {
+            previousActive = candidate;
+            break;
         }
+    }
+    BOOL focusScopeChanged = !previousActive || previousActive.node.inputScope != node.node.inputScope;
+    if (!isSameNode) {
         [self prepareInactiveTextResourceForFocusChange:previousActive];
     }
     uint32_t kind = node.node.nodeKind;
@@ -3106,6 +5260,17 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     BOOL isMultiline = kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
     self.activeNodeIndex = node.index; self.activeNodeId = node.node.nodeId; self.activeProjectionVersion = node.node.projectionVersion;
     self.activeNodeResourceId = node.node.resourceId; self.activeNodeKind = kind;
+    // The AppKit menu is process-global but scope-dependent. A Cangjie layer
+    // can move focus only after its scene commits, so refresh the projection
+    // at that actual input-boundary transition; background windows never own
+    // the current key menu.
+    // Cmd-C/V reservation depends on whether the newly focused node is a
+    // non-text transfer source/target, not only on its scope.  Rebuild on a
+    // real node transition so AppKit never leaves a stale Edit equivalent
+    // installed while focus moves between a button and a text proxy.
+    if ((focusScopeChanged || !isSameNode) && self.session.window == NSApp.keyWindow) {
+        CjguiRebuildComposableCommandMenuForKeyWindow();
+    }
     if (!isTextInput) {
         if (self.inputProxy.hasMarkedText) {
             self.applyingProjection = YES;
@@ -3400,6 +5565,7 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     if (self.pointerCaptureActive) {
         [self endPointerCaptureAtPoint:NSMakePoint(self.pointerCaptureX, self.pointerCaptureY) cancelled:YES];
     }
+    [self cancelPressForPlatformLoss];
 }
 
 - (CJGuiInternalComposableSceneNode *)capturedPointerNode {
@@ -3414,6 +5580,252 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
         }
     }
     return nil;
+}
+- (CJGuiInternalComposableSceneNode *)hoveredPressableNode {
+    if (self.hoveredNodeId == 0) return nil;
+    for (CJGuiInternalComposableSceneNode *candidate in self.nodes) {
+        if (candidate.node.nodeId == self.hoveredNodeId &&
+            candidate.node.resourceId == self.hoveredResourceId &&
+            candidate.node.nodeKind == self.hoveredNodeKind && candidate.node.isInteractive != 0 &&
+            candidate.node.isReadOnly == 0 && CjguiComposableNodeIsPressable(candidate.node.nodeKind)) return candidate;
+    }
+    return nil;
+}
+- (CJGuiInternalComposableSceneNode *)pressedPressableNode {
+    if (self.pressedNodeId == 0) return nil;
+    for (CJGuiInternalComposableSceneNode *candidate in self.nodes) {
+        if (candidate.node.nodeId == self.pressedNodeId &&
+            candidate.node.resourceId == self.pressedResourceId &&
+            candidate.node.nodeKind == self.pressedNodeKind && candidate.node.isInteractive != 0 &&
+            candidate.node.isReadOnly == 0 && CjguiComposableNodeIsPressable(candidate.node.nodeKind)) return candidate;
+    }
+    return nil;
+}
+- (void)clearPressRouting {
+    self.pressedNodeId = 0; self.pressedResourceId = -1; self.pressedNodeKind = 0;
+    self.pressedCancelled = NO; self.pressedX = 0.0; self.pressedY = 0.0;
+}
+- (void)clearHoverAtPoint:(NSPoint)point {
+    CJGuiInternalComposableSceneNode *previous = [self hoveredPressableNode];
+    self.hoveredNodeId = 0; self.hoveredResourceId = -1; self.hoveredNodeKind = 0;
+    if (previous) (void)CjguiEnqueueComposablePointerInteraction(
+        self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_HOVER_LEAVE, previous, point);
+}
+- (void)updateHoverAtPoint:(NSPoint)point {
+    CJGuiInternalComposableSceneNode *next = [self nodeAtPoint:point];
+    if (!next || !CjguiComposableNodeIsPressable(next.node.nodeKind) || next.node.isInteractive == 0 ||
+        next.node.isReadOnly != 0) next = nil;
+    CJGuiInternalComposableSceneNode *previous = [self hoveredPressableNode];
+    if (previous && next && previous.node.nodeId == next.node.nodeId &&
+        previous.node.resourceId == next.node.resourceId && previous.node.nodeKind == next.node.nodeKind) return;
+    [self clearHoverAtPoint:point];
+    if (next) {
+        self.hoveredNodeId = next.node.nodeId; self.hoveredResourceId = next.node.resourceId;
+        self.hoveredNodeKind = next.node.nodeKind;
+        (void)CjguiEnqueueComposablePointerInteraction(
+            self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_HOVER_ENTER, next, point);
+    }
+}
+- (void)beginPressForNode:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point {
+    if (!node || node.node.isInteractive == 0 || node.node.isReadOnly != 0 ||
+        !CjguiComposableNodeIsPressable(node.node.nodeKind)) return;
+    [self clearPressRouting];
+    [self focusNode:node enqueue:YES];
+    self.pressedNodeId = node.node.nodeId; self.pressedResourceId = node.node.resourceId;
+    self.pressedNodeKind = node.node.nodeKind; self.pressedX = point.x; self.pressedY = point.y;
+    if (!CjguiEnqueueComposablePointerInteraction(
+        self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_BEGIN, node, point)) {
+        [self clearPressRouting];
+    }
+}
+- (void)cancelPressAtPoint:(NSPoint)point {
+    CJGuiInternalComposableSceneNode *node = [self pressedPressableNode];
+    if (!node) { [self clearPressRouting]; return; }
+    self.pressedCancelled = YES; self.pressedX = point.x; self.pressedY = point.y;
+    (void)CjguiEnqueueComposablePointerInteraction(
+        self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL, node, point);
+}
+- (void)completePressAtPoint:(NSPoint)point {
+    CJGuiInternalComposableSceneNode *pressed = [self pressedPressableNode];
+    if (!pressed) { [self clearPressRouting]; return; }
+    CJGuiInternalComposableSceneNode *hit = [self nodeAtPoint:point];
+    BOOL activates = !self.pressedCancelled && hit && hit.node.nodeId == pressed.node.nodeId &&
+        hit.node.resourceId == pressed.node.resourceId && hit.node.nodeKind == pressed.node.nodeKind;
+    self.pressedX = point.x; self.pressedY = point.y;
+    (void)CjguiEnqueueComposablePointerInteraction(
+        self.session, activates ? CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_END :
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL, pressed, point);
+    [self clearPressRouting];
+    if (!activates) return;
+    if (pressed.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) {
+        NSString *next = [pressed.value isEqualToString:@"true"] ? @"false" : @"true";
+        (void)CjguiEnqueueComposableInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index, next, NSMakeRange(0, 0));
+        CjguiStampPointerModifiersOnQueuedInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index);
+    } else {
+        (void)CjguiEnqueueComposableInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index, @"", NSMakeRange(0, 0));
+        CjguiStampPointerModifiersOnQueuedInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index);
+    }
+}
+- (void)cancelPressForPlatformLoss {
+    if (self.pressedNodeId != 0) [self cancelPressAtPoint:NSMakePoint(self.pressedX, self.pressedY)];
+    [self clearPressRouting];
+}
+- (CJGuiInternalComposableDataTransferItem *)dataTransferItemForNode:(CJGuiInternalComposableSceneNode *)node
+                                                                 role:(uint32_t)role {
+    if (!node) return nil;
+    return CjguiComposableDataTransferItemForNode(self.session, node.node.nodeId,
+        node.node.resourceId, node.node.nodeKind, role);
+}
+- (CJGuiInternalComposableSceneNode *)dataTransferTargetAtPoint:(NSPoint)point
+                                                       pasteboard:(NSPasteboard *)pasteboard {
+    CJGuiInternalComposableSceneNode *node = [self nodeAtPoint:point];
+    CJGuiInternalComposableDataTransferItem *item = [self dataTransferItemForNode:node
+        role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET];
+    if (!item || !pasteboard) return nil;
+    return [pasteboard availableTypeFromArray:@[CjguiPasteboardTypeForDataTransferFormat(item.format)]] ? node : nil;
+}
+- (void)clearDataTransferHoverAtPoint:(NSPoint)point {
+    if (self.dataTransferHoverNodeId == 0) return;
+    for (CJGuiInternalComposableSceneNode *node in self.nodes) {
+        if (node.node.nodeId == self.dataTransferHoverNodeId &&
+            node.node.resourceId == self.dataTransferHoverResourceId &&
+            node.node.nodeKind == self.dataTransferHoverNodeKind) {
+            (void)CjguiEnqueueComposablePointerInteraction(self.session,
+                CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_HOVER_LEAVE, node, point);
+            break;
+        }
+    }
+    self.dataTransferHoverNodeId = 0; self.dataTransferHoverResourceId = -1;
+    self.dataTransferHoverNodeKind = 0;
+}
+- (void)setDataTransferHoverTarget:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point {
+    if (node && self.dataTransferHoverNodeId == node.node.nodeId &&
+        self.dataTransferHoverResourceId == node.node.resourceId &&
+        self.dataTransferHoverNodeKind == node.node.nodeKind) return;
+    [self clearDataTransferHoverAtPoint:point];
+    if (!node) return;
+    self.dataTransferHoverNodeId = node.node.nodeId;
+    self.dataTransferHoverResourceId = node.node.resourceId;
+    self.dataTransferHoverNodeKind = node.node.nodeKind;
+    (void)CjguiEnqueueComposablePointerInteraction(self.session,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_HOVER_ENTER, node, point);
+}
+- (BOOL)beginDataTransferDragForNode:(CJGuiInternalComposableSceneNode *)node event:(NSEvent *)event {
+#ifdef CJGUI_INTERNAL_TESTING
+    self.testDataTransferDragSessionBegan = NO;
+#endif
+    CJGuiInternalComposableDataTransferItem *item = [self dataTransferItemForNode:node
+        role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE];
+    if (!item || !event) return NO;
+    NSData *payload = [item.payload dataUsingEncoding:NSUTF8StringEncoding];
+    NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
+    if (!payload || payload.length > item.item.maximumPayloadBytes || !type) return NO;
+    if (CjguiDataTransferTraceEnabled()) {
+        NSPoint local = [self convertPoint:event.locationInWindow fromView:nil];
+        NSPoint screen = NSEvent.mouseLocation;
+        NSLog(@"cjgui: transfer source begin window=%ld node=%llu local=%.1f,%.1f event_window=%.1f,%.1f screen=%.1f,%.1f type=%@ bytes=%lu",
+              (long)(self.window ? self.window.windowNumber : 0), (unsigned long long)node.node.nodeId,
+              local.x, local.y, event.locationInWindow.x, event.locationInWindow.y, screen.x, screen.y, type,
+              (unsigned long)payload.length);
+    }
+    NSPasteboardItem *pasteboardItem = [[NSPasteboardItem alloc] init];
+    if (!pasteboardItem) return NO;
+    [pasteboardItem setData:payload forType:type];
+    NSData *metadata = CjguiDataTransferSourceMetadata(item);
+    if (metadata) [pasteboardItem setData:metadata forType:kCjguiDataTransferSourceMetadataType];
+    NSDraggingItem *draggingItem = [[NSDraggingItem alloc] initWithPasteboardWriter:pasteboardItem];
+    NSRect frame = CjguiComposableRect(node, self);
+    NSImage *preview = [[NSImage alloc] initWithSize:frame.size];
+    [preview lockFocus];
+    [[NSColor colorWithCalibratedWhite:0.82 alpha:0.82] setFill];
+    NSRectFill(NSMakeRect(0, 0, frame.size.width, frame.size.height));
+    [preview unlockFocus];
+    [draggingItem setDraggingFrame:frame contents:preview];
+    [self cancelPressAtPoint:NSMakePoint(self.pressedX, self.pressedY)];
+    [self clearPressRouting];
+    BOOL began = [self beginDraggingSessionWithItems:@[draggingItem] event:event source:self] != nil;
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer source session window=%ld began=%@", (long)(self.window ? self.window.windowNumber : 0),
+              began ? @"true" : @"false");
+    }
+#ifdef CJGUI_INTERNAL_TESTING
+    self.testDataTransferDragSessionBegan = began;
+#endif
+    return began;
+}
+- (NSDragOperation)draggingSession:(NSDraggingSession *)session
+    sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+    (void)session; (void)context;
+    return NSDragOperationCopy;
+}
+- (void)draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint
+               operation:(NSDragOperation)operation {
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer source ended window=%ld screen=%.1f,%.1f operation=%lu session=%@",
+              (long)(self.window ? self.window.windowNumber : 0), screenPoint.x, screenPoint.y,
+              (unsigned long)operation, session);
+    }
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    NSPoint point = [self convertPoint:sender.draggingLocation fromView:nil];
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer target entered window=%ld drag_window=%.1f,%.1f local=%.1f,%.1f types=%@",
+              (long)(self.window ? self.window.windowNumber : 0), sender.draggingLocation.x, sender.draggingLocation.y,
+              point.x, point.y, sender.draggingPasteboard.types);
+    }
+    CJGuiInternalComposableSceneNode *target = [self dataTransferTargetAtPoint:point
+        pasteboard:sender.draggingPasteboard];
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer target entered-result window=%ld node=%@", (long)(self.window ? self.window.windowNumber : 0),
+              target ? @(target.node.nodeId) : @"none");
+    }
+    [self setDataTransferHoverTarget:target atPoint:point];
+    return target ? NSDragOperationCopy : NSDragOperationNone;
+}
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+    return [self draggingEntered:sender];
+}
+- (void)draggingExited:(nullable id<NSDraggingInfo>)sender {
+    NSPoint point = sender ? [self convertPoint:sender.draggingLocation fromView:nil] : NSZeroPoint;
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer target exited window=%ld local=%.1f,%.1f sender=%@",
+              (long)(self.window ? self.window.windowNumber : 0), point.x, point.y, sender ? @"present" : @"nil");
+    }
+    [self clearDataTransferHoverAtPoint:point];
+}
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)sender {
+    NSPoint point = [self convertPoint:sender.draggingLocation fromView:nil];
+    CJGuiInternalComposableSceneNode *target = [self dataTransferTargetAtPoint:point pasteboard:sender.draggingPasteboard];
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer target prepare window=%ld local=%.1f,%.1f node=%@",
+              (long)(self.window ? self.window.windowNumber : 0), point.x, point.y,
+              target ? @(target.node.nodeId) : @"none");
+    }
+    return target != nil;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSPoint point = [self convertPoint:sender.draggingLocation fromView:nil];
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer target perform window=%ld drag_window=%.1f,%.1f local=%.1f,%.1f types=%@",
+              (long)(self.window ? self.window.windowNumber : 0), sender.draggingLocation.x, sender.draggingLocation.y,
+              point.x, point.y, sender.draggingPasteboard.types);
+    }
+    CJGuiInternalComposableSceneNode *target = [self dataTransferTargetAtPoint:point
+        pasteboard:sender.draggingPasteboard];
+    CJGuiInternalComposableDataTransferItem *item = [self dataTransferItemForNode:target
+        role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET];
+    CjguiInternalRendererStatus status = CjguiReadComposableDataTransferItem(self.session, item,
+        sender.draggingPasteboard, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP);
+    if (CjguiDataTransferTraceEnabled()) {
+        NSLog(@"cjgui: transfer target perform-result window=%ld node=%@ status=%d",
+              (long)(self.window ? self.window.windowNumber : 0), target ? @(target.node.nodeId) : @"none", status);
+    }
+    [self clearDataTransferHoverAtPoint:point];
+    return status == CJGUI_INTERNAL_RENDERER_OK;
 }
 - (BOOL)beginPointerCaptureForNode:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point {
     if (!node || node.node.isInteractive == 0 || node.node.isReadOnly != 0 ||
@@ -3491,6 +5903,10 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
         return;
     }
     if (node.node.isReadOnly != 0) return;
+    if (CjguiComposableNodeIsPressable(kind)) {
+        [self beginPressForNode:node atPoint:point];
+        return;
+    }
     [self mouseDownForNode:node];
 }
 - (void)mouseDownForNode:(CJGuiInternalComposableSceneNode *)node {
@@ -3501,9 +5917,14 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     [self focusNode:node enqueue:YES];
     if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) {
         NSString *next = [node.value isEqualToString:@"true"] ? @"false" : @"true";
-        (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, node.index, next, NSMakeRange(0, 0)); return;
+        (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, node.index, next, NSMakeRange(0, 0));
+        CjguiStampPointerModifiersOnQueuedInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, node.index);
+        return;
     }
     (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, node.index, @"", NSMakeRange(0, 0));
+    CjguiStampPointerModifiersOnQueuedInteraction(self.session,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, node.index);
 }
 - (void)setText:(NSString *)text forNode:(CJGuiInternalComposableSceneNode *)node {
     [self focusNode:node enqueue:NO]; self.applyingProjection = YES; self.inputProxy.string = text ?: @"";
@@ -3519,15 +5940,32 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_CHANGED, node.index, self.inputProxy.string, self.inputProxy.selectedRange);
 }
 - (void)mouseDown:(NSEvent *)event {
+    self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    [self updateHoverAtPoint:point];
     CJGuiInternalComposableSceneNode *node = [self nodeAtPoint:point];
     if (node) [self mouseDownForNode:node atPoint:point];
     else [self clearDraggingSelection];
 }
 - (void)mouseDragged:(NSEvent *)event {
+    self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
     if (self.pointerCaptureActive) {
         NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
         (void)[self updatePointerCaptureAtPoint:point];
+        return;
+    }
+    if (self.pressedNodeId != 0) {
+        NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+        [self updateHoverAtPoint:point];
+        CJGuiInternalComposableSceneNode *pressed = [self pressedPressableNode];
+        if (pressed && [self dataTransferItemForNode:pressed role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE] &&
+            hypot(point.x - self.pressedX, point.y - self.pressedY) >= 3.0 &&
+            [self beginDataTransferDragForNode:pressed event:event]) {
+            return;
+        }
+        CJGuiInternalComposableSceneNode *hit = [self nodeAtPoint:point];
+        if (pressed && (!hit || hit.node.nodeId != pressed.node.nodeId || hit.node.resourceId != pressed.node.resourceId ||
+            hit.node.nodeKind != pressed.node.nodeKind)) [self cancelPressAtPoint:point];
         return;
     }
     if (self.draggingNodeId == 0 || self.activeNodeIndex == NSNotFound) return;
@@ -3558,12 +5996,22 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
     [self setNeedsDisplay:YES];
 }
 - (void)mouseUp:(NSEvent *)event {
+    self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
     if (self.pointerCaptureActive) {
         NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
         [self endPointerCaptureAtPoint:point cancelled:NO];
         return;
     }
+    if (self.pressedNodeId != 0) {
+        NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+        [self updateHoverAtPoint:point];
+        [self completePressAtPoint:point];
+        return;
+    }
     [self clearDraggingSelection];
+}
+- (void)mouseMoved:(NSEvent *)event {
+    [self updateHoverAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
 }
 - (void)scrollWheel:(NSEvent *)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
@@ -3783,6 +6231,18 @@ static NSString *CjguiComposableShortcutForEvent(NSEvent *event) {
     return result;
 }
 
+// Copy/paste are framework transfer gestures only for an unmodified Command
+// chord on a non-text control.  Shift/Option/Control variants remain distinct
+// declared shortcuts (or ordinary AppKit input); they must not be silently
+// folded into the generic transfer route.
+static BOOL CjguiEventIsExactCommandCharacter(NSEvent *event, NSString *expected) {
+    if (!event || expected.length != 1) return NO;
+    NSEventModifierFlags relevant = NSEventModifierFlagCommand | NSEventModifierFlagControl |
+        NSEventModifierFlagOption | NSEventModifierFlagShift;
+    if ((event.modifierFlags & relevant) != NSEventModifierFlagCommand) return NO;
+    return [event.charactersIgnoringModifiers.lowercaseString isEqualToString:expected];
+}
+
 static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSString *shortcut) {
     if (!session || shortcut.length == 0) return NO;
     return CjguiEnqueueComposableInteraction(session,
@@ -3826,7 +6286,8 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
         (void)CjguiEnqueueComposableInteraction(self.session,
                                                 CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED,
                                                 node.index, next, NSMakeRange(0, 0));
-    } else if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON) {
+    } else if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON ||
+               node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC) {
         (void)CjguiEnqueueComposableInteraction(self.session,
                                                 CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE,
                                                 node.index, @"", NSMakeRange(0, 0));
@@ -3834,6 +6295,11 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
 }
 - (BOOL)handleWindowCommandKeyDown:(NSEvent *)event {
     NSString *shortcut = CjguiComposableShortcutForEvent(event);
+    // Native has no command executor.  It may forward only a declaration
+    // that is currently visible in the focused scope; Cangjie then performs
+    // the authoritative identity/enabled check after FIFO delivery.  An
+    // undeclared Cmd-C/V must fall through to the generic transfer route.
+    if (!CjguiComposableActiveScopeDeclaresShortcut(self.session, shortcut)) return NO;
     return CjguiEnqueueComposableShortcut(self.session, shortcut);
 }
 - (void)keyDown:(NSEvent *)event {
@@ -3852,6 +6318,45 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     BOOL activeIsText = activeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
         activeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT ||
         activeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
+    // Text controls retain NSTextView's standard Cmd-C/X/V ownership through
+    // the input proxy. Only a declared non-text transfer node reaches this
+    // bounded generic route, and only after an explicit human shortcut.
+    if (!activeIsText && active) {
+        if (CjguiEventIsExactCommandCharacter(event, @"c")) {
+            CJGuiInternalComposableDataTransferItem *source = [self dataTransferItemForNode:active
+                role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE];
+            CjguiInternalRendererStatus status = source ?
+                CjguiCopyComposableDataTransferItem(self.session, source) : CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+            if (status == CJGUI_INTERNAL_RENDERER_OK) {
+                return;
+            }
+        } else if (CjguiEventIsExactCommandCharacter(event, @"v")) {
+            CJGuiInternalComposableDataTransferItem *target = [self dataTransferItemForNode:active
+                role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET];
+            if (target && CjguiReadComposableDataTransferItem(self.session, target,
+                NSPasteboard.generalPasteboard,
+                CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_PASTE) == CJGUI_INTERNAL_RENDERER_OK) {
+                return;
+            }
+        } else if (CjguiEventIsExactCommandCharacter(event, @"a")) {
+            // Command-A over a non-text composable control is a scope-local
+            // "select all" for the list/tree that contains the focused node.
+            // Text controls keep NSTextView's own select-all through the
+            // input proxy (they never reach this branch), and a scope with
+            // no containing list falls back to the focused node itself.
+            NSRect activeRect = CjguiComposableRect(active, self);
+            CJGuiInternalComposableSceneNode *scopeNode = [self scrollNodeContainingPoint:
+                NSMakePoint(NSMidX(activeRect), NSMidY(activeRect))];
+            if (!scopeNode) scopeNode = active;
+            (void)CjguiEnqueueComposableInteraction(self.session,
+                                                    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                                    scopeNode.index, @"select_all", NSMakeRange(0, 0));
+            CjguiStampKeyboardModifiersOnQueuedInteraction(self.session,
+                                                           CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                                           scopeNode.index, event.modifierFlags);
+            return;
+        }
+    }
     if (event.keyCode == 53 && active && active.node.inputScope != 0) {
         (void)CjguiEnqueueComposableInteraction(self.session,
                                                 CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
@@ -3867,6 +6372,9 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
             (void)CjguiEnqueueComposableInteraction(self.session,
                                                     CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
                                                     active.index, navigation, NSMakeRange(0, 0));
+            CjguiStampKeyboardModifiersOnQueuedInteraction(self.session,
+                                                           CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                                           active.index, event.modifierFlags);
             return;
         }
         if (active.node.inputScope != 0 && (event.keyCode == 123 || event.keyCode == 124 ||
@@ -3880,6 +6388,13 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
         NSString *navigation = nil;
         if (event.keyCode == 126) navigation = @"up";
         else if (event.keyCode == 125) navigation = @"down";
+        // Left/Right belong to the same scroll/list navigation vocabulary as
+        // up/down/home/end: a tree uses them to collapse/ascend and
+        // expand/descend. Pointer-capture nodes (split handles, sliders) and
+        // input-scope focus traversal keep their own earlier branches, so this
+        // only reaches an ordinary list/tree scope.
+        else if (event.keyCode == 123) navigation = @"left";
+        else if (event.keyCode == 124) navigation = @"right";
         else if (event.keyCode == 116) navigation = @"page_up";
         else if (event.keyCode == 121) navigation = @"page_down";
         else if (event.keyCode == 115) navigation = @"home";
@@ -3891,6 +6406,9 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                 (void)CjguiEnqueueComposableInteraction(self.session,
                                                         CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
                                                         scrollNode.index, navigation, NSMakeRange(0, 0));
+                CjguiStampKeyboardModifiersOnQueuedInteraction(self.session,
+                                                               CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                                               scrollNode.index, event.modifierFlags);
                 return;
             }
         }
@@ -3907,6 +6425,32 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
         return;
     }
     [super keyDown:event];
+}
+
+// The Edit menu's "Select All" (Command-A) is offered to the menu before any
+// keyDown, so the Command-A branch in keyDown is unreachable for a non-text
+// composable control while this view is first responder. Routing the standard
+// action here makes the menu item and the raw chord land on the same scope:
+// a focused non-text control selects its containing list/tree through the
+// ordinary NAVIGATE interaction. A text control keeps NSTextView's own
+// select-all, because the input proxy is the first responder in that case and
+// handles the command itself.
+- (void)selectAll:(id)sender {
+    (void)sender;
+    CJGuiInternalComposableSceneNode *active = [self activeFocusableNode];
+    if (!active) return;
+    uint32_t kind = active.node.nodeKind;
+    BOOL activeIsText = kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
+    if (activeIsText) return;
+    NSRect activeRect = CjguiComposableRect(active, self);
+    CJGuiInternalComposableSceneNode *scopeNode = [self scrollNodeContainingPoint:
+        NSMakePoint(NSMidX(activeRect), NSMidY(activeRect))];
+    if (!scopeNode) scopeNode = active;
+    (void)CjguiEnqueueComposableInteraction(self.session,
+                                            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                            scopeNode.index, @"select_all", NSMakeRange(0, 0));
 }
 - (void)cancelActiveComposition {
     if (!self.inputProxy.hasMarkedText) return;
@@ -4980,21 +7524,19 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     return NSIsEmptyRect(rect) ? [super firstRectForCharacterRange:range actualRange:actualRange] : rect;
 }
 - (BOOL)handleStandardTextCommandKeyDown:(NSEvent *)event {
-    if ((event.modifierFlags & NSEventModifierFlagCommand) == 0) return NO;
-    NSString *characters = event.charactersIgnoringModifiers.lowercaseString;
-    if ([characters isEqualToString:@"a"]) {
+    if (CjguiEventIsExactCommandCharacter(event, @"a")) {
         [self selectAll:nil];
         return YES;
     }
-    if ([characters isEqualToString:@"c"]) {
+    if (CjguiEventIsExactCommandCharacter(event, @"c")) {
         [self copy:nil];
         return YES;
     }
-    if ([characters isEqualToString:@"x"]) {
+    if (CjguiEventIsExactCommandCharacter(event, @"x")) {
         [self cut:nil];
         return YES;
     }
-    if ([characters isEqualToString:@"v"]) {
+    if (CjguiEventIsExactCommandCharacter(event, @"v")) {
         [self paste:nil];
         return YES;
     }
@@ -6024,12 +8566,6 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 
 // ---- session table ----
 
-static CJGuiInternalSession *gCjguiSessions[4];
-static BOOL gCjguiSessionOccupied[4];
-static uint64_t gCjguiNextSessionGeneration = 1;
-static char CJGuiSessionWindowAssociationKey;
-static BOOL gCjguiMainThreadDispatchEnabled;
-
 static BOOL CjguiIsMainThread(void) {
     return [NSThread isMainThread];
 }
@@ -6056,6 +8592,96 @@ void cjgui_internal_renderer_request_application_stop(void) {
     });
 }
 
+void cjgui_internal_renderer_complete_application_exit_request(void) {
+    if (CjguiIsMainThread()) {
+        atomic_store_explicit(&gCjguiApplicationExitRequestWasUnkeyed, false, memory_order_release);
+        atomic_store_explicit(&gCjguiApplicationExitRequestPending, false, memory_order_release);
+        return;
+    }
+    // This never asks Cangjie to run on AppKit's main thread. It only clears
+    // the native coalescing bit after the Cangjie application turn has made
+    // its own existing exit decision.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        atomic_store_explicit(&gCjguiApplicationExitRequestWasUnkeyed, false, memory_order_release);
+        atomic_store_explicit(&gCjguiApplicationExitRequestPending, false, memory_order_release);
+    });
+}
+
+void cjgui_internal_renderer_retain_application_exit_lifecycle_owner(void) {
+    uint32_t observed = atomic_load_explicit(&gCjguiApplicationExitLifecycleOwnerCount, memory_order_relaxed);
+    while (observed < UINT32_MAX &&
+           !atomic_compare_exchange_weak_explicit(&gCjguiApplicationExitLifecycleOwnerCount, &observed, observed + 1,
+                                                  memory_order_release, memory_order_relaxed)) {
+    }
+}
+
+void cjgui_internal_renderer_release_application_exit_lifecycle_owner(void) {
+    uint32_t observed = atomic_load_explicit(&gCjguiApplicationExitLifecycleOwnerCount, memory_order_relaxed);
+    while (observed > 0 &&
+           !atomic_compare_exchange_weak_explicit(&gCjguiApplicationExitLifecycleOwnerCount, &observed, observed - 1,
+                                                  memory_order_release, memory_order_relaxed)) {
+    }
+}
+
+uint8_t cjgui_internal_renderer_has_unkeyed_application_exit_request(void) {
+    return atomic_load_explicit(&gCjguiApplicationExitRequestPending, memory_order_acquire) &&
+        atomic_load_explicit(&gCjguiApplicationExitRequestWasUnkeyed, memory_order_acquire) &&
+        atomic_load_explicit(&gCjguiApplicationExitLifecycleOwnerCount, memory_order_acquire) > 0 ? 1u : 0u;
+}
+
+@interface CJGuiInternalApplicationTerminationDelegate : NSObject <NSApplicationDelegate>
+@end
+
+@implementation CJGuiInternalApplicationTerminationDelegate
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    (void)sender;
+    if (atomic_load_explicit(&gCjguiApplicationExitRequestPending, memory_order_acquire)) {
+        return NSTerminateCancel;
+    }
+    CJGuiInternalSession *session = CjguiComposableCommandMenuKeySession();
+    if (!session) {
+        // A CjguiMacosApplication can remain live with every window hidden or
+        // otherwise non-key. Its Cangjie lifecycle registry, not focus, owns
+        // the decision in that case. A legacy one-window Host does not retain
+        // this reference and keeps AppKit's documented no-owner termination.
+        if (atomic_load_explicit(&gCjguiApplicationExitLifecycleOwnerCount, memory_order_acquire) == 0) {
+            return NSTerminateNow;
+        }
+        atomic_store_explicit(&gCjguiApplicationExitRequestWasUnkeyed, true, memory_order_release);
+        atomic_store_explicit(&gCjguiApplicationExitRequestPending, true, memory_order_release);
+        return NSTerminateCancel;
+    }
+    if (!CjguiEnqueueComposableInteraction(session,
+                                            CJGUI_INTERNAL_RENDERER_EVENT_APPLICATION_EXIT_REQUESTED,
+                                            0, @"", NSMakeRange(0, 0))) {
+        // Do not close a live framework application merely because its FIFO
+        // is full. The unchanged owner remains usable and a later Quit can
+        // retry after the normal pump drains it.
+        return NSTerminateCancel;
+    }
+    atomic_store_explicit(&gCjguiApplicationExitRequestWasUnkeyed, false, memory_order_release);
+    atomic_store_explicit(&gCjguiApplicationExitRequestPending, true, memory_order_release);
+    return NSTerminateCancel;
+}
+
+@end
+
+static CJGuiInternalApplicationTerminationDelegate *gCjguiApplicationTerminationDelegate;
+
+static void CjguiInstallApplicationTerminationDelegate(NSApplication *app) {
+    if (!app) return;
+    if (!gCjguiApplicationTerminationDelegate) {
+        gCjguiApplicationTerminationDelegate = [[CJGuiInternalApplicationTerminationDelegate alloc] init];
+    }
+    // The bundled CJGUI launcher owns this NSApplication. Do not overwrite an
+    // embedding application's delegate, which would be a materially
+    // different lifecycle contract; normal framework bundles start with nil.
+    if (!app.delegate || app.delegate == gCjguiApplicationTerminationDelegate) {
+        app.delegate = gCjguiApplicationTerminationDelegate;
+    }
+}
+
 static CjguiInternalRendererStatus CjguiEnsureApp(NSApplication **outApp) {
     NSApplication *app = [NSApplication sharedApplication];
     if (!app) {
@@ -6064,6 +8690,7 @@ static CjguiInternalRendererStatus CjguiEnsureApp(NSApplication **outApp) {
     if (app.activationPolicy == NSApplicationActivationPolicyProhibited) {
         [app setActivationPolicy:NSApplicationActivationPolicyRegular];
     }
+    CjguiInstallApplicationTerminationDelegate(app);
     *outApp = app;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -6077,7 +8704,8 @@ static uint64_t CjguiAllocateSession(CJGuiInternalSession *session) {
             gCjguiSessionOccupied[i] = YES;
             gCjguiSessions[i] = session;
             // Token = (slot index + 1) so 0 stays the invalid sentinel.
-            return (uint64_t)(i + 1);
+            session.rendererSessionToken = (uint64_t)(i + 1);
+            return session.rendererSessionToken;
         }
     }
     return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
@@ -6101,6 +8729,346 @@ static void CjguiReleaseSession(uint64_t token) {
     NSUInteger idx = (NSUInteger)(token - 1);
     gCjguiSessionOccupied[idx] = NO;
     gCjguiSessions[idx] = nil;
+}
+
+static CJGuiInternalSession *CjguiComposableCommandMenuKeySession(void) {
+    NSWindow *keyWindow = NSApp.keyWindow;
+    if (!keyWindow) return nil;
+    CJGuiInternalSession *session = objc_getAssociatedObject(keyWindow, &CJGuiSessionWindowAssociationKey);
+    return session && !session.destroyed ? session : nil;
+}
+
+static BOOL CjguiComposableCommandMenuContainsEnabledCommand(CJGuiInternalSession *session, NSString *commandId) {
+    if (!session || commandId.length == 0) return NO;
+    for (CJGuiInternalComposableCommandMenuItem *item in session.composableCommandMenuItems) {
+        if ([item.commandId isEqualToString:commandId]) {
+            CJGuiInternalComposableSceneNode *active = [session.composableSceneOverlay activeFocusableNode];
+            // Cangjie treats no explicit focus as the base scope. Preserve
+            // that route for an initial button/menu declaration, while a real
+            // non-base focused layer still suppresses base commands.
+            return item.enabled && (active ? item.focusScope == active.node.inputScope : item.focusScope == 0);
+        }
+    }
+    return NO;
+}
+
+@implementation CJGuiInternalComposableCommandMenuDispatcher
+
++ (instancetype)sharedDispatcher {
+    static CJGuiInternalComposableCommandMenuDispatcher *dispatcher = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dispatcher = [[CJGuiInternalComposableCommandMenuDispatcher alloc] init];
+    });
+    return dispatcher;
+}
+
+- (void)invokeComposableCommand:(id)sender {
+    if (![sender isKindOfClass:[NSMenuItem class]]) return;
+    NSString *commandId = ((NSMenuItem *)sender).representedObject;
+    if (![commandId isKindOfClass:[NSString class]] || commandId.length == 0) return;
+    // Do not trust the object that originally owned the menu item. A delayed
+    // callback from window A is resolved against the *current key window* B;
+    // B must still advertise the id as enabled before an intent may enter its
+    // FIFO. Cangjie then validates target, scope and projection again.
+    CJGuiInternalSession *session = CjguiComposableCommandMenuKeySession();
+    if (!CjguiComposableCommandMenuContainsEnabledCommand(session, commandId)) return;
+    (void)CjguiEnqueueComposableInteraction(session,
+                                             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND,
+                                             0, commandId, NSMakeRange(0, 0));
+}
+
+@end
+
+static BOOL CjguiComposableMenuShortcutReservedForText(NSString *shortcut) {
+    return [shortcut isEqualToString:@"shortcut:command+c"] ||
+           [shortcut isEqualToString:@"shortcut:command+x"] ||
+           [shortcut isEqualToString:@"shortcut:command+v"] ||
+           [shortcut isEqualToString:@"shortcut:command+a"];
+}
+
+static void CjguiConfigureComposableMenuKeyEquivalent(NSMenuItem *menuItem, NSString *shortcut) {
+    if (!menuItem || shortcut.length == 0 || CjguiComposableMenuShortcutReservedForText(shortcut)) return;
+    NSArray<NSString *> *parts = [shortcut componentsSeparatedByString:@"+"];
+    if (parts.count < 2) return;
+    NSString *key = parts.lastObject.lowercaseString;
+    if (key.length != 1) return;
+    NSEventModifierFlags modifiers = 0;
+    if ([shortcut rangeOfString:@"control+"].location != NSNotFound) modifiers |= NSEventModifierFlagControl;
+    if ([shortcut rangeOfString:@"option+"].location != NSNotFound) modifiers |= NSEventModifierFlagOption;
+    if ([shortcut rangeOfString:@"shift+"].location != NSNotFound) modifiers |= NSEventModifierFlagShift;
+    if ([shortcut rangeOfString:@"command+"].location != NSNotFound) modifiers |= NSEventModifierFlagCommand;
+    if (modifiers == 0) return;
+    menuItem.keyEquivalent = key;
+    menuItem.keyEquivalentModifierMask = modifiers;
+}
+
+static void CjguiAddStandardMenuItem(NSMenu *menu, NSString *title, SEL action, NSString *key,
+                                     NSEventModifierFlags modifiers) {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:key ?: @""];
+    item.target = nil;
+    item.enabled = YES;
+    if (key.length > 0) item.keyEquivalentModifierMask = modifiers;
+    [menu addItem:item];
+}
+
+static void CjguiAddStandardApplicationMenus(NSMenu *mainMenu,
+                                             NSMutableDictionary<NSString *, NSMenu *> *menus) {
+    NSString *appName = NSProcessInfo.processInfo.processName;
+    if (appName.length == 0) appName = @"CJGUI";
+    NSMenu *applicationMenu = [[NSMenu alloc] initWithTitle:appName];
+    applicationMenu.autoenablesItems = NO;
+    CjguiAddStandardMenuItem(applicationMenu, [@"About " stringByAppendingString:appName],
+                             @selector(orderFrontStandardAboutPanel:), @"", 0);
+    [applicationMenu addItem:[NSMenuItem separatorItem]];
+    CjguiAddStandardMenuItem(applicationMenu, [@"Hide " stringByAppendingString:appName], @selector(hide:), @"h",
+                             NSEventModifierFlagCommand);
+    CjguiAddStandardMenuItem(applicationMenu, @"Hide Others", @selector(hideOtherApplications:), @"h",
+                             NSEventModifierFlagCommand | NSEventModifierFlagOption);
+    CjguiAddStandardMenuItem(applicationMenu, @"Show All", @selector(unhideAllApplications:), @"", 0);
+    [applicationMenu addItem:[NSMenuItem separatorItem]];
+    CjguiAddStandardMenuItem(applicationMenu, [@"Quit " stringByAppendingString:appName], @selector(terminate:), @"q",
+                             NSEventModifierFlagCommand);
+    NSMenuItem *applicationItem = [[NSMenuItem alloc] initWithTitle:appName action:nil keyEquivalent:@""];
+    applicationItem.submenu = applicationMenu;
+    [mainMenu addItem:applicationItem];
+
+    NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    editMenu.autoenablesItems = NO;
+    CjguiAddStandardMenuItem(editMenu, @"Undo", @selector(undo:), @"z", NSEventModifierFlagCommand);
+    CjguiAddStandardMenuItem(editMenu, @"Redo", @selector(redo:), @"z",
+                             NSEventModifierFlagCommand | NSEventModifierFlagShift);
+    [editMenu addItem:[NSMenuItem separatorItem]];
+    CjguiAddStandardMenuItem(editMenu, @"Cut", @selector(cut:), @"x", NSEventModifierFlagCommand);
+    CjguiAddStandardMenuItem(editMenu, @"Copy", @selector(copy:), @"c", NSEventModifierFlagCommand);
+    CjguiAddStandardMenuItem(editMenu, @"Paste", @selector(paste:), @"v", NSEventModifierFlagCommand);
+    CjguiAddStandardMenuItem(editMenu, @"Select All", @selector(selectAll:), @"a", NSEventModifierFlagCommand);
+    NSMenuItem *editItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
+    editItem.submenu = editMenu;
+    [mainMenu addItem:editItem];
+    [menus setObject:editMenu forKey:@"Edit"];
+}
+
+static BOOL CjguiComposableMenuDeclaresShortcut(CJGuiInternalSession *session, NSString *shortcut) {
+    if (!session || shortcut.length == 0) return NO;
+    for (CJGuiInternalComposableCommandMenuItem *entry in session.composableCommandMenuItems) {
+        if ([entry.shortcut isEqualToString:shortcut]) return YES;
+    }
+    return NO;
+}
+
+// Match native command forwarding to the same active scope AppKit projects.
+// `enabled` is deliberately not part of this predicate: a disabled declared
+// command still owns its chord long enough for Cangjie to reject it against
+// the accepted scene.  Falling through to an unrelated copy/paste action
+// would turn a disabled command into a different owner operation.
+static BOOL CjguiComposableActiveScopeDeclaresShortcut(CJGuiInternalSession *session, NSString *shortcut) {
+    if (!session || shortcut.length == 0 || !session.composableSceneOverlay) return NO;
+    CJGuiInternalComposableSceneNode *active = [session.composableSceneOverlay activeFocusableNode];
+    uint64_t activeScope = active ? active.node.inputScope : 0;
+    for (CJGuiInternalComposableCommandMenuItem *entry in session.composableCommandMenuItems) {
+        if ([entry.shortcut isEqualToString:shortcut] && entry.focusScope == activeScope) return YES;
+    }
+    return NO;
+}
+
+static BOOL CjguiComposableActiveNonTextTransferOwnsShortcut(CJGuiInternalSession *session,
+                                                              NSString *shortcut, uint32_t transferRole) {
+    if (!session || !session.composableSceneOverlay || shortcut.length == 0) return NO;
+    CJGuiInternalComposableSceneNode *active = [session.composableSceneOverlay activeFocusableNode];
+    // Standard AppKit text editing retains Cmd-C/V/A/X.  Only a focused
+    // non-text control may reserve the two transfer equivalents.
+    if (!active || CjguiComposableNodeIsTextInput(active.node.nodeKind)) return NO;
+    if (CjguiComposableActiveScopeDeclaresShortcut(session, shortcut)) return YES;
+    return CjguiComposableDataTransferItemForNode(session, active.node.nodeId, active.node.resourceId,
+        active.node.nodeKind, transferRole) != nil;
+}
+
+static void CjguiSuppressStandardEditShortcut(NSMenu *editMenu, SEL action,
+                                              BOOL hasDeclaredOwnerShortcut) {
+    if (!editMenu || !action || !hasDeclaredOwnerShortcut) return;
+    for (NSInteger index = 0; index < (NSInteger)editMenu.numberOfItems; index++) {
+        NSMenuItem *item = [editMenu itemAtIndex:index];
+        if (item.action != action) continue;
+        // A disabled or layer-covered owner declaration still reserves its
+        // chord. Otherwise AppKit's responder chain could silently execute a
+        // different Undo/Redo path before the Cangjie owner has a chance to
+        // reject it. Text fallback remains available only without an owner
+        // declaration for that standard chord.
+        item.keyEquivalent = @"";
+        item.keyEquivalentModifierMask = 0;
+        return;
+    }
+}
+
+static void CjguiReserveStandardEditShortcutsForComposableOwner(
+    NSMutableDictionary<NSString *, NSMenu *> *menus, CJGuiInternalSession *session) {
+    NSMenu *editMenu = [menus objectForKey:@"Edit"];
+    // Cmd-C/V have two possible non-text owners: an explicitly declared
+    // command in the focused scope, or a declared transfer source/target.
+    // Suppress AppKit's responder equivalent only at that focused boundary;
+    // a text proxy stays on the standard edit route.
+    BOOL reserveCopy = CjguiComposableActiveNonTextTransferOwnsShortcut(
+        session, @"shortcut:command+c", CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE);
+    BOOL reservePaste = CjguiComposableActiveNonTextTransferOwnsShortcut(
+        session, @"shortcut:command+v", CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET);
+    CjguiSuppressStandardEditShortcut(editMenu, @selector(copy:), reserveCopy);
+    CjguiSuppressStandardEditShortcut(editMenu, @selector(paste:), reservePaste);
+    CjguiSuppressStandardEditShortcut(
+        editMenu, @selector(undo:),
+        CjguiComposableMenuDeclaresShortcut(session, @"shortcut:command+z"));
+    CjguiSuppressStandardEditShortcut(
+        editMenu, @selector(redo:),
+        CjguiComposableMenuDeclaresShortcut(session, @"shortcut:shift+command+z"));
+}
+
+static void CjguiRebuildComposableCommandMenuForKeyWindow(void) {
+    if (!CjguiIsMainThread()) return;
+    NSString *appName = NSProcessInfo.processInfo.processName;
+    if (appName.length == 0) appName = @"CJGUI";
+    NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:appName];
+    mainMenu.autoenablesItems = NO;
+    NSMutableDictionary<NSString *, NSMenu *> *menus = [NSMutableDictionary dictionary];
+    CJGuiInternalSession *session = CjguiComposableCommandMenuKeySession();
+    CjguiAddStandardApplicationMenus(mainMenu, menus);
+    CjguiReserveStandardEditShortcutsForComposableOwner(menus, session);
+    if (!session) {
+        [NSApp setMainMenu:mainMenu];
+        return;
+    }
+    NSMutableDictionary<NSString *, NSNumber *> *lastSections = [NSMutableDictionary dictionary];
+    for (CJGuiInternalComposableCommandMenuItem *entry in session.composableCommandMenuItems) {
+        if (entry.menuGroup.length == 0) continue;
+        NSMenu *submenu = [menus objectForKey:entry.menuGroup];
+        if (!submenu) {
+            submenu = [[NSMenu alloc] initWithTitle:entry.menuGroup];
+            submenu.autoenablesItems = NO;
+            NSMenuItem *groupItem = [[NSMenuItem alloc] initWithTitle:entry.menuGroup action:nil keyEquivalent:@""];
+            groupItem.submenu = submenu;
+            [mainMenu addItem:groupItem];
+            [menus setObject:submenu forKey:entry.menuGroup];
+        }
+        NSNumber *previousSection = [lastSections objectForKey:entry.menuGroup];
+        if ((!previousSection && submenu.numberOfItems > 0) ||
+            (previousSection && previousSection.unsignedIntValue != entry.menuSection)) {
+            [submenu addItem:[NSMenuItem separatorItem]];
+        }
+        [lastSections setObject:@(entry.menuSection) forKey:entry.menuGroup];
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:entry.title
+                                                       action:@selector(invokeComposableCommand:)
+                                                keyEquivalent:@""];
+        item.target = [CJGuiInternalComposableCommandMenuDispatcher sharedDispatcher];
+        item.representedObject = entry.commandId;
+        CJGuiInternalComposableSceneNode *active = [session.composableSceneOverlay activeFocusableNode];
+        BOOL activeScopeEnabled = entry.enabled && (active ? entry.focusScope == active.node.inputScope :
+                                                     entry.focusScope == 0);
+        item.enabled = activeScopeEnabled;
+        item.state = entry.checked ? NSControlStateValueOn : NSControlStateValueOff;
+        [item setAccessibilityIdentifier:[@"cjgui.composable-command." stringByAppendingString:entry.commandId]];
+        if (activeScopeEnabled) CjguiConfigureComposableMenuKeyEquivalent(item, entry.shortcut);
+        [submenu addItem:item];
+    }
+    [NSApp setMainMenu:mainMenu];
+#ifdef CJGUI_INTERNAL_TESTING
+    gCjguiComposableCommandMenuRebuildCount += 1;
+#endif
+}
+
+static char CJGuiImageDomainsAssociationKey;
+
+static NSMutableArray<CJGuiInternalComposableImageResourceDomain *> *CjguiComposableImageDomains(
+    NSApplication *app, BOOL createIfMissing) {
+    if (!app) return nil;
+    NSMutableArray<CJGuiInternalComposableImageResourceDomain *> *domains =
+        objc_getAssociatedObject(app, &CJGuiImageDomainsAssociationKey);
+    if (!domains && createIfMissing) {
+        domains = [NSMutableArray array];
+        objc_setAssociatedObject(app, &CJGuiImageDomainsAssociationKey, domains, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return domains;
+}
+
+static CJGuiInternalComposableImageResourceDomain *CjguiAcquireComposableImageDomain(NSApplication *app,
+                                                                                       id<MTLDevice> device) {
+    if (!app || !device) return nil;
+    NSMutableArray<CJGuiInternalComposableImageResourceDomain *> *domains = CjguiComposableImageDomains(app, YES);
+    for (CJGuiInternalComposableImageResourceDomain *domain in domains) {
+        if (!domain.destroyed && domain.device == device) return domain;
+    }
+    // Each domain needs at least one fixed table session, so this cannot grow
+    // beyond the pre-existing native capacity even if a future host offers
+    // multiple Metal devices.
+    if (domains.count >= kCjguiSessionCapacity) return nil;
+    CJGuiInternalComposableImageResourceDomain *domain =
+        [[CJGuiInternalComposableImageResourceDomain alloc] initWithDevice:device];
+    if (domain) [domains addObject:domain];
+    return domain;
+}
+
+static void CjguiReleaseComposableImageDomain(CJGuiInternalSession *session) {
+    CJGuiInternalComposableImageResourceDomain *domain = session.composableImageDomain;
+    NSApplication *app = session.app;
+    if (!domain || !app) return;
+    if (domain.sessionCount > 0) domain.sessionCount -= 1;
+    if (domain.sessionCount != 0) return;
+    // Removing subscriptions is distinct from cancellation: MetalKit may
+    // finish underlying work, but its captured domain sees `destroyed` and
+    // cannot resurrect any closed session or publish a completion epoch.
+    domain.destroyed = YES;
+    [domain.textureCache removeAllObjects];
+    [domain.resources removeAllObjects];
+    [domain.loaders removeAllObjects];
+    [domain.pendingKeys removeAllObjects];
+    NSMutableArray<CJGuiInternalComposableImageResourceDomain *> *domains = CjguiComposableImageDomains(app, NO);
+    [domains removeObjectIdenticalTo:domain];
+    if (domains.count == 0) {
+        objc_setAssociatedObject(app, &CJGuiImageDomainsAssociationKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+}
+
+static BOOL CjguiWindowFrameFitsVisibleArea(NSRect frame, NSRect visibleArea) {
+    return NSWidth(frame) > 0.0 && NSHeight(frame) > 0.0 && NSContainsRect(visibleArea, frame);
+}
+
+static BOOL CjguiWindowFrameAvoidsVisibleWindows(NSWindow *window, NSRect frame) {
+    for (NSWindow *existing in NSApp.windows) {
+        if (existing == window || !existing.isVisible || existing.isMiniaturized) continue;
+        if (NSIntersectsRect(frame, existing.frame)) return NO;
+    }
+    return YES;
+}
+
+// A regular application can open multiple independent composable windows.
+// Centering each one at the same point turns an otherwise valid source/target
+// pair into an obscured single-window surface. Prefer one adjacent, entirely
+// visible slot when it exists; retain the conventional centred fallback for
+// large or crowded displays. This is platform presentation only: it neither
+// creates a Cangjie coordinate API nor changes session ownership.
+static void CjguiPlaceNewWindowWithoutObscuringVisibleSibling(NSWindow *window) {
+    if (!window) return;
+    NSScreen *screen = NSScreen.mainScreen ?: NSScreen.screens.firstObject;
+    NSRect visibleArea = screen ? screen.visibleFrame : NSZeroRect;
+    if (NSIsEmptyRect(visibleArea)) return;
+    NSRect original = window.frame;
+    for (NSWindow *existing in NSApp.windows) {
+        if (existing == window || !existing.isVisible || existing.isMiniaturized) continue;
+        NSRect sibling = existing.frame;
+        NSRect candidates[] = {
+            NSMakeRect(NSMaxX(sibling) + 24.0, NSMinY(sibling), NSWidth(original), NSHeight(original)),
+            NSMakeRect(NSMinX(sibling) - 24.0 - NSWidth(original), NSMinY(sibling),
+                       NSWidth(original), NSHeight(original)),
+            NSMakeRect(NSMinX(sibling), NSMinY(sibling) - 24.0 - NSHeight(original),
+                       NSWidth(original), NSHeight(original)),
+            NSMakeRect(NSMinX(sibling), NSMaxY(sibling) + 24.0, NSWidth(original), NSHeight(original)),
+        };
+        for (NSUInteger index = 0; index < sizeof(candidates) / sizeof(candidates[0]); index++) {
+            if (CjguiWindowFrameFitsVisibleArea(candidates[index], visibleArea) &&
+                CjguiWindowFrameAvoidsVisibleWindows(window, candidates[index])) {
+                [window setFrameOrigin:candidates[index].origin];
+                return;
+            }
+        }
+    }
 }
 
 // ---- ABI: create ----
@@ -6168,8 +9136,10 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
             if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_WINDOW_CREATE_FAILED;
             return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
         }
+        [window setAcceptsMouseMovedEvents:YES];
         [window setReleasedWhenClosed:NO];
         [window center];
+        CjguiPlaceNewWindowWithoutObscuringVisibleSibling(window);
         [window setTitle:@"CJGUI Shared Operation"];
         NSLog(@"cjgui: window created");
 
@@ -6192,6 +9162,13 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
         session.view = view;
         session.device = device;
         session.commandQueue = commandQueue;
+        session.composableImageDomain = CjguiAcquireComposableImageDomain(app, device);
+        if (!session.composableImageDomain) {
+            [view invalidateBridgeResources];
+            [window close];
+            if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        }
         [window setDelegate:session];
         // A screen move may leave point bounds unchanged while the backing
         // scale changes. That transition needs the same Cangjie scene/derived
@@ -6212,9 +9189,12 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
             [window close];
             objc_setAssociatedObject(window, &CJGuiSessionWindowAssociationKey, nil,
                                      OBJC_ASSOCIATION_ASSIGN);
+            CjguiReleaseComposableImageDomain(session);
+            session.composableImageDomain = nil;
             if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_SESSION_TABLE_FULL;
             return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
         }
+        session.composableImageDomain.sessionCount += 1;
 
         return token;
     }
@@ -6253,6 +9233,37 @@ cjgui_internal_renderer_set_window_title(uint64_t session, const char *title) {
 
 // ---- ABI: presentClear ----
 
+static id<MTLTexture> CjguiComposableMultisampleTarget(CJGuiInternalMetalView *view, id<MTLTexture> drawableTexture) {
+    if (!view || !drawableTexture || drawableTexture.width == 0 || drawableTexture.height == 0) return nil;
+    id<MTLTexture> existing = view.composableMultisampleTexture;
+    if (existing && existing.width == drawableTexture.width && existing.height == drawableTexture.height &&
+        existing.pixelFormat == drawableTexture.pixelFormat && existing.sampleCount == 4) {
+        return existing;
+    }
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:drawableTexture.pixelFormat
+                                                                                             width:drawableTexture.width
+                                                                                            height:drawableTexture.height
+                                                                                         mipmapped:NO];
+    descriptor.textureType = MTLTextureType2DMultisample;
+    descriptor.sampleCount = 4;
+    descriptor.storageMode = MTLStorageModePrivate;
+    descriptor.usage = MTLTextureUsageRenderTarget;
+    id<MTLTexture> replacement = [view.device newTextureWithDescriptor:descriptor];
+    if (!replacement) return nil;
+    view.composableMultisampleTexture = replacement;
+    return replacement;
+}
+
+// MSAA is a vector-edge quality choice, not a blanket cost for text/forms.
+// The committed native node array is the same accepted snapshot consumed by
+// painter order and hit testing, so this scan cannot observe a partial scene.
+static BOOL CjguiComposableSceneNeedsMultisampling(NSArray<CJGuiInternalComposableSceneNode *> *nodes) {
+    for (CJGuiInternalComposableSceneNode *node in nodes) {
+        if (node.hasVectorGeometry) return YES;
+    }
+    return NO;
+}
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_present_clear(uint64_t session,
                                       const CjguiInternalRendererClearColor *color,
@@ -6288,24 +9299,61 @@ cjgui_internal_renderer_present_clear(uint64_t session,
     MTLClearColor clearColor = MTLClearColorMake(red, green, blue, alpha);
 
     @autoreleasepool {
+#ifdef CJGUI_INTERNAL_TESTING
+        view.testComposableNextDrawableMicros = 0;
+        view.testComposableCommandBufferMicros = 0;
+        view.testComposablePresentMicros = 0;
+        view.testComposableCommitMicros = 0;
+        view.testComposableReadbackWaitMicros = 0;
+        view.testComposableReadbackWaited = 0;
+#endif
         [view updateDrawableSize];
 
+#ifdef CJGUI_INTERNAL_TESTING
+        uint64_t nextDrawableStarted = CjguiMonotonicMicros();
+#endif
         id<CAMetalDrawable> drawable = [view.metalLayer nextDrawable];
+#ifdef CJGUI_INTERNAL_TESTING
+        view.testComposableNextDrawableMicros = CjguiMonotonicMicros() - nextDrawableStarted;
+#endif
         if (!drawable) {
             return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
         }
         CGSize drawableSize = drawable.texture ? CGSizeMake(drawable.texture.width, drawable.texture.height) : CGSizeZero;
 
+#ifdef CJGUI_INTERNAL_TESTING
+        uint64_t commandBufferStarted = CjguiMonotonicMicros();
+#endif
         id<MTLCommandBuffer> commandBuffer = [view.commandQueue commandBuffer];
+#ifdef CJGUI_INTERNAL_TESTING
+        view.testComposableCommandBufferMicros = CjguiMonotonicMicros() - commandBufferStarted;
+#endif
         if (!commandBuffer) {
             return CJGUI_INTERNAL_RENDERER_METAL_COMMAND_BUFFER_UNAVAILABLE;
         }
 
+        BOOL needsMultisampling = CjguiComposableSceneNeedsMultisampling(view.composableNodes);
+        view.composableUsesMultisampling = needsMultisampling;
+        id<MTLTexture> composableTarget = drawable.texture;
+        if (needsMultisampling) {
+            composableTarget = CjguiComposableMultisampleTarget(view, drawable.texture);
+            if (!composableTarget) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        } else {
+            // Release the private 4x attachment when the accepted scene no
+            // longer contains vectors. The 1x pipelines remain lazily reused.
+            view.composableMultisampleTexture = nil;
+        }
         MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-        pass.colorAttachments[0].texture = drawable.texture;
+        pass.colorAttachments[0].texture = composableTarget;
         pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        pass.colorAttachments[0].resolveTexture = needsMultisampling ? drawable.texture : nil;
+        pass.colorAttachments[0].storeAction = needsMultisampling ? MTLStoreActionMultisampleResolve : MTLStoreActionStore;
         pass.colorAttachments[0].clearColor = clearColor;
+#ifdef CJGUI_INTERNAL_TESTING
+        view.testComposableRenderSampleCount = needsMultisampling ? 4 : 1;
+        uint64_t pixels = (uint64_t)drawable.texture.width * (uint64_t)drawable.texture.height;
+        view.testComposableMultisampleAttachmentBytes = needsMultisampling && pixels <= UINT64_MAX / 16u ? pixels * 16u : 0;
+#endif
 
         // Probe only a final, visible opaque colour. The scene can contain a
         // clipped row, alpha overlay or image whose centre does not identify
@@ -6484,13 +9532,32 @@ cjgui_internal_renderer_present_clear(uint64_t session,
             });
         }];
 
+ #ifdef CJGUI_INTERNAL_TESTING
+        uint64_t presentStarted = CjguiMonotonicMicros();
+ #endif
         [commandBuffer presentDrawable:drawable];
+ #ifdef CJGUI_INTERNAL_TESTING
+        view.testComposablePresentMicros = CjguiMonotonicMicros() - presentStarted;
+ #endif
         view.frameIndex = submittedFrameIndex;
+ #ifdef CJGUI_INTERNAL_TESTING
+        uint64_t commitStarted = CjguiMonotonicMicros();
+ #endif
         [commandBuffer commit];
+ #ifdef CJGUI_INTERNAL_TESTING
+        view.testComposableCommitMicros = CjguiMonotonicMicros() - commitStarted;
+ #endif
 
         if (shouldProbe) {
             if (readbackBlitEncoded && readbackBuffer) {
+ #ifdef CJGUI_INTERNAL_TESTING
+                uint64_t readbackWaitStarted = CjguiMonotonicMicros();
+ #endif
                 [commandBuffer waitUntilCompleted];
+ #ifdef CJGUI_INTERNAL_TESTING
+                view.testComposableReadbackWaitMicros += CjguiMonotonicMicros() - readbackWaitStarted;
+                view.testComposableReadbackWaited = 1;
+ #endif
                 commandBufferWaited = YES;
                 readbackCompleted = commandBuffer.status == MTLCommandBufferStatusCompleted;
                 if (readbackCompleted) {
@@ -6559,7 +9626,14 @@ cjgui_internal_renderer_present_clear(uint64_t session,
 #ifdef CJGUI_INTERNAL_TESTING
         if (testDrawablePixelRequested) {
             if (!commandBufferWaited) {
+ #ifdef CJGUI_INTERNAL_TESTING
+                uint64_t readbackWaitStarted = CjguiMonotonicMicros();
+ #endif
                 [commandBuffer waitUntilCompleted];
+ #ifdef CJGUI_INTERNAL_TESTING
+                view.testComposableReadbackWaitMicros += CjguiMonotonicMicros() - readbackWaitStarted;
+                view.testComposableReadbackWaited = 1;
+ #endif
                 commandBufferWaited = YES;
             }
             ctx.testDrawablePixelPending = NO;
@@ -6613,6 +9687,161 @@ cjgui_internal_renderer_present_clear(uint64_t session,
     }
 }
 
+// ---- ABI: generic composable command menu ----
+
+static BOOL CjguiComposableCommandMenuStagingIsComplete(CJGuiInternalSession *ctx) {
+    if (!ctx || ctx.stagedComposableCommandMenuVersion == 0) return NO;
+    for (CJGuiInternalComposableCommandMenuItem *item in ctx.stagedComposableCommandMenuItems) {
+        if (item.commandId.length == 0 || item.title.length == 0) return NO;
+    }
+    return YES;
+}
+
+static BOOL CjguiComposableCommandMenuItemsEqual(
+    NSArray<CJGuiInternalComposableCommandMenuItem *> *left,
+    NSArray<CJGuiInternalComposableCommandMenuItem *> *right) {
+    if (left.count != right.count) return NO;
+    for (NSUInteger index = 0; index < left.count; index++) {
+        CJGuiInternalComposableCommandMenuItem *a = left[index];
+        CJGuiInternalComposableCommandMenuItem *b = right[index];
+        if (![a.commandId isEqualToString:b.commandId] || ![a.title isEqualToString:b.title] ||
+            ![a.menuGroup isEqualToString:b.menuGroup] || ![a.shortcut isEqualToString:b.shortcut] ||
+            a.menuSection != b.menuSection || a.focusScope != b.focusScope || a.enabled != b.enabled ||
+            a.checked != b.checked) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static uint64_t CjguiComposableCommandMenuActiveFocusScope(CJGuiInternalSession *ctx) {
+    CJGuiInternalComposableSceneNode *active = [ctx.composableSceneOverlay activeFocusableNode];
+    return active ? active.node.inputScope : 0;
+}
+
+static BOOL CjguiCommitStagedComposableCommandMenu(CJGuiInternalSession *ctx) {
+    BOOL changed = !CjguiComposableCommandMenuItemsEqual(
+        ctx.composableCommandMenuItems, ctx.stagedComposableCommandMenuItems);
+    ctx.composableCommandMenuItems = [ctx.stagedComposableCommandMenuItems mutableCopy] ?: [NSMutableArray array];
+    ctx.composableCommandMenuVersion = ctx.stagedComposableCommandMenuVersion;
+    return changed;
+}
+
+static CjguiInternalRendererStatus CjguiConfigureComposableCommandMenuOnMain(
+    uint64_t session, uint64_t projectionVersion, uint32_t itemCount) {
+    if (projectionVersion == 0 || itemCount > 128) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.window || ctx.destroyed) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    NSMutableArray<CJGuiInternalComposableCommandMenuItem *> *staged =
+        [NSMutableArray arrayWithCapacity:itemCount];
+    for (uint32_t index = 0; index < itemCount; index++) {
+        CJGuiInternalComposableCommandMenuItem *item = [[CJGuiInternalComposableCommandMenuItem alloc] init];
+        if (!item) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        item.commandId = @""; item.title = @""; item.menuGroup = @""; item.shortcut = @"";
+        item.menuSection = 0; item.enabled = NO; item.checked = NO;
+        [staged addObject:item];
+    }
+    ctx.stagedComposableCommandMenuItems = staged;
+    ctx.stagedComposableCommandMenuVersion = projectionVersion;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_configure_composable_command_menu(
+    uint64_t session, uint64_t projectionVersion, uint32_t itemCount) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = CjguiConfigureComposableCommandMenuOnMain(session, projectionVersion, itemCount);
+        });
+        return status;
+    }
+    return CjguiConfigureComposableCommandMenuOnMain(session, projectionVersion, itemCount);
+}
+
+static CjguiInternalRendererStatus CjguiSetComposableCommandMenuItemOnMain(
+    uint64_t session, uint32_t itemIndex, const char *commandId, const char *title,
+    const char *menuGroup, const char *shortcut, uint32_t menuSection, uint64_t focusScope, uint8_t enabled,
+    uint8_t checked) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (ctx.destroyed || itemIndex >= ctx.stagedComposableCommandMenuItems.count || !commandId || !title ||
+        !menuGroup || !shortcut || ctx.stagedComposableCommandMenuVersion == 0) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSString *nativeCommandId = [NSString stringWithUTF8String:commandId];
+    NSString *nativeTitle = [NSString stringWithUTF8String:title];
+    NSString *nativeMenuGroup = [NSString stringWithUTF8String:menuGroup];
+    NSString *nativeShortcut = [NSString stringWithUTF8String:shortcut];
+    if (nativeCommandId.length == 0 || nativeTitle.length == 0 || !nativeMenuGroup || !nativeShortcut) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    CJGuiInternalComposableCommandMenuItem *item = ctx.stagedComposableCommandMenuItems[itemIndex];
+    item.commandId = nativeCommandId;
+    item.title = nativeTitle;
+    item.menuGroup = nativeMenuGroup;
+    item.shortcut = nativeShortcut;
+    item.menuSection = menuSection;
+    item.focusScope = focusScope;
+    item.enabled = enabled != 0;
+    item.checked = checked != 0;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_command_menu_item(
+    uint64_t session, uint32_t itemIndex, const char *commandId, const char *title,
+    const char *menuGroup, const char *shortcut, uint32_t menuSection, uint64_t focusScope, uint8_t enabled,
+    uint8_t checked) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = CjguiSetComposableCommandMenuItemOnMain(session, itemIndex, commandId, title, menuGroup,
+                                                              shortcut, menuSection, focusScope, enabled, checked);
+        });
+        return status;
+    }
+    return CjguiSetComposableCommandMenuItemOnMain(session, itemIndex, commandId, title, menuGroup,
+                                                    shortcut, menuSection, focusScope, enabled, checked);
+}
+
+static CjguiInternalRendererStatus CjguiCommitComposableCommandMenuOnMain(uint64_t session) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.window || ctx.destroyed) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (ctx.stagedComposableCommandMenuVersion != ctx.composableSceneVersion ||
+        !CjguiComposableCommandMenuStagingIsComplete(ctx)) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    BOOL menuProjectionChanged = CjguiCommitStagedComposableCommandMenu(ctx);
+    // NSApp.mainMenu projects only the current key window. A background
+    // window keeps its own scalar command state without replacing that
+    // process-global projection; a same-key state-only update rebuilds only
+    // when the actual menu projection changes.
+    if (menuProjectionChanged && ctx.window == NSApp.keyWindow) {
+        CjguiRebuildComposableCommandMenuForKeyWindow();
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_commit_composable_command_menu(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = CjguiCommitComposableCommandMenuOnMain(session);
+        });
+        return status;
+    }
+    return CjguiCommitComposableCommandMenuOnMain(session);
+}
+
 // ---- ABI: generic composable scene ----
 
 static CjguiInternalRendererStatus CjguiConfigureComposableSceneOnMain(uint64_t session, uint64_t projectionVersion, uint32_t nodeCount) {
@@ -6656,6 +9885,11 @@ static CjguiInternalRendererStatus CjguiConfigureComposableSceneOnMain(uint64_t 
         [nextStaging addObject:node];
     }
     ctx.stagedComposableNodes = nextStaging;
+    // Every scene candidate starts with an explicit empty transfer table. A
+    // caller that declares transfers replaces it below; legacy consumers
+    // therefore cannot accidentally retain a prior scene's paste/drop target.
+    ctx.stagedComposableDataTransferItems = [NSMutableArray array];
+    ctx.stagedComposableDataTransferVersion = projectionVersion;
 #ifdef CJGUI_INTERNAL_TESTING
     ctx.testComposableSceneConfigureMicros += CjguiMonotonicMicros() - started;
 #endif
@@ -6671,6 +9905,141 @@ cjgui_internal_renderer_configure_composable_scene(uint64_t session, uint64_t pr
         return status;
     }
     return CjguiConfigureComposableSceneOnMain(session, projectionVersion, nodeCount);
+}
+
+static const NSUInteger kCjguiComposableDataTransferItemCapacity = 128;
+static const NSUInteger kCjguiComposableDataTransferPayloadByteCapacity = 512u * 1024u;
+
+static BOOL CjguiComposableDataTransferFormatIsValid(NSString *format) {
+    if (!format || format.length == 0 || format.length > 128) return NO;
+    if ([format isEqualToString:@"text/plain"]) return YES;
+    if (![format hasPrefix:@"application/"] && ![format hasPrefix:@"cjgui."]) return NO;
+    for (NSUInteger index = 0; index < format.length; index++) {
+        unichar character = [format characterAtIndex:index];
+        BOOL allowed = (character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9') || character == '/' ||
+            character == '.' || character == '-' || character == '+';
+        if (!allowed) return NO;
+    }
+    return YES;
+}
+
+static BOOL CjguiComposableStagedNodeMatchesDataTransferItem(
+    CJGuiInternalSession *ctx, const CjguiInternalRendererComposableDataTransferItem *item) {
+    if (!ctx || !item) return NO;
+    for (CJGuiInternalComposableSceneNode *node in ctx.stagedComposableNodes) {
+        if (node.node.nodeId == item->nodeId &&
+            node.node.resourceId == item->resourceId &&
+            node.node.nodeKind == item->nodeKind &&
+            node.node.isInteractive != 0 && node.node.isReadOnly == 0) return YES;
+    }
+    return NO;
+}
+
+static CjguiInternalRendererStatus CjguiConfigureComposableDataTransferOnMain(
+    uint64_t session, uint64_t projectionVersion, uint32_t itemCount) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.view || ctx.view.invalidated) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (projectionVersion == 0 || projectionVersion != ctx.stagedComposableSceneVersion ||
+        itemCount > kCjguiComposableDataTransferItemCapacity) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    NSMutableArray<CJGuiInternalComposableDataTransferItem *> *items =
+        [NSMutableArray arrayWithCapacity:itemCount];
+    for (uint32_t index = 0; index < itemCount; index++) {
+        CJGuiInternalComposableDataTransferItem *placeholder =
+            [[CJGuiInternalComposableDataTransferItem alloc] init];
+        if (!placeholder) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        placeholder.format = @"";
+        placeholder.payload = @"";
+        [items addObject:placeholder];
+    }
+    ctx.stagedComposableDataTransferItems = items;
+    ctx.stagedComposableDataTransferVersion = projectionVersion;
+#ifdef CJGUI_INTERNAL_TESTING
+    CjguiUpdateTestDataTransferRetentionPeaks(ctx);
+#endif
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_configure_composable_data_transfer(
+    uint64_t session, uint64_t projectionVersion, uint32_t itemCount) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = CjguiConfigureComposableDataTransferOnMain(session, projectionVersion, itemCount);
+        });
+        return status;
+    }
+    return CjguiConfigureComposableDataTransferOnMain(session, projectionVersion, itemCount);
+}
+
+static CjguiInternalRendererStatus CjguiSetComposableDataTransferItemOnMain(
+    uint64_t session, uint32_t itemIndex,
+    const CjguiInternalRendererComposableDataTransferItem *item,
+    const char *formatBytes, const char *payloadBytes,
+    const char *sourceKindBytes, const char *sourceIdentityBytes) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!item || itemIndex >= ctx.stagedComposableDataTransferItems.count ||
+        item->projectionVersion == 0 || item->projectionVersion != ctx.stagedComposableDataTransferVersion ||
+        item->projectionVersion != ctx.stagedComposableSceneVersion ||
+        (item->role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE &&
+         item->role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET) ||
+        item->maximumPayloadBytes == 0 || item->maximumPayloadBytes > kCjguiComposableDataTransferPayloadByteCapacity ||
+        !CjguiComposableStagedNodeMatchesDataTransferItem(ctx, item)) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    NSString *format = formatBytes ? [NSString stringWithUTF8String:formatBytes] : nil;
+    NSString *payload = payloadBytes ? [NSString stringWithUTF8String:payloadBytes] : nil;
+    NSString *sourceKind = sourceKindBytes ? [NSString stringWithUTF8String:sourceKindBytes] : nil;
+    NSString *sourceIdentity = sourceIdentityBytes ? [NSString stringWithUTF8String:sourceIdentityBytes] : nil;
+    if (!CjguiComposableDataTransferFormatIsValid(format) || !payload || !sourceKind || !sourceIdentity) {
+        return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    }
+    NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
+    if (!payloadData || payloadData.length > item->maximumPayloadBytes ||
+        (item->role == CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET && (payloadData.length != 0 ||
+         sourceKind.length != 0 || sourceIdentity.length != 0 || item->sourceId >= 0)) ||
+        (item->role == CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE && (sourceKind.length == 0 ||
+         sourceKind.length > 128 || sourceIdentity.length == 0 || sourceIdentity.length > 256 || item->sourceId < 0))) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    CJGuiInternalComposableDataTransferItem *copy =
+        ctx.stagedComposableDataTransferItems[itemIndex];
+    copy.item = *item;
+    copy.format = [format copy];
+    copy.payload = [payload copy];
+    copy.sourceKind = [sourceKind copy];
+    copy.sourceIdentity = [sourceIdentity copy];
+#ifdef CJGUI_INTERNAL_TESTING
+    [copy markObservationFilled];
+    CjguiUpdateTestDataTransferRetentionPeaks(ctx);
+#endif
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_data_transfer_item(
+    uint64_t session, uint32_t itemIndex,
+    const CjguiInternalRendererComposableDataTransferItem *item,
+    const char *format, const char *payload,
+    const char *sourceKind, const char *sourceIdentity) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = CjguiSetComposableDataTransferItemOnMain(session, itemIndex, item, format, payload,
+                                                               sourceKind, sourceIdentity);
+        });
+        return status;
+    }
+    return CjguiSetComposableDataTransferItemOnMain(session, itemIndex, item, format, payload,
+                                                     sourceKind, sourceIdentity);
 }
 
 static CjguiInternalRendererStatus CjguiSetComposableSceneNodeOnMain(
@@ -6711,6 +10080,35 @@ static CjguiInternalRendererStatus CjguiSetComposableSceneNodeOnMain(
     copy.imageResourcePath = imageResourcePath ? [NSString stringWithUTF8String:imageResourcePath] : @"";
     copy.imageResourceId = imageResourceId ? [NSString stringWithUTF8String:imageResourceId] : copy.imageResourcePath;
     copy.imageResourceVersion = imageResourceVersion;
+    if (copy.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC) {
+        CjguiInternalComposableVectorGeometry geometry = {0};
+        if (!CjguiParseComposableVectorGeometry(copy.value, &geometry)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        // Local triangles are independent of paint but not of path/stroke
+        // geometry. Keep a COW-reused cache only through paint/layout/clip
+        // changes; a changed path gets exactly one new preparation on draw.
+        if (!copy.hasVectorPreparedGeometry ||
+            !CjguiComposableVectorPreparationGeometryEquals(copy.vectorPreparedGeometry, geometry)) {
+            copy.vectorPreparedTriangles = nil;
+            copy.vectorPreparedVertexBuffer = nil;
+            copy.vectorPreparedVertexCount = 0;
+            copy.vectorPreparedVertexBytes = 0;
+            copy.hasVectorPreparedGeometry = NO;
+            CjguiInternalComposableVectorGeometry emptyPreparedGeometry = {0};
+            copy.vectorPreparedGeometry = emptyPreparedGeometry;
+        }
+        copy.vectorGeometry = geometry;
+        copy.hasVectorGeometry = YES;
+    } else {
+        copy.hasVectorGeometry = NO;
+        CjguiInternalComposableVectorGeometry emptyGeometry = {0};
+        copy.vectorGeometry = emptyGeometry;
+        copy.vectorPreparedTriangles = nil;
+        copy.vectorPreparedVertexBuffer = nil;
+        copy.vectorPreparedVertexCount = 0;
+        copy.vectorPreparedVertexBytes = 0;
+        copy.hasVectorPreparedGeometry = NO;
+        copy.vectorPreparedGeometry = emptyGeometry;
+    }
     if (copy.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE) {
         NSString *resolved = nil;
         NSString *declaredCacheKey = CjguiComposableImageCacheKey(copy.imageResourcePath, copy.imageResourceId,
@@ -6814,6 +10212,30 @@ static CjguiInternalRendererStatus CjguiCommitComposableSceneOnMain(uint64_t ses
         // provenance comes from the committed session version below.
         if (node.node.projectionVersion == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
+    if (ctx.stagedComposableCommandMenuVersion != 0 &&
+        (ctx.stagedComposableCommandMenuVersion != ctx.stagedComposableSceneVersion ||
+         !CjguiComposableCommandMenuStagingIsComplete(ctx))) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (ctx.stagedComposableDataTransferVersion != ctx.stagedComposableSceneVersion) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    for (CJGuiInternalComposableDataTransferItem *item in ctx.stagedComposableDataTransferItems) {
+        CjguiInternalRendererComposableDataTransferItem itemValue = item.item;
+        if (!CjguiComposableDataTransferFormatIsValid(item.format) ||
+            itemValue.projectionVersion != ctx.stagedComposableSceneVersion ||
+            !CjguiComposableStagedNodeMatchesDataTransferItem(ctx, &itemValue)) {
+            return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+        }
+        NSData *payload = [item.payload dataUsingEncoding:NSUTF8StringEncoding];
+        if (!payload || payload.length > item.item.maximumPayloadBytes ||
+            (item.item.role == CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET && (payload.length != 0 ||
+             item.sourceKind.length != 0 || item.sourceIdentity.length != 0 || item.item.sourceId >= 0)) ||
+            (item.item.role == CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE && (item.sourceKind.length == 0 ||
+             item.sourceIdentity.length == 0 || item.item.sourceId < 0))) {
+            return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+        }
+    }
     // Text resources are prepared while admitting the immutable scene, never
     // from the Metal encoder.  This keeps AppKit text shaping out of the
     // frame-critical command-buffer path and lets the encoder only reuse a
@@ -6822,9 +10244,24 @@ static CjguiInternalRendererStatus CjguiCommitComposableSceneOnMain(uint64_t ses
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
     BOOL imageContentChanged = CjguiComposableImageContentChanged(ctx.composableNodes, ctx.stagedComposableNodes);
+    uint64_t previousMenuFocusScope = CjguiComposableCommandMenuActiveFocusScope(ctx);
+    BOOL menuProjectionChanged = NO;
     ctx.composableSceneVersion = ctx.stagedComposableSceneVersion;
     ctx.composableNodes = [ctx.stagedComposableNodes mutableCopy];
-    CjguiPruneComposableImageTextureCache(ctx, NO);
+    ctx.composableDataTransferItems = [ctx.stagedComposableDataTransferItems mutableCopy];
+    ctx.composableDataTransferVersion = ctx.stagedComposableDataTransferVersion;
+#ifdef CJGUI_INTERNAL_TESTING
+    CjguiUpdateTestDataTransferRetentionPeaks(ctx);
+#endif
+    if (ctx.stagedComposableCommandMenuVersion == ctx.composableSceneVersion) {
+        menuProjectionChanged = CjguiCommitStagedComposableCommandMenu(ctx);
+    }
+    // This is the only promotion boundary for image subscribers. Candidate
+    // configure/set failures and present rollback keep the old committed
+    // subscriptions intact, while the newly accepted scene replaces them
+    // atomically before a later completion can wake this window.
+    CjguiReconcileCommittedComposableImageSubscribers(ctx);
+    CjguiPruneComposableImageTextureCache(CjguiComposableImageDomainForSession(ctx), NO);
     ctx.view.composableNodes = [ctx.composableNodes copy];
     if (imageContentChanged) {
         ctx.view.readbackProbeCompleted = NO;
@@ -6835,6 +10272,11 @@ static CjguiInternalRendererStatus CjguiCommitComposableSceneOnMain(uint64_t ses
     ctx.sharedOperationOverlay.hidden = YES;
     ctx.sharedEditingFormOverlay.hidden = YES;
     [ctx.composableSceneOverlay setNodesFromProjection:ctx.view.composableNodes];
+    uint64_t currentMenuFocusScope = CjguiComposableCommandMenuActiveFocusScope(ctx);
+    if (ctx.window == NSApp.keyWindow &&
+        (menuProjectionChanged || previousMenuFocusScope != currentMenuFocusScope)) {
+        CjguiRebuildComposableCommandMenuForKeyWindow();
+    }
     // Title ownership is the application-host configuration. A scene commit
     // may refresh business content but must not overwrite that declaration.
 #ifdef CJGUI_INTERNAL_TESTING
@@ -6857,12 +10299,23 @@ cjgui_internal_renderer_present_composable_scene(uint64_t session, CjguiInternal
     CJGuiInternalSession *candidate = CjguiLookupSession(session);
     if (candidate && candidate.forcedComposablePresentFailures > 0) {
         candidate.forcedComposablePresentFailures -= 1;
+        // The Cangjie caller will keep its accepted scene on this error.  The
+        // staged image setters may already have registered candidate demand,
+        // so restore requesters/subscribers from that accepted native scene
+        // before returning the test seam's forced rejection.
+        CjguiRestoreAcceptedComposableImageDemand(candidate);
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
 #endif
     CJGuiInternalSession *beforeCommit = CjguiLookupSession(session);
     NSArray<CJGuiInternalComposableSceneNode *> *previousNodes = [beforeCommit.composableNodes copy];
     uint64_t previousSceneVersion = beforeCommit.composableSceneVersion;
+    NSArray<CJGuiInternalComposableDataTransferItem *> *previousDataTransferItems =
+        [beforeCommit.composableDataTransferItems copy];
+    uint64_t previousDataTransferVersion = beforeCommit.composableDataTransferVersion;
+    NSArray<CJGuiInternalComposableCommandMenuItem *> *previousCommandMenuItems =
+        [beforeCommit.composableCommandMenuItems copy];
+    uint64_t previousCommandMenuVersion = beforeCommit.composableCommandMenuVersion;
     CjguiInternalRendererStatus committed = CjguiCommitComposableSceneOnMain(session);
     if (committed != CJGUI_INTERNAL_RENDERER_OK) return committed;
     CjguiInternalRendererClearColor clear = { 0.08, 0.16, 0.20, 1.0 };
@@ -6876,8 +10329,17 @@ cjgui_internal_renderer_present_composable_scene(uint64_t session, CjguiInternal
         if (ctx && !ctx.destroyed) {
             ctx.composableSceneVersion = previousSceneVersion;
             ctx.composableNodes = [previousNodes mutableCopy] ?: [NSMutableArray array];
+            ctx.composableDataTransferItems = [previousDataTransferItems mutableCopy] ?: [NSMutableArray array];
+            ctx.composableDataTransferVersion = previousDataTransferVersion;
+            ctx.composableCommandMenuItems = [previousCommandMenuItems mutableCopy] ?: [NSMutableArray array];
+            ctx.composableCommandMenuVersion = previousCommandMenuVersion;
             ctx.view.composableNodes = [ctx.composableNodes copy];
             [ctx.composableSceneOverlay setNodesFromProjection:ctx.view.composableNodes];
+            if (ctx.window == NSApp.keyWindow) CjguiRebuildComposableCommandMenuForKeyWindow();
+            // Commit happened before the Metal presentation verdict. Restore
+            // the prior committed subscriber set together with the old scene;
+            // a rejected replacement must never receive a completion epoch.
+            CjguiReconcileCommittedComposableImageSubscribers(ctx);
         }
     }
     return status;
@@ -6896,7 +10358,7 @@ static CjguiInternalRendererStatus CjguiPrepareComposableImageResourceAbiOnMain(
     NSString *identifier = resourceId ? [NSString stringWithUTF8String:resourceId] : @"";
     if (!path || !identifier) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     *outState = CjguiPrepareComposableImageResourceOnMain(session, sessionToken, path, identifier,
-                                                           resourceVersion, YES, NULL);
+                                                           resourceVersion, YES, YES, NULL);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -6932,21 +10394,23 @@ static CjguiInternalRendererStatus CjguiComposableImageResourceStateOnMain(
         *outState = CjguiComposableImageResourceFailed;
         return CJGUI_INTERNAL_RENDERER_OK;
     }
-    if (session.composableImageTextureCache[cacheKey]) {
-        CJGuiInternalComposableImageResource *resource = session.composableImageResources[cacheKey];
-        if (resource) resource.lastAccess = CjguiComposableImageNextAccess(session);
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(session);
+    if (!domain) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+    if (domain.textureCache[cacheKey]) {
+        CJGuiInternalComposableImageResource *resource = domain.resources[cacheKey];
+        if (resource) resource.lastAccess = CjguiComposableImageNextAccess(domain);
         *outState = CjguiComposableImageResourceReady;
         return CJGUI_INTERNAL_RENDERER_OK;
     }
-    if (CjguiComposableImageBoundTexture(session, cacheKey)) {
-        CJGuiInternalComposableImageResource *resource = session.composableImageResources[cacheKey];
-        if (resource) resource.lastAccess = CjguiComposableImageNextAccess(session);
+    if (CjguiComposableImageDomainBoundTexture(domain, cacheKey)) {
+        CJGuiInternalComposableImageResource *resource = domain.resources[cacheKey];
+        if (resource) resource.lastAccess = CjguiComposableImageNextAccess(domain);
         *outState = CjguiComposableImageResourceReady;
         return CJGUI_INTERNAL_RENDERER_OK;
     }
-    CJGuiInternalComposableImageResource *resource = session.composableImageResources[cacheKey];
+    CJGuiInternalComposableImageResource *resource = domain.resources[cacheKey];
     if (resource) {
-        resource.lastAccess = CjguiComposableImageNextAccess(session);
+        resource.lastAccess = CjguiComposableImageNextAccess(domain);
         *outState = resource.state;
     }
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -7078,7 +10542,7 @@ cjgui_internal_renderer_test_set_composable_image_launch_gate(uint64_t session, 
     if (!ctx || ctx.destroyed) return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     ctx.testComposableImageLaunchGateHeld = held != 0;
     if (!ctx.testComposableImageLaunchGateHeld) {
-        CjguiStartNextComposableImageLoads(ctx, session);
+        CjguiStartNextComposableImageLoads(CjguiComposableImageDomainForSession(ctx));
     }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -7097,17 +10561,19 @@ cjgui_internal_renderer_test_composable_image_pipeline_stats(
     *outPeakInFlight = 0; *outPeakPending = 0; *outCacheBytes = 0; *outResourceCompletionVersion = 0;
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
     if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(ctx);
+    if (!domain) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
     uint64_t cacheBytes = 0;
-    for (id<MTLTexture> texture in ctx.composableImageTextureCache.allValues) {
+    for (id<MTLTexture> texture in domain.textureCache.allValues) {
         NSUInteger bytes = CjguiComposableImageTextureBytes(texture);
         cacheBytes = bytes > UINT64_MAX - cacheBytes ? UINT64_MAX : cacheBytes + bytes;
     }
-    *outPathResolveMicros = ctx.testComposableImagePathResolveMicros;
-    *outCacheHitCount = ctx.testComposableImageCacheHitCount;
-    *outAsyncLaunchCount = ctx.testComposableImageAsyncLaunchCount;
-    *outAsyncTotalMicros = ctx.testComposableImageAsyncTotalMicros;
-    *outPeakInFlight = ctx.testComposableImagePeakInFlight;
-    *outPeakPending = ctx.testComposableImagePeakPending;
+    *outPathResolveMicros = domain.testPathResolveMicros;
+    *outCacheHitCount = domain.testCacheHitCount;
+    *outAsyncLaunchCount = domain.testActualLoadCount;
+    *outAsyncTotalMicros = domain.testAsyncTotalMicros;
+    *outPeakInFlight = domain.testPeakInFlight;
+    *outPeakPending = domain.testPeakPending;
     *outCacheBytes = cacheBytes;
     *outResourceCompletionVersion = ctx.composableImageResourceCompletionVersion;
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -7120,13 +10586,68 @@ cjgui_internal_renderer_test_composable_image_stats(uint64_t session, uint32_t *
     *outLoadedTextureCount = 0; *outCacheEntryCount = 0; *outDecodeCount = 0;
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
     if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(ctx);
+    if (!domain) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
     uint32_t loaded = 0;
     for (CJGuiInternalComposableSceneNode *node in ctx.composableNodes) {
         if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE && node.imageTexture) loaded += 1;
     }
     *outLoadedTextureCount = loaded;
-    *outCacheEntryCount = (uint32_t)MIN(UINT32_MAX, ctx.composableImageTextureCache.count);
+    *outCacheEntryCount = (uint32_t)MIN(UINT32_MAX, domain.textureCache.count);
     *outDecodeCount = ctx.composableImageDecodeCount;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_application_image_domain_stats(
+    uint64_t session, uint32_t *outReusableCacheEntries, uint64_t *outReusableCacheBytes,
+    uint32_t *outInFlight, uint32_t *outPending, uint64_t *outActualLoadCount,
+    uint64_t *outActualDecodeCount, uint32_t *outCommittedTextureRefs,
+    uint32_t *outSubscriberCount, uint32_t *outActiveSessionCount,
+    uint32_t *outResourceRecordCount) {
+    if (!outReusableCacheEntries || !outReusableCacheBytes || !outInFlight || !outPending ||
+        !outActualLoadCount || !outActualDecodeCount || !outCommittedTextureRefs ||
+        !outSubscriberCount || !outActiveSessionCount || !outResourceRecordCount) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outReusableCacheEntries = 0; *outReusableCacheBytes = 0; *outInFlight = 0; *outPending = 0;
+    *outActualLoadCount = 0; *outActualDecodeCount = 0; *outCommittedTextureRefs = 0;
+    *outSubscriberCount = 0; *outActiveSessionCount = 0; *outResourceRecordCount = 0;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(ctx);
+    if (!ctx || !domain) return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    uint64_t cacheBytes = 0;
+    for (id<MTLTexture> texture in domain.textureCache.allValues) {
+        NSUInteger bytes = CjguiComposableImageTextureBytes(texture);
+        cacheBytes = bytes > UINT64_MAX - cacheBytes ? UINT64_MAX : cacheBytes + bytes;
+    }
+    uint32_t committedRefs = 0;
+    for (CJGuiInternalComposableSceneNode *node in ctx.composableNodes) {
+        if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE && node.imageTexture) {
+            committedRefs = committedRefs == UINT32_MAX ? UINT32_MAX : committedRefs + 1;
+        }
+    }
+    uint32_t subscribers = 0;
+    for (CJGuiInternalComposableImageResource *resource in domain.resources.allValues) {
+        for (NSInteger index = (NSInteger)resource.subscribers.count - 1; index >= 0; index--) {
+            CJGuiInternalComposableImageSubscription *subscriber = resource.subscribers[(NSUInteger)index];
+            CJGuiInternalSession *live = CjguiLookupSession(subscriber.sessionToken);
+            if (!live || live.destroyed || live.composableImageDomain != domain ||
+                live.sessionGeneration != subscriber.sessionGeneration) {
+                [resource.subscribers removeObjectAtIndex:(NSUInteger)index];
+            } else if (subscribers < UINT32_MAX) {
+                subscribers += 1;
+            }
+        }
+    }
+    *outReusableCacheEntries = (uint32_t)MIN(UINT32_MAX, domain.textureCache.count);
+    *outReusableCacheBytes = cacheBytes;
+    *outInFlight = (uint32_t)MIN(UINT32_MAX, domain.loaders.count);
+    *outPending = (uint32_t)MIN(UINT32_MAX, domain.pendingKeys.count);
+    *outActualLoadCount = domain.testActualLoadCount;
+    *outActualDecodeCount = domain.testActualDecodeCount;
+    *outCommittedTextureRefs = committedRefs;
+    *outSubscriberCount = subscribers;
+    *outActiveSessionCount = (uint32_t)MIN(UINT32_MAX, domain.sessionCount);
+    *outResourceRecordCount = (uint32_t)MIN(UINT32_MAX, domain.resources.count);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -7179,6 +10700,58 @@ cjgui_internal_renderer_test_composable_interaction_stats(uint64_t session,
     *outPendingInteractionCount = (uint32_t)MIN(UINT32_MAX, ctx.pendingInteractions.count);
     *outMaxPendingInteractionCount = ctx.testComposableMaxPendingInteractionCount;
     *outAccessibilityNotificationCount = ctx.testComposableAccessibilityNotificationCount;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_stats(
+    uint64_t session,
+    uint64_t *outReadCount, uint64_t *outReadBytes, uint64_t *outReadPeakBytes,
+    uint64_t *outParseCount, uint64_t *outParseBytes, uint64_t *outParsePeakBytes,
+    uint64_t *outSourceWriteCount, uint64_t *outSourceWriteBytes, uint64_t *outSourceWritePeakBytes,
+    uint64_t *outSourceCurrentBytes, uint64_t *outSourcePeakBytes,
+    uint64_t *outAcceptedCurrentBytes, uint64_t *outAcceptedPeakBytes,
+    uint64_t *outCandidateCurrentBytes, uint64_t *outCandidatePeakBytes,
+    uint32_t *outFifoCurrentEvents, uint32_t *outFifoPeakEvents,
+    uint64_t *outFifoCurrentBytes, uint64_t *outFifoPeakBytes) {
+    if (!outReadCount || !outReadBytes || !outReadPeakBytes || !outParseCount || !outParseBytes ||
+        !outParsePeakBytes || !outSourceWriteCount || !outSourceWriteBytes || !outSourceWritePeakBytes ||
+        !outSourceCurrentBytes || !outSourcePeakBytes || !outAcceptedCurrentBytes || !outAcceptedPeakBytes ||
+        !outCandidateCurrentBytes || !outCandidatePeakBytes || !outFifoCurrentEvents || !outFifoPeakEvents ||
+        !outFifoCurrentBytes || !outFifoPeakBytes) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outReadCount = 0; *outReadBytes = 0; *outReadPeakBytes = 0;
+    *outParseCount = 0; *outParseBytes = 0; *outParsePeakBytes = 0;
+    *outSourceWriteCount = 0; *outSourceWriteBytes = 0; *outSourceWritePeakBytes = 0;
+    *outSourceCurrentBytes = 0; *outSourcePeakBytes = 0;
+    *outAcceptedCurrentBytes = 0; *outAcceptedPeakBytes = 0;
+    *outCandidateCurrentBytes = 0; *outCandidatePeakBytes = 0;
+    *outFifoCurrentEvents = 0; *outFifoPeakEvents = 0;
+    *outFifoCurrentBytes = 0; *outFifoPeakBytes = 0;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    uint32_t fifoEvents = 0;
+    uint64_t fifoBytes = CjguiTestTransferFifoBytes(ctx, &fifoEvents);
+    *outReadCount = ctx.testDataTransferReadCount;
+    *outReadBytes = ctx.testDataTransferReadBytes;
+    *outReadPeakBytes = ctx.testDataTransferReadPeakBytes;
+    *outParseCount = ctx.testDataTransferParseCount;
+    *outParseBytes = ctx.testDataTransferParseBytes;
+    *outParsePeakBytes = ctx.testDataTransferParsePeakBytes;
+    *outSourceWriteCount = ctx.testDataTransferSourceWriteCount;
+    *outSourceWriteBytes = ctx.testDataTransferSourceWriteBytes;
+    *outSourceWritePeakBytes = ctx.testDataTransferSourceWritePeakBytes;
+    *outSourceCurrentBytes = CjguiTestTransferSourcePayloadBytes(ctx.composableDataTransferItems);
+    *outSourcePeakBytes = ctx.testDataTransferSourcePeakBytes;
+    *outAcceptedCurrentBytes = CjguiTestTransferDeclarationBytes(ctx.composableDataTransferItems);
+    *outAcceptedPeakBytes = ctx.testDataTransferAcceptedPeakBytes;
+    *outCandidateCurrentBytes = CjguiTestTransferDeclarationBytes(ctx.stagedComposableDataTransferItems);
+    *outCandidatePeakBytes = ctx.testDataTransferCandidatePeakBytes;
+    *outFifoCurrentEvents = fifoEvents;
+    *outFifoPeakEvents = ctx.testDataTransferFifoPeakEvents;
+    *outFifoCurrentBytes = fifoBytes;
+    *outFifoPeakBytes = ctx.testDataTransferFifoPeakBytes;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -7636,6 +11209,47 @@ cjgui_internal_renderer_test_composable_drawable_pixel(uint64_t session, uint8_t
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+static CjguiInternalRendererStatus CjguiWriteSolidImageFixture(const char *path,
+                                                               uint32_t width, uint32_t height,
+                                                               uint8_t red, uint8_t green,
+                                                               uint8_t blue, uint8_t alpha) {
+    if (!path || path[0] == '\0') return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (width == 0 || height == 0 || width > 4096 || height > 4096 || width > NSUIntegerMax / height ||
+        (NSUInteger)width * (NSUInteger)height > NSUIntegerMax / 4) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSString *fixturePath = [NSString stringWithUTF8String:path];
+    if (!fixturePath) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)width pixelsHigh:(NSInteger)height bitsPerSample:8 samplesPerPixel:4
+        hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+        bitmapFormat:NSBitmapFormatAlphaNonpremultiplied bytesPerRow:(NSInteger)width * 4 bitsPerPixel:32];
+    if (!bitmap || !bitmap.bitmapData) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    uint8_t *pixels = bitmap.bitmapData;
+    for (NSUInteger index = 0; index < (NSUInteger)width * (NSUInteger)height; index++) {
+        uint8_t *pixel = pixels + index * 4u;
+        pixel[0] = red; pixel[1] = green; pixel[2] = blue; pixel[3] = alpha;
+    }
+    NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    if (!png || ![png writeToFile:fixturePath options:NSDataWritingAtomic error:nil]) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_write_solid_image_fixture(const char *path,
+                                                        uint8_t red, uint8_t green,
+                                                        uint8_t blue, uint8_t alpha) {
+    return CjguiWriteSolidImageFixture(path, 16, 16, red, green, blue, alpha);
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_write_solid_image_fixture_sized(const char *path,
+                                                              uint32_t width, uint32_t height,
+                                                              uint8_t red, uint8_t green,
+                                                              uint8_t blue, uint8_t alpha) {
+    return CjguiWriteSolidImageFixture(path, width, height, red, green, blue, alpha);
+}
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_composable_encoder_stats(uint64_t session,
                                                        uint32_t *outShapeNodeCount,
@@ -7677,6 +11291,86 @@ cjgui_internal_renderer_test_composable_encoder_cpu_stats(uint64_t session,
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
     if (!ctx || !ctx.view || ctx.destroyed) return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     *outEncodeMicros = ctx.view.testComposableEncoderCpuMicros;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_present_timing_stats(
+    uint64_t session,
+    uint64_t *outNextDrawableMicros,
+    uint64_t *outCommandBufferMicros,
+    uint64_t *outPresentMicros,
+    uint64_t *outCommitMicros,
+    uint64_t *outReadbackWaitMicros,
+    uint8_t *outReadbackWaited) {
+    if (!outNextDrawableMicros || !outCommandBufferMicros || !outPresentMicros || !outCommitMicros ||
+        !outReadbackWaitMicros || !outReadbackWaited) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outNextDrawableMicros = 0;
+    *outCommandBufferMicros = 0;
+    *outPresentMicros = 0;
+    *outCommitMicros = 0;
+    *outReadbackWaitMicros = 0;
+    *outReadbackWaited = 0;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.view || ctx.destroyed) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    *outNextDrawableMicros = ctx.view.testComposableNextDrawableMicros;
+    *outCommandBufferMicros = ctx.view.testComposableCommandBufferMicros;
+    *outPresentMicros = ctx.view.testComposablePresentMicros;
+    *outCommitMicros = ctx.view.testComposableCommitMicros;
+    *outReadbackWaitMicros = ctx.view.testComposableReadbackWaitMicros;
+    *outReadbackWaited = ctx.view.testComposableReadbackWaited;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_vector_submission_stats(uint64_t session,
+                                                                 uint32_t *outDrawCount,
+                                                                 uint32_t *outBufferUploads,
+                                                                 uint32_t *outBufferReuses,
+                                                                 uint64_t *outBufferUploadBytes,
+                                                                 uint64_t *outResidentBytes) {
+    if (!outDrawCount || !outBufferUploads || !outBufferReuses || !outBufferUploadBytes || !outResidentBytes) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outDrawCount = 0; *outBufferUploads = 0; *outBufferReuses = 0;
+    *outBufferUploadBytes = 0; *outResidentBytes = 0;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.view || ctx.destroyed) return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    *outDrawCount = ctx.view.testComposableVectorDrawCount;
+    *outBufferUploads = ctx.view.testComposableVectorBufferUploadCount;
+    *outBufferReuses = ctx.view.testComposableVectorBufferReuseCount;
+    *outBufferUploadBytes = ctx.view.testComposableVectorBufferUploadBytes;
+    uint64_t residentBytes = 0;
+    for (CJGuiInternalComposableSceneNode *node in ctx.view.composableNodes) {
+        if (!node.vectorPreparedVertexBuffer || node.vectorPreparedVertexBytes == 0) continue;
+        uint64_t bytes = node.vectorPreparedVertexBytes;
+        residentBytes = bytes > UINT64_MAX - residentBytes ? UINT64_MAX : residentBytes + bytes;
+    }
+    *outResidentBytes = residentBytes;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_vector_render_stats(
+    uint64_t session,
+    uint8_t *outSampleCount,
+    uint64_t *outMultisampleAttachmentBytes,
+    uint64_t *outPipelineBuildCount,
+    uint64_t *outGeometryPreparationCount,
+    uint64_t *outGeometryPreparedBytes) {
+    if (!outSampleCount || !outMultisampleAttachmentBytes || !outPipelineBuildCount ||
+        !outGeometryPreparationCount || !outGeometryPreparedBytes) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outSampleCount = 0; *outMultisampleAttachmentBytes = 0; *outPipelineBuildCount = 0;
+    *outGeometryPreparationCount = 0; *outGeometryPreparedBytes = 0;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.view || ctx.destroyed) return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    *outSampleCount = ctx.view.testComposableRenderSampleCount;
+    *outMultisampleAttachmentBytes = ctx.view.testComposableMultisampleAttachmentBytes;
+    *outPipelineBuildCount = ctx.view.testComposablePipelineBuildCount;
+    *outGeometryPreparationCount = ctx.view.testComposableVectorGeometryPreparationCount;
+    *outGeometryPreparedBytes = ctx.view.testComposableVectorGeometryPreparedBytes;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -7840,7 +11534,7 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_test_enqueue_composable_event(uint64_t session, uint32_t nodeIndex, uint32_t eventKind, const char *text) {
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
     if (!ctx || nodeIndex >= ctx.composableNodes.count) return ctx ? CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (eventKind < CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE || eventKind > CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (eventKind < CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE || eventKind > CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     return CjguiEnqueueComposableInteraction(ctx, eventKind, nodeIndex,
                                              text ? [NSString stringWithUTF8String:text] : @"", NSMakeRange(0, 0))
         ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
@@ -7870,6 +11564,106 @@ cjgui_internal_renderer_test_send_composable_pointer(uint64_t session, uint32_t 
         return CJGUI_INTERNAL_RENDERER_OK;
     }
     return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+// Test-only: simulates the modifier state a real pointer event would carry
+// (`mouseDown:`/`mouseUp:` set exactly this field from NSEvent.modifierFlags).
+// It lets a probe drive the production pointer activation path through
+// CjguiStampPointerModifiersOnQueuedInteraction without posting a synthetic
+// AppKit event, so the native -> queue -> FFI -> window -> controller payload
+// can be asserted directly.
+void cjgui_internal_renderer_test_set_pointer_modifiers(uint64_t session, int64_t modifierFlags) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return;
+    ctx.pointerModifierFlags = modifierFlags;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_activate_composable_point(uint64_t session, float pointX, float pointY) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (!isfinite(pointX) || !isfinite(pointY)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    CJGuiInternalComposableSceneNode *node = [overlay nodeAtPoint:NSMakePoint(pointX, pointY)];
+    if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSPoint point = NSMakePoint(pointX, pointY);
+    // This testing seam exercises the production physical press/release
+    // contract rather than preserving the retired immediate-on-down action.
+    [overlay updateHoverAtPoint:point];
+    [overlay mouseDownForNode:node atPoint:point];
+    [overlay completePressAtPoint:point];
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_send_composable_mouse(uint64_t session, uint32_t phase, float pointX, float pointY) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (!isfinite(pointX) || !isfinite(pointY)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    NSPoint point = NSMakePoint(pointX, pointY);
+    if (phase == 1) {
+        [overlay updateHoverAtPoint:point];
+        CJGuiInternalComposableSceneNode *node = [overlay nodeAtPoint:point];
+        if (node) [overlay mouseDownForNode:node atPoint:point];
+        else [overlay clearDraggingSelection];
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if (phase == 2) {
+        if (overlay.pointerCaptureActive) {
+            return [overlay updatePointerCaptureAtPoint:point]
+                ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+        if (overlay.pressedNodeId == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        [overlay updateHoverAtPoint:point];
+        CJGuiInternalComposableSceneNode *pressed = [overlay pressedPressableNode];
+        CJGuiInternalComposableSceneNode *hit = [overlay nodeAtPoint:point];
+        if (pressed && (!hit || hit.node.nodeId != pressed.node.nodeId ||
+            hit.node.resourceId != pressed.node.resourceId || hit.node.nodeKind != pressed.node.nodeKind)) {
+            [overlay cancelPressAtPoint:point];
+        }
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if (phase == 3) {
+        if (overlay.pointerCaptureActive) {
+            [overlay endPointerCaptureAtPoint:point cancelled:NO];
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        if (overlay.pressedNodeId == 0) {
+            [overlay clearDraggingSelection];
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        [overlay updateHoverAtPoint:point];
+        [overlay completePressAtPoint:point];
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if (phase == 4) {
+        if (overlay.pointerCaptureActive) {
+            [overlay endPointerCaptureAtPoint:point cancelled:YES];
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        if (overlay.pressedNodeId == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        [overlay cancelPressAtPoint:point];
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_cancel_composable_platform_interaction(uint64_t session) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    // `windowDidResignKey:` invokes this exact overlay method in production.
+    // Keep the seam at that boundary instead of emulating a distinct test
+    // event, so the press cancellation and FIFO event are identical.
+    [ctx.composableSceneOverlay cancelPointerCaptureForPlatformLoss];
+    return CJGUI_INTERNAL_RENDERER_OK;
 }
 
 CjguiInternalRendererStatus
@@ -8781,6 +12575,544 @@ const char *cjgui_internal_renderer_form_event_text(uint64_t session) {
     return stable.length > 0 ? stable.bytes : "";
 }
 
+const char *cjgui_internal_renderer_data_transfer_event_format(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return "";
+        __block const char *format = "";
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            format = cjgui_internal_renderer_data_transfer_event_format(session);
+        });
+        return format;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    NSData *stable = ctx.pumpedDataTransferFormatUtf8;
+    return stable.length > 0 ? stable.bytes : "";
+}
+
+const char *cjgui_internal_renderer_data_transfer_event_source_kind(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return "";
+        __block const char *kind = "";
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            kind = cjgui_internal_renderer_data_transfer_event_source_kind(session);
+        });
+        return kind;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    NSData *stable = ctx.pumpedDataTransferSourceKindUtf8;
+    return stable.length > 0 ? stable.bytes : "";
+}
+
+const char *cjgui_internal_renderer_data_transfer_event_source_identity(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return "";
+        __block const char *identity = "";
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            identity = cjgui_internal_renderer_data_transfer_event_source_identity(session);
+        });
+        return identity;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    NSData *stable = ctx.pumpedDataTransferSourceIdentityUtf8;
+    return stable.length > 0 ? stable.bytes : "";
+}
+
+int64_t cjgui_internal_renderer_data_transfer_event_source_id(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return -1;
+        __block int64_t sourceId = -1;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            sourceId = cjgui_internal_renderer_data_transfer_event_source_id(session);
+        });
+        return sourceId;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    return ctx ? ctx.pumpedDataTransferSourceId : -1;
+}
+
+#ifdef CJGUI_INTERNAL_TESTING
+static NSMenuItem *gCjguiCapturedComposableCommandMenuItem;
+
+static NSMenuItem *CjguiFindComposableCommandMenuItem(NSMenu *menu, NSString *commandId) {
+    if (!menu || commandId.length == 0) return nil;
+    for (NSInteger index = 0; index < (NSInteger)menu.numberOfItems; index++) {
+        NSMenuItem *item = [menu itemAtIndex:index];
+        if ([item.representedObject isKindOfClass:[NSString class]] &&
+            [(NSString *)item.representedObject isEqualToString:commandId]) {
+            return item;
+        }
+        NSMenuItem *nested = CjguiFindComposableCommandMenuItem(item.submenu, commandId);
+        if (nested) return nested;
+    }
+    return nil;
+}
+
+static BOOL CjguiPerformComposableCommandMenuItem(NSMenu *menu, NSString *commandId, NSMenuItem **outItem) {
+    NSMenuItem *item = CjguiFindComposableCommandMenuItem(menu, commandId);
+    NSMenu *parent = item.menu;
+    NSInteger index = parent ? [parent indexOfItem:item] : -1;
+    if (!item || !item.enabled || !parent || index < 0) return NO;
+    [parent performActionForItemAtIndex:index];
+    if (outItem) *outItem = item;
+    return YES;
+}
+
+static BOOL CjguiMenuContainsAction(NSMenu *menu, SEL action) {
+    if (!menu || !action) return NO;
+    for (NSInteger index = 0; index < (NSInteger)menu.numberOfItems; index++) {
+        NSMenuItem *item = [menu itemAtIndex:index];
+        if (item.action == action) return YES;
+        if (CjguiMenuContainsAction(item.submenu, action)) return YES;
+    }
+    return NO;
+}
+
+static NSMenuItem *CjguiFindMenuItemWithAction(NSMenu *menu, SEL action) {
+    if (!menu || !action) return nil;
+    for (NSInteger index = 0; index < (NSInteger)menu.numberOfItems; index++) {
+        NSMenuItem *item = [menu itemAtIndex:index];
+        if (item.action == action) return item;
+        NSMenuItem *nested = CjguiFindMenuItemWithAction(item.submenu, action);
+        if (nested) return nested;
+    }
+    return nil;
+}
+
+static BOOL CjguiMenuItemHasKeyEquivalent(NSMenuItem *item, NSString *key,
+                                          NSEventModifierFlags modifiers) {
+    return item && [item.keyEquivalent.lowercaseString isEqualToString:key] &&
+        item.keyEquivalentModifierMask == modifiers;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_composable_command_menu_projection(uint64_t *outRebuildCount,
+                                                                          uint32_t *outStandardMenuFlags) {
+    if (!outRebuildCount || !outStandardMenuFlags) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outRebuildCount = 0;
+    *outStandardMenuFlags = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_observe_composable_command_menu_projection(outRebuildCount,
+                                                                                               outStandardMenuFlags);
+        });
+        return status;
+    }
+    NSMenu *mainMenu = NSApp.mainMenu;
+    *outRebuildCount = gCjguiComposableCommandMenuRebuildCount;
+    if (CjguiMenuContainsAction(mainMenu, @selector(terminate:)) &&
+        CjguiMenuContainsAction(mainMenu, @selector(hide:))) {
+        *outStandardMenuFlags |= 1u;
+    }
+    if (CjguiMenuContainsAction(mainMenu, @selector(copy:)) &&
+        CjguiMenuContainsAction(mainMenu, @selector(paste:)) &&
+        CjguiMenuContainsAction(mainMenu, @selector(selectAll:))) {
+        *outStandardMenuFlags |= 2u;
+    }
+    return mainMenu && *outStandardMenuFlags == 3u ? CJGUI_INTERNAL_RENDERER_OK :
+        CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_current_composable_menu_item(const char *commandId,
+                                                                    uint32_t *outStateFlags) {
+    if (!outStateFlags) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outStateFlags = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_observe_current_composable_menu_item(commandId, outStateFlags);
+        });
+        return status;
+    }
+    NSString *nativeCommandId = commandId ? [NSString stringWithUTF8String:commandId] : nil;
+    NSMenuItem *item = CjguiFindComposableCommandMenuItem(NSApp.mainMenu, nativeCommandId);
+    if (!nativeCommandId || !item) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (item.enabled) *outStateFlags |= 1u;
+    if (item.state == NSControlStateValueOn) *outStateFlags |= 2u;
+    if (item.keyEquivalent.length > 0) *outStateFlags |= 4u;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// This does not synthesize a renderer event. It finds the NSMenuItem that the
+// accepted Cangjie command projection installed and invokes its AppKit action
+// exactly as a menu selection would. The Cangjie probe then drains the normal
+// FIFO and proves owner dispatch independently.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_prepare_composable_command_menu(uint64_t session,
+                                                              uint32_t *outReadinessFlags) {
+    if (!outReadinessFlags) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outReadinessFlags = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_prepare_composable_command_menu(session, outReadinessFlags);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.window || !ctx.app) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    // These short-lived notification observations belong exclusively to the
+    // integration test. They establish the AppKit precondition before menu
+    // selection, without adding a production focus policy or a nested run
+    // loop on the main thread.
+    __block BOOL didBecomeActive = NO;
+    __block BOOL didBecomeKey = NO;
+    NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+    id activeObserver = [center addObserverForName:NSApplicationDidBecomeActiveNotification
+                                             object:ctx.app queue:nil
+                                         usingBlock:^(NSNotification *note) {
+        (void)note;
+        didBecomeActive = YES;
+    }];
+    id keyObserver = [center addObserverForName:NSWindowDidBecomeKeyNotification
+                                          object:ctx.window queue:nil
+                                      usingBlock:^(NSNotification *note) {
+        (void)note;
+        didBecomeKey = YES;
+    }];
+    [ctx.app activateIgnoringOtherApps:YES];
+    [ctx.window makeKeyAndOrderFront:nil];
+    [ctx.app updateWindows];
+    [center removeObserver:activeObserver];
+    [center removeObserver:keyObserver];
+
+    if (CjguiIsMainThread()) *outReadinessFlags |= 1u;
+    if (ctx.app.activationPolicy == NSApplicationActivationPolicyRegular) *outReadinessFlags |= 2u;
+    if (ctx.app.isRunning) *outReadinessFlags |= 4u;
+    if (ctx.app.isActive) *outReadinessFlags |= 8u;
+    if (ctx.window.isVisible) *outReadinessFlags |= 16u;
+    if (ctx.window.canBecomeKeyWindow) *outReadinessFlags |= 32u;
+    if (ctx.window.isKeyWindow) *outReadinessFlags |= 64u;
+    if (ctx.app.keyWindow == ctx.window) *outReadinessFlags |= 128u;
+    if (didBecomeActive) *outReadinessFlags |= 256u;
+    if (didBecomeKey) *outReadinessFlags |= 512u;
+    return (ctx.app.keyWindow == ctx.window && ctx.window.isKeyWindow) ?
+        CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_current_composable_command_menu(uint32_t *outReadinessFlags) {
+    if (!outReadinessFlags) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outReadinessFlags = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_observe_current_composable_command_menu(outReadinessFlags);
+        });
+        return status;
+    }
+    NSApplication *app = NSApp;
+    NSWindow *window = app.keyWindow;
+    CJGuiInternalSession *ctx = window ? objc_getAssociatedObject(window, &CJGuiSessionWindowAssociationKey) : nil;
+    if (CjguiIsMainThread()) *outReadinessFlags |= 1u;
+    if (app.activationPolicy == NSApplicationActivationPolicyRegular) *outReadinessFlags |= 2u;
+    if (app.isRunning) *outReadinessFlags |= 4u;
+    if (app.isActive) *outReadinessFlags |= 8u;
+    if (window.isVisible) *outReadinessFlags |= 16u;
+    if (window.canBecomeKeyWindow) *outReadinessFlags |= 32u;
+    if (window.isKeyWindow) *outReadinessFlags |= 64u;
+    if (window && app.keyWindow == window && ctx && !ctx.destroyed) *outReadinessFlags |= 128u;
+    return (window && window.isKeyWindow && ctx && !ctx.destroyed) ?
+        CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_prepare_composable_command_menu_window(const char *title,
+                                                                     uint32_t *outReadinessFlags) {
+    if (!outReadinessFlags) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outReadinessFlags = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_prepare_composable_command_menu_window(title, outReadinessFlags);
+        });
+        return status;
+    }
+    NSString *targetTitle = title ? [NSString stringWithUTF8String:title] : nil;
+    if (!targetTitle) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSWindow *target = nil;
+    for (NSWindow *candidate in NSApp.windows) {
+        if ([candidate.title isEqualToString:targetTitle] &&
+            objc_getAssociatedObject(candidate, &CJGuiSessionWindowAssociationKey)) {
+            target = candidate;
+            break;
+        }
+    }
+    if (!target) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    // LaunchServices starts the normal bundle with regular activation policy,
+    // but a user foreground application may still own activation at this
+    // instant. This test-only request does not claim success; the Cangjie
+    // scheduler's following observation must prove the key transition.
+    [NSApp activateIgnoringOtherApps:YES];
+    [target makeKeyAndOrderFront:nil];
+    // `makeKeyAndOrderFront:` can enqueue the activation/key transition. Do
+    // not spin a nested run loop here: the normal Cangjie application
+    // scheduler owns the bounded wait. Its next observation must prove the
+    // actual key window before a test is allowed to select any menu item.
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_standard_quit_menu_item(void) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_invoke_standard_quit_menu_item();
+        });
+        return status;
+    }
+    NSMenuItem *item = CjguiFindMenuItemWithAction(NSApp.mainMenu, @selector(terminate:));
+    NSMenu *parent = item.menu;
+    NSInteger index = parent ? [parent indexOfItem:item] : -1;
+    if (item && item.enabled && parent && index >= 0) {
+        [parent performActionForItemAtIndex:index];
+    } else {
+        // A hidden normal application has no enabled main-menu item, yet its
+        // Dock/Application Quit path still enters this exact standard AppKit
+        // responder. This test seam invokes that responder rather than
+        // fabricating a Cangjie event or selecting a renderer session.
+        [NSApp terminate:nil];
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_set_application_hidden(uint8_t hidden,
+                                                     uint32_t *outNoKeyWindow) {
+    if (!outNoKeyWindow) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outNoKeyWindow = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_set_application_hidden(hidden, outNoKeyWindow);
+        });
+        return status;
+    }
+    if (hidden) {
+        [NSApp hide:nil];
+    } else {
+        [NSApp unhideWithoutActivation];
+    }
+    *outNoKeyWindow = NSApp.keyWindow ? 0u : 1u;
+    // AppKit may deliver the hide transition on the next ordinary scheduler
+    // turn. The test observes the resulting no-key state separately instead
+    // of spinning a nested main loop here.
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_standard_edit_shortcuts(uint32_t *outShortcutFlags) {
+    if (!outShortcutFlags) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outShortcutFlags = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_observe_standard_edit_shortcuts(outShortcutFlags);
+        });
+        return status;
+    }
+    NSMenuItem *undoItem = CjguiFindMenuItemWithAction(NSApp.mainMenu, @selector(undo:));
+    NSMenuItem *redoItem = CjguiFindMenuItemWithAction(NSApp.mainMenu, @selector(redo:));
+    if (!undoItem || !redoItem) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (CjguiMenuItemHasKeyEquivalent(undoItem, @"z", NSEventModifierFlagCommand)) {
+        *outShortcutFlags |= 1u;
+    }
+    if (CjguiMenuItemHasKeyEquivalent(redoItem, @"z",
+                                      NSEventModifierFlagCommand | NSEventModifierFlagShift)) {
+        *outShortcutFlags |= 2u;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_composable_menu_item(uint64_t session, const char *commandId) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_invoke_composable_menu_item(session, commandId);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    NSString *nativeCommandId = commandId ? [NSString stringWithUTF8String:commandId] : nil;
+    // This helper intentionally performs no activation, focus mutation or
+    // nested run loop. The preceding preparation step must already have made
+    // a normal AppKit window key; production dispatch likewise resolves only
+    // from the current NSApp.keyWindow at selection time.
+    if (!ctx || !ctx.window || !nativeCommandId || ctx.window != NSApp.keyWindow) {
+        NSLog(@"cjgui command menu test: invalid key session=%@ key=%@", ctx.window, NSApp.keyWindow);
+        return ctx ? CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    NSUInteger pendingBefore = ctx.pendingInteractions.count;
+    NSMenuItem *selectedItem = nil;
+    if (!CjguiPerformComposableCommandMenuItem(NSApp.mainMenu, nativeCommandId, &selectedItem) || !selectedItem) {
+        NSLog(@"cjgui command menu test: menu item missing id=%@ root=%@", nativeCommandId, NSApp.mainMenu);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    CJGuiInternalQueuedInteraction *last = ctx.pendingInteractions.lastObject;
+    if (!(ctx.pendingInteractions.count == pendingBefore + 1 &&
+        last.kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND &&
+        [last.formText isEqualToString:nativeCommandId])) {
+        NSLog(@"cjgui command menu test: no FIFO action before=%lu after=%lu kind=%u text=%@", (unsigned long)pendingBefore,
+              (unsigned long)ctx.pendingInteractions.count, last.kind, last.formText);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_current_composable_menu_item(const char *commandId) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_invoke_current_composable_menu_item(commandId);
+        });
+        return status;
+    }
+    NSWindow *window = NSApp.keyWindow;
+    CJGuiInternalSession *ctx = window ? objc_getAssociatedObject(window, &CJGuiSessionWindowAssociationKey) : nil;
+    NSString *nativeCommandId = commandId ? [NSString stringWithUTF8String:commandId] : nil;
+    if (!window || !ctx || ctx.destroyed || !nativeCommandId) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSUInteger pendingBefore = ctx.pendingInteractions.count;
+    NSMenuItem *selectedItem = nil;
+    if (!CjguiPerformComposableCommandMenuItem(NSApp.mainMenu, nativeCommandId, &selectedItem) || !selectedItem) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    CJGuiInternalQueuedInteraction *last = ctx.pendingInteractions.lastObject;
+    return (ctx.pendingInteractions.count == pendingBefore + 1 &&
+            last.kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND &&
+            [last.formText isEqualToString:nativeCommandId]) ?
+        CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_dispatch_current_composable_command_shortcut(
+    uint16_t keyCode, uint64_t modifiers, const char *characters) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_dispatch_current_composable_command_shortcut(
+                keyCode, modifiers, characters);
+        });
+        return status;
+    }
+    NSWindow *window = NSApp.keyWindow;
+    CJGuiInternalSession *ctx = window ? objc_getAssociatedObject(window, &CJGuiSessionWindowAssociationKey) : nil;
+    NSString *text = characters ? [NSString stringWithUTF8String:characters] : nil;
+    if (!window || !ctx || ctx.destroyed || text.length == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    // A physical Shift-Cmd-Z event has characters "Z" but
+    // charactersIgnoringModifiers "z". Using the same value for both makes
+    // AppKit key-equivalent matching diverge from a normal keyboard event.
+    NSString *unmodifiedText = text.lowercaseString;
+    NSUInteger pendingBefore = ctx.pendingInteractions.count;
+    NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                 modifierFlags:(NSEventModifierFlags)modifiers timestamp:0.0
+                                      windowNumber:window.windowNumber context:nil characters:text
+                         charactersIgnoringModifiers:unmodifiedText isARepeat:NO keyCode:keyCode];
+    if (!event) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    [NSApp sendEvent:event];
+    return ctx.pendingInteractions.count == pendingBefore + 1 ?
+        CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_dispatch_current_composable_key(
+    uint16_t keyCode, uint64_t modifiers, const char *characters) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_dispatch_current_composable_key(
+                keyCode, modifiers, characters);
+        });
+        return status;
+    }
+    NSWindow *window = NSApp.keyWindow;
+    CJGuiInternalSession *ctx = window ? objc_getAssociatedObject(window, &CJGuiSessionWindowAssociationKey) : nil;
+    NSString *text = characters ? [NSString stringWithUTF8String:characters] : nil;
+    if (!window || !ctx || ctx.destroyed || text.length == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                 modifierFlags:(NSEventModifierFlags)modifiers timestamp:0.0
+                                  windowNumber:window.windowNumber context:nil characters:text
+                     charactersIgnoringModifiers:text isARepeat:NO keyCode:keyCode];
+    if (!event) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSUInteger pendingBefore = ctx.pendingInteractions.count;
+    [NSApp sendEvent:event];
+    // At least one queued interaction means the event was delivered into the
+    // production route; a Command chord may legitimately produce a declared
+    // shortcut interaction in addition to the generic navigation route, so the
+    // probe asserts the delivered kinds/texts instead of a fixed count.
+    return ctx.pendingInteractions.count > pendingBefore ?
+        CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_capture_current_composable_menu_item(const char *commandId) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_capture_current_composable_menu_item(commandId);
+        });
+        return status;
+    }
+    NSWindow *window = NSApp.keyWindow;
+    CJGuiInternalSession *ctx = window ? objc_getAssociatedObject(window, &CJGuiSessionWindowAssociationKey) : nil;
+    NSString *nativeCommandId = commandId ? [NSString stringWithUTF8String:commandId] : nil;
+    NSMenuItem *item = CjguiFindComposableCommandMenuItem(NSApp.mainMenu, nativeCommandId);
+    if (!window || !ctx || ctx.destroyed || !item || !item.enabled) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    gCjguiCapturedComposableCommandMenuItem = item;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_captured_composable_menu_item(void) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_invoke_captured_composable_menu_item();
+        });
+        return status;
+    }
+    NSWindow *keyWindow = NSApp.keyWindow;
+    CJGuiInternalSession *target = keyWindow ? objc_getAssociatedObject(keyWindow, &CJGuiSessionWindowAssociationKey) : nil;
+    NSMenuItem *item = gCjguiCapturedComposableCommandMenuItem;
+    if (!keyWindow || !target || target.destroyed || !item || !item.enabled || !item.target || !item.action) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSUInteger pendingBefore = target.pendingInteractions.count;
+    // A key-window transition rebuilds NSApp.mainMenu, so an old item no
+    // longer has a parent menu/index. Replaying that real item's retained
+    // target and selector is the AppKit representation of a delayed callback;
+    // the dispatcher still resolves the receiver from the *current* key
+    // window and then queues the ordinary FIFO event.
+    [NSApp sendAction:item.action to:item.target from:item];
+    CJGuiInternalQueuedInteraction *last = target.pendingInteractions.lastObject;
+    return (target.pendingInteractions.count == pendingBefore + 1 &&
+            last.kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND) ?
+        CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+#endif
+
 #ifdef CJGUI_INTERNAL_TESTING
 // Kept out of the production header/ABI. The focused probe uses this seam to
 // prove ordering independently of accessibility or desktop automation.
@@ -8795,6 +13127,306 @@ int cjgui_internal_renderer_test_enqueue_form_event(
     return CjguiEnqueueInteraction(
         ctx, kind, fieldIndex, text ? [NSString stringWithUTF8String:text] : @"",
         selectionStart, selectionEnd) ? 1 : 0;
+}
+#endif
+
+#ifdef CJGUI_INTERNAL_TESTING
+// This synthetic info object exists only to enter the production AppKit
+// destination callbacks deterministically. It deliberately implements the
+// two NSDraggingInfo facts the overlay reads; it is not an alternate transfer
+// path and never crosses the public/Cangjie boundary.
+@interface CjguiInternalTestDraggingInfo : NSObject
+@property(nonatomic, assign) NSPoint location;
+@property(nonatomic, strong) NSPasteboard *pasteboard;
+@end
+
+@implementation CjguiInternalTestDraggingInfo
+- (NSPoint)draggingLocation { return self.location; }
+- (NSPasteboard *)draggingPasteboard { return self.pasteboard; }
+@end
+
+static NSArray<NSPasteboardItem *> *CjguiCopyPasteboardItems(NSPasteboard *pasteboard) {
+    NSMutableArray<NSPasteboardItem *> *saved = [NSMutableArray array];
+    for (NSPasteboardItem *item in pasteboard.pasteboardItems ?: @[]) {
+        NSPasteboardItem *copy = [[NSPasteboardItem alloc] init];
+        for (NSPasteboardType type in item.types) {
+            NSData *data = [item dataForType:type];
+            if (data) [copy setData:data forType:type];
+        }
+        [saved addObject:copy];
+    }
+    return saved;
+}
+
+static void CjguiConditionallyRestorePasteboard(NSPasteboard *pasteboard,
+                                                 NSArray<NSPasteboardItem *> *saved,
+                                                 NSInteger expectedChangeCount) {
+    // Do not overwrite a newer external clipboard write while this tiny test
+    // seam was running. Ordinary production transfers never restore it.
+    if (pasteboard.changeCount != expectedChangeCount) return;
+    [pasteboard clearContents];
+    if (saved.count > 0) [pasteboard writeObjects:saved];
+}
+
+static CJGuiInternalComposableDataTransferItem *CjguiTestDataTransferItem(
+    CJGuiInternalSession *ctx, uint64_t nodeId, uint32_t role) {
+    if (!ctx) return nil;
+    for (CJGuiInternalComposableDataTransferItem *item in ctx.composableDataTransferItems) {
+        if (item.item.nodeId == nodeId && item.item.role == role &&
+            item.item.projectionVersion == ctx.composableSceneVersion) return item;
+    }
+    return nil;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_copy(uint64_t session, uint64_t sourceNodeId) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_composable_data_transfer_copy(session, sourceNodeId);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    CJGuiInternalComposableDataTransferItem *item = CjguiTestDataTransferItem(
+        ctx, sourceNodeId, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE);
+    if (!item) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    NSArray<NSPasteboardItem *> *saved = CjguiCopyPasteboardItems(pasteboard);
+    CjguiInternalRendererStatus status = CjguiCopyComposableDataTransferItem(ctx, item);
+    NSInteger expectedChangeCount = pasteboard.changeCount;
+    NSData *copied = [pasteboard dataForType:CjguiPasteboardTypeForDataTransferFormat(item.format)];
+    BOOL matches = copied && [copied isEqualToData:[item.payload dataUsingEncoding:NSUTF8StringEncoding]];
+    CjguiConditionallyRestorePasteboard(pasteboard, saved, expectedChangeCount);
+    return status == CJGUI_INTERNAL_RENDERER_OK && matches ? status : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_paste(uint64_t session, uint64_t targetNodeId,
+                                                             const char *externalPayload) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_composable_data_transfer_paste(session, targetNodeId, externalPayload);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    CJGuiInternalComposableDataTransferItem *item = CjguiTestDataTransferItem(
+        ctx, targetNodeId, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET);
+    NSString *payload = externalPayload ? [NSString stringWithUTF8String:externalPayload] : nil;
+    if (!item) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    if (!payload) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    NSArray<NSPasteboardItem *> *saved = CjguiCopyPasteboardItems(pasteboard);
+    NSPasteboardItem *externalItem = [[NSPasteboardItem alloc] init];
+    NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
+    NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
+    CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (externalItem && payloadData && type) {
+        [externalItem setData:payloadData forType:type];
+    }
+    if (externalItem && payloadData && type && [pasteboard clearContents] && [pasteboard writeObjects:@[externalItem]]) {
+        NSInteger expectedChangeCount = pasteboard.changeCount;
+        status = CjguiReadComposableDataTransferItem(ctx, item, pasteboard,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_PASTE);
+        CjguiConditionallyRestorePasteboard(pasteboard, saved, expectedChangeCount);
+    } else {
+        CjguiConditionallyRestorePasteboard(pasteboard, saved, pasteboard.changeCount);
+    }
+    return status;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_drop(uint64_t session, uint64_t targetNodeId,
+                                                            const char *externalPayload) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_composable_data_transfer_drop(session, targetNodeId,
+                                                                                  externalPayload);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalComposableDataTransferItem *item = CjguiTestDataTransferItem(
+        ctx, targetNodeId, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET);
+    NSString *payload = externalPayload ? [NSString stringWithUTF8String:externalPayload] : nil;
+    if (!ctx || !ctx.composableSceneOverlay || !item) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (!payload) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
+    NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
+    if (!payloadData || payloadData.length > item.item.maximumPayloadBytes || !type) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    CJGuiInternalComposableSceneNode *target = nil;
+    for (CJGuiInternalComposableSceneNode *node in overlay.nodes) {
+        if (node.node.nodeId == item.item.nodeId && node.node.resourceId == item.item.resourceId &&
+            node.node.nodeKind == item.item.nodeKind) {
+            target = node;
+            break;
+        }
+    }
+    if (!target) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    NSPasteboard *pasteboard = [NSPasteboard pasteboardWithUniqueName];
+    NSPasteboardItem *pasteboardItem = [[NSPasteboardItem alloc] init];
+    if (!pasteboard || !pasteboardItem || ![pasteboard clearContents]) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    [pasteboardItem setData:payloadData forType:type];
+    if (![pasteboard writeObjects:@[pasteboardItem]]) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSRect targetRect = CjguiComposableRect(target, overlay);
+    NSPoint localPoint = NSMakePoint(NSMidX(targetRect), NSMidY(targetRect));
+    CjguiInternalTestDraggingInfo *info = [[CjguiInternalTestDraggingInfo alloc] init];
+    info.location = [overlay convertPoint:localPoint toView:nil];
+    info.pasteboard = pasteboard;
+    id<NSDraggingInfo> draggingInfo = (id<NSDraggingInfo>)info;
+    if ([overlay draggingEntered:draggingInfo] != NSDragOperationCopy ||
+        ![overlay prepareForDragOperation:draggingInfo] ||
+        ![overlay performDragOperation:draggingInfo]) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_trace_composable_data_transfer_drag(
+    uint64_t session, float sourceX, float sourceY, float dragX, float dragY, uint32_t *outTrace) {
+    if (!outTrace) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outTrace = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_trace_composable_data_transfer_drag(
+                session, sourceX, sourceY, dragX, dragY, outTrace);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay || !ctx.window || !isfinite(sourceX) || !isfinite(sourceY) ||
+        !isfinite(dragX) || !isfinite(dragY)) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    NSPoint sourcePoint = NSMakePoint(sourceX, sourceY);
+    NSPoint dragPoint = NSMakePoint(dragX, dragY);
+    CJGuiInternalComposableSceneNode *source = [overlay nodeAtPoint:sourcePoint];
+    if (!source) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outTrace |= 1u;
+    // `NSEvent.locationInWindow` uses window coordinates, whereas this
+    // flipped composable overlay uses top-left layout coordinates.
+    NSPoint downLocation = [overlay convertPoint:sourcePoint toView:nil];
+    NSPoint dragLocation = [overlay convertPoint:dragPoint toView:nil];
+    NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                        location:downLocation modifierFlags:0 timestamp:0.0
+                                   windowNumber:ctx.window.windowNumber context:nil eventNumber:1
+                                     clickCount:1 pressure:1.0];
+    NSEvent *drag = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+                                        location:dragLocation modifierFlags:0 timestamp:0.01
+                                   windowNumber:ctx.window.windowNumber context:nil eventNumber:1
+                                     clickCount:1 pressure:1.0];
+    if (!down || !drag) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    [overlay mouseDown:down];
+    if (overlay.pressedNodeId != source.node.nodeId ||
+        overlay.pressedResourceId != source.node.resourceId ||
+        overlay.pressedNodeKind != source.node.nodeKind) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outTrace |= 2u;
+    if (![overlay dataTransferItemForNode:source role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE] ||
+        hypot(dragPoint.x - sourcePoint.x, dragPoint.y - sourcePoint.y) < 3.0) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outTrace |= 4u;
+    overlay.testDataTransferDragSessionBegan = NO;
+    [overlay mouseDragged:drag];
+    if (overlay.testDataTransferDragSessionBegan) *outTrace |= 8u;
+    if (!overlay.testDataTransferDragSessionBegan && overlay.pressedNodeId != 0) {
+        [overlay cancelPressAtPoint:dragPoint];
+        [overlay clearPressRouting];
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_hover_target(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_composable_data_transfer_hover_target(session);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    CJGuiInternalComposableSceneNode *target = nil;
+    for (CJGuiInternalComposableSceneNode *node in overlay.nodes) {
+        if ([overlay dataTransferItemForNode:node role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET]) {
+            target = node;
+            break;
+        }
+    }
+    if (!target) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    NSRect bounds = CjguiComposableRect(target, overlay);
+    NSPoint point = NSMakePoint(NSMidX(bounds), NSMidY(bounds));
+    [overlay setDataTransferHoverTarget:target atPoint:point];
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_hover_cleared(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_composable_data_transfer_hover_cleared(session);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    return overlay.dataTransferHoverNodeId == 0 && overlay.dataTransferHoverResourceId == -1 &&
+        overlay.dataTransferHoverNodeKind == 0 ? CJGUI_INTERNAL_RENDERER_OK :
+        CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_cancel(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_composable_data_transfer_cancel(session);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    CjguiInternalRendererStatus status =
+        cjgui_internal_renderer_test_composable_data_transfer_hover_target(session);
+    if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+    // Cancellation enters the same production callback as AppKit. It emits
+    // only a paired hover leave; it never reads a pasteboard or queues an
+    // owner-facing PASTE/DROP event.
+    [ctx.composableSceneOverlay draggingExited:nil];
+    return CJGUI_INTERNAL_RENDERER_OK;
 }
 #endif
 
@@ -8870,6 +13502,7 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         outEvent->nodeKind = interaction.nodeKind;
         outEvent->pointerX = interaction.pointerX;
         outEvent->pointerY = interaction.pointerY;
+        outEvent->modifierFlags = interaction.modifierFlags;
 #ifdef CJGUI_INTERNAL_TESTING
         ctx.testComposableLastPumpedKind = interaction.kind;
         ctx.testComposableLastPumpedNodeId = interaction.nodeId;
@@ -8877,15 +13510,46 @@ cjgui_internal_renderer_pump_event(uint64_t session,
 #endif
         ctx.pumpedFormText = interaction.formText ?: @"";
         ctx.pumpedFormTextUtf8 = CjguiStableUtf8CString(ctx.pumpedFormText);
+        ctx.pumpedDataTransferFormat = interaction.dataTransferFormat ?: @"";
+        ctx.pumpedDataTransferFormatUtf8 = CjguiStableUtf8CString(ctx.pumpedDataTransferFormat);
+        ctx.pumpedDataTransferSourceKind = interaction.dataTransferSourceKind ?: @"";
+        ctx.pumpedDataTransferSourceKindUtf8 = CjguiStableUtf8CString(ctx.pumpedDataTransferSourceKind);
+        ctx.pumpedDataTransferSourceIdentity = interaction.dataTransferSourceIdentity ?: @"";
+        ctx.pumpedDataTransferSourceIdentityUtf8 = CjguiStableUtf8CString(ctx.pumpedDataTransferSourceIdentity);
+        ctx.pumpedDataTransferSourceId = interaction.dataTransferSourceId;
     } else if (outEvent && ctx.pendingInputQueueFullNotice) {
         ctx.pendingInputQueueFullNotice = NO;
         ctx.pumpedFormText = @"";
         ctx.pumpedFormTextUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferFormat = @"";
+        ctx.pumpedDataTransferFormatUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceKind = @"";
+        ctx.pumpedDataTransferSourceKindUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceIdentity = @"";
+        ctx.pumpedDataTransferSourceIdentityUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceId = -1;
         outEvent->kind = CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_INPUT_QUEUE_FULL;
     } else if (outEvent && ctx.closeRequested) {
         ctx.pumpedFormText = @"";
         ctx.pumpedFormTextUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferFormat = @"";
+        ctx.pumpedDataTransferFormatUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceKind = @"";
+        ctx.pumpedDataTransferSourceKindUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceIdentity = @"";
+        ctx.pumpedDataTransferSourceIdentityUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceId = -1;
         outEvent->kind = CJGUI_INTERNAL_RENDERER_EVENT_CLOSE_REQUESTED;
+    } else if (outEvent) {
+        ctx.pumpedFormText = @"";
+        ctx.pumpedFormTextUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferFormat = @"";
+        ctx.pumpedDataTransferFormatUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceKind = @"";
+        ctx.pumpedDataTransferSourceKindUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceIdentity = @"";
+        ctx.pumpedDataTransferSourceIdentityUtf8 = CjguiStableUtf8CString(@"");
+        ctx.pumpedDataTransferSourceId = -1;
     }
 
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -8950,7 +13614,22 @@ cjgui_internal_renderer_destroy(uint64_t session) {
         return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     }
 
+    // Remove scalar requester/subscriber interests while this token and
+    // generation are still valid. A close never cancels another window's
+    // shared load, but it must make this window invisible to late completion.
+    CjguiRemoveComposableImageSubscriptions(ctx);
     ctx.destroyed = YES;
+#ifdef CJGUI_INTERNAL_TESTING
+    // The retained-item seam is process-test-only. Clearing it as any native
+    // session retires guarantees a later probe cannot call an item from a
+    // prior lifecycle after windows begin closing.
+    gCjguiCapturedComposableCommandMenuItem = nil;
+#endif
+    [ctx.composableCommandMenuItems removeAllObjects];
+    [ctx.stagedComposableCommandMenuItems removeAllObjects];
+    ctx.composableCommandMenuVersion = 0;
+    ctx.stagedComposableCommandMenuVersion = 0;
+    if (ctx.window == NSApp.keyWindow) CjguiRebuildComposableCommandMenuForKeyWindow();
 
     if (ctx.view) {
         [ctx.sharedOperationOverlay removeFromSuperview];
@@ -8975,10 +13654,17 @@ cjgui_internal_renderer_destroy(uint64_t session) {
     ctx.view = nil;
     [ctx.composableNodes removeAllObjects];
     [ctx.stagedComposableNodes removeAllObjects];
-    [ctx.composableImageTextureCache removeAllObjects];
-    [ctx.composableImageResources removeAllObjects];
-    [ctx.composableImageLoaders removeAllObjects];
-    [ctx.composableImagePendingKeys removeAllObjects];
+    [ctx.composableCommandMenuItems removeAllObjects];
+    [ctx.stagedComposableCommandMenuItems removeAllObjects];
+    // Retire the composable data-transfer declarations with the session. The
+    // accepted/staged arrays are the only strong owners of those items; a
+    // closed window must not keep its last accepted declarations alive, and a
+    // late callback must not find them under a destroyed session.
+    [ctx.composableDataTransferItems removeAllObjects];
+    [ctx.stagedComposableDataTransferItems removeAllObjects];
+    ctx.stagedComposableDataTransferVersion = 0;
+    CjguiReleaseComposableImageDomain(ctx);
+    ctx.composableImageDomain = nil;
     ctx.window = nil;
     ctx.commandQueue = nil;
     ctx.device = nil;

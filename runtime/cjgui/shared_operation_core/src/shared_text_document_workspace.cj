@@ -129,6 +129,94 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
         return synchronized(lock) { contextSnapshotForTargetsUnlocked(targets) }
     }
 
+    public func transferTargetIdentity(): String {
+        return synchronized(lock) { streamIdentity }
+    }
+
+    /// Creates a bounded text offer from a validated UTF-8 range. The offer
+    /// copies bytes out of the document at one version and retains no owner or
+    /// native text object.
+    public func textTransferOfferForRangeFromHuman(
+        documentId: Int64,
+        range: CjguiTextDocumentRange
+    ): ?CjguiSharedOperationTransferOffer {
+        return synchronized(lock) {
+            if (let Some(entry) <- openEntryForIdUnlocked(documentId)) {
+                let snapshot = entry.document.snapshot()
+                if (!entry.document.acceptsRange(range)) { return None }
+                let bytes = snapshot.content.toArray()
+                try {
+                    let text = String.fromUtf8(bytes.slice(range.start, range.end - range.start))
+                    return CjguiSharedOperationTransferOffer.create(
+                        "COPY", "text_document", streamIdentity, documentId,
+                        CjguiSharedOperationTransferFormat.utf8Text(), text)
+                } catch (_) {
+                    return None
+                }
+            }
+            return None
+        }
+    }
+
+    public func acceptTextTransferFromHuman(
+        documentId: Int64,
+        range: CjguiTextDocumentRange,
+        offer: CjguiSharedOperationTransferOffer
+    ): CjguiSharedOperationTransferResult {
+        return synchronized(lock) {
+            if (let Some(request) <- CjguiSharedOperationTransferAcceptRequest.create(
+                "text_document", streamIdentity, documentId, offer,
+                CjguiSharedOperationTransferFormat.utf8Text(), 0)) {
+                let _ = request
+                if (offer.format.kind != "UTF8_TEXT") {
+                    return CjguiSharedOperationTransferResult.rejected(
+                        0, "unsupported_transfer_format", format: Some(CjguiSharedOperationTransferFormat.utf8Text()))
+                }
+                if (let Some(entry) <- entryForIdUnlocked(documentId)) {
+                    if (!entry.isOpen) {
+                        return CjguiSharedOperationTransferResult.rejected(
+                            entry.document.version(), "document_closed", format: Some(request.acceptedFormat))
+                    }
+                    let currentVersion = entry.document.version()
+                    if (!entry.document.acceptsRange(range)) {
+                        return CjguiSharedOperationTransferResult.rejected(
+                            currentVersion, "invalid_text_boundary", format: Some(request.acceptedFormat))
+                    }
+                    let action = editUnlocked(documentId, "REPLACE_RANGE", range, offer.payload, currentVersion, false)
+                    return CjguiSharedOperationTransferResult.fromActionResult(action, offer)
+                }
+                return CjguiSharedOperationTransferResult.rejected(
+                    0, "unknown_document", format: Some(request.acceptedFormat))
+            }
+            return CjguiSharedOperationTransferResult.rejected(
+                0, "invalid_transfer", format: Some(CjguiSharedOperationTransferFormat.utf8Text()))
+        }
+    }
+
+    /// External text acceptance enters the existing range mutation and
+    /// document-version CAS path. No transfer-specific mutation is added.
+    public func acceptTextTransferFromExternal(
+        documentId: Int64,
+        range: CjguiTextDocumentRange,
+        offer: CjguiSharedOperationTransferOffer,
+        expectedVersion: Int64
+    ): CjguiSharedOperationTransferResult {
+        return synchronized(lock) {
+            if (let Some(request) <- CjguiSharedOperationTransferAcceptRequest.create(
+                "text_document", streamIdentity, documentId, offer,
+                CjguiSharedOperationTransferFormat.utf8Text(), expectedVersion)) {
+                if (request.offer.format.kind != "UTF8_TEXT") {
+                    return CjguiSharedOperationTransferResult.rejected(
+                        expectedVersion, "unsupported_transfer_format", format: Some(request.acceptedFormat))
+                }
+                let action = editUnlocked(documentId, "REPLACE_RANGE", range, offer.payload, expectedVersion, true)
+                return CjguiSharedOperationTransferResult.fromActionResult(action, offer)
+            }
+            return CjguiSharedOperationTransferResult.rejected(
+                expectedVersion, "invalid_transfer", format: Some(CjguiSharedOperationTransferFormat.utf8Text()))
+        }
+    }
+
     public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> {
         return ArrayList<CjguiSharedOperationActionDescriptor>([
             descriptor("SELECT_DOCUMENT", "选择文档", ArrayList<CjguiSharedOperationParameterDescriptor>()),

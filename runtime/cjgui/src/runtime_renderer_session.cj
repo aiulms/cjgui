@@ -118,6 +118,28 @@ struct CjguiInternalRendererEvent {
     var nodeKind: UInt32 = 0
     var pointerX: Int64 = 0
     var pointerY: Int64 = 0
+    var modifierFlags: Int64 = 0
+}
+
+@C
+struct CjguiInternalRendererComposableDataTransferItem {
+    var nodeId: UInt64 = 0
+    var projectionVersion: UInt64 = 0
+    var resourceId: Int64 = -1
+    var nodeKind: UInt32 = 0
+    var role: UInt32 = 0
+    var maximumPayloadBytes: UInt32 = 0
+    var sourceId: Int64 = -1
+    init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, nodeKind!: UInt32, role!: UInt32,
+        maximumPayloadBytes!: UInt32, sourceId!: Int64) {
+        this.nodeId = nodeId
+        this.projectionVersion = projectionVersion
+        this.resourceId = resourceId
+        this.nodeKind = nodeKind
+        this.role = role
+        this.maximumPayloadBytes = maximumPayloadBytes
+        this.sourceId = sourceId
+    }
 }
 
 @C
@@ -345,9 +367,10 @@ struct InternalRendererPumpResult {
     let nodeKind: UInt32
     let pointerX: Int64
     let pointerY: Int64
+    let modifierFlags: Int64
     init(status: Int32, eventKind: UInt32, recordIndex: UInt32, selectionStart: UInt32, selectionEnd: UInt32,
         nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64, nodeKind: UInt32, pointerX: Int64,
-        pointerY: Int64) {
+        pointerY: Int64, modifierFlags: Int64) {
         this.status = status
         this.eventKind = eventKind
         this.recordIndex = recordIndex
@@ -359,6 +382,7 @@ struct InternalRendererPumpResult {
         this.nodeKind = nodeKind
         this.pointerX = pointerX
         this.pointerY = pointerY
+        this.modifierFlags = modifierFlags
     }
 }
 
@@ -410,6 +434,14 @@ struct InternalRendererComposableDisplayProgressResult {
 foreign {
     func cjgui_internal_renderer_request_application_stop(): Unit
 
+    func cjgui_internal_renderer_complete_application_exit_request(): Unit
+
+    func cjgui_internal_renderer_retain_application_exit_lifecycle_owner(): Unit
+
+    func cjgui_internal_renderer_release_application_exit_lifecycle_owner(): Unit
+
+    func cjgui_internal_renderer_has_unkeyed_application_exit_request(): UInt8
+
     func cjgui_internal_renderer_create(
         config: CPointer<CjguiInternalRendererConfig>,
         outStatus: CPointer<Int32>
@@ -440,10 +472,47 @@ foreign {
         imageResourceVersion: UInt64
     ): Int32
 
+    func cjgui_internal_renderer_configure_composable_data_transfer(
+        session: UInt64,
+        projectionVersion: UInt64,
+        itemCount: UInt32
+    ): Int32
+
+    func cjgui_internal_renderer_set_composable_data_transfer_item(
+        session: UInt64,
+        itemIndex: UInt32,
+        item: CPointer<CjguiInternalRendererComposableDataTransferItem>,
+        format: CString,
+        payload: CString,
+        sourceKind: CString,
+        sourceIdentity: CString
+    ): Int32
+
     func cjgui_internal_renderer_present_composable_scene(
         session: UInt64,
         outObservation: CPointer<CjguiInternalRendererFrameObservation>
     ): Int32
+
+    func cjgui_internal_renderer_configure_composable_command_menu(
+        session: UInt64,
+        projectionVersion: UInt64,
+        itemCount: UInt32
+    ): Int32
+
+    func cjgui_internal_renderer_set_composable_command_menu_item(
+        session: UInt64,
+        itemIndex: UInt32,
+        commandId: CString,
+        title: CString,
+        menuGroup: CString,
+        shortcut: CString,
+        menuSection: UInt32,
+        focusScope: UInt64,
+        enabled: UInt8,
+        checked: UInt8
+    ): Int32
+
+    func cjgui_internal_renderer_commit_composable_command_menu(session: UInt64): Int32
 
     func cjgui_internal_renderer_prepare_composable_image_resource(
         session: UInt64,
@@ -553,6 +622,10 @@ foreign {
     func cjgui_internal_renderer_set_shared_form_status(session: UInt64, statusText: CString): Int32
 
     func cjgui_internal_renderer_form_event_text(session: UInt64): CString
+    func cjgui_internal_renderer_data_transfer_event_format(session: UInt64): CString
+    func cjgui_internal_renderer_data_transfer_event_source_kind(session: UInt64): CString
+    func cjgui_internal_renderer_data_transfer_event_source_identity(session: UInt64): CString
+    func cjgui_internal_renderer_data_transfer_event_source_id(session: UInt64): Int64
 
     func cjgui_internal_renderer_request_close(session: UInt64): Int32
 
@@ -569,6 +642,22 @@ foreign {
 
 func internalRendererRequestApplicationStop(): Unit {
     unsafe { cjgui_internal_renderer_request_application_stop() }
+}
+
+func internalRendererCompleteApplicationExitRequest(): Unit {
+    unsafe { cjgui_internal_renderer_complete_application_exit_request() }
+}
+
+func internalRendererRetainApplicationExitLifecycleOwner(): Unit {
+    unsafe { cjgui_internal_renderer_retain_application_exit_lifecycle_owner() }
+}
+
+func internalRendererReleaseApplicationExitLifecycleOwner(): Unit {
+    unsafe { cjgui_internal_renderer_release_application_exit_lifecycle_owner() }
+}
+
+func internalRendererHasUnkeyedApplicationExitRequest(): Bool {
+    return unsafe { cjgui_internal_renderer_has_unkeyed_application_exit_request() } != 0u8
 }
 
 func internalRendererCreate(config: CjguiInternalRendererConfig): InternalRendererCreateResult {
@@ -616,12 +705,68 @@ func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32): InternalRend
         status = cjgui_internal_renderer_pump_event(session, timeoutMs, inout event)
     }
     return InternalRendererPumpResult(status, event.kind, event.recordIndex, event.selectionStart, event.selectionEnd,
-        event.nodeId, event.projectionVersion, event.resourceId, event.nodeKind, event.pointerX, event.pointerY)
+        event.nodeId, event.projectionVersion, event.resourceId, event.nodeKind, event.pointerX, event.pointerY,
+        event.modifierFlags)
 }
 
 func internalRendererConfigureComposableScene(session: UInt64, projectionVersion: UInt64, nodeCount: UInt32): Int32 {
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     unsafe { status = cjgui_internal_renderer_configure_composable_scene(session, projectionVersion, nodeCount) }
+    return status
+}
+
+func internalRendererConfigureComposableCommandMenu(session: UInt64, projectionVersion: UInt64,
+    itemCount: UInt32): Int32 {
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe { status = cjgui_internal_renderer_configure_composable_command_menu(session, projectionVersion, itemCount) }
+    return status
+}
+
+func internalRendererSetComposableCommandMenuItem(
+    session: UInt64,
+    itemIndex: UInt32,
+    commandId: String,
+    title: String,
+    menuGroup: String,
+    shortcut: String,
+    menuSection: UInt32,
+    focusScope: UInt64,
+    enabled: Bool,
+    checked: Bool
+): Int32 {
+    let cCommandId = unsafe { LibC.mallocCString(commandId) }
+    let cTitle = unsafe { LibC.mallocCString(title) }
+    let cMenuGroup = unsafe { LibC.mallocCString(menuGroup) }
+    let cShortcut = unsafe { LibC.mallocCString(shortcut) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (commandIdResource = cCommandId.asResource()) {
+        try (titleResource = cTitle.asResource()) {
+            try (menuGroupResource = cMenuGroup.asResource()) {
+                try (shortcutResource = cShortcut.asResource()) {
+                    unsafe {
+                        status = cjgui_internal_renderer_set_composable_command_menu_item(
+                            session,
+                            itemIndex,
+                            commandIdResource.value,
+                            titleResource.value,
+                            menuGroupResource.value,
+                            shortcutResource.value,
+                            menuSection,
+                            focusScope,
+                            if (enabled) { 1u8 } else { 0u8 },
+                            if (checked) { 1u8 } else { 0u8 }
+                        )
+                    }
+                }
+            }
+        }
+    }
+    return status
+}
+
+func internalRendererCommitComposableCommandMenu(session: UInt64): Int32 {
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe { status = cjgui_internal_renderer_commit_composable_command_menu(session) }
     return status
 }
 
@@ -661,6 +806,49 @@ func internalRendererSetComposableSceneNode(
                             imageResourceIdResource.value,
                             boundedVersion
                         )
+                    }
+                }
+            }
+        }
+    }
+    return status
+}
+
+func internalRendererConfigureComposableDataTransfer(
+    session: UInt64,
+    projectionVersion: UInt64,
+    itemCount: UInt32
+): Int32 {
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        status = cjgui_internal_renderer_configure_composable_data_transfer(session, projectionVersion, itemCount)
+    }
+    return status
+}
+
+func internalRendererSetComposableDataTransferItem(
+    session: UInt64,
+    itemIndex: UInt32,
+    item: CjguiInternalRendererComposableDataTransferItem,
+    format: String,
+    payload: String,
+    sourceKind: String,
+    sourceIdentity: String
+): Int32 {
+    var mutableItem = item
+    let cFormat = unsafe { LibC.mallocCString(format) }
+    let cPayload = unsafe { LibC.mallocCString(payload) }
+    let cSourceKind = unsafe { LibC.mallocCString(sourceKind) }
+    let cSourceIdentity = unsafe { LibC.mallocCString(sourceIdentity) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (formatResource = cFormat.asResource()) {
+        try (payloadResource = cPayload.asResource()) {
+            try (sourceKindResource = cSourceKind.asResource()) {
+                try (sourceIdentityResource = cSourceIdentity.asResource()) {
+                    unsafe {
+                        status = cjgui_internal_renderer_set_composable_data_transfer_item(
+                            session, itemIndex, inout mutableItem, formatResource.value, payloadResource.value,
+                            sourceKindResource.value, sourceIdentityResource.value)
                     }
                 }
             }
@@ -1077,6 +1265,25 @@ func internalRendererSetSharedFormStatus(session: UInt64, statusText: String): I
 func internalRendererFormEventText(session: UInt64): String {
     let borrowed = unsafe { cjgui_internal_renderer_form_event_text(session) }
     return borrowed.toString()
+}
+
+func internalRendererDataTransferEventFormat(session: UInt64): String {
+    let borrowed = unsafe { cjgui_internal_renderer_data_transfer_event_format(session) }
+    return borrowed.toString()
+}
+
+func internalRendererDataTransferEventSourceKind(session: UInt64): String {
+    let borrowed = unsafe { cjgui_internal_renderer_data_transfer_event_source_kind(session) }
+    return borrowed.toString()
+}
+
+func internalRendererDataTransferEventSourceIdentity(session: UInt64): String {
+    let borrowed = unsafe { cjgui_internal_renderer_data_transfer_event_source_identity(session) }
+    return borrowed.toString()
+}
+
+func internalRendererDataTransferEventSourceId(session: UInt64): Int64 {
+    return unsafe { cjgui_internal_renderer_data_transfer_event_source_id(session) }
 }
 
 func internalRendererRequestClose(session: UInt64): Int32 {

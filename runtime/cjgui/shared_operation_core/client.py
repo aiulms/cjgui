@@ -922,6 +922,41 @@ def request_payload(args: argparse.Namespace, descriptor: dict[str, object]) -> 
         header.append(f"GET_CONTEXT {len(targets)}")
         header.extend(f"ID {resource_id}" for resource_id in targets)
         return "\n".join(header)
+    if args.command == "generated-capabilities":
+        header.append("GET_GENERATED_UI_CAPABILITIES")
+        return "\n".join(header)
+    if args.command == "generated-structure":
+        header.append("GET_GENERATED_UI_STRUCTURE")
+        return "\n".join(header)
+    if args.command == "generated-fields":
+        header.append("GET_GENERATED_UI_FIELDS")
+        return "\n".join(header)
+    if args.command == "tree-selection":
+        header.append("GET_TREE_SELECTION")
+        return "\n".join(header)
+    if args.command == "tree-select":
+        if args.selection_version < 0:
+            fail("selection version cannot be negative")
+        key = args.key if args.key else "-"
+        if key != "-":
+            import re as _re
+            if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", key):
+                fail("selection key is not a protocol identifier")
+        header.append(f"UPDATE_TREE_SELECTION {args.selection_version} {args.selection_command} {key}")
+        return "\n".join(header)
+    if args.command == "generated-submit":
+        if args.structure_version < 0:
+            fail("structure version cannot be negative")
+        try:
+            with open(args.payload_file, "r", encoding="utf-8") as handle:
+                candidate = handle.read()
+        except OSError as exc:
+            fail(f"cannot read candidate payload: {exc}")
+        if not candidate:
+            fail("candidate payload is empty")
+        header.append(f"SUBMIT_GENERATED_UI {args.structure_version}")
+        header.append(candidate)
+        return "\n".join(header)
     if args.command == "changes":
         targets = args.target or []
         if args.stream_id:
@@ -1007,6 +1042,26 @@ def parser() -> argparse.ArgumentParser:
     read_range.add_argument("start", type=int)
     read_range.add_argument("end", type=int)
     read_range.add_argument("expected_version", type=int)
+    commands.add_parser("generated-capabilities",
+                        help="query the application's runtime-generated-UI capability catalog")
+    commands.add_parser("generated-structure",
+                        help="read the currently accepted generated structure and its version")
+    commands.add_parser("generated-fields",
+                        help="read live field projections (draft/applied/validation/focus/selection)")
+    commands.add_parser("tree-selection",
+                        help="read the shared tree/collection selection snapshot (keys/focus/anchor/versions)")
+    tree_select = commands.add_parser("tree-select",
+                                      help="update the shared selection through the same handler the window uses")
+    tree_select.add_argument("--selection-version", type=int, required=True)
+    tree_select.add_argument("--selection-command", dest="selection_command", required=True,
+                             choices=["replace", "toggle", "range", "select-all", "clear", "expand", "collapse"])
+    tree_select.add_argument("--key", default="-")
+    generated_submit = commands.add_parser("generated-submit",
+                                           help="submit a generated-UI structure candidate (structure CAS)")
+    generated_submit.add_argument("--structure-version", type=int, required=True,
+                                  help="structure version the candidate was built against")
+    generated_submit.add_argument("--payload-file", required=True,
+                                  help="file holding the candidate payload lines")
     invoke = commands.add_parser("invoke", help="invoke a dynamically named action")
     invoke.add_argument("expected_version", type=int)
     invoke.add_argument("action")

@@ -1,6 +1,6 @@
 # 最小上下文读取
 
-更新：2026-09-12。执行已下发阶段时，默认工作包只有：
+更新：2026-09-19。执行已下发阶段时，默认工作包只有：
 
 1. AGENTS.md：共同规则。
 2. ACTIVE_DIRECTION.md：当前事实、下一阶段指针。
@@ -11,12 +11,12 @@
 
 按问题加读：
 - 指导 AI 选择大阶段、调整架构或恢复历史：[设计意图与资产导航](../plans/DESIGN_INTENT_INDEX.md)、框架完整性视角及对应源码。将相关资产的复用/替换取舍放进提示词，不把全部历史阅读转交执行 AI。
-- 方向争议：GUI_PROJECT_DIRECTION.md。
-- 人机共同操作设计：AI_NATIVE_UI_SEMANTICS.md 的相关段落。
-- 验收判断：CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md。
+- 方向争议：[项目方向](../core/GUI_PROJECT_DIRECTION.md)；不从样例或旧阶段反推定位。
+- 状态归属、单一定义、人机共同操作或生成式接入：[架构契约](../core/AI_NATIVE_UI_SEMANTICS.md)的相关段落。
+- 验收判断：[验收标准](../core/CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md)。
 - 平台/语言问题：对应源码、[工具链问题账本](../setup/CANGJIE_ISSUE_LEDGER.md)、构建资料、相关 Cangjie skill 小节；长期 workaround 要保留原因为何成立和移除条件。
 - 样例暴露框架缺陷或可独立贡献资产：按导航中的反馈入口保存复现和去向；无需每轮读取贡献雷达或报“无问题”。
-- 治理例外：GUI_GOVERNANCE.md。
+- 治理例外：[治理总则](../core/GUI_GOVERNANCE.md)；文档有冲突时按[信息归属](../README.md#各类信息只在一处维护)回到维护入口。
 
 默认不读全部治理、风险账本、research、参考仓库和历史 plans。
 需要多读相关文件时自行读，不因超过固定文件数申请批准或写“上下文预算”文档。

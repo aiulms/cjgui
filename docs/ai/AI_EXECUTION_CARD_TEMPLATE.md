@@ -34,5 +34,5 @@
 执行 AI 更新 ACTIVE_DIRECTION.md 的当前事实并给一次阶段摘要。
 指导 AI 做阶段验收审阅；不要求每个内部步骤再交 preflight、approval、manifest、closure。
 
-可直接复用的首阶段提示词：
+历史示例，仅参考任务粒度，不直接作为当前开发指令；当前任务从 ACTIVE 获取：
 [人和外部系统共同操作最小窗口](../plans/2026-09-11-shared-operation-stage-prompt.md)。

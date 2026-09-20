@@ -10,12 +10,24 @@ public class CjguiSharedFormFieldDescriptor {
     public let fieldId: String
     public let label: String
     public let editorKind: String
+    // Declared business constraints of this field. They belong to the one field
+    // definition so the handwritten form, the generated editor and an external
+    // query all enforce and publish the same boundary instead of restating it.
+    // `minimum`/`maximum` are only meaningful for INTEGER; `required` applies
+    // to any editor kind; 0/0 means "no declared bound".
+    public let required: Bool
+    public let minimum: Int64
+    public let maximum: Int64
 
-    public init(resourceId: Int64, fieldId: String, label: String, editorKind: String) {
+    public init(resourceId: Int64, fieldId: String, label: String, editorKind: String,
+                required!: Bool = false, minimum!: Int64 = 0, maximum!: Int64 = 0) {
         this.resourceId = resourceId
         this.fieldId = fieldId
         this.label = label
         this.editorKind = editorKind
+        this.required = required
+        this.minimum = minimum
+        this.maximum = maximum
     }
 }
 

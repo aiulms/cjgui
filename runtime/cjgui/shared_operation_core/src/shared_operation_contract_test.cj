@@ -871,3 +871,21 @@ func genericTransportRequiresAllResourceInteractionGrantBeforeEmittingInteractio
     @Assert(interaction.contains("WINDOW_SCENE_VERSION"), false)
     @Assert(interaction.contains("RESOURCE 42"), false)
 }
+
+/// One canonical text form per shared value kind. A consumer that publishes a
+/// value as text must not have to know the kind-to-encoding mapping itself: a
+/// boolean published through `stringValue` was empty to an external reader even
+/// though the business value was set.
+@Test
+func sharedOperationValueHasOneCanonicalTextForm(): Unit {
+    @Assert(CjguiSharedOperationValue.string("外部续写").displayText(), "外部续写")
+    @Assert(CjguiSharedOperationValue.integer(730).displayText(), "730")
+    @Assert(CjguiSharedOperationValue.boolean(true).displayText(), "true")
+    @Assert(CjguiSharedOperationValue.boolean(false).displayText(), "false")
+    // The typed accessors keep their own meaning; displayText never invents a
+    // value for a kind it does not own.
+    @Assert(CjguiSharedOperationValue.boolean(true).stringValue, "")
+    @Assert(CjguiSharedOperationValue.integer(7).stringValue, "")
+    let empty = CjguiSharedOperationValue.string("")
+    @Assert(empty.displayText(), "")
+}

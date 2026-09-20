@@ -1,13 +1,13 @@
 # CJGUI runtime 与样例
 
-更新：2026-09-12。状态：[ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md)。
+更新：2026-09-19。状态：[ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md)。本页说明已有 API 与使用入口，不另定义项目定位、架构或当前任务；规范归属见[文档导航](../../docs/README.md)。
 仓颉包当前名为 cjgui，版本 0.0.0，输出 static；不承诺稳定公共 API。
 
 ## 当前目录
 
 - src/：runtime、窗口投影和 demo_support；部分旧模块仍是摘要模型，需读源码确认。
 - shared_operation_core/：不链接 renderer/AppKit/Metal 的普通 core 包，包含通用契约、socket transport、列表消费者和公开客户端。
-- native/：平台桥接与本地 R1 internal renderer。
+- native/：平台桥接与 AppKit/Metal 自绘后端；原生接口内部使用，普通应用经公开仓颉宿主/组件入口消费。
 - demo/：程序化状态/harness 样例，目前不能当作窗口应用。
 - examples/shared_operation_window_app/：正常启动的 macOS 共同操作窗口；人类窗口输入和受授权的本地外部操作进入同一列表。
 - examples/shared_operation_second_consumer/：只消费 core 的列表命令行消费者，使用不同数据和授权范围。
@@ -41,8 +41,8 @@
 
 一个普通窗口消费者实现 `CjguiComposableUiController`：
 
-1. `buildUi()` 从领域快照构造组件树；页面顺序、分组、间距、颜色和动作都在
-   消费者仓颉代码中调整。
+1. `buildUi()` 从领域快照构造组件树；当前公开消费主要在仓颉代码中声明
+   页面顺序、分组、间距、颜色和动作。这描述当前入口，不限定界面只能手写。
 2. `uiSceneVersion()` 是全部渲染可见声明的廉价失效提示，而不只是领域内容版本：内容、
    树层级、样式、资源和本地 UI 状态变化都必须推进它；窗口另行分配投影身份，并在同一已显示快照上
    清空 FIFO 后才重投影。事件以节点 ID（数组 index 仅作诊断）和投影身份解析；
@@ -56,6 +56,165 @@
 默认把 Tab 用作导航，只有显式 `tabInsertsText: true` 才插入制表符。窗口可用
 `bindCommand("save"|"undo"|"redo", nodeId)` 把 Command 快捷键映射到已有语义按钮，而非向
 native 写业务规则。
+
+### 树形数据与多选（experimental）
+
+`composable_ui_tree.cj` 提供与既有虚拟列表共用的树入口，应用只实现数据来源：
+
+    public class CatalogSource <: CjguiComposableUiTreeDataSource {
+        public func childCount(parentKey: String): Int64 { ... }   // 根用 ""
+        public func childAt(parentKey: String, index: Int64): CjguiComposableUiTreeNode { ... }
+    }
+
+    let projection = CjguiComposableUiTreeProjection(source)   // 构造即建一次 O(N) 索引
+    let selection = CjguiComposableUiTreeSelection(projection)
+    projection.setExpandedBatch(projection.groupKeys(), true)  // 一次集合修改、一次重建
+    selection.click("record-12", command: true, shift: false)  // Cmd 切换；Shift 走 moveFocus(extendSelection)
+
+    // 只物化视口+overscan：把投影接到既有固定行虚拟列表
+    let listSource = CjguiComposableUiTreeListSource(projection, selection) { row, isSelected, isFocused =>
+        ... // row 带真实稳定 key/depth/group/expanded，禁止从文案或 resourceId 猜 key
+    }
+    cjguiComposableVirtualList(nodeId, "tree", contentNodeId, listSource, listState, 30, 4, 6, style)
+
+`CjguiComposableUiTreeSelection.snapshot()` 返回 keys/focus/anchor/选择与投影版本；窗口控件点击事件带
+`modifierFlags`（AppKit 位，见 `CJGUI_UI_MODIFIER_*`），消费者据此实现普通点击/Cmd/Shift 语义。
+
+### 运行时生成式接入（experimental，已接通公开闭环）
+
+应用注册能力目录（组件/属性/动作/字段 + 深度/节点/属性/字符串上限），外部经既有连接提交受限结构描述，
+经校验与既有组件展开后进入同一场景接受链；字段、草稿与动作仍在原业务 owner。
+
+    let catalog = CjguiGeneratedUiCapabilityCatalog()
+    catalog.registerComponent(CjguiGeneratedUiComponentSpec("textInput", properties, false))
+    catalog.registerAction(CjguiGeneratedUiActionSpec("APPLY_DRAFT", "应用草稿"))
+    catalog.registerField("label")
+
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    // App 实现 CjguiGeneratedUiBindingProvider：实时草稿/生效值、动作可执行性、
+    // fieldResourceId（共享字段资源）与 fieldOperationResourceId（当前 owner 目标，无则 -1 → 输入禁用）
+    let result = holder.submit(decodedCandidate, provider)   // 拒绝时保留上一份已接受结构与路由
+    section.add(holder.buildAccepted(provider))
+
+公开入口（`experimental`，客户端见 `shared_operation_core/client.py`）：
+
+    client.py DESCRIPTOR generated-capabilities        # 能力目录（含 bounds）
+    client.py DESCRIPTOR generated-structure           # 已接受结构 + 结构版本
+    client.py DESCRIPTOR generated-fields              # 字段实时投影（draft/applied/错误/焦点/选区）
+    client.py DESCRIPTOR generated-submit --structure-version N --payload-file candidate.txt
+    client.py DESCRIPTOR tree-selection                # 共享选择快照
+    client.py DESCRIPTOR tree-select --selection-version N --selection-command replace|toggle|range|select-all|clear|expand|collapse --key record-1
+
+`generated-capabilities` 的每个字段行发布调用方需要的契约（类型、共享资源、owner 写操作、
+声明约束与当前可执行性），外部调用者不需要猜字段名对应哪个操作：
+
+    FIELD <fieldId> <editorKind> resource=<shared-resource-id> writer=<owner-operation|none> required=<0|1> min=<n> max=<n> callable=<0|1>
+
+`writer` 来自应用自己的字段定义（不同领域可不同，例如草稿操作或即时 owner 操作）；`required` 与
+`min`/`max` 也来自同一份 `CjguiSharedFormFieldDescriptor`，手写表单、生成编辑器与外部查询读的是
+同一份声明。旧的两段式 `FIELD <id>` 行已扩展为该契约行。
+
+候选文本格式（可替换编码；值模型为契约核心，`CjguiGeneratedUiEncoding` 为薄适配）：
+
+    GENERATED_UI_STRUCTURE 1
+    NODE 0 panel vertical
+    NODE 1 nameField textInput field=label
+    PROPERTY 1 nameField label 生成输入框
+    NODE 1 applyBtn action action=APPLY_DRAFT
+    PROPERTY 1 applyBtn label 应用草稿
+    END
+
+拒绝族（每项带具体位置与原因，且保留旧界面）：unknown_component / unknown_property / duplicate_key /
+unknown_action / unknown_field / max_depth_exceeded / max_nodes_exceeded / property_too_long /
+structure_version_conflict / malformed_node。参见[生成契约](../../docs/core/AI_NATIVE_UI_SEMANTICS.md#运行时生成与修改界面)与
+[生成式阶段方案](../../docs/plans/2026-09-19-runtime-generated-ui-milestone.md)。
+
+### 运行时生成式接入（原规划说明）
+
+框架方向包含手写、运行时生成及混合界面。应用注册可用组件、字段与动作，外部提交受限结构描述，
+经校验后进入同一 `buildUi()`/候选场景/自绘链；结构变化需与稳定身份、焦点、草稿、事件及资源生命周期
+一起处理。现有动态组件基础可复用，旧 `demo/ai_generated_ui_app.cj` 的内存状态演示不能算接入完成。
+参见[生成契约](../../docs/core/AI_NATIVE_UI_SEMANTICS.md#运行时生成与修改界面)与
+[生成式阶段方案](../../docs/plans/2026-09-19-runtime-generated-ui-milestone.md)。是否已实施以 ACTIVE 为准；这不要求应用接模型或聊天运行时。
+
+### 数据传输（experimental）
+
+`cjgui_shared_operation_core` 提供纯值的
+`CjguiSharedOperationTransferFormat`、`CjguiSharedOperationTransferOffer`、
+`CjguiSharedOperationTransferAcceptRequest` 和
+`CjguiSharedOperationTransferResult`。格式必须声明为 UTF-8 文本或应用自定义的结构化标识；payload、
+格式标识和来源身份都有边界，当前单项最多 512 KiB。它们不携带 `NSPasteboard`、drag object、业务回调
+或领域对象。
+
+可组合窗口的 controller 可以额外实现
+`CjguiComposableUiDataTransferProvider`：为一个稳定 `semanticId` 声明 source offer 或 target format，
+并在 `applyDataTransfer(...)` 中把已重验节点的 immutable offer 交给已有领域入口。native 只暂存已接受
+的格式、字节、来源标量和节点身份；scene commit 与纯 interaction repaint 都会重绑该表。复制/拖放后的
+来源 metadata 只用于恢复 offer 的 source kind/identity/id，绝不是授权凭据；接收方仍须验证格式、payload、
+目标和 CAS。
+
+声明为 source/target 的非文本控件支持显式 Cmd-C、Cmd-V 及 macOS drag/drop；hover 复用既有
+interaction paint。输入框仍优先保留系统文本编辑、IME 和 Cmd-A/C/X/V。没有声明的节点不会读取剪贴板，
+取消、超限、格式不匹配、已失效/只读目标均不会调用领域修改。当前仅支持 copy、有界 UTF-8 文本和应用
+声明的一个结构化文本格式；不支持 move/delete、文件 promise、文件/大流传输或后台剪贴板监控。
+
+```text
+zsh runtime/cjgui/native/scripts/verify_composable_data_transfer_native.sh
+zsh runtime/cjgui/native/scripts/verify_composable_data_transfer_window_integration.sh
+zsh runtime/cjgui/native/scripts/verify_shared_document_transfer_chain.sh
+zsh runtime/cjgui/native/scripts/verify_composable_data_transfer_cross_window.sh
+```
+
+该探针真实创建 macOS 窗口，覆盖显式 copy、外部 text paste、64-byte 超限拒绝、来源 metadata 与取消无
+owner event；测试会条件恢复其读到的剪贴板内容。它是受控 AppKit 验证，不等同于人工物理拖放。窗口集成
+探针另覆盖 128B/4KiB/512KiB（文档总量边界）payload、队列满压力与 close 后保留收敛；文档消费者链在真实
+bundle 窗口上串起外部授权调用与窗口编辑/复制粘贴；跨窗脚本以真实鼠标拖动验证同进程跨窗口 drop。
+这些同样是自动化验证，不等同于人工物理输入。
+
+### 交互状态与主题（experimental）
+
+`CjguiComposableUiInteractionStyle` 是 `CjguiComposableUiStyle` 的可选 paint 覆盖：它只接受
+`background`、`border`、`textColor` 与 `borderWidth`，所以 hover 等状态不能改变 padding、尺寸、字体或
+布局。组件可通过各 helper 的 `interactionStyle:` 使用它；`CjguiComposableUiTheme.beaconDark()` 和
+`paperLight()` 均提供 input/primaryAction 的完整状态样式，应用仍选择自己的主题和基础 Style。
+
+```cangjie
+let theme = CjguiComposableUiTheme.beaconDark()
+root.add(cjguiComposableButton(42, "publish", "发布", "PUBLISH", resourceId,
+    theme.primaryAction, interactionStyle: theme.primaryActionInteraction,
+    ownerInteractionState: if (isSelected) { CjguiComposableUiInteractionState.SELECTED } else { 0 }))
+```
+
+解析顺序固定为 `base → normal → selected → checked → focused → hover → pressed → disabled`；后一个
+状态仅覆盖它明确给出的 paint 字段。应用只能声明 `selected`/`checked`，并且应从已有领域快照投影；
+`hover`、`pressed`、`focused` 与 `disabled` 分别由窗口的命中/press/focus/`enabled` 声明推导。native
+只保存短暂路由身份和最终颜色，不保存业务颜色、选择或 checked 状态。
+
+鼠标按下先显示 press，只有在同一仍有效目标上释放才进入已有 `applyUiEvent()` 动作；移出、窗口/焦点
+取消、disabled、删除、换绑或 modal 覆盖后的释放都不改写替代对象。键盘焦点使用相同 focus paint，
+而 AX 语义 Press 仍直接进入同一个动作，不伪造物理鼠标序列。滑块/分隔条继续走既有 pointer capture，
+文本框继续复用系统输入代理和组合态。
+
+纯 hover/press/focus 更新会从已接受的 Cangjie layout snapshot 生成 copy-on-write paint scene；不会调用
+`buildUi()`、layout 或 TextKit 测量，也不会写领域/CAS 版本。由于 native scene 与 command-menu generation
+原子提交，窗口会在同一 paint generation 暂存原有命令声明；这不是菜单或业务状态的第二个 owner。主题切换
+属于应用声明改变，应用须推进 `uiSceneVersion()`，因此会进行一次正常整窗投影，随后 idle 不持续重绘。
+
+针对性受控验证：
+
+```text
+zsh runtime/cjgui/native/scripts/verify_composable_ui_interaction_style_values.sh
+zsh runtime/cjgui/native/scripts/verify_composable_ui_interaction_style_native.sh
+zsh runtime/cjgui/native/scripts/verify_composable_ui_interaction_style_scale.sh
+```
+
+后一个入口通过实际 native overlay 的 press lifecycle 验证 enter/press 的像素、移出取消不动作、同点释放仅
+一次动作，以及纯 paint 更新的 build/layout 计数不变。它是受控 AppKit/Metal 验证，不等同于物理鼠标、
+VoiceOver、系统 IME、安装/公证或发布验收。
+
+scale 入口保留 8、128、960 个控件各 30 次跨控件 hover 的原始单调时钟样本；每项要求一次提交、恰好两个
+节点 paint 更新、零 build/layout/文本测量增量。它用于检测局部更新回退，不把 `pump_ns` 解释成 GPU 完成、
+物理呈现或人工输入延迟。
 
 ### 表单与选择列表组合（experimental）
 
@@ -101,7 +260,83 @@ setter、present 或命令校验失败都会丢弃候选，继续保留旧 scene
 快捷键可用于不同 scope，但同一 scope 的冲突会失败。键盘先取当前 focus scope 的声明；没有
 scope 时才可取 global fallback，因此顶层 layer/另一个编辑器不能穿透到 base command。Cmd-A/C/X/V
 和 marked text 仍由原生文本服务优先；无快捷键菜单动作应走自己的 Cangjie 菜单/动作调用，不要填造
-一个快捷键。实例/命令 API 是仓颉公共实验接口，native 不接收业务 key、command id 或回调。
+一个快捷键。实例/命令 API 是仓颉公共实验接口；native 可短暂保存已接受的稳定 command id
+以回投 FIFO，但不解释业务、不保存 callback 或 action name。
+
+### 可组合矢量图形（experimental）
+
+`src/composable_vector_graphics.cj` 提供不携带 Metal/AppKit 对象的纯值描述：
+`CjguiComposableUiVectorPoint(x, y)`、`CjguiComposableUiVectorColor(red, green, blue, alpha)`、
+`CjguiComposableUiVectorPaint(fill, stroke, strokeWidth, cap, join)` 和
+`CjguiComposableUiVectorGeometry`。几何工厂为：
+
+```cangjie
+let geometry = CjguiComposableUiVectorGeometry.ellipse(
+    160.0, 110.0, CjguiComposableUiVectorPoint(80.0, 55.0), 42.0, 30.0, paint)
+if (let Some(value) <- geometry) {
+    root.add(cjguiComposableVectorGraphic(22, "status-graphic", value,
+        CjguiComposableUiStyle(fixedWidth: 320, fixedHeight: 220)))
+}
+```
+
+`line`、`polyline`、`ellipse` 和 `simplePolygon` 均返回 `?CjguiComposableUiVectorGeometry`；
+工厂返回 `None` 时，调用者必须保留旧场景或显示明确失败，不能截断点数组或用矩形替代。
+点和椭圆边界使用 geometry 的 `viewBoxWidth/viewBoxHeight` 逻辑坐标，组件 layout bounds 负责缩放；
+命中也在同一几何坐标中进行，而不是把整个节点外接矩形当作命中区域。`cjguiComposableVectorGraphic`
+的 `interactive` 默认为 `false`，只有声明 action 后才进入既有 composable 事件/授权 owner。
+
+本阶段限制为最多 12 个点：line/polyline 需要 2–12 个点，simple polygon 需要 3–12 个点；
+凹的简单闭合多边形受支持，洞和自交被拒绝。所有点和椭圆边界必须落在正的有限 viewBox 内，
+相邻重复点、零长度、零面积、非有限值、容量超限和不可见画笔都会显式失败。颜色 RGBA 必须在
+`0..1`；fill/stroke 至少一个 alpha 大于零；透明 stroke 可使用宽度 0，非透明 stroke 必须宽度大于零。
+端点 `BUTT/ROUND/SQUARE` 与连接 `MITER/BEVEL/ROUND` 仅描述描边，不改变填充几何。
+这些 API 当前为 experimental，耳切、GPU 合批、布局缩放和几何命中由框架主链负责，不在消费者内创建
+第二个 canvas/runtime。
+
+两个 public-only 消费场景位于 [framework_preview_vector_consumer.cj](probe/framework_preview_vector_consumer.cj)：
+纯 UI 图表组合 line、polyline 和带填充/描边的简单多边形；共同操作窗口把已有
+`CjguiSharedOperationList` 的 `isMarked` 作为 durable owner，通过 `SET_MARKED` 外部授权写入投影颜色，
+再由同一 controller 的人侧 action 切回并读回状态。消费者只读取 controller/window projection 的字段，
+不读取 native/test seam。验证入口为 `native/scripts/verify_composable_vector_graphics_consumers.sh`。
+
+### 应用命令、菜单与快捷键（experimental）
+
+窗口消费者可以用公开的 `CjguiComposableUiCommand` 把一个稳定命令声明为现有按钮的语义入口：
+
+```cangjie
+let scope = CjguiComposableUiIdentityScope("editor")
+let command = CjguiComposableUiCommand(
+    "editor.publish",
+    CjguiComposableUiNodeReference.scoped(scope, "publish"),
+    "发布",
+    CjguiComposableUiShortcut("p"),
+    "Editor", 0, isEnabled, isChecked
+)
+```
+
+命令由实现 `CjguiComposableUiSceneRefreshParticipant` 的 Cangjie owner 在每次候选 scene 中返回；`scope.local("publish")` 是稳定目标，不能用列表下标或 native 对象替代。`CjguiComposableUiShortcut` 的快捷键是可选的：带快捷键的声明进入平台菜单投影，不带快捷键的声明仍可被仓颉拥有的自绘菜单通过 `window.invokeCommand("editor.publish")` 调用。`focusScopeId` 可将同一个命令 vocabulary 限定到当前焦点范围；相同 scope 的重复命令或快捷键冲突会使候选失败。
+
+`isEnabled` 和 `isChecked` 是当前已接受 Cangjie 声明的投影。disabled 命令、目标已移除、目标换绑、候选 scene 未被 native 接受，都会 fail closed：调用返回 `false`，保留上一份 accepted scene/命令集合，不静默重定向到另一个按钮。命令处理仍进入 owner 的 `applyUiEvent()`；按钮、平台菜单和自绘菜单因此共享同一动作与领域状态。结果可用 `window.windowProjection().fieldValues` 读回，但这只是 owner 状态的只读投影，不是第二个真相源。
+
+native 只保存当前 accepted scene 的菜单标题、分组、可选快捷键和 enabled/checked 投影，并在输入到达时回到 Cangjie target；它不解释业务 `command id`，不保存 callback/action name，也不拥有资源、权限或版本。菜单和快捷键仅在 macOS bridge 的平台边界内成立；Cmd-A/C/X/V、marked text 和输入法继续由系统文本服务优先处理。其他平台或没有平台菜单的宿主应使用同一个 Cangjie command declaration 和自绘 surface，不能假定 AppKit 菜单存在。
+
+macOS 的标准 **Quit** 仍由 Application 菜单的 `terminate:` 发起，但 bridge 只将其合并为一个退出意图；正常应用回合调用既有的 `CjguiMacosApplicationExitDecisionProvider`，再由已有 `requestApplicationExit()` 统一关闭窗口、外部连接和主循环。native 不保存或执行保存/退出业务决策，也不会在主线程同步等待 Cangjie。拒绝退出会保留应用可继续编辑；同一轮重复 Quit 只产生一个待处理意图。
+
+当当前 Cangjie owner 声明 `command+z` 或 `shift+command+z`，其命令优先于标准 Edit responder：平台仍保留 Undo/Redo 条目，但会移除该条目的 key equivalent，使实际键盘事件只进入当前 owner。顶层 layer 或 disabled owner 的同一声明同样保留该快捷键，避免静默回退为文本 undo/redo；只有没有任何已声明 owner 的快捷键才由标准文本 responder 处理。该规则不创建第二套 undo 栈，也不改变 Cmd-A/C/X/V、剪贴板或系统组合输入。
+
+平台菜单更新比较的是有效投影，而不是任意 scene 版本：当前 accepted 命令集合、enabled/checked、有效 `focusScopeId` 和当前 key-window 身份都没有变化时，普通 scene 内容（例如说明文字或布局版本）的刷新不会重新创建 `NSApp.mainMenu`。切换 key window、焦点范围或命令菜单投影本身变化时才更新平台菜单；这不改变 Cangjie owner 对按钮、菜单和 `window.invokeCommand(...)` 的单一动作归属。
+
+以上 API 目前仍为 experimental。导出预览的公共消费验收为：
+
+```text
+source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
+CJGUI_PREVIEW_CONSUMPTION_KEEP_TMPDIR=1 \
+  zsh runtime/cjgui/native/scripts/verify_framework_preview_consumption.sh
+```
+
+该检查会把 [framework_preview_command_menu_consumer.cj](probe/framework_preview_command_menu_consumer.cj) 复制到含空格的导出目录，构建并运行两个不同 owner 的命令窗口，验证稳定 target、按钮/菜单同一 action、projection readback 与 disabled 拒绝。成功行包含 `command_menu=build_and_run`、`command_owners=2`、`command_projection_readback=true`，并给出 `command_manifest`、`command-menu-preview-run.log`、source/bundle SHA-256 和 `evidence_tmp_root`；设置 `CJGUI_PREVIEW_CONSUMPTION_KEEP_TMPDIR=1` 才保留这些临时证据。
+
+同一检查还会把 [framework_preview_vector_consumer.cj](probe/framework_preview_vector_consumer.cj) 复制到导出框架，迁移到含空格路径后构建并运行图表消费者和共同操作消费者。成功行包含 `vector=build_and_run`、`vector_chart_consumer=true`、`vector_external_color_write=true`、`vector_window_projection_readback=true` 和 `vector_human_action_after_external=not_run`，并给出 `vector_manifest`、source/bundle SHA-256 与 `evidence_tmp_root`；它故意不在生产消费者内注入输入。若要验证桌面输入接续，应运行 `--run-vector` 并把真实窗口操作、公开连接读写和窗口投影逐项记录为独立证据。这项检查证明的是导出源码、正常宿主、授权外部修改和窗口字段读回，不等同于桌面输入、完整 GPU completed、安装、公证或发布。
 
 多行文字仍由 AppKit TextKit 负责组合、选择与字形排版，仓颉 document owner 只接收已提交
 投影。它的公共 UTF-8 边界当前是保守 profile：拒绝 UTF-8 标量内部、CRLF、常见组合标记/变体
@@ -223,6 +458,8 @@ sidecar；`cjpm build --skip-script` 只在该 archive 已存在时用于复核�
 
 ## 相关入口
 
-[项目方向](../../docs/core/GUI_PROJECT_DIRECTION.md) · [当前阶段交付](../../docs/plans/2026-09-13-ordered-gpu-composition-milestone.md) · [验收标准](../../docs/core/CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md)
+[项目方向](../../docs/core/GUI_PROJECT_DIRECTION.md) · [架构契约](../../docs/core/AI_NATIVE_UI_SEMANTICS.md) · [当前任务与交付状态](ACTIVE_DIRECTION.md) · [验收标准](../../docs/core/CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md)
+
+[有序 GPU 合成阶段](../../docs/plans/2026-09-13-ordered-gpu-composition-milestone.md)为历史交付参考，不是当前任务。
 
 旧长篇阶段记录见 [历史快照](../../docs/archive/2026-09-11-direction-governance/README.md)。

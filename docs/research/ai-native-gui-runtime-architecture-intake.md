@@ -1,5 +1,7 @@
 # AI-Native GUI Runtime Architecture Intake
 
+> 历史研究，日期与实施限制均属于原记录。2026-09-19 导航校准：本文的 P1、internal-only 和“禁止实现”不再决定当前开发范围；有效目标与机制分别见[项目方向](../core/GUI_PROJECT_DIRECTION.md)和[架构契约](../core/AI_NATIVE_UI_SEMANTICS.md)。第8节的 AI 生成意图继续保留，实施与验收以当前任务为准。下文不改写为当前能力声明。
+
 日期：2026-04-30
 
 性质：sidecar architecture intake / future risk radar

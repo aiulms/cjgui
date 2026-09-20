@@ -11,6 +11,9 @@ import std.time.*
 
 private const CJGUI_SHARED_OPERATION_PROTOCOL: String = "CJGUI_SHARED_OPERATION/2"
 private const CJGUI_SHARED_OPERATION_MAX_FRAME_BYTES: Int64 = 8 * 1024 * 1024
+// Generated-UI payloads (capability descriptions, accepted structures and
+// candidates) are bounded separately from the frame limit.
+private const CJGUI_SHARED_OPERATION_MAX_GENERATED_UI_BYTES: Int64 = 256 * 1024
 private const CJGUI_SHARED_OPERATION_MAX_HEADER_BYTES: Int64 = 12
 private const CJGUI_SHARED_OPERATION_MAX_TARGETS: Int64 = 1024
 private const CJGUI_SHARED_OPERATION_MAX_STRING_BYTES: Int64 = 64 * 1024
@@ -705,6 +708,8 @@ public class CjguiSharedOperationExternalConnection {
     private var rangeReadDomain: ?CjguiSharedOperationRangeReadDomain
     private let windowProjectionProvider: ?CjguiSharedOperationWindowProjectionProvider
     private var windowProjectionTargetProvider: ?CjguiSharedOperationWindowProjectionTargetProvider
+    private var generatedUiProvider: ?CjguiSharedOperationGeneratedUiProvider
+    private var treeSelectionProvider: ?CjguiSharedOperationTreeSelectionProvider
     private var windowProgressProvider: ?CjguiSharedOperationWindowProgressProvider
     private var windowProgressTargetProvider: ?CjguiSharedOperationWindowProgressTargetProvider
     private let authorization: CjguiSharedOperationExternalAuthorization
@@ -731,6 +736,8 @@ public class CjguiSharedOperationExternalConnection {
         this.rangeReadDomain = None
         this.windowProjectionProvider = None
         this.windowProjectionTargetProvider = None
+        this.generatedUiProvider = None
+        this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
         this.authorization = authorization
@@ -758,6 +765,8 @@ public class CjguiSharedOperationExternalConnection {
         this.rangeReadDomain = None
         this.windowProjectionProvider = None
         this.windowProjectionTargetProvider = None
+        this.generatedUiProvider = None
+        this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
         this.authorization = authorization
@@ -786,6 +795,8 @@ public class CjguiSharedOperationExternalConnection {
         this.rangeReadDomain = None
         this.windowProjectionProvider = Some(windowProjectionProvider)
         this.windowProjectionTargetProvider = None
+        this.generatedUiProvider = None
+        this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
         this.authorization = authorization
@@ -815,6 +826,8 @@ public class CjguiSharedOperationExternalConnection {
         this.rangeReadDomain = None
         this.windowProjectionProvider = Some(windowProjectionProvider)
         this.windowProjectionTargetProvider = None
+        this.generatedUiProvider = None
+        this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
         this.authorization = authorization
@@ -896,6 +909,34 @@ public class CjguiSharedOperationExternalConnection {
                 return false
             }
             windowProjectionTargetProvider = Some(provider)
+            return true
+        }
+    }
+
+    /// Enables the generated-UI structure entry points (capability query,
+    /// accepted-structure read and candidate submission) before the descriptor
+    /// is published. The application owns the structure holder, fields and
+    /// actions behind the provider; this connection only authorizes and
+    /// forwards bounded payloads.
+    public func enableGeneratedUiProvider(provider: CjguiSharedOperationGeneratedUiProvider): Bool {
+        return synchronized(transportLock) {
+            if (let Some(_) <- server) {
+                return false
+            }
+            generatedUiProvider = Some(provider)
+            return true
+        }
+    }
+
+    /// Enables the shared tree/collection selection entry points (snapshot
+    /// read and human-equivalent selection updates) before the descriptor is
+    /// published. The window's own selection object stays the single owner.
+    public func enableTreeSelectionProvider(provider: CjguiSharedOperationTreeSelectionProvider): Bool {
+        return synchronized(transportLock) {
+            if (let Some(_) <- server) {
+                return false
+            }
+            treeSelectionProvider = Some(provider)
             return true
         }
     }
@@ -1057,6 +1098,24 @@ public class CjguiSharedOperationExternalConnection {
         }
         if (lines[2].startsWith("READ_RANGE ")) {
             return dispatchRangeRead(lines)
+        }
+        if (lines[2] == "GET_GENERATED_UI_CAPABILITIES") {
+            return dispatchGeneratedUiCapabilities(lines)
+        }
+        if (lines[2] == "GET_GENERATED_UI_STRUCTURE") {
+            return dispatchGeneratedUiStructure(lines)
+        }
+        if (lines[2] == "GET_GENERATED_UI_FIELDS") {
+            return dispatchGeneratedUiFields(lines)
+        }
+        if (lines[2] == "GET_TREE_SELECTION") {
+            return dispatchTreeSelectionRead(lines)
+        }
+        if (lines[2].startsWith("UPDATE_TREE_SELECTION ")) {
+            return dispatchTreeSelectionUpdate(lines)
+        }
+        if (lines[2].startsWith("SUBMIT_GENERATED_UI ")) {
+            return dispatchGeneratedUiSubmit(lines)
         }
         if (lines[2].startsWith("INVOKE ")) {
             return dispatchInvocation(lines)
@@ -1488,6 +1547,200 @@ public class CjguiSharedOperationExternalConnection {
             return errorPayload("unknown_window_target")
         }
         return errorPayload("window_progress_target_unavailable")
+    }
+
+    private func dispatchTreeSelectionRead(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_TREE_SELECTION")) {
+            return errorPayload("unauthorized_action")
+        }
+        if (lines.size != 3 || lines[2] != "GET_TREE_SELECTION") {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- treeSelectionProvider) {
+            let payload = provider.selectionPayload()
+            if (payload.size > CJGUI_SHARED_OPERATION_MAX_GENERATED_UI_BYTES) {
+                return errorPayload("selection_payload_too_large")
+            }
+            return generatedUiPayload("TREE_SELECTION", payload)
+        }
+        return errorPayload("tree_selection_unavailable")
+    }
+
+    private func dispatchTreeSelectionUpdate(lines: Array<String>): String {
+        if (!authorization.permitsAction("UPDATE_TREE_SELECTION")) {
+            return errorPayload("unauthorized_action")
+        }
+        if (lines.size != 3) {
+            return errorPayload("invalid_request")
+        }
+        let fields = lines[2].split(" ")
+        if (fields.size != 4 || fields[0] != "UPDATE_TREE_SELECTION" || !isSafeInteger(fields[1]) ||
+            !isSafeIdentifier(fields[2])) {
+            return errorPayload("invalid_request")
+        }
+        let key = if (fields[3] == "-") { "" } else { fields[3] }
+        // Stable selection keys may contain '-' (for example "record-12");
+        // they are still bounded to the protocol-safe character set.
+        if (key.size > 0 && !isSafeSelectionKey(key)) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- treeSelectionProvider) {
+            let result = provider.applySelection(fields[2], key, parseInt64OrZero(fields[1]))
+            let body = CjguiSharedOperationBoundedTextBuilder()
+            if (!body.append(
+                "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND TREE_SELECTION_UPDATE\n" +
+                "APPLIED ${result.applied}\nREASON ${if (result.reason.size > 0) { result.reason } else { "none" }}\n" +
+                "SELECTION_VERSION ${result.selectionVersion}\nEND")) {
+                return errorPayload("response_too_large")
+            }
+            if (result.applied) {
+                synchronized(transportLock) {
+                    windowRefreshRequested = true
+                }
+            }
+            return body.toString()
+        }
+        return errorPayload("tree_selection_unavailable")
+    }
+
+    private func dispatchGeneratedUiCapabilities(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_GENERATED_UI")) {
+            return errorPayload("unauthorized_action")
+        }
+        if (lines.size != 3 || lines[2] != "GET_GENERATED_UI_CAPABILITIES") {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- generatedUiProvider) {
+            let payload = provider.capabilitiesPayload()
+            if (payload.size > CJGUI_SHARED_OPERATION_MAX_GENERATED_UI_BYTES) {
+                return errorPayload("generated_ui_payload_too_large")
+            }
+            return generatedUiPayload("GENERATED_UI_CAPABILITIES", payload)
+        }
+        return errorPayload("generated_ui_unavailable")
+    }
+
+    private func dispatchGeneratedUiFields(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_GENERATED_UI")) {
+            return errorPayload("unauthorized_action")
+        }
+        if (lines.size != 3 || lines[2] != "GET_GENERATED_UI_FIELDS") {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- generatedUiProvider) {
+            let payload = provider.fieldsPayload()
+            if (payload.size > CJGUI_SHARED_OPERATION_MAX_GENERATED_UI_BYTES) {
+                return errorPayload("generated_ui_payload_too_large")
+            }
+            return generatedUiPayload("GENERATED_UI_FIELDS", payload)
+        }
+        return errorPayload("generated_ui_unavailable")
+    }
+
+    private func dispatchGeneratedUiStructure(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_GENERATED_UI")) {
+            return errorPayload("unauthorized_action")
+        }
+        if (lines.size != 3 || lines[2] != "GET_GENERATED_UI_STRUCTURE") {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- generatedUiProvider) {
+            let payload = provider.acceptedStructurePayload()
+            if (payload.size > CJGUI_SHARED_OPERATION_MAX_GENERATED_UI_BYTES) {
+                return errorPayload("generated_ui_payload_too_large")
+            }
+            let body = CjguiSharedOperationBoundedTextBuilder()
+            if (!body.append(
+                "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND GENERATED_UI_STRUCTURE\n" +
+                "STRUCTURE_VERSION ${provider.acceptedStructureVersion()}\n")) {
+                return errorPayload("response_too_large")
+            }
+            if (!body.append("CANDIDATE_VERSION ${provider.candidateStructureVersion()}\n")) {
+                return errorPayload("response_too_large")
+            }
+            if (!body.append(
+                "SCENE_STATE ${if (provider.sceneState().size > 0) { provider.sceneState() } else { "none" }}\n")) {
+                return errorPayload("response_too_large")
+            }
+            if (!body.append("STRUCTURE_LENGTH ${payload.size}\n")) {
+                return errorPayload("response_too_large")
+            }
+            if (!body.append(payload)) {
+                return errorPayload("response_too_large")
+            }
+            if (!body.append("\nEND")) {
+                return errorPayload("response_too_large")
+            }
+            return body.toString()
+        }
+        return errorPayload("generated_ui_unavailable")
+    }
+
+    private func dispatchGeneratedUiSubmit(lines: Array<String>): String {
+        if (!authorization.permitsAction("SUBMIT_GENERATED_UI")) {
+            return errorPayload("unauthorized_action")
+        }
+        let header = lines[2].split(" ")
+        if (lines.size < 4 || header.size != 2 || header[0] != "SUBMIT_GENERATED_UI" ||
+            !isSafeInteger(header[1])) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- generatedUiProvider) {
+            // Everything after the header line is the candidate payload.
+            let builder = StringBuilder()
+            var index: Int64 = 3
+            while (index < lines.size) {
+                if (index > 3) { builder.append("\n") }
+                builder.append(lines[index])
+                index += 1
+            }
+            let candidate = builder.toString()
+            if (candidate.size <= 0 || candidate.size > CJGUI_SHARED_OPERATION_MAX_GENERATED_UI_BYTES) {
+                return errorPayload("generated_ui_payload_too_large")
+            }
+            let result = provider.submitStructure(candidate, parseInt64OrZero(header[1]))
+            if (result.accepted) {
+                // An accepted structure is an external mutation of this
+                // window's declarations: request the same bounded refresh the
+                // business-action path uses.
+                synchronized(transportLock) {
+                    windowRefreshRequested = true
+                }
+            }
+            let body = CjguiSharedOperationBoundedTextBuilder()
+            if (!body.append(
+                "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND GENERATED_UI_SUBMIT\n" +
+                "APPLIED ${result.accepted}\nREASON ${if (result.reason.size > 0) { result.reason } else { "none" }}\n" +
+                "PATH ${if (result.path.size > 0) { result.path } else { "none" }}\n" +
+                "VERSION_BEFORE ${result.versionBefore}\nVERSION_AFTER ${result.versionAfter}\n" +
+                // Candidate receipt and scene acceptance are reported
+                // separately: VERSION_AFTER stays the scene-accepted version,
+                // so a client cannot read a received candidate as an accepted
+                // interface.
+                "CANDIDATE_ACCEPTED ${result.candidateAccepted}\n" +
+                "SCENE_ACCEPTED ${result.sceneAccepted}\n" +
+                "CANDIDATE_VERSION ${result.candidateVersion}\nEND")) {
+                return errorPayload("response_too_large")
+            }
+            return body.toString()
+        }
+        return errorPayload("generated_ui_unavailable")
+    }
+
+    private func generatedUiPayload(kind: String, payload: String): String {
+        let body = CjguiSharedOperationBoundedTextBuilder()
+        if (!body.append(
+            "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND ${kind}\n" +
+            "PAYLOAD_LENGTH ${payload.size}\n")) {
+            return errorPayload("response_too_large")
+        }
+        if (!body.append(payload)) {
+            return errorPayload("response_too_large")
+        }
+        if (!body.append("\nEND")) {
+            return errorPayload("response_too_large")
+        }
+        return body.toString()
     }
 
     private func dispatchWindowProjectionTargetsRead(lines: Array<String>): String {
@@ -2196,6 +2449,58 @@ public class CjguiSharedOperationExternalConnection {
                 )
             }
         }
+        if (authorization.permitsAction("GET_TREE_SELECTION")) {
+            if (let Some(_) <- treeSelectionProvider) {
+                actions.add(
+                    CjguiSharedOperationActionDescriptor(
+                        "GET_TREE_SELECTION",
+                        "读取树/集合选择快照",
+                        ArrayList<CjguiSharedOperationParameterDescriptor>(),
+                        0,
+                        0
+                    )
+                )
+            }
+        }
+        if (authorization.permitsAction("UPDATE_TREE_SELECTION")) {
+            if (let Some(_) <- treeSelectionProvider) {
+                actions.add(
+                    CjguiSharedOperationActionDescriptor(
+                        "UPDATE_TREE_SELECTION",
+                        "更新树/集合选择",
+                        ArrayList<CjguiSharedOperationParameterDescriptor>(),
+                        0,
+                        CJGUI_SHARED_OPERATION_MAX_TARGETS
+                    )
+                )
+            }
+        }
+        if (authorization.permitsAction("GET_GENERATED_UI")) {
+            if (let Some(_) <- generatedUiProvider) {
+                actions.add(
+                    CjguiSharedOperationActionDescriptor(
+                        "GET_GENERATED_UI",
+                        "查询/读取运行时生成界面",
+                        ArrayList<CjguiSharedOperationParameterDescriptor>(),
+                        0,
+                        0
+                    )
+                )
+            }
+        }
+        if (authorization.permitsAction("SUBMIT_GENERATED_UI")) {
+            if (let Some(_) <- generatedUiProvider) {
+                actions.add(
+                    CjguiSharedOperationActionDescriptor(
+                        "SUBMIT_GENERATED_UI",
+                        "提交运行时生成界面结构",
+                        ArrayList<CjguiSharedOperationParameterDescriptor>(),
+                        0,
+                        CJGUI_SHARED_OPERATION_MAX_TARGETS
+                    )
+                )
+            }
+        }
         if (authorization.permitsAction("READ_RANGE")) {
             if (let Some(_) <- rangeReadDomain) {
                 actions.add(
@@ -2537,6 +2842,59 @@ private func isSafeCapability(capability: String): Bool {
         }
     }
     return true
+}
+
+private func isSafeSelectionKey(value: String): Bool {
+    if (value.size == 0 || value.size > 64 || !value.isAscii()) {
+        return false
+    }
+    var index = 0
+    for (byte in value) {
+        let isLetter = (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z')
+        let isDigit = byte >= b'0' && byte <= b'9'
+        if ((!isLetter && byte != b'_') && index == 0) {
+            return false
+        }
+        if (!isLetter && !isDigit && byte != b'_' && byte != b'-') {
+            return false
+        }
+        index += 1
+    }
+    return true
+}
+
+private func isSafeInteger(value: String): Bool {
+    if (value.size == 0 || value.size > 20 || !value.isAscii()) {
+        return false
+    }
+    var index = 0
+    for (byte in value) {
+        if (index == 0 && byte == b'-') {
+            index += 1
+            continue
+        }
+        if (byte < b'0' || byte > b'9') {
+            return false
+        }
+        index += 1
+    }
+    return true
+}
+
+private func parseInt64OrZero(value: String): Int64 {
+    var result: Int64 = 0
+    var negative = false
+    var index = 0
+    for (byte in value) {
+        if (index == 0 && byte == b'-') {
+            negative = true
+            index += 1
+            continue
+        }
+        result = result * 10 + Int64(byte - b'0')
+        index += 1
+    }
+    return if (negative) { -result } else { result }
 }
 
 private func isSafeIdentifier(value: String): Bool {

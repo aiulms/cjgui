@@ -30,6 +30,26 @@ public class CjguiSharedOperationValue {
         return CjguiSharedOperationValue("BOOLEAN", "", 0, value)
     }
 
+    /// Canonical single-line text form of this value. Every projection that has
+    /// to publish a value as text (field readback, external queries, logs) uses
+    /// this one definition instead of each consumer inventing its own encoding:
+    /// STRING keeps its text, INTEGER its decimal form, BOOLEAN "true"/"false".
+    /// Without it a boolean field published `stringValue` and an external reader
+    /// saw an empty value even though the business value was set.
+    public func displayText(): String {
+        if (valueType == "BOOLEAN") {
+            return if (booleanValue) {
+                "true"
+            } else {
+                "false"
+            }
+        }
+        if (valueType == "INTEGER") {
+            return "${integerValue}"
+        }
+        return stringValue
+    }
+
     /// A bounded, transport-decoded list of original-version text ranges.
     /// Only action parameters may use this type; resource projections remain
     /// the three ordinary scalar kinds above.
@@ -335,6 +355,93 @@ public interface CjguiSharedOperationWindowProjectionProvider {
 public interface CjguiSharedOperationWindowProjectionTargetProvider {
     func windowProjectionTargets(): ArrayList<String>
     func windowProjectionForTarget(target: String): ?CjguiSharedOperationWindowProjection
+}
+
+/// Application-owned generated-UI structure provider. The payload encoding is
+/// chosen by the application/framework pair; the connection bounds and
+/// forwards it, and never interprets structure or business state itself.
+/// Fields, drafts and actions stay with the application's own owner.
+public interface CjguiSharedOperationGeneratedUiProvider {
+    /// Typed capability description (components, properties, actions, fields
+    /// and the size bounds) that an external client can query.
+    func capabilitiesPayload(): String
+    /// Live field projections (draft, applied value, validation, focus and
+    /// selection) for the fields the application registered. The same shared
+    /// field descriptor/projection feeds the handwritten form, the generated
+    /// region and this external read.
+    func fieldsPayload(): String
+    /// The currently accepted structure, with its structure version.
+    func acceptedStructurePayload(): String
+    /// Version of the currently accepted structure (0 when none accepted yet).
+    func acceptedStructureVersion(): Int64
+    /// Validates and expands a candidate. The previous accepted structure and
+    /// its interaction routing stay in place on any rejection.
+    func submitStructure(candidatePayload: String, expectedVersion: Int64): CjguiSharedOperationGeneratedUiSubmit
+    /// Version a received candidate would install once the scene accepts it
+    /// (0 when no candidate is pending). An external reader can therefore see
+    /// "candidate received" without mistaking it for "already displayed".
+    func candidateStructureVersion(): Int64 {
+        return 0
+    }
+    /// Scene state of the last candidate: "scene_accepted", "scene_pending",
+    /// "scene_rejected:<reason>", or "" before any candidate.
+    func sceneState(): String {
+        return ""
+    }
+}
+
+/// Selection provider for a tree/collection surface. The window's own
+/// selection object stays the only owner; this interface exposes a snapshot
+/// and routes external selection/expansion commands through the same handler
+/// the human input path uses, verifying the selection version.
+public interface CjguiSharedOperationTreeSelectionProvider {
+    /// Keys, focus, anchor and selection/projection versions.
+    func selectionPayload(): String
+    /// Applies one selection/expansion command (replace, toggle, range,
+    /// select-all, clear, expand, collapse) at an exact selection version.
+    func applySelection(command: String, key: String,
+                         expectedSelectionVersion: Int64): CjguiSharedOperationTreeSelectionResult
+}
+
+public class CjguiSharedOperationTreeSelectionResult {
+    public let applied: Bool
+    public let reason: String
+    public let selectionVersion: Int64
+
+    public init(applied: Bool, reason: String, selectionVersion: Int64) {
+        this.applied = applied
+        this.reason = reason
+        this.selectionVersion = selectionVersion
+    }
+}
+
+/// One structure-submission outcome. Candidate acceptance is reported
+/// separately from business/scene effects.
+public class CjguiSharedOperationGeneratedUiSubmit {
+    public let accepted: Bool
+    public let reason: String
+    public let path: String
+    public let versionBefore: Int64
+    public let versionAfter: Int64
+    /// True only when the candidate passed validation and was received. The
+    /// scene may still be pending; `sceneAccepted` distinguishes the two.
+    public let candidateAccepted: Bool
+    /// True when the window had already accepted the scene that contains this
+    /// structure. A freshly submitted candidate is normally still pending.
+    public let sceneAccepted: Bool
+    public let candidateVersion: Int64
+
+    public init(accepted: Bool, reason: String, path: String, versionBefore: Int64, versionAfter: Int64,
+                sceneAccepted!: Bool = false, candidateVersion!: Int64 = 0) {
+        this.accepted = accepted
+        this.reason = reason
+        this.path = path
+        this.versionBefore = versionBefore
+        this.versionAfter = versionAfter
+        this.candidateAccepted = accepted
+        this.sceneAccepted = sceneAccepted
+        this.candidateVersion = candidateVersion
+    }
 }
 
 /// Narrow, read-only facts from a live window.  The progress endpoint exposes

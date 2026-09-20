@@ -94,8 +94,8 @@ if [[ -z "$DESCRIPTOR" || ! -f "$DESCRIPTOR" ]]; then
 fi
 
 TARGETS="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-targets)"
-TARGET_A="$(print -r -- "$TARGETS" | awk '$1 == "WINDOW_TARGET" { print $2; exit }')"
-TARGET_B="$(print -r -- "$TARGETS" | awk '$1 == "WINDOW_TARGET" { count += 1; if (count == 2) { print $2; exit } }')"
+TARGET_A="$(awk '$1 == "WINDOW_TARGET" { print $2; exit }' <<< "$TARGETS")"
+TARGET_B="$(awk '$1 == "WINDOW_TARGET" { count += 1; if (count == 2) { print $2; exit } }' <<< "$TARGETS")"
 test -n "$TARGET_A"
 test -n "$TARGET_B"
 
@@ -106,10 +106,10 @@ CONTEXT_A="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR
 CONTEXT_B="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-context "$TARGET_B")"
 print -r -- "$CONTEXT_A" >"$TEMP_ROOT/context-a.log"
 print -r -- "$CONTEXT_B" >"$TEMP_ROOT/context-b.log"
-print -r -- "$CONTEXT_A" | rg -q "WINDOW_TARGET $TARGET_A"
-print -r -- "$CONTEXT_A" | rg -q 'WINDOW_NODE shared-document-multi-root-primary 1 window'
-print -r -- "$CONTEXT_B" | rg -q "WINDOW_TARGET $TARGET_B"
-print -r -- "$CONTEXT_B" | rg -q 'WINDOW_NODE shared-document-multi-root-review 1 window'
+rg -q "WINDOW_TARGET $TARGET_A" "$TEMP_ROOT/context-a.log"
+rg -q 'WINDOW_NODE shared-document-multi-root-primary 1 window' "$TEMP_ROOT/context-a.log"
+rg -q "WINDOW_TARGET $TARGET_B" "$TEMP_ROOT/context-b.log"
+rg -q 'WINDOW_NODE shared-document-multi-root-review 1 window' "$TEMP_ROOT/context-b.log"
 
 # Progress and interaction are now target-bound observations as well. The
 # response must carry the requested target so a client can correlate a late
@@ -118,17 +118,18 @@ PROGRESS_A="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTO
 INTERACTION_B="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-interaction "$TARGET_B")"
 print -r -- "$PROGRESS_A" >"$TEMP_ROOT/progress-a.log"
 print -r -- "$INTERACTION_B" >"$TEMP_ROOT/interaction-b.log"
-print -r -- "$PROGRESS_A" | rg -q 'KIND WINDOW_PROGRESS'
-print -r -- "$PROGRESS_A" | rg -q "WINDOW_TARGET $TARGET_A"
-print -r -- "$PROGRESS_A" | rg -q 'WINDOW_PROJECTION ACTIVE'
-print -r -- "$INTERACTION_B" | rg -q 'KIND WINDOW_INTERACTION'
-print -r -- "$INTERACTION_B" | rg -q "WINDOW_TARGET $TARGET_B"
+rg -q 'KIND WINDOW_PROGRESS' "$TEMP_ROOT/progress-a.log"
+rg -q "WINDOW_TARGET $TARGET_A" "$TEMP_ROOT/progress-a.log"
+rg -q 'WINDOW_PROJECTION ACTIVE' "$TEMP_ROOT/progress-a.log"
+rg -q 'KIND WINDOW_INTERACTION' "$TEMP_ROOT/interaction-b.log"
+rg -q "WINDOW_TARGET $TARGET_B" "$TEMP_ROOT/interaction-b.log"
 
 CONTEXT="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" get)"
-VERSION="$(print -r -- "$CONTEXT" | awk '$1 == "VERSION" { print $2; exit }')"
+print -r -- "$CONTEXT" >"$TEMP_ROOT/context.log"
+VERSION="$(awk '$1 == "VERSION" { print $2; exit }' "$TEMP_ROOT/context.log")"
 test -n "$VERSION"
 INVOKE="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" invoke "$VERSION" REPLACE_RANGE --target 7101 --arg start=INTEGER:0 --arg end=INTEGER:3 --arg text=STRING:外部)"
-print -r -- "$INVOKE" | rg -q 'APPLIED true'
+rg -q 'APPLIED true' <<< "$INVOKE"
 
 # A closed A is an error, never a request to read whichever sibling happens
 # to be first. B remains a separately addressable live projection.
@@ -139,13 +140,13 @@ for attempt in {1..100}; do
   STALE_A_RESPONSE="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-context "$TARGET_A" 2>&1)"
   STALE_A_STATUS=$?
   set -e
-  if [[ "$STALE_A_STATUS" == 3 ]] && print -r -- "$STALE_A_RESPONSE" | rg -q 'ERROR unknown_window_target'; then
+  if [[ "$STALE_A_STATUS" == 3 ]] && rg -q 'ERROR unknown_window_target' <<< "$STALE_A_RESPONSE"; then
     break
   fi
   sleep 0.1
 done
 [[ "$STALE_A_STATUS" == 3 ]]
-print -r -- "$STALE_A_RESPONSE" | rg -q 'ERROR unknown_window_target'
+rg -q 'ERROR unknown_window_target' <<< "$STALE_A_RESPONSE"
 STALE_A_PROGRESS=""
 STALE_A_PROGRESS_STATUS=0
 for attempt in {1..100}; do
@@ -153,13 +154,13 @@ for attempt in {1..100}; do
   STALE_A_PROGRESS="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-progress "$TARGET_A" 2>&1)"
   STALE_A_PROGRESS_STATUS=$?
   set -e
-  if [[ "$STALE_A_PROGRESS_STATUS" == 3 ]] && print -r -- "$STALE_A_PROGRESS" | rg -q 'ERROR unknown_window_target'; then
+  if [[ "$STALE_A_PROGRESS_STATUS" == 3 ]] && rg -q 'ERROR unknown_window_target' <<< "$STALE_A_PROGRESS"; then
     break
   fi
   sleep 0.1
 done
 [[ "$STALE_A_PROGRESS_STATUS" == 3 ]]
-print -r -- "$STALE_A_PROGRESS" | rg -q 'ERROR unknown_window_target'
+rg -q 'ERROR unknown_window_target' <<< "$STALE_A_PROGRESS"
 print -r -- "$STALE_A_PROGRESS" >"$TEMP_ROOT/stale-progress-a.log"
 STALE_A_INTERACTION=""
 STALE_A_INTERACTION_STATUS=0
@@ -168,24 +169,24 @@ for attempt in {1..100}; do
   STALE_A_INTERACTION="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-interaction "$TARGET_A" 2>&1)"
   STALE_A_INTERACTION_STATUS=$?
   set -e
-  if [[ "$STALE_A_INTERACTION_STATUS" == 3 ]] && print -r -- "$STALE_A_INTERACTION" | rg -q 'ERROR unknown_window_target'; then
+  if [[ "$STALE_A_INTERACTION_STATUS" == 3 ]] && rg -q 'ERROR unknown_window_target' <<< "$STALE_A_INTERACTION"; then
     break
   fi
   sleep 0.1
 done
 [[ "$STALE_A_INTERACTION_STATUS" == 3 ]]
-print -r -- "$STALE_A_INTERACTION" | rg -q 'ERROR unknown_window_target'
+rg -q 'ERROR unknown_window_target' <<< "$STALE_A_INTERACTION"
 print -r -- "$STALE_A_INTERACTION" >"$TEMP_ROOT/stale-interaction-a.log"
 CONTEXT_B_AFTER_CLOSE="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-context "$TARGET_B")"
 print -r -- "$CONTEXT_B_AFTER_CLOSE" >"$TEMP_ROOT/context-b-after-close.log"
-print -r -- "$CONTEXT_B_AFTER_CLOSE" | rg -q "WINDOW_TARGET $TARGET_B"
-print -r -- "$CONTEXT_B_AFTER_CLOSE" | rg -q 'WINDOW_NODE shared-document-multi-root-review 1 window'
+rg -q "WINDOW_TARGET $TARGET_B" "$TEMP_ROOT/context-b-after-close.log"
+rg -q 'WINDOW_NODE shared-document-multi-root-review 1 window' "$TEMP_ROOT/context-b-after-close.log"
 PROGRESS_B_AFTER_CLOSE="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-progress "$TARGET_B")"
 INTERACTION_B_AFTER_CLOSE="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-interaction "$TARGET_B")"
 print -r -- "$PROGRESS_B_AFTER_CLOSE" >"$TEMP_ROOT/progress-b-after-close.log"
 print -r -- "$INTERACTION_B_AFTER_CLOSE" >"$TEMP_ROOT/interaction-b-after-close.log"
-print -r -- "$PROGRESS_B_AFTER_CLOSE" | rg -q "WINDOW_TARGET $TARGET_B"
-print -r -- "$INTERACTION_B_AFTER_CLOSE" | rg -q "WINDOW_TARGET $TARGET_B"
+rg -q "WINDOW_TARGET $TARGET_B" "$TEMP_ROOT/progress-b-after-close.log"
+rg -q "WINDOW_TARGET $TARGET_B" "$TEMP_ROOT/interaction-b-after-close.log"
 REOPENED_TARGET=""
 for attempt in {1..100}; do
   REOPENED_TARGET="$(awk '$1 == "CJGUI_SHARED_DOCUMENT_MULTI_WINDOW_RESULT" && $2 == "REOPENED_TARGET" { print $3; exit }' "$CONNECTION_LOG")"
@@ -197,8 +198,8 @@ done
 test -n "$REOPENED_TARGET"
 REOPENED_PROGRESS="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$DESCRIPTOR" window-progress "$REOPENED_TARGET")"
 print -r -- "$REOPENED_PROGRESS" >"$TEMP_ROOT/progress-reopened.log"
-print -r -- "$REOPENED_PROGRESS" | rg -q "WINDOW_TARGET $REOPENED_TARGET"
-print -r -- "$REOPENED_PROGRESS" | rg -q 'WINDOW_PROJECTION ACTIVE'
+rg -q "WINDOW_TARGET $REOPENED_TARGET" "$TEMP_ROOT/progress-reopened.log"
+rg -q 'WINDOW_PROJECTION ACTIVE' "$TEMP_ROOT/progress-reopened.log"
 
 wait "$APP_PID"
 APP_PID=""
@@ -235,10 +236,10 @@ if [[ -z "$BACKLOG_DESCRIPTOR" || ! -f "$BACKLOG_DESCRIPTOR" ]]; then
   exit 1
 fi
 BACKLOG_TARGETS="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$BACKLOG_DESCRIPTOR" window-targets)"
-BACKLOG_TARGET_B="$(print -r -- "$BACKLOG_TARGETS" | awk '$1 == "WINDOW_TARGET" { count += 1; if (count == 2) { print $2; exit } }')"
+BACKLOG_TARGET_B="$(awk '$1 == "WINDOW_TARGET" { count += 1; if (count == 2) { print $2; exit } }' <<< "$BACKLOG_TARGETS")"
 test -n "$BACKLOG_TARGET_B"
 BACKLOG_B_PROGRESS="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$BACKLOG_DESCRIPTOR" window-progress "$BACKLOG_TARGET_B")"
-BACKLOG_B_SESSION="$(print -r -- "$BACKLOG_B_PROGRESS" | awk '$1 == "WINDOW_SESSION" { print $2; exit }')"
+BACKLOG_B_SESSION="$(awk '$1 == "WINDOW_SESSION" { print $2; exit }' <<< "$BACKLOG_B_PROGRESS")"
 test -n "$BACKLOG_B_SESSION"
 BACKLOG_CLIENT_PIDS=()
 for client_index in {1..4}; do
@@ -251,13 +252,14 @@ for client_index in {1..4}; do
 done
 sleep 0.1
 BACKLOG_CONTEXT="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$BACKLOG_DESCRIPTOR" get)"
-BACKLOG_VERSION="$(print -r -- "$BACKLOG_CONTEXT" | awk '$1 == "VERSION" { print $2; exit }')"
+print -r -- "$BACKLOG_CONTEXT" >"$TEMP_ROOT/backlog-context.log"
+BACKLOG_VERSION="$(awk '$1 == "VERSION" { print $2; exit }' "$TEMP_ROOT/backlog-context.log")"
 test -n "$BACKLOG_VERSION"
 BACKLOG_INVOKE="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$BACKLOG_DESCRIPTOR" invoke "$BACKLOG_VERSION" REPLACE_RANGE --target 7101 --arg start=INTEGER:0 --arg end=INTEGER:3 --arg text=STRING:繁忙)"
-print -r -- "$BACKLOG_INVOKE" | rg -q 'APPLIED true'
+rg -q 'APPLIED true' <<< "$BACKLOG_INVOKE"
 BACKLOG_B_WAIT="$(python3 "$RUNTIME_DIR/shared_operation_core/client.py" "$BACKLOG_DESCRIPTOR" wait-window "$BACKLOG_B_SESSION" 2 --target "$BACKLOG_TARGET_B" --timeout-ms 3000)"
 print -r -- "$BACKLOG_B_WAIT" >"$TEMP_ROOT/backlog-b-wait.log"
-print -r -- "$BACKLOG_B_WAIT" | rg -q 'WINDOW_WAIT_OUTCOME completed'
+rg -q 'WINDOW_WAIT_OUTCOME completed' "$TEMP_ROOT/backlog-b-wait.log"
 for backlog_client_pid in "${BACKLOG_CLIENT_PIDS[@]}"; do
   wait "$backlog_client_pid"
 done

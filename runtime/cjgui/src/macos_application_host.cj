@@ -121,6 +121,20 @@ private class CjguiMacosApplicationLoopReferenceRegistry {
             return remaining.size == 0
         }
     }
+
+    /// A process-level standard Quit without a key window has no focus
+    /// routing information. Only the sole live application lifecycle owner
+    /// may consume that intent; more than one owner deliberately remains
+    /// fail-closed rather than borrowing a sibling window.
+    public static func isExclusiveOwner(applicationIdentifier: String): Bool {
+        if (applicationIdentifier.size == 0) {
+            return false
+        }
+        return synchronized(CjguiMacosApplicationLoopReferenceRegistry.referenceLock) {
+            return CjguiMacosApplicationLoopReferenceRegistry.activeApplicationIdentifiers.size == 1 &&
+                CjguiMacosApplicationLoopReferenceRegistry.activeApplicationIdentifiers[0] == applicationIdentifier
+        }
+    }
 }
 
 /// Value-only result for a requested window creation. A failed creation never
@@ -199,6 +213,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     private var deferredCloseIdentifiers: ArrayList<CjguiMacosApplicationWindowIdentifier>
     private var deferredAuthorizedClose: Bool
     private var ownsProcessLoopReference: Bool
+    private var ownsApplicationExitLifecycleReference: Bool
 
     public init(
         maximumWindowCount!: Int64 = 4,
@@ -220,6 +235,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         this.deferredCloseIdentifiers = ArrayList<CjguiMacosApplicationWindowIdentifier>()
         this.deferredAuthorizedClose = false
         this.ownsProcessLoopReference = false
+        this.ownsApplicationExitLifecycleReference = false
     }
 
     /// Opens one independent projection/session. The controller and its
@@ -272,6 +288,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 return CjguiMacosApplicationWindowOpenResult(false, None, "application_loop_reference_failed")
             }
             ownsProcessLoopReference = true
+            internalRendererRetainApplicationExitLifecycleOwner()
+            ownsApplicationExitLifecycleReference = true
         }
         windows.add(CjguiMacosApplicationWindowEntry(identifier, window))
         return CjguiMacosApplicationWindowOpenResult(true, Some(identifier), "opened")
@@ -476,6 +494,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 }
             }
         }
+        consumeNativeApplicationExitIntent()
         applyDeferredMutations()
         if (!isOpen()) {
             return CjguiMacosApplicationTurnResult(false, 0, externalActionCount, 0u32, elapsedMs(started), None)
@@ -502,6 +521,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 retire(waitedIdentifier)
             }
         }
+        consumeNativeApplicationExitIntent()
         applyDeferredMutations()
         let result = CjguiMacosApplicationTurnResult(
             isOpen(),
@@ -512,6 +532,35 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             Some(waitedIdentifier)
         )
         return result
+    }
+
+    /// AppKit's delegate only queues a coalesced, process-level Quit intent
+    /// and returns immediately. The current normal application turn is the
+    /// sole place that consumes it, so the already-public exit decision
+    /// provider decides rejection/cleanup without a main-thread wait on
+    /// Cangjie. One native intent is enough even when the user repeats Quit
+    /// before this turn reaches its key window.
+    private func consumeNativeApplicationExitIntent(): Unit {
+        // No key window means keyboard focus cannot identify a session, but
+        // it does not erase this application's lifecycle owner. Consume only
+        // when the reference registry proves that this is the one live
+        // application owner; otherwise leave the native intent pending and
+        // fail closed instead of selecting an arbitrary sibling window.
+        if (ownsApplicationExitLifecycleReference &&
+            CjguiMacosApplicationLoopReferenceRegistry.isExclusiveOwner(applicationIdentity) &&
+            internalRendererHasUnkeyedApplicationExitRequest()) {
+            internalRendererCompleteApplicationExitRequest()
+            let _ = requestApplicationExit()
+            return
+        }
+        for (identifier in windowIdentifiers()) {
+            if (let Some(composableWindow) <- window(identifier)) {
+                if (composableWindow.consumeApplicationExitRequest()) {
+                    let _ = requestApplicationExit()
+                    return
+                }
+            }
+        }
     }
 
     /// Final application shutdown intentionally bypasses per-window business
@@ -542,6 +591,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             connection.close()
         }
         externalConnection = None
+        if (ownsApplicationExitLifecycleReference) {
+            ownsApplicationExitLifecycleReference = false
+            internalRendererReleaseApplicationExitLifecycleOwner()
+        }
         if (ownsProcessLoopReference) {
             ownsProcessLoopReference = false
             if (CjguiMacosApplicationLoopReferenceRegistry.release(applicationIdentity)) {

@@ -53,6 +53,9 @@ typedef enum CjguiInternalRendererStatus {
     // remains an internal status; the Cangjie wrapper maps it to a value-only
     // experimental API reason and never exposes the native enum.
     CJGUI_INTERNAL_RENDERER_INVALID_UTF8 = 14,
+    // A platform transfer offer or payload did not match the currently
+    // accepted Cangjie declaration or its explicit byte bound.
+    CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED = 15,
     CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR = 99
 } CjguiInternalRendererStatus;
 
@@ -122,8 +125,35 @@ typedef enum CjguiInternalRendererEventKind {
     CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN = 37,
     CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE = 38,
     CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END = 39,
-    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL = 40
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL = 40,
+    // An AppKit NSMenuItem never owns an application callback.  Its action
+    // only carries the stable command id into the same bounded Cangjie FIFO
+    // as the keyboard route, where the accepted scene revalidates it.
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND = 41,
+    // Standard AppKit Quit is only a process-level intent.  It is delivered
+    // to the current Cangjie application turn, whose existing exit-decision
+    // provider may reject it without closing any projection.
+    CJGUI_INTERNAL_RENDERER_EVENT_APPLICATION_EXIT_REQUESTED = 42,
+    // These are framework-owned visual interaction phases. They carry the
+    // same copied scene identity as every other composable event; Cangjie
+    // resolves paint from it, while native retains only short-lived mouse
+    // routing needed to decide whether release may activate.
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_HOVER_ENTER = 43,
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_HOVER_LEAVE = 44,
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_BEGIN = 45,
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_END = 46,
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL = 47,
+    // Native copies a bounded declared value and stable scene identity only.
+    // Cangjie revalidates the target and invokes the established owner.
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_COPY = 48,
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_PASTE = 49,
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP = 50
 } CjguiInternalRendererEventKind;
+
+typedef enum CjguiInternalRendererDataTransferRole {
+    CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE = 1,
+    CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET = 2
+} CjguiInternalRendererDataTransferRole;
 
 typedef enum CjguiInternalRendererComposableNodeKind {
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_VERTICAL = 1,
@@ -137,7 +167,11 @@ typedef enum CjguiInternalRendererComposableNodeKind {
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE = 9,
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT = 10,
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_SPLIT_DIVIDER = 13,
-    CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER = 14
+    CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER = 14,
+    // Bounded, Cangjie-described geometry. The payload is copied into the
+    // existing generic scene-node value; this enum carries no GPU object or
+    // public native rendering API.
+    CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC = 15
 } CjguiInternalRendererComposableNodeKind;
 
 // Config POD. Window geometry + clear color baseline. Layout matches the
@@ -202,7 +236,24 @@ typedef struct CjguiInternalRendererEvent {
     // phases; selection fields retain their existing text-only meaning.
     int64_t pointerX;
     int64_t pointerY;
+    // Keyboard modifier flags of the pointer event that produced this intent
+    // (AppKit NSEventModifierFlag* bits). Non-pointer intents leave it 0.
+    int64_t modifierFlags;
 } CjguiInternalRendererEvent;
+
+// One native coordination declaration for one format on an already-staged
+// composable node. Format and UTF-8 payload are copied during the setter;
+// Cangjie objects, business callbacks and pasteboard objects never enter this
+// ABI. A source supplies payload; a target supplies an empty payload.
+typedef struct CjguiInternalRendererComposableDataTransferItem {
+    uint64_t nodeId;
+    uint64_t projectionVersion;
+    int64_t resourceId;
+    uint32_t nodeKind;
+    uint32_t role; // CjguiInternalRendererDataTransferRole
+    uint32_t maximumPayloadBytes;
+    int64_t sourceId;
+} CjguiInternalRendererComposableDataTransferItem;
 
 // Generic scene node. Geometry uses top-left point coordinates supplied by
 // the Cangjie layout engine. The C side copies labels/values immediately and
@@ -330,6 +381,25 @@ void cjgui_internal_renderer_enable_main_thread_dispatch(void);
 // cleanup. It transfers no application state and retains no Cangjie object.
 void cjgui_internal_renderer_request_application_stop(void);
 
+// Clears the coalesced standard-Quit intent after its Cangjie application
+// owner has made a decision. This carries no Cangjie object or decision value;
+// the owner itself owns the resulting close or rejection.
+void cjgui_internal_renderer_complete_application_exit_request(void);
+
+// Application-owned multi-window hosts retain one scalar lifecycle reference
+// while they have a live process-loop owner. It lets a standard Quit with no
+// key window remain an application decision, without selecting an arbitrary
+// renderer session. Legacy single-window hosts retain no reference and keep
+// AppKit's explicit normal no-owner behavior.
+void cjgui_internal_renderer_retain_application_exit_lifecycle_owner(void);
+void cjgui_internal_renderer_release_application_exit_lifecycle_owner(void);
+
+// Returns non-zero only for a pending standard Quit that had no key CJGUI
+// window and has at least one application-lifecycle owner. The Cangjie
+// application layer must establish that it is the unique active owner before
+// consuming it, then acknowledge through complete_application_exit_request.
+uint8_t cjgui_internal_renderer_has_unkeyed_application_exit_request(void);
+
 // create(config) -> session token.
 // Returns CJGUI_INTERNAL_RENDERER_INVALID_SESSION on failure; status is
 // written to *outStatus (which may be NULL only when a caller is fine
@@ -367,9 +437,41 @@ cjgui_internal_renderer_set_composable_scene_node(
     const char *label, const char *value, const char *imageResourcePath,
     const char *imageResourceId, uint64_t imageResourceVersion);
 
+// Replaces the complete native coordination declaration set (including an
+// empty set) for this staged composable scene. Promotion is atomic with the
+// scene presented by `present_composable_scene`.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_configure_composable_data_transfer(uint64_t session,
+                                                            uint64_t projectionVersion,
+                                                            uint32_t itemCount);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_data_transfer_item(
+    uint64_t session, uint32_t itemIndex,
+    const CjguiInternalRendererComposableDataTransferItem *item,
+    const char *format, const char *payload,
+    const char *sourceKind, const char *sourceIdentity);
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_present_composable_scene(
     uint64_t session, CjguiInternalRendererFrameObservation *outObservation);
+
+// Stage one bounded, scalar command-menu projection alongside a composable
+// scene candidate. Strings are copied during each setter; no Cangjie pointer
+// or AppKit object crosses this internal ABI. The scene commit promotes it
+// atomically with the input scene, while the explicit commit supports a
+// command-state-only refresh against an already accepted scene version.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_configure_composable_command_menu(
+    uint64_t session, uint64_t projectionVersion, uint32_t itemCount);
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_command_menu_item(
+    uint64_t session, uint32_t itemIndex, const char *commandId,
+    const char *title, const char *menuGroup, const char *shortcut,
+    uint32_t menuSection, uint64_t focusScope, uint8_t enabled, uint8_t checked);
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_commit_composable_command_menu(uint64_t session);
 
 // Starts or observes a bounded asynchronous image preparation owned by this
 // renderer session. `outState` is one of 0=unrequested, 1=loading, 2=ready,
@@ -415,6 +517,103 @@ cjgui_internal_renderer_test_enqueue_composable_event(uint64_t session,
                                                        uint32_t eventKind,
                                                        const char *text);
 
+// Locates the actual NSMenuItem installed from an accepted command menu
+// projection and performs its AppKit action. It is a test-only native seam,
+// never a public Cangjie menu handle or direct FIFO injector.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_prepare_composable_command_menu(uint64_t session,
+                                                              uint32_t *outReadinessFlags);
+
+// Observes the normal application's current key window without selecting a
+// session, changing activation, or mutating focus. Bits report main-thread,
+// regular policy, running, active, visible, can-become-key, is-key and
+// key-window-has-a-live-CJGUI-session respectively.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_current_composable_command_menu(uint32_t *outReadinessFlags);
+
+// Test-only focus-preparation request by the ordinary window title. It is
+// separate from item selection and has no production analogue. The caller
+// must subsequently let the normal application scheduler run and use the
+// observation function above to prove that this window actually became key.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_prepare_composable_command_menu_window(const char *title,
+                                                                     uint32_t *outReadinessFlags);
+
+// Selects an already-installed menu item only when its session is the
+// application's current key window. Frontmost/key preparation is deliberately
+// a separate test step so this helper cannot conceal cross-window routing
+// mistakes by changing focus for its session argument.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_composable_menu_item(uint64_t session,
+                                                          const char *commandId);
+
+// Selects the installed item for the current key window only. This keeps a
+// normal consumer probe independent of the package-private session token.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_current_composable_menu_item(const char *commandId);
+
+// Sends one command-key shortcut through NSApplication while the current
+// key-window menu projection is live. This is test-only; it does not call the
+// Cangjie command API or enqueue a FIFO record directly.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_dispatch_current_composable_command_shortcut(uint16_t keyCode,
+                                                                            uint64_t modifiers,
+                                                                            const char *characters);
+
+// Sends one ordinary key event (for example an arrow or Home/End, with or
+// without modifiers) through NSApplication into the production keyDown path of
+// the key window. Test-only: the NSEvent is built here, while the routing,
+// queue and FFI below it stay production code. It returns OK only when the
+// event produced exactly one queued interaction, so a swallowed event is
+// distinguishable from a delivered one.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_dispatch_current_composable_key(uint16_t keyCode, uint64_t modifiers,
+                                                             const char *characters);
+
+// Captures an actual NSMenuItem while one window is key, then later invokes
+// that retained item's AppKit action without changing the current key window.
+// It verifies stale native callbacks still resolve their target at execution.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_capture_current_composable_menu_item(const char *commandId);
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_captured_composable_menu_item(void);
+
+// Reads only normal AppKit projection facts for the command-menu integration
+// probe: the process-local rebuild count and presence of the standard app/text
+// responder entries. It cannot select a command or change window focus.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_composable_command_menu_projection(uint64_t *outRebuildCount,
+                                                                          uint32_t *outStandardMenuFlags);
+
+// Observes one item in the current AppKit menu without selecting it. Bits are
+// enabled, checked and has-key-equivalent; this is test-only state evidence
+// for an accepted external owner update.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_current_composable_menu_item(const char *commandId,
+                                                                    uint32_t *outStateFlags);
+
+// Executes the installed standard Quit NSMenuItem through AppKit.  This is
+// intentionally test-only: the normal application bridge must still decide
+// process exit from its Cangjie-owned lifecycle turn.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_invoke_standard_quit_menu_item(void);
+
+// Makes the process application hidden or visible through the ordinary AppKit
+// path and reports whether a CJGUI key window remains.  It exists only to
+// exercise an application-owned standard-Quit decision when no window is key;
+// it never chooses a renderer session as an application owner.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_set_application_hidden(uint8_t hidden,
+                                                     uint32_t *outNoKeyWindow);
+
+// Reads whether the standard Edit responder items currently retain their
+// Cmd-Z / Cmd-Shift-Z key equivalents (bits 0 and 1).  It does not select an
+// item or mutate focus, and lets the normal-app probe distinguish owner
+// command priority from a responder-chain fallback.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_observe_standard_edit_shortcuts(uint32_t *outShortcutFlags);
+
 // Programmatic native event seam for the pointer-capture probe. It exercises
 // the production overlay hit-test/capture route and does not enter the
 // normal-consumer ABI.
@@ -423,6 +622,31 @@ cjgui_internal_renderer_test_send_composable_pointer(uint64_t session,
                                                       uint32_t phase,
                                                       float pointX,
                                                       float pointY);
+
+// Test-only one-shot press through the same overlay hit-test and ordinary
+// activation route used by mouseDown. It is intentionally separate from the
+// capture-only seam above so non-capturing interactive geometry can prove its
+// exact hit shape without becoming a second pointer-control contract.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_activate_composable_point(uint64_t session,
+                                                        float pointX,
+                                                        float pointY);
+
+// Drives one press lifecycle through the same production overlay branches as
+// mouseDown/mouseDragged/mouseUp. Phase 1 is down, 2 is drag/move, 3 is up,
+// and 4 is cancellation. It remains test-only so no platform event object is
+// exposed through the Cangjie consumer ABI.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_send_composable_mouse(uint64_t session,
+                                                    uint32_t phase,
+                                                    float pointX,
+                                                    float pointY);
+
+// Invokes the same press/pointer cancellation path as a native key-window
+// resignation. It is test-only: normal consumers never receive a platform
+// object or an imperative focus-loss API.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_cancel_composable_platform_interaction(uint64_t session);
 
 // Test-only scalar observability for the normal-window text-measurement
 // cache. It is absent from the production sidecar ABI.
@@ -474,6 +698,18 @@ cjgui_internal_renderer_test_composable_image_pipeline_stats(
     uint64_t *outAsyncLaunchCount, uint64_t *outAsyncTotalMicros,
     uint32_t *outPeakInFlight, uint32_t *outPeakPending,
     uint64_t *outCacheBytes, uint64_t *outResourceCompletionVersion);
+
+// Test-only scalar inspection of the bounded application+MTLDevice image
+// domain. Reusable-cache bytes/entries are intentionally separate from
+// committed scene texture references; neither pointer nor native object crosses
+// the ABI. `subscriberCount` includes only live token+generation subscribers.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_application_image_domain_stats(
+    uint64_t session, uint32_t *outReusableCacheEntries, uint64_t *outReusableCacheBytes,
+    uint32_t *outInFlight, uint32_t *outPending, uint64_t *outActualLoadCount,
+    uint64_t *outActualDecodeCount, uint32_t *outCommittedTextureRefs,
+    uint32_t *outSubscriberCount, uint32_t *outActiveSessionCount,
+    uint32_t *outResourceRecordCount);
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_composable_scene_version(uint64_t session,
@@ -564,6 +800,20 @@ cjgui_internal_renderer_test_composable_drawable_pixel(uint64_t session,
                                                         uint8_t *outBlue, uint8_t *outGreen,
                                                         uint8_t *outRed, uint8_t *outAlpha);
 
+// Creates a small opaque local PNG fixture only for native renderer probes.
+// The test still exercises normal file URL decode, texture creation, draw and
+// drawable readback; this avoids embedding user assets or a second decoder.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_write_solid_image_fixture(const char *path,
+                                                        uint8_t red, uint8_t green,
+                                                        uint8_t blue, uint8_t alpha);
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_write_solid_image_fixture_sized(const char *path,
+                                                              uint32_t width, uint32_t height,
+                                                              uint8_t red, uint8_t green,
+                                                              uint8_t blue, uint8_t alpha);
+
 // Encoder-work scalars for the latest composable Metal frame. Consecutive
 // shape nodes may share one vertex upload/draw; image and text textures stay
 // explicit painter-order boundaries. This is test-only and never exports a
@@ -590,6 +840,47 @@ cjgui_internal_renderer_test_composable_encoder_batch_stats(uint64_t session,
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_composable_encoder_cpu_stats(uint64_t session,
                                                            uint64_t *outEncodeMicros);
+
+// Latest composable frame's native call spans. `nextDrawable` is measured
+// directly rather than inferred from a larger stage interval; command-buffer,
+// present and commit calls are separate CPU spans. `readbackWait` is non-zero
+// only when that frame synchronously waited for a diagnostic/readback. These
+// test-only scalars do not report GPU completion or physical presentation.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_present_timing_stats(
+    uint64_t session,
+    uint64_t *outNextDrawableMicros,
+    uint64_t *outCommandBufferMicros,
+    uint64_t *outPresentMicros,
+    uint64_t *outCommitMicros,
+    uint64_t *outReadbackWaitMicros,
+    uint8_t *outReadbackWaited);
+
+// Latest-frame facts for compact vector-buffer submission. `outBufferUploads`
+// and `outBufferUploadBytes` describe topology allocations made by that frame;
+// `outBufferReuses` describes already accepted per-node buffers bound again for
+// paint/layout/clip changes. Resident bytes remain owned by accepted native
+// nodes and are retained through in-flight command-buffer completion.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_vector_submission_stats(uint64_t session,
+                                                                 uint32_t *outDrawCount,
+                                                                 uint32_t *outBufferUploads,
+                                                                 uint32_t *outBufferReuses,
+                                                                 uint64_t *outBufferUploadBytes,
+                                                                 uint64_t *outResidentBytes);
+
+// Test-only scalar ownership/preparation facts for vector render-path probes.
+// `outMultisampleAttachmentBytes` is the declared private 4x color attachment
+// byte cost for the latest submitted frame (0 on the ordinary drawable path),
+// not total GPU process memory or completion timing.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_vector_render_stats(
+    uint64_t session,
+    uint8_t *outSampleCount,
+    uint64_t *outMultisampleAttachmentBytes,
+    uint64_t *outPipelineBuildCount,
+    uint64_t *outGeometryPreparationCount,
+    uint64_t *outGeometryPreparedBytes);
 
 // Test-only selector for comparing two legal shape submission strategies on
 // the same scene: one complete rectangle per setVertexBytes call versus
@@ -962,6 +1253,61 @@ cjgui_internal_renderer_set_shared_form_status(uint64_t session, const char *sta
 // form update for this session. It is consumed immediately inside the
 // internal Cangjie bridge and is never part of a public API.
 const char *cjgui_internal_renderer_form_event_text(uint64_t session);
+
+// Borrowed until the next event pump for this session. It contains the
+// declared format for a copy/paste/drop event and is empty for other events.
+const char *cjgui_internal_renderer_data_transfer_event_format(uint64_t session);
+const char *cjgui_internal_renderer_data_transfer_event_source_kind(uint64_t session);
+const char *cjgui_internal_renderer_data_transfer_event_source_identity(uint64_t session);
+int64_t cjgui_internal_renderer_data_transfer_event_source_id(uint64_t session);
+
+#ifdef CJGUI_INTERNAL_TESTING
+// Test-only normal-pasteboard exercises. They conditionally restore the
+// saved pasteboard and still call the production bounded helpers.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_copy(uint64_t session, uint64_t sourceNodeId);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_paste(uint64_t session, uint64_t targetNodeId,
+                                                             const char *externalPayload);
+// Drives the production destination callbacks with a test-owned dragging
+// info/pasteboard. It proves target callback -> FIFO boundaries only, never
+// cross-window AppKit dispatch.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_drop(uint64_t session, uint64_t targetNodeId,
+                                                            const char *externalPayload);
+// Drives the production mouse-down/mouse-dragged source path and reports
+// hit/press/threshold/dragging-session bits (1/2/4/8). It does not fabricate
+// a target drop or expose an AppKit object to framework consumers.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_trace_composable_data_transfer_drag(
+    uint64_t session, float sourceX, float sourceY, float dragX, float dragY, uint32_t *outTrace);
+// Enters the first declared target through the production hover helper. The
+// paired cancel helper below then calls the production draggingExited method.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_hover_target(uint64_t session);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_hover_cleared(uint64_t session);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_cancel(uint64_t session);
+
+// Test-only transfer-retention observability. All byte values are bounded
+// UTF-8 copies already owned by the normal native scene/FIFO: these are not
+// allocator totals or application-domain payload retention. `read`/`parse`
+// are cumulative callback observations with a largest single payload; source,
+// accepted and candidate report current/peak declaration copies; FIFO reports
+// only copy/paste/drop events (not unrelated pointer input).
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_data_transfer_stats(
+    uint64_t session,
+    uint64_t *outReadCount, uint64_t *outReadBytes, uint64_t *outReadPeakBytes,
+    uint64_t *outParseCount, uint64_t *outParseBytes, uint64_t *outParsePeakBytes,
+    uint64_t *outSourceWriteCount, uint64_t *outSourceWriteBytes, uint64_t *outSourceWritePeakBytes,
+    uint64_t *outSourceCurrentBytes, uint64_t *outSourcePeakBytes,
+    uint64_t *outAcceptedCurrentBytes, uint64_t *outAcceptedPeakBytes,
+    uint64_t *outCandidateCurrentBytes, uint64_t *outCandidatePeakBytes,
+    uint32_t *outFifoCurrentEvents, uint32_t *outFifoPeakEvents,
+    uint64_t *outFifoCurrentBytes, uint64_t *outFifoPeakBytes);
+#endif
 
 // requestClose(session) -> status. Marks close requested and closes the
 // window. Does not destroy the session.

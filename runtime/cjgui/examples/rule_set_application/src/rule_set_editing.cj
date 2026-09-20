@@ -106,6 +106,18 @@ private class CjguiRuleSetLoadedFile {
     }
 }
 
+private class CjguiRuleSetTransferRecord {
+    let label: String
+    let enabled: Bool
+    let retentionCount: Int64
+    let excludedType: String
+
+    init(label: String, enabled: Bool, retentionCount: Int64, excludedType: String) {
+        this.label = label; this.enabled = enabled; this.retentionCount = retentionCount
+        this.excludedType = excludedType
+    }
+}
+
 /// Test and independent-consumer convenience builders. Production callers can
 /// discover the same action schema through the shared descriptor.
 public class CjguiRuleSetInvocationFactory {
@@ -132,7 +144,18 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     public static let formLabelResourceId: Int64 = 81001
     public static let formEnabledResourceId: Int64 = 81002
     public static let formRetentionResourceId: Int64 = 81003
+    /// The default retention boundary of this domain. It is declared once here,
+    /// travels with the shared field binding, and is the same value the draft
+    /// validator enforces - so the handwritten form, the generated editor and
+    /// an external capability query cannot disagree. A deployment may configure
+    /// a different declared boundary (see `newUntitled`), which is how the
+    /// "the declared rule changed" acceptance is verified without editing the
+    /// example's own convention.
+    public static let defaultRetentionMinimum: Int64 = 1
+    public static let defaultRetentionMaximum: Int64 = 90
     public static let formExcludedTypeResourceId: Int64 = 81004
+    public static let transferFormatIdentifier: String = "cjgui.rule.record"
+    public static let transferFormatVersion: Int64 = 1
     private static let maximumChanges: Int64 = 64
     private static let maximumRememberedRequests: Int64 = 128
 
@@ -160,17 +183,24 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     // rule-set domain so local pointer input and authorized external writes
     // share one CAS/version boundary. It is intentionally not serialized as
     // rule content or folded into save/dirty decisions.
+    /// The declared retention boundary this domain enforces and publishes.
+    private let retentionMinimumValue: Int64
+    private let retentionMaximumValue: Int64
     private var splitFirstSizeValue: Int64
     // This target-scoped owner revision invalidates only an active split drag.
     // The aggregate rule-set version continues to invalidate the full scene.
     private var splitFirstSizeVersionValue: Int64
 
-    public init() {
+    public init(retentionMinimum!: Int64 = CjguiRuleSetEditingDomain.defaultRetentionMinimum,
+                retentionMaximum!: Int64 = CjguiRuleSetEditingDomain.defaultRetentionMaximum) {
+        this.retentionMinimumValue = retentionMinimum
+        this.retentionMaximumValue = retentionMaximum
         this.lock = Mutex()
         this.binding = CjguiSharedFormBinding(ArrayList<CjguiSharedFormFieldDescriptor>([
             CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formLabelResourceId, "label", "规则名称", "TEXT"),
             CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled", "启用规则", "BOOLEAN"),
-            CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", "保留天数", "INTEGER"),
+            CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", "保留天数", "INTEGER",
+                minimum: retentionMinimum, maximum: retentionMaximum),
             CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", "排除类型", "TEXT")
         ]))
         this.records = ArrayList<CjguiMutableRuleSetRecord>()
@@ -190,7 +220,23 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     }
 
     public static func newUntitled(): CjguiRuleSetEditingDomain { return CjguiRuleSetEditingDomain() }
+
+    /// A domain whose declared retention boundary is configured explicitly. The
+    /// application's own convention stays the default above; this exists so the
+    /// "declared rule" acceptance can move the boundary and verify that the
+    /// binding, the external capability description and the owner validation
+    /// all follow the same declaration.
+    public static func newWithRetentionRange(minimum!: Int64, maximum!: Int64): CjguiRuleSetEditingDomain {
+        return CjguiRuleSetEditingDomain(retentionMinimum: minimum, retentionMaximum: maximum)
+    }
     public func resourceType(): String { return "backup_rule_set" }
+    public static func transferFormat(): CjguiSharedOperationTransferFormat {
+        return CjguiSharedOperationTransferFormat.structured(
+            CjguiRuleSetEditingDomain.transferFormatIdentifier,
+            version: CjguiRuleSetEditingDomain.transferFormatVersion,
+            maximumBytes: 16 * 1024)
+    }
+    public func transferTargetIdentity(): String { return synchronized(lock) { instanceIdentity } }
     public func formBinding(): CjguiSharedFormBinding { return binding }
     public func selectedRecordId(): Int64 { return synchronized(lock) { selectedId } }
     public func splitFirstSize(): Int64 { return synchronized(lock) { splitFirstSizeValue } }
@@ -236,6 +282,70 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         targets: ArrayList<Int64>
     ): ?CjguiSharedOperationContextSnapshot {
         return synchronized(lock) { contextSnapshotForTargetsUnlocked(targets) }
+    }
+
+    /// Builds an immutable structured copy offer from the actual applied
+    /// record. The offer contains no mutable record or native object.
+    public func transferOfferForRecordFromHuman(recordId: Int64): ?CjguiSharedOperationTransferOffer {
+        return synchronized(lock) {
+            if (let Some(record) <- recordForIdUnlocked(recordId)) {
+                let payload = serializeTransferRecord(record.label, record.enabled, record.retentionCount, record.excludedType)
+                return CjguiSharedOperationTransferOffer.create(
+                    "COPY", "rule_record", instanceIdentity, record.id, CjguiRuleSetEditingDomain.transferFormat(), payload)
+            }
+            return None
+        }
+    }
+
+    public func selectedRecordTransferOfferFromHuman(): ?CjguiSharedOperationTransferOffer {
+        return synchronized(lock) {
+            if (let Some(record) <- selectedUnlocked()) {
+                let payload = serializeTransferRecord(record.label, record.enabled, record.retentionCount, record.excludedType)
+                return CjguiSharedOperationTransferOffer.create(
+                    "COPY", "rule_record", instanceIdentity, record.id, CjguiRuleSetEditingDomain.transferFormat(), payload)
+            }
+            return None
+        }
+    }
+
+    /// Accepts a structured rule offer through the same owner mutation used by
+    /// the normal human command. Same-owner offers use COPY_RECORD after the
+    /// payload is checked against the source; foreign offers use CREATE_RECORD.
+    public func acceptTransferFromHuman(
+        offer: CjguiSharedOperationTransferOffer
+    ): CjguiSharedOperationTransferResult {
+        return synchronized(lock) {
+            if (let Some(request) <- CjguiSharedOperationTransferAcceptRequest.create(
+                "rule_set", instanceIdentity, CjguiRuleSetEditingDomain.ruleSetResourceId,
+                offer, CjguiRuleSetEditingDomain.transferFormat(), versionValue)) {
+                return acceptTransferUnlocked(request, false, "")
+            }
+            return CjguiSharedOperationTransferResult.rejected(
+                versionValue, "invalid_transfer", format: Some(CjguiRuleSetEditingDomain.transferFormat()))
+        }
+    }
+
+    /// External acceptance retains capability/CAS at the transport boundary;
+    /// this method adds the application request id before entering the same
+    /// locked owner dispatcher.
+    public func acceptTransferFromExternal(
+        offer: CjguiSharedOperationTransferOffer,
+        expectedVersion: Int64,
+        requestId: String
+    ): CjguiSharedOperationTransferResult {
+        return synchronized(lock) {
+            if (requestId.size == 0 || requestId.size > 128) {
+                return CjguiSharedOperationTransferResult.rejected(
+                    versionValue, "invalid_request_id", format: Some(CjguiRuleSetEditingDomain.transferFormat()))
+            }
+            if (let Some(request) <- CjguiSharedOperationTransferAcceptRequest.create(
+                "rule_set", instanceIdentity, CjguiRuleSetEditingDomain.ruleSetResourceId,
+                offer, CjguiRuleSetEditingDomain.transferFormat(), expectedVersion)) {
+                return acceptTransferUnlocked(request, true, requestId)
+            }
+            return CjguiSharedOperationTransferResult.rejected(
+                versionValue, "invalid_transfer", format: Some(CjguiRuleSetEditingDomain.transferFormat()))
+        }
     }
 
     public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> {
@@ -446,13 +556,18 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
 
     private func formSnapshotUnlocked(): CjguiSharedFormSnapshot {
         if (let Some(record) <- selectedUnlocked()) {
+            // The published field version is the record's own draft version: the
+            // one `EDIT_DRAFT_TEXT` and `APPLY_DRAFT` compare against. Publishing
+            // a per-field counter made the token an external reader sees differ
+            // from the token the write operations expect as soon as two fields
+            // were edited in one flow.
             return CjguiSharedFormSnapshot(
                 versionValue, record.appliedRevision, record.draftVersion, record.baseAppliedRevision,
                 ArrayList<CjguiSharedFormFieldProjection>([
-                    formProjection(CjguiRuleSetEditingDomain.formLabelResourceId, "label", CjguiSharedOperationValue.string(record.label), record.draftLabel, record.labelError, record.labelFieldVersion, record.activeFieldId == "label", record.selectionStart, record.selectionEnd),
-                    formProjection(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled", CjguiSharedOperationValue.boolean(record.enabled), if (record.draftEnabled) { "true" } else { "false" }, "", record.enabledFieldVersion, record.activeFieldId == "enabled", 0, 0),
-                    formProjection(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", CjguiSharedOperationValue.integer(record.retentionCount), record.draftRetentionCount, record.retentionError, record.retentionFieldVersion, record.activeFieldId == "retentionCount", record.selectionStart, record.selectionEnd),
-                    formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", CjguiSharedOperationValue.string(record.excludedType), record.draftExcludedType, record.excludedError, record.excludedFieldVersion, record.activeFieldId == "excludedType", record.selectionStart, record.selectionEnd)
+                    formProjection(CjguiRuleSetEditingDomain.formLabelResourceId, "label", CjguiSharedOperationValue.string(record.label), record.draftLabel, record.labelError, record.draftVersion, record.activeFieldId == "label", record.selectionStart, record.selectionEnd),
+                    formProjection(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled", CjguiSharedOperationValue.boolean(record.enabled), if (record.draftEnabled) { "true" } else { "false" }, "", record.draftVersion, record.activeFieldId == "enabled", 0, 0),
+                    formProjection(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", CjguiSharedOperationValue.integer(record.retentionCount), record.draftRetentionCount, record.retentionError, record.draftVersion, record.activeFieldId == "retentionCount", record.selectionStart, record.selectionEnd),
+                    formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", CjguiSharedOperationValue.string(record.excludedType), record.draftExcludedType, record.excludedError, record.draftVersion, record.activeFieldId == "excludedType", record.selectionStart, record.selectionEnd)
                 ]), record.baseAppliedRevision == record.appliedRevision, status
             )
         }
@@ -550,6 +665,58 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         if (resourceId == CjguiRuleSetEditingDomain.formRetentionResourceId) { return "retentionCount" }
         if (resourceId == CjguiRuleSetEditingDomain.formExcludedTypeResourceId) { return "excludedType" }
         return ""
+    }
+
+    private func acceptTransferUnlocked(
+        request: CjguiSharedOperationTransferAcceptRequest,
+        external: Bool,
+        requestId: String
+    ): CjguiSharedOperationTransferResult {
+        if (request.targetId != CjguiRuleSetEditingDomain.ruleSetResourceId ||
+            request.offer.format.kind != "STRUCTURED" ||
+            request.offer.format.identifier != CjguiRuleSetEditingDomain.transferFormatIdentifier ||
+            request.offer.format.version != CjguiRuleSetEditingDomain.transferFormatVersion) {
+            return CjguiSharedOperationTransferResult.rejected(
+                versionValue, "unsupported_transfer_format", format: Some(request.acceptedFormat))
+        }
+        if (let Some(parsed) <- parseTransferRecord(request.offer.payload)) {
+            var actionName = "CREATE_RECORD"
+            var targets = ArrayList<Int64>([CjguiRuleSetEditingDomain.ruleSetResourceId])
+            if (request.offer.sourceKind == "rule_record" && request.offer.sourceIdentity == instanceIdentity) {
+                if (let Some(source) <- recordForIdUnlocked(request.offer.sourceId)) {
+                    if (source.label != parsed.label || source.enabled != parsed.enabled ||
+                        source.retentionCount != parsed.retentionCount || source.excludedType != parsed.excludedType) {
+                        return CjguiSharedOperationTransferResult.rejected(
+                            versionValue, "source_payload_mismatch", format: Some(request.acceptedFormat))
+                    }
+                    actionName = "COPY_RECORD"
+                    targets = ArrayList<Int64>([source.id])
+                }
+            }
+            let arguments = ArrayList<CjguiSharedOperationActionArgument>()
+            arguments.add(CjguiSharedOperationActionArgument(
+                "label", CjguiSharedOperationValue.string(parsed.label)))
+            if (actionName == "CREATE_RECORD") {
+                arguments.add(CjguiSharedOperationActionArgument(
+                    "enabled", CjguiSharedOperationValue.boolean(parsed.enabled)))
+                arguments.add(CjguiSharedOperationActionArgument(
+                    "retentionCount", CjguiSharedOperationValue.integer(parsed.retentionCount)))
+                arguments.add(CjguiSharedOperationActionArgument(
+                    "excludedType", CjguiSharedOperationValue.string(parsed.excludedType)))
+            }
+            if (external) {
+                arguments.add(CjguiSharedOperationActionArgument(
+                    "requestId", CjguiSharedOperationValue.string(requestId)))
+            }
+            // We already hold the owner lock; call the existing dispatcher
+            // directly instead of recursively acquiring it.
+            let action = executeUnlocked(
+                CjguiSharedOperationActionInvocation(actionName, request.expectedVersion, targets, arguments),
+                external)
+            return CjguiSharedOperationTransferResult.fromActionResult(action, request.offer)
+        }
+        return CjguiSharedOperationTransferResult.rejected(
+            versionValue, "invalid_structured_payload", format: Some(request.acceptedFormat))
     }
 
     private func executeUnlocked(invocation: CjguiSharedOperationActionInvocation, external: Bool): CjguiSharedOperationActionResult {
@@ -906,7 +1073,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         if (record.draftLabel.size == 0) { record.labelError = "rule_label_required" }
         else if (record.draftLabel.size > 128) { record.labelError = "rule_label_too_long" }
         if (record.draftRetentionCount.size == 0) { record.retentionError = "retention_count_required" }
-        else if (let Some(value) <- Int64.tryParse(record.draftRetentionCount)) { if (value < 1 || value > 90) { record.retentionError = "retention_count_out_of_range" } }
+        else if (let Some(value) <- Int64.tryParse(record.draftRetentionCount)) { if (value < retentionMinimumValue || value > retentionMaximumValue) { record.retentionError = "retention_count_out_of_range" } }
         else { record.retentionError = "retention_count_invalid" }
         if (record.draftExcludedType.size == 0) { record.excludedError = "excluded_type_required" }
         else if (record.draftExcludedType.size > 128) { record.excludedError = "excluded_type_too_long" }
@@ -922,7 +1089,10 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         record.baseAppliedRevision = record.appliedRevision; record.activeFieldId = ""; clearValidationUnlocked(record)
         record.labelFieldVersion += 1; record.enabledFieldVersion += 1; record.retentionFieldVersion += 1; record.excludedFieldVersion += 1
     }
-    private func validRule(label: String, retention: Int64, excluded: String): Bool { return label.size > 0 && label.size <= 128 && retention >= 1 && retention <= 90 && excluded.size > 0 && excluded.size <= 128 }
+    /// The same declared retention boundary the binding publishes and the draft
+    /// validator enforces. It used to be restated here as literal 1/90, which is
+    /// exactly how a "declared rule" can drift away from what is enforced.
+    private func validRule(label: String, retention: Int64, excluded: String): Bool { return label.size > 0 && label.size <= 128 && retention >= retentionMinimumValue && retention <= retentionMaximumValue && excluded.size > 0 && excluded.size <= 128 }
     private func isRuleSetTarget(invocation: CjguiSharedOperationActionInvocation): Bool { return invocation.targetResourceIds.size == 1 && invocation.targetResourceIds[0] == CjguiRuleSetEditingDomain.ruleSetResourceId }
     private func accepted(reason: String): CjguiSharedOperationActionResult { return CjguiSharedOperationActionResult(true, false, versionValue, versionValue, reason) }
     private func rejected(conflict: Bool, reason: String): CjguiSharedOperationActionResult { return CjguiSharedOperationActionResult(false, conflict, versionValue, versionValue, reason) }
@@ -1153,6 +1323,48 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         for (argument in invocation.arguments) { if (argument.name == name && argument.value.valueType == "BOOLEAN") { return Some(argument.value.booleanValue) } }
         return None
     }
+}
+
+private func serializeTransferRecord(label: String, enabled: Bool, retentionCount: Int64, excludedType: String): String {
+    return "CJGUI_RULE_RECORD/1\nLABEL ${label.size} ${encodeHex(label)}\nENABLED ${if (enabled) { 1 } else { 0 }}\nRETENTION ${retentionCount}\nEXCLUDED ${excludedType.size} ${encodeHex(excludedType)}\nEND"
+}
+
+private func parseTransferRecord(payload: String): ?CjguiRuleSetTransferRecord {
+    let lines = payload.split("\n")
+    if (lines.size != 6 || lines[0] != "CJGUI_RULE_RECORD/1" || lines[5] != "END") { return None }
+    let labelParts = lines[1].split(" ")
+    let enabledParts = lines[2].split(" ")
+    let retentionParts = lines[3].split(" ")
+    let excludedParts = lines[4].split(" ")
+    if (labelParts.size != 3 || labelParts[0] != "LABEL" || enabledParts.size != 2 ||
+        enabledParts[0] != "ENABLED" || retentionParts.size != 2 || retentionParts[0] != "RETENTION" ||
+        excludedParts.size != 3 || excludedParts[0] != "EXCLUDED") {
+        return None
+    }
+    if (let Some(labelBytes) <- Int64.tryParse(labelParts[1])) {
+        if (let Some(label) <- decodeHex(labelParts[2])) {
+            if (label.size != labelBytes) { return None }
+            if (let Some(retention) <- Int64.tryParse(retentionParts[1])) {
+                if (let Some(excludedBytes) <- Int64.tryParse(excludedParts[1])) {
+                    if (let Some(excluded) <- decodeHex(excludedParts[2])) {
+                        if (excluded.size != excludedBytes ||
+                            (enabledParts[1] != "0" && enabledParts[1] != "1") ||
+                            !validTransferRule(label, retention, excluded)) {
+                            return None
+                        }
+                        return Some(CjguiRuleSetTransferRecord(
+                            label, enabledParts[1] == "1", retention, excluded))
+                    }
+                }
+            }
+        }
+    }
+    return None
+}
+
+private func validTransferRule(label: String, retention: Int64, excluded: String): Bool {
+    return label.size > 0 && label.size <= 128 && retention >= 1 && retention <= 90 &&
+        excluded.size > 0 && excluded.size <= 128
 }
 
 private func containsId(ids: ArrayList<Int64>, id: Int64): Bool {

@@ -90,6 +90,48 @@ func documentWorkspaceKeepsRangeTruthSelectionAndStaleWritesOnTheirOriginalDocum
 }
 
 @Test
+func documentTextTransferUsesTheExistingHumanRangeOwner(): Unit {
+    let document = CjguiTextDocument(7501, "传输", "甲乙🙂")
+    let workspace = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([document]))
+    let offer = workspace.textTransferOfferForRangeFromHuman(7501, CjguiTextDocumentRange(0, 3))
+    if (let Some(validOffer) <- offer) {
+        @Assert(validOffer.format.kind, "UTF8_TEXT")
+        let result = workspace.acceptTextTransferFromHuman(
+            7501, CjguiTextDocumentRange(3, 3), validOffer)
+        @Assert(result.applied, true)
+        @Assert(document.snapshot().content, "甲甲乙🙂")
+        @Assert(document.snapshot().version, 1)
+    } else {
+        @Assert(false, true)
+    }
+}
+
+@Test
+func documentTextTransferUsesExistingExternalRangeCasAndRejectsStaleTarget(): Unit {
+    let source = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([
+        CjguiTextDocument(7511, "源", "外部文本")
+    ]))
+    let targetDocument = CjguiTextDocument(7512, "目标", "目标")
+    let target = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([targetDocument]))
+    if (let Some(offer) <- source.textTransferOfferForRangeFromHuman(7511, CjguiTextDocumentRange(0, 12))) {
+        let applied = target.acceptTextTransferFromExternal(
+            7512, CjguiTextDocumentRange(6, 6), offer, 0)
+        @Assert(applied.applied, true)
+        @Assert(targetDocument.snapshot().content, "目标外部文本")
+        @Assert(targetDocument.snapshot().version, 1)
+
+        let stale = target.acceptTextTransferFromExternal(
+            7512, CjguiTextDocumentRange(6, 6), offer, 0)
+        @Assert(stale.applied, false)
+        @Assert(stale.isVersionConflict, true)
+        @Assert(stale.reason, "version_conflict")
+        @Assert(targetDocument.snapshot().content, "目标外部文本")
+    } else {
+        @Assert(false, true)
+    }
+}
+
+@Test
 func documentWorkspaceSharesHumanUndoRedoWithoutTurningSelectionIntoDocumentContent(): Unit {
     let description = CjguiTextDocument(7201, "说明", "第一行\n第二行")
     let notes = CjguiTextDocument(7202, "笔记", "原样")

@@ -9,7 +9,6 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
     let domain: CjguiSharedOperationList
     let componentRegistry: CjguiComposableUiComponentRegistry
     var localRevision: Int64 = 1
-    var usesCoralBeacon: Bool = false
     var showsSecondaryToggle: Bool = true
     var primaryToggleNodeId: Int64 = -1
     var secondaryToggleNodeId: Int64 = -1
@@ -22,6 +21,9 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
     }
 
     public func buildUi(): CjguiComposableUiNode {
+        // This normal app chooses the framework's dark theme and applies its
+        // public paint-only state declarations to ordinary controls.
+        let theme = CjguiComposableUiTheme.beaconDark()
         let style = CjguiComposableUiStyle(
             minWidth: 280,
             idealWidth: 640,
@@ -74,20 +76,46 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
         // Normal app bundles place declared rasters directly in
         // Contents/Resources; keep the scene path bundle-relative rather
         // than leaking the source-tree layout into the packaged executable.
-        let beaconPath = if (usesCoralBeacon) {
+        // The image is a projection of the same domain record that the
+        // descriptor-gated SET_MARKED action mutates.  Its explicit resource
+        // version follows the durable domain version, so an external write
+        // cannot leave a stale local boolean or repaint the old pixels under
+        // a new semantic state.
+        let imageRecord = domain.snapshot().recordAt(0)
+        let beaconPath = if (imageRecord.isMarked) {
             "composable-beacon-coral.png"
         } else {
             "composable-beacon.png"
         }
-        let beaconVersion = if (usesCoralBeacon) {
-            2
-        } else {
-            1
-        }
+        let beaconVersion = domain.version() + 1
         root.add(
             cjguiComposableImage(15, "adaptive-resource-beacon", beaconPath,
                 CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64, alignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER),
                 imageResourceId: "adaptive-resource-beacon", imageResourceVersion: beaconVersion))
+        // This is an ordinary public vector component in the existing normal
+        // application.  Its color is the same durable field as the raster
+        // beacon, and activating the accepted ellipse uses the established
+        // TOGGLE_RESOURCE action rather than a private renderer shortcut.
+        let vectorFill = if (imageRecord.isMarked) {
+            CjguiComposableUiVectorColor(0.95, 0.30, 0.23, 0.86)
+        } else {
+            CjguiComposableUiVectorColor(0.18, 0.52, 0.92, 0.86)
+        }
+        let vectorPaint = CjguiComposableUiVectorPaint(Some(vectorFill),
+            Some(CjguiComposableUiVectorColor(0.96, 0.86, 0.30, 1.0)), 2.0,
+            CJGUI_COMPOSABLE_UI_VECTOR_CAP_ROUND, CJGUI_COMPOSABLE_UI_VECTOR_JOIN_ROUND)
+        if (let Some(vectorBeacon) <- CjguiComposableUiVectorGeometry.ellipse(80.0, 48.0,
+            CjguiComposableUiVectorPoint(40.0, 24.0), 22.0, 14.0, vectorPaint)) {
+            root.add(cjguiComposableVectorGraphic(18, "adaptive-vector-beacon", vectorBeacon,
+                CjguiComposableUiStyle(fixedWidth: 80, fixedHeight: 48, alignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER),
+                interactive: true, actionName: "TOGGLE_RESOURCE", resourceId: 7101,
+                interactionStyle: theme.primaryActionInteraction,
+                ownerInteractionState: if (imageRecord.isMarked) {
+                    CjguiComposableUiInteractionState.CHECKED
+                } else {
+                    CjguiComposableUiInteractionState.NONE
+                }))
+        }
         let actions = cjguiComposableHorizontal(4, "adaptive-actions", style)
         actions.add(
             cjguiComposableButton(
@@ -99,7 +127,8 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
                 style,
                 enabled: true,
                 operationActionName: "SET_MARKED",
-                operationResourceId: 7101
+                operationResourceId: 7101,
+                interactionStyle: theme.primaryActionInteraction
             )
         )
         actions.add(
@@ -112,7 +141,8 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
                 style,
                 enabled: true,
                 operationActionName: "",
-                operationResourceId: 0
+                operationResourceId: 0,
+                interactionStyle: theme.primaryActionInteraction
             )
         )
         actions.add(
@@ -125,7 +155,13 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
                 style,
                 enabled: true,
                 operationActionName: "",
-                operationResourceId: 0
+                operationResourceId: 0,
+                interactionStyle: theme.primaryActionInteraction,
+                ownerInteractionState: if (imageRecord.isMarked) {
+                    CjguiComposableUiInteractionState.CHECKED
+                } else {
+                    CjguiComposableUiInteractionState.NONE
+                }
             )
         )
         actions.add(
@@ -138,7 +174,13 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
                 style,
                 enabled: true,
                 operationActionName: "",
-                operationResourceId: 0
+                operationResourceId: 0,
+                interactionStyle: theme.primaryActionInteraction,
+                ownerInteractionState: if (showsSecondaryToggle) {
+                    CjguiComposableUiInteractionState.SELECTED
+                } else {
+                    CjguiComposableUiInteractionState.NONE
+                }
             )
         )
         root.add(actions)
@@ -151,7 +193,11 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             let group = cjguiComposableVertical(primary.nodeId("root"), primary.semanticId("root"),
                 CjguiComposableUiStyle(padding: 6, gap: 3), inputScopeId: primary.focusScopeId())
             let toggle = cjguiComposableButton(primary.nodeId("toggle"), primary.semanticId("toggle"), "主组件切换资源",
-                "TOGGLE_RESOURCE", 0, CjguiComposableUiStyle(fixedHeight: 28))
+                "TOGGLE_RESOURCE", 0, CjguiComposableUiStyle(fixedHeight: 28),
+                interactionStyle: theme.primaryActionInteraction,
+                ownerInteractionState: if (imageRecord.isMarked) { CjguiComposableUiInteractionState.CHECKED } else {
+                    CjguiComposableUiInteractionState.NONE
+                })
             group.add(toggle);
             root.add(group)
             primaryToggleNodeId = toggle.nodeId
@@ -163,7 +209,11 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
                 let group = cjguiComposableVertical(secondary.nodeId("root"), secondary.semanticId("root"),
                     CjguiComposableUiStyle(padding: 6, gap: 3), inputScopeId: secondary.focusScopeId())
                 let toggle = cjguiComposableButton(secondary.nodeId("toggle"), secondary.semanticId("toggle"),
-                    "第二组件切换资源", "TOGGLE_RESOURCE", 0, CjguiComposableUiStyle(fixedHeight: 28))
+                    "第二组件切换资源", "TOGGLE_RESOURCE", 0, CjguiComposableUiStyle(fixedHeight: 28),
+                    interactionStyle: theme.primaryActionInteraction,
+                    ownerInteractionState: if (imageRecord.isMarked) { CjguiComposableUiInteractionState.CHECKED } else {
+                        CjguiComposableUiInteractionState.NONE
+                    })
                 group.add(toggle);
                 root.add(group)
                 secondaryToggleNodeId = toggle.nodeId
@@ -221,7 +271,11 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
         if (event.eventKind == 27 && event.node.actionName == "TOGGLE_RESOURCE") {
-            usesCoralBeacon = !usesCoralBeacon
+            let current = domain.snapshot().recordAt(0).isMarked
+            let result = domain.setMarkedFromHuman(7101, !current)
+            if (!result.applied) {
+                return CjguiComposableUiDispatchResult(false, shouldClose: false)
+            }
         }
         if (event.eventKind == 27 && event.node.actionName == "TOGGLE_COMPONENT") {
             showsSecondaryToggle = !showsSecondaryToggle
@@ -301,6 +355,7 @@ main(): Int64 {
     }
     if (let Some(info) <- connection.connectionInfo()) {
         getStdOut().writeln("ADAPTIVE_LAYOUT_READY DESCRIPTOR_PATH ${info.descriptorPath}")
+        getStdOut().writeln("ADAPTIVE_LAYOUT_VECTOR_DECLARATION action=TOGGLE_RESOURCE state=blue")
         getStdOut().flush()
     }
     while (host.isOpen()) {

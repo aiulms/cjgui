@@ -462,7 +462,7 @@ private class SameSceneParticipantExceptionController <: CjguiComposableUiContro
 /// An intentionally tiny consumer that proves the real window input chain:
 /// modal backdrop hit testing, scope-confined Tab, Escape dismissal, and
 /// focus restoration all use the ordinary Cangjie scene/controller route.
-private class LayerInputController <: CjguiComposableUiController {
+private class LayerInputController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant {
     private var layerMode: String
     private var backgroundWasActivated: Bool
     private var topMenuActionWasApplied: Bool
@@ -533,6 +533,23 @@ private class LayerInputController <: CjguiComposableUiController {
         return CjguiComposableUiDispatchResult(false)
     }
     public func requestWindowClose(): CjguiComposableUiDispatchResult { return CjguiComposableUiDispatchResult(true, shouldClose: true) }
+    // The top menu action only exists while the anchored layer is present.
+    // Publish it with the candidate scene so the native command map cannot
+    // name a node or focus scope that is absent from the accepted projection.
+    public func beginSceneRefresh(): Bool { return true }
+    public func prepareSceneRefresh(): Bool { return true }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        let commands = ArrayList<CjguiComposableUiCommand>()
+        if (layerMode == "menu") {
+            commands.add(CjguiComposableUiCommand(
+                "layer.top-menu-action", 9012, CjguiComposableUiShortcut("k"),
+                focusScopeId: "layer-input-top-menu"
+            ))
+        }
+        return commands
+    }
+    public func commitSceneRefresh(): Unit {}
+    public func rollbackSceneRefresh(): Unit {}
     public func isDialogOpen(): Bool { return layerMode == "dialog" || layerMode == "dialog-menu" }
     public func isDialogMenuOpen(): Bool { return layerMode == "dialog-menu" }
     public func isTopMenuOpen(): Bool { return layerMode == "menu" }
@@ -1341,12 +1358,6 @@ main(args: Array<String>): Int64 {
     let layerController = LayerInputController()
     let layerWindow = CjguiComposableUiWindow(layerController)
     if (!layerWindow.start()) { window.close(); return 52 }
-    let topMenuShortcut = CjguiComposableUiShortcut("k")
-    if (!layerWindow.declareCommand(CjguiComposableUiCommand(
-        "layer.top-menu-action", 9012, topMenuShortcut, focusScopeId: "layer-input-top-menu"
-    )) || layerWindow.declareCommand(CjguiComposableUiCommand(
-        "layer.conflicting-shortcut", 9012, CjguiComposableUiShortcut("k"), focusScopeId: "layer-input-top-menu"
-    ))) { layerWindow.close(); window.close(); return 106 }
     // A top-level anchored menu is not modal, but the normal mouse path must
     // still enter its declared input scope.  This mirrors the visible rule
     // editor menu: without that focus transition, Tab walks base controls and
@@ -1359,6 +1370,13 @@ main(args: Array<String>): Int64 {
         !layerController.isTopMenuOpen()) {
         layerWindow.close(); window.close(); return 70
     }
+    // This conflict is checked only after the candidate command and its
+    // target have been accepted. Before opening the menu, neither exists and
+    // the public fail-closed declaration rule must reject the pre-registration.
+    if (layerWindow.declareCommand(CjguiComposableUiCommand(
+        "layer.conflicting-shortcut", 9012, CjguiComposableUiShortcut("k"),
+        focusScopeId: "layer-input-top-menu"
+    ))) { layerWindow.close(); window.close(); return 106 }
     // The native path only normalizes Cmd-K. Cangjie resolves the declared
     // shortcut and focused menu scope to the same controller action that an
     // AX/menu press uses; the conflicting declaration above was rejected.
@@ -1403,6 +1421,9 @@ main(args: Array<String>): Int64 {
     if (topMenuEscapeStatus != CJGUI_INTERNAL_RENDERER_OK || topMenuEscapeFocused != 9012u64 ||
         !topMenuDismissed.didApplyHumanAction || layerController.isTopMenuOpen()) {
         layerWindow.close(); window.close(); return 72
+    }
+    if (layerWindow.invokeCommand("layer.top-menu-action")) {
+        layerWindow.close(); window.close(); return 157
     }
     var topMenuRestoredFocused: UInt64 = 0u64
     let topMenuRestoreStatus = unsafe {

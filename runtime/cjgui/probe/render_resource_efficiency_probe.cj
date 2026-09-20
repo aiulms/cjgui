@@ -315,24 +315,39 @@ private func resourcePipelineObservation(window: CjguiComposableUiWindow): Resou
 /// 1254px images, exercising the entry and byte budgets independently.
 private func verifyActiveImageCacheEvictionConverges(kind: String, imagePath: String, imageCount: Int64,
     maximumCacheEntries: UInt32): Bool {
-    let controller = MultiImageResourceController(imageCount, imagePath, true)
+    // Start with an empty ordinary scene so the application-domain counter has
+    // a meaningful before value; revealing the same nodes below is the normal
+    // controller/refresh path used by consumers.
+    let controller = MultiImageResourceController(imageCount, imagePath, false)
     let window = CjguiComposableUiWindow(controller)
     if (!window.start()) { window.close(); return false }
     var previous = resourcePipelineObservation(window)
+    // Pipeline launch accounting is application+device domain-owned. This
+    // private probe therefore compares the isolated window's work against a
+    // baseline instead of incorrectly requiring a process-global counter to
+    // reset when another ordinary window is still alive.
+    let launchBaseline = previous.launches
+    controller.revealResources()
+    if (!window.refresh()) { window.close(); return false }
     var stableTurns: Int64 = 0
     var turns: Int64 = 0
     while (turns < 240) {
         let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(window, turnBudgetMs: 4u32)
         let current = resourcePipelineObservation(window)
+        let runLaunches = if (current.launches >= launchBaseline) {
+            current.launches - launchBaseline
+        } else {
+            0u64
+        }
         if (current.status != CJGUI_INTERNAL_RENDERER_OK) { window.close(); return false }
         if (current.loaded == UInt32(imageCount) && current.cache <= maximumCacheEntries &&
-            current.launches == UInt64(imageCount) && current.decode == UInt32(imageCount) &&
+            runLaunches == UInt64(imageCount) && current.decode == UInt32(imageCount) &&
             current.completion == UInt64(imageCount) && current.launches == previous.launches &&
             current.decode == previous.decode && current.completion == previous.completion &&
             current.submissions == previous.submissions) {
             stableTurns += 1
             if (stableTurns >= 16) {
-                println("CJGUI_RESOURCE_ACTIVE_CACHE_CONVERGED kind=${kind} images=${imageCount} loaded=${current.loaded} cache=${current.cache} decodes=${current.decode} launches=${current.launches} completion=${current.completion} submissions=${current.submissions} stable_turns=${stableTurns}")
+                println("CJGUI_RESOURCE_ACTIVE_CACHE_CONVERGED kind=${kind} images=${imageCount} loaded=${current.loaded} cache=${current.cache} decodes=${current.decode} domain_launches=${current.launches} run_launches=${runLaunches} completion=${current.completion} submissions=${current.submissions} stable_turns=${stableTurns}")
                 window.close(); return true
             }
         } else {
@@ -342,7 +357,8 @@ private func verifyActiveImageCacheEvictionConverges(kind: String, imagePath: St
         turns += 1
     }
     let current = resourcePipelineObservation(window)
-    println("CJGUI_RESOURCE_ACTIVE_CACHE_NOT_CONVERGED kind=${kind} images=${imageCount} loaded=${current.loaded} cache=${current.cache} decodes=${current.decode} launches=${current.launches} completion=${current.completion} submissions=${current.submissions} turns=${turns}")
+    let runLaunches = if (current.launches >= launchBaseline) { current.launches - launchBaseline } else { 0u64 }
+    println("CJGUI_RESOURCE_ACTIVE_CACHE_NOT_CONVERGED kind=${kind} images=${imageCount} loaded=${current.loaded} cache=${current.cache} decodes=${current.decode} domain_launches=${current.launches} run_launches=${runLaunches} completion=${current.completion} submissions=${current.submissions} turns=${turns}")
     window.close()
     return false
 }
@@ -355,6 +371,7 @@ private func verifyVisibleResourceBackPressureDrains(): Bool {
     let controller = MultiImageResourceController(24, imagePath, false)
     let window = CjguiComposableUiWindow(controller)
     if (!window.start()) { window.close(); return false }
+    let launchBaseline = resourcePipelineObservation(window).launches
     controller.revealResources()
     if (!window.refresh()) { window.close(); return false }
     // Scene staging synchronously admits four loaders and sixteen pending
@@ -401,8 +418,9 @@ private func verifyVisibleResourceBackPressureDrains(): Bool {
             // more reusable entries than the accepted cache permits.
             let _ = window.refreshIfNeeded()
             let pipeline = resourcePipelineObservation(window)
-            if (pipeline.launches == 24u64 && pipeline.decode == 24u32 && pipeline.cache <= 8u32) {
-                println("CJGUI_RESOURCE_VISIBLE_BACKPRESSURE_DRAINED initial_loading=${initialLoading} initial_busy=${initialBusy} ready=${ready} loading=${loading} busy=${busy} failed=${failed} launches=${pipeline.launches} decodes=${pipeline.decode} cache=${pipeline.cache} turns=${turns}")
+            let runLaunches = if (pipeline.launches >= launchBaseline) { pipeline.launches - launchBaseline } else { 0u64 }
+            if (runLaunches == 24u64 && pipeline.decode == 24u32 && pipeline.cache <= 8u32) {
+                println("CJGUI_RESOURCE_VISIBLE_BACKPRESSURE_DRAINED initial_loading=${initialLoading} initial_busy=${initialBusy} ready=${ready} loading=${loading} busy=${busy} failed=${failed} domain_launches=${pipeline.launches} run_launches=${runLaunches} decodes=${pipeline.decode} cache=${pipeline.cache} turns=${turns}")
                 window.close(); return true
             }
         }
@@ -410,7 +428,8 @@ private func verifyVisibleResourceBackPressureDrains(): Bool {
         turns += 1
     }
     let pipeline = resourcePipelineObservation(window)
-    println("CJGUI_RESOURCE_VISIBLE_BACKPRESSURE_TIMEOUT launches=${pipeline.launches} decodes=${pipeline.decode} cache=${pipeline.cache} turns=${turns}")
+    let runLaunches = if (pipeline.launches >= launchBaseline) { pipeline.launches - launchBaseline } else { 0u64 }
+    println("CJGUI_RESOURCE_VISIBLE_BACKPRESSURE_TIMEOUT domain_launches=${pipeline.launches} run_launches=${runLaunches} decodes=${pipeline.decode} cache=${pipeline.cache} turns=${turns}")
     window.close()
     return false
 }

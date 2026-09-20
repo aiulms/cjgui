@@ -31,6 +31,7 @@ trap cleanup EXIT HUP INT TERM
 FRAMEWORK_DIR="$STAGING_DIR/framework/cjgui"
 mkdir -p "$FRAMEWORK_DIR"
 cp "$RUNTIME_DIR/cjpm.toml" "$FRAMEWORK_DIR/cjpm.toml"
+cp "$RUNTIME_DIR/README.md" "$FRAMEWORK_DIR/README.md"
 mkdir -p "$FRAMEWORK_DIR/src" "$FRAMEWORK_DIR/shared_operation_core/src" "$FRAMEWORK_DIR/native" \
   "$FRAMEWORK_DIR/resources" "$FRAMEWORK_DIR/scripts" "$FRAMEWORK_DIR/templates"
 # Preview consumers may copy either package independently. Keep the source
@@ -49,7 +50,11 @@ typeset -a PREVIEW_CJGUI_SOURCES
 PREVIEW_CJGUI_SOURCES=(
   composable_ui.cj
   composable_ui_component_instance.cj
+  composable_vector_graphics.cj
+  composable_vector_graphics_component.cj
   composable_ui_window.cj
+  composable_ui_tree.cj
+  composable_ui_generated.cj
   macos_application_host.cj
   runtime_renderer_session.cj
 )
@@ -64,6 +69,7 @@ PREVIEW_CORE_SOURCES=(
   shared_operation_contract.cj
   shared_operation_list.cj
   shared_operation_transport.cj
+  shared_operation_transfer.cj
   shared_text_document.cj
   shared_text_document_workspace.cj
   shared_text_document_file.cj
@@ -77,6 +83,68 @@ done
 cp "$RUNTIME_DIR/resources/composable-beacon.png" "$RUNTIME_DIR/resources/composable-beacon-coral.png" "$FRAMEWORK_DIR/resources/"
 cp "$RUNTIME_DIR/scripts/run_macos_application.sh" "$RUNTIME_DIR/scripts/create_macos_application.sh" "$FRAMEWORK_DIR/scripts/"
 cp -R "$RUNTIME_DIR/templates/macos_application" "$FRAMEWORK_DIR/templates/"
+# Consumers shipped with the preview so the exported tree, generation and
+# rule-set surfaces can be built and run from the export root alone. Their
+# dependency paths are rewritten to the exported packages; no author-directory
+# or environment override is needed.
+typeset -a PREVIEW_CONSUMERS
+PREVIEW_CONSUMERS=(
+  "tree_outline_consumer:cjgui"
+  "generated_panel_consumer:cjgui,cjgui_shared_operation_core"
+  "rule_set_window_app:cjgui,cjgui_shared_operation_core,cjgui_rule_set_application"
+)
+mkdir -p "$STAGING_DIR/consumers"
+cp -R "$RUNTIME_DIR/examples/rule_set_application" "$STAGING_DIR/framework/rule_set_application"
+rm -rf "$STAGING_DIR/framework/rule_set_application/target"
+python3 - "$STAGING_DIR/framework/rule_set_application/cjpm.toml" <<'PYAPPDEP'
+import re
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+text = re.sub(r'cjgui = \{ path = "[^"]+" \}', 'cjgui = { path = "../cjgui" }', text)
+text = re.sub(r'cjgui_shared_operation_core = \{ path = "[^"]+" \}',
+              'cjgui_shared_operation_core = { path = "../cjgui/shared_operation_core" }', text)
+open(path, "w", encoding="utf-8").write(text)
+PYAPPDEP
+for consumer_spec in "${PREVIEW_CONSUMERS[@]}"; do
+  consumer_name="${consumer_spec%%:*}"
+  consumer_deps="${consumer_spec#*:}"
+  consumer_source="$RUNTIME_DIR/examples/$consumer_name"
+  [[ -d "$consumer_source" ]] || continue
+  consumer_target="$STAGING_DIR/consumers/$consumer_name"
+  mkdir -p "$consumer_target"
+  cp "$consumer_source/cjpm.toml" "$consumer_source/run.sh" "$consumer_source/cjgui_macos_app.sh" "$consumer_target/" 2>/dev/null || true
+  cp -R "$consumer_source/src" "$consumer_target/src"
+  # The exported launcher lives under framework/cjgui/scripts; point the
+  # consumer runner at it so the export root is runnable by itself.
+  if [[ -f "$consumer_target/run.sh" ]]; then
+    python3 - "$consumer_target/run.sh" <<'PYRUNSH'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+text = text.replace("$CJGUI_ROOT/scripts/run_macos_application.sh",
+                    "$CJGUI_ROOT/framework/cjgui/scripts/run_macos_application.sh")
+text = text.replace("$APP_DIR/../../scripts/run_macos_application.sh",
+                    "$APP_DIR/../../framework/cjgui/scripts/run_macos_application.sh")
+open(path, "w", encoding="utf-8").write(text)
+PYRUNSH
+  fi
+  python3 - "$consumer_target" "$consumer_deps" <<'PYCONSUMER'
+import re
+import sys
+target, deps = sys.argv[1:3]
+path = f"{target}/cjpm.toml"
+text = open(path, encoding="utf-8").read()
+replacements = {
+    "cjgui_shared_operation_core": "../../framework/cjgui/shared_operation_core",
+    "cjgui_rule_set_application": "../../framework/rule_set_application",
+    "cjgui": "../../framework/cjgui",
+}
+for name, relative in replacements.items():
+    text = re.sub(rf'{name} = \{{ path = "[^"]+" \}}', f'{name} = {{ path = "{relative}" }}', text)
+open(path, "w", encoding="utf-8").write(text)
+PYCONSUMER
+done
 cp "$RUNTIME_DIR/preview/FRAMEWORK_PREVIEW_MANIFEST.md" "$STAGING_DIR/preview-manifest.md"
 chmod +x "$FRAMEWORK_DIR/scripts/run_macos_application.sh" "$FRAMEWORK_DIR/scripts/create_macos_application.sh" \
   "$FRAMEWORK_DIR/templates/macos_application"/*/*.sh

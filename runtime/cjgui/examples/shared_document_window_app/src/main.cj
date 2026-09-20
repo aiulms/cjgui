@@ -23,10 +23,13 @@ private class CjguiSharedDocumentVirtualListSource <: CjguiComposableUiVariableH
     private let workspace: CjguiTextDocumentWorkspace
     private let theme: CjguiComposableUiTheme
     private let documentIds: ArrayList<Int64>
+    private let cardScope: CjguiComposableUiIdentityScope
 
-    init(workspace: CjguiTextDocumentWorkspace, theme: CjguiComposableUiTheme, reversed!: Bool = false) {
+    init(workspace: CjguiTextDocumentWorkspace, theme: CjguiComposableUiTheme, reversed!: Bool = false,
+        cardScope!: CjguiComposableUiIdentityScope = CjguiComposableUiIdentityScope("shared-document-card")) {
         this.workspace = workspace
         this.theme = theme
+        this.cardScope = cardScope
         this.documentIds = if (reversed) {
             ArrayList<Int64>([NOTES_DOCUMENT_ID, DESCRIPTION_DOCUMENT_ID])
         } else {
@@ -106,15 +109,34 @@ private class CjguiSharedDocumentVirtualListSource <: CjguiComposableUiVariableH
                 "SELECT_DOCUMENT", item.resourceId,
                 CjguiComposableUiStyle(fixedHeight: 26, textColor: textColor, fontFamily: theme.body.fontFamily),
                 operationActionName: "SELECT_DOCUMENT", operationResourceId: item.resourceId))
+        let itemScope = cardScope.child("document_${item.resourceId}")
+        row.add(
+            cjguiComposableScopedActionRow(
+                itemScope.child("actions"),
+                "shared-document-card-actions-${item.resourceId}",
+                ArrayList<CjguiComposableUiActionItem>(
+                    [
+                        CjguiComposableUiActionItem("menu", "操作", "OPEN_DOCUMENT_CARD_MENU", item.resourceId,
+                            CjguiComposableUiStyle(fixedHeight: 26, textColor: textColor,
+                                fontFamily: theme.body.fontFamily),
+                            semanticId: "shared-document-card-menu-${item.resourceId}"),
+                        CjguiComposableUiActionItem("edit", "编辑", "OPEN_DOCUMENT_CARD_EDIT", item.resourceId,
+                            CjguiComposableUiStyle(fixedHeight: 26, textColor: textColor,
+                                fontFamily: theme.body.fontFamily),
+                            semanticId: "shared-document-card-edit-${item.resourceId}")
+                    ]
+                ),
+                CjguiComposableUiStyle(fixedHeight: 30, gap: 5)
+            )
+        )
         return row
     }
 }
 
-/// This consumer has no repeated component identity of its own, but its
-/// keyboard/menu declarations still participate in the same scene acceptance
-/// transaction as its document editor and virtual list.  That retires the
-/// legacy post-start command registration path.
-private class CjguiSharedDocumentController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider {
+/// This consumer repeats the same scoped document card for every visible
+/// document. Keyboard/menu declarations still participate in the same scene
+/// acceptance transaction as its editor and virtual list.
+private class CjguiSharedDocumentController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiDataTransferProvider {
     private let workspace: CjguiTextDocumentWorkspace
     private let fileBinding: CjguiTextDocumentFileBinding
     private let savePath: String
@@ -125,9 +147,19 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
     // a success message that claims an older document revision.
     private var statusDocumentVersion: Int64
     private let documentListState: CjguiComposableUiVirtualListState
+    private let cardScope: CjguiComposableUiIdentityScope
+    private let actionScope: CjguiComposableUiIdentityScope
     private var layerMode: String
+    private var activeDocumentId: Int64
     private var documentOrderReversed: Bool
-    private var actionRowForCommands: ?CjguiComposableUiNode
+    // Consumer-owned observations for a real window transfer event. These
+    // counters are diagnostics only; workspace state remains the sole owner.
+    private var transferDeclarationReadCount: Int64
+    private var transferEventCount: Int64
+    private var transferAcceptedCount: Int64
+    private var transferRejectedCount: Int64
+    private var transferPeakPayloadBytes: Int64
+    private var transferLastApplyNanoseconds: Int64
 
     init(
         workspace: CjguiTextDocumentWorkspace,
@@ -147,9 +179,17 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             -1
         }
         this.documentListState = CjguiComposableUiVirtualListState()
+        this.cardScope = CjguiComposableUiIdentityScope("shared-document-card")
+        this.actionScope = CjguiComposableUiIdentityScope("shared-document-actions")
         this.layerMode = ""
+        this.activeDocumentId = -1
         this.documentOrderReversed = false
-        this.actionRowForCommands = None
+        this.transferDeclarationReadCount = 0
+        this.transferEventCount = 0
+        this.transferAcceptedCount = 0
+        this.transferRejectedCount = 0
+        this.transferPeakPayloadBytes = 0
+        this.transferLastApplyNanoseconds = 0
     }
 
     public func uiSceneVersion(): Int64 {
@@ -163,6 +203,83 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             return workspace.previewLimitVersionForDocument(node.resourceId)
         }
         return uiSceneVersion()
+    }
+
+    /// Transfer target/offer/accept seam for the future native clipboard and
+    /// drag adapter. The controller delegates text mutation to the existing
+    /// workspace range owner and retains no clipboard or drag state.
+    public func offerSelectedTextTransfer(): ?CjguiSharedOperationTransferOffer {
+        let selection = workspace.selection()
+        if (!selection.isAvailable) { return None }
+        return workspace.textTransferOfferForRangeFromHuman(
+            selection.documentId, CjguiTextDocumentRange(selection.start, selection.end))
+    }
+    public func acceptTransferFromHuman(
+        offer: CjguiSharedOperationTransferOffer
+    ): CjguiSharedOperationTransferResult {
+        let selection = workspace.selection()
+        if (!selection.isAvailable) {
+            return CjguiSharedOperationTransferResult.rejected(-1, "no_target")
+        }
+        let result = workspace.acceptTextTransferFromHuman(
+            selection.documentId, CjguiTextDocumentRange(selection.start, selection.end), offer)
+        if (result.applied) {
+            status = "已接收传输文本：v${result.versionAfter}"
+            statusDocumentVersion = result.versionAfter
+            localRevision += 1
+        }
+        return result
+    }
+    public func dataTransferDeclarations(): ArrayList<CjguiComposableUiDataTransferDeclaration> {
+        transferDeclarationReadCount += 1
+        let declarations = ArrayList<CjguiComposableUiDataTransferDeclaration>()
+        if (let Some(offer) <- offerSelectedTextTransfer()) {
+            declarations.add(CjguiComposableUiDataTransferDeclaration.source("shared-document-transfer-copy", offer))
+            declarations.add(CjguiComposableUiDataTransferDeclaration.target("shared-document-transfer-paste",
+                CjguiSharedOperationTransferFormat.utf8Text()))
+        }
+        return declarations
+    }
+
+    public func applyDataTransfer(event: CjguiComposableUiDataTransferEvent): CjguiComposableUiDispatchResult {
+        transferEventCount += 1
+        if (event.offer.payloadByteCount > transferPeakPayloadBytes) {
+            transferPeakPayloadBytes = event.offer.payloadByteCount
+        }
+        let started = MonoTime.now()
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
+            status = "已复制当前选区；可拖到“粘贴到选区”或在其上粘贴。"
+            localRevision += 1
+            transferAcceptedCount += 1
+            transferLastApplyNanoseconds = (MonoTime.now() - started).toNanoseconds()
+            getStdOut().writeln("CJGUI_DOCUMENT_TRANSFER_EVENT kind=${event.eventKind} payload_bytes=${event.offer.payloadByteCount} accepted=true apply_ns=${transferLastApplyNanoseconds}")
+            getStdOut().flush()
+            return CjguiComposableUiDispatchResult(true)
+        }
+        let result = acceptTransferFromHuman(event.offer)
+        if (!result.applied) {
+            status = if (result.isVersionConflict) {
+                "传输未应用：目标版本已变化。"
+            } else {
+                "传输未应用：${result.reason}"
+            }
+            localRevision += 1
+        }
+        if (result.applied) {
+            transferAcceptedCount += 1
+        } else {
+            transferRejectedCount += 1
+        }
+        transferLastApplyNanoseconds = (MonoTime.now() - started).toNanoseconds()
+        getStdOut().writeln("CJGUI_DOCUMENT_TRANSFER_EVENT kind=${event.eventKind} payload_bytes=${event.offer.payloadByteCount} accepted=${result.applied} apply_ns=${transferLastApplyNanoseconds}")
+        getStdOut().flush()
+        return CjguiComposableUiDispatchResult(true)
+    }
+
+    func transferMetricsSummary(): String {
+        return "declaration_reads=${transferDeclarationReadCount} events=${transferEventCount} " +
+            "accepted=${transferAcceptedCount} rejected=${transferRejectedCount} " +
+            "peak_payload_bytes=${transferPeakPayloadBytes} last_apply_ns=${transferLastApplyNanoseconds}"
     }
 
     public func buildUi(): CjguiComposableUiNode {
@@ -194,8 +311,8 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         documentListState.setSelectedKey("document_${selectedDocumentId}")
         workspacePanel.add(
             cjguiComposableVariableHeightList(10, "shared-document-list-scroll", 15,
-                CjguiSharedDocumentVirtualListSource(workspace, theme, reversed: documentOrderReversed),
-                documentListState, 96, 4, 2,
+                CjguiSharedDocumentVirtualListSource(workspace, theme, reversed: documentOrderReversed,
+                    cardScope: cardScope), documentListState, 96, 4, 2,
                 CjguiComposableUiStyle(minWidth: 160, idealWidth: 220, maxWidth: 320, growX: 1,
                     alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH, background: CjguiComposableUiColor(0.06, 0.10, 0.18, 1.0),
                     border: CjguiComposableUiColor(0.28, 0.40, 0.62, 1.0))))
@@ -239,7 +356,6 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         // making the action target stale after a document switch. The row
         // and its five buttons use a caller-owned scope; handlers and the
         // document owner remain exactly the same as the legacy buttons.
-        let actionScope = CjguiComposableUiIdentityScope("shared-document-actions")
         let actions = cjguiComposableScopedActionRow(
             actionScope,
             "shared-document-actions",
@@ -249,6 +365,10 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
                         operationActionName: "UNDO", semanticId: "shared-document-undo"),
                     CjguiComposableUiActionItem("redo", "重做", "REDO", selectedDocumentId, secondary,
                         operationActionName: "REDO", semanticId: "shared-document-redo"),
+                    CjguiComposableUiActionItem("transfer-copy", "复制选区", "TRANSFER_COPY", selectedDocumentId,
+                        secondary, semanticId: "shared-document-transfer-copy"),
+                    CjguiComposableUiActionItem("transfer-paste", "粘贴到选区", "TRANSFER_PASTE", selectedDocumentId,
+                        secondary, semanticId: "shared-document-transfer-paste"),
                     CjguiComposableUiActionItem("save", "保存", "SAVE", selectedDocumentId, theme.primaryAction,
                         semanticId: "shared-document-save"),
                     CjguiComposableUiActionItem("close", "关闭", "CLOSE", selectedDocumentId, secondary,
@@ -259,7 +379,6 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             ),
             CjguiComposableUiStyle(fixedHeight: 36, gap: 10)
         )
-        actionRowForCommands = Some(actions)
         root.add(actions)
         let previewSlider = cjguiComposableSlider(36, "shared-document-preview-limit", previewLimit, 128, 512, 32,
             CjguiComposableUiStyle(minWidth: 180, idealWidth: 220, fixedHeight: 28),
@@ -316,10 +435,64 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             )
             host.add(menu)
         }
+        if (layerMode == "document-card-menu" && activeDocumentId >= 0) {
+            let cardScope = this.cardScope.child("document_${activeDocumentId}")
+            let menu = cjguiComposableAnchoredLayerWithReference(60, "shared-document-card-menu-${activeDocumentId}",
+                "shared-document-card-menu-${activeDocumentId}", "menu", "shared-document-row-${activeDocumentId}",
+                CjguiComposableUiNodeReference.scoped(cardScope.child("actions").child("item"), "menu"),
+                CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 70,
+                    background: CjguiComposableUiColor(0.12, 0.18, 0.30, 1.0),
+                    border: CjguiComposableUiColor(0.45, 0.72, 1.0, 1.0), padding: 6, gap: 4))
+            menu.add(
+                cjguiComposableButton(61, "shared-document-card-menu-edit-${activeDocumentId}", "编辑内容",
+                    "OPEN_DOCUMENT_CARD_EDIT", activeDocumentId, secondary))
+            menu.add(
+                cjguiComposableButton(62, "shared-document-card-menu-close-${activeDocumentId}", "关闭菜单",
+                    "CLOSE_LAYER", activeDocumentId, secondary))
+            host.add(menu)
+        }
+        if (layerMode == "document-card-edit" && activeDocumentId >= 0) {
+            let snapshotForDialog = if (let Some(value) <- workspace.documentSnapshot(activeDocumentId)) {
+                value
+            } else {
+                CjguiTextDocumentSnapshot(activeDocumentId, "已关闭文档", "", 0)
+            }
+            let editorScope = this.cardScope.child("document_${activeDocumentId}").child("editor")
+            let dialog = cjguiComposableDialogLayerWithReference(63,
+                "shared-document-card-edit-dialog-${activeDocumentId}",
+                "shared-document-card-edit-dialog-${activeDocumentId}", "shared-document-row-${activeDocumentId}",
+                CjguiComposableUiNodeReference.scoped(
+                    this.cardScope.child("document_${activeDocumentId}").child("actions").child("item"), "edit"),
+                CjguiComposableUiStyle(fixedWidth: 520, fixedHeight: 300,
+                    background: CjguiComposableUiColor(0.035, 0.06, 0.11, 1.0),
+                    border: CjguiComposableUiColor(0.45, 0.72, 1.0, 1.0), padding: 12, gap: 8),
+                initialFocus: Some(CjguiComposableUiNodeReference.scoped(editorScope, "editor-content")))
+            dialog.add(cjguiComposableText(64, "shared-document-card-edit-title", "编辑文档内容", theme.heading))
+            dialog.add(
+                CjguiComposableUiNode(65, "shared-document-card-editor-content",
+                    CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "内容", snapshotForDialog.content, "EDIT_MULTILINE_TEXT",
+                    activeDocumentId, editorStyle, fieldId: "documentContent", operationActionName: "REPLACE_RANGE",
+                    operationResourceId: activeDocumentId, displayValueRole: "document",
+                    identity: Some(editorScope.local("editor-content"))))
+            dialog.add(
+                cjguiComposableButton(66, "shared-document-card-edit-close", "完成", "CLOSE_LAYER", activeDocumentId,
+                    secondary))
+            host.add(dialog)
+        }
         return host
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == 27 && (event.node.actionName == "TRANSFER_COPY" || event.node.actionName ==
+            "TRANSFER_PASTE")) {
+            status = if (event.node.actionName == "TRANSFER_COPY") {
+                "在此按钮上使用 Cmd-C 或从此处拖出选区。"
+            } else {
+                "在此按钮上使用 Cmd-V 或拖入文本。"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER && event.eventKind == 35) {
             let direction = if (event.text == "left" || event.text == "down" || event.text == "previous") {
                 -1
@@ -365,11 +538,15 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         }
         if (event.eventKind == 30 && event.node.nodeId == 10) {
             documentListState.scrollByViewport(event.text);
+            layerMode = ""
+            activeDocumentId = -1
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
         if (event.eventKind == 31 && event.node.actionName == "SELECT_DOCUMENT") {
             documentListState.setFocusedKey("document_${event.node.resourceId}");
+            layerMode = ""
+            activeDocumentId = -1
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
@@ -424,6 +601,17 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             localRevision += 1
             return CjguiComposableUiDispatchResult(result.applied)
         }
+        if (event.eventKind == 28 && event.node.nodeId == 65) {
+            let result = workspace.replaceProjectionTextFromHuman(event.node.resourceId, event.text)
+            if (result.applied) {
+                status = "文档已更新：v${result.versionAfter}"
+                statusDocumentVersion = result.versionAfter
+            } else {
+                status = "文档未更新：${result.reason}"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
         if (event.eventKind != 27) {
             return CjguiComposableUiDispatchResult(false)
         }
@@ -432,8 +620,21 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
+        if (event.node.actionName == "OPEN_DOCUMENT_CARD_MENU") {
+            activeDocumentId = event.node.resourceId
+            layerMode = "document-card-menu"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.node.actionName == "OPEN_DOCUMENT_CARD_EDIT") {
+            activeDocumentId = event.node.resourceId
+            layerMode = "document-card-edit"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.node.actionName == "CLOSE_LAYER") {
             layerMode = ""
+            activeDocumentId = -1
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
@@ -533,16 +734,65 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         return true
     }
     public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        // A visible self-drawn menu owns the Cangjie focus scope. Rebind its
+        // shared command vocabulary to the actions inside that layer, so the
+        // native application menu never reaches through the focused layer to
+        // a covered document action.
+        let menuIsOpen = layerMode == "menu"
+        let commandActionScope = if (menuIsOpen) {
+            actionScope.child("menu").child("item")
+        } else {
+            actionScope.child("item")
+        }
+        let commandFocusScope = if (menuIsOpen) {
+            "shared-document-menu"
+        } else {
+            ""
+        }
         return ArrayList<CjguiComposableUiCommand>(
             [
-                CjguiComposableUiCommand("undo", actionNodeIdForCommands("shared-document-undo"),
-                    CjguiComposableUiShortcut("z")),
-                CjguiComposableUiCommand("redo", actionNodeIdForCommands("shared-document-redo"),
-                    CjguiComposableUiShortcut("z", usesShift: true)),
-                CjguiComposableUiCommand("save", actionNodeIdForCommands("shared-document-save"),
-                    CjguiComposableUiShortcut("s")),
-                CjguiComposableUiCommand("shared-document.open-menu",
-                    actionNodeIdForCommands("shared-document-menu-trigger"), CjguiComposableUiShortcut("m"))
+                CjguiComposableUiCommand(
+                    "shared-document.undo",
+                    CjguiComposableUiNodeReference.scoped(commandActionScope, "undo"),
+                    "撤销",
+                    CjguiComposableUiShortcut("z"),
+                    "Document",
+                    0,
+                    true,
+                    false,
+                    focusScopeId: commandFocusScope
+                ),
+                CjguiComposableUiCommand(
+                    "shared-document.redo",
+                    CjguiComposableUiNodeReference.scoped(commandActionScope, "redo"),
+                    "重做",
+                    CjguiComposableUiShortcut("z", usesShift: true),
+                    "Document",
+                    0,
+                    true,
+                    false,
+                    focusScopeId: commandFocusScope
+                ),
+                CjguiComposableUiCommand(
+                    "shared-document.save",
+                    CjguiComposableUiNodeReference.scoped(actionScope.child("item"), "save"),
+                    "保存",
+                    CjguiComposableUiShortcut("s"),
+                    "Document",
+                    1,
+                    !menuIsOpen,
+                    false
+                ),
+                CjguiComposableUiCommand(
+                    "shared-document.open-menu",
+                    CjguiComposableUiNodeReference.scoped(actionScope.child("item"), "menu-trigger"),
+                    "菜单",
+                    CjguiComposableUiShortcut("m"),
+                    "Document",
+                    2,
+                    !menuIsOpen,
+                    false
+                )
             ]
         )
     }
@@ -554,6 +804,8 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
     // focus therefore remain keyed to the same document across refresh.
     func reverseDocumentOrder(): Unit {
         documentOrderReversed = !documentOrderReversed
+        layerMode = ""
+        activeDocumentId = -1
         localRevision += 1
     }
 
@@ -561,20 +813,9 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         return documentListState.focusedKey()
     }
 
-    private func actionNodeIdForCommands(semanticId: String): Int64 {
-        if (let Some(row) <- actionRowForCommands) {
-            for (node in row.children()) {
-                if (node.semanticId == semanticId) {
-                    return node.nodeId
-                }
-            }
-        }
-        return -1
-    }
-
     private func currentDocumentListSource(): CjguiSharedDocumentVirtualListSource {
         return CjguiSharedDocumentVirtualListSource(workspace, CjguiComposableUiTheme.beaconDark(),
-            reversed: documentOrderReversed)
+            reversed: documentOrderReversed, cardScope: cardScope)
     }
 }
 
@@ -605,6 +846,16 @@ private func assertSharedDocumentActionProjection(projection: CjguiSharedOperati
     @Assert(firstResourceId(menu), documentId)
 }
 
+private func assertSharedDocumentCardProjection(projection: CjguiSharedOperationWindowProjection, documentId: Int64): Unit {
+    let menu = sharedDocumentProjectionNode(projection, "shared-document-card-menu-${documentId}")
+    let edit = sharedDocumentProjectionNode(projection, "shared-document-card-edit-${documentId}")
+    @Assert(menu.nodeId > 0, true)
+    @Assert(edit.nodeId > 0, true)
+    @Assert(menu.nodeId != edit.nodeId, true)
+    @Assert(firstResourceId(menu), documentId)
+    @Assert(firstResourceId(edit), documentId)
+}
+
 private func firstResourceId(node: CjguiSharedOperationWindowNode): Int64 {
     let resourceIds = node.resourceIds()
     return if (resourceIds.size > 0) {
@@ -612,6 +863,114 @@ private func firstResourceId(node: CjguiSharedOperationWindowNode): Int64 {
     } else {
         -1
     }
+}
+
+@Test
+func composableDocumentTransferConsumerUsesExistingRangeOwner(): Unit {
+    let workspace = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([
+        CjguiTextDocument(DESCRIPTION_DOCUMENT_ID, "传输文档", "甲乙")
+    ]))
+    let controller = CjguiSharedDocumentController(workspace, CjguiTextDocumentFileBinding(), "", "测试")
+    let _ = workspace.setSelectionFromHuman(DESCRIPTION_DOCUMENT_ID, CjguiTextDocumentRange(0, 3))
+    if (let Some(offer) <- controller.offerSelectedTextTransfer()) {
+        let _ = workspace.setSelectionFromHuman(DESCRIPTION_DOCUMENT_ID, CjguiTextDocumentRange(3, 6))
+        let declarations = controller.dataTransferDeclarations()
+        @Assert(declarations.size, 2)
+        let targetNode = CjguiComposableUiLayoutNode(
+            cjguiComposableButton(9902, "shared-document-transfer-paste", "粘贴到选区", "TRANSFER_PASTE",
+                DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30)), CjguiComposableUiRect(0, 0, 100, 30),
+            CjguiComposableUiRect(0, 0, 100, 30))
+        let accepted = controller.applyDataTransfer(CjguiComposableUiDataTransferEvent(
+            targetNode, CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_PASTE, offer, offer.format, 1))
+        @Assert(accepted.didApply, true)
+        if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+            @Assert(snapshot.content, "甲甲")
+        } else {
+            @Assert(false, true)
+        }
+    } else {
+        @Assert(false, true)
+    }
+}
+
+private func transferCostDocumentText(length: Int64): String {
+    let builder = StringBuilder()
+    var index: Int64 = 0
+    while (index < length) {
+        builder.append("x")
+        index += 1
+    }
+    return builder.toString()
+}
+
+// The document consumer measures bounded UTF-8 offers without retaining a
+// pasteboard or re-entering the workspace owner. The sizes cover a small,
+// middle and near-maximum supported text selection.
+@Test
+func composableDocumentTransferCostIsBoundedAcrossPayloadSizesAndIdleRepeats(): Unit {
+    let small = transferCostDocumentText(128)
+    let medium = transferCostDocumentText(4096)
+    let nearLimit = transferCostDocumentText(512 * 1024)
+    let workspace = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([
+        CjguiTextDocument(DESCRIPTION_DOCUMENT_ID, "成本小", small),
+        CjguiTextDocument(NOTES_DOCUMENT_ID, "成本中", medium),
+        CjguiTextDocument(READ_ONLY_ARCHIVE_ID, "成本近上限", nearLimit)
+    ]))
+    var payloadBytes = ArrayList<Int64>()
+    let started = MonoTime.now()
+    let documentIds = ArrayList<Int64>([DESCRIPTION_DOCUMENT_ID, NOTES_DOCUMENT_ID, READ_ONLY_ARCHIVE_ID])
+    let selections = ArrayList<Int64>([128, 4096, 512 * 1024])
+    var index: Int64 = 0
+    while (index < selections.size) {
+        @Assert(workspace.setSelectionFromHuman(documentIds[index],
+            CjguiTextDocumentRange(0, selections[index])).isAvailable, true)
+        if (let Some(offer) <- workspace.textTransferOfferForRangeFromHuman(
+            documentIds[index], CjguiTextDocumentRange(0, selections[index]))) {
+            payloadBytes.add(offer.payloadByteCount)
+        } else {
+            @Assert(false, true)
+        }
+        index += 1
+    }
+    let elapsedMs = (MonoTime.now() - started).toMilliseconds()
+    @Assert(payloadBytes.size, 3)
+    @Assert(payloadBytes[0], 128)
+    @Assert(payloadBytes[1], 4096)
+    @Assert(payloadBytes[2], 512 * 1024)
+    getStdOut().writeln("CJGUI_DOCUMENT_TRANSFER_COST sizes=${payloadBytes[0]},${payloadBytes[1]},${payloadBytes[2]} " +
+        "repeated_offers=3 owner_version=${workspace.contextSnapshot().version} elapsed_ms=${elapsedMs} passed=true")
+    getStdOut().flush()
+}
+
+// Command-menu regression: external owner content is projected, then the
+// self-drawn document menu uses the same command IDs as the window command
+// declarations. Undo remains a workspace operation, and closing the window
+// removes the command target rather than retaining a stale callback.
+@Test
+func commandMenuRouteKeepsDocumentOwnerAndLayerInSync(): Unit {
+    let workspace = CjguiTextDocumentWorkspace(
+        ArrayList<CjguiTextDocument>([
+            CjguiTextDocument(DESCRIPTION_DOCUMENT_ID, "说明文档", "说明内容"),
+            CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档", "笔记内容")
+        ])
+    )
+    let controller = CjguiSharedDocumentController(workspace, CjguiTextDocumentFileBinding(), "", "测试")
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    let edited = workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, "外部修改后的说明")
+    @Assert(edited.applied, true)
+    @Assert(window.refresh(), true)
+    @Assert(window.windowProjection().pendingRefreshReason, "none")
+    @Assert(window.invokeCommand("shared-document.open-menu"), true)
+    @Assert(sharedDocumentProjectionNode(window.windowProjection(), "shared-document-menu").nodeId > 0, true)
+    @Assert(window.invokeCommand("shared-document.undo"), true)
+    if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+        @Assert(snapshot.content, "说明内容")
+    } else {
+        @Assert(false, true)
+    }
+    window.close()
+    @Assert(!window.invokeCommand("shared-document.undo"), true)
 }
 
 @Test
@@ -630,6 +989,43 @@ func scopedDocumentActionsRetainOwnerAcrossSelectionAndReorder(): Unit {
     let window = CjguiComposableUiWindow(controller)
     @Assert(window.start(), true)
     assertSharedDocumentActionProjection(window.windowProjection(), DESCRIPTION_DOCUMENT_ID)
+    assertSharedDocumentCardProjection(window.windowProjection(), DESCRIPTION_DOCUMENT_ID)
+    assertSharedDocumentCardProjection(window.windowProjection(), NOTES_DOCUMENT_ID)
+
+    let cardMenu = cjguiComposableButton(117103, "shared-document-card-menu-7101", "操作", "OPEN_DOCUMENT_CARD_MENU",
+        DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 26))
+    let cardMenuEvent = controller.applyUiEvent(
+        CjguiComposableUiEvent(
+            CjguiComposableUiLayoutNode(cardMenu, CjguiComposableUiRect(0, 0, 80, 26), CjguiComposableUiRect(0, 0, 80,
+                26)), 27, "", 0, 0, 1))
+    @Assert(cardMenuEvent.didApply, true)
+    @Assert(window.refresh(), true)
+    let openedCardMenu = sharedDocumentProjectionNode(window.windowProjection(), "shared-document-card-menu-7101")
+    @Assert(openedCardMenu.nodeId > 0, true)
+    let cardEdit = cjguiComposableButton(117104, "shared-document-card-edit-7101", "编辑", "OPEN_DOCUMENT_CARD_EDIT",
+        DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 26))
+    let cardEditEvent = controller.applyUiEvent(
+        CjguiComposableUiEvent(
+            CjguiComposableUiLayoutNode(cardEdit, CjguiComposableUiRect(0, 0, 80, 26), CjguiComposableUiRect(0, 0, 80,
+                26)), 27, "", 0, 0, 1))
+    @Assert(cardEditEvent.didApply, true)
+    @Assert(window.refresh(), true)
+    let openedCardDialog = sharedDocumentProjectionNode(window.windowProjection(),
+        "shared-document-card-edit-dialog-7101")
+    @Assert(openedCardDialog.nodeId > 0, true)
+    let cardContent = cjguiComposableMultilineTextInput(65, "shared-document-card-editor-content", "内容",
+        "更新后的说明", DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 80))
+    let cardContentEvent = controller.applyUiEvent(
+        CjguiComposableUiEvent(
+            CjguiComposableUiLayoutNode(cardContent, CjguiComposableUiRect(0, 0, 200, 80),
+                CjguiComposableUiRect(0, 0, 200, 80)), 28, "更新后的说明", 0, 0, 1))
+    @Assert(cardContentEvent.didApply, true)
+    if (let Some(updatedDescription) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+        @Assert(updatedDescription.content, "更新后的说明")
+    } else {
+        @Assert(false, true)
+    }
+    @Assert(window.refresh(), true)
 
     // Use the same semantic/action/resource tuple emitted by the list row;
     // controller dispatch remains the sole owner-side selection path.
@@ -643,6 +1039,7 @@ func scopedDocumentActionsRetainOwnerAcrossSelectionAndReorder(): Unit {
     @Assert(controller.focusedDocumentKeyForTest(), "document_7102")
     @Assert(window.refresh(), true)
     assertSharedDocumentActionProjection(window.windowProjection(), NOTES_DOCUMENT_ID)
+    assertSharedDocumentCardProjection(window.windowProjection(), NOTES_DOCUMENT_ID)
 
     // Reorder the source while keeping the selected/focused business key.
     // The next accepted scene must retain the same action targets rather than
@@ -651,6 +1048,7 @@ func scopedDocumentActionsRetainOwnerAcrossSelectionAndReorder(): Unit {
     @Assert(window.refresh(), true)
     let reordered = window.windowProjection()
     assertSharedDocumentActionProjection(reordered, NOTES_DOCUMENT_ID)
+    assertSharedDocumentCardProjection(reordered, NOTES_DOCUMENT_ID)
     let selectedRow = sharedDocumentProjectionNode(reordered, "shared-document-select-7102")
     @Assert(selectedRow.nodeId > 0, true)
     @Assert(firstResourceId(selectedRow), NOTES_DOCUMENT_ID)
@@ -1103,8 +1501,9 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
     } else {
         "新文档将保存到 ${path}"
     }
+    let controller = CjguiSharedDocumentController(workspace, fileBinding, path, startupStatus)
     let host = CjguiMacosApplicationHost(
-        CjguiSharedDocumentController(workspace, fileBinding, path, startupStatus),
+        controller,
         configuration: CjguiMacosApplicationWindowConfiguration("CJGUI Shared Document", 980u32, 620u32)
     )
     let window = host.window()
@@ -1204,11 +1603,66 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
             let _ = host.pumpOneTurn()
         }
     }
+    getStdOut().writeln("CJGUI_DOCUMENT_TRANSFER_METRICS ${controller.transferMetricsSummary()}")
+    getStdOut().flush()
     host.close()
     return 0
 }
 
+// Public-consumer cost mode. It starts the ordinary composable window,
+// measures three bounded owner offers, then proves idle refresh convergence
+// without a second layout or business mutation.
+private func runTransferCostProbe(): Int32 {
+    let workspace = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([
+        CjguiTextDocument(DESCRIPTION_DOCUMENT_ID, "成本小", transferCostDocumentText(128)),
+        CjguiTextDocument(NOTES_DOCUMENT_ID, "成本中", transferCostDocumentText(4096)),
+        CjguiTextDocument(READ_ONLY_ARCHIVE_ID, "成本近上限", transferCostDocumentText(512 * 1024))
+    ]))
+    let controller = CjguiSharedDocumentController(workspace, CjguiTextDocumentFileBinding(), "", "成本探针")
+    let window = CjguiComposableUiWindow(controller)
+    if (!window.start()) { return 1 }
+    var sizes = ArrayList<Int64>()
+    let documentIds = ArrayList<Int64>([DESCRIPTION_DOCUMENT_ID, NOTES_DOCUMENT_ID, READ_ONLY_ARCHIVE_ID])
+    let selections = ArrayList<Int64>([128, 4096, 512 * 1024])
+    var index: Int64 = 0
+    while (index < selections.size) {
+        let selection = workspace.setSelectionFromHuman(documentIds[index],
+            CjguiTextDocumentRange(0, selections[index]))
+        if (!selection.isAvailable) { window.close(); return 1 }
+        if (let Some(offer) <- controller.offerSelectedTextTransfer()) {
+            sizes.add(offer.payloadByteCount)
+        } else {
+            window.close()
+            return 1
+        }
+        index += 1
+    }
+    if (!window.refresh()) { window.close(); return 1 }
+    let before = window.windowProjection()
+    let started = MonoTime.now()
+    var repeats: Int64 = 0
+    while (repeats < 128) {
+        if (!window.refreshIfNeeded()) { window.close(); return 1 }
+        repeats += 1
+    }
+    let elapsedMs = (MonoTime.now() - started).toMilliseconds()
+    let after = window.windowProjection()
+    let passed = sizes.size == 3 && sizes[0] < sizes[1] && sizes[1] < sizes[2] &&
+        after.buildPassCount == before.buildPassCount && after.layoutPassCount == before.layoutPassCount &&
+        after.nativeSubmissionCount == before.nativeSubmissionCount
+    getStdOut().writeln("CJGUI_DOCUMENT_TRANSFER_COST sizes=${sizes[0]},${sizes[1]},${sizes[2]} " +
+        "repeats=${repeats} idle_build_delta=${after.buildPassCount - before.buildPassCount} " +
+        "idle_layout_delta=${after.layoutPassCount - before.layoutPassCount} " +
+        "idle_submit_delta=${after.nativeSubmissionCount - before.nativeSubmissionCount} elapsed_ms=${elapsedMs} passed=${passed}")
+    getStdOut().flush()
+    window.close()
+    return if (passed) { 0 } else { 1 }
+}
+
 main(args: Array<String>): Int64 {
+    if (args.size == 1 && args[0] == "--verify-transfer-cost") {
+        return Int64(runTransferCostProbe())
+    }
     if (let Some(options) <- launchOptionsFromArgs(args)) {
         if (options.opensMultipleWindows) {
             return Int64(runMultiWindow(options.filePath, options.enablesExternalConnection,
@@ -1219,7 +1673,7 @@ main(args: Array<String>): Int64 {
             options.expectsConnectionStartFailure, options.measurementDurationMs, options.measurementWarmupMs))
     }
     getStdErr().writeln(
-        "usage: CJGUISharedDocument [--file PATH] [--multi-window] [--with-connection] [--verify-connection-start-failure] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000] [--close-first-window-after-ms 1..60000] [--reopen-first-window-after-close] [--record-turn-observations]")
+        "usage: CJGUISharedDocument [--file PATH] [--multi-window] [--with-connection] [--verify-connection-start-failure] [--verify-transfer-cost] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000] [--close-first-window-after-ms 1..60000] [--reopen-first-window-after-close] [--record-turn-observations]")
     CjguiMacosApplicationHost.stopApplicationLoop()
     return 2
 }

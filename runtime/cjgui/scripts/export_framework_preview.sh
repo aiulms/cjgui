@@ -55,6 +55,7 @@ PREVIEW_CJGUI_SOURCES=(
   composable_ui_window.cj
   composable_ui_tree.cj
   composable_ui_generated.cj
+  composable_ui_composite_component.cj
   macos_application_host.cj
   runtime_renderer_session.cj
 )
@@ -66,6 +67,7 @@ cp "$RUNTIME_DIR/shared_operation_core/client.py" "$FRAMEWORK_DIR/shared_operati
 typeset -a PREVIEW_CORE_SOURCES
 PREVIEW_CORE_SOURCES=(
   shared_editing_form_contract.cj
+  shared_field_write_rule.cj
   shared_operation_contract.cj
   shared_operation_list.cj
   shared_operation_transport.cj

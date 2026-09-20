@@ -220,6 +220,45 @@ cjgui_unique_round_owns() {
   [[ "$owner" == "$pid" ]]
 }
 
+# cjgui_reclaim_candidates [log-function]
+# Reclaims exactly the identities a round registered BEFORE launching, so a
+# process that started but never reached its ready/ownership handshake is still
+# cleaned up. Each PID is re-derived from the round-unique exec name + directory
+# (never a generic process name search) and ownership is re-proven before any
+# signal; an identity that is not registered here is never touched.
+#
+# Reads the caller's CANDIDATE_EXECS / CANDIDATE_DIRS / CANDIDATE_DESCS arrays.
+cjgui_reclaim_candidates() {
+  local logfn="${1:-}" index=1 pid line
+  if (( ${#CANDIDATE_EXECS} == 0 )); then
+    return 0
+  fi
+  emit() {
+    if [[ -n "$logfn" ]]; then
+      "$logfn" "$*"
+    else
+      print -r -- "$*"
+    fi
+  }
+  while (( index <= ${#CANDIDATE_EXECS} )); do
+    pid="$(cjgui_unique_round_pid "${CANDIDATE_EXECS[index]}" "${CANDIDATE_DIRS[index]}" || true)"
+    if [[ -n "$pid" ]]; then
+      cjgui_terminate_owned "$pid" "${CANDIDATE_DESCS[index]:-}" "${CANDIDATE_EXECS[index]}" \
+        "${CANDIDATE_DIRS[index]}" || true
+      line="cleanup: candidate ${CANDIDATE_EXECS[index]} pid=$pid closed="
+      if cjgui_pid_owns "$pid" "${CANDIDATE_DESCS[index]:-}" "${CANDIDATE_EXECS[index]}" \
+        "${CANDIDATE_DIRS[index]}"; then
+        emit "${line}no"
+      else
+        emit "${line}yes"
+      fi
+    else
+      emit "cleanup: candidate ${CANDIDATE_EXECS[index]} never started"
+    fi
+    index=$(( index + 1 ))
+  done
+}
+
 # cjgui_prepare_app_copy <template-dir> <dest-dir> <runtime-dir> <name-token> <suffix> <bundle-id-token>
 # Makes a per-round copy of a window application so this round never shares a
 # bundle identifier, executable name, directory or descriptor with a user

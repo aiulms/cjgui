@@ -26,8 +26,13 @@ private class CjguiRuleSetStartupFiles {
     /// different boundary without editing the example's own convention.
     let retentionMinimum: Int64
     let retentionMaximum: Int64
+    /// Explicit preset override for the composite integer editor. Empty means
+    /// "derive the presets from the declared field bounds"; a value is used only
+    /// by the dedicated out-of-range negative control.
+    let retentionPreset: String
     init(openPath: String, saveAsPath: String, verifiesHostCloseDecisions: Bool, measurementDurationMs: Int64,
-        measurementWarmupMs: Int64, retentionMinimum: Int64, retentionMaximum: Int64) {
+        measurementWarmupMs: Int64, retentionMinimum: Int64, retentionMaximum: Int64,
+        retentionPreset!: String = "") {
         this.openPath = openPath
         this.saveAsPath = saveAsPath
         this.verifiesHostCloseDecisions = verifiesHostCloseDecisions
@@ -35,6 +40,7 @@ private class CjguiRuleSetStartupFiles {
         this.measurementWarmupMs = measurementWarmupMs
         this.retentionMinimum = retentionMinimum
         this.retentionMaximum = retentionMaximum
+        this.retentionPreset = retentionPreset
     }
 }
 
@@ -202,10 +208,10 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     private let treePanel: CjguiRuleSetTreePanel
     private let generatedRegion: CjguiRuleSetGeneratedRegion
 
-    init(domain: CjguiRuleSetEditingDomain) {
+    init(domain: CjguiRuleSetEditingDomain, presetOverride!: String = "") {
         this.domain = domain
         this.treePanel = CjguiRuleSetTreePanel(domain)
-        this.generatedRegion = CjguiRuleSetGeneratedRegion(domain)
+        this.generatedRegion = CjguiRuleSetGeneratedRegion(domain, presetOverride: presetOverride)
         this.listState = CjguiComposableUiVirtualListState()
         this.componentRegistry = CjguiComposableUiComponentRegistry()
         this.recordCardScope = CjguiComposableUiIdentityScope("rule-record-card")
@@ -583,6 +589,32 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             while (dialogFieldIndex < binding.fieldCount()) {
                 let descriptor = binding.fieldAtControlIndex(dialogFieldIndex);
                 let field = form.fieldForResourceId(descriptor.resourceId)
+                if (descriptor.fieldId == "retentionCount") {
+                    // The handwritten region uses the SAME composite
+                    // implementation the generated region presents: one numeric
+                    // input plus the configured preset button, built by
+                    // `CjguiRetentionIntegerEditComposite.buildEditor`. The
+                    // preset caption/value come from the one config the
+                    // registered composite also carries.
+                    let compositeRow = CjguiRetentionIntegerEditComposite.buildEditor(
+                        dialogFieldGroupNodeId(renderedSelectedId, dialogFieldIndex),
+                        "dialog-field-group-${descriptor.fieldId}",
+                        dialogFieldNodeId(renderedSelectedId, dialogFieldIndex),
+                        dialogPresetNodeId(renderedSelectedId, dialogFieldIndex), descriptor.label,
+                        field.draftText, descriptor.fieldId, "EDIT_DRAFT_TEXT", descriptor.resourceId,
+                        renderedSelectedId, generatedRegion.retentionPreset().label,
+                        style: inputStyle)
+                    if (field.validationError.size > 0) {
+                        compositeRow.add(cjguiComposableText(
+                            dialogValidationNodeId(renderedSelectedId, dialogFieldIndex),
+                            "dialog-error-${descriptor.fieldId}", "请先填写保留天数，再应用规则", validationStyle,
+                            resourceId: descriptor.resourceId, fieldId: descriptor.fieldId,
+                            displayValueRole: "validation", operationResourceId: renderedSelectedId))
+                    }
+                    dialog.add(compositeRow)
+                    dialogFieldIndex += 1
+                    continue
+                }
                 dialog.add(
                     cjguiComposableBoundFormField(dialogFieldGroupNodeId(renderedSelectedId, dialogFieldIndex),
                         "dialog-field-group-${descriptor.fieldId}",
@@ -739,6 +771,24 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             if (result.applied) {
                 localRevision += 1
             };
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
+        // The composite editor's preset button in the HANDWRITTEN region: its
+        // activation writes the configured constant through the SAME owner draft
+        // entry the typed edit uses, so legality, the draft/applied split and the
+        // apply/cancel rule are identical. The constant comes from the one preset
+        // configuration the registered composite also carries - an out-of-range
+        // preset is refused by the owner, never clamped here.
+        let presetTarget = node.operationResourceId
+        if (node.actionName == CjguiRetentionIntegerEditComposite.PRESET_ACTION &&
+            event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE && presetTarget >= 0 &&
+            node.resourceId == CjguiRuleSetEditingDomain.formRetentionResourceId) {
+            let preset = generatedRegion.retentionPreset()
+            let result = domain.editTextForCollectionItemFromHuman(presetTarget, node.resourceId,
+                preset.value, 0, preset.value.size)
+            if (result.applied) {
+                localRevision += 1
+            }
             return CjguiComposableUiDispatchResult(result.applied)
         }
         if (event.eventKind != 27) {
@@ -1058,6 +1108,12 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     private func dialogValidationNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
         return 900000000 + recordId * 16 + fieldIndex
     }
+    /// Identity of the composite editor's preset button inside the handwritten
+    /// dialog. The composite implementation is shared with the generated region,
+    /// so its extra element needs its own distinct id range.
+    private func dialogPresetNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1000000000 + recordId * 16 + fieldIndex
+    }
     private func dialogActionNodeId(recordId: Int64, actionIndex: Int64): Int64 {
         return 500000000 + recordId * 4 + actionIndex
     }
@@ -1100,6 +1156,7 @@ private func parseStartupFiles(args: Array<String>): ?CjguiRuleSetStartupFiles {
     var hasMeasurementWarmup = false;
     var retentionMinimum = CjguiRuleSetEditingDomain.defaultRetentionMinimum
     var retentionMaximum = CjguiRuleSetEditingDomain.defaultRetentionMaximum
+    var retentionPreset = ""
     var hasRetentionRange = false
     var index: Int64 = 0
     while (index < args.size) {
@@ -1126,6 +1183,12 @@ private func parseStartupFiles(args: Array<String>): ?CjguiRuleSetStartupFiles {
             } else {
                 return None
             }
+            index += 2
+        } else if (args[index] == "--retention-preset" && index + 1 < args.size) {
+            // Typed application configuration for the composite editor's preset
+            // button. The command line is the app's existing configuration
+            // channel; no environment variable or hidden global is introduced.
+            retentionPreset = args[index + 1]
             index += 2
         } else if (args[index] == "--retention-range" && index + 2 < args.size && !hasRetentionRange) {
             if (let Some(minimum) <- Int64.tryParse(args[index + 1])) {
@@ -1162,7 +1225,8 @@ private func parseStartupFiles(args: Array<String>): ?CjguiRuleSetStartupFiles {
     }
     return Some(
         CjguiRuleSetStartupFiles(openPath, saveAsPath, verifiesHostCloseDecisions, measurementDurationMs,
-            measurementWarmupMs, retentionMinimum, retentionMaximum))
+            measurementWarmupMs, retentionMinimum, retentionMaximum,
+            retentionPreset: retentionPreset))
 }
 
 // Bounded consumer-side cost probe. It uses the same public controller and
@@ -1574,7 +1638,8 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
         CjguiMacosApplicationHost.stopApplicationLoop();
         return 2
     }
-    let controller = CjguiRuleSetComposableController(domain)
+    let controller = CjguiRuleSetComposableController(domain,
+        presetOverride: startup.retentionPreset)
     let host = CjguiMacosApplicationHost(
         controller,
         configuration: CjguiMacosApplicationWindowConfiguration("CJGUI 规则集编辑器", 980u32, 620u32)
@@ -1664,7 +1729,7 @@ main(args: Array<String>): Int64 {
         return Int64(runRuleSetApp(startup))
     }
     getStdErr().writeln(
-        "usage: CJGUIRuleSet [--open PATH] [--save-as PATH] [--verify-host-close-decisions] [--retention-range MIN MAX] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000]")
+        "usage: CJGUIRuleSet [--open PATH] [--save-as PATH] [--verify-host-close-decisions] [--retention-range MIN MAX] [--retention-preset VALUE] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000]")
     CjguiMacosApplicationHost.stopApplicationLoop()
     return 2
 }
@@ -2100,7 +2165,7 @@ func generatedCapabilitiesPublishFieldContracts(): Unit {
     let controller = CjguiRuleSetComposableController(domain)
     let payload = controller.generatedUiRegion().capabilitiesPayload()
     @Assert(payload.contains("FIELD retentionCount INTEGER resource=81003 " +
-        "writer=EDIT_DRAFT_TEXT required=0 min=1 max=90 callable=1"), true)
+        "writer=EDIT_DRAFT_TEXT required=0 min=1 max=90 maxlen=0 callable=1"), true)
     @Assert(payload.contains("FIELD enabled BOOLEAN resource=81002 writer=EDIT_DRAFT_BOOLEAN"), true)
     @Assert(payload.contains("FIELD label TEXT resource=81001 writer=EDIT_DRAFT_TEXT"), true)
     @Assert(payload.contains("FIELD excludedType TEXT resource=81004"), true)
@@ -2115,5 +2180,242 @@ func generatedCapabilitiesFollowTheDeclaredRetentionBoundary(): Unit {
     let controller = CjguiRuleSetComposableController(domain)
     let payload = controller.generatedUiRegion().capabilitiesPayload()
     @Assert(payload.contains("FIELD retentionCount INTEGER resource=81003 " +
-        "writer=EDIT_DRAFT_TEXT required=0 min=365 max=730 callable=1"), true)
+        "writer=EDIT_DRAFT_TEXT required=0 min=365 max=730 maxlen=0 callable=1"), true)
+}
+
+// --- B1: the shared retention integer-edit composite -------------------------
+
+private let RETENTION_COMPOSITE_S1: String = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 panel vertical
+NODE 1 retentionEdit retentionIntegerEdit
+END
+"""
+
+/// Node identity plus the business-facing attributes only: ids allocated by the
+/// framework or the consumer are deliberately excluded, which is exactly the
+/// difference between the two presentations.
+private func compositeShapeOf(node: CjguiComposableUiNode, intoLines: ArrayList<String>): Unit {
+    intoLines.add("${node.nodeKind}|${node.label}|${node.fieldId}|${node.operationActionName}|${node.actionName}")
+    for (child in node.children()) {
+        compositeShapeOf(child, intoLines)
+    }
+}
+
+private func findNodeBySemanticId(node: CjguiComposableUiNode, semanticId: String): ?CjguiComposableUiNode {
+    if (node.semanticId == semanticId) {
+        return Some(node)
+    }
+    for (child in node.children()) {
+        if (let Some(found) <- findNodeBySemanticId(child, semanticId)) {
+            return found
+        }
+    }
+    return None
+}
+
+private func findNodeById(node: CjguiComposableUiNode, nodeId: Int64): ?CjguiComposableUiNode {
+    if (node.nodeId == nodeId) {
+        return Some(node)
+    }
+    for (child in node.children()) {
+        if (let Some(found) <- findNodeById(child, nodeId)) {
+            return found
+        }
+    }
+    return None
+}
+
+/// The preset is the ONE configuration: a normal launch derives it from the
+/// field's own declared bounds (never a copied business limit), while a
+/// dedicated negative control may declare an explicit out-of-range value.
+@Test
+func retentionCompositePresetComesFromTheDeclaredBounds(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    let region = CjguiRuleSetGeneratedRegion(domain)
+    @Assert(region.retentionPreset().value, "${CjguiRuleSetEditingDomain.defaultRetentionMaximum}")
+    let wide = CjguiRuleSetEditingDomain.newWithRetentionRange(minimum: 365, maximum: 730)
+    let wideRegion = CjguiRuleSetGeneratedRegion(wide)
+    @Assert(wideRegion.retentionPreset().value, "730")
+    let override = CjguiRuleSetGeneratedRegion(domain, presetOverride: "200")
+    @Assert(override.retentionPreset().value, "200")
+    @Assert(override.retentionPreset().label.contains("200"), true)
+}
+
+/// The handwritten dialog presents the composite through the ONE build
+/// implementation: its retention row is byte-for-byte the same node shape
+/// `buildEditor` produces for the same declared inputs, and the generated region
+/// resolves the same field/preset elements for that kind.
+@Test
+func retentionCompositeHandwrittenAndGeneratedShareOneShape(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("组合复用", true, 30, "shared", "composite-share").applied, true)
+    let recordId = domain.selectedRecordId()
+    let controller = CjguiRuleSetComposableController(domain)
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+
+    // Generated side: the app's generated region accepts the composite kind and
+    // resolves its field + preset elements.
+    let region = controller.generatedUiRegion()
+    @Assert(region.submitStructure(RETENTION_COMPOSITE_S1, 0).candidateAccepted, true)
+    @Assert(window.refresh(), true)
+    @Assert(region.acceptedStructureVersion(), 1)
+    @Assert(region.acceptedNodeIdForKey("retentionEdit") > 0, true)
+    @Assert(region.acceptedCompositeElementNodeId("retentionEdit", "edit") > 0, true)
+    @Assert(region.acceptedCompositeElementNodeId("retentionEdit", "preset") > 0, true)
+
+    // Handwritten side: open the edit dialog and take the retention row.
+    let scene = CjguiComposableUiLayoutEngine.layout(controller.buildUi(),
+        CjguiComposableUiRect(0, 0, 980, 620), 1)
+    let openButton = scene.nodeForId(29)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(openButton,
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, scene.version)).didApply, true)
+    let handwrittenTree = controller.buildUi()
+    let handwrittenRow = findNodeBySemanticId(handwrittenTree, "dialog-field-group-retentionCount") ??
+        cjguiComposableVertical(-1, "missing-retention-row", CjguiComposableUiStyle())
+    @Assert(handwrittenRow.semanticId, "dialog-field-group-retentionCount")
+    let handwrittenShape = ArrayList<String>()
+    compositeShapeOf(handwrittenRow, handwrittenShape)
+
+    // The same implementation, called directly with the same declared inputs.
+    let form = domain.formSnapshot()
+    let field = form.fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId)
+    var descriptorLabel = "保留天数"
+    for (descriptor in domain.formBinding().allFields()) {
+        if (descriptor.fieldId == "retentionCount") {
+            descriptorLabel = descriptor.label
+        }
+    }
+    let directBuild = CjguiRetentionIntegerEditComposite.buildEditor(1, "direct-row", 2, 3,
+        descriptorLabel, field.draftText, "retentionCount", "EDIT_DRAFT_TEXT",
+        CjguiRuleSetEditingDomain.formRetentionResourceId, recordId,
+        region.retentionPreset().label)
+    let directShape = ArrayList<String>()
+    compositeShapeOf(directBuild, directShape)
+    @Assert(handwrittenShape.size, directShape.size)
+    var index: Int64 = 0
+    while (index < handwrittenShape.size) {
+        @Assert(handwrittenShape[index], directShape[index])
+        index += 1
+    }
+    // The shape really is input + preset, not a plain editor.
+    @Assert(handwrittenShape.size >= 3, true)
+    // shape[0] is the row container, [1] the shared integer input and [2] the
+    // configured preset button.
+    @Assert(handwrittenShape[1].contains("|retentionCount|EDIT_DRAFT_TEXT|"), true)
+    @Assert(handwrittenShape[2].contains("|${CjguiRetentionIntegerEditComposite.PRESET_ACTION}"), true)
+    window.close()
+}
+
+/// A generated preset activation becomes a field edit carrying the CONFIGURED
+/// constant, and the owner's rule (not the widget) decides legality: an
+/// out-of-range preset reaches the draft unchanged and is refused at apply.
+@Test
+func compositePresetWritesConfiguredValueAndOwnerRefusesOutOfRange(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("预设写入", true, 30, "preset", "composite-preset").applied, true)
+    let recordId = domain.selectedRecordId()
+    let controller = CjguiRuleSetComposableController(domain)
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    let region = controller.generatedUiRegion()
+    @Assert(region.submitStructure(RETENTION_COMPOSITE_S1, 0).candidateAccepted, true)
+    @Assert(window.refresh(), true)
+    let presetNodeId = region.acceptedCompositeElementNodeId("retentionEdit", "preset")
+    @Assert(presetNodeId > 0, true)
+    let presetValue = region.retentionPreset().value
+    @Assert(presetValue, "${CjguiRuleSetEditingDomain.defaultRetentionMaximum}")
+
+    let presetNode = CjguiComposableUiLayoutNode(
+        cjguiComposableButton(presetNodeId, "retention-preset",
+            region.retentionPreset().label, CjguiRetentionIntegerEditComposite.PRESET_ACTION,
+            CjguiRuleSetEditingDomain.formRetentionResourceId, CjguiComposableUiStyle()),
+        CjguiComposableUiRect(0, 0, 120, 26), CjguiComposableUiRect(0, 0, 120, 26))
+    @Assert(region.handleEvent(CjguiComposableUiEvent(presetNode,
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, 1)).didApply, true)
+    @Assert(domain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, presetValue)
+    // 90 is legal in 1..90: the owner applies it through the ordinary rule.
+    let applied = domain.applyDraftForCollectionItemFromHuman(recordId,
+        domain.draftVersionForCollectionItem(recordId), domain.baseAppliedVersionForCollectionItem(recordId))
+    @Assert(applied.applied, true)
+    window.close()
+
+    // Negative control: the same composite with an explicitly out-of-range preset
+    // must hand 200 to the owner (no clamping here) and the owner refuses it.
+    let outOfRangeDomain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(outOfRangeDomain.createRecordFromHuman("越界预设", true, 30, "x", "composite-preset-oor").applied, true)
+    let outOfRangeRecord = outOfRangeDomain.selectedRecordId()
+    let outOfRangeRegion = CjguiRuleSetGeneratedRegion(outOfRangeDomain, presetOverride: "200")
+    @Assert(outOfRangeRegion.retentionPreset().value, "200")
+    let outOfRangeController = CjguiRuleSetComposableController(outOfRangeDomain, presetOverride: "200")
+    let outOfRangeWindow = CjguiComposableUiWindow(outOfRangeController)
+    @Assert(outOfRangeWindow.start(), true)
+    let outOfRangeLive = outOfRangeController.generatedUiRegion()
+    @Assert(outOfRangeLive.submitStructure(RETENTION_COMPOSITE_S1, 0).candidateAccepted, true)
+    @Assert(outOfRangeWindow.refresh(), true)
+    let outOfRangePresetId = outOfRangeLive.acceptedCompositeElementNodeId("retentionEdit", "preset")
+    @Assert(outOfRangePresetId > 0, true)
+    let outOfRangeNode = CjguiComposableUiLayoutNode(
+        cjguiComposableButton(outOfRangePresetId, "retention-preset", "设为 200",
+            CjguiRetentionIntegerEditComposite.PRESET_ACTION,
+            CjguiRuleSetEditingDomain.formRetentionResourceId, CjguiComposableUiStyle()),
+        CjguiComposableUiRect(0, 0, 120, 26), CjguiComposableUiRect(0, 0, 120, 26))
+    @Assert(outOfRangeLive.handleEvent(CjguiComposableUiEvent(outOfRangeNode,
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, 1)).didApply, true)
+    // The declared constant reached the draft unchanged - no silent clamp.
+    @Assert(outOfRangeDomain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "200")
+    let refused = outOfRangeDomain.applyDraftForCollectionItemFromHuman(outOfRangeRecord,
+        outOfRangeDomain.draftVersionForCollectionItem(outOfRangeRecord),
+        outOfRangeDomain.baseAppliedVersionForCollectionItem(outOfRangeRecord))
+    @Assert(refused.applied, false)
+    @Assert(outOfRangeDomain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).validationError, "retention_count_out_of_range")
+    outOfRangeWindow.close()
+}
+
+/// The handwritten preset button goes through the same owner draft entry the
+/// typed edit uses, reading the same one configuration.
+@Test
+func handwrittenCompositePresetWritesTheOwnerDraft(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("手写预设", true, 30, "hand", "composite-hand-preset").applied, true)
+    let recordId = domain.selectedRecordId()
+    let controller = CjguiRuleSetComposableController(domain)
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    let scene = CjguiComposableUiLayoutEngine.layout(controller.buildUi(),
+        CjguiComposableUiRect(0, 0, 980, 620), 1)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(scene.nodeForId(29),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, scene.version)).didApply, true)
+    let tree = controller.buildUi()
+    let presetRow = findNodeBySemanticId(tree, "dialog-field-group-retentionCount") ??
+        cjguiComposableVertical(-1, "missing-retention-row", CjguiComposableUiStyle())
+    @Assert(presetRow.semanticId, "dialog-field-group-retentionCount")
+    // The row's preset button is the one built by the shared composite.
+    let button = findPresetButton(presetRow) ??
+        cjguiComposableButton(-1, "missing-preset", "", "", -1, CjguiComposableUiStyle())
+    @Assert(button.actionName, CjguiRetentionIntegerEditComposite.PRESET_ACTION)
+    let layout = CjguiComposableUiLayoutNode(button, CjguiComposableUiRect(0, 0, 120, 26),
+        CjguiComposableUiRect(0, 0, 120, 26))
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(layout,
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, 1)).didApply, true)
+    let presetValue = controller.generatedUiRegion().retentionPreset().value
+    @Assert(domain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, presetValue)
+    window.close()
+}
+
+private func findPresetButton(node: CjguiComposableUiNode): ?CjguiComposableUiNode {
+    if (node.actionName == CjguiRetentionIntegerEditComposite.PRESET_ACTION) {
+        return Some(node)
+    }
+    for (child in node.children()) {
+        if (let Some(found) <- findPresetButton(child)) {
+            return found
+        }
+    }
+    return None
 }

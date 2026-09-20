@@ -27,9 +27,33 @@ private func panelWithEditor(): (CjguiSharedOperationList, CjguiTaskGeneratedReg
     let domain = CjguiSharedOperationList(ArrayList<CjguiSharedOperationRecord>([
         CjguiSharedOperationRecord(1, "初始标题", false)
     ]))
+    // Production wiring: the application installs its declared field rules on
+    // the owner before any entry point can write. Tests that skipped this would
+    // not exercise the rule the handwritten pane, the generated editor and an
+    // external caller all hit.
+    let _ = CjguiTaskFields.installInto(domain, 1)
     let _ = domain.selectFromHuman(1)
     let region = CjguiTaskGeneratedRegion(domain, CjguiTaskFields.titleResourceId)
     return (domain, region)
+}
+
+private func repeated(text: String, count: Int64): String {
+    let builder = StringBuilder()
+    var index: Int64 = 0
+    while (index < count) {
+        builder.append(text)
+        index += 1
+    }
+    return builder.toString()
+}
+
+private func notesOfRecord(domain: CjguiSharedOperationList, recordId: Int64): String {
+    for (record in domain.snapshot().records) {
+        if (record.id == recordId) {
+            return record.notes
+        }
+    }
+    return "<missing>"
 }
 
 private let EDITOR_STRUCTURE = """
@@ -252,6 +276,180 @@ func oneDefinitionDrivesHandwrittenGeneratedAndExternalEntries(): Unit {
     let payload = region.capabilitiesPayload()
     @Assert(payload.contains("FIELD title TEXT resource=8101 writer=SET_TITLE required=1"), true)
     @Assert(payload.contains("FIELD marked BOOLEAN resource=8102 writer=SET_MARKED required=0"), true)
+    @Assert(payload.contains("maxlen=120"), true)
+}
+
+private func externalWrite(domain: CjguiSharedOperationList, action: String, argument: String,
+    value: CjguiSharedOperationValue): CjguiSharedOperationActionResult {
+    return domain.executeFromExternal(CjguiSharedOperationActionInvocation(action, domain.version(),
+        ArrayList<Int64>([1]),
+        ArrayList<CjguiSharedOperationActionArgument>([
+            CjguiSharedOperationActionArgument(argument, value)
+        ])))
+}
+
+/// One rule, three entry points: a rule declared once is enforced by the owner no
+/// matter which entry point sends the write. The generated editor, the declared
+/// owner entry the handwritten pane calls, and a real external invocation all get
+/// the same reason; a refusal changes neither the value nor the version, and a
+/// legal write still applies afterwards.
+@Test
+func oneRuleRefusesEveryEntryPointWithoutPartialWrite(): Unit {
+    let (domain, region) = panelWithEditor()
+    @Assert(acceptEditorStructure(region), true)
+    let tooLong = repeated("字", 121)
+    let versionBefore = domain.version()
+    // 1. generated editor event
+    let generated = CjguiComposableUiEvent(editorNode(region, "titleEditor", "title",
+        CjguiTaskFields.titleResourceId, "SET_TITLE", 1, CJGUI_COMPOSABLE_UI_TEXT_INPUT), 28,
+        tooLong, 0, 0, 1)
+    @Assert(region.handleEvent(generated).didApply, false)
+    // 2. the declared owner entry the handwritten pane calls
+    let titleRule = CjguiTaskFields.definition("title").rule(1)
+    let handwritten = domain.writeDeclaredFieldFromHuman(titleRule, 1,
+        CjguiSharedOperationValue.string(tooLong))
+    @Assert(handwritten.applied, false)
+    @Assert(handwritten.reason, "title_too_long")
+    // 3. real external invocation (public protocol shape, version pre-check passed)
+    let external = externalWrite(domain, "SET_TITLE", "title", CjguiSharedOperationValue.string(tooLong))
+    @Assert(external.applied, false)
+    @Assert(external.reason, "title_too_long")
+    // No partial write and no version bump from any refusal.
+    @Assert(titleOfRecord(domain, 1), "初始标题")
+    @Assert(domain.version(), versionBefore)
+    // The same three entries accept a legal value.
+    @Assert(domain.writeDeclaredFieldFromHuman(titleRule, 1,
+        CjguiSharedOperationValue.string("合法标题")).applied, true)
+    @Assert(titleOfRecord(domain, 1), "合法标题")
+    let generatedLegal = CjguiComposableUiEvent(editorNode(region, "titleEditor", "title",
+        CjguiTaskFields.titleResourceId, "SET_TITLE", 1, CJGUI_COMPOSABLE_UI_TEXT_INPUT), 28,
+        "生成合法标题", 0, 0, 1)
+    @Assert(region.handleEvent(generatedLegal).didApply, true)
+    @Assert(titleOfRecord(domain, 1), "生成合法标题")
+    @Assert(externalWrite(domain, "SET_TITLE", "title",
+        CjguiSharedOperationValue.string("外部合法标题")).applied, true)
+    @Assert(titleOfRecord(domain, 1), "外部合法标题")
+}
+
+/// A legal request can still be refused when the BUSINESS CONDITION changes: once
+/// the task is submitted its title is frozen. The refusal names the condition, the
+/// stored value and version stay untouched, and reopening the task makes the very
+/// same request succeed. This is deliberately not a version conflict.
+@Test
+func businessConditionChangeRefusesLegalTitleUntilReopened(): Unit {
+    let (domain, _) = panelWithEditor()
+    let titleRule = CjguiTaskFields.definition("title").rule(1)
+    let markedRule = CjguiTaskFields.definition("marked").rule(1)
+    // Legal under the current condition.
+    @Assert(domain.writeDeclaredFieldFromHuman(titleRule, 1,
+        CjguiSharedOperationValue.string("第一版")).applied, true)
+    // Submit through the same declared entry the submit button uses.
+    @Assert(domain.writeDeclaredFieldFromHuman(markedRule, 1,
+        CjguiSharedOperationValue.boolean(true)).applied, true)
+    let frozenVersion = domain.version()
+    // Same field, legal value, correct version - refused by the business condition.
+    let refused = domain.writeDeclaredFieldFromHuman(titleRule, 1,
+        CjguiSharedOperationValue.string("第二版"))
+    @Assert(refused.applied, false)
+    @Assert(refused.reason, "title_frozen_after_submit")
+    @Assert(refused.isVersionConflict, false)
+    @Assert(titleOfRecord(domain, 1), "第一版")
+    @Assert(domain.version(), frozenVersion)
+    // The external entry sees exactly the same business refusal.
+    let external = externalWrite(domain, "SET_TITLE", "title", CjguiSharedOperationValue.string("第二版"))
+    @Assert(external.applied, false)
+    @Assert(external.reason, "title_frozen_after_submit")
+    @Assert(titleOfRecord(domain, 1), "第一版")
+    // Reopening removes the condition; the same request now applies.
+    @Assert(domain.writeDeclaredFieldFromHuman(markedRule, 1,
+        CjguiSharedOperationValue.boolean(false)).applied, true)
+    @Assert(domain.writeDeclaredFieldFromHuman(titleRule, 1,
+        CjguiSharedOperationValue.string("第二版")).applied, true)
+    @Assert(titleOfRecord(domain, 1), "第二版")
+}
+
+/// The declared length unit is Unicode scalar values, not UTF-8 bytes: a 120
+/// character CJK title is accepted even though it is 360 bytes, and 121 is
+/// refused. The pane's feedback and the owner's verdict use the same rule object.
+@Test
+func declaredTitleLengthIsMeasuredInScalarValues(): Unit {
+    let (domain, _) = panelWithEditor()
+    let title = CjguiTaskFields.definition("title")
+    @Assert(title.rejectionFor(repeated("字", 120)), "")
+    @Assert(title.rejectionFor(repeated("字", 121)), "title_too_long")
+    let rule = title.rule(1)
+    @Assert(domain.writeDeclaredFieldFromHuman(rule, 1,
+        CjguiSharedOperationValue.string(repeated("字", 120))).applied, true)
+    let tooLong = domain.writeDeclaredFieldFromHuman(rule, 1,
+        CjguiSharedOperationValue.string(repeated("字", 121)))
+    @Assert(tooLong.applied, false)
+    @Assert(tooLong.reason, "title_too_long")
+}
+
+/// `required` is enforced by the owner at the WRITE boundary (this domain writes
+/// immediately and has no draft layer), and the clear-transient rule is
+/// consistent across entry points: a required field refuses a blank write, an
+/// optional declared field accepts a legal clear through the same entry.
+@Test
+func requiredIsEnforcedAtTheOwnerWriteBoundary(): Unit {
+    let (domain, _) = panelWithEditor()
+    let titleRule = CjguiTaskFields.definition("title").rule(1)
+    let blank = domain.writeDeclaredFieldFromHuman(titleRule, 1, CjguiSharedOperationValue.string("   "))
+    @Assert(blank.applied, false)
+    @Assert(blank.reason, "title_required")
+    @Assert(titleOfRecord(domain, 1), "初始标题")
+    let notesRule = CjguiTaskFields.definition("notes").rule(1)
+    @Assert(domain.writeDeclaredFieldFromHuman(notesRule, 1,
+        CjguiSharedOperationValue.string("备注内容")).applied, true)
+    @Assert(domain.writeDeclaredFieldFromHuman(notesRule, 1,
+        CjguiSharedOperationValue.string("")).applied, true)
+    @Assert(notesOfRecord(domain, 1), "")
+}
+
+private let NOTES_STRUCTURE = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 boardNotes vertical
+NODE 1 notesEditor textInput field=notes
+PROPERTY 1 notesEditor label 备注编辑
+END"""
+
+/// A newly declared field is served by every entry point without a
+/// generation-specific switch: it appears in the generated catalog and the
+/// external capability description, its owner rule is enforced on the external
+/// invocation, and a generated editor built only from its declaration writes it.
+@Test
+func newlyDeclaredFieldFlowsThroughGenerationAndOwner(): Unit {
+    let (domain, region) = panelWithEditor()
+    @Assert(CjguiTaskFields.definitions().size, 3)
+    let payload = region.capabilitiesPayload()
+    @Assert(payload.contains(
+        "FIELD notes TEXT resource=8103 writer=SET_NOTES required=0 min=0 max=0 maxlen=200 callable=1"), true)
+    // Owner rule on the external path: 200 scalar values accepted, 201 refused.
+    let over = externalWrite(domain, "SET_NOTES", "notes",
+        CjguiSharedOperationValue.string(repeated("n", 201)))
+    @Assert(over.applied, false)
+    @Assert(over.reason, "notes_too_long")
+    @Assert(externalWrite(domain, "SET_NOTES", "notes",
+        CjguiSharedOperationValue.string(repeated("n", 200))).applied, true)
+    @Assert(notesOfRecord(domain, 1), repeated("n", 200))
+    // A declared writer invoked with another argument is refused, never routed to
+    // the title writer by default.
+    let wrongArgument = externalWrite(domain, "SET_NOTES", "title",
+        CjguiSharedOperationValue.string("串到标题"))
+    @Assert(wrongArgument.applied, false)
+    @Assert(wrongArgument.reason, "unknown_argument")
+    @Assert(titleOfRecord(domain, 1), "初始标题")
+    // The generated path serves the new field from its declaration alone.
+    @Assert(region.submitStructure(NOTES_STRUCTURE, region.acceptedStructureVersion()).candidateAccepted, true)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    let notesEvent = CjguiComposableUiEvent(editorNode(region, "notesEditor", "notes",
+        CjguiTaskFields.notesResourceId, "SET_NOTES", 1, CJGUI_COMPOSABLE_UI_TEXT_INPUT), 28,
+        "生成写备注", 0, 0, 1)
+    @Assert(region.handleEvent(notesEvent).didApply, true)
+    @Assert(notesOfRecord(domain, 1), "生成写备注")
 }
 
 /// Same key, different object: a queued event keeps the object it was rendered

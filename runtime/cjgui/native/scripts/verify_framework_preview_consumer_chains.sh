@@ -6,14 +6,29 @@
 # What this proves:
 #   * the exported tree builds from the export root alone (each consumer's
 #     dependency paths are relative to the export, not to the author's tree);
-#   * the UI-only tree consumer runs and publishes its own row projection;
+#   * EVERY process that participates - the UI-only tree consumer, the derived
+#     per-round tree-interaction copy, the rule generated consumer and the
+#     second generated consumer - resolves its runtime, native sources,
+#     dependencies and resources inside the export root, and never falls back
+#     to the author checkout;
 #   * both runtime-generated-UI consumers answer the public capability /
 #     structure / submit / field-readback entry points from that export;
+#   * the generated editors of both consumers are driven by the same REAL
+#     desktop input driver the interaction verifiers use (posted click / typed
+#     Unicode / boolean press), parameterized to the exported instance, and the
+#     effect is read back exactly through the public owner projection;
 #   * every instance is a per-round copy identified by its own descriptor and
 #     executable path, and is reclaimed at the end of the round.
 #
-# Desktop-only input (real clicks/typing) is not claimed here; the interaction
-# verifiers cover that separately and report their own BLOCKED state.
+# Public invoke is still used for the EXTERNAL actions (record create/select,
+# APPLY_DRAFT, SET_TITLE/SET_MARKED when the desktop input itself is blocked)
+# and for exact read-backs; it is not accepted as evidence for the generated
+# control input segments.
+#
+# Desktop input is bounded. If the session is locked, the driver cannot be
+# built, or posted input is not delivered, the affected segment is reported
+# BLOCKED with the measured condition and the script exits 3 - the origin and
+# structure guarantees above are still verified headlessly.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -52,66 +67,87 @@ set -u
 export SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
 
 typeset -a ROUND_PIDS ROUND_DIRS ROUND_EXECS ROUND_DESCS
+# Candidate identity is recorded BEFORE each launch: a process that starts but
+# dies/answers the ready+ownership handshake incorrectly would otherwise never
+# reach register_round and leak. Cleanup re-resolves the PID from this identity
+# (exec path/name + this round's directory) and re-proves ownership before
+# signalling - never a generic pkill and never a user instance.
+typeset -a CANDIDATE_EXECS CANDIDATE_DIRS CANDIDATE_DESCS
+register_candidate() { # register_candidate <exec-path-or-name> <round-dir> [descriptor]
+  CANDIDATE_EXECS+=("$1"); CANDIDATE_DIRS+=("$2"); CANDIDATE_DESCS+=("${3:-}")
+}
 cleanup() {
   # zsh arrays are 1-based; leave no gap when no instance was registered.
-  if (( ${#ROUND_PIDS} == 0 )); then
-    return 0
+  if (( ${#ROUND_PIDS} > 0 )); then
+    local index=1
+    while (( index <= ${#ROUND_PIDS} )); do
+      cjgui_terminate_owned "${ROUND_PIDS[index]}" "${ROUND_DESCS[index]}" "${ROUND_EXECS[index]}" \
+        "${ROUND_DIRS[index]}" || true
+      index=$(( index + 1 ))
+    done
   fi
-  local index=1
-  while (( index <= ${#ROUND_PIDS} )); do
-    cjgui_terminate_owned "${ROUND_PIDS[index]}" "${ROUND_DESCS[index]}" "${ROUND_EXECS[index]}" \
-      "${ROUND_DIRS[index]}" || true
-    index=$(( index + 1 ))
-  done
+  # Reclaim anything that started but never reached the ready/ownership
+  # handshake, from the identity registered before launch. The shared helper is
+  # the same code the pre-registration negative control exercises.
+  cjgui_reclaim_candidates log
 }
 trap cleanup EXIT
 
 # --- 1. export into the spaced path ----------------------------------------
-log "step1 exporting to: $export_root"
-zsh "$RUNTIME_DIR/scripts/export_framework_preview.sh" "$export_root" >> "$LOG" 2>&1 \
-  || fail "export failed"
+# A caller that already produced (and completed) this export root can reuse it
+# instead of re-exporting; the byte-identity comparison below still proves the
+# reused root carries THIS author source, so a stale root cannot pass.
+if [[ "${CJGUI_PREVIEW_CHAIN_REUSE_EXPORT:-0}" == "1" ]]; then
+  log "step1 export_reused=true root='$export_root' reason=CJGUI_PREVIEW_CHAIN_REUSE_EXPORT"
+else
+  log "step1 exporting to: $export_root"
+  zsh "$RUNTIME_DIR/scripts/export_framework_preview.sh" "$export_root" >> "$LOG" 2>&1 \
+    || fail "export failed"
+fi
 [[ -d "$export_root/framework/cjgui/src" ]] || fail "exported framework sources missing"
 [[ -d "$export_root/consumers" ]] || fail "exported consumers missing"
 CLIENT="$export_root/framework/cjgui/shared_operation_core/client.py"
 [[ -f "$CLIENT" ]] || fail "exported client missing"
 log "step1 export_ok root_has_spaces=true client_source=export cleared_overrides='${CLEARED_OVERRIDES:-none}'"
 
-# The export must really be THIS source: every exported framework source file is
-# compared with the author copy, and the combined fingerprint is recorded.
-EXPORTED_SOURCE_COUNT=0
-for file in "$export_root"/framework/cjgui/src/*.cj; do
-  base="$(basename "$file")"
-  [[ -f "$RUNTIME_DIR/src/$base" ]] || fail "exported source $base has no author original"
-  cmp -s "$file" "$RUNTIME_DIR/src/$base" || fail "exported $base differs from the author source"
-  EXPORTED_SOURCE_COUNT=$(( EXPORTED_SOURCE_COUNT + 1 ))
-done
-for file in "$export_root"/framework/cjgui/native/cjgui_internal_renderer.m; do
-  base="$(basename "$file")"
-  cmp -s "$file" "$RUNTIME_DIR/native/$base" || fail "exported native $base differs from the author source"
-  EXPORTED_SOURCE_COUNT=$(( EXPORTED_SOURCE_COUNT + 1 ))
-done
-for file in "$export_root"/framework/cjgui/shared_operation_core/src/*.cj; do
-  base="$(basename "$file")"
-  cmp -s "$file" "$RUNTIME_DIR/shared_operation_core/src/$base" ||     fail "exported shared-core $base differs from the author source"
-  EXPORTED_SOURCE_COUNT=$(( EXPORTED_SOURCE_COUNT + 1 ))
-done
-[[ "$EXPORTED_SOURCE_COUNT" -gt 0 ]] || fail "no exported sources were compared"
-EXPORT_FINGERPRINT="$(cat "$export_root"/framework/cjgui/src/*.cj "$export_root"/framework/cjgui/native/cjgui_internal_renderer.m | shasum -a 256 | awk '{print $1}')"
-log "step1b source_fingerprint_match files=$EXPORTED_SOURCE_COUNT sha256=$EXPORT_FINGERPRINT"
+# The export must really be THIS source. ONE explicit list (shared with the
+# fast, GUI-free check `verify_export_fingerprint.sh`) drives the per-file
+# comparison, the per-file hash and the aggregate fingerprint, so the recorded
+# file count is exactly the number of hashed inputs and no subset can be reported
+# as "the whole SDK fingerprint".
+REPOSITORY_ROOT="$(cd "$RUNTIME_DIR/../.." && pwd)"
+EXPORT_FINGERPRINT_REPORT="$(python3 "$SCRIPT_DIR/export_fingerprint.py" \
+  "$export_root" "$RUNTIME_DIR" "$REPOSITORY_ROOT")" || fail "export source fingerprint check failed"
+EXPORT_FINGERPRINT_SUMMARY="$(print -r -- "$EXPORT_FINGERPRINT_REPORT" | head -1)"
+EXPORTED_SOURCE_COUNT="$(print -r -- "$EXPORT_FINGERPRINT_SUMMARY" | sed -n 's/^files=\([0-9]*\).*/\1/p')"
+EXPORT_FINGERPRINT="$(print -r -- "$EXPORT_FINGERPRINT_SUMMARY" | sed -n 's/.*sha256=\([0-9a-f]*\).*/\1/p')"
+[[ -n "$EXPORTED_SOURCE_COUNT" && "$EXPORTED_SOURCE_COUNT" -gt 0 ]] || fail "no exported sources were compared"
+# The per-file hash lines are evidence, not noise: the aggregate above is
+# computed from exactly these inputs.
+print -r -- "$EXPORT_FINGERPRINT_REPORT" | tail -n +2 >> "$LOG"
+log "step1b source_fingerprint_match $EXPORT_FINGERPRINT_SUMMARY"
 
-# Every launched consumer must report origins inside the export root.
-assert_export_origins() { # assert_export_origins <log> <consumer>
-  local log_file="$1" consumer="$2"
-  grep -q "source_origin runtime=$export_root/framework/cjgui" "$log_file" || \
-    fail "$consumer did not resolve its runtime from the export root"
-  grep -q "native=$export_root/framework/cjgui/native" "$log_file" || \
-    fail "$consumer did not resolve native sources from the export root"
-  grep -q "dependency_cjgui=$export_root/framework/cjgui" "$log_file" || \
-    fail "$consumer did not resolve the cjgui package from the export root"
-  if grep -q "$RUNTIME_DIR/native" "$log_file"; then
-    fail "$consumer resolved native sources from the author tree"
+# Every launched process must report origins inside the export root. The check
+# is per process, covers runtime/native/dependencies/resources, and records one
+# evidence line so a reader can see which process resolved which origin.
+assert_export_origins() { # assert_export_origins <stdout-log> <process-name>
+  local log_file="$1" name="$2"
+  local runtime_origin="$export_root/framework/cjgui"
+  local native_origin="$export_root/framework/cjgui/native"
+  local dep_origin="$export_root/framework/cjgui"
+  local core_origin="$export_root/framework/cjgui/shared_operation_core"
+  local resource_origin="$export_root/framework/cjgui/resources/"
+  [[ -f "$log_file" ]] || fail "$name has no stdout log ($log_file)"
+  grep -qF "source_origin runtime=$runtime_origin native=$native_origin dependency_cjgui=$dep_origin dependency_core=$core_origin" "$log_file" \
+    || fail "$name did not resolve runtime/native/dependency origins inside the export root"
+  grep -qF "resource_origin=$resource_origin" "$log_file" \
+    || fail "$name did not resolve resources inside the export root"
+  # No process in this acceptance may resolve anything from the author checkout.
+  if [[ "$export_root" != "$RUNTIME_DIR"* ]] && \
+     grep -E 'source_origin|resource_origin' "$log_file" | grep -qF "$RUNTIME_DIR"; then
+    fail "$name resolved an origin from the author tree ($RUNTIME_DIR)"
   fi
-  log "step1c origins_ok consumer=$consumer source=export no_author_path=true"
+  log "origin_ok process=$name runtime=$runtime_origin native=$native_origin deps=$dep_origin resources=$resource_origin"
 }
 
 FRAMEWORK_FOR_RUN="$export_root/framework/cjgui"
@@ -132,12 +168,31 @@ register_round() { # register_round <pid> <descriptor> <exec> <dir>
   ROUND_PIDS+=("$1"); ROUND_DESCS+=("$2"); ROUND_EXECS+=("$3"); ROUND_DIRS+=("$4")
 }
 
+# --- real desktop input into the EXPORTED generated controls ----------------
+# The driver build, the AX frame walk and the bounded type/owner-readback loop
+# now live in lib_cjgui_desktop_input.sh, so this script and the
+# common-definition acceptance exercise the SAME implementation instead of two
+# drifting copies. AX_PID selects the round process and CLIENT is the exported
+# public client, so no author-runtime seam is introduced.
+source "$SCRIPT_DIR/lib_cjgui_desktop_input.sh"
+
+prepare_desktop_driver || true
+
+# A per-round consumer build that fails to compile is reported as such instead
+# of as "did not start": a concurrent source change can land a file the export
+# whitelist does not copy yet, and the compiler error inside the exported tree
+# is the actionable evidence.
+build_failure_hint() { # build_failure_hint <stdout-log>
+  grep -qE 'failed to compile package|Error: cjpm build failed|cjpm did not publish executable' "$1" 2>/dev/null
+}
+
 # --- 2. UI-only tree consumer: build + run + own projection -----------------
 TREE_DIR="$(prepare_consumer tree_outline_consumer "CJGUIUiOnlyStarter" \
   "org.example.cjgui.ui-only-starter" "TreeChain${RUN_TAG}")"
 TREE_EXEC_NAME="CJGUIUiOnlyStarterTreeChain${RUN_TAG}"
 TREE_STDOUT="$WORK/tree-outline.log"
 ROUND_STARTED="$(date +%s)"
+register_candidate "$TREE_EXEC_NAME" "$TREE_DIR"  # no descriptor: identity is the round-unique exec name + dir
 ( cd "$TREE_DIR" && nohup zsh run.sh > "$TREE_STDOUT" 2>&1 & )
 TREE_PID=""
 waited=0
@@ -149,12 +204,19 @@ while (( waited < 200 )); do
   sleep 2
   waited=$(( waited + 2 ))
 done
-[[ -n "$TREE_PID" ]] || fail "exported UI-only tree consumer did not start"
+if [[ -z "$TREE_PID" ]]; then
+  if build_failure_hint "$TREE_STDOUT"; then
+    tail -8 "$TREE_STDOUT" >> "$LOG" 2>/dev/null || true
+    fail "exported UI-only tree consumer did not build (exported tree does not compile)"
+  fi
+  fail "exported UI-only tree consumer did not start"
+fi
 cjgui_unique_round_owns "$TREE_PID" "$TREE_EXEC_NAME" "$TREE_DIR" || fail "tree consumer pid is not this round's instance"
 TREE_READY_LINE="$(grep 'TREE_OUTLINE_CONSUMER_READY' "$TREE_STDOUT" | tail -1)"
 TREE_ROWS="$(print -r -- "$TREE_READY_LINE" | sed -n 's/.*rows=\([0-9]*\).*/\1/p')"
 [[ -n "$TREE_ROWS" && "$TREE_ROWS" -gt 0 ]] || fail "tree consumer published no rows ($TREE_READY_LINE)"
 register_round "$TREE_PID" "" "$TREE_EXEC_NAME" "$TREE_DIR"
+assert_export_origins "$TREE_STDOUT" ui_only_tree_consumer
 log "step2 ui_only_tree_consumer_started pid=$TREE_PID rows=$TREE_ROWS source=export"
 
 # --- 2b. the exported UI-only tree actually navigates ---------------------
@@ -197,12 +259,16 @@ CHAIN_EXEC="$CHAIN_DIR/target/release/${CHAIN_EXEC_NAME}.app/Contents/MacOS/${CH
 CHAIN_LOG="$WORK/tree-interaction.log"
 # The per-round launcher hardcodes the directory it was created for, so this
 # copy gets its own launcher instead of inheriting one that points back at the
-# unmodified round directory.
+# unmodified round directory. It must launch through the EXPORT root's own
+# framework scripts: the author path here made the derived navigation copy
+# resolve runtime/native/resources from the author checkout even though its
+# dependencies pointed at the export.
 cat > "$CHAIN_DIR/run.sh" <<RUNSH
 #!/usr/bin/env zsh
-exec zsh "$RUNTIME_DIR/scripts/run_macos_application.sh" "$CHAIN_DIR/cjgui_macos_app.sh" "\$@"
+exec zsh "$FRAMEWORK_FOR_RUN/scripts/run_macos_application.sh" "$CHAIN_DIR/cjgui_macos_app.sh" "\$@"
 RUNSH
 chmod +x "$CHAIN_DIR/run.sh"
+register_candidate "$CHAIN_EXEC" "$CHAIN_DIR"  # derived navigation copy, same identity rule
 ( cd "$CHAIN_DIR" && nohup zsh "$CHAIN_DIR/run.sh" > "$CHAIN_LOG" 2>&1 & )
 CHAIN_PID=""
 waited=0
@@ -225,6 +291,7 @@ if ! grep -q 'EXPORT_TREE_CHAIN window ' "$CHAIN_LOG" 2>/dev/null; then
   tail -20 "$CHAIN_LOG" >> "$LOG" 2>/dev/null || true
   fail "exported UI-only tree interaction chain did not complete"
 fi
+assert_export_origins "$CHAIN_LOG" tree_interaction_derived_copy
 grep -q '^EXPORT_TREE_CHAIN ready rows=2' "$CHAIN_LOG" || fail "exported tree did not start collapsed with 2 rows"
 grep -q '^EXPORT_TREE_CHAIN expanded .* rows=14' "$CHAIN_LOG" || fail "exported tree did not expand to 14 rows"
 grep -qE '^EXPORT_TREE_CHAIN down focus=[^ ]+ anchor=[^ ]* keys= rows=14 selected=0' "$CHAIN_LOG" || \
@@ -244,6 +311,7 @@ RULE_DIR="$(prepare_consumer rule_set_window_app "CJGUIRuleSet" \
   "org.cangjie.cjgui.rule-set.example" "Export${RUN_TAG}")"
 RULE_EXEC="$RULE_DIR/target/release/CJGUIRuleSetExport${RUN_TAG}.app/Contents/MacOS/CJGUIRuleSetExport${RUN_TAG}"
 RULE_STDOUT="$WORK/rule-window.log"
+register_candidate "$RULE_EXEC" "$RULE_DIR"  # descriptor is recorded after the handshake
 ( cd "$RULE_DIR" && nohup zsh run.sh > "$RULE_STDOUT" 2>&1 & )
 RULE_DESCRIPTOR=""
 waited=0
@@ -253,14 +321,19 @@ while (( waited < 200 )); do
   sleep 2
   waited=$(( waited + 2 ))
 done
-[[ -f "${RULE_DESCRIPTOR:-}" ]] || fail "exported rule window did not publish a descriptor"
+if [[ ! -f "${RULE_DESCRIPTOR:-}" ]]; then
+  if build_failure_hint "$RULE_STDOUT"; then
+    tail -8 "$RULE_STDOUT" >> "$LOG" 2>/dev/null || true
+    fail "exported rule window did not build (exported tree does not compile)"
+  fi
+  fail "exported rule window did not publish a descriptor"
+fi
 RULE_PID="$(cjgui_descriptor_owner_pid "$RULE_DESCRIPTOR" "$RULE_EXEC" "$RULE_DIR" "$ROUND_STARTED" || true)"
 [[ -n "$RULE_PID" ]] || fail "exported rule window descriptor has no matching owner"
 cjgui_pid_owns "$RULE_PID" "$RULE_DESCRIPTOR" "$RULE_EXEC" "$RULE_DIR" || fail "rule window pid is not this round's instance"
 register_round "$RULE_PID" "$RULE_DESCRIPTOR" "$RULE_EXEC" "$RULE_DIR"
 rule_pub() { python3 "$CLIENT" "$RULE_DESCRIPTOR" "$@"; }
 assert_export_origins "$RULE_STDOUT" rule_generated_consumer
-hex_text_local() { python3 -c 'import sys; raw=sys.stdin.read().strip(); print("" if raw in ("", "-") else bytes.fromhex(raw).decode("utf-8","replace"))'; }
 rule_field_token() { # rule_field_token <fieldId> <TOKEN>
   local attempt=0 line value
   # Bounded retry: a read issued while the window commits a refresh can come
@@ -281,7 +354,8 @@ rule_field_token() { # rule_field_token <fieldId> <TOKEN>
 }
 rule_draft_version() { rule_field_token label VERSION; }
 # The generated editors bind to the selected record, so the export chain first
-# creates and selects one through the public entry points.
+# creates and selects one through the public entry points. These are EXTERNAL
+# actions; the control edits below are real desktop input.
 rule_pub invoke 0 CREATE_RECORD --target 8000 --arg label=STRING:"导出消费记录" --arg enabled=BOOLEAN:true \
   --arg retentionCount=INTEGER:7 --arg excludedType=STRING:"-" --arg requestId=STRING:"export-rule-1" \
   > "$WORK/rule-create.log" 2>&1 || true
@@ -295,16 +369,34 @@ rule_pub generated-capabilities > "$WORK/rule-capabilities.txt" 2>&1 || true
 grep -q '^KIND GENERATED_UI_CAPABILITIES' "$WORK/rule-capabilities.txt" \
   || fail "exported rule consumer did not answer the capability query"
 grep -q '^FIELD label' "$WORK/rule-capabilities.txt" || fail "exported rule catalog missing the shared field"
-cat > "$WORK/rule-s1.txt" <<'RS1'
+# S1 through the public submit entry: declares the generated text editor and the
+# generated boolean editor with their accessibility labels so the real desktop
+# driver can reach them.
+# The declared retention maximum comes from the same capability payload the
+# external query already reads; the composite's preset caption is its OWN
+# declared property, so the real click below is unambiguous.
+RULE_RETENTION_MAX="$(rule_pub generated-capabilities 2>/dev/null \
+  | grep -m1 '^FIELD retentionCount ' | sed -n 's/.* max=\([0-9]*\).*/\1/p')"
+[[ -n "$RULE_RETENTION_MAX" ]] || fail "rule consumer did not publish the retention bound"
+cat > "$WORK/rule-s1.txt" <<RS1
 GENERATED_UI_STRUCTURE 1
 NODE 0 panel vertical
 NODE 1 greeting label
 PROPERTY 1 greeting text 导出消费：编辑规则名称
 NODE 1 nameField textInput field=label
+PROPERTY 1 nameField label 规则名称编辑
+NODE 1 enabledEditor booleanInput field=enabled
+PROPERTY 1 enabledEditor label 启用状态编辑
+NODE 1 retentionEdit retentionIntegerEdit
+PROPERTY 1 retentionEdit presetLabel 导出预设${RULE_RETENTION_MAX}
 NODE 1 applyBtn action action=APPLY_DRAFT
 PROPERTY 1 applyBtn label 应用草稿
 END
 RS1
+# The public capability query must publish the application's own composite kind.
+rule_pub generated-capabilities 2>/dev/null | grep -q '^COMPONENT retentionIntegerEdit ' \
+  || fail "the exported rule consumer did not publish the composite kind"
+log "step3cap rule_composite_published kind=retentionIntegerEdit retention_max=$RULE_RETENTION_MAX"
 rule_pub generated-submit --structure-version 0 --payload-file "$WORK/rule-s1.txt" > "$WORK/rule-submit.txt" 2>&1 || true
 grep -q '^CANDIDATE_ACCEPTED true' "$WORK/rule-submit.txt" || fail "exported rule consumer rejected the candidate"
 waited=0
@@ -319,27 +411,116 @@ done
 rule_pub generated-structure 2>/dev/null | grep -q 'NODE 1 nameField textInput field=label' \
   || fail "exported rule consumer accepted structure missing the field binding"
 rule_pub generated-fields 2>/dev/null | grep -q '^FIELD label ' || fail "exported rule consumer field readback missing"
-# The generated editor writes through the operation the shared definition
-# declares, and the public readback is exact - not a substring.
-RULE_EDIT_TEXT="导出消费编辑"
-RULE_DRAFT_VERSION="$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')"
-rule_pub invoke "$RULE_DRAFT_VERSION" EDIT_DRAFT_TEXT --target "$RULE_RECORD_ID" \
-  --arg fieldId=STRING:label --arg text=STRING:"$RULE_EDIT_TEXT" --arg expectedDraftVersion=INTEGER:0 \
-  > "$WORK/rule-edit.log" 2>&1 || true
-grep -q '^APPLIED true' "$WORK/rule-edit.log" || fail "exported rule generated editor write was rejected"
-[[ "$(rule_field_token label DRAFT_HEX | hex_text_local)" == "$RULE_EDIT_TEXT" ]] || \
-  fail "exported rule generated editor draft read-back mismatch"
-# Same key, different position: the accepted editor keeps its identity and the
-# still-pending draft continues through it (the draft version advances per edit,
-# so the reorder must not reset it).
-cat > "$WORK/rule-s2.txt" <<'RS2'
+rule_pub generated-structure 2>/dev/null | grep -q 'NODE 1 retentionEdit retentionIntegerEdit' \
+  || fail "exported rule consumer accepted structure missing the composite instance"
+
+# --- 3a. REAL generated-control input #1 (text) -----------------------------
+AX_PID="$RULE_PID"
+RULE_TEXT_ONE="export-rule-edit-one"
+RULE_INPUT_FALLBACK=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit rule_text_one "$RULE_DESCRIPTOR" label "规则名称编辑" "text field" "$RULE_TEXT_ONE"; then
+    log "step3a rule_control_text_edit mode='$REAL_EDIT_MODE' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' target='$RULE_TEXT_ONE' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="rule_generated_text_input_not_delivered"
+    RULE_INPUT_FALLBACK="public_invoke"
+    log "BLOCKED rule_generated_text_edit reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}' target='$RULE_TEXT_ONE' focus='$(window_focus_for "$RULE_DESCRIPTOR")'"
+  fi
+else
+  RULE_INPUT_FALLBACK="public_invoke"
+  log "note rule_generated_text_edit skipped input_blocked=$INPUT_BLOCKED fallback=$RULE_INPUT_FALLBACK"
+fi
+if [[ -n "$RULE_INPUT_FALLBACK" ]]; then
+  # The EXTERNAL edit keeps the rest of the round's semantics verifiable; it is
+  # recorded as a fallback and never replaces the control-input evidence.
+  rule_pub invoke "$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" EDIT_DRAFT_TEXT \
+    --target "$RULE_RECORD_ID" --arg fieldId=STRING:label --arg text=STRING:"$RULE_TEXT_ONE" \
+    --arg expectedDraftVersion=INTEGER:"$(rule_draft_version)" > "$WORK/rule-edit-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/rule-edit-fallback.log" || fail "exported rule public fallback edit was rejected"
+  log "note rule_text_edit_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(rule_field_token label DRAFT_HEX | hex_to_text)" == "$RULE_TEXT_ONE" ]] || \
+  fail "exported rule draft read-back mismatch after the control edit"
+
+# --- 3b. REAL generated-control input #1 (boolean toggle) -------------------
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_boolean_toggle rule_bool_one "$RULE_DESCRIPTOR" enabled "启用状态编辑" checkbox; then
+    assert_boolean_flip "rule generated boolean"
+    log "step3b rule_control_boolean_toggle mode='$REAL_EDIT_MODE' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="rule_generated_boolean_input_not_delivered"
+    log "BLOCKED rule_generated_boolean_toggle reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}'"
+  fi
+else
+  rule_pub invoke "$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" EDIT_DRAFT_BOOLEAN \
+    --target "$RULE_RECORD_ID" --arg fieldId=STRING:enabled --arg value=BOOLEAN:false \
+    --arg expectedDraftVersion=INTEGER:"$(rule_field_token enabled VERSION)" > "$WORK/rule-bool-fallback.log" 2>&1 || true
+  log "note rule_boolean_edit_fallback=public_invoke control_input_unverified=true"
+fi
+
+# --- 3e/3f. the APPLICATION COMPOSITE participates in the real chain ---------
+# The composite instance was submitted through the public structure channel and
+# is now edited with real desktop input, exactly like a built-in editor.
+RULE_COMPOSITE_TEXT="45"
+RULE_COMPOSITE_FALLBACK=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit rule_composite_retention "$RULE_DESCRIPTOR" retentionCount "保留天数" "text field" "$RULE_COMPOSITE_TEXT"; then
+    log "step3e rule_composite_integer_edit mode='$REAL_EDIT_MODE' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' target='$RULE_COMPOSITE_TEXT' kind=retentionIntegerEdit input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="rule_composite_integer_input_not_delivered"
+    RULE_COMPOSITE_FALLBACK="public_invoke"
+    log "FAIL_CANDIDATE rule_composite_integer_edit reason=not_delivered before='${REAL_EDIT_BEFORE:-}' after='${REAL_EDIT_AFTER:-}'"
+  fi
+else
+  RULE_COMPOSITE_FALLBACK="public_invoke"
+  log "note rule_composite_integer_edit skipped input_blocked=$INPUT_BLOCKED"
+fi
+if [[ -n "$RULE_COMPOSITE_FALLBACK" ]]; then
+  rule_pub invoke "$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" EDIT_DRAFT_TEXT \
+    --target "$RULE_RECORD_ID" --arg fieldId=STRING:retentionCount --arg text=STRING:"$RULE_COMPOSITE_TEXT" \
+    --arg expectedDraftVersion=INTEGER:"$(rule_draft_version)" > "$WORK/rule-composite-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/rule-composite-fallback.log" || fail "exported rule composite fallback edit was rejected"
+  log "note rule_composite_integer_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(rule_field_token retentionCount DRAFT_HEX | hex_to_text)" == "$RULE_COMPOSITE_TEXT" ]] || \
+  fail "the composite editor did not write the shared retention draft"
+
+# A real press on the composite's own preset button: it resolves to the same
+# field edit with the DECLARED constant, so the value comes from the app's one
+# configuration rather than from a duplicated limit in this script.
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_ax_press_button "$RULE_PID" "导出预设${RULE_RETENTION_MAX}"; then
+    log "step3f rule_composite_preset_click label='导出预设${RULE_RETENTION_MAX}' target=$RULE_RETENTION_MAX input=real_desktop_control driver=ax"
+  else
+    INPUT_BLOCKED="rule_composite_preset_not_delivered"
+    log "FAIL_CANDIDATE rule_composite_preset_click label='导出预设${RULE_RETENTION_MAX}'"
+  fi
+fi
+[[ "$(rule_field_token retentionCount DRAFT_HEX | hex_to_text)" == "$RULE_RETENTION_MAX" ]] || \
+  fail "the composite preset press did not write the declared maximum"
+# The declared maximum is inside the declared range, so the owner applies it.
+rule_pub invoke "$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" APPLY_DRAFT --target "$RULE_RECORD_ID" \
+  --arg expectedDraftVersion=INTEGER:"$(rule_draft_version)" > "$WORK/rule-composite-apply.log" 2>&1 || true
+grep -q '^APPLIED true' "$WORK/rule-composite-apply.log" || fail "the composite preset draft was not applied"
+[[ "$(rule_field_token retentionCount APPLIED_HEX | hex_to_text)" == "$RULE_RETENTION_MAX" ]] || \
+  fail "the applied composite preset value mismatch"
+log "step3ef rule_composite_chain_ok kind=retentionIntegerEdit typed=$RULE_COMPOSITE_TEXT preset=$RULE_RETENTION_MAX applied=true"
+
+# Same key, different position: the accepted editors keep their identity and the
+# still-pending draft continues through them.
+cat > "$WORK/rule-s2.txt" <<RS2
 GENERATED_UI_STRUCTURE 1
 NODE 0 panel vertical
+NODE 1 retentionEdit retentionIntegerEdit
+PROPERTY 1 retentionEdit presetLabel 导出预设${RULE_RETENTION_MAX}
 NODE 1 applyBtn action action=APPLY_DRAFT
 PROPERTY 1 applyBtn label 应用草稿
+NODE 1 enabledEditor booleanInput field=enabled
+PROPERTY 1 enabledEditor label 启用状态编辑
 NODE 1 greeting label
 PROPERTY 1 greeting text 导出消费：重排后继续编辑
 NODE 1 nameField textInput field=label
+PROPERTY 1 nameField label 规则名称编辑
 END
 RS2
 rule_pub generated-submit --structure-version "$RULE_VERSION" --payload-file "$WORK/rule-s2.txt" > "$WORK/rule-submit2.txt" 2>&1 || true
@@ -352,26 +533,51 @@ while (( waited < 40 )); do
   waited=$(( waited + 1 ))
 done
 [[ "${RULE_VERSION2:-}" == "2" ]] || fail "exported rule consumer never scene-accepted the reordered structure"
-RULE_EDIT2_TEXT="导出消费编辑二"
-RULE_DRAFT2_VERSION="$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')"
-RULE_FIELD_VERSION2="$(rule_draft_version)"
-log "diag rule_edit2_expected_draft=$RULE_FIELD_VERSION2"
-rule_pub invoke "$RULE_DRAFT2_VERSION" EDIT_DRAFT_TEXT --target "$RULE_RECORD_ID" \
-  --arg fieldId=STRING:label --arg text=STRING:"$RULE_EDIT2_TEXT" \
-  --arg expectedDraftVersion=INTEGER:"$RULE_FIELD_VERSION2" > "$WORK/rule-edit2.log" 2>&1 || true
-grep -q '^APPLIED true' "$WORK/rule-edit2.log" || fail "exported rule editor stopped accepting input after the reorder"
-[[ "$(rule_field_token label DRAFT_HEX | hex_text_local)" == "$RULE_EDIT2_TEXT" ]] || \
+
+# --- 3c. REAL generated-control input #2 (continue editing after S2) --------
+RULE_TEXT_TWO="export-rule-edit-two"
+RULE_INPUT_FALLBACK2=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit rule_text_two "$RULE_DESCRIPTOR" label "规则名称编辑" "text field" "$RULE_TEXT_TWO"; then
+    log "step3c rule_control_text_edit_after_s2 mode='$REAL_EDIT_MODE' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' target='$RULE_TEXT_TWO' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="rule_generated_text_input_not_delivered_after_s2"
+    RULE_INPUT_FALLBACK2="public_invoke"
+    log "BLOCKED rule_generated_text_edit_after_s2 reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}' target='$RULE_TEXT_TWO'"
+  fi
+else
+  RULE_INPUT_FALLBACK2="public_invoke"
+  log "note rule_generated_text_edit_after_s2 skipped input_blocked=$INPUT_BLOCKED fallback=$RULE_INPUT_FALLBACK2"
+fi
+if [[ -n "$RULE_INPUT_FALLBACK2" ]]; then
+  rule_pub invoke "$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" EDIT_DRAFT_TEXT \
+    --target "$RULE_RECORD_ID" --arg fieldId=STRING:label --arg text=STRING:"$RULE_TEXT_TWO" \
+    --arg expectedDraftVersion=INTEGER:"$(rule_draft_version)" > "$WORK/rule-edit2-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/rule-edit2-fallback.log" || fail "exported rule public fallback edit after S2 was rejected"
+  log "note rule_text_edit_after_s2_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(rule_field_token label DRAFT_HEX | hex_to_text)" == "$RULE_TEXT_TWO" ]] || \
   fail "exported rule draft read-back after the reorder mismatch"
 
-# The continued draft then applies through the same owner operation, and the
-# applied value is read back exactly.
-RULE_APPLY_VERSION="$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')"
-RULE_FIELD_VERSION3="$(rule_draft_version)"
-log "diag rule_apply_expected_draft=$RULE_FIELD_VERSION3"
-rule_pub invoke "$RULE_APPLY_VERSION" APPLY_DRAFT --target "$RULE_RECORD_ID" \
-  --arg expectedDraftVersion=INTEGER:"$RULE_FIELD_VERSION3" > "$WORK/rule-apply.log" 2>&1 || true
+# The composite instance survived the reorder with its identity: a real edit
+# through it still writes the shared field.
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit rule_composite_after_s2 "$RULE_DESCRIPTOR" retentionCount "保留天数" "text field" "50"; then
+    log "step3g rule_composite_after_reorder mode='$REAL_EDIT_MODE' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="rule_composite_after_s2_not_delivered"
+    log "FAIL_CANDIDATE rule_composite_after_reorder"
+  fi
+fi
+[[ "$(rule_field_token retentionCount DRAFT_HEX | hex_to_text)" == "50" ]] || \
+  fail "the composite editor stopped working after the reorder"
+
+# The continued draft then applies through the same owner operation (EXTERNAL
+# action), and the applied value is read back exactly.
+rule_pub invoke "$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" APPLY_DRAFT --target "$RULE_RECORD_ID" \
+  --arg expectedDraftVersion=INTEGER:"$(rule_draft_version)" > "$WORK/rule-apply.log" 2>&1 || true
 grep -q '^APPLIED true' "$WORK/rule-apply.log" || fail "exported rule generated editor apply was rejected"
-[[ "$(rule_field_token label APPLIED_HEX | hex_text_local)" == "$RULE_EDIT2_TEXT" ]] || \
+[[ "$(rule_field_token label APPLIED_HEX | hex_to_text)" == "$RULE_TEXT_TWO" ]] || \
   fail "exported rule applied value read-back mismatch"
 
 # An illegal candidate keeps the accepted structure and its editors usable.
@@ -386,15 +592,57 @@ rule_pub generated-submit --structure-version "$RULE_VERSION2" --payload-file "$
 grep -q '^CANDIDATE_ACCEPTED false' "$WORK/rule-illegal.log" || fail "exported rule consumer accepted an illegal candidate"
 [[ "$(rule_pub generated-structure 2>/dev/null | awk '/^STRUCTURE_VERSION /{print $2}')" == "2" ]] || \
   fail "exported rule consumer changed its accepted structure after a rejected candidate"
-[[ "$(rule_field_token label DRAFT_HEX | hex_text_local)" == "$RULE_EDIT2_TEXT" ]] || \
+[[ "$(rule_field_token label DRAFT_HEX | hex_to_text)" == "$RULE_TEXT_TWO" ]] || \
   fail "exported rule editors stopped being readable after a rejected candidate"
-log "step3 exported_rule_generated_chain_ok version=$RULE_VERSION s2=$RULE_VERSION2 edit_readback=true rejected_candidate_kept_old=true"
+
+# --- 3d. REAL generated-control input #3: the OLD interface is operating ----
+RULE_TEXT_THREE="export-rule-edit-three"
+RULE_INPUT_FALLBACK3=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit rule_text_three "$RULE_DESCRIPTOR" label "规则名称编辑" "text field" "$RULE_TEXT_THREE"; then
+    log "step3d rule_control_text_edit_after_rejection mode='$REAL_EDIT_MODE' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' target='$RULE_TEXT_THREE' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="rule_generated_text_input_not_delivered_after_rejection"
+    RULE_INPUT_FALLBACK3="public_invoke"
+    log "BLOCKED rule_generated_text_edit_after_rejection reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}' target='$RULE_TEXT_THREE'"
+  fi
+else
+  RULE_INPUT_FALLBACK3="public_invoke"
+  log "note rule_generated_text_edit_after_rejection skipped input_blocked=$INPUT_BLOCKED fallback=$RULE_INPUT_FALLBACK3"
+fi
+if [[ -n "$RULE_INPUT_FALLBACK3" ]]; then
+  rule_pub invoke "$(rule_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" EDIT_DRAFT_TEXT \
+    --target "$RULE_RECORD_ID" --arg fieldId=STRING:label --arg text=STRING:"$RULE_TEXT_THREE" \
+    --arg expectedDraftVersion=INTEGER:"$(rule_draft_version)" > "$WORK/rule-edit3-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/rule-edit3-fallback.log" || fail "exported rule public fallback edit after rejection was rejected"
+  log "note rule_text_edit_after_rejection_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(rule_field_token label DRAFT_HEX | hex_to_text)" == "$RULE_TEXT_THREE" ]] || \
+  fail "exported rule old interface was not operable after the rejected candidate"
+
+# The OLD composite interface is still operable after the rejected candidate.
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit rule_composite_after_reject "$RULE_DESCRIPTOR" retentionCount "保留天数" "text field" "55"; then
+    log "step3h rule_composite_after_rejection mode='$REAL_EDIT_MODE' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="rule_composite_after_rejection_not_delivered"
+    log "FAIL_CANDIDATE rule_composite_after_rejection"
+  fi
+fi
+[[ "$(rule_field_token retentionCount DRAFT_HEX | hex_to_text)" == "55" ]] || \
+  fail "the composite editor stopped being operable after a rejected candidate"
+if [[ -n "$RULE_INPUT_FALLBACK" || -n "$RULE_INPUT_FALLBACK2" || -n "$RULE_INPUT_FALLBACK3" ]]; then
+  log "step3 exported_rule_generated_chain_ok version=$RULE_VERSION s2=$RULE_VERSION2 edit_readback=true rejected_candidate_kept_old=true control_input=blocked"
+else
+  log "step3 exported_rule_generated_chain_ok version=$RULE_VERSION s2=$RULE_VERSION2 edit_readback=true rejected_candidate_kept_old=true control_input=real_desktop"
+fi
 
 # --- 4. second generated consumer: public capability/structure/submit -------
 PANEL_DIR="$(prepare_consumer generated_panel_consumer "CJGUICollaborationStarter" \
   "org.example.cjgui.collaboration-starter" "Export${RUN_TAG}")"
 PANEL_EXEC="$PANEL_DIR/target/release/CJGUICollaborationStarterExport${RUN_TAG}.app/Contents/MacOS/CJGUICollaborationStarterExport${RUN_TAG}"
 PANEL_STDOUT="$WORK/panel.log"
+register_candidate "$PANEL_EXEC" "$PANEL_DIR"  # descriptor is recorded after the handshake
 ( cd "$PANEL_DIR" && nohup zsh run.sh > "$PANEL_STDOUT" 2>&1 & )
 PANEL_DESCRIPTOR=""
 waited=0
@@ -404,7 +652,13 @@ while (( waited < 200 )); do
   sleep 2
   waited=$(( waited + 2 ))
 done
-[[ -f "${PANEL_DESCRIPTOR:-}" ]] || fail "exported second consumer did not publish a descriptor"
+if [[ ! -f "${PANEL_DESCRIPTOR:-}" ]]; then
+  if build_failure_hint "$PANEL_STDOUT"; then
+    tail -8 "$PANEL_STDOUT" >> "$LOG" 2>/dev/null || true
+    fail "exported second consumer did not build (exported tree does not compile)"
+  fi
+  fail "exported second consumer did not publish a descriptor"
+fi
 PANEL_PID="$(cjgui_descriptor_owner_pid "$PANEL_DESCRIPTOR" "$PANEL_EXEC" "$PANEL_DIR" "$ROUND_STARTED" || true)"
 [[ -n "$PANEL_PID" ]] || fail "exported second consumer descriptor has no matching owner"
 cjgui_pid_owns "$PANEL_PID" "$PANEL_DESCRIPTOR" "$PANEL_EXEC" "$PANEL_DIR" || fail "second consumer pid is not this round's instance"
@@ -426,6 +680,8 @@ NODE 1 titleEditor textInput field=title
 PROPERTY 1 titleEditor label 任务标题编辑
 NODE 1 markedEditor booleanInput field=marked
 PROPERTY 1 markedEditor label 提交状态编辑
+NODE 1 card taskEditCard
+PROPERTY 1 card caption 导出任务编辑卡
 NODE 1 toggleBtn action action=TOGGLE_MARKED
 PROPERTY 1 toggleBtn label 切换提交状态
 END
@@ -444,26 +700,80 @@ done
 panel_pub generated-structure 2>/dev/null | grep -q 'NODE 1 markedEditor booleanInput field=marked' \
   || fail "exported second consumer accepted structure missing the boolean editor"
 panel_pub generated-fields 2>/dev/null | grep -q '^FIELD marked ' || fail "second consumer boolean field readback missing"
-# The generated text editor writes through this consumer's own owner operation
-# (SET_TITLE) and the public readback is the complete value.
-PANEL_TEXT="导出消费标题"
-PANEL_DOMAIN_VERSION="$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')"
-panel_pub invoke "$PANEL_DOMAIN_VERSION" SET_TITLE --target 8101 --arg title=STRING:"$PANEL_TEXT" \
-  > "$WORK/panel-edit.log" 2>&1 || true
-grep -q '^APPLIED true' "$WORK/panel-edit.log" || fail "exported second consumer generated editor write was rejected"
-[[ "$(panel_field_token title APPLIED_HEX | hex_text_local)" == "$PANEL_TEXT" ]] || \
-  fail "exported second consumer title read-back mismatch"
+# The public capability query publishes the second application composite too.
+panel_pub generated-capabilities 2>/dev/null | grep -q '^COMPONENT taskEditCard ' \
+  || fail "the exported second consumer did not publish the composite kind"
+panel_pub generated-structure 2>/dev/null | grep -q 'NODE 1 card taskEditCard' \
+  || fail "the exported second consumer accepted structure missing the card"
+log "step4cap panel_composite_published kind=taskEditCard"
 
-# Same key in a different position: the editors keep working.
+# --- 4a. REAL generated-control input #1: type into the generated text editor
+AX_PID="$PANEL_PID"
+PANEL_TEXT_ONE="export-panel-title-one"
+PANEL_INPUT_FALLBACK=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit panel_text_one "$PANEL_DESCRIPTOR" title "任务标题编辑" "text field" "$PANEL_TEXT_ONE"; then
+    log "step4a panel_control_text_edit mode='$REAL_EDIT_MODE' frame='$REAL_EDIT_FRAME' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' target='$PANEL_TEXT_ONE' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="panel_generated_text_input_not_delivered"
+    PANEL_INPUT_FALLBACK="public_invoke"
+    log "BLOCKED panel_generated_text_edit reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}' target='$PANEL_TEXT_ONE'"
+  fi
+else
+  PANEL_INPUT_FALLBACK="public_invoke"
+  log "note panel_generated_text_edit skipped input_blocked=$INPUT_BLOCKED fallback=$PANEL_INPUT_FALLBACK"
+fi
+if [[ -n "$PANEL_INPUT_FALLBACK" ]]; then
+  panel_pub invoke "$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" SET_TITLE --target 8101 \
+    --arg title=STRING:"$PANEL_TEXT_ONE" > "$WORK/panel-edit-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/panel-edit-fallback.log" || fail "exported second consumer public fallback title write was rejected"
+  log "note panel_text_edit_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(panel_field_token title APPLIED_HEX | hex_to_text)" == "$PANEL_TEXT_ONE" ]] || \
+  fail "exported second consumer title read-back mismatch after the control edit"
+
+# Same key in a different position: the editors keep working. This runs BEFORE
+# the generated boolean editor marks the task submitted: the exported domain
+# freezes the title once it is submitted (SET_TITLE -> title_frozen_after_submit),
+# so the "continue editing" step must happen while the editor is still callable.
 cat > "$WORK/panel-s2.txt" <<'PS2'
 GENERATED_UI_STRUCTURE 1
 NODE 0 board horizontal
+NODE 1 card taskEditCard
+PROPERTY 1 card caption 导出任务编辑卡
 NODE 1 markedEditor booleanInput field=marked
 PROPERTY 1 markedEditor label 提交状态编辑
 NODE 1 titleEditor textInput field=title
 PROPERTY 1 titleEditor label 任务标题编辑
 END
 PS2
+# --- 4f. REAL input through the APPLICATION COMPOSITE's own editor ----------
+# The card instance came from the public structure channel; its notes editor is
+# now driven with real desktop input and read back from the owner.
+PANEL_CARD_NOTES="export-card-notes-one"
+PANEL_CARD_FALLBACK=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit panel_card_notes "$PANEL_DESCRIPTOR" notes "备注" "text field" "$PANEL_CARD_NOTES"; then
+    log "step4f panel_composite_notes_edit mode='$REAL_EDIT_MODE' frame='$REAL_EDIT_FRAME' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' kind=taskEditCard input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="panel_composite_notes_not_delivered"
+    PANEL_CARD_FALLBACK="public_invoke"
+    log "FAIL_CANDIDATE panel_composite_notes_edit reason=not_delivered before='${REAL_EDIT_BEFORE:-}' after='${REAL_EDIT_AFTER:-}'"
+  fi
+else
+  PANEL_CARD_FALLBACK="public_invoke"
+  log "note panel_composite_notes_edit skipped input_blocked=$INPUT_BLOCKED"
+fi
+if [[ -n "$PANEL_CARD_FALLBACK" ]]; then
+  panel_pub invoke "$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" SET_NOTES --target 8101 \
+    --arg notes=STRING:"$PANEL_CARD_NOTES" > "$WORK/panel-card-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/panel-card-fallback.log" || fail "exported second consumer card fallback write was rejected"
+  log "note panel_composite_notes_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(panel_field_token notes APPLIED_HEX | hex_to_text)" == "$PANEL_CARD_NOTES" ]] || \
+  fail "the card's notes editor did not write the owner field"
+log "step4f panel_composite_chain_ok kind=taskEditCard field=notes readback=true"
+
 panel_pub generated-submit --structure-version "$PANEL_VERSION" --payload-file "$WORK/panel-s2.txt" > "$WORK/panel-submit2.txt" 2>&1 || true
 grep -q '^CANDIDATE_ACCEPTED true' "$WORK/panel-submit2.txt" || fail "exported second consumer rejected the reordered structure"
 waited=0
@@ -474,15 +784,55 @@ while (( waited < 40 )); do
   waited=$(( waited + 1 ))
 done
 [[ "${PANEL_VERSION2:-}" == "2" ]] || fail "exported second consumer never scene-accepted the reordered structure"
-PANEL_TEXT2="导出消费标题二"
-PANEL_DOMAIN_VERSION2="$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')"
-panel_pub invoke "$PANEL_DOMAIN_VERSION2" SET_TITLE --target 8101 --arg title=STRING:"$PANEL_TEXT2" \
-  > "$WORK/panel-edit2.log" 2>&1 || true
-grep -q '^APPLIED true' "$WORK/panel-edit2.log" || fail "exported second consumer owner stopped accepting writes after the reorder"
-[[ "$(panel_field_token title APPLIED_HEX | hex_text_local)" == "$PANEL_TEXT2" ]] || \
+
+# --- 4b. REAL generated-control input #2: continue editing after S2 ---------
+PANEL_TEXT_TWO="export-panel-title-two"
+PANEL_INPUT_FALLBACK2=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit panel_text_two "$PANEL_DESCRIPTOR" title "任务标题编辑" "text field" "$PANEL_TEXT_TWO"; then
+    log "step4b panel_control_text_edit_after_s2 mode='$REAL_EDIT_MODE' frame='$REAL_EDIT_FRAME' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' target='$PANEL_TEXT_TWO' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="panel_generated_text_input_not_delivered_after_s2"
+    PANEL_INPUT_FALLBACK2="public_invoke"
+    log "BLOCKED panel_generated_text_edit_after_s2 reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}' target='$PANEL_TEXT_TWO'"
+  fi
+else
+  PANEL_INPUT_FALLBACK2="public_invoke"
+  log "note panel_generated_text_edit_after_s2 skipped input_blocked=$INPUT_BLOCKED fallback=$PANEL_INPUT_FALLBACK2"
+fi
+if [[ -n "$PANEL_INPUT_FALLBACK2" ]]; then
+  panel_pub invoke "$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" SET_TITLE --target 8101 \
+    --arg title=STRING:"$PANEL_TEXT_TWO" > "$WORK/panel-edit2-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/panel-edit2-fallback.log" || fail "exported second consumer public fallback title write after S2 was rejected"
+  log "note panel_text_edit_after_s2_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(panel_field_token title APPLIED_HEX | hex_to_text)" == "$PANEL_TEXT_TWO" ]] || \
   fail "exported second consumer read-back after the reorder mismatch"
+
+# --- 4c. REAL generated-control input #3: press the generated boolean editor -
+# This is the same generated boolean control the task board uses to submit; the
+# press must reach the owner as a real event, not as a public invoke.
+PANEL_INPUT_FALLBACK3=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_boolean_toggle panel_bool_submit "$PANEL_DESCRIPTOR" marked "提交状态编辑" checkbox; then
+    assert_boolean_flip "panel generated boolean"
+    log "step4c panel_control_boolean_toggle mode='$REAL_EDIT_MODE' frame='$REAL_EDIT_FRAME' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="panel_generated_boolean_input_not_delivered"
+    PANEL_INPUT_FALLBACK3="public_invoke"
+    log "BLOCKED panel_generated_boolean_toggle reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}'"
+  fi
+else
+  PANEL_INPUT_FALLBACK3="public_invoke"
+  log "note panel_generated_boolean_toggle skipped input_blocked=$INPUT_BLOCKED fallback=$PANEL_INPUT_FALLBACK3"
+fi
+if [[ -n "$PANEL_INPUT_FALLBACK3" ]]; then
+  panel_pub invoke "$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" SET_MARKED --target 8101 \
+    --arg marked=BOOLEAN:true > "$WORK/panel-bool-fallback.log" 2>&1 || true
+  log "note panel_boolean_edit_fallback=public_invoke control_input_unverified=true"
+fi
 # The boolean editor's field is readable through the same projection.
-[[ "$(panel_field_token marked APPLIED_HEX | hex_text_local)" != "" ]] || \
+[[ "$(panel_field_token marked APPLIED_HEX | hex_to_text)" != "" ]] || \
   fail "exported second consumer boolean field read-back is empty"
 
 # An illegal candidate keeps the accepted structure and its editors usable.
@@ -497,10 +847,69 @@ panel_pub generated-submit --structure-version "$PANEL_VERSION2" --payload-file 
 grep -q '^CANDIDATE_ACCEPTED false' "$WORK/panel-illegal.log" || fail "exported second consumer accepted an illegal candidate"
 [[ "$(panel_pub generated-structure 2>/dev/null | awk '/^STRUCTURE_VERSION /{print $2}')" == "2" ]] || \
   fail "exported second consumer changed its accepted structure after a rejected candidate"
-[[ "$(panel_field_token title APPLIED_HEX | hex_text_local)" == "$PANEL_TEXT2" ]] || \
+[[ "$(panel_field_token title APPLIED_HEX | hex_to_text)" == "$PANEL_TEXT_TWO" ]] || \
   fail "exported second consumer editors stopped being readable after a rejected candidate"
-log "step4 exported_second_generated_chain_ok version=$PANEL_VERSION s2=$PANEL_VERSION2 edit_readback=true rejected_candidate_kept_old=true"
 
+# --- 4d. REAL generated-control input #4: the OLD interface is operating -----
+# After the rejected candidate the same generated controls still take real
+# input: the boolean press un-submits (which the exported domain exposes as the
+# recovery condition), and the title editor is then operable again.
+PANEL_INPUT_FALLBACK4=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_boolean_toggle panel_bool_after_rejection "$PANEL_DESCRIPTOR" marked "提交状态编辑" checkbox; then
+    assert_boolean_flip "panel generated boolean after rejection"
+    log "step4d panel_control_boolean_after_rejection mode='$REAL_EDIT_MODE' frame='$REAL_EDIT_FRAME' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="panel_generated_boolean_input_not_delivered_after_rejection"
+    PANEL_INPUT_FALLBACK4="public_invoke"
+    log "BLOCKED panel_generated_boolean_after_rejection reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}'"
+  fi
+else
+  PANEL_INPUT_FALLBACK4="public_invoke"
+  log "note panel_generated_boolean_after_rejection skipped input_blocked=$INPUT_BLOCKED fallback=$PANEL_INPUT_FALLBACK4"
+fi
+if [[ -n "$PANEL_INPUT_FALLBACK4" ]]; then
+  panel_pub invoke "$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" SET_MARKED --target 8101 \
+    --arg marked=BOOLEAN:false > "$WORK/panel-bool2-fallback.log" 2>&1 || true
+  log "note panel_boolean_after_rejection_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(panel_field_token title APPLIED_HEX | hex_to_text)" == "$PANEL_TEXT_TWO" ]] || \
+  fail "exported second consumer title changed while only a boolean was pressed"
+
+PANEL_TEXT_THREE="export-panel-title-three"
+PANEL_INPUT_FALLBACK5=""
+if [[ -z "$INPUT_BLOCKED" ]]; then
+  if real_generated_text_edit panel_text_three "$PANEL_DESCRIPTOR" title "任务标题编辑" "text field" "$PANEL_TEXT_THREE"; then
+    log "step4e panel_control_text_edit_after_rejection mode='$REAL_EDIT_MODE' frame='$REAL_EDIT_FRAME' before='$REAL_EDIT_BEFORE' after='$REAL_EDIT_AFTER' target='$PANEL_TEXT_THREE' input=real_desktop_control driver=cgevent"
+  else
+    INPUT_BLOCKED="panel_generated_text_input_not_delivered_after_rejection"
+    PANEL_INPUT_FALLBACK5="public_invoke"
+    log "BLOCKED panel_generated_text_edit_after_rejection reason=not_delivered before='$REAL_EDIT_BEFORE' after='${REAL_EDIT_AFTER:-}' target='$PANEL_TEXT_THREE'"
+  fi
+else
+  PANEL_INPUT_FALLBACK5="public_invoke"
+  log "note panel_generated_text_edit_after_rejection skipped input_blocked=$INPUT_BLOCKED fallback=$PANEL_INPUT_FALLBACK5"
+fi
+if [[ -n "$PANEL_INPUT_FALLBACK5" ]]; then
+  panel_pub invoke "$(panel_pub get 2>/dev/null | awk '/^VERSION /{print $2}')" SET_TITLE --target 8101 \
+    --arg title=STRING:"$PANEL_TEXT_THREE" > "$WORK/panel-edit3-fallback.log" 2>&1 || true
+  grep -q '^APPLIED true' "$WORK/panel-edit3-fallback.log" || fail "exported second consumer public fallback title write after rejection was rejected"
+  log "note panel_text_edit_after_rejection_fallback=public_invoke control_input_unverified=true"
+fi
+[[ "$(panel_field_token title APPLIED_HEX | hex_to_text)" == "$PANEL_TEXT_THREE" ]] || \
+  fail "exported second consumer old interface was not operable after the rejected candidate"
+if [[ -n "$PANEL_INPUT_FALLBACK" || -n "$PANEL_INPUT_FALLBACK2" || -n "$PANEL_INPUT_FALLBACK3" || -n "$PANEL_INPUT_FALLBACK4" || -n "$PANEL_INPUT_FALLBACK5" ]]; then
+  log "step4 exported_second_generated_chain_ok version=$PANEL_VERSION s2=$PANEL_VERSION2 edit_readback=true rejected_candidate_kept_old=true control_input=blocked"
+else
+  log "step4 exported_second_generated_chain_ok version=$PANEL_VERSION s2=$PANEL_VERSION2 edit_readback=true rejected_candidate_kept_old=true control_input=real_desktop"
+fi
+
+if [[ -n "$INPUT_BLOCKED" ]]; then
+  log "BLOCKED exported_consumer_chains input_segments_unverified reason=$INPUT_BLOCKED"
+  log "PASSED_HEADLESS origin_and_structure_chain root='$export_root'"
+  cat "$LOG"
+  exit 3
+fi
 log "PASSED exported consumer chains root='$export_root'"
 cat "$LOG"
 exit 0

@@ -2,9 +2,57 @@
 
 日期：2026-09-19。第四轮复核后，将必要返工与既有生成式方案合为一次完整交付。用户将[交接提示词](2026-09-19-external-executor-handoff-prompt.md)发给执行者后，即连续实施本页完整范围；当前执行状态只见 [ACTIVE](../../runtime/cjgui/ACTIVE_DIRECTION.md)。本页不启动旧 Codex 任务或定时。树/多选承接原定目标，不补全控件库；鸿蒙继续暂停。
 
+## A/B/C/D交付复核与公共组件扩展接续
+
+更新：2026-09-20。**接受已经成立的实现和运行链；“A/B/C/D全部完成”的总括结论尚不成立。** 指导只读检查当前源码、脚本和本次原始日志，没有重跑构建、包测试或桌面输入。当前指导结论以本节及[完整交接任务](2026-09-19-external-executor-handoff-prompt.md)为准；下面夜23及执行记录保留为历史，不能用旧完成句覆盖本节的具体欠项。
+
+### 接受范围
+
+- 共同字段声明已接到 owner 事务，手写/生成/外部写入共用标题120标量长度、required及业务条件；新增 notes 的声明、writer/argument派发和测试代码已落地。业务冻结后合法标题拒绝、解除后恢复的测试定义与原报告相符，不再重复返工已经统一的三个入口。
+- `/private/tmp/cjgui-common-definition/20260920100951-38546/chain.log` 确有两边数字输入的真实 CGEvent 编辑、精确 owner 读回、同一越界原因及两次启动声明1..365/1..730。它证明两入口数字编辑同源，不证明两种不同交互呈现，也不证明运行期热改规则。
+- 公共树 changed-key 路径、当前规则源的结构/未知变更回退、公共消费者接线和 groupKeys 全树 DFS 修复成立。当前日志有单可见对象 `index_calls=0 / 3438us`、屏外对象不物化的证据；不能从旧13.6ms或本轮全量修改的18.3ms推导同条件加速比。
+- `/private/tmp/cjgui-preview-chains/cjgui preview 20260920101219-40829/chains.log` 的四个实际进程来源均在导出根，两生成消费者均通过真实控件输入、S2后续写、非法候选后旧界面继续编辑，并精确读回 owner。本次不是 invoke 兜底。D 的核心消费链接受，后述清单和失败清理单独修复。
+- 同一正常应用循环中的两窗进展与一活一闲独立性已有证据，接受其有限结论。包测试50/2/52/20/24/11沿用执行报告，指导未重新运行。A3、剪贴板、100条接续、键鼠和既有生成事务不从头重做。
+
+### 必要返工：已给出的可区分方案
+
+**1. 树局部更新的契约。** `composable_ui_tree.cj` 的 `ContentUpdate` 默认 `selectable=true`，`applyContentUpdates` 直接覆盖原行属性；Catalog 的组原来 `selectable=false`，`renameEntry("domain-0", "新组名")` 却会发默认 true 的补丁。内容更新因此改变了选择语义。把快路径限为显示内容，保留原 selectable/resource/父子/身份；选择能力变化走重建及既有 selection/focus 校正。若保留 selectable 参数，则不一致必须在任何写入前拒绝快路径，调用方回退，不能忽略其声明。补组改名、已选叶变不可选的反例，整批先检查再应用。
+
+`CatalogSource.renameEntry` 只提取数字和检查范围，`domain-0garbage`、`domain-0-topic-1-junk` 可被当成有效 key，版本前进但真实条目不变。用既有 domainKey/topicKey/entryKey 重建规范 key 并精确匹配后再写；未知 key 不改数据、版本或通知。框架拒绝未武装/回退的 source 版本，不能由异常 provider 返回 Some 就倒退已应用版本；已知消费者的安全回退保留。
+
+单条可见更新还须在该步立即核对窗口已接受节点中的新文本、对应 native 提交/可见反馈，再运行下一步；controller.builtLabels及后置全量重建成功不能替代它。当前 sameLayoutNode 比较 label/value，所以“label-only天然只是语义更新、不需要提交”的历史解释不成立；屏外更新可不提交，可见文字改变须真实反映，按证据定位而不是先判 renderer 坏了。
+
+**2. 性能四场景仍未成立。** `composable_ui_window_perf_test.cj:708` 起的采样器：cold_submit/hot_structure执行同一分支且重复同一spec；field_change五次只第一次把suffix从空变为星号；no_change从未给生成holder提交结构，测的是 `generated-empty` 对完整手写面板，并每轮bump强制重建。计时外另一组对象的等价比较无法证明这些被测实例等价。当前“无变化249/6us”等结论撤回。
+
+在**实际被计时实例**建立同一有效内容并检查等价：冷样本使用新holder/首次结构提交且不把热样本混成冷中位数；热结构每次改变同一布局属性；字段更新预先接受结构、每轮交替不同值且不重提交结构；无变化轮既不bump也不重提交，确认零build/submit增量。必要的“相同内容强制刷新”另标，不代替idle。保留每个原始样本及源码/产物来源，计时外核对实际字段和场景；复用现有 refreshTiming 分开build/layout/native与整周期，未调用decode仍标none。树优化比较必须让同一个单对象变更分别走patch与既有rebuild，不能用singleOne对changeAll。
+
+两活动窗口还缺原要求的**A持续工作时，B排队输入/外部请求真正生效的延迟**；当前用例直接改两窗scroll后pump至都发布，只证有界进展。复用正常host和既有调度入口，记录请求入队、owner应用、场景接受三个单调时刻、原始多样本及p50/p95/max，停止后收敛。无需为统计另造调度器或无条件重写生产调度。
+
+**3. 共同定义验收与失败分类。** 两个integerInput仍不是数字输入与预设按钮等不同呈现；在下面新增组合组件能力中一起完成，别再把“作者不同”当“交互类型不同”。本轮成功日志保留。`verify_common_definition_acceptance.sh` 输入失败/锁屏转公开invoke后最终仍无条件 `PASSED/exit0`；可继续验证独立语义段，但整体应按真实结果返回PASS/FAIL/BLOCKED，工具未送达且原因不明不能直接认定环境。复用D已有exit3路径；针对性验证一个真实阻塞及一个断言失败的传播，不再重跑全套桌面矩阵来检查退出码。
+
+**4. 导出收尾。** `verify_framework_preview_consumer_chains.sh:103-122` 的cmp计数覆盖19文件，但汇总hash仅拼接9个runtime源和1个native源，漏9个core；“三次同19文件指纹”表述需纠正。同一明确相对路径清单参与cmp、逐文件hash与总指纹，并覆盖本包改动的实际依赖/消费文件，不把任何子集指纹说成整个SDK。`preview/FRAMEWORK_PREVIEW_MANIFEST.md` 仍写5个runtime/7个core且排除examples，与实际导出9/9及三消费者矛盾，按实际导出范围同步。cleanup只清成功register_round的PID，启动成功但ready/归属握手前失败会漏回收；启动前记录本轮唯一目录/可执行路径等候选身份，清理时再精确查实归属，补一次注册前失败注入与对照实例不受影响。保留本轮通过链，不因此全盘重验D。
+
+### 新框架能力：应用自定义组合组件可被生成界面直接使用
+
+当前 `CjguiGeneratedUiPresentation.isImplemented` 与 `nodeFor` 只支持七类内置呈现；自定义kind只是映射已有呈现的别名。下一整包在上述返工之外，推进**公共、实验性的应用组合组件注册/构建接缝**：开发者用现有仓颉组件写一次组合实现，手写区域直接用它；注册有类型的属性、字段/动作引用和构建实现后，外部可查询并在运行期实例化、重排和修改同一组件。新增第二个应用组件不改框架kind switch、不复制解释器，不执行外部传入源码，不建立插件下载或Agent运行时。
+
+复用现有catalog/validator/holder、普通组件、组件identity事务、共同字段定义及owner动作；工厂只构建投影，结构提交不能写业务。框架提供有作用域的身份和已解析绑定，工厂生成的实际子树也受节点/深度/属性/身份/动作边界检查，不能用一个自定义节点逃过展开预算。候选失败保留旧界面、旧路由与原字段；同key同绑定重排保留编辑状态，换绑/删除的旧事件不能落到新对象。
+
+在现有规则消费者做“数字输入 + 预设按钮组合”共享retention字段，并真正点击两类控件验证同一owner规则/草稿/应用；在任务消费者注册另一种实际组合（例如标题与备注编辑卡），证明接口可复用。至少一个组件手写/生成共用同一仓颉实现，同类型两实例身份互不干扰；多target消费须给每个暴露的写入目标安装/解析其权威字段规则，不能沿用仅第一条记录有规则的假设。保持普通UI应用不被强制启用生成能力。
+
+边界、实施顺序和集中验收详见[完整交接任务](2026-09-19-external-executor-handoff-prompt.md)。一包包含修复、公共扩展、两领域实际消费、可信性能与最终导出；不是只修旧问题，也不是开全控件库或通用响应式系统。
+
+### 六条主线取舍与执行边界
+
+组件/布局推进公共组合扩展；语义/动作复用单一字段与规则；输入验证多种控件与结构接续；资源/调度补持续工作中的另一窗响应；自绘/GPU沿同一既有提交链验真实文字变化和成本；开发者接入用两个公共消费者及独立导出证明。后续候选为真实模型仅凭公开能力生成/操作验证及按测量选取的自绘/资源热点，不在本包补成成熟控件大全。系统IME只做集成，鸿蒙仍等待用户恢复。
+
+外部执行AI主写入，按AGENTS咨询Terra CLI/xhigh；需要观察操作桌面时可用CLI Luna/high，已有确定性脚本有效就直接复用。旧Codex任务/30分钟自动化继续暂停。原目录、不切分支/建worktree、不stage/commit/push；本轮不清理历史临时证据。CGEvent/AX是工具输入，任何此前“手写物理键盘沿用已有链”的说法不能升级成人工物理验收；真实模型、物理输入、系统IME/VoiceOver、GPU实际呈现、实测内存峰值、外部TextEdit源实拖、真机和发布继续按各自边界保留。
+
 ## 夜23指导复核与接续方案
 
-更新：2026-09-20。**接受已证成果，撤回“原五项全部完成/欠项清零”的总括结论。** 指导只读核对当前源码、脚本及指定原始日志，未重跑构建、测试或桌面；`/private/tmp/cjgui-acceptance-sweep/20260920082108-45207/sweep.log` 确实是23/23、0阻塞，该数字准确，但脚本覆盖和运行来源仍存在下面的缺口。本节是当前指导结论，夜22及更早指导、夜23执行报告均作历史；不重复下发已关闭事项。
+更新：2026-09-20。**历史指导，已由页首A/B/C/D交付复核更新。** 当时接受已证成果，撤回“原五项全部完成/欠项清零”的总括结论。指导只读核对当时源码、脚本及指定原始日志，未重跑构建、测试或桌面；`/private/tmp/cjgui-acceptance-sweep/20260920082108-45207/sweep.log` 确实是23/23、0阻塞，该数字准确，但当时脚本覆盖和运行来源仍存在下面的缺口。已在页首接受的后续修复不再重复下发。
+
+复核期间另观察到 `candidate_rejection_observability_test.cj` 与 `verify_framework_preview_consumer_chains.sh` 的指纹发生并行变化，均未覆盖。末次定向读取确认下述导出run.sh作者路径与invoke编辑仍存在；后续执行先核对最新差异，不将08:21旧日志自动归为并行修改后的回归证据。
 
 ### 已接受与本轮取舍
 
@@ -47,6 +95,8 @@
 最后相关生产改动完成后统一导出一次，来源核对覆盖本轮依赖与native产物，不扩大成全仓重新打包矩阵。含空格目录、自有实例隔离、原剪贴板保护继续沿用；若桌面不可用保留具体缺段，不把仓库应用成功移记到导出消费者。
 
 ### 整包执行与验收边界
+
+用户本轮补充：可在工具实际可用时让CLI Luna模拟电脑操作。本机已用 `gpt-5.6-luna` 成功调用 `cua.getState()` 确认原生接口连通，没有进行点击/键入。当前外部执行者可按[交接提示词的桌面分工](2026-09-19-external-executor-handoff-prompt.md#可选的-luna-桌面验收)委派一个连续验收包，自己继续负责实现与公开字段读回。工具模拟输入可验真实控件路径，与人工物理输入分别标注；不恢复旧Terra/Luna任务或定时。
 
 先修A的真实规则差异及C的确定来源错误；独立推进B的对照修正和公共局部更新，再汇合共同定义、双窗口、导出实际输入。A/B/C一起下发，不只返工、不按小补丁停工；原键盘/鼠标/100条/A3/分类绿色仅在确实受影响时重跑。指导已给出根因与可区分方案；外部执行AI按AGENTS在方案仍不明确或连续修复无进展时做Terra/xhigh聚焦只读咨询，不把模型回答当运行证据。
 
@@ -290,7 +340,7 @@
 
 ## 执行记录（2026-09-19 晚，A/B 收口 + 树虚拟化 + 生成核心）
 
-> 以下为执行者历史记录，保留原始结果及当时假设；当前接受范围与未完成项以页首“夜21指导复核与完整续接”和 ACTIVE 为准。
+> 以下为执行者历史记录，保留原始结果及当时假设；当前接受范围与未完成项以页首最新指导复核和 ACTIVE 为准。
 
 ### A. 桌面验证安全与剪贴板 —— 收口
 
@@ -1461,3 +1511,365 @@ shared document chain、instance isolation）本轮标为 **BLOCKED、未验证*
   物化恒 12 行、`index_calls=0`；单对象可见 13.6 ms（索引 12.4 ms）、远端不物化；全量重写 17.8 ms；
   手写 vs 生成 79/127/197 vs 85/200/338 µs；idle 50 次刷新 0 新场景/0 重建/0 索引调用 —— 与 01:42
   锁屏期同口径数值在样本量级内一致。
+
+### 执行记录（2026-09-20 指导复核后第一轮：三入口规则统一、局部树更新、等价性能对照）
+
+- **A 三入口业务规则真正统一**（`shared_operation_core` + `generated_panel_consumer`）：
+  - 新公共契约 `shared_field_write_rule.cj`：`CjguiSharedFieldRule`（fieldId/editorKind/targetResourceId/
+    writer/argument/required/maximumLength/condition）、`CjguiSharedFieldWriteCondition`、
+    `CjguiSharedFieldWriteRequest`；`maximumLength` 单位明确为 **Unicode 标量值（Rune）**，不是 UTF-8 字节。
+  - owner 侧：`CjguiSharedOperationList.installFieldRule/fieldRule/writeDeclaredFieldFromHuman`；
+    `executeUnlocked` 在**任何写入之前**按 (action, target) 查已安装规则并逐个 target 校验，因此拒绝不会留下
+    部分写入；未注册 writer/参数返回 `unknown_argument`/`missing_argument`，不再默认落到标题。
+  - 消费者：`CjguiTaskFields` 仍是唯一字段定义，手写面板（按声明的 TEXT 字段迭代出输入）、生成 spec、
+    owner 规则、外部 capability 全部由它派生；生成路径按声明的 writer/argument 派发（删掉“非 BOOLEAN 即
+    setTitle”的默认分支）；新增声明字段 `notes`（SET_NOTES，maxlen 200）无需任何生成专用分支即可三路接通。
+  - descriptor/spec/capability 新增 `maxlen=`（TEXT 长度上限），descriptor/spec 不再丢 maximumLength。
+  - 验收证据（`generated_panel_consumer` `cjpm test` **11/11**，原 6 + 新 5）：三入口对越界/空值返回同一原因
+    且版本与值不变；业务条件变化（提交后标题冻结 `title_frozen_after_submit`，非版本冲突）拒绝合法请求、
+    解除后恢复；`required` 在 owner 写入边界执行；可选字段合法清空三路一致；120 个 CJK 字符接受、121 拒绝
+    （标量单位，非字节）。
+- **C 公共树局部内容更新（本轮新框架能力）**：
+  - 框架 `composable_ui_tree.cj`：`CjguiComposableUiTreeContentUpdate(Source)` +
+    `projection.attachContentUpdateSource/refreshContentOnly/markSourceIndexCurrent/lastContentPatchedRows`。
+    只有提供者能**证明**仅内容变化、且每个 key 都是现有行时才按 key 打补丁；否则回退 `rebuild()`。
+    真实缺陷修复：`rebuild()` 原先会擅自把 source 版本记为已同步，展开触发的 rebuild 曾让投影误以为
+    已同步到 v3（记录行确实缺失），现在只有调用方显式 `markSourceIndexCurrent()` 才武装该路径。
+  - 规则窗口：`CjguiRuleSetTreeSource` 实现提供者；domain 新增 `contentChangeSince`（version-scoped，
+    只读变更 key 的标签，O(changed)）与常数时间 `version()`；`commitContentUnlocked` 集中分类
+    `record_renamed`/`draft_applied_label_only` 为内容变化，其它（建/删/拷贝/移组/批量/undo/redo）一律不可用
+    → rebuild；`syncWithData` 内容路径不重建、不 prune。
+  - 证据（`/private/tmp/cjgui-window-perf.log`）：10k 单对象内容更新 **index_calls=0**（同条件 rebuild 对照
+    **10001**）、单可见对象整次窗口刷新 3155 µs（其中索引 12 µs）、远端对象 96 µs 且不物化、批量改 10001 个
+    对象仍走 rebuild 15746 µs、一次提交 3 行的合并 patch、落后两个版本→rebuild、折叠中变更的对象再现时值正确。
+  - 测试：cjgui **49/49**、规则窗口 **24/24**。
+- **B 性能对照校准**：同一只读 fixture 构造等价手写/生成面板（同字段 id/资源/值/绑定；生成器不支持的样式从
+  手写侧移除），计时外用规范化 dump（kind/content/绑定/bounds，忽略框架分配的 node id 与场景版本）断言
+  两者一致；四场景（冷结构提交、热结构变更、普通字段变更、无变化刷新）各自测**整周期**并把作者自身部分
+  单列，明确标注 `decode=none`（此路径没有解码调用，不贴 decode 标签）。旧的“两个中位数之差=解码/校验
+  成本”结论作废；采样（30 字段）：热结构 249/517 µs（生成 adapter 78 µs）、字段变更 290/489（77 µs）、
+  无变化 249/6。既有的“一窗进展、另一窗空闲”报告行改为 `claim=idle_side_only … dual_active_shared_host=not_measured_here`，
+  不再把它当双活动窗口证据。
+- **包测试**：cjgui 49/49、shared_operation_core 52/52、rule_set_application 20/20、规则窗口 24/24、
+  第二消费者 11/11（测试计数随新增用例更新；共享 list 的 action 数从 4 变 5 已同步断言）。
+- **D 独立导出真实消费（已完成并由主执行者独立核对）**：tree-interaction 派生副本的 `run.sh` 改为经导出根
+  `$export_root/framework/cjgui/scripts/run_macos_application.sh` 启动（脚本内已无作者 runtime 启动点，
+  `grep` 为空）；`assert_export_origins` 对四个进程（ui_only_tree_consumer、tree_interaction_derived_copy、
+  rule_generated_consumer、second_generated_consumer）逐一断言 runtime/native/依赖/资源来源都在导出根并拒绝
+  含作者路径的行；两生成消费者的编辑段改为真实 CGEvent 控件输入（规则 3 文本 + 1 布尔、面板 3 文本 + 2 布尔），
+  公开 invoke 只用于外部动作与读回。原始运行
+  `/private/tmp/cjgui-preview-chains/cjgui preview 20260920092145-2640`：`step1b files=19
+  sha256=71694ae6e56d71658d31ed030fc18effc40523958e0188c08bced6fee875cea3`、四行 `origin_ok … export/…`、
+  `step3a/3d`、`step4a/4e` 等 `input=real_desktop_control driver=cgevent`、`PASSED exported consumer chains`、
+  收尾 0 个自有实例；`tree-interaction.log` 的 `source_origin`/`resource_origin` 均指向导出根（此前是作者目录）。
+  另：本轮新增核心文件未进导出白名单导致导出编译失败，已修 `scripts/export_framework_preview.sh` 与
+  `native/scripts/verify_framework_preview_consumption.sh`，并无头验证导出内 shared core `cjpm build` 成功。
+- **A 的专用边界配置（本轮补齐）**：`verify_common_definition_acceptance.sh` 新增 step11，在**不改现有
+  1..90 业务约定**的专用声明下比较两种启动声明，三个入口读同一规则：
+  `declared=1..365 external_query=1..365 create_366=false create_731=false draft366_applied=false
+  draft_rule_reason=retention_count_out_of_range`；
+  `declared=1..730 external_query=1..730 create_366=true create_731=false draft366_applied=true`；
+  `redeclaration_mode=startup_flag(--retention-range) dynamic_update_entry=none`（明确是启动时重声明，不是运行时
+  动态更新）。每一处拒绝都断言了 `CONFLICT false` 与业务原因，避免把版本冲突误当边界生效。脚本整体 `PASSED`
+  （exit 0）。修正期间还发现并修掉了三处会让该步“因错误原因通过”的写法（陈旧版本 invoke、Select 版本、
+  把 `invalid_draft` 当成规则原因）以及一处 `maxlen=` 遗漏的旧断言。
+- **最终统一导出一次（本轮完成）**：`verify_framework_preview_consumer_chains.sh` 全新导出运行
+  `/private/tmp/cjgui-preview-chains/cjgui preview 20260920093602-15499`，`PASSED exported consumer chains`、
+  `step1b files=19 sha256=71694ae6…cea3`（与 09:21 同指纹）、四个进程 `origin_ok … export/…`、
+  两生成消费者 `control_input=real_desktop`、收尾无自有实例。
+- **B 双活动窗口：本轮尝试与具体发现（未冒充完成）**。在 `composable_ui_window_perf_test.cj` 里用
+  `CjguiMacosApplication(maximumWindowCount: 2)` 开两个窗口、每轮让两窗各自产生内容变更与滚动，再用一次
+  `pumpOneTurn` 服务两窗。读码确认正常泵确实对每个 live window 调用 `refreshIfNeeded()`
+  （`macos_application_host.cj` 的 `pumpOneTurnWhileGuarded`，逐 window 循环），但首版断言“每轮 8 个 turn 内两窗的
+  **accepted** 场景版本都前进”没有成立；加打印后该轮没有输出，说明失败发生在 warmup 或首轮断言边界。为避免把
+  未查清的调度问题留成红灯，该测试已撤下（框架套件回到 49/49 绿），**B 的双活动窗口项保持未完成**，连同上述
+  具体发现留给下一轮：需要在两窗同活时把候选/已接受场景版本与提交时机查清，再决定正确断言是“N 个 turn 内都被
+  服务（N 实测）”还是确实存在某一窗被饿死（后者是产品问题，要单独报告）。现有“一窗进展、一窗空闲”证据仍只
+  标为空闲侧（`dual_active_shared_host=not_measured_here`）。
+- **本轮未完成（诚实记录）**：A 的现场“两种兼容呈现的生成侧**真实控件事件**”（当前该步的生成呈现写入仍用公开
+  invoke 的 `edit_draft_field`，需要把桌面输入驱动接进该脚本并按 AX frame 定位生成整数编辑器）；B 的双活动窗口
+  过同一正常 ApplicationHost 的排队/应用延迟；公共 UI-only 树消费者的局部更新接入（其目录为不可变样例，
+  无 owner 内容变更链，规则窗口是真实链）。这三项留待下一轮，均有明确实现路径。
+
+### 执行记录（2026-09-20 指导复核后第二轮：A 现场真实控件事件、B 双活动窗口、C 公共树接入的真实缺陷、共享驱动库）
+
+上一轮“本轮未完成”三项全部落地，并在 C 的真实消费者链上发现并修掉一处框架缺陷。
+
+- **A 现场：两种兼容呈现都改为真实控件事件（`verify_common_definition_acceptance.sh` step9）**：
+  - step9 的生成呈现写入不再用公开 invoke 的 `edit_draft_field`。脚本接入真实桌面驱动（`swiftc -O` 构建
+    `native/tests/desktop_input_driver.swift`），按 AX frame / 组件焦点定位生成整数编辑器，真实点击+输入 `900`，
+    再从同一 owner 投影读回。证据（运行目录 `/private/tmp/cjgui-common-definition/20260920094948-22883`）：
+    `step9a generated_control_edit mode='tab_replace focus=component-9-1' before='45' after='900' target=900
+    input=real_desktop_control driver=cgevent`；随后外部 apply 仍被**同一条规则**拒绝
+    `REASON/字段错误=retention_count_out_of_range`；恢复值 `60` 也经同一控件输入（`step9b … target=60`）。
+    收尾行：`step9 two_presentations_one_rule reason=retention_count_out_of_range both=enforced applied=60
+    control_input=real_desktop`，整脚本 `PASSED common-definition acceptance`（exit 0），step10/step11 结论不变
+    （`declared=1..365/1..730`、`redeclaration_mode=startup_flag(--retention-range)`）。
+  - **手写呈现同样由真实控件事件驱动**（新增 step9c/step9d）：公共库新增
+    `real_focus_text_edit <label> <descriptor> <fieldId> <focusMatch> <target>`，用真实 Tab 走焦点、只在窗口自己报出
+    的目标焦点上输入；`real_generated_text_edit` 复用同一实现（`focusMatch=component-`），手写侧传入精确的
+    `field-<fieldId>`，因此走焦点时**不可能**误写另一个手写字段。证据（重跑目录
+    `/private/tmp/cjgui-common-definition/20260920100951-38546`）：
+    `step9c handwritten_control_edit mode='tab_replace focus=field-retentionCount' before='900' after='888'
+    target=888 input=real_desktop_control driver=cgevent`、`step9d two_presentations_same_reason
+    reason=retention_count_out_of_range handwritten=888 generated=900`（两个不同越界值经两种呈现得到**同一**原因，
+    且两次都无部分写入，applied 保持 45），收尾
+    `step9 … handwritten_reason=retention_count_out_of_range … control_input=real_desktop handwritten_control=real_desktop`。
+  - 锁定/无 swiftc 时仍保留公开 invoke 兜底，但显式记为 `control_input_unverified=true`，不冒充控件输入。
+- **B 双活动窗口：过同一正常应用循环，实测通过（`composable_ui_window_perf_test.cj` 新增用例）**：
+  `windowPerfTwoActiveWindowsInOneApplicationTurn` 用 `CjguiMacosApplication(maximumWindowCount: 2)` 开两窗，只用
+  一次 `pumpOneTurn` 服务两窗。证据（`/private/tmp/cjgui-window-perf.log`）：
+  `window_dual_active_shared_turn … windows=2 turns=2 scene_a=2 scene_b=2 accepted_a=2 accepted_b=2
+  submitted_a=2 submitted_b=2 failure_a='none' failure_b='none' waited_window_per_turn=1 both_live_turns=2
+  builds_a=2 builds_b=2 materialized_a=12 materialized_b=12 dual_active_shared_host=measured_here`；
+  同循环内再证互相独立：`window_dual_active_sibling_idle_in_loop … solo_turns=1 active_scene=3 idle_scene=2
+  idle_scene_before=2 active_builds=3 idle_builds=0 idle_accepted=2 active_accepted=3`。
+  旧空闲用例的标签从 `dual_active_shared_host=not_measured_here` 改为
+  `separate_windows_here measured_by=windowPerfTwoActiveWindowsInOneApplicationTurn`。
+  - 上一轮“8 个 turn 内 accepted 前进不成立”的原因已查清并记录：`windowProgress().acceptedSceneVersion` 跟踪的是
+    **已发布场景修订号**，不是 controller 的 `uiSceneVersion()`；且内容型 `dataChanged()`（按 changed keys 打补丁）
+    走“语义投影”接受分支，不产生新的渲染场景。用真实提交路径（滚动改布局）驱动后两窗各自前进。断言因此改为
+    “两窗各自的 scene/accepted/submitted 三者一致且都前进 + 各自 build/materialize + 每轮恰好一次等待”。
+- **C 公共 UI-only 树消费者的局部更新接入，并修掉一处框架缺陷**：
+  - 缺陷：`CjguiComposableUiTreeProjection.groupKeys()` 文档写“visible or not is irrelevant”，实现却只遍历**当前可见
+    行**。`expandAll()`（公共消费者“展开全部”按钮）因此只能展开第一层：3 域×3 主题×3 条目的窗口在展开后只有
+    3+9=12 行。改为按 source 做确定性 DFS 前序收集（去重 + 深度≤64 守卫，与投影 walk 同规则）。
+  - 真实窗口证据（`native/scripts/verify_tree_consumer_human_rows.sh`，全部经窗口自身状态文本读回）：
+    `step1 expand_ok rows=39`（3+9+27）、`step2/step3` 两个分支点击 selected=1、`step4 select_all_ok selected=27`、
+    `step5 collapse_keeps_selection_ok rows=3 selected=27`、`PASSED tree consumer human chain`（exit 0）。
+  - 新增消费者用例 `catalog_content_update_test.cj`（2/2）：按 key 打补丁且只 patch 1 行、结构/不可描述变更回退
+    rebuild、未知 key 拒绝；挂载控制器经真实 `CATALOG_LEAF_TOGGLE` 事件多选后改名仍保持 selected/focus/可见行数，
+    越界 key 不改场景版本。
+  - 计时影响（避免误读旧基线）：`composable_ui_tree_perf_test.cj` 的 `bulk_expand_*` 计时区间包含 `groupKeys()`，
+    修复前它在折叠状态下只走 `rows`（等于漏项），修复后按 source 全量走一遍。当前
+    `/private/tmp/cjgui-tree-perf.log`：`cold_index_100/1k/10k=18/36/190 µs`、
+    `bulk_expand_100/1k/10k=153/1313/11999 µs`、`bulk_collapse_100=121 µs`。这些是“真正的全量展开”成本，
+    不能与修复前的偏小数字直接比较；`bulk_collapse_*` 在展开态下新旧一致（展开时所有组本来就可见）。
+  - 包测试复跑：cjgui **50/50**（新增双活动用例）、tree_outline_consumer **2/2**、shared_operation_core 52/52、
+    rule_set_application 20/20、rule_set_window_app 24/24、generated_panel_consumer 11/11。
+- **共享桌面驱动库（消除两套副本）**：新增 `native/scripts/lib_cjgui_desktop_input.sh`，内容与
+  `verify_framework_preview_consumer_chains.sh` 中原有驱动/AX/有界输入实现**逐字节一致**（`diff` 已核对），
+  两个脚本各自改为 source 该库（预览链脚本净减 300 行重复），本文件不再维护第二份实现。
+- **D 导出链复跑（共享库改动后的回归证明）**：`verify_framework_preview_consumer_chains.sh` 全新导出运行
+  `/private/tmp/cjgui-preview-chains/cjgui preview 20260920095226-25817`：`PASSED exported consumer chains`、
+  `step1b files=19 sha256=c4afe63b7ec57e3a5533ceccc3c631f3e14f37c9f1bf9fa6161775516d369ea3`（与 09:21/09:36 的
+  `71694ae6…cea3` 不同，因为本轮改了被导出的 `composable_ui_tree.cj` 等源文件；文件数仍为 19）、四个进程
+  `origin_ok … export/…`、两生成消费者 `control_input=real_desktop`（规则 3 文本+1 布尔、面板 3 文本+2 布尔）、
+  收尾 0 个自有实例。
+- **D 最终统一导出（相关改动后一次）**：随后又跑两次，最近一次
+  `/private/tmp/cjgui-preview-chains/cjgui preview 20260920101219-40829`（前一次 `20260920100544-35815`），均为
+  `PASSED exported consumer chains`（exit 0）、
+  `step1b files=19 sha256=c4afe63b7ec57e3a5533ceccc3c631f3e14f37c9f1bf9fa6161775516d369ea3`（与 09:52 完全一致，
+  说明导出源已冻结在这一状态）、四个进程 `origin_ok`、两消费者 `control_input=real_desktop`（`step3a/3c/3d`
+  `mode='tab_replace'`）、收尾 0 个自有实例。
+  导出白名单只含框架源码/native/资源/脚本/模板与 3 个消费者，不含测试文件与 `native/scripts/*` 验证脚本，因此本轮
+  之后的性能用例与驱动库改动不影响该指纹。
+- **发现并修掉一处验证工具缺陷（10:01 那次导出运行的真实失败）**：`lib_cjgui_desktop_input.sh` 的
+  `real_type_target` 原本把“精确替换”和“追加（前置值+目标）”都算成功，但所有调用方随后都断言**精确等于目标值**。
+  10:01:25 那次运行里 Command-A 未生效，输入变成追加（`mode='tab_append'`，值变成
+  `export-rule-edit-oneexport-rule-edit-two`），脚本因此在一个看起来无关的读回断言处失败。已改为：只在精确替换时
+  返回成功，命中追加时有界重试（重新发 Command-A 并重打），重试仍失败则返回“未送达”，由调用方按既有约定记
+  `BLOCKED/control_input_unverified` 并走公开 invoke 兜底。修后两个脚本都重跑通过：
+  `verify_common_definition_acceptance.sh` exit 0（`step9a/9b mode='tab_replace'`、`control_input=real_desktop`、
+  step10/step11 结论不变），`verify_framework_preview_consumer_chains.sh` exit 0（`step3a/3c/3d mode='tab_replace'`、
+  此前会追加的 step3c 已回到精确替换）。注意：**用管道取脚本输出会吞掉退出码**，这轮因此先误记为通过，重跑时改为
+  显式捕获 `ACCEPTANCE_EXIT`/`PREVIEW_EXIT`。
+- **仍未验证（不扩大结论）**：A 的手写侧真实键盘输入仍沿用既有键盘链证据；B 的窗口排队延迟只有“2 个 turn 内两窗
+  各自发布”这一有界实测，没有做延迟分布统计；C 的规则窗口侧接的是真实 owner 链，公共消费者侧用事件入口驱动，
+  未做整窗人工长链；真实模型、系统 IME/VoiceOver、GPU 实际呈现、内存峰值、真机与发布仍未验。合成 CGEvent 会重置
+  系统 HID idle，因此“用户是否离开”只能与自己的注入区分开看，不能只用 ioreg 一个数判断。
+
+### 执行记录（2026-09-20 第三轮：A 四项返工闭合、公共组合组件接缝、阶段页留档）
+
+按页首“A/B/C/D交付复核与公共组件扩展接续”执行。**A 的四项返工已闭合；B 的公共框架能力已实现并通过框架测试；B 的两个领域消费、C 的性能重写、D 的汇合与最终导出仍未完成。**
+
+- **A1 树局部更新契约**：`CjguiComposableUiTreeContentUpdate.selectable` 改为 `?Bool = None`。快路径只替换显示内容，
+  原行的 resource/depth/kind/expanded/selectable 归原行所有；**声明值与在用行不一致时整批在任何写入前拒绝**
+  （调用方回退 rebuild + 选择校正）。`refreshContentOnly` 另加两道闸：调用方索引未武装（`appliedSourceVersion < 0`）
+  或版本倒退都不走快路径。新增公共 `CjguiComposableUiTreeSelection.pruneSelectionToSelectable()`（只清不再可选的选择/
+  anchor，保留仍存在的行焦点，因为不可选组仍是合法的展开/收起焦点目标）。用例
+  `composable_ui_tree_content_update_test.cj`（4 条）：组改名仍 `selectable=false` 且身份不变；一批“诚实内容改动 +
+  声明可选性不一致”整批拒绝且无部分写入（乐观写入未生效），随后 rebuild 恢复真实语义；未知 key / 未武装 / 版本倒退
+  都不打补丁；已选叶变为不可选后选择与 anchor 被清、焦点因行仍存在而保留。
+- **A2 规范身份与可见文字**：`CatalogSource.renameEntry` 改为按 `domainKey/topicKey/entryKey` 重建规范 key 并精确相等，
+  `domain-0garbage`、`domain-0-topic-1-junk`、`domain-0-topic--1-entry-1`、`domain-00`、
+  `domain-0-topic-01-entry-1` 全部拒绝且**不改内容、不改版本、不发通知**（消费者用例
+  `catalogRenameRefusesNonCanonicalKeysWithoutSideEffects`）。新增窗口只读投影 API
+  `CjguiComposableUiWindow.acceptedNodeText(semanticId)`（返回窗口**已接受场景**的显示文本：text 节点取 `value`、
+  button 取 `label`），据此新增用例 `windowContentOnlyUpdateShowsNewTextInAcceptedScene`：同一可见行内容变更当步即从
+  已接受场景读到新文字，且 `acceptedSceneVersion` 与 `nativeSubmissionCount` 都前进、`lastNativeFailure=none`、
+  走的是 content-only 路径（`lastPatchedRows=1`）——不再用 builtLabels 加后置全量重建代替。
+- **A3 验收脚本退出分类**：`verify_common_definition_acceptance.sh` 区分两类输入失败：`INPUT_FAILED`（真实控件未送达
+  → FAIL/exit 1）与 `INPUT_BLOCKED`（已证锁屏/无 swiftc/驱动不可构建 → BLOCKED/exit 3，语义段仍完整执行）。公开
+  invoke 兜底保留但只作兜底。新增 `verify_common_definition_acceptance_exit_paths.sh` 做有界负对照，三条都过：
+  `inject=fail exit=1`、`inject=undelivered exit=1`、`inject=blocked exit=3` 且 blocked 那次仍出现
+  `step11 redeclaration_mode=...`（说明语义段未被跳过）。运行目录
+  `/private/tmp/cjgui-acceptance-exit-paths/20260920120159-85633`。
+- **A4 导出一致性与回收**：新增 `native/scripts/export_fingerprint.py`，用**一份明确的目录+文件名清单**同时驱动逐文件
+  cmp、逐文件 sha256 与汇总指纹，文件数必须等于 hash 输入行数；清单覆盖 10 个 cjgui 源、9 个 core 源、core
+  cjpm.toml/client.py、5 个 native、2 个资源、2 个脚本、8 个模板、README/LICENSE/NOTICE、rule_set_application
+  与三个消费者的 `src/**`；导出会**改写**的构建入口（各包 cjpm.toml、消费者 run.sh、`preview-manifest.md`）单列为
+  存在性检查，不冒充作者同源。新增快速无 GUI 校验 `verify_export_fingerprint.sh`：对全新导出报
+  `PASSED export fingerprint (files=56 matches 56 per-file hash inputs)`；对 10:12 的旧导出直接报
+  `exported framework/cjgui/src/composable_ui_tree.cj differs from the author source`（真实漂移能被抓到）。
+  `preview/FRAMEWORK_PREVIEW_MANIFEST.md` 已按实际导出范围重写（10 runtime/9 core/5 native/3 消费者）。
+  回收：身份在**启动前**登记（`register_candidate`），共享库新增 `cjgui_reclaim_candidates`，清理按“本轮唯一 exec 名 +
+  本轮目录”重新求 PID 并复核归属；新增 `verify_prelaunch_candidate_cleanup.sh`：未完成握手的候选被精确回收
+  （`closed=yes`），未登记的对照实例仍存活且身份可解析、随后按自身身份回收。
+- **B 公共组合组件接缝（新框架能力，本包重点）**：新增 `composable_ui_composite_component.cj`：`CjguiCompositeElementSpec`
+  /`CjguiCompositeComponentSpec`（kind、属性、孩子规则、展开预算、元素角色 container/field/preset/action）、
+  `CjguiCompositeElementBinding`（框架解析出的 nodeId/semanticId/writer/owner target/绑定资源/草稿）、
+  `CjguiCompositeBuildContext`、`CjguiCompositeComponentFactory`、公共绑定适配器产物 `CjguiGeneratedUiIntent`。
+  `CjguiGeneratedUiCapabilityCatalog.registerComposite(spec, factory)` 与 kind/factory 原子登记；拒绝对内置 kind 覆写、
+  重复 kind、未知 field/action、无可写 writer、preset 无声明值、超预算、重复元素 key、未知父元素（各有专属原因）。
+  holder 在 `nodeFor` 里：**框架**分配每个实例/元素的 node id 与 semantic id、解析 owner 绑定，再由应用工厂用这些值
+  构建普通组件；返回的**真实子树**按声明预算与“只用已分配身份、不得重复、不得漏元素”审计（
+  `composite_expansion_node_limit`/`_catalog_limit`/`_depth_limit`/`_unidentified_node`/`_foreign_node_id`/
+  `_duplicate_node_id`/`_element_missing`），失败保留旧场景/旧路由（candidate 拒绝，accepted 身份仍在）。新增公共
+  `CjguiGeneratedUiStructureHolder.resolveIntent(node, eventKind, text)`：field 元素按字段声明的事件种类解析为字段编辑；
+  **preset 元素的 ACTIVATE 解析为“写声明常量”的字段编辑**（不因字段是 INTEGER 被吞掉）；action 元素解析为动作；
+  普通生成节点仍先按字段声明校验 writer/fieldId/绑定资源，若不是该字段的变更则**落到动作分支而不是静默返回**。
+  `prepareCandidateRefresh` 不再用 `candidate_not_prepared` 覆盖更具体的原因（否则真实拒绝原因被隐藏）。
+  框架用例 `composable_ui_composite_test.cj`（4 条）覆盖：登记严格性与“未知 kind/属性拒绝未被放宽”；真实子树审计
+  （重复身份/外部 id/漏元素三种拒绝都保留旧结构）；适配器 field/preset/action 三态与伪造 node id；同 kind 两实例身份
+  互不相同、同 key 重排身份保持。
+- **本轮包测试**：cjgui **59/59**（新增 4 组合用例 + 4 树用例 + 1 窗口用例）、tree_outline_consumer **3/3**、
+  shared_operation_core 52/52、rule_set_application 20/20、rule_set_window_app 24/24、generated_panel_consumer 11/11。
+  本轮改动只在受影响包重跑，未重跑 23 项桌面矩阵。
+- **仍未完成（下一轮继续）**：B 的两个领域消费（规则窗口“数字输入+预设按钮”组合、任务消费者标题+备注卡，含真实键入/
+  真实点击预设、第二记录规则、重排续写）；C 的四场景性能重写（被测实例等价、字段每轮交替、idle 零 build/submit、
+  patch 与 rebuild 同进程同变更对照、两窗排队/应用/接受时刻与 p50/p95/max）；D 的公开能力查询→结构创建→真实控件编辑
+  →外部读回→重排续写→非法候选后旧界面可操作汇合链，以及相关生产改动后的最终统一导出。
+
+### 执行记录（2026-09-20 第四轮：B1 规则窗口组合组件接通，含真实预设点击）
+
+- **B1 组合复用（规则窗口）**：新增 `examples/rule_set_window_app/src/retention_integer_edit.cj`：
+  `CjguiRetentionPresetConfig`（预设值**由字段自身声明边界派生** `fromDeclaredBounds`，另留 `explicit` 供越界反例）、
+  `CjguiRetentionIntegerEditComposite.buildEditor(...)` 是**唯一一份**构建实现（数字输入 + 预设按钮，预设按钮带
+  已解析 owner target），`buildComposite` 让生成路径用框架分配的身份/绑定调用同一实现，`registerInto` 注册 kind
+  （元素 root/edit/preset，预算 4 节点/3 层，属性 gap + presetLabel）。
+- **两个区域共用**：手写编辑对话框的 retention 行改为调用 `buildEditor`（同一行内可追加校验文字）；生成的
+  `retentionIntegerEdit` 结构由框架调用 `buildComposite`。生成消费者 `handleEvent` 改为使用公共适配器
+  `holder.resolveIntent`（字段编辑/动作二选一），不再自己判断控件类型——这也让 INTEGER 字段上的预设按钮不会被
+  “变更种类”判断吞掉。新增 `acceptedCompositeElementNodeId(instanceKey, elementKey)` 供公开能力读回。
+- **规则窗口用例 28/28**（新增 4 条）：预设值随声明边界变化（1..90→90、365..730→730、显式越界 200）；
+  手写行的节点形状与直接调用 `buildEditor` 的输出逐项一致（证明手写区域用的就是那一份实现），且第 2 项是
+  retention 输入、第 3 项是预设按钮；生成的预设激活解析为携带声明常量的字段编辑，越界预设**原样**进入草稿
+  （不被钳制）并由 owner 以 `retention_count_out_of_range` 拒绝；手写预设按钮经同一 owner 草稿入口写入。
+- **真实桌面证据（共同定义验收脚本新增 step9e/9f，整脚本 PASSED exit 0）**：
+  `step9e handwritten_preset_click label='设为 90' input=real_desktop_control driver=ax`、
+  `step9f generated_preset_click label='生成预设90' input=real_desktop_control driver=ax`、
+  `step9ef composite_preset_ok handwritten=clicked generated=clicked value=90 min=1 applied_before=60`。
+  预设值/文案来自声明边界（`min=1 max=90` → “设为 90”），生成侧文案由声明的 `presetLabel` 属性给出以便
+  两个控件在 AX 中可区分；两次点击后均断言草稿写入声明值并经 APPLY_DRAFT 应用成功。同一轮仍保留 step9a/9c 的
+  真实键入与 step9d 的“两呈现同一原因”。脚本读取边界改为读第 1 步已捕获的 capability payload，不再中途重复查询。
+- **受影响包复跑**：cjgui 59/59、规则窗口 28/28、shared_operation_core 52/52、rule_set_application 20/20、
+  generated_panel_consumer 11/11、tree_outline_consumer 3/3。
+- **仍未完成**：B2（任务消费者注册标题+备注卡、每写 target 的权威规则、第二记录拒绝）、C（性能四场景重写、
+  patch/rebuild 同变更对照、两窗排队时延）、D（汇合链与相关生产改动后的最终统一导出）。
+
+### 执行记录（2026-09-20 第五轮：B2 任务消费者组合组件，每 target 规则）
+
+- **B2 组合复用（任务消费者）**：新增 `examples/generated_panel_consumer/src/task_edit_card.cj`：
+  `CjguiTaskEditCardComposite`（kind `taskEditCard`）是一个有真实组合结构的卡（root 容器 + caption 文本 +
+  标题编辑器 + 备注编辑器），两个编辑器绑定既有 `CjguiTaskFields` 的 title（SET_TITLE，120 标量 + 提交后冻结条件）
+  与 notes（SET_NOTES，200 标量）。新增该组件只改了本文件、应用注册调用与消费者的派发接入，**框架 kind 分派未改**。
+- **消费者派发改用公共适配器**：`generated_region.cj` 的 `handleEvent` 改为 `holder.resolveIntent`（字段编辑/动作），
+  布尔“驱动未带投影值时翻转当前值”的领域读取保留在消费者内；新增 `acceptedCompositeElementNodeId` 与
+  `acceptedCompositeElementSummary(instanceKey, elementKey)`（`label|fieldId|writer|role`）供公开读回。
+- **每暴露 target 安装权威规则**：新增 `CjguiTaskFields.installIntoEveryRecord(domain)`，`main.cj` 改用它。用例明确钉住
+  当前 owner 契约：**未安装规则的 (writer,target) 不会被 owner 拒绝**（框架不为未接线的 target 发明规则），
+  因此“每个暴露 target 都要接线”是应用责任，并验证两记录都被覆盖。
+- **任务消费者用例 16/16**（新增 5 条）：卡注册与展开（4 节点，未知 kind/属性拒绝未被放宽）；卡的两个编辑器写各自声明字段且
+  **对第二条记录同样执行越界与业务冻结拒绝**（第一、二条互不影响）；`installIntoEveryRecord` 覆盖所有记录、未接线 target
+  无规则可执行；手写 `buildCard` 形状与生成侧解析出的绑定一致（`当前任务|title|SET_TITLE|field`、
+  `备注|notes|SET_NOTES|field`）；同 key 重排后元素身份不变、旧场景事件仍写原对象、非法候选后旧卡仍可写。
+- **包测试**：generated_panel_consumer 16/16、rule_set_window_app 28/28、tree_outline_consumer 3/3（UI-only 消费未受影响）。
+- **仍未完成**：C（性能四场景重写、patch/rebuild 同变更对照、两窗排队时延）与 D（含新组件的汇合链与最终统一导出）。
+
+### 执行记录（2026-09-20 第六轮：性能四场景按被测实例重做）
+
+- **采样器重写**（`composable_ui_window_perf_test.cj`）：旧采样器 cold/hot 走同一分支、field 只有首轮真正改值、
+  no_change 的生成侧根本没有已接受结构（拿空树对手写完整面板）。现在每个场景在被测实例上成立：
+  - **cold_submit**：每个样本都是新的 controller/holder，计时包含**首次有效提交**与共享刷新，`window.start()`
+    与 fixture 构造在计时外；断言每个样本 `acceptedSceneVersion == sceneVersion` 且版本从 1 开始前进；
+  - **hot_structure**：已接受基线之后每轮把**声明的布局属性**（gap）改成 8/10/12（刻意排除 6 基线值，否则那轮是
+    无操作刷新），提交结构 + bump + 刷新；计时外断言**已接受面板真的带这一轮的声明值**（生成侧读已接受结构的 gap，
+    手写侧读它真正构建用的 gap），并断言 build/提交都前进；同时如实记录：探针节点的自身 rect 在容器 gap 变化下
+    不变（此布局模型子节点 rect 相对父级），因此**不用几何相等当变化证据**；
+  - **field_change**：先接受基线，每轮写入**不同的字段值**且**不重提结构**；计时外断言新值确实出现在**已接受场景**
+    转储里且与上一轮不同；
+  - **no_change（idle）**：不 bump、不提交结构；断言零 build、零 native 提交、已接受场景转储与版本完全不变；
+  - **forced_same_content_refresh**：单独命名。如实记录框架行为：它**确实重建**（builds+5），但相同已接受树
+    **不产生新的已接受场景版本、也不做 native 提交**（重复场景抑制），不是 idle 证据。
+- **等价性落在被测实例上**：新增只读投影读取 `acceptedNodeValue`、`acceptedNodeBounds`、`acceptedNodeCount`、
+  `acceptedSceneDump`（`kind|semantic_id|label|value|field_id|bounds`）。每个场景两个作者都报告
+  `declared_nodes`/`accepted_nodes`（fields=30 → 61/61，两者一致）、原始样本、min/max、作者自身耗时、
+  build/提交计数、`decode=none`（此路径无解码调用），并用内容形状（kind|label|value|字段绑定，忽略框架分配 id 与几何）
+  断言两个作者在被测实例上提交相同内容。
+- **抽样观察（fields=30，`/private/tmp/cjgui-window-perf.log`）**：idle 两作者均 `builds=0 native_submits=0`；
+  强制同内容刷新 `builds=5 native_submits=0`；cold 生成侧含首次提交整周期毫秒级、手写侧为纯刷新；
+  field_change 与 hot_structure 每轮均真实提交。具体数值随机器波动，只作同一次运行的原始样本，不与他轮相减。
+- **包测试**：cjgui 59/59。
+- **仍未完成**：C 的树 patch 与**同一单对象变更** rebuild 的同进程同起点对照；两活动窗口过同一正常 host 的
+  入队/owner 应用/场景接受时延（p50/p95/max）与停止后收敛；D 的汇合链与最终统一导出。
+
+### 执行记录（2026-09-20 第七轮：同变更 patch/rebuild 对照、两窗排队时延，C 完成）
+
+- **同一单对象变更的实现对照**（新用例 `windowTreePatchVersusRebuildForTheSameSingleChange`）：同进程、两个全新实例
+  （同展开集、同缓存起点），对**同一个** `leaf-3 + "*"` 变更分别走 content-only 与既有 rebuild。控制器新增
+  `contentOnly` 开关（关掉 provider 即走 rebuild），因此对照的是实现而不是不同负载。证据
+  （`/private/tmp/cjgui-window-perf.log`）：
+  `patch_index_calls=0 patch_index_us=3 patch_row_build_us=11 patch_materialized=12 patch_total_us=3157` vs
+  `rebuild_index_calls=10001 rebuild_index_us=10375 rebuild_row_build_us=14 rebuild_materialized=12
+  rebuild_total_us=11326`，`same_visible_text=true`（两者从**已接受场景**读到同一 `叶 3 *`），物化行数都为 12。
+  证据行自带 `note=numbers_are_one_run_do_not_divide_across_runs`，不跨轮相除、不宣称倍数。
+- **两活动窗口过同一正常应用循环的排队时延**（新用例
+  `windowTwoActiveWindowsQueueLatencyThroughOneApplicationLoop`）：A 每轮真实滚动（持续工作），B 通过既有控制器入口
+  排队一次可见行内容变更，每个样本记录**入队 / owner 应用 / 场景接受**三个单调时刻与所需共享轮数。证据：
+  `raw_turns=1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 served_within_10_turns=20/20 unserved_within_10=0
+  turns_to_scene_accepted_p50/p95/max=1/1/1 enqueue_to_owner_applied_us_p50=2253 p95=23361 max=31718
+  enqueue_to_scene_accepted_us_p50=17373 p95=33687 max=38206 b_last_native_failure='none' a_kept_working=true
+  idle_turns=10 idle_builds_a=0 idle_builds_b=0 idle_submits_a=0 idle_submits_b=0 gpu_presentation=not_claimed`。
+  即：B 的排队工作**每个样本都在下一轮共享 turn 内被 owner 应用并场景接受**，停止后 10 轮零重建、零提交；
+  延迟以一轮 turn（含 16ms 等待预算）为主，GPU 呈现未被声称。
+- **一处诊断纠正（如实记录）**：该探针最初让 B 改 `samples % 100` 的行，出现“第 12 个样本起 10 轮内不再被接受”的
+  现象。诊断输出 `b_pending='none' b_failure='none' b_scene=12 b_accepted=12 b_builds=13` 表明这不是饿死：B 的
+  投影走了 content-only 补丁，而被补丁的行**不在 B 的视口内**，所以构建出的树没有变化 → 框架按语义修订发布、
+  **不产生新的已接受场景**（这正是“屏外更新可不提交、滚入时必须是最新值”的既有契约）。改为只对可见行排队后
+  20/20 全部在一轮内被接受。该行为已写进测试注释，避免以后再把它误报成调度缺陷。
+- **包测试**：cjgui **61/61**。C 的三项（四场景、实现对照、双窗排队时延）至此全部完成。
+- **仍未完成**：D（新组合组件走公开能力查询→结构创建→真实控件编辑→外部精确读回→重排接续→非法候选后旧界面
+  可操作的汇合链；相关生产改动后统一导出一次并核对来源/指纹/manifest）。
+
+### 执行记录（2026-09-20 第八轮：D 汇合链与最终统一导出，本包完成）
+
+- **两个消费者在导出实例上跑完新组合组件的完整链**（`verify_framework_preview_consumer_chains.sh`，运行
+  `/private/tmp/cjgui-preview-chains/cjgui preview 20260920130156-12505`，`PASSED exported consumer chains` exit 0）：
+  - 规则消费者：`step3cap rule_composite_published kind=retentionIntegerEdit retention_max=90`（公开能力查询发布自定义
+    kind）→ 结构接受含 `NODE 1 retentionEdit retentionIntegerEdit` → **真实键入** `step3e
+    rule_composite_integer_edit mode='tab_replace focus=component-7-2-editor' before='7' after='45'
+    kind=retentionIntegerEdit` → **真实点击预设** `step3f rule_composite_preset_click label='导出预设90' target=90
+    input=real_desktop_control driver=ax` → `step3ef rule_composite_chain_ok typed=45 preset=90 applied=true`
+    （外部 APPLY + 精确读回）→ 同 key S2 重排后 `step3g rule_composite_after_reorder before='90' after='50'`
+    （元素身份保持、旧事件仍写原对象）→ 非法候选被拒后 `step3h rule_composite_after_rejection before='50' after='55'`
+    （旧组合界面仍可操作）。
+  - 任务消费者：`step4cap panel_composite_published kind=taskEditCard` → 结构接受含 `NODE 1 card taskEditCard` →
+    **真实键入** `step4f panel_composite_notes_edit mode='frame_replace' frame='370 340 365 42' before=''
+    after='export-card-notes-one' kind=taskEditCard` + 外部精确读回；随后 S2 重排、布尔切换、非法候选后旧界面继续编辑
+    全部保持 `control_input=real_desktop`。
+- **本轮修掉的第二个消费者真实缺陷**：`fieldsPayload()` 对**每个非布尔字段都发布 title 的值**（`draftText` 同样只回答
+  title），所以 `FIELD notes …` 的外部读回其实是标题，卡片备注的真实值无法被外部核对。改为每字段读自己的值
+  （`fieldTextValue`: title→record.title、notes→record.notes），`draftText` 同步修正；任务消费者 16/16 保持绿色。
+  这正是"外部精确读回"应当暴露的问题。
+- **顺带的应用侧补齐**：`SET_NOTES` 加入任务消费者的外部授权 scope（此前 `fieldsPayload` 已发布该字段与 writer，
+  但外部客户端无法写它）；这是应用自身声明字段的授权一致性，不是框架放宽。
+- **最终统一导出与清单核对**：`step1b source_fingerprint_match files=59 sha256=ecb8d3c87fd7356704c5f400ba6852a868103f6558c91112a80170b9b50953f0
+  rewritten=8`；快速校验 `verify_export_fingerprint.sh` 对该导出根报
+  `PASSED export fingerprint (files=59 matches 59 per-file hash inputs)`（文件数与 hash 输入一一对应）；四个进程
+  `origin_ok`，`preview/FRAMEWORK_PREVIEW_MANIFEST.md` 已与实际导出范围一致；收尾 0 个自有实例。
+- **本包最终验证**：cjgui 61/61、generated_panel_consumer 16/16、rule_set_window_app 28/28、tree_outline_consumer 3/3、
+  shared_operation_core 52/52、rule_set_application 20/20；共同定义验收（含真实预设点击）与导出链均 `PASSED`；
+  `git diff --check` 干净、未 stage/commit/push、0 自有实例残留。
+- **本包未纳入（按用户边界）**：真实模型、人工物理输入、系统 IME/VoiceOver、GPU 实际呈现、实测内存峰值、
+  真机与发布；工具 CGEvent/AX 输入已与人工物理输入分开标注。

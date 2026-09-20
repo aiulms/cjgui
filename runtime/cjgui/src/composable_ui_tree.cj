@@ -43,6 +43,47 @@ public interface CjguiComposableUiTreeDataSource {
     func childAt(parentKey: String, index: Int64): CjguiComposableUiTreeNode
 }
 
+/// One content-only change of an existing node: the stable key keeps its
+/// parents, order, depth, kind, identity, resource and whether it can be
+/// selected; only the displayed content is replaced. A node that appeared,
+/// disappeared, moved, re-parented or changed kind is NOT a content update -
+/// that is a structural change and must take the rebuild path.
+///
+/// `selectable` is optional and normally left undeclared: a content update never
+/// changes interaction semantics, so the live row's own value is preserved.
+/// Declaring a value that disagrees with the live row is not a content-only
+/// change either - the whole batch is refused before any write, so the caller
+/// falls back to a rebuild and runs its normal selection/focus correction
+/// instead of silently gaining or losing selectability.
+public class CjguiComposableUiTreeContentUpdate {
+    public let key: String
+    public let label: String
+    /// Declared selectability, or None to keep the live row's own value.
+    public let selectable: ?Bool
+
+    public init(key: String, label: String, selectable!: ?Bool = None) {
+        this.key = key
+        this.label = label
+        this.selectable = selectable
+    }
+}
+
+/// Optional data-source capability: a version-scoped, cheap answer to "which
+/// existing nodes changed content only?". An implementation must answer from its
+/// own authoritative business state and must return None whenever it cannot
+/// PROVE structural stability (creation, deletion, reorder, re-parent, kind or
+/// identity change, an unknown version gap, or a change stream that was
+/// truncated); the projection then falls back to a full rebuild instead of
+/// risking a stale row.
+public interface CjguiComposableUiTreeContentUpdateSource {
+    /// The owner's current data version.
+    func contentVersion(): Int64
+
+    /// Content-only changes since `sinceVersion`, or None when the caller must
+    /// rebuild. An empty list means "up to date".
+    func contentUpdates(sinceVersion: Int64): ?ArrayList<CjguiComposableUiTreeContentUpdate>
+}
+
 /// One visible row of the expanded projection.
 public struct CjguiComposableUiTreeRow {
     public let key: String
@@ -76,6 +117,12 @@ public class CjguiComposableUiTreeProjection {
     private var keyToParent: HashMap<String, String>
     private var dataVersionValue: Int64
     private var lastErrorValue: String
+    // Optional content-only update path (see CjguiComposableUiTreeContentUpdateSource).
+    private var contentUpdateSource: ?CjguiComposableUiTreeContentUpdateSource
+    // The source version the current rows were built or patched from.
+    private var appliedSourceVersion: Int64
+    private var lastContentPatchedRowsValue: Int64
+    private var contentRefreshCountValue: Int64
 
     public init(source: CjguiComposableUiTreeDataSource) {
         this.source = source
@@ -85,7 +132,114 @@ public class CjguiComposableUiTreeProjection {
         this.keyToParent = HashMap<String, String>()
         this.dataVersionValue = 0
         this.lastErrorValue = ""
+        this.contentUpdateSource = None
+        this.appliedSourceVersion = -1
+        this.lastContentPatchedRowsValue = 0
+        this.contentRefreshCountValue = 0
         let _ = rebuild()
+    }
+
+    /// Attaches an optional content-only update source. Without one every
+    /// refresh rebuilds, which stays correct - this is an optimisation, never a
+    /// correctness requirement.
+    public func attachContentUpdateSource(provider: CjguiComposableUiTreeContentUpdateSource): Unit {
+        contentUpdateSource = Some(provider)
+    }
+
+    /// Rows replaced by the last content-only patch (evidence/diagnostics).
+    public func lastContentPatchedRows(): Int64 {
+        return lastContentPatchedRowsValue
+    }
+
+    /// How many refreshes took the content-only path.
+    public func contentRefreshCount(): Int64 {
+        return contentRefreshCountValue
+    }
+
+    /// Declares that the CALLER's own data index now matches the source's current
+    /// version (it re-read its business state for this version). Only then may the
+    /// content-only path start from here: a plain `rebuild()` - for example one
+    /// triggered by expand/collapse - does NOT refresh the caller's index, so it
+    /// must not arm this path.
+    public func markSourceIndexCurrent(): Unit {
+        if (let Some(provider) <- contentUpdateSource) {
+            appliedSourceVersion = provider.contentVersion()
+        }
+    }
+
+    /// Refreshes in place when the attached provider can PROVE that only content
+    /// changed and every changed key is an existing row. Returns false when the
+    /// caller must refresh its own index and rebuild; it never patches a partial
+    /// or structurally changed answer.
+    public func refreshContentOnly(): Bool {
+        let provider = match (contentUpdateSource) {
+            case Some(value) => value
+            case None => return false
+        }
+        // The caller's own index must have been armed against a known source
+        // version (`markSourceIndexCurrent`); without that base there is nothing
+        // meaningful to ask "since what version" and the fast path is refused.
+        if (appliedSourceVersion < 0) {
+            return false
+        }
+        let version = provider.contentVersion()
+        if (version == appliedSourceVersion) {
+            return true
+        }
+        // A source reporting an OLDER version than the one already applied
+        // cannot describe the difference. Trusting `Some(updates)` here would
+        // regress the applied version and could patch rows from a stale answer,
+        // so the caller rebuilds instead.
+        if (version < appliedSourceVersion) {
+            return false
+        }
+        let maybeUpdates = provider.contentUpdates(appliedSourceVersion)
+        if (let Some(updates) <- maybeUpdates) {
+            if (applyContentUpdates(updates)) {
+                appliedSourceVersion = version
+                lastContentPatchedRowsValue = updates.size
+                contentRefreshCountValue += 1
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Replaces the content of the named rows. Every key is validated first: a
+    /// key that is not a current row means the source changed structurally, and
+    /// a partially patched projection would be worse than a rebuild.
+    private func applyContentUpdates(updates: ArrayList<CjguiComposableUiTreeContentUpdate>): Bool {
+        // Validate the WHOLE batch before any write. A key that is not a current
+        // row means the source changed structurally; a declared selectability
+        // that disagrees with the live row means the change is not content-only
+        // either. Both must refuse the fast path so the caller rebuilds and its
+        // existing selection/focus correction runs, instead of this path
+        // silently changing row interaction semantics (or half-applying).
+        for (update in updates) {
+            let index = match (keyToRowIndex.get(update.key)) {
+                case Some(value) => value
+                case None => return false
+            }
+            if (let Some(declared) <- update.selectable) {
+                if (rows[index].selectable != declared) {
+                    return false
+                }
+            }
+        }
+        for (update in updates) {
+            if (let Some(index) <- keyToRowIndex.get(update.key)) {
+                let row = rows[index]
+                // Only displayed content changes; identity, resource, depth,
+                // kind, expansion and selectability stay the row's own.
+                let selectable = match (update.selectable) {
+                    case Some(value) => value
+                    case None => row.selectable
+                }
+                rows[index] = CjguiComposableUiTreeRow(update.key, update.label, row.resourceId,
+                    row.depth, row.isGroup, row.expanded, selectable)
+            }
+        }
+        return true
     }
 
     public func dataVersion(): Int64 {
@@ -182,18 +336,40 @@ public class CjguiComposableUiTreeProjection {
         return true
     }
 
-    /// All group keys of the current projection (visible or not is irrelevant:
-    /// groups are roots or descendants that carry children).
+    /// All group keys of the logical tree (visible or not is irrelevant: groups
+    /// are roots or descendants that carry children). It walks the source, not
+    /// the currently projected rows, so a bulk expand/collapse reaches hidden
+    /// descendants too; reading only visible rows would silently limit
+    /// `expandAll()` to the first level of a collapsed tree. Traversal is a
+    /// deterministic depth-first pre-order with the same duplicate/cycle guards
+    /// the projection walk uses.
     public func groupKeys(): ArrayList<String> {
         let result = ArrayList<String>()
-        var index: Int64 = 0
-        while (index < rows.size) {
-            if (rows[index].isGroup) {
-                result.add(rows[index].key)
-            }
-            index += 1
-        }
+        let seenKeys = HashSet<String>()
+        collectGroupKeys("", 0, result, seenKeys)
         return result
+    }
+
+    private func collectGroupKeys(parentKey: String, depth: Int64, result: ArrayList<String>,
+                                  seenKeys: HashSet<String>): Unit {
+        if (depth > 64) {
+            return
+        }
+        let count = source.childCount(parentKey)
+        var index: Int64 = 0
+        while (index < count) {
+            let node = source.childAt(parentKey, index)
+            index += 1
+            if (node.key.isEmpty() || seenKeys.contains(node.key)) {
+                continue
+            }
+            seenKeys.add(node.key)
+            if (!node.isGroup) {
+                continue
+            }
+            result.add(node.key)
+            collectGroupKeys(node.key, depth + 1, result, seenKeys)
+        }
     }
 
     public func lastError(): String {
@@ -710,6 +886,47 @@ public class CjguiComposableUiTreeSelection {
                 changed = true
             }
             focusKey = ""
+        }
+        if (changed) {
+            selectionVersionValue += 1
+        }
+    }
+
+    /// Drops selected/anchor keys whose row is gone OR has stopped being
+    /// selectable, after the caller has rebuilt the projection from a source
+    /// that changed a row's selectability.
+    ///
+    /// `prune` only knows existence, so a row that still projects but can no
+    /// longer be selected would keep an unusable selection (and an anchor other
+    /// ranges may extend from). Focus is intentionally kept while its row still
+    /// projects: a non-selectable group row is a legitimate focus target for
+    /// expand/collapse, so the user's row position is not thrown away.
+    public func pruneSelectionToSelectable(): Unit {
+        var changed = false
+        var index = selectionOrder.size - 1
+        while (index >= 0) {
+            let key = selectionOrder[index]
+            let rowIndex = projection.indexForKey(key)
+            if (rowIndex < 0 || !projection.rowAt(rowIndex).selectable) {
+                selectedKeys.remove(key)
+                selectionOrder.remove(at: index)
+                changed = true
+            }
+            index -= 1
+        }
+        let anchor = anchorKeyEffective()
+        if (!anchor.isEmpty()) {
+            let anchorRow = projection.indexForKey(anchor)
+            if (anchorRow < 0 || !projection.rowAt(anchorRow).selectable) {
+                // Same fallback rule as `prune`: first surviving selected key,
+                // never an unrelated branch.
+                let fallbackAnchor = if (selectionOrder.size > 0) { selectionOrder[0] } else { "" }
+                if (fallbackAnchor != anchorKeyEffectiveValue) {
+                    changed = true
+                }
+                anchorKeyEffectiveValue = fallbackAnchor
+                anchorKey = fallbackAnchor
+            }
         }
         if (changed) {
             selectionVersionValue += 1

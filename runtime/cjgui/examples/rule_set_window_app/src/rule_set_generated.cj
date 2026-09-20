@@ -19,19 +19,30 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let holder: CjguiGeneratedUiStructureHolder
     private let lock: Mutex
+    /// The SAME preset the registered integer-edit composite carries, so the
+    /// handwritten region reads one configuration instead of a second copy.
+    private let compositePreset: CjguiRetentionPreset
     private var lastOutcome: String
     private var observedStructureVersion: Int64
     private var revisionValue: Int64
 
-    public init(domain: CjguiRuleSetEditingDomain) {
+    public init(domain: CjguiRuleSetEditingDomain, presetOverride!: String = "") {
         this.domain = domain
         this.lock = Mutex()
-        this.catalog = CjguiRuleSetGeneratedRegion.buildCatalog(domain)
+        let built = CjguiRuleSetGeneratedRegion.buildCatalog(domain, presetOverride: presetOverride)
+        this.catalog = built[0]
+        this.compositePreset = built[1].primary()
         this.holder = CjguiGeneratedUiStructureHolder(catalog,
             rootScope: CjguiComposableUiIdentityScope("rule-generated"))
         this.lastOutcome = "尚未提交生成结构"
         this.observedStructureVersion = 0
         this.revisionValue = 1
+    }
+
+    /// The preset the handwritten region must use as well: the same value the
+    /// registered composite writes.
+    public func retentionPreset(): CjguiRetentionPreset {
+        return compositePreset
     }
 
     /// The generated capability catalog is derived from the application's own
@@ -40,7 +51,8 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     /// form already uses. There is no second, hand-maintained field list, so a
     /// field cannot be named "retention" in one place and "retentionCount" in
     /// another.
-    static func buildCatalog(domain: CjguiRuleSetEditingDomain): CjguiGeneratedUiCapabilityCatalog {
+    static func buildCatalog(domain: CjguiRuleSetEditingDomain,
+                             presetOverride!: String = ""): (CjguiGeneratedUiCapabilityCatalog, CjguiRetentionPresetConfig) {
         let catalog = CjguiGeneratedUiCapabilityCatalog()
         let containerProperties = ArrayList<CjguiGeneratedUiPropertySpec>([
             CjguiGeneratedUiPropertySpec("gap", "INTEGER", minimum: 0, maximum: 32),
@@ -69,7 +81,25 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         // One definition: the domain's shared form binding (the same object the
         // handwritten form field list and the external field read come from).
         let _ = catalog.registerFields(CjguiGeneratedUiFieldSpec.fromFormBinding(domain.formBinding()))
-        return catalog
+        // The reusable integer-edit composite (numeric input + preset button),
+        // registered with presets derived from the field's OWN declared bounds so
+        // the application keeps no second copy of the business limit. A dedicated
+        // negative-control launch may configure an out-of-range preset instead;
+        // the owner's rule then refuses it rather than the widget clamping it.
+        let retention = catalog.fieldFor("retentionCount")
+        // A dedicated negative-control launch may configure an explicit
+        // (deliberately out-of-range) preset; a normal launch derives them from
+        // the field's own declared bounds.
+        let presetConfig = if (presetOverride.size > 0) {
+            CjguiRetentionPresetConfig.explicit(presetOverride)
+        } else {
+            match (retention) {
+                case Some(field) => CjguiRetentionPresetConfig.fromDeclaredBounds(field.minimum, field.maximum)
+                case None => CjguiRetentionPresetConfig.explicit("30")
+            }
+        }
+        let _ = CjguiRetentionIntegerEditComposite.registerInto(catalog, presetConfig)
+        return (catalog, presetConfig)
     }
 
     public func revision(): Int64 {
@@ -348,80 +378,48 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     }
 
     public func handleEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
-        // Generated field edits: the operation name the accepted node carries
-        // comes from the field's own definition (CjguiGeneratedUiFieldSpec), so
-        // this routing never hardcodes EDIT_DRAFT_TEXT/EDIT_DRAFT_BOOLEAN and a
-        // field whose owner uses a different writer would still route correctly.
-        let operation = event.node.operationActionName
-        if (operation.size > 0) {
-            let key = holder.keyForNodeId(event.node.nodeId)
-            if (key.isEmpty()) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let spec = match (holder.acceptedNodeForKey(key)) {
+        // One public adapter resolves the raw control event into either a field
+        // edit (with the fingerprinted owner binding) or a declared action. It is
+        // also what makes a COMPOSITE element work: a preset button activates
+        // rather than "changes text", and the adapter resolves it from the
+        // element's declared role instead of gating on the field's editor kind,
+        // so a preset on an INTEGER field is never swallowed.
+        let intent = holder.resolveIntent(event.node, event.eventKind, event.text)
+        if (intent.isFieldEdit()) {
+            let field = match (fieldSpec(intent.fieldId)) {
                 case Some(value) => value
                 case None => return CjguiComposableUiDispatchResult(false)
             }
-            if (spec.fieldId.isEmpty()) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let field = match (fieldSpec(spec.fieldId)) {
-                case Some(value) => value
-                case None => return CjguiComposableUiDispatchResult(false)
-            }
-            // The event is only valid for the accepted generation of this
-            // field: same field, same declared writer, same shared resource.
-            if (field.writeActionName != operation || event.node.fieldId != spec.fieldId) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let sharedResource = field.resourceId
-            if (sharedResource < 0 || event.node.resourceId != sharedResource) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let target = event.node.operationResourceId
-            if (target < 0) {
-                // No owner binding was accepted for this node: reject instead
-                // of guessing a target.
-                return CjguiComposableUiDispatchResult(false)
-            }
-            // Which kind carries a change is part of the field definition, so a
-            // focus/scroll/activation event on an editor can never be turned
-            // into a write, and a real boolean press (reported as a boolean
-            // change) is never filtered out.
-            if (!field.acceptsChangeEventKind(event.eventKind)) {
+            if (intent.ownerTargetResourceId < 0) {
                 return CjguiComposableUiDispatchResult(false)
             }
             if (field.editorKind == "BOOLEAN") {
-                let next = if (event.text == "true" || event.text == "false") {
-                    event.text == "true"
-                } else {
-                    let current = draftBoolean(spec.fieldId) ?? false
-                    !current
-                }
-                let result = domain.editBooleanForCollectionItemFromHuman(target, sharedResource, next)
+                let result = domain.editBooleanForCollectionItemFromHuman(intent.ownerTargetResourceId,
+                    field.resourceId, intent.value.booleanValue)
                 return finishGeneratedEdit(result, "布尔草稿")
             }
-            if (field.editorKind != "TEXT" && field.editorKind != "INTEGER") {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let result = domain.editTextForCollectionItemFromHuman(target, sharedResource, event.text,
-                event.selectionStart, event.selectionEnd)
+            let result = domain.editTextForCollectionItemFromHuman(intent.ownerTargetResourceId,
+                field.resourceId, intent.value.stringValue, event.selectionStart, event.selectionEnd)
             return finishGeneratedEdit(result, "文本草稿")
         }
-        if (event.node.actionName != "GENERATED_ACTION") {
-            return CjguiComposableUiDispatchResult(false)
+        if (intent.isAction()) {
+            // The key comes from the accepted identity map, so a stale key can
+            // never execute a different object's action.
+            let result = executeAction(intent.actionName, intent.nodeKey)
+            return CjguiComposableUiDispatchResult(result.applied)
         }
-        // Events resolve through the accepted structure's own identity map, so
-        // a stale key can never execute a different object's action.
-        let key = holder.keyForNodeId(event.node.nodeId)
-        if (key.isEmpty()) {
-            return CjguiComposableUiDispatchResult(false)
-        }
-        let actionName = holder.actionNameForKey(key)
-        if (actionName.isEmpty()) {
-            return CjguiComposableUiDispatchResult(false)
-        }
-        let result = executeAction(actionName, key)
-        return CjguiComposableUiDispatchResult(result.applied)
+        return CjguiComposableUiDispatchResult(false)
     }
+
+    /// Accepted composite element node id for one instance key, so a consumer (or
+    /// a verification script) can address the element without knowing its id.
+    public func acceptedCompositeElementNodeId(instanceKey: String, elementKey: String): Int64 {
+        for (binding in holder.compositeElementNodeIdsForKey(instanceKey)) {
+            if (binding.elementKey == elementKey) {
+                return binding.nodeId
+            }
+        }
+        return -1
+    }
+
 }

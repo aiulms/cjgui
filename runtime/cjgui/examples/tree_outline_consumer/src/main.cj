@@ -17,10 +17,19 @@ let CJGUI_CATALOG_LIST_NODE_ID: Int64 = 27
 let CJGUI_CATALOG_ROW_IDENTITY_SCOPE: CjguiComposableUiIdentityScope =
     CjguiComposableUiIdentityScope("catalog-rows")
 
-public class CatalogSource <: CjguiComposableUiTreeDataSource {
+public class CatalogSource <: CjguiComposableUiTreeDataSource &
+    CjguiComposableUiTreeContentUpdateSource {
     public let domains: ArrayList<String>
     public let topicsPerDomain: Int64
     public let entriesPerTopic: Int64
+    // Content-only overrides: the owner's current display label per stable key.
+    // A rename changes no parent, order or kind, so the projection may patch the
+    // row by key instead of rebuilding the whole logical tree.
+    private let labels: HashMap<String, String> = HashMap<String, String>()
+    private var contentVersionValue: Int64 = 0
+    private var lastContentKeys: ArrayList<String> = ArrayList<String>()
+    private var lastContentLabels: ArrayList<String> = ArrayList<String>()
+    private var lastChangeDescribable: Bool = false
 
     public init(domains: ArrayList<String>, topicsPerDomain: Int64, entriesPerTopic: Int64) {
         this.domains = domains
@@ -51,25 +60,102 @@ public class CatalogSource <: CjguiComposableUiTreeDataSource {
     public func childAt(parentKey: String, index: Int64): CjguiComposableUiTreeNode {
         let numbers = numericSegments(parentKey)
         if (numbers.size == 0) {
-            let name = domains[index]
+            let key = domainKey(index)
             return CjguiComposableUiTreeNode(
-                domainKey(index), name, 100 + index, true, selectable: false)
+                key, labelFor(key, domains[index]), 100 + index, true, selectable: false)
         }
         if (numbers.size == 1) {
             let domainIndex = numbers[0]
+            let key = topicKey(domainIndex, index)
             return CjguiComposableUiTreeNode(
-                topicKey(domainIndex, index), "主题 ${domainIndex}.${index}",
+                key, labelFor(key, "主题 ${domainIndex}.${index}"),
                 200 + domainIndex * 10 + index, true, selectable: false)
         }
         if (numbers.size == 2) {
             let domainIndex = numbers[0]
             let topicIndex = numbers[1]
+            let key = entryKey(domainIndex, topicIndex, index)
             return CjguiComposableUiTreeNode(
-                entryKey(domainIndex, topicIndex, index),
-                "条目 ${domainIndex}.${topicIndex}.${index}",
+                key, labelFor(key, "条目 ${domainIndex}.${topicIndex}.${index}"),
                 300 + domainIndex * 100 + topicIndex * 10 + index, false, selectable: true)
         }
         return CjguiComposableUiTreeNode("missing", "missing", -1, false, selectable: false)
+    }
+
+    private func labelFor(key: String, fallback: String): String {
+        if (let Some(value) <- labels.get(key)) {
+            return value
+        }
+        return fallback
+    }
+
+    /// Owner-side content change: rename one existing domain/topic/entry. The
+    /// parent, order and kind are untouched, so this is a content-only change.
+    /// An unknown key is refused instead of silently creating a row.
+    ///
+    /// Identity is checked against the CANONICAL key rebuilt from the parsed
+    /// segments, not against "the segments look plausible": parsing only the
+    /// digit runs would accept `domain-0garbage` or `domain-0-topic-1-junk` as
+    /// valid keys, bump the version and notify, while the real entry never
+    /// changed. A refused key changes no label, no version and no notification.
+    public func renameEntry(key: String, label: String): Bool {
+        if (key.size == 0 || label.size == 0) {
+            return false
+        }
+        let numbers = numericSegments(key)
+        if (numbers.size == 0 || numbers[0] < 0 || numbers[0] >= domains.size) {
+            return false
+        }
+        let canonical = match (numbers.size) {
+            case 1 => domainKey(numbers[0])
+            case 2 => topicKey(numbers[0], numbers[1])
+            case 3 => entryKey(numbers[0], numbers[1], numbers[2])
+            case _ => ""
+        }
+        if (canonical.isEmpty() || key != canonical) {
+            return false
+        }
+        let isTopic = numbers.size == 2 && numbers[1] >= 0 && numbers[1] < topicsPerDomain
+        let isEntry = numbers.size == 3 && numbers[1] >= 0 && numbers[1] < topicsPerDomain &&
+            numbers[2] >= 0 && numbers[2] < entriesPerTopic
+        if (!(numbers.size == 1 || isTopic || isEntry)) {
+            return false
+        }
+        labels.add(key, label)
+        lastContentKeys = ArrayList<String>([key])
+        lastContentLabels = ArrayList<String>([label])
+        lastChangeDescribable = true
+        contentVersionValue += 1
+        return true
+    }
+
+    /// An owner change that is NOT content-only (a row appears or disappears):
+    /// the projection must rebuild.
+    public func markStructuralChange(): Unit {
+        lastContentKeys = ArrayList<String>()
+        lastContentLabels = ArrayList<String>()
+        lastChangeDescribable = false
+        contentVersionValue += 1
+    }
+
+    public func contentVersion(): Int64 {
+        return contentVersionValue
+    }
+
+    public func contentUpdates(sinceVersion: Int64): ?ArrayList<CjguiComposableUiTreeContentUpdate> {
+        if (sinceVersion == contentVersionValue) {
+            return Some(ArrayList<CjguiComposableUiTreeContentUpdate>())
+        }
+        if (sinceVersion == contentVersionValue - 1 && lastChangeDescribable) {
+            let updates = ArrayList<CjguiComposableUiTreeContentUpdate>()
+            var index: Int64 = 0
+            while (index < lastContentKeys.size) {
+                updates.add(CjguiComposableUiTreeContentUpdate(lastContentKeys[index], lastContentLabels[index]))
+                index += 1
+            }
+            return Some(updates)
+        }
+        return None
     }
 
     // "domain-0-topic-1-entry-2" -> [0, 1, 2]
@@ -112,9 +198,24 @@ public class CatalogController <: CjguiComposableUiController {
 
     public init(source: CatalogSource) {
         this.source = source
-        this.projection = CjguiComposableUiTreeProjection(source)
-        this.selection = CjguiComposableUiTreeSelection(this.projection)
+        let treeProjection = CjguiComposableUiTreeProjection(source)
+        // The source can prove content-only changes, so a rename patches the row
+        // by key instead of re-walking the logical tree.
+        treeProjection.attachContentUpdateSource(source)
+        treeProjection.markSourceIndexCurrent()
+        this.projection = treeProjection
+        this.selection = CjguiComposableUiTreeSelection(treeProjection)
         this.listState = CjguiComposableUiVirtualListState()
+    }
+
+    /// Owner-side rename through the consumer, followed by a scene revision so
+    /// the window repaints the patched row.
+    public func renameEntry(key: String, label: String): Bool {
+        if (!source.renameEntry(key, label)) {
+            return false
+        }
+        revision += 1
+        return true
     }
 
     public func uiSceneVersion(): Int64 {
@@ -348,7 +449,13 @@ public class CatalogController <: CjguiComposableUiController {
     }
 
     private func syncWithData(): Unit {
+        // Content-only change: patch the changed rows by key (no walk). Anything
+        // structural or undescribable still takes the rebuild path.
+        if (projection.refreshContentOnly()) {
+            return
+        }
         let _ = projection.rebuild()
+        projection.markSourceIndexCurrent()
     }
 }
 

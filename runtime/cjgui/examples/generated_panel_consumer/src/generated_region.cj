@@ -31,10 +31,13 @@ public class CjguiTaskFieldDefinition {
     public let writer: String        // owner operation, "" when none
     public let argument: String      // the writer's own argument name
     public let required: Bool
-    public let maximumLength: Int64  // 0 = no declared limit
+    /// 0 = no declared limit. Unit: Unicode scalar values (Rune), not bytes.
+    public let maximumLength: Int64
+    private let condition: ?CjguiSharedFieldWriteCondition
 
     public init(fieldId: String, label: String, editorKind: String, resourceId: Int64,
-                writer: String, argument: String, required!: Bool = false, maximumLength!: Int64 = 0) {
+                writer: String, argument: String, required!: Bool = false, maximumLength!: Int64 = 0,
+                condition!: ?CjguiSharedFieldWriteCondition = None) {
         this.fieldId = fieldId
         this.label = label
         this.editorKind = editorKind
@@ -43,37 +46,59 @@ public class CjguiTaskFieldDefinition {
         this.argument = argument
         this.required = required
         this.maximumLength = maximumLength
+        this.condition = condition
     }
 
-    /// The one rule source of this field. It returns "" when the value is
-    /// acceptable and the reason otherwise; the owner keeps the final authority
-    /// (it rejects the write itself), and the handwritten pane asks the same
-    /// predicate before it offers the write.
+    /// The owner-facing rule of this field for one target resource. The
+    /// handwritten pane, the generated editor and an external invocation all
+    /// hand this same object to the owner entry, which enforces it inside its
+    /// own transaction.
+    public func rule(targetResourceId: Int64): CjguiSharedFieldRule {
+        return CjguiSharedFieldRule(fieldId, editorKind, targetResourceId, writer, argument,
+            required: required, maximumLength: maximumLength, condition: condition)
+    }
+
+    /// Immediate feedback for a pane: it evaluates the declared constraint
+    /// through the very rule object the owner enforces, so the length unit and
+    /// the boundary cannot drift between the pane and the owner. The owner
+    /// stays authoritative - this never writes.
     public func rejectionFor(value: String): String {
-        if (required && value.trim().size == 0) {
-            return "${fieldId}_required"
-        }
-        if (maximumLength > 0 && value.size > maximumLength) {
-            return "${fieldId}_too_long"
+        return rule(0).declaredTextRejection(value)
+    }
+}
+
+/// The application's own business condition of the title field: once the task
+/// has been submitted, its title is frozen. This is a business condition, not a
+/// version conflict - the request can be legal in form and still be refused
+/// until the task is reopened.
+private class CjguiTaskTitleFrozenWhenSubmitted <: CjguiSharedFieldWriteCondition {
+    public func rejectionFor(request: CjguiSharedFieldWriteRequest): String {
+        if (request.currentMarked) {
+            return "title_frozen_after_submit"
         }
         return ""
     }
 }
 
 /// The single field definition of this consumer: printed by the handwritten
-/// pane, the generated catalog and the external field readbacks.
+/// pane, the generated catalog and the external field readbacks, and installed
+/// into the owner as the rules every write is checked against.
 public class CjguiTaskFields {
     public static let titleResourceId: Int64 = 8101
     public static let markedResourceId: Int64 = 8102
+    public static let notesResourceId: Int64 = 8103
 
     /// The authored definition list. A new field is declared here once and is
     /// then visible to the handwritten pane, the generated catalog and the
-    /// external query.
+    /// external query, and enforced by the owner - with no generation-specific
+    /// switch and no second validation copy.
     public static func definitions(): ArrayList<CjguiTaskFieldDefinition> {
         return ArrayList<CjguiTaskFieldDefinition>([
             CjguiTaskFieldDefinition("title", "当前任务", "TEXT", titleResourceId, "SET_TITLE", "title",
-                required: true, maximumLength: 120),
-            CjguiTaskFieldDefinition("marked", "提交状态", "BOOLEAN", markedResourceId, "SET_MARKED", "isMarked")
+                required: true, maximumLength: 120, condition: Some(CjguiTaskTitleFrozenWhenSubmitted())),
+            CjguiTaskFieldDefinition("marked", "提交状态", "BOOLEAN", markedResourceId, "SET_MARKED", "isMarked"),
+            CjguiTaskFieldDefinition("notes", "备注", "TEXT", notesResourceId, "SET_NOTES", "notes",
+                maximumLength: 200)
         ])
     }
 
@@ -86,13 +111,54 @@ public class CjguiTaskFields {
         return CjguiTaskFieldDefinition("", "", "", -1, "", "")
     }
 
+    /// Declared fields of one editor kind, in declaration order. The handwritten
+    /// pane builds its inputs from this, so adding a field does not require a
+    /// pane edit.
+    public static func definitionsOfKind(editorKind: String): ArrayList<CjguiTaskFieldDefinition> {
+        let result = ArrayList<CjguiTaskFieldDefinition>()
+        for (field in definitions()) {
+            if (field.editorKind == editorKind) {
+                result.add(field)
+            }
+        }
+        return result
+    }
+
+    /// Installs every declared rule for EVERY record the application exposes.
+    /// The owner only applies a field rule for a (writer, target) pair that was
+    /// really installed - it never invents one for an un-installed target - so a
+    /// multi-record consumer must wire each exposed record, not just the first.
+    public static func installIntoEveryRecord(domain: CjguiSharedOperationList): Bool {
+        for (record in domain.snapshot().records) {
+            if (!installInto(domain, record.id)) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Installs every declared rule on the owner that holds the data. After
+    /// this, the external SET_TITLE/SET_NOTES invocations, the generated editors
+    /// and the handwritten pane all pass through the same owner rule.
+    public static func installInto(domain: CjguiSharedOperationList, targetResourceId: Int64): Bool {
+        for (field in definitions()) {
+            if (field.writer.size == 0) {
+                continue
+            }
+            if (!domain.installFieldRule(field.rule(targetResourceId))) {
+                return false
+            }
+        }
+        return true
+    }
+
     /// The shared form binding the handwritten pane and the external field read
     /// use, derived from the same definition list.
     public static func definition(): CjguiSharedFormBinding {
         let descriptors = ArrayList<CjguiSharedFormFieldDescriptor>()
         for (field in definitions()) {
             descriptors.add(CjguiSharedFormFieldDescriptor(field.resourceId, field.fieldId, field.label,
-                field.editorKind, required: field.required))
+                field.editorKind, required: field.required, maximumLength: field.maximumLength))
         }
         return CjguiSharedFormBinding(descriptors)
     }
@@ -105,7 +171,8 @@ public class CjguiTaskFields {
         let specs = ArrayList<CjguiGeneratedUiFieldSpec>()
         for (field in definitions()) {
             specs.add(CjguiGeneratedUiFieldSpec(field.fieldId, field.label, field.editorKind,
-                field.resourceId, writeActionName: field.writer, required: field.required))
+                field.resourceId, writeActionName: field.writer, required: field.required,
+                maximumLength: field.maximumLength))
         }
         return specs
     }
@@ -158,6 +225,10 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("SET_TITLE", "写回任务标题"))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("TOGGLE_MARKED", "切换提交状态"))
         let _ = catalog.registerFields(CjguiTaskFields.generatedSpecs())
+        // The application's own composite card. Registering a second component
+        // kind changes this registration call and that component's file only:
+        // no framework dispatch or kind switch is touched.
+        let _ = CjguiTaskEditCardComposite.registerInto(catalog)
         return catalog
     }
 
@@ -218,11 +289,23 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         return selectedRecordId()
     }
 
-    /// The generated title editor presents the live owner value. This domain
-    /// applies immediately, so there is no separate draft to prefer.
+    /// The generated editor presents the live owner value of ITS OWN field. This
+    /// domain applies immediately, so there is no separate draft to prefer.
+    /// Answering the title for every text field made the notes editor show (and
+    /// the external field read publish) the title's value.
     public func draftText(fieldId: String): String {
-        if (fieldId != "title") { return "" }
-        return titleOf(selectedRecordId())
+        return fieldTextValue(fieldId, selectedRecordId())
+    }
+
+    /// The owner's current value of one declared text field.
+    private func fieldTextValue(fieldId: String, recordId: Int64): String {
+        for (record in domain.snapshot().records) {
+            if (record.id != recordId) { continue }
+            if (fieldId == "title") { return record.title }
+            if (fieldId == "notes") { return record.notes }
+            return ""
+        }
+        return ""
     }
 
     public func appliedText(fieldId: String): String {
@@ -292,7 +375,9 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 builder.append("FIELD ${fieldId} ${spec.resourceId} DRAFT_HEX ${hex} APPLIED_HEX ${hex} " +
                     "ERROR none FOCUS 0 SELECTION 0 0 VERSION ${domain.version()}\n")
             } else {
-                let value = titleOf(recordId)
+                // Each field publishes ITS OWN value: a reader that resolves a
+                // field id must not receive another field's content.
+                let value = fieldTextValue(fieldId, recordId)
                 builder.append("FIELD ${fieldId} ${spec.resourceId} DRAFT_HEX ${encodeHex(value)} " +
                     "APPLIED_HEX ${encodeHex(value)} ERROR none FOCUS 1 SELECTION 0 0 " +
                     "VERSION ${domain.version()}\n")
@@ -411,71 +496,63 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     }
 
     public func handleEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
-        // Generated field editors write through this domain's own human owner
-        // operation, exactly like the handwritten pane. The operation name and
-        // the binding resource come from the field's single definition, so a
-        // stale or rebound node cannot write another field or record.
-        let operation = event.node.operationActionName
-        if (operation.size > 0 && (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE ||
-            event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_TEXT_CHANGED ||
-            event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_BOOLEAN_CHANGED)) {
-            let key = holder.keyForNodeId(event.node.nodeId)
-            if (key.isEmpty()) {
+        // One public adapter resolves the raw control event into a field edit
+        // (with the fingerprint owner binding the accepted node carried) or a
+        // declared action. It also serves COMPOSITE elements: a card field is not
+        // distinguishable by control type, and the adapter never gates on the
+        // field's editor kind, so a composite editor is not dropped.
+        let intent = holder.resolveIntent(event.node, event.eventKind, event.text)
+        if (intent.isFieldEdit()) {
+            let definition = CjguiTaskFields.definition(intent.fieldId)
+            if (definition.fieldId.size == 0 || definition.writer.size == 0) {
+                return finishEdit(CjguiSharedOperationResult(false, false, 0, 0, "unknown_writer"),
+                    intent.fieldId)
+            }
+            if (intent.ownerTargetResourceId < 0) {
                 return CjguiComposableUiDispatchResult(false)
             }
-            let spec = match (holder.acceptedNodeForKey(key)) {
-                case Some(value) => value
-                case None => return CjguiComposableUiDispatchResult(false)
+            // A boolean control whose driver sent no projected next value toggles
+            // the owner's current value; that read is domain behaviour, not a
+            // generation-specific branch.
+            let value = if (definition.editorKind == "BOOLEAN" && event.text != "true" &&
+                event.text != "false") {
+                CjguiSharedOperationValue.boolean(!markedOf(intent.ownerTargetResourceId))
+            } else {
+                intent.value
             }
-            if (spec.fieldId.isEmpty()) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let field = match (fieldSpec(spec.fieldId)) {
-                case Some(value) => value
-                case None => return CjguiComposableUiDispatchResult(false)
-            }
-            if (field.writeActionName != operation || event.node.fieldId != spec.fieldId ||
-                event.node.resourceId != field.resourceId) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let target = event.node.operationResourceId
-            if (target < 0) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            // The change kind comes from the field's own definition: the native
-            // bridge reports a toggled boolean as `BOOLEAN_CHANGED`, not as an
-            // activation, so requiring activation here dropped every real press
-            // on the generated boolean editor.
-            if (!field.acceptsChangeEventKind(event.eventKind)) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            if (field.editorKind == "BOOLEAN") {
-                // Prefer the projected next value the bridge sent with the
-                // change; fall back to toggling the owner's current value when
-                // a driver delivers the change without text.
-                let next = if (event.text == "true" || event.text == "false") {
-                    event.text == "true"
-                } else {
-                    !markedOf(target)
-                }
-                let result = domain.setMarkedFromHuman(target, next)
-                return finishEdit(result, "提交状态")
-            }
-            let result = domain.setTitleFromHuman(target, event.text)
-            return finishEdit(result, "任务标题")
+            // The same owner entry and the same declared rule the handwritten
+            // pane and an external invocation use.
+            let result = domain.writeDeclaredFieldFromHuman(definition.rule(this.resourceId),
+                intent.ownerTargetResourceId, value)
+            return finishEdit(result, definition.label)
         }
-        if (event.node.actionName != "GENERATED_ACTION") {
-            return CjguiComposableUiDispatchResult(false)
+        if (intent.isAction()) {
+            return CjguiComposableUiDispatchResult(executeAction(intent.actionName, intent.nodeKey).applied)
         }
-        let key = holder.keyForNodeId(event.node.nodeId)
-        if (key.isEmpty()) {
-            return CjguiComposableUiDispatchResult(false)
+        return CjguiComposableUiDispatchResult(false)
+    }
+
+    /// Accepted composite element node id for one instance key, so a consumer or
+    /// a verification script can address a card element without knowing its id.
+    public func acceptedCompositeElementNodeId(instanceKey: String, elementKey: String): Int64 {
+        for (binding in holder.compositeElementNodeIdsForKey(instanceKey)) {
+            if (binding.elementKey == elementKey) {
+                return binding.nodeId
+            }
         }
-        let actionName = holder.actionNameForKey(key)
-        if (actionName.isEmpty()) {
-            return CjguiComposableUiDispatchResult(false)
+        return -1
+    }
+
+    /// Resolved binding of one accepted composite element ("label|fieldId|writer|
+    /// role"), so an external reader can see which declared field and owner
+    /// writer the framework resolved for that element.
+    public func acceptedCompositeElementSummary(instanceKey: String, elementKey: String): String {
+        for (binding in holder.compositeElementNodeIdsForKey(instanceKey)) {
+            if (binding.elementKey == elementKey) {
+                return "${binding.label}|${binding.fieldId}|${binding.writerOperation}|${binding.role}"
+            }
         }
-        return CjguiComposableUiDispatchResult(executeAction(actionName, key).applied)
+        return ""
     }
 
     private func finishEdit(result: CjguiSharedOperationResult, label: String): CjguiComposableUiDispatchResult {

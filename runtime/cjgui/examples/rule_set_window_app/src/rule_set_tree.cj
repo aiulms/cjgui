@@ -38,7 +38,8 @@ let CJGUI_RULE_SET_TREE_ROW_IDENTITY_SCOPE: CjguiComposableUiIdentityScope =
 /// copies the domain snapshot per row; child lookups are index reads over the
 /// already-derived grouping. `logicalKeys()` is the full logical existence set
 /// (records plus the two groups), independent of what is currently expanded.
-public class CjguiRuleSetTreeSource <: CjguiComposableUiTreeDataSource {
+public class CjguiRuleSetTreeSource <: CjguiComposableUiTreeDataSource &
+    CjguiComposableUiTreeContentUpdateSource {
     private let domain: CjguiRuleSetEditingDomain
     private var enabledKeys: ArrayList<String>
     private var disabledKeys: ArrayList<String>
@@ -58,6 +59,39 @@ public class CjguiRuleSetTreeSource <: CjguiComposableUiTreeDataSource {
 
     public func snapshotVersion(): Int64 {
         return snapshotVersionValue
+    }
+
+    // --- content-only update path ------------------------------------------
+    // A pure label rewrite (rename, or an apply that changed only the label)
+    // cannot move, create or remove a row, so the projection can patch the row
+    // by key instead of walking the whole logical tree. Every other change -
+    // creation, deletion, copy, enabled-group move, batch write, undo/redo, a
+    // truncated change stream or an unknown version gap - answers None and takes
+    // the rebuild path.
+
+    /// The owner's current data version (the panel's observed business version).
+    public func contentVersion(): Int64 {
+        return domain.version()
+    }
+
+    public func contentUpdates(sinceVersion: Int64): ?ArrayList<CjguiComposableUiTreeContentUpdate> {
+        let change = match (domain.contentChangeSince(sinceVersion)) {
+            case Some(value) => value
+            case None => return None
+        }
+        let updates = ArrayList<CjguiComposableUiTreeContentUpdate>()
+        var index: Int64 = 0
+        while (index < change.recordIds.size) {
+            let key = "record-${change.recordIds[index]}"
+            let label = change.labels[index]
+            // Keep this source's own view consistent, so a later childAt/rebuild
+            // reads the same value the projection just patched.
+            labelByKey.add(key, label)
+            updates.add(CjguiComposableUiTreeContentUpdate(key, label))
+            index += 1
+        }
+        snapshotVersionValue = change.version
+        return Some(updates)
     }
 
     /// Rebuilds the grouping index from the current domain snapshot. Called by
@@ -156,8 +190,13 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
 
     public init(domain: CjguiRuleSetEditingDomain) {
         this.domain = domain
-        this.source = CjguiRuleSetTreeSource(domain)
-        this.projection = CjguiComposableUiTreeProjection(source)
+        let treeSource = CjguiRuleSetTreeSource(domain)
+        let treeProjection = CjguiComposableUiTreeProjection(treeSource)
+        // The source can prove content-only changes, so a pure label rewrite
+        // patches the existing rows instead of rebuilding the whole tree.
+        treeProjection.attachContentUpdateSource(treeSource)
+        this.source = treeSource
+        this.projection = treeProjection
         this.selection = CjguiComposableUiTreeSelection(projection)
         this.listState = CjguiComposableUiVirtualListState()
         this.observedDataVersion = -1
@@ -205,8 +244,18 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
         let version = domain.snapshot().version
         if (version != observedDataVersion) {
             observedDataVersion = version
+            // Content-only change: the row set and grouping are unchanged, so the
+            // projection patches the changed rows by key (no walk, no re-index,
+            // no selection prune). Anything structural - or a change the source
+            // cannot prove - refreshes the index and rebuilds.
+            if (projection.refreshContentOnly()) {
+                return true
+            }
             source.refresh()
             projection.invalidate()
+            // The source index now matches this version, so the content-only path
+            // may start from it.
+            projection.markSourceIndexCurrent()
             selection.prune(source.logicalKeys())
             return true
         }

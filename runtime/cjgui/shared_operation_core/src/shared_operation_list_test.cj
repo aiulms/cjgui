@@ -16,11 +16,16 @@ func originalListConsumerUsesTheGenericDomainHandlerForHumanAndExternalActions()
     )
 
     let actions = list.actionDescriptors()
-    @Assert(actions.size, 4)
+    @Assert(actions.size, 5)
     @Assert(actions[2].name, "SET_MARKED")
     @Assert(actions[2].parameters[0].valueType, "BOOLEAN")
     @Assert(actions[3].name, "SET_TITLE")
     @Assert(actions[3].parameters[0].valueType, "STRING")
+    // The generic second text field. Its constraint is not hardcoded here: it
+    // comes from the application's installed field rule.
+    @Assert(actions[4].name, "SET_NOTES")
+    @Assert(actions[4].parameters[0].name, "notes")
+    @Assert(actions[4].parameters[0].valueType, "STRING")
 
     let selected = list.executeFromHuman(
         CjguiSharedOperationActionInvocation(

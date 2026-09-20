@@ -15,13 +15,17 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
     private let domain: CjguiSharedOperationList
     private let components: CjguiComposableUiComponentRegistry
     private var revision: Int64 = 1
-    private var status: String = "直接编辑当前任务；提交时才检查必填。授权协作者可修改同一内容和状态。"
-    private var taskTitleNodeId: Int64 = -1
+    private var status: String = "直接编辑当前任务；必填与长度由 owner 的字段规则在写入时执行。授权协作者可修改同一内容和状态。"
+    // Text inputs this pane mounted, by layout node id -> declared field id.
+    // The pane routes a text change by the field its own definition declared,
+    // so adding a declared text field needs no new branch here.
+    private let textInputFields: HashMap<Int64, String>
     private let generatedRegion: CjguiTaskGeneratedRegion
 
     init(domain: CjguiSharedOperationList) {
         this.domain = domain
         this.components = CjguiComposableUiComponentRegistry()
+        this.textInputFields = HashMap<Int64, String>()
         this.generatedRegion = CjguiTaskGeneratedRegion(domain, TASK_RESOURCE_ID)
     }
 
@@ -45,17 +49,24 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
         editorPane.add(cjguiComposableImage(4, "collaboration-beacon", "composable-beacon.png",
             CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64, cornerRadius: 12, clipsContent: true),
             imageResourceId: "collaboration-beacon", imageResourceVersion: 1))
-        let editor = components.use("collaboration-task-title")
-        // The handwritten input takes its field id, label and writer operation
-        // from the single definition - the same object the generated spec and
-        // the external field read use.
-        let titleField = CjguiTaskFields.definition("title")
+        // One handwritten input per declared TEXT field: the field id, label,
+        // writer operation and constraint all come from the one definition list,
+        // so a second declared field (here `notes`) appears without a pane
+        // rewrite and is enforced by the same owner rule.
         let markedField = CjguiTaskFields.definition("marked")
-        if (editor.isLive()) {
-            taskTitleNodeId = editor.nodeId("input")
-            editorPane.add(cjguiComposableTextInput(taskTitleNodeId, editor.semanticId("input"), titleField.label,
-                task.title, TASK_RESOURCE_ID, theme.input, fieldId: titleField.fieldId,
-                operationActionName: titleField.writer, displayValueRole: "applied"))
+        var textIndex: Int64 = 0
+        let textFields = CjguiTaskFields.definitionsOfKind("TEXT")
+        while (textIndex < textFields.size) {
+            let field = textFields[textIndex]
+            let editor = components.use("collaboration-task-${field.fieldId}")
+            if (editor.isLive()) {
+                let nodeId = editor.nodeId("input")
+                textInputFields.add(nodeId, field.fieldId)
+                editorPane.add(cjguiComposableTextInput(nodeId, editor.semanticId("input"), field.label,
+                    currentText(field.fieldId, task), TASK_RESOURCE_ID, theme.input, fieldId: field.fieldId,
+                    operationActionName: field.writer, displayValueRole: "applied"))
+            }
+            textIndex += 1
         }
         editorPane.add(cjguiComposableButton(7, "collaboration-submit", "提交当前任务", "HUMAN_SUBMIT", TASK_RESOURCE_ID,
             theme.primaryAction, operationActionName: markedField.writer))
@@ -83,24 +94,29 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             revision += 1
             return generated
         }
-        if (event.eventKind == 28 && event.node.nodeId == taskTitleNodeId) {
-            // The same declared rule the owner enforces: the pane refuses a
-            // value the field definition rejects instead of inventing its own.
-            let titleField = CjguiTaskFields.definition("title")
-            let rejection = titleField.rejectionFor(event.text)
-            if (rejection.size > 0) {
-                status = "任务内容未更新：${rejection}"
+        if (event.eventKind == 28) {
+            if (let Some(fieldId) <- textInputFields.get(event.node.nodeId)) {
+                let field = CjguiTaskFields.definition(fieldId)
+                // Immediate feedback through the same declared rule; the owner
+                // entry below stays authoritative and is what actually writes
+                // (or refuses) the value, so a business condition the pane
+                // cannot see is still enforced.
+                let rejection = field.rejectionFor(event.text)
+                if (rejection.size > 0) {
+                    status = "${field.label}未更新：${rejection}"
+                    revision += 1
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                let result = domain.writeDeclaredFieldFromHuman(field.rule(TASK_RESOURCE_ID),
+                    TASK_RESOURCE_ID, CjguiSharedOperationValue.string(event.text))
+                status = if (result.applied) {
+                    "${field.label}已由本地更新；共享版本 ${result.versionAfter}"
+                } else {
+                    "${field.label}未更新：${result.reason}"
+                }
                 revision += 1
-                return CjguiComposableUiDispatchResult(false)
+                return CjguiComposableUiDispatchResult(result.applied)
             }
-            let result = domain.setTitleFromHuman(TASK_RESOURCE_ID, event.text)
-            status = if (result.applied) {
-                "当前任务内容已由本地更新；共享版本 ${result.versionAfter}"
-            } else {
-                "任务内容未更新：${result.reason}"
-            }
-            revision += 1
-            return CjguiComposableUiDispatchResult(result.applied)
         }
         if (event.eventKind == 27 && event.node.actionName == "HUMAN_SUBMIT") {
             let task = taskFromSnapshot(domain.snapshot())
@@ -111,7 +127,11 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
                 revision += 1
                 return CjguiComposableUiDispatchResult(false)
             }
-            let result = domain.setMarkedFromHuman(TASK_RESOURCE_ID, true)
+            // The submit button writes the declared `marked` field through the
+            // same owner entry as every other declared field.
+            let markedField = CjguiTaskFields.definition("marked")
+            let result = domain.writeDeclaredFieldFromHuman(markedField.rule(TASK_RESOURCE_ID),
+                TASK_RESOURCE_ID, CjguiSharedOperationValue.boolean(true))
             status = if (result.applied) {
                 "当前任务已提交；共享版本 ${result.versionAfter}"
             } else {
@@ -183,6 +203,17 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
     private func displayTitle(title: String): String {
         return if (title.size == 0) { "（尚未填写）" } else { title }
     }
+
+    /// The stored value of a declared text field, read from the owner snapshot.
+    private func currentText(fieldId: String, task: CjguiSharedOperationRecord): String {
+        if (fieldId == "title") {
+            return task.title
+        }
+        if (fieldId == "notes") {
+            return task.notes
+        }
+        return ""
+    }
 }
 
 private func authorization(): CjguiSharedOperationExternalAuthorization {
@@ -193,6 +224,10 @@ private func authorization(): CjguiSharedOperationExternalAuthorization {
             CjguiSharedOperationExternalActionScope("GET_WINDOW_PROGRESS", ArrayList<Int64>(), true),
             CjguiSharedOperationExternalActionScope("SET_TITLE", ArrayList<Int64>([TASK_RESOURCE_ID]), false),
             CjguiSharedOperationExternalActionScope("SET_MARKED", ArrayList<Int64>([TASK_RESOURCE_ID]), false),
+            // The declared notes field is part of the same single definition the
+            // generated card and the handwritten pane use, so the external
+            // client that may already write the title can write it too.
+            CjguiSharedOperationExternalActionScope("SET_NOTES", ArrayList<Int64>([TASK_RESOURCE_ID]), false),
             CjguiSharedOperationExternalActionScope("GET_GENERATED_UI", ArrayList<Int64>(), true),
             CjguiSharedOperationExternalActionScope("SUBMIT_GENERATED_UI", ArrayList<Int64>(), true)
         ])
@@ -205,6 +240,14 @@ main(args: Array<String>): Int64 {
     let domain = CjguiSharedOperationList(ArrayList<CjguiSharedOperationRecord>([
         CjguiSharedOperationRecord(TASK_RESOURCE_ID, "", false)
     ]))
+    // The application installs its declared field rules for every record it
+    // exposes. Every later write - handwritten pane, generated editor or
+    // external invocation - is then checked by the same rule inside the owner
+    // transaction, and the owner never invents a rule for a target the
+    // application did not wire.
+    if (!CjguiTaskFields.installIntoEveryRecord(domain)) {
+        return 1
+    }
     let controller = CollaborationStarterController(domain)
     let host = CjguiMacosApplicationHost(
         controller,

@@ -30,6 +30,8 @@ public class CjguiGeneratedUiFieldSpec {
     public let minimum: Int64
     public let maximum: Int64
     public let required: Bool           // declared by the application's binding
+    // Declared TEXT length limit in Unicode scalar values (Rune); 0 = none.
+    public let maximumLength: Int64
 
     /// `writeActionName` may be given explicitly by an application whose owner
     /// writes immediately (for example SET_TITLE) instead of through the
@@ -37,7 +39,7 @@ public class CjguiGeneratedUiFieldSpec {
     /// consumer re-derives the writer from a field name.
     public init(fieldId: String, label: String, editorKind: String, resourceId: Int64,
                 minimum!: Int64 = 0, maximum!: Int64 = 0, writeActionName!: String = "",
-                required!: Bool = false) {
+                required!: Bool = false, maximumLength!: Int64 = 0) {
         this.fieldId = fieldId
         this.label = label
         this.editorKind = editorKind
@@ -50,6 +52,7 @@ public class CjguiGeneratedUiFieldSpec {
         this.minimum = minimum
         this.maximum = maximum
         this.required = required
+        this.maximumLength = maximumLength
     }
 
     /// The single place that maps a shared-form editor kind to the framework
@@ -115,7 +118,8 @@ public class CjguiGeneratedUiFieldSpec {
             // application declared in its one binding.
             result.add(CjguiGeneratedUiFieldSpec(descriptor.fieldId, descriptor.label,
                 descriptor.editorKind, descriptor.resourceId, minimum: descriptor.minimum,
-                maximum: descriptor.maximum, required: descriptor.required))
+                maximum: descriptor.maximum, required: descriptor.required,
+                maximumLength: descriptor.maximumLength))
         }
         return result
     }
@@ -163,6 +167,11 @@ public class CjguiGeneratedUiPresentation {
             presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL ||
             presentation == CJGUI_GENERATED_PRESENTATION_LABEL ||
             presentation == CJGUI_GENERATED_PRESENTATION_ACTION ||
+            // An application composite is presented by its own registered
+            // factory; the catalog only stores this presentation together with
+            // that factory, so accepting it here cannot degrade an unregistered
+            // kind into a label.
+            presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE ||
             presentation == "FIELD_TEXT" || presentation == "FIELD_INTEGER" ||
             presentation == "FIELD_BOOLEAN"
     }
@@ -198,6 +207,15 @@ public class CjguiGeneratedUiPresentation {
     /// that no presentation consumes is rejected, so a declared attribute
     /// cannot pass validation and then be ignored by the renderer.
     public static func isPropertyImplemented(presentation: String, name: String, valueType: String): Bool {
+        if (presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE) {
+            // A composite's declared properties are consumed by the
+            // application's own factory, which the framework cannot inspect
+            // statically. The declaration itself is the contract: a property
+            // only exists here because registerComposite accepted it with a real
+            // value type, and a description carrying anything else is still
+            // rejected as unknown_property against the SAME declaration.
+            return valueType == "STRING" || valueType == "INTEGER" || valueType == "BOOLEAN"
+        }
         if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL ||
             presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
             return (name == "gap" || name == "padding") && valueType == "INTEGER"
@@ -282,6 +300,11 @@ public class CjguiGeneratedUiCapabilityCatalog {
     private let components: ArrayList<CjguiGeneratedUiComponentSpec>
     private let actions: ArrayList<CjguiGeneratedUiActionSpec>
     private let fields: ArrayList<CjguiGeneratedUiFieldSpec>
+    // Application composites: the declared kind/elements and the compiled
+    // factory. Both are registered together, so a kind that claims the COMPOSITE
+    // presentation can never exist without a real implementation.
+    private let composites: ArrayList<CjguiCompositeComponentSpec>
+    private let compositeFactories: ArrayList<CjguiCompositeComponentFactory>
     public let maxDepth: Int64
     public let maxNodes: Int64
     public let maxPropertiesPerNode: Int64
@@ -292,6 +315,9 @@ public class CjguiGeneratedUiCapabilityCatalog {
         this.components = ArrayList<CjguiGeneratedUiComponentSpec>()
         this.actions = ArrayList<CjguiGeneratedUiActionSpec>()
         this.fields = ArrayList<CjguiGeneratedUiFieldSpec>()
+        this.composites = ArrayList<CjguiCompositeComponentSpec>()
+        this.compositeFactories = ArrayList<CjguiCompositeComponentFactory>()
+        this.lastRegistrationIssue = ""
         this.maxDepth = maxDepth
         // The declared node bound can never exceed what the framework can
         // actually mount: one component instance per node, capped by the
@@ -385,6 +411,162 @@ public class CjguiGeneratedUiCapabilityCatalog {
     }
 
     private var lastRegistrationIssue: String = ""
+
+    /// Registers an application composite kind together with its compiled
+    /// implementation. The kind is validated against the SAME rules a built-in
+    /// kind obeys (no override of a built-in kind, no duplicate, known property
+    /// value types, real field/action references, budgets within the catalog's),
+    /// and the derived component spec uses the COMPOSITE presentation. Because
+    /// spec and factory are stored atomically, a kind can never be registered
+    /// with the composite presentation but no real implementation.
+    public func registerComposite(spec: CjguiCompositeComponentSpec,
+                                  factory: CjguiCompositeComponentFactory): Bool {
+        lastRegistrationIssue = ""
+        if (spec.kind.size == 0) {
+            lastRegistrationIssue = "empty_component_kind"
+            return false
+        }
+        if (CjguiGeneratedUiPresentation.forBuiltInKind(spec.kind).size > 0) {
+            lastRegistrationIssue = "built_in_kind_not_overridable:${spec.kind}"
+            return false
+        }
+        if (let Some(_) <- componentFor(spec.kind)) {
+            lastRegistrationIssue = "duplicate_component_kind:${spec.kind}"
+            return false
+        }
+        if (spec.elements.size == 0) {
+            lastRegistrationIssue = "composite_has_no_elements:${spec.kind}"
+            return false
+        }
+        if (spec.expandedNodeLimit <= 0 || spec.expandedNodeLimit > maxNodes) {
+            lastRegistrationIssue = "composite_expanded_node_limit:${spec.kind}"
+            return false
+        }
+        if (spec.expandedDepthLimit <= 0 || spec.expandedDepthLimit > maxDepth) {
+            lastRegistrationIssue = "composite_expanded_depth_limit:${spec.kind}"
+            return false
+        }
+        // Element keys are the scoped identities: unique within the kind, and
+        // every declared parent must itself be an element.
+        let elementKeys = HashSet<String>()
+        for (element in spec.elements) {
+            if (element.elementKey.size == 0 || elementKeys.contains(element.elementKey)) {
+                lastRegistrationIssue = "composite_duplicate_element_key:${spec.kind}:${element.elementKey}"
+                return false
+            }
+            elementKeys.add(element.elementKey)
+        }
+        for (element in spec.elements) {
+            if (!element.parentKey.isEmpty() && !elementKeys.contains(element.parentKey)) {
+                lastRegistrationIssue = "composite_unknown_parent:${spec.kind}:${element.elementKey}"
+                return false
+            }
+            validateCompositeElement(spec, element)
+            if (!lastRegistrationIssue.isEmpty()) {
+                return false
+            }
+        }
+        // Property value types must be real, and a declared property nothing can
+        // consume is rejected exactly like a built-in property that no
+        // presentation reads.
+        for (property in spec.properties) {
+            if (property.valueType != "STRING" && property.valueType != "INTEGER" &&
+                property.valueType != "BOOLEAN") {
+                lastRegistrationIssue = "unknown_property_type:${spec.kind}:${property.name}"
+                return false
+            }
+        }
+        let derived = CjguiGeneratedUiComponentSpec(spec.kind, spec.properties, spec.allowsChildren,
+            childLimit: spec.childLimit, presentation: CJGUI_GENERATED_PRESENTATION_COMPOSITE)
+        if (!registerComponent(derived)) {
+            return false
+        }
+        composites.add(spec)
+        compositeFactories.add(factory)
+        return true
+    }
+
+    private func validateCompositeElement(spec: CjguiCompositeComponentSpec,
+                                          element: CjguiCompositeElementSpec): Unit {
+        let role = element.role
+        if (role == CJGUI_COMPOSITE_ELEMENT_CONTAINER) {
+            if (!element.fieldId.isEmpty() || !element.actionName.isEmpty()) {
+                lastRegistrationIssue = "composite_container_binding:${spec.kind}:${element.elementKey}"
+            }
+            return
+        }
+        if (role == CJGUI_COMPOSITE_ELEMENT_FIELD || role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
+            if (element.fieldId.isEmpty()) {
+                lastRegistrationIssue = "composite_field_required:${spec.kind}:${element.elementKey}"
+                return
+            }
+            if (let None <- fieldFor(element.fieldId)) {
+                lastRegistrationIssue = "unknown_field:${spec.kind}:${element.fieldId}"
+                return
+            }
+            let field = match (fieldFor(element.fieldId)) {
+                case Some(value) => value
+                case None => CjguiGeneratedUiFieldSpec("", "", "", -1)
+            }
+            if (!field.isWritable()) {
+                lastRegistrationIssue = "composite_field_has_no_writer:${spec.kind}:${element.fieldId}"
+                return
+            }
+            if (role == CJGUI_COMPOSITE_ELEMENT_PRESET && element.presetValue.size == 0) {
+                lastRegistrationIssue = "composite_preset_value_required:${spec.kind}:${element.elementKey}"
+                return
+            }
+            if (!element.actionName.isEmpty()) {
+                lastRegistrationIssue = "composite_field_element_action:${spec.kind}:${element.elementKey}"
+            }
+            return
+        }
+        if (role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
+            if (element.actionName.isEmpty()) {
+                lastRegistrationIssue = "composite_action_required:${spec.kind}:${element.elementKey}"
+                return
+            }
+            if (let None <- actionFor(element.actionName)) {
+                lastRegistrationIssue = "unknown_action:${spec.kind}:${element.actionName}"
+                return
+            }
+            if (!element.fieldId.isEmpty()) {
+                lastRegistrationIssue = "composite_action_element_field:${spec.kind}:${element.elementKey}"
+            }
+            return
+        }
+        lastRegistrationIssue = "composite_unknown_role:${spec.kind}:${element.elementKey}"
+    }
+
+    public func compositeFor(kind: String): ?CjguiCompositeComponentSpec {
+        for (spec in composites) {
+            if (spec.kind == kind) {
+                return Some(spec)
+            }
+        }
+        return None
+    }
+
+    public func compositeFactoryFor(kind: String): ?CjguiCompositeComponentFactory {
+        var index: Int64 = 0
+        while (index < composites.size) {
+            if (composites[index].kind == kind) {
+                return Some(compositeFactories[index])
+            }
+            index += 1
+        }
+        return None
+    }
+
+    /// Declared composite kinds, so an external reader can discover them beside
+    /// the built-in component kinds.
+    public func compositeKinds(): ArrayList<String> {
+        let result = ArrayList<String>()
+        for (spec in composites) {
+            result.add(spec.kind)
+        }
+        return result
+    }
 
     /// Reason text of the most recent rejected registration ("" when the last
     /// registration succeeded).
@@ -810,6 +992,14 @@ public class CjguiGeneratedUiStructureHolder {
     private var nodeIdToKey: HashMap<Int64, String>
     // Candidate identity table, published only by the commit hook.
     private var candidateNodeIdToKey: HashMap<Int64, String>
+    // Accepted composite element bindings by node identity. A composite element
+    // (field / preset / action) resolves its owner binding from here, so no
+    // consumer re-derives it from a control type or a field name.
+    private var acceptedCompositeElements: HashMap<Int64, CjguiCompositeElementBinding>
+    private var candidateCompositeElements: HashMap<Int64, CjguiCompositeElementBinding>
+    // Counters proving the expanded-subtree budget is really checked.
+    private var lastExpandedNodeCount: Int64
+    private var lastExpandedDepth: Int64
 
     public init(catalog: CjguiGeneratedUiCapabilityCatalog,
                 rootScope!: CjguiComposableUiIdentityScope = CjguiComposableUiIdentityScope("generated-root")) {
@@ -828,6 +1018,20 @@ public class CjguiGeneratedUiStructureHolder {
         this.renderFailurePath = ""
         this.nodeIdToKey = HashMap<Int64, String>()
         this.candidateNodeIdToKey = HashMap<Int64, String>()
+        this.acceptedCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
+        this.candidateCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
+        this.lastExpandedNodeCount = 0
+        this.lastExpandedDepth = 0
+    }
+
+    /// Nodes the last composite expansion really produced, and its real depth.
+    /// Evidence for the budget check, not a declared value.
+    public func lastCompositeExpansionNodes(): Int64 {
+        return lastExpandedNodeCount
+    }
+
+    public func lastCompositeExpansionDepth(): Int64 {
+        return lastExpandedDepth
     }
 
     /// Scene-accepted structure version. It advances only when the window
@@ -945,7 +1149,13 @@ public class CjguiGeneratedUiStructureHolder {
             return true
         }
         if (!candidatePrepared) {
-            lastSceneOutcomeValue = "scene_rejected:candidate_not_prepared"
+            // Keep the SPECIFIC rejection recorded by the failed candidate build
+            // (for example composite_expansion_node_limit). Replacing it with the
+            // generic "candidate_not_prepared" would hide the real cause from the
+            // evidence and from a caller deciding how to recover.
+            if (!lastSceneOutcomeValue.startsWith("scene_rejected:")) {
+                lastSceneOutcomeValue = "scene_rejected:candidate_not_prepared"
+            }
             return false
         }
         if (!registry.prepareTransaction()) {
@@ -970,6 +1180,10 @@ public class CjguiGeneratedUiStructureHolder {
             accepted = Some(structure)
             acceptedVersion = candidateVersion
             nodeIdToKey = candidateNodeIdToKey
+            // The composite element bindings are part of the same accepted
+            // transaction: an event on a composite element resolves its owner
+            // binding only from the accepted table.
+            acceptedCompositeElements = candidateCompositeElements
             candidate = None
             candidatePrepared = false
             // No candidate is pending any more: the public candidate read must
@@ -1021,6 +1235,9 @@ public class CjguiGeneratedUiStructureHolder {
                             provider: CjguiGeneratedUiBindingProvider,
                             intoAcceptedTable: Bool): CjguiGeneratedUiRendered {
         nodeIdToKey = HashMap<Int64, String>()
+        acceptedCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
+        lastExpandedNodeCount = 0
+        lastExpandedDepth = 0
         renderFailureReason = ""
         renderFailurePath = ""
         if (!registry.begin()) {
@@ -1043,6 +1260,7 @@ public class CjguiGeneratedUiStructureHolder {
     private func renderIntoCandidate(structure: CjguiGeneratedUiNodeSpec,
                                      provider: CjguiGeneratedUiBindingProvider): CjguiGeneratedUiRendered {
         candidateNodeIdToKey = HashMap<Int64, String>()
+        candidateCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
         renderFailureReason = ""
         renderFailurePath = ""
         let node = nodeFor(structure, provider, false)
@@ -1077,6 +1295,137 @@ public class CjguiGeneratedUiStructureHolder {
         return ""
     }
 
+    /// Accepted composite element binding for a node identity, or None when the
+    /// node is an ordinary generated node.
+    public func compositeElementForNodeId(nodeId: Int64): ?CjguiCompositeElementBinding {
+        return acceptedCompositeElements.get(nodeId)
+    }
+
+    /// Accepted composite element bindings belonging to one instance key, so a
+    /// consumer (or a test) can address an element without knowing its node id.
+    public func compositeElementNodeIdsForKey(key: String): ArrayList<CjguiCompositeElementBinding> {
+        let result = ArrayList<CjguiCompositeElementBinding>()
+        for ((_, binding) in acceptedCompositeElements) {
+            if (keyForNodeId(binding.nodeId) == key) {
+                result.add(binding)
+            }
+        }
+        return result
+    }
+
+    /// PUBLIC BINDING ADAPTER: resolves a raw control event into a typed intent,
+    /// so every consumer dispatches through one contract instead of guessing from
+    /// the control type.
+    ///
+    /// Two behaviours this fixes:
+    ///   * a composite PRESET button activates (it is not a text change), yet it
+    ///     must reach the field's owner writer with its declared constant - the
+    ///     adapter resolves it from the element's role, never from the field's
+    ///     editor kind;
+    ///   * a control whose event is not a change for its field must not be
+    ///     swallowed: if the accepted node declares an action, the adapter
+    ///     resolves the ACTION intent instead of silently returning nothing.
+    public func resolveIntent(node: CjguiComposableUiLayoutNode, eventKind: Int64,
+                              text: String): CjguiGeneratedUiIntent {
+        let key = keyForNodeId(node.nodeId)
+        if (key.isEmpty()) {
+            return CjguiGeneratedUiIntent.none("unknown_node")
+        }
+        // Composite element: the role and the resolved owner binding are the
+        // framework's, not the consumer's.
+        if (let Some(element) <- acceptedCompositeElements.get(node.nodeId)) {
+            if (element.role == CJGUI_COMPOSITE_ELEMENT_FIELD) {
+                let field = match (catalog.fieldFor(element.fieldId)) {
+                    case Some(value) => value
+                    case None => return CjguiGeneratedUiIntent.none("unknown_field")
+                }
+                if (!field.acceptsChangeEventKind(eventKind)) {
+                    return CjguiGeneratedUiIntent.none("event_not_a_field_change")
+                }
+                let value = if (field.editorKind == "BOOLEAN") {
+                    CjguiSharedOperationValue.boolean(if (text == "true" || text == "false") {
+                        text == "true"
+                    } else {
+                        !element.draftBoolean
+                    })
+                } else {
+                    CjguiSharedOperationValue.string(text)
+                }
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "",
+                    fieldId: element.fieldId, writerOperation: element.writerOperation,
+                    ownerTargetResourceId: element.ownerTargetResourceId,
+                    argumentName: "", value: value)
+            }
+            if (element.role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
+                if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
+                    return CjguiGeneratedUiIntent.none("event_not_an_activation")
+                }
+                // The declared constant goes to the owner unchanged: an
+                // out-of-range preset must be refused by the owner's rule, never
+                // clamped here.
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "",
+                    fieldId: element.fieldId, writerOperation: element.writerOperation,
+                    ownerTargetResourceId: element.ownerTargetResourceId,
+                    value: CjguiSharedOperationValue.string(element.presetValue))
+            }
+            if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
+                if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
+                    return CjguiGeneratedUiIntent.none("event_not_an_activation")
+                }
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_ACTION, key, "",
+                    actionName: element.actionName)
+            }
+            return CjguiGeneratedUiIntent.none("composite_container_event")
+        }
+        // Ordinary generated node: keep the same verification the consumers
+        // performed themselves (declared writer, field id, binding resource), so
+        // a stale or rebound node never writes another field.
+        let spec = match (acceptedNodeForKey(key)) {
+            case Some(value) => value
+            case None => return CjguiGeneratedUiIntent.none("unknown_node_key")
+        }
+        if (!spec.fieldId.isEmpty()) {
+            let field = match (catalog.fieldFor(spec.fieldId)) {
+                case Some(value) => value
+                case None => return CjguiGeneratedUiIntent.none("unknown_field")
+            }
+            if (field.acceptsChangeEventKind(eventKind)) {
+                if (node.operationActionName.size == 0 || node.operationActionName != field.writeActionName ||
+                    node.fieldId != spec.fieldId || node.resourceId != field.resourceId) {
+                    return CjguiGeneratedUiIntent.none("node_binding_mismatch")
+                }
+                if (node.operationResourceId < 0) {
+                    return CjguiGeneratedUiIntent.none("owner_target_missing")
+                }
+                let value = if (field.editorKind == "BOOLEAN") {
+                    CjguiSharedOperationValue.boolean(if (text == "true" || text == "false") {
+                        text == "true"
+                    } else {
+                        true
+                    })
+                } else {
+                    CjguiSharedOperationValue.string(text)
+                }
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "",
+                    fieldId: spec.fieldId, writerOperation: field.writeActionName,
+                    ownerTargetResourceId: node.operationResourceId, value: value)
+            }
+            // Not a change for that field: fall through to the action intent so an
+            // activation is never swallowed by the field branch.
+        }
+        if (node.actionName == "GENERATED_ACTION") {
+            let actionName = actionNameForKey(key)
+            if (actionName.isEmpty()) {
+                return CjguiGeneratedUiIntent.none("unknown_action_key")
+            }
+            if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
+                return CjguiGeneratedUiIntent.none("event_not_an_activation")
+            }
+            return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_ACTION, key, "", actionName: actionName)
+        }
+        return CjguiGeneratedUiIntent.none("unrouted_event")
+    }
+
     /// Expands one node into ordinary components through the presentation its
     /// registered kind declares. An unregistered or unimplemented kind is an
     /// explicit render failure - it never degrades into a label. `nodeIdToKey`
@@ -1109,6 +1458,9 @@ public class CjguiGeneratedUiStructureHolder {
         }
         let style = styleFor(spec)
         let presentation = declared.presentation
+        if (presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE) {
+            return compositeFor(spec, provider, instance, intoAcceptedTable)
+        }
         if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL ||
             presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
             let group = if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL) {
@@ -1179,6 +1531,180 @@ public class CjguiGeneratedUiStructureHolder {
         if (renderFailureReason.isEmpty()) {
             renderFailureReason = reason
             renderFailurePath = key
+        }
+    }
+
+    /// Framework-allocated node identity for one composite element. The formula
+    /// matches the ordinary generated identity allocation, so a composite element
+    /// can never collide with a window's own manual node ids.
+    private func allocatedElementNodeId(instance: CjguiComposableUiComponentInstance,
+                                        elementKey: String): Int64 {
+        let registryNodeId = instance.nodeId(elementKey)
+        if (registryNodeId > 0) {
+            return 800000 + registryNodeId
+        }
+        return -1
+    }
+
+    /// Resolves one composite element from the registered field/action
+    /// definitions and the live provider. The factory never sees the catalog, so
+    /// it cannot substitute a different owner or writer.
+    private func resolveCompositeElement(element: CjguiCompositeElementSpec, nodeId: Int64,
+                                         semanticId: String,
+                                         provider: CjguiGeneratedUiBindingProvider): CjguiCompositeElementBinding {
+        if (element.role == CJGUI_COMPOSITE_ELEMENT_CONTAINER) {
+            return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId,
+                element.label)
+        }
+        if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
+            let label = if (element.label.size > 0) {
+                element.label
+            } else if (let Some(action) <- catalog.actionFor(element.actionName)) {
+                action.label
+            } else {
+                element.actionName
+            }
+            return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
+                actionName: element.actionName, actionEnabled: provider.actionAvailable(element.actionName))
+        }
+        let field = match (catalog.fieldFor(element.fieldId)) {
+            case Some(value) => value
+            case None => CjguiGeneratedUiFieldSpec("", "", "", -1)
+        }
+        let resourceId = if (field.resourceId > 0) { field.resourceId } else { nodeId }
+        let ownerTarget = provider.fieldOperationResourceId(element.fieldId)
+        let label = if (element.label.size > 0) { element.label } else { field.label }
+        if (field.editorKind == "BOOLEAN") {
+            return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
+                fieldId: element.fieldId, writerOperation: field.writeActionName,
+                ownerTargetResourceId: ownerTarget, bindingResourceId: resourceId,
+                editorKind: field.editorKind, presetValue: element.presetValue,
+                draftBoolean: provider.draftBoolean(element.fieldId) ?? false)
+        }
+        return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
+            fieldId: element.fieldId, writerOperation: field.writeActionName,
+            ownerTargetResourceId: ownerTarget, bindingResourceId: resourceId,
+            editorKind: field.editorKind, presetValue: element.presetValue,
+            draftText: provider.draftText(element.fieldId))
+    }
+
+    /// Renders one application composite. The framework allocates every
+    /// element's identity, resolves its owner binding and validates the REAL
+    /// subtree the factory returns against the declared budget before any
+    /// identity table is published. A failure keeps the previously accepted
+    /// scene and its routes.
+    private func compositeFor(spec: CjguiGeneratedUiNodeSpec,
+                              provider: CjguiGeneratedUiBindingProvider,
+                              instance: CjguiComposableUiComponentInstance,
+                              intoAcceptedTable: Bool): CjguiComposableUiNode {
+        if (let None <- catalog.compositeFor(spec.kind)) {
+            noteRenderFailure("composite_not_registered", spec.key)
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+        }
+        if (let None <- catalog.compositeFactoryFor(spec.kind)) {
+            noteRenderFailure("composite_factory_missing", spec.key)
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+        }
+        let composite = match (catalog.compositeFor(spec.kind)) {
+            case Some(value) => value
+            case None => CjguiCompositeComponentSpec("", ArrayList<CjguiGeneratedUiPropertySpec>(),
+                ArrayList<CjguiCompositeElementSpec>())
+        }
+        let factory = match (catalog.compositeFactoryFor(spec.kind)) {
+            case Some(value) => value
+            case None => CjguiCompositeMissingFactory()
+        }
+        let properties = HashMap<String, String>()
+        for ((name, value) in spec.properties) {
+            properties.add(name, value)
+        }
+        let bindings = ArrayList<CjguiCompositeElementBinding>()
+        let allocated = HashSet<Int64>()
+        for (element in composite.elements) {
+            let elementNodeId = allocatedElementNodeId(instance, element.elementKey)
+            if (elementNodeId <= 0) {
+                noteRenderFailure("composite_element_identity_missing", spec.key)
+                return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+            }
+            allocated.add(elementNodeId)
+            bindings.add(resolveCompositeElement(element, elementNodeId,
+                instance.semanticId(element.elementKey), provider))
+        }
+        let children = ArrayList<CjguiComposableUiNode>()
+        for (child in spec.children) {
+            children.add(nodeFor(child, provider, intoAcceptedTable))
+        }
+        if (!renderFailureReason.isEmpty()) {
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+        }
+        let context = CjguiCompositeBuildContext(spec.key, properties, bindings, children: children)
+        let built = factory.buildComposite(context)
+        let audit = CjguiCompositeExpansionAudit()
+        auditExpanded(built, 1, composite, allocated, audit)
+        if (audit.issue.isEmpty() && audit.seen.size != allocated.size) {
+            audit.issue = "composite_element_missing"
+        }
+        if (!audit.issue.isEmpty()) {
+            noteRenderFailure(audit.issue, spec.key)
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+        }
+        lastExpandedNodeCount = audit.count
+        lastExpandedDepth = audit.maxDepth
+        // Only a validated expansion publishes identities and bindings.
+        for (binding in bindings) {
+            if (intoAcceptedTable) {
+                nodeIdToKey.add(binding.nodeId, spec.key)
+                acceptedCompositeElements.add(binding.nodeId, binding)
+            } else {
+                candidateNodeIdToKey.add(binding.nodeId, spec.key)
+                candidateCompositeElements.add(binding.nodeId, binding)
+            }
+        }
+        return built
+    }
+
+    /// Audits the REAL expanded subtree: node count against the declared limit
+    /// and the catalog bound, depth against the declared limit, and every node
+    /// identity must be one the framework allocated for this instance exactly
+    /// once. A custom declaration therefore cannot expand past capacity, invent
+    /// an id, drop a declared element or reuse an identity.
+    private func auditExpanded(node: CjguiComposableUiNode, depth: Int64,
+                               composite: CjguiCompositeComponentSpec, allocated: HashSet<Int64>,
+                               audit: CjguiCompositeExpansionAudit): Unit {
+        if (!audit.issue.isEmpty()) {
+            return
+        }
+        audit.count += 1
+        if (audit.count > composite.expandedNodeLimit) {
+            audit.issue = "composite_expansion_node_limit"
+            return
+        }
+        if (audit.count > catalog.maxNodes) {
+            audit.issue = "composite_expansion_catalog_limit"
+            return
+        }
+        if (depth > composite.expandedDepthLimit) {
+            audit.issue = "composite_expansion_depth_limit"
+            return
+        }
+        if (depth > audit.maxDepth) {
+            audit.maxDepth = depth
+        }
+        if (node.nodeId <= 0) {
+            audit.issue = "composite_unidentified_node"
+            return
+        }
+        if (!allocated.contains(node.nodeId)) {
+            audit.issue = "composite_foreign_node_id"
+            return
+        }
+        if (audit.seen.contains(node.nodeId)) {
+            audit.issue = "composite_duplicate_node_id"
+            return
+        }
+        audit.seen.add(node.nodeId)
+        for (child in node.children()) {
+            auditExpanded(child, depth + 1, composite, allocated, audit)
         }
     }
 
@@ -1299,9 +1825,10 @@ public class CjguiGeneratedUiEncoding {
                     "writer=${if (field.writeActionName.size > 0) { field.writeActionName } else { "none" }} " +
                     "required=${if (field.required) { 1 } else { 0 }} " +
                     "min=${field.minimum} max=${field.maximum} " +
+                    "maxlen=${field.maximumLength} " +
                     "callable=${if (field.isWritable()) { 1 } else { 0 }}\n")
             } else {
-                builder.append("FIELD ${fieldId} unknown writer=none required=0 min=0 max=0 callable=0\n")
+                builder.append("FIELD ${fieldId} unknown writer=none required=0 min=0 max=0 maxlen=0 callable=0\n")
             }
         }
         builder.append("END")

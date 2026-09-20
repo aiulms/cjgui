@@ -1397,6 +1397,91 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     public func displayedSceneVersion(): Int64 {
         return renderedScene.version
     }
+
+    /// Read-only view of the window's OWN accepted scene: the displayed text of
+    /// the accepted node carrying this semantic id, or None when the accepted
+    /// scene has no such node.
+    ///
+    /// It reports what the window actually committed, not the controller's
+    /// latest build output, so a caller can verify that a content change really
+    /// reached the accepted projection in the same step instead of inferring it
+    /// from controller state or from a later full rebuild. A text node carries
+    /// its string in `value` and a button in `label`, so the displayed text is
+    /// whichever the node kind really uses.
+    public func acceptedNodeText(semanticId: String): ?String {
+        if (!isWindowOpen) {
+            return None
+        }
+        for (node in renderedScene.nodes()) {
+            if (node.semanticId == semanticId) {
+                if (!node.label.isEmpty()) {
+                    return Some(node.label)
+                }
+                return Some(node.value)
+            }
+        }
+        return None
+    }
+
+    /// Read-only dump of the window's accepted scene, one line per node:
+    /// kind|semantic_id|label|value|field_id|bounds. A generated node's semantic
+    /// id is registry-derived rather than the declared key, so a caller that wants
+    /// to assert the accepted content/geometry uses this instead of guessing an
+    /// id. It reports the committed scene, never the controller's latest build.
+    public func acceptedSceneDump(): String {
+        if (!isWindowOpen) {
+            return ""
+        }
+        let builder = StringBuilder()
+        for (node in renderedScene.nodes()) {
+            builder.append("${node.nodeKind}|${node.semanticId}|${node.label}|${node.value}|" +
+                "${node.fieldId}|${node.bounds.x},${node.bounds.y},${node.bounds.width},${node.bounds.height}\n")
+        }
+        return builder.toString()
+    }
+
+    /// Accepted VALUE of the node carrying this semantic id, or None when the
+    /// accepted scene has no such node. `acceptedNodeText` reports the accessible
+    /// caption (a button's label, a text node's value); an editable control's
+    /// displayed content is its value, and this is the precise probe for it.
+    public func acceptedNodeValue(semanticId: String): ?String {
+        if (!isWindowOpen) {
+            return None
+        }
+        for (node in renderedScene.nodes()) {
+            if (node.semanticId == semanticId) {
+                return Some(node.value)
+            }
+        }
+        return None
+    }
+
+    /// Accepted geometry of the node carrying this semantic id, or None when the
+    /// accepted scene has no such node. Companion to `acceptedNodeText`: it lets a
+    /// caller verify that a layout change really reached the accepted scene
+    /// instead of inferring it from a controller counter.
+    public func acceptedNodeBounds(semanticId: String): ?CjguiComposableUiRect {
+        if (!isWindowOpen) {
+            return None
+        }
+        for (node in renderedScene.nodes()) {
+            if (node.semanticId == semanticId) {
+                return Some(node.bounds)
+            }
+        }
+        return None
+    }
+
+    /// Number of nodes in the window's accepted scene (0 when nothing is
+    /// accepted). Read-only: it reports what the window committed, so a caller
+    /// can record the real expansion size of the scene it timed.
+    public func acceptedNodeCount(): Int64 {
+        if (!isWindowOpen) {
+            return 0
+        }
+        return renderedScene.nodes().size
+    }
+
     /// Incremental compatibility declaration. Duplicate IDs and a matching
     /// shortcut *in the same focus scope* fail closed; mutually exclusive
     /// scopes may deliberately reuse one chord.

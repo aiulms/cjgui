@@ -22,6 +22,23 @@ public class CjguiRuleSetRecord {
     }
 }
 
+/// A version-scoped content-only change of this domain: the changed record ids and
+/// their new applied labels. Consumed by the tree projection's local-update path;
+/// a caller that cannot be served exactly must rebuild (see
+/// `CjguiRuleSetEditingDomain.contentChangeSince`).
+public class CjguiRuleSetContentChange {
+    public let beforeVersion: Int64
+    public let version: Int64
+    public let recordIds: ArrayList<Int64>
+    public let labels: ArrayList<String>
+    public init(beforeVersion: Int64, version: Int64, recordIds: ArrayList<Int64>, labels: ArrayList<String>) {
+        this.beforeVersion = beforeVersion
+        this.version = version
+        this.recordIds = recordIds
+        this.labels = labels
+    }
+}
+
 public class CjguiRuleSetSnapshot {
     public let version: Int64
     public let selectedRecordId: Int64
@@ -175,6 +192,13 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     private var selectedId: Int64
     private var nextId: Int64
     private var historyFloorVersion: Int64
+    // Version-scoped signal for the tree projection's content-only path: the last
+    // committed change is reusable ONLY when it could not create, delete, move or
+    // re-parent a row (a pure label rewrite). Everything else leaves this
+    // unusable, so the projection rebuilds instead of guessing.
+    private var contentChangeBeforeVersion: Int64 = -1
+    private var contentChangeKeys: ArrayList<Int64> = ArrayList<Int64>()
+    private var contentChangeUsable: Bool = false
     private var documentGeneration: Int64
     private var currentFilePath: String
     private var lastPersistedPayload: String
@@ -239,6 +263,10 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     public func transferTargetIdentity(): String { return synchronized(lock) { instanceIdentity } }
     public func formBinding(): CjguiSharedFormBinding { return binding }
     public func selectedRecordId(): Int64 { return synchronized(lock) { selectedId } }
+    /// Constant-time business version. `snapshot()` copies every record, so a
+    /// caller that only needs freshness (the tree projection's content-update
+    /// path) must not pay that.
+    public func version(): Int64 { return synchronized(lock) { versionValue } }
     public func splitFirstSize(): Int64 { return synchronized(lock) { splitFirstSizeValue } }
     public func splitFirstSizeVersion(): Int64 { return synchronized(lock) { splitFirstSizeVersionValue } }
     public func selectedDraftVersion(): Int64 {
@@ -890,11 +918,19 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
             if (!validateDraftUnlocked(record)) { record.draftVersion += 1; versionValue += 1; status = "草稿校验失败，已保留原输入"; return rejected(false, "invalid_draft") }
             if (record.draftLabel == record.label && record.draftEnabled == record.enabled && record.draftRetentionCount == record.retentionCount.toString() && record.draftExcludedType == record.excludedType) { return accepted("already_applied") }
             if (let Some(retention) <- Int64.tryParse(record.draftRetentionCount)) {
+                // A label-only apply cannot move the row between groups or change
+                // its order, so the tree projection may patch it by key. Any
+                // other field makes this a structural change (rebuild).
+                let labelOnly = record.draftLabel != record.label &&
+                    record.draftEnabled == record.enabled &&
+                    record.draftRetentionCount == record.retentionCount.toString() &&
+                    record.draftExcludedType == record.excludedType
                 recordUndoUnlocked()
                 record.label = record.draftLabel; record.enabled = record.draftEnabled; record.retentionCount = retention; record.excludedType = record.draftExcludedType
                 record.appliedRevision += 1; record.baseAppliedRevision = record.appliedRevision; record.activeFieldId = ""
                 clearValidationUnlocked(record); record.draftVersion += 1
-                commitContentUnlocked(ArrayList<Int64>([record.id]), "draft_applied")
+                commitContentUnlocked(ArrayList<Int64>([record.id]),
+                    if (labelOnly) { "draft_applied_label_only" } else { "draft_applied" })
                 return accepted("draft_applied")
             }
             return rejected(false, "invalid_draft")
@@ -1047,7 +1083,42 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
 
     private func commitContentUnlocked(resourceIds: ArrayList<Int64>, kind: String) {
         versionValue += 1; status = "内容已更新；尚未保存"
+        // Classify the change for the tree projection in ONE place. Only a pure
+        // label rewrite can be patched by key; creation, deletion, copy,
+        // enabled-group moves, batch writes and undo/redo change structure (or
+        // cannot be proven not to), so they must fall back to a rebuild.
+        let contentOnly = kind == "record_renamed" || kind == "draft_applied_label_only"
+        contentChangeUsable = contentOnly
+        contentChangeBeforeVersion = if (contentOnly) { versionValue - 1 } else { -1 }
+        contentChangeKeys = if (contentOnly) { ArrayList<Int64>(resourceIds) } else { ArrayList<Int64>() }
         for (id in resourceIds) { appendChangeUnlocked(id, kind) }
+    }
+
+    /// Content-only change set for a caller that is exactly one version behind,
+    /// or None when it must rebuild. Labels are read for the changed keys only,
+    /// so the answer costs O(changed), not O(records).
+    public func contentChangeSince(version: Int64): ?CjguiRuleSetContentChange {
+        synchronized(lock) {
+            if (version == versionValue) {
+                return Some(CjguiRuleSetContentChange(version, versionValue,
+                    ArrayList<Int64>(), ArrayList<String>()))
+            }
+            if (!contentChangeUsable || version != contentChangeBeforeVersion) {
+                return None
+            }
+            let ids = ArrayList<Int64>()
+            let labels = ArrayList<String>()
+            for (id in contentChangeKeys) {
+                if (let Some(record) <- recordsById.get(id)) {
+                    ids.add(id)
+                    labels.add(record.label)
+                } else {
+                    // The changed key no longer exists: structural.
+                    return None
+                }
+            }
+            return Some(CjguiRuleSetContentChange(version, versionValue, ids, labels))
+        }
     }
     private func appendChangeUnlocked(resourceId: Int64, kind: String) {
         changes.addLast(CjguiSharedOperationChangeEntry(versionValue, resourceId, kind))

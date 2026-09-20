@@ -10,11 +10,17 @@ public class CjguiSharedOperationRecord {
     public let id: Int64
     public let title: String
     public let isMarked: Bool
+    /// Generic optional text field. It exists so an application can declare a
+    /// second text field and have all three entry points serve it without a new
+    /// generation-specific branch; the application's rule for it is installed
+    /// as a `CjguiSharedFieldRule`, never hardcoded here.
+    public let notes: String
 
-    public init(id: Int64, title: String, isMarked: Bool) {
+    public init(id: Int64, title: String, isMarked: Bool, notes!: String = "") {
         this.id = id
         this.title = title
         this.isMarked = isMarked
+        this.notes = notes
     }
 }
 
@@ -66,11 +72,13 @@ private class CjguiSharedOperationMutableRecord {
     let id: Int64
     var title: String
     var isMarked: Bool
+    var notes: String
 
-    init(id: Int64, title: String, isMarked: Bool) {
+    init(id: Int64, title: String, isMarked: Bool, notes: String) {
         this.id = id
         this.title = title
         this.isMarked = isMarked
+        this.notes = notes
     }
 }
 
@@ -82,18 +90,70 @@ public class CjguiSharedOperationList <: CjguiSharedOperationDomain {
     private let mutableRecords: ArrayList<CjguiSharedOperationMutableRecord>
     private var currentVersion: Int64
     private var currentSelectedRecordId: Int64
+    /// Declared field write rules, keyed by `<writer>@<target resource>`. An
+    /// application installs them once; every entry point (handwritten pane,
+    /// generated editor, external invocation) then reaches the same owner
+    /// transaction and the same rule, so no UI layer has to restate it.
+    private let fieldRules: HashMap<String, CjguiSharedFieldRule>
 
     public init(records: ArrayList<CjguiSharedOperationRecord>) {
         this.lock = Mutex()
         this.mutableRecords = ArrayList<CjguiSharedOperationMutableRecord>()
         this.currentVersion = 0
         this.currentSelectedRecordId = -1
+        this.fieldRules = HashMap<String, CjguiSharedFieldRule>()
         for (record in records) {
             if (containsRecord(record.id)) {
                 throw IllegalArgumentException("duplicate_record_id")
             }
-            mutableRecords.add(CjguiSharedOperationMutableRecord(record.id, record.title, record.isMarked))
+            mutableRecords.add(CjguiSharedOperationMutableRecord(record.id, record.title, record.isMarked,
+                record.notes))
         }
+    }
+
+    /// Installs one declared field rule on this owner. A conflicting duplicate
+    /// (same writer+resource bound to a different field or argument) is refused
+    /// instead of silently replacing the binding.
+    public func installFieldRule(rule: CjguiSharedFieldRule): Bool {
+        return synchronized(lock) {
+            if (rule.fieldId.size == 0 || rule.writer.size == 0 || rule.argument.size == 0) {
+                return false
+            }
+            let key = ruleKey(rule.writer, rule.targetResourceId)
+            if (let Some(existing) <- fieldRules.get(key)) {
+                return existing.fieldId == rule.fieldId && existing.argument == rule.argument &&
+                    existing.editorKind == rule.editorKind
+            }
+            fieldRules.add(key, rule)
+            return true
+        }
+    }
+
+    /// The rule the owner will apply for this writer on this resource, or None
+    /// when the action is not a declared field write.
+    public func fieldRule(writer: String, targetResourceId: Int64): ?CjguiSharedFieldRule {
+        return synchronized(lock) { fieldRules.get(ruleKey(writer, targetResourceId)) }
+    }
+
+    /// The one owner entry for a declared field write. The handwritten pane and
+    /// the generated editor both call it, so neither can bypass the rule the
+    /// owner also applies to an external invocation.
+    public func writeDeclaredFieldFromHuman(rule: CjguiSharedFieldRule, targetResourceId: Int64,
+        value: CjguiSharedOperationValue): CjguiSharedOperationResult {
+        return legacyResult(
+            executeFromHuman(CjguiSharedOperationActionInvocation(
+                rule.writer,
+                version(),
+                ArrayList<Int64>([targetResourceId]),
+                ArrayList<CjguiSharedOperationActionArgument>(
+                    [CjguiSharedOperationActionArgument(rule.argument, value)]
+                )
+            ))
+        )
+    }
+
+    private func ruleKey(writer: String, targetResourceId: Int64): String {
+        return "${writer}@${targetResourceId}"
     }
 
     public func resourceType(): String {
@@ -143,6 +203,15 @@ public class CjguiSharedOperationList <: CjguiSharedOperationDomain {
                     "设置记录标题",
                     ArrayList<CjguiSharedOperationParameterDescriptor>(
                         [CjguiSharedOperationParameterDescriptor("title", "STRING", true)]
+                    ),
+                    1,
+                    1
+                ),
+                CjguiSharedOperationActionDescriptor(
+                    "SET_NOTES",
+                    "设置记录备注",
+                    ArrayList<CjguiSharedOperationParameterDescriptor>(
+                        [CjguiSharedOperationParameterDescriptor("notes", "STRING", true)]
                     ),
                     1,
                     1
@@ -257,6 +326,7 @@ public class CjguiSharedOperationList <: CjguiSharedOperationDomain {
                         [
                             CjguiSharedOperationField("title", CjguiSharedOperationValue.string(record.title)),
                             CjguiSharedOperationField("isMarked", CjguiSharedOperationValue.boolean(record.isMarked)),
+                            CjguiSharedOperationField("notes", CjguiSharedOperationValue.string(record.notes)),
                             CjguiSharedOperationField(
                                 "selected",
                                 CjguiSharedOperationValue.boolean(currentSelectedRecordId == record.id)
@@ -277,7 +347,7 @@ public class CjguiSharedOperationList <: CjguiSharedOperationDomain {
     private func snapshotUnlocked(): CjguiSharedOperationSnapshot {
         let copy = ArrayList<CjguiSharedOperationRecord>()
         for (record in mutableRecords) {
-            copy.add(CjguiSharedOperationRecord(record.id, record.title, record.isMarked))
+            copy.add(CjguiSharedOperationRecord(record.id, record.title, record.isMarked, notes: record.notes))
         }
         return CjguiSharedOperationSnapshot(currentVersion, currentSelectedRecordId, copy)
     }
@@ -289,6 +359,14 @@ public class CjguiSharedOperationList <: CjguiSharedOperationDomain {
         let versionBefore = currentVersion
         if (requiresCurrentVersion && invocation.expectedVersion != currentVersion) {
             return rejected(versionBefore, true, "version_conflict")
+        }
+        // The application's declared field rule runs inside the owner
+        // transaction, before any mutation, so a rejected request can never
+        // leave a partial write behind and an external caller cannot bypass the
+        // rule that the handwritten pane and the generated editor also hit.
+        let ruleRejection = declaredWriteRejectionUnlocked(invocation)
+        if (ruleRejection.size > 0) {
+            return rejected(versionBefore, false, ruleRejection)
         }
         if (invocation.actionName == "SELECT") {
             return selectUnlocked(invocation, versionBefore)
@@ -302,7 +380,47 @@ public class CjguiSharedOperationList <: CjguiSharedOperationDomain {
         if (invocation.actionName == "SET_TITLE") {
             return setTitleUnlocked(invocation, versionBefore)
         }
+        if (invocation.actionName == "SET_NOTES") {
+            return setNotesUnlocked(invocation, versionBefore)
+        }
         return rejected(versionBefore, false, "unknown_action")
+    }
+
+    /// Evaluates the installed rule for a declared field write. Actions without
+    /// a declared rule (SELECT/TOGGLE and any other generic action) are not
+    /// affected. A declared writer invoked with a different argument name or a
+    /// value of the wrong type is refused instead of being routed to another
+    /// field by default. Every target is checked before anything is mutated, so
+    /// a refused multi-target write cannot leave a partial write behind.
+    private func declaredWriteRejectionUnlocked(
+        invocation: CjguiSharedOperationActionInvocation
+    ): String {
+        for (resourceId in invocation.targetResourceIds) {
+            if (let Some(rule) <- fieldRules.get(ruleKey(invocation.actionName, resourceId))) {
+                var requestedText = ""
+                var requestedBoolean = false
+                if (let Some(text) <- stringArgument(invocation, rule.argument)) {
+                    requestedText = text
+                } else if (let Some(flag) <- booleanArgument(invocation, rule.argument)) {
+                    requestedBoolean = flag
+                } else {
+                    return if (invocation.arguments.size == 0) { "missing_argument" } else { "unknown_argument" }
+                }
+                for (record in mutableRecords) {
+                    if (record.id == resourceId) {
+                        let request = CjguiSharedFieldWriteRequest(
+                            rule.fieldId, rule.writer, rule.argument, resourceId,
+                            requestedText, requestedBoolean, record.title, record.isMarked, currentVersion
+                        )
+                        let rejection = rule.rejectionFor(request)
+                        if (rejection.size > 0) {
+                            return rejection
+                        }
+                    }
+                }
+            }
+        }
+        return ""
     }
 
     private func selectUnlocked(
@@ -394,6 +512,32 @@ public class CjguiSharedOperationList <: CjguiSharedOperationDomain {
                         return CjguiSharedOperationActionResult(true, false, versionBefore, currentVersion, "already_at_target")
                     }
                     record.title = title
+                    currentVersion += 1
+                    return CjguiSharedOperationActionResult(true, false, versionBefore, currentVersion, "applied")
+                }
+            }
+            return rejected(versionBefore, false, "unknown_record")
+        }
+        return rejected(versionBefore, false, "invalid_parameters")
+    }
+
+    /// The generic second text field. Its constraint comes from the installed
+    /// `CjguiSharedFieldRule`; this domain hardcodes none.
+    private func setNotesUnlocked(
+        invocation: CjguiSharedOperationActionInvocation,
+        versionBefore: Int64
+    ): CjguiSharedOperationActionResult {
+        if (invocation.targetResourceIds.size != 1 || invocation.arguments.size != 1) {
+            return rejected(versionBefore, false, "invalid_parameters")
+        }
+        if (let Some(notes) <- stringArgument(invocation, "notes")) {
+            let recordId = invocation.targetResourceIds[0]
+            for (record in mutableRecords) {
+                if (record.id == recordId) {
+                    if (record.notes == notes) {
+                        return CjguiSharedOperationActionResult(true, false, versionBefore, currentVersion, "already_at_target")
+                    }
+                    record.notes = notes
                     currentVersion += 1
                     return CjguiSharedOperationActionResult(true, false, versionBefore, currentVersion, "applied")
                 }

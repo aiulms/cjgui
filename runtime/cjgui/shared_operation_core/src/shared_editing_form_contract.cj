@@ -15,12 +15,16 @@ public class CjguiSharedFormFieldDescriptor {
     // query all enforce and publish the same boundary instead of restating it.
     // `minimum`/`maximum` are only meaningful for INTEGER; `required` applies
     // to any editor kind; 0/0 means "no declared bound".
+    // `maximumLength` applies to TEXT and is measured in Unicode scalar values
+    // (Rune), not UTF-8 bytes; 0 means "no declared limit".
     public let required: Bool
     public let minimum: Int64
     public let maximum: Int64
+    public let maximumLength: Int64
 
     public init(resourceId: Int64, fieldId: String, label: String, editorKind: String,
-                required!: Bool = false, minimum!: Int64 = 0, maximum!: Int64 = 0) {
+                required!: Bool = false, minimum!: Int64 = 0, maximum!: Int64 = 0,
+                maximumLength!: Int64 = 0) {
         this.resourceId = resourceId
         this.fieldId = fieldId
         this.label = label
@@ -28,6 +32,7 @@ public class CjguiSharedFormFieldDescriptor {
         this.required = required
         this.minimum = minimum
         this.maximum = maximum
+        this.maximumLength = maximumLength
     }
 }
 

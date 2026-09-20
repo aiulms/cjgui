@@ -47,11 +47,15 @@ SOURCE_PAYLOAD_RELATIVE=(
   src/composable_vector_graphics.cj
   src/composable_vector_graphics_component.cj
   src/composable_ui_window.cj
+  src/composable_ui_tree.cj
+  src/composable_ui_generated.cj
+  src/composable_ui_composite_component.cj
   src/macos_application_host.cj
   src/runtime_renderer_session.cj
   shared_operation_core/cjpm.toml
   shared_operation_core/client.py
   shared_operation_core/src/shared_editing_form_contract.cj
+  shared_operation_core/src/shared_field_write_rule.cj
   shared_operation_core/src/shared_operation_contract.cj
   shared_operation_core/src/shared_operation_list.cj
   shared_operation_core/src/shared_operation_transport.cj

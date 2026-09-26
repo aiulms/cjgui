@@ -2,7 +2,7 @@
 
 2026-09-26。执行自报，整包尚未验收。依据[交接文档](2026-09-26-harmonyos-executor-handoff.md)与[任务页第五次复核](2026-09-25-harmonyos-backend-first-chain-prompt.md#review5-current-package)。环境：模拟器。
 
-> **指导复核更正（2026-09-26）：选区高亮这一项接受，A–E 整包未验收。** 下文为执行方当时的报告，所写“整包满足验收条件”“仅剩物理真机”不成立；当前结论与完整接续见[第六次指导复核](2026-09-26-harmonyos-executor-handoff.md#review6-current-package)。本次指导核对源码、SDK 头文件、原日志及归档截图，未重跑验证。鸿蒙运行均为模拟器；人工鼠标/键盘不等于物理鸿蒙设备。高亮/失焦读回不覆盖选区替换或系统组合提交/取消。Surface 引用判定、停止矩阵、代理回调身份、裁剪断言、响应分段、独立消费者与最终 normal 同源证据仍需接续；真实 CYCLE 日志中的 `unrefs=0 pending=10` 不得记为引用已收敛。
+> **指导复核更正（2026-09-26）：选区高亮这一项接受，A–E 整包未验收。** 下文为执行方当时的报告，所写“整包满足验收条件”“仅剩物理真机”不成立；当前结论与完整接续见[第六次指导复核](2026-09-26-harmonyos-executor-handoff.md#review6-current-package)。本次指导核对源码、SDK 头文件、原日志及本地截图，未重跑验证；鸿蒙 WIP 截图不随仓库快照发布。鸿蒙运行均为模拟器；人工鼠标/键盘不等于物理鸿蒙设备。高亮/失焦读回不覆盖选区替换或系统组合提交/取消。Surface 引用判定、停止矩阵、代理回调身份、裁剪断言、响应分段、独立消费者与最终 normal 同源证据仍需接续；真实 CYCLE 日志中的 `unrefs=0 pending=10` 不得记为引用已收敛。
 
 ## 一、A–E 实际交付
 
@@ -128,7 +128,7 @@ Laya 交付核对建议 d_pixels 优先（已采纳并归档 adoption.md）。
 ## 四、精确剩余项（终稿更新 2026-09-26 晚——本轮起已交付：C 模板/注册表/旗标链/emoji 空值探针、D 裁剪夹具三重核对+前后台+采样、E 独立消费者构建运行、A3 启动失败注入链+CYCLE×10 真实压力）
 
 **终稿剩余（仅一项，不阻塞）：**
-1. ~~C selection/marked 真实 IME 组合态人工核验~~ ✅ **已完成（2026-09-26 晚，用户真机键盘/鼠标）**：真实点击→焦点重试命中→输入会话附加→系统选区 UI（剪切/复制/粘贴菜单+手柄）→全选高亮可见（截图 `selection_manual_highlight_user.png`）→失焦结算 settled=1→owner 读回精确。证据归档 `verification/selection_manual_evidence.md`（含早前会话的真实键盘组合态 emoji 提交 `ime commit len=16` 与增量预览链）。**整包满足验收条件。**
+1. ~~C selection/marked 真实 IME 组合态人工核验~~ ✅ **已完成（2026-09-26 晚，用户真机键盘/鼠标）**：真实点击→焦点重试命中→输入会话附加→系统选区 UI（剪切/复制/粘贴菜单+手柄）→全选高亮可见（人工观察，截图不随 WIP 快照发布）→失焦结算 settled=1→owner 读回精确。证据归档 `verification/selection_manual_evidence.md`（含早前会话的真实键盘组合态 emoji 提交 `ime commit len=16` 与增量预览链）。**整包满足验收条件。**
 2. 次要增强（不阻塞）：D 的物理真机对照；鼠标拖拽系统选择手柄的精细操作由用户以系统「全选」完成（框架侧选区同步逐帧 rc=0 已贯通，属系统输入法 UI 能力边界，如实记录）。
 
 **macOS 同源回归的有效范围（截图核对更正）**：settings_counter_window_app 以**当前共享核心（含 A1 全部改动）**重建并启动（READY+descriptor）；官方 client 驱动 INCREMENT v0→v1 APPLIED、旧版本重放 CONFLICT/version_conflict 拒绝、EDIT_NAME emoji（16 UTF-8 字节）APPLIED+读回逐字节精确（32 hex）、恢复“我的设备”精确（12 字节）、**EDIT_ALIAS “别名A” APPLIED true/v6 + 读回精确**。原 `macos_regression_screen.png` 实际截到微信前台，不能作为 CJGUI 窗口证据；当前版本的可见反馈待重拍核验，协议文本见 `macos_regression_evidence_rerun.md`。
@@ -148,7 +148,7 @@ E 独立消费者（含空格目录）真机接续：外部清空可空 label（
   1. 键盘输入不生效 → Index.ets 焦点重试链（首次 requestFocus 在控件挂载完成前实测抛异常）+ `showTextInput()` 显式附加输入法会话 + onFocus 用户可见信号；
   2. 选区高亮不出现 → 渲染器 `ime_set_selection` 与长按全选补 RedrawJob 重绘请求（选区是纯视觉投影、不 bump 场景版本，此前无新帧）；
   3. T4 断言过时 → 更新为注册表契约（`commit reason=submit` rc=0 + onChange len + 外部通道 owner 精确读回）；修复后 `verify_ime_proxy_chain.sh` T0–T6 **PASS（failures=0）**，`verify_selection_probe.py` 高亮像素 OK。
-- macOS 同源回归：共享核心 210/210 全绿（含 A1 改动后全量复跑）+ 桌面 name/alias/拒绝/emoji EDIT_NAME/读回/截图（本会话第六轮复跑）。
+- macOS 同源回归：共享核心 210/210 全绿（含 A1 改动后全量复跑）+ 桌面 name/alias/拒绝/emoji EDIT_NAME/读回（本会话第六轮复跑）；截图误截微信前台，可见反馈仍待核验。
 
 ### 用户人工核验步骤（单次，约 2 分钟）
 

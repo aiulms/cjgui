@@ -4,6 +4,7 @@
 产物：verify-transport 变体，run_id=`selection_redraw_fix`（hap sha256 见 run 目录）。
 结论：**人工核验通过**——自绘字段上的真实点击、真实键盘键入、系统选区 UI、
 选区高亮、失焦结算与 owner 读回全部成立。
+本 WIP 仓库快照不收录人工截图；可复核的协议与事件记录见下表及同目录日志。
 
 ## 1. 本轮人工链路（2026-09-26 17:5x，PID 6524）
 
@@ -12,9 +13,9 @@
 | 点击自绘名称字段 | 真实鼠标点击 | `ime focus payload={"action":"focus",...}` → `ime proxy mounted ctx=1` |
 | 代理获得焦点 | — | `ime requestFocus threw attempt=0` → `sent attempt=1` → `ime proxy FOCUSED`（重试链命中） |
 | 输入法会话附加 | — | `ime showTextInput ok field=counter-name` |
-| 系统选区 UI | 长按出现剪切/复制/粘贴菜单与选择手柄（截图） | `ime select [2,2)/[1,1)/[0,0)...`（系统手柄移动逐帧上报） |
+| 系统选区 UI | 长按出现剪切/复制/粘贴菜单与选择手柄（人工观察） | `ime select [2,2)/[1,1)/[0,0)...`（系统手柄移动逐帧上报） |
 | 全选 | 系统全选（鼠标拖动手柄不精确，用户改用全选） | `ime select [0,4) rc=0`——真实非空选区到达渲染器 |
-| 选区高亮 | **自绘场景中「我的设备」整段蓝色高亮可见**（截图） | 截图 `selection_manual_highlight_user.png` |
+| 选区高亮 | **自绘场景中「我的设备」整段蓝色高亮可见**（人工观察） | `ime select [0,4) rc=0` 仅证明选区事件到达；本快照不附视觉图像 |
 | 失焦结算 | 点击字段外 | `ime blur settle ctx=1 settled=1 node=24 text=我的设备` |
 | owner 读回 | 外部通道 GET | `name=我的设备 version=2`（human_external_human_probe.py read） |
 

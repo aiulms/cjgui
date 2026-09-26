@@ -1,0 +1,30 @@
+{
+  "model": "laya-rl-agent",
+  "answers": {
+    "route": {
+      "type": "choice",
+      "choice": "pure_cangjie_now",
+      "probabilities": {
+        "minimal_arkts_host": 0.0991,
+        "pure_cangjie_now": 0.5841,
+        "current_raw_thread": 0.0836,
+        "insufficient": 0.2332
+      },
+      "confidence": 0.2136,
+      "action": { "act_probability": 1.0 }
+    },
+    "gap": {
+      "type": "choice",
+      "choice": "insufficient",
+      "probabilities": {
+        "public_mount_contract": 0.0661,
+        "render_correctness": 0.2121,
+        "business_state": 0.0758,
+        "insufficient": 0.6461
+      },
+      "confidence": 0.2887,
+      "action": { "act_probability": 1.0 }
+    }
+  },
+  "usage": { "input_tokens": 630, "output_tokens": 0 }
+}

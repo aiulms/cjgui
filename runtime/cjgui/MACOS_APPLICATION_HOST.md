@@ -125,6 +125,18 @@ host.close()
 
 配置的 `title` 是窗口标题 owner：初始首帧与后续业务 refresh 都保持它，场景提交不改写成 framework 固定文案。若应用要请求关闭而非无条件 teardown，可调用 `host.requestClose()`；它走 controller 的 `requestWindowClose()` 决策，拒绝时 Host 仍可继续 pump，批准时收敛到 normal close。`close()` 已幂等，并关闭 window、可选 connection 和 AppKit loop；一个关闭后的 Host 不支持原地 reopen，重开应构造新的 Host/connection，并只交付新 descriptor。若参数解析或领域初始化在尚未创建 `host` 前失败，调用 `CjguiMacosApplicationHost.stopApplicationLoop()` 后返回非零。不要自行声明 old `finish` foreign 函数，也不要另写 sleep/accept 事件循环。
 
+## AppKit 访问必须在主线程
+
+宿主把仓颉入口放在**工作线程**运行，AppKit 的窗口与视图操作只能在**主线程**执行。
+从工作线程直接改窗口状态（例如设置 `NSWindow.appearance` 以让标题栏跟随主题）会让进程在
+AppKit 内部断言失败：崩溃报告写明 `Must only be used from the main thread`，栈经
+`NSView setAppearance:` 与 `NSWindow _windowDidChangeAppearance`。
+
+处置方式：应用侧的 native helper 把这类调用 `dispatch_async(dispatch_get_main_queue(), …)` 到主线程
+再执行，并在主线程内读回状态确认（例如 `window.effectiveAppearance`）。
+CJGUI 已对部分接口做了主线程转发（见窗口标题接口）；新增任何触碰 AppKit 的能力时应沿用同一约定，
+或在宿主侧提供通用的"主线程执行"入口。
+
 ## 最小授权外部操作
 
 外部 connection 不是第二份应用状态：先选择一个真实

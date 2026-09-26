@@ -21,7 +21,7 @@ extern int cjgui_internal_renderer_test_enqueue_form_event(
 
 static int fail(uint64_t session, const char *message) {
     fprintf(stderr, "cjgui shared form queue probe: %s\n", message);
-    if (session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION) {
+    if (session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
         (void)cjgui_internal_renderer_destroy(session);
     }
     return 1;
@@ -51,7 +51,7 @@ int main(void) {
         CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         uint64_t session = cjgui_internal_renderer_create(&config, &status);
         if (status != CJGUI_INTERNAL_RENDERER_OK ||
-            session == CJGUI_INTERNAL_RENDERER_INVALID_SESSION) {
+            session == CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
             return fail(session, "cannot create session");
         }
         if (cjgui_internal_renderer_configure_shared_form(session, 2) !=
@@ -81,7 +81,7 @@ int main(void) {
             return fail(session, "form intent order or UTF-8 payload was lost");
         }
         if (cjgui_internal_renderer_destroy(session) != CJGUI_INTERNAL_RENDERER_OK) {
-            return fail(CJGUI_INTERNAL_RENDERER_INVALID_SESSION, "cannot destroy session");
+            return fail(CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN, "cannot destroy session");
         }
         printf("cjgui shared form queue probe: focus-text-apply ordering=true\n");
         printf("cjgui shared form queue probe: utf8_payload=true\n");

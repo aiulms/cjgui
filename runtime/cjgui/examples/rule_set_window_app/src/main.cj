@@ -11,6 +11,20 @@ import std.time.*
 import std.unittest.*
 import std.unittest.testmacro.*
 
+/// The rule window's detail workspace: "基本" (draft fields) and "保留策略" (file
+/// and retention work) as ONE public tab container. The composition lives here so
+/// the shipping window and its contract test build the SAME tree instead of two
+/// lookalike declarations.
+public func ruleDetailTabWorkspace(state: CjguiComposableUiTabsState, basicPage: CjguiComposableUiNode,
+    retentionPage: CjguiComposableUiNode): CjguiComposableUiNode {
+    let scope = CjguiComposableUiIdentityScope("rule-detail-pages")
+    let pages = ArrayList<CjguiComposableUiTabPage>()
+    pages.add(CjguiComposableUiTabPage("basic", "基本", basicPage))
+    pages.add(CjguiComposableUiTabPage("retention", "保留策略", retentionPage))
+    return cjguiComposableTabs(scope, "rule-detail-tabs", pages, state,
+        CjguiComposableUiStyle(growX: 1), titleHeight: 26)
+}
+
 private class CjguiRuleSetStartupFiles {
     let openPath: String
     let saveAsPath: String
@@ -207,11 +221,19 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     private var transferLastApplyNanoseconds: Int64
     private let treePanel: CjguiRuleSetTreePanel
     private let generatedRegion: CjguiRuleSetGeneratedRegion
+    // ONE public viewport for the whole mixed panel: the handwritten form, the
+    // tree panel and the generated section all scroll through the same object.
+    private let rootViewport: CjguiComposableUiScrollViewport
+    // ONE public tab view state for the rule detail pane: "基本" keeps the draft
+    // fields, "保留策略" keeps the file/retention work. Which page is ACTIVE is
+    // window view state, so an ordinary refresh never moves a person back.
+    private let detailTabs: CjguiComposableUiTabsState = CjguiComposableUiTabsState("basic")
 
     init(domain: CjguiRuleSetEditingDomain, presetOverride!: String = "") {
         this.domain = domain
         this.treePanel = CjguiRuleSetTreePanel(domain)
         this.generatedRegion = CjguiRuleSetGeneratedRegion(domain, presetOverride: presetOverride)
+        this.rootViewport = CjguiComposableUiScrollViewport()
         this.listState = CjguiComposableUiVirtualListState()
         this.componentRegistry = CjguiComposableUiComponentRegistry()
         this.recordCardScope = CjguiComposableUiIdentityScope("rule-record-card")
@@ -231,6 +253,23 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         this.transferRejectedCount = 0
         this.transferPeakPayloadBytes = 0
         this.transferLastApplyNanoseconds = 0
+    }
+
+    /// The detail pane's shared tab view state. Switching a page is a WINDOW view
+    /// fact, so the application exposes it instead of mirroring the page into its
+    /// business domain; `requestDetailPage` makes the next commit present it.
+    public func detailPageState(): CjguiComposableUiTabsState {
+        return detailTabs
+    }
+
+    /// Presents the currently selected detail page on the next refresh. Returns
+    /// false when the selection did not move.
+    public func requestDetailPage(pageKey: String): Bool {
+        if (!detailTabs.select(pageKey)) {
+            return false
+        }
+        localRevision += 1
+        return true
     }
 
     public func uiSceneVersion(): Int64 {
@@ -344,16 +383,10 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         let inputStyle = presentationTextStyle(theme.input)
         let validationStyle = CjguiComposableUiStyle(fixedHeight: 20,
             textColor: CjguiComposableUiColor(0.75, 0.12, 0.14, 1.0), fontFamily: bodyStyle.fontFamily)
-        let beaconPath = if (usesCoralBeacon) {
-            "composable-beacon-coral.png"
-        } else {
-            "composable-beacon.png"
-        }
-        let beaconVersion = if (usesCoralBeacon) {
-            2
-        } else {
-            1
-        }
+        // The handwritten beacon takes path/key/version from the SAME application
+        // declaration the generated side resolves against; the toggle only moves
+        // the declared version.
+        let beacon = generatedRegion.beaconResource()
         renderedSelectedId = collection.selectedResourceId
         listState.setSelectedKey(if (renderedSelectedId >= 0) {
             "rule_${renderedSelectedId}"
@@ -361,6 +394,13 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             ""
         })
         let host = cjguiComposableLayerHost(1, "rule-set-layer-host", theme.page)
+        // The header, the split panes, the tree panel and the generated section
+        // together are longer than one screen. ONE public scroll container shares
+        // ONE public viewport, so a real wheel gesture and the framework's focus
+        // reveal reach the generated editors at the bottom while every author
+        // keeps declaring only its own content.
+        let scroll = cjguiComposableScrollArea(480, "rule-set-scroll", rootViewport,
+            CjguiComposableUiStyle(growX: 1, growY: 1))
         let root = cjguiComposableVertical(2, "rule-set-root", theme.page)
         // The title owns a full row. Keeping it beside eight fixed actions
         // leaves too little width in a narrow normal window and clips the
@@ -431,15 +471,23 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             "请选择或新增一条规则"
         }, headingStyle))
         detail.add(
-            cjguiComposableImage(32, "rule-set-beacon", beaconPath,
+            cjguiComposableImage(32, "rule-set-beacon", beacon.rasterPath,
                 CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64, alignX: CJGUI_COMPOSABLE_UI_ALIGN_END),
-                imageResourceId: "rule-set-beacon", imageResourceVersion: beaconVersion))
+                imageResourceId: beacon.key, imageResourceVersion: beacon.version))
+        // The detail pane is a real multi-page workspace through the PUBLIC tab
+        // container: "基本" holds the draft fields, "保留策略" holds the file and
+        // retention work. Both pages share the app's existing identities, and
+        // which page is active is window view state.
+        let basicPage = cjguiComposableVertical(60, "rule-detail-basic",
+            CjguiComposableUiStyle(gap: 8, growX: 1))
+        let retentionPage = cjguiComposableVertical(61, "rule-detail-retention",
+            CjguiComposableUiStyle(gap: 8, growX: 1))
         if (renderedSelectedId >= 0 && layerMode != "edit" && layerMode != "edit-menu") {
             var fieldIndex: Int64 = 0
             while (fieldIndex < binding.fieldCount()) {
                 let descriptor = binding.fieldAtControlIndex(fieldIndex);
                 let field = form.fieldForResourceId(descriptor.resourceId)
-                detail.add(
+                basicPage.add(
                     cjguiComposableBoundFormField(detailFieldGroupNodeId(renderedSelectedId, fieldIndex),
                         "field-group-${descriptor.fieldId}", detailFieldNodeId(renderedSelectedId, fieldIndex),
                         detailValidationNodeId(renderedSelectedId, fieldIndex), descriptor, field, renderedSelectedId,
@@ -451,22 +499,22 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             let applyRow = cjguiComposableHorizontal(41, "draft-actions", CjguiComposableUiStyle(fixedHeight: 34, gap: 8))
             applyRow.add(command(detailActionNodeId(renderedSelectedId, 0), "apply", "应用草稿", "APPLY"));
             applyRow.add(command(detailActionNodeId(renderedSelectedId, 1), "cancel", "取消草稿", "CANCEL"));
-            detail.add(applyRow)
+            basicPage.add(applyRow)
         }
         if (renderedSelectedId >= 0 && (layerMode == "edit" || layerMode == "edit-menu")) {
-            detail.add(
+            basicPage.add(
                 cjguiComposableText(34, "detail-layer-editor-notice",
                     "草稿正在通用对话框中编辑；应用/取消仍直接进入规则集领域。", bodyStyle))
         }
-        detail.add(
+        retentionPage.add(
             cjguiComposableTextInput(390, "file-path", "文件路径", filePath, -1, inputStyle,
                 displayValueRole: "draft", interactionStyle: theme.inputInteraction))
         let fileActions = cjguiComposableHorizontal(40, "file-actions", CjguiComposableUiStyle(fixedHeight: 34, gap: 8))
         fileActions.add(command(403, "save-as", "另存为", "SAVE_AS"));
         fileActions.add(command(404, "open", "打开", "OPEN"));
         fileActions.add(command(405, "close", "关闭", "CLOSE"));
-        detail.add(fileActions)
-        detail.add(cjguiComposableText(50, "status", if (inputNotice.size > 0) {
+        retentionPage.add(fileActions)
+        retentionPage.add(cjguiComposableText(50, "status", if (inputNotice.size > 0) {
             inputNotice
         } else {
             collection.statusMessage
@@ -482,7 +530,7 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             group.add(
                 cjguiComposableButton(appearance.nodeId("toggle"), appearance.semanticId("toggle"), "组件：外观/字体",
                     "TOGGLE_PRESENTATION", -1, presentationButtonStyle(150)))
-            detail.add(group)
+            retentionPage.add(group)
         }
         let resource = componentRegistry.use("rule-set-resource")
         if (resource.isLive()) {
@@ -491,8 +539,11 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             group.add(
                 cjguiComposableButton(resource.nodeId("toggle"), resource.semanticId("toggle"), "组件：切换图标",
                     "TOGGLE_BEACON", -1, presentationButtonStyle(150)))
-            detail.add(group)
+            retentionPage.add(group)
         }
+        // The public tab container presents exactly ONE page; the other page keeps
+        // its identity and its own view state without being measured or drawn.
+        detail.add(ruleDetailTabWorkspace(detailTabs, basicPage, retentionPage))
         let splitScope = CjguiComposableUiIdentityScope("rule-set-content")
         let split = cjguiComposableScopedSplitView(splitScope, "rule-set-content", listPane, detail,
             CjguiComposableUiSplitAxis.HORIZONTAL, domain.splitFirstSize(), 160, 260,
@@ -504,7 +555,8 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         // the generated region follows below.
         root.add(treePanel.buildSection(theme, bodyStyle))
         root.add(generatedRegion.buildSection(theme, bodyStyle))
-        host.add(root)
+        scroll.add(root)
+        host.add(scroll)
         if (layerMode == "menu") {
             let menu = cjguiComposableAnchoredLayer(500, "rule-set-menu", "rule-set-menu", "menu", "open-rule-set-menu",
                 18,
@@ -840,6 +892,9 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         if (node.actionName == "TOGGLE_PRESENTATION") {
             usesDarkAppearance = !usesDarkAppearance
             usesMonospacedText = !usesMonospacedText
+            // The application's OWN theme switch retargets the one named style, so
+            // the handwritten and generated controls change paint together.
+            let _ = generatedRegion.setAccentAppearance(usesDarkAppearance)
             inputNotice = if (usesDarkAppearance) {
                 "已切换到深色与等宽文字"
             } else {
@@ -851,6 +906,7 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         }
         if (node.actionName == "TOGGLE_BEACON") {
             usesCoralBeacon = !usesCoralBeacon
+            let _ = generatedRegion.setBeaconVersion(if (usesCoralBeacon) { 2 } else { 1 })
             inputNotice = if (usesCoralBeacon) {
                 "已替换为珊瑚灯塔资源"
             } else {
@@ -993,6 +1049,13 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         // scene the window accepted.
         generatedRegion.commitSceneRefresh()
     }
+    public func disposeSceneRefreshResources(): Unit {
+        generatedRegion.releaseImageIdentities()
+        // Evidence from the REAL window dispose path: after releasing, the shared
+        // catalog must hold nothing for this window. `eprintln` is unbuffered, so
+        // a closed window still leaves the line in its log.
+        eprintln("CJGUI_IMAGE_IDENTITY_DISPOSE leftover_holds=${generatedRegion.liveImageIdentityHoldCount()}")
+    }
     public func rollbackSceneRefresh(): Unit {
         componentRegistry.rollbackTransaction()
         // The old structure, version and instances stay exactly as they were.
@@ -1019,12 +1082,21 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     }
     private func scopedLocalPresentationButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
         width: Int64, identity: CjguiComposableUiIdentity): CjguiComposableUiNode {
+        // ONE definition: the application's named paint role supplies the paint,
+        // the helper keeps its own geometry. The same style object is registered in
+        // the capability catalog the generated nodes resolve against.
+        let sized = presentationButtonStyle(width)
+        let accent = generatedRegion.namedStyle("rule_primary_action")
+        let painted = match (accent) {
+            case Some(value) => cjguiComposableUiPaintOverlay(sized, value.base)
+            case None => sized
+        }
+        let interaction = match (accent) {
+            case Some(value) => value.interaction
+            case None => CjguiComposableUiTheme.paperLight().primaryActionInteraction
+        }
         return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_BUTTON, label, label, actionName, -1,
-            presentationButtonStyle(width), interactionStyle: if (usesDarkAppearance) {
-                CjguiComposableUiTheme.beaconDark().primaryActionInteraction
-            } else {
-                CjguiComposableUiTheme.paperLight().primaryActionInteraction
-            }, identity: Some(identity))
+            painted, interactionStyle: interaction, identity: Some(identity))
     }
     private func presentationButtonStyle(width: Int64): CjguiComposableUiStyle {
         let base = if (usesDarkAppearance) {
@@ -1649,6 +1721,9 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
     // tree model focused; the panel needs the window to resolve that row's
     // scoped identity.
     controller.treeSelectionProvider().attachWindow(window)
+    // The generated-instance projection needs the same accepted window its
+    // identities live in, so an external caller can address them by declared key.
+    controller.generatedUiRegion().attachWindow(window)
     let connection = CjguiSharedOperationExternalConnection(domain, authorization(), domain, window)
     if (!connection.enableTargetedContextReads(domain) || !connection.enableWindowProgressReads(window) ||
         !connection.enableGeneratedUiProvider(controller.generatedUiRegion()) ||
@@ -1658,6 +1733,30 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
         return 1
     }
     if (startup.verifiesHostCloseDecisions) {
+        // A window that really HOLDS a shared-catalog image identity, accepted
+        // through the same public structure channel an external client uses. The
+        // close path below must release it; a zero-hold window would prove
+        // nothing.
+        let closeProbeRegion = controller.generatedUiRegion()
+        let closeProbeStructure = "GENERATED_UI_STRUCTURE 1\nNODE 0 board vertical\n" +
+            "NODE 1 beacon image\nPROPERTY 1 beacon resource rule-set-beacon\n" +
+            "PROPERTY 1 beacon resourceVersion 1\nEND"
+        if (!closeProbeRegion.submitStructure(closeProbeStructure,
+            closeProbeRegion.acceptedStructureVersion()).candidateAccepted ||
+            !closeProbeRegion.beginSceneRefresh()) {
+            host.close()
+            return 1
+        }
+        let _ = closeProbeRegion.buildSection(CjguiComposableUiTheme.beaconDark(),
+            CjguiComposableUiStyle(fontSize: 13.0))
+        if (!closeProbeRegion.prepareSceneRefresh()) {
+            host.close()
+            return 1
+        }
+        closeProbeRegion.commitSceneRefresh()
+        getStdOut().writeln(
+            "CJGUI_RULE_SET_HOST_PROBE image_holds_before_close=${closeProbeRegion.liveImageIdentityHoldCount()}")
+        getStdOut().flush()
         if (!domain.createCollectionItemFromHuman().applied) {
             host.close();
             return 1
@@ -2327,10 +2426,19 @@ func compositePresetWritesConfiguredValueAndOwnerRefusesOutOfRange(): Unit {
     let presetValue = region.retentionPreset().value
     @Assert(presetValue, "${CjguiRuleSetEditingDomain.defaultRetentionMaximum}")
 
+    // The preset control must carry the RESOLVED writer/owner target, exactly as
+    // the shared builder does; the adapter verifies the event node against the
+    // accepted binding.
+    let presetBinding = match (region.acceptedCompositeElement("retentionEdit", "preset")) {
+        case Some(value) => value
+        case None => CjguiCompositeElementBinding("preset", CJGUI_COMPOSITE_ELEMENT_PRESET, -1, "", "")
+    }
     let presetNode = CjguiComposableUiLayoutNode(
         cjguiComposableButton(presetNodeId, "retention-preset",
             region.retentionPreset().label, CjguiRetentionIntegerEditComposite.PRESET_ACTION,
-            CjguiRuleSetEditingDomain.formRetentionResourceId, CjguiComposableUiStyle()),
+            presetBinding.bindingResourceId, CjguiComposableUiStyle(),
+            operationActionName: presetBinding.writerOperation,
+            operationResourceId: presetBinding.ownerTargetResourceId),
         CjguiComposableUiRect(0, 0, 120, 26), CjguiComposableUiRect(0, 0, 120, 26))
     @Assert(region.handleEvent(CjguiComposableUiEvent(presetNode,
         CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, 1)).didApply, true)
@@ -2357,10 +2465,16 @@ func compositePresetWritesConfiguredValueAndOwnerRefusesOutOfRange(): Unit {
     @Assert(outOfRangeWindow.refresh(), true)
     let outOfRangePresetId = outOfRangeLive.acceptedCompositeElementNodeId("retentionEdit", "preset")
     @Assert(outOfRangePresetId > 0, true)
+    let outOfRangeBinding = match (outOfRangeLive.acceptedCompositeElement("retentionEdit", "preset")) {
+        case Some(value) => value
+        case None => CjguiCompositeElementBinding("preset", CJGUI_COMPOSITE_ELEMENT_PRESET, -1, "", "")
+    }
     let outOfRangeNode = CjguiComposableUiLayoutNode(
         cjguiComposableButton(outOfRangePresetId, "retention-preset", "设为 200",
             CjguiRetentionIntegerEditComposite.PRESET_ACTION,
-            CjguiRuleSetEditingDomain.formRetentionResourceId, CjguiComposableUiStyle()),
+            outOfRangeBinding.bindingResourceId, CjguiComposableUiStyle(),
+            operationActionName: outOfRangeBinding.writerOperation,
+            operationResourceId: outOfRangeBinding.ownerTargetResourceId),
         CjguiComposableUiRect(0, 0, 120, 26), CjguiComposableUiRect(0, 0, 120, 26))
     @Assert(outOfRangeLive.handleEvent(CjguiComposableUiEvent(outOfRangeNode,
         CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, 1)).didApply, true)
@@ -2418,4 +2532,35 @@ private func findPresetButton(node: CjguiComposableUiNode): ?CjguiComposableUiNo
         }
     }
     return None
+}
+
+/// The registered `gap` property really reaches the shared builder: the composite
+/// row built for a description that declares a gap uses that gap, and one that
+/// declares none uses the builder's own fallback.
+@Test
+func retentionCompositeAppliesItsDeclaredGap(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("间距", true, 30, "x", "composite-gap").applied, true)
+    let controller = CjguiRuleSetComposableController(domain)
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    let region = controller.generatedUiRegion()
+
+    let declared = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 panel vertical
+NODE 1 retentionEdit retentionIntegerEdit
+PROPERTY 1 retentionEdit gap 12
+PROPERTY 1 retentionEdit presetLabel 间距预设
+END"""
+    @Assert(region.submitStructure(declared, 0).candidateAccepted, true)
+    @Assert(window.refresh(), true)
+    let section = region.buildSection(CjguiComposableUiTheme.paperLight(), CjguiComposableUiStyle())
+    let rowId = region.acceptedCompositeElementNodeId("retentionEdit", "root")
+    @Assert(rowId > 0, true)
+    let row = findNodeById(section, rowId) ??
+        cjguiComposableVertical(-1, "missing-composite-row", CjguiComposableUiStyle())
+    @Assert(row.nodeId, rowId)
+    @Assert(row.style.gap, 12)
+    window.close()
 }

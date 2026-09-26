@@ -14,6 +14,9 @@ if [[ -e "$DESTINATION" ]]; then
   print -u2 -- "cjgui preview: destination already exists: $DESTINATION"
   exit 2
 fi
+# The export target's parent may not exist yet (a caller picks a fresh
+# stamped directory); create it instead of failing on the dirname cd.
+mkdir -p "$(dirname "$DESTINATION")"
 DESTINATION_PARENT="$(cd "$(dirname "$DESTINATION")" && pwd)"
 DESTINATION="$DESTINATION_PARENT/$(basename "$DESTINATION")"
 typeset -a LICENSE_FILES
@@ -32,6 +35,10 @@ FRAMEWORK_DIR="$STAGING_DIR/framework/cjgui"
 mkdir -p "$FRAMEWORK_DIR"
 cp "$RUNTIME_DIR/cjpm.toml" "$FRAMEWORK_DIR/cjpm.toml"
 cp "$RUNTIME_DIR/README.md" "$FRAMEWORK_DIR/README.md"
+# The README's primary onboarding pointer must resolve inside the export:
+# carry the application-host quick start beside the README instead of leaving
+# a dangling first-run link.
+cp "$RUNTIME_DIR/MACOS_APPLICATION_HOST.md" "$FRAMEWORK_DIR/MACOS_APPLICATION_HOST.md"
 mkdir -p "$FRAMEWORK_DIR/src" "$FRAMEWORK_DIR/shared_operation_core/src" "$FRAMEWORK_DIR/native" \
   "$FRAMEWORK_DIR/resources" "$FRAMEWORK_DIR/scripts" "$FRAMEWORK_DIR/templates"
 # Preview consumers may copy either package independently. Keep the source
@@ -55,6 +62,7 @@ PREVIEW_CJGUI_SOURCES=(
   composable_ui_window.cj
   composable_ui_tree.cj
   composable_ui_generated.cj
+  composable_ui_named_style.cj
   composable_ui_composite_component.cj
   macos_application_host.cj
   runtime_renderer_session.cj
@@ -64,6 +72,16 @@ for source_name in "${PREVIEW_CJGUI_SOURCES[@]}"; do
 done
 cp "$RUNTIME_DIR/shared_operation_core/cjpm.toml" "$FRAMEWORK_DIR/shared_operation_core/cjpm.toml"
 cp "$RUNTIME_DIR/shared_operation_core/client.py" "$FRAMEWORK_DIR/shared_operation_core/client.py"
+# The typed public layer and its runnable example ship beside the raw client so a
+# developer can import them from the export root alone.
+cp "$RUNTIME_DIR/shared_operation_core/cjgui_generated_client.py" \
+  "$FRAMEWORK_DIR/shared_operation_core/cjgui_generated_client.py"
+cp "$RUNTIME_DIR/shared_operation_core/example_generated_consumption.py" \
+  "$FRAMEWORK_DIR/shared_operation_core/example_generated_consumption.py"
+cp "$RUNTIME_DIR/shared_operation_core/example_generated_observation.py" \
+  "$FRAMEWORK_DIR/shared_operation_core/example_generated_observation.py"
+cp "$RUNTIME_DIR/shared_operation_core/example_generated_candidate_race.py" \
+  "$FRAMEWORK_DIR/shared_operation_core/example_generated_candidate_race.py"
 typeset -a PREVIEW_CORE_SOURCES
 PREVIEW_CORE_SOURCES=(
   shared_editing_form_contract.cj

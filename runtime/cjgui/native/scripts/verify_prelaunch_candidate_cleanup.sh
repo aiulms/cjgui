@@ -61,6 +61,25 @@ if kill -0 "$LOST_PID" 2>/dev/null; then
 fi
 log "lost_stand_in_reclaimed=true"
 
+# A registered identity with NO live process must be reported as an OBSERVATION,
+# not as "never started": a candidate that launched and already exited is
+# indistinguishable from one that never launched, so cleanup must not claim
+# which happened.
+ABSENT_EXEC="$WORK/lost-round/CJGUIPrelaunchAbsent${RUN_TAG}"
+ABSENT_OUT="$( (
+  typeset -a CANDIDATE_EXECS CANDIDATE_DIRS CANDIDATE_DESCS
+  CANDIDATE_EXECS=("$ABSENT_EXEC")
+  CANDIDATE_DIRS=("$WORK/lost-round")
+  CANDIDATE_DESCS=("")
+  cjgui_reclaim_candidates
+) 2>&1 )"
+print -r -- "$ABSENT_OUT" | grep -q "no_live_process" || \
+  fail "absent candidate was not reported by its registered identity"
+if print -r -- "$ABSENT_OUT" | grep -q "never started"; then
+  fail "cleanup still claims 'never started' without a launch observation"
+fi
+log "absent_candidate_reported_as_observation=true"
+
 # The control instance is NOT in this round's candidate list: it must be
 # untouched and still resolvable by its own identity.
 if ! kill -0 "$CONTROL_PID" 2>/dev/null; then

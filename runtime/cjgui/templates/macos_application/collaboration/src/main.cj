@@ -27,6 +27,12 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
 
     public func buildUi(): CjguiComposableUiNode {
         let theme = CjguiComposableUiTheme.beaconDark()
+        // ONE role pick gives the submit button both its base paint and its
+        // interaction states (hover/pressed keep the readable foreground the
+        // theme declares on the base action style).
+        let action = CjguiComposableUiNamedStyle("collaboration-submit",
+            theme.primaryAction, interaction: theme.primaryActionInteraction,
+            purpose: "提交当前任务")
         let snapshot = domain.snapshot()
         let task = taskFromSnapshot(snapshot)
         let root = cjguiComposableHorizontal(1, "collaboration-root", theme.page)
@@ -46,7 +52,7 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
                 theme.input, fieldId: "title", operationActionName: "SET_TITLE", displayValueRole: "applied"))
         }
         editorPane.add(cjguiComposableButton(7, "collaboration-submit", "提交当前任务", "HUMAN_SUBMIT", TASK_RESOURCE_ID,
-            theme.primaryAction, operationActionName: "SET_MARKED"))
+            action.localStyle(), operationActionName: "SET_MARKED", interactionStyle: action.interaction))
         editorPane.add(cjguiComposableText(8, "collaboration-status", status, theme.body))
         let activityPane = cjguiComposableVertical(20, "collaboration-activity", CjguiComposableUiStyle(
             growX: 1, padding: 14, gap: 8, cornerRadius: 16, clipsContent: true,

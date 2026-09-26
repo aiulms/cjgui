@@ -1,0 +1,51 @@
+# CJGUI 鸿蒙应用（Hybrid 模块：ets + cangjie + cpp 同模块）。
+#
+# 与 runtime/cjgui/cjpm.toml 的关系（同 2026-09-20 探针的差异原则）：
+#   1) 去掉 darwin 链接框架（AppKit/Metal/MetalKit/QuartzCore/lobjc）
+#   2) [ffi.c] 替换为 ohos 目标的桥静态库（NDK clang 产出 ELF .a），
+#      实现 cjgui_internal_renderer_* C ABI
+#   3) 增加 [target.aarch64-linux-ohos] 编译选项与 bin-dependencies
+#
+# 装载模型（Astra 咨询后定稿）：官方 Hybrid 模块布局，ArkTS import
+# 'libcjgui_app.so' 由官方 ark_interop loader 完成运行时初始化；entry 的
+# C++ 桥对已加载的库调用原始 @C 导出（app_main + ingress 函数指针注册）。
+#
+# 说明：曾尝试"ArkTS entry + 仓颉 HAR 模块"两模块拆分，构建成功但
+# HAP 缺仓颉运行时库（MoveCangjieLibs 只处理 HAP 模块自身），故按官方
+# Hybrid 模板收敛为单模块。快照同步脚本同步本模块内的 cjgui/ 与
+# shared_operation_core/。
+
+[package]
+  cjc-version = "1.1.3"
+  compile-option = "--dy-std --cfg=\"${COMPILE_CONDITION_ENTRY}\""
+  override-compile-option = "${OVERRIDE_COMPILE_OPTION}"
+  description = "CJGUI harmony app (same-source core + settings-counter owner + ohos host layer)"
+  name = "cjgui_app"
+  output-type = "dynamic"
+  src-dir = "./src/main/cangjie"
+  target-dir = ""
+  version = "1.0.0"
+
+[dependencies]
+  cjgui = { path = "./cjgui" }
+  cjgui_shared_operation_core = { path = "./shared_operation_core" }
+  cjgui_settings_counter_application = { path = "./settings_counter_application" }
+  cjgui_ohos_transport = { path = "./ohos_transport" }
+
+[profile]
+  [profile.build]
+    incremental = true
+    lto = ""
+    [profile.build.combined]
+      cjgui_app = "dynamic"
+  [profile.customized-option]
+    debug = "-g -Woff all -Won apilevel-check"
+    release = "--fast-math -O2 -s -Woff all -Won apilevel-check"
+  [profile.test]
+
+[target.aarch64-linux-ohos]
+  compile-option = "-B \"${DEVECO_CANGJIE_HOME}/build-tools/third_party/llvm/bin\" -B \"${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"${DEVECO_OH_NATIVE_HOME}/llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos\" -L \"${DEVECO_OH_NATIVE_HOME}/llvm/lib/aarch64-linux-ohos\" --sysroot \"${DEVECO_OH_NATIVE_HOME}/sysroot\""
+  link-option = "./oh_renderer/libcjgui_ohos_renderer.a -lnative_drawing -lnative_window -lEGL -lGLESv3 -lace_ndk.z -lhilog_ndk.z -lc++ -lohinputmethod"
+[target.aarch64-linux-ohos.bin-dependencies]
+  path-option = ["${AARCH64_LIBS}", "${AARCH64_MACRO_LIBS}", "${AARCH64_KIT_LIBS}"]
+  package-option = {}

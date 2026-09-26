@@ -49,7 +49,9 @@ cjc --sysroot "$SDKROOT_PATH" \
   "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
   "$RUNTIME_DIR/src/composable_ui.cj" \
   "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
+  "$RUNTIME_DIR/src/composable_ui_composite_component.cj" \
   "$RUNTIME_DIR/src/composable_ui_generated.cj" \
+  "$RUNTIME_DIR/src/composable_ui_named_style.cj" \
   "$RUNTIME_DIR/src/composable_ui_window.cj" \
   "$RUNTIME_DIR/src/macos_application_host.cj" \
   "$RUNTIME_DIR/probe/composable_ui_generated_commit_probe.cj" \

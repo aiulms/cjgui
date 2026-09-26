@@ -1,0 +1,128 @@
+[
+  {
+    "check": "负控：仅超时不判为拒绝",
+    "actual": "timeout",
+    "expected": "timeout",
+    "pass": true
+  },
+  {
+    "check": "负控：reset 判为拒绝",
+    "actual": "ConnectionResetError",
+    "expected": "ConnectionResetError",
+    "pass": true
+  },
+  {
+    "check": "服务可用",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "旧实例身份可读",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "认领已暂停",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  },
+  {
+    "check": "排队取消完成",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  },
+  {
+    "check": "close+boot 线程已分离",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  },
+  {
+    "check": "关闭窗口已保持（800ms）",
+    "actual": "800",
+    "expected": "800",
+    "pass": true
+  },
+  {
+    "check": "4 张 Pending 全部确定未执行（closed/timeout）",
+    "actual": 4,
+    "expected": 4,
+    "pass": true
+  },
+  {
+    "check": "无客户端未定",
+    "actual": 0,
+    "expected": 0,
+    "pass": true
+  },
+  {
+    "check": "关闭窗口内连接被拒（EOF/reset/refused）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "关闭窗口内无超时冒充拒绝",
+    "actual": false,
+    "expected": false,
+    "pass": true
+  },
+  {
+    "check": "旧连接补发被拒（无业务回包）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "owner 外确认 Closed（生产 awaitClosed 判定）",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  },
+  {
+    "check": "同进程 BOOT 完成",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  },
+  {
+    "check": "新身份不等于旧身份",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "重开后业务可用",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "owner 值保留",
+    "actual": "我的设备",
+    "expected": "我的设备",
+    "pass": true
+  },
+  {
+    "check": "取消票+旧半帧未应用（版本不变）",
+    "actual": 0,
+    "expected": 0,
+    "pass": true
+  },
+  {
+    "check": "取消票+旧半帧未应用（计数不变）",
+    "actual": "10",
+    "expected": "10",
+    "pass": true
+  },
+  {
+    "check": "新身份下 INCREMENT 应用",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  }
+]

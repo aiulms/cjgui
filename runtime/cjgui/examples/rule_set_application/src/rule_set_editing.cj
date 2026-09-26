@@ -562,6 +562,49 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     private func copyParameters(): ArrayList<CjguiSharedOperationParameterDescriptor> { return ArrayList<CjguiSharedOperationParameterDescriptor>([parameter("label", "STRING"), parameter("requestId", "STRING")]) }
     private func renameParameters(): ArrayList<CjguiSharedOperationParameterDescriptor> { return ArrayList<CjguiSharedOperationParameterDescriptor>([parameter("label", "STRING"), parameter("requestId", "STRING")]) }
     private func requestParameters(): ArrayList<CjguiSharedOperationParameterDescriptor> { return ArrayList<CjguiSharedOperationParameterDescriptor>([parameter("requestId", "STRING")]) }
+    /// The argument name of the draft-text write operation, derived from the SAME
+    /// parameter list the external operation descriptor publishes. An application
+    /// composite declares its element's argument from here, so the framework can
+    /// carry the real argument instead of every consumer guessing it.
+    public func draftTextArgumentName(): String {
+        for (parameter in draftTextParameters()) {
+            if (parameter.name != "fieldId" && parameter.name != "expectedDraftVersion") {
+                return parameter.name
+            }
+        }
+        return ""
+    }
+
+    /// The argument name of the draft-boolean write operation, from the same
+    /// definition list. Provided beside the text one so the generated field
+    /// definition (and therefore the public capability description) carries the
+    /// real argument for BOTH editor kinds.
+    public func draftBooleanArgumentName(): String {
+        for (parameter in draftBooleanParameters()) {
+            if (parameter.name != "fieldId" && parameter.name != "expectedDraftVersion") {
+                return parameter.name
+            }
+        }
+        return ""
+    }
+
+    /// Declared parameter names of one write/apply action, taken from THIS
+    /// application's single action descriptor list. The generated capability
+    /// description publishes them with the action, so no consumer restates the
+    /// owner's argument list.
+    public func actionArgumentNames(actionName: String): ArrayList<String> {
+        let result = ArrayList<String>()
+        for (descriptor in actionDescriptors()) {
+            if (descriptor.name != actionName) {
+                continue
+            }
+            for (parameter in descriptor.parameters) {
+                result.add(parameter.name)
+            }
+        }
+        return result
+    }
+
     private func draftTextParameters(): ArrayList<CjguiSharedOperationParameterDescriptor> { return ArrayList<CjguiSharedOperationParameterDescriptor>([parameter("fieldId", "STRING"), parameter("text", "STRING"), parameter("expectedDraftVersion", "INTEGER")]) }
     private func draftBooleanParameters(): ArrayList<CjguiSharedOperationParameterDescriptor> { return ArrayList<CjguiSharedOperationParameterDescriptor>([parameter("fieldId", "STRING"), parameter("value", "BOOLEAN"), parameter("expectedDraftVersion", "INTEGER")]) }
     private func draftApplyParameters(): ArrayList<CjguiSharedOperationParameterDescriptor> { return ArrayList<CjguiSharedOperationParameterDescriptor>([parameter("expectedDraftVersion", "INTEGER")]) }

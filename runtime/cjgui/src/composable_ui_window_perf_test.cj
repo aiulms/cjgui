@@ -544,6 +544,11 @@ private class WindowPerfPanelController <: CjguiComposableUiController &
     CjguiComposableUiSceneRefreshParticipant {
     private let fixture: WindowPerfFieldFixture
     private let generated: Bool
+    /// When true this window authors the practical-size/growth/alignment/font
+    /// fixture instead of the gap/padding-only baseline. Both fixtures stay in
+    /// the same class so the existing measurement helpers sample the new panel
+    /// through the exact same path the baseline uses.
+    private let practical: Bool
     private let provider: WindowPerfFieldProvider
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let spec: ?CjguiGeneratedUiNodeSpec
@@ -559,15 +564,24 @@ private class WindowPerfPanelController <: CjguiComposableUiController &
     var adapterCalls: Int64 = 0
     var lastBuiltGap: Int64 = 6
 
-    init(fixture: WindowPerfFieldFixture, generated: Bool) {
+    init(fixture: WindowPerfFieldFixture, generated: Bool, practical!: Bool = false) {
         this.fixture = fixture
         this.generated = generated
+        this.practical = practical
         this.provider = WindowPerfFieldProvider(fixture)
         if (generated) {
-            let built = buildPanelCatalog(fixture)
+            let built = if (practical) {
+                buildPracticalPanelCatalog(fixture)
+            } else {
+                buildPanelCatalog(fixture)
+            }
             this.catalog = built
             this.holder = Some(CjguiGeneratedUiStructureHolder(built))
-            this.spec = Some(perfPanelSpec(fixture))
+            this.spec = Some(if (practical) {
+                perfPracticalPanelSpec(fixture)
+            } else {
+                perfPanelSpec(fixture)
+            })
         } else {
             this.catalog = CjguiGeneratedUiCapabilityCatalog()
             this.holder = None
@@ -585,14 +599,23 @@ private class WindowPerfPanelController <: CjguiComposableUiController &
         let root = if (this.generated) {
             match (holder) {
                 case Some(value) => value.buildRefreshNode(provider)
-                case None => perfHandwrittenPanel(fixture, gap: pendingGap)
+                case None => handwrittenPanelRoot(pendingGap)
             }
         } else {
-            perfHandwrittenPanel(fixture, gap: pendingGap)
+            handwrittenPanelRoot(pendingGap)
         }
         lastBuiltGap = pendingGap
         buildMicros += (MonoTime.now() - started).toMicroseconds()
         return root
+    }
+
+    /// The handwritten builder this controller authors, selected by the fixture
+    /// flavor so a baseline round is byte-for-byte the old panel.
+    private func handwrittenPanelRoot(gap: Int64): CjguiComposableUiNode {
+        if (practical) {
+            return perfPracticalHandwrittenPanel(fixture, gap: gap)
+        }
+        return perfHandwrittenPanel(fixture, gap: gap)
     }
 
     /// The generated author's own work for one structure version: decode-free
@@ -603,7 +626,11 @@ private class WindowPerfPanelController <: CjguiComposableUiController &
     public func submitStructure(gap!: Int64 = 6): Bool {
         pendingGap = gap
         if (let Some(value) <- holder) {
-            let candidate = perfPanelSpec(fixture, gap: gap)
+            let candidate = if (practical) {
+                perfPracticalPanelSpec(fixture, gap: gap)
+            } else {
+                perfPanelSpec(fixture, gap: gap)
+            }
             let started = MonoTime.now()
             let submitted = value.submit(candidate, provider)
             adapterMicros += (MonoTime.now() - started).toMicroseconds()
@@ -619,7 +646,7 @@ private class WindowPerfPanelController <: CjguiComposableUiController &
         if (let Some(value) <- holder) {
             return value.buildRefreshNode(provider)
         }
-        return perfHandwrittenPanel(fixture)
+        return handwrittenPanelRoot(6)
     }
 
     public func beginSceneRefresh(): Bool {
@@ -666,6 +693,18 @@ private class WindowPerfPanelController <: CjguiComposableUiController &
 
     public func bump(): Unit {
         revision += 1
+    }
+
+    /// The accepted node identity behind one authored stable key, through THIS
+    /// author's own mapping: the generated author asks its accepted key table
+    /// (the framework allocated the identity), the handwritten author mirrors the
+    /// ids it declared. The key is the shared identity; the node id is how each
+    /// author addresses its own accepted node.
+    public func nodeIdForKey(key: String): Int64 {
+        if (let Some(value) <- holder) {
+            return value.nodeIdForKey(key)
+        }
+        return perfHandwrittenNodeId(key, practical: practical)
     }
 
     /// The declared layout attribute the ACCEPTED panel carries: for the
@@ -747,10 +786,214 @@ private func perfPanelSpec(fixture: WindowPerfFieldFixture, gap!: Int64 = 6): Cj
         children: children)
 }
 
+// --- the practical style fixture -------------------------------------------
+//
+// The baseline above authors only gap/padding, which the catalog has always
+// consumed. This second fixture authors the shared size / growth / alignment /
+// font vocabulary in BOTH languages from the SAME published property
+// definitions, so equivalence is asserted for the properties the catalog now
+// maps and not only for the old ones. The baseline case and its numbers are
+// left exactly as they were.
+
+private let PERF_PRACTICAL_ROOT_ID: Int64 = 900
+private let PERF_PRACTICAL_ROW_ID: Int64 = 901
+private let PERF_PRACTICAL_ROW_LABEL_ID: Int64 = 902
+private let PERF_PRACTICAL_ROW_INPUT_ID: Int64 = 903
+private let PERF_PRACTICAL_ROW_GAP: Int64 = 6
+private let PERF_PRACTICAL_ROW_PADDING: Int64 = 6
+private let PERF_PRACTICAL_LABEL_WIDTH: Int64 = 160
+private let PERF_PRACTICAL_LABEL_TEXT: String = "字段宽度"
+private let PERF_PRACTICAL_LABEL_FONT_SIZE: Int64 = 24
+private let PERF_PRACTICAL_EDITOR_FONT_SIZE: Int64 = 12
+
+private func perfPracticalLabelNodeId(index: Int64): Int64 {
+    return 910 + (index - 1) * 2
+}
+
+private func perfPracticalInputNodeId(index: Int64): Int64 {
+    return 911 + (index - 1) * 2
+}
+
+/// The practical handwritten pane: a horizontal row whose first label keeps a
+/// bounded width while its sibling editor grows, with a declared font size and
+/// a non-default vertical alignment, inside a container that declares both gap
+/// and padding. `labelFontSize` and `editorAlignY` are parameters so the SAME
+/// author can be sampled twice with exactly one property changed, which is how
+/// the differential geometry claims are proved.
+private func perfPracticalHandwrittenPanel(fixture: WindowPerfFieldFixture, gap!: Int64 = 6,
+    labelFontSize!: Float64 = Float64(PERF_PRACTICAL_LABEL_FONT_SIZE),
+    editorAlignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_CENTER,
+    labelFixedWidth!: Int64 = PERF_PRACTICAL_LABEL_WIDTH): CjguiComposableUiNode {
+    let root = cjguiComposableVertical(PERF_PRACTICAL_ROOT_ID, "perf-panel",
+        CjguiComposableUiStyle(gap: gap, padding: 8))
+    let row = cjguiComposableHorizontal(PERF_PRACTICAL_ROW_ID, "perf-row",
+        CjguiComposableUiStyle(gap: PERF_PRACTICAL_ROW_GAP, padding: PERF_PRACTICAL_ROW_PADDING))
+    row.add(cjguiComposableText(PERF_PRACTICAL_ROW_LABEL_ID, "perf-row-label", PERF_PRACTICAL_LABEL_TEXT,
+        CjguiComposableUiStyle(fixedWidth: labelFixedWidth, fontSize: labelFontSize)))
+    row.add(cjguiComposableTextInput(PERF_PRACTICAL_ROW_INPUT_ID, "perf-input-0", fixture.editorLabel(0),
+        fixture.value(0), fixture.resourceId(0),
+        CjguiComposableUiStyle(growX: 1, fontSize: Float64(PERF_PRACTICAL_EDITOR_FONT_SIZE),
+            alignY: editorAlignY),
+        fieldId: fixture.fieldId(0), operationActionName: "EDIT_DRAFT_TEXT",
+        operationResourceId: 1, displayValueRole: "draft"))
+    root.add(row)
+    var index: Int64 = 1
+    while (index < fixture.fields) {
+        root.add(cjguiComposableText(perfPracticalLabelNodeId(index), "perf-label-${index}",
+            fixture.staticLabel(index), CjguiComposableUiStyle()))
+        root.add(cjguiComposableTextInput(perfPracticalInputNodeId(index), "perf-input-${index}",
+            fixture.editorLabel(index), fixture.value(index), fixture.resourceId(index),
+            CjguiComposableUiStyle(), fieldId: fixture.fieldId(index),
+            operationActionName: "EDIT_DRAFT_TEXT", operationResourceId: 1, displayValueRole: "draft"))
+        index += 1
+    }
+    return root
+}
+
+/// The generated author's capability catalog for the practical fixture. Every
+/// style property is registered through the SAME shared declaration
+/// (`containerStyleProperties` / `leafStyleProperties`) the framework publishes,
+/// so the generated side cannot drift from the handwritten side by inventing or
+/// dropping a property. A registration that the framework rejects fails here
+/// instead of degrading silently.
+private func buildPracticalPanelCatalog(fixture: WindowPerfFieldFixture): CjguiGeneratedUiCapabilityCatalog {
+    let catalog = CjguiGeneratedUiCapabilityCatalog()
+    @Assert(catalog.registerComponent(CjguiGeneratedUiComponentSpec("vertical",
+        CjguiGeneratedUiPresentation.containerStyleProperties(), true, childLimit: 256)), true)
+    @Assert(catalog.registerComponent(CjguiGeneratedUiComponentSpec("horizontal",
+        CjguiGeneratedUiPresentation.containerStyleProperties(), true, childLimit: 256)), true)
+    let labelProperties = CjguiGeneratedUiPresentation.leafStyleProperties()
+    labelProperties.add(CjguiGeneratedUiPropertySpec("text", "STRING", required: true, maxLength: 64))
+    @Assert(catalog.registerComponent(CjguiGeneratedUiComponentSpec("label", labelProperties, false)), true)
+    let inputProperties = CjguiGeneratedUiPresentation.leafStyleProperties()
+    inputProperties.add(CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 64))
+    @Assert(catalog.registerComponent(CjguiGeneratedUiComponentSpec("textInput", inputProperties, false)), true)
+    var index: Int64 = 0
+    while (index < fixture.fields) {
+        @Assert(catalog.registerField(CjguiGeneratedUiFieldSpec(fixture.fieldId(index),
+            fixture.editorLabel(index), "TEXT", fixture.resourceId(index),
+            writeActionName: "EDIT_DRAFT_TEXT")), true)
+        index += 1
+    }
+    return catalog
+}
+
+/// The same practical panel declared through the generated presentation: the
+/// row is a `horizontal` container, the bounded label declares `fixedWidth` and
+/// `fontSize`, the editor declares `growX` and `alignY`, and the row declares
+/// its own `gap`/`padding`. Nothing is written onto a built node afterwards.
+private func perfPracticalPanelSpec(fixture: WindowPerfFieldFixture, gap!: Int64 = 6,
+    labelFontSize!: Int64 = PERF_PRACTICAL_LABEL_FONT_SIZE,
+    editorAlignY!: String = "center"): CjguiGeneratedUiNodeSpec {
+    let rowChildren = ArrayList<CjguiGeneratedUiNodeSpec>()
+    let rowLabelProperties = HashMap<String, String>()
+    rowLabelProperties.add("text", PERF_PRACTICAL_LABEL_TEXT)
+    rowLabelProperties.add("fixedWidth", "${PERF_PRACTICAL_LABEL_WIDTH}")
+    rowLabelProperties.add("fontSize", "${labelFontSize}")
+    rowChildren.add(CjguiGeneratedUiNodeSpec("perf-row-label", "label", properties: rowLabelProperties))
+    let rowInputProperties = HashMap<String, String>()
+    rowInputProperties.add("label", fixture.editorLabel(0))
+    rowInputProperties.add("growX", "1")
+    rowInputProperties.add("fontSize", "${PERF_PRACTICAL_EDITOR_FONT_SIZE}")
+    rowInputProperties.add("alignY", editorAlignY)
+    rowChildren.add(CjguiGeneratedUiNodeSpec("perf-input-0", "textInput", properties: rowInputProperties,
+        fieldId: fixture.fieldId(0)))
+    let rowProperties = HashMap<String, String>()
+    rowProperties.add("gap", "${PERF_PRACTICAL_ROW_GAP}")
+    rowProperties.add("padding", "${PERF_PRACTICAL_ROW_PADDING}")
+    let children = ArrayList<CjguiGeneratedUiNodeSpec>()
+    children.add(CjguiGeneratedUiNodeSpec("perf-row", "horizontal", properties: rowProperties,
+        children: rowChildren))
+    var index: Int64 = 1
+    while (index < fixture.fields) {
+        let text = HashMap<String, String>()
+        text.add("text", fixture.staticLabel(index))
+        children.add(CjguiGeneratedUiNodeSpec("perf-label-${index}", "label", properties: text))
+        let label = HashMap<String, String>()
+        label.add("label", fixture.editorLabel(index))
+        children.add(CjguiGeneratedUiNodeSpec("perf-input-${index}", "textInput", properties: label,
+            fieldId: fixture.fieldId(index)))
+        index += 1
+    }
+    let rootProperties = HashMap<String, String>()
+    rootProperties.add("gap", "${gap}")
+    rootProperties.add("padding", "8")
+    return CjguiGeneratedUiNodeSpec("perf-panel", "vertical", properties: rootProperties,
+        children: children)
+}
+
+/// Builds one accepted generated practical tree for a single-property variant.
+/// It runs the same submit + build path the controller uses, so the comparison
+/// is between real accepted trees rather than hand-assembled nodes.
+private func perfPracticalGeneratedRoot(fixture: WindowPerfFieldFixture, gap!: Int64 = 6,
+    labelFontSize!: Int64 = PERF_PRACTICAL_LABEL_FONT_SIZE,
+    editorAlignY!: String = "center"): CjguiComposableUiNode {
+    let catalog = buildPracticalPanelCatalog(fixture)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let provider = WindowPerfFieldProvider(fixture)
+    let submitted = holder.submit(perfPracticalPanelSpec(fixture, gap: gap,
+        labelFontSize: labelFontSize, editorAlignY: editorAlignY), provider)
+    @Assert(submitted.candidateAccepted, true)
+    // The candidate identity transaction is part of building the accepted tree;
+    // rendering without it would fall back to an empty accepted structure.
+    @Assert(holder.beginCandidateRefresh(), true)
+    let root = holder.buildRefreshNode(provider)
+    @Assert(holder.prepareCandidateRefresh(), true)
+    holder.commitCandidateRefresh()
+    return root
+}
+
+/// Declared node count of the practical panel: root + row + two row children +
+/// two nodes per remaining field.
+private func perfPracticalDeclaredNodes(fixture: WindowPerfFieldFixture): Int64 {
+    return 4 + 2 * (fixture.fields - 1)
+}
+
+/// The practical panel's declared stable keys, in built order.
+private func perfPracticalPanelKeys(fields: Int64): ArrayList<String> {
+    let keys = ArrayList<String>()
+    keys.add("perf-panel")
+    keys.add("perf-row")
+    keys.add("perf-row-label")
+    keys.add("perf-input-0")
+    var index: Int64 = 1
+    while (index < fields) {
+        keys.add("perf-label-${index}")
+        keys.add("perf-input-${index}")
+        index += 1
+    }
+    return keys
+}
+
+private func perfPracticalHandwrittenNodeId(key: String): Int64 {
+    if (key == "perf-panel") {
+        return PERF_PRACTICAL_ROOT_ID
+    }
+    if (key == "perf-row") {
+        return PERF_PRACTICAL_ROW_ID
+    }
+    if (key == "perf-row-label") {
+        return PERF_PRACTICAL_ROW_LABEL_ID
+    }
+    if (key == "perf-input-0") {
+        return PERF_PRACTICAL_ROW_INPUT_ID
+    }
+    if (key.startsWith("perf-label-")) {
+        return perfPracticalLabelNodeId(numericSuffix(key))
+    }
+    if (key.startsWith("perf-input-")) {
+        return perfPracticalInputNodeId(numericSuffix(key))
+    }
+    return -1
+}
+
 /// Declared node count of one author's panel: the handwritten pane declares
 /// 1 + 2*fields nodes, the generated description declares the same shape, and the
 /// accepted scene must materialize exactly that (plus nothing hidden).
-private func perfDeclaredNodes(fixture: WindowPerfFieldFixture): Int64 {
+private func perfDeclaredNodes(fixture: WindowPerfFieldFixture, practical!: Bool = false): Int64 {
+    if (practical) {
+        return perfPracticalDeclaredNodes(fixture)
+    }
     return 1 + 2 * fixture.fields
 }
 
@@ -772,6 +1015,51 @@ private func normalizedPanelDump(root: CjguiComposableUiNode): String {
             "${node.displayValueRole}|${node.bounds.x},${node.bounds.y},${node.bounds.width},${node.bounds.height}\n")
     }
     return builder.toString()
+}
+
+/// One component of a `normalizedPanelDump` bounds field ("x,y,w,h").
+private func panelBoundsComponent(bounds: String, index: Int64): Int64 {
+    if (bounds.size == 0) {
+        return -1
+    }
+    let parts = bounds.split(",")
+    if (index < 0 || index >= parts.size) {
+        return -1
+    }
+    return perfParseInt(parts[index], -1)
+}
+
+/// The bounds of the first TEXT node carrying one exact value in the dump.
+private func panelDumpTextBounds(dump: String, value: String): String {
+    for (line in dump.split("\n")) {
+        let parts = line.split("|")
+        if (parts.size >= 9 && parts[0] == "${CJGUI_COMPOSABLE_UI_TEXT}" && parts[2] == value) {
+            return parts[8]
+        }
+    }
+    return ""
+}
+
+/// The bounds of the first node bound to one exact field id in the dump.
+private func panelDumpFieldBounds(dump: String, fieldId: String): String {
+    for (line in dump.split("\n")) {
+        let parts = line.split("|")
+        if (parts.size >= 9 && parts[3] == fieldId) {
+            return parts[8]
+        }
+    }
+    return ""
+}
+
+/// The bounds of the first node of one node kind in the dump.
+private func panelDumpKindBounds(dump: String, kind: Int64): String {
+    for (line in dump.split("\n")) {
+        let parts = line.split("|")
+        if (parts.size >= 9 && parts[0] == "${kind}") {
+            return parts[8]
+        }
+    }
+    return ""
 }
 
 private func medianOf(samples: ArrayList<Int64>): Int64 {
@@ -805,6 +1093,10 @@ private class WindowPerfScenarioResult {
     var acceptedVersion: Int64 = 0
     var sceneVersion: Int64 = 0
     var acceptedText: String = ""
+    /// The node identity THIS author resolved each declared key to, captured
+    /// together with `acceptedText` so the item-by-item comparison addresses the
+    /// accepted scene through the author's own mapping.
+    let keyNodeIds: HashMap<String, Int64> = HashMap<String, Int64>()
     var acceptedBoundsKey: String = ""
     var acceptedBoundsFirst: String = ""
     var acceptedBoundsLast: String = ""
@@ -825,8 +1117,114 @@ private func perfPanelAccepts(controller: WindowPerfPanelController, window: Cjg
     @Assert(window.refreshIfNeeded(), true)
 }
 
-private func perfBoundsKey(rect: CjguiComposableUiRect): String {
-    return "${rect.x},${rect.y},${rect.width},${rect.height}"
+/// One accepted-scene row of the timed panel, addressed by the NODE IDENTITY the
+/// author's own stable key currently maps to. The generated author asks the
+/// framework for the identity it allocated for a key; the handwritten author
+/// declares its ids explicitly. Node id is the probe identity here, not the
+/// semantic id: a generated node's semantic id belongs to the framework's
+/// identity slot while the declared key is the identity both authors share, so
+/// each author resolves the same key through its OWN mapping. `present` is false
+/// when the accepted scene has no such node: a probe that silently substituted a
+/// zero rectangle could not tell "unchanged" from "not found", which is how a
+/// missing generated node passed as equal.
+private class WindowPerfAcceptedRow {
+    var present: Bool = false
+    var kind: Int64 = 0
+    var label: String = ""
+    var value: String = ""
+    var fieldId: String = ""
+    var actionName: String = ""
+    var operationActionName: String = ""
+    var operationResourceId: Int64 = -1
+    var resourceId: Int64 = -1
+    var displayValueRole: String = ""
+    var gap: Int64 = 0
+    var padding: Int64 = 0
+    var bounds: String = ""
+
+    func signature(): String {
+        return "${kind}|${label}|${value}|${fieldId}|${actionName}|${operationActionName}|" +
+            "${operationResourceId}|${resourceId}|${displayValueRole}|${gap}|${padding}|${bounds}"
+    }
+}
+
+private func perfParseInt(value: String, fallback: Int64): Int64 {
+    return match (parseGeneratedInteger(value)) {
+        case Some(parsed) => parsed
+        case None => fallback
+    }
+}
+
+private func perfAcceptedRow(dump: String, nodeId: Int64): WindowPerfAcceptedRow {
+    let row = WindowPerfAcceptedRow()
+    for (line in dump.split("\n")) {
+        let parts = line.split("|")
+        if (parts.size < 14 || perfParseInt(parts[0], -1) != nodeId) {
+            continue
+        }
+        row.present = true
+        row.kind = perfParseInt(parts[1], 0)
+        row.label = parts[3]
+        row.value = parts[4]
+        row.fieldId = parts[5]
+        row.actionName = parts[6]
+        row.operationActionName = parts[7]
+        row.operationResourceId = perfParseInt(parts[8], -1)
+        row.resourceId = perfParseInt(parts[9], -1)
+        row.displayValueRole = parts[10]
+        row.gap = perfParseInt(parts[11], 0)
+        row.padding = perfParseInt(parts[12], 0)
+        row.bounds = parts[13]
+        return row
+    }
+    return row
+}
+
+/// The node identity the handwritten pane declares for one stable panel key.
+/// It builds these ids explicitly, so a probe can address them the same way the
+/// generated author addresses the identities the framework allocated for it.
+private func perfHandwrittenNodeId(key: String, practical!: Bool = false): Int64 {
+    if (practical) {
+        return perfPracticalHandwrittenNodeId(key)
+    }
+    if (key == "perf-panel") {
+        return 500
+    }
+    if (key.startsWith("perf-label-")) {
+        return 601 + numericSuffix(key) * 4
+    }
+    if (key.startsWith("perf-input-")) {
+        return 602 + numericSuffix(key) * 4
+    }
+    return -1
+}
+
+/// The panel's declared stable keys, in built order: the ONE identity set both
+/// authors must commit. Each author resolves them to its own node ids.
+private func perfPanelKeys(fields: Int64, practical!: Bool = false): ArrayList<String> {
+    if (practical) {
+        return perfPracticalPanelKeys(fields)
+    }
+    let keys = ArrayList<String>()
+    keys.add("perf-panel")
+    var index: Int64 = 0
+    while (index < fields) {
+        keys.add("perf-label-${index}")
+        keys.add("perf-input-${index}")
+        index += 1
+    }
+    return keys
+}
+
+/// Capture the author's own key -> node identity mapping at the SAME moment the
+/// accepted scene text is taken, so the later item-by-item comparison addresses
+/// one consistent pair. A key the author cannot resolve is recorded as -1 and
+/// fails the presence assertion where it is used.
+private func perfRecordKeyNodeIds(controller: WindowPerfPanelController, result: WindowPerfScenarioResult,
+    fields: Int64, practical!: Bool = false): Unit {
+    for (key in perfPanelKeys(fields, practical: practical)) {
+        result.keyNodeIds.add(key, controller.nodeIdForKey(key))
+    }
 }
 
 /// One measured scenario for one author, on ONE instance: cold structure, hot
@@ -838,8 +1236,8 @@ private func perfBoundsKey(rect: CjguiComposableUiRect): String {
 /// actually measured instead of a separate look-alike. `decode=none` is stated
 /// because this path never calls a decoder: the structure object already exists
 /// in memory, and the field values come from the in-memory fixture.
-private func samplePanelScenario(generated: Bool, fields: Int64, scenario: String, sampleCount: Int64):
-    WindowPerfScenarioResult {
+private func samplePanelScenario(generated: Bool, fields: Int64, scenario: String, sampleCount: Int64,
+    practical!: Bool = false): WindowPerfScenarioResult {
     let result = WindowPerfScenarioResult()
     if (scenario == "cold_submit") {
         // Cold: EACH sample is a NEW controller/holder whose FIRST valid
@@ -849,7 +1247,7 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
         var sample: Int64 = 0
         while (sample < sampleCount) {
             let fixture = WindowPerfFieldFixture(fields)
-            let controller = WindowPerfPanelController(fixture, generated)
+            let controller = WindowPerfPanelController(fixture, generated, practical: practical)
             let window = CjguiComposableUiWindow(controller)
             @Assert(window.start(), true)
             let authorBefore = controller.adapterMicros
@@ -867,12 +1265,13 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
             @Assert(progress.sceneVersion > 0, true)
             if (sample == sampleCount - 1) {
                 result.acceptedText = window.acceptedSceneDump()
+                perfRecordKeyNodeIds(controller, result, fields, practical: practical)
                 result.acceptedNodes = window.acceptedNodeCount()
                 result.acceptedVersion = progress.acceptedSceneVersion
                 result.sceneVersion = progress.sceneVersion
                 result.controllerBuilds = controller.buildCount
                 result.nativeSubmits = window.windowProjection().nativeSubmissionCount
-                result.declaredNodes = perfDeclaredNodes(fixture)
+                result.declaredNodes = perfDeclaredNodes(fixture, practical: practical)
                 result.valueReads = fixture.valueReads
             }
             window.close()
@@ -884,7 +1283,7 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
     // Every other scenario starts from ONE accepted baseline, so the timed rounds
     // measure the change, not the first build.
     let fixture = WindowPerfFieldFixture(fields)
-    let controller = WindowPerfPanelController(fixture, generated)
+    let controller = WindowPerfPanelController(fixture, generated, practical: practical)
     let window = CjguiComposableUiWindow(controller)
     @Assert(window.start(), true)
     perfPanelAccepts(controller, window)
@@ -892,9 +1291,16 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
     let baselineSubmits = window.windowProjection().nativeSubmissionCount
     let baselineVersion = window.windowProgress().acceptedSceneVersion
     let baselineText = window.acceptedSceneDump()
-    let boundsProbe = "perf-panel"
-    let firstBounds = perfBoundsKey(window.acceptedNodeBounds(boundsProbe) ??
-        CjguiComposableUiRect(0, 0, 0, 0))
+    // A child that a real layout change must MOVE: the second field editor sits
+    // after the first label, so a changed container gap shifts its position. A
+    // late child of a tall panel can be clamped by its parent's box, where a gap
+    // change is no longer observable.
+    let boundsProbeKey = if (fields >= 2) { "perf-input-1" } else { "perf-panel" }
+    let boundsProbe = controller.nodeIdForKey(boundsProbeKey)
+    @Assert(boundsProbe > 0, true)
+    let firstRow = perfAcceptedRow(window.acceptedSceneDump(), boundsProbe)
+    @Assert(firstRow.present, true)
+    let firstBounds = firstRow.bounds
 
     var sample: Int64 = 0
     while (sample < sampleCount) {
@@ -902,8 +1308,8 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
         let buildsBefore = controller.buildCount
         let submitsBefore = window.windowProjection().nativeSubmissionCount
         let dumpBefore = window.acceptedSceneDump()
-        let boundsBefore = perfBoundsKey(window.acceptedNodeBounds(boundsProbe) ??
-            CjguiComposableUiRect(0, 0, 0, 0))
+        let rowBefore = perfAcceptedRow(dumpBefore, boundsProbe)
+        @Assert(rowBefore.present, true)
         let versionBefore = window.windowProgress().acceptedSceneVersion
         let started = MonoTime.now()
         var declaredGap: Int64 = 0
@@ -942,8 +1348,8 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
         let buildsNow = controller.buildCount
         let submitsNow = window.windowProjection().nativeSubmissionCount
         let dumpNow = window.acceptedSceneDump()
-        let boundsNow = perfBoundsKey(window.acceptedNodeBounds(boundsProbe) ??
-            CjguiComposableUiRect(0, 0, 0, 0))
+        let rowNow = perfAcceptedRow(dumpNow, boundsProbe)
+        @Assert(rowNow.present, true)
         if (scenario == "field_change") {
             // The new field value really reached the accepted scene.
             @Assert(dumpNow.contains("|v0 v${sample + 1}|"), true)
@@ -954,14 +1360,13 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
             }
             result.observedChange = true
         } else if (scenario == "hot_structure") {
-            // The declared layout attribute really is the one this round declared,
-            // in the ACCEPTED panel (generated: its accepted structure;
-            // handwritten: the tree it built). The probe node's own rect does not
-            // move for a container gap because child rects are parent-relative in
-            // this layout model, so geometry equality here is expected and is NOT
-            // used as change evidence.
+            // The declared layout attribute really is the accepted one AND the
+            // probed child really moved on screen, which is what a hot layout
+            // change has to do. Everything except geometry stays put.
             @Assert(controller.acceptedLayoutGap(), declaredGap)
-            @Assert(boundsNow, boundsBefore)
+            @Assert(rowNow.bounds != rowBefore.bounds, true)
+            @Assert(rowNow.value, rowBefore.value)
+            @Assert(rowNow.fieldId, rowBefore.fieldId)
             @Assert(buildsNow > buildsBefore, true)
             @Assert(submitsNow > submitsBefore, true)
             result.observedChange = true
@@ -971,7 +1376,7 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
             @Assert(submitsNow, submitsBefore)
             @Assert(progress.acceptedSceneVersion, versionBefore)
             @Assert(dumpNow, dumpBefore)
-            @Assert(boundsNow, boundsBefore)
+            @Assert(rowNow.bounds, rowBefore.bounds)
         } else {
             // A forced same-content refresh DOES rebuild, but an identical
             // accepted tree publishes neither a new accepted scene revision nor a
@@ -981,7 +1386,7 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
             @Assert(buildsNow > buildsBefore, true)
             @Assert(progress.acceptedSceneVersion, versionBefore)
             @Assert(dumpNow, dumpBefore)
-            @Assert(boundsNow, boundsBefore)
+            @Assert(rowNow.bounds, rowBefore.bounds)
             result.forcedRefreshRounds += 1
             if (submitsNow > submitsBefore) {
                 result.nativeSubmittedRounds += 1
@@ -996,12 +1401,14 @@ private func samplePanelScenario(generated: Bool, fields: Int64, scenario: Strin
     result.acceptedVersion = window.windowProgress().acceptedSceneVersion
     result.sceneVersion = window.windowProgress().sceneVersion
     result.acceptedText = window.acceptedSceneDump()
+    perfRecordKeyNodeIds(controller, result, fields, practical: practical)
     result.acceptedNodes = window.acceptedNodeCount()
-    result.declaredNodes = perfDeclaredNodes(fixture)
-    result.acceptedBoundsKey = perfBoundsKey(window.acceptedNodeBounds(boundsProbe) ??
-        CjguiComposableUiRect(0, 0, 0, 0))
+    result.declaredNodes = perfDeclaredNodes(fixture, practical: practical)
+    let finalRow = perfAcceptedRow(result.acceptedText, boundsProbe)
+    @Assert(finalRow.present, true)
+    result.acceptedBoundsKey = finalRow.bounds
     result.acceptedBoundsFirst = firstBounds
-    result.acceptedBoundsLast = result.acceptedBoundsKey
+    result.acceptedBoundsLast = finalRow.bounds
     result.valueReads = fixture.valueReads
     if (scenario == "hot_structure") {
         result.acceptedGaps = "${controller.acceptedLayoutGap()}"
@@ -1108,9 +1515,22 @@ func windowPerfPanelEquivalenceAndScenarios(): Unit {
             @Assert(hand.acceptedNodes == generated.acceptedNodes, true)
             @Assert(hand.observedChange == generated.observedChange, true)
             // Equivalence on the TIMED instances: the same authored panel must
-            // commit the same observable content (kind|label|value|field
-            // binding), ignoring registry-allocated ids and geometry.
-            @Assert(perfContentShape(hand.acceptedText), perfContentShape(generated.acceptedText))
+            // commit the same nodes, item by item - kind, content, bindings, role,
+            // declared layout, and the geometry the window really accepted under
+            // the same viewport. Each author resolves the shared declared key
+            // through its OWN mapping (framework-allocated vs declared node id);
+            // nothing is dropped from the comparison.
+            for (key in perfPanelKeys(fields)) {
+                let handNodeId = hand.keyNodeIds.get(key) ?? -1
+                let generatedNodeId = generated.keyNodeIds.get(key) ?? -1
+                @Assert(handNodeId > 0, true)
+                @Assert(generatedNodeId > 0, true)
+                let handRow = perfAcceptedRow(hand.acceptedText, handNodeId)
+                let generatedRow = perfAcceptedRow(generated.acceptedText, generatedNodeId)
+                @Assert(handRow.present, true)
+                @Assert(generatedRow.present, true)
+                @Assert(handRow.signature(), generatedRow.signature())
+            }
             if (scenario == "no_change") {
                 // Idle is asserted, not inferred: zero builds/submissions.
                 @Assert(hand.controllerBuilds, 0)
@@ -1118,6 +1538,145 @@ func windowPerfPanelEquivalenceAndScenarios(): Unit {
                 @Assert(hand.nativeSubmits, 0)
                 @Assert(generated.nativeSubmits, 0)
             }
+        }
+    }
+
+    // --- NEW fixture: the shared practical style vocabulary -----------------
+    // The cases above author only gap/padding in both trees, so their numbers
+    // are baseline evidence for the old property set, not for the size /
+    // growth / alignment / font properties the catalog now consumes. This case
+    // authors a SECOND panel in both languages from the SAME shared property
+    // definitions, asserts the same accepted geometry, and proves each new
+    // property really moved geometry versus the gap/padding-only baseline.
+    // The old case and its reported numbers are left untouched.
+    let practicalFields: Int64 = 4
+    let practicalHandController = WindowPerfPanelController(WindowPerfFieldFixture(practicalFields), false,
+        practical: true)
+    @Assert(practicalHandController.beginSceneRefresh(), true)
+    let practicalHandRoot = practicalHandController.buildUi()
+    @Assert(practicalHandController.prepareSceneRefresh(), true)
+    practicalHandController.commitSceneRefresh()
+    let practicalGeneratedController = WindowPerfPanelController(WindowPerfFieldFixture(practicalFields), true,
+        practical: true)
+    @Assert(practicalGeneratedController.submitStructure(), true)
+    @Assert(practicalGeneratedController.beginSceneRefresh(), true)
+    let practicalGeneratedRoot = practicalGeneratedController.buildUi()
+    @Assert(practicalGeneratedController.prepareSceneRefresh(), true)
+    practicalGeneratedController.commitSceneRefresh()
+
+    let practicalHandDump = normalizedPanelDump(practicalHandRoot)
+    let practicalGeneratedDump = normalizedPanelDump(practicalGeneratedRoot)
+    // AUTHOR-specific identity: kind, content, bindings and accepted bounds
+    // must match, node ids and scene versions are ignored.
+    @Assert(practicalHandDump, practicalGeneratedDump)
+
+    let boundedLabelBounds = panelDumpTextBounds(practicalHandDump, PERF_PRACTICAL_LABEL_TEXT)
+    let growingEditorBounds = panelDumpFieldBounds(practicalHandDump, "label-0")
+    let practicalRowBounds = panelDumpKindBounds(practicalHandDump, CJGUI_COMPOSABLE_UI_HORIZONTAL)
+    @Assert(boundedLabelBounds.size > 0, true)
+    @Assert(growingEditorBounds.size > 0, true)
+    @Assert(practicalRowBounds.size > 0, true)
+    let boundedWidth = panelBoundsComponent(boundedLabelBounds, 2)
+    let growingWidth = panelBoundsComponent(growingEditorBounds, 2)
+    let boundedX = panelBoundsComponent(boundedLabelBounds, 0)
+    let boundedY = panelBoundsComponent(boundedLabelBounds, 1)
+    let growingX = panelBoundsComponent(growingEditorBounds, 0)
+    let growingY = panelBoundsComponent(growingEditorBounds, 1)
+    let rowX = panelBoundsComponent(practicalRowBounds, 0)
+    let rowY = panelBoundsComponent(practicalRowBounds, 1)
+    let rowInnerHeight = panelBoundsComponent(practicalRowBounds, 3) - PERF_PRACTICAL_ROW_PADDING * 2
+    // fixedWidth: the bounded label is EXACTLY its declared width.
+    @Assert(boundedWidth, PERF_PRACTICAL_LABEL_WIDTH)
+    // growX: the sibling editor consumed the row's surplus and is wider.
+    @Assert(growingWidth > boundedWidth, true)
+    // gap/padding: the row's own padding offsets the first child and its gap is
+    // the exact space between the two children.
+    @Assert(boundedX - rowX, PERF_PRACTICAL_ROW_PADDING)
+    @Assert(growingX - (boundedX + boundedWidth), PERF_PRACTICAL_ROW_GAP)
+    // alignY=center: the editor sits below the row's inner start by exactly the
+    // centering offset, while the label's default START pins it to the inset.
+    @Assert(boundedY, rowY + PERF_PRACTICAL_ROW_PADDING)
+    @Assert(growingY > boundedY, true)
+    @Assert(growingY - boundedY, (rowInnerHeight - panelBoundsComponent(growingEditorBounds, 3)) / 2)
+
+    // fontSize: the SAME author with only the declared label size changed must
+    // produce a different node height; the generated author must agree.
+    let smallHandDump = normalizedPanelDump(perfPracticalHandwrittenPanel(
+        WindowPerfFieldFixture(practicalFields), labelFontSize: Float64(PERF_PRACTICAL_EDITOR_FONT_SIZE)))
+    let smallGeneratedDump = normalizedPanelDump(perfPracticalGeneratedRoot(
+        WindowPerfFieldFixture(practicalFields), labelFontSize: PERF_PRACTICAL_EDITOR_FONT_SIZE))
+    @Assert(smallHandDump, smallGeneratedDump)
+    let smallLabelHeight = panelBoundsComponent(
+        panelDumpTextBounds(smallHandDump, PERF_PRACTICAL_LABEL_TEXT), 3)
+    let largeLabelHeight = panelBoundsComponent(boundedLabelBounds, 3)
+    @Assert(largeLabelHeight > smallLabelHeight, true)
+
+    // alignY: the same author with START instead of CENTER puts the editor back
+    // on the row's inner start; the generated author must agree.
+    let startHandDump = normalizedPanelDump(perfPracticalHandwrittenPanel(
+        WindowPerfFieldFixture(practicalFields), editorAlignY: CJGUI_COMPOSABLE_UI_ALIGN_START))
+    let startGeneratedDump = normalizedPanelDump(perfPracticalGeneratedRoot(
+        WindowPerfFieldFixture(practicalFields), editorAlignY: "start"))
+    @Assert(startHandDump, startGeneratedDump)
+    let startEditorY = panelBoundsComponent(panelDumpFieldBounds(startHandDump, "label-0"), 1)
+    let startLabelY = panelBoundsComponent(panelDumpTextBounds(startHandDump, PERF_PRACTICAL_LABEL_TEXT), 1)
+    @Assert(startEditorY, startLabelY)
+
+    reportWindowPerf("window_panel_practical_equivalence", 0,
+        "fields=${practicalFields} fixture=shared_style_properties " +
+        "props=fixedWidth+growX+fontSize+alignY+gap+padding " +
+        "declared_nodes=${perfDeclaredNodes(WindowPerfFieldFixture(practicalFields), practical: true)} " +
+        "bounded_fixed_width=${boundedWidth} growing_editor_width=${growingWidth} " +
+        "row_padding=${PERF_PRACTICAL_ROW_PADDING} row_gap=${PERF_PRACTICAL_ROW_GAP} " +
+        "label_height_font24=${largeLabelHeight} label_height_font12=${smallLabelHeight} " +
+        "alignY_center_offset=${growingY - boundedY} alignY_start_offset=${startEditorY - startLabelY} " +
+        "compared=kind+content+bindings+bounds ignored=node_id+scene_version")
+
+    // Stage timings for the NEW equivalent panel, through the SAME scenario
+    // sampler the baseline uses. The baseline rows above keep their own label
+    // and are not relabelled as this evidence.
+    for (scenario in ["cold_submit", "hot_structure", "field_change", "no_change"]) {
+        let practicalHand = samplePanelScenario(false, practicalFields, scenario, 5, practical: true)
+        let practicalGenerated = samplePanelScenario(true, practicalFields, scenario, 5, practical: true)
+        reportWindowPerf("window_panel_practical_scenario", medianOf(practicalHand.totals),
+            "author=handwritten fixture=shared_style_properties scenario=${scenario} fields=${practicalFields} " +
+            "samples=5 min_us=${perfMin(practicalHand.totals)} max_us=${perfMax(practicalHand.totals)} " +
+            "raw_us=${perfSamplesText(practicalHand.totals)} author_us=${medianOf(practicalHand.authors)} " +
+            "builds=${practicalHand.controllerBuilds} native_submits=${practicalHand.nativeSubmits} " +
+            "accepted_v=${practicalHand.acceptedVersion} declared_nodes=${practicalHand.declaredNodes} " +
+            "accepted_nodes=${practicalHand.acceptedNodes} decoded=false decode=none " +
+            "observed_change=${practicalHand.observedChange} accepted_gap=${practicalHand.acceptedGaps} " +
+            "bounds_probe=${practicalHand.acceptedBoundsFirst}->${practicalHand.acceptedBoundsLast} " +
+            "noop_refreshes=${practicalHand.noOpRefreshes}")
+        reportWindowPerf("window_panel_practical_scenario", medianOf(practicalGenerated.totals),
+            "author=generated fixture=shared_style_properties scenario=${scenario} fields=${practicalFields} " +
+            "samples=5 min_us=${perfMin(practicalGenerated.totals)} max_us=${perfMax(practicalGenerated.totals)} " +
+            "raw_us=${perfSamplesText(practicalGenerated.totals)} author_us=${medianOf(practicalGenerated.authors)} " +
+            "builds=${practicalGenerated.controllerBuilds} native_submits=${practicalGenerated.nativeSubmits} " +
+            "accepted_v=${practicalGenerated.acceptedVersion} declared_nodes=${practicalGenerated.declaredNodes} " +
+            "accepted_nodes=${practicalGenerated.acceptedNodes} decoded=false decode=none " +
+            "observed_change=${practicalGenerated.observedChange} accepted_gap=${practicalGenerated.acceptedGaps} " +
+            "bounds_probe=${practicalGenerated.acceptedBoundsFirst}->${practicalGenerated.acceptedBoundsLast} " +
+            "noop_refreshes=${practicalGenerated.noOpRefreshes}")
+        @Assert(practicalHand.declaredNodes == practicalGenerated.declaredNodes, true)
+        @Assert(practicalHand.acceptedNodes == practicalGenerated.acceptedNodes, true)
+        @Assert(practicalHand.observedChange == practicalGenerated.observedChange, true)
+        for (key in perfPanelKeys(practicalFields, practical: true)) {
+            let handNodeId = practicalHand.keyNodeIds.get(key) ?? -1
+            let generatedNodeId = practicalGenerated.keyNodeIds.get(key) ?? -1
+            @Assert(handNodeId > 0, true)
+            @Assert(generatedNodeId > 0, true)
+            let handRow = perfAcceptedRow(practicalHand.acceptedText, handNodeId)
+            let generatedRow = perfAcceptedRow(practicalGenerated.acceptedText, generatedNodeId)
+            @Assert(handRow.present, true)
+            @Assert(generatedRow.present, true)
+            @Assert(handRow.signature(), generatedRow.signature())
+        }
+        if (scenario == "no_change") {
+            @Assert(practicalHand.controllerBuilds, 0)
+            @Assert(practicalGenerated.controllerBuilds, 0)
+            @Assert(practicalHand.nativeSubmits, 0)
+            @Assert(practicalGenerated.nativeSubmits, 0)
         }
     }
 }
@@ -1623,4 +2182,1487 @@ private func percentile(samples: ArrayList<Int64>, percent: Int64): Int64 {
         rank = sorted.size
     }
     return sorted[rank - 1]
+}
+
+// --- same-load scroll + split: handwritten vs generated, cold/hot, convergence --
+//
+// The perf evidence above compares two AUTHORS of the same panel. The new
+// generated capabilities (scroll container + generated split) need the same
+// treatment on the ordinary window path: identical declared content, identical
+// accepted geometry, and comparable real work counters for the SAME load. A hot
+// round that changes nothing must not rebuild or resubmit, and the counters must
+// converge once the scenario stops.
+
+private class WindowPerfScrollSplitProvider <: CjguiGeneratedUiBindingProvider {
+    public func fieldResourceId(fieldId: String): Int64 { return 7 }
+    public func fieldOperationResourceId(fieldId: String): Int64 { return 1 }
+    public func draftText(fieldId: String): String { return "" }
+    public func appliedText(fieldId: String): String { return "" }
+    public func draftBoolean(fieldId: String): ?Bool { return None }
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        return CjguiGeneratedUiActionResult(true, "")
+    }
+    public func actionAvailable(actionName: String): Bool { return true }
+}
+
+/// Catalog for the author matrix. The declared child limit must cover the
+/// LARGEST load the matrix submits, otherwise a bigger load would be refused as
+/// `child_limit_exceeded` and the author would silently keep its previous scene -
+/// which would look like "no work" instead of "the load was never accepted".
+private func windowPerfAuthorMatrixCatalog(maxRows: Int64): CjguiGeneratedUiCapabilityCatalog {
+    let catalog = CjguiGeneratedUiCapabilityCatalog()
+    let limit = if (maxRows > 16) {
+        maxRows + 4
+    } else {
+        16
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("vertical",
+        CjguiGeneratedUiPresentation.containerStyleProperties(), true, childLimit: limit))
+    let labelProperties = ArrayList<CjguiGeneratedUiPropertySpec>()
+    labelProperties.add(CjguiGeneratedUiPropertySpec("text", "STRING", required: true))
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        labelProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("label", labelProperties, false))
+    let scrollProperties = CjguiGeneratedUiPresentation.scrollContentProperties()
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        scrollProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("scrollArea", scrollProperties, true,
+        childLimit: 1))
+    return catalog
+}
+
+private func windowPerfScrollSplitCatalog(): CjguiGeneratedUiCapabilityCatalog {
+    let catalog = CjguiGeneratedUiCapabilityCatalog()
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("vertical",
+        CjguiGeneratedUiPresentation.containerStyleProperties(), true, childLimit: 16))
+    let labelProperties = ArrayList<CjguiGeneratedUiPropertySpec>()
+    labelProperties.add(CjguiGeneratedUiPropertySpec("text", "STRING", required: true))
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        labelProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("label", labelProperties, false))
+    let scrollProperties = CjguiGeneratedUiPresentation.scrollContentProperties()
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        scrollProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("scrollArea", scrollProperties, true,
+        childLimit: 1))
+    let splitProperties = CjguiGeneratedUiPresentation.splitContentProperties()
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        splitProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("split", splitProperties, true, childLimit: 2))
+    return catalog
+}
+
+private func windowPerfScrollSplitSpec(height!: Int64 = 120): CjguiGeneratedUiNodeSpec {
+    let rows = ArrayList<CjguiGeneratedUiNodeSpec>()
+    var index = 0
+    while (index < 8) {
+        rows.add(CjguiGeneratedUiNodeSpec("row${index}", "label",
+            properties: HashMap<String, String>([("text", "滚动行 ${index}"), ("fixedHeight", "20")])))
+        index += 1
+    }
+    let stack = CjguiGeneratedUiNodeSpec("perfStack", "vertical", children: rows)
+    let scroll = CjguiGeneratedUiNodeSpec("perfScroll", "scrollArea",
+        properties: HashMap<String, String>([("offset", "0"), ("fixedHeight", "${height}")]),
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([stack]))
+    let pane0 = CjguiGeneratedUiNodeSpec("pane0", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([CjguiGeneratedUiNodeSpec("pane0Label", "label",
+            properties: HashMap<String, String>([("text", "左栏"), ("fixedHeight", "20")]))]))
+    let pane1 = CjguiGeneratedUiNodeSpec("pane1", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([CjguiGeneratedUiNodeSpec("pane1Label", "label",
+            properties: HashMap<String, String>([("text", "右栏"), ("fixedHeight", "20")]))]))
+    let split = CjguiGeneratedUiNodeSpec("perfSplit", "split",
+        properties: HashMap<String, String>([("firstSize", "160"), ("firstMinimum", "80"), ("secondMinimum", "80"),
+            ("fixedHeight", "${height}")]),
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([pane0, pane1]))
+    return CjguiGeneratedUiNodeSpec("perfRoot", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([scroll, split]))
+}
+
+/// The handwritten author of exactly that declared content, using the public
+/// `cjguiComposableScrollArea` + `cjguiComposableScopedSplitView` components.
+private func handwrittenScrollSplitRoot(viewport: CjguiComposableUiScrollViewport,
+    height: Int64): CjguiComposableUiNode {
+    let root = cjguiComposableVertical(1, "perf-root", CjguiComposableUiStyle(gap: 4))
+    let scroll = cjguiComposableScrollArea(2, "perf-scroll", viewport,
+        CjguiComposableUiStyle(growX: 1, fixedHeight: height))
+    // The generated vertical applies its own default gap when none is declared;
+    // the handwritten author declares the SAME gap so the load is identical.
+    let stack = cjguiComposableVertical(3, "perf-scroll-stack", CjguiComposableUiStyle(gap: 4))
+    var index = 0
+    while (index < 8) {
+        stack.add(cjguiComposableText(100 + index, "perf-scroll-row-${index}", "滚动行 ${index}",
+            CjguiComposableUiStyle(fontSize: 13.0, fixedHeight: 20)))
+        index += 1
+    }
+    scroll.add(stack)
+    root.add(scroll)
+    let pane0 = cjguiComposableVertical(200, "perf-split-pane0", CjguiComposableUiStyle())
+    pane0.add(cjguiComposableText(201, "perf-split-pane0-label", "左栏",
+        CjguiComposableUiStyle(fixedHeight: 20)))
+    let pane1 = cjguiComposableVertical(210, "perf-split-pane1", CjguiComposableUiStyle())
+    pane1.add(cjguiComposableText(211, "perf-split-pane1-label", "右栏",
+        CjguiComposableUiStyle(fixedHeight: 20)))
+    let scope = CjguiComposableUiIdentityScope("perf-split")
+    root.add(cjguiComposableScopedSplitView(scope, "perf-split", pane0, pane1,
+        CjguiComposableUiSplitAxis.HORIZONTAL, 160, 80, 80, CjguiComposableUiStyle(growX: 1, fixedHeight: height)))
+    return root
+}
+
+private class WindowPerfScrollSplitController <: CjguiComposableUiController &
+    CjguiComposableUiSceneRefreshParticipant {
+    private let generated: Bool
+    private let holder: ?CjguiGeneratedUiStructureHolder
+    private let provider = WindowPerfScrollSplitProvider()
+    let viewport = CjguiComposableUiScrollViewport()
+    private var revision: Int64 = 1
+    private var heightValue: Int64 = 120
+    var buildCount: Int64 = 0
+
+    init(generated: Bool) {
+        this.generated = generated
+        if (generated) {
+            let built = CjguiGeneratedUiStructureHolder(windowPerfScrollSplitCatalog())
+            let _ = built.submit(windowPerfScrollSplitSpec(), provider)
+            this.holder = Some(built)
+        } else {
+            this.holder = None
+        }
+    }
+
+    /// A REAL content change on the same load: the declared height changes, so the
+    /// next round must rebuild and resubmit for both authors.
+    public func setHeight(value: Int64): Unit {
+        heightValue = value
+        match (holder) {
+            case Some(structure) => let _ = structure.submit(windowPerfScrollSplitSpec(height: value), provider)
+            case None => ()
+        }
+        revision += 1
+    }
+
+    public func bump(): Unit {
+        revision += 1
+    }
+    public func generatedViewport(): CjguiComposableUiScrollViewport {
+        return match (holder) {
+            case Some(value) => value.scrollViewportForInstance("perfScroll", 0)
+            case None => CjguiComposableUiScrollViewport()
+        }
+    }
+    public func generatedNodeId(key: String): Int64 {
+        return match (holder) {
+            case Some(value) => value.nodeIdForKey(key)
+            case None => -1
+        }
+    }
+    public func uiSceneVersion(): Int64 {
+        return revision
+    }
+    public func buildUi(): CjguiComposableUiNode {
+        buildCount += 1
+        if (generated) {
+            return match (holder) {
+                case Some(value) => value.buildRefreshNode(provider)
+                case None => handwrittenScrollSplitRoot(viewport, heightValue)
+            }
+        }
+        return handwrittenScrollSplitRoot(viewport, heightValue)
+    }
+    public func beginSceneRefresh(): Bool {
+        return match (holder) {
+            case Some(value) => value.beginCandidateRefresh()
+            case None => true
+        }
+    }
+    public func prepareSceneRefresh(): Bool {
+        return match (holder) {
+            case Some(value) => value.prepareCandidateRefresh()
+            case None => true
+        }
+    }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>()
+    }
+    public func commitSceneRefresh(): Unit {
+        match (holder) {
+            case Some(value) => let _ = value.commitCandidateRefresh()
+            case None => ()
+        }
+    }
+    public func rollbackSceneRefresh(): Unit {
+        match (holder) {
+            case Some(value) => value.rollbackCandidateRefresh()
+            case None => ()
+        }
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+private func perfAcceptedNodeBySemantic(window: CjguiComposableUiWindow,
+    semanticId: String): CjguiComposableUiLayoutNode {
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == semanticId) {
+            return node
+        }
+    }
+    return CjguiComposableUiLayoutNode.missing()
+}
+
+private func perfAcceptedNodeById(window: CjguiComposableUiWindow, nodeId: Int64): CjguiComposableUiLayoutNode {
+    for (node in window.acceptedSceneNodes()) {
+        if (node.nodeId == nodeId) {
+            return node
+        }
+    }
+    return CjguiComposableUiLayoutNode.missing()
+}
+
+@Test
+func windowPerfScrollSplitEquivalenceAndConvergence(): Unit {
+    let hand = WindowPerfScrollSplitController(false)
+    let handWindow = CjguiComposableUiWindow(hand)
+    @Assert(handWindow.start(), true)
+    @Assert(handWindow.refresh(), true)
+    let generated = WindowPerfScrollSplitController(true)
+    let generatedWindow = CjguiComposableUiWindow(generated)
+    @Assert(generatedWindow.start(), true)
+    @Assert(generatedWindow.refresh(), true)
+
+    let handProgress = handWindow.windowProgress()
+    let generatedProgress = generatedWindow.windowProgress()
+    @Assert(handProgress.acceptedSceneVersion == handProgress.sceneVersion, true)
+    @Assert(generatedProgress.acceptedSceneVersion == generatedProgress.sceneVersion, true)
+    @Assert(handProgress.lastNativeFailure, "none")
+    @Assert(generatedProgress.lastNativeFailure, "none")
+
+    // Equivalence of the accepted geometry for the SAME declared load.
+    let generatedViewport = generated.generatedViewport()
+    @Assert(hand.viewport.contentExtent() > 0, true)
+    @Assert(generatedViewport.contentExtent() > 0, true)
+    @Assert(hand.viewport.contentExtent(), generatedViewport.contentExtent())
+    @Assert(hand.viewport.viewportExtent(), generatedViewport.viewportExtent())
+    @Assert(handWindow.acceptedSceneNodes().size, generatedWindow.acceptedSceneNodes().size)
+    let handScroll = perfAcceptedNodeBySemantic(handWindow, "perf-scroll")
+    let generatedScroll = perfAcceptedNodeById(generatedWindow, generated.generatedNodeId("perfScroll"))
+    @Assert(handScroll.bounds.x, generatedScroll.bounds.x)
+    @Assert(handScroll.bounds.y, generatedScroll.bounds.y)
+    @Assert(handScroll.bounds.width, generatedScroll.bounds.width)
+    @Assert(handScroll.bounds.height, generatedScroll.bounds.height)
+    let handPane0 = perfAcceptedNodeBySemantic(handWindow, "perf-split-pane0")
+    let generatedPane0 = perfAcceptedNodeById(generatedWindow, generated.generatedNodeId("pane0"))
+    reportWindowPerf("window_scroll_split_geometry", 0,
+        "hand_scroll=${handScroll.bounds.x},${handScroll.bounds.y},${handScroll.bounds.width},${handScroll.bounds.height} " +
+        "gen_scroll=${generatedScroll.bounds.x},${generatedScroll.bounds.y},${generatedScroll.bounds.width},${generatedScroll.bounds.height} " +
+        "hand_pane0=${handPane0.bounds.x},${handPane0.bounds.y},${handPane0.bounds.width},${handPane0.bounds.height} " +
+        "gen_pane0=${generatedPane0.bounds.x},${generatedPane0.bounds.y},${generatedPane0.bounds.width},${generatedPane0.bounds.height}")
+    @Assert(handPane0.bounds.x, generatedPane0.bounds.x)
+    @Assert(handPane0.bounds.y, generatedPane0.bounds.y)
+    @Assert(handPane0.bounds.width, generatedPane0.bounds.width)
+    @Assert(handPane0.bounds.height, generatedPane0.bounds.height)
+    @Assert(handPane0.bounds.width, 160)
+    let handPane1 = perfAcceptedNodeBySemantic(handWindow, "perf-split-pane1")
+    let generatedPane1 = perfAcceptedNodeById(generatedWindow, generated.generatedNodeId("pane1"))
+    @Assert(handPane1.bounds.x, generatedPane1.bounds.x)
+    @Assert(handPane1.bounds.width, generatedPane1.bounds.width)
+    @Assert(handPane1.bounds.height, generatedPane1.bounds.height)
+    @Assert(handPane1.bounds.x > handPane0.bounds.x + handPane0.bounds.width - 1, true)
+
+    // Cold submit: one build and one native submission per author.
+    let handBuildsCold = hand.buildCount
+    let generatedBuildsCold = generated.buildCount
+    let handSubmitsCold = handProgress.nativeSubmissionVersion
+    let generatedSubmitsCold = generatedProgress.nativeSubmissionVersion
+    @Assert(handBuildsCold, generatedBuildsCold)
+    @Assert(handSubmitsCold, generatedSubmitsCold)
+    @Assert(handBuildsCold >= 1, true)
+    @Assert(handSubmitsCold >= 1, true)
+    let handSolvesCold = hand.viewport.acceptedSolveCount()
+    let generatedSolvesCold = generatedViewport.acceptedSolveCount()
+    @Assert(handSolvesCold, generatedSolvesCold)
+
+    // Hot no-op rounds: nothing changed, so nothing may rebuild or resubmit.
+    var round = 0
+    while (round < 5) {
+        let _ = handWindow.refreshIfNeeded()
+        let _ = generatedWindow.refreshIfNeeded()
+        round += 1
+    }
+    @Assert(hand.buildCount, handBuildsCold)
+    @Assert(generated.buildCount, generatedBuildsCold)
+    @Assert(handWindow.windowProgress().nativeSubmissionVersion, handSubmitsCold)
+    @Assert(generatedWindow.windowProgress().nativeSubmissionVersion, generatedSubmitsCold)
+
+    // One REAL content change each (the declared height changes): exactly one more
+    // build and one more native submission, then the counters converge again.
+    hand.setHeight(150)
+    generated.setHeight(150)
+    @Assert(handWindow.refreshIfNeeded(), true)
+    @Assert(generatedWindow.refreshIfNeeded(), true)
+    let handBuildsHot = hand.buildCount
+    let generatedBuildsHot = generated.buildCount
+    let handSubmitsHot = handWindow.windowProgress().nativeSubmissionVersion
+    let generatedSubmitsHot = generatedWindow.windowProgress().nativeSubmissionVersion
+    @Assert(handBuildsHot, handBuildsCold + 1)
+    @Assert(generatedBuildsHot, generatedBuildsCold + 1)
+    @Assert(handSubmitsHot, handSubmitsCold + 1)
+    @Assert(generatedSubmitsHot, generatedSubmitsCold + 1)
+    // The changed load stays equivalent: both authors accepted the same viewport
+    // extent after the real change.
+    @Assert(hand.viewport.viewportExtent(), 150)
+    @Assert(generated.generatedViewport().viewportExtent(), 150)
+    round = 0
+    while (round < 5) {
+        let _ = handWindow.refreshIfNeeded()
+        let _ = generatedWindow.refreshIfNeeded()
+        round += 1
+    }
+    @Assert(hand.buildCount, handBuildsHot)
+    @Assert(generated.buildCount, generatedBuildsHot)
+    @Assert(handWindow.windowProgress().nativeSubmissionVersion, handSubmitsHot)
+    @Assert(generatedWindow.windowProgress().nativeSubmissionVersion, generatedSubmitsHot)
+    @Assert(hand.viewport.acceptedSolveCount() >= handSolvesCold, true)
+    @Assert(generatedViewport.acceptedSolveCount() >= generatedSolvesCold, true)
+
+    reportWindowPerf("window_scroll_split_equivalence", 0,
+        "accepted_nodes=${handWindow.acceptedSceneNodes().size} content=${hand.viewport.contentExtent()} " +
+        "viewport=${hand.viewport.viewportExtent()} pane0_w=${handPane0.bounds.width} " +
+        "hand_builds=${handBuildsCold}->${handBuildsHot} generated_builds=${generatedBuildsCold}->${generatedBuildsHot} " +
+        "hand_submits=${handSubmitsCold}->${handSubmitsHot} generated_submits=${generatedSubmitsCold}->${generatedSubmitsHot} " +
+        "hand_solves=${hand.viewport.acceptedSolveCount()} generated_solves=${generatedViewport.acceptedSolveCount()} " +
+        "hot_noop_builds=0 hot_noop_submits=0 converged=true decode=none")
+    handWindow.close()
+    generatedWindow.close()
+}
+
+/// D: the NORMAL window hot path across the three authors and two loads, with
+/// real WORK separated from TIME.
+///
+/// Work is counted by the framework itself (builds, layout solves, native
+/// submissions and structure serializations); time is a MonoTime delta of the
+/// public refresh call. The two are reported on separate fields so a timing that
+/// happens to be zero can never be read as "no work was done" - the counters say
+/// what really happened.
+@Test
+func windowPerfThreeAuthorsTwoLoadsWithSeparatedWorkAndTime(): Unit {
+    let loads: ArrayList<Int64> = ArrayList<Int64>([8, 32])
+    var referenceSignature = ""
+    var referenceLoad: Int64 = 0
+    for (load in loads) {
+        var loadSignature = ""
+        for (author in 0..3) {
+            let controller = WindowPerfAuthorMatrixController(author, load)
+            let window = CjguiComposableUiWindow(controller)
+            // The view object the author's own tree binds, captured BEFORE the
+            // refresh so a commit-time prune cannot swap the identity behind us.
+            // The declared load must have been ACCEPTED: a refused declaration
+            // would leave the author on its previous scene and a "measurement"
+            // would silently describe the wrong load.
+            @Assert(controller.seedAccepted, true)
+            let boundViewport = controller.effectiveViewport()
+            // COLD is timed on its own: a first native session plus the first
+            // accepted scene is not a hot operation and must not be averaged into
+            // one.
+            let coldStarted = MonoTime.now()
+            let coldOpened = window.start()
+            let coldRefreshed = window.refresh()
+            let coldMicros = (MonoTime.now() - coldStarted).toMicroseconds()
+            @Assert(coldOpened, true)
+            @Assert(coldRefreshed, true)
+            let coldProgress = window.windowProgress()
+            @Assert(coldProgress.lastNativeFailure, "none")
+            @Assert(coldProgress.acceptedSceneVersion == coldProgress.sceneVersion, true)
+            let coldBuilds = controller.buildCount
+            let coldSubmits = coldProgress.nativeSubmissionVersion
+            let coldSolves = boundViewport.acceptedSolveCount()
+            @Assert(coldBuilds >= 1, true)
+            @Assert(coldSubmits >= 1, true)
+            @Assert(coldSolves >= 1, true)
+            // The three authors must describe the SAME accepted layout: same node
+            // kinds and same solved heights in the same order. Work counters alone
+            // cannot prove equivalence, and a mixed author that nested a second
+            // scroll would silently be a different tree.
+            let signature = authorMatrixSceneSignature(window)
+            if (loadSignature.size == 0) {
+                loadSignature = signature
+            }
+            @Assert(signature, loadSignature)
+            // Every author's accepted scene really carries ITS OWN rows.
+            let acceptedRows = authorMatrixAcceptedRowCount(window, load)
+            @Assert(acceptedRows, load)
+
+            // >= 20 bounded HOT samples per (author, load). Only the measured
+            // refresh is inside the timed region; every assertion and every
+            // counter read happens after the timer stopped.
+            let samples = ArrayList<Int64>()
+            var refreshedAll = true
+            let buildsBefore = controller.buildCount
+            let submitsBefore = window.windowProgress().nativeSubmissionVersion
+            let solvesBefore = boundViewport.acceptedSolveCount()
+            var index: Int64 = 0
+            while (index < 20) {
+                controller.setHeight(load * 4 + index)
+                let started = MonoTime.now()
+                let refreshed = window.refresh()
+                samples.add((MonoTime.now() - started).toMicroseconds())
+                refreshedAll = refreshedAll && refreshed
+                index += 1
+            }
+            @Assert(refreshedAll, true)
+            let hotProgress = window.windowProgress()
+            let hotBuilds = controller.buildCount - buildsBefore
+            let hotSubmits = hotProgress.nativeSubmissionVersion - submitsBefore
+            let hotSolves = boundViewport.acceptedSolveCount() - solvesBefore
+            @Assert(hotProgress.lastNativeFailure, "none")
+            // Each of the 20 samples must have produced REAL work: a rebuild, a
+            // native submission and a solved viewport per sample. A "fast" sample
+            // can therefore never be an operation that did nothing.
+            @Assert(hotBuilds, 20)
+            @Assert(hotSubmits, 20)
+            @Assert(hotSolves >= 20, true)
+            // ...and the accepted scene still carries exactly this author's rows
+            // after the hot samples (verified OUTSIDE the timer).
+            @Assert(authorMatrixAcceptedRowCount(window, load), load)
+            let sortedSamples = sortedPerfSampleCopy(samples)
+            let medianMicros = perfNearestRank(sortedSamples, 1, 2)
+            reportWindowPerf("author_matrix load=${load} author=${controller.authorName()}", medianMicros,
+                "cold_micros=${coldMicros} hot_samples=${samples.size} hot_median_micros=${medianMicros} " +
+                "hot_min_micros=${sortedSamples[0]} hot_max_micros=${sortedSamples[sortedSamples.size - 1]} " +
+                "cold_builds=${coldBuilds} cold_submits=${coldSubmits} cold_solves=${coldSolves} " +
+                "hot_builds=${hotBuilds} hot_submits=${hotSubmits} hot_solves=${hotSolves} " +
+                "rows=${controller.rowCount()} accepted_rows=${authorMatrixAcceptedRowCount(window, load)} " +
+                "scene_signature_nodes=${window.acceptedSceneNodes().size} " +
+                "time_source=MonoTime separated=work_vs_time asserts_outside_timer=true")
+
+            // Idle convergence AFTER the timed region: several normal turns with
+            // nothing changed must do NO build, NO submission and NO layout solve.
+            // One real idle turn is timed (it is a real turn, never a 0 sentinel).
+            let idleBuildsBefore = controller.buildCount
+            let idleSubmitsBefore = window.windowProgress().nativeSubmissionVersion
+            let idleSolvesBefore = boundViewport.acceptedSolveCount()
+            let clockProbeStart = MonoTime.now()
+            let clockProbeEnd = MonoTime.now()
+            let clockResolutionMicros = (clockProbeEnd - clockProbeStart).toMicroseconds()
+            let idleStarted = MonoTime.now()
+            let idleRefreshed = window.refreshIfNeeded()
+            let idleMicros = (MonoTime.now() - idleStarted).toMicroseconds()
+            var idleRounds: Int64 = 1
+            var idleExtraWork: Int64 = 0
+            while (idleRounds < 5) {
+                let extra = window.refreshIfNeeded()
+                if (extra) {
+                    idleExtraWork += 1
+                }
+                idleRounds += 1
+            }
+            let idleBuilds = controller.buildCount - idleBuildsBefore
+            let idleSubmits = window.windowProgress().nativeSubmissionVersion - idleSubmitsBefore
+            let idleSolves = boundViewport.acceptedSolveCount() - idleSolvesBefore
+            @Assert(idleBuilds, 0)
+            @Assert(idleSubmits, 0)
+            @Assert(idleSolves, 0)
+            reportWindowPerf("author_matrix_idle load=${load} author=${controller.authorName()}", idleMicros,
+                "idle_refresh_requested=${idleRefreshed} idle_rounds=${idleRounds} idle_extra_work=${idleExtraWork} " +
+                "idle_builds=${idleBuilds} idle_submits=${idleSubmits} idle_solves=${idleSolves} " +
+                "clock_resolution_micros=${clockResolutionMicros} zero_allowed=true " +
+                "time_source=MonoTime separated=work_vs_time")
+            window.close()
+        }
+        if (referenceSignature.size == 0) {
+            referenceSignature = loadSignature
+            referenceLoad = load
+        } else {
+            // The two loads are different trees on purpose; only the SAME load is
+            // compared across authors, and both loads were compared above.
+            @Assert(loadSignature.size > 0, true)
+        }
+    }
+    @Assert(referenceSignature.size > 0, true)
+    @Assert(referenceLoad > 0, true)
+}
+
+/// A bounded copy of the raw samples, ascending. The sample set is small (>= 20)
+/// and bounded, so the insertion sort keeps the reporting allocation-free.
+private func sortedPerfSampleCopy(values: ArrayList<Int64>): Array<Int64> {
+    let copy = Array<Int64>(values.size, repeat: 0)
+    var index = 0
+    while (index < values.size) {
+        copy[index] = values[index]
+        index += 1
+    }
+    var position = 1
+    while (position < copy.size) {
+        let current = copy[position]
+        var scan = position - 1
+        while (scan >= 0 && copy[scan] > current) {
+            copy[scan + 1] = copy[scan]
+            scan -= 1
+        }
+        copy[scan + 1] = current
+        position += 1
+    }
+    return copy
+}
+
+/// Nearest-rank percentile over an ascending sample array.
+private func perfNearestRank(sortedValues: Array<Int64>, numerator: Int64, denominator: Int64): Int64 {
+    if (sortedValues.size == 0) {
+        return 0
+    }
+    let rank = (sortedValues.size * numerator + denominator - 1) / denominator
+    let index = if (rank <= 0) {
+        0
+    } else if (rank > sortedValues.size) {
+        sortedValues.size - 1
+    } else {
+        rank - 1
+    }
+    return sortedValues[index]
+}
+
+/// One accepted-scene signature: node kind and solved height in traversal order.
+/// Two authors that claim "the same work" must produce the same signature.
+private func authorMatrixSceneSignature(window: CjguiComposableUiWindow): String {
+    var text = ""
+    for (node in window.acceptedSceneNodes()) {
+        text += "${node.nodeKind}:${node.bounds.height}|"
+    }
+    return text
+}
+
+/// Accepted equivalence for the D operation fixture: content, field/action
+/// binding, resource identity and all solved bounds are compared while the
+/// framework-owned node id and scene version remain outside the contract.
+private func operationMatrixAcceptedSignature(window: CjguiComposableUiWindow): String {
+    var text = ""
+    for (node in window.acceptedSceneNodes()) {
+        text += "${node.nodeKind}|${node.label}|${node.value}|${node.fieldId}|" +
+            "${node.operationActionName}|${node.operationResourceId}|${node.resourceId}|" +
+            "${node.displayValueRole}|${node.bounds.x},${node.bounds.y}," +
+            "${node.bounds.width},${node.bounds.height}|"
+    }
+    return text
+}
+
+/// How many accepted label rows this window's scene really carries. It is read
+/// from the accepted scene, never from a rebuilt tree.
+private func authorMatrixAcceptedRowCount(window: CjguiComposableUiWindow, rows: Int64): Int64 {
+    let _ = rows
+    var count: Int64 = 0
+    for (node in window.acceptedSceneNodes()) {
+        if (node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT && node.value.startsWith("滚动行 ")) {
+            count += 1
+        }
+    }
+    return count
+}
+
+/// Three authors over ONE declared load:
+///   0 = handwritten, 1 = generated, 2 = MIXED (a handwritten scroll/split shell
+///   whose inner section is the generated structure). The mixed author is the
+///   ordinary application shape this framework has to price, not a fourth
+///   renderer.
+private class WindowPerfAuthorMatrixController <: CjguiComposableUiController &
+    CjguiComposableUiSceneRefreshParticipant {
+    private let author: Int64
+    private let rows: Int64
+    private let holder: ?CjguiGeneratedUiStructureHolder
+    private let provider = WindowPerfScrollSplitProvider()
+    let viewport = CjguiComposableUiScrollViewport()
+    private var revision: Int64 = 1
+    private var heightValue: Int64 = 120
+    var buildCount: Int64 = 0
+    /// Whether the declared load was really accepted by the generated catalog.
+    var seedAccepted: Bool = true
+    var seedReason: String = ""
+
+    init(author: Int64, rows: Int64) {
+        this.author = author
+        this.rows = rows
+        if (author == 1 || author == 2) {
+            let built = CjguiGeneratedUiStructureHolder(windowPerfAuthorMatrixCatalog(rows))
+            // The generated author declares the whole scroll layout; the MIXED
+            // author declares the same rows as the INNER content of a handwritten
+            // scroll, so its tree is structurally equivalent instead of nesting a
+            // second scroll inside the first.
+            let seeded = if (author == 2) {
+                built.submit(authorMatrixContentSpec(rows), provider)
+            } else {
+                built.submit(authorMatrixSpec(rows), provider)
+            }
+            // A refused seed would leave the author with NO generated scene, so it
+            // is recorded instead of being discovered as "zero solves".
+            this.seedAccepted = seeded.candidateAccepted
+            this.seedReason = seeded.reason
+            this.holder = Some(built)
+        } else {
+            this.holder = None
+        }
+    }
+
+    public func authorName(): String {
+        if (author == 1) {
+            return "generated"
+        }
+        if (author == 2) {
+            return "mixed"
+        }
+        return "handwritten"
+    }
+    public func rowCount(): Int64 {
+        return rows
+    }
+    /// The viewport THIS author's tree really binds: the handwritten author (and
+    /// the mixed shell) binds the controller's own viewport, while the generated
+    /// author binds its per-instance viewport inside the holder.
+    public func effectiveViewport(): CjguiComposableUiScrollViewport {
+        if (author == 1) {
+            return match (holder) {
+                case Some(value) => value.scrollViewportForInstance("perfScroll", 0)
+                case None => viewport
+            }
+        }
+        return viewport
+    }
+    /// A REAL content change: the declared height moves, so the next round must
+    /// rebuild and resubmit for every author.
+    public func setHeight(value: Int64): Unit {
+        heightValue = value
+        match (holder) {
+            case Some(structure) => let _ = if (author == 2) {
+                structure.submit(authorMatrixContentSpec(rows), provider)
+            } else {
+                structure.submit(authorMatrixSpec(rows, height: value), provider)
+            }
+            case None => ()
+        }
+        revision += 1
+    }
+    public func uiSceneVersion(): Int64 {
+        return revision
+    }
+    public func buildUi(): CjguiComposableUiNode {
+        buildCount += 1
+        if (author == 1) {
+            return match (holder) {
+                case Some(value) => value.buildRefreshNode(provider)
+                case None => authorMatrixHandwritten(viewport, rows, heightValue)
+            }
+        }
+        if (author == 2) {
+            // The handwritten shell OWNS the public viewport; the generated
+            // structure contributes only the INNER content, exactly like an
+            // application that migrated one region at a time. It deliberately
+            // declares NO second scroll area: all three authors must describe the
+            // same one-scroll layout, or "the same work" would be a claim about
+            // different trees.
+            let shell = cjguiComposableVertical(1, "perf-root", CjguiComposableUiStyle(gap: 4))
+            let scroll = cjguiComposableScrollArea(2, "perf-scroll", viewport,
+                CjguiComposableUiStyle(growX: 1, fixedHeight: heightValue))
+            scroll.add(match (holder) {
+                case Some(value) => value.buildRefreshNode(provider)
+                case None => authorMatrixHandwritten(viewport, rows, heightValue)
+            })
+            shell.add(scroll)
+            return shell
+        }
+        return authorMatrixHandwritten(viewport, rows, heightValue)
+    }
+    public func beginSceneRefresh(): Bool {
+        return match (holder) {
+            case Some(value) => value.beginCandidateRefresh()
+            case None => true
+        }
+    }
+    public func prepareSceneRefresh(): Bool {
+        return match (holder) {
+            case Some(value) => value.prepareCandidateRefresh()
+            case None => true
+        }
+    }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>()
+    }
+    public func commitSceneRefresh(): Unit {
+        match (holder) {
+            case Some(value) => let _ = value.commitCandidateRefresh()
+            case None => ()
+        }
+    }
+    public func rollbackSceneRefresh(): Unit {
+        match (holder) {
+            case Some(value) => value.rollbackCandidateRefresh()
+            case None => ()
+        }
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+private func authorMatrixHandwritten(viewport: CjguiComposableUiScrollViewport, rows: Int64,
+    height: Int64): CjguiComposableUiNode {
+    let root = cjguiComposableVertical(1, "perf-root", CjguiComposableUiStyle(gap: 4))
+    let scroll = cjguiComposableScrollArea(2, "perf-scroll", viewport,
+        CjguiComposableUiStyle(growX: 1, fixedHeight: height))
+    let stack = cjguiComposableVertical(3, "perf-scroll-stack", CjguiComposableUiStyle(gap: 4))
+    var index = 0
+    while (index < rows) {
+        stack.add(cjguiComposableText(100 + index, "perf-scroll-row-${index}", "滚动行 ${index}",
+            CjguiComposableUiStyle(fontSize: 13.0, fixedHeight: 20)))
+        index += 1
+    }
+    scroll.add(stack)
+    root.add(scroll)
+    return root
+}
+
+private func authorMatrixSpec(rows: Int64, height!: Int64 = 120): CjguiGeneratedUiNodeSpec {
+    let rowSpecs = ArrayList<CjguiGeneratedUiNodeSpec>()
+    var index = 0
+    while (index < rows) {
+        rowSpecs.add(CjguiGeneratedUiNodeSpec("row${index}", "label",
+            properties: HashMap<String, String>([("text", "滚动行 ${index}"), ("fixedHeight", "20")])))
+        index += 1
+    }
+    let stack = CjguiGeneratedUiNodeSpec("perfStack", "vertical", children: rowSpecs)
+    let scroll = CjguiGeneratedUiNodeSpec("perfScroll", "scrollArea",
+        properties: HashMap<String, String>([("offset", "0"), ("fixedHeight", "${height}")]),
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([stack]))
+    return CjguiGeneratedUiNodeSpec("perfRoot", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([scroll]))
+}
+
+/// The INNER content of the mixed author's handwritten scroll: the same rows as
+/// the generated author's stack, with no scroll area of its own.
+private func authorMatrixContentSpec(rows: Int64): CjguiGeneratedUiNodeSpec {
+    let rowSpecs = ArrayList<CjguiGeneratedUiNodeSpec>()
+    var index = 0
+    while (index < rows) {
+        rowSpecs.add(CjguiGeneratedUiNodeSpec("row${index}", "label",
+            properties: HashMap<String, String>([("text", "滚动行 ${index}"), ("fixedHeight", "20")])))
+        index += 1
+    }
+    return CjguiGeneratedUiNodeSpec("perfContent", "vertical", children: rowSpecs)
+}
+
+/// The normal application shape for the interaction samples: a scroll viewport, a
+/// state-bound split and a public tab container in ONE window, all driven through
+/// their public seams.
+private class WindowPerfInteractionController <: CjguiComposableUiController {
+    let viewport = CjguiComposableUiScrollViewport()
+    let split = CjguiComposableUiSplitState(200, 120, 120)
+    let tabs = CjguiComposableUiTabsState("basic")
+    private var revision: Int64 = 1
+    var buildCount: Int64 = 0
+    /// Two OWNER values behind two editors: one on the VISIBLE page, one on the
+    /// page the tab container currently hides. A background write to the hidden
+    /// one must not be required to commit visibly, but switching back must present
+    /// the owner's CURRENT value.
+    var visibleDraft: String = "可见初值"
+    var hiddenDraft: String = "隐藏初值"
+
+    public func bump(): Unit {
+        revision += 1
+    }
+    public func uiSceneVersion(): Int64 {
+        return revision
+    }
+    public func buildUi(): CjguiComposableUiNode {
+        buildCount += 1
+        let root = cjguiComposableVertical(1, "perf-root", CjguiComposableUiStyle(gap: 4))
+        let scroll = cjguiComposableScrollArea(2, "perf-scroll", viewport,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 120))
+        let stack = cjguiComposableVertical(3, "perf-scroll-stack", CjguiComposableUiStyle(gap: 4))
+        var index = 0
+        while (index < 24) {
+            stack.add(cjguiComposableText(100 + index, "perf-scroll-row-${index}", "滚动行 ${index}",
+                CjguiComposableUiStyle(fontSize: 13.0, fixedHeight: 20)))
+            index += 1
+        }
+        // The VISIBLE editor the field-update samples drive.
+        stack.add(cjguiComposableTextInput(300, "perf-visible-editor", "可见", visibleDraft, 8301,
+            CjguiComposableUiStyle(fixedHeight: 20)))
+        scroll.add(stack)
+        root.add(scroll)
+        let pane0 = cjguiComposableVertical(200, "perf-split-pane0", CjguiComposableUiStyle())
+        pane0.add(cjguiComposableText(201, "perf-split-pane0-label", "左栏", CjguiComposableUiStyle(fixedHeight: 20)))
+        let pane1 = cjguiComposableVertical(210, "perf-split-pane1", CjguiComposableUiStyle())
+        pane1.add(cjguiComposableText(211, "perf-split-pane1-label", "右栏", CjguiComposableUiStyle(fixedHeight: 20)))
+        let splitScope = CjguiComposableUiIdentityScope("perf-interaction-split")
+        root.add(cjguiComposableScopedSplitView(splitScope, "perf-split", pane0, pane1,
+            CjguiComposableUiSplitAxis.HORIZONTAL, split.firstSize(), 120, 120,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 80), splitState: split))
+        let basic = cjguiComposableVertical(600, "perf-tab-basic", CjguiComposableUiStyle(gap: 2))
+        basic.add(cjguiComposableText(601, "perf-tab-basic-line", "基本行", CjguiComposableUiStyle(fixedHeight: 20)))
+        let retention = cjguiComposableVertical(610, "perf-tab-retention", CjguiComposableUiStyle(gap: 2))
+        retention.add(cjguiComposableText(611, "perf-tab-retention-line", "保留策略行",
+            CjguiComposableUiStyle(fixedHeight: 20)))
+        // The editor on the HIDDEN page.
+        retention.add(cjguiComposableTextInput(612, "perf-hidden-editor", "隐藏", hiddenDraft, 8302,
+            CjguiComposableUiStyle(fixedHeight: 20)))
+        let pages = ArrayList<CjguiComposableUiTabPage>()
+        pages.add(CjguiComposableUiTabPage("basic", "基本", basic))
+        pages.add(CjguiComposableUiTabPage("retention", "保留策略", retention))
+        let tabsScope = CjguiComposableUiIdentityScope("perf-interaction-tabs")
+        root.add(cjguiComposableTabs(tabsScope, "perf-tabs", pages, tabs,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 90), titleHeight: 24))
+        return root
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+// --- D operation matrix: the same interaction load for all three authors ------
+//
+// `WindowPerfAuthorMatrixController` above proves the author/load hot path, while
+// the older interaction controller proves the public operation seams on one
+// fixed handwritten fixture. This controller joins those two dimensions: one
+// accepted tree is built by hand, by the generated holder, or by a handwritten
+// shell containing a generated tab region, and the exact same public state
+// operations drive every load.
+
+private class WindowPerfOperationProvider <: CjguiGeneratedUiBindingProvider {
+    var visibleDraft: String = "可见初值"
+    var hiddenDraft: String = "隐藏初值"
+
+    public func fieldResourceId(fieldId: String): Int64 {
+        return if (fieldId == "visible-field") { 8301 } else { 8302 }
+    }
+    public func fieldOperationResourceId(fieldId: String): Int64 { return 1 }
+    public func draftText(fieldId: String): String {
+        return if (fieldId == "visible-field") { visibleDraft } else { hiddenDraft }
+    }
+    public func appliedText(fieldId: String): String { return draftText(fieldId) }
+    public func draftBoolean(fieldId: String): ?Bool { return None }
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        return CjguiGeneratedUiActionResult(true, "")
+    }
+    public func actionAvailable(actionName: String): Bool { return true }
+}
+
+private func windowPerfOperationCatalog(rows: Int64): CjguiGeneratedUiCapabilityCatalog {
+    let catalog = CjguiGeneratedUiCapabilityCatalog()
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("vertical",
+        CjguiGeneratedUiPresentation.containerStyleProperties(), true, childLimit: rows + 12))
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("horizontal",
+        CjguiGeneratedUiPresentation.containerStyleProperties(), true, childLimit: 4))
+    let labelProperties = CjguiGeneratedUiPresentation.leafStyleProperties()
+    labelProperties.add(CjguiGeneratedUiPropertySpec("text", "STRING", maxLength: 200))
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("label", labelProperties, false))
+    let inputProperties = CjguiGeneratedUiPresentation.leafStyleProperties()
+    inputProperties.add(CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 64))
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("textInput", inputProperties, false))
+    let scrollProperties = CjguiGeneratedUiPresentation.scrollContentProperties()
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        scrollProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("scrollArea", scrollProperties, true,
+        childLimit: 1))
+    let splitProperties = CjguiGeneratedUiPresentation.splitContentProperties()
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        splitProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("split", splitProperties, true,
+        childLimit: 2))
+    let pageProperties = CjguiGeneratedUiPresentation.tabPageContentProperties()
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        pageProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("tabPage", pageProperties, true,
+        childLimit: 3))
+    let tabsProperties = CjguiGeneratedUiPresentation.tabsContentProperties()
+    for (property in CjguiGeneratedUiPresentation.containerStyleProperties()) {
+        tabsProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("tabs", tabsProperties, true,
+        childLimit: 2))
+    let _ = catalog.registerField(CjguiGeneratedUiFieldSpec("visible-field", "可见", "TEXT", 8301,
+        writeActionName: "EDIT_DRAFT_TEXT"))
+    let _ = catalog.registerField(CjguiGeneratedUiFieldSpec("hidden-field", "隐藏", "TEXT", 8302,
+        writeActionName: "EDIT_DRAFT_TEXT"))
+    return catalog
+}
+
+private func windowPerfOperationLabel(key: String, text: String): CjguiGeneratedUiNodeSpec {
+    return CjguiGeneratedUiNodeSpec(key, "label",
+        properties: HashMap<String, String>([("text", text), ("fixedHeight", "20")]))
+}
+
+private func windowPerfOperationInput(key: String, fieldId: String): CjguiGeneratedUiNodeSpec {
+    let label = if (fieldId == "visible-field") { "可见" } else { "隐藏" }
+    return CjguiGeneratedUiNodeSpec(key, "textInput",
+        properties: HashMap<String, String>([("label", label), ("fixedHeight", "20")]), fieldId: fieldId)
+}
+
+private func windowPerfOperationPage(key: String, pageKey: String, title: String,
+    fieldKey: String, fieldId: String): CjguiGeneratedUiNodeSpec {
+    let content = ArrayList<CjguiGeneratedUiNodeSpec>()
+    content.add(windowPerfOperationLabel("${key}-line", "${title}行"))
+    content.add(windowPerfOperationInput(fieldKey, fieldId))
+    let children = ArrayList<CjguiGeneratedUiNodeSpec>()
+    children.add(CjguiGeneratedUiNodeSpec("${key}-content", "vertical",
+        properties: HashMap<String, String>([("gap", "2")]), children: content))
+    let properties = HashMap<String, String>([("pageKey", pageKey), ("pageTitle", title)])
+    return CjguiGeneratedUiNodeSpec(key, "tabPage", properties: properties, children: children)
+}
+
+private func windowPerfOperationTabsSpec(): CjguiGeneratedUiNodeSpec {
+    let pages = ArrayList<CjguiGeneratedUiNodeSpec>()
+    pages.add(windowPerfOperationPage("perf-page-basic", "basic", "基本",
+        "perf-visible-editor", "visible-field"))
+    pages.add(windowPerfOperationPage("perf-page-retention", "retention", "保留策略",
+        "perf-hidden-editor", "hidden-field"))
+    let properties = HashMap<String, String>([("initialPage", "basic"), ("titleHeight", "24")])
+    return CjguiGeneratedUiNodeSpec("perf-tabs", "tabs", properties: properties, children: pages)
+}
+
+private func windowPerfOperationRootSpec(rows: Int64, tabsOnly!: Bool = false): CjguiGeneratedUiNodeSpec {
+    if (tabsOnly) {
+        return windowPerfOperationTabsSpec()
+    }
+    let rowSpecs = ArrayList<CjguiGeneratedUiNodeSpec>()
+    var index: Int64 = 0
+    while (index < rows) {
+        rowSpecs.add(windowPerfOperationLabel("row${index}", "滚动行 ${index}"))
+        index += 1
+    }
+    let stack = CjguiGeneratedUiNodeSpec("perf-scroll-stack", "vertical", children: rowSpecs)
+    let scroll = CjguiGeneratedUiNodeSpec("perf-scroll", "scrollArea",
+        properties: HashMap<String, String>([("offset", "0"), ("fixedHeight", "120")]),
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([stack]))
+    let pane0 = CjguiGeneratedUiNodeSpec("perf-pane-0", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([windowPerfOperationLabel("perf-pane-0-label", "左栏")]))
+    let pane1 = CjguiGeneratedUiNodeSpec("perf-pane-1", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([windowPerfOperationLabel("perf-pane-1-label", "右栏")]))
+    let split = CjguiGeneratedUiNodeSpec("perf-split", "split",
+        properties: HashMap<String, String>([("firstSize", "200"), ("firstMinimum", "120"),
+            ("secondMinimum", "120"), ("fixedHeight", "80")]),
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([pane0, pane1]))
+    return CjguiGeneratedUiNodeSpec("perf-operation-root", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([scroll, split, windowPerfOperationTabsSpec()]))
+}
+
+private func windowPerfOperationHandRoot(viewport: CjguiComposableUiScrollViewport,
+    split: CjguiComposableUiSplitState, tabs: CjguiComposableUiTabsState, rows: Int64,
+    visibleDraft: String, hiddenDraft: String): CjguiComposableUiNode {
+    let root = cjguiComposableVertical(1, "perf-operation-root", CjguiComposableUiStyle(gap: 4))
+    let scroll = cjguiComposableScrollArea(2, "perf-scroll", viewport,
+        CjguiComposableUiStyle(growX: 1, fixedHeight: 120))
+    let stack = cjguiComposableVertical(3, "perf-scroll-stack", CjguiComposableUiStyle(gap: 4))
+    var index: Int64 = 0
+    while (index < rows) {
+        stack.add(cjguiComposableText(100 + index, "row${index}", "滚动行 ${index}",
+            CjguiComposableUiStyle(fontSize: 13.0, fixedHeight: 20)))
+        index += 1
+    }
+    scroll.add(stack)
+    root.add(scroll)
+    let pane0 = cjguiComposableVertical(200, "perf-pane-0", CjguiComposableUiStyle())
+    pane0.add(cjguiComposableText(201, "perf-pane-0-label", "左栏", CjguiComposableUiStyle(fixedHeight: 20)))
+    let pane1 = cjguiComposableVertical(210, "perf-pane-1", CjguiComposableUiStyle())
+    pane1.add(cjguiComposableText(211, "perf-pane-1-label", "右栏", CjguiComposableUiStyle(fixedHeight: 20)))
+    let splitScope = CjguiComposableUiIdentityScope("perf-operation-split")
+    root.add(cjguiComposableScopedSplitView(splitScope, "perf-split", pane0, pane1,
+        CjguiComposableUiSplitAxis.HORIZONTAL, split.firstSize(), 120, 120,
+        CjguiComposableUiStyle(growX: 1, fixedHeight: 80), splitState: split))
+    let basic = cjguiComposableVertical(600, "perf-page-basic", CjguiComposableUiStyle(gap: 2))
+    basic.add(cjguiComposableText(601, "perf-page-basic-line", "基本行", CjguiComposableUiStyle(fixedHeight: 20)))
+    basic.add(cjguiComposableTextInput(602, "perf-visible-editor", "可见", visibleDraft, 8301,
+        CjguiComposableUiStyle(fixedHeight: 20), fieldId: "visible-field",
+        operationActionName: "EDIT_DRAFT_TEXT", operationResourceId: 1, displayValueRole: "draft"))
+    let retention = cjguiComposableVertical(610, "perf-page-retention", CjguiComposableUiStyle(gap: 2))
+    retention.add(cjguiComposableText(611, "perf-page-retention-line", "保留策略行", CjguiComposableUiStyle(fixedHeight: 20)))
+    retention.add(cjguiComposableTextInput(612, "perf-hidden-editor", "隐藏", hiddenDraft, 8302,
+        CjguiComposableUiStyle(fixedHeight: 20), fieldId: "hidden-field",
+        operationActionName: "EDIT_DRAFT_TEXT", operationResourceId: 1, displayValueRole: "draft"))
+    let pages = ArrayList<CjguiComposableUiTabPage>()
+    pages.add(CjguiComposableUiTabPage("basic", "基本", basic))
+    pages.add(CjguiComposableUiTabPage("retention", "保留策略", retention))
+    let tabsScope = CjguiComposableUiIdentityScope("perf-operation-tabs")
+    root.add(cjguiComposableTabs(tabsScope, "perf-tabs", pages, tabs,
+        CjguiComposableUiStyle(), titleHeight: 24))
+    return root
+}
+
+private class WindowPerfOperationMatrixController <: CjguiComposableUiController &
+    CjguiComposableUiSceneRefreshParticipant {
+    private let author: Int64
+    private let rows: Int64
+    private let provider = WindowPerfOperationProvider()
+    private let holder: ?CjguiGeneratedUiStructureHolder
+    let viewport = CjguiComposableUiScrollViewport()
+    let split = CjguiComposableUiSplitState(200, 120, 120)
+    let tabs = CjguiComposableUiTabsState("basic")
+    private var revision: Int64 = 1
+    var buildCount: Int64 = 0
+    var visibleDraft: String = "可见初值"
+    var hiddenDraft: String = "隐藏初值"
+    var seedAccepted: Bool = true
+    var seedReason: String = ""
+
+    init(author: Int64, rows: Int64) {
+        this.author = author
+        this.rows = rows
+        if (author == 1 || author == 2) {
+            let built = CjguiGeneratedUiStructureHolder(windowPerfOperationCatalog(rows))
+            let seeded = if (author == 2) {
+                built.submit(windowPerfOperationRootSpec(rows, tabsOnly: true), provider)
+            } else {
+                built.submit(windowPerfOperationRootSpec(rows), provider)
+            }
+            this.seedAccepted = seeded.candidateAccepted
+            this.seedReason = seeded.reason
+            this.holder = Some(built)
+        } else {
+            this.holder = None
+        }
+    }
+
+    public func authorName(): String {
+        if (author == 1) { return "generated" }
+        if (author == 2) { return "mixed" }
+        return "handwritten"
+    }
+    public func rowCount(): Int64 { return rows }
+    public func operationViewport(): CjguiComposableUiScrollViewport {
+        if (author == 1) {
+            return match (holder) {
+                case Some(value) => value.scrollViewportForInstance("perf-scroll", 0)
+                case None => viewport
+            }
+        }
+        return viewport
+    }
+    public func operationSplit(): CjguiComposableUiSplitState {
+        if (author == 1) {
+            return match (holder) {
+                case Some(value) => value.splitStateForInstance("perf-split", 200,
+                    firstMinimum: 120, secondMinimum: 120)
+                case None => split
+            }
+        }
+        return split
+    }
+    public func operationTabs(): CjguiComposableUiTabsState {
+        if (author == 1 || author == 2) {
+            return match (holder) {
+                case Some(value) => value.tabsStateForInstance("perf-tabs", "basic")
+                case None => tabs
+            }
+        }
+        return tabs
+    }
+    public func setVisible(value: String): Unit {
+        visibleDraft = value
+        provider.visibleDraft = value
+        revision += 1
+    }
+    public func setHidden(value: String): Unit {
+        hiddenDraft = value
+        provider.hiddenDraft = value
+        revision += 1
+    }
+    public func bump(): Unit { revision += 1 }
+    public func uiSceneVersion(): Int64 { return revision }
+    public func buildUi(): CjguiComposableUiNode {
+        buildCount += 1
+        if (author == 1) {
+            return match (holder) {
+                case Some(value) => value.buildRefreshNode(provider)
+                case None => windowPerfOperationHandRoot(viewport, split, tabs, rows, visibleDraft, hiddenDraft)
+            }
+        }
+        if (author == 2) {
+            // The mixed shape is intentionally the handwritten shell plus the
+            // generated tab region. Build the shell's common nodes directly and
+            // replace only its tab subtree with the generated accepted region.
+            let root = cjguiComposableVertical(1, "perf-operation-root", CjguiComposableUiStyle(gap: 4))
+            let scroll = cjguiComposableScrollArea(2, "perf-scroll", viewport,
+                CjguiComposableUiStyle(growX: 1, fixedHeight: 120))
+            let stack = cjguiComposableVertical(3, "perf-scroll-stack", CjguiComposableUiStyle(gap: 4))
+            var index: Int64 = 0
+            while (index < rows) {
+                stack.add(cjguiComposableText(100 + index, "row${index}", "滚动行 ${index}",
+                    CjguiComposableUiStyle(fontSize: 13.0, fixedHeight: 20)))
+                index += 1
+            }
+            scroll.add(stack)
+            root.add(scroll)
+            let pane0 = cjguiComposableVertical(200, "perf-pane-0", CjguiComposableUiStyle())
+            pane0.add(cjguiComposableText(201, "perf-pane-0-label", "左栏", CjguiComposableUiStyle(fixedHeight: 20)))
+            let pane1 = cjguiComposableVertical(210, "perf-pane-1", CjguiComposableUiStyle())
+            pane1.add(cjguiComposableText(211, "perf-pane-1-label", "右栏", CjguiComposableUiStyle(fixedHeight: 20)))
+            let scope = CjguiComposableUiIdentityScope("perf-operation-split")
+            root.add(cjguiComposableScopedSplitView(scope, "perf-split", pane0, pane1,
+                CjguiComposableUiSplitAxis.HORIZONTAL, split.firstSize(), 120, 120,
+                CjguiComposableUiStyle(growX: 1, fixedHeight: 80), splitState: split))
+            root.add(match (holder) {
+                case Some(value) => value.buildRefreshNode(provider)
+                case None => cjguiComposableText(-1, "missing-tabs", "", CjguiComposableUiStyle())
+            })
+            return root
+        }
+        return windowPerfOperationHandRoot(viewport, split, tabs, rows, visibleDraft, hiddenDraft)
+    }
+    public func beginSceneRefresh(): Bool {
+        return match (holder) {
+            case Some(value) => value.beginCandidateRefresh()
+            case None => true
+        }
+    }
+    public func prepareSceneRefresh(): Bool {
+        return match (holder) {
+            case Some(value) => value.prepareCandidateRefresh()
+            case None => true
+        }
+    }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>()
+    }
+    public func commitSceneRefresh(): Unit {
+        match (holder) {
+            case Some(value) => let _ = value.commitCandidateRefresh()
+            case None => ()
+        }
+    }
+    public func rollbackSceneRefresh(): Unit {
+        match (holder) {
+            case Some(value) => value.rollbackCandidateRefresh()
+            case None => ()
+        }
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+private func windowPerfOperationSample(window: CjguiComposableUiWindow,
+    controller: WindowPerfOperationMatrixController, kind: String, count: Int64,
+    operation: () -> Unit): Unit {
+    let samples = ArrayList<Int64>()
+    let buildsBefore = controller.buildCount
+    let submitsBefore = window.windowProgress().nativeSubmissionVersion
+    let solvesBefore = controller.operationViewport().acceptedSolveCount()
+    var refreshedAll = true
+    var index: Int64 = 0
+    while (index < count) {
+        // The request itself is outside the timed region. The timer covers one
+        // ordinary refresh only, so the raw list remains comparable by operation.
+        operation()
+        controller.bump()
+        let started = MonoTime.now()
+        let refreshed = window.refresh()
+        samples.add((MonoTime.now() - started).toMicroseconds())
+        refreshedAll = refreshedAll && refreshed
+        index += 1
+    }
+    @Assert(refreshedAll, true)
+    @Assert(window.windowProgress().lastNativeFailure, "none")
+    let builds = controller.buildCount - buildsBefore
+    let submits = window.windowProgress().nativeSubmissionVersion - submitsBefore
+    let solves = controller.operationViewport().acceptedSolveCount() - solvesBefore
+    @Assert(builds, count)
+    @Assert(solves >= count, true)
+    let sorted = sortedPerfSampleCopy(samples)
+    let median = perfNearestRank(sorted, 1, 2)
+    reportWindowPerf("operation_matrix ${kind}", median,
+        "author=${controller.authorName()} rows=${controller.rowCount()} samples=${samples.size} " +
+        "raw_micros=${perfSamplesText(samples)} min_micros=${sorted[0]} " +
+        "median_micros=${median} max_micros=${sorted[sorted.size - 1]} " +
+        "builds=${builds} submits=${submits} solves=${solves} " +
+        "time_source=MonoTime separated=work_vs_time asserts_outside_timer=true")
+}
+
+/// Every author/load pair receives the same operation matrix. The requests are
+/// public view-state/owner operations; accepted values, rows and geometry are
+/// checked after the timer has stopped. MonoTime is reported at microsecond
+/// resolution and a measured zero remains valid evidence for a sub-microsecond
+/// turn.
+@Test
+func windowPerfThreeAuthorsTwoLoadsOperationMatrix(): Unit {
+    for (rows in [8, 32]) {
+        var referenceSignature = ""
+        for (author in 0..3) {
+            let controller = WindowPerfOperationMatrixController(author, rows)
+            let window = CjguiComposableUiWindow(controller)
+            @Assert(controller.seedAccepted, true)
+            @Assert(window.start(), true)
+            @Assert(window.refresh(), true)
+            @Assert(window.windowProgress().lastNativeFailure, "none")
+            @Assert(authorMatrixAcceptedRowCount(window, rows), rows)
+            let signature = operationMatrixAcceptedSignature(window)
+            if (referenceSignature.size == 0) {
+                referenceSignature = signature
+            } else {
+                @Assert(signature, referenceSignature)
+            }
+
+            windowPerfOperationSample(window, controller, "hot", 20) {
+                // A versioned ordinary refresh is the hot no-structure path.
+                let _ = controller.operationViewport().offset()
+            }
+            windowPerfOperationSample(window, controller, "scroll", 20) {
+                if (controller.buildCount % 2 == 0) {
+                    let _ = controller.operationViewport().step("next", 40)
+                } else {
+                    let _ = controller.operationViewport().step("previous", 40)
+                }
+            }
+            windowPerfOperationSample(window, controller, "reveal", 20) {
+                if (controller.buildCount % 2 == 0) {
+                    let _ = controller.operationViewport().reveal(rows * 20 - 20, rows * 20)
+                } else {
+                    let _ = controller.operationViewport().reveal(0, 20)
+                }
+            }
+            windowPerfOperationSample(window, controller, "split", 20) {
+                let requested = if (controller.buildCount % 2 == 0) { 260 } else { 200 }
+                let applied = controller.operationSplit().applyFirstSize(requested, 500, 8)
+                @Assert(applied, requested)
+            }
+            windowPerfOperationSample(window, controller, "tabs", 20) {
+                let next = if (controller.operationTabs().activeKey() == "basic") {
+                    "retention"
+                } else {
+                    "basic"
+                }
+                @Assert(controller.operationTabs().select(next), true)
+            }
+            windowPerfOperationSample(window, controller, "visible_field", 20) {
+                controller.setVisible("可见值-${controller.buildCount}")
+            }
+            windowPerfOperationSample(window, controller, "hidden_field", 20) {
+                controller.setHidden("隐藏值-${controller.buildCount}")
+            }
+
+            // The owner values are read from the accepted scene after the timed
+            // rounds. Hidden-page content is checked only after a real page switch.
+            @Assert(window.acceptedSceneDump().contains(controller.visibleDraft), true)
+            @Assert(controller.operationTabs().select("retention"), true)
+            controller.bump()
+            @Assert(window.refresh(), true)
+            @Assert(window.acceptedSceneDump().contains(controller.hiddenDraft), true)
+
+            // Clock resolution self-check is outside every operation timer. It is
+            // reported for interpreting a raw 0 microsecond sample, never used to
+            // manufacture work or to reject that sample.
+            let clockStart = MonoTime.now()
+            let clockEnd = MonoTime.now()
+            let clockResolutionMicros = (clockEnd - clockStart).toMicroseconds()
+            let idleBuildsBefore = controller.buildCount
+            let idleSubmitsBefore = window.windowProgress().nativeSubmissionVersion
+            let idleSolvesBefore = controller.operationViewport().acceptedSolveCount()
+            let idleStarted = MonoTime.now()
+            let idleRefreshed = window.refreshIfNeeded()
+            let idleMicros = (MonoTime.now() - idleStarted).toMicroseconds()
+            var idleRounds: Int64 = 1
+            while (idleRounds < 5) {
+                let _ = window.refreshIfNeeded()
+                idleRounds += 1
+            }
+            let idleBuilds = controller.buildCount - idleBuildsBefore
+            let idleSubmits = window.windowProgress().nativeSubmissionVersion - idleSubmitsBefore
+            let idleSolves = controller.operationViewport().acceptedSolveCount() - idleSolvesBefore
+            @Assert(idleBuilds, 0)
+            @Assert(idleSubmits, 0)
+            @Assert(idleSolves, 0)
+            reportWindowPerf("operation_matrix idle", idleMicros,
+                "author=${controller.authorName()} rows=${rows} samples=1 raw_micros=${idleMicros} " +
+                "refresh_requested=${idleRefreshed} idle_rounds=${idleRounds} builds=${idleBuilds} " +
+                "submits=${idleSubmits} solves=${idleSolves} clock_resolution_micros=${clockResolutionMicros} " +
+                "zero_allowed=true time_source=MonoTime separated=work_vs_time")
+            window.close()
+        }
+        @Assert(referenceSignature.size > 0, true)
+    }
+}
+
+/// D: >= 20 bounded samples per necessary hot interaction on the normal window
+/// hot path - scroll, reveal, split, tab page, a VISIBLE field update and a HIDDEN
+/// field update - each driving the PUBLIC request seam and then one ordinary
+/// refresh. Only the measured refresh is inside the timed region; every request,
+/// counter read and assertion runs outside it. Work counters and the MonoTime
+/// delta are reported separately, so a fast-looking sample can never hide
+/// "nothing happened", and the idle line reports a REAL turn instead of a 0
+/// sentinel.
+@Test
+func windowPerfInteractionSamplesWithSeparatedWorkAndTime(): Unit {
+    let controller = WindowPerfInteractionController()
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    @Assert(window.refresh(), true)
+    @Assert(window.windowProgress().lastNativeFailure, "none")
+
+    // Each block alternates its request so EVERY sample really moves the
+    // accepted scene: a request that is already satisfied would be a no-op turn
+    // and could not price the operation.
+    interactionSample(window, controller, "scroll", 20) {
+        if (controller.buildCount % 2 == 0) {
+            let _ = controller.viewport.step("next", 40)
+        } else {
+            let _ = controller.viewport.step("previous", 40)
+        }
+    }
+    interactionSample(window, controller, "reveal", 20) {
+        if (controller.buildCount % 2 == 0) {
+            let _ = controller.viewport.reveal(400, 430)
+        } else {
+            let _ = controller.viewport.reveal(60, 90)
+        }
+    }
+    interactionSample(window, controller, "split", 20) {
+        if (controller.buildCount % 2 == 0) {
+            let _ = controller.split.applyFirstSize(260, 500, 8)
+        } else {
+            let _ = controller.split.applyFirstSize(200, 500, 8)
+        }
+    }
+    interactionSample(window, controller, "tabs", 20) {
+        let next = if (controller.tabs.activeKey() == "basic") {
+            "retention"
+        } else {
+            "basic"
+        }
+        let _ = controller.tabs.select(next)
+    }
+    // A VISIBLE field update: the owner value moves and the accepted scene must
+    // carry it.
+    interactionSample(window, controller, "visible_field", 20) {
+        controller.visibleDraft = "可见值-${controller.buildCount}"
+    }
+    // A HIDDEN field update: the owner value moves while the page is not shown. It
+    // needs no visible commit, but switching back must present it.
+    interactionSample(window, controller, "hidden_field", 20) {
+        controller.hiddenDraft = "隐藏值-${controller.buildCount}"
+    }
+    let acceptedVisible = interactionAcceptedEditorValue(window, "perf-visible-editor")
+    @Assert(acceptedVisible, controller.visibleDraft)
+    // Switch to the hidden page and verify the owner's CURRENT hidden value.
+    @Assert(controller.tabs.select("retention"), true)
+    controller.bump()
+    @Assert(window.refresh(), true)
+    let acceptedHidden = interactionAcceptedEditorValue(window, "perf-hidden-editor")
+    @Assert(acceptedHidden, controller.hiddenDraft)
+    reportWindowPerf("interaction hidden_field_continuation", 0,
+        "active_page=${controller.tabs.activeKey()} accepted_hidden='${acceptedHidden}' " +
+        "owner_hidden='${controller.hiddenDraft}' accepted_visible='${acceptedVisible}'")
+
+    // Idle convergence AFTER the timed region: one REAL idle turn is timed (never
+    // a 0 sentinel) and several further turns must do no build/submit/solve.
+    let idleBuildsBefore = controller.buildCount
+    let idleSubmitsBefore = window.windowProgress().nativeSubmissionVersion
+    let idleSolvesBefore = controller.viewport.acceptedSolveCount()
+    let clockProbeStart = MonoTime.now()
+    let clockProbeEnd = MonoTime.now()
+    let clockResolutionMicros = (clockProbeEnd - clockProbeStart).toMicroseconds()
+    let idleStarted = MonoTime.now()
+    let idleRequested = window.refreshIfNeeded()
+    let idleMicros = (MonoTime.now() - idleStarted).toMicroseconds()
+    var idleRounds: Int64 = 1
+    var idleExtraWork: Int64 = 0
+    while (idleRounds < 8) {
+        if (window.refreshIfNeeded()) {
+            idleExtraWork += 1
+        }
+        idleRounds += 1
+    }
+    let idleBuilds = controller.buildCount - idleBuildsBefore
+    let idleSubmits = window.windowProgress().nativeSubmissionVersion - idleSubmitsBefore
+    let idleSolves = controller.viewport.acceptedSolveCount() - idleSolvesBefore
+    @Assert(idleBuilds, 0)
+    @Assert(idleSubmits, 0)
+    @Assert(idleSolves, 0)
+    reportWindowPerf("interaction sample=idle", idleMicros,
+        "refresh_requested=${idleRequested} idle_rounds=${idleRounds} idle_extra_work=${idleExtraWork} " +
+        "builds=${idleBuilds} submits=${idleSubmits} solves=${idleSolves} " +
+        "clock_resolution_micros=${clockResolutionMicros} zero_allowed=true " +
+        "time_source=MonoTime separated=work_vs_time")
+    window.close()
+}
+
+/// One bounded sample block: `count` iterations of ONE measured operation, each
+/// timed on its own, with the request and the assertions OUTSIDE the timer. It
+/// reports the raw sample count, min/median/max and the work counters the block
+/// really produced, so "fast" can never mean "nothing happened".
+private func interactionSample(window: CjguiComposableUiWindow, controller: WindowPerfInteractionController,
+    kind: String, count: Int64, operation: () -> Unit): Unit {
+    // A content-only field update may legitimately be published as a semantic-only
+    // revision with NO native submission, so that expectation is derived from the
+    // KIND instead of being assumed for all of them.
+    let requireSubmit = kind != "visible_field" && kind != "hidden_field"
+    let samples = ArrayList<Int64>()
+    let buildsBefore = controller.buildCount
+    let submitsBefore = window.windowProgress().nativeSubmissionVersion
+    let solvesBefore = controller.viewport.acceptedSolveCount()
+    var refreshedAll = true
+    var index: Int64 = 0
+    while (index < count) {
+        operation()
+        controller.bump()
+        let started = MonoTime.now()
+        let refreshed = window.refresh()
+        samples.add((MonoTime.now() - started).toMicroseconds())
+        refreshedAll = refreshedAll && refreshed
+        index += 1
+    }
+    @Assert(refreshedAll, true)
+    @Assert(window.windowProgress().lastNativeFailure, "none")
+    let builds = controller.buildCount - buildsBefore
+    let submits = window.windowProgress().nativeSubmissionVersion - submitsBefore
+    let solves = controller.viewport.acceptedSolveCount() - solvesBefore
+    // Every sample of a real change must have produced a real rebuild.
+    @Assert(builds, count)
+    if (requireSubmit) {
+        @Assert(submits >= count, true)
+    }
+    let sorted = sortedPerfSampleCopy(samples)
+    let median = perfNearestRank(sorted, 1, 2)
+    reportWindowPerf("interaction sample=${kind}", median,
+        "samples=${samples.size} min_micros=${sorted[0]} max_micros=${sorted[sorted.size - 1]} " +
+        "median_micros=${median} builds=${builds} submits=${submits} solves=${solves} " +
+        "submit_required=${requireSubmit} " +
+        "time_source=MonoTime separated=work_vs_time asserts_outside_timer=true")
+}
+
+/// The value the window's ACCEPTED scene really carries for one editor semantic
+/// id. A rebuilt tree is not accepted state.
+private func interactionAcceptedEditorValue(window: CjguiComposableUiWindow, semanticId: String): String {
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == semanticId) {
+            return node.value
+        }
+    }
+    return ""
 }

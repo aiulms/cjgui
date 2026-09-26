@@ -3,6 +3,12 @@
 # board: a different existing domain, different fields/actions and different
 # catalog bounds). Proves the same public entry points work outside the rule
 # business without copying an interpreter or a rule-private branch.
+#
+# step4b/4b2 additionally prove that a generated image reference resolves from
+# the second domain's OWN declaration (logical key + exact version, never a
+# path), and step4c proves a declared constraint/font reaches the real accepted
+# geometry and survives a REAL window resize together with the draft and focus
+# on the same binding.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +31,20 @@ log() { print -r -- "$*" >> "$LOG"; }
 fail() { log "FAIL $*"; cat "$LOG"; exit 1; }
 
 source "$SCRIPT_DIR/lib_cjgui_instance.sh"
+# The SHARED real-input driver. It resolves the exact accepted semanticId and
+# refuses to type until the window reports that identity, so a press on this
+# window can never write another field.
+source "$SCRIPT_DIR/lib_cjgui_desktop_input.sh"
+
+# This consumer owns exactly ONE window, so its host advertises no window
+# targets and RE_WINDOW_TARGET stays unset on purpose: the target-qualified
+# `window-interaction <target>` read belongs to the explicit multi-window host
+# (verify_multi_window_application.sh enumerates targets there). Exactness here
+# comes from the driver's accepted-identity focus read, and this chain REFUSES
+# the AX owner-readback fallback: an edit only counts when the window's own
+# focus projection reported the exact accepted semanticId. Without this, a
+# label/role match could pass as "the exact instance received the input".
+export REQUIRE_EXACT_INSTANCE_EVIDENCE=1
 
 # --- real desktop input for the generated editors ---------------------------
 DRIVER_SOURCE="$RUNTIME_DIR/native/tests/desktop_input_driver.swift"
@@ -50,34 +70,106 @@ prepare_driver() {
 # window's accessibility tree, and the role it was found under is recorded so
 # the evidence shows what the projection actually produced.
 ax_editor_frame() { # ax_editor_frame <description> [role] -> "x y w h role" or "missing"
+  # A generated control can share its accessibility description with an
+  # enclosing row/container. Search the window's direct elements first and the
+  # whole tree after, and prefer the SMALLEST matching element inside each pass:
+  # a container's centre is not a hit point on the control itself.
   local role="${2:-}"
   cjgui_ax 20 -e "tell application \"System Events\"
     set p to first process whose unix id is $APP_PID
     set wanted to \"$1\"
+    set wantedRole to \"$role\"
+    set bestFrame to \"missing\"
+    set bestArea to -1
+    -- The typed collection lists the generated editors on this host, while
+    -- The full contents may not expose descendants at all.
+    set collectionKind to \"\"
+    if wantedRole is \"AXTextField\" then set collectionKind to \"text field\"
+    if wantedRole is \"AXCheckBox\" then set collectionKind to \"checkbox\"
     try
-      if \"$role\" is not \"\" then
-        set candidates to (every UI element of window 1 of p whose role is \"$role\")
-        repeat with e in candidates
+      if collectionKind is \"text field\" then
+        repeat with e in (every text field of window 1 of p)
           try
-            if (description of e) is wanted then
-              set pp to position of e
-              set ss to size of e
-              return ((item 1 of pp) as string) & \" \" & ((item 2 of pp) as string) & \" \" & ((item 1 of ss) as string) & \" \" & ((item 2 of ss) as string) & \" \" & (role of e)
+            if wantedRole is \"\" or (role of e) is wantedRole then
+              if (description of e) is wanted then
+                set pp to position of e
+                set ss to size of e
+                set area to ((item 1 of ss) as integer) * ((item 2 of ss) as integer)
+                if bestArea < 0 or area < bestArea then
+                  set bestArea to area
+                  set bestFrame to ((item 1 of pp) as string) & \" \" & ((item 2 of pp) as string) & \" \" & ((item 1 of ss) as string) & \" \" & ((item 2 of ss) as string) & \" \" & (role of e)
+                end if
+              end if
+            end if
+          end try
+        end repeat
+      else if collectionKind is \"checkbox\" then
+        repeat with e in (every checkbox of window 1 of p)
+          try
+            if wantedRole is \"\" or (role of e) is wantedRole then
+              if (description of e) is wanted then
+                set pp to position of e
+                set ss to size of e
+                set area to ((item 1 of ss) as integer) * ((item 2 of ss) as integer)
+                if bestArea < 0 or area < bestArea then
+                  set bestArea to area
+                  set bestFrame to ((item 1 of pp) as string) & \" \" & ((item 2 of pp) as string) & \" \" & ((item 1 of ss) as string) & \" \" & ((item 2 of ss) as string) & \" \" & (role of e)
+                end if
+              end if
             end if
           end try
         end repeat
       end if
-      repeat with e in (entire contents of window 1 of p)
+    end try
+    if bestFrame is not \"missing\" then return bestFrame
+    try
+      repeat with e in (every UI element of window 1 of p)
         try
           if (description of e) is wanted then
-            set pp to position of e
-            set ss to size of e
-            return ((item 1 of pp) as string) & \" \" & ((item 2 of pp) as string) & \" \" & ((item 1 of ss) as string) & \" \" & ((item 2 of ss) as string) & \" \" & (role of e)
+            set matchedRole to role of e
+            if wantedRole is \"\" or matchedRole is wantedRole then
+              set pp to position of e
+              set ss to size of e
+              set area to ((item 1 of ss) as integer) * ((item 2 of ss) as integer)
+              if bestArea < 0 or area < bestArea then
+                set bestArea to area
+                set bestFrame to ((item 1 of pp) as string) & \" \" & ((item 2 of pp) as string) & \" \" & ((item 1 of ss) as string) & \" \" & ((item 2 of ss) as string) & \" \" & matchedRole
+              end if
+            end if
           end if
         end try
       end repeat
     end try
-    return \"missing\"
+    if bestFrame is \"missing\" then
+      try
+        repeat with e in (entire contents of window 1 of p)
+          try
+            if (description of e) is wanted then
+              set matchedRole to role of e
+              if wantedRole is \"\" or matchedRole is wantedRole then
+                set pp to position of e
+                set ss to size of e
+                set area to ((item 1 of ss) as integer) * ((item 2 of ss) as integer)
+                if bestArea < 0 or area < bestArea then
+                  set bestArea to area
+                  set bestFrame to ((item 1 of pp) as string) & \" \" & ((item 2 of pp) as string) & \" \" & ((item 1 of ss) as string) & \" \" & ((item 2 of ss) as string) & \" \" & matchedRole
+                end if
+              end if
+            end if
+          end try
+        end repeat
+      end try
+    end if
+    return bestFrame
+  end tell" 2>/dev/null | tail -1 || true
+}
+ax_focused_description() {
+  cjgui_ax 10 -e "tell application \"System Events\"
+    set p to first process whose unix id is $APP_PID
+    try
+      return description of (first UI element of window 1 of p whose focused is true)
+    end try
+    return \"none\"
   end tell" 2>/dev/null | tail -1 || true
 }
 window_frame() {
@@ -138,7 +230,7 @@ log "launched pid=$APP_PID descriptor=$DESCRIPTOR owner_verified=descriptor+exec
 
 pub() { python3 "$CLIENT" "$DESCRIPTOR" "$@"; }
 structure_version() { pub generated-structure 2>/dev/null | awk '/^STRUCTURE_VERSION /{print $2}'; }
-field_line() { pub generated-fields 2>/dev/null | awk -v id="$1" '$1 == "FIELD" && $2 == id {print; exit}'; }
+field_line() { pub generated-fields 2>/dev/null | awk -v id="$1" '$1 == "FIELD" && $2 == id {print}'; }
 field_hex() { # field_hex <fieldId> <HEX-TAG>
   field_line "$1" | awk -v tag="$2" '{for (i = 1; i <= NF; i++) if ($i == tag) print $(i + 1)}'
 }
@@ -222,6 +314,12 @@ log "step4 s2_reorder_ok field_survived=true"
 cat > "$WORK/s3.txt" <<'S3'
 GENERATED_UI_STRUCTURE 1
 NODE 0 board3 vertical
+NODE 1 cardIcon image
+PROPERTY 1 cardIcon resource collaboration-beacon
+PROPERTY 1 cardIcon resourceVersion 1
+PROPERTY 1 cardIcon contentMode fill
+PROPERTY 1 cardIcon fixedWidth 56
+PROPERTY 1 cardIcon fixedHeight 56
 NODE 1 titleEditor textInput field=title
 PROPERTY 1 titleEditor label 任务标题编辑
 NODE 1 markedEditor booleanInput field=marked
@@ -240,8 +338,86 @@ grep -q 'NODE 1 markedEditor booleanInput field=marked' <<< "$S3_STRUCTURE" || f
 [[ "$(field_hex title DRAFT_HEX)" == "$BEFORE_TITLE" ]] || fail "field read changed without an edit"
 log "step4b generated_editors_accepted version=$((S3_VERSION + 1))"
 
+# The SAME accepted window carries a generated reference to the application's
+# logical image resource: read-back names the resource and version, never a path.
+pub generated-instances > "$WORK/s3-instances.txt" 2>&1 || true
+grep -q '^INSTANCE cardIcon ' "$WORK/s3-instances.txt" \
+  || fail "the accepted panel image instance is missing"
+grep -q 'kind=image' "$WORK/s3-instances.txt" || fail "the accepted panel instance is not an image"
+grep -q 'resource=collaboration-beacon' "$WORK/s3-instances.txt" \
+  || fail "the panel instance does not name the logical resource"
+grep -q 'resource_version=1' "$WORK/s3-instances.txt" \
+  || fail "the panel instance does not name the accepted resource version"
+grep -q 'composable-beacon.png' "$WORK/s3-instances.txt" \
+  && fail "the panel instance projection leaked the application raster path"
+log "step4b2 panel_image_resource_ok key=collaboration-beacon version=1 readback=resource_only"
+
 if prepare_driver; then
   if activate_and_key; then
+    # Real typing into the generated text editor.
+    TFRAME="$(ax_editor_frame "任务标题编辑" "AXTextField")"
+    if [[ -z "$DESKTOP_BLOCKED" && "$TFRAME" != "missing" && -n "$TFRAME" ]]; then
+      tx="$(print -r -- "$TFRAME" | awk '{print $1}')"
+      ty="$(print -r -- "$TFRAME" | awk '{print $2}')"
+      tw="$(print -r -- "$TFRAME" | awk '{print $3}')"
+      th="$(print -r -- "$TFRAME" | awk '{print $4}')"
+      TROLE="$(print -r -- "$TFRAME" | awk '{print $5}')"
+      # The first press may only key the window; each attempt re-clicks the
+      # control's own frame, records the focused accessibility element, and
+      # types. The owner read-back decides acceptance, not the click.
+      local text_attempt=0
+      local text_target="Zk9"
+      AFTER_TITLE="$BEFORE_TITLE"
+      while (( text_attempt < 3 )); do
+        # A generated text editor's accessibility frame can span its whole row;
+        # the editable area sits on the trailing side. The window is re-keyed and
+        # the frame re-read on EVERY attempt: on this host a synthetic press can
+        # be delivered while the window is not yet key (measured: two identical
+        # presses in a row reached the owner, a third run's two presses did not),
+        # so the attempt is bounded and the owner read-back still decides.
+        activate_and_key || true
+        TFRAME="$(ax_editor_frame "任务标题编辑" "AXTextField")"
+        [[ "$TFRAME" != "missing" && -n "$TFRAME" ]] || break
+        tx="$(print -r -- "$TFRAME" | awk '{print $1}')"
+        ty="$(print -r -- "$TFRAME" | awk '{print $2}')"
+        tw="$(print -r -- "$TFRAME" | awk '{print $3}')"
+        th="$(print -r -- "$TFRAME" | awk '{print $4}')"
+        TROLE="$(print -r -- "$TFRAME" | awk '{print $5}')"
+        if (( text_attempt == 1 )); then
+          "$DRIVER" click $(( tx + tw - 30 )) $(( ty + th / 2 )) >/dev/null 2>&1
+        else
+          "$DRIVER" click $(( tx + tw / 2 )) $(( ty + th / 2 )) >/dev/null 2>&1
+        fi
+        sleep 0.8
+        log "diag real_text_edit_focus label=second_consumer attempt=$text_attempt frame='$tx $ty $tw $th role=$TROLE' focused_description='$(ax_focused_description)' window='$(window_frame)' frontmost='$(cjgui_ax 10 -e "tell application \"System Events\" to return name of first process whose frontmost is true" 2>/dev/null | tail -1)'"
+        # The same real chord the tree keyboard verifier uses: a real Command
+        # key-down, Command+A, key-up, then the typed string.
+        "$DRIVER" key-down 55 >/dev/null 2>&1
+        "$DRIVER" shortcut command 0 >/dev/null 2>&1
+        "$DRIVER" key-up 55 >/dev/null 2>&1
+        sleep 0.3
+        "$DRIVER" type "$text_target" >/dev/null 2>&1
+        # A public read issued while the window commits a refresh can come back
+        # empty even though the owner value is set, so the comparison is retried
+        # within a fixed bound instead of reading once.
+        local poll=0
+        while (( poll < 8 )); do
+          AFTER_TITLE="$(field_hex title DRAFT_HEX)"
+          if [[ -n "$AFTER_TITLE" && "$AFTER_TITLE" != "-" && "$AFTER_TITLE" != "$BEFORE_TITLE" ]]; then
+            break
+          fi
+          sleep 0.3
+          poll=$(( poll + 1 ))
+        done
+        [[ -n "$AFTER_TITLE" && "$AFTER_TITLE" != "-" && "$AFTER_TITLE" != "$BEFORE_TITLE" ]] && break
+        text_attempt=$(( text_attempt + 1 ))
+      done
+      [[ -n "$AFTER_TITLE" && "$AFTER_TITLE" != "-" && "$AFTER_TITLE" != "$BEFORE_TITLE" ]] || \
+        fail "real typing into the generated text editor did not reach the owner"
+      log "step4b_text_editor_ok role=$TROLE frame='$tx $ty $tw $th' title=$(print -r -- "$AFTER_TITLE" | hex_to_text)"
+    elif [[ -z "$DESKTOP_BLOCKED" ]]; then
+      DESKTOP_BLOCKED="generated text editor is not exposed by the accessibility projection"
+    fi
     # Real desktop press on the generated boolean editor. It is exposed with
     # the checkbox role, so the lookup asks for that role first and falls back
     # to a role-agnostic tree walk.
@@ -288,25 +464,6 @@ if prepare_driver; then
     else
       DESKTOP_BLOCKED="generated boolean editor is not exposed by the accessibility projection"
     fi
-    # Real typing into the generated text editor.
-    TFRAME="$(ax_editor_frame "任务标题编辑" "AXTextField")"
-    if [[ -z "$DESKTOP_BLOCKED" && "$TFRAME" != "missing" && -n "$TFRAME" ]]; then
-      tx="$(print -r -- "$TFRAME" | awk '{print $1}')"
-      ty="$(print -r -- "$TFRAME" | awk '{print $2}')"
-      tw="$(print -r -- "$TFRAME" | awk '{print $3}')"
-      th="$(print -r -- "$TFRAME" | awk '{print $4}')"
-      TROLE="$(print -r -- "$TFRAME" | awk '{print $5}')"
-      "$DRIVER" click $(( tx + tw / 2 )) $(( ty + th / 2 )) >/dev/null 2>&1
-      sleep 0.8
-      "$DRIVER" type "Z" >/dev/null 2>&1
-      sleep 1.5
-      AFTER_TITLE="$(field_hex title DRAFT_HEX)"
-      [[ "$AFTER_TITLE" != "$BEFORE_TITLE" ]] || \
-        fail "real typing into the generated text editor did not reach the owner"
-      log "step4b_text_editor_ok role=$TROLE frame='$tx $ty $tw $th' title=$(print -r -- "$AFTER_TITLE" | hex_to_text)"
-    elif [[ -z "$DESKTOP_BLOCKED" ]]; then
-      DESKTOP_BLOCKED="generated text editor is not exposed by the accessibility projection"
-    fi
   else
     DESKTOP_BLOCKED="round window geometry unavailable for the desktop input driver"
   fi
@@ -315,6 +472,152 @@ else
 fi
 if [[ -n "$DESKTOP_BLOCKED" ]]; then
   log "BLOCKED generated_editor_desktop_input reason=$DESKTOP_BLOCKED"
+fi
+
+# --- 4c. real resize keeps the SAME declared key and the draft -------------
+# The offline layout test proves the shared style vocabulary reaches the built
+# geometry. This is the SAME second domain under a REAL pointer-driven resize:
+# a declared constraint and font size must reach the accepted geometry, the
+# window is resized by dragging its own corner, and the SAME declared key must
+# still accept a NEW exact value afterwards with every other draft unchanged.
+#
+# The TITLE is deliberately NOT used for the continuation: the application's own
+# business rule freezes it once the task has been submitted
+# (`title_frozen_after_submit`), and step4b really submitted the task. The notes
+# field stays editable, so the continuity mainline runs there and still proves
+# the same-key resize behaviour. The freeze itself is a business refusal covered
+# by the application's own test, not a delivery failure.
+instance_bounds() { # instance_bounds <key> -> "x,y,w,h"
+  pub generated-instances 2>/dev/null | awk -v key="$1" '$1 == "INSTANCE" && $2 == key {
+    for (i = 1; i <= NF; i++) if ($i ~ /^bounds=/ && !found) { sub(/^bounds=/, "", $i); print $i; found=1 }
+  }'
+}
+bounds_field() { # bounds_field <x,y,w,h> <index>
+  print -r -- "$1" | awk -F, -v i="$2" '{print $i}'
+}
+cat > "$WORK/s4.txt" <<'S4'
+GENERATED_UI_STRUCTURE 1
+NODE 0 board4 vertical
+NODE 1 icon4 image
+PROPERTY 1 icon4 resource collaboration-beacon
+PROPERTY 1 icon4 resourceVersion 1
+PROPERTY 1 icon4 contentMode fit
+PROPERTY 1 icon4 fixedWidth 56
+PROPERTY 1 icon4 fixedHeight 56
+NODE 1 titleEditor textInput field=title
+PROPERTY 1 titleEditor label 任务标题编辑
+NODE 1 bigLabel label
+PROPERTY 1 bigLabel text 大字号标签
+PROPERTY 1 bigLabel fontSize 24
+NODE 1 smallLabel label
+PROPERTY 1 smallLabel text 小字号标签
+PROPERTY 1 smallLabel fontSize 12
+NODE 1 stretchNote label
+PROPERTY 1 stretchNote text 宽度随窗口变化
+PROPERTY 1 stretchNote growX 1
+NODE 1 notesEditor textInput field=notes
+PROPERTY 1 notesEditor label 备注编辑
+END
+S4
+S4_VERSION="$(structure_version)"
+if [[ -z "$DESKTOP_BLOCKED" ]]; then
+  AX_PID="$APP_PID"
+  log "diag key_window_before_s4 focus='$(ax_window_focus)' frontmost='$(app_frontmost)'"
+fi
+pub generated-submit --structure-version "$S4_VERSION" --payload-file "$WORK/s4.txt" > "$WORK/submit-s4.log" 2>&1 || true
+grep -q '^APPLIED true' "$WORK/submit-s4.log" || fail "the constrained/font structure was rejected"
+wait_for_structure_version $((S4_VERSION + 1)) || fail "the constrained/font structure was never scene-accepted"
+BOUND_ICON="$(instance_bounds icon4)"
+BOUND_BIG="$(instance_bounds bigLabel)"
+BOUND_SMALL="$(instance_bounds smallLabel)"
+BOUND_STRETCH="$(instance_bounds stretchNote)"
+BOUND_NOTES="$(instance_bounds notesEditor)"
+[[ -n "$BOUND_ICON" && -n "$BOUND_BIG" && -n "$BOUND_SMALL" && -n "$BOUND_STRETCH" && -n "$BOUND_NOTES" ]] \
+  || fail "the constrained/font instances are missing from the accepted read-back"
+[[ "$(bounds_field "$BOUND_ICON" 3)" == "56" ]] \
+  || fail "the declared fixedWidth did not reach the accepted image geometry (icon=$BOUND_ICON)"
+BIG_H="$(bounds_field "$BOUND_BIG" 4)"
+SMALL_H="$(bounds_field "$BOUND_SMALL" 4)"
+(( BIG_H > SMALL_H )) || fail "the declared fontSize did not change the accepted label height ($BIG_H vs $SMALL_H)"
+log "step4c constraint_geometry_ok icon_w=$(bounds_field "$BOUND_ICON" 3) font24_h=$BIG_H font12_h=$SMALL_H same_key=true"
+
+# A real edit on the notes field BEFORE the resize. This is also the
+# discriminator: if it fails, the failure is the scene change, not the resize.
+INPUT_CONTINUATION_BLOCKED=""
+TITLE_BEFORE_CONTINUATION="$(field_hex title DRAFT_HEX)"
+MARKED_BEFORE_CONTINUATION="$(field_hex marked DRAFT_HEX)"
+if [[ -z "$DESKTOP_BLOCKED" ]]; then
+  AX_PID="$APP_PID"
+  AX_APP_PATH="${ROUND_EXEC%%.app/*}.app"
+  if real_generated_text_edit panel_pre_resize_edit "$DESCRIPTOR" notes "备注编辑" \
+      "text field" "备注-A" notesEditor; then
+    [[ "$(print -r -- "$(field_hex notes DRAFT_HEX)" | hex_to_text)" == "备注-A" ]] \
+      || fail "the pre-resize notes edit is not exactly '备注-A'"
+    log "step4c pre_resize_edit_ok mode='$REAL_EDIT_MODE' field=notes value='备注-A'"
+  else
+    INPUT_CONTINUATION_BLOCKED="post_structure_edit_not_delivered_to_owner"
+    log "BLOCKED post_structure_input_continuation reason=$INPUT_CONTINUATION_BLOCKED"
+  fi
+fi
+
+if [[ -z "$INPUT_CONTINUATION_BLOCKED" && -z "$DESKTOP_BLOCKED" ]]; then
+  DRAFT_BEFORE_RESIZE="$(field_hex notes DRAFT_HEX)"
+  FOCUS_BEFORE_RESIZE="$(field_line notes | awk '{for (i = 1; i <= NF; i++) if ($i == "FOCUS") print $(i + 1)}')"
+  [[ -n "$DRAFT_BEFORE_RESIZE" && "$DRAFT_BEFORE_RESIZE" != "-" ]] \
+    || fail "the notes draft did not survive the constrained/font structure change"
+
+  # A REAL resize through the same pointer path a person uses: press the window's
+  # own bottom-right corner and drag it.
+  RESIZE_LOG="$WORK/second-resize.log"
+  AX_PID="$APP_PID"
+  make_window_key || true
+  real_resize_window 140 100 > "$RESIZE_LOG" 2>&1 || true
+  sleep 1.5
+  RESIZED_STRETCH=""
+  waited=0
+  while (( waited < 20 )); do
+    RESIZED_STRETCH="$(instance_bounds stretchNote)"
+    if [[ -n "$RESIZED_STRETCH" && "$(bounds_field "$RESIZED_STRETCH" 3)" -gt "$(bounds_field "$BOUND_STRETCH" 3)" ]]; then
+      break
+    fi
+    sleep 0.5
+    waited=$(( waited + 1 ))
+  done
+  [[ -n "$RESIZED_STRETCH" ]] || fail "the accepted geometry is not readable after the resize"
+  BEFORE_W="$(bounds_field "$BOUND_STRETCH" 3)"
+  AFTER_W="$(bounds_field "$RESIZED_STRETCH" 3)"
+  (( AFTER_W > BEFORE_W )) \
+    || fail "the real resize did not widen the growing instance ($BEFORE_W -> $AFTER_W)"
+  RESIZED_ICON="$(instance_bounds icon4)"
+  [[ "$(bounds_field "$RESIZED_ICON" 3)" == "56" ]] \
+    || fail "the fixed constraint followed the resize instead of staying 56 (icon=$RESIZED_ICON)"
+  [[ -n "$(instance_bounds notesEditor)" ]] || fail "the resize lost the accepted notes editor key"
+  DRAFT_AFTER_RESIZE="$(field_hex notes DRAFT_HEX)"
+  FOCUS_AFTER_RESIZE="$(field_line notes | awk '{for (i = 1; i <= NF; i++) if ($i == "FOCUS") print $(i + 1)}')"
+  [[ "$DRAFT_AFTER_RESIZE" == "$DRAFT_BEFORE_RESIZE" ]] \
+    || fail "the real resize lost the notes draft on the same field binding"
+  [[ "$FOCUS_AFTER_RESIZE" == "$FOCUS_BEFORE_RESIZE" ]] \
+    || fail "the real resize moved focus off the same binding ($FOCUS_BEFORE_RESIZE -> $FOCUS_AFTER_RESIZE)"
+  [[ "$(field_hex title DRAFT_HEX)" == "$TITLE_BEFORE_CONTINUATION" ]] \
+    || fail "the resize changed the frozen title draft"
+  log "step4c real_resize_ok window='$(window_frame)' stretch_w=${BEFORE_W}->${AFTER_W} icon_w=56 notes_draft_kept=true focus=${FOCUS_AFTER_RESIZE} same_key=true"
+
+  # The continuation AFTER the resize, on the SAME declared key, with an exact
+  # owner read-back and every other draft unchanged.
+  AFTER_RESIZE_TARGET="备注-B"
+  if real_generated_text_edit panel_resize_edit "$DESCRIPTOR" notes "备注编辑" \
+      "text field" "$AFTER_RESIZE_TARGET" notesEditor; then
+    [[ "$(print -r -- "$(field_hex notes DRAFT_HEX)" | hex_to_text)" == "$AFTER_RESIZE_TARGET" ]] \
+      || fail "the post-resize edit is not exactly '$AFTER_RESIZE_TARGET'"
+    [[ "$(field_hex marked DRAFT_HEX)" == "$MARKED_BEFORE_CONTINUATION" ]] \
+      || fail "the post-resize edit changed an unrelated field draft"
+    [[ "$(field_hex title DRAFT_HEX)" == "$TITLE_BEFORE_CONTINUATION" ]] \
+      || fail "the post-resize edit changed the frozen title draft"
+    log "step4c post_resize_edit_ok mode='$REAL_EDIT_MODE' field=notes value='$AFTER_RESIZE_TARGET' other_field_unchanged=true input=real_desktop_control driver=cgevent"
+  else
+    INPUT_CONTINUATION_BLOCKED="post_resize_edit_not_delivered_to_owner"
+    log "BLOCKED post_resize_input_continuation reason=$INPUT_CONTINUATION_BLOCKED"
+  fi
 fi
 
 # --- 5. rejection family keeps the previous structure ----------------------
@@ -345,6 +648,11 @@ pub generated-submit --structure-version 0 --payload-file "$WORK/s1.txt" > "$WOR
 grep -q 'REASON structure_version_conflict' "$WORK/stale.log" || fail "stale structure rejection missing"
 [[ "$(structure_version)" == "$before_version" ]] || fail "structure version changed after rejections"
 log "step5 rejections_ok version_stable=$before_version"
+if [[ -n "$INPUT_CONTINUATION_BLOCKED" ]]; then
+  log "BLOCKED second-consumer input continuation: $INPUT_CONTINUATION_BLOCKED"
+  cat "$LOG"
+  exit 3
+fi
 if [[ -n "$DESKTOP_BLOCKED" ]]; then
   log "BLOCKED the generated-editor desktop edit was not verified: $DESKTOP_BLOCKED"
   cat "$LOG"

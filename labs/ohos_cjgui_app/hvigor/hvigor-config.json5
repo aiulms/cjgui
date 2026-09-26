@@ -1,0 +1,14 @@
+{
+  "modelVersion": "26.0.0",
+  "dependencies": {
+    "@ohos/cangjie-build-support": "file:/Users/jiangxuanyang/Library/Application Support/Huawei/DevEcoStudio26.0/plugins/devecostudio-cangjie-plugin-mac-arm-26.0.0.821/lib/hvigor/cangjie-build-support"
+  },
+  "execution": {
+  },
+  "logging": {
+  },
+  "debugging": {
+  },
+  "nodeOptions": {
+  }
+}

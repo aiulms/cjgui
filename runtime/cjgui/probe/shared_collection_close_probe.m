@@ -10,7 +10,7 @@ enum { CJGUI_EXPECTED_HUMAN_COLLECTION_CLOSE = 24 };
 
 static int fail(uint64_t session, const char *message) {
     fprintf(stderr, "cjgui collection close probe: %s\n", message);
-    if (session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION) {
+    if (session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
         (void)cjgui_internal_renderer_destroy(session);
     }
     return 1;
@@ -25,7 +25,7 @@ int main(void) {
         };
         CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         uint64_t session = cjgui_internal_renderer_create(&config, &status);
-        if (status != CJGUI_INTERNAL_RENDERER_OK || session == CJGUI_INTERNAL_RENDERER_INVALID_SESSION) {
+        if (status != CJGUI_INTERNAL_RENDERER_OK || session == CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
             return fail(session, "cannot create session");
         }
         if (cjgui_internal_renderer_configure_shared_collection_form(session, 2, 0) != CJGUI_INTERNAL_RENDERER_OK) {
@@ -42,7 +42,7 @@ int main(void) {
             return fail(session, "user close did not become a collection close-request intent");
         }
         if (cjgui_internal_renderer_destroy(session) != CJGUI_INTERNAL_RENDERER_OK) {
-            return fail(CJGUI_INTERNAL_RENDERER_INVALID_SESSION, "cannot destroy session");
+            return fail(CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN, "cannot destroy session");
         }
         printf("cjgui collection close probe: deferred_domain_decision=true\n");
         printf("cjgui collection close probe: success=true\n");

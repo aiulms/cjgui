@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "internet_reason",
+      "value": "Local loopback state channel for the external-operation experiment"
+    },
+    {
+      "name": "module_desc",
+      "value": "CJGUI harmony host module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "CJGUI 设置与计数 host"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "CJGUI 设置与计数"
+    }
+  ]
+}

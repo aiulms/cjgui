@@ -1,0 +1,68 @@
+[
+  {
+    "check": "emoji EDIT_NAME 应用",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  },
+  {
+    "check": "emoji 逐码元精确读回",
+    "actual": "设备🚀上线🎉+中文",
+    "expected": "设备🚀上线🎉+中文",
+    "pass": true
+  },
+  {
+    "check": "emoji 后版本推进",
+    "actual": 1,
+    "expected": 1,
+    "pass": true
+  },
+  {
+    "check": "星面码点数（代理对来源）",
+    "actual": 2,
+    "expected": 2,
+    "pass": true
+  },
+  {
+    "check": "UTF-16 码元数 = 码点数 + 星面数",
+    "actual": 11,
+    "expected": 11,
+    "pass": true
+  },
+  {
+    "check": "空串被域规则拒绝（APPLIED false）",
+    "actual": "false",
+    "expected": "false",
+    "pass": true
+  },
+  {
+    "check": "拒绝后 owner 值不变（仍为 emoji 值）",
+    "actual": "设备🚀上线🎉+中文",
+    "expected": "设备🚀上线🎉+中文",
+    "pass": true
+  },
+  {
+    "check": "拒绝后版本不变",
+    "actual": 1,
+    "expected": 1,
+    "pass": true
+  },
+  {
+    "check": "恢复 EDIT_NAME 应用",
+    "actual": "true",
+    "expected": "true",
+    "pass": true
+  },
+  {
+    "check": "恢复后逐码元精确读回",
+    "actual": "我的设备·✅",
+    "expected": "我的设备·✅",
+    "pass": true
+  },
+  {
+    "check": "恢复后版本推进",
+    "actual": 2,
+    "expected": 2,
+    "pass": true
+  }
+]

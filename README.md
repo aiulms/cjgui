@@ -13,6 +13,15 @@
   <a href="LICENSE">Apache 2.0</a>
 </p>
 
+## 最新进展
+
+| 阶段 | 目前证明了什么 | 状态 |
+| --- | --- | --- |
+| **macOS：长文本与正常双窗** | 已接通增量文字与样式绑定、可见资源复用和同进程双窗接续。2026-09-24 冻结版本在 3700 行、约 10 万 UTF-16 单元的自然高度负载下，27 个热样本中 B 窗公开请求到 owner／accepted 的观察上界 p95 为 72／89 ms；该数字只适用于所测负载与环节。[验收范围](docs/plans/2026-09-23-incremental-text-style-binding-milestone.md#指导验收结论2026-09-24本阶段收口) | **阶段已验收** |
+| **鸿蒙：同源自绘后端** | 仓颉核心经平台快照进入正常 HAP，在模拟器上已有自绘、外部授权操作、系统选区高亮与 owner 读回的局部链路。后端采用 ArkTS 薄壳、XComponent 和原生绘制；生命周期、输入代理、裁剪验收及独立消费者仍有待完成项。[后端入口](runtime/cjgui/platforms/ohos/README.md) | **WIP 快照，整包未验收** |
+
+两条路线共用仓颉的组件、场景与业务状态定义。macOS 仍是优先试用平台；鸿蒙目前只有模拟器开发证据，没有物理设备或正式发布承诺。
+
 ## 演示：人和 AI 接续编辑同一份文档
 
 ![同一份仓颉文档：界面编辑、公开接口调用演示与界面续接](https://raw.githubusercontent.com/aiulms/cjgui/main/docs/assets/demo/cjgui-shared-document-real-demo.gif)

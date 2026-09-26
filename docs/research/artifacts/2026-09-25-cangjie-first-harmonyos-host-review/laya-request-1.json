@@ -1,0 +1,25 @@
+{
+  "state": "CJGUI HarmonyOS host feasibility, SDK 26.0.0.105 and Cangjie plugin 26.0.0.821. Evidence: pure Cangjie UIAbility/WindowStage baseline builds; importing kit.ArkUI.XComponent fails as not accessible; Native ArkUI C API can create ARKUI_NODE_XCOMPONENT and get OH_NativeXComponent, but documented mounting APIs require ArkTS-created NodeContent/UIContext via NAPI and no public creation bridge was found from Cangjie; mixed same-module experiment with Cangjie ability plus existing ArkTS page fails CangjiePreBuild saying modules containing ArkTS must use ArkTS srcEntry; current ArkTS UIAbility plus XComponent plus official Cangjie JSModule loading is buildable, while a detached native pthread calling a raw Cangjie @C entry remains an unproven runtime ownership path.",
+  "questions": {
+    "route": {
+      "type": "choice",
+      "instructions": "Which route should be the current deliverable under a Cangjie-first goal, requiring public APIs and preserving native GPU surface semantics?",
+      "criteria": {
+        "minimal_arkts_host": "Keep ArkTS only as the required UIAbility/XComponent surface adapter; Cangjie owns CJGUI scene, state, layout, scheduling policy and public behavior; C++ owns platform surface/events; remove raw pthread runtime startup.",
+        "pure_cangjie_now": "Ship a pure Cangjie UIAbility/page and directly mount native XComponent now despite the missing documented mount token.",
+        "current_raw_thread": "Keep the current C++ detached thread plus dlopen/dlsym @C app entry as the main architecture.",
+        "insufficient": "Evidence is insufficient to prefer any route."
+      }
+    },
+    "gap": {
+      "type": "choice",
+      "instructions": "What is the decisive missing evidence before claiming a pure Cangjie host is production-feasible?",
+      "criteria": {
+        "public_mount_contract": "A documented, buildable Cangjie-to-Native ArkUI mount contract that yields NodeContent, UIContext, root-node, or XComponent/NativeWindow without ArkTS NAPI.",
+        "render_correctness": "More pixel-level rendering tests only.",
+        "business_state": "More settings-counter business state tests only.",
+        "insufficient": "The listed evidence does not identify a decisive gap."
+      }
+    }
+  }
+}

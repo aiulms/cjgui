@@ -24,6 +24,7 @@ log() { print -r -- "$*" >> "$LOG"; }
 fail() { log "FAIL $*"; cat "$LOG"; exit 1; }
 
 source "$SCRIPT_DIR/lib_cjgui_instance.sh"
+source "$SCRIPT_DIR/lib_cjgui_desktop_input.sh"
 
 # A locked session exposes no AX window for this bundle, so every row and
 # select-all press below would be recorded as a product FAILure although
@@ -69,7 +70,17 @@ done
 cjgui_unique_round_owns "$APP_PID" "$ROUND_EXEC_NAME" "$ROUND_DIR" || fail "consumer pid is not this round's instance"
 log "launched pid=$APP_PID exec=$ROUND_EXEC_NAME owner_verified=unique-exec+dir"
 
+AX_PID="$APP_PID"
+AX_APP_PATH="$ROUND_DIR/target/release/${ROUND_EXEC_NAME}.app"
+show_page() { # catalog | rows
+  local press
+  press="$(real_ax_press_identifier "$APP_PID" "catalog-workspace-tab-$1")"
+  [[ "$press" == "identifier_press_sent" ]]
+}
 ax_press() { # <description>
+  local page="catalog"
+  [[ "$1" == "○ 条目"* ]] && page="rows"
+  show_page "$page" || return 1
   if cjgui_ax 15 -e "tell application \"System Events\"
     set p to first process whose unix id is $APP_PID
     set frontmost of p to true
@@ -84,6 +95,8 @@ ax_press() { # <description>
   return 1
 }
 status_text() {
+  # Status belongs to the catalog page; a row press occurs on the sibling page.
+  show_page catalog || return 1
   cjgui_ax 15 -e "tell application \"System Events\"
     set p to first process whose unix id is $APP_PID
     set out to \"\"

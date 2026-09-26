@@ -67,7 +67,7 @@ int32_t cjgui_app_run(void) {
 
         CjguiInternalRendererStatus createStatus = CJGUI_INTERNAL_RENDERER_OK;
         uint64_t session = cjgui_internal_renderer_create(&config, &createStatus);
-        if (session == CJGUI_INTERNAL_RENDERER_INVALID_SESSION) {
+        if (session == CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
             return (int32_t)createStatus;
         }
 

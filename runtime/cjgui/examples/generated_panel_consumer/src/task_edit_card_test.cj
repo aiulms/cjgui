@@ -68,10 +68,19 @@ private func acceptCardAgain(region: CjguiTaskGeneratedRegion): Bool {
 /// A real control event on one accepted composite element.
 private func cardEvent(region: CjguiTaskGeneratedRegion, elementKey: String, eventKind: Int64,
                        text: String): CjguiComposableUiEvent {
-    let nodeId = region.acceptedCompositeElementNodeId("card", elementKey)
+    // The event node must carry the RESOLVED binding the framework allocated for
+    // that element (field, writer, owner target, own resource), exactly like the
+    // shared card builder does; the adapter verifies it against the accepted
+    // binding so a stale object cannot route its event through a new binding.
+    let binding = match (region.acceptedCompositeElement("card", elementKey)) {
+        case Some(value) => value
+        case None => CjguiCompositeElementBinding("", "", -1, "", "")
+    }
     let bounds = CjguiComposableUiRect(0, 0, 200, 26)
-    let declared = cjguiComposableTextInput(nodeId, "card-${elementKey}", "", "", 0,
-        CjguiComposableUiStyle(fixedHeight: 26))
+    let declared = cjguiComposableTextInput(binding.nodeId, "card-${elementKey}", binding.label, "",
+        binding.bindingResourceId, CjguiComposableUiStyle(fixedHeight: 26), fieldId: binding.fieldId,
+        operationActionName: binding.writerOperation,
+        operationResourceId: binding.ownerTargetResourceId, displayValueRole: "draft")
     return CjguiComposableUiEvent(CjguiComposableUiLayoutNode(declared, bounds, bounds), eventKind,
         text, 0, 0, 1)
 }
@@ -249,6 +258,12 @@ func taskEditCardKeepsElementIdentityAcrossReorder(): Unit {
     @Assert(acceptCard(region), true)
     let titleElementBefore = region.acceptedCompositeElementNodeId("card", "title")
     @Assert(titleElementBefore > 0, true)
+    // The binding that carries this element's identity in the PREVIOUS scene. It
+    // is unchanged by a same-binding reorder, so the old event must still resolve.
+    let titleBindingBefore = match (region.acceptedCompositeElement("card", "title")) {
+        case Some(value) => value
+        case None => CjguiCompositeElementBinding("title", CJGUI_COMPOSITE_ELEMENT_FIELD, -1, "", "")
+    }
 
     // Same key, different position: the card instance keeps its identity.
     let reordered = """
@@ -270,8 +285,11 @@ END"""
     // A queued event built from the PREVIOUS scene still resolves to the same
     // field and record.
     let staleNode = CjguiComposableUiLayoutNode(
-        cjguiComposableTextInput(titleElementBefore, "card-title", "", "", 0,
-            CjguiComposableUiStyle(fixedHeight: 26)),
+        cjguiComposableTextInput(titleElementBefore, "card-title", titleBindingBefore.label, "",
+            titleBindingBefore.bindingResourceId, CjguiComposableUiStyle(fixedHeight: 26),
+            fieldId: titleBindingBefore.fieldId,
+            operationActionName: titleBindingBefore.writerOperation,
+            operationResourceId: titleBindingBefore.ownerTargetResourceId, displayValueRole: "draft"),
         CjguiComposableUiRect(0, 0, 200, 26), CjguiComposableUiRect(0, 0, 200, 26))
     @Assert(region.handleEvent(CjguiComposableUiEvent(staleNode,
         CJGUI_COMPOSABLE_UI_EVENT_TEXT_CHANGED, "重排后写入", 0, 0, 2)).didApply, true)
@@ -290,4 +308,149 @@ END""", region.acceptedStructureVersion())
     @Assert(region.handleEvent(CjguiComposableUiEvent(staleNode,
         CJGUI_COMPOSABLE_UI_EVENT_TEXT_CHANGED, "拒绝后仍可写", 0, 0, 2)).didApply, true)
     @Assert(titleFor(domain, 1), "拒绝后仍可写")
+}
+
+/// The card's registered `gap` property really reaches the shared builder.
+@Test
+func taskEditCardAppliesItsDeclaredGap(): Unit {
+    let domain = cardDomain()
+    @Assert(CjguiTaskFields.installIntoEveryRecord(domain), true)
+    @Assert(domain.selectFromHuman(1).applied, true)
+    let region = CjguiTaskGeneratedRegion(domain, CjguiTaskFields.titleResourceId)
+    let declared = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 board vertical
+NODE 1 card taskEditCard
+PROPERTY 1 card gap 10
+END"""
+    @Assert(region.submitStructure(declared, 0).candidateAccepted, true)
+    @Assert(region.beginSceneRefresh(), true)
+    let section = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    let cardId = region.acceptedCompositeElementNodeId("card", "root")
+    @Assert(cardId > 0, true)
+    let card = findCardNode(section, cardId) ??
+        cjguiComposableVertical(-1, "missing-card", CjguiComposableUiStyle())
+    @Assert(card.nodeId, cardId)
+    @Assert(card.style.gap, 10)
+}
+
+/// The card consumes the SAME named style the application publishes: its editors
+/// carry the declared paint while keeping their own geometry, and they carry the
+/// named style's interaction paint, which still resolves through the framework's
+/// one state priority.
+@Test
+func taskEditCardConsumesTheSharedNamedStylePaintAndInteraction(): Unit {
+    let named = CjguiTaskGeneratedRegion.primaryActionStyle()
+    let catalog = CjguiTaskGeneratedRegion.buildCatalog()
+    @Assert(catalog.namedStyles().forName("collaboration_primary_action").isSome(), true)
+    let described = CjguiGeneratedUiEncoding.describe(catalog)
+    @Assert(described.contains("STYLE collaboration_primary_action "), true)
+    @Assert(described.contains("STYLE_STATE collaboration_primary_action normal["), true)
+    @Assert(described.contains("hover[background="), true)
+
+    // Paint overlay: the helper keeps its geometry, the named style supplies paint.
+    let geometry = CjguiComposableUiStyle(fixedHeight: 26, padding: 4)
+    let painted = cjguiComposableUiPaintOverlay(geometry, named.base)
+    @Assert(painted.fixedHeight, 26)
+    @Assert(painted.padding, 4)
+    @Assert(cjguiComposableUiColorToken(painted.background), cjguiComposableUiColorToken(named.base.background))
+
+    let token = cjguiComposableUiColorToken(named.base.background)
+    let card = CjguiTaskEditCardComposite.buildCard(1, "shared-style-card", 2, 3, 4, "任务编辑卡",
+        "当前任务", "值一", "SET_TITLE", CjguiTaskFields.titleResourceId, 1, "备注", "值二",
+        "SET_NOTES", CjguiTaskFields.notesResourceId, 1,
+        cardGap: 4, style: painted, interaction: named.interaction)
+    @Assert(countEditorsWithPaint(card, token, 26), 2)
+
+    // Hover paint on one of those editors resolves through the existing machine
+    // and equals the application's named hover paint.
+    let editor = findNodeKind(card, CJGUI_COMPOSABLE_UI_TEXT_INPUT)
+    @Assert(editor.isSome(), true)
+    let node = match (editor) {
+        case Some(value) => value
+        case None => cjguiComposableText(-1, "missing", "", CjguiComposableUiStyle())
+    }
+    let hover = node.interactionStyle.resolve(node.style, CjguiComposableUiInteractionState.HOVER)
+    let hoverNamed = match (node.interactionStyle.hover.background) {
+        case Some(value) => value
+        case None => CjguiComposableUiColor(0.0, 0.0, 0.0, 0.0)
+    }
+    @Assert(cjguiComposableUiColorToken(hover.background), cjguiComposableUiColorToken(hoverNamed))
+    // A paint-only change keeps the geometry and the property names untouched.
+    @Assert(hover.fixedHeight, node.style.fixedHeight)
+    @Assert(hover.padding, node.style.padding)
+}
+
+private func countEditorsWithPaint(node: CjguiComposableUiNode, token: String, height: Int64): Int64 {
+    var count: Int64 = 0
+    if (node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT &&
+        cjguiComposableUiColorToken(node.style.background) == token && node.style.fixedHeight == height) {
+        count += 1
+    }
+    for (child in node.children()) {
+        count += countEditorsWithPaint(child, token, height)
+    }
+    return count
+}
+
+private func findNodeKind(node: CjguiComposableUiNode, kind: Int64): ?CjguiComposableUiNode {
+    if (node.nodeKind == kind) {
+        return Some(node)
+    }
+    for (child in node.children()) {
+        if (let Some(found) <- findNodeKind(child, kind)) {
+            return Some(found)
+        }
+    }
+    return None
+}
+
+private func findCardNode(node: CjguiComposableUiNode, nodeId: Int64): ?CjguiComposableUiNode {
+    if (node.nodeId == nodeId) {
+        return Some(node)
+    }
+    for (child in node.children()) {
+        if (let Some(found) <- findCardNode(child, nodeId)) {
+            return found
+        }
+    }
+    return None
+}
+
+/// The registered card's icon is mounted from the application's ONE image
+/// declaration: the catalog publishes the discovery line, and the card builds
+/// the same native image node the handwritten pane builds.
+@Test
+func taskEditCardIconComesFromTheSharedImageDeclaration(): Unit {
+    let resource = CjguiTaskGeneratedRegion.imageResource()
+    let catalog = CjguiTaskGeneratedRegion.buildCatalog()
+    @Assert(catalog.imageResourceFor(resource.key, resource.version).isSome(), true)
+    @Assert(catalog.componentFor("image").isSome(), true)
+    let described = CjguiGeneratedUiEncoding.describe(catalog)
+    @Assert(described.contains("IMAGE_RESOURCE collaboration-beacon PNG 1 任务面板图标"), true)
+    @Assert(described.contains("composable-beacon.png"), false)
+
+    let card = CjguiTaskEditCardComposite.buildCard(1, "handwritten-card", 2, 3, 4, "任务编辑卡",
+        "当前任务", "值一", "SET_TITLE", CjguiTaskFields.titleResourceId, 1, "备注", "值二",
+        "SET_NOTES", CjguiTaskFields.notesResourceId, 1,
+        cardGap: 4, iconNodeId: 9, icon: Some(resource), iconSize: 32,
+        style: CjguiComposableUiStyle(fixedHeight: 26))
+    if (let Some(node) <- findCardNode(card, 9)) {
+        @Assert(node.nodeKind, CJGUI_COMPOSABLE_UI_IMAGE)
+        @Assert(node.imageResourceId, resource.key)
+        @Assert(node.imageResourceVersion, resource.version)
+        @Assert(node.imageResourcePath, resource.rasterPath)
+        @Assert(node.style.fixedWidth, 32)
+        @Assert(node.style.fixedHeight, 32)
+    } else {
+        @Assert(false, true)
+    }
+    // Without an icon the card keeps its previous four-node shape.
+    let plain = CjguiTaskEditCardComposite.buildCard(1, "handwritten-card", 2, 3, 4, "任务编辑卡",
+        "当前任务", "值一", "SET_TITLE", CjguiTaskFields.titleResourceId, 1, "备注", "值二",
+        "SET_NOTES", CjguiTaskFields.notesResourceId, 1,
+        style: CjguiComposableUiStyle(fixedHeight: 26))
+    @Assert(findCardNode(plain, 9).isNone(), true)
 }

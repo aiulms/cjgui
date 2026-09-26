@@ -1,0 +1,85 @@
+{
+  "matrix": {
+    "C1_sim": [
+      "2",
+      "3"
+    ],
+    "C1_hilog": "",
+    "C4_stats": "cleared=00 committed=1 aborted=0 job_fails=0 ack_fails=0",
+    "C6_hilog": "09-26 15:39:37.453 32066 32438 I A00000/CjguiApp: host closed; stop_requested=false render_shutdown_status=0 shutdown_done=1 ticks=558"
+  },
+  "checks": [
+    {
+      "check": "C1: INCREMENT APPLIED",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "C1: 公开读回版本精确",
+      "actual": 2,
+      "expected": 2,
+      "pass": true
+    },
+    {
+      "check": "C2: INCREMENT APPLIED",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "C2: 公开读回版本精确",
+      "actual": 4,
+      "expected": 4,
+      "pass": true
+    },
+    {
+      "check": "C3: INCREMENT APPLIED",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "C3: 公开读回版本精确",
+      "actual": 6,
+      "expected": 6,
+      "pass": true
+    },
+    {
+      "check": "C4: INCREMENT APPLIED",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "C4: 公开读回版本精确",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "C5: INCREMENT APPLIED",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "C5: 公开读回版本精确",
+      "actual": 10,
+      "expected": 10,
+      "pass": true
+    },
+    {
+      "check": "C6: 关闭后停止链收敛（连接被拒）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "C6: 宿主关闭日志存在（render teardown 完成）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    }
+  ]
+}

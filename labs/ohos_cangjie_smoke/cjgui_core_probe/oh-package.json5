@@ -1,0 +1,10 @@
+{
+  "name": "cjgui_core_probe",
+  "version": "1.0.0",
+  "description": "CJGUI 核心 ohos 交叉编译探针（模块源码由 scripts/probe_cjgui_ohos.sh 同步，不纳入版本管理）",
+  "main": "",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+  }
+}

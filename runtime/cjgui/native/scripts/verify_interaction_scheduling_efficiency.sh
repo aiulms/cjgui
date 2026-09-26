@@ -3,12 +3,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-OUTPUT_DIR="${CJGUI_INTERACTION_SCHEDULING_TMPDIR:-/private/tmp/cjgui-interaction-scheduling-efficiency}"
 RUN_MODE="${CJGUI_INTERACTION_SCHEDULING_RUN_MODE:-full}"
+if [[ "$RUN_MODE" == "latency" ]]; then
+  OUTPUT_DIR="${CJGUI_INTERACTION_SCHEDULING_TMPDIR:-/private/tmp/cjgui-dual-window-latency/$(date +%Y%m%d-%H%M%S)-$$}"
+else
+  OUTPUT_DIR="${CJGUI_INTERACTION_SCHEDULING_TMPDIR:-/private/tmp/cjgui-interaction-scheduling-efficiency}"
+fi
+LATENCY_DIR="$OUTPUT_DIR"
 SDKROOT_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 SHARED_CORE="$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core"
 CLIENT="$RUNTIME_DIR/shared_operation_core/client.py"
 PROBE_SRC="$RUNTIME_DIR/probe/interaction_scheduling_efficiency_probe.cj"
+LATENCY_CLIENT_SRC="$SCRIPT_DIR/latency_public_client.py"
+SHARED_CORE_LIBRARY="$SHARED_CORE/libcjgui_shared_operation_core.a"
 
 set +u
 source "${CJGUI_CANGJIE_HOME:-/Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3}/envsetup.sh"
@@ -16,7 +23,7 @@ set -u
 
 require_source_line() {
   local expected="$1"
-  if ! rg -F -q "$expected" "$PROBE_SRC"; then
+  if ! rg -F -q -- "$expected" "$PROBE_SRC"; then
     print -u2 -- "interaction scheduling verifier: missing source line: $expected"
     exit 1
   fi
@@ -31,8 +38,10 @@ require_source_line "terminal_exact="
 require_source_line "generic_split="
 require_source_line "CJGUI_INTERACTION_SCHEDULING_OVERLAP_READY"
 require_source_line "ArrayList<Int64>([8, 128, 960])"
+require_source_line "CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT"
+require_source_line "--latency-only"
 
-if [[ "$RUN_MODE" != "full" && "$RUN_MODE" != "overlap" ]]; then
+if [[ "$RUN_MODE" != "full" && "$RUN_MODE" != "overlap" && "$RUN_MODE" != "latency" ]]; then
   print -u2 -- "interaction scheduling verifier: unsupported run mode: $RUN_MODE"
   exit 2
 fi
@@ -40,7 +49,9 @@ fi
 mkdir -p "$OUTPUT_DIR/native" "$OUTPUT_DIR/acks"
 LOG="$OUTPUT_DIR/probe.log"
 CALL_LOG="$OUTPUT_DIR/public-calls.log"
-rm -f "$LOG" "$CALL_LOG" "$OUTPUT_DIR"/acks/ack-*(N) "$OUTPUT_DIR"/acks/overlap-ack-*(N)
+LATENCY_CLIENT_LOG="$OUTPUT_DIR/latency-public-client.log"
+rm -f "$LOG" "$CALL_LOG" "$LATENCY_CLIENT_LOG" "$OUTPUT_DIR"/acks/ack-*(N) "$OUTPUT_DIR"/acks/overlap-ack-*(N)
+rm -f "$OUTPUT_DIR"/latency-*(N)
 
 (
   cd "$RUNTIME_DIR/shared_operation_core"
@@ -53,12 +64,24 @@ clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-st
 clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong \
   -isysroot "$SDKROOT_PATH" -mmacosx-version-min=12.0 \
   -c "$RUNTIME_DIR/native/cjgui_native_bridge.m" -o "$OUTPUT_DIR/native/cjgui_native_bridge.o"
+# The probe must run under the SAME macOS application host as a shipped
+# application: AppKit owns the process main thread, the Cangjie entry runs on the
+# runtime worker, and the renderer marshals its operations back to the main
+# thread. Linking the launcher archive is what enables that main-thread dispatch;
+# a bare cjc executable leaves it disabled, so any operation that reaches the
+# native renderer from the worker is refused as NOT_MAIN_THREAD.
+clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong \
+  -isysroot "$SDKROOT_PATH" -mmacosx-version-min=12.0 \
+  -c "$RUNTIME_DIR/native/cjgui_macos_application_launcher.m" \
+  -o "$OUTPUT_DIR/native/cjgui_macos_application_launcher.o"
 ar rcs "$OUTPUT_DIR/native/libcjgui_interaction_scheduling.a" \
-  "$OUTPUT_DIR/native/cjgui_internal_renderer.o" "$OUTPUT_DIR/native/cjgui_native_bridge.o"
+  "$OUTPUT_DIR/native/cjgui_internal_renderer.o" "$OUTPUT_DIR/native/cjgui_native_bridge.o" \
+  "$OUTPUT_DIR/native/cjgui_macos_application_launcher.o"
 
 cjc --sysroot "$SDKROOT_PATH" --import-path "$SHARED_CORE" \
   "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
   "$RUNTIME_DIR/src/composable_ui.cj" \
+  "$RUNTIME_DIR/src/composable_ui_named_style.cj" \
   "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
   "$RUNTIME_DIR/src/composable_ui_window.cj" \
   "$RUNTIME_DIR/src/macos_application_host.cj" \
@@ -69,9 +92,14 @@ cjc --sysroot "$SDKROOT_PATH" --import-path "$SHARED_CORE" \
   -o "$OUTPUT_DIR/interaction_scheduling_efficiency_probe"
 
 export DYLD_LIBRARY_PATH="$CANGJIE_HOME/runtime/lib/darwin_aarch64_cjnative:${DYLD_LIBRARY_PATH:-}"
-PROBE_ARGS=(--ack-dir "$OUTPUT_DIR/acks")
-if [[ "$RUN_MODE" == "overlap" ]]; then
-  PROBE_ARGS+=(--overlap-only)
+if [[ "$RUN_MODE" == "latency" ]]; then
+  PROBE_ARGS=(--ack-dir "$LATENCY_DIR")
+  PROBE_ARGS+=(--latency-only)
+else
+  PROBE_ARGS=(--ack-dir "$OUTPUT_DIR/acks")
+  if [[ "$RUN_MODE" == "overlap" ]]; then
+    PROBE_ARGS+=(--overlap-only)
+  fi
 fi
 "$OUTPUT_DIR/interaction_scheduling_efficiency_probe" "${PROBE_ARGS[@]}" >"$LOG" 2>&1 &
 PROBE_PID=$!
@@ -83,7 +111,7 @@ wait_for_descriptor() {
       return 0
     fi
     if ! kill -0 "$PROBE_PID" 2>/dev/null; then
-      print -u2 -- "interaction scheduling verifier: probe exited before next sample (previous=$previous_key)"
+      print -u2 -- "interaction scheduling verifier: probe exited before next sample (previous=${previous_key:-:})"
       return 1
     fi
     sleep 0.05
@@ -145,11 +173,115 @@ wait_for_overlap_ready() {
   return 1
 }
 
+# Raw-artifact fingerprints for the focused latency run. Every measurement
+# input (probe source, this script, the public driver, the transport/window/
+# workspace/client sources, the linked shared-core library) and the built probe
+# binary are hashed into one reproducible file inside the evidence directory.
+write_latency_fingerprints() {
+  local fingerprint_file="$OUTPUT_DIR/fingerprints.txt"
+  : >"$fingerprint_file"
+  local target=""
+  for target in \
+    "$PROBE_SRC" \
+    "$SCRIPT_DIR/verify_interaction_scheduling_efficiency.sh" \
+    "$LATENCY_CLIENT_SRC" \
+    "$RUNTIME_DIR/shared_operation_core/src/shared_operation_transport.cj" \
+    "$RUNTIME_DIR/src/composable_ui_window.cj" \
+    "$RUNTIME_DIR/shared_operation_core/src/shared_text_document_workspace.cj" \
+    "$CLIENT" \
+    "$OUTPUT_DIR/interaction_scheduling_efficiency_probe" \
+    "$SHARED_CORE_LIBRARY"; do
+    if [[ -f "$target" ]]; then
+      shasum -a 256 "$target" >>"$fingerprint_file"
+    else
+      print -r -- "MISSING  $target" >>"$fingerprint_file"
+    fi
+  done
+}
+
+# The probe must report an ENABLED main-thread dispatch: that is the observable
+# consequence of running under the macOS application launcher. A disabled flag
+# means the probe is a bare cjc process, and any renderer operation from the
+# runtime worker would be refused before scheduling could be measured.
+wait_for_host_state() {
+  local attempts=0
+  while (( attempts < 240 )); do
+    if rg -q '^CJGUI_INTERACTION_SCHEDULING_HOST ' "$LOG" 2>/dev/null; then
+      return 0
+    fi
+    if ! kill -0 "$PROBE_PID" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.05
+    (( attempts += 1 ))
+  done
+  return 1
+}
+wait_for_host_state \
+  || { print -u2 -- "interaction scheduling verifier: probe did not report its host state"; exit 1; }
+host_line="$(rg '^CJGUI_INTERACTION_SCHEDULING_HOST ' "$LOG" | tail -n 1)"
+if ! print -r -- "$host_line" | rg -q 'dispatch_enabled=1'; then
+  print -u2 -- "interaction scheduling verifier: main-thread dispatch is disabled ($host_line); the probe is not running under the macOS application launcher"
+  exit 1
+fi
+
 wait_for_descriptor
 DESCRIPTOR_PATH="$(rg '^CJGUI_INTERACTION_SCHEDULING_READY_DESCRIPTOR ' "$LOG" | tail -n 1 | awk '{print $2}')"
 if [[ -z "$DESCRIPTOR_PATH" ]]; then
   print -u2 -- "interaction scheduling verifier: empty descriptor path"
   exit 1
+fi
+
+if [[ "$RUN_MODE" == "latency" ]]; then
+  # One long-lived public driver, one request in flight at a time. The driver
+  # waits for `latency-armed`; the probe waits for it too, so the driver's
+  # single pre-measurement GET_CONTEXT cannot race the ready observer's
+  # per-sample accounting.
+  python3 "$LATENCY_CLIENT_SRC" "$DESCRIPTOR_PATH" --ack-dir "$LATENCY_DIR" --values 129-148 \
+    >"$LATENCY_CLIENT_LOG" 2>&1 &
+  CLIENT_PID=$!
+  touch "$LATENCY_DIR/latency-armed"
+
+  probe_status=0
+  client_status=0
+  wait "$CLIENT_PID" || client_status=$?
+  wait "$PROBE_PID" || probe_status=$?
+  write_latency_fingerprints
+
+  if [[ "$probe_status" != "0" ]]; then
+    print -u2 -- "interaction scheduling verifier: latency probe exited status=$probe_status"
+  fi
+  if [[ "$client_status" != "0" ]]; then
+    print -u2 -- "interaction scheduling verifier: latency public client exited status=$client_status"
+  fi
+
+  rg '^CJGUI_INTERACTION_SCHEDULING_LATENCY_SAMPLE ' "$LOG" || true
+  rg '^CJGUI_INTERACTION_SCHEDULING_LATENCY_CLIENT' "$LATENCY_CLIENT_LOG" || true
+
+  sample_lines="$(rg -c '^CJGUI_INTERACTION_SCHEDULING_LATENCY_SAMPLE ' "$LOG" 2>/dev/null || true)"
+  if [[ "$sample_lines" != "20" ]]; then
+    print -u2 -- "interaction scheduling verifier: expected 20 latency sample lines, got ${sample_lines:-0}"
+    exit 1
+  fi
+  response_files="$(ls "$LATENCY_DIR"/latency-response-*.txt 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$response_files" != "20" ]]; then
+    print -u2 -- "interaction scheduling verifier: expected 20 raw invoke responses, got $response_files"
+    exit 1
+  fi
+  if ! rg -q '^CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT samples=20 valid=true ' "$LOG"; then
+    print -u2 -- "interaction scheduling verifier: probe latency result was not valid"
+    exit 1
+  fi
+  if ! rg -q '^CJGUI_INTERACTION_SCHEDULING_LATENCY_CLIENT samples=20 valid=true ' "$LATENCY_CLIENT_LOG"; then
+    print -u2 -- "interaction scheduling verifier: public latency client did not report success"
+    exit 1
+  fi
+  if [[ "$probe_status" != "0" || "$client_status" != "0" ]]; then
+    exit 1
+  fi
+  rg '^CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT ' "$LOG"
+  print -r -- "interaction scheduling efficiency verification: PASS mode=latency samples=20 real_uds=1 one_request_in_flight=1 controlled_a_input=1 idle_clean=1 fingerprints=$OUTPUT_DIR/fingerprints.txt"
+  exit 0
 fi
 
 if [[ "$RUN_MODE" == "full" ]]; then

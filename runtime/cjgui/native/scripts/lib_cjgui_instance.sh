@@ -253,7 +253,11 @@ cjgui_reclaim_candidates() {
         emit "${line}yes"
       fi
     else
-      emit "cleanup: candidate ${CANDIDATE_EXECS[index]} never started"
+      # Nothing matches the registered identity NOW. That is an observation at
+      # cleanup time, not proof that the process never launched: an instance that
+      # started and already exited looks identical here. Because the identity was
+      # registered before launch, either outcome leaves no live PID to reclaim.
+      emit "cleanup: candidate ${CANDIDATE_EXECS[index]} no_live_process observed=exited_or_not_launched identity=registered_before_launch"
     fi
     index=$(( index + 1 ))
   done

@@ -1,0 +1,121 @@
+{
+  "meta": {
+    "token": "t85d6d71",
+    "target_ticket_id": "3",
+    "executing_sample": {
+      "T0": "ID 3 PHASE executing SETTLED false"
+    },
+    "pre_stop_sample": {
+      "KIND": "OK",
+      "OP": "COUNTERS",
+      "QUEUED": "0",
+      "BYTES": "0",
+      "CONNS": "2",
+      "INFLIGHT": "1",
+      "LIFECYCLE": "0"
+    },
+    "old_identity": "ohos_transport_2000",
+    "new_identity": "ohos_transport_3000"
+  },
+  "checks": [
+    {
+      "check": "服务可用",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "旧实例身份可读",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "认领已暂停",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "执行保持已设定（先于 RESUME）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "认领已放行",
+      "actual": "false",
+      "expected": "false",
+      "pass": true
+    },
+    {
+      "check": "票据进入不可取消提交窗口（PHASE=executing）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "停止+收敛完成（含在途票结算）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "业务终态 KIND RESULT",
+      "actual": "RESULT",
+      "expected": "RESULT",
+      "pass": true
+    },
+    {
+      "check": "业务终态 APPLIED true",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "业务终态 VERSION_AFTER 前进一位",
+      "actual": 3,
+      "expected": 3,
+      "pass": true
+    },
+    {
+      "check": "owner 外确认 Closed",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "同进程 BOOT 完成",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "新身份不等于旧身份",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "提交结果保留（版本恰好 +1）",
+      "actual": 3,
+      "expected": 3,
+      "pass": true
+    },
+    {
+      "check": "提交结果保留（计数恰好 +1）",
+      "actual": "13",
+      "expected": "13",
+      "pass": true
+    },
+    {
+      "check": "owner 值保留",
+      "actual": "我的设备",
+      "expected": "我的设备",
+      "pass": true
+    },
+    {
+      "note": "transport-layer commit only; renderer Flush/Committing not covered here"
+    }
+  ]
+}

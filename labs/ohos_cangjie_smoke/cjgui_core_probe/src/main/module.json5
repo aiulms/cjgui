@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "cjgui_core_probe",
+    "type": "har",
+    "deviceTypes": [
+      "phone",
+      "tablet"
+    ]
+  }
+}

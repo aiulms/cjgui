@@ -1,0 +1,10 @@
+[
+ {
+  "n": 3,
+  "min_ms": 13.8,
+  "p50_ms": 14.0,
+  "max_ms": 15.2,
+  "unit": "模拟器",
+  "scope": "transport invoke round-trip (owner apply + response)"
+ }
+]

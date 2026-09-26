@@ -45,13 +45,13 @@ int main(void) {
         };
         CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         uint64_t session = cjgui_internal_renderer_create(&config, &status);
-        if (require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+        if (require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                     "create")) return 1;
 
         int result = 1;
         NSWindow *firstWindow = nil;
         NSWindow *secondWindow = nil;
-        uint64_t secondSession = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        uint64_t secondSession = CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN;
         // Two regular application windows with this small configuration fit
         // side by side on the active screen. Keeping their visible frames
         // disjoint is a normal multi-window usability invariant and removes
@@ -63,7 +63,7 @@ int main(void) {
         secondSession = cjgui_internal_renderer_create(&config, &status);
         secondWindow = NSApp.windows.lastObject;
         if (require(status == CJGUI_INTERNAL_RENDERER_OK &&
-                    secondSession != CJGUI_INTERNAL_RENDERER_INVALID_SESSION && secondWindow != nil &&
+                    secondSession != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN && secondWindow != nil &&
                     secondWindow != firstWindow,
                     "second_window") ||
             require(!NSIntersectsRect(firstWindow.frame, secondWindow.frame), "disjoint_window_frames")) goto cleanup;
@@ -223,7 +223,7 @@ int main(void) {
         fprintf(stdout, "CJGUI_DATA_TRANSFER_NATIVE_PROBE copy_paste_controlled_drop_bounded_cancel passed=1\n");
 
     cleanup:
-        if (secondSession != CJGUI_INTERNAL_RENDERER_INVALID_SESSION) {
+        if (secondSession != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
             (void)cjgui_internal_renderer_destroy(secondSession);
         }
         (void)cjgui_internal_renderer_destroy(session);

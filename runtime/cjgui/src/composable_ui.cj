@@ -4,6 +4,7 @@ import cjgui_shared_operation_core.*
 import std.collection.*
 import std.convert.*
 import std.overflow.*
+import std.sync.*
 
 // Experimental composable UI value model.  It is deliberately platform free:
 // consumers describe components, visual style, resource/action relationships,
@@ -39,6 +40,15 @@ public let CJGUI_COMPOSABLE_UI_SLIDER: Int64 = 14
 /// A bounded public vector component. Its immutable Geometry value remains
 /// Cangjie-owned; native receives only the existing copied scene projection.
 public let CJGUI_COMPOSABLE_UI_VECTOR_GRAPHIC: Int64 = 15
+/// A bounded public tab container: one title row plus 2-3 pages, exactly ONE of
+/// which is the active page laid out, hit-tested, measured and drawn. A hidden
+/// page keeps its stable identity and its own view state without taking part in
+/// the active scene, so hiding is never deletion and never a business write.
+public let CJGUI_COMPOSABLE_UI_TABS: Int64 = 16
+/// One tab TITLE inside a tab container's title row. Its stable identity comes
+/// from the container's scope, and activating it is the ordinary view intent
+/// shared by pointer and keyboard.
+public let CJGUI_COMPOSABLE_UI_TAB_TITLE: Int64 = 17
 /// Horizontal inset shared by the component layout content width and the
 /// native AppKit text drawing rectangle. The native bridge applies 7pt on
 /// each side, so text measurement must reserve 14pt before wrapping.
@@ -75,10 +85,20 @@ public class CjguiComposableUiSplitGeometry {
         } else {
             0
         }
-        let requestedUpper = if (minSecond > 0 && available > minSecond) {
-            available - minSecond
-        } else {
+        let requestedUpper = if (available <= 0) {
             0
+        } else if (minSecond > 0) {
+            // The second pane keeps ITS declared minimum, so the first pane stops
+            // that much before the end of the track.
+            if (available > minSecond) {
+                available - minSecond
+            } else {
+                0
+            }
+        } else {
+            // No second minimum declared: the whole available track is legal. A
+            // missing bound must not collapse the first pane to zero.
+            available
         }
         let upper = if (requestedUpper >= lower) {
             requestedUpper
@@ -236,11 +256,20 @@ public class CjguiComposableUiRect {
 /// a smaller, incorrectly rounded rectangle when descendants are offset.
 /// The native bridge carries the same bounded sequence; it never recreates an
 /// AppKit containment tree.
+///
+/// `ownerIdentity` names the node that CREATED this clip, so a consumer can
+/// resolve the real ancestor chain by identity instead of guessing it from equal
+/// rectangles. Two siblings can overlap exactly, and equal geometry is not
+/// evidence of containment.
 public class CjguiComposableUiClipConstraint {
     public let rect: CjguiComposableUiRect
     public let cornerRadius: Int64
-    public init(rect: CjguiComposableUiRect, cornerRadius!: Int64 = 0) {
+    /// Stable identity of the clipping node (`CjguiComposableUiLayoutNode.identityKey`),
+    /// empty only for a constraint built by hand outside the layout engine.
+    public let ownerIdentity: String
+    public init(rect: CjguiComposableUiRect, cornerRadius!: Int64 = 0, ownerIdentity!: String = "") {
         this.rect = rect
+        this.ownerIdentity = ownerIdentity
         let limit = if (rect.width < rect.height) {
             rect.width / 2
         } else {
@@ -306,6 +335,11 @@ public class CjguiComposableUiStyle {
     /// scene carries both the rectangular bounds and its corner radius so
     /// Metal, hit testing and accessibility resolve one projection.
     public let clipsContent: Bool
+    /// Opt a non-input node into pointer delivery. A read-only presentation
+    /// surface (the editor's visual mode) needs click coordinates but must not be
+    /// an editable text target; without this a plain TEXT node receives no
+    /// pointer event at all.
+    public let pointerInteractive: Bool
     /// Points, not device pixels. The same declared font is supplied to the
     /// production AppKit measurer and draw layer.
     public let fontSize: Float64
@@ -344,7 +378,8 @@ public class CjguiComposableUiStyle {
         alignX!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_STRETCH,
         alignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
         cornerRadius!: Int64 = 0,
-        clipsContent!: Bool = false
+        clipsContent!: Bool = false,
+        pointerInteractive!: Bool = false
     ) {
         this.background = background
         this.border = border
@@ -392,6 +427,7 @@ public class CjguiComposableUiStyle {
             cornerRadius
         }
         this.clipsContent = clipsContent
+        this.pointerInteractive = pointerInteractive
         this.fontSize = if (fontSize < 6.0) {
             6.0
         } else if (fontSize > 144.0) {
@@ -399,15 +435,26 @@ public class CjguiComposableUiStyle {
         } else {
             fontSize
         }
+        // Font weight carries BOTH the legacy boolean form and the numeric
+        // scale: 0 is regular and 1 still means bold, but values from 100 up are
+        // preserved as weights (400 regular, 500 medium, 600 semibold, 700+ bold).
+        // Collapsing anything above 1 to 1 silently turned body text bold.
         this.fontWeight = if (fontWeight < 0) {
             0
-        } else if (fontWeight > 1) {
+        } else if (fontWeight > 1 && fontWeight < 100) {
             1
         } else {
             fontWeight
         }
+        // Font family also carries the italic request: the renderer already
+        // receives one family code per run, so italic rides that field instead of
+        // widening the native node struct.
         this.fontFamily = if (fontFamily == "monospaced") {
             "monospaced"
+        } else if (fontFamily == "system-italic") {
+            "system-italic"
+        } else if (fontFamily == "monospaced-italic") {
+            "monospaced-italic"
         } else {
             "system"
         }
@@ -468,6 +515,24 @@ public class CjguiComposableUiStyle {
 /// intentionally limited to the properties that can change without a layout
 /// pass; geometry, typography and content metrics remain owned by the base
 /// `CjguiComposableUiStyle`.
+/// Paint-only overlay used by applications and composites: the BASE's geometry,
+/// typography and layout are kept exactly as authored, while the OVERLAY's
+/// background/border/textColor/borderWidth replace the paint. A named style can
+/// therefore be a pure paint role whose switching never moves layout, re-measures
+/// text or rebuilds identity.
+public func cjguiComposableUiPaintOverlay(base: CjguiComposableUiStyle,
+                                          paint: CjguiComposableUiStyle): CjguiComposableUiStyle {
+    return CjguiComposableUiStyle(
+        background: paint.background, border: paint.border, textColor: paint.textColor,
+        padding: base.padding, gap: base.gap, fixedWidth: base.fixedWidth, fixedHeight: base.fixedHeight,
+        growX: base.growX, growY: base.growY, borderWidth: paint.borderWidth,
+        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily,
+        minWidth: base.minWidth, maxWidth: base.maxWidth, idealWidth: base.idealWidth,
+        minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
+        alignX: base.alignX, alignY: base.alignY, cornerRadius: base.cornerRadius,
+        clipsContent: base.clipsContent)
+}
+
 public class CjguiComposableUiPaintStyle {
     public let background: Option<CjguiComposableUiColor>
     public let border: Option<CjguiComposableUiColor>
@@ -641,8 +706,14 @@ public class CjguiComposableUiTheme {
             CjguiComposableUiStyle(textColor: CjguiComposableUiColor(0.66, 0.74, 0.88, 1.0), fontSize: 13.0),
             CjguiComposableUiStyle(fixedHeight: 42, background: CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0),
                 border: CjguiComposableUiColor(0.42, 0.56, 0.80, 1.0)),
+            // The base action style declares its own readable foreground. The
+            // interaction states below keep it (they override background and
+            // border only), so a consumer that passes the base style - or a
+            // named style built from it - never falls back to the near-black
+            // default text on this dark blue surface.
             CjguiComposableUiStyle(fixedHeight: 34, background: CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0),
-                border: CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0), fontWeight: 1),
+                border: CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0),
+                textColor: CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0), fontWeight: 1),
             inputInteraction: CjguiComposableUiInteractionStyle(
                 normal: CjguiComposableUiPaintStyle(
                     border: Some(CjguiComposableUiColor(0.42, 0.56, 0.80, 1.0)),
@@ -833,6 +904,729 @@ private class CjguiComposableUiVariableHeightCacheEntry {
         }
         this.measured = measured
         this.liveIndex = liveIndex
+    }
+}
+
+/// Allocates the lifetime identity of one shared view-state object (scroll
+/// viewport, split size, active tab page). The identity is what lets a window
+/// release exactly the objects its accepted structure no longer references
+/// without depending on language-level reference equality.
+class CjguiComposableUiViewStateAllocator {
+    private static let allocationLock = Mutex()
+    private static var nextIdentity: Int64 = 1
+
+    public static func allocate(): Int64 {
+        return synchronized(CjguiComposableUiViewStateAllocator.allocationLock) {
+            let identity = CjguiComposableUiViewStateAllocator.nextIdentity
+            CjguiComposableUiViewStateAllocator.nextIdentity += 1
+            return identity
+        }
+    }
+}
+
+/// Cangjie-owned view state for ONE generated split instance: the first pane's
+/// current size plus both minimums. The declaration only SEEDS it; after that the
+/// framework's single size rule (divider drag and keyboard) updates it, so
+/// re-submitting the same structure, a theme change or a resize never silently
+/// resets the layout a person just chose.
+///
+/// Stability: experimental. Together with the public scroll viewport this is the
+/// minimal seam that lets a generated split share ONE view state with the window;
+/// the shape may change, and it is never a business write permission.
+public class CjguiComposableUiSplitState {
+    // Per-window view state: see CjguiComposableUiScrollViewport.claimOwner.
+    private var ownerWindowTokenValue: Int64 = 0
+    // Lifetime identity of this view-state object. Two references are the same
+    // object exactly when their identities are equal, which is what lets a window
+    // release the objects its accepted structure no longer references without
+    // depending on language-level reference equality.
+    private let viewStateIdentityValue: Int64 = CjguiComposableUiViewStateAllocator.allocate()
+    // Generation stamp of the last accepted-structure walk that saw this object.
+    private var liveStampValue: Int64 = 0
+    // CANDIDATE staging for a re-declaration: the bounds AND size in force before
+    // the in-flight candidate first touched this instance. A rejected attempt
+    // restores them, so a candidate that is never accepted cannot leave its
+    // declaration or the geometry it solved with behind in an object the accepted
+    // scene is still using.
+    private var boundsRollbackArmedValue: Bool = false
+    private var boundsRollbackFirstMinimumValue: Int64 = 0
+    private var boundsRollbackSecondMinimumValue: Int64 = 0
+    private var boundsRollbackFirstSizeValue: Int64 = 0
+    private var firstSizeValue: Int64
+    private var firstMinimumValue: Int64
+    private var secondMinimumValue: Int64
+    /// The track (handle included) the ACCEPTED scene really solved. Zero until
+    /// a layout was accepted, so no sample width is ever invented here.
+    private var acceptedTrackValue: Int64 = 0
+    private var acceptedHandleValue: Int64 = 1
+    private var acceptedFirstSizeValue: Int64 = 0
+
+    public init(firstSize: Int64, firstMinimum: Int64, secondMinimum: Int64) {
+        this.firstSizeValue = if (firstSize > 0) {
+            firstSize
+        } else {
+            0
+        }
+        this.firstMinimumValue = if (firstMinimum > 0) {
+            firstMinimum
+        } else {
+            0
+        }
+        this.secondMinimumValue = if (secondMinimum > 0) {
+            secondMinimum
+        } else {
+            0
+        }
+    }
+
+    /// Claims this split state for one window instance; see
+    /// `CjguiComposableUiScrollViewport.claimOwner`.
+    public func claimOwner(windowToken: Int64): Bool {
+        if (windowToken <= 0) {
+            return false
+        }
+        if (ownerWindowTokenValue == 0) {
+            ownerWindowTokenValue = windowToken
+            return true
+        }
+        return ownerWindowTokenValue == windowToken
+    }
+    public func ownerWindowToken(): Int64 {
+        return ownerWindowTokenValue
+    }
+    public func firstSize(): Int64 {
+        return firstSizeValue
+    }
+    public func firstMinimum(): Int64 {
+        return firstMinimumValue
+    }
+    public func secondMinimum(): Int64 {
+        return secondMinimumValue
+    }
+
+    /// Consumes a NEW declaration of the two minimums for an instance that already
+    /// exists. The person's current size is untouched: the next solve clamps it
+    /// with the ONE size rule against the real track and the new minimums, so a
+    /// legal re-declaration of the constraints is honoured instead of silently
+    /// keeping the old bounds.
+    ///
+    /// Both values are EXPLICIT declarations: `0` is a legal minimum ("no bound"),
+    /// not "undeclared". A declaration absent from the description is expressed by
+    /// NOT calling this at all, so removing a property can fall back to the public
+    /// default instead of silently keeping an older value, and a read-only size
+    /// query can never rewrite the constraints.
+    public func declareBounds(firstMinimum: Int64, secondMinimum: Int64): Unit {
+        firstMinimumValue = if (firstMinimum > 0) {
+            firstMinimum
+        } else {
+            0
+        }
+        secondMinimumValue = if (secondMinimum > 0) {
+            secondMinimum
+        } else {
+            0
+        }
+    }
+
+    /// Candidate counterpart of `declareBounds`: applies the new declaration for
+    /// THIS build while remembering the values in force before the candidate first
+    /// touched this instance. `commitStagedBoundsDeclaration` keeps the new
+    /// values; `discardStagedBoundsDeclaration` puts the old ones back, so a
+    /// rejected candidate cannot rewrite the bounds an accepted split is using.
+    public func stageBoundsDeclaration(firstMinimum: Int64, secondMinimum: Int64): Unit {
+        if (!boundsRollbackArmedValue) {
+            boundsRollbackArmedValue = true
+            boundsRollbackFirstMinimumValue = firstMinimumValue
+            boundsRollbackSecondMinimumValue = secondMinimumValue
+            boundsRollbackFirstSizeValue = firstSizeValue
+        }
+        declareBounds(firstMinimum, secondMinimum)
+    }
+
+    /// Publishes the staged declaration together with the accepted scene.
+    public func commitStagedBoundsDeclaration(): Unit {
+        boundsRollbackArmedValue = false
+    }
+
+    /// Gives the pre-candidate bounds and size back when the attempt is rejected.
+    /// The size is included because the candidate's own solve writes the size it
+    /// clamped against the candidate bounds; a rejected attempt must leave the
+    /// accepted instance's own size as the person left it.
+    public func discardStagedBoundsDeclaration(): Unit {
+        if (boundsRollbackArmedValue) {
+            firstMinimumValue = boundsRollbackFirstMinimumValue
+            secondMinimumValue = boundsRollbackSecondMinimumValue
+            firstSizeValue = boundsRollbackFirstSizeValue
+            boundsRollbackArmedValue = false
+        }
+    }
+
+    /// True while a candidate declaration is applied but not yet accepted.
+    public func hasStagedBoundsDeclaration(): Bool {
+        return boundsRollbackArmedValue
+    }
+
+    /// Releases this instance for the window that owned it. Only the owning window
+    /// token may release, so a rejected or foreign window can never drop another
+    /// window's rights.
+    public func releaseOwner(windowToken: Int64): Bool {
+        if (windowToken <= 0 || ownerWindowTokenValue != windowToken) {
+            return false
+        }
+        ownerWindowTokenValue = 0
+        return true
+    }
+
+    /// Lifetime identity; see `viewStateIdentityValue`.
+    public func viewStateIdentity(): Int64 {
+        return viewStateIdentityValue
+    }
+
+    /// Framework bookkeeping for one accepted-structure walk.
+    func markLive(stamp: Int64): Unit {
+        liveStampValue = stamp
+    }
+
+    func liveStamp(): Int64 {
+        return liveStampValue
+    }
+
+    /// The ONE size rule shared by the divider drag, the keyboard and the layout:
+    /// `CjguiComposableUiSplitGeometry.firstSizeForTrack` already bounds the
+    /// requested size by BOTH declared minimums and by the track that is really
+    /// available, so the value recorded here is exactly the value the layout
+    /// solves. Keeping a second, subtly different rule here made the state record
+    /// a size the accepted geometry never used (and then poisoned the drag origin
+    /// derived from it).
+    public func applyFirstSize(requested: Int64, track: Int64, handleSize: Int64): Int64 {
+        let bounded = CjguiComposableUiSplitGeometry.firstSizeForTrack(requested, track, handleSize,
+            firstMinimumValue, secondMinimumValue)
+        firstSizeValue = bounded
+        return bounded
+    }
+
+    /// The track and handle thickness of the ACCEPTED scene. Candidate solves
+    /// only stage these facts, so a rejected attempt can never move the bounds a
+    /// real drag is clamped against.
+    public func acceptSplitTrack(track: Int64, handleSize: Int64, firstSize: Int64): Unit {
+        acceptedTrackValue = if (track > 0) {
+            track
+        } else {
+            0
+        }
+        acceptedHandleValue = if (handleSize > 0) {
+            handleSize
+        } else {
+            1
+        }
+        acceptedFirstSizeValue = if (firstSize > 0) {
+            firstSize
+        } else {
+            0
+        }
+    }
+    public func acceptedTrack(): Int64 {
+        return acceptedTrackValue
+    }
+    public func acceptedHandleSize(): Int64 {
+        return acceptedHandleValue
+    }
+    /// The first pane width the ACCEPTED scene really allocated. Zero until a
+    /// layout was accepted, so geometry derived from it can never use a request.
+    public func acceptedFirstSize(): Int64 {
+        return acceptedFirstSizeValue
+    }
+
+    /// Applies the framework's ONE size rule to a requested size. Before any
+    /// layout was accepted the track is unknown, so only the declared minimums
+    /// bound the value instead of an invented sample track.
+    public func applyAcceptedFirstSize(requested: Int64): Int64 {
+        if (acceptedTrackValue <= 0) {
+            var bounded = if (requested < firstMinimumValue) {
+                firstMinimumValue
+            } else {
+                requested
+            }
+            if (bounded < 0) {
+                bounded = 0
+            }
+            firstSizeValue = bounded
+            return bounded
+        }
+        return applyFirstSize(requested, acceptedTrackValue, acceptedHandleValue)
+    }
+
+    /// Stores an already-bounded size, such as the layout's own clamp result.
+    public func setFirstSize(size: Int64): Unit {
+        firstSizeValue = if (size > 0) {
+            size
+        } else {
+            0
+        }
+    }
+}
+
+/// One CANDIDATE split fact of a solve: the instance's view state plus the track
+/// the solver really used. The window promotes it with the scene it accepts and
+/// discards it with a rejected candidate, so a trial layout never publishes.
+public class CjguiComposableUiSplitTrackFact {
+    public let state: CjguiComposableUiSplitState
+    public let track: Int64
+    public let handleSize: Int64
+    /// The first pane's width this solve really allocated. The window promotes it
+    /// with the same scene, so a drag origin (or a keyboard base) can use the
+    /// ACCEPTED geometry instead of a request that may never have been solved.
+    public let firstSize: Int64
+    public init(state: CjguiComposableUiSplitState, track: Int64, handleSize: Int64, firstSize: Int64) {
+        this.state = state
+        this.track = track
+        this.handleSize = handleSize
+        this.firstSize = firstSize
+    }
+}
+
+/// Cangjie-owned view state for ONE tab container instance: which page is
+/// ACTIVE. Selecting a page is a WINDOW view fact, never a business write: the
+/// declaration's initial page only seeds a NEW instance, so re-submitting the
+/// same structure (a reorder, a style change or an ordinary field refresh) can
+/// never silently move a person back to the declared page.
+///
+/// Stability: experimental. This is the minimal public seam for generated and
+/// handwritten tab containers; the shape may change, and it never carries a
+/// business value.
+public class CjguiComposableUiTabsState {
+    // Per-window view state: see CjguiComposableUiScrollViewport.claimOwner.
+    private var ownerWindowTokenValue: Int64 = 0
+    // Lifetime identity / accepted-structure stamp; see
+    // CjguiComposableUiSplitState.
+    private let viewStateIdentityValue: Int64 = CjguiComposableUiViewStateAllocator.allocate()
+    private var liveStampValue: Int64 = 0
+    private var activeKeyValue: String = ""
+    /// The page the DECLARATION asked for when this instance was created. It is
+    /// kept separate from the active page so a later legal re-declaration that
+    /// changes only the initial page cannot override a person's selection.
+    private var declaredKeyValue: String = ""
+    // CANDIDATE reconcile staging. A candidate build may drop the active page,
+    // which must move the CANDIDATE scene to the fallback page; the live value
+    // (a person's selection, or the last accepted page) is published only when
+    // the scene containing it is accepted. A rejected candidate therefore cannot
+    // move an accepted container, and a newer legal selection made while the
+    // candidate was in flight is never overwritten by an older staging pass.
+    private var stagedReconcileActiveValue: Bool = false
+    private var stagedActiveKeyValue: String = ""
+    private var stagedDeclaredKeyValue: String = ""
+    private var stagedAvailableKeysValue: ArrayList<String> = ArrayList<String>()
+
+    public init(initialPage: String) {
+        this.activeKeyValue = initialPage
+        this.declaredKeyValue = initialPage
+    }
+
+    /// The page this instance currently shows. Empty only before the first
+    /// declaration seeded it.
+    /// Claims this tab state for one window instance; see
+    /// `CjguiComposableUiScrollViewport.claimOwner`.
+    public func claimOwner(windowToken: Int64): Bool {
+        if (windowToken <= 0) {
+            return false
+        }
+        if (ownerWindowTokenValue == 0) {
+            ownerWindowTokenValue = windowToken
+            return true
+        }
+        return ownerWindowTokenValue == windowToken
+    }
+    public func ownerWindowToken(): Int64 {
+        return ownerWindowTokenValue
+    }
+
+    /// Releases this instance for the window that owned it. Only the owning
+    /// window token may release.
+    public func releaseOwner(windowToken: Int64): Bool {
+        if (windowToken <= 0 || ownerWindowTokenValue != windowToken) {
+            return false
+        }
+        ownerWindowTokenValue = 0
+        return true
+    }
+
+    /// Lifetime identity; see `viewStateIdentityValue`.
+    public func viewStateIdentity(): Int64 {
+        return viewStateIdentityValue
+    }
+
+    /// Framework bookkeeping for one accepted-structure walk.
+    func markLive(stamp: Int64): Unit {
+        liveStampValue = stamp
+    }
+
+    func liveStamp(): Int64 {
+        return liveStampValue
+    }
+
+    /// The page this instance currently shows. While a candidate reconcile is
+    /// staged, this is the page the CANDIDATE scene uses; the accepted value is
+    /// restored/discarded at the same transaction boundary.
+    public func activeKey(): String {
+        return if (stagedReconcileActiveValue) {
+            stagedActiveKeyValue
+        } else {
+            activeKeyValue
+        }
+    }
+
+    public func declaredKey(): String {
+        return if (stagedReconcileActiveValue) {
+            stagedDeclaredKeyValue
+        } else {
+            declaredKeyValue
+        }
+    }
+
+    /// True while a candidate reconcile is applied but not yet accepted.
+    public func hasStagedReconcile(): Bool {
+        return stagedReconcileActiveValue
+    }
+
+    /// Selects a page for the next accepted scene. Returns true when the
+    /// selection moved, so a caller only requests a projection when something
+    /// really changed.
+    public func select(key: String): Bool {
+        if (key.size == 0 || key == activeKeyValue) {
+            return false
+        }
+        activeKeyValue = key
+        return true
+    }
+
+    /// Keeps a page the instance already shows, or adopts the declared one when
+    /// the current selection is no longer part of the description (a removed
+    /// page must not leave the container pointing at nothing). Returns true when
+    /// the active page changed.
+    public func reconcile(availableKeys: ArrayList<String>, declaredKey: String): Bool {
+        declaredKeyValue = declaredKey
+        for (key in availableKeys) {
+            if (key == activeKeyValue) {
+                return false
+            }
+        }
+        let fallback = if (declaredKey.size > 0) {
+            declaredKey
+        } else if (availableKeys.size > 0) {
+            availableKeys[0]
+        } else {
+            ""
+        }
+        if (fallback == activeKeyValue) {
+            return false
+        }
+        activeKeyValue = fallback
+        return true
+    }
+
+    /// Candidate counterpart of `reconcile`: computes the page the candidate
+    /// scene must show and remembers it without publishing it. Returns true when
+    /// the candidate's active page differs from the accepted one.
+    public func stageReconcile(availableKeys: ArrayList<String>, declaredKey: String): Bool {
+        stagedReconcileActiveValue = true
+        stagedDeclaredKeyValue = declaredKey
+        stagedAvailableKeysValue = ArrayList<String>(availableKeys)
+        var effective = activeKeyValue
+        var found = false
+        for (key in availableKeys) {
+            if (key == activeKeyValue) {
+                found = true
+            }
+        }
+        if (!found) {
+            effective = if (declaredKey.size > 0) {
+                declaredKey
+            } else if (availableKeys.size > 0) {
+                availableKeys[0]
+            } else {
+                ""
+            }
+        }
+        stagedActiveKeyValue = effective
+        return effective != activeKeyValue
+    }
+
+    /// Publishes the staged reconcile with the accepted scene. A page the person
+    /// selected while the candidate was in flight and that is still part of the
+    /// accepted description wins over the older staging pass; otherwise the
+    /// staged fallback is adopted so a removed page cannot leave the container
+    /// pointing at nothing.
+    public func commitStagedReconcile(): Unit {
+        if (!stagedReconcileActiveValue) {
+            return
+        }
+        declaredKeyValue = stagedDeclaredKeyValue
+        var liveStillAvailable = false
+        for (key in stagedAvailableKeysValue) {
+            if (key == activeKeyValue) {
+                liveStillAvailable = true
+            }
+        }
+        if (!liveStillAvailable) {
+            activeKeyValue = stagedActiveKeyValue
+        }
+        stagedReconcileActiveValue = false
+        stagedAvailableKeysValue = ArrayList<String>()
+    }
+
+    /// Drops the staged reconcile of a rejected/abandoned attempt. The accepted
+    /// active page and the person's pending selection are untouched.
+    public func discardStagedReconcile(): Unit {
+        stagedReconcileActiveValue = false
+        stagedAvailableKeysValue = ArrayList<String>()
+    }
+}
+
+/// Cangjie-owned vertical viewport for ORDINARY content. It deliberately does
+/// not reuse the virtual-list state: it carries no selection, row or
+/// materialization semantics, so a handwritten, generated or composite author
+/// shares ONE viewport without inheriting list behavior.
+///
+/// Requested and accepted facts are kept apart: a wheel gesture only raises a
+/// request, and the layout reports the extents and clamped offset it really
+/// solved. A caller can therefore never read a pending request as accepted, and
+/// content that shrank never leaves an out-of-range offset behind.
+///
+/// Stability: experimental. This is the minimal public seam for shared view
+/// state while the generated scroll/split layout package evolves; the shape may
+/// change, and applications should keep owning their business values.
+public class CjguiComposableUiScrollViewport {
+    // The window INSTANCE that accepted a scene containing this viewport. A
+    // viewport is per-window view state: sharing ONE mutable object between two
+    // windows would let either window's wheel/edit silently move the other's
+    // accepted geometry, so a second window's candidate is refused instead.
+    private var ownerWindowTokenValue: Int64 = 0
+    // Lifetime identity / accepted-structure stamp; see
+    // CjguiComposableUiSplitState.
+    private let viewStateIdentityValue: Int64 = CjguiComposableUiViewStateAllocator.allocate()
+    private var liveStampValue: Int64 = 0
+    private var requestedOffsetValue: Int64 = 0
+    private var acceptedOffsetValue: Int64 = 0
+    private var contentExtentValue: Int64 = 0
+    private var viewportExtentValue: Int64 = 0
+    private var acceptedSolveCountValue: Int64 = 0
+    // The layout's CANDIDATE facts for the solve currently in flight. They are
+    // promoted only when the window accepts the scene that contains this
+    // viewport, so a rejected/early-returned candidate can never leak into the
+    // accepted facts the previous scene is still using.
+    private var stagedContentExtentValue: Int64 = 0
+    private var stagedViewportExtentValue: Int64 = 0
+    private var stagedOffsetValue: Int64 = 0
+    private var stagedSolvedValue: Bool = false
+
+    /// The offset the next build should use.
+    public func offset(): Int64 {
+        return requestedOffsetValue
+    }
+    /// The offset the current accepted scene was laid out with.
+    public func acceptedOffset(): Int64 {
+        return acceptedOffsetValue
+    }
+    public func contentExtent(): Int64 {
+        return contentExtentValue
+    }
+    /// Claims this viewport for one window instance. Returns false when a
+    /// DIFFERENT window already accepted a scene containing it: the caller must
+    /// refuse its own candidate rather than let two windows share one mutable
+    /// view object.
+    public func claimOwner(windowToken: Int64): Bool {
+        if (windowToken <= 0) {
+            return false
+        }
+        if (ownerWindowTokenValue == 0) {
+            ownerWindowTokenValue = windowToken
+            return true
+        }
+        return ownerWindowTokenValue == windowToken
+    }
+    /// The window instance that owns this viewport, or 0 while unclaimed.
+    public func ownerWindowToken(): Int64 {
+        return ownerWindowTokenValue
+    }
+    /// Releases this viewport for the window that owned it. Only the owning
+    /// window token may release, so a rejected or foreign window can never drop
+    /// another window's rights.
+    public func releaseOwner(windowToken: Int64): Bool {
+        if (windowToken <= 0 || ownerWindowTokenValue != windowToken) {
+            return false
+        }
+        ownerWindowTokenValue = 0
+        return true
+    }
+    /// Lifetime identity; see `viewStateIdentityValue`.
+    public func viewStateIdentity(): Int64 {
+        return viewStateIdentityValue
+    }
+    /// Framework bookkeeping for one accepted-structure walk.
+    func markLive(stamp: Int64): Unit {
+        liveStampValue = stamp
+    }
+    func liveStamp(): Int64 {
+        return liveStampValue
+    }
+    public func viewportExtent(): Int64 {
+        return viewportExtentValue
+    }
+    public func acceptedSolveCount(): Int64 {
+        return acceptedSolveCountValue
+    }
+    public func maximumOffset(): Int64 {
+        let span = contentExtentValue - viewportExtentValue
+        return if (span > 0) {
+            span
+        } else {
+            0
+        }
+    }
+    public func hasPendingRequest(): Bool {
+        return requestedOffsetValue != acceptedOffsetValue
+    }
+    /// Requests an offset for the NEXT build. It is clamped to the extents the
+    /// layout last accepted and is never reported as accepted by itself.
+    public func requestOffset(offset: Int64): Bool {
+        let clamped = clamp(offset)
+        if (clamped == requestedOffsetValue) {
+            return false
+        }
+        requestedOffsetValue = clamped
+        return true
+    }
+    /// The declaration's INITIAL value for a brand-new instance. Unlike
+    /// `requestOffset` it does not clamp against extents that are not known yet:
+    /// the first accepted solve clamps it like any other request, so a later
+    /// refresh that re-submits the same structure cannot reset the view state of
+    /// an instance that already exists.
+    public func requestInitialOffset(offset: Int64): Unit {
+        requestedOffsetValue = if (offset > 0) {
+            offset
+        } else {
+            0
+        }
+    }
+
+    public func scrollBy(delta: Int64): Bool {
+        return requestOffset(requestedOffsetValue.saturatingAdd(delta))
+    }
+    /// One wheel step: `next` moves toward the end of the content, `previous`
+    /// toward the start. An unknown direction is not a scroll.
+    public func step(direction: String, step: Int64): Bool {
+        let unit = if (step > 0) {
+            step
+        } else {
+            1
+        }
+        if (direction == "next") {
+            return scrollBy(unit)
+        }
+        if (direction == "previous") {
+            return scrollBy(0 - unit)
+        }
+        return false
+    }
+    /// Reveals [start, end) of the content. Returns true when the request moved,
+    /// so "already visible" and "a new scene is needed" stay distinguishable.
+    public func reveal(start: Int64, end: Int64, margin!: Int64 = 0): Bool {
+        let top = if (start - margin > 0) {
+            start - margin
+        } else {
+            0
+        }
+        let bottom = end + margin
+        if (top < acceptedOffsetValue) {
+            return requestOffset(top)
+        }
+        let visibleEnd = acceptedOffsetValue + viewportExtentValue
+        if (bottom > visibleEnd) {
+            return requestOffset(bottom - viewportExtentValue)
+        }
+        return false
+    }
+    /// Called by the layout with what THIS solve measured. These are candidate
+    /// facts: they do not become accepted until the window accepts the scene that
+    /// contains this viewport (`commitStagedExtents`). An empty scroll area stages
+    /// zero content and a zero offset while keeping the viewport's real geometry.
+    public func stageExtents(content: Int64, viewport: Int64, offset: Int64): Unit {
+        stagedContentExtentValue = if (content > 0) {
+            content
+        } else {
+            0
+        }
+        stagedViewportExtentValue = if (viewport > 0) {
+            viewport
+        } else {
+            0
+        }
+        stagedOffsetValue = if (offset > 0) {
+            offset
+        } else {
+            0
+        }
+        stagedSolvedValue = true
+    }
+
+    /// Whether a solve staged facts that are not yet accepted.
+    public func hasStagedExtents(): Bool {
+        return stagedSolvedValue
+    }
+
+    /// Promotes the staged solve to the accepted facts. The pending request
+    /// converges to the clamped offset the accepted scene really used, so a
+    /// request is never reported as accepted before this point.
+    public func commitStagedExtents(): Unit {
+        if (!stagedSolvedValue) {
+            return
+        }
+        let span = stagedContentExtentValue - stagedViewportExtentValue
+        let maximum = if (span > 0) {
+            span
+        } else {
+            0
+        }
+        let clamped = if (stagedOffsetValue > maximum) {
+            maximum
+        } else {
+            stagedOffsetValue
+        }
+        contentExtentValue = stagedContentExtentValue
+        viewportExtentValue = stagedViewportExtentValue
+        acceptedOffsetValue = if (clamped > 0) {
+            clamped
+        } else {
+            0
+        }
+        // The request has been presented; it is no longer pending.
+        requestedOffsetValue = acceptedOffsetValue
+        acceptedSolveCountValue += 1
+        stagedSolvedValue = false
+    }
+
+    /// Drops the staged solve of a candidate the window did NOT accept. The
+    /// accepted facts stay exactly as the previous scene left them and the
+    /// pending request is preserved, so the next legal refresh can present it
+    /// instead of silently forgetting or mislabelling it.
+    public func discardStagedExtents(): Unit {
+        stagedSolvedValue = false
+    }
+    /// Content can shrink or disappear: the requested offset never keeps an
+    /// out-of-range value that would show blank space.
+    public func clampToAccepted(): Unit {
+        requestedOffsetValue = clamp(requestedOffsetValue)
+    }
+    private func clamp(offset: Int64): Int64 {
+        if (offset < 0) {
+            return 0
+        }
+        let maximum = maximumOffset()
+        return if (offset > maximum) {
+            maximum
+        } else {
+            offset
+        }
     }
 }
 
@@ -1774,6 +2568,71 @@ public class CjguiComposableUiNodeReference {
     }
 }
 
+/// One presentation style run of a text node: a UTF-8 display byte range plus the
+/// attributes the renderer applies over it. Runs are flat and non-overlapping:
+/// the product composes nesting before sending them, so no overlapping layers
+/// ever reach the renderer.
+public class CjguiComposableUiTextStyleRun {
+    public let start: Int64
+    public let end: Int64
+    public let fontSize: Float64
+    public let fontWeight: Int64
+    public let fontFamily: String
+    public let red: Float64
+    public let green: Float64
+    public let blue: Float64
+    public let alpha: Float64
+    /// Optional background for this run (inline code). `hasBackground` separates
+    /// "no background" from "fully transparent".
+    public let hasBackground: Bool
+    public let backgroundRed: Float64
+    public let backgroundGreen: Float64
+    public let backgroundBlue: Float64
+    public let backgroundAlpha: Float64
+
+    public init(start: Int64, end: Int64, fontSize: Float64, fontWeight: Int64,
+        fontFamily: String, red: Float64, green: Float64, blue: Float64, alpha: Float64,
+        hasBackground!: Bool = false, backgroundRed!: Float64 = 0.0, backgroundGreen!: Float64 = 0.0,
+        backgroundBlue!: Float64 = 0.0, backgroundAlpha!: Float64 = 1.0) {
+        this.start = start
+        this.end = end
+        this.fontSize = fontSize
+        this.fontWeight = fontWeight
+        this.fontFamily = fontFamily
+        this.red = red
+        this.green = green
+        this.blue = blue
+        this.alpha = alpha
+        this.hasBackground = hasBackground
+        this.backgroundRed = backgroundRed
+        this.backgroundGreen = backgroundGreen
+        this.backgroundBlue = backgroundBlue
+        this.backgroundAlpha = backgroundAlpha
+    }
+
+    /// The wire form the renderer accepts: one run per `;`, fields separated by
+    /// `:` as start:end:fontSize:weight:family:r:g:b:a.
+    public func encoded(): String {
+        let family = if (this.fontFamily == "monospaced") {
+            1u32
+        } else if (this.fontFamily == "system-italic") {
+            2u32
+        } else if (this.fontFamily == "monospaced-italic") {
+            3u32
+        } else {
+            0u32
+        }
+        let background = if (this.hasBackground) {
+            1
+        } else {
+            0
+        }
+        return "${this.start}:${this.end}:${this.fontSize}:${this.fontWeight}:${family}:" +
+            "${this.red}:${this.green}:${this.blue}:${this.alpha}:${background}:" +
+            "${this.backgroundRed}:${this.backgroundGreen}:${this.backgroundBlue}:${this.backgroundAlpha}"
+    }
+}
+
 /// One Cangjie-owned component declaration.  `resourceId` and `actionName`
 /// form a common-operation semantic relation; neither is interpreted by this
 /// framework as a business command.
@@ -1810,6 +2669,9 @@ public class CjguiComposableUiNode {
     public let imageResourceVersion: Int64
     public let imageContentMode: Int64
     public let style: CjguiComposableUiStyle
+    /// Optional presentation style runs for this node. Empty means "use the
+    /// single `style` exactly as before", so no existing consumer changes.
+    public let textStyleRuns: Array<CjguiComposableUiTextStyleRun>
     /// Paint-only state declarations live with the Cangjie component. Native
     /// receives only the resolved style of one accepted scene generation.
     public let interactionStyle: CjguiComposableUiInteractionStyle
@@ -1835,6 +2697,24 @@ public class CjguiComposableUiNode {
     public let pointerControlFirstSize: Int64
     public let pointerControlSecondMinimum: Int64
     public var scrollOffset: Int64
+    /// The public vertical viewport a `SCROLL` area shares with its author. It
+    /// is an ordinary Cangjie object with no native handle, and `None` keeps the
+    /// plain value-based scroll area unchanged.
+    public let scrollViewport: ?CjguiComposableUiScrollViewport
+    /// The shared view state of a generated split instance, kept for the same
+    /// reason as the viewport: the framework's single size rule updates it.
+    public let splitState: ?CjguiComposableUiSplitState
+    /// The tab container's shared view state, when this node IS a tab container.
+    public let tabsState: ?CjguiComposableUiTabsState
+    /// The stable page key when this node is one PAGE of a tab container (empty
+    /// otherwise). A hidden page keeps its key, so its identity and its own view
+    /// state can be restored without being part of the active scene.
+    public let tabsPageKey: String
+    /// True when this page is the container's ACTIVE page in the declared tree.
+    /// The layout only measures, hit-tests and draws active pages.
+    public let tabsPageActive: Bool
+    /// Height of the title row of a tab container, in logical points.
+    public let tabsTitleHeight: Int64
     // Virtual-list metadata stays wholly in the Cangjie layout layer. The
     // renderer sees only rows materialized for the current range, never this
     // source or a logical collection's full contents.
@@ -1875,7 +2755,12 @@ public class CjguiComposableUiNode {
     private let childNodes: ArrayList<CjguiComposableUiNode>
 
     public init(nodeId: Int64, semanticId: String, nodeKind: Int64, label: String, value: String, actionName: String,
-        resourceId: Int64, style: CjguiComposableUiStyle, scrollOffset!: Int64 = 0, enabled!: Bool = true,
+        resourceId: Int64, style: CjguiComposableUiStyle, scrollOffset!: Int64 = 0,
+        scrollViewport!: ?CjguiComposableUiScrollViewport = None,
+        splitState!: ?CjguiComposableUiSplitState = None, enabled!: Bool = true,
+        tabsState!: ?CjguiComposableUiTabsState = None, tabsPageKey!: String = "", tabsPageActive!: Bool = false,
+        tabsTitleHeight!: Int64 = 0,
+        textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>(),
         readOnly!: Bool = false, fieldId!: String = "", operationActionName!: String = "",
         operationResourceId!: Int64 = -1, displayValueRole!: String = "", imageResourcePath!: String = "",
         imageResourceId!: String = "", imageResourceVersion!: Int64 = 0, imageContentMode!: Int64 = 1,
@@ -1924,12 +2809,23 @@ public class CjguiComposableUiNode {
             1
         }
         this.style = style
+        this.textStyleRuns = textStyleRuns
         this.interactionStyle = interactionStyle
         this.ownerInteractionState = CjguiComposableUiInteractionState.ownerBits(ownerInteractionState)
         this.scrollOffset = if (scrollOffset < 0) {
             0
         } else {
             scrollOffset
+        }
+        this.scrollViewport = scrollViewport
+        this.splitState = splitState
+        this.tabsState = tabsState
+        this.tabsPageKey = tabsPageKey
+        this.tabsPageActive = tabsPageActive
+        this.tabsTitleHeight = if (tabsTitleHeight > 0) {
+            tabsTitleHeight
+        } else {
+            0
         }
         this.isEnabled = enabled
         this.isReadOnly = readOnly && (nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind ==
@@ -2105,6 +3001,18 @@ public class CjguiComposableUiNode {
     public func isSplitView(): Bool {
         return pointerControlRole == "split_view"
     }
+    /// Whether this node is the container of a public tab component.
+    public func isTabsContainer(): Bool {
+        return nodeKind == CJGUI_COMPOSABLE_UI_TABS
+    }
+    /// Whether this node is one PAGE of a tab container.
+    public func isTabPage(): Bool {
+        return tabsPageKey.size > 0
+    }
+    /// Whether this node is a tab TITLE.
+    public func isTabTitle(): Bool {
+        return nodeKind == CJGUI_COMPOSABLE_UI_TAB_TITLE
+    }
     func scopedIdentity(): ?CjguiComposableUiIdentity {
         return scopedIdentityValue
     }
@@ -2155,7 +3063,15 @@ public class CjguiComposableUiNode {
     /// materialised rows are rebuilt only for this candidate.
     func cloneForWindowCandidate(): CjguiComposableUiNode {
         let cloned = CjguiComposableUiNode(nodeId, semanticId, nodeKind, label, value, actionName, resourceId, style,
-            scrollOffset: scrollOffset, enabled: isEnabled, readOnly: isReadOnly, fieldId: fieldId,
+            // The window snapshots the declaration; presentation runs are part of
+            // the declaration and must survive the snapshot, otherwise every
+            // accepted node silently loses its inline styles.
+            textStyleRuns: textStyleRuns,
+            scrollOffset: scrollOffset, scrollViewport: scrollViewport, splitState: splitState,
+            tabsState: tabsState, tabsPageKey: tabsPageKey, tabsPageActive: tabsPageActive,
+            tabsTitleHeight: tabsTitleHeight,
+            enabled: isEnabled, readOnly: isReadOnly,
+            fieldId: fieldId,
             operationActionName: operationActionName, operationResourceId: operationResourceId,
             displayValueRole: displayValueRole, imageResourcePath: imageResourcePath, imageResourceId: imageResourceId,
             imageResourceVersion: imageResourceVersion, imageContentMode: imageContentMode,
@@ -2686,6 +3602,103 @@ public func cjguiComposableSplitView(nodeId: Int64, semanticId: String, first: C
     return container
 }
 
+/// ONE declared page of a public tab container: a stable page key, the title a
+/// person reads, whether the container may switch to it, and the subtree it
+/// presents. The key is the ONLY stable identity a caller needs; the container's
+/// scope allocates the page's and the title's framework identities.
+public class CjguiComposableUiTabPage {
+    public let key: String
+    public let title: String
+    public let enabled: Bool
+    public let content: CjguiComposableUiNode
+
+    public init(key: String, title: String, content: CjguiComposableUiNode, enabled!: Bool = true) {
+        this.key = key
+        this.title = title
+        this.content = content
+        this.enabled = enabled
+    }
+}
+
+/// The public tab container: a bounded set of pages (2..3 is the supported
+/// working set) of which exactly ONE is active. `state` holds the active page as
+/// WINDOW view state: the declared page only seeds a new instance, so a reorder,
+/// a style change or an ordinary field refresh never moves a person back.
+///
+/// A hidden page keeps its scoped identity and its own view state, but it is NOT
+/// measured, hit-tested or drawn: hiding is never deletion, and it is never a
+/// business write. Both authors (handwritten and generated) build through this
+/// ONE component, and the title row's identities come from `scope`, so no caller
+/// owns an implementation-defined node id.
+public func cjguiComposableTabs(scope: CjguiComposableUiIdentityScope, semanticId: String,
+    pages: ArrayList<CjguiComposableUiTabPage>, state: CjguiComposableUiTabsState,
+    style: CjguiComposableUiStyle, titleHeight!: Int64 = 28,
+    titleStyle!: CjguiComposableUiStyle = CjguiComposableUiStyle(),
+    titleInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    containerNodeId!: Int64 = -1): CjguiComposableUiNode {
+    let safeTitleHeight = if (titleHeight > 0) {
+        titleHeight
+    } else {
+        1
+    }
+    let titleRowStyle = CjguiComposableUiStyle(fixedHeight: safeTitleHeight, growX: 1)
+    // Generated authors already reserve a stable numeric ID for this declared
+    // container. Keep that exact ID so accepted-instance lookup and event
+    // routing use the same identity; handwritten callers keep scoped identity.
+    let containerIdentity: ?CjguiComposableUiIdentity = if (containerNodeId >= 0) {
+        None
+    } else {
+        Some(scope.local("container"))
+    }
+    let container = CjguiComposableUiNode(containerNodeId, semanticId, CJGUI_COMPOSABLE_UI_TABS,
+        "", "", "", -1, style, tabsState: state, tabsTitleHeight: safeTitleHeight,
+        identity: containerIdentity)
+    let titleRow = CjguiComposableUiNode(-1, "${semanticId}-titles", CJGUI_COMPOSABLE_UI_HORIZONTAL, "", "", "", -1,
+        titleRowStyle, identity: scope.local("titles"))
+    // A title keeps the row's own centred geometry and takes only PAINT from
+    // `titleStyle`/`titleInteraction`. The default pair is the empty style and
+    // the empty interaction paint, so a caller that passes neither keeps the
+    // exact title it had before (implicit defaults); a dark-surface consumer can
+    // make its titles readable without a second focus owner or an inherited
+    // colour system.
+    let titleNodeStyle = CjguiComposableUiStyle(
+        background: titleStyle.background,
+        border: titleStyle.border,
+        textColor: titleStyle.textColor,
+        borderWidth: titleStyle.borderWidth,
+        fontSize: titleStyle.fontSize,
+        fontWeight: titleStyle.fontWeight,
+        growX: 1,
+        alignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
+    var index = 0
+    while (index < pages.size) {
+        let page = pages[index]
+        let title = CjguiComposableUiNode(-1, "${semanticId}-tab-${page.key}", CJGUI_COMPOSABLE_UI_TAB_TITLE,
+            page.title, page.key, "ACTIVATE_TAB", -1,
+            titleNodeStyle, enabled: page.enabled,
+            tabsState: state, tabsPageKey: page.key, tabsTitleHeight: safeTitleHeight,
+            interactionStyle: titleInteraction,
+            identity: scope.local("tab-${page.key}"))
+        titleRow.add(title)
+        index += 1
+    }
+    container.add(titleRow)
+    index = 0
+    while (index < pages.size) {
+        let page = pages[index]
+        let active = page.key == state.activeKey()
+        // The page keeps the caller's subtree, and the ACTIVE flag lives on the
+        // page root so the layout presents exactly one page.
+        let pageRoot = CjguiComposableUiNode(-1, page.content.semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "",
+            -1, CjguiComposableUiStyle(growX: 1), tabsState: state, tabsPageKey: page.key, tabsPageActive: active,
+            identity: scope.local("page-${page.key}"))
+        pageRoot.add(page.content)
+        container.add(pageRoot)
+        index += 1
+    }
+    return container
+}
+
 /// Safe split composition. Unlike the legacy numeric overload, the container
 /// and handle are local identities below `scope`; no implementation detail
 /// claims a caller-owned `nodeId + offset` range. The owning window resolves
@@ -2693,7 +3706,8 @@ public func cjguiComposableSplitView(nodeId: Int64, semanticId: String, first: C
 public func cjguiComposableScopedSplitView(scope: CjguiComposableUiIdentityScope, semanticId: String,
     first: CjguiComposableUiNode, second: CjguiComposableUiNode, axis: Int64, firstSize: Int64, minFirst: Int64,
     minSecond: Int64, style: CjguiComposableUiStyle, operationActionName!: String = "SET_SPLIT_SIZE",
-    operationResourceId!: Int64 = -1, handleThickness!: Int64 = 8): CjguiComposableUiNode {
+    operationResourceId!: Int64 = -1, handleThickness!: Int64 = 8,
+    splitState!: ?CjguiComposableUiSplitState = None): CjguiComposableUiNode {
     let safeAxis = if (axis == CjguiComposableUiSplitAxis.VERTICAL) {
         CjguiComposableUiSplitAxis.VERTICAL
     } else {
@@ -2714,7 +3728,7 @@ public func cjguiComposableScopedSplitView(scope: CjguiComposableUiIdentityScope
         operationResourceId: operationResourceId, pointerControlRole: "split_handle", pointerControlAxis: safeAxis,
         pointerControlMinimum: minFirst, pointerControlFirstSize: firstSize,
         pointerControlHandleThickness: safeThickness, pointerControlSecondMinimum: minSecond,
-        identity: scope.local("handle"))
+        identity: scope.local("handle"), splitState: splitState)
     let containerKind = if (safeAxis == CjguiComposableUiSplitAxis.VERTICAL) {
         CJGUI_COMPOSABLE_UI_VERTICAL
     } else {
@@ -2724,7 +3738,7 @@ public func cjguiComposableScopedSplitView(scope: CjguiComposableUiIdentityScope
         operationActionName: operationActionName, operationResourceId: operationResourceId,
         pointerControlRole: "split_view", pointerControlAxis: safeAxis, pointerControlMinimum: minFirst,
         pointerControlFirstSize: firstSize, pointerControlHandleThickness: safeThickness,
-        pointerControlSecondMinimum: minSecond, identity: scope.local("container"))
+        pointerControlSecondMinimum: minSecond, identity: scope.local("container"), splitState: splitState)
     container.add(first)
     container.add(handle)
     container.add(second)
@@ -2810,10 +3824,53 @@ public func cjguiComposableSlider(nodeId: Int64, semanticId: String, value: Int6
 
 public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String, style: CjguiComposableUiStyle,
     resourceId!: Int64 = -1, fieldId!: String = "", displayValueRole!: String = "", operationResourceId!: Int64 = -1,
-    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
+    identity!: ?CjguiComposableUiIdentity = None,
+    textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>()): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT, "", value, "", resourceId, style,
+        textStyleRuns: textStyleRuns,
         fieldId: fieldId, operationResourceId: operationResourceId, displayValueRole: displayValueRole,
-        identity: identity)
+        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, identity: identity)
+}
+
+/// Whole-group binding for a static text node (same one-argument contract as
+/// the button overload).
+public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String,
+    boundStyle: CjguiComposableUiBoundStyle, resourceId!: Int64 = -1, fieldId!: String = "",
+    displayValueRole!: String = "", operationResourceId!: Int64 = -1,
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
+    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    return cjguiComposableText(nodeId, semanticId, value, boundStyle.style,
+        resourceId: resourceId, fieldId: fieldId, displayValueRole: displayValueRole,
+        operationResourceId: operationResourceId, interactionStyle: boundStyle.interaction,
+        ownerInteractionState: ownerInteractionState, identity: identity)
+}
+
+/// Whole-group binding: the component receives ONE bound value carrying both
+/// the resolved base style and the interaction paint, so picking the named
+/// role once brings hover/pressed/focused/disabled along. Old explicit
+/// `style`+`interactionStyle` parameters remain fully compatible; the bound
+/// value's fields install in the same order as the explicit pair.
+// NODE ID SPACE (measured 2026-09-25, cost two rounds):
+//   * ids <  200  -- ordinary controls. A button here activates normally.
+//   * ids >= 200  -- the PRESENTATION / POINTER space (text fragments, table cells,
+//                    notices). A CONTROL created with an id >= 200 renders and even
+//                    reports a rect, but NEVER activates: the click is routed on the
+//                    pointer/text path instead. Two conditional buttons at 300/301 were
+//                    dead for exactly this reason, and the same ids in the status bar made
+//                    it look like "the status bar cannot take clicks", which was wrong.
+// Keep control ids below 200. A product that needs a high-range id for data (fragments,
+// cells) must pick its control ids from the low range.
+public func cjguiComposableButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
+    resourceId: Int64, boundStyle: CjguiComposableUiBoundStyle, enabled!: Bool = true,
+    operationActionName!: String = "", operationResourceId!: Int64 = -1,
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
+    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    return cjguiComposableButton(nodeId, semanticId, label, actionName, resourceId,
+        boundStyle.style, enabled: enabled, operationActionName: operationActionName,
+        operationResourceId: operationResourceId, interactionStyle: boundStyle.interaction,
+        ownerInteractionState: ownerInteractionState, identity: identity)
 }
 
 public func cjguiComposableButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
@@ -2836,6 +3893,20 @@ public func cjguiComposableTextInput(nodeId: Int64, semanticId: String, label: S
         resourceId, style, enabled: enabled, readOnly: readOnly, fieldId: fieldId,
         operationActionName: operationActionName, operationResourceId: operationResourceId,
         displayValueRole: displayValueRole, interactionStyle: interactionStyle,
+        ownerInteractionState: ownerInteractionState)
+}
+
+/// Whole-group binding for a text input (same one-argument contract as the
+/// button overload).
+public func cjguiComposableTextInput(nodeId: Int64, semanticId: String, label: String, value: String,
+    resourceId: Int64, boundStyle: CjguiComposableUiBoundStyle, enabled!: Bool = true,
+    readOnly!: Bool = false, fieldId!: String = "", operationActionName!: String = "",
+    operationResourceId!: Int64 = -1, displayValueRole!: String = "draft",
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
+    return cjguiComposableTextInput(nodeId, semanticId, label, value, resourceId,
+        boundStyle.style, enabled: enabled, readOnly: readOnly, fieldId: fieldId,
+        operationActionName: operationActionName, operationResourceId: operationResourceId,
+        displayValueRole: displayValueRole, interactionStyle: boundStyle.interaction,
         ownerInteractionState: ownerInteractionState)
 }
 
@@ -3006,9 +4077,12 @@ public func cjguiComposableSelectableListRow(
 
 public func cjguiComposableImage(nodeId: Int64, semanticId: String, localRasterPath: String,
     style: CjguiComposableUiStyle, contentMode!: Int64 = 1, imageResourceId!: String = "",
-    imageResourceVersion!: Int64 = 0): CjguiComposableUiNode {
+    imageResourceVersion!: Int64 = 0,
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_IMAGE, "", "", "", -1, style,
         imageResourcePath: localRasterPath, imageResourceId: imageResourceId, imageResourceVersion: imageResourceVersion,
+        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
         imageContentMode: contentMode)
 }
 
@@ -3016,6 +4090,17 @@ public func cjguiComposableScrollArea(nodeId: Int64, semanticId: String, scrollO
     style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
         scrollOffset: scrollOffset, enabled: enabled)
+}
+
+/// The SAME public scroll container bound to a shared viewport state. The build
+/// reads the viewport's requested offset, and the layout reports the accepted
+/// extents back through the same object, so a wheel gesture, a reveal and a
+/// theme change all flow through ONE definition instead of each author computing
+/// coordinates.
+public func cjguiComposableScrollArea(nodeId: Int64, semanticId: String, viewport: CjguiComposableUiScrollViewport,
+    style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
+    return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
+        scrollOffset: viewport.offset(), scrollViewport: Some(viewport), enabled: enabled)
 }
 
 /// Compose a fixed-row list without first creating every logical row. The
@@ -3132,6 +4217,20 @@ public class CjguiComposableUiLayoutNode {
     public let pointerControlFirstSize: Int64
     public let pointerControlSecondMinimum: Int64
     public let bounds: CjguiComposableUiRect
+    /// The shared viewport of this scroll area, when its author bound one. The
+    /// layout reports the accepted extents through it; the value-based scroll
+    /// area keeps `None`.
+    public let scrollViewport: ?CjguiComposableUiScrollViewport
+    /// The shared view state of a generated split instance, kept for the same
+    /// reason as the viewport: the framework's single size rule updates it.
+    public let splitState: ?CjguiComposableUiSplitState
+    /// Tab-container facts carried onto the resolved layout node: the shared view
+    /// state, this node's page key (when it is a page) and whether that page is
+    /// the ACTIVE one the scene really presents.
+    public let tabsState: ?CjguiComposableUiTabsState
+    public let tabsPageKey: String
+    public let tabsPageActive: Bool
+    public let tabsTitleHeight: Int64
     /// Axis-aligned intersection of `clipConstraints`, retained for cheap
     /// bounds, AX frames and resource visibility. It is not a substitute for
     /// the original rounded shapes below.
@@ -3144,6 +4243,9 @@ public class CjguiComposableUiLayoutNode {
     /// resolved paint so interaction-only presentation can reuse geometry.
     public let declaredStyle: CjguiComposableUiStyle
     public let style: CjguiComposableUiStyle
+    /// Presentation runs carried from the source component, so the scene
+    /// projection can install them for the renderer.
+    public let textStyleRuns: Array<CjguiComposableUiTextStyleRun>
     public let interactionStyle: CjguiComposableUiInteractionStyle
     public let ownerInteractionState: Int64
     /// A non-empty scope traps native focus navigation to a currently visible
@@ -3151,6 +4253,13 @@ public class CjguiComposableUiLayoutNode {
     public let inputScopeId: String
     public let layerId: String
     public let layerKind: String
+    /// Stable identity of the declaration this node was resolved from. It is the
+    /// scoped canonical key when the author declared one, otherwise the semantic
+    /// id, otherwise the resolved node id: never empty, and unique within one
+    /// accepted scene. Consumers use it to resolve a real ancestor chain (for
+    /// example the clip owners of a reveal) without comparing geometry.
+    public let identityKey: String
+    private let scopedIdentityValue: ?CjguiComposableUiIdentity
     public init(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect, clip: CjguiComposableUiRect,
         inputScopeId!: String = "", clipCornerRadius!: Int64 = 0,
         clipConstraints!: ArrayList<CjguiComposableUiClipConstraint> = ArrayList<CjguiComposableUiClipConstraint>(),
@@ -3181,6 +4290,12 @@ public class CjguiComposableUiLayoutNode {
         this.pointerControlHandleThickness = node.pointerControlHandleThickness
         this.pointerControlFirstSize = node.pointerControlFirstSize
         this.pointerControlSecondMinimum = node.pointerControlSecondMinimum
+        this.scrollViewport = node.scrollViewport
+        this.splitState = node.splitState
+        this.tabsState = node.tabsState
+        this.tabsPageKey = node.tabsPageKey
+        this.tabsPageActive = node.tabsPageActive
+        this.tabsTitleHeight = node.tabsTitleHeight
         this.bounds = bounds
         this.clip = clip
         this.clipCornerRadius = if (clipCornerRadius < 0) {
@@ -3191,6 +4306,7 @@ public class CjguiComposableUiLayoutNode {
         this.resolvedClipConstraints = ArrayList<CjguiComposableUiClipConstraint>(clipConstraints)
         this.declaredStyle = node.style
         this.style = if (let Some(value) <- resolvedPaintStyle) { value } else { node.style }
+        this.textStyleRuns = node.textStyleRuns
         this.interactionStyle = node.interactionStyle
         this.ownerInteractionState = node.ownerInteractionState
         this.inputScopeId = if (node.layerId().size > 0) {
@@ -3200,6 +4316,24 @@ public class CjguiComposableUiLayoutNode {
         }
         this.layerId = node.layerId()
         this.layerKind = node.layerKind()
+        this.identityKey = CjguiComposableUiLayoutNode.identityKeyFor(node)
+        this.scopedIdentityValue = node.scopedIdentity()
+    }
+
+    /// The stable identity rule used by `identityKey` and by the clip constraint
+    /// the layout engine records for a clipping node. Scoped declarations use
+    /// their canonical scope/key; otherwise the semantic id, and only a node with
+    /// neither falls back to its resolved numeric id.
+    static func identityKeyFor(node: CjguiComposableUiNode): String {
+        if (let Some(identity) <- node.scopedIdentity()) {
+            if (identity.isValid()) {
+                return identity.canonicalKey()
+            }
+        }
+        if (node.semanticId.size > 0) {
+            return "semantic:${node.semanticId}"
+        }
+        return "node:${node.nodeId}"
     }
     public static func missing(): CjguiComposableUiLayoutNode {
         return CjguiComposableUiLayoutNode(
@@ -3213,7 +4347,8 @@ public class CjguiComposableUiLayoutNode {
             CJGUI_COMPOSABLE_UI_INTEGER_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT || nodeKind ==
             CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_LAYER_BACKDROP || nodeKind ==
             CJGUI_COMPOSABLE_UI_SCROLL_AREA || nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE || nodeKind ==
-            CJGUI_COMPOSABLE_UI_SLIDER || (nodeKind == CJGUI_COMPOSABLE_UI_VECTOR_GRAPHIC && actionName.size > 0)
+            CJGUI_COMPOSABLE_UI_SLIDER || nodeKind == CJGUI_COMPOSABLE_UI_TAB_TITLE ||
+            (nodeKind == CJGUI_COMPOSABLE_UI_VECTOR_GRAPHIC && actionName.size > 0)
     }
     public func clipConstraints(): ArrayList<CjguiComposableUiClipConstraint> {
         return ArrayList<CjguiComposableUiClipConstraint>(resolvedClipConstraints)
@@ -3225,7 +4360,10 @@ public class CjguiComposableUiLayoutNode {
     public func withResolvedPaintStyle(resolvedStyle: CjguiComposableUiStyle): CjguiComposableUiLayoutNode {
         let projectionNode = CjguiComposableUiNode(
             nodeId, semanticId, nodeKind, label, value, actionName, resourceId, declaredStyle,
+            scrollViewport: scrollViewport, splitState: splitState,
             enabled: isEnabled, readOnly: isReadOnly, fieldId: fieldId,
+            tabsState: tabsState, tabsPageKey: tabsPageKey, tabsPageActive: tabsPageActive,
+            tabsTitleHeight: tabsTitleHeight,
             operationActionName: operationActionName, operationResourceId: operationResourceId,
             displayValueRole: displayValueRole, imageResourcePath: imageResourcePath,
             imageResourceId: imageResourceId, imageResourceVersion: imageResourceVersion,
@@ -3235,7 +4373,8 @@ public class CjguiComposableUiLayoutNode {
             pointerControlMinimum: pointerControlMinimum, pointerControlMaximum: pointerControlMaximum,
             pointerControlStep: pointerControlStep, pointerControlHandleThickness: pointerControlHandleThickness,
             pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
-            interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState)
+            interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
+            identity: scopedIdentityValue)
         return CjguiComposableUiLayoutNode(
             projectionNode, bounds, clip, inputScopeId: inputScopeId,
             clipCornerRadius: clipCornerRadius, clipConstraints: resolvedClipConstraints,
@@ -3258,6 +4397,19 @@ public class CjguiComposableUiLayoutNode {
     /// Read-only text remains a platform text target for focus, selection and
     /// copy.  It intentionally does not pass editable input events back to
     /// the controller.
+    /// Whether this accepted node is a tab TITLE whose container bound shared tab
+    /// view state. Activation is then a framework-owned view intent.
+    public func isTabTitle(): Bool {
+        return nodeKind == CJGUI_COMPOSABLE_UI_TAB_TITLE
+    }
+    /// Whether this accepted node IS a public tab container.
+    public func isTabsContainer(): Bool {
+        return nodeKind == CJGUI_COMPOSABLE_UI_TABS
+    }
+    /// Whether this accepted node is one PAGE of a tab container.
+    public func isTabPage(): Bool {
+        return tabsPageKey.size > 0
+    }
     public func canReceiveFocus(): Bool {
         if (nodeKind == CJGUI_COMPOSABLE_UI_LAYER_BACKDROP) {
             return false
@@ -3265,12 +4417,33 @@ public class CjguiComposableUiLayoutNode {
         if (!isEnabled) {
             return false
         }
+        // A pointer-interactive PRESENTATION text node owns a caret and receives product
+        // key intents (e.g. Tab for table cell navigation), so it is focusable even though
+        // it is not an editable input. Without this, the focus a click establishes is lost
+        // on the next projection change and key intents have no target at all.
+        if (nodeKind == CJGUI_COMPOSABLE_UI_TEXT && this.style.pointerInteractive) {
+            return true
+        }
         if (!isReadOnly) {
             return acceptsInput()
         }
         return nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT ||
             nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
     }
+}
+
+/// The framework's pointer hit-priority rule, extracted as a PURE function so it can be unit-tested and so
+/// the Cangjie contract and the native `nodeAtPoint:` implementation can cite one rule in one place.
+///
+/// Rule (2026-09-26): TOPMOST wins; a later (lower) candidate may take over ONLY when it lies strictly inside
+/// the current best. Comparing area alone let a small sibling in a LOWER layer beat a large upper layer that
+/// also contained the point, while containment still keeps the 2026-09-25 fix (the interactive text node
+/// inside the scroll area keeps winning over its container).
+public func cjguiComposableHitMayTakeOver(bestX: Int64, bestY: Int64, bestWidth: Int64, bestHeight: Int64,
+    candidateX: Int64, candidateY: Int64, candidateWidth: Int64, candidateHeight: Int64): Bool {
+    return candidateX >= bestX && candidateY >= bestY &&
+        candidateX + candidateWidth <= bestX + bestWidth &&
+        candidateY + candidateHeight <= bestY + bestHeight
 }
 
 public class CjguiComposableUiScene {
@@ -3314,6 +4487,25 @@ public class CjguiComposableUiScene {
         }
         return node
     }
+    /// Resolve a node that opted into pointer reporting but is deliberately NOT
+    /// an input. A read-only presentation surface needs click coordinates, yet
+    /// `resolveInput` refuses anything that cannot receive editable input, which
+    /// left its ACTIVATE/FOCUS events rejected before reaching the controller.
+    /// Identity and version checks stay identical to `resolveInput`.
+    public func resolvePointerTarget(nodeId: Int64, resourceId: Int64, nodeKind: Int64,
+        projectionVersion: Int64): CjguiComposableUiLayoutNode {
+        if (!validValue || projectionVersion != version) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        let node = nodeForId(nodeId)
+        if (node.resourceId != resourceId || node.nodeKind != nodeKind) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        if (!node.canReceiveInput() && !node.style.pointerInteractive) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        return node
+    }
     /// Platform-owned selection is not an edit. Allow it for an enabled
     /// read-only text field while retaining the same full identity/version
     /// check used for editable input.
@@ -3333,15 +4525,34 @@ public class CjguiComposableUiScene {
         if (!validValue) {
             return CjguiComposableUiLayoutNode.missing()
         }
+        // Prefer the INNERMOST input-capable node under the point, not merely the last node in resolved
+        // order. A scroll area / column that CONTAINS interactive text is itself input-capable, so it used
+        // to win this loop and swallow clicks meant for the text inside it (measured 2026-09-25: a click on
+        // a body fragment delivered the event to the scroll node 311 and the caret never moved). The
+        // smallest containing area is the innermost target; ties keep the previous topmost preference.
+        var best = CjguiComposableUiLayoutNode.missing()
+        var bestArea: Int64 = 0
+        var found = false
         var index = resolvedNodes.size - 1
         while (index >= 0) {
             let node = resolvedNodes[index]
             if (node.canReceiveInput() && node.bounds.contains(x, y) && node.containsResolvedClip(x, y)) {
-                return node
+                // Topmost wins; a later (lower, usually deeper) node may take over ONLY when it lies strictly
+                // inside the current best. Comparing AREA alone let a small sibling in a LOWER layer beat a
+                // large upper layer that also contained the point (regression introduced 2026-09-25), while
+                // containment still keeps the original fix: the body fragment inside the scroll node wins.
+                let insideBest = cjguiComposableHitMayTakeOver(best.bounds.x, best.bounds.y,
+                    best.bounds.width, best.bounds.height, node.bounds.x, node.bounds.y,
+                    node.bounds.width, node.bounds.height)
+                if (!found || insideBest) {
+                    best = node
+                    bestArea = node.bounds.width * node.bounds.height
+                    found = true
+                }
             }
             index -= 1
         }
-        return CjguiComposableUiLayoutNode.missing()
+        return best
     }
     public func focusScopeForNode(nodeId: Int64): String {
         return nodeForId(nodeId).inputScopeId
@@ -3404,6 +4615,15 @@ public class CjguiComposableUiTextMeasurement {
 
 public interface CjguiComposableUiTextMeasurer {
     func measure(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64): CjguiComposableUiTextMeasurement
+}
+
+/// Preview opt-in for the content height of a multiline input at its resolved
+/// content width. The four-metric text query retains its existing semantics.
+/// `None` means this query failed; callers may calculate a temporary fallback,
+/// but a production measurer must reject the candidate through its status.
+public interface CjguiComposableUiMultilineNaturalHeightMeasurer {
+    func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle,
+        contentWidth: Int64): ?Int64
 }
 
 /// An opt-in invalidation contract for a cross-pass layout cache. A text
@@ -3550,9 +4770,20 @@ public class CjguiComposableUiLayoutMetrics {
 public class CjguiComposableUiLayoutResult {
     public let scene: CjguiComposableUiScene
     public let metrics: CjguiComposableUiLayoutMetrics
-    public init(scene: CjguiComposableUiScene, metrics: CjguiComposableUiLayoutMetrics) {
+    /// The public scroll viewports this solve STAGED candidate facts for. The
+    /// window promotes them with the scene it accepts and discards them when it
+    /// rejects the candidate, so no caller has to remember a rollback.
+    public let viewports: ArrayList<CjguiComposableUiScrollViewport>
+    /// The public split instances this solve STAGED candidate track facts for,
+    /// promoted and discarded with the same scene as `viewports`.
+    public let splitTracks: ArrayList<CjguiComposableUiSplitTrackFact>
+    public init(scene: CjguiComposableUiScene, metrics: CjguiComposableUiLayoutMetrics,
+        viewports!: ArrayList<CjguiComposableUiScrollViewport> = ArrayList<CjguiComposableUiScrollViewport>(),
+        splitTracks!: ArrayList<CjguiComposableUiSplitTrackFact> = ArrayList<CjguiComposableUiSplitTrackFact>()) {
         this.scene = scene
         this.metrics = metrics
+        this.viewports = viewports
+        this.splitTracks = splitTracks
     }
 }
 
@@ -3562,8 +4793,15 @@ private class CjguiComposableUiLayoutWorkCounter {
     var horizontalContainerSolveCount: Int64 = 0
     var layerHostSolveCount: Int64 = 0
     var scrollAreaSolveCount: Int64 = 0
+    /// Hidden tab pages this solve presented WITHOUT measuring or drawing them.
+    var hiddenTabPageCount: Int64 = 0
     var clipConstraintCapacityExceeded: Bool = false
     var dynamicIdentityIssue: String = ""
+    /// Distinct public viewports staged by this solve.
+    var stagedViewports: ArrayList<CjguiComposableUiScrollViewport> = ArrayList<CjguiComposableUiScrollViewport>()
+    /// Candidate split track facts staged by this solve.
+    var stagedSplitTracks: ArrayList<CjguiComposableUiSplitTrackFact> =
+        ArrayList<CjguiComposableUiSplitTrackFact>()
 }
 
 /// One immutable, Cangjie-owned entry for a stable top-level composition
@@ -3971,6 +5209,14 @@ public class CjguiComposableUiLayoutReuseCache {
         appendBool(builder, byteCount, cacheable, node.isReadOnly)
         appendBool(builder, byteCount, cacheable, node.tabInsertsText)
         appendInt(builder, byteCount, cacheable, node.scrollOffset)
+        // A split's current first-pane size lives in its shared view state, not
+        // in the declaration, so a divider size change must invalidate a cached
+        // region even though the node tree itself was not rebuilt.
+        appendInt(builder, byteCount, cacheable, if (let Some(state) <- node.splitState) {
+            state.firstSize()
+        } else {
+            0
+        })
         appendInt(builder, byteCount, cacheable, node.layoutHeightOverride())
         appendInt(builder, byteCount, cacheable, node.virtualContentHeight())
         appendInt(builder, byteCount, cacheable, node.virtualVerticalOrigin())
@@ -4087,16 +5333,18 @@ private class CjguiComposableUiLayoutMeasurementCacheEntry {
     let value: String
     let style: CjguiComposableUiStyle
     let maximumWidth: Int64
+    let queryKind: Int64
     let measurement: CjguiComposableUiTextMeasurement
-    init(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64,
+    init(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, queryKind: Int64,
         measurement: CjguiComposableUiTextMeasurement) {
         this.value = value
         this.style = style
         this.maximumWidth = maximumWidth
+        this.queryKind = queryKind
         this.measurement = measurement
     }
-    func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64): Bool {
-        return this.value == value && this.maximumWidth == maximumWidth && this.style.background.red == style
+    func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, queryKind: Int64): Bool {
+        return this.queryKind == queryKind && this.value == value && this.maximumWidth == maximumWidth && this.style.background.red == style
             .background
             .red && this.style.background.green == style.background.green && this.style.background.blue == style
             .background
@@ -4117,7 +5365,8 @@ private class CjguiComposableUiLayoutMeasurementCacheEntry {
     }
 }
 
-private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
+private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
+    CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
     // This bounded cache has one measurer identity because a wrapper belongs
     // to exactly one `layout` call. A later layout starts empty and asks the
     // supplied measurer again, so a changed font/session/generation cannot be
@@ -4150,7 +5399,7 @@ private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
             var index: Int64 = 0
             while (index < cache.size) {
                 let entry = cache[index]
-                if (entry.matches(value, style, maximumWidth)) {
+                if (entry.matches(value, style, maximumWidth, 0)) {
                     measurementReuseHitCount += 1
                     return entry.measurement
                 }
@@ -4166,9 +5415,40 @@ private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
             if (cache.size >= 1024) {
                 cache = ArrayList<CjguiComposableUiLayoutMeasurementCacheEntry>()
             }
-            cache.add(CjguiComposableUiLayoutMeasurementCacheEntry(value, style, maximumWidth, measurement))
+            cache.add(CjguiComposableUiLayoutMeasurementCacheEntry(value, style, maximumWidth, 0, measurement))
         }
         return measurement
+    }
+    public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle,
+        contentWidth: Int64): ?Int64 {
+        let capable = baseMeasurer as CjguiComposableUiMultilineNaturalHeightMeasurer
+        if (let Some(multiline) <- capable) {
+            measurementRequestCount += 1
+            if (reuseMeasurements) {
+                var index: Int64 = 0
+                while (index < cache.size) {
+                    let entry = cache[index]
+                    if (entry.matches(value, style, contentWidth, 1)) {
+                        measurementReuseHitCount += 1
+                        return Some(entry.measurement.height)
+                    }
+                    index += 1
+                }
+            }
+            measurerCallCount += 1
+            let height = multiline.multilineNaturalContentHeight(value, style, contentWidth)
+            if (let Some(result) <- height) {
+                if (reuseMeasurements) {
+                    if (cache.size >= 1024) {
+                        cache = ArrayList<CjguiComposableUiLayoutMeasurementCacheEntry>()
+                    }
+                    cache.add(CjguiComposableUiLayoutMeasurementCacheEntry(value, style, contentWidth, 1,
+                        CjguiComposableUiTextMeasurement(0, result, 1, 0)))
+                }
+            }
+            return height
+        }
+        return Some(measure(value, style, contentWidth).height)
     }
     func metrics(work: CjguiComposableUiLayoutWorkCounter, reuseCache!: ?CjguiComposableUiLayoutReuseCache = None): CjguiComposableUiLayoutMetrics {
         let reuseHits = if (let Some(cache) <- reuseCache) {
@@ -4310,7 +5590,8 @@ public class CjguiComposableUiLayoutEngine {
             }
         }
         let scene = CjguiComposableUiScene(version, viewport, nodes, valid: error.size == 0, layoutError: error)
-        return CjguiComposableUiLayoutResult(scene, layoutMeasurer.metrics(work, reuseCache: reuseCache))
+        return CjguiComposableUiLayoutResult(scene, layoutMeasurer.metrics(work, reuseCache: reuseCache),
+            viewports: work.stagedViewports, splitTracks: work.stagedSplitTracks)
     }
 
     private static func layoutNode(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect,
@@ -4351,7 +5632,8 @@ public class CjguiComposableUiLayoutEngine {
             if (childClipConstraints.size >= CJGUI_COMPOSABLE_UI_MAX_CLIP_CONSTRAINTS) {
                 work.clipConstraintCapacityExceeded = true
             } else {
-                childClipConstraints.add(CjguiComposableUiClipConstraint(inner, cornerRadius: radius))
+                childClipConstraints.add(CjguiComposableUiClipConstraint(inner, cornerRadius: radius,
+                    ownerIdentity: CjguiComposableUiLayoutNode.identityKeyFor(node)))
             }
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_LAYER_HOST) {
@@ -4368,6 +5650,15 @@ public class CjguiComposableUiLayoutEngine {
         }
         let children = node.children()
         if (children.size == 0) {
+            if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
+                // An empty scroll area is a real viewport with no content: zero
+                // content and zero offset, but its own geometry is preserved
+                // instead of leaving a stale extent from an earlier solve.
+                if (let Some(viewport) <- node.scrollViewport) {
+                    viewport.stageExtents(0, inner.height, 0)
+                    CjguiComposableUiLayoutEngine.recordStagedViewport(work, viewport)
+                }
+            }
             return
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
@@ -4382,10 +5673,36 @@ public class CjguiComposableUiLayoutEngine {
             } else {
                 0
             }
-            let offset = if (node.scrollOffset > maximumOffset) {
+            let offset = if (let Some(viewport) <- node.scrollViewport) {
+                // A viewport-bound scroll area takes its offset from the PUBLIC
+                // viewport: that ONE view state is shared by the author, the
+                // wheel, the keyboard reveal and the accepted scene. The
+                // declaration's `scrollOffset` only seeds a brand-new viewport, so
+                // a window that clones its declared tree for a projection still
+                // MOVES the content instead of publishing an offset the layout
+                // never used.
+                let requested = viewport.offset()
+                if (requested > maximumOffset) {
+                    maximumOffset
+                } else if (requested < 0) {
+                    0
+                } else {
+                    requested
+                }
+            } else if (node.scrollOffset > maximumOffset) {
                 maximumOffset
+            } else if (node.scrollOffset < 0) {
+                0
             } else {
                 node.scrollOffset
+            }
+            if (let Some(viewport) <- node.scrollViewport) {
+                // CANDIDATE facts: they become accepted only when the window
+                // accepts the scene that contains this viewport, so a wheel
+                // request can never be read as accepted while the layer is still
+                // a candidate.
+                viewport.stageExtents(natural, inner.height, offset)
+                CjguiComposableUiLayoutEngine.recordStagedViewport(work, viewport)
             }
             let contentBounds = CjguiComposableUiRect(inner.x, inner.y - offset, inner.width, natural)
             // The virtual content was just materialized from mutable source
@@ -4393,6 +5710,11 @@ public class CjguiComposableUiLayoutEngine {
             // than entering the stable-region cache.
             layoutNode(content, contentBounds, childClipConstraints, output, measurer, inputScope, work,
                 reuseCache: reuseCache, reuseDepth: reuseDepth + 1, identityRegistry: identityRegistry)
+            return
+        }
+        if (node.isTabsContainer()) {
+            layoutTabs(node, children, inner, childClipConstraints, output, measurer, inputScope, work, reuseCache,
+                reuseDepth, identityRegistry)
             return
         }
         if (node.isSplitView()) {
@@ -4576,6 +5898,23 @@ public class CjguiComposableUiLayoutEngine {
     /// Build only the current virtual range after actual scroll bounds are
     /// known. The logical content height remains the full collection, while
     /// the resolved scene contains solely visible rows and a bounded buffer.
+    /// Records one staged viewport per solve, so the window promotes or discards
+    /// exactly the viewports this candidate touched.
+    private static func recordStagedViewport(work: CjguiComposableUiLayoutWorkCounter,
+        viewport: CjguiComposableUiScrollViewport): Unit {
+        // One entry per scroll-area node in this solve. Promoting or discarding a
+        // viewport twice is a no-op, so no identity comparison is needed.
+        work.stagedViewports.add(viewport)
+    }
+
+    /// Records one candidate track fact per split instance in this solve. The
+    /// window promotes exactly these facts with the scene it accepts, so a trial
+    /// layout of a rejected candidate can never widen the bounds of a real drag.
+    private static func recordStagedSplitTrack(work: CjguiComposableUiLayoutWorkCounter,
+        state: CjguiComposableUiSplitState, track: Int64, handleSize: Int64, firstSize: Int64): Unit {
+        work.stagedSplitTracks.add(CjguiComposableUiSplitTrackFact(state, track, handleSize, firstSize))
+    }
+
     private static func materializeVirtualList(node: CjguiComposableUiNode, inner: CjguiComposableUiRect,
         measurer: CjguiComposableUiTextMeasurer, work: CjguiComposableUiLayoutWorkCounter,
         identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
@@ -4829,35 +6168,85 @@ public class CjguiComposableUiLayoutEngine {
         work: CjguiComposableUiLayoutWorkCounter, reuseCache: ?CjguiComposableUiLayoutReuseCache, reuseDepth: Int64,
         identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
         work.verticalContainerSolveCount += 1
+        let widths = ArrayList<Int64>()
+        for (child in children) {
+            // Natural height must wrap at the width this child actually gets.
+            widths.add(crossAxisLength(child, inner.width, inner.width, true, measurer))
+        }
         let heights = ArrayList<Int64>()
-        var total: Int64 = if (children.size > 1) {
+        var fixedTotal: Int64 = if (children.size > 1) {
             gap * (children.size - 1)
         } else {
             0
         }
-        var grow: Int64 = 0
-        for (child in children) {
-            let height = preferredHeight(child, inner.width, measurer);
-            heights.add(height);
-            total += height
-            grow += child.style.growY
-        }
-        distributeGrowth(heights, children, if (inner.height > total) {
-            inner.height - total
-        } else {
-            0
-        }, grow, false)
-        shrinkToFit(heights, children, if (total > inner.height) {
-            total - inner.height
-        } else {
-            0
-        }, false)
-        var cursor = inner.y + owner.virtualVerticalOrigin()
+        var flexibleIndex: Int64 = -1
+        var definiteAllocation = children.size > 0
         var index: Int64 = 0
+        while (index < children.size) {
+            let child = children[index]
+            if (child.layoutHeightOverride() > 0) {
+                definiteAllocation = false
+                break
+            }
+            if (child.style.fixedHeight > 0) {
+                fixedTotal += child.style.fixedHeight
+            } else if (flexibleIndex < 0 && child.style.growY > 0 && child.style.minHeight >= 0 && (child
+                .style
+                .maxHeight <= 0 || child.style.maxHeight >= child.style.minHeight)) {
+                flexibleIndex = index
+            } else {
+                definiteAllocation = false
+                break
+            }
+            index += 1
+        }
+        if (definiteAllocation && flexibleIndex >= 0) {
+            index = 0
+            while (index < children.size) {
+                let child = children[index]
+                heights.add(if (index == flexibleIndex) {
+                    // With one growable child and only fixed-height siblings,
+                    // growth or shrink always resolves to this bounded space.
+                    // Its intrinsic text height cannot affect the result.
+                    constrainedLength(inner.height - fixedTotal, 0, child.style.minHeight, child.style.maxHeight, 0)
+                } else {
+                    child.style.fixedHeight
+                })
+                index += 1
+            }
+        } else {
+            var total: Int64 = if (children.size > 1) {
+                gap * (children.size - 1)
+            } else {
+                0
+            }
+            var grow: Int64 = 0
+            index = 0
+            while (index < children.size) {
+                let child = children[index]
+                let height = preferredHeight(child, widths[index], measurer)
+                heights.add(height)
+                total += height
+                grow += child.style.growY
+                index += 1
+            }
+            distributeGrowth(heights, children, if (inner.height > total) {
+                inner.height - total
+            } else {
+                0
+            }, grow, false)
+            shrinkToFit(heights, children, if (total > inner.height) {
+                total - inner.height
+            } else {
+                0
+            }, false)
+        }
+        var cursor = inner.y + owner.virtualVerticalOrigin()
+        index = 0
         while (index < children.size) {
             let child = children[index];
             let height = heights[index]
-            let width = crossAxisLength(child, inner.width, inner.width, true, measurer)
+            let width = widths[index]
             let x = alignedOrigin(inner.x, inner.width, width, child.style.alignX)
             layoutNodeOrReuse(child, CjguiComposableUiRect(x, cursor, width, height), clipConstraints, output, measurer,
                 inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
@@ -4914,7 +6303,15 @@ public class CjguiComposableUiLayoutEngine {
         } else {
             inner.width
         }
-        let firstSize = CjguiComposableUiSplitGeometry.firstSizeForTrack(owner.splitFirstSize(), track, handleSize,
+        // A split whose author bound shared view state takes its current size from
+        // that state, so a divider drag changes geometry without rebuilding the
+        // structure or inventing a business version.
+        let requestedFirst = if (let Some(state) <- owner.splitState) {
+            state.firstSize()
+        } else {
+            owner.splitFirstSize()
+        }
+        let firstSize = CjguiComposableUiSplitGeometry.firstSizeForTrack(requestedFirst, track, handleSize,
             owner.splitMinFirst(), owner.splitMinSecond())
         let available = if (track > handleSize) {
             track - handleSize
@@ -4927,6 +6324,12 @@ public class CjguiComposableUiLayoutEngine {
             0
         } else {
             firstSize
+        }
+        if (let Some(state) <- owner.splitState) {
+            // The staged fact carries the width this solve REALLY allocated, so the
+            // accepted geometry (drag origin, keyboard base) never has to be derived
+            // from a request that may never have been solved.
+            CjguiComposableUiLayoutEngine.recordStagedSplitTrack(work, state, track, handleSize, boundedFirst)
         }
         let secondSize = if (available > boundedFirst) {
             available - boundedFirst
@@ -4951,6 +6354,93 @@ public class CjguiComposableUiLayoutEngine {
         layoutNodeOrReuse(children[2],
             CjguiComposableUiRect(inner.x + boundedFirst + handleSize, inner.y, secondSize, inner.height),
             clipConstraints, output, measurer, inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
+    }
+
+    /// A tab container presents exactly ONE page: the title row on top and the
+    /// ACTIVE page below it. Every other page is emitted as a ZERO-SIZE layout
+    /// node that keeps its identity and its inactive marker, but its subtree is
+    /// not measured, hit-tested or drawn — hiding is not deletion, and a hidden
+    /// page never pays text measurement or paint cost.
+    private static func tabsTitleBandHeight(owner: CjguiComposableUiNode): Int64 {
+        return if (owner.tabsTitleHeight > 0) { owner.tabsTitleHeight } else { 1 }
+    }
+
+    private static func tabsPageGap(owner: CjguiComposableUiNode): Int64 {
+        return if (owner.style.gap > 0) { owner.style.gap } else { 0 }
+    }
+
+    private static func tabsPageIsActive(owner: CjguiComposableUiNode, page: CjguiComposableUiNode): Bool {
+        let activeKey = match (owner.tabsState) {
+            case Some(state) => state.activeKey()
+            case None => ""
+        }
+        return page.tabsPageActive || (activeKey.size > 0 && page.tabsPageKey == activeKey)
+    }
+
+    /// Intrinsic tabs height uses the same title, gap and active-page rules as
+    /// layoutTabs. A hidden page cannot enlarge its parent scroll extent.
+    private static func tabsNaturalHeight(owner: CjguiComposableUiNode, availableWidth: Int64,
+        measurer: CjguiComposableUiTextMeasurer): Int64 {
+        let children = owner.children()
+        if (children.size == 0) {
+            return owner.style.padding * 2
+        }
+        let innerWidth = maxValue(0, availableWidth - owner.style.padding * 2)
+        var bodyHeight: Int64 = 0
+        var hasActivePage = false
+        var index = 1
+        while (index < children.size) {
+            if (tabsPageIsActive(owner, children[index])) {
+                hasActivePage = true
+                bodyHeight = maxValue(bodyHeight, preferredHeight(children[index], innerWidth, measurer))
+            }
+            index += 1
+        }
+        let activeContribution = if (hasActivePage) { tabsPageGap(owner) + bodyHeight } else { 0 }
+        return owner.style.padding * 2 + tabsTitleBandHeight(owner) + activeContribution
+    }
+
+    private static func layoutTabs(owner: CjguiComposableUiNode, children: ArrayList<CjguiComposableUiNode>,
+        inner: CjguiComposableUiRect, clipConstraints: ArrayList<CjguiComposableUiClipConstraint>,
+        output: ArrayList<CjguiComposableUiLayoutNode>, measurer: CjguiComposableUiTextMeasurer, inputScope: String,
+        work: CjguiComposableUiLayoutWorkCounter, reuseCache: ?CjguiComposableUiLayoutReuseCache, reuseDepth: Int64,
+        identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
+        if (children.size == 0) {
+            return
+        }
+        let titleHeight = tabsTitleBandHeight(owner)
+        let boundedTitle = if (titleHeight > inner.height) {
+            inner.height
+        } else {
+            titleHeight
+        }
+        layoutNodeOrReuse(children[0], CjguiComposableUiRect(inner.x, inner.y, inner.width, boundedTitle),
+            clipConstraints, output, measurer, inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
+        // The container's declared gap separates the title row from the page
+        // body, so the property a declaration may carry is really consumed.
+        let gap = tabsPageGap(owner)
+        let bodyTop = inner.y + boundedTitle + gap
+        let bodyHeight = if (inner.height > boundedTitle + gap) {
+            inner.height - boundedTitle - gap
+        } else {
+            0
+        }
+        var index = 1
+        while (index < children.size) {
+            let page = children[index]
+            if (tabsPageIsActive(owner, page)) {
+                layoutNodeOrReuse(page, CjguiComposableUiRect(inner.x, bodyTop, inner.width, bodyHeight),
+                    clipConstraints, output, measurer, inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
+            } else {
+                // A hidden page keeps its identity in the scene with an EMPTY rect:
+                // the instance projection publishes it as inactive/invisible and
+                // no text is measured for it.
+                output.add(CjguiComposableUiLayoutNode(page, CjguiComposableUiRect(inner.x, bodyTop, 0, 0),
+                    CjguiComposableUiRect(inner.x, bodyTop, 0, 0), inputScopeId: inputScope))
+                work.hiddenTabPageCount += 1
+            }
+            index += 1
+        }
     }
 
     private static func distributeGrowth(values: ArrayList<Int64>, children: ArrayList<CjguiComposableUiNode>,
@@ -5079,7 +6569,13 @@ public class CjguiComposableUiLayoutEngine {
         let valueWidth = measurer.measure(node.value, node.style, 0).width
         let textWidth = maxValue(labelWidth, valueWidth)
         let intrinsic = if (node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT) {
-            maxValue(16, valueWidth + 4)
+            // The draw path insets the glyph rect by
+            // CJGUI_COMPOSABLE_UI_TEXT_HORIZONTAL_INSET on EACH side, so the
+            // natural width must carry both insets. With a bare `+4` a text node
+            // sized to its own text had ~10pt less drawable width than it needed
+            // and clipped the trailing glyphs (visible in the editor's status
+            // counters, where "行 21" lost its number).
+            maxValue(16, valueWidth + CJGUI_COMPOSABLE_UI_TEXT_HORIZONTAL_INSET * 2)
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_BUTTON) {
             maxValue(64, valueWidth + 20)
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
@@ -5111,7 +6607,20 @@ public class CjguiComposableUiLayoutEngine {
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
             120
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) {
-            maxValue(72, measurer.measure(node.value, node.style, textContentWidth(availableWidth)).height + 12)
+            let contentWidth = textContentWidth(availableWidth)
+            let multiline = measurer as CjguiComposableUiMultilineNaturalHeightMeasurer
+            let contentHeight = if (let Some(capable) <- multiline) {
+                if (let Some(height) <- capable.multilineNaturalContentHeight(node.value, node.style, contentWidth)) {
+                    height
+                } else {
+                    measurer.measure(node.value, node.style, contentWidth).height
+                }
+            } else {
+                measurer.measure(node.value, node.style, contentWidth).height
+            }
+            maxValue(72, contentHeight + 12)
+        } else if (node.isTabsContainer()) {
+            tabsNaturalHeight(node, availableWidth, measurer)
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL || node.nodeKind == CJGUI_COMPOSABLE_UI_HORIZONTAL) {
             naturalHeight(node, availableWidth, measurer)
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_IMAGE) {
@@ -5151,8 +6660,14 @@ public class CjguiComposableUiLayoutEngine {
         }
         var total = node.style.padding * 2;
         var index: Int64 = 0
+        let innerWidth = if (availableWidth > node.style.padding * 2) {
+            availableWidth - node.style.padding * 2
+        } else {
+            0
+        }
         while (index < children.size) {
-            total += preferredHeight(children[index], availableWidth, measurer)
+            let childWidth = crossAxisLength(children[index], innerWidth, innerWidth, true, measurer)
+            total += preferredHeight(children[index], childWidth, measurer)
             if (index + 1 < children.size) {
                 total += node.style.gap
             };
@@ -5310,6 +6825,12 @@ public class CjguiComposableUiLayoutEngine {
             var inner = outer + 1
             while (inner < nodes.size) {
                 if (nodes[outer].nodeId == nodes[inner].nodeId) {
+                    // Keep the contract string unchanged (tests assert on it) but name
+                    // the offending id for diagnosis.
+                    println("PHAROS_DUPLICATE_NODE_ID id=${nodes[outer].nodeId} " +
+                        "outer=${outer} inner=${inner} count=${nodes.size} " +
+                        "a=${nodes[outer].semanticId} b=${nodes[inner].semanticId} " +
+                        "ak=${nodes[outer].nodeKind} bk=${nodes[inner].nodeKind}")
                     return "duplicate_node_id"
                 }
                 inner += 1

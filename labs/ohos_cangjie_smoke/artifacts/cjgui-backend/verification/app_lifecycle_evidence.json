@@ -1,0 +1,44 @@
+[
+  {
+    "check": "关闭挂起期间传输仍服务（未强制断开）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "放行后关闭收敛（连接被拒）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "关闭命令未丢失（CLEAR 派发或已收敛）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "重启后新实例业务可用",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "10 次重建循环业务连续",
+    "actual": 10,
+    "expected": 10,
+    "pass": true
+  },
+  {
+    "check": "许可配对收敛（acquired - released == 1 活跃持有）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "重建循环后 INCREMENT 正常",
+    "actual": 1,
+    "expected": 1,
+    "pass": true
+  }
+]

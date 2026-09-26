@@ -1,0 +1,30 @@
+{
+  "model": "laya-rl-agent",
+  "answers": {
+    "next_step": {
+      "type": "choice",
+      "choice": "switch_to_canvas_now",
+      "probabilities": {
+        "ship_minimal_arkts_and_spike_canvas": 0.0202,
+        "switch_to_canvas_now": 0.9491,
+        "wait_for_xcomponent": 0.0102,
+        "insufficient": 0.0205
+      },
+      "confidence": 0.816,
+      "action": { "act_probability": 1.0 }
+    },
+    "canvas_status": {
+      "type": "choice",
+      "choice": "insufficient",
+      "probabilities": {
+        "candidate_not_equivalent": 0.1524,
+        "production_ready": 0.1109,
+        "irrelevant": 0.3397,
+        "insufficient": 0.397
+      },
+      "confidence": 0.0881,
+      "action": { "act_probability": 1.0 }
+    }
+  },
+  "usage": { "input_tokens": 546, "output_tokens": 0 }
+}

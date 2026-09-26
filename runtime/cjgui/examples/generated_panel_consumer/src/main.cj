@@ -21,12 +21,17 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
     // so adding a declared text field needs no new branch here.
     private let textInputFields: HashMap<Int64, String>
     private let generatedRegion: CjguiTaskGeneratedRegion
+    // ONE public viewport for this pane. It survives every build, so a real
+    // wheel step, a keyboard reveal and a theme change all read and write the
+    // same object instead of each author remembering an offset.
+    private let editorViewport: CjguiComposableUiScrollViewport
 
     init(domain: CjguiSharedOperationList) {
         this.domain = domain
         this.components = CjguiComposableUiComponentRegistry()
         this.textInputFields = HashMap<Int64, String>()
         this.generatedRegion = CjguiTaskGeneratedRegion(domain, TASK_RESOURCE_ID)
+        this.editorViewport = CjguiComposableUiScrollViewport()
     }
 
     public func generatedUiRegion(): CjguiTaskGeneratedRegion { return generatedRegion }
@@ -40,15 +45,28 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
         let snapshot = domain.snapshot()
         let task = taskFromSnapshot(snapshot)
         let root = cjguiComposableHorizontal(1, "collaboration-root", theme.page)
-        let editorPane = cjguiComposableVertical(2, "collaboration-editor", CjguiComposableUiStyle(
-            growX: 1, padding: 14, gap: 8, cornerRadius: 16, clipsContent: true,
-            background: CjguiComposableUiColor(0.12, 0.18, 0.30, 0.88),
-            border: CjguiComposableUiColor(0.25, 0.38, 0.60, 0.82)
-        ))
-        editorPane.add(cjguiComposableText(3, "collaboration-title", "协作任务板", theme.heading))
-        editorPane.add(cjguiComposableImage(4, "collaboration-beacon", "composable-beacon.png",
+        // The handwritten editors, the generated section and the composite card
+        // together are longer than one screen. They live in ONE public scroll
+        // container sharing ONE public viewport, so the framework can present the
+        // clipped bottom after a real wheel gesture and reveal an off-screen
+        // editor before focusing it.
+        let editorPane = cjguiComposableScrollArea(2, "collaboration-editor-scroll", editorViewport,
+            // A horizontal parent sizes the cross axis by alignment, so the pane
+            // states its stretch explicitly instead of relying on a natural
+            // height that a scroll container does not have.
+            CjguiComposableUiStyle(growX: 1, growY: 1, alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH,
+                cornerRadius: 16, clipsContent: true,
+                background: CjguiComposableUiColor(0.12, 0.18, 0.30, 0.88),
+                border: CjguiComposableUiColor(0.25, 0.38, 0.60, 0.82)))
+        let editorContent = cjguiComposableVertical(2002, "collaboration-editor-content",
+            CjguiComposableUiStyle(padding: 14, gap: 8))
+        editorContent.add(cjguiComposableText(3, "collaboration-title", "协作任务板", theme.heading))
+        // The handwritten beacon resolves from the application's ONE declaration,
+        // the same one the generated side and the registered card consume.
+        let beacon = generatedRegion.beaconResource()
+        editorContent.add(cjguiComposableImage(4, "collaboration-beacon", beacon.rasterPath,
             CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64, cornerRadius: 12, clipsContent: true),
-            imageResourceId: "collaboration-beacon", imageResourceVersion: 1))
+            imageResourceId: beacon.key, imageResourceVersion: beacon.version))
         // One handwritten input per declared TEXT field: the field id, label,
         // writer operation and constraint all come from the one definition list,
         // so a second declared field (here `notes`) appears without a pane
@@ -62,16 +80,23 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             if (editor.isLive()) {
                 let nodeId = editor.nodeId("input")
                 textInputFields.add(nodeId, field.fieldId)
-                editorPane.add(cjguiComposableTextInput(nodeId, editor.semanticId("input"), field.label,
-                    currentText(field.fieldId, task), TASK_RESOURCE_ID, theme.input, fieldId: field.fieldId,
+                // The handwritten editor consumes the SAME owner availability the
+                // generated editor and the composite card do: a field the owner
+                // currently refuses is shown disabled here too, with identity and
+                // value untouched. An unknown verdict does not disable anything.
+                let availability = generatedRegion.fieldAvailability(field.fieldId)
+                editorContent.add(cjguiComposableTextInput(nodeId, editor.semanticId("input"), field.label,
+                    currentText(field.fieldId, task), TASK_RESOURCE_ID, theme.input,
+                    enabled: if (availability.known) { availability.isAvailable } else { true },
+                    fieldId: field.fieldId,
                     operationActionName: field.writer, displayValueRole: "applied"))
             }
             textIndex += 1
         }
-        editorPane.add(cjguiComposableButton(7, "collaboration-submit", "提交当前任务", "HUMAN_SUBMIT", TASK_RESOURCE_ID,
+        editorContent.add(cjguiComposableButton(7, "collaboration-submit", "提交当前任务", "HUMAN_SUBMIT", TASK_RESOURCE_ID,
             theme.primaryAction, operationActionName: markedField.writer))
-        editorPane.add(cjguiComposableText(8, "collaboration-status", status, theme.body))
-        editorPane.add(generatedRegion.buildSection(theme))
+        editorContent.add(cjguiComposableText(8, "collaboration-status", status, theme.body))
+        editorContent.add(generatedRegion.buildSection(theme))
         let activityPane = cjguiComposableVertical(20, "collaboration-activity", CjguiComposableUiStyle(
             growX: 1, padding: 14, gap: 8, cornerRadius: 16, clipsContent: true,
             background: CjguiComposableUiColor(0.07, 0.12, 0.22, 0.82),
@@ -83,6 +108,7 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             theme.body, resourceId: TASK_RESOURCE_ID, fieldId: "title", displayValueRole: "applied"))
         activityPane.add(cjguiComposableText(23, "collaboration-external-help",
             "外部从公开 context 发现同一资源，再经 SET_TITLE 或 SET_MARKED 授权操作；旧版本会被拒绝。", theme.body))
+        editorPane.add(editorContent)
         root.add(editorPane)
         root.add(activityPane)
         return root
@@ -185,6 +211,10 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
         components.commitTransaction()
         generatedRegion.commitSceneRefresh()
     }
+    public func disposeSceneRefreshResources(): Unit {
+        generatedRegion.releaseImageIdentities()
+        eprintln("CJGUI_IMAGE_IDENTITY_DISPOSE leftover_holds=${generatedRegion.liveImageIdentityHoldCount()}")
+    }
     public func rollbackSceneRefresh(): Unit {
         components.rollbackTransaction()
         generatedRegion.rollbackSceneRefresh()
@@ -222,6 +252,13 @@ private func authorization(): CjguiSharedOperationExternalAuthorization {
         ArrayList<CjguiSharedOperationExternalActionScope>([
             CjguiSharedOperationExternalActionScope("GET_CONTEXT", ArrayList<Int64>(), true),
             CjguiSharedOperationExternalActionScope("GET_WINDOW_PROGRESS", ArrayList<Int64>(), true),
+            // The interaction projection is the second consumer's OWN focus
+            // answer: it publishes the accepted scene identity (control id,
+            // field/object, focus, selection) with the three distinct facts
+            // valid / unfocused / unknown. Real desktop input may only claim
+            // "this exact accepted instance received the keystrokes" through
+            // this read; the AX owner read-back is an explicitly degraded grade.
+            CjguiSharedOperationExternalActionScope("GET_WINDOW_INTERACTION", ArrayList<Int64>(), true),
             CjguiSharedOperationExternalActionScope("SET_TITLE", ArrayList<Int64>([TASK_RESOURCE_ID]), false),
             CjguiSharedOperationExternalActionScope("SET_MARKED", ArrayList<Int64>([TASK_RESOURCE_ID]), false),
             // The declared notes field is part of the same single definition the
@@ -254,6 +291,9 @@ main(args: Array<String>): Int64 {
         configuration: CjguiMacosApplicationWindowConfiguration("协作任务板", 840u32, 520u32)
     )
     let window = host.window()
+    // Address generated instances by declared key: the projection needs the
+    // window whose accepted scene carries them.
+    controller.generatedUiRegion().attachWindow(window)
     let connection = CjguiSharedOperationExternalConnection(domain, authorization(), window)
     if (!connection.enableWindowProgressReads(window) ||
         !connection.enableGeneratedUiProvider(controller.generatedUiRegion()) ||

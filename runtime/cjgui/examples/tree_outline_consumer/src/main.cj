@@ -195,9 +195,38 @@ public class CatalogController <: CjguiComposableUiController {
     // native focus on the row the tree model just focused.
     private var attachedWindow: ?CjguiComposableUiWindow = None
     private var revision: Int64 = 1
+    // The SAME shared definitions the generated panels use, consumed here by a
+    // UI-only consumer: one named style for the catalog surface + one declared
+    // image resource (logical key/version, never a path this file invents), and
+    // the window's own interaction projection. No server, descriptor or Agent is
+    // involved, and adding another field/condition needs no second definition.
+    private let styles: CjguiComposableUiNamedStyleCatalog = CjguiComposableUiNamedStyleCatalog()
+    // The SAME shared dark theme the two application consumers already resolve.
+    // The catalog's roles below carry PAINT ONLY, so a theme update moves every
+    // title/body/status/action together without moving geometry or re-measuring
+    // text, and this consumer never invents a second palette.
+    private let theme: CjguiComposableUiTheme = CjguiComposableUiTheme.beaconDark()
+    // The same public vertical viewport the other consumers use. This consumer
+    // has no descriptor, UDS or model: it only shares the one published
+    // container, and a keyboard focus that lands on a clipped control reveals it
+    // through the framework instead of an application-specific offset.
+    private let viewport = CjguiComposableUiScrollViewport()
+    /// The UI-only workspace state: "目录" keeps the actions and the derived
+    /// detail text, "条目" keeps the tree list. Which page is ACTIVE is window
+    /// view state, exactly like the two application consumers.
+    private let workspaceTabs: CjguiComposableUiTabsState = CjguiComposableUiTabsState("catalog")
+    private let imageDeclarations: CjguiGeneratedUiCapabilityCatalog =
+        CjguiGeneratedUiCapabilityCatalog()
+    private var catalogIcon: ?CjguiGeneratedUiImageResourceSpec = None
+    // This is a normal consumer parameter. The default catalog keeps its
+    // ordinary compact detail text; the opt-in fixture exercises the same
+    // public text node with a bounded, multi-thousand-character value.
+    private let largeTextFixtureValue: Bool
+    private let largeTextIdentityScope = CjguiComposableUiIdentityScope("catalog-large-text")
 
-    public init(source: CatalogSource) {
+    public init(source: CatalogSource, largeTextFixture!: Bool = false) {
         this.source = source
+        this.largeTextFixtureValue = largeTextFixture
         let treeProjection = CjguiComposableUiTreeProjection(source)
         // The source can prove content-only changes, so a rename patches the row
         // by key instead of re-walking the logical tree.
@@ -206,6 +235,143 @@ public class CatalogController <: CjguiComposableUiController {
         this.projection = treeProjection
         this.selection = CjguiComposableUiTreeSelection(treeProjection)
         this.listState = CjguiComposableUiVirtualListState()
+        // The shared theme turned into the roles this dark surface needs. Every
+        // colour comes from `beaconDark` (the theme the other consumers use), and
+        // every role states its normal / focused / disabled paint, so the title,
+        // body, status and action read on the dark catalog surface - default and
+        // large-text alike - instead of falling back to the near-black default
+        // text colour. Roles are PAINT ONLY: the node keeps its own font size
+        // and geometry.
+        let themeHeading = theme.heading
+        let themeBody = theme.body
+        let themeAction = theme.primaryAction
+        let rowInteraction = CjguiComposableUiInteractionStyle(
+            normal: CjguiComposableUiPaintStyle(textColor: Some(themeBody.textColor)),
+            hover: CjguiComposableUiPaintStyle(background: theme.inputInteraction.selected.background,
+                textColor: Some(themeHeading.textColor)),
+            pressed: CjguiComposableUiPaintStyle(background: themeAction.background,
+                textColor: Some(themeAction.textColor)),
+            focused: theme.inputInteraction.focused,
+            disabled: theme.inputInteraction.disabled,
+            selected: CjguiComposableUiPaintStyle(background: theme.inputInteraction.selected.background,
+                textColor: Some(themeHeading.textColor)),
+            checked: theme.inputInteraction.checked)
+        let titleInteraction = CjguiComposableUiInteractionStyle(
+            normal: CjguiComposableUiPaintStyle(textColor: Some(themeHeading.textColor)),
+            hover: CjguiComposableUiPaintStyle(textColor: Some(themeAction.textColor)),
+            pressed: CjguiComposableUiPaintStyle(textColor: Some(themeAction.textColor)),
+            focused: theme.inputInteraction.focused,
+            disabled: theme.inputInteraction.disabled,
+            selected: CjguiComposableUiPaintStyle(background: theme.inputInteraction.selected.background,
+                textColor: Some(themeHeading.textColor)))
+        let _ = this.styles.register(CjguiComposableUiNamedStyle("catalog_surface",
+            CjguiComposableUiStyle(padding: 10, gap: 6,
+                background: CjguiComposableUiColor(0.06, 0.10, 0.16, 1.0),
+                border: CjguiComposableUiColor(0.30, 0.50, 0.80, 1.0),
+                textColor: themeBody.textColor),
+            purpose: "目录面板表面"))
+        let _ = this.styles.register(CjguiComposableUiNamedStyle("catalog_title",
+            CjguiComposableUiStyle(textColor: themeHeading.textColor, fontWeight: themeHeading.fontWeight),
+            interaction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(textColor: Some(themeHeading.textColor)),
+                focused: theme.inputInteraction.focused,
+                disabled: theme.inputInteraction.disabled),
+            purpose: "目录标题"))
+        let _ = this.styles.register(CjguiComposableUiNamedStyle("catalog_body",
+            CjguiComposableUiStyle(textColor: themeBody.textColor),
+            interaction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(textColor: Some(themeBody.textColor)),
+                disabled: theme.inputInteraction.disabled),
+            purpose: "目录正文"))
+        let _ = this.styles.register(CjguiComposableUiNamedStyle("catalog_status",
+            CjguiComposableUiStyle(textColor: themeBody.textColor),
+            interaction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(textColor: Some(themeBody.textColor)),
+                disabled: theme.inputInteraction.disabled),
+            purpose: "目录状态文字"))
+        let _ = this.styles.register(CjguiComposableUiNamedStyle("catalog_action",
+            CjguiComposableUiStyle(background: themeAction.background, border: themeAction.border,
+                textColor: themeAction.textColor, borderWidth: themeAction.borderWidth),
+            interaction: theme.primaryActionInteraction, purpose: "目录操作按钮"))
+        let _ = this.styles.register(CjguiComposableUiNamedStyle("catalog_row",
+            CjguiComposableUiStyle(textColor: themeBody.textColor),
+            interaction: rowInteraction, purpose: "目录行控件"))
+        let _ = this.styles.register(CjguiComposableUiNamedStyle("catalog_tab_title",
+            CjguiComposableUiStyle(textColor: themeHeading.textColor, fontWeight: themeHeading.fontWeight),
+            interaction: titleInteraction, purpose: "目录页签标题"))
+        let _ = this.imageDeclarations.registerImageResource(
+            CjguiGeneratedUiImageResourceSpec("catalog_icon", "PNG", 1, "目录图标",
+                "composable-beacon.png"))
+        this.catalogIcon = this.imageDeclarations.imageResourceFor("catalog_icon", 1)
+    }
+
+    /// The consumer's ONE shared style definition, exposed so a test and the
+    /// export chain can prove it is really consumed rather than merely declared.
+    public func namedStyles(): CjguiComposableUiNamedStyleCatalog {
+        return styles
+    }
+
+    /// The framework's one-shot role consumption: interaction paint comes from
+    /// the named style definition, never re-assembled here.
+    private func roleInteraction(name: String): CjguiComposableUiInteractionStyle {
+        return match (styles.forName(name)) {
+            case Some(value) => value.interaction
+            case None => CjguiComposableUiInteractionStyle()
+        }
+    }
+
+    /// The framework's one-shot role consumption with this node's own geometry:
+    /// `localStyle` keeps paint single-sourced in the named definition and the
+    /// consumer only translates its local geometry into the optional overrides.
+    private func roleStyle(name: String, fontSize!: Float64 = 0.0, fontWeight!: Int64 = -1,
+        fixedHeight!: Int64 = 0, minHeight!: Int64 = 0, maxHeight!: Int64 = 0,
+        growX!: Int64 = 0, growY!: Int64 = 0): CjguiComposableUiStyle {
+        return match (styles.forName(name)) {
+            case Some(value) => value.localStyle(
+                fontSize: if (fontSize > 0.0) { Some(fontSize) } else { None<Float64> },
+                fontWeight: if (fontWeight >= 0) { Some(fontWeight) } else { None<Int64> },
+                fixedHeight: if (fixedHeight > 0) { Some(fixedHeight) } else { None<Int64> },
+                minHeight: if (minHeight > 0) { Some(minHeight) } else { None<Int64> },
+                maxHeight: if (maxHeight > 0) { Some(maxHeight) } else { None<Int64> },
+                growX: if (growX > 0) { Some(growX) } else { None<Int64> },
+                growY: if (growY > 0) { Some(growY) } else { None<Int64> })
+            case None => CjguiComposableUiStyle()
+        }
+    }
+
+    /// The UI-only workspace's shared tab view state. Switching a page is a WINDOW
+    /// view fact, so it is exposed instead of being mirrored into the catalogue.
+    public func workspaceState(): CjguiComposableUiTabsState {
+        return workspaceTabs
+    }
+
+    /// Presents the selected workspace page on the next refresh. Returns false when
+    /// the selection did not move.
+    public func requestWorkspacePage(pageKey: String): Bool {
+        if (!workspaceTabs.select(pageKey)) {
+            return false
+        }
+        revision += 1
+        return true
+    }
+
+    /// The declared image resource this consumer consumes (logical key/version,
+    /// never a path invented at the call site).
+    public func imageDeclaration(): ?CjguiGeneratedUiImageResourceSpec {
+        return catalogIcon
+    }
+
+    /// The window's CURRENT interaction context read through the shared
+    /// projection: the three focus facts stay distinct (`valid` / `unfocused` /
+    /// `unknown`) and the revision travels with them. This is a READ — it writes
+    /// nothing and authorizes nothing.
+    public func interactionContext(): String {
+        return match (attachedWindow) {
+            case Some(window) =>
+                let progress = window.windowProgress()
+                "${progress.focusState}|${progress.focusedControlId}|${progress.interactionVersion}"
+            case None => "unknown|none|0"
+        }
     }
 
     /// Owner-side rename through the consumer, followed by a scene revision so
@@ -228,24 +394,83 @@ public class CatalogController <: CjguiComposableUiController {
 
     public func buildUi(): CjguiComposableUiNode {
         let _ = syncWithData()
-        let section = cjguiComposableVertical(20, "catalog-tree-section",
-            CjguiComposableUiStyle(padding: 10, gap: 6,
-                background: CjguiComposableUiColor(0.06, 0.10, 0.16, 1.0),
-                border: CjguiComposableUiColor(0.30, 0.50, 0.80, 1.0)))
+        // The surface paint/geometry comes from the SHARED named style: retuning
+        // or renaming it in the catalogue moves this consumer too, with no local
+        // copy of the colors.
+        let surface = match (styles.forName("catalog_surface")) {
+            case Some(value) => value.base
+            case None => CjguiComposableUiStyle()
+        }
+        let scroll = cjguiComposableScrollArea(20, "catalog-scroll", viewport,
+            CjguiComposableUiStyle(growX: 1, growY: 1, alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH))
+        let section = cjguiComposableVertical(2000, "catalog-tree-section", surface)
         section.add(cjguiComposableText(21, "catalog-tree-title", "知识目录（树形多选）",
-            CjguiComposableUiStyle(fontSize: 15.0)))
+            roleStyle("catalog_title", fontSize: 15.0),
+            interactionStyle: roleInteraction("catalog_title")))
+        // The icon is mounted from the application's SHARED declaration: the
+        // layout names the logical key/version, and replacing the raster is a new
+        // version of that key instead of a path edited here.
+        if (let Some(icon) <- catalogIcon) {
+            section.add(cjguiComposableImage(29, "catalog-tree-icon", icon.rasterPath,
+                CjguiComposableUiStyle(fixedWidth: 24, fixedHeight: 24, cornerRadius: 6,
+                    clipsContent: true),
+                imageResourceId: icon.key, imageResourceVersion: icon.version))
+        }
 
+        // The action row uses the shared action ROLE, so its normal, hover,
+        // pressed, focused and disabled paint come from the same theme entry as
+        // the other consumers' primary action; only the height is local.
+        let actionInteraction = roleInteraction("catalog_action")
         let actions = cjguiComposableHorizontal(22, "catalog-tree-actions",
             CjguiComposableUiStyle(gap: 6))
         actions.add(cjguiComposableButton(23, "catalog-expand-all", "展开全部", "CATALOG_EXPAND_ALL", 1,
-            CjguiComposableUiStyle(fixedHeight: 28)))
+            roleStyle("catalog_action", fixedHeight: 28), interactionStyle: actionInteraction))
         actions.add(cjguiComposableButton(24, "catalog-collapse-all", "收起全部", "CATALOG_COLLAPSE_ALL", 2,
-            CjguiComposableUiStyle(fixedHeight: 28)))
+            roleStyle("catalog_action", fixedHeight: 28), interactionStyle: actionInteraction))
         actions.add(cjguiComposableButton(25, "catalog-select-all", "全选条目", "CATALOG_SELECT_ALL", 3,
-            CjguiComposableUiStyle(fixedHeight: 28)))
+            roleStyle("catalog_action", fixedHeight: 28), interactionStyle: actionInteraction))
         actions.add(cjguiComposableButton(26, "catalog-clear", "清空多选", "CATALOG_CLEAR", 4,
-            CjguiComposableUiStyle(fixedHeight: 28)))
-        section.add(actions)
+            roleStyle("catalog_action", fixedHeight: 28), interactionStyle: actionInteraction))
+        // The public tab container turns this UI-only consumer into a workspace
+        // too: "目录" keeps the shared-definition actions and the derived detail
+        // text, "条目" keeps the tree list. All of it is the SAME framework
+        // component the two application consumers use.
+        let catalogPage = cjguiComposableVertical(70, "catalog-workspace-page", CjguiComposableUiStyle(gap: 6))
+        let rowsPage = cjguiComposableVertical(71, "catalog-rows-page", CjguiComposableUiStyle(gap: 6))
+        catalogPage.add(actions)
+
+        // A bounded detail panel derived from the SAME projection. It is long
+        // enough that the tree list below it falls outside a normal window: the
+        // consumer keeps NO scroll arithmetic, so reaching the list is exactly
+        // the shared viewport plus the framework's focus reveal.
+        var details = if (largeTextFixtureValue) {
+            "大文字正常数据夹具（同一树投影）"
+        } else {
+            "可见条目（同一投影）"
+        }
+        var detailIndex = 0
+        let detailLimit = if (largeTextFixtureValue) { 96 } else { 18 }
+        while (detailIndex < detailLimit) {
+            let row = projection.rowAt(detailIndex % projection.rowCount())
+            if (largeTextFixtureValue) {
+                details = "${details}\n[正文 ${detailIndex}] ${row.key} · ${row.label}：这是应用正常数据中的一段较长文字，用于验证公开文本节点的身份、内容与几何尺寸在窗口中保持一致。"
+            } else {
+                details = "${details}\n${row.key} · ${row.label}"
+            }
+            detailIndex += 1
+        }
+        let detailSemanticId = if (largeTextFixtureValue) { "catalog-large-details" } else { "catalog-details" }
+        // BOTH configurations resolve the SAME body role, so the default and the
+        // large-text fixture can only differ in font size - never in readability.
+        let detailStyle = roleStyle("catalog_body",
+            fontSize: if (largeTextFixtureValue) { 18.0 } else { 11.0 })
+        let detailIdentity: ?CjguiComposableUiIdentity = if (largeTextFixtureValue) {
+            Some(largeTextIdentityScope.local("details"))
+        } else {
+            None
+        }
+        catalogPage.add(cjguiComposableText(64, detailSemanticId, details, detailStyle,
+            interactionStyle: roleInteraction("catalog_body"), identity: detailIdentity))
 
         // Only viewport + overscan rows materialize: the expanded projection
         // is exposed through the existing fixed-row virtual list engine, and
@@ -253,16 +478,30 @@ public class CatalogController <: CjguiComposableUiController {
         // Row declarations carry a scoped identity derived from that key, so
         // the window's identity registry allocates their node ids instead of a
         // hand-reserved numeric block per consumer.
-        section.add(cjguiComposableVirtualList(CJGUI_CATALOG_LIST_NODE_ID, "catalog-tree-list", 28,
+        rowsPage.add(cjguiComposableVirtualList(CJGUI_CATALOG_LIST_NODE_ID, "catalog-tree-list", 28,
             catalogListSource(), listState, 30, 4, 6,
             CjguiComposableUiStyle(minHeight: 220, maxHeight: 320, background:
                 CjguiComposableUiColor(0.04, 0.07, 0.11, 1.0))))
 
         let status = cjguiComposableText(63, "catalog-status",
-            "多选 ${selection.selectedCount()} 条 · 可见 ${projection.rowCount()} 行",
-            CjguiComposableUiStyle(fontSize: 11.0))
-        section.add(status)
-        return section
+            "多选 ${selection.selectedCount()} 条 · 可见 ${projection.rowCount()} 行 · 焦点 ${interactionContext()}",
+            roleStyle("catalog_status", fontSize: 11.0),
+            interactionStyle: roleInteraction("catalog_status"))
+        catalogPage.add(status)
+        let workspaceScope = CjguiComposableUiIdentityScope("catalog-workspace")
+        let workspacePages = ArrayList<CjguiComposableUiTabPage>()
+        workspacePages.add(CjguiComposableUiTabPage("catalog", "目录", catalogPage))
+        workspacePages.add(CjguiComposableUiTabPage("rows", "条目", rowsPage))
+        // The tabs container gets the page-title ROLE from the same catalogue:
+        // the shared component keeps its geometry and takes the light title paint
+        // plus its focused/disabled states, so "目录"/"条目" are readable on the
+        // dark catalog surface without a second focus owner.
+        section.add(cjguiComposableTabs(workspaceScope, "catalog-workspace", workspacePages, workspaceTabs,
+            CjguiComposableUiStyle(growX: 1), titleHeight: 24,
+            titleStyle: roleStyle("catalog_tab_title"),
+            titleInteraction: roleInteraction("catalog_tab_title")))
+        scroll.add(section)
+        return scroll
     }
 
     /// Builds (and remembers) the tree list source. Row declarations carry a
@@ -271,6 +510,11 @@ public class CatalogController <: CjguiComposableUiController {
     /// numeric block per consumer, two rows can never collide, and the same key
     /// keeps its identity across reorder, re-parenting and re-materialization.
     private func catalogListSource(): CjguiComposableUiTreeListSource {
+        // Row paint comes from the shared row ROLE (light text on the dark list
+        // surface, with the focused/selected/disabled states the list already
+        // projects), so a row is readable on the same terms as the rest of the
+        // catalog instead of using the near-black default.
+        let rowInteraction = roleInteraction("catalog_row")
         let listSource = CjguiComposableUiTreeListSource(projection, selection,
             { row, isSelected, isFocused =>
                 let rowScope = CJGUI_CATALOG_ROW_IDENTITY_SCOPE.child(row.key)
@@ -283,17 +527,22 @@ public class CatalogController <: CjguiComposableUiController {
                 let line = cjguiComposableHorizontal(0, "catalog-vrow-${row.key}",
                     CjguiComposableUiStyle(gap: 4), identity: Some(rowScope.local("line")))
                 line.add(cjguiComposableText(0, "catalog-vindent-${row.key}", indentText,
-                    CjguiComposableUiStyle(fontSize: 11.0), identity: Some(rowScope.local("indent"))))
+                    roleStyle("catalog_row", fontSize: 11.0), interactionStyle: rowInteraction,
+                    identity: Some(rowScope.local("indent"))))
                 if (row.isGroup) {
                     let marker = if (row.expanded) { "▾" } else { "▸" }
                     line.add(cjguiComposableButton(0, "catalog-vgroup-${row.key}",
                         "${marker} ${row.label}", "CATALOG_GROUP_TOGGLE", row.resourceId,
-                        CjguiComposableUiStyle(fixedHeight: 26), identity: Some(rowScope.local("group"))))
+                        roleStyle("catalog_row", fixedHeight: 26), interactionStyle: rowInteraction,
+                        identity: Some(rowScope.local("group"))))
                 } else {
                     let mark = if (isSelected) { "◉" } else { "○" }
                     line.add(cjguiComposableButton(0, "catalog-vleaf-${row.key}",
                         "${mark} ${row.label}", "CATALOG_LEAF_TOGGLE", row.resourceId,
-                        CjguiComposableUiStyle(fixedHeight: 26), identity: Some(rowScope.local("leaf"))))
+                        roleStyle("catalog_row", fixedHeight: 26), interactionStyle: rowInteraction,
+                        ownerInteractionState: if (isSelected) { CjguiComposableUiInteractionState.SELECTED }
+                            else { CjguiComposableUiInteractionState.NONE },
+                        identity: Some(rowScope.local("leaf"))))
                 }
                 line
             })
@@ -337,6 +586,11 @@ public class CatalogController <: CjguiComposableUiController {
             }
             revision += 1
             return CjguiComposableUiDispatchResult(true)
+        }
+        // Focus (31) carries the same actionable row identity as activation.
+        // Only an actual press (27) may mutate expansion or selection.
+        if (event.eventKind != 27) {
+            return CjguiComposableUiDispatchResult(false)
         }
         if (event.node.actionName == "CATALOG_GROUP_TOGGLE") {
             let key = keyForResource(event.node.resourceId)
@@ -459,18 +713,69 @@ public class CatalogController <: CjguiComposableUiController {
     }
 }
 
+private func largeTextFixtureEnabled(): Bool {
+    if (let Some(value) <- getVariable("CJGUI_TREE_OUTLINE_TEXT_FIXTURE")) {
+        return value == "large" || value == "large-text" || value == "1"
+    }
+    return false
+}
+
+private func acceptedNode(window: CjguiComposableUiWindow, semanticId: String): CjguiComposableUiLayoutNode {
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == semanticId) {
+            return node
+        }
+    }
+    return CjguiComposableUiLayoutNode.missing()
+}
+
 main(): Int64 {
     let domains = ArrayList<String>(["绘制", "布局", "输入"])
     let source = CatalogSource(domains, 3, 3)
-    let controller = CatalogController(source)
+    let largeTextFixture = largeTextFixtureEnabled()
+    let controller = CatalogController(source, largeTextFixture: largeTextFixture)
     let host = CjguiMacosApplicationHost(
         controller,
         configuration: CjguiMacosApplicationWindowConfiguration("CJGUI 知识目录", 640u32, 520u32)
     )
     controller.attachWindow(host.window())
     if (!host.start()) { return 2 }
-    println("TREE_OUTLINE_CONSUMER_READY rows=${controller.visibleRowCount()}")
+    // The READY line publishes the SHARED facts this UI-only consumer actually
+    // consumed: its named style, its declared image resource (logical key/version)
+    // and the window's own interaction context. Nothing here needs a server, a
+    // descriptor or an Agent.
+    let iconToken = match (controller.imageDeclaration()) {
+        case Some(value) => "${value.key}@${value.version}"
+        case None => "none"
+    }
+    let styleToken = match (controller.namedStyles().forName("catalog_surface")) {
+        case Some(value) => value.name
+        case None => "none"
+    }
+    println("TREE_OUTLINE_CONSUMER_READY rows=${controller.visibleRowCount()} " +
+        "style=${styleToken} image=${iconToken} fixture=${if (largeTextFixture) { "large-text" } else { "default" }} " +
+        "focus=${controller.interactionContext()}")
     getStdOut().flush()
+    if (largeTextFixture) {
+        let before = acceptedNode(host.window(), "catalog-large-details")
+        let beforeIdentity = before.identityKey
+        let beforeValueSize = before.value.size
+        let beforeHeight = before.bounds.height
+        let renamed = controller.renameEntry("domain-0", "验收重命名")
+        let refreshed = host.window().refresh()
+        let after = acceptedNode(host.window(), "catalog-large-details")
+        println("TREE_OUTLINE_CONSUMER_LARGE_TEXT node_id=${before.nodeId} identity=${beforeIdentity} " +
+            "value_size=${beforeValueSize} width=${before.bounds.width} height=${beforeHeight} " +
+            "rename=${renamed} refreshed=${refreshed} identity_same=${after.identityKey == beforeIdentity} " +
+            "value_changed=${after.value != before.value} after_size=${after.value.size}")
+        getStdOut().flush()
+        if (let Some(value) <- getVariable("CJGUI_TREE_OUTLINE_ACCEPTANCE_ONESHOT")) {
+            if (value == "1") {
+                host.close()
+                return 0
+            }
+        }
+    }
     // Pump the public application loop until the window closes; this is the
     // same host the handwritten examples use, so the tree rows, expansion and
     // multi-selection all re-render through the ordinary scene path.

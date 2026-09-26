@@ -112,9 +112,13 @@ foreign {
         outUnknownRaster: CPointer<UInt64>, outStaticCandidateRaster: CPointer<UInt64>,
         outActiveContentRaster: CPointer<UInt64>, outSelectionCaretRaster: CPointer<UInt64>,
         outVisibleTileScrollRaster: CPointer<UInt64>, outRetryRaster: CPointer<UInt64>,
+        outProjectionGeometryRaster: CPointer<UInt64>,
+        outExternalProjectionContentRaster: CPointer<UInt64>,
         outUnknownUpload: CPointer<UInt64>, outStaticCandidateUpload: CPointer<UInt64>,
         outActiveContentUpload: CPointer<UInt64>, outSelectionCaretUpload: CPointer<UInt64>,
         outVisibleTileScrollUpload: CPointer<UInt64>, outRetryUpload: CPointer<UInt64>,
+        outProjectionGeometryUpload: CPointer<UInt64>,
+        outExternalProjectionContentUpload: CPointer<UInt64>,
         outLastProjectionVersion: CPointer<UInt64>, outLastContentUtf8Bytes: CPointer<UInt64>
     ): Int32
     func cjgui_internal_renderer_test_composable_encoder_stats(
@@ -1403,12 +1407,16 @@ private func textWorkReasonStatsAvailable(window: CjguiComposableUiWindow): Bool
     var selectionCaretRaster: UInt64 = 0u64
     var visibleTileScrollRaster: UInt64 = 0u64
     var retryRaster: UInt64 = 0u64
+    var projectionGeometryRaster: UInt64 = 0u64
+    var externalProjectionContentRaster: UInt64 = 0u64
     var unknownUpload: UInt64 = 0u64
     var staticCandidateUpload: UInt64 = 0u64
     var activeContentUpload: UInt64 = 0u64
     var selectionCaretUpload: UInt64 = 0u64
     var visibleTileScrollUpload: UInt64 = 0u64
     var retryUpload: UInt64 = 0u64
+    var projectionGeometryUpload: UInt64 = 0u64
+    var externalProjectionContentUpload: UInt64 = 0u64
     var lastProjectionVersion: UInt64 = 0u64
     var lastContentUtf8Bytes: UInt64 = 0u64
     let status = unsafe {
@@ -1416,8 +1424,10 @@ private func textWorkReasonStatsAvailable(window: CjguiComposableUiWindow): Bool
             window.testSessionToken(),
             inout unknownRaster, inout staticCandidateRaster, inout activeContentRaster,
             inout selectionCaretRaster, inout visibleTileScrollRaster, inout retryRaster,
+            inout projectionGeometryRaster, inout externalProjectionContentRaster,
             inout unknownUpload, inout staticCandidateUpload, inout activeContentUpload,
             inout selectionCaretUpload, inout visibleTileScrollUpload, inout retryUpload,
+            inout projectionGeometryUpload, inout externalProjectionContentUpload,
             inout lastProjectionVersion, inout lastContentUtf8Bytes
         )
     }
@@ -1432,12 +1442,16 @@ private func printTextWorkReasonSummary(window: CjguiComposableUiWindow, workloa
     var selectionCaretRaster: UInt64 = 0u64
     var visibleTileScrollRaster: UInt64 = 0u64
     var retryRaster: UInt64 = 0u64
+    var projectionGeometryRaster: UInt64 = 0u64
+    var externalProjectionContentRaster: UInt64 = 0u64
     var unknownUpload: UInt64 = 0u64
     var staticCandidateUpload: UInt64 = 0u64
     var activeContentUpload: UInt64 = 0u64
     var selectionCaretUpload: UInt64 = 0u64
     var visibleTileScrollUpload: UInt64 = 0u64
     var retryUpload: UInt64 = 0u64
+    var projectionGeometryUpload: UInt64 = 0u64
+    var externalProjectionContentUpload: UInt64 = 0u64
     var lastProjectionVersion: UInt64 = 0u64
     var lastContentUtf8Bytes: UInt64 = 0u64
     let status = unsafe {
@@ -1445,16 +1459,18 @@ private func printTextWorkReasonSummary(window: CjguiComposableUiWindow, workloa
             window.testSessionToken(),
             inout unknownRaster, inout staticCandidateRaster, inout activeContentRaster,
             inout selectionCaretRaster, inout visibleTileScrollRaster, inout retryRaster,
+            inout projectionGeometryRaster, inout externalProjectionContentRaster,
             inout unknownUpload, inout staticCandidateUpload, inout activeContentUpload,
             inout selectionCaretUpload, inout visibleTileScrollUpload, inout retryUpload,
+            inout projectionGeometryUpload, inout externalProjectionContentUpload,
             inout lastProjectionVersion, inout lastContentUtf8Bytes
         )
     }
     if (status != CJGUI_INTERNAL_RENDERER_OK) { return false }
     let aggregate = textWorkStats(window)
-    let reasonRaster = unknownRaster + staticCandidateRaster + activeContentRaster + selectionCaretRaster + visibleTileScrollRaster + retryRaster
-    let reasonUpload = unknownUpload + staticCandidateUpload + activeContentUpload + selectionCaretUpload + visibleTileScrollUpload + retryUpload
-    println("CJGUI_TEXT_WORK_REASON_SUMMARY workload=${workload} nodes=${nodes} owner_version=${ownerVersion} owner_content_utf8_bytes=${ownerContentUtf8Bytes} reason_last_projection_version=${lastProjectionVersion} reason_last_content_utf8_bytes=${lastContentUtf8Bytes} unknown_raster=${unknownRaster} static_candidate_raster=${staticCandidateRaster} active_content_raster=${activeContentRaster} selection_caret_raster=${selectionCaretRaster} visible_tile_scroll_raster=${visibleTileScrollRaster} retry_raster=${retryRaster} unknown_upload=${unknownUpload} static_candidate_upload=${staticCandidateUpload} active_content_upload=${activeContentUpload} selection_caret_upload=${selectionCaretUpload} visible_tile_scroll_upload=${visibleTileScrollUpload} retry_upload=${retryUpload}")
+    let reasonRaster = unknownRaster + staticCandidateRaster + activeContentRaster + selectionCaretRaster + visibleTileScrollRaster + retryRaster + projectionGeometryRaster + externalProjectionContentRaster
+    let reasonUpload = unknownUpload + staticCandidateUpload + activeContentUpload + selectionCaretUpload + visibleTileScrollUpload + retryUpload + projectionGeometryUpload + externalProjectionContentUpload
+    println("CJGUI_TEXT_WORK_REASON_SUMMARY workload=${workload} nodes=${nodes} owner_version=${ownerVersion} owner_content_utf8_bytes=${ownerContentUtf8Bytes} reason_last_projection_version=${lastProjectionVersion} reason_last_content_utf8_bytes=${lastContentUtf8Bytes} unknown_raster=${unknownRaster} static_candidate_raster=${staticCandidateRaster} active_content_raster=${activeContentRaster} selection_caret_raster=${selectionCaretRaster} visible_tile_scroll_raster=${visibleTileScrollRaster} retry_raster=${retryRaster} projection_geometry_raster=${projectionGeometryRaster} external_projection_content_raster=${externalProjectionContentRaster} unknown_upload=${unknownUpload} static_candidate_upload=${staticCandidateUpload} active_content_upload=${activeContentUpload} selection_caret_upload=${selectionCaretUpload} visible_tile_scroll_upload=${visibleTileScrollUpload} retry_upload=${retryUpload} projection_geometry_upload=${projectionGeometryUpload} external_projection_content_upload=${externalProjectionContentUpload}")
     return reasonRaster == aggregate.rasterCount && reasonUpload == aggregate.uploadCount &&
         unknownRaster == 0u64 && unknownUpload == 0u64
 }

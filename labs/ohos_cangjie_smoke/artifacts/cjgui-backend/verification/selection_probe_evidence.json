@@ -1,0 +1,26 @@
+[
+  {
+    "check": "selection 事件到达渲染器 (rc=0)",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "selection 范围非空（start<end）",
+    "actual": false,
+    "expected": true,
+    "pass": false
+  },
+  {
+    "check": "选区高亮像素可见",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "owner 读回为替换后文本（含 emoji）",
+    "actual": false,
+    "expected": true,
+    "pass": false
+  }
+]

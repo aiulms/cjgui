@@ -49,6 +49,7 @@ SOURCE_PAYLOAD_RELATIVE=(
   src/composable_ui_window.cj
   src/composable_ui_tree.cj
   src/composable_ui_generated.cj
+  src/composable_ui_named_style.cj
   src/composable_ui_composite_component.cj
   src/macos_application_host.cj
   src/runtime_renderer_session.cj

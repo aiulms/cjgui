@@ -704,22 +704,23 @@ static int verify_text_texture_uses_visible_tile(uint64_t session) {
                  "stage_visible_text_tile_without_full_node_oom")) return 0;
     uint64_t bytes = 0; float x = 0, y = 0, width = 0, height = 0;
     if (!require(cjgui_internal_renderer_test_composable_text_resource_stats(session, 1, &bytes, &x, &y, &width, &height) == CJGUI_INTERNAL_RENDERER_OK &&
-                 bytes > 0 && bytes <= 1024 * 1024 && x == 40.0f && y == 20.0f && width == 200.0f && height == 140.0f,
-                 "visible_text_tile_has_bounded_texture_and_scene_rect")) return 0;
+                 bytes > 0 && bytes <= 1024 * 1024 && x >= 40.0f && y >= 20.0f &&
+                 width > 0.0f && height > 0.0f && x + width <= 240.0f && y + height <= 160.0f &&
+                 (width < 200.0f || height < 140.0f),
+                 "visible_short_text_tile_is_compact_inside_clip")) return 0;
     uint8_t blue = 0, green = 0, red = 0, alpha = 0;
     return capture_composable_pixel(session, 70, 80, &blue, &green, &red, &alpha) &&
            require_bgra(blue, green, red, alpha, 255, 0, 255, 255, "visible_text_tile_preserves_glyph_position");
 }
 
-// A 1000x400pt editor is a normal full visible viewport, not an oversized
-// logical-document stress case.  At this machine's 2x backing scale it needs
-// 6.4 MiB, so the former 4 MiB single-tile admission incorrectly rejected
-// the entire scene before a first frame.
+// A 1000x400pt text node is a normal full visible viewport. Its short value
+// now needs only a compact glyph texture while the original scene geometry
+// and first-frame admission stay intact.
 static int verify_ordinary_large_visible_text_tile(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 1100, 500, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_ordinary_large_visible_text_window")) return 0;
     CjguiInternalRendererComposableNode root = {
         .nodeId = 914, .projectionVersion = 95,
@@ -741,10 +742,15 @@ static int verify_ordinary_large_visible_text_tile(void) {
                  cjgui_internal_renderer_present_composable_scene(session, &frame) == CJGUI_INTERNAL_RENDERER_OK,
                  "ordinary_large_visible_editor_is_admitted")) { (void)cjgui_internal_renderer_destroy(session); return 0; }
     uint64_t bytes = 0; float x = 0, y = 0, width = 0, height = 0;
+    uint64_t glyphPixels = 0;
     int passed = require(cjgui_internal_renderer_test_composable_text_resource_stats(session, 1, &bytes, &x, &y, &width, &height) == CJGUI_INTERNAL_RENDERER_OK &&
-                         bytes > 4u * 1024u * 1024u && bytes <= 8u * 1024u * 1024u &&
-                         x == 50.0f && y == 50.0f && width == 1000.0f && height == 400.0f,
-                         "ordinary_large_visible_editor_keeps_bounded_admitted_tile");
+                         bytes > 0 && bytes < 4u * 1024u * 1024u &&
+                         x >= 50.0f && y >= 50.0f && width > 0.0f && height > 0.0f &&
+                         x + width <= 1050.0f && y + height <= 450.0f &&
+                         (width < 1000.0f || height < 400.0f) &&
+                         cjgui_internal_renderer_test_composable_text_tile_alpha_pixels(session, 1, 0, &glyphPixels) == CJGUI_INTERNAL_RENDERER_OK &&
+                         glyphPixels > 0,
+                         "ordinary_large_visible_short_text_uses_compact_glyph_tile");
     if (cjgui_internal_renderer_request_close(session) != CJGUI_INTERNAL_RENDERER_OK ||
         cjgui_internal_renderer_destroy(session) != CJGUI_INTERNAL_RENDERER_OK) return 0;
     return passed;
@@ -758,7 +764,7 @@ static int verify_static_text_tile_invalidates_for_relative_node_offset(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_static_relative_tile_offset_window")) return 0;
     CjguiInternalRendererComposableNode root = {
         .nodeId = 916, .projectionVersion = 96,
@@ -806,7 +812,7 @@ static int verify_active_multiline_tile_invalidates_for_relative_node_offset(voi
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_active_relative_tile_offset_window")) return 0;
     CjguiInternalRendererComposableNode root = {
         .nodeId = 918, .projectionVersion = 98,
@@ -855,7 +861,7 @@ static int verify_active_multiline_clip_shape_reprojects_same_tile(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_active_multiline_clip_shape_window")) return 0;
     CjguiInternalRendererComposableNode root = {
         .nodeId = 920, .projectionVersion = 100,
@@ -909,7 +915,7 @@ static int verify_active_multiline_style_reprojects_same_tile(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_active_multiline_style_window")) return 0;
     CjguiInternalRendererComposableNode root = {
         .nodeId = 922, .projectionVersion = 102,
@@ -962,7 +968,7 @@ static int verify_readback_probe_selects_visible_opaque_nodes(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_readback_selection_window")) return 0;
 
     CjguiInternalRendererComposableNode root = {
@@ -1065,7 +1071,7 @@ static int verify_readback_probe_rejects_gpu_text_coverage(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 240, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_readback_text_coverage_window")) return 0;
 
     CjguiInternalRendererComposableNode root = {
@@ -1109,7 +1115,7 @@ static int verify_readback_probe_rejects_self_gpu_text_coverage(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 240, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_readback_self_text_coverage_window")) return 0;
 
     CjguiInternalRendererComposableNode text = {
@@ -1149,7 +1155,7 @@ static int verify_consecutive_shape_batch_respects_vertex_bytes_limit(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.04, 0.08, 0.12, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  "create_oversized_consecutive_shape_batch_window")) return 0;
 
     enum { CjguiOversizedShapeCount = 7 };
@@ -1232,7 +1238,7 @@ static int run_legal_shape_submission_cost_sample(uint8_t mode, const char *labe
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.04, 0.08, 0.12, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION,
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
                  label)) return 0;
     enum { CjguiComparedShapeCount = 7 };
     CjguiInternalRendererComposableNode root = {
@@ -1308,7 +1314,7 @@ int main(void) {
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiInternalRendererConfig config = { 420, 180, 0.08, 0.16, 0.20, 1.0 };
     uint64_t session = cjgui_internal_renderer_create(&config, &status);
-    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION, "create")) return 1;
+    if (!require(status == CJGUI_INTERNAL_RENDERER_OK && session != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN, "create")) return 1;
 
     CjguiInternalRendererComposableNode background = {
         .nodeId = 1, .projectionVersion = 77,

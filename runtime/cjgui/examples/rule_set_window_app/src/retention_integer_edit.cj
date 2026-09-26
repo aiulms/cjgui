@@ -91,19 +91,26 @@ public class CjguiRetentionIntegerEditComposite <: CjguiCompositeComponentFactor
     /// Registers the composite kind with the field/action references the window
     /// really exposes. The framework validates every reference.
     public static func registerInto(catalog: CjguiGeneratedUiCapabilityCatalog,
-                                    config: CjguiRetentionPresetConfig): Bool {
+                                    config: CjguiRetentionPresetConfig,
+                                    draftTextArgument: String): Bool {
         let properties = ArrayList<CjguiGeneratedUiPropertySpec>()
         properties.add(CjguiGeneratedUiPropertySpec("gap", "INTEGER", minimum: 0, maximum: 32))
         // The declared caption for the preset button. A generated description may
         // set it (the value is data, never code); empty keeps the configured
         // caption. It also lets one window present two unambiguous controls.
         properties.add(CjguiGeneratedUiPropertySpec("presetLabel", "STRING", maxLength: 40))
+        // The framework's shared style vocabulary: the factory below really
+        // applies these to the control it builds.
+        for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+            properties.add(property)
+        }
         let elements = ArrayList<CjguiCompositeElementSpec>()
         elements.add(CjguiCompositeElementSpec("root", CJGUI_COMPOSITE_ELEMENT_CONTAINER))
         elements.add(CjguiCompositeElementSpec("edit", CJGUI_COMPOSITE_ELEMENT_FIELD,
-            fieldId: "retentionCount", parentKey: "root"))
+            fieldId: "retentionCount", argumentName: draftTextArgument, parentKey: "root"))
         elements.add(CjguiCompositeElementSpec("preset", CJGUI_COMPOSITE_ELEMENT_PRESET,
-            fieldId: "retentionCount", presetValue: config.primary().value,
+            fieldId: "retentionCount", argumentName: draftTextArgument,
+            presetValue: config.primary().value,
             label: config.primary().label, parentKey: "root"))
         return catalog.registerComposite(
             CjguiCompositeComponentSpec(KIND, properties, elements,
@@ -117,19 +124,22 @@ public class CjguiRetentionIntegerEditComposite <: CjguiCompositeComponentFactor
                                    presetNodeId: Int64, label: String, value: String, fieldId: String,
                                    writerOperation: String, bindingResourceId: Int64,
                                    ownerTargetResourceId: Int64, presetLabel: String,
-                                   enabled!: Bool = true,
+                                   enabled!: Bool = true, rowGap!: Int64 = 6,
                                    style!: CjguiComposableUiStyle = CjguiComposableUiStyle()): CjguiComposableUiNode {
-        let group = cjguiComposableHorizontal(nodeId, semanticId, CjguiComposableUiStyle(gap: 6))
+        // The row gap is the CALLER's declared layout property (`gap`), applied to
+        // the same builder both regions call - a registered property must not be
+        // dropped on the floor here.
+        let group = cjguiComposableHorizontal(nodeId, semanticId, CjguiComposableUiStyle(gap: rowGap))
         group.add(cjguiComposableIntegerInput(editorNodeId, "${semanticId}-editor", label, value,
             bindingResourceId, style, enabled: enabled && ownerTargetResourceId >= 0, fieldId: fieldId,
             operationActionName: writerOperation, operationResourceId: ownerTargetResourceId,
             displayValueRole: "draft"))
-        // The preset button carries its resolved owner target, exactly like the
-        // input: a late activation therefore writes the record it was rendered
-        // for, never a later selection.
+        // The preset button carries its resolved owner target and writer, exactly
+        // like the input: a late activation therefore writes the record it was
+        // rendered for, never a later selection.
         group.add(cjguiComposableButton(presetNodeId, "${semanticId}-preset", presetLabel, PRESET_ACTION,
             bindingResourceId, style, enabled: enabled && ownerTargetResourceId >= 0,
-            operationResourceId: ownerTargetResourceId))
+            operationActionName: writerOperation, operationResourceId: ownerTargetResourceId))
         return group
     }
 
@@ -150,9 +160,20 @@ public class CjguiRetentionIntegerEditComposite <: CjguiCompositeComponentFactor
         }
         let declaredLabel = context.property("presetLabel")
         let presetLabel = if (declaredLabel.size > 0) { declaredLabel } else { preset.label }
+        let rowGap = context.propertyInteger("gap", fallback: 6)
+        // The declared style really reaches the built subtree: the framework
+        // resolved it once, and this factory applies it to the editor it builds,
+        // keeping the composite's own 26pt default height only when none was
+        // declared.
+        let declared = context.resolvedStyle
+        let editorStyle = CjguiComposableUiStyle(fixedWidth: declared.fixedWidth,
+            fixedHeight: if (declared.fixedHeight > 0) { declared.fixedHeight } else { 26 },
+            growX: declared.growX, growY: declared.growY, fontSize: declared.fontSize,
+            fontWeight: declared.fontWeight, minWidth: declared.minWidth, maxWidth: declared.maxWidth,
+            minHeight: declared.minHeight, maxHeight: declared.maxHeight, alignX: declared.alignX,
+            alignY: declared.alignY)
         return buildEditor(root.nodeId, root.semanticId, edit.nodeId, preset.nodeId, edit.label,
             edit.draftText, edit.fieldId, edit.writerOperation, edit.bindingResourceId,
-            edit.ownerTargetResourceId, presetLabel,
-            style: CjguiComposableUiStyle(fixedHeight: 26))
+            edit.ownerTargetResourceId, presetLabel, rowGap: rowGap, style: editorStyle)
     }
 }

@@ -1,0 +1,16 @@
+HAP: /tmp/cjgui_missing_dep.hap
+sha256: 08460cb223c6f4efaf53334562079a8d5aabd883f7292ce5c8cdc28232e5b46c
+HAP 内 libs/arm64-v8a 库数: 32
+
+== 应用自身产物 ==
+  OK   libentry.so
+  OK   libcjgui_app.so
+  OK   libcjgui.so
+  OK   libcjgui_shared_operation_core.so
+  OK   libcjgui_settings_counter_application.so
+  MISS libcjgui_ohos_transport.so
+
+== 闭包校验（每个 HAP 内 .so 的每条 NEEDED 必须自包含或属系统白名单）==
+  UNSAT libcjgui_app.so -> libcjgui_ohos_transport.so (既不在 HAP 也未列入系统白名单)
+
+RESULT: FAIL

@@ -1,0 +1,26 @@
+== B0 基线（owner pid=25826）
+   OK   基线版本 v=4
+
+== B1 超过连接上限的滴流（12 连接 vs maxConnections=8）
+   已建立 12 条，服务端主动关闭 6 条
+   OK   额度释放后正常请求仍可应用 (true/counter_changed)
+
+== B2 无换行 header（20 字节数字 > MAX_HEADER_BYTES=16）
+   服务端响应 0 字节：b''
+   OK   超长 header 连接被拒绝 (closed)
+
+== B3 暂停 owner 认领，两批各 8 票到期取消后恢复
+   闸门响应：ERROR invalid_request
+   第 1 批 8 票：服务端超时结算 0/8，客户端超时 0/8
+   FAIL 第 1 批在暂停期间全部未执行 (got '0' expect '8')
+   第 2 批 8 票：服务端超时结算 0/8，客户端超时 0/8
+   FAIL 第 2 批在暂停期间全部未执行 (got '0' expect '8')
+   恢复响应：ERROR invalid_request
+   FAIL 暂停期间无业务写入 (got '6' expect '5')
+   OK   恢复后正常请求重新应用 (true/counter_changed)
+
+== B4 半帧连接（只发长度头）→ 到期清理 → 正常请求不受影响
+   半帧连接状态：closed
+   OK   半帧连接不影响后续正常请求 (true/counter_changed)
+
+==== RESULT: FAIL (failures=3) ====

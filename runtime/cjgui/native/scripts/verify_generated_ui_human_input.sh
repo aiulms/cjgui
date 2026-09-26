@@ -99,6 +99,18 @@ wait_for_structure_version() { # wait_for_structure_version <expected> [seconds]
 focus_id() { pub window-interaction 2>/dev/null | awk '/^WINDOW_FOCUS /{print $2}'; }
 interaction_version() { pub window-interaction 2>/dev/null | awk '/^WINDOW_INTERACTION_VERSION /{print $2}'; }
 draft_hex() { pub generated-fields 2>/dev/null | awk '/^FIELD label /{for (i = 1; i <= NF; i++) if ($i == "DRAFT_HEX") print $(i + 1)}'; }
+# The accepted instance identity of one field, from the SAME accepted-instance
+# table the window's focus projection is derived from. A `component-` prefix
+# alone only says "some generated control", not "the instance bound to this
+# field", so the focus read must match this exact semanticId before typing.
+accepted_semantic_for() { # accepted_semantic_for <fieldId>
+  pub generated-instances 2>/dev/null | awk -v f="field=$1" '{
+    for (i = 1; i <= NF; i++) if ($i == f) {
+      for (j = 1; j <= NF; j++) if ($j ~ /^semantic=/) { sub("^semantic=", "", $j); print $j; exit }
+      exit
+    }
+  }'
+}
 draft_text() { python3 -c 'import sys; raw=sys.stdin.read().strip(); print("" if raw in ("", "-") else bytes.fromhex(raw).decode("utf-8","replace"))'; }
 # --- real desktop input driver ----------------------------------------------
 DRIVER_SOURCE="$RUNTIME_DIR/native/tests/desktop_input_driver.swift"
@@ -292,8 +304,13 @@ else
   FOCUS_AT="$(focus_id)"
   FOCUS_PATH="click"
 fi
+ACCEPTED_SEMANTIC="$(accepted_semantic_for label)"
+[[ -n "$ACCEPTED_SEMANTIC" && "$ACCEPTED_SEMANTIC" != "-" ]] \
+  || fail "no accepted instance declares field label"
+[[ "$FOCUS_AT" == "$ACCEPTED_SEMANTIC" ]] \
+  || fail "generated focus ($FOCUS_AT) is not the accepted instance ($ACCEPTED_SEMANTIC) of field label"
 [[ "$FOCUS_AT" == component-* ]] || fail "generated text field did not take focus (focus=$FOCUS_AT path=$FOCUS_PATH)"
-log "positive_focus_ok path=$FOCUS_PATH focus=$FOCUS_AT"
+log "positive_focus_ok path=$FOCUS_PATH focus=$FOCUS_AT accepted=$ACCEPTED_SEMANTIC exact_instance=true"
 "$DRIVER" type "Q" >/dev/null 2>&1
 sleep 2
 DRAFT_AFTER_FIRST="$(draft_hex)"

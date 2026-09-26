@@ -1,0 +1,25 @@
+{
+  "state": "Updated CJGUI HarmonyOS host evidence on SDK 26.0.0.105. A pure Cangjie UIAbility plus pure Cangjie ArkUI Canvas/CanvasRenderingContext2D page compiles and packages successfully; Canvas is documented since API 22 and supports common events, but this requires a new CJGUI Canvas renderer and has no runtime, text/input, frame pacing, or performance proof. Cangjie XComponent is inaccessible. Native ArkUI XComponent exists, but its public mounting path requires ArkTS-created NodeContent/UIContext through NAPI. A module that contains ArkTS rejects a Cangjie srcEntry. The current ArkTS UIAbility plus XComponent path has a real emulator screen and official Cangjie JSModule probe, but raw detached pthread startup should be replaced.",
+  "questions": {
+    "next_step": {
+      "type": "choice",
+      "instructions": "Choose the bounded next architecture step that best advances Cangjie-first ownership without claiming unproven equivalence.",
+      "criteria": {
+        "ship_minimal_arkts_and_spike_canvas": "Use minimal ArkTS UIAbility/XComponent for the current native-surface delivery, move all business and CJGUI ownership to Cangjie, and run a separate bounded pure-Cangjie Canvas backend spike with performance and input acceptance gates.",
+        "switch_to_canvas_now": "Replace the current native-surface route with pure Cangjie Canvas immediately based only on compile success.",
+        "wait_for_xcomponent": "Stop current delivery until a public Cangjie XComponent or mount-token API appears.",
+        "insufficient": "Evidence is insufficient to choose a next step."
+      }
+    },
+    "canvas_status": {
+      "type": "choice",
+      "instructions": "How should the pure Cangjie Canvas result be labeled now?",
+      "criteria": {
+        "candidate_not_equivalent": "Build-feasible candidate backend, not yet equivalent to the existing native XComponent/GPU path.",
+        "production_ready": "Production-ready replacement for XComponent.",
+        "irrelevant": "Not relevant to a self-drawn GUI framework.",
+        "insufficient": "Evidence is insufficient to label it."
+      }
+    }
+  }
+}

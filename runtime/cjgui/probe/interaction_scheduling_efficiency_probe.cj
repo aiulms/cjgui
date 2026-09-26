@@ -5,12 +5,26 @@ import std.collection.*
 import std.env.*
 import std.fs.*
 import std.overflow.*
+import std.sync.*
 import std.time.*
 
 private let DOCUMENT_A: Int64 = 7301
 private let DOCUMENT_B: Int64 = 7302
 private let SCALE_SAMPLE_COUNT: Int64 = 30
 private let MAX_EXTERNAL_WAIT_ROUNDS: Int64 = 80
+// Focused latency mode. One public request is in flight at a time and every
+// sample gets a distinct, legal, non-initial DOCUMENT_B preview value.
+private let LATENCY_SAMPLE_COUNT: Int64 = 20
+private let LATENCY_FIRST_VALUE: Int64 = 129
+// The external driver performs exactly one pre-measurement GET_CONTEXT (to
+// learn the owner context version) before sample 1. The ready-queue observer
+// counts every queued request, so sample i's INVOKE is the
+// (LATENCY_PRE_MEASUREMENT_READY_COUNT + i)-th queued request. Validity below
+// re-checks the exact total so a stray read cannot hide as a valid sample.
+private let LATENCY_PRE_MEASUREMENT_READY_COUNT: Int64 = 1
+private let LATENCY_ARMED_WAIT_MS: Int64 = 30000
+private let LATENCY_SAMPLE_WAIT_MS: Int64 = 10000
+private let LATENCY_SCENE_WAIT_MS: Int64 = 10000
 // The application turn's nominal event-wait budget is 16 ms, but owner work
 // already admitted before that wait can legitimately consume it. This probe
 // gives the fixed 64-event backlog plus real UDS admission a 64 ms wall-clock
@@ -23,6 +37,12 @@ foreign {
     ): Int32
     func cjgui_internal_renderer_test_enqueue_composable_event(
         session: UInt64, nodeIndex: UInt32, eventKind: UInt32, text: CString
+    ): Int32
+    /// Test-only: reports whether the CALLING thread is the macOS main thread and
+    /// whether main-thread dispatch is enabled in the native renderer. It exists
+    /// so a probe can localize a NOT_MAIN_THREAD rejection instead of guessing.
+    func cjgui_internal_renderer_test_is_main_thread(
+        outIsMainThread: CPointer<Int32>, outDispatchEnabled: CPointer<Int32>
     ): Int32
     func cjgui_internal_renderer_test_composable_interaction_stats(
         session: UInt64, outPendingInteractionCount: CPointer<UInt32>,
@@ -180,12 +200,124 @@ private class SchedulingBController <: CjguiComposableUiController {
     public func ownerVersion(): Int64 { return workspace.previewLimitVersionForDocument(DOCUMENT_B) }
 }
 
+/// Test-only ready-queue observer.
+///
+/// The transport worker calls this the moment a complete public request enters
+/// the owner ready queue. It retains only a bounded local order/time pair, so
+/// the focused latency probe can attribute the exact ready time of one
+/// measurement invoke. It never touches owner state, never copies a request
+/// payload, and adds no protocol surface.
+private class LatencyReadyObserver <: CjguiSharedOperationReadyRequestObserver {
+    private let lock: Mutex
+    private let queuedAt: ArrayList<MonoTime>
+    private var recordedCount: Int64
+
+    init() {
+        this.lock = Mutex()
+        this.queuedAt = ArrayList<MonoTime>()
+        this.recordedCount = 0
+    }
+
+    public func readyRequestQueued(sequence: Int64, at: MonoTime): Unit {
+        synchronized(lock) {
+            queuedAt.add(at)
+            if (sequence > recordedCount) {
+                recordedCount = sequence
+            }
+        }
+    }
+
+    public func count(): Int64 {
+        return synchronized(lock) { recordedCount }
+    }
+
+    public func timeFor(sequence: Int64): ?MonoTime {
+        return synchronized(lock) {
+            if (sequence < 1 || sequence > Int64(queuedAt.size)) {
+                return None
+            }
+            return Some(queuedAt[sequence - 1])
+        }
+    }
+}
+
+/// Thin latency measurement wrapper over the real workspace.
+///
+/// It is not a second owner: all five domain methods delegate to the same
+/// CjguiTextDocumentWorkspace the controllers, the change domain and the
+/// targeted context reads already use. `executeFromExternal` only samples the
+/// owner's own committed result (time, versionAfter, applied count, target and
+/// integer value) after the real owner submission, so the probe can timestamp
+/// the exact apply without bypassing the public transport or touching business
+/// state.
+private class LatencyTimingDomain <: CjguiSharedOperationDomain {
+    private let workspace: CjguiTextDocumentWorkspace
+    private var appliedCountValue: Int64
+    private var lastApplyTimeValue: ?MonoTime
+    private var lastApplyVersionAfterValue: Int64
+    private var lastApplyValueValue: Int64
+    private var lastApplyDocumentValue: Int64
+
+    init(workspace: CjguiTextDocumentWorkspace) {
+        this.workspace = workspace
+        this.appliedCountValue = 0
+        this.lastApplyTimeValue = None
+        this.lastApplyVersionAfterValue = 0
+        this.lastApplyValueValue = -1
+        this.lastApplyDocumentValue = -1
+    }
+
+    public func resourceType(): String { return workspace.resourceType() }
+
+    public func contextSnapshot(): CjguiSharedOperationContextSnapshot {
+        return workspace.contextSnapshot()
+    }
+
+    public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> {
+        return workspace.actionDescriptors()
+    }
+
+    public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+        return workspace.executeFromHuman(invocation)
+    }
+
+    public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+        let result = workspace.executeFromExternal(invocation)
+        if (result.applied) {
+            appliedCountValue += 1
+            lastApplyTimeValue = Some(MonoTime.now())
+            lastApplyVersionAfterValue = result.versionAfter
+            if (invocation.targetResourceIds.size == 1) {
+                lastApplyDocumentValue = invocation.targetResourceIds[0]
+            } else {
+                lastApplyDocumentValue = -1
+            }
+            var value: Int64 = -1
+            for (argument in invocation.arguments) {
+                if (argument.name == "value") {
+                    value = argument.value.integerValue
+                }
+            }
+            lastApplyValueValue = value
+        }
+        return result
+    }
+
+    public func appliedCount(): Int64 { return appliedCountValue }
+    public func lastApplyTime(): ?MonoTime { return lastApplyTimeValue }
+    public func lastApplyVersionAfter(): Int64 { return lastApplyVersionAfterValue }
+    public func lastApplyValue(): Int64 { return lastApplyValueValue }
+    public func lastApplyDocument(): Int64 { return lastApplyDocumentValue }
+}
+
 private class SchedulingOptions {
     let ackDirectory: String
     let overlapOnly: Bool
-    init(ackDirectory: String, overlapOnly!: Bool = false) {
+    let latencyOnly: Bool
+    init(ackDirectory: String, overlapOnly!: Bool = false, latencyOnly!: Bool = false) {
         this.ackDirectory = ackDirectory
         this.overlapOnly = overlapOnly
+        this.latencyOnly = latencyOnly
     }
 }
 
@@ -195,6 +327,9 @@ private func optionsFromArgs(args: Array<String>): ?SchedulingOptions {
     }
     if (args.size == 3 && args[0] == "--ack-dir" && args[2] == "--overlap-only") {
         return Some(SchedulingOptions(args[1], overlapOnly: true))
+    }
+    if (args.size == 3 && args[0] == "--ack-dir" && args[2] == "--latency-only") {
+        return Some(SchedulingOptions(args[1], latencyOnly: true))
     }
     return None
 }
@@ -315,11 +450,22 @@ private class OverlapWaitResult {
     let bOwnerVersionDeltaAtFirstExternal: Int64
     let bOrdinaryEnqueued: Bool
     let queueOverflowObserved: Bool
+    /// B's ordinary input processed IN THE SAME TURN as the external action, and
+    /// A's pending depth at that turn: the documented "one atomic owner turn
+    /// serves both" condition, recorded per turn instead of as a total.
+    let bOrdinaryDeltaAtFirstExternal: Int64
+    let pendingBeforeExternalObserved: UInt32
+    /// True when B's ordinary input was injected at the post-refresh/pre-pump
+    /// boundary of the measured turn. That is the ONLY place an event can be
+    /// both issued after the external-driven refresh and still processed by the
+    /// same turn, so it is the measurement's precondition, not a convenience.
+    let bPostRefreshInjected: Bool
 
     init(seen: Bool, rounds: Int64, externalActions: Int64, firstExternalRound: Int64,
         firstExternalElapsedBeforeWaitMs: Int64, pendingBeforeExternal: UInt32, maxPending: UInt32,
         maxHighWater: UInt32, bOrdinaryDelta: Int64, bOwnerVersionDeltaAtFirstExternal: Int64,
-        bOrdinaryEnqueued: Bool, queueOverflowObserved: Bool) {
+        bOrdinaryEnqueued: Bool, queueOverflowObserved: Bool, bOrdinaryDeltaAtFirstExternal: Int64,
+        pendingBeforeExternalObserved: UInt32, bPostRefreshInjected: Bool) {
         this.seen = seen
         this.rounds = rounds
         this.externalActions = externalActions
@@ -332,6 +478,9 @@ private class OverlapWaitResult {
         this.bOwnerVersionDeltaAtFirstExternal = bOwnerVersionDeltaAtFirstExternal
         this.bOrdinaryEnqueued = bOrdinaryEnqueued
         this.queueOverflowObserved = queueOverflowObserved
+        this.bOrdinaryDeltaAtFirstExternal = bOrdinaryDeltaAtFirstExternal
+        this.pendingBeforeExternalObserved = pendingBeforeExternalObserved
+        this.bPostRefreshInjected = bPostRefreshInjected
     }
 }
 
@@ -357,6 +506,46 @@ private func waitForAck(application: CjguiMacosApplication, windowA: CjguiCompos
         UInt64((MonoTime.now() - started).toNanoseconds()))
 }
 
+/// Test-only post-refresh/pre-pump observer for the overlap acceptance. The
+/// host calls it after a window's external-driven refresh and before that same
+/// turn pumps the window, which is the ONLY boundary where B's ordinary input
+/// can be both issued against the refreshed projection and served by the
+/// measured turn. It injects at most once and only into B.
+private class OverlapPostRefreshObserver <: CjguiMacosApplicationPostRefreshObserver {
+    private let sessionB: UInt64
+    private let emptyText: CString
+    private var armedValue: Bool = false
+    private var injectedValue: Bool = false
+
+    init(sessionB: UInt64, emptyText: CString) {
+        this.sessionB = sessionB
+        this.emptyText = emptyText
+    }
+
+    public func arm(): Unit {
+        armedValue = true
+    }
+
+    public func postRefreshBeforePump(window: CjguiComposableUiWindow): Unit {
+        if (!armedValue || injectedValue) {
+            return
+        }
+        if (window.testSessionToken() != sessionB) {
+            return
+        }
+        let status = unsafe {
+            cjgui_internal_renderer_test_enqueue_composable_event(sessionB, 1u32, 27u32, emptyText)
+        }
+        if (status == CJGUI_INTERNAL_RENDERER_OK) {
+            injectedValue = true
+        }
+    }
+
+    public func injected(): Bool {
+        return injectedValue
+    }
+}
+
 /// Waits for one real external burst while A already owns a bounded FIFO.
 /// There is deliberately no producer loop here: the 64 A events are queued
 /// once before READY and are drained by the one normal owner turn.  If the
@@ -364,7 +553,8 @@ private func waitForAck(application: CjguiMacosApplication, windowA: CjguiCompos
 /// replenishing the queue after every turn and manufacturing overlap.
 private func waitForOverlapAck(application: CjguiMacosApplication, windowA: CjguiComposableUiWindow,
     windowB: CjguiComposableUiWindow, controllerB: SchedulingBController, sessionA: UInt64,
-    sessionB: UInt64, startPath: String, ackPath: String, emptyText: CString): OverlapWaitResult {
+    sessionB: UInt64, startPath: String, ackPath: String, emptyText: CString,
+    postRefresh: OverlapPostRefreshObserver): OverlapWaitResult {
     var rounds: Int64 = 0
     var externalActions: Int64 = 0
     var firstExternalRound: Int64 = -1
@@ -374,9 +564,18 @@ private func waitForOverlapAck(application: CjguiMacosApplication, windowA: Cjgu
     var maxHighWater: UInt32 = 0u32
     let bOrdinaryStart = controllerB.ordinaryCount()
     let bOwnerVersionStart = controllerB.ownerVersion()
+    // B's ordinary input is queued BEFORE the measured turn, not inside it: the
+    // test enqueue becomes pumpable on the following host turn (it is dispatched
+    // to the main queue), so queueing it inside the measured turn would only
+    // prove the injection latency, not whether the owner turn serves both.
+    let bSetupStatus = unsafe {
+        cjgui_internal_renderer_test_enqueue_composable_event(sessionB, 1u32, 27u32, emptyText)
+    }
+    let bOrdinaryEnqueued = bSetupStatus == CJGUI_INTERNAL_RENDERER_OK
     var bOrdinaryDelta: Int64 = 0
+    var bOrdinaryDeltaAtFirstExternal: Int64 = 0
+    var pendingBeforeExternalObserved: UInt32 = 0u32
     var bOwnerVersionDeltaAtFirstExternal: Int64 = 0
-    var bOrdinaryEnqueued = false
     var queueOverflowObserved = false
     let coordinationStarted = MonoTime.now()
     while (!exists(startPath) && (MonoTime.now() - coordinationStarted).toMilliseconds() < 2000) {
@@ -386,16 +585,14 @@ private func waitForOverlapAck(application: CjguiMacosApplication, windowA: Cjgu
         sleep(Duration.millisecond)
     }
     if (!exists(startPath)) {
-        return OverlapWaitResult(false, 0, 0, -1, -1, 0u32, 0u32, 0u32, 0, 0, false, false)
+        return OverlapWaitResult(false, 0, 0, -1, -1, 0u32, 0u32, 0u32, 0, 0, false, false, 0, 0u32,
+            postRefresh.injected())
     }
     while (!exists(ackPath) && rounds < MAX_EXTERNAL_WAIT_ROUNDS) {
         let before = nativeStats(sessionA)
         maxPending = if (before.pending > maxPending) { before.pending } else { maxPending }
         maxHighWater = if (before.highWater > maxHighWater) { before.highWater } else { maxHighWater }
-        let bStatus = unsafe {
-            cjgui_internal_renderer_test_enqueue_composable_event(sessionB, 1u32, 27u32, emptyText)
-        }
-        bOrdinaryEnqueued = bOrdinaryEnqueued || bStatus == CJGUI_INTERNAL_RENDERER_OK
+        let bOrdinaryBeforeTurn = controllerB.ordinaryCount()
         // A's 64-event queue is already full from the caller.  This explicit
         // 65th enqueue proves the native refusal boundary without changing
         // the production scheduler or dropping an accepted event.
@@ -417,22 +614,85 @@ private func waitForOverlapAck(application: CjguiMacosApplication, windowA: Cjgu
             pendingBeforeExternal = before.pending
             externalActions = turn.externalActionCount
             bOwnerVersionDeltaAtFirstExternal = controllerB.ownerVersion() - bOwnerVersionStart
+            // B's ordinary input must be processed IN THIS TURN, not merely at
+            // some point in the loop: that is the "same atomic turn" claim.
+            bOrdinaryDeltaAtFirstExternal = controllerB.ordinaryCount() - bOrdinaryBeforeTurn
+            pendingBeforeExternalObserved = before.pending
         }
         if (!turn.isOpen || !application.isOpen() || !windowA.isOpen() || !windowB.isOpen()) {
-            println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_TURN_FAILURE round=${rounds + 1} application_open=${application.isOpen()} a_open=${windowA.isOpen()} b_open=${windowB.isOpen()} turn_open=${turn.isOpen} pending_before=${before.pending} pending_after=${after.pending} external_actions=${turn.externalActionCount}")
+            // Report the FIRST state change, not only the final closed state: the
+            // host records the first window retirement, the application close
+            // reason and any consumed exit intent, and each window records why it
+            // stopped being open (native event kind/status included).
+            println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_TURN_FAILURE round=${rounds + 1} application_open=${application.isOpen()} a_open=${windowA.isOpen()} b_open=${windowB.isOpen()} turn_open=${turn.isOpen} pending_before=${before.pending} pending_after=${after.pending} external_actions=${turn.externalActionCount} retirement='${application.testRetirementTrace()}' app_close='${application.testApplicationCloseTrace()}' exit_intent='${application.testExitIntentTrace()}' a_trace='${windowA.testCloseTrace()}' b_trace='${windowB.testCloseTrace()}' a_native=${windowA.nativeStatus()} b_native=${windowB.nativeStatus()} a_scene=${windowA.displayedSceneVersion()} b_scene=${windowB.displayedSceneVersion()}")
             getStdOut().flush()
             break
         }
+        println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_THREAD phase=round_${rounds + 1} ${mainThreadState()}")
+        getStdOut().flush()
+        println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_ROUND round=${rounds + 1} setup_b_status=${bSetupStatus} overflow_status=${overflowStatus} b_ordinary_before=${bOrdinaryBeforeTurn} b_ordinary_after=${controllerB.ordinaryCount()} external=${turn.externalActionCount} turn_elapsed_ms=${turn.elapsedBeforeEventWaitMs} pending_before=${before.pending} pending_after=${after.pending} waited_window_present=${turn.waitedWindow.isSome()}")
+        getStdOut().flush()
         rounds += 1
     }
     return OverlapWaitResult(exists(ackPath), rounds, externalActions, firstExternalRound,
         firstExternalElapsedBeforeWaitMs, pendingBeforeExternal, maxPending, maxHighWater,
-        bOrdinaryDelta, bOwnerVersionDeltaAtFirstExternal, bOrdinaryEnqueued, queueOverflowObserved)
+        bOrdinaryDelta, bOwnerVersionDeltaAtFirstExternal, bOrdinaryEnqueued, queueOverflowObserved,
+        bOrdinaryDeltaAtFirstExternal, pendingBeforeExternalObserved, postRefresh.injected())
+}
+
+private func mainThreadState(): String {
+    var isMain: Int32 = -1
+    var dispatchEnabled: Int32 = -1
+    let status = unsafe {
+        cjgui_internal_renderer_test_is_main_thread(inout isMain, inout dispatchEnabled)
+    }
+    return "status=${status} is_main=${isMain} dispatch_enabled=${dispatchEnabled}"
+}
+
+private class OverlapAdmissionResult {
+    let admitted: Bool
+    let ready: Int64
+    let waitedMs: Int64
+
+    init(admitted: Bool, ready: Int64, waitedMs: Int64) {
+        this.admitted = admitted
+        this.ready = ready
+        this.waitedMs = waitedMs
+    }
+}
+
+/// Wait, WITHOUT pumping any turn, until the transport's public ready-queue
+/// counter shows the client's request has really been admitted. The client's
+/// start marker only proves the frame is on the socket: the I/O worker still has
+/// to accept and queue it. Pumping before that admission drains A's full FIFO, so
+/// the documented "one atomic owner turn serves the real UDS request while A has
+/// 64 pending events" condition becomes unobservable. This waits on the existing
+/// public diagnostics; it changes no production scheduling and relaxes no bound.
+private func waitForOverlapAdmission(connection: CjguiSharedOperationExternalConnection,
+                                     startPath: String): OverlapAdmissionResult {
+    let started = MonoTime.now()
+    var ready: Int64 = 0
+    var waited: Int64 = 0
+    while (waited < 3000) {
+        if (exists(startPath)) {
+            if (let Some(diagnostics) <- connection.transportDiagnostics()) {
+                ready = diagnostics.readyRequestCount
+                if (ready >= 1) {
+                    return OverlapAdmissionResult(true, ready, waited)
+                }
+            }
+        }
+        // Busy-wait diagnostic: no sleep on the probing thread while the
+        // transport worker admits the request.
+        waited = (MonoTime.now() - started).toMilliseconds()
+    }
+    return OverlapAdmissionResult(false, ready, waited)
 }
 
 private func runOverlap(application: CjguiMacosApplication, windowA: CjguiComposableUiWindow,
     windowB: CjguiComposableUiWindow, controllerA: SchedulingAController, controllerB: SchedulingBController,
-    sessionA: UInt64, sessionB: UInt64, ackDirectory: String, emptyText: CString): Bool {
+    sessionA: UInt64, sessionB: UInt64, ackDirectory: String, emptyText: CString,
+    connection: CjguiSharedOperationExternalConnection): Bool {
     let ackPath = "${ackDirectory}/overlap-ack-1"
     let beforeActionCount = controllerA.actionCount()
     let downStatus = unsafe {
@@ -459,8 +719,22 @@ private func runOverlap(application: CjguiMacosApplication, windowA: CjguiCompos
     let beforeReady = nativeStats(sessionA)
     println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_READY sample=1 target=${DOCUMENT_B} expected_version=${controllerB.ownerVersion()} value=160 queued_a=${queuedA} pending_a=${beforeReady.pending}")
     getStdOut().flush()
+    println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_THREAD phase=before_admission ${mainThreadState()}")
+    getStdOut().flush()
+    let admission = waitForOverlapAdmission(connection, "${ackDirectory}/overlap-start-1")
+    println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_ADMISSION admitted=${admission.admitted} ready=${admission.ready} waited_ms=${admission.waitedMs} thread='${mainThreadState()}'")
+    getStdOut().flush()
+    // B's ordinary input is injected at the host's post-refresh/pre-pump
+    // boundary, so the SAME measured turn both applies the external write and
+    // serves the ordinary input. The stale pre-refresh event enqueued above is
+    // deliberately still present: an accepted post-refresh event plus the
+    // strict projection-version rule prove the stale one was refused.
+    let postRefresh = OverlapPostRefreshObserver(sessionB, emptyText)
+    application.setTestPostRefreshObserver(Some(postRefresh))
+    postRefresh.arm()
     let wait = waitForOverlapAck(application, windowA, windowB, controllerB, sessionA, sessionB,
-        "${ackDirectory}/overlap-start-1", ackPath, emptyText)
+        "${ackDirectory}/overlap-start-1", ackPath, emptyText, postRefresh)
+    application.setTestPostRefreshObserver(None)
     let pressSnapshotBeforeUp = windowA.testPressedInteractionActionName()
     let beforeUp = nativeStats(sessionA)
     let upStatus = unsafe {
@@ -479,18 +753,30 @@ private func runOverlap(application: CjguiMacosApplication, windowA: CjguiCompos
     let terminalNormalActivation = actionDelta == 1
     let terminalCorrect = terminalNormalActivation || terminalPlatformCancel
     let finalStats = nativeStats(sessionA)
-    let boundedQueue = queuedA == 64 && beforeReady.pending == 64u32 &&
-        wait.pendingBeforeExternal == 64u32 && wait.maxPending <= 64u32 &&
-        wait.maxHighWater <= 64u32 && wait.queueOverflowObserved
-    let bOwnerObserved = wait.bOrdinaryEnqueued && wait.bOrdinaryDelta == 1 &&
-        wait.bOwnerVersionDeltaAtFirstExternal == 1
+    // A's FIFO must be exactly at its bound when the external action is served,
+    // and the 65th enqueue must have been refused. The counter of our own
+    // successful enqueues is evidence, not the condition: one pre-existing
+    // pending event can occupy a slot, which the pending/high-water readings and
+    // the explicit refusal already prove.
+    let boundedQueue = beforeReady.pending == 64u32 &&
+        wait.pendingBeforeExternal == 64u32 && wait.pendingBeforeExternalObserved == 64u32 &&
+        wait.maxPending <= 64u32 && wait.maxHighWater <= 64u32 && wait.queueOverflowObserved
+    // B's ordinary input and the external action really were served in the SAME
+    // owner turn, and the external action applied exactly one owner version.
+    // B's ordinary input was injected AFTER the external-driven refresh and
+    // processed by the SAME turn; the stale pre-refresh event was refused, which
+    // is why exactly ONE of the two enqueued events was accepted.
+    let bOwnerObserved = wait.bOrdinaryEnqueued && wait.bPostRefreshInjected &&
+        wait.bOrdinaryDeltaAtFirstExternal >= 1 && wait.bOwnerVersionDeltaAtFirstExternal == 1 &&
+        wait.bOrdinaryDelta == 1
     let sameAtomicTurn = wait.seen && wait.externalActions > 0 && wait.firstExternalRound > 0 &&
         wait.firstExternalElapsedBeforeWaitMs <= MAX_OVERLAP_OWNER_SERVICE_MS
-    let valid = downStatus == CJGUI_INTERNAL_RENDERER_OK && downTurn.isOpen && pressedAction.size > 0 &&
+    let valid = admission.admitted && downStatus == CJGUI_INTERNAL_RENDERER_OK && downTurn.isOpen &&
+        pressedAction.size > 0 &&
         wait.seen && sameAtomicTurn && boundedQueue && bOwnerObserved && upStatus == CJGUI_INTERNAL_RENDERER_OK &&
         upTurn.isOpen && pressSnapshotBeforeUp.size > 0 && terminalCorrect && finalStats.status == CJGUI_INTERNAL_RENDERER_OK &&
         beforeUp.status == CJGUI_INTERNAL_RENDERER_OK
-    println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_RESULT valid=${valid} ready_pending=${beforeReady.pending} queued_a=${queuedA} ack_seen=${wait.seen} rounds=${wait.rounds} first_external_round=${wait.firstExternalRound} external_actions=${wait.externalActions} first_external_elapsed_before_wait_ms=${wait.firstExternalElapsedBeforeWaitMs} owner_service_bound_ms=${MAX_OVERLAP_OWNER_SERVICE_MS} pending_before_external=${wait.pendingBeforeExternal} max_pending=${wait.maxPending} max_high_water=${wait.maxHighWater} queue_overflow_observed=${wait.queueOverflowObserved} b_ordinary_enqueued=${wait.bOrdinaryEnqueued} b_ordinary_delta=${wait.bOrdinaryDelta} b_owner_version_delta_at_first_external=${wait.bOwnerVersionDeltaAtFirstExternal} press_snapshot_before_up=${pressSnapshotBeforeUp} terminal_identity_changed=${terminalIdentityChanged} terminal_activation_suppressed=${terminalActivationSuppressed} terminal_normal_activation=${terminalNormalActivation} terminal_platform_cancel=${terminalPlatformCancel} terminal_rebind_suppressed=${terminalRebindSuppressed} action_delta=${actionDelta} up_status=${upStatus} up_turn_open=${upTurn.isOpen}")
+    println("CJGUI_INTERACTION_SCHEDULING_OVERLAP_RESULT valid=${valid} ready_pending=${beforeReady.pending} queued_a=${queuedA} ack_seen=${wait.seen} rounds=${wait.rounds} first_external_round=${wait.firstExternalRound} external_actions=${wait.externalActions} first_external_elapsed_before_wait_ms=${wait.firstExternalElapsedBeforeWaitMs} owner_service_bound_ms=${MAX_OVERLAP_OWNER_SERVICE_MS} pending_before_external=${wait.pendingBeforeExternal} max_pending=${wait.maxPending} max_high_water=${wait.maxHighWater} queue_overflow_observed=${wait.queueOverflowObserved} b_ordinary_enqueued=${wait.bOrdinaryEnqueued} b_post_refresh_injected=${wait.bPostRefreshInjected} b_ordinary_delta=${wait.bOrdinaryDelta} b_ordinary_delta_at_first_external=${wait.bOrdinaryDeltaAtFirstExternal} b_owner_version_delta_at_first_external=${wait.bOwnerVersionDeltaAtFirstExternal} press_snapshot_before_up=${pressSnapshotBeforeUp} terminal_identity_changed=${terminalIdentityChanged} terminal_activation_suppressed=${terminalActivationSuppressed} terminal_normal_activation=${terminalNormalActivation} terminal_platform_cancel=${terminalPlatformCancel} terminal_rebind_suppressed=${terminalRebindSuppressed} action_delta=${actionDelta} up_status=${upStatus} up_turn_open=${upTurn.isOpen}")
     getStdOut().flush()
     return valid
 }
@@ -633,14 +919,383 @@ private func runScale(application: CjguiMacosApplication, windowA: CjguiComposab
     return valid
 }
 
+private func joinTokenList(items: ArrayList<String>): String {
+    var text = ""
+    var index = 0
+    while (index < items.size) {
+        if (index > 0) {
+            text += "+"
+        }
+        text += items[index]
+        index += 1
+    }
+    return text
+}
+
+/// Ascending copy of a bounded sample vector. The focused probe owns exactly
+/// 20 records, so a local insertion sort keeps the nearest-rank definition
+/// recomputable without adding a dependency or a second statistics path.
+private func sortedSampleCopy(values: ArrayList<Int64>): Array<Int64> {
+    let copy = values.toArray()
+    var index = 1
+    while (index < copy.size) {
+        let key = copy[index]
+        var scan = index - 1
+        while (scan >= 0 && copy[scan] > key) {
+            copy[scan + 1] = copy[scan]
+            scan -= 1
+        }
+        copy[scan + 1] = key
+        index += 1
+    }
+    return copy
+}
+
+/// Nearest-rank percentile. `rank = ceil(numerator * n / denominator)`, then
+/// the 1-based rank selects the element. With n = 20 this makes p50 the 10th
+/// record and p95 the 19th record.
+private func percentileNearestRank(sortedValues: Array<Int64>, numerator: Int64, denominator: Int64): Int64 {
+    if (sortedValues.size == 0) {
+        return 0
+    }
+    let count = sortedValues.size
+    var rank = (numerator * count + denominator - 1) / denominator
+    if (rank < 1) {
+        rank = 1
+    }
+    if (rank > count) {
+        rank = count
+    }
+    return sortedValues[rank - 1]
+}
+
+private func writeMarkerFile(path: String, content: String): Unit {
+    File.writeTo(Path(path), content.toArray())
+}
+
+private func acceptedOwnerText(windowB: CjguiComposableUiWindow): String {
+    if (let Some(text) <- windowB.acceptedNodeText("scheduling-b-owner-value")) {
+        return text
+    }
+    return ""
+}
+
+/// Focused latency mode. It reuses the same application host, workspace and UDS
+/// lifecycle as the full probe, but opens A first and B second so every normal
+/// turn still services A before B, and it runs exactly 20 public samples.
+private func runLatencyMode(options: SchedulingOptions, workspace: CjguiTextDocumentWorkspace,
+    application: CjguiMacosApplication, configuration: CjguiMacosApplicationWindowConfiguration,
+    controllerB: SchedulingBController): Int64 {
+    let controllerA = SchedulingAController(workspace, 8)
+    let openedA = application.openWindow(controllerA, configuration: configuration)
+    if (!openedA.didOpen) {
+        application.close()
+        return 1
+    }
+    let identifierA = if (let Some(value) <- openedA.identifier) {
+        value
+    } else {
+        application.close()
+        return 1
+    }
+    let windowA = if (let Some(value) <- application.window(identifierA)) {
+        value
+    } else {
+        application.close()
+        return 1
+    }
+    let openedB = application.openWindow(controllerB, configuration: configuration)
+    if (!openedB.didOpen) {
+        application.close()
+        return 1
+    }
+    let identifierB = if (let Some(value) <- openedB.identifier) {
+        value
+    } else {
+        application.close()
+        return 1
+    }
+    let windowB = if (let Some(value) <- application.window(identifierB)) {
+        value
+    } else {
+        application.close()
+        return 1
+    }
+    let timingDomain = LatencyTimingDomain(workspace)
+    let connection = CjguiSharedOperationExternalConnection(timingDomain, authorization(), workspace)
+    if (!connection.enableTargetedContextReads(workspace) || !application.attachExternalConnection(connection)) {
+        application.close()
+        return 1
+    }
+    let observer = LatencyReadyObserver()
+    if (!connection.enableTestReadyRequestObserver(observer)) {
+        application.close()
+        return 1
+    }
+    if (let None <- connection.connectionInfo()) {
+        application.close()
+        return 1
+    }
+    if (let Some(info) <- connection.connectionInfo()) {
+        println("CJGUI_INTERACTION_SCHEDULING_READY_DESCRIPTOR ${info.descriptorPath}")
+        getStdOut().flush()
+    }
+    let sessionA = windowA.testSessionToken()
+    let emptyText = unsafe { LibC.mallocCString("") }
+    let valid = runLatencySamples(application, windowA, windowB, controllerA, timingDomain, connection,
+        observer, sessionA, options.ackDirectory, emptyText)
+    unsafe { LibC.free(emptyText) }
+    application.close()
+    return if (valid) { 0 } else { 1 }
+}
+
+private func runLatencySamples(application: CjguiMacosApplication, windowA: CjguiComposableUiWindow,
+    windowB: CjguiComposableUiWindow, controllerA: SchedulingAController, timing: LatencyTimingDomain,
+    connection: CjguiSharedOperationExternalConnection, observer: LatencyReadyObserver, sessionA: UInt64,
+    ackDirectory: String, emptyText: CString): Bool {
+    let _ = emptyText
+    let origin = MonoTime.now()
+    // The external driver publishes `latency-armed` before it starts measuring.
+    // This wait pumps the host so the driver's single pre-measurement
+    // GET_CONTEXT is served and cannot be mistaken for a sample request.
+    let armedStarted = MonoTime.now()
+    var turnOpen = true
+    while (!exists("${ackDirectory}/latency-armed") &&
+        (MonoTime.now() - armedStarted).toMilliseconds() < LATENCY_ARMED_WAIT_MS) {
+        let turn = application.pumpOneTurn(turnBudgetMs: 16u32)
+        if (!turn.isOpen) {
+            turnOpen = false
+            break
+        }
+    }
+    if (!exists("${ackDirectory}/latency-armed")) {
+        println("FAIL_LATENCY_NOT_ARMED host_open=${turnOpen} waited_ms=${(MonoTime.now() - armedStarted).toMilliseconds()}")
+        getStdOut().flush()
+        return false
+    }
+
+    var samplesValid = true
+    var aProgressEverySample = true
+    let readyToOwner = ArrayList<Int64>()
+    let ownerToScene = ArrayList<Int64>()
+    let readyToScene = ArrayList<Int64>()
+    var index: Int64 = 1
+    while (index <= LATENCY_SAMPLE_COUNT) {
+        let value = LATENCY_FIRST_VALUE + (index - 1)
+        let requestPath = "${ackDirectory}/latency-request-${index}"
+        let acceptedPath = "${ackDirectory}/latency-accepted-${index}"
+        let expectedSequence = LATENCY_PRE_MEASUREMENT_READY_COUNT + index
+        let readyStarted = MonoTime.now()
+        var readySeen = false
+        var hostOpen = true
+        while ((MonoTime.now() - readyStarted).toMilliseconds() < LATENCY_SAMPLE_WAIT_MS) {
+            if (exists(requestPath) && observer.count() >= expectedSequence) {
+                readySeen = true
+                break
+            }
+            let turn = application.pumpOneTurn(turnBudgetMs: 16u32)
+            if (!turn.isOpen) {
+                hostOpen = false
+                break
+            }
+        }
+        if (!readySeen) {
+            println("FAIL_LATENCY_READY index=${index} value=${value} host_open=${hostOpen} ready_count=${observer.count()} expected_sequence=${expectedSequence} waited_ms=${(MonoTime.now() - readyStarted).toMilliseconds()}")
+            getStdOut().flush()
+            return false
+        }
+        var t0 = origin
+        if (let Some(stamp) <- observer.timeFor(expectedSequence)) {
+            t0 = stamp
+        } else {
+            println("FAIL_LATENCY_READY_STAMP index=${index} sequence=${expectedSequence}")
+            getStdOut().flush()
+            return false
+        }
+
+        let beforeApplied = timing.appliedCount()
+        let beforeProjectionA = windowA.windowProjection()
+        let beforeAction = controllerA.actionCount()
+        let beforeGeneric = controllerA.genericCount()
+        var beforeBSubmission: Int64 = 0
+        if (let Some(snapshot) <- windowB.testLastNativeSubmissionSnapshot()) {
+            beforeBSubmission = snapshot.submissionCount
+        }
+
+        // One real controlled native input on A during every sample. It is the
+        // same public down/up helper the sequential scale probe uses; it is not
+        // a direct setter and never touches the shared owner.
+        let downStatus = unsafe {
+            cjgui_internal_renderer_test_send_composable_mouse(sessionA, 1u32, 40.0f32, 14.0f32)
+        }
+        let downTurn = application.pumpOneTurn(turnBudgetMs: 16u32)
+        let upStatus = unsafe {
+            cjgui_internal_renderer_test_send_composable_mouse(sessionA, 3u32, 40.0f32, 14.0f32)
+        }
+
+        let expectedText = "B owner=${value}"
+        let sceneStarted = MonoTime.now()
+        var applySeen = false
+        var sceneSeen = false
+        var sceneTime = origin
+        var pumpRounds: Int64 = 0
+        while ((MonoTime.now() - sceneStarted).toMilliseconds() < LATENCY_SCENE_WAIT_MS) {
+            let turn = application.pumpOneTurn(turnBudgetMs: 16u32)
+            pumpRounds += 1
+            if (!turn.isOpen) {
+                break
+            }
+            if (timing.appliedCount() > beforeApplied) {
+                applySeen = true
+            }
+            if (let Some(snapshot) <- windowB.testLastNativeSubmissionSnapshot()) {
+                if (snapshot.submissionCount > beforeBSubmission && acceptedOwnerText(windowB) == expectedText) {
+                    sceneSeen = true
+                    sceneTime = snapshot.time
+                }
+            }
+            if (applySeen && sceneSeen) {
+                break
+            }
+        }
+
+        var ownerTime = origin
+        var ownerSeen = false
+        if (let Some(stamp) <- timing.lastApplyTime()) {
+            ownerTime = stamp
+            ownerSeen = true
+        }
+        let applyMatched = timing.lastApplyDocument() == DOCUMENT_B && timing.lastApplyValue() == value &&
+            timing.lastApplyVersionAfter() > 0
+        var ordered = false
+        if (ownerSeen && sceneSeen) {
+            ordered = t0 <= ownerTime && ownerTime <= sceneTime
+        }
+        let afterProjectionA = windowA.windowProjection()
+        let actionDelta = controllerA.actionCount() - beforeAction
+        let genericDelta = controllerA.genericCount() - beforeGeneric
+        let submissionDelta = afterProjectionA.nativeSubmissionCount - beforeProjectionA.nativeSubmissionCount
+        let acceptedDelta = afterProjectionA.acceptedSceneVersion - beforeProjectionA.acceptedSceneVersion
+        let tokens = ArrayList<String>()
+        if (actionDelta > 0) { tokens.add("action") }
+        if (genericDelta > 0) { tokens.add("generic") }
+        if (submissionDelta > 0) { tokens.add("submit") }
+        if (acceptedDelta > 0) { tokens.add("accepted") }
+        var aProgress = "none"
+        if (tokens.size > 0) {
+            aProgress = joinTokenList(tokens)
+        }
+        let aProgressed = tokens.size > 0
+        aProgressEverySample = aProgressEverySample && aProgressed
+
+        var readyOwnerNs: Int64 = -1
+        var ownerSceneNs: Int64 = -1
+        var readySceneNs: Int64 = -1
+        if (ownerSeen) {
+            readyOwnerNs = (ownerTime - t0).toNanoseconds()
+        }
+        if (ownerSeen && sceneSeen) {
+            ownerSceneNs = (sceneTime - ownerTime).toNanoseconds()
+        }
+        if (sceneSeen) {
+            readySceneNs = (sceneTime - t0).toNanoseconds()
+        }
+        if (readyOwnerNs >= 0) { readyToOwner.add(readyOwnerNs) }
+        if (ownerSceneNs >= 0) { ownerToScene.add(ownerSceneNs) }
+        if (readySceneNs >= 0) { readyToScene.add(readySceneNs) }
+
+        let sampleValid = applySeen && sceneSeen && ownerSeen && ordered && applyMatched && aProgressed &&
+            downStatus == CJGUI_INTERNAL_RENDERER_OK && upStatus == CJGUI_INTERNAL_RENDERER_OK &&
+            downTurn.isOpen && hostOpen
+        samplesValid = samplesValid && sampleValid
+        println("CJGUI_INTERACTION_SCHEDULING_LATENCY_SAMPLE index=${index} value=${value} t0_ns=${(t0 - origin).toNanoseconds()} t1_ns=${(ownerTime - origin).toNanoseconds()} t2_ns=${(sceneTime - origin).toNanoseconds()} owner_to_scene_ns=${ownerSceneNs} ready_to_owner_ns=${readyOwnerNs} ready_to_scene_ns=${readySceneNs} a_progress=${aProgress} valid=${sampleValid} t0_abs_ns=${(t0 - origin).toNanoseconds()} t1_abs_ns=${(ownerTime - origin).toNanoseconds()} t2_abs_ns=${(sceneTime - origin).toNanoseconds()} ready_sequence=${expectedSequence} observer_count=${observer.count()} apply_version_after=${timing.lastApplyVersionAfter()} accepted_text=${acceptedOwnerText(windowB)} pump_rounds=${pumpRounds} down_status=${downStatus} up_status=${upStatus} down_turn_open=${downTurn.isOpen}")
+        getStdOut().flush()
+        writeMarkerFile(acceptedPath, "index=${index} value=${value}\n")
+        index += 1
+    }
+
+    // Idle check after the last sample: the same host, with all external work
+    // drained, must stop building, laying out and submitting on its own.
+    let idleABefore = windowA.windowProjection()
+    let idleBBefore = windowB.windowProjection()
+    let idleDiagnosticsBefore = connection.transportDiagnostics()
+    var readyQueueBefore: Int64 = -1
+    if (let Some(diagnostics) <- idleDiagnosticsBefore) {
+        readyQueueBefore = diagnostics.readyRequestCount
+    }
+    var idleExternalActions: Int64 = 0
+    var idleTurnsSeen: Int64 = 0
+    var idleTurnsClean = true
+    while (idleTurnsSeen < 3) {
+        let idleTurn = application.pumpOneTurn(turnBudgetMs: 0u32)
+        idleExternalActions += idleTurn.externalActionCount
+        if (!idleTurn.isOpen || idleTurn.externalActionCount != 0) {
+            idleTurnsClean = false
+        }
+        idleTurnsSeen += 1
+    }
+    let idleAAfter = windowA.windowProjection()
+    let idleBAfter = windowB.windowProjection()
+    let idleDiagnosticsAfter = connection.transportDiagnostics()
+    var readyQueueAfter: Int64 = -1
+    if (let Some(diagnostics) <- idleDiagnosticsAfter) {
+        readyQueueAfter = diagnostics.readyRequestCount
+    }
+    let aBuildDelta = idleAAfter.buildPassCount - idleABefore.buildPassCount
+    let aLayoutDelta = idleAAfter.layoutPassCount - idleABefore.layoutPassCount
+    let aSubmissionDelta = idleAAfter.nativeSubmissionCount - idleABefore.nativeSubmissionCount
+    let aAcceptedDelta = idleAAfter.acceptedSceneVersion - idleABefore.acceptedSceneVersion
+    let bBuildDelta = idleBAfter.buildPassCount - idleBBefore.buildPassCount
+    let bLayoutDelta = idleBAfter.layoutPassCount - idleBBefore.layoutPassCount
+    let bSubmissionDelta = idleBAfter.nativeSubmissionCount - idleBBefore.nativeSubmissionCount
+    let bAcceptedDelta = idleBAfter.acceptedSceneVersion - idleBBefore.acceptedSceneVersion
+    let idleUnchanged = aBuildDelta == 0 && aLayoutDelta == 0 && aSubmissionDelta == 0 && aAcceptedDelta == 0 &&
+        bBuildDelta == 0 && bLayoutDelta == 0 && bSubmissionDelta == 0 && bAcceptedDelta == 0
+    let idleClean = idleTurnsClean && idleUnchanged && idleExternalActions == 0 && readyQueueAfter == 0
+
+    let readyToOwnerSorted = sortedSampleCopy(readyToOwner)
+    let ownerToSceneSorted = sortedSampleCopy(ownerToScene)
+    let readyToSceneSorted = sortedSampleCopy(readyToScene)
+    let p50ReadyOwner = percentileNearestRank(readyToOwnerSorted, 50, 100)
+    let p95ReadyOwner = percentileNearestRank(readyToOwnerSorted, 95, 100)
+    let p50ReadyScene = percentileNearestRank(readyToSceneSorted, 50, 100)
+    let p95ReadyScene = percentileNearestRank(readyToSceneSorted, 95, 100)
+    let maxReadyScene = percentileNearestRank(readyToSceneSorted, 100, 100)
+    let maxReadyOwner = percentileNearestRank(readyToOwnerSorted, 100, 100)
+    let maxOwnerScene = percentileNearestRank(ownerToSceneSorted, 100, 100)
+    let recordCount = Int64(readyToScene.size)
+    let observedRequests = observer.count()
+    let expectedRequests = LATENCY_PRE_MEASUREMENT_READY_COUNT + LATENCY_SAMPLE_COUNT
+    let recordsComplete = recordCount == LATENCY_SAMPLE_COUNT
+    let requestAccountingExact = observedRequests == expectedRequests
+    let valid = samplesValid && aProgressEverySample && idleClean && recordsComplete && requestAccountingExact
+    println("CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT samples=${LATENCY_SAMPLE_COUNT} valid=${valid} p50_ready_to_owner_ns=${p50ReadyOwner} p95_ready_to_owner_ns=${p95ReadyOwner} p50_ready_to_scene_ns=${p50ReadyScene} p95_ready_to_scene_ns=${p95ReadyScene} max_ready_to_scene_ns=${maxReadyScene} max_ready_to_owner_ns=${maxReadyOwner} max_owner_to_scene_ns=${maxOwnerScene} records=${recordCount} observer_requests=${observedRequests} expected_observer_requests=${expectedRequests} samples_valid=${samplesValid} a_progress_every_sample=${aProgressEverySample} idle_clean=${idleClean} idle_external_actions=${idleExternalActions} idle_turns=${idleTurnsSeen} idle_a_build_delta=${aBuildDelta} idle_a_layout_delta=${aLayoutDelta} idle_a_submission_delta=${aSubmissionDelta} idle_a_accepted_delta=${aAcceptedDelta} idle_b_build_delta=${bBuildDelta} idle_b_layout_delta=${bLayoutDelta} idle_b_submission_delta=${bSubmissionDelta} idle_b_accepted_delta=${bAcceptedDelta} ready_queue_before=${readyQueueBefore} ready_queue_after=${readyQueueAfter}")
+    getStdOut().flush()
+    if (!valid) {
+        println("FAIL_LATENCY_SAMPLES records=${recordCount} samples_valid=${samplesValid} a_progress_every_sample=${aProgressEverySample} idle_clean=${idleClean} observer_requests=${observedRequests} expected_observer_requests=${expectedRequests}")
+        getStdOut().flush()
+    }
+    return valid
+}
+
 private func run(options: SchedulingOptions): Int64 {
     let workspace = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([
         CjguiTextDocument(DOCUMENT_A, "scheduling-A", "A"),
         CjguiTextDocument(DOCUMENT_B, "scheduling-B", "B")
     ]))
     let application = CjguiMacosApplication(maximumWindowCount: 2)
+    // The process host is part of the measurement: a probe that is not running
+    // under the macOS application launcher has no enabled main-thread dispatch,
+    // so every renderer operation from the runtime worker would be refused as
+    // NOT_MAIN_THREAD. Report that state once, before any window opens, so a
+    // harness bootstrap problem cannot be misread as a scheduling defect.
+    println("CJGUI_INTERACTION_SCHEDULING_HOST ${mainThreadState()}")
+    getStdOut().flush()
     let configuration = CjguiMacosApplicationWindowConfiguration("CJGUI Interaction Scheduling", 480u32, 260u32)
     let controllerB = SchedulingBController(workspace)
+    if (options.latencyOnly) {
+        return runLatencyMode(options, workspace, application, configuration, controllerB)
+    }
     let openedB = application.openWindow(controllerB, configuration: configuration)
     if (!openedB.didOpen) { application.close(); return 1 }
     let identifierB = if (let Some(value) <- openedB.identifier) { value } else {
@@ -689,7 +1344,7 @@ private func run(options: SchedulingOptions): Int64 {
             return 1
         }
         let overlapValid = runOverlap(application, windowA, windowB, controllerA, controllerB,
-            windowA.testSessionToken(), sessionB, options.ackDirectory, emptyText)
+            windowA.testSessionToken(), sessionB, options.ackDirectory, emptyText, connection)
         let closedA = application.requestClose(identifierA)
         let bRemainsOpen = application.isOpen() && windowB.isOpen() && !windowA.isOpen()
         let valid = overlapValid && closedA && bRemainsOpen
@@ -737,7 +1392,7 @@ private func run(options: SchedulingOptions): Int64 {
         allScalesValid = allScalesValid && scaleValid
         if (scale == 960) {
             overlapValid = runOverlap(application, scaleWindow, windowB, scaleController, controllerB,
-                scaleSession, sessionB, options.ackDirectory, emptyText)
+                scaleSession, sessionB, options.ackDirectory, emptyText, connection)
             // Keep the final A window open for the failure-candidate and idle
             // checks; smaller scale windows are closed after their samples.
             let failureBefore = scaleWindow.displayedSceneVersion()
@@ -745,21 +1400,28 @@ private func run(options: SchedulingOptions): Int64 {
             let forceFailure = unsafe {
                 cjgui_internal_renderer_test_set_composable_present_failures(scaleSession, 1u32)
             }
-            // Every regular sample finishes with Cangjie-owned hover on B:
-            // native's direct mouse helper still retains A as its hover, so
-            // mouse-up has no second hover event to overwrite that Cangjie
-            // state. Clear B then enter A in the same normal FIFO drain to
-            // make this controlled candidate observably different.
+            // The controlled candidate must be an INTERACTION PAINT: the
+            // hovered control here is the A action button (index 1), which is
+            // the node that actually carries a hover paint style. Clearing that
+            // slot requests exactly one paint; entering a control without an
+            // interaction style would request nothing, and re-entering the same
+            // slot would be a no-op. One change, one deferred submission.
             let failureLeave = unsafe {
-                cjgui_internal_renderer_test_enqueue_composable_event(scaleSession, 2u32, 44u32, emptyText)
+                cjgui_internal_renderer_test_enqueue_composable_event(scaleSession, 1u32, 44u32, emptyText)
             }
-            let failureEnqueue = unsafe {
-                cjgui_internal_renderer_test_enqueue_composable_event(scaleSession, 1u32, 43u32, emptyText)
-            }
+            let failureEnqueue = failureLeave
             let failureTurn = application.pumpOneTurn(turnBudgetMs: 16u32)
+            let _ = failureEnqueue
+            // The interaction event itself only MARKS the projection; the
+            // coalesced paint submission happens on the NEXT turn's refresh. The
+            // injected native failure must therefore be observed on that
+            // deferred turn, not on the turn that drained the FIFO.
+            let failureSettleTurn = application.pumpOneTurn(turnBudgetMs: 16u32)
+            let failureTrace = nativeInteractionTrace(scaleSession)
             let failureProjection = scaleWindow.windowProjection()
             failedCandidateRetained = forceFailure == CJGUI_INTERNAL_RENDERER_OK &&
-                failureLeave == CJGUI_INTERNAL_RENDERER_OK && failureEnqueue == CJGUI_INTERNAL_RENDERER_OK && failureTurn.isOpen &&
+                failureLeave == CJGUI_INTERNAL_RENDERER_OK && failureEnqueue == CJGUI_INTERNAL_RENDERER_OK &&
+                failureTurn.isOpen && failureSettleTurn.isOpen &&
                 scaleWindow.displayedSceneVersion() == failureBefore &&
                 failureProjection.pendingRefreshReason == "interaction_paint_internal_error" &&
                 failureProjection.lastNativeFailure == "internal_error" &&
@@ -769,7 +1431,7 @@ private func run(options: SchedulingOptions): Int64 {
             failedCandidateRecovered = healthyRetry && scaleWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_OK &&
                 recoveredProjection.pendingRefreshReason == "none" &&
                 recoveredProjection.nativeSubmissionCount > failureSubmissionBefore
-            println("CJGUI_INTERACTION_SCHEDULING_FAILURE_CANDIDATE force_status=${forceFailure} leave_status=${failureLeave} enqueue_status=${failureEnqueue} turn_open=${failureTurn.isOpen} scene_before=${failureBefore} scene_after=${scaleWindow.displayedSceneVersion()} failure_pending=${failureProjection.pendingRefreshReason} failure_reason=${failureProjection.lastNativeFailure} submissions_before=${failureSubmissionBefore} submissions_after_failure=${failureProjection.nativeSubmissionCount} retry_ok=${healthyRetry} retry_pending=${recoveredProjection.pendingRefreshReason} submissions_after_retry=${recoveredProjection.nativeSubmissionCount} retained=${failedCandidateRetained} recovered=${failedCandidateRecovered}")
+            println("CJGUI_INTERACTION_SCHEDULING_FAILURE_CANDIDATE force_status=${forceFailure} leave_status=${failureLeave} enqueue_status=${failureEnqueue} turn_open=${failureTurn.isOpen} scene_before=${failureBefore} scene_after=${scaleWindow.displayedSceneVersion()} settle_turn_open=${failureSettleTurn.isOpen} failure_pending=${failureProjection.pendingRefreshReason} failure_reason=${failureProjection.lastNativeFailure} submissions_before=${failureSubmissionBefore} submissions_after_failure=${failureProjection.nativeSubmissionCount} retry_ok=${healthyRetry} retry_pending=${recoveredProjection.pendingRefreshReason} submissions_after_retry=${recoveredProjection.nativeSubmissionCount} retained=${failedCandidateRetained} recovered=${failedCandidateRecovered} enqueued_kind=${failureTrace.lastEnqueuedKind} pumped_kind=${failureTrace.lastPumpedKind} enqueued_node=${failureTrace.lastEnqueuedNodeId} pumped_node=${failureTrace.lastPumpedNodeId} pending_trace=${failureTrace.pending}")
             let idleABefore = scaleWindow.windowProjection()
             let idleBBefore = windowB.windowProjection()
             var idleValid = true
@@ -811,6 +1473,6 @@ main(args: Array<String>): Int64 {
     if (let Some(options) <- optionsFromArgs(args)) {
         return run(options)
     }
-    getStdErr().writeln("usage: interaction_scheduling_efficiency_probe --ack-dir PATH [--overlap-only]")
+    getStdErr().writeln("usage: interaction_scheduling_efficiency_probe --ack-dir PATH [--overlap-only|--latency-only]")
     return 2
 }

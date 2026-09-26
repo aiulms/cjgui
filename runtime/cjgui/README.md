@@ -365,7 +365,14 @@ grapheme segmentation”的承诺。原生 TextKit 的位置与公共 UTF-8 转�
 生产窗口通过 `CjguiInternalRendererTextMeasurer` 调用与绘制相同的 AppKit 字体服务，按字号、
 字重、字体族和约束宽度得到字形 bounds、行高和基线；其跨刷新 scalar 缓存键包含这些实际影响项，
 容量限制为 128。生产测量失败会令本轮投影失败、保留旧场景并给出
-非 OK 状态，不能静默当作真实测量成功。单行静态文字、按钮及文本/整数/布尔字段的可见文本由
+非 OK 状态，不能静默当作真实测量成功。
+
+预览版 `CjguiComposableUiMultilineNaturalHeightMeasurer` 是多行输入框的可选高度查询：布局在解析出
+最终内容宽度后，用与绘制/输入一致的 TextKit word-wrap 和零行片段 padding 求全文自然高度；
+未实现该接口的自定义 measurer 仍走原 `measure(...).height`。两种查询按角色分别缓存，原四指标
+`measure` 的 char-wrap 语义不变。该高度查询需要完成全文布局，不承诺任意规模文本的恒定耗时。
+
+单行静态文字、按钮及文本/整数/布尔字段的可见文本由
 TextKit/AppKit 完成 shaping 后，在场景提交前栅格成节点持有的 Metal 纹理；形状、图片和这些
 文字纹理严格按同一已接受 scene 的 painter order 合成。活动单行字段把唯一 `inputProxy` 的文本、
 选区、光标和 marked range 作为派生纹理状态；TextKit 仍是 IME、候选和选择的唯一 owner。多行字段

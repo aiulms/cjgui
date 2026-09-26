@@ -1,0 +1,16 @@
+HAP: /tmp/cjgui_damaged.hap
+sha256: 5a0a36d305f2ab6b9030b556213fa20096c99e895112bfdf6d46ade99999ae12
+HAP 内 libs/arm64-v8a 库数: 33
+
+== 应用自身产物 ==
+  OK   libentry.so
+  OK   libcjgui_app.so
+  OK   libcjgui.so
+  OK   libcjgui_shared_operation_core.so
+  OK   libcjgui_settings_counter_application.so
+  OK   libcjgui_ohos_transport.so
+
+== 闭包校验（每个 HAP 内 .so 的每条 NEEDED 必须自包含或属系统白名单）==
+  BROKEN ELF 解析失败（非 ELF 或 readobj 失败）: libcjgui.so
+
+RESULT: FAIL

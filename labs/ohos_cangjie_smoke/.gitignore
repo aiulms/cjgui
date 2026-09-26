@@ -1,0 +1,21 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+*.hap
+
+# 探针模块：源码在探针运行时同步进来，不纳入版本管理
+/cjgui_core_probe/src/main/cangjie/
+/cjgui_core_probe/shared_operation_core/
+
+# 探针模块的生成物
+/cjgui_core_probe/cjpm.lock
+/cjgui_core_probe/BuildProfile.ets

@@ -1,0 +1,117 @@
+{
+  "matrix": {
+    "M1_gate_result": "cleared=00 committed=1 aborted=0 job_fails=0 ack_fails=0",
+    "M2_gate_result": "committed=2 aborted=0 job_fails=0 ack_fails=0 armed=0 permits=1/0",
+    "M3_reject_dispatch": "set_fail_next=0 armed_now=1",
+    "M3_mid_armed": "committed=2 aborted=1 job_fails=1 ack_fails=0 armed=0 permits=1/0",
+    "M3_gate_result": "committed=3 aborted=1 job_fails=1 ack_fails=0 armed=0 permits=1/0",
+    "M4_gate_result": "committed=4 aborted=1 job_fails=1 ack_fails=1 armed=0 permits=1/0",
+    "M5_gate_result": "committed=5 aborted=1 job_fails=1 ack_fails=1 armed=0 permits=1/0",
+    "M5_fault_hilog": "09-26 15:39:00.648 28181 31581 I A00000/CjguiApp: settlement fault: present_acceptance_exception",
+    "M5_close_hilog": "09-26 15:39:00.923 28181 31581 I A00000/CjguiApp: host closed; stop_requested=false render_shutdown_status=0 shutdown_done=1 ticks=525"
+  },
+  "checks": [
+    {
+      "check": "首帧放行后生产结算 Accepted（committed>=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "StartingPending 收敛后业务正常",
+      "actual": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "check": "等待期 owner 改值生效（帧未结算）",
+      "actual": 1,
+      "expected": 1,
+      "pass": true
+    },
+    {
+      "check": "等待期后帧结算 Accepted（committed>=2）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "结算后新请求正常（APPLIED true）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "结算后版本恰好推进一位",
+      "actual": 2,
+      "expected": 2,
+      "pass": true
+    },
+    {
+      "check": "注入票 owner 结果仍确定（APPLIED true）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "生产结算裁决 Rejected（aborted>=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "Rejected 后候选不卡死（新 INCREMENT APPLIED）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "Rejected 后公开读回版本精确",
+      "actual": 4,
+      "expected": 4,
+      "pass": true
+    },
+    {
+      "check": "ACK 失败注入恰好一次（>=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "ACK 重试成功后清票（新 INCREMENT APPLIED）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "异常票 native 侧仍按事实结算（committed 增 1）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "终止收敛命名故障可见（settlement fault）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "终止收敛期间业务仍确定（owner 裁决不受影响）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true
+    },
+    {
+      "check": "关闭后传输按停止链收敛（连接被拒）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "关闭后宿主完整收敛（host closed 日志）",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+09-26 17:47:20.371  6524  6524 I A00000/CjguiApp: onCreate
+09-26 17:47:20.385  6524  6524 I A00000/CjguiApp: onWindowStageCreate
+09-26 17:47:20.392  6524  6524 I A00000/CjguiApp: onForeground
+09-26 17:47:20.417  6524  6524 I A00000/CjguiApp: loadContent ok
+09-26 17:47:20.498  6524  6524 I A00000/CjguiApp: host state: phase=idle appInstance=0 ownerReady=0 ownerExited=0 rendererDone=-1 seam=0 refs=0 unrefs=0 refsPending=0 surfacesUnclosed=0 surfacesActive=0 permits=-1/-1 boundGen=0 sessions=-1 unacked=-1 pendingTickets=-1
+09-26 17:47:20.502  6524  6524 I A00000/CjguiApp: XComponent loaded
+09-26 17:47:20.503  6524  8065 I A00000/CjguiRenderer: renderer instance observations reset for new owner start
+09-26 17:47:20.503  6524  8065 I A00000/CjguiRenderer: ingress registered; starting cangjie app loop
+09-26 17:47:20.503  6524  8065 I A00000/CjguiApp: app_main_cangjie: ingress registered, running owner loop synchronously
+09-26 17:47:20.503  6524  8065 I A00000/CjguiApp: surface ready; starting settings-counter host
+09-26 17:47:20.503  6524  8065 I A00000/CjguiRenderer: viewport 1320x1928 gen=1
+09-26 17:47:20.542  6524  8066 I A00000/CjguiRenderer: surface permit acquired gen=1 app=0 comp=1 geo=1
+09-26 17:47:20.542  6524  8066 I A00000/CjguiRenderer: surface bound gen=<private> <private>x<private>
+09-26 17:47:20.564  6524  8066 I A00000/CjguiRenderer: present frame ok (nodes=16)
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=1 kind=1 label=counter-root value= v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=10 kind=3 label=counter-title value=设置与计数 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=11 kind=3 label=counter-mixed value=混排 Mixed 0129 样例 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=15 kind=1 label=counter-card value= v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=12 kind=3 label=counter-value value=计数：10 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=20 kind=2 label=counter-actions value= v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=21 kind=4 label=减少 value=减少 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=22 kind=4 label=增加 value=增加 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=23 kind=7 label=启用计数 value=true v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=24 kind=5 label=名称 value=我的设备 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=25 kind=5 label=别名 value=前台 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=30 kind=3 label=counter-status value=编辑后应用计数配置 · v0 v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=40 kind=1 label=d-clip-box value= v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=41 kind=3 label=d-clip-in value=界内文字 ABC v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=42 kind=3 label=d-clip-cross value=跨边界文字 DEF v=1
+09-26 17:47:20.564  6524  8065 I A00000/CjguiRenderer: accepted node=43 kind=3 label=d-clip-out value=界外文字 XYZ v=1
+09-26 17:47:20.565  6524  8065 I A00000/CjguiApp: host started; pumping turns
+09-26 17:47:20.565  6524  8065 I A00000/CjguiRenderer: owner app ready declared
+09-26 17:47:20.565  6524  8065 I A00000/CjguiApp: owner declared app ready; entering pump loop
+09-26 17:47:26.364  6524  8065 I A00000/CjguiApp: external payload dispatched (90 bytes)
+09-26 17:47:26.383  6524  8065 I A00000/CjguiApp: external payload dispatched (151 bytes)
+09-26 17:47:26.408  6524  8066 I A00000/CjguiRenderer: present frame ok (nodes=16)
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=1 kind=1 label=counter-root value= v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=10 kind=3 label=counter-title value=设置与计数 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=11 kind=3 label=counter-mixed value=混排 Mixed 0129 样例 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=15 kind=1 label=counter-card value= v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=12 kind=3 label=counter-value value=计数：10 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=20 kind=2 label=counter-actions value= v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=21 kind=4 label=减少 value=减少 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=22 kind=4 label=增加 value=增加 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=23 kind=7 label=启用计数 value=true v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=24 kind=5 label=名称 value=我的设备 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=25 kind=5 label=别名 value=前台 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=30 kind=3 label=counter-status value=编辑后应用计数配置 · v1 v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=40 kind=1 label=d-clip-box value= v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=41 kind=3 label=d-clip-in value=界内文字 ABC v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=42 kind=3 label=d-clip-cross value=跨边界文字 DEF v=2
+09-26 17:47:26.409  6524  8065 I A00000/CjguiRenderer: accepted node=43 kind=3 label=d-clip-out value=界外文字 XYZ v=2
+09-26 17:47:44.951  6524  8065 I A00000/CjguiRenderer: raw touch action=37 x=200 y=458
+09-26 17:47:44.951  6524  8065 I A00000/CjguiRenderer: hit=1 index=9
+09-26 17:47:44.952  6524  6524 I A00000/CjguiApp: ime focus payload={"action":"focus","context":1,"field":"counter-name"}
+09-26 17:47:44.958  6524  6524 I A00000/CjguiApp: ime proxy mounted ctx=1 field=counter-name node=24 gen=1 base=2 font=28 px=52,426 1216x72 vp=14.9,121.7 347.4x24.0 density=3.50 text=我的设备
+09-26 17:47:44.958  6524  6524 I A00000/CjguiApp: proxy mounted key=app1/s1/c1/e1/m1 field=counter-name
+09-26 17:47:44.959  6524  6524 W A00000/CjguiApp: ime requestFocus threw attempt=0
+09-26 17:47:44.968  6524  6524 I A00000/CjguiApp: ime proxy onChange len=4
+09-26 17:47:44.971  6524  6524 I A00000/CjguiApp: ime select [4,4) rc=0
+09-26 17:47:45.033  6524  8065 I A00000/CjguiRenderer: raw touch action=39 x=200 y=458
+09-26 17:47:45.060  6524  6524 I A00000/CjguiApp: ime requestFocus sent attempt=1
+09-26 17:47:45.274  6524  6524 I A00000/CjguiApp: ime proxy FOCUSED field=counter-name
+09-26 17:47:45.293  6524  6524 I A00000/CjguiApp: ime select [2,2) rc=0
+09-26 17:47:45.297  6524  6524 I A00000/CjguiApp: ime showTextInput ok field=counter-name
+09-26 17:47:46.833  6524  6524 I A00000/CjguiApp: ime select [1,1) rc=0
+09-26 17:47:47.043  6524  6524 I A00000/CjguiApp: ime select [0,0) rc=0
+09-26 17:47:47.425  6524  6524 I A00000/CjguiApp: ime select [1,1) rc=0
+09-26 17:47:48.757  6524  6524 I A00000/CjguiApp: ime select [0,0) rc=0
+09-26 17:47:49.197  6524  6524 I A00000/CjguiApp: ime select [1,1) rc=0
+09-26 17:47:50.528  6524  6524 I A00000/CjguiApp: ime select [0,0) rc=0
+09-26 17:47:50.878  6524  6524 I A00000/CjguiApp: ime select [1,1) rc=0
+09-26 17:47:51.014  6524  6524 I A00000/CjguiApp: ime select [2,2) rc=0
+09-26 17:47:51.289  6524  6524 I A00000/CjguiApp: ime select [1,1) rc=0
+09-26 17:47:51.871  6524  6524 I A00000/CjguiApp: ime select [0,0) rc=0
+09-26 17:47:52.466  6524  6524 I A00000/CjguiApp: ime select [1,1) rc=0
+09-26 17:47:52.511  6524  6524 I A00000/CjguiApp: ime select [2,2) rc=0
+09-26 17:47:53.533  6524  6524 I A00000/CjguiApp: ime select [1,1) rc=0
+09-26 17:47:54.515  6524  6524 I A00000/CjguiApp: ime select [0,2) rc=0
+09-26 17:47:56.131  6524  6524 I A00000/CjguiApp: ime select [0,4) rc=0
+09-26 17:48:06.140  6524  8065 I A00000/CjguiRenderer: raw touch action=37 x=383 y=1102
+09-26 17:48:06.140  6524  8065 I A00000/CjguiRenderer: hit=0 index=0
+09-26 17:48:06.140  6524  8065 I A00000/CjguiRenderer: ime blur settle ctx=1 settled=1 node=24 text=我的设备
+09-26 17:48:06.141  6524  6524 I A00000/CjguiApp: ime focus payload={"action":"end","context":1,"field":"counter-name"}
+09-26 17:48:06.141  6524  6524 I A00000/CjguiApp: proxy released by framework ctx=1
+09-26 17:48:06.141  6524  8066 I A00000/CjguiRenderer: present frame ok (nodes=16)
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=1 kind=1 label=counter-root value= v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=10 kind=3 label=counter-title value=设置与计数 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=11 kind=3 label=counter-mixed value=混排 Mixed 0129 样例 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=15 kind=1 label=counter-card value= v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=12 kind=3 label=counter-value value=计数：10 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=20 kind=2 label=counter-actions value= v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=21 kind=4 label=减少 value=减少 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=22 kind=4 label=增加 value=增加 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=23 kind=7 label=启用计数 value=true v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=24 kind=5 label=名称 value=我的设备 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=25 kind=5 label=别名 value=前台 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=30 kind=3 label=counter-status value=名称已应用 v2 · 我的设备 · v2 v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=40 kind=1 label=d-clip-box value= v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=41 kind=3 label=d-clip-in value=界内文字 ABC v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=42 kind=3 label=d-clip-cross value=跨边界文字 DEF v=3
+09-26 17:48:06.141  6524  8065 I A00000/CjguiRenderer: accepted node=43 kind=3 label=d-clip-out value=界外文字 XYZ v=3
+09-26 17:48:06.190  6524  8065 I A00000/CjguiRenderer: raw touch action=39 x=383 y=1102

@@ -125,9 +125,9 @@ func catalogControllerRenameIsContentOnlyAndKeepsSelection(): Unit {
     let firstLeaf = catalogLeafNode(controller, 311)
     let secondLeaf = catalogLeafNode(controller, 322)
     @Assert(controller.applyUiEvent(
-        CjguiComposableUiEvent(firstLeaf, 33, "", 0, 0, 1)).didApply, true)
+        CjguiComposableUiEvent(firstLeaf, 27, "", 0, 0, 1)).didApply, true)
     @Assert(controller.applyUiEvent(
-        CjguiComposableUiEvent(secondLeaf, 33, "", 0, 0, 1,
+        CjguiComposableUiEvent(secondLeaf, 27, "", 0, 0, 1,
             modifierFlags: 1 << 20)).didApply, true)
     @Assert(controller.selectedCount(), 2)
     let selectedBefore = controller.selectedKeys()

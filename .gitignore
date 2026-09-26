@@ -52,3 +52,33 @@ sources/
 
 # AI 规划草稿目录（本地工作区，不入库）
 .planning/
+/.workbuddy/
+
+# HarmonyOS lab products and synchronized copies. Sources of truth live in
+# runtime/cjgui/platforms/ohos, the shared examples, and the lab entry app.
+/labs/ohos_cjgui_app/.hvigor/
+/labs/ohos_cjgui_app/oh_modules/
+/labs/ohos_cjgui_app/labs/
+/labs/ohos_cjgui_app/entry/.hvigor/
+/labs/ohos_cjgui_app/entry/.cxx/
+/labs/ohos_cjgui_app/entry/oh_modules/
+/labs/ohos_cjgui_app/entry/libs/
+/labs/ohos_cjgui_app/entry/cjgui/
+/labs/ohos_cjgui_app/entry/shared_operation_core/
+/labs/ohos_cjgui_app/entry/settings_counter_application/
+/labs/ohos_cjgui_app/entry/ohos_transport/
+/labs/ohos_cjgui_app/entry/oh_renderer/
+/labs/ohos_cjgui_app/entry/src/main/cpp/
+/labs/ohos_cjgui_app/entry/src/main/ets/proxy/
+/labs/ohos_cjgui_app/entry/cjgui_sync_*.manifest
+
+# Keep concise verification evidence; local build, run, and consultation
+# archives remain available in the workspace without entering Git history.
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/snapshot/
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/build/
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/consultations/
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/laya/
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/screenshots/
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/verification/*.png
+/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/verification/*.jpeg

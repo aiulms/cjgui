@@ -5443,3 +5443,16 @@ int32_t cjgui_native_bridge_draw_call_vertex_binding_required(void) {
 int32_t cjgui_native_bridge_draw_call_still_blocked(void) {
     return CJGUI_NATIVE_BRIDGE_DRAW_CALL_STILL_BLOCKED;
 }
+
+// 2026-09-26(B2):极薄**非 static** 访问器 —— 供渲染器侧导出包装把 view token 解成视图。
+// 内部完全照既有模式(锁内取值 ⇒ 立即解锁 ⇒ 不持锁跨调用),**不改动既有 static 符号**。
+void *CjguiNativeBridgeViewForToken(uint64_t viewToken) {
+    void *result = NULL;
+    pthread_mutex_lock(&g_cjgui_native_bridge_nsview_table_mutex);
+    int32_t slot = nsview_table_find_token_locked(viewToken);
+    if (slot >= 0) {
+        result = (__bridge void *)g_cjgui_native_bridge_nsview_table[slot].view;
+    }
+    pthread_mutex_unlock(&g_cjgui_native_bridge_nsview_table_mutex);
+    return result;
+}

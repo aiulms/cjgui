@@ -1,0 +1,66 @@
+[
+  {
+    "check": "accepted 几何日志可读",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "D 夹具节点已渲染（40/41/42/43）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "界外节点 clip 高度为 0（空交集）",
+    "actual": 0.0,
+    "expected": 0.0,
+    "pass": true
+  },
+  {
+    "check": "跨边界节点 clip 高度被截（10<40）",
+    "actual": 10.0,
+    "expected": 10.0,
+    "pass": true
+  },
+  {
+    "band": [
+      773,
+      820
+    ],
+    "text_px": 18,
+    "inside_text_sample": [
+      77,
+      31,
+      31
+    ]
+  },
+  {
+    "check": "截图像素采样完成",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "命中增加按钮 → owner 版本 +1",
+    "actual": 1,
+    "expected": 1,
+    "pass": true
+  },
+  {
+    "check": "命中减少按钮 → owner 版本 +1",
+    "actual": 2,
+    "expected": 2,
+    "pass": true
+  },
+  {
+    "check": "点击裁剪容器非交互区 → owner 版本不变",
+    "actual": 2,
+    "expected": 2,
+    "pass": true
+  },
+  {
+    "corner_point_hit": true,
+    "note": "cornerRadius=14; behavior recorded as-is"
+  }
+]

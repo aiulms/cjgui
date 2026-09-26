@@ -288,6 +288,106 @@ private func externalWrite(domain: CjguiSharedOperationList, action: String, arg
         ])))
 }
 
+/// The owner's CURRENT availability is consumed by EVERY presentation of the
+/// same field: the built-in generated editor, the registered composite's editor
+/// and the handwritten pane all read the same owner answer (the handwritten pane
+/// calls `generatedRegion.fieldAvailability`, asserted here directly). A frozen
+/// title is disabled everywhere with the SAME reason, notes stays editable, an
+/// external write is refused with that reason, and reopening restores editing.
+@Test
+func ownerAvailabilityDrivesEveryPresentationOfTheSameField(): Unit {
+    let (domain, region) = panelWithEditor()
+    let structure = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 board vertical
+NODE 1 titleEditor textInput field=title
+PROPERTY 1 titleEditor label 任务标题编辑
+NODE 1 notesEditor textInput field=notes
+PROPERTY 1 notesEditor label 备注编辑
+NODE 1 card taskEditCard
+PROPERTY 1 card caption 任务编辑卡
+END"""
+    if (!region.submitStructure(structure, region.acceptedStructureVersion()).candidateAccepted) {
+        @Assert(false, true)
+        return
+    }
+    if (!region.beginSceneRefresh()) {
+        @Assert(false, true)
+        return
+    }
+    let _ = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    if (!region.prepareSceneRefresh()) {
+        @Assert(false, true)
+        return
+    }
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 1)
+
+    // Before the task is submitted every presentation is editable.
+    let titleBefore = region.fieldAvailability("title")
+    @Assert(titleBefore.known, true)
+    @Assert(titleBefore.isAvailable, true)
+    @Assert(region.fieldAvailability("notes").isAvailable, true)
+
+    // Submit through the same declared owner entry the submit button uses.
+    let markedRule = CjguiTaskFields.definition("marked").rule(1)
+    @Assert(domain.writeDeclaredFieldFromHuman(markedRule, 1,
+        CjguiSharedOperationValue.boolean(true)).applied, true)
+
+    // ONE owner answer, with the owner's own reason, for the field the
+    // handwritten pane reads and for the generated projections below.
+    let titleFrozen = region.fieldAvailability("title")
+    @Assert(titleFrozen.known, true)
+    @Assert(titleFrozen.isAvailable, false)
+    @Assert(titleFrozen.reason, "title_frozen_after_submit")
+    @Assert(region.fieldAvailability("notes").isAvailable, true)
+
+    let section = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    let titleNode = editorPresentationNode(section, region.acceptedNodeIdForKey("titleEditor"))
+    @Assert(titleNode.isEnabled, false)
+    let notesNode = editorPresentationNode(section, region.acceptedNodeIdForKey("notesEditor"))
+    @Assert(notesNode.isEnabled, true)
+    // The composite's title editor consumes the element's resolved availability.
+    let cardTitleId = region.acceptedCompositeElementNodeId("card", "title")
+    @Assert(cardTitleId > 0, true)
+    let cardTitle = editorPresentationNode(section, cardTitleId)
+    @Assert(cardTitle.isEnabled, false)
+    let cardNotesId = region.acceptedCompositeElementNodeId("card", "notes")
+    @Assert(cardNotesId > 0, true)
+    @Assert(editorPresentationNode(section, cardNotesId).isEnabled, true)
+
+    // The external entry that read "available" a moment ago is refused NOW by the
+    // owner, with the same reason and no partial write.
+    let versionBefore = domain.version()
+    let external = externalWrite(domain, "SET_TITLE", "title",
+        CjguiSharedOperationValue.string("外部新值"))
+    @Assert(external.applied, false)
+    @Assert(external.reason, "title_frozen_after_submit")
+    @Assert(domain.version(), versionBefore)
+    @Assert(titleOfRecord(domain, 1), "初始标题")
+
+    // Reopening through the same declared entry restores editing everywhere.
+    @Assert(domain.writeDeclaredFieldFromHuman(markedRule, 1,
+        CjguiSharedOperationValue.boolean(false)).applied, true)
+    @Assert(region.fieldAvailability("title").isAvailable, true)
+    let reopened = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    @Assert(editorPresentationNode(reopened, region.acceptedNodeIdForKey("titleEditor")).isEnabled, true)
+    @Assert(editorPresentationNode(reopened, cardTitleId).isEnabled, true)
+}
+
+private func editorPresentationNode(node: CjguiComposableUiNode, nodeId: Int64): CjguiComposableUiNode {
+    if (node.nodeId == nodeId) {
+        return node
+    }
+    for (child in node.children()) {
+        let found = editorPresentationNode(child, nodeId)
+        if (found.nodeId == nodeId) {
+            return found
+        }
+    }
+    return cjguiComposableText(-1, "missing", "", CjguiComposableUiStyle())
+}
+
 /// One rule, three entry points: a rule declared once is enforced by the owner no
 /// matter which entry point sends the write. The generated editor, the declared
 /// owner entry the handwritten pane calls, and a real external invocation all get
@@ -490,4 +590,251 @@ func sameKeyRebindingKeepsQueuedEventOnItsOriginalObject(): Unit {
     @Assert(region.handleEvent(CjguiComposableUiEvent(current, 28, "新绑定的标题", 0, 0, 2)).didApply, true)
     @Assert(titleOfRecord(domain, 1), "排队事件的标题")
     @Assert(titleOfRecord(domain, 2), "新绑定的标题")
+}
+
+// The FRAMEWORK's shared style vocabulary must reach the geometry this second
+// consumer really builds: growth consumes the row's slack and a fixed width is
+// honored, using the panel's own registered catalog (no second style mapping).
+@Test
+func generatedPanelStyleVocabularyReachesTheBuiltGeometry(): Unit {
+    let (_, region) = panelWithEditor()
+    let structure = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 styleRow horizontal
+PROPERTY 0 styleRow gap 0
+NODE 1 fixedNote label
+PROPERTY 1 fixedNote text 固定
+PROPERTY 1 fixedNote fixedWidth 40
+NODE 1 growingNote label
+PROPERTY 1 growingNote text 生长
+PROPERTY 1 growingNote growX 1
+END
+"""
+    @Assert(region.submitStructure(structure, region.acceptedStructureVersion()).candidateAccepted, true)
+    @Assert(region.beginSceneRefresh(), true)
+    let built = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 1)
+    let fixedId = region.acceptedNodeIdForKey("fixedNote")
+    let growingId = region.acceptedNodeIdForKey("growingNote")
+    @Assert(fixedId > 0, true)
+    @Assert(growingId > 0, true)
+    let scene = CjguiComposableUiLayoutEngine.layout(built, CjguiComposableUiRect(0, 0, 400, 80), 1)
+    let fixed = scene.nodeForId(fixedId)
+    let growing = scene.nodeForId(growingId)
+    @Assert(fixed.bounds.width, 40)
+    @Assert(growing.bounds.width > fixed.bounds.width, true)
+    @Assert(growing.bounds.x > fixed.bounds.x, true)
+}
+
+/// The dynamic availability an editor's enabled state projects is derived from
+/// the SAME owner condition the write path enforces, and it is a projection, not
+/// a permission: a caller that acts on a stale "available" answer is still refused
+/// by the owner's own re-check.
+@Test
+func fieldAvailabilityFollowsTheOwnerConditionAndStillRechecksOnWrite(): Unit {
+    let (domain, region) = panelWithEditor()
+    // A fresh task: the title is editable, and so are its neighbours.
+    let title = region.fieldAvailability("title")
+    @Assert(title.known, true)
+    @Assert(title.isAvailable, true)
+    @Assert(title.reason, "")
+    @Assert(title.ownerResourceId, 1)
+    @Assert(region.fieldAvailability("notes").isAvailable, true)
+
+    // Submit through the same declared entry the submit control uses: the title
+    // is now blocked with the OWNER's reason, while notes keeps working and the
+    // title stays readable (its value is still published elsewhere).
+    @Assert(domain.writeDeclaredFieldFromHuman(CjguiTaskFields.definition("marked").rule(1), 1,
+        CjguiSharedOperationValue.boolean(true)).applied, true)
+    let frozen = region.fieldAvailability("title")
+    @Assert(frozen.known, true)
+    @Assert(frozen.isAvailable, false)
+    @Assert(frozen.reason, "title_frozen_after_submit")
+    @Assert(frozen.ownerResourceId, 1)
+    @Assert(frozen.stateVersion, domain.version())
+    @Assert(region.fieldAvailability("notes").isAvailable, true)
+
+    // A fresh availability answer does NOT authorize the write: the owner
+    // re-checks the current condition inside its transaction.
+    let refused = domain.writeDeclaredFieldFromHuman(CjguiTaskFields.definition("title").rule(1), 1,
+        CjguiSharedOperationValue.string("迟到标题"))
+    @Assert(refused.applied, false)
+    @Assert(refused.reason, "title_frozen_after_submit")
+
+    // The action that writes the title reports exactly the same condition.
+    let action = region.actionAvailability("SET_TITLE")
+    @Assert(action.known, true)
+    @Assert(action.isAvailable, false)
+    @Assert(action.reason, "title_frozen_after_submit")
+    // An action with no condition of its own is not blocked by the title's.
+    @Assert(region.actionAvailability("TOGGLE_MARKED").isAvailable, true)
+
+    // Reopening lifts the condition, and the very same field becomes available.
+    @Assert(domain.writeDeclaredFieldFromHuman(CjguiTaskFields.definition("marked").rule(1), 1,
+        CjguiSharedOperationValue.boolean(false)).applied, true)
+    @Assert(region.fieldAvailability("title").isAvailable, true)
+    // An unknown field is not claimed either way.
+    @Assert(region.fieldAvailability("no_such_field").known, false)
+}
+
+/// Counterexample for "same field, same label": TWO accepted editors bound to the
+/// SAME field with the SAME visible label must stay distinguishable by their
+/// accepted identity, so an input driver can confirm exactly which control
+/// received the input instead of matching a label/role (and cannot type into the
+/// wrong one while still seeing the field value change).
+private let DUAL_EDITOR_STRUCTURE = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 board vertical
+NODE 1 titleEditor textInput field=title
+PROPERTY 1 titleEditor label 任务标题编辑
+NODE 1 titleMirror textInput field=title
+PROPERTY 1 titleMirror label 任务标题编辑
+END"""
+
+@Test
+func twoControlsOfOneFieldStayDistinctByAcceptedIdentity(): Unit {
+    let (domain, region) = panelWithEditor()
+    @Assert(region.submitStructure(DUAL_EDITOR_STRUCTURE,
+        region.acceptedStructureVersion()).candidateAccepted, true)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 1)
+
+    // Same field, same label, DIFFERENT accepted identities.
+    let editorId = region.acceptedNodeIdForKey("titleEditor")
+    let mirrorId = region.acceptedNodeIdForKey("titleMirror")
+    @Assert(editorId > 0, true)
+    @Assert(mirrorId > 0, true)
+    @Assert(editorId != mirrorId, true)
+
+    // Input through the MIRROR control applies the field once; both identities
+    // survive, and the sibling control keeps its own accepted node.
+    let before = titleOfRecord(domain, 1)
+    let event = CjguiComposableUiEvent(editorNode(region, "titleMirror", "title",
+        CjguiTaskFields.titleResourceId, "SET_TITLE", 1, CJGUI_COMPOSABLE_UI_TEXT_INPUT), 28,
+        "镜像标题", 0, 0, 1)
+    @Assert(region.handleEvent(event).didApply, true)
+    @Assert(titleOfRecord(domain, 1), "镜像标题")
+    @Assert(before != "镜像标题", true)
+    @Assert(region.acceptedNodeIdForKey("titleEditor"), editorId)
+    @Assert(region.acceptedNodeIdForKey("titleMirror"), mirrorId)
+
+    // An event carrying the SIBLING's identity still resolves to the sibling,
+    // not to the control that was typed into last.
+    let sibling = CjguiComposableUiEvent(editorNode(region, "titleEditor", "title",
+        CjguiTaskFields.titleResourceId, "SET_TITLE", 1, CJGUI_COMPOSABLE_UI_TEXT_INPUT), 28,
+        "兄弟标题", 0, 0, 1)
+    @Assert(region.handleEvent(sibling).didApply, true)
+    @Assert(titleOfRecord(domain, 1), "兄弟标题")
+}
+
+/// An image structure submitted by the PUBLIC structure channel.
+private let IMAGE_IDENTITY_STRUCTURE = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 board vertical
+NODE 1 beacon image
+PROPERTY 1 beacon resource collaboration-beacon
+PROPERTY 1 beacon resourceVersion 1
+END"""
+
+/// The WINDOW's dispose hook is the real release path for a window's holds on the
+/// SHARED resource catalog: this calls the same method the window's dispose
+/// boundary calls (never the release helper directly), after real successful
+/// commits, and requires exactly one hold per accepted binding and nothing left
+/// after teardown.
+@Test
+func controllerDisposeReleasesSharedCatalogImageHolds(): Unit {
+    let (domain, _) = panelWithEditor()
+    let controller = CollaborationStarterController(domain)
+    let region = controller.generatedUiRegion()
+    var round = 0
+    while (round < 3) {
+        if (!region.submitStructure(IMAGE_IDENTITY_STRUCTURE, region.acceptedStructureVersion()).candidateAccepted) {
+            @Assert(false, true)
+            return
+        }
+        if (!region.beginSceneRefresh()) {
+            @Assert(false, true)
+            return
+        }
+        let _ = region.buildSection(CjguiComposableUiTheme.beaconDark())
+        if (!region.prepareSceneRefresh()) {
+            @Assert(false, true)
+            return
+        }
+        region.commitSceneRefresh()
+        // Repeated successful commits of the SAME published identity keep one hold.
+        @Assert(region.liveImageIdentityHoldCount(), 1)
+        round += 1
+    }
+    controller.disposeSceneRefreshResources()
+    @Assert(region.liveImageIdentityHoldCount(), 0)
+    // Idempotent: a second teardown path must not double release (or throw).
+    controller.disposeSceneRefreshResources()
+    @Assert(region.liveImageIdentityHoldCount(), 0)
+}
+
+/// The generated scroll container submitted through the PUBLIC structure channel
+/// of this domain: discovery names it, the builder produces a real public
+/// viewport, and an illegal shape is refused as a whole.
+private func generatedScrollPayload(lines: Int64, illegalShape!: Bool = false): String {
+    // `content` is a DEPTH-2 node, so it is a child of the scroll node; the
+    // illegal case adds a SECOND depth-2 node (two children of one scroll).
+    var payload = "GENERATED_UI_STRUCTURE 1\nNODE 0 board vertical\nNODE 1 panel scrollArea\n" +
+        "PROPERTY 1 panel offset 40\nNODE 2 content vertical\n"
+    var index: Int64 = 0
+    while (index < lines) {
+        payload = "${payload}NODE 3 line${index} label\nPROPERTY 3 line${index} text 行${index}\n"
+        index += 1
+    }
+    if (illegalShape) {
+        payload = "${payload}NODE 2 extra label\nPROPERTY 2 extra text 多余\n"
+    }
+    return "${payload}END"
+}
+
+private func panelFindScroll(node: CjguiComposableUiNode): ?CjguiComposableUiNode {
+    if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
+        return Some(node)
+    }
+    for (child in node.children()) {
+        if (let Some(found) <- panelFindScroll(child)) {
+            return Some(found)
+        }
+    }
+    return None
+}
+
+@Test
+func generatedScrollIsDiscoveredAndBuiltInThePanelDomain(): Unit {
+    // Public discovery names the kind and its declared limit.
+    let described = CjguiGeneratedUiEncoding.describe(CjguiTaskGeneratedRegion.buildCatalog())
+    @Assert(described.contains("COMPONENT scrollArea"), true)
+
+    let (_, region) = panelWithEditor()
+    let submitted = region.submitStructure(generatedScrollPayload(4), region.acceptedStructureVersion())
+    @Assert(submitted.candidateAccepted, true)
+    @Assert(region.beginSceneRefresh(), true)
+    let built = region.buildSection(CjguiComposableUiTheme.beaconDark())
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    let scroll = match (panelFindScroll(built)) {
+        case Some(value) => value
+        case None => cjguiComposableText(-1, "missing", "", CjguiComposableUiStyle())
+    }
+    @Assert(scroll.nodeKind, CJGUI_COMPOSABLE_UI_SCROLL_AREA)
+    @Assert(scroll.scrollViewport.isSome(), true)
+    @Assert(scroll.scrollOffset, 40)
+
+    // A second child of the scroll node is an illegal shape: the whole candidate
+    // is refused and the accepted interface stays usable.
+    let refused = region.submitStructure(generatedScrollPayload(2, illegalShape: true),
+        region.acceptedStructureVersion())
+    @Assert(refused.candidateAccepted, false)
+    @Assert(refused.reason, "child_limit_exceeded")
+    @Assert(region.acceptedStructureVersion(), 1)
 }

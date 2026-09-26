@@ -1093,11 +1093,117 @@ private func settleComposableImages(window: CjguiComposableUiWindow, expectedLoa
         }
         let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(window, turnBudgetMs: 4u32)
     }
+    var finalLoaded: UInt32 = 0
+    var finalCacheEntries: UInt32 = 0
+    var finalDecodes: UInt32 = 0
+    let finalStatus = unsafe {
+        cjgui_internal_renderer_test_composable_image_stats(window.testSessionToken(),
+            inout finalLoaded, inout finalCacheEntries, inout finalDecodes)
+    }
+    let progress = window.windowProgress()
+    println("CJGUI_ASYNC_IMAGE_TIMEOUT expected_loaded=${expectedLoaded} expected_decodes=${expectedDecodeCount} " +
+        "status=${finalStatus} loaded=${finalLoaded} cache_entries=${finalCacheEntries} decodes=${finalDecodes} " +
+        "accepted=${progress.acceptedSceneVersion} pending='${progress.pendingRefreshReason}' " +
+        "native_failure='${progress.lastNativeFailure}'")
     return false
 }
 
+// The optional multiline natural-height query must obey the same candidate
+// rejection boundary as the older four-metric measurement path. Keep this in
+// the ordinary window probe so the native failure seam reaches the real
+// controller, layout, and accepted-scene transaction.
+private class MultilineNaturalHeightFailureController <: CjguiComposableUiController {
+    private var value: String
+    private var revision: Int64
+
+    init() { this.value = "accepted before measurement\n第二行 😀"; this.revision = 1 }
+    public func uiSceneVersion(): Int64 { return revision }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(9900, "natural-height-failure-root",
+            CjguiComposableUiStyle(fixedWidth: 320, padding: 8))
+        root.add(cjguiComposableMultilineTextInput(9901, "natural-height-failure-field", "",
+            value, 9901, CjguiComposableUiStyle(fixedWidth: 280)))
+        return root
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        let _ = event
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        let _ = eventKind; let _ = nodeId
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+    public func replace(value: String): Unit { this.value = value; revision += 1 }
+}
+
+private func acceptedNaturalHeightValue(window: CjguiComposableUiWindow, value: String): Bool {
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == "natural-height-failure-field" && node.value == value) { return true }
+    }
+    return false
+}
+
+private func verifyMultilineNaturalHeightFailureRecovery(): Bool {
+    let controller = MultilineNaturalHeightFailureController()
+    let window = CjguiComposableUiWindow(controller)
+    if (!window.start()) { return false }
+    let oldVersion = window.displayedSceneVersion()
+    let oldValue = "accepted before measurement\n第二行 😀"
+    let newValue = "replacement after measurement failure\n第二行 😀\nthird line wraps at the resolved width"
+    controller.replace(newValue)
+    let forced = unsafe {
+        cjgui_internal_renderer_test_set_composable_measurement_failures(window.testSessionToken(), 1u32)
+    }
+    let failedRefresh = window.refresh()
+    let failedProjection = window.windowProjection()
+    let retained = forced == CJGUI_INTERNAL_RENDERER_OK && !failedRefresh &&
+        window.nativeStatus() != CJGUI_INTERNAL_RENDERER_OK &&
+        window.displayedSceneVersion() == oldVersion &&
+        failedProjection.acceptedSceneVersion == oldVersion &&
+        failedProjection.lastNativeMeasurementCallCount > 0 &&
+        acceptedNaturalHeightValue(window, oldValue)
+    let recoveredRefresh = window.refresh()
+    let recovered = recoveredRefresh && window.displayedSceneVersion() > oldVersion &&
+        acceptedNaturalHeightValue(window, newValue)
+    println("CJGUI_MULTILINE_NATURAL_HEIGHT_FAILURE forced=${forced} retained=${retained} " +
+        "failed_measure_calls=${failedProjection.lastNativeMeasurementCallCount} recovered=${recovered}")
+    window.close()
+    return retained && recovered
+}
+
+private func focusScopeRemapStable(window: CjguiComposableUiWindow): Bool {
+    // The native focus helper alone does not update the Cangjie focus owner.
+    // Deliver the matching focus intent so a scoped shortcut is live in both
+    // the old scene and the remapped scene.
+    var targetIndex: UInt32 = 0u32
+    var targetFound = false
+    for (node in window.acceptedSceneNodes()) {
+        if (node.nodeId == 9406) { targetFound = true; break }
+        targetIndex += 1u32
+    }
+    let nativeFocus = if (targetFound) {
+        internalRendererFocusComposableNode(window.testSessionToken(), 9406)
+    } else {
+        CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    }
+    let focusQueued = nativeFocus == CJGUI_INTERNAL_RENDERER_OK &&
+        enqueue(window, targetIndex, 31u32, "")
+    if (focusQueued) { let _ = window.pump(0u32) }
+    let focusedControl = window.windowProgress().focusedControlId
+    println("CJGUI_SCOPE_REMAP_FOCUS scene=${window.displayedSceneVersion()} target_index=${targetIndex} " +
+        "native=${nativeFocus} queued=${focusQueued} focused='${focusedControl}'")
+    return targetFound && focusQueued && focusedControl == "scope-remap-stable"
+}
+
 main(args: Array<String>): Int64 {
+    if (args.size == 1 && args[0] == "--natural-height-failure-only") {
+        return if (verifyMultilineNaturalHeightFailureRecovery()) { 0 } else { 162 }
+    }
     if (args.size != 0) { return 2 }
+    if (!verifyMultilineNaturalHeightFailureRecovery()) { return 162 }
     let controller = NativeEventController()
     let window = CjguiComposableUiWindow(controller)
     if (!window.start()) { return 3 }
@@ -1560,24 +1666,90 @@ main(args: Array<String>): Int64 {
     let scopeRemapController = ScopeRemapController()
     let scopeRemapWindow = CjguiComposableUiWindow(scopeRemapController)
     if (!scopeRemapWindow.start()) { window.close(); return 91 }
-    if (!scopeRemapWindow.declareCommand(CjguiComposableUiCommand(
-        "scope-remap.stable", 9406, CjguiComposableUiShortcut("k")
-    ))) { scopeRemapWindow.close(); window.close(); return 109 }
+    // A layer target may only bind a command in that layer's input scope.
+    // The old unscoped declaration reached this point and failed at exit109;
+    // retain that failure as an explicit negative control.
+    let unscopedRemapCommand = CjguiComposableUiCommand(
+        "scope-remap.invalid-empty-scope", 9406, CjguiComposableUiShortcut("k")
+    )
+    let scopedRemapCommand = CjguiComposableUiCommand(
+        "scope-remap.stable", 9406, CjguiComposableUiShortcut("k"),
+        focusScopeId: "scope-remap-target"
+    )
+    var remapTargetDeclared = false
+    for (node in scopeRemapWindow.acceptedSceneNodes()) {
+        if (node.nodeId == 9406) {
+            remapTargetDeclared = node.actionName == "STABLE_SCOPE" &&
+                node.inputScopeId == scopedRemapCommand.focusScopeId &&
+                unscopedRemapCommand.focusScopeId == ""
+            println("CJGUI_SCOPE_REMAP_DECLARATION target=${node.nodeId} action='${node.actionName}' " +
+                "input_scope='${node.inputScopeId}' invalid_scope='${unscopedRemapCommand.focusScopeId}' " +
+                "command_scope='${scopedRemapCommand.focusScopeId}' " +
+                "scene=${scopeRemapWindow.displayedSceneVersion()}")
+        }
+    }
+    let invalidScopeRejected = !scopeRemapWindow.declareCommand(unscopedRemapCommand)
+    let validScopeRegistered = scopeRemapWindow.declareCommand(scopedRemapCommand)
+    println("CJGUI_SCOPE_REMAP_REGISTRATION target_declared=${remapTargetDeclared} " +
+        "invalid_rejected=${invalidScopeRejected} valid_registered=${validScopeRegistered}")
+    if (!remapTargetDeclared || !invalidScopeRejected || !validScopeRegistered) {
+        scopeRemapWindow.close(); window.close(); return 109
+    }
+    if (!focusScopeRemapStable(scopeRemapWindow)) {
+        scopeRemapWindow.close(); window.close(); return 93
+    }
     // Queue a normalized key from the old native scene, then accept a new
     // Cangjie projection before draining it. A shortcut cannot be rebound to
     // the current target merely because its declaration string still exists.
+    let queuedRemapScene = scopeRemapWindow.displayedSceneVersion()
     if (!enqueue(scopeRemapWindow, 0u32, 34u32, "shortcut:command+k")) {
         scopeRemapWindow.close(); window.close(); return 110
     }
     scopeRemapController.removePrefixScope()
     if (!scopeRemapWindow.refresh()) { scopeRemapWindow.close(); window.close(); return 92 }
+    let acceptedRemapScene = scopeRemapWindow.displayedSceneVersion()
     let staleShortcutPump = scopeRemapWindow.pump(0u32)
-    if (staleShortcutPump.didApplyHumanAction || scopeRemapController.didApplyStableAction()) {
+    let staleShortcutRejected = acceptedRemapScene > queuedRemapScene &&
+        !staleShortcutPump.didApplyHumanAction &&
+        !scopeRemapController.didApplyStableAction()
+    println("CJGUI_SCOPE_REMAP_STALE queued_scene=${queuedRemapScene} accepted_scene=${acceptedRemapScene} " +
+        "rejected=${staleShortcutRejected}")
+    if (!staleShortcutRejected) {
         scopeRemapWindow.close(); window.close(); return 111
     }
-    if (internalRendererFocusComposableNode(scopeRemapWindow.testSessionToken(), 9406) != CJGUI_INTERNAL_RENDERER_OK) {
+    if (!focusScopeRemapStable(scopeRemapWindow)) {
         scopeRemapWindow.close(); window.close(); return 93
     }
+    var freshShortcutFocused: UInt64 = 0u64
+    let freshShortcutStatus = unsafe {
+        cjgui_internal_renderer_test_send_composable_key(
+            scopeRemapWindow.testSessionToken(), 40u16, 1048576u64, inout freshShortcutFocused
+        )
+    }
+    let freshShortcutPump = scopeRemapWindow.pump(0u32)
+    let freshShortcutApplied = freshShortcutStatus == CJGUI_INTERNAL_RENDERER_OK &&
+        freshShortcutFocused == 9406u64 && freshShortcutPump.didApplyHumanAction &&
+        scopeRemapController.didApplyStableAction()
+    var remapPending: UInt32 = 0
+    var remapEnqueuedKind: UInt32 = 0
+    var remapEnqueuedNode: UInt64 = 0u64
+    var remapEnqueuedScene: UInt64 = 0u64
+    var remapPumpedKind: UInt32 = 0
+    var remapPumpedNode: UInt64 = 0u64
+    var remapPumpedScene: UInt64 = 0u64
+    let remapTraceStatus = unsafe {
+        cjgui_internal_renderer_test_composable_interaction_trace(scopeRemapWindow.testSessionToken(),
+            inout remapPending, inout remapEnqueuedKind, inout remapEnqueuedNode, inout remapEnqueuedScene,
+            inout remapPumpedKind, inout remapPumpedNode, inout remapPumpedScene)
+    }
+    println("CJGUI_SCOPE_REMAP_SHORTCUT stale_rejected=${staleShortcutRejected} " +
+        "fresh_status=${freshShortcutStatus} fresh_focused=${freshShortcutFocused} " +
+        "fresh_applied=${freshShortcutApplied} pump_applied=${freshShortcutPump.didApplyHumanAction} " +
+        "controller_applied=${scopeRemapController.didApplyStableAction()} trace_status=${remapTraceStatus} " +
+        "pending=${remapPending} enqueued=${remapEnqueuedKind}/${remapEnqueuedNode}/${remapEnqueuedScene} " +
+        "pumped=${remapPumpedKind}/${remapPumpedNode}/${remapPumpedScene} " +
+        "accepted_scene=${scopeRemapWindow.displayedSceneVersion()}")
+    if (!freshShortcutApplied) { scopeRemapWindow.close(); window.close(); return 167 }
     var scopeRemapFocused: UInt64 = 0u64
     let scopeRemapTabStatus = unsafe {
         cjgui_internal_renderer_test_send_composable_key(
@@ -1585,6 +1757,8 @@ main(args: Array<String>): Int64 {
         )
     }
     let _ = scopeRemapWindow.pump(0u32)
+    println("CJGUI_SCOPE_REMAP_TAB status=${scopeRemapTabStatus} focused=${scopeRemapFocused} " +
+        "expected=9407")
     if (scopeRemapTabStatus != CJGUI_INTERNAL_RENDERER_OK || scopeRemapFocused != 9407u64) {
         scopeRemapWindow.close(); window.close(); return 94
     }
@@ -2175,16 +2349,23 @@ main(args: Array<String>): Int64 {
     if (retiringProgress.submittedFrameIndex <= 1) { inFlightWindow.close(); window.close(); return 80 }
     inFlightWindow.close()
     if (!inFlightWindow.start()) { window.close(); return 81 }
-    // The reopened session owns a legitimate initial asynchronous image
-    // completion of its own. Settle that normal work before checking that no
-    // late command-buffer/resource completion from the retired session can
-    // advance this replacement's counters.
-    if (!settleComposableImages(inFlightWindow, 2u32, 1u32)) { inFlightWindow.close(); window.close(); return 165 }
+    // The still-live application image domain reuses its decoded texture on
+    // reopen. Both image nodes must load, while this new session performs no
+    // additional decode. Settle that normal work before checking that no late
+    // completion from the retired session advances the replacement's counters.
+    if (!settleComposableImages(inFlightWindow, 2u32, 0u32)) { inFlightWindow.close(); window.close(); return 165 }
     let replacementProgress = inFlightWindow.windowProjection()
-    if (replacementProgress.submittedFrameIndex != 2) { inFlightWindow.close(); window.close(); return 82 }
-    // The second frame is a normal asynchronous completion and may still be
-    // pending here; the bounded pump below verifies its completion before
-    // asserting that no retired-session work can advance it.
+    println("CJGUI_INFLIGHT_REOPEN_PROGRESS accepted=${replacementProgress.acceptedSceneVersion} " +
+        "submitted=${replacementProgress.submittedFrameIndex} " +
+        "completed=${replacementProgress.observedMetalCompletionFrameIndex} " +
+        "build=${replacementProgress.buildPassCount} layout=${replacementProgress.layoutPassCount} " +
+        "native_submit=${replacementProgress.nativeSubmissionCount} " +
+        "pending='${replacementProgress.pendingRefreshReason}' " +
+        "failure='${replacementProgress.lastNativeFailure}'")
+    // Reused image textures are present in the reopened session's first
+    // frame. A late completion from the retired generation must not add a
+    // second submitted or completed frame to this replacement session.
+    if (replacementProgress.submittedFrameIndex != 1) { inFlightWindow.close(); window.close(); return 82 }
     if (replacementProgress.observedMetalCompletionFrameIndex > replacementProgress.submittedFrameIndex ||
         replacementProgress.observedMetalFailureFrameIndex >= replacementProgress.submittedFrameIndex) {
         inFlightWindow.close(); window.close(); return 83
@@ -2195,7 +2376,7 @@ main(args: Array<String>): Int64 {
         let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(inFlightWindow, turnBudgetMs: 4u32)
     }
     let settledReplacement = inFlightWindow.windowProjection()
-    if (settledReplacement.submittedFrameIndex != 2 || settledReplacement.observedMetalCompletionFrameIndex != 2 ||
+    if (settledReplacement.submittedFrameIndex != 1 || settledReplacement.observedMetalCompletionFrameIndex != 1 ||
         settledReplacement.observedMetalFailureFrameIndex != -1) { inFlightWindow.close(); window.close(); return 85 }
     inFlightWindow.close()
     // An actual native view invalidation is a no-drawable failure before a

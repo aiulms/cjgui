@@ -1,0 +1,32 @@
+   OK   基线版本 v=0
+
+== B1 无凭据控制帧：不得切换任何状态
+   响应：['PROTOCOL CJGUI_SHARED_OPERATION/2', 'KIND ERROR', 'ERROR invalid_request']
+   OK   普通产物不识别控制帧（落回业务路径） (False)
+   OK   无凭据后闸门未暂停 ()
+   OK   无凭据后正常写入立刻应用（未被暂停） (true/counter_changed)
+
+== B1 错误凭据控制帧：不得切换任何状态
+   OK   普通产物对伪凭据仍走业务路径 (False)
+   OK   错误凭据后正常写入立刻应用（未被暂停） (true/counter_changed)
+
+== B1 合法业务字段值含 'PAUSE_CLAIM'：值必须真正进入 owner
+   业务响应前 40 字节：'PROTOCOL CJGUI_SHARED_OPERATION/2\nKIND E'
+   OK   含关键字的业务帧不返回控制帧 (False)
+   OK   关键字作为合法值被应用 (true/name_changed)
+   OK   公开读回确认关键字值进入 owner (PAUSE_CLAIM)
+
+== B3 连接上限：精确断言占用上限与拒绝数（maxConnections=8，共 12 条）
+   建立 12 条：服务端主动关闭 4，仍活 8
+   OK   超出额度的连接被精确拒绝（12-8=4） (4)
+   OK   额度内连接不被拒绝 (8)
+   OK   额度释放后正常写入仍可应用 (true/counter_changed)
+
+== B3 半帧连接（只发长度头，声明 500 字节）
+   1.2s（< 3s 帧期限）：alive-timeout
+   OK   短于帧期限时半帧连接仍活（未误报关闭） (alive-timeout)
+   3.8s（> 3s 帧期限）：eof
+   OK   超过帧期限后半帧连接被服务端收场（eof/reset；alive-timeout=失败） (True)
+   本段只覆盖「半帧到期收场」，不主张关闭重开；关闭重开另见下节。
+
+==== RESULT: PASS (failures=0) ====

@@ -8,7 +8,9 @@ build a candidate, submit it and observe acceptance without re-implementing a
 regex parser or hard-coding an action name, a field id or a resource id.
 
 It adds no business owner, no model runtime and no second permission system: it
-is a thin typed layer over the SAME descriptor-gated public connection.
+is a thin typed layer over the SAME public connection. Desktop consumers use an
+application-issued descriptor; OHOS consumers can name a caller-owned, explicit
+target and local TCP forward while retaining the typed session and ticket logic.
 
 What is deliberately NOT here:
   * no UI presentation claim — reading the accepted structure/geometry says what
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import socket
 import time
 
 from client import (
@@ -31,6 +34,11 @@ from client import (
     SharedOperationArgument,
     SharedOperationClient,
     SharedOperationResponse,
+    _remaining_budget,
+    _send_all,
+    frame,
+    parse_response,
+    read_frame,
 )
 
 
@@ -237,6 +245,41 @@ class GeneratedPropertySpec:
     # property. Both are optional in the protocol.
     values: tuple[str, ...] = ()
     default: str = ""
+    # Structured-value discovery, published from the SAME constants acceptance
+    # obeys (empty = the token was not published for this property). A reader
+    # that only has `capabilities()` can assemble a legal structured value
+    # without reading application source:
+    #   * `encoding`      the wire grammar (`offX,offY,blur,spread,#RRGGBBAA`);
+    #   * `unit`          the unit of a structured/numeric value;
+    #   * `value_range`   the accepted domain (`offset:-4096..4096,blur:0..256`);
+    #   * `semantics`     what empty/`none`/omitted mean;
+    #   * `stability`     the contract stability marker;
+    #   * `backend_support` the backend support surface.
+    encoding: str = ""
+    unit: str = ""
+    value_range: str = ""
+    semantics: str = ""
+    stability: str = ""
+    backend_support: str = ""
+
+    def range_entries(self) -> tuple[tuple[str, str, str], ...]:
+        """The `range=` token as `(name, low, high)` triples.
+
+        The published grammar is `name:low..high` entries joined by commas (for
+        example `offset:-4096..4096,blur:0..256,spread:0..128`). An empty token
+        yields no entries; a malformed entry is refused instead of skipped, so a
+        reader can never silently lose an upper bound it is about to enforce.
+        """
+        if not self.value_range:
+            return ()
+        entries: list[tuple[str, str, str]] = []
+        for raw in self.value_range.split(","):
+            name, separator, bounds = raw.partition(":")
+            low, dots, high = bounds.partition("..")
+            if not separator or not dots or not name or not low or not high:
+                raise GeneratedUiError(f"property range entry is malformed: {raw!r}")
+            entries.append((name, low, high))
+        return tuple(entries)
 
 
 @dataclass(frozen=True)
@@ -316,6 +359,20 @@ class GeneratedImageResource:
 
 
 @dataclass(frozen=True)
+class GeneratedWindowBackgroundSpec:
+    """Window-scoped generated declaration, separate from node properties."""
+
+    name: str
+    value_type: str
+    root_only: bool
+    values: tuple[str, ...]
+    default: str
+    omitted: str
+    stability: str
+    backend_support: str
+
+
+@dataclass(frozen=True)
 class GeneratedCapabilities:
     max_depth: int
     max_nodes: int
@@ -327,6 +384,7 @@ class GeneratedCapabilities:
     actions: tuple[GeneratedActionSpec, ...]
     fields: tuple[GeneratedFieldSpec, ...]
     image_resources: tuple[GeneratedImageResource, ...] = ()
+    window_background: GeneratedWindowBackgroundSpec | None = None
 
     def image_resource(self, key: str, version: int) -> GeneratedImageResource | None:
         for resource in self.image_resources:
@@ -356,6 +414,53 @@ class GeneratedCapabilities:
         return tuple(element for element in self.elements if element.kind == kind)
 
 
+# The trailing `key=value` tokens a capability PROPERTY line may publish. The
+# tokenizer below reads a value as everything up to the NEXT ` <known>=`
+# boundary, so a value may contain spaces, commas and `=` without changing the
+# single-line protocol (for example the framework's own
+# `semantics=none_or_empty=clear,absent=inherit`). A token whose name is not in
+# this set is refused - never skipped - so a newer framework cannot be read as if
+# it had published less than it did.
+_PROPERTY_EXTRA_KEYS = frozenset({
+    "values", "default", "encoding", "unit", "range", "semantics", "stability", "support",
+})
+_PROPERTY_EXTRA_KEY = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
+
+
+def _parse_property_extras(extras: str) -> dict[str, str]:
+    """Split the trailing `key=value` tokens of one capability PROPERTY line.
+
+    `extras` is everything after the eight fixed columns. Each value runs up to
+    the next ` <known>=` boundary, so a value that itself contains spaces (or
+    `=`, as `semantics=none_or_empty=clear,absent=inherit` does) is preserved
+    losslessly. An unknown key or a tail that does not start with a known key is
+    a protocol error, because dropping it would hide a token the publisher sent.
+    """
+    tokens: dict[str, str] = {}
+    index = 0
+    length = len(extras)
+    while index < length:
+        match = _PROPERTY_EXTRA_KEY.match(extras, index)
+        if match is None or match.group(1) not in _PROPERTY_EXTRA_KEYS:
+            raise GeneratedUiError("capability PROPERTY line has an unknown token")
+        key = match.group(1)
+        value_start = match.end()
+        value_end = length
+        probe = value_start
+        while True:
+            space = extras.find(" ", probe)
+            if space < 0:
+                break
+            boundary = _PROPERTY_EXTRA_KEY.match(extras, space + 1)
+            if boundary is not None and boundary.group(1) in _PROPERTY_EXTRA_KEYS:
+                value_end = space
+                break
+            probe = space + 1
+        tokens[key] = extras[value_start:value_end]
+        index = value_end + 1 if value_end < length else length
+    return tokens
+
+
 def parse_generated_capabilities(response: SharedOperationResponse) -> GeneratedCapabilities:
     components: dict[str, list[GeneratedPropertySpec]] = {}
     component_children: dict[str, tuple[bool, int]] = {}
@@ -364,6 +469,7 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
     actions: list[GeneratedActionSpec] = []
     fields: list[GeneratedFieldSpec] = []
     image_resources: list[GeneratedImageResource] = []
+    window_background: GeneratedWindowBackgroundSpec | None = None
     max_depth = max_nodes = max_properties = max_string = 0
     for line in _payload_lines(response):
         if line.startswith("BOUNDS "):
@@ -381,23 +487,41 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
             component_children[parts[1]] = (_token_bool(parts[2], "COMPONENT children"),
                                             _token_int(parts[3], "COMPONENT child limit"))
         elif line.startswith("PROPERTY "):
-            parts = line.split(" ")
+            # Split only the eight fixed columns; the remainder is the optional
+            # trailing token tail, whose values may contain spaces.
+            parts = line.split(" ", 8)
             if len(parts) < 8:
                 raise GeneratedUiError("capability PROPERTY line is malformed")
-            values: tuple[str, ...] = ()
-            default = ""
-            for token in parts[8:]:
-                if token.startswith("values="):
-                    raw = token.split("=", 1)[1]
-                    values = tuple(raw.split(",")) if raw else ()
-                elif token.startswith("default="):
-                    default = token.split("=", 1)[1]
-                else:
-                    raise GeneratedUiError("capability PROPERTY line has an unknown token")
+            extras = _parse_property_extras(parts[8]) if len(parts) > 8 else {}
+            raw_values = extras.get("values", "")
+            values: tuple[str, ...] = tuple(raw_values.split(",")) if raw_values else ()
             components.setdefault(parts[1], []).append(GeneratedPropertySpec(
                 parts[2], parts[3], _token_bool(parts[4], "PROPERTY required"),
                 _token_int(parts[5], "PROPERTY minimum"), _token_int(parts[6], "PROPERTY maximum"),
-                _token_int(parts[7], "PROPERTY max length"), values, default))
+                _token_int(parts[7], "PROPERTY max length"), values, extras.get("default", ""),
+                encoding=extras.get("encoding", ""), unit=extras.get("unit", ""),
+                value_range=extras.get("range", ""), semantics=extras.get("semantics", ""),
+                stability=extras.get("stability", ""), backend_support=extras.get("support", "")))
+        elif line.startswith("WINDOW_BACKGROUND_PROPERTY "):
+            parts = line.split(" ")
+            if len(parts) != 9 or window_background is not None:
+                raise GeneratedUiError("capability WINDOW_BACKGROUND_PROPERTY line is malformed")
+            tokens: dict[str, str] = {}
+            expected = {"root_only", "encoding", "default", "omitted", "stability", "support"}
+            for part in parts[3:]:
+                key, separator, value = part.partition("=")
+                if not separator or not value or key not in expected or key in tokens:
+                    raise GeneratedUiError("capability WINDOW_BACKGROUND_PROPERTY has an unknown token")
+                tokens[key] = value
+            if set(tokens) != expected or parts[1] != "windowBackground" or parts[2] != "STRING":
+                raise GeneratedUiError("capability WINDOW_BACKGROUND_PROPERTY line is malformed")
+            values = tuple(tokens["encoding"].split("|"))
+            if (len(values) < 2 or any(not value for value in values) or
+                    tokens["default"] not in values or tokens["omitted"] not in values):
+                raise GeneratedUiError("capability WINDOW_BACKGROUND_PROPERTY encoding is malformed")
+            window_background = GeneratedWindowBackgroundSpec(
+                parts[1], parts[2], _token_bool(tokens["root_only"], "WINDOW_BACKGROUND_PROPERTY root_only"),
+                values, tokens["default"], tokens["omitted"], tokens["stability"], tokens["support"])
         elif line.startswith("COMPOSITE "):
             parts, _label = _split_label(line)
             values = {}
@@ -463,10 +587,35 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
                   for kind in components)
     return GeneratedCapabilities(max_depth, max_nodes, max_properties, max_string, built,
                                  tuple(composites), tuple(elements), tuple(actions), tuple(fields),
-                                 tuple(image_resources))
+                                 tuple(image_resources), window_background)
 
 
 # --- structure objects -------------------------------------------------------
+
+# The accepted-structure protocol carries an empty property value as an explicit
+# non-empty token, because the transport rejects an empty field on any response
+# line (`client.parse_response` -> "response field is malformed"). A value that
+# already begins with a backslash is escaped so the mapping is reversible. The
+# application's encoder (`CjguiGeneratedUiEncoding.encodePropertyValue`) uses the
+# SAME convention, so `none`, `""` and an absent property stay distinguishable.
+_EMPTY_VALUE_TOKEN = "\\e"
+
+
+def _encode_property_value(value: str) -> str:
+    if value == "":
+        return _EMPTY_VALUE_TOKEN
+    if value.startswith("\\"):
+        return "\\" + value
+    return value
+
+
+def _decode_property_value(token: str) -> str:
+    if token == _EMPTY_VALUE_TOKEN:
+        return ""
+    if token.startswith("\\"):
+        return token[1:]
+    return token
+
 
 @dataclass(frozen=True)
 class GeneratedProperty:
@@ -541,7 +690,9 @@ def parse_generated_structure(response: SharedOperationResponse) -> GeneratedStr
                 depth = _token_int(parts[1], "PROPERTY depth")
                 key = parts[2]
                 name = parts[3]
-                value = parts[4]
+                # The application escapes an empty value as `\e` so the response
+                # stays a well-formed line; decode it back to the literal value.
+                value = _decode_property_value(parts[4])
                 if depth != nodes[-1].depth or key != nodes[-1].key:
                     raise GeneratedUiError("structure PROPERTY does not follow its NODE")
                 node = nodes[-1]
@@ -553,8 +704,11 @@ def parse_generated_structure(response: SharedOperationResponse) -> GeneratedStr
 def encode_generated_structure(nodes: "Sequence[GeneratedNode]") -> str:
     """Encode typed nodes exactly the way the decoder reads them.
 
-    A value that cannot be represented on one protocol line (a newline) is
-    rejected here instead of being silently truncated.
+    A value that cannot be represented on one protocol line is rejected here
+    instead of being silently truncated: a newline breaks the framing, and a
+    leading/trailing space would produce an empty token the transport refuses.
+    The EMPTY value is representable through the shared `\\e` token, so the
+    "empty clears" contract still round-trips.
     """
     lines = ["GENERATED_UI_STRUCTURE 1"]
     for node in nodes:
@@ -575,7 +729,9 @@ def encode_generated_structure(nodes: "Sequence[GeneratedNode]") -> str:
             seen.add(prop.name)
             if "\n" in prop.value or "\r" in prop.value:
                 raise GeneratedUiError("property values cannot contain a newline")
-            lines.append(f"PROPERTY {node.depth} {node.key} {prop.name} {prop.value}")
+            if prop.value and (prop.value[0] == " " or prop.value[-1] == " "):
+                raise GeneratedUiError("property values cannot begin or end with a space")
+            lines.append(f"PROPERTY {node.depth} {node.key} {prop.name} {_encode_property_value(prop.value)}")
     lines.append("END")
     return "\n".join(lines)
 
@@ -707,6 +863,14 @@ class GeneratedInstance:
     # plus the exact accepted version. The path stays inside the application.
     resource: str = ""
     resource_version: int = 0
+    control_role: str = "none"
+    control_selected: bool = False
+    control_expandable: bool = False
+    control_expanded: bool = False
+    control_enabled: bool = True
+    control_level: int = 0
+    control_row_key: str = ""
+    control_parent_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -763,7 +927,15 @@ def parse_generated_instances(response: SharedOperationResponse) -> GeneratedIns
                 tuple(_token_int(part, "instance bound") for part in bounds_parts),
                 _hex_text(values.get("label_hex", "-"), "instance label"),
                 values.get("resource", "-") if values.get("resource", "-") != "-" else "",
-                _token_int(values.get("resource_version", "0"), "instance resource version")))
+                _token_int(values.get("resource_version", "0"), "instance resource version"),
+                values.get("control_role", "none"),
+                _token_bool(values.get("selected", "0"), "instance selected"),
+                _token_bool(values.get("expandable", "0"), "instance expandable"),
+                _token_bool(values.get("expanded", "0"), "instance expanded"),
+                _token_bool(values.get("enabled", "1"), "instance enabled"),
+                _token_int(values.get("level", "0"), "instance level"),
+                _optional(values.get("row_key", "-")) or "",
+                _optional(values.get("parent_key", "-")) or ""))
     return GeneratedInstances(version, candidate, scene, tuple(instances))
 
 
@@ -927,6 +1099,8 @@ class GeneratedSnapshot:
     structure_text: str
     instances_text: str
     styles_text: str
+    effects_text: str = ""
+    platform_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -1026,17 +1200,22 @@ _SECTIONS_BY_CATEGORY = {
     # A named-style directory change re-reads the style DEFINITIONS: the accepted
     # structure is untouched, so no tree/instance section goes stale.
     "STYLES": ("STYLES",),
+    # Actual renderer effect status is independent of the accepted generated
+    # tree and is refreshed through its own bounded section.
+    "EFFECTS": ("EFFECTS",),
+    "PLATFORM": ("PLATFORM",),
     "CANDIDATE": (),
 }
 
-_GENERATED_SECTION_NAMES = ("FIELDS", "STRUCTURE", "INSTANCES", "STYLES")
+_GENERATED_SECTION_NAMES = ("FIELDS", "STRUCTURE", "INSTANCES", "STYLES", "EFFECTS", "PLATFORM")
 
 
 def parse_generated_section(response: SharedOperationResponse, section: str) -> GeneratedSection:
     values = {}
     lines: list[str] = []
     prefix = {"FIELDS": "SNAPSHOT_FIELD", "STRUCTURE": "SNAPSHOT_STRUCTURE",
-              "INSTANCES": "SNAPSHOT_INSTANCE", "STYLES": "SNAPSHOT_STYLE"}[section]
+              "INSTANCES": "SNAPSHOT_INSTANCE", "STYLES": "SNAPSHOT_STYLE",
+              "EFFECTS": "SNAPSHOT_EFFECT", "PLATFORM": "SNAPSHOT_PLATFORM"}[section]
     for label, tokens in response.entries:
         if label == prefix:
             lines.append(" ".join(tokens))
@@ -1061,6 +1240,8 @@ def parse_generated_snapshot(response: SharedOperationResponse) -> GeneratedSnap
     structure_lines: list[str] = []
     instances_lines: list[str] = []
     styles_lines: list[str] = []
+    effects_lines: list[str] = []
+    platform_lines: list[str] = []
     for label, tokens in response.entries:
         if label == "SNAPSHOT_FIELD":
             fields_lines.append(" ".join(tokens))
@@ -1070,6 +1251,10 @@ def parse_generated_snapshot(response: SharedOperationResponse) -> GeneratedSnap
             instances_lines.append(" ".join(tokens))
         elif label == "SNAPSHOT_STYLE":
             styles_lines.append(" ".join(tokens))
+        elif label == "SNAPSHOT_EFFECT":
+            effects_lines.append(" ".join(tokens))
+        elif label == "SNAPSHOT_PLATFORM":
+            platform_lines.append(" ".join(tokens))
         elif tokens:
             values[label] = tokens[0]
     if "STREAM_EPOCH" not in values or "CURSOR" not in values:
@@ -1094,7 +1279,7 @@ def parse_generated_snapshot(response: SharedOperationResponse) -> GeneratedSnap
         _token_bool(values.get("OWNER_PENDING_SCENE", "0"), "OWNER_PENDING_SCENE"),
         _token_bool(values.get("STRUCTURE_CANDIDATE_PENDING", "0"), "STRUCTURE_CANDIDATE_PENDING"),
         "\n".join(fields_lines), "\n".join(structure_lines), "\n".join(instances_lines),
-        "\n".join(styles_lines))
+        "\n".join(styles_lines), "\n".join(effects_lines), "\n".join(platform_lines))
 
 
 def parse_generated_changes(response: SharedOperationResponse) -> GeneratedChanges:
@@ -1175,6 +1360,40 @@ def parse_action_signatures(response: SharedOperationResponse) -> tuple[TypedAct
 
 # --- the session wrapper -----------------------------------------------------
 
+@dataclass(frozen=True)
+class ForwardedTcpSharedOperationClient(SharedOperationClient):
+    """Public protocol client over one caller-owned, target-bound local forward.
+
+    `target` and `device_port` record the hdc mapping the caller verified and
+    owns. This adapter connects only to the local loopback port; it neither
+    creates nor removes a forward. Generated candidate replies still carry the
+    endpoint instance and bind generation checked by GeneratedUiSession.
+    """
+
+    target: str = ""
+    device_port: int = 0
+    local_port: int = 0
+
+    def request(self, payload: str, *, timeout_seconds: float | None = None,
+                deadline_monotonic: float | None = None) -> SharedOperationResponse:
+        request_bytes = frame(payload)
+        if deadline_monotonic is None:
+            effective_timeout = 2.0 if timeout_seconds is None else timeout_seconds
+            if effective_timeout <= 0:
+                raise TimeoutError("socket exchange deadline expired")
+            deadline_monotonic = time.monotonic() + effective_timeout
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+            connection.settimeout(_remaining_budget(deadline_monotonic))
+            connection.connect(("127.0.0.1", self.local_port))
+            fragments = (
+                request_bytes[start:start + self.fragment_bytes]
+                for start in range(0, len(request_bytes), self.fragment_bytes)
+            ) if self.fragment_bytes > 0 else (request_bytes,)
+            for fragment in fragments:
+                _send_all(connection, fragment, deadline_monotonic)
+            return parse_response(read_frame(connection, deadline_monotonic))
+
+
 @dataclass
 class GeneratedUiSession:
     """A small typed session over one public endpoint.
@@ -1200,6 +1419,33 @@ class GeneratedUiSession:
     @classmethod
     def connect(cls, descriptor_path: str) -> "GeneratedUiSession":
         return cls(SharedOperationClient.from_descriptor(descriptor_path))
+
+    @classmethod
+    def connect_forwarded_tcp(cls, *, target: str, local_port: int, device_port: int,
+                              capability: str, caller: str, fragment_bytes: int = 0) -> "GeneratedUiSession":
+        """Use the same typed session over an explicitly identified hdc forward.
+
+        The caller must verify the live `target tcp:local_port -> tcp:device_port`
+        mapping and its successful creation receipt before calling this method.
+        Only the local loopback endpoint is contacted; target is not a claim
+        that this process independently verified hdc ownership.
+        """
+        if (not target or any(ord(char) <= 32 or ord(char) >= 127 for char in target)):
+            raise ValueError("target must be an explicit printable hdc identity")
+        if (not isinstance(local_port, int) or isinstance(local_port, bool) or
+                not isinstance(device_port, int) or isinstance(device_port, bool) or
+                not (1 <= local_port <= 65535) or not (1 <= device_port <= 65535)):
+            raise ValueError("forward ports must be in 1..65535")
+        if (not capability or any(char in capability for char in "\r\n") or
+                not caller or any(char in caller for char in "\r\n")):
+            raise ValueError("forward capability and caller must be nonempty single lines")
+        if not isinstance(fragment_bytes, int) or isinstance(fragment_bytes, bool) or fragment_bytes < 0:
+            raise ValueError("fragment byte count cannot be negative")
+        return cls(ForwardedTcpSharedOperationClient(
+            {"capability": capability, "caller": caller, "target": target,
+             "device_port": device_port, "local_port": local_port},
+            fragment_bytes=fragment_bytes, target=target,
+            device_port=device_port, local_port=local_port))
 
     def reconnect(self, descriptor_path: str) -> None:
         """Replace the endpoint and drop EVERY cached projection.
@@ -1339,9 +1585,10 @@ class GeneratedUiSession:
             raise GeneratedUiEndpointError(
                 "endpoint_replaced",
                 f"section endpoint {part.endpoint.describe()}, session {self._endpoint_identity.describe()}")
-        if part.cursor != expected_cursor:
-            # An unrequested cursor is a protocol violation even if the provider
-            # did not set the revision flag: the content cannot be stitched.
+        if part.cursor != expected_cursor and not part.revision_changed:
+            # A moved cursor WITH the provider's revision flag is the normal
+            # guarded-section race: observe_once takes a fresh atomic snapshot.
+            # Without the flag it is a protocol violation, never stitchable.
             raise GeneratedUiError(
                 f"section cursor {part.cursor} differs from requested {expected_cursor}")
         if self._observation_anchor is not None:
@@ -1713,4 +1960,3 @@ def parse_domain_version(response: SharedOperationResponse) -> int:
         if label == "VERSION" and tokens:
             return _token_int(tokens[0], "domain VERSION")
     return -1
-

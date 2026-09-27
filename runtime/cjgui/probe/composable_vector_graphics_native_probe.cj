@@ -208,6 +208,21 @@ private class VectorNativeProbeController <: CjguiComposableUiController {
     }
 }
 
+private func vectorAcceptedGeometryClip(window: CjguiComposableUiWindow): String {
+    var result = ""
+    var found: Int64 = 0
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == "vector-native-ellipse" || node.semanticId == "vector-native-concave-polygon") {
+            result += "${node.semanticId}:${node.bounds.x},${node.bounds.y},${node.bounds.width},${node.bounds.height}:" +
+                "${node.clip.x},${node.clip.y},${node.clip.width},${node.clip.height};"
+            if (node.bounds.width > 0 && node.bounds.height > 0 && node.clip.width > 0 && node.clip.height > 0) {
+                found += 1
+            }
+        }
+    }
+    return if (found == 2) { result } else { "" }
+}
+
 private func readPixel(session: UInt64, x: UInt32, y: UInt32): Array<UInt8> {
     var blue: UInt8 = 0u8
     var green: UInt8 = 0u8
@@ -425,6 +440,7 @@ main(): Int64 {
     let vectorStatsAfterIdle = unsafe { cjgui_internal_renderer_test_composable_vector_render_stats(session,
         inout vectorSampleCountAfterIdle, inout vectorAttachmentBytesAfterIdle, inout vectorPipelineBuildsAfterIdle,
         inout vectorPreparationsAfterIdle, inout vectorPreparedBytesAfterIdle) }
+    let scaleGeometryClipBefore = vectorAcceptedGeometryClip(window)
     var scaleOneResize: UInt64 = 0u64
     var scaleOneBefore: Float64 = 0.0
     var scaleOneAfter: Float64 = 0.0
@@ -543,8 +559,24 @@ main(): Int64 {
         scaleTwoVectorStats == CJGUI_INTERNAL_RENDERER_OK && scaleTwoVectorDraws == capacityVectorDraws &&
         scaleTwoVectorUploads == 0u32 && scaleTwoVectorReuses == scaleTwoVectorDraws && scaleTwoVectorUploadBytes == 0u64 &&
         scaleTwoVectorResidentBytes == capacityVectorResidentBytes
-    println("CJGUI_VECTOR_NATIVE_PROBE line_request=${lineRequest} line_refresh=${lineRefresh} line_read=${lineRead} line_rgba=${lineRed},${lineGreen},${lineBlue},${lineAlpha} polyline_request=${polylineRequest} polyline_refresh=${polylineRefresh} polyline_read=${polylineRead} polyline_rgba=${polylineRed},${polylineGreen},${polylineBlue},${polylineAlpha} overlap_request=${overlapRequest} overlap_refresh=${overlapRefresh} overlap_read=${overlapRead} overlap_rgba=${overlapRed},${overlapGreen},${overlapBlue},${overlapAlpha} notch_request=${concaveNotchRequest} notch_refresh=${concaveNotchRefresh} notch_read=${concaveNotchRead} notch_rgba=${concaveNotchRed},${concaveNotchGreen},${concaveNotchBlue},${concaveNotchAlpha} center_request=${centerRequest} center_refresh=${centerRefresh} center_read=${centerRead} center_rgba=${centerRed},${centerGreen},${centerBlue},${centerAlpha} hit_status=${hitStatus} hit_turn=${hitTurn.didApplyHumanAction} miss_status=${missStatus} miss_turn=${missTurn.didApplyHumanAction} capacity_generic_vertices=${smallVertexBytes}/${mediumVertexBytes}/${capacityVertexBytes} capacity_generic_nodes=${smallNodes}/${mediumNodes}/${capacityNodes} capacity_generic_batches=${smallBatches}/${mediumBatches}/${capacityBatches} capacity_vector_draws=${smallVectorDraws}/${mediumVectorDraws}/${capacityVectorDraws} capacity_vector_uploads=${smallVectorUploads}/${mediumVectorUploads}/${capacityVectorUploads} capacity_vector_upload_bytes=${smallVectorUploadBytes}/${mediumVectorUploadBytes}/${capacityVectorUploadBytes} capacity_vector_resident_bytes=${smallVectorResidentBytes}/${mediumVectorResidentBytes}/${capacityVectorResidentBytes} capacity_stride=${capacityStride} capacity_max_batch_bytes=${capacityMaxBatchBytes} capacity_cpu_us=${capacityEncodeMicros} vector_msaa=${vectorSampleCountBeforeIdle}/${vectorSampleCountAfterIdle} vector_attachment_bytes=${vectorAttachmentBytesBeforeIdle}/${vectorAttachmentBytesAfterIdle} vector_pipeline_builds=${vectorPipelineBuildsBeforeIdle}/${vectorPipelineBuildsAfterIdle} vector_geometry_preparations=${vectorPreparationsBeforeIdle}/${vectorPreparationsAfterIdle} vector_geometry_bytes=${vectorPreparedBytesBeforeIdle}/${vectorPreparedBytesAfterIdle} idle_nodes=${idleCommittedBefore}/${idleCommittedAfter} idle_updates=${idleUpdatesBefore}/${idleUpdatesAfter} scale1_status=${scaleOneStatus} scale1=${scaleOneBefore}->${scaleOneAfter}@${scaleOneWidth}x${scaleOneHeight} scale1_pixel=${scaleOneRed},${scaleOneGreen},${scaleOneBlue},${scaleOneAlpha} scale1_vector=${scaleOneVectorDraws}/${scaleOneVectorUploads}/${scaleOneVectorReuses}/${scaleOneVectorResidentBytes} antialias_pixel=${antialiasRed},${antialiasGreen},${antialiasBlue},${antialiasAlpha} scale2_status=${scaleTwoStatus} scale2=${scaleTwoBefore}->${scaleTwoAfter}@${scaleTwoWidth}x${scaleTwoHeight} scale2_pixel=${scaleTwoRed},${scaleTwoGreen},${scaleTwoBlue},${scaleTwoAlpha} scale2_vector=${scaleTwoVectorDraws}/${scaleTwoVectorUploads}/${scaleTwoVectorReuses}/${scaleTwoVectorResidentBytes} selected=${controller.selected()} background=${controller.background()} passed=${passed}")
+    let scaleGeometryClipAfter = vectorAcceptedGeometryClip(window)
+    let scaleHitStatus = unsafe { cjgui_internal_renderer_test_activate_composable_point(session, 120.0f32, 80.0f32) }
+    let scaleHitTurn = window.pump(0u32)
+    let scaleMissStatus = unsafe { cjgui_internal_renderer_test_activate_composable_point(session, 18.0f32, 18.0f32) }
+    let scaleMissTurn = window.pump(0u32)
+    let scaleConsumption = scaleOneAfter == 1.0 && scaleTwoAfter == 2.0 &&
+        scaleGeometryClipBefore.size > 0 && scaleGeometryClipAfter == scaleGeometryClipBefore &&
+        scaleHitStatus == CJGUI_INTERNAL_RENDERER_OK && scaleHitTurn.didApplyHumanAction &&
+        scaleMissStatus == CJGUI_INTERNAL_RENDERER_OK && scaleMissTurn.didApplyHumanAction &&
+        controller.selected() == 2 && controller.background() == 2
+    println("CJGUI_VECTOR_SCALE_CONSUMPTION scale=${scaleOneAfter}->${scaleTwoAfter} " +
+        "accepted_geometry_clip_stable=${scaleGeometryClipAfter == scaleGeometryClipBefore} " +
+        "hit=${scaleHitStatus}/${scaleHitTurn.didApplyHumanAction} " +
+        "miss=${scaleMissStatus}/${scaleMissTurn.didApplyHumanAction} " +
+        "edge_rgba=${scaleOneRed},${scaleOneGreen},${scaleOneBlue},${scaleOneAlpha}->" +
+        "${scaleTwoRed},${scaleTwoGreen},${scaleTwoBlue},${scaleTwoAlpha} passed=${scaleConsumption}")
+    println("CJGUI_VECTOR_NATIVE_PROBE line_request=${lineRequest} line_refresh=${lineRefresh} line_read=${lineRead} line_rgba=${lineRed},${lineGreen},${lineBlue},${lineAlpha} polyline_request=${polylineRequest} polyline_refresh=${polylineRefresh} polyline_read=${polylineRead} polyline_rgba=${polylineRed},${polylineGreen},${polylineBlue},${polylineAlpha} overlap_request=${overlapRequest} overlap_refresh=${overlapRefresh} overlap_read=${overlapRead} overlap_rgba=${overlapRed},${overlapGreen},${overlapBlue},${overlapAlpha} notch_request=${concaveNotchRequest} notch_refresh=${concaveNotchRefresh} notch_read=${concaveNotchRead} notch_rgba=${concaveNotchRed},${concaveNotchGreen},${concaveNotchBlue},${concaveNotchAlpha} center_request=${centerRequest} center_refresh=${centerRefresh} center_read=${centerRead} center_rgba=${centerRed},${centerGreen},${centerBlue},${centerAlpha} hit_status=${hitStatus} hit_turn=${hitTurn.didApplyHumanAction} miss_status=${missStatus} miss_turn=${missTurn.didApplyHumanAction} capacity_generic_vertices=${smallVertexBytes}/${mediumVertexBytes}/${capacityVertexBytes} capacity_generic_nodes=${smallNodes}/${mediumNodes}/${capacityNodes} capacity_generic_batches=${smallBatches}/${mediumBatches}/${capacityBatches} capacity_vector_draws=${smallVectorDraws}/${mediumVectorDraws}/${capacityVectorDraws} capacity_vector_uploads=${smallVectorUploads}/${mediumVectorUploads}/${capacityVectorUploads} capacity_vector_upload_bytes=${smallVectorUploadBytes}/${mediumVectorUploadBytes}/${capacityVectorUploadBytes} capacity_vector_resident_bytes=${smallVectorResidentBytes}/${mediumVectorResidentBytes}/${capacityVectorResidentBytes} capacity_stride=${capacityStride} capacity_max_batch_bytes=${capacityMaxBatchBytes} capacity_cpu_us=${capacityEncodeMicros} vector_msaa=${vectorSampleCountBeforeIdle}/${vectorSampleCountAfterIdle} vector_attachment_bytes=${vectorAttachmentBytesBeforeIdle}/${vectorAttachmentBytesAfterIdle} vector_pipeline_builds=${vectorPipelineBuildsBeforeIdle}/${vectorPipelineBuildsAfterIdle} vector_geometry_preparations=${vectorPreparationsBeforeIdle}/${vectorPreparationsAfterIdle} vector_geometry_bytes=${vectorPreparedBytesBeforeIdle}/${vectorPreparedBytesAfterIdle} idle_nodes=${idleCommittedBefore}/${idleCommittedAfter} idle_updates=${idleUpdatesBefore}/${idleUpdatesAfter} scale1_status=${scaleOneStatus} scale1=${scaleOneBefore}->${scaleOneAfter}@${scaleOneWidth}x${scaleOneHeight} scale1_pixel=${scaleOneRed},${scaleOneGreen},${scaleOneBlue},${scaleOneAlpha} scale1_vector=${scaleOneVectorDraws}/${scaleOneVectorUploads}/${scaleOneVectorReuses}/${scaleOneVectorResidentBytes} antialias_pixel=${antialiasRed},${antialiasGreen},${antialiasBlue},${antialiasAlpha} scale2_status=${scaleTwoStatus} scale2=${scaleTwoBefore}->${scaleTwoAfter}@${scaleTwoWidth}x${scaleTwoHeight} scale2_pixel=${scaleTwoRed},${scaleTwoGreen},${scaleTwoBlue},${scaleTwoAlpha} scale2_vector=${scaleTwoVectorDraws}/${scaleTwoVectorUploads}/${scaleTwoVectorReuses}/${scaleTwoVectorResidentBytes} selected=${controller.selected()} background=${controller.background()} passed=${passed && scaleConsumption}")
     println("CJGUI_VECTOR_RENDER_PATH normal_msaa=${normalSampleCount} normal_attachment_bytes=${normalAttachmentBytes} normal_pipeline_builds=${normalPipelineBuilds} normal_geometry_preparations=${normalPreparations} vector_msaa=${vectorSampleCountBeforeIdle}/${vectorSampleCountAfterIdle} vector_attachment_bytes=${vectorAttachmentBytesBeforeIdle}/${vectorAttachmentBytesAfterIdle} vector_pipeline_builds=${vectorPipelineBuildsBeforeIdle}/${vectorPipelineBuildsAfterIdle} vector_geometry_preparations=${vectorPreparationsBeforeIdle}/${vectorPreparationsAfterIdle}")
     window.close()
-    return if (passed) { 0 } else { 1 }
+    return if (passed && scaleConsumption) { 0 } else { 1 }
 }

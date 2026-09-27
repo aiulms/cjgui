@@ -45,13 +45,17 @@ func failDelivery(_ reason: String) {
 func postUnicode(_ text: String) {
     for scalar in text.unicodeScalars {
         guard let source = CGEventSource(stateID: .hidSystemState) else { failDelivery("no_event_source"); return }
-        var unit = UniChar(scalar.value)
+        // A non-BMP scalar (emoji, rare CJK extensions) is one UTF-16 surrogate
+        // pair: both units must travel in the SAME event. Truncating the scalar
+        // into one UniChar trapped the driver (exit 133) on any astral input,
+        // and two lone-surrogate events would be dropped by AppKit anyway.
+        var units = Array(String(scalar).utf16)
         if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {
-            down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
             down.post(tap: .cghidEventTap)
         } else { failDelivery("no_keyboard_event") }
         if let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
-            up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
             up.post(tap: .cghidEventTap)
         }
         usleep(30_000)
@@ -152,13 +156,13 @@ func drag(x1: Double, y1: Double, x2: Double, y2: Double) {
 // the gesture; the driver never writes an offset or a field.
 // A real pointer move with no button pressed: the hover state a person produces
 // by moving the mouse over a control.
-func movePointer(x: Double, y: Double) {
+func movePointer(x: Double, y: Double, settleMicros: UInt32 = 90_000) {
     guard let source = CGEventSource(stateID: .hidSystemState) else { return }
     if let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
                           mouseCursorPosition: CGPoint(x: x, y: y), mouseButton: .left) {
         move.post(tap: .cghidEventTap)
     }
-    usleep(90_000)
+    usleep(settleMicros)
 }
 
 // A real press that STAYS down, so the pressed paint can be observed before the
@@ -210,7 +214,7 @@ func scroll(x: Double, y: Double, lines: Int32) {
 
 let args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else {
-    FileHandle.standardError.write("usage: driver (type <text> | tab | key <code> | key-down <code> | key-up <code> | click <x> <y> | hold-click <modifier> <x> <y> | cmd-click <x> <y> | shift-click <x> <y> | scroll <x> <y> <lines> | move <x> <y> | press <x> <y> | release <x> <y> | preflight)\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: driver (type <text> | tab | key <code> | key-down <code> | key-up <code> | click <x> <y> | hold-click <modifier> <x> <y> | cmd-click <x> <y> | shift-click <x> <y> | scroll <x> <y> <lines> | move <x> <y> | move-fast <x> <y> | press <x> <y> | release <x> <y> | preflight)\n".data(using: .utf8)!)
     exit(2)
 }
 switch command {
@@ -244,6 +248,10 @@ case "scroll":
     scroll(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0, lines: Int32(args[3]) ?? 1)
 case "move":
     movePointer(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0)
+case "move-fast":
+    // One real CGEvent without the normal settling delay. Verification can
+    // reverse a pointer transition before its 160 ms tween reaches the target.
+    movePointer(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0, settleMicros: 1_000)
 case "press":
     mouseDown(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0)
 case "release":

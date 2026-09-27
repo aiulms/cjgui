@@ -1,5 +1,6 @@
 package cjgui
 
+import cjgui_shared_operation_core.*
 import std.collection.*
 import std.time.*
 
@@ -50,7 +51,14 @@ let CJGUI_INTERNAL_RENDERER_READBACK_FAILED: Int32 = 13
 // 结算槽给出一次性 commit/rollback（见 ohos_renderer.cpp 结算协议）。
 let CJGUI_INTERNAL_RENDERER_PRESENT_PENDING: Int32 = 20
 let CJGUI_INTERNAL_RENDERER_INVALID_UTF8: Int32 = 14
+let CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED: Int32 = 15
 let CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED: Int32 = 16
+let CJGUI_INTERNAL_RENDERER_EFFECT_RESOURCE_BUDGET_EXCEEDED: Int32 = 22
+let CJGUI_INTERNAL_RENDERER_EFFECT_DECLARATION_REJECTED: Int32 = 23
+let CJGUI_INTERNAL_RENDERER_PNG_INVALID: Int32 = 25
+let CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED: Int32 = 26
+let CJGUI_INTERNAL_RENDERER_PNG_DECODE_FAILED: Int32 = 27
+let CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED: Int32 = 28
 let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
 
 // Invalid session token sentinel.
@@ -142,6 +150,57 @@ struct CjguiInternalRendererComposableDisplayProgress {
     var observedMetalFailureFrameIndex: UInt64 = 0
     var observedMetalGpuDurationMicros: Int64 = -1
     var overlayDrawnProjectionVersion: UInt64 = 0
+    var effectSubmittedSceneVersion: UInt64 = 0
+    var effectSubmittedFrameIndex: UInt64 = 0
+    var effectRequestedRadiusPoints: UInt32 = 0
+    var effectMode: UInt32 = 0
+    var effectFallbackReason: UInt32 = 0
+    var effectCompletion: UInt32 = 0
+}
+
+@C
+struct CjguiInternalRendererDiagnosticNodeGeometry {
+    var sceneVersion: UInt64 = 0
+    var frameIndex: UInt64 = 0
+    var outputX: Float64 = 0.0
+    var outputY: Float64 = 0.0
+    var outputWidth: Float64 = 0.0
+    var outputHeight: Float64 = 0.0
+    var sampleX: Float64 = 0.0
+    var sampleY: Float64 = 0.0
+    var sampleWidth: Float64 = 0.0
+    var sampleHeight: Float64 = 0.0
+    var flags: UInt32 = 0
+    var reserved: UInt32 = 0
+}
+
+@C
+struct CjguiInternalRendererDiagnosticResources {
+    var sceneVersion: UInt64 = 0
+    var frameIndex: UInt64 = 0
+    var liveEffectBytes: UInt64 = 0
+    var cachedEffectBytes: UInt64 = 0
+    var overlayDrawCount: UInt64 = 0
+}
+
+/// C mirror of the native window-background observation. This describes
+/// AppKit host adoption and the matching Metal submission, never a sampled
+/// WindowServer pixel or an AppKit object.
+@C
+struct CjguiInternalRendererWindowBackgroundSnapshot {
+    var acceptedSceneVersion: UInt64 = 0
+    var frameIndex: UInt64 = 0
+    var requestRevision: UInt64 = 0
+    var environmentRevision: UInt64 = 0
+    var observationRevision: UInt64 = 0
+    var requestedMode: UInt32 = 0
+    var backend: UInt32 = 0
+    var actualMode: UInt32 = 0
+    var fallbackReason: UInt32 = 0
+    var completion: UInt32 = 0
+    var reduceTransparency: UInt32 = 0
+    var windowActive: UInt32 = 0
+    var colorScheme: UInt32 = 0
 }
 
 @C
@@ -157,6 +216,15 @@ struct CjguiInternalRendererEvent {
     var pointerX: Int64 = 0
     var pointerY: Int64 = 0
     var modifierFlags: Int64 = 0
+    // kind 52 组字相位记录（其余 kind 恒为 0/-1，与 C 头逐字段同序）。
+    var compositionPhase: UInt32 = 0
+    var replacementStart16: Int64 = -1
+    var replacementLength16: Int64 = 0
+    var markedStart16: Int64 = -1
+    var markedLength16: Int64 = 0
+    var compositionId: UInt64 = 0
+    var bindingEpoch: UInt64 = 0
+    var dataTransferEventId: UInt64 = 0
 }
 
 @C
@@ -168,8 +236,9 @@ struct CjguiInternalRendererComposableDataTransferItem {
     var role: UInt32 = 0
     var maximumPayloadBytes: UInt32 = 0
     var sourceId: Int64 = -1
+    var bindingEpoch: UInt64 = 0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, nodeKind!: UInt32, role!: UInt32,
-        maximumPayloadBytes!: UInt32, sourceId!: Int64) {
+        maximumPayloadBytes!: UInt32, sourceId!: Int64, bindingEpoch!: UInt64 = 0u64) {
         this.nodeId = nodeId
         this.projectionVersion = projectionVersion
         this.resourceId = resourceId
@@ -177,6 +246,7 @@ struct CjguiInternalRendererComposableDataTransferItem {
         this.role = role
         this.maximumPayloadBytes = maximumPayloadBytes
         this.sourceId = sourceId
+        this.bindingEpoch = bindingEpoch
     }
 }
 
@@ -241,6 +311,65 @@ struct CjguiInternalRendererComposableNode {
     var inputScope: UInt64 = 0
     var tabGroupId: UInt64 = 0
     var tabSelected: UInt32 = 0
+    var semanticRole: UInt32 = 0
+    var semanticState: UInt32 = 0
+    var semanticLevel: Int64 = 0
+    var semanticIncarnation: Int64 = 0
+    var shadowPresent: UInt32 = 0
+    var shadowOffsetX: Float64 = 0.0
+    var shadowOffsetY: Float64 = 0.0
+    var shadowBlurRadius: Float64 = 0.0
+    var shadowSpread: Float64 = 0.0
+    var shadowRed: Float64 = 0.0
+    var shadowGreen: Float64 = 0.0
+    var shadowBlue: Float64 = 0.0
+    var shadowAlpha: Float64 = 0.0
+    var gradientPresent: UInt32 = 0
+    var gradientStopCount: UInt32 = 0
+    var gradientStartX: Float64 = 0.0
+    var gradientStartY: Float64 = 0.0
+    var gradientEndX: Float64 = 0.0
+    var gradientEndY: Float64 = 0.0
+    var gradientStop0Position: Float64 = 0.0
+    var gradientStop0Red: Float64 = 0.0
+    var gradientStop0Green: Float64 = 0.0
+    var gradientStop0Blue: Float64 = 0.0
+    var gradientStop0Alpha: Float64 = 0.0
+    var gradientStop1Position: Float64 = 0.0
+    var gradientStop1Red: Float64 = 0.0
+    var gradientStop1Green: Float64 = 0.0
+    var gradientStop1Blue: Float64 = 0.0
+    var gradientStop1Alpha: Float64 = 0.0
+    var gradientStop2Position: Float64 = 0.0
+    var gradientStop2Red: Float64 = 0.0
+    var gradientStop2Green: Float64 = 0.0
+    var gradientStop2Blue: Float64 = 0.0
+    var gradientStop2Alpha: Float64 = 0.0
+    var gradientStop3Position: Float64 = 0.0
+    var gradientStop3Red: Float64 = 0.0
+    var gradientStop3Green: Float64 = 0.0
+    var gradientStop3Blue: Float64 = 0.0
+    var gradientStop3Alpha: Float64 = 0.0
+    var effectGroupPresent: UInt32 = 0
+    var effectGroupSubtreeCount: UInt32 = 0
+    var effectGroupOpacity: Float64 = 1.0
+    var effectGroupBlendMode: UInt32 = 0
+    var effectMaskPresent: UInt32 = 0
+    var effectMaskStopCount: UInt32 = 0
+    var effectMaskStartX: Float64 = 0.0
+    var effectMaskStartY: Float64 = 0.0
+    var effectMaskEndX: Float64 = 0.0
+    var effectMaskEndY: Float64 = 0.0
+    var effectMaskStop0Position: Float64 = 0.0
+    var effectMaskStop0Alpha: Float64 = 0.0
+    var effectMaskStop1Position: Float64 = 0.0
+    var effectMaskStop1Alpha: Float64 = 0.0
+    var effectMaskStop2Position: Float64 = 0.0
+    var effectMaskStop2Alpha: Float64 = 0.0
+    var effectMaskStop3Position: Float64 = 0.0
+    var effectMaskStop3Alpha: Float64 = 0.0
+    var effectBackdropBlurRadiusPoints: UInt32 = 0
+    var effectBackdropBlurFallback: UInt32 = 0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, x!: Int64, y!: Int64, width!: Int64,
         height!: Int64, clipX!: Int64, clipY!: Int64, clipWidth!: Int64, clipHeight!: Int64, nodeKind!: UInt32,
         isInteractive!: UInt32, isReadOnly!: UInt32, tabInsertsText!: UInt32, preservesActiveLocalText!: UInt32 = 0u32,
@@ -253,8 +382,31 @@ struct CjguiInternalRendererComposableNode {
         clip3CornerRadius!: Float64 = 0.0, fontSize!: Float64, fontWeight!: UInt32, fontFamily!: UInt32,
         imageContentMode!: UInt32, fillRed!: Float64, fillGreen!: Float64, fillBlue!: Float64, fillAlpha!: Float64,
         borderRed!: Float64, borderGreen!: Float64, borderBlue!: Float64, borderAlpha!: Float64, textRed!: Float64,
-        textGreen!: Float64, textBlue!: Float64, textAlpha!: Float64, inputScope!: UInt64 = 0,
-        tabGroupId!: UInt64 = 0, tabSelected!: UInt32 = 0) {
+        textGreen!: Float64, textBlue!: Float64, textAlpha!: Float64, inputScope!: UInt64 = 0, tabGroupId!: UInt64 = 0,
+        tabSelected!: UInt32 = 0, semanticRole!: UInt32 = 0u32, semanticState!: UInt32 = 0u32,
+        semanticLevel!: Int64 = 0, semanticIncarnation!: Int64 = 0,
+        shadowPresent!: UInt32 = 0u32, shadowOffsetX!: Float64 = 0.0,
+        shadowOffsetY!: Float64 = 0.0, shadowBlurRadius!: Float64 = 0.0, shadowSpread!: Float64 = 0.0,
+        shadowRed!: Float64 = 0.0, shadowGreen!: Float64 = 0.0, shadowBlue!: Float64 = 0.0, shadowAlpha!: Float64 = 0.0,
+        gradientPresent!: UInt32 = 0u32, gradientStopCount!: UInt32 = 0u32, gradientStartX!: Float64 = 0.0,
+        gradientStartY!: Float64 = 0.0, gradientEndX!: Float64 = 0.0, gradientEndY!: Float64 = 0.0,
+        gradientStop0Position!: Float64 = 0.0, gradientStop0Red!: Float64 = 0.0, gradientStop0Green!: Float64 = 0.0,
+        gradientStop0Blue!: Float64 = 0.0, gradientStop0Alpha!: Float64 = 0.0, gradientStop1Position!: Float64 = 0.0,
+        gradientStop1Red!: Float64 = 0.0, gradientStop1Green!: Float64 = 0.0, gradientStop1Blue!: Float64 = 0.0,
+        gradientStop1Alpha!: Float64 = 0.0, gradientStop2Position!: Float64 = 0.0, gradientStop2Red!: Float64 = 0.0,
+        gradientStop2Green!: Float64 = 0.0, gradientStop2Blue!: Float64 = 0.0, gradientStop2Alpha!: Float64 = 0.0,
+        gradientStop3Position!: Float64 = 0.0, gradientStop3Red!: Float64 = 0.0, gradientStop3Green!: Float64 = 0.0,
+        gradientStop3Blue!: Float64 = 0.0, gradientStop3Alpha!: Float64 = 0.0,
+        effectGroupPresent!: UInt32 = 0u32, effectGroupSubtreeCount!: UInt32 = 0u32,
+        effectGroupOpacity!: Float64 = 1.0, effectGroupBlendMode!: UInt32 = 0u32,
+        effectMaskPresent!: UInt32 = 0u32, effectMaskStopCount!: UInt32 = 0u32,
+        effectMaskStartX!: Float64 = 0.0, effectMaskStartY!: Float64 = 0.0,
+        effectMaskEndX!: Float64 = 0.0, effectMaskEndY!: Float64 = 0.0,
+        effectMaskStop0Position!: Float64 = 0.0, effectMaskStop0Alpha!: Float64 = 0.0,
+        effectMaskStop1Position!: Float64 = 0.0, effectMaskStop1Alpha!: Float64 = 0.0,
+        effectMaskStop2Position!: Float64 = 0.0, effectMaskStop2Alpha!: Float64 = 0.0,
+        effectMaskStop3Position!: Float64 = 0.0, effectMaskStop3Alpha!: Float64 = 0.0,
+        effectBackdropBlurRadiusPoints!: UInt32 = 0u32, effectBackdropBlurFallback!: UInt32 = 0u32) {
         this.nodeId = nodeId
         this.projectionVersion = projectionVersion
         this.resourceId = resourceId
@@ -314,6 +466,65 @@ struct CjguiInternalRendererComposableNode {
         this.inputScope = inputScope
         this.tabGroupId = tabGroupId
         this.tabSelected = tabSelected
+        this.semanticRole = semanticRole
+        this.semanticState = semanticState
+        this.semanticLevel = semanticLevel
+        this.semanticIncarnation = semanticIncarnation
+        this.shadowPresent = shadowPresent
+        this.shadowOffsetX = shadowOffsetX
+        this.shadowOffsetY = shadowOffsetY
+        this.shadowBlurRadius = shadowBlurRadius
+        this.shadowSpread = shadowSpread
+        this.shadowRed = shadowRed
+        this.shadowGreen = shadowGreen
+        this.shadowBlue = shadowBlue
+        this.shadowAlpha = shadowAlpha
+        this.gradientPresent = gradientPresent
+        this.gradientStopCount = gradientStopCount
+        this.gradientStartX = gradientStartX
+        this.gradientStartY = gradientStartY
+        this.gradientEndX = gradientEndX
+        this.gradientEndY = gradientEndY
+        this.gradientStop0Position = gradientStop0Position
+        this.gradientStop0Red = gradientStop0Red
+        this.gradientStop0Green = gradientStop0Green
+        this.gradientStop0Blue = gradientStop0Blue
+        this.gradientStop0Alpha = gradientStop0Alpha
+        this.gradientStop1Position = gradientStop1Position
+        this.gradientStop1Red = gradientStop1Red
+        this.gradientStop1Green = gradientStop1Green
+        this.gradientStop1Blue = gradientStop1Blue
+        this.gradientStop1Alpha = gradientStop1Alpha
+        this.gradientStop2Position = gradientStop2Position
+        this.gradientStop2Red = gradientStop2Red
+        this.gradientStop2Green = gradientStop2Green
+        this.gradientStop2Blue = gradientStop2Blue
+        this.gradientStop2Alpha = gradientStop2Alpha
+        this.gradientStop3Position = gradientStop3Position
+        this.gradientStop3Red = gradientStop3Red
+        this.gradientStop3Green = gradientStop3Green
+        this.gradientStop3Blue = gradientStop3Blue
+        this.gradientStop3Alpha = gradientStop3Alpha
+        this.effectGroupPresent = effectGroupPresent
+        this.effectGroupSubtreeCount = effectGroupSubtreeCount
+        this.effectGroupOpacity = effectGroupOpacity
+        this.effectGroupBlendMode = effectGroupBlendMode
+        this.effectMaskPresent = effectMaskPresent
+        this.effectMaskStopCount = effectMaskStopCount
+        this.effectMaskStartX = effectMaskStartX
+        this.effectMaskStartY = effectMaskStartY
+        this.effectMaskEndX = effectMaskEndX
+        this.effectMaskEndY = effectMaskEndY
+        this.effectMaskStop0Position = effectMaskStop0Position
+        this.effectMaskStop0Alpha = effectMaskStop0Alpha
+        this.effectMaskStop1Position = effectMaskStop1Position
+        this.effectMaskStop1Alpha = effectMaskStop1Alpha
+        this.effectMaskStop2Position = effectMaskStop2Position
+        this.effectMaskStop2Alpha = effectMaskStop2Alpha
+        this.effectMaskStop3Position = effectMaskStop3Position
+        this.effectMaskStop3Alpha = effectMaskStop3Alpha
+        this.effectBackdropBlurRadiusPoints = effectBackdropBlurRadiusPoints
+        this.effectBackdropBlurFallback = effectBackdropBlurFallback
     }
 }
 
@@ -440,9 +651,8 @@ struct InternalRendererTicketStats {
     let duplicateSettlementCount: Int64
     let destroyRefusedCount: Int64
     let available: Bool
-    init(nextTicketId: Int64, unackedTicketId: Int64, acceptedCount: Int64, rejectedCount: Int64,
-        queryCount: Int64, ackCount: Int64, duplicateSettlementCount: Int64, destroyRefusedCount: Int64,
-        available: Bool) {
+    init(nextTicketId: Int64, unackedTicketId: Int64, acceptedCount: Int64, rejectedCount: Int64, queryCount: Int64,
+        ackCount: Int64, duplicateSettlementCount: Int64, destroyRefusedCount: Int64, available: Bool) {
         this.nextTicketId = nextTicketId
         this.unackedTicketId = unackedTicketId
         this.acceptedCount = acceptedCount
@@ -468,9 +678,19 @@ struct InternalRendererPumpResult {
     let pointerX: Int64
     let pointerY: Int64
     let modifierFlags: Int64
+    let compositionPhase: UInt32
+    let replacementStart16: Int64
+    let replacementLength16: Int64
+    let markedStart16: Int64
+    let markedLength16: Int64
+    let compositionId: UInt64
+    let bindingEpoch: UInt64
+    let dataTransferEventId: UInt64
     init(status: Int32, eventKind: UInt32, recordIndex: UInt32, selectionStart: UInt32, selectionEnd: UInt32,
         nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64, nodeKind: UInt32, pointerX: Int64,
-        pointerY: Int64, modifierFlags: Int64) {
+        pointerY: Int64, modifierFlags: Int64, compositionPhase: UInt32, replacementStart16: Int64,
+        replacementLength16: Int64, markedStart16: Int64, markedLength16: Int64, compositionId: UInt64,
+        bindingEpoch: UInt64, dataTransferEventId: UInt64) {
         this.status = status
         this.eventKind = eventKind
         this.recordIndex = recordIndex
@@ -483,6 +703,14 @@ struct InternalRendererPumpResult {
         this.pointerX = pointerX
         this.pointerY = pointerY
         this.modifierFlags = modifierFlags
+        this.compositionPhase = compositionPhase
+        this.replacementStart16 = replacementStart16
+        this.replacementLength16 = replacementLength16
+        this.markedStart16 = markedStart16
+        this.markedLength16 = markedLength16
+        this.compositionId = compositionId
+        this.bindingEpoch = bindingEpoch
+        this.dataTransferEventId = dataTransferEventId
     }
 }
 
@@ -517,15 +745,38 @@ struct InternalRendererComposableDisplayProgressResult {
     let observedMetalFailureFrameIndex: UInt64
     let observedMetalGpuDurationMicros: Int64
     let overlayDrawnProjectionVersion: UInt64
+    let effectSubmittedSceneVersion: UInt64
+    let effectSubmittedFrameIndex: UInt64
+    let effectRequestedRadiusPoints: UInt32
+    let effectMode: UInt32
+    let effectFallbackReason: UInt32
+    let effectCompletion: UInt32
     init(status: Int32, submittedFrameIndex: UInt64, observedMetalCompletionFrameIndex: UInt64,
         observedMetalFailureFrameIndex: UInt64, observedMetalGpuDurationMicros: Int64,
-        overlayDrawnProjectionVersion: UInt64) {
+        overlayDrawnProjectionVersion: UInt64, effectSubmittedSceneVersion: UInt64,
+        effectSubmittedFrameIndex: UInt64, effectRequestedRadiusPoints: UInt32,
+        effectMode: UInt32, effectFallbackReason: UInt32, effectCompletion: UInt32) {
         this.status = status
         this.submittedFrameIndex = submittedFrameIndex
         this.observedMetalCompletionFrameIndex = observedMetalCompletionFrameIndex
         this.observedMetalFailureFrameIndex = observedMetalFailureFrameIndex
         this.observedMetalGpuDurationMicros = observedMetalGpuDurationMicros
         this.overlayDrawnProjectionVersion = overlayDrawnProjectionVersion
+        this.effectSubmittedSceneVersion = effectSubmittedSceneVersion
+        this.effectSubmittedFrameIndex = effectSubmittedFrameIndex
+        this.effectRequestedRadiusPoints = effectRequestedRadiusPoints
+        this.effectMode = effectMode
+        this.effectFallbackReason = effectFallbackReason
+        this.effectCompletion = effectCompletion
+    }
+}
+
+struct InternalRendererWindowBackgroundResult {
+    let status: Int32
+    let snapshot: CjguiInternalRendererWindowBackgroundSnapshot
+    init(status: Int32, snapshot: CjguiInternalRendererWindowBackgroundSnapshot) {
+        this.status = status
+        this.snapshot = snapshot
     }
 }
 
@@ -549,7 +800,24 @@ foreign {
 
     func cjgui_internal_renderer_set_window_title(session: UInt64, title: CString): Int32
 
+    func cjgui_internal_renderer_stage_window_background(
+        session: UInt64, projectionVersion: UInt64, mode: UInt32, colorScheme: UInt32
+    ): Int32
+
+    func cjgui_internal_renderer_window_background_snapshot(
+        session: UInt64, outSnapshot: CPointer<CjguiInternalRendererWindowBackgroundSnapshot>
+    ): Int32
+
     func cjgui_internal_renderer_set_composable_range_edit_delta(session: UInt64, enabled: Int32): Int32
+
+    func cjgui_internal_renderer_set_composable_owned_text_session(
+        session: UInt64,
+        nodeId: UInt64,
+        resourceId: Int64,
+        nodeKind: UInt32,
+        bindingEpoch: UInt64,
+        enabled: Int32
+    ): Int32
 
     func cjgui_internal_renderer_recover_active_text_proxy(
         session: UInt64,
@@ -584,10 +852,33 @@ foreign {
         imageResourceVersion: UInt64
     ): Int32
 
+    func cjgui_internal_renderer_set_composable_scene_node_bytes(
+        session: UInt64, nodeIndex: UInt32, node: CPointer<CjguiInternalRendererComposableNode>,
+        label: CString, value: CString, imageResourcePath: CString, imageResourceId: CString,
+        imageResourceVersion: UInt64, bytes: CPointer<UInt8>, length: UInt32
+    ): Int32
+
+    func cjgui_internal_renderer_prepare_composable_png_transfer(
+        session: UInt64, resourceIdentity: CString, bytes: CPointer<UInt8>, length: UInt32,
+        outWidth: CPointer<UInt32>, outHeight: CPointer<UInt32>, outDecodeMicros: CPointer<UInt64>
+    ): Int32
+    func cjgui_internal_renderer_finish_composable_png_transfer(
+        session: UInt64, resourceIdentity: CString, accepted: UInt8
+    ): Int32
+
     func cjgui_internal_renderer_set_composable_node_semantic_identity(
         session: UInt64,
         nodeIndex: UInt32,
         semanticId: CString
+    ): Int32
+
+    func cjgui_internal_renderer_set_composable_node_semantic_metadata(
+        session: UInt64,
+        nodeIndex: UInt32,
+        bindingKey: CString,
+        rowKey: CString,
+        parentRowKey: CString,
+        semanticLabel: CString
     ): Int32
 
     func cjgui_internal_renderer_configure_composable_data_transfer(
@@ -604,6 +895,10 @@ foreign {
         payload: CString,
         sourceKind: CString,
         sourceIdentity: CString
+    ): Int32
+
+    func cjgui_internal_renderer_set_composable_data_transfer_item_bytes(
+        session: UInt64, itemIndex: UInt32, bytes: CPointer<UInt8>, length: UInt32
     ): Int32
 
     func cjgui_internal_renderer_present_composable_scene(
@@ -700,12 +995,43 @@ foreign {
         outProgress: CPointer<CjguiInternalRendererComposableDisplayProgress>
     ): Int32
 
+    func cjgui_internal_renderer_diagnostic_node_geometry(
+        session: UInt64, nodeIndex: UInt32,
+        outGeometry: CPointer<CjguiInternalRendererDiagnosticNodeGeometry>
+    ): Int32
+
+    func cjgui_internal_renderer_diagnostic_resources(
+        session: UInt64, outResources: CPointer<CjguiInternalRendererDiagnosticResources>
+    ): Int32
+
+    func cjgui_internal_renderer_set_diagnostic_overlay(
+        session: UInt64, flags: UInt32, selectedNodeId: UInt64, hasSelection: UInt8
+    ): Int32
+
     func cjgui_internal_renderer_focus_composable_node(session: UInt64, nodeId: UInt64): Int32
 
     func cjgui_internal_renderer_restore_composable_selection(
-        session: UInt64, nodeId: UInt64, resourceId: Int64, nodeKind: UInt32,
-        sceneVersion: UInt64, expectedValue: CString, selectionStart: UInt32, selectionEnd: UInt32,
-        outSelectionStart: CPointer<UInt32>, outSelectionEnd: CPointer<UInt32>
+        session: UInt64,
+        nodeId: UInt64,
+        resourceId: Int64,
+        nodeKind: UInt32,
+        sceneVersion: UInt64,
+        expectedValue: CString,
+        selectionStart: UInt32,
+        selectionEnd: UInt32,
+        outSelectionStart: CPointer<UInt32>,
+        outSelectionEnd: CPointer<UInt32>
+    ): Int32
+
+    func cjgui_internal_renderer_read_composable_selection(
+        session: UInt64,
+        nodeId: UInt64,
+        resourceId: Int64,
+        nodeKind: UInt32,
+        sceneVersion: UInt64,
+        expectedValue: CString,
+        outSelectionStart: CPointer<UInt32>,
+        outSelectionEnd: CPointer<UInt32>
     ): Int32
 
     func cjgui_internal_renderer_cancel_composable_pointer_capture(session: UInt64): Int32
@@ -839,10 +1165,18 @@ foreign {
     func cjgui_internal_renderer_set_shared_form_status(session: UInt64, statusText: CString): Int32
 
     func cjgui_internal_renderer_form_event_text(session: UInt64): CString
+
     func cjgui_internal_renderer_data_transfer_event_format(session: UInt64): CString
+
     func cjgui_internal_renderer_data_transfer_event_source_kind(session: UInt64): CString
+
     func cjgui_internal_renderer_data_transfer_event_source_identity(session: UInt64): CString
+
     func cjgui_internal_renderer_data_transfer_event_source_id(session: UInt64): Int64
+    func cjgui_internal_renderer_data_transfer_event_binary_size(session: UInt64, eventId: UInt64): UInt32
+    func cjgui_internal_renderer_copy_data_transfer_event_binary(
+        session: UInt64, eventId: UInt64, outBytes: CPointer<UInt8>, capacity: UInt32
+    ): Int32
 
     func cjgui_internal_renderer_request_close(session: UInt64): Int32
 
@@ -896,6 +1230,17 @@ func internalRendererSetWindowTitle(session: UInt64, title: String): Int32 {
     return status
 }
 
+func internalRendererStageWindowBackground(session: UInt64, projectionVersion: UInt64, mode: UInt32,
+    colorScheme: UInt32): Int32 {
+    return unsafe { cjgui_internal_renderer_stage_window_background(session, projectionVersion, mode, colorScheme) }
+}
+
+func internalRendererWindowBackgroundSnapshot(session: UInt64): InternalRendererWindowBackgroundResult {
+    var snapshot = CjguiInternalRendererWindowBackgroundSnapshot()
+    let status = unsafe { cjgui_internal_renderer_window_background_snapshot(session, inout snapshot) }
+    return InternalRendererWindowBackgroundResult(status, snapshot)
+}
+
 func internalRendererPresentClear(session: UInt64, color: CjguiInternalRendererClearColor): InternalRendererFrameResult {
     var col = color
     var observation = CjguiInternalRendererFrameObservation()
@@ -915,6 +1260,44 @@ func internalRendererPresentClear(session: UInt64, color: CjguiInternalRendererC
     )
 }
 
+@C
+struct CjguiInternalRendererFrameObservationCanary {
+    var observation: CjguiInternalRendererFrameObservation = CjguiInternalRendererFrameObservation()
+    var canaryTail1: UInt64 = 0xA5A5A5A55A5A5A5A
+    var canaryTail2: UInt64 = 0x5A5A5A5AA5A5A5A5
+}
+
+// Keep the canary's direct CFunc call in the declaration's compilation unit.
+// A cjpm unittest body is linked from `cjgui$test`; its direct reference to a
+// private foreign declaration can acquire a package-prefixed linker symbol.
+// This still passes the nested observation field to the exact native writer.
+func internalRendererPresentClearCanaryInvalidSession(): Bool {
+    var wrapper = CjguiInternalRendererFrameObservationCanary()
+    let status = unsafe { cjgui_internal_renderer_present_clear(
+        987654321, CPointer<CjguiInternalRendererClearColor>(), inout wrapper.observation) }
+    return status == CJGUI_INTERNAL_RENDERER_INVALID_SESSION && wrapper.observation.frameIndex == 0 &&
+        wrapper.observation.ticketId == 0 && wrapper.canaryTail1 == 0xA5A5A5A55A5A5A5A &&
+        wrapper.canaryTail2 == 0x5A5A5A5AA5A5A5A5
+}
+
+@C
+struct CjguiInternalRendererEventCanary {
+    var event: CjguiInternalRendererEvent = CjguiInternalRendererEvent()
+    var canaryTail1: UInt64 = 0xA5A5A5A55A5A5A5A
+    var canaryTail2: UInt64 = 0x5A5A5A5AA5A5A5A5
+}
+
+// pump_event 的 native 端先按自己的 sizeof(Event) 清零整块再写字段:仓颉镜像
+// 偏小会被完整清零越界写坏哨兵,偏大则读不到 native 写入的字段尾部。无效会话
+// 仍走这条清零路径,因此这个形状能同时锁尺寸与写入边界。
+func internalRendererPumpEventCanaryInvalidSession(): Bool {
+    var wrapper = CjguiInternalRendererEventCanary()
+    let status = unsafe { cjgui_internal_renderer_pump_event(987654321, 0, inout wrapper.event) }
+    return status == CJGUI_INTERNAL_RENDERER_INVALID_SESSION && wrapper.event.kind == 0 &&
+        wrapper.event.compositionPhase == 0 && wrapper.event.bindingEpoch == 0 &&
+        wrapper.canaryTail1 == 0xA5A5A5A55A5A5A5A && wrapper.canaryTail2 == 0x5A5A5A5AA5A5A5A5
+}
+
 func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32): InternalRendererPumpResult {
     var event = CjguiInternalRendererEvent()
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
@@ -923,7 +1306,9 @@ func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32): InternalRend
     }
     return InternalRendererPumpResult(status, event.kind, event.recordIndex, event.selectionStart, event.selectionEnd,
         event.nodeId, event.projectionVersion, event.resourceId, event.nodeKind, event.pointerX, event.pointerY,
-        event.modifierFlags)
+        event.modifierFlags, event.compositionPhase, event.replacementStart16, event.replacementLength16,
+        event.markedStart16, event.markedLength16, event.compositionId, event.bindingEpoch,
+        event.dataTransferEventId)
 }
 
 func internalRendererConfigureComposableScene(session: UInt64, projectionVersion: UInt64, nodeCount: UInt32): Int32 {
@@ -932,8 +1317,7 @@ func internalRendererConfigureComposableScene(session: UInt64, projectionVersion
     return status
 }
 
-func internalRendererConfigureComposableCommandMenu(session: UInt64, projectionVersion: UInt64,
-    itemCount: UInt32): Int32 {
+func internalRendererConfigureComposableCommandMenu(session: UInt64, projectionVersion: UInt64, itemCount: UInt32): Int32 {
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     unsafe { status = cjgui_internal_renderer_configure_composable_command_menu(session, projectionVersion, itemCount) }
     return status
@@ -970,8 +1354,16 @@ func internalRendererSetComposableCommandMenuItem(
                             shortcutResource.value,
                             menuSection,
                             focusScope,
-                            if (enabled) { 1u8 } else { 0u8 },
-                            if (checked) { 1u8 } else { 0u8 }
+                            if (enabled) {
+                                1u8
+                            } else {
+                                0u8
+                            },
+                            if (checked) {
+                                1u8
+                            } else {
+                                0u8
+                            }
                         )
                     }
                 }
@@ -996,7 +1388,8 @@ func internalRendererSetComposableSceneNode(
     semanticId: String,
     imageResourcePath: String,
     imageResourceId: String,
-    imageResourceVersion: Int64
+    imageResourceVersion: Int64,
+    imageTransferOffer!: ?CjguiSharedOperationTransferOffer = None
 ): Int32 {
     var mutableNode = node
     let cLabel = unsafe { LibC.mallocCString(label) }
@@ -1015,17 +1408,29 @@ func internalRendererSetComposableSceneNode(
                         } else {
                             UInt64(imageResourceVersion)
                         }
+                        if (let Some(offer) <- imageTransferOffer) {
+                            let bytes = offer.binaryBytes()
+                            if (bytes.size <= 0 || bytes.size > 512 * 1024) {
+                                status = CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED
+                            } else {
+                                unsafe {
+                                    let handle = acquireArrayRawData(bytes)
+                                    status = cjgui_internal_renderer_set_composable_scene_node_bytes(
+                                        session, nodeIndex, inout mutableNode, labelResource.value,
+                                        valueResource.value, imageResource.value, imageResourceIdResource.value,
+                                        boundedVersion, handle.pointer, UInt32(bytes.size))
+                                    releaseArrayRawData(handle)
+                                }
+                            }
+                        } else {
+                            unsafe {
+                                status = cjgui_internal_renderer_set_composable_scene_node(
+                                    session, nodeIndex, inout mutableNode, labelResource.value,
+                                    valueResource.value, imageResource.value, imageResourceIdResource.value,
+                                    boundedVersion)
+                            }
+                        }
                         unsafe {
-                            status = cjgui_internal_renderer_set_composable_scene_node(
-                                session,
-                                nodeIndex,
-                                inout mutableNode,
-                                labelResource.value,
-                                valueResource.value,
-                                imageResource.value,
-                                imageResourceIdResource.value,
-                                boundedVersion
-                            )
                             // The accepted semantic identity is staged only with the
                             // node it addresses; a later AX read then has the exact
                             // instance address instead of a caption guess.
@@ -1037,6 +1442,77 @@ func internalRendererSetComposableSceneNode(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+    return status
+}
+
+struct InternalRendererPreparedPng {
+    let status: Int32
+    let width: UInt32
+    let height: UInt32
+    let decodeMicros: UInt64
+    init(status: Int32, width: UInt32, height: UInt32, decodeMicros: UInt64) {
+        this.status = status
+        this.width = width
+        this.height = height
+        this.decodeMicros = decodeMicros
+    }
+}
+
+func internalRendererPreparePngTransfer(session: UInt64,
+    offer: CjguiSharedOperationTransferOffer): InternalRendererPreparedPng {
+    let bytes = offer.binaryBytes()
+    if (bytes.size <= 0 || bytes.size > 512 * 1024) {
+        return InternalRendererPreparedPng(CJGUI_INTERNAL_RENDERER_PNG_INVALID, 0u32, 0u32, 0u64)
+    }
+    let identity = cjguiComposableTransferImageResourceIdentity(offer)
+    let cIdentity = unsafe { LibC.mallocCString(identity) }
+    var width: UInt32 = 0u32
+    var height: UInt32 = 0u32
+    var micros: UInt64 = 0u64
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (identityResource = cIdentity.asResource()) {
+        unsafe {
+            let handle = acquireArrayRawData(bytes)
+            status = cjgui_internal_renderer_prepare_composable_png_transfer(
+                session, identityResource.value, handle.pointer, UInt32(bytes.size),
+                inout width, inout height, inout micros)
+            releaseArrayRawData(handle)
+        }
+    }
+    return InternalRendererPreparedPng(status, width, height, micros)
+}
+
+func internalRendererFinishPngTransfer(session: UInt64,
+    offer: CjguiSharedOperationTransferOffer, accepted: Bool): Int32 {
+    let identity = cjguiComposableTransferImageResourceIdentity(offer)
+    let cIdentity = unsafe { LibC.mallocCString(identity) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (identityResource = cIdentity.asResource()) {
+        status = unsafe { cjgui_internal_renderer_finish_composable_png_transfer(
+            session, identityResource.value, if (accepted) { 1u8 } else { 0u8 }) }
+    }
+    return status
+}
+
+func internalRendererSetComposableSemanticMetadata(session: UInt64, nodeIndex: UInt32,
+    bindingKey: String, rowKey: String, parentRowKey: String, semanticLabel: String): Int32 {
+    let cBinding = unsafe { LibC.mallocCString(bindingKey) }
+    let cRow = unsafe { LibC.mallocCString(rowKey) }
+    let cParent = unsafe { LibC.mallocCString(parentRowKey) }
+    let cLabel = unsafe { LibC.mallocCString(semanticLabel) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (bindingResource = cBinding.asResource()) {
+        try (rowResource = cRow.asResource()) {
+            try (parentResource = cParent.asResource()) {
+                try (labelResource = cLabel.asResource()) {
+                    unsafe {
+                        status = cjgui_internal_renderer_set_composable_node_semantic_metadata(session, nodeIndex,
+                            bindingResource.value, rowResource.value, parentResource.value, labelResource.value)
                     }
                 }
             }
@@ -1077,13 +1553,26 @@ func internalRendererSetComposableDataTransferItem(
             try (sourceKindResource = cSourceKind.asResource()) {
                 try (sourceIdentityResource = cSourceIdentity.asResource()) {
                     unsafe {
-                        status = cjgui_internal_renderer_set_composable_data_transfer_item(
-                            session, itemIndex, inout mutableItem, formatResource.value, payloadResource.value,
-                            sourceKindResource.value, sourceIdentityResource.value)
+                        status = cjgui_internal_renderer_set_composable_data_transfer_item(session, itemIndex,
+                            inout mutableItem, formatResource.value, payloadResource.value, sourceKindResource.value,
+                            sourceIdentityResource.value)
                     }
                 }
             }
         }
+    }
+    return status
+}
+
+func internalRendererSetComposableDataTransferItemBytes(session: UInt64, itemIndex: UInt32,
+    bytes: Array<Byte>): Int32 {
+    if (bytes.size <= 0 || bytes.size > 512 * 1024) { return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let handle = acquireArrayRawData(bytes)
+        status = cjgui_internal_renderer_set_composable_data_transfer_item_bytes(
+            session, itemIndex, handle.pointer, UInt32(bytes.size))
+        releaseArrayRawData(handle)
     }
     return status
 }
@@ -1123,8 +1612,8 @@ func internalRendererPresentTicketStats(session: UInt64): InternalRendererTicket
         return InternalRendererTicketStats(0, 0, 0, 0, 0, 0, 0, 0, false)
     }
     return InternalRendererTicketStats(stats.nextTicketId, stats.unackedTicketId, stats.acceptedCount,
-        stats.rejectedCount, stats.queryCount, stats.ackCount, stats.duplicateSettlementCount,
-        stats.destroyRefusedCount, true)
+        stats.rejectedCount, stats.queryCount, stats.ackCount, stats.duplicateSettlementCount, stats.destroyRefusedCount,
+        true)
 }
 
 private func internalRendererComposableImageResource(
@@ -1197,7 +1686,13 @@ func internalRendererComposableDisplayProgress(session: UInt64): InternalRendere
         progress.observedMetalCompletionFrameIndex,
         progress.observedMetalFailureFrameIndex,
         progress.observedMetalGpuDurationMicros,
-        progress.overlayDrawnProjectionVersion
+        progress.overlayDrawnProjectionVersion,
+        progress.effectSubmittedSceneVersion,
+        progress.effectSubmittedFrameIndex,
+        progress.effectRequestedRadiusPoints,
+        progress.effectMode,
+        progress.effectFallbackReason,
+        progress.effectCompletion
     )
 }
 
@@ -1212,10 +1707,9 @@ func internalRendererFocusComposableNode(session: UInt64, nodeId: Int64): Int32 
 
 // The positions and the returned range are UTF-16 code units. The native side
 // validates the accepted scene, exact owner value and active input responder.
-func internalRendererRestoreComposableSelection(session: UInt64, nodeId: Int64, resourceId: Int64,
-    nodeKind: Int64, sceneVersion: Int64, value: String, start: Int64, end: Int64): (Int32, Int64, Int64) {
-    if (nodeId < 0 || nodeKind < 0 || sceneVersion < 0 || start < 0 || end < start ||
-        end > 4294967295) {
+func internalRendererRestoreComposableSelection(session: UInt64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
+    sceneVersion: Int64, value: String, start: Int64, end: Int64): (Int32, Int64, Int64) {
+    if (nodeId < 0 || nodeKind < 0 || sceneVersion < 0 || start < 0 || end < start || end > 4294967295) {
         return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0, 0)
     }
     let cValue = unsafe { LibC.mallocCString(value) }
@@ -1232,13 +1726,32 @@ func internalRendererRestoreComposableSelection(session: UInt64, nodeId: Int64, 
     return (status, Int64(appliedStart), Int64(appliedEnd))
 }
 
+func internalRendererReadComposableSelection(session: UInt64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
+    sceneVersion: Int64, value: String): (Int32, Int64, Int64) {
+    if (nodeId < 0 || nodeKind < 0 || sceneVersion < 0) {
+        return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0, 0)
+    }
+    let cValue = unsafe { LibC.mallocCString(value) }
+    var currentStart: UInt32 = 0
+    var currentEnd: UInt32 = 0
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (valueResource = cValue.asResource()) {
+        unsafe {
+            status = cjgui_internal_renderer_read_composable_selection(session, UInt64(nodeId), resourceId,
+                UInt32(nodeKind), UInt64(sceneVersion), valueResource.value,
+                inout currentStart, inout currentEnd)
+        }
+    }
+    return (status, Int64(currentStart), Int64(currentEnd))
+}
+
 /// Roll back the hidden text proxy after the application refused a human range
 /// edit: restore the value the owner already accepted, under projection
 /// suppression, and report the installed grapheme-safe selection. It never
 /// creates document truth and fails without changing anything when the target
 /// is no longer the active node or the accepted value is stale.
-func internalRendererRecoverActiveTextProxy(session: UInt64, nodeId: Int64, resourceId: Int64,
-    nodeKind: Int64, acceptedValue: String): (Int32, Int64, Int64) {
+func internalRendererRecoverActiveTextProxy(session: UInt64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
+    acceptedValue: String): (Int32, Int64, Int64) {
     if (nodeId < 0 || nodeKind < 0) {
         return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0, 0)
     }
@@ -1283,8 +1796,9 @@ private class CjguiInternalRendererTextMeasurementCacheEntry {
         this.measurement = measurement
     }
     func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, queryKind: Int64): Bool {
-        return this.queryKind == queryKind && this.value == value && this.fontSize == style.fontSize && this.fontWeight == style.fontWeight &&
-            this.fontFamily == style.fontFamily && this.maximumWidth == maximumWidth
+        return this.queryKind == queryKind && this.value == value && this.fontSize == style.fontSize &&
+            this.fontWeight == style.fontWeight && this.fontFamily == style.fontFamily && this.maximumWidth ==
+            maximumWidth
     }
 }
 
@@ -1293,8 +1807,7 @@ private class CjguiInternalRendererTextMeasurementCacheEntry {
 /// by the native sidecar. The fallback is used only to complete the current
 /// local calculation safely: callers inspect `measurementStatus` and refuse
 /// to publish the scene if any real AppKit query failed.
-class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer &
-    CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
+class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
     private let session: UInt64
     private let fallback: CjguiComposableUiFallbackTextMeasurer
     private var cache: ArrayList<CjguiInternalRendererTextMeasurementCacheEntry>
@@ -1407,8 +1920,7 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer &
         )
         return result
     }
-    public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle,
-        contentWidth: Int64): ?Int64 {
+    public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
         var cachedIndex: Int64 = 0
         while (cachedIndex < cache.size) {
             let cached = cache[cachedIndex]
@@ -1430,10 +1942,12 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer &
         let nativeStarted = MonoTime.now()
         try (textResource = cText.asResource()) {
             unsafe {
-                status = cjgui_internal_renderer_measure_composable_multiline_natural_height(
-                    session, textResource.value, style.fontSize,
-                    if (style.fontWeight > 0) { 1u32 } else { 0u32 },
-                    composableFontFamilyCode(style.fontFamily), boundedWidth, inout nativeHeight)
+                status = cjgui_internal_renderer_measure_composable_multiline_natural_height(session, textResource.value,
+                    style.fontSize, if (style.fontWeight > 0) {
+                        1u32
+                    } else {
+                        0u32
+                    }, composableFontFamilyCode(style.fontFamily), boundedWidth, inout nativeHeight)
             }
         }
         measurementPassNativeCallCountValue += 1
@@ -1452,8 +1966,9 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer &
         if (cache.size >= 128) {
             cache = ArrayList<CjguiInternalRendererTextMeasurementCacheEntry>()
         }
-        cache.add(CjguiInternalRendererTextMeasurementCacheEntry(
-            value, style.fontSize, style.fontWeight, style.fontFamily, contentWidth, 1, result))
+        cache.add(
+            CjguiInternalRendererTextMeasurementCacheEntry(value, style.fontSize, style.fontWeight, style.fontFamily,
+                contentWidth, 1, result))
         return Some(Int64(nativeHeight))
     }
 }
@@ -1639,6 +2154,22 @@ func internalRendererSetComposableRangeEditDelta(session: UInt64, enabled: Bool)
     return unsafe { cjgui_internal_renderer_set_composable_range_edit_delta(session, flag) }
 }
 
+/// 声明(或撤回)窗口拥有的那个文本节点:它的平台组字相位以 kind 52 送达该
+/// 会话,对应整值/范围事件被抑制。`bindingEpoch` 原样回传,供窗口拒绝换绑前
+/// 入队的旧回调;`enabled` 为 false 时撤回声明。
+func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt64, resourceId: Int64,
+    nodeKind: UInt32, bindingEpoch: UInt64, enabled: Bool): Int32 {
+    let flag: Int32 = if (enabled) {
+        1
+    } else {
+        0
+    }
+    return unsafe {
+        cjgui_internal_renderer_set_composable_owned_text_session(session, nodeId, resourceId, nodeKind,
+            bindingEpoch, flag)
+    }
+}
+
 func internalRendererFormEventText(session: UInt64): String {
     let borrowed = unsafe { cjgui_internal_renderer_form_event_text(session) }
     return borrowed.toString()
@@ -1661,6 +2192,21 @@ func internalRendererDataTransferEventSourceIdentity(session: UInt64): String {
 
 func internalRendererDataTransferEventSourceId(session: UInt64): Int64 {
     return unsafe { cjgui_internal_renderer_data_transfer_event_source_id(session) }
+}
+
+func internalRendererDataTransferEventBinary(session: UInt64, eventId: UInt64): ?Array<Byte> {
+    if (eventId == 0u64) { return None }
+    let length = unsafe { cjgui_internal_renderer_data_transfer_event_binary_size(session, eventId) }
+    if (length == 0u32 || length > 512u32 * 1024u32) { return None }
+    let bytes = Array<Byte>(Int64(length), repeat: 0)
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let handle = acquireArrayRawData(bytes)
+        status = cjgui_internal_renderer_copy_data_transfer_event_binary(
+            session, eventId, handle.pointer, length)
+        releaseArrayRawData(handle)
+    }
+    return if (status == CJGUI_INTERNAL_RENDERER_OK) { Some(bytes) } else { None }
 }
 
 func internalRendererRequestClose(session: UInt64): Int32 {

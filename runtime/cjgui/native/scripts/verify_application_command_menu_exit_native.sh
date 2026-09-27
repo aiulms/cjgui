@@ -36,7 +36,7 @@ set -e
 print -r -- "$OUTPUT" > "$RUN_LOG"
 print -r -- "$OUTPUT"
 print -r -- "runner_status=$RUN_STATUS" >> "$MANIFEST"
-record_digest "source_macos_application_host_sha256" "$RUNTIME_DIR/src/macos_application_host.cj"
+record_digest "source_macos_application_host_sha256" "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/src/composable_ui_platform_state.cj"
 record_digest "source_composable_ui_window_sha256" "$RUNTIME_DIR/src/composable_ui_window.cj"
 record_digest "source_renderer_session_sha256" "$RUNTIME_DIR/src/runtime_renderer_session.cj"
 record_digest "source_native_renderer_sha256" "$RUNTIME_DIR/native/cjgui_internal_renderer.m"

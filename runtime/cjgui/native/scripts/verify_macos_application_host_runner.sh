@@ -17,7 +17,7 @@ rg -q 'bundle-staging' "$RUNTIME_DIR/scripts/run_macos_application.sh"
 rg -q 'open -W .*--args' "$RUNTIME_DIR/scripts/run_macos_application.sh"
 
 ! rg -q 'CjguiMacosApplicationRunner|CjguiMacosApplicationTurnSource' \
-  "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/src/macos_application_host_test.cj"
+  "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/src/composable_ui_platform_state.cj" "$RUNTIME_DIR/src/macos_application_host_test.cj"
 rg -q 'requestCloseFromApplication' "$RUNTIME_DIR/src/composable_ui_window.cj"
 rg -q 'public func requestClose' "$RUNTIME_DIR/src/macos_application_host.cj"
 ! sed -n '/static CjguiInternalRendererStatus CjguiCommitComposableSceneOnMain/,/return CJGUI_INTERNAL_RENDERER_OK/p' \

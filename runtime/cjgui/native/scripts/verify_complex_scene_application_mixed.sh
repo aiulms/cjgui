@@ -7,6 +7,9 @@ set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
 RUNTIME_DIR="${SCRIPT_DIR}/../.."
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 OUTPUT_DIR="${1:-/private/tmp/cjgui-complex-scene-application-mixed}"
 SDKROOT_PATH="${CJ_GUI_SDKROOT:-${SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk}}"
 TOOLCHAIN_ENV="/Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh"
@@ -37,7 +40,7 @@ print -- "client_source=$CLIENT_SOURCE" >> "$MANIFEST"
 print -- "image_fixture=$RUNTIME_DIR/resources/composable-beacon.png" >> "$MANIFEST"
 print -- "image_fixture_sha256=$(shasum -a 256 "$RUNTIME_DIR/resources/composable-beacon.png" | awk '{print $1}')" >> "$MANIFEST"
 print -- "build_parameters=CJGUI_INTERNAL_TESTING;sysroot=$SDKROOT_PATH;macosx-version-min=12.0;argument=--complex-mixed" >> "$MANIFEST"
-for source_file in "$PROBE_SOURCE" "$CLIENT_SOURCE" "$RUNTIME_DIR/src/runtime_renderer_session.cj" "$RUNTIME_DIR/src/composable_ui.cj" "$RUNTIME_DIR/src/composable_ui_window.cj" "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/native/cjgui_internal_renderer.m" "$RUNTIME_DIR/native/cjgui_native_bridge.m"; do
+for source_file in "$PROBE_SOURCE" "$CLIENT_SOURCE" "$RUNTIME_DIR/src/runtime_renderer_session.cj" "$RUNTIME_DIR/src/composable_ui.cj" "$RUNTIME_DIR/src/composable_ui_window.cj" "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/src/composable_ui_platform_state.cj" "$RUNTIME_DIR/native/cjgui_internal_renderer.m" "$RUNTIME_DIR/native/cjgui_native_bridge.m"; do
   print -- "source_sha256[$source_file]=$(shasum -a 256 "$source_file" | awk '{print $1}')" >> "$MANIFEST"
 done
 
@@ -57,10 +60,7 @@ ar rcs "$NATIVE_DIR/libcjgui_complex_scene_application_mixed.a" \
 
 cjc --sysroot "$SDKROOT_PATH" \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$PROBE_SOURCE" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
   -lcjgui_shared_operation_core -L "$NATIVE_DIR" -lcjgui_complex_scene_application_mixed \

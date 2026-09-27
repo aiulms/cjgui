@@ -170,8 +170,22 @@ typedef enum CjguiInternalRendererEventKind {
     // replacement string. Consumers that need the resulting value keep the
     // existing TEXT_CHANGED event; a range-text consumer uses this one and never
     // has to diff the full text.
-    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED = 51
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED = 51,
+    // One platform composition phase (IME marked text) routed to the single
+    // window-owned Cangjie text session bound to this node. `formText` carries
+    // the preedit on update (phase 1) or the final text on commit (phase 2);
+    // cancel (phase 3) carries no text. Emitted ONLY while the window's
+    // `set_composable_owned_text_session` declaration names this node with a
+    // matching binding epoch; every other node keeps the ordinary text events
+    // above and never receives this kind.
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_COMPOSITION = 52
 } CjguiInternalRendererEventKind;
+
+typedef enum CjguiInternalRendererTextCompositionPhase {
+    CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE = 1,
+    CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_COMMIT = 2,
+    CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_CANCEL = 3
+} CjguiInternalRendererTextCompositionPhase;
 
 typedef enum CjguiInternalRendererDataTransferRole {
     CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE = 1,
@@ -303,7 +317,34 @@ typedef struct CjguiInternalRendererEvent {
     // Keyboard modifier flags of the pointer event that produced this intent
     // (AppKit NSEventModifierFlag* bits). Non-pointer intents leave it 0.
     int64_t modifierFlags;
+    // TEXT_COMPOSITION (kind 52) record. Zero for every other kind, so a
+    // consumer that does not know this kind still reads a valid event.
+    // `compositionPhase` is CjguiInternalRendererTextCompositionPhase;
+    // `compositionId` is monotonic per native session and identifies one
+    // composition across its update/terminal phases; `bindingEpoch` is the
+    // window's binding generation at capture time, so an event queued before a
+    // rebind is refused instead of editing the new session.
+    uint32_t compositionPhase;
+    // `replacementStart16`/`replacementLength16` describe the platform's
+    // intended replacement in UTF-16 units of the node's CURRENT proxy text
+    // (-1 location = the protocol's NSNotFound, i.e. "not specified").
+    // `markedStart16`/`markedLength16` are the actual marked range read after
+    // the platform mutation; a terminal phase may report -1/0 (no marked text).
+    // The inner selection of an update reuses selectionStart/selectionEnd.
+    int64_t replacementStart16;
+    int64_t replacementLength16;
+    int64_t markedStart16;
+    int64_t markedLength16;
+    uint64_t compositionId;
+    uint64_t bindingEpoch;
 } CjguiInternalRendererEvent;
+
+// Layout: kind + recordIndex + selection pair (4x uint32), nodeId +
+// projectionVersion + resourceId (3x 64), nodeKind (uint32 + 4 pad),
+// pointer pair + modifiers (3x 64), then the kind-52 record as
+// uint32 phase + 4 pad + six 64-bit fields. 128 bytes exactly.
+_Static_assert(sizeof(CjguiInternalRendererEvent) == 128,
+               "CjguiInternalRendererEvent layout drifted");
 
 // One native coordination declaration for one format on an already-staged
 // composable node. Format and UTF-8 payload are copied during the setter;
@@ -490,6 +531,19 @@ cjgui_internal_renderer_set_window_title(uint64_t session, const char *title);
 // inserted replacement string. Disabled by default.
 int32_t
 cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session, int32_t enabled);
+
+// Declare (or withdraw) the single composable text node whose platform
+// composition phases belong to the window-owned text session. While the
+// declaration names an ACTIVE node, its IME marked-text lifecycle is delivered
+// as CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_COMPOSITION (kind 52)
+// and the corresponding ordinary text events are suppressed for that intent.
+// Every other node and every non-composition edit keeps the ordinary events.
+// `bindingEpoch` is echoed back on each phase so a queued event from before a
+// rebind can be refused by the window; `enabled = 0` withdraws the declaration.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint64_t nodeId,
+                                                          int64_t resourceId, uint32_t nodeKind,
+                                                          uint64_t bindingEpoch, uint32_t enabled);
 
 // Roll back the hidden text proxy after the application refused a human range
 // edit. Only restores text the owner already accepted; fails (and changes

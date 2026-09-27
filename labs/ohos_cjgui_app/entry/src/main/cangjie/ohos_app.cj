@@ -26,7 +26,10 @@ import std.convert.*
 foreign func cjgui_ohos_surface_ready(): UInt8
 foreign func ohos_renderer_shutdown_render_thread(): Int32
 foreign func cjgui_ohos_application_stop_requested(): Int32
+foreign func cjgui_ohos_request_application_stop(): Int32
 foreign func cjgui_ohos_renderer_shutdown_done(): Int32
+foreign func cjgui_ohos_renderer_running(): Int32
+foreign func cjgui_ohos_notify_owner_exit(reason: Int32): Unit
 
 // A1 矩阵：renderer test-gates 的 foreign 入口。两个产物变体都导出同名符号，
 // 普通产物返回 -1（无闸门行为）；测试产物由 verify 探针经接缝命令驱动。
@@ -37,6 +40,18 @@ foreign func cjgui_ohos_test_inject_touch(action: UInt32, x: Float32, y: Float32
 foreign func cjgui_ohos_test_gate_set_flush_hold_release(): Int32
 foreign func cjgui_ohos_test_gate_job_fail_count(): Int32
 foreign func cjgui_ohos_test_gate_fail_armed(): Int32
+foreign func cjgui_ohos_test_gate_stage_held_packed(): Int64
+foreign func cjgui_ohos_test_stub_arm(enable: Int64): Int32
+foreign func cjgui_ohos_test_stub_hold_set(stage: Int32, gen: Int64, ms: Int32): Int32
+foreign func cjgui_ohos_test_trigger_redraw(): Int32
+foreign func cjgui_ohos_test_audit_negative_fixture_cj(): Int32
+foreign func cjgui_ohos_test_stub_session_register_cj(gen: Int64, w: Int64, h: Int64): Int32
+foreign func cjgui_ohos_test_stub_lease_retire(gen: Int64): Int32
+foreign func cjgui_ohos_test_stub_release(): Int32
+foreign func cjgui_ohos_test_stub_counts(gen: Int64): Int64
+foreign func cjgui_ohos_test_stub_state(): Int64
+foreign func cjgui_ohos_test_stub_disarm(): Int32
+foreign func cjgui_ohos_test_platform_call_packed(): Int64
 foreign func cjgui_ohos_permit_pair_packed(): Int64
 foreign func cjgui_ohos_test_gate_ack_fail_count(): Int32
 foreign func cjgui_ohos_test_settlement_committed(): Int32
@@ -135,17 +150,287 @@ public func cjgui_ohos_app_main_cangjie(ingress: CPointer<Unit>): Int32 {
 // 应用循环（与 macOS 同源：同一 domain/controller + 同一宿主泵语义）
 // ---------------------------------------------------------------------------
 
+// 第九次复核 C：owner **统一清理尾部**——所有出口（Phase A 停止、
+// host.start 失败、Phase B 正常结束）汇入此处：停止接单 → 传输收敛 →
+// 按事实结束已启动 renderer → 终态日志。真正未启动的部件记 not_started，
+// 不伪造成功 shutdown。
+func ohosCleanupTail(reason: String): Bool {
+    OhosTransportBridge.requestStop()
+    let transportClosed = OhosTransportBridge.awaitClosed(2000)
+    let (queued, _qbytes, conns, inflight, lifecycle) = OhosTransportBridge.snapshotCounters()
+    let rendererStarted = unsafe { cjgui_ohos_renderer_running() } == 1
+    var shutdownStatus: Int32 = -1
+    var shutdownDone: Int32 = -1
+    if (rendererStarted) {
+        shutdownStatus = unsafe { ohos_renderer_shutdown_render_thread() }
+        shutdownDone = unsafe { cjgui_ohos_renderer_shutdown_done() }
+    }
+    Hilog.info(0, TAG,
+        "cleanup tail [${reason}]: renderer_started=${rendererStarted} " +
+        "shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} " +
+        "transport_closed=${transportClosed} queued=${queued} conns=${conns} " +
+        "inflight=${inflight} lifecycle=${lifecycle}")
+    return transportClosed && queued == 0 && conns == 0 && inflight == 0 &&
+        (!rendererStarted || (shutdownStatus == 0 && shutdownDone == 1))
+}
+
+// A1 矩阵：闸门命令派发（第八次复核链1：pre-surface 替身服务复用同一派发）。
+func executeGateCommand(gateName: String): String {
+    var result = "unknown_command"
+    if (gateName.startsWith("TOUCH_")) {
+        // D 夹具：TOUCH_<action>_<x>_<y>（action: 0=down 1=up 2=move）
+        let parts = gateName.split("_")
+        if (parts.size >= 4) {
+            // 夹具约定 0=down 1=up 2=move → 渲染器 ingress 动作码
+            // 37=BEGIN 38=UPDATE 39=END（此前直接透传 0/1/2，BEGIN 语义
+            // 永不触发——触摸注入对焦点/指针路径实际上是惰性的，实测修复）。
+            let raw = UInt32.parse(parts[1])
+            var action = raw
+            if (raw == 0) {
+                action = 37
+            } else if (raw == 1) {
+                action = 39
+            } else if (raw == 2) {
+                action = 38
+            }
+            let x = Float32.parse(parts[2])
+            let y = Float32.parse(parts[3])
+            let rc = unsafe { cjgui_ohos_test_inject_touch(action, x, y) }
+            result = "touch=${rc}"
+        }
+    }
+    // 链2（Astra Q4）：替身适配器命令——STUB_<op> [参数]，经渲染线程真实
+    // 路径驱动替身会话（替身自有对象/租约，不接收真实 window 指针）。
+    if (gateName == "STUB_ARM") {
+        let r = unsafe { cjgui_ohos_test_stub_arm(1) }
+        result = "stub_arm=${r}"
+    } else if (gateName.startsWith("STUB_HOLD ")) {
+        // 第九次复核 A4：阻塞配置独立命令（任意时刻可设，不经准入）。
+        let parts = gateName.split(" ")
+        if (parts.size >= 4) {
+            let r = unsafe { cjgui_ohos_test_stub_hold_set(Int32.parse(parts[1]),
+                Int64.parse(parts[2]), Int32.parse(parts[3])) }
+            result = "stub_hold=${r}"
+        }
+    } else if (gateName == "GATE_REDRAW") {
+        // 第九次复核 A 验收：经真实 redraw 路径驱动（替身句柄由其 backend 分发）。
+        let r = unsafe { cjgui_ohos_test_trigger_redraw() }
+        result = "redraw=${r}"
+    } else if (gateName == "GATE_PC_CALLS") {
+        // 平台调用生命周期计数（按代 enter/exit packed）——零错类型调用断言读数。
+        let p = unsafe { cjgui_ohos_test_platform_call_packed() }
+        result = "pc_calls=${p}"
+    } else if (gateName == "GATE_AUDIT_FIXTURE") {
+        // 第九次复核 B：NEG4 隔离夹具（拦截 Reference 逐命令断言）。
+        let r = unsafe { cjgui_ohos_test_audit_negative_fixture_cj() }
+        result = "audit_fixture=${r}"
+    } else if (gateName.startsWith("STUB_SESSION ")) {
+        // 第九次复核 A3：注册宿主表替身会话（active 即租约）。
+        let parts = gateName.split(" ")
+        if (parts.size >= 4) {
+            let r = unsafe { cjgui_ohos_test_stub_session_register_cj(Int64.parse(parts[1]),
+                Int64.parse(parts[2]), Int64.parse(parts[3])) }
+            result = "stub_session=${r}"
+        }
+    } else if (gateName.startsWith("STUB_RETIRE ")) {
+        let parts = gateName.split(" ")
+        if (parts.size >= 2) {
+            let r = unsafe { cjgui_ohos_test_stub_lease_retire(Int64.parse(parts[1])) }
+            result = "stub_retire=${r}"
+        }
+    } else if (gateName == "STUB_RELEASE") {
+        let r = unsafe { cjgui_ohos_test_stub_release() }
+        result = "stub_release=${r}"
+    } else if (gateName.startsWith("STUB_COUNTS ")) {
+        let parts = gateName.split(" ")
+        if (parts.size >= 2) {
+            let packed = unsafe { cjgui_ohos_test_stub_counts(Int64.parse(parts[1])) }
+            result = "stub_counts=${packed}"
+        }
+    } else if (gateName == "STUB_STATE") {
+        let st = unsafe { cjgui_ohos_test_stub_state() }
+        result = "stub_state=${st}"
+    } else if (gateName == "STUB_DISARM") {
+        let r = unsafe { cjgui_ohos_test_stub_disarm() }
+        result = "stub_disarm=${r}"
+    }
+    if (gateName == "GATE_REJECT_NEXT") {
+        let r = unsafe { cjgui_ohos_test_gate_set_fail_next(1, 0) }
+        let a = unsafe { cjgui_ohos_test_gate_fail_armed() }
+        result = "set_fail_next=${r} armed_now=${a}"
+    } else if (gateName == "GATE_FAIL_ACK_1") {
+        let r = unsafe { cjgui_ohos_test_gate_set_fail_next(0, 1) }
+        result = "set_fail_ack=${r}"
+    } else if (gateName == "GATE_DEQUEUE_HOLD_30000") {
+        let r = unsafe { cjgui_ohos_test_gate_set_dequeue_hold_ms(30000) }
+        result = "set_dequeue_hold=${r}"
+    } else if (gateName == "GATE_FLUSH_HOLD_30000") {
+        let r = unsafe { cjgui_ohos_test_gate_set_flush_hold_ms(30000, -1) }
+        result = "flush_hold=${r}"
+    } else if (gateName == "GATE_FLUSH_HOLD_RELEASE") {
+        // 第七次复核 A2：专用释放操作必须真实接通（此前回包
+        // verify_unknown_op——命令从未存在）。
+        let r = unsafe { cjgui_ohos_test_gate_set_flush_hold_release() }
+        result = "flush_release=${r}"
+    } else if (gateName == "GATE_HOLD_PERMIT_8000") {
+        let r = unsafe { cjgui_ohos_test_gate_set_hold_permit(8000, -1) }
+        result = "hold_permit=${r}"
+    } else if (gateName == "GATE_HOLD_CREATE_8000") {
+        let r = unsafe { cjgui_ohos_test_gate_set_hold_create(8000, -1) }
+        result = "hold_create=${r}"
+    } else if (gateName == "GATE_HOLD_CREATE_RET_8000") {
+        let r = unsafe { cjgui_ohos_test_gate_set_hold_create_return(8000, -1) }
+        result = "hold_create_return=${r}"
+    } else if (gateName == "GATE_HOLD_DRAW_8000") {
+        let r = unsafe { cjgui_ohos_test_gate_set_hold_draw(8000, -1) }
+        result = "hold_draw=${r}"
+    } else if (gateName == "GATE_HOLD_ADMIT_8000") {
+        let r = unsafe { cjgui_ohos_test_gate_set_hold_admission(8000, -1) }
+        result = "hold_admission=${r}"
+    } else if (gateName == "GATE_SIM_RETIRED") {
+        let r = unsafe { cjgui_ohos_test_simulate_surface_retired() }
+        result = "sim_retired=${r}"
+    } else if (gateName == "GATE_SIM_CREATED") {
+        let r = unsafe { cjgui_ohos_test_simulate_surface_created() }
+        result = "sim_created=${r}"
+    } else if (gateName == "GATE_ACCEPT_THROW") {
+        CJGUI_WINDOW_GATE_ACCEPTANCE_THROW = true
+        result = "accept_throw armed"
+    } else if (gateName == "GATE_ROLLBACK_THROW") {
+        CJGUI_WINDOW_GATE_ROLLBACK_THROW = true
+        result = "rollback_throw armed"
+    } else if (gateName == "GATE_THROW_CLEAR") {
+        CJGUI_WINDOW_GATE_ACCEPTANCE_THROW = false
+        CJGUI_WINDOW_GATE_ROLLBACK_THROW = false
+        result = "throw cleared"
+    } else if (gateName == "GATE_A2_STATS") {
+        let committed = unsafe { cjgui_ohos_test_settlement_committed() }
+        let aborted = unsafe { cjgui_ohos_test_settlement_aborted() }
+        let jf = unsafe { cjgui_ohos_test_gate_job_fail_count() }
+        let af = unsafe { cjgui_ohos_test_gate_ack_fail_count() }
+        let armed = unsafe { cjgui_ohos_test_gate_fail_armed() }
+        let pair = unsafe { cjgui_ohos_permit_pair_packed() }
+        let pa = pair >> 32
+        let pr = pair & 0xFFFFFFFF
+        let stageHeld = unsafe { cjgui_ohos_test_gate_stage_held_packed() }
+        result = "committed=${committed} aborted=${aborted} job_fails=${jf} ack_fails=${af} armed=${armed} permits=${pa}/${pr} stageHeld=${stageHeld}"
+    } else if (gateName == "GATE_CLEAR") {
+        // 只解除「持有」类闸门；fail-next 是注入指令，不得被 CLEAR 抵消
+        //（否则放行与注入同轮派发时注入永远打不中）。
+        let r1 = unsafe { cjgui_ohos_test_gate_set_dequeue_hold_ms(0) }
+        let r2 = unsafe { cjgui_ohos_test_gate_set_flush_hold_release() }
+        let ra = unsafe { cjgui_ohos_test_gate_set_hold_permit(0, 0) }
+        let rb = unsafe { cjgui_ohos_test_gate_set_hold_create(0, 0) }
+        let rc2 = unsafe { cjgui_ohos_test_gate_set_hold_create_return(0, 0) }
+        let rd = unsafe { cjgui_ohos_test_gate_set_hold_draw(0, 0) }
+        let re = unsafe { cjgui_ohos_test_gate_set_hold_admission(0, 0) }
+        if (r1 == 0 && ra == 0 && rb == 0 && rc2 == 0 && rd == 0 && re == 0) {
+            Hilog.info(0, TAG, "verify gate clear: a2 holds released")
+        }
+        let committed = unsafe { cjgui_ohos_test_settlement_committed() }
+        let aborted = unsafe { cjgui_ohos_test_settlement_aborted() }
+        let jf = unsafe { cjgui_ohos_test_gate_job_fail_count() }
+        let af = unsafe { cjgui_ohos_test_gate_ack_fail_count() }
+        result = "cleared=${r1}${r2} committed=${committed} aborted=${aborted} job_fails=${jf} ack_fails=${af}"
+    }
+    return result
+}
+// 单轮服务：闸门命令派发 + 外部票据认领/dispatch/complete（Phase A/B 共用）。
+func serveOnce(connection: CjguiSharedOperationExternalConnection): Bool {
+    var served = false
+    let (gateId, gateName) = VerificationSeam.pendingGateCommand()
+    if (gateId != 0) {
+        served = true
+        let result = executeGateCommand(gateName)
+        VerificationSeam.reportGateResult(gateId, result)
+        Hilog.info(0, TAG, "verify gate ${gateName} -> ${result}")
+    }
+    var n: Int64 = 0
+    while (n < 8) {
+        let lease = OhosTransportBridge.claimNext()
+        if (let Some(l) <- lease) {
+            let holdMs = VerificationSeam.executionHoldRemainingMs()
+            if (holdMs > 0) {
+                sleep(Duration.millisecond * holdMs)
+            }
+            let response = connection.dispatchPayload(l.payload)
+            let _ = OhosTransportBridge.complete(l, response)
+            served = true
+            n += 1
+        } else {
+            break
+        }
+    }
+    return served
+}
 func ohosApplicationLoop(): Unit {
     var ticks: Int64 = 0
-    // 等待 XComponent surface 就绪（Astra：宿主等到 surface Ready 才 start）。
-    while (unsafe { cjgui_ohos_surface_ready() } == 0) {
-        if (ticks >= 1200) {
-            Hilog.error(0, TAG, "surface not ready after 60s; app loop exits")
-            return
+    // 第七次复核 Q3：域/外部连接/传输监听全部前移到 surface 等待之前——
+    // KnownShimNoRef 拒绝发布 degradedActive 后 surface 永不就绪，owner/
+    // 传输替身测试（外部协议在等待窗口内服务）仍可用；不做此前移则替身
+    // 通道一并不可达（ConnectionReset 实证）。
+    let bridgeGeneration = APP_LOOP_TICKS.load() + 1
+    let _ = OhosTransportBridge.start(bridgeGeneration, 7856)
+    let _ = spawn {
+        OhosTransportBridge.listen(7856)
+    }
+    // 第八次复核链1：启动准备与替身服务不依赖 surface——
+    // 域/控制器/外部连接（无 window 重载）与传输监听先于 surface 等待建立；
+    // KnownShimNoRef 档下 owner/传输替身持续服务（无渲染，明确发布后端不可用），
+    // surface 就绪后无缝创建 host 进入渲染（真实引用平台不受影响）。
+    let domain = CjguiSettingsCounterDomain()
+    let controller = CjguiSettingsCounterController(domain)
+    // 链1：三参重载——changeDomain 必须给（否则 visibleActions 无业务动作，
+    // hasSafeAuthorization 的 scope 核对失败 → unauthorized_caller，实测）。
+    let connection = CjguiSharedOperationExternalConnection(domain, settingsCounterAuthorization(), domain)
+    // The region and its candidate table belong to this owner instance. Register
+    // before Surface readiness so discovery and a pending candidate remain
+    // available through the same TCP owner queue during Phase A.
+    let generatedReady = connection.enableGeneratedUiProvider(controller.generatedUiRegion())
+    if (!generatedReady) {
+        Hilog.error(0, TAG, "generated provider registration failed")
+        let _ = ohosCleanupTail("generated provider registration failed")
+        unsafe { cjgui_ohos_notify_owner_exit(1) }
+        return
+    }
+
+    // Phase A：替身服务循环——surface 未就绪也持续服务闸门命令、外部请求
+    // 与停止（不再空等 60s 后退出；KnownShimNoRef 档按 Astra Q3 持续替身运行）
+    var surfaceReady = false
+    var standinAnnounced = false
+    var standinStop = false
+    while (!surfaceReady) {
+        if (unsafe { cjgui_ohos_application_stop_requested() } == 1) {
+            standinStop = true
+            break
         }
-        sleep(Duration.millisecond * 50)
-        ticks += 1
-        APP_LOOP_TICKS.store(ticks)
+        // 链1：停止可先服务——close 请求在替身阶段同样可达。无 host/窗口
+        // 可关，close 意图即应用停止：置停止请求，下一轮循环边界退出，
+        // 走同一收敛路径（不因 surface 未发布而不可停，实测修复 C6）。
+        if (VerificationSeam.consumeWindowCloseRequest()) {
+            Hilog.info(0, TAG, "stand-in close: no host yet; close intent = application stop")
+            let _ = unsafe { cjgui_ohos_request_application_stop() }
+        }
+        let _ = serveOnce(connection)
+        surfaceReady = (unsafe { cjgui_ohos_surface_ready() } == 1)
+        if (!surfaceReady) {
+            if (!standinAnnounced) {
+                Hilog.info(0, TAG, "surface pending; owner service active")
+                standinAnnounced = true
+            }
+            sleep(Duration.millisecond * 50)
+            ticks += 1
+            APP_LOOP_TICKS.store(ticks)
+        }
+    }
+    if (standinStop && !surfaceReady) {
+        // 第九次复核 C：替身阶段停止走统一清理尾部
+        // STUB_ARM 等测试路径启动过 renderer 时按事实 shutdown；成功与否
+        // 在清理后声明，避免失败的收尾被宿主当作有序退出。
+        controller.generatedUiRegion().rejectPendingOnClose()
+        let cleaned = ohosCleanupTail("stand-in stopped")
+        unsafe { cjgui_ohos_notify_owner_exit(if (cleaned) { 0 } else { 1 }) }
+        return
     }
     Hilog.info(0, TAG, "surface ready; starting settings-counter host")
     // A1 首帧反例：首帧 PENDING 由启动参数重放的 flush 闸门制造（票据已发、
@@ -153,12 +438,10 @@ func ohosApplicationLoop(): Unit {
     // 可观察）。此处不再按 dequeue 闸门——那会让首帧在票据分配前被扣住，
     // 触发「PENDING 无票据」协议缺口路径（实测导致 host start failed）。
 
-    let domain = CjguiSettingsCounterDomain()
-    let controller = CjguiSettingsCounterController(domain)
     let host = CjguiMacosApplicationHost(controller,
         configuration: CjguiMacosApplicationWindowConfiguration("设置与计数", 720u32, 1400u32))
     let window = host.window()
-    let connection = CjguiSharedOperationExternalConnection(domain, settingsCounterAuthorization(), domain, window)
+    controller.generatedUiRegion().attachWindow(window)
     let progressReady = connection.enableWindowProgressReads(window)
     if (!progressReady) {
         Hilog.warn(0, TAG, "window progress reads unavailable")
@@ -166,18 +449,17 @@ func ohosApplicationLoop(): Unit {
     // 注意：不调用 connection.start()——其私有 unix 传输硬编码 /tmp，
     // OHOS 沙箱不可写。外部通道走 ohos_transport.cj 的 TCP→dispatchPayload 桥。
     if (!host.start()) {
+        // 第九次复核 C：启动失败同样汇入统一清理尾部（明确 failed 可重试），
+        // 不再绕过传输/renderer 收尾。
         Hilog.error(0, TAG, "host start failed")
+        unsafe { cjgui_ohos_notify_owner_exit(1) }   // 启动失败
+        controller.generatedUiRegion().rejectPendingOnClose()
         host.close()
+        let _ = ohosCleanupTail("host start failed")
         return
     }
     Hilog.info(0, TAG, "host started; pumping turns")
-
-    // 外部通道：票据桥（新实例身份）+ 监听线程 + owner 串行 dispatch。
-    let bridgeGeneration = APP_LOOP_TICKS.load() + 1
-    let _ = OhosTransportBridge.start(bridgeGeneration, 7856)
-    let _ = spawn {
-        OhosTransportBridge.listen(7856)
-    }
+    Hilog.info(0, TAG, "generated_work phase=host_started ${controller.generatedUiRegion().testWorkCounts()}")
 
     // 停止协议（Sol 归属）：surface 卸载只退役租约并保留 owner；
     // Ability 真正关闭由宿主置停止请求，owner 在轮间安全边界退出循环，
@@ -208,98 +490,9 @@ func ohosApplicationLoop(): Unit {
             Hilog.info(0, TAG, "verify close: host.close() via production path")
             host.close()
         }
-        // A1 矩阵：执行验证接缝发布的闸门命令。未注册产物 pendingGateCommand
-        // 恒 (0,"")，此分支不可达；结果按命令 ID 回填供验证者读数。
-        let (gateId, gateName) = VerificationSeam.pendingGateCommand()
-        if (gateId != 0) {
-            var result = "unknown_command"
-            if (gateName.startsWith("TOUCH_")) {
-                // D 夹具：TOUCH_<action>_<x>_<y>（action: 0=down 1=up 2=move）
-                let parts = gateName.split("_")
-                if (parts.size >= 4) {
-                    let action = UInt32.parse(parts[1])
-                    let x = Float32.parse(parts[2])
-                    let y = Float32.parse(parts[3])
-                    let rc = unsafe { cjgui_ohos_test_inject_touch(action, x, y) }
-                    result = "touch=${rc}"
-                }
-            }
-            if (gateName == "GATE_REJECT_NEXT") {
-                let r = unsafe { cjgui_ohos_test_gate_set_fail_next(1, 0) }
-                let a = unsafe { cjgui_ohos_test_gate_fail_armed() }
-                result = "set_fail_next=${r} armed_now=${a}"
-            } else if (gateName == "GATE_FAIL_ACK_1") {
-                let r = unsafe { cjgui_ohos_test_gate_set_fail_next(0, 1) }
-                result = "set_fail_ack=${r}"
-            } else if (gateName == "GATE_DEQUEUE_HOLD_30000") {
-                let r = unsafe { cjgui_ohos_test_gate_set_dequeue_hold_ms(30000) }
-                result = "set_dequeue_hold=${r}"
-            } else if (gateName == "GATE_FLUSH_HOLD_30000") {
-                let r = unsafe { cjgui_ohos_test_gate_set_flush_hold_ms(30000, -1) }
-                result = "flush_hold=${r}"
-            } else if (gateName == "GATE_HOLD_PERMIT_8000") {
-                let r = unsafe { cjgui_ohos_test_gate_set_hold_permit(8000, -1) }
-                result = "hold_permit=${r}"
-            } else if (gateName == "GATE_HOLD_CREATE_8000") {
-                let r = unsafe { cjgui_ohos_test_gate_set_hold_create(8000, -1) }
-                result = "hold_create=${r}"
-            } else if (gateName == "GATE_HOLD_CREATE_RET_8000") {
-                let r = unsafe { cjgui_ohos_test_gate_set_hold_create_return(8000, -1) }
-                result = "hold_create_return=${r}"
-            } else if (gateName == "GATE_HOLD_DRAW_8000") {
-                let r = unsafe { cjgui_ohos_test_gate_set_hold_draw(8000, -1) }
-                result = "hold_draw=${r}"
-            } else if (gateName == "GATE_HOLD_ADMIT_8000") {
-                let r = unsafe { cjgui_ohos_test_gate_set_hold_admission(8000, -1) }
-                result = "hold_admission=${r}"
-            } else if (gateName == "GATE_SIM_RETIRED") {
-                let r = unsafe { cjgui_ohos_test_simulate_surface_retired() }
-                result = "sim_retired=${r}"
-            } else if (gateName == "GATE_SIM_CREATED") {
-                let r = unsafe { cjgui_ohos_test_simulate_surface_created() }
-                result = "sim_created=${r}"
-            } else if (gateName == "GATE_ACCEPT_THROW") {
-                CJGUI_WINDOW_GATE_ACCEPTANCE_THROW = true
-                result = "accept_throw armed"
-            } else if (gateName == "GATE_ROLLBACK_THROW") {
-                CJGUI_WINDOW_GATE_ROLLBACK_THROW = true
-                result = "rollback_throw armed"
-            } else if (gateName == "GATE_THROW_CLEAR") {
-                CJGUI_WINDOW_GATE_ACCEPTANCE_THROW = false
-                CJGUI_WINDOW_GATE_ROLLBACK_THROW = false
-                result = "throw cleared"
-            } else if (gateName == "GATE_A2_STATS") {
-                let committed = unsafe { cjgui_ohos_test_settlement_committed() }
-                let aborted = unsafe { cjgui_ohos_test_settlement_aborted() }
-                let jf = unsafe { cjgui_ohos_test_gate_job_fail_count() }
-                let af = unsafe { cjgui_ohos_test_gate_ack_fail_count() }
-                let armed = unsafe { cjgui_ohos_test_gate_fail_armed() }
-                let pair = unsafe { cjgui_ohos_permit_pair_packed() }
-                let pa = pair >> 32
-                let pr = pair & 0xFFFFFFFF
-                result = "committed=${committed} aborted=${aborted} job_fails=${jf} ack_fails=${af} armed=${armed} permits=${pa}/${pr}"
-            } else if (gateName == "GATE_CLEAR") {
-                // 只解除「持有」类闸门；fail-next 是注入指令，不得被 CLEAR 抵消
-                //（否则放行与注入同轮派发时注入永远打不中）。
-                let r1 = unsafe { cjgui_ohos_test_gate_set_dequeue_hold_ms(0) }
-                let r2 = unsafe { cjgui_ohos_test_gate_set_flush_hold_release() }
-                let ra = unsafe { cjgui_ohos_test_gate_set_hold_permit(0, 0) }
-                let rb = unsafe { cjgui_ohos_test_gate_set_hold_create(0, 0) }
-                let rc2 = unsafe { cjgui_ohos_test_gate_set_hold_create_return(0, 0) }
-                let rd = unsafe { cjgui_ohos_test_gate_set_hold_draw(0, 0) }
-                let re = unsafe { cjgui_ohos_test_gate_set_hold_admission(0, 0) }
-                if (r1 == 0 && ra == 0 && rb == 0 && rc2 == 0 && rd == 0 && re == 0) {
-                    Hilog.info(0, TAG, "verify gate clear: a2 holds released")
-                }
-                let committed = unsafe { cjgui_ohos_test_settlement_committed() }
-                let aborted = unsafe { cjgui_ohos_test_settlement_aborted() }
-                let jf = unsafe { cjgui_ohos_test_gate_job_fail_count() }
-                let af = unsafe { cjgui_ohos_test_gate_ack_fail_count() }
-                result = "cleared=${r1}${r2} committed=${committed} aborted=${aborted} job_fails=${jf} ack_fails=${af}"
-            }
-            VerificationSeam.reportGateResult(gateId, result)
-            Hilog.info(0, TAG, "verify gate ${gateName} -> ${result}")
-        }
+        // A1 矩阵：闸门命令 + 外部票据单轮服务（executeGateCommand 独立成
+        // 函数，供 pre-surface 替身阶段复用——第八次复核链1）。
+        let _ = serveOnce(connection)
         // 外部请求 drain：每次只认领下一张票（Astra：不预标预算），
         // 认领→dispatch→complete 全部经票归属协议。
         var served: Int64 = 0
@@ -330,6 +523,9 @@ func ohosApplicationLoop(): Unit {
         let _ = host.pumpOneTurn()
         ticks += 1
         APP_LOOP_TICKS.store(ticks)
+        if (ticks % 200 == 0) {
+            Hilog.info(0, TAG, "generated_work tick=${ticks} ${controller.generatedUiRegion().testWorkCounts()}")
+        }
     }
     // 关闭链（Sol 归属，每步唯一完成者）：
     //  1) 停止接单/认领（owner 已退出循环）
@@ -337,6 +533,8 @@ func ohosApplicationLoop(): Unit {
     //  3) 窗口会话关闭（owner 内容按应用生命周期契约保留在 owner 内）
     //  4) 渲染线程在自有线程 teardown surface/GPU context 后退出并 join
     //  5) 启动身份复位（渲染器代际已在请求时递增；本循环报告真实终态）
+    // 第九次复核 C：Phase B 正常结束汇入统一清理尾部（renderer 必已启动，
+    // shutdown 真实执行；字段与渲染档终态判据兼容）。
     OhosTransportBridge.requestStop()
     let transportClosed = OhosTransportBridge.awaitClosed(2000)
     let (queued, _qbytes, conns, inflight, lifecycle) = OhosTransportBridge.snapshotCounters()
@@ -345,6 +543,24 @@ func ohosApplicationLoop(): Unit {
     host.close()
     let shutdownStatus = unsafe { ohos_renderer_shutdown_render_thread() }
     let shutdownDone = unsafe { cjgui_ohos_renderer_shutdown_done() }
+    // Committing 超时的原票据在平台 Flush 返回前仍是 PENDING。host.close()
+    // 只记录 close 意图；渲染线程停止并不替 owner 查询、ACK 与销毁会话。
+    // 在同一 owner 上有界推进原窗口的前置结算门，直到 close 意图被消费。
+    var closeWaitMs: Int64 = 0
+    while (window.isOpen() && closeWaitMs < 10000) {
+        let _ = window.refreshIfNeeded()
+        if (window.isOpen()) {
+            sleep(Duration.millisecond * 10)
+            closeWaitMs += 10
+        }
+    }
+    let windowClosed = !window.isOpen()
+    Hilog.info(0, TAG, "window close settlement: closed=${windowClosed} waited_ms=${closeWaitMs}")
+    controller.generatedUiRegion().rejectPendingOnClose()
+    let tailCleaned = ohosCleanupTail("phase-b closed")
+    let orderly = tailCleaned && shutdownStatus == 0 && shutdownDone == 1 && windowClosed && !host.isOpen()
+    unsafe { cjgui_ohos_notify_owner_exit(if (orderly) { 0 } else { 1 }) }
     Hilog.info(0, TAG,
-        "host closed; stop_requested=${stopRequested} render_shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} ticks=${ticks}")
+        "host closed; stop_requested=${stopRequested} render_shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} " +
+        "tail_cleaned=${tailCleaned} owner_orderly=${orderly} ticks=${ticks}")
 }

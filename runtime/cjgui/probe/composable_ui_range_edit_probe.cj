@@ -21,6 +21,22 @@ private class PlainRangeStore <: CjguiRangeTextSource & CjguiRangeTextEditSink {
     private var lastEnd: Int64 = -1
     private var lastInserted: String = ""
 
+    public func confirmRangeTextVersion(expectedVersion: Int64, action: () -> Bool): Bool {
+        if (this.version != expectedVersion) {
+            return false
+        }
+        return action()
+    }
+
+    public func rebaseRangeTextSelection(fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64) {
+        if (fromVersion == this.rangeTextVersion() && startByte >= 0 &&
+            endByte >= startByte && endByte <= this.rangeTextByteLength()) {
+            return Some((fromVersion, startByte, endByte))
+        }
+        return None
+    }
+
     init(text: String) {
         this.bytes = text.toArray()
     }

@@ -14,10 +14,49 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "cjgui_internal_renderer.h"
+#include "cjgui_native_bridge.h"
 
 extern int InitCJRuntime(const void *parameter);
 typedef void (*CjguiRuntimeStart)(void *entry);
+
+// Runtime parameter block, declared EXACTLY as the official open-source runtime
+// publishes it (https://github.com/Cangjie-Pub/cangjie_runtime,
+// runtime/src/Cangjie.h, struct RuntimeParam; the toolchain does not ship the
+// header). Zeroed fields mean "runtime default". The only field this host sets
+// is coParam.coStackSize: the launcher comment below explains why a GUI
+// application's layout solver needs far more than the 64 KB-class default.
+struct CjguiHeapParam {
+    size_t regionSize;
+    size_t heapSize;
+    double exemptionThreshold;
+    double heapUtilization;
+    double heapGrowth;
+    double allocationRate;
+    size_t allocationWaitTime;
+};
+struct CjguiGCParam {
+    size_t gcThreshold;
+    double garbageThreshold;
+    uint64_t gcInterval;
+    uint64_t backupGCInterval;
+    int32_t gcThreads;
+};
+struct CjguiLogParam {
+    int logLevel;
+};
+struct CjguiConcurrencyParam {
+    size_t thStackSize;
+    size_t coStackSize;
+    uint32_t processorNum;
+};
+struct CjguiRuntimeParam {
+    struct CjguiHeapParam heapParam;
+    struct CjguiGCParam gcParam;
+    struct CjguiLogParam logParam;
+    struct CjguiConcurrencyParam coParam;
+};
 
 static pthread_mutex_t gCjguiRuntimeLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t gCjguiRuntimeCondition = PTHREAD_COND_INITIALIZER;
@@ -38,11 +77,15 @@ static CjguiRuntimeStart CjguiResolveRuntimeStart(void) {
 
 static void *CjguiRuntimeWorker(void *unused) {
     (void)unused;
-    // The runtime accepts a documented-default parameter block. Reserve more
-    // than its current size with 64-bit alignment rather than copying a
-    // private runtime declaration into application source.
-    uint64_t runtimeParameter[32] = {0};
-    int initializationResult = InitCJRuntime(runtimeParameter);
+    // The only non-default parameter is the CJTHREAD stack size. The layout
+    // engine recurses per container level (measured: a 7-level visual body
+    // scene overflows the class-default cjthread stack before the scene is
+    // ever accepted); 16 MiB is inside the runtime's documented [64KB, 1GB]
+    // range and is only virtually reserved per cjthread.
+    struct CjguiRuntimeParam runtimeParameter;
+    memset(&runtimeParameter, 0, sizeof(runtimeParameter));
+    runtimeParameter.coParam.coStackSize = 16ULL * 1024 * 1024 / 1024; /* KB */
+    int initializationResult = InitCJRuntime(&runtimeParameter);
 
     pthread_mutex_lock(&gCjguiRuntimeLock);
     gCjguiRuntimeReady = initializationResult == 0;
@@ -71,11 +114,22 @@ void CJ_MRT_CjRuntimeInit(void) {
     }
 
     gCjguiRuntimeStart = CjguiResolveRuntimeStart();
+    // 2026-09-26: the runtime worker MUST carry an explicit large stack. With
+    // default attributes macOS gives a pthread only 512 KiB, and the Cangjie
+    // `main` runs ON THIS THREAD: the layout solver recurses a few containers
+    // deep (a visual body scene nests ~7 layout levels) and dies with
+    // StackOverflowError before the scene is ever accepted -- measured with a
+    // bounded visit log: 24 legal node visits, then overflow, on a 141-byte
+    // document. 64 MiB is lazily committed by macOS, so reserving it is free.
+    pthread_attr_t workerAttr;
+    pthread_attr_init(&workerAttr);
+    pthread_attr_setstacksize(&workerAttr, 64ULL * 1024 * 1024);
     pthread_t worker;
-    if (pthread_create(&worker, NULL, CjguiRuntimeWorker, NULL) != 0) {
+    if (pthread_create(&worker, &workerAttr, CjguiRuntimeWorker, NULL) != 0) {
         fprintf(stderr, "cjgui macOS application host: cannot create Cangjie runtime worker\n");
         abort();
     }
+    pthread_attr_destroy(&workerAttr);
     pthread_detach(worker);
 
     pthread_mutex_lock(&gCjguiRuntimeLock);
@@ -97,6 +151,7 @@ int CJ_MRT_CjRuntimeStart(void *entry) {
     }
 
     cjgui_internal_renderer_enable_main_thread_dispatch();
+    cjgui_macos_enable_accent_sampling();
     pthread_mutex_lock(&gCjguiRuntimeLock);
     gCjguiCompilerEntry = entry;
     gCjguiCompilerEntryReady = true;

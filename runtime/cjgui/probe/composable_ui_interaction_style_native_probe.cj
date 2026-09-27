@@ -240,6 +240,10 @@ private func verifyPressBoundaryLifecycle(): Bool {
         println("CJGUI_INTERACTION_STYLE_PRESS_BOUNDARY start=false")
         return false
     }
+    // This probe judges the native input and replacement boundary at each
+    // event. Make its immediate paint oracle explicit; animated color timing
+    // is covered by the dedicated interaction transition tests.
+    let _ = window.setReduceMotionEnabled(true)
     let session = window.testSessionToken()
     let emptyText = unsafe { LibC.mallocCString("") }
     // An identical enter is a true no-op: accepted hover paint remains live,
@@ -404,6 +408,7 @@ main(): Int64 {
     let controller = InteractionStyleProbeController()
     let window = CjguiComposableUiWindow(controller)
     if (!window.start()) { return 2 }
+    let _ = window.setReduceMotionEnabled(true)
     let session = window.testSessionToken()
     let emptyText = unsafe { LibC.mallocCString("") }
     let initial = window.windowProjection()
@@ -467,7 +472,7 @@ main(): Int64 {
         actionRebindCancelled
     let pressBoundaryValid = verifyPressBoundaryLifecycle()
     let valid = styleValid && pressBoundaryValid
-    println("CJGUI_INTERACTION_STYLE_NATIVE_PROBE hover_paint=${hoverPaint} press_paint=${pressPaint} build_stable=${stableBuild} layout_stable=${stableLayout} local_submit=${changedSubmission} physical_cancel_no_action=${noActionAfterCancelledPress} physical_release_once=${actionOnce} action_rebind_cancelled=${actionRebindCancelled} press_boundary=${pressBoundaryValid} valid=${valid} versions=${initialVersion}/${afterHoverVersion}/${afterPressVersion}/${afterCancelVersion} submissions=${initial.nativeSubmissionCount}/${afterHover.nativeSubmissionCount}/${afterPress.nativeSubmissionCount}/${afterCancel.nativeSubmissionCount} trace_hover=${hoverTrace} trace_press=${pressTrace} trace_cancel=${cancelTrace}")
+    println("CJGUI_INTERACTION_STYLE_NATIVE_PROBE hover_paint=${hoverPaint} press_paint=${pressPaint} build_stable=${stableBuild} layout_stable=${stableLayout} local_submit=${changedSubmission} physical_cancel_no_action=${noActionAfterCancelledPress} physical_release_once=${actionOnce} action_rebind_cancelled=${actionRebindCancelled} press_boundary=${pressBoundaryValid} valid=${valid} versions=${initialVersion}/${afterHoverVersion}/${afterPressVersion}/${afterCancelVersion} submissions=${initial.nativeSubmissionCount}/${afterHover.nativeSubmissionCount}/${afterPress.nativeSubmissionCount}/${afterCancel.nativeSubmissionCount} hover_rgba=${hoverPixel.status}:${hoverPixel.red},${hoverPixel.green},${hoverPixel.blue},${hoverPixel.alpha} press_rgba=${pressPixel.status}:${pressPixel.red},${pressPixel.green},${pressPixel.blue},${pressPixel.alpha} trace_hover=${hoverTrace} trace_press=${pressTrace} trace_cancel=${cancelTrace}")
     unsafe { LibC.free(emptyText) }
     window.close()
     return if (valid) { 0 } else { 3 }

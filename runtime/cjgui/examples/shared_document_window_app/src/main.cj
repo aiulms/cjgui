@@ -1056,6 +1056,27 @@ func scopedDocumentActionsRetainOwnerAcrossSelectionAndReorder(): Unit {
     window.close()
 }
 
+/// D: a typed request that carries its OWN identity and the monotonic instant it
+/// became ready. It waits in the consumer's queue until a later turn applies it
+/// through the same owner entry the native text-change event uses, so the
+/// measured owner latency includes a real queue wait instead of being a
+/// synchronous write performed during measurement. The marker is written into
+/// the document content, so the accepted scene can be checked for EXACTLY this
+/// request's content rather than only "something grew".
+private class CjguiSharedTypedRequest {
+    let requestId: String
+    let marker: String
+    let readyAt: MonoTime
+    let readyTurn: Int64
+
+    init(requestId: String, marker: String, readyAt: MonoTime, readyTurn: Int64) {
+        this.requestId = requestId
+        this.marker = marker
+        this.readyAt = readyAt
+        this.readyTurn = readyTurn
+    }
+}
+
 /// A deliberately smaller projection for the application-owned multi-window
 /// example. Its document binding is fixed per window: focus and selection
 /// remain Cangjie window-local, while text mutations still travel to the one
@@ -1066,14 +1087,146 @@ private class CjguiSharedDocumentMultiWindowController <: CjguiComposableUiContr
     private let documentId: Int64
     private let viewName: String
     private let viewSemanticId: String
+    private let responseEffectMode: String
     private var localRevision: Int64
+    // P1/P2 same-host evidence: the primary view carries a real shadow +
+    // gradient node whose paint alpha is animated through the public window
+    // entry, so the multi-window resource/ownership story includes effects.
+    private var effectWindow: ?CjguiComposableUiWindow = None
+    private var effectPhaseHigh: Bool = false
+    private var effectSummary: String = "效果节点：阴影 + 渐变（动效就绪）"
+    private var effectGroupOpacity: Float64 = 1.0
+    // D: queued typed requests that carry their own identity. Applied at most
+    // one per turn through the owner path, so the queue wait is part of the
+    // observed owner latency.
+    private let typedRequestQueue = ArrayList<CjguiSharedTypedRequest>()
+    private var lastTypedRequestId: String = ""
+    private var lastTypedRequestMarker: String = ""
+    private var lastTypedRequestReadyAt: ?MonoTime = None
+    private var lastTypedRequestOwnerMs: Int64 = -1
+    private var lastTypedRequestReadyTurn: Int64 = -1
 
-    init(workspace: CjguiTextDocumentWorkspace, documentId: Int64, viewName: String, viewSemanticId: String) {
+    init(workspace: CjguiTextDocumentWorkspace, documentId: Int64, viewName: String, viewSemanticId: String,
+        responseEffectMode!: String = "static") {
         this.workspace = workspace
         this.documentId = documentId
         this.viewName = viewName
         this.viewSemanticId = viewSemanticId
+        this.responseEffectMode = responseEffectMode
         this.localRevision = 1
+    }
+
+    /// The three comparison legs retain the exact same effect node content.
+    /// Only the group declaration differs: absent, static, or driven opacity.
+    private func responseEffectGroup(): ?CjguiComposableUiEffectGroup {
+        if (!viewSemanticId.startsWith("primary") || responseEffectMode == "no_effect") {
+            return None
+        }
+        return Some(CjguiComposableUiEffectGroup(opacity: effectGroupOpacity, blendMode: "normal", mask: None))
+    }
+
+    public func effectGroupDeclared(): Bool {
+        return responseEffectGroup().isSome()
+    }
+
+    public func effectGroupOpacityValue(): Float64 {
+        return effectGroupOpacity
+    }
+
+    /// Change only the public EffectGroup opacity between accepted scene builds.
+    /// The response workload calls this once per A/B turn in active mode.
+    public func tickEffectGroupOpacity(): Bool {
+        if (!viewSemanticId.startsWith("primary") || responseEffectMode != "active") {
+            return false
+        }
+        // Keep the group's leg visually distinct from the separate P3 node
+        // animation that this workload retains for the real AX control check.
+        effectGroupOpacity = if (effectGroupOpacity < 1.0) { 1.0 } else { 0.55 }
+        localRevision = localRevision.saturatingAdd(1)
+        return true
+    }
+
+    /// Attach the exact window this view was opened for, so the effect node is
+    /// addressed in THIS window's accepted scene (never a sibling's).
+    public func attachWindow(window: CjguiComposableUiWindow): Unit {
+        effectWindow = Some(window)
+    }
+
+    /// Drive the primary view's effect node through the public paint-alpha entry
+    /// once, returning a greppable observation. Used by the multi-window run so
+    /// the same-host scenario carries a real animation fact.
+    public func driveEffectProbe(): String {
+        let identity = "semantic:shared-document-multi-effect-${viewSemanticId}"
+        let window = match (effectWindow) {
+            case Some(value) => value
+            case None => return "window=none"
+        }
+        let started = window.animateNodeOpacity(identity, 0.35,
+            spec: CjguiComposableUiAnimationSpec.tween(durationMs: 120,
+                easing: CjguiComposableUiAnimationEasing.EASE_OUT), atTime: MonoTime.now())
+        let presented = match (window.animatedNodeOpacity(identity)) {
+            case Some(value) => value
+            case None => -1.0
+        }
+        return "view=${viewSemanticId} identity=${identity} started=${if (started) { 1 } else { 0 }} " +
+            "target=0.350000 presented=${presented} active=${window.activeAnimationCount()} " +
+            "bindings=${window.animationBindingCount()}"
+    }
+
+    /// D: enqueue a typed request carrying its own identity. It is applied on a
+    /// LATER turn, so the queue wait is included in the owner latency.
+    public func enqueueTypedRequest(requestId: String, marker: String, readyTurn: Int64): Bool {
+        if (requestId.size == 0 || marker.size == 0 || typedRequestQueue.size >= 16) {
+            return false
+        }
+        typedRequestQueue.add(CjguiSharedTypedRequest(requestId, marker, MonoTime.now(), readyTurn))
+        return true
+    }
+
+    public func queuedTypedRequestCount(): Int64 {
+        return typedRequestQueue.size
+    }
+
+    /// Apply exactly one queued typed request through the same owner entry the
+    /// native text-change event uses. Returns the request identity, or "" when
+    /// the queue is empty or the owner refused the edit.
+    public func applyNextTypedRequest(): String {
+        if (typedRequestQueue.size == 0) {
+            return ""
+        }
+        let request = typedRequestQueue.remove(at: 0)
+        let version = humanAppendText(request.marker)
+        if (version < 0) {
+            return ""
+        }
+        lastTypedRequestId = request.requestId
+        lastTypedRequestMarker = request.marker
+        lastTypedRequestReadyAt = Some(request.readyAt)
+        lastTypedRequestReadyTurn = request.readyTurn
+        lastTypedRequestOwnerMs = (MonoTime.now() - request.readyAt).toMilliseconds()
+        return request.requestId
+    }
+
+    public func lastTypedRequestIdentity(): String {
+        return lastTypedRequestId
+    }
+
+    public func lastTypedRequestMarkerValue(): String {
+        return lastTypedRequestMarker
+    }
+
+    public func lastTypedRequestOwnerLatencyMs(): Int64 {
+        return lastTypedRequestOwnerMs
+    }
+
+    /// The monotonic instant the last-applied request became ready; the caller
+    /// uses it to measure the remaining ready -> accepted-scene latency.
+    public func lastTypedRequestReadyAtValue(): ?MonoTime {
+        return lastTypedRequestReadyAt
+    }
+
+    public func lastTypedRequestReadyTurnValue(): Int64 {
+        return lastTypedRequestReadyTurn
     }
 
     public func uiSceneVersion(): Int64 {
@@ -1113,6 +1266,31 @@ private class CjguiSharedDocumentMultiWindowController <: CjguiComposableUiContr
             cjguiComposableButton(5, "shared-document-multi-close-${viewSemanticId}", "关闭此窗口", "CLOSE", documentId,
                 CjguiComposableUiStyle(fixedHeight: 32, background: CjguiComposableUiColor(0.12, 0.18, 0.30, 1.0),
                     border: CjguiComposableUiColor(0.28, 0.40, 0.62, 1.0), textColor: theme.body.textColor)))
+        // The effect card and its real control are present in every comparison
+        // leg. The accepted group declaration alone distinguishes no-effect,
+        // static-effect and active-group-opacity runs.
+        if (viewSemanticId.startsWith("primary")) {
+            let effectNode = cjguiComposableVertical(6, "shared-document-multi-effect-${viewSemanticId}",
+                CjguiComposableUiStyle(fixedHeight: 56, growX: 1, padding: 8, cornerRadius: 10,
+                    background: CjguiComposableUiColor(0.16, 0.20, 0.30, 1.0), textColor: theme.body.textColor,
+                    gradient: Some(CjguiComposableUiLinearGradient(startX: 0.0, startY: 0.0, endX: 1.0, endY: 0.0,
+                        stops: [
+                            CjguiComposableUiGradientStop(position: 0.0,
+                                color: CjguiComposableUiColor(0.11, 0.31, 0.57, 1.0)),
+                            CjguiComposableUiGradientStop(position: 1.0,
+                                color: CjguiComposableUiColor(0.25, 0.66, 0.96, 1.0))
+                        ])),
+                    shadow: Some(CjguiComposableUiShadowStyle(color: CjguiComposableUiColor(0.02, 0.04, 0.10, 0.85),
+                        offsetX: 0, offsetY: 10, blurRadius: 12, spread: 2)),
+                    effectGroup: responseEffectGroup()))
+            effectNode.add(cjguiComposableText(7, "shared-document-multi-effect-label-${viewSemanticId}",
+                effectSummary, theme.body))
+            root.add(effectNode)
+            root.add(cjguiComposableButton(8, "shared-document-multi-effect-toggle-${viewSemanticId}",
+                "动效过渡", "ANIMATE_VIEW_OPACITY", 0,
+                CjguiComposableUiStyle(fixedHeight: 30, background: CjguiComposableUiColor(0.12, 0.18, 0.30, 1.0),
+                    border: CjguiComposableUiColor(0.28, 0.40, 0.62, 1.0), textColor: theme.body.textColor)))
+        }
         return root
     }
 
@@ -1124,6 +1302,29 @@ private class CjguiSharedDocumentMultiWindowController <: CjguiComposableUiContr
         if (event.eventKind == 27 && event.node.actionName == "CLOSE") {
             return CjguiComposableUiDispatchResult(true, shouldClose: true)
         }
+        if (event.eventKind == 27 && event.node.actionName == "ANIMATE_VIEW_OPACITY") {
+            effectPhaseHigh = !effectPhaseHigh
+            let target: Float64 = if (effectPhaseHigh) { 1.0 } else { 0.3 }
+            let identity = "semantic:shared-document-multi-effect-${viewSemanticId}"
+            let window = match (effectWindow) {
+                case Some(value) => value
+                case None => return CjguiComposableUiDispatchResult(false)
+            }
+            let started = window.animateNodeOpacity(identity, target,
+                spec: CjguiComposableUiAnimationSpec.tween(durationMs: 160,
+                    easing: CjguiComposableUiAnimationEasing.EASE_IN_OUT), atTime: MonoTime.now())
+            let presented = match (window.animatedNodeOpacity(identity)) {
+                case Some(value) => value
+                case None => -1.0
+            }
+            effectSummary = "动效 目标=${target} 当前=${presented}"
+            localRevision = localRevision.saturatingAdd(1)
+            getStdOut().writeln("CJGUI_MULTI_WINDOW_ANIMATION_STATE view=${viewSemanticId} identity=${identity} " +
+                "started=${if (started) { 1 } else { 0 }} target=${target} presented=${presented} " +
+                "active=${window.activeAnimationCount()} bindings=${window.animationBindingCount()}")
+            getStdOut().flush()
+            return CjguiComposableUiDispatchResult(started)
+        }
         return CjguiComposableUiDispatchResult(false)
     }
 
@@ -1132,7 +1333,63 @@ private class CjguiSharedDocumentMultiWindowController <: CjguiComposableUiContr
         return CjguiComposableUiDispatchResult(false)
     }
 
+    /// Keep this view's effect animation live for one application turn. A
+    /// retarget from the current presented value followed by an explicit-clock
+    /// advance keeps the channel active across the whole response run, so A is
+    /// continuously animating while B is being typed into.
+    public func tickEffectAnimation(): String {
+        let window = match (effectWindow) {
+            case Some(value) => value
+            case None => return "window=none"
+        }
+        let atTime = MonoTime.now()
+        let identity = "semantic:shared-document-multi-effect-${viewSemanticId}"
+        effectPhaseHigh = !effectPhaseHigh
+        let target: Float64 = if (effectPhaseHigh) { 1.0 } else { 0.3 }
+        let started = window.animateNodeOpacity(identity, target,
+            spec: CjguiComposableUiAnimationSpec.tween(durationMs: 240,
+                easing: CjguiComposableUiAnimationEasing.EASE_IN_OUT), atTime: atTime)
+        let advanced = window.advanceAnimations(atTime: atTime)
+        return "view=${viewSemanticId} identity=${identity} started=${if (started) { 1 } else { 0 }} " +
+            "target=${target} active=${window.activeAnimationCount()} advanced=${if (advanced) { 1 } else { 0 }}"
+    }
+
+    public func activeEffectAnimationCount(): Int64 {
+        return match (effectWindow) {
+            case Some(window) => window.activeAnimationCount()
+            case None => 0
+        }
+    }
+
+    /// Simulate a person typing this snippet into the view's editor. The text is
+    /// submitted through the same owner method the native text-change event
+    /// uses, so the owner version and this window's accepted scene both have to
+    /// advance for the input to be observed. Returns the owner version after
+    /// the edit, or -1 when the document is unavailable/closed.
+    public func humanAppendText(snippet: String): Int64 {
+        let current = match (workspace.documentSnapshot(documentId)) {
+            case Some(snapshot) => snapshot.content
+            case None => return -1
+        }
+        let result = workspace.replaceProjectionTextFromHuman(documentId, current + snippet)
+        if (!result.applied) { return -1 }
+        localRevision = localRevision.saturatingAdd(1)
+        return match (workspace.documentSnapshot(documentId)) {
+            case Some(snapshot) => snapshot.version
+            case None => -1
+        }
+    }
+
     public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        // P2: closing THIS view cancels only its own effect binding; a sibling
+        // view keeps its own bindings and input.
+        if (let Some(window) <- effectWindow) {
+            let identity = "semantic:shared-document-multi-effect-${viewSemanticId}"
+            let cancelled = window.cancelNodeOpacityAnimation(identity)
+            getStdOut().writeln("CJGUI_MULTI_WINDOW_ANIMATION_CANCELLED view=${viewSemanticId} " +
+                "cancelled=${if (cancelled) { 1 } else { 0 }} active=${window.activeAnimationCount()}")
+            getStdOut().flush()
+        }
         return CjguiComposableUiDispatchResult(true, shouldClose: true)
     }
 }
@@ -1186,10 +1443,17 @@ private class CjguiSharedDocumentLaunchOptions {
     let closeFirstWindowAfterMs: Int64
     let recordsTurnObservations: Bool
     let reopensFirstWindowAfterClose: Bool
+    /// Opt-in response workload: A's effect animation is driven every turn while
+    /// B keeps taking text through the owner path, and each turn records the
+    /// owner/accepted latency. Requires --multi-window.
+    let recordsResponseWorkload: Bool
+    let responseEffectMode: String
+    let responseInputIntervalTurns: Int64
 
     init(filePath: String, enablesExternalConnection: Bool, expectsConnectionStartFailure: Bool,
         opensMultipleWindows: Bool, measurementDurationMs: Int64, measurementWarmupMs: Int64,
-        closeFirstWindowAfterMs: Int64, recordsTurnObservations: Bool, reopensFirstWindowAfterClose: Bool) {
+        closeFirstWindowAfterMs: Int64, recordsTurnObservations: Bool, reopensFirstWindowAfterClose: Bool,
+        recordsResponseWorkload: Bool, responseEffectMode: String, responseInputIntervalTurns: Int64) {
         this.filePath = filePath
         this.enablesExternalConnection = enablesExternalConnection
         this.expectsConnectionStartFailure = expectsConnectionStartFailure
@@ -1199,6 +1463,9 @@ private class CjguiSharedDocumentLaunchOptions {
         this.closeFirstWindowAfterMs = closeFirstWindowAfterMs
         this.recordsTurnObservations = recordsTurnObservations
         this.reopensFirstWindowAfterClose = reopensFirstWindowAfterClose
+        this.recordsResponseWorkload = recordsResponseWorkload
+        this.responseEffectMode = responseEffectMode
+        this.responseInputIntervalTurns = responseInputIntervalTurns
     }
 }
 
@@ -1212,6 +1479,10 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
     var closeFirstWindowAfterMs: Int64 = 0
     var recordsTurnObservations = false
     var reopensFirstWindowAfterClose = false
+    var recordsResponseWorkload = false
+    var responseEffectMode = "active"
+    var responseInputIntervalTurns: Int64 = 2
+    var hasResponseInputInterval = false
     var hasMeasurementWarmup = false;
     var hasCloseFirstWindowAfter = false
     var index: Int64 = 0
@@ -1273,19 +1544,40 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
         } else if (args[index] == "--reopen-first-window-after-close" && !reopensFirstWindowAfterClose) {
             reopensFirstWindowAfterClose = true
             index += 1
+        } else if (args[index] == "--multi-window-response" && !recordsResponseWorkload) {
+            recordsResponseWorkload = true
+            index += 1
+        } else if (args[index] == "--response-effect-mode" && index + 1 < args.size && responseEffectMode == "active") {
+            let mode = args[index + 1]
+            if (mode != "no_effect" && mode != "static" && mode != "active") { return None }
+            responseEffectMode = mode
+            index += 2
+        } else if (args[index] == "--response-input-interval-turns" && index + 1 < args.size &&
+            !hasResponseInputInterval) {
+            if (let Some(value) <- Int64.tryParse(args[index + 1])) {
+                if (value < 1 || value > 120) { return None }
+                responseInputIntervalTurns = value
+                hasResponseInputInterval = true
+            } else {
+                return None
+            }
+            index += 2
         } else {
             return None
         }
     }
     if ((hasCloseFirstWindowAfter && !opensMultipleWindows) || (recordsTurnObservations && !opensMultipleWindows) || (reopensFirstWindowAfterClose &&
         (!opensMultipleWindows || !hasCloseFirstWindowAfter)) || (hasCloseFirstWindowAfter &&
-        expectsConnectionStartFailure)) {
+        expectsConnectionStartFailure) || (recordsResponseWorkload && !opensMultipleWindows) ||
+        (responseEffectMode != "active" && !recordsResponseWorkload) ||
+        (hasResponseInputInterval && !recordsResponseWorkload)) {
         return None
     }
     return Some(
         CjguiSharedDocumentLaunchOptions(filePath, enablesExternalConnection, expectsConnectionStartFailure,
             opensMultipleWindows, measurementDurationMs, measurementWarmupMs, closeFirstWindowAfterMs,
-            recordsTurnObservations, reopensFirstWindowAfterClose))
+            recordsTurnObservations, reopensFirstWindowAfterClose, recordsResponseWorkload, responseEffectMode,
+            responseInputIntervalTurns))
 }
 
 private func initialPrimaryDocument(binding: CjguiTextDocumentFileBinding, path: String): CjguiTextDocument {
@@ -1304,7 +1596,8 @@ private func initialPrimaryDocument(binding: CjguiTextDocumentFileBinding, path:
 /// optional transport, so closing A cannot close B or the endpoint.
 private func runMultiWindow(path: String, enablesExternalConnection: Bool, expectsConnectionStartFailure: Bool,
     measurementDurationMs: Int64, measurementWarmupMs: Int64, closeFirstWindowAfterMs: Int64,
-    recordsTurnObservations: Bool, reopensFirstWindowAfterClose: Bool): Int32 {
+    recordsTurnObservations: Bool, reopensFirstWindowAfterClose: Bool, recordsResponseWorkload: Bool,
+    responseEffectMode: String, responseInputIntervalTurns: Int64): Int32 {
     let fileBinding = CjguiTextDocumentFileBinding()
     let primary = initialPrimaryDocument(fileBinding, path)
     let notes = CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档",
@@ -1312,14 +1605,19 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
     let archive = CjguiTextDocument(READ_ONLY_ARCHIVE_ID, "只读归档诱饵", "可发现，但不授予远程内容范围读取或替换。")
     let workspace = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([primary, notes, archive]))
     let application = CjguiMacosApplication(maximumWindowCount: 4)
+    // Same-host views share the workspace but keep separate controller/view
+    // identities; A owns the effect node, both share the one owner document.
+    let controllerA = CjguiSharedDocumentMultiWindowController(workspace, DESCRIPTION_DOCUMENT_ID, "说明主视图", "primary",
+        responseEffectMode: responseEffectMode)
+    let controllerB = CjguiSharedDocumentMultiWindowController(workspace, DESCRIPTION_DOCUMENT_ID, "说明审阅视图", "review")
     var activeConnection: ?CjguiSharedOperationExternalConnection = None
     var servicedExternalActions: Int64 = 0
     let configuration = CjguiMacosApplicationWindowConfiguration("CJGUI Shared Document", 900u32, 580u32)
     let openedA = application.openWindow(
-        CjguiSharedDocumentMultiWindowController(workspace, DESCRIPTION_DOCUMENT_ID, "说明主视图", "primary"),
+        controllerA,
         configuration: configuration)
     let openedB = application.openWindow(
-        CjguiSharedDocumentMultiWindowController(workspace, DESCRIPTION_DOCUMENT_ID, "说明审阅视图", "review"),
+        controllerB,
         configuration: configuration)
     let openedC = application.openWindow(
         CjguiSharedDocumentMultiWindowController(workspace, NOTES_DOCUMENT_ID, "笔记视图", "notes"),
@@ -1327,6 +1625,42 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
     if (!openedA.didOpen || !openedB.didOpen || !openedC.didOpen || application.windowIdentifiers().size != 3) {
         application.close()
         return 1
+    }
+    // Bind each controller to its OWN window so an effect on the primary view
+    // can only ever address that window's accepted scene.
+    if (let Some(identifierA) <- openedA.identifier) {
+        if (let Some(windowA) <- application.window(identifierA)) {
+            controllerA.attachWindow(windowA)
+        }
+    }
+    if (let Some(identifierB) <- openedB.identifier) {
+        if (let Some(windowB) <- application.window(identifierB)) {
+            controllerB.attachWindow(windowB)
+        }
+    }
+    // The response workload exposes A's published control for supervised
+    // input. Bring A above the review/notes windows once, before measuring B.
+    if (recordsResponseWorkload) {
+        if (let Some(identifierA) <- openedA.identifier) {
+            if (let Some(windowA) <- application.window(identifierA)) {
+                let front = windowA.activateWindow()
+                var key = false
+                var mainWindow = false
+                var appActive = false
+                if (let Some(state) <- windowA.windowActivationState()) {
+                    let (isKey, isMain, isActive) = state
+                    key = isKey
+                    mainWindow = isMain
+                    appActive = isActive
+                }
+                getStdOut().writeln("CJGUI_MULTI_WINDOW_RESPONSE_PRIMARY_ACTIVATION accepted=${front} key=${key} main=${mainWindow} app_active=${appActive}")
+                getStdOut().flush()
+                if (!front) {
+                    application.close()
+                    return 1
+                }
+            }
+        }
     }
     if (enablesExternalConnection) {
         let connectionAuthorization = if (expectsConnectionStartFailure) {
@@ -1394,6 +1728,29 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
     let measurementStarted = MonoTime.now()
     var firstWindowCloseRequested = false
     var observedTurnIndex: Int64 = 0
+    var pumpedTurns: Int64 = 0
+    // Response workload bookkeeping: A keeps its selected EffectGroup mode, B
+    // keeps taking text, and each submitted input is timed through acceptance.
+    var bInputCount: Int64 = 0
+    var pendingInputTurn: Int64 = -1
+    var pendingBaseScene: Int64 = -1
+    var lastLatencyTurns: Int64 = -1
+    var acceptedInputCount: Int64 = 0
+    var maxLatencyTurns: Int64 = -1
+    var bProgressAfterCloseTurns: Int64 = 0
+    var aAnimationActiveTurns: Int64 = 0
+    var aEffectGroupActiveTurns: Int64 = 0
+    // D: identity-carrying request bookkeeping. `pendingRequestMarker` is the
+    // exact content a queued request wrote, so the accepted scene check proves
+    // THIS request's content was accepted (not merely that something changed).
+    var bQueuedRequests: Int64 = 0
+    var pendingRequestMarker: String = "-"
+    var pendingRequestReadyAt: ?MonoTime = None
+    var requestOwnerLatencyMs: Int64 = -1
+    var requestSceneLatencyMs: Int64 = -1
+    var maxRequestSceneMs: Int64 = -1
+    var acceptedIdentityChecks: Int64 = 0
+    let responseRequestLimit: Int64 = 120
     while (application.isOpen() && (measurementDurationMs <= 0 ||
             (MonoTime.now() - measurementStarted).toMilliseconds() < measurementDurationMs)) {
         // This opt-in, bounded probe switch exercises the same public
@@ -1411,14 +1768,17 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
                 firstWindowCloseRequested = true
                 output.writeln("CJGUI_SHARED_DOCUMENT_MULTI_WINDOW_RESULT CLOSED_TARGET ${identifier.value}")
                 if (reopensFirstWindowAfterClose) {
-                    let reopened = application.openWindow(
-                        CjguiSharedDocumentMultiWindowController(workspace, DESCRIPTION_DOCUMENT_ID, "说明重建视图",
-                            "primary-reopened"), configuration: configuration)
+                    let reopenedController = CjguiSharedDocumentMultiWindowController(workspace, DESCRIPTION_DOCUMENT_ID,
+                        "说明重建视图", "primary-reopened")
+                    let reopened = application.openWindow(reopenedController, configuration: configuration)
                     if (!reopened.didOpen) {
                         application.close()
                         return 1
                     }
                     if (let Some(reopenedIdentifier) <- reopened.identifier) {
+                        if (let Some(reopenedWindow) <- application.window(reopenedIdentifier)) {
+                            reopenedController.attachWindow(reopenedWindow)
+                        }
                         output.writeln(
                             "CJGUI_SHARED_DOCUMENT_MULTI_WINDOW_RESULT REOPENED_TARGET ${reopenedIdentifier.value} GENERATION ${reopenedIdentifier.generation}")
                     } else {
@@ -1432,8 +1792,66 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
                 return 1
             }
         }
+        // --- opt-in response workload (before the turn is pumped) ----------
+        var responseInputSubmitted = false
+        var responseAState = "disabled"
+        if (recordsResponseWorkload) {
+            // All legs keep the same A effect node, controls and B owner/scene
+            // workload. Only its EffectGroup declaration is absent, static, or
+            // actively changing opacity.
+            if (let Some(identifierA) <- openedA.identifier) {
+                if (application.window(identifierA).isSome()) {
+                    responseAState = if (responseEffectMode == "active") {
+                        controllerA.tickEffectAnimation()
+                    } else {
+                        responseEffectMode
+                    }
+                    if (controllerA.tickEffectGroupOpacity()) {
+                        aEffectGroupActiveTurns += 1
+                    }
+                    if (controllerA.activeEffectAnimationCount() > 0) {
+                        aAnimationActiveTurns += 1
+                    }
+                }
+            }
+            // B: enqueue one identity-carrying typed request every few turns, and
+            // apply at most one PREVIOUSLY queued request before this turn's pump.
+            // The request therefore waits in a real queue; the applied marker is
+            // written into the owner, so the accepted scene can be checked for
+            // EXACTLY this request's content.
+            if (controllerB.applyNextTypedRequest().size > 0) {
+                if (let Some(identifierB) <- openedB.identifier) {
+                    if (let Some(windowB) <- application.window(identifierB)) {
+                        pendingBaseScene = windowB.windowProjection().sceneVersion
+                    }
+                }
+                pendingRequestMarker = controllerB.lastTypedRequestMarkerValue()
+                pendingRequestReadyAt = controllerB.lastTypedRequestReadyAtValue()
+                requestOwnerLatencyMs = controllerB.lastTypedRequestOwnerLatencyMs()
+                requestSceneLatencyMs = -1
+                bInputCount += 1
+                pendingInputTurn = controllerB.lastTypedRequestReadyTurnValue()
+                responseInputSubmitted = true
+            }
+            // Enqueue after this turn's dequeue. Even the first request must
+            // spend one complete application turn ready before owner apply.
+            if (bQueuedRequests < responseRequestLimit && observedTurnIndex % responseInputIntervalTurns == 0) {
+                let requestNumber = bQueuedRequests + 1
+                let marker = "#${requestNumber}#"
+                if (controllerB.enqueueTypedRequest("req-${requestNumber}", marker, observedTurnIndex)) {
+                    bQueuedRequests += 1
+                }
+            }
+        }
         let turn = application.pumpOneTurn()
         servicedExternalActions += turn.externalActionCount
+        pumpedTurns += 1
+        if (pumpedTurns == 2 && (!recordsResponseWorkload || responseEffectMode == "active")) {
+            // P2: one real animation drive on the primary view only. A sibling
+            // window is not touched, and closing A later leaves B's input intact.
+            output.writeln("CJGUI_MULTI_WINDOW_ANIMATION_VERIFY ${controllerA.driveEffectProbe()}")
+            output.flush()
+        }
         if (recordsTurnObservations) {
             var bSceneVersion: Int64 = -1
             var bSubmissionVersion: Int64 = -1
@@ -1452,12 +1870,85 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
             output.writeln(
                 "CJGUI_SHARED_DOCUMENT_MULTI_WINDOW_TURN index ${observedTurnIndex} served_actions ${turn.externalActionCount} b_scene ${bSceneVersion} b_submit ${bSubmissionVersion} event_wait_budget_ms ${turn.eventWaitBudgetMs} elapsed_before_wait_ms ${turn.elapsedBeforeEventWaitMs} waited_target ${waitedTarget}")
             output.flush()
+        }
+        if (recordsResponseWorkload) {
+            var responseBScene: Int64 = -1
+            var responseBSubmit: Int64 = -1
+            if (let Some(identifierB) <- openedB.identifier) {
+                if (let Some(windowB) <- application.window(identifierB)) {
+                    let projectionB = windowB.windowProjection()
+                    responseBScene = projectionB.sceneVersion
+                    responseBSubmit = projectionB.nativeSubmissionCount
+                }
+            }
+            let ownerVersion = match (workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+                case Some(snapshot) => snapshot.version
+                case None => -1
+            }
+            // The queued request's EXACT content reached B's accepted scene this
+            // turn, so this request's identity is verified, not just "something
+            // grew". Both the turn latency and the monotonic ready -> scene ms
+            // are recorded.
+            if (pendingInputTurn >= 0 && responseBScene > pendingBaseScene) {
+                var acceptedText = ""
+                if (let Some(identifierB) <- openedB.identifier) {
+                    if (let Some(windowB) <- application.window(identifierB)) {
+                        // An editable control's displayed content is its accepted
+                        // VALUE; the label is only the accessible caption.
+                        acceptedText = match (windowB.acceptedNodeValue("shared-document-multi-editor-review")) {
+                            case Some(value) => value
+                            case None => ""
+                        }
+                    }
+                }
+                if (acceptedText.contains(pendingRequestMarker)) {
+                    lastLatencyTurns = observedTurnIndex - pendingInputTurn
+                    acceptedInputCount += 1
+                    acceptedIdentityChecks += 1
+                    if (lastLatencyTurns > maxLatencyTurns) { maxLatencyTurns = lastLatencyTurns }
+                    requestSceneLatencyMs = match (pendingRequestReadyAt) {
+                        case Some(readyAt) => (MonoTime.now() - readyAt).toMilliseconds()
+                        case None => -1
+                    }
+                    if (requestSceneLatencyMs > maxRequestSceneMs) { maxRequestSceneMs = requestSceneLatencyMs }
+                    pendingInputTurn = -1
+                }
+            }
+            // After A closes, count turns in which B still accepts submitted
+            // input (its accepted scene keeps advancing without A).
+            if (firstWindowCloseRequested && responseInputSubmitted && responseBScene > pendingBaseScene) {
+                bProgressAfterCloseTurns += 1
+            }
+            output.writeln(
+                "CJGUI_MULTI_WINDOW_RESPONSE index ${observedTurnIndex} effect_mode ${responseEffectMode} a_closed ${if (firstWindowCloseRequested) { 1 } else { 0 }} a_active ${controllerA.activeEffectAnimationCount()} a_animation_state ${responseAState} a_group_declared ${if (controllerA.effectGroupDeclared()) { 1 } else { 0 }} a_group_opacity ${controllerA.effectGroupOpacityValue()} a_group_active_turns ${aEffectGroupActiveTurns} owner_version ${ownerVersion} b_scene ${responseBScene} b_submit ${responseBSubmit} b_inputs ${bInputCount} b_queued ${bQueuedRequests} req_owner_ms ${requestOwnerLatencyMs} req_scene_ms ${requestSceneLatencyMs} req_marker ${pendingRequestMarker} submitted_now ${if (responseInputSubmitted) { 1 } else { 0 }} latency_turns ${lastLatencyTurns}")
+            output.flush()
+        }
+        if (recordsTurnObservations || recordsResponseWorkload) {
             observedTurnIndex += 1
         }
     }
     if (closeFirstWindowAfterMs > 0 && !firstWindowCloseRequested) {
         application.close()
         return 1
+    }
+    if (recordsResponseWorkload) {
+        // Response summary: A's animation stayed active across turns, every
+        // submitted B input was observed by B's accepted scene, and B kept
+        // accepting after A closed.
+        let responseHeld = bInputCount == responseRequestLimit && acceptedInputCount == responseRequestLimit &&
+            acceptedIdentityChecks >= bInputCount &&
+            (if (responseEffectMode == "active") { aAnimationActiveTurns > 0 }
+                else { aAnimationActiveTurns == 0 }) &&
+            (if (responseEffectMode == "active") { aEffectGroupActiveTurns > 0 }
+                else { aEffectGroupActiveTurns == 0 }) &&
+            (closeFirstWindowAfterMs == 0 || (firstWindowCloseRequested && bProgressAfterCloseTurns > 0))
+        output.writeln(
+            "CJGUI_MULTI_WINDOW_RESPONSE_SUMMARY effect_mode ${responseEffectMode} inputs ${bInputCount} accepted ${acceptedInputCount} identity_checked ${acceptedIdentityChecks} queued ${bQueuedRequests} max_latency_turns ${maxLatencyTurns} max_req_scene_ms ${maxRequestSceneMs} last_req_owner_ms ${requestOwnerLatencyMs} a_animation_active_turns ${aAnimationActiveTurns} a_effect_group_active_turns ${aEffectGroupActiveTurns} after_close_accept_turns ${bProgressAfterCloseTurns} closed ${if (firstWindowCloseRequested) { 1 } else { 0 }} held ${responseHeld}")
+        output.flush()
+        if (!responseHeld) {
+            application.close()
+            return 1
+        }
     }
     // Normal-process scalar evidence: this distinguishes the durable owner
     // version from each affected/unaffected window's submitted projection. A
@@ -1667,13 +2158,14 @@ main(args: Array<String>): Int64 {
         if (options.opensMultipleWindows) {
             return Int64(runMultiWindow(options.filePath, options.enablesExternalConnection,
                 options.expectsConnectionStartFailure, options.measurementDurationMs, options.measurementWarmupMs,
-                options.closeFirstWindowAfterMs, options.recordsTurnObservations, options.reopensFirstWindowAfterClose))
+                options.closeFirstWindowAfterMs, options.recordsTurnObservations, options.reopensFirstWindowAfterClose,
+                options.recordsResponseWorkload, options.responseEffectMode, options.responseInputIntervalTurns))
         }
         return Int64(runWindow(options.filePath, options.enablesExternalConnection,
             options.expectsConnectionStartFailure, options.measurementDurationMs, options.measurementWarmupMs))
     }
     getStdErr().writeln(
-        "usage: CJGUISharedDocument [--file PATH] [--multi-window] [--with-connection] [--verify-connection-start-failure] [--verify-transfer-cost] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000] [--close-first-window-after-ms 1..60000] [--reopen-first-window-after-close] [--record-turn-observations]")
+        "usage: CJGUISharedDocument [--file PATH] [--multi-window] [--with-connection] [--verify-connection-start-failure] [--verify-transfer-cost] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000] [--close-first-window-after-ms 1..60000] [--reopen-first-window-after-close] [--record-turn-observations] [--multi-window-response] [--response-input-interval-turns 1..120]")
     CjguiMacosApplicationHost.stopApplicationLoop()
     return 2
 }

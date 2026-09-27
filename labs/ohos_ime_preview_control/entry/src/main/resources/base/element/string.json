@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Independent ArkUI TextInput preview-text control"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "IME Preview Control"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "IME Preview Control"
+    }
+  ]
+}

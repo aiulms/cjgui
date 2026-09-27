@@ -22,7 +22,8 @@ struct CjguiOhosIngress {
     // surface lease 快照：active 返回 1 并填充全部输出；window 指针仅用于
     // OH_Drawing_SurfaceCreateOnScreen，不得解引用或长期保存。
     int (*surfaceActive)(void **outWindow, uint64_t *outGeneration, int32_t *outWidth,
-                         int32_t *outHeight, double *outDensity);
+                         int32_t *outHeight, double *outDensity,
+                         uint64_t *outGeometryRevision);
     // 出队一个原始触摸；返回 1 有事件 / 0 空 / -1 旧代事件已受控丢弃。
     int (*touchDequeue)(uint32_t *outAction, float *outX, float *outY, uint64_t *outGeneration);
     // 前后台观察：1 前台 / 0 后台。
@@ -45,6 +46,20 @@ struct CjguiOhosIngress {
     // 供渲染器留证与后续复核；surfaceGeneration 即入参 generation。
     int (*surfacePermitAcquire)(uint64_t generation, uint64_t *outAppInstance,
                                uint64_t *outComponentInstance, uint64_t *outGeometryRevision);
+
+    // --- 第九次复核 A3：替身会话表（宿主 SurfaceRecord 生产语义）---
+    // 注册 active 替身会话（backend=1，window 为非空哨兵）；身份/准入/退役
+    // 规则与真实记录同一套。返回 0 成功；-2 代际冲突。
+    int (*stubSessionRegister)(int64_t generation, int64_t width, int64_t height);
+    // 生产退役路径（与真实 destroyed 同一实现）。返回 0 成功；-2 无活动会话。
+    int (*stubSessionRetire)(int64_t generation);
+    // 只读：当前 active 替身会话数。
+    int (*stubSessionActive)(void);
+    // 第九次复核 B：NEG4 隔离夹具（拦截 Reference/Create 逐命令断言）。
+    int (*auditNegativeFixture)(void);
+    // 第九次复核 A（零错类型调用）：按代际返回后端类型（0=真实 XComponent，
+    // 1=替身会话）。渲染器据此分派——替身会话的假地址**绝不**进真实平台库。
+    int (*sessionBackend)(uint64_t generation);
     // 归还：返回归还后该代**仍持有**的许可数。返回 0 表示已无任何使用者，
     // 宿主方可串行归还原生引用（由宿主在 UI 线程完成，不由渲染线程直接调用）。
     int (*surfacePermitRelease)(uint64_t generation);

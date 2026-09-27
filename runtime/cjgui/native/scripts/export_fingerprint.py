@@ -27,6 +27,7 @@ the checkout root (for the LICENSE/NOTICE copies).
 import glob
 import hashlib
 import os
+import subprocess
 import sys
 
 # <export-relative dir>|<author root: runtime|repo>|<mirrored author-relative dir>|<file pattern>|<min files>
@@ -38,7 +39,7 @@ import sys
 # a shrinking list; it is set to the count this export currently ships, so a
 # dropped file fails here rather than quietly shrinking the payload.
 IDENTICAL_SPECS = [
-    ("framework/cjgui/src", "runtime", "src", "*.cj", 11),
+    ("framework/cjgui/src", "runtime", "src", "@framework-source-set", 0),
     ("framework/cjgui/shared_operation_core/src", "runtime",
      "shared_operation_core/src", "*.cj", 9),
     ("framework/cjgui/shared_operation_core", "runtime",
@@ -91,9 +92,36 @@ IDENTICAL_SPECS = [
      "examples/tree_outline_consumer", "cjgui_macos_app.sh", 1),
     ("consumers/generated_panel_consumer", "runtime",
      "examples/generated_panel_consumer", "cjgui_macos_app.sh", 1),
+    ("consumers/generated_panel_consumer", "runtime",
+     "examples/generated_panel_consumer", "verify_generated_effect_candidates.py", 1),
+    ("consumers/generated_panel_consumer", "runtime",
+     "examples/generated_panel_consumer", "verify_public_effect_observation.py", 1),
+    ("consumers/generated_panel_consumer", "runtime",
+     "examples/generated_panel_consumer", "verify_public_window_material.py", 1),
     ("consumers/rule_set_window_app", "runtime",
      "examples/rule_set_window_app", "cjgui_macos_app.sh", 1),
+    # The UI-only consumer ships in the preview too (see PREVIEW_CONSUMERS in
+    # export_framework_preview.sh): its source and launcher are byte-identical,
+    # while its cjpm.toml/run.sh are path-rewritten build entries.
+    ("consumers/adaptive_layout_public_consumer/src", "runtime",
+     "examples/adaptive_layout_public_consumer/src", "*.cj", 1),
+    ("consumers/adaptive_layout_public_consumer", "runtime",
+     "examples/adaptive_layout_public_consumer", "cjgui_macos_app.sh", 1),
 ]
+
+
+def framework_source_names(runtime_dir):
+    """Read the same ordered source set used by standalone probes and export."""
+    helper = os.path.join(runtime_dir, "native", "scripts", "lib_cjgui_source_set.sh")
+    result = subprocess.run(
+        ["zsh", "-c", 'source "$1"; cjgui_framework_source_names true',
+         "cjgui-source-set", helper],
+        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    names = result.stdout.splitlines()
+    if not names or len(names) != len(set(names)) or any(
+            os.path.basename(name) != name or not name.endswith(".cj") for name in names):
+        raise SystemExit("framework source-set helper returned an invalid or duplicate source name")
+    return names
 
 # Build entries the export deliberately REWRITES (package cjpm.toml dependency
 # paths, consumer run.sh launchers, the preview manifest). They must exist and
@@ -104,9 +132,11 @@ REWRITTEN_ENTRIES = [
     "consumers/tree_outline_consumer/cjpm.toml",
     "consumers/generated_panel_consumer/cjpm.toml",
     "consumers/rule_set_window_app/cjpm.toml",
+    "consumers/adaptive_layout_public_consumer/cjpm.toml",
     "consumers/tree_outline_consumer/run.sh",
     "consumers/generated_panel_consumer/run.sh",
     "consumers/rule_set_window_app/run.sh",
+    "consumers/adaptive_layout_public_consumer/run.sh",
     "preview-manifest.md",
 ]
 
@@ -119,6 +149,13 @@ def is_generated_artifact(relative):
     files are never touched: these paths exist inside the EXPORT COPY.
     """
     normalized = "/" + relative.replace(os.sep, "/")
+    # The two-consumer verifier writes its own result after the export is
+    # built. cjpm likewise writes consumer lock files during that build; the
+    # preview exporter does not copy those files as payload inputs.
+    if relative == "CONSUMER_FINGERPRINTS.txt":
+        return True
+    if relative.startswith("consumers/") and os.path.basename(relative) == "cjpm.lock":
+        return True
     for marker in ("/target/", "/.cjgui/", "/native/lib/", "/__pycache__/"):
         if marker in normalized:
             return True
@@ -129,11 +166,25 @@ def is_generated_artifact(relative):
 def check(export_root, runtime_dir, repo_dir):
     roots = {"runtime": runtime_dir, "repo": repo_dir}
     entries = []
+    source_names = None
     for export_dir, root_name, author_dir, pattern, minimum in IDENTICAL_SPECS:
         # Only regular files are compared: a template pattern like `*/*` also
         # matches the `src` directory itself.
-        export_matches = [path for path in sorted(glob.glob(os.path.join(export_root, export_dir, pattern)))
-                          if os.path.isfile(path)]
+        if pattern == "@framework-source-set":
+            if source_names is None:
+                source_names = framework_source_names(runtime_dir)
+            source_dir = os.path.join(export_root, export_dir)
+            export_matches = [os.path.join(source_dir, name) for name in source_names]
+            actual_sources = {os.path.basename(path) for path in glob.glob(os.path.join(source_dir, "*.cj"))
+                              if os.path.isfile(path)}
+            if actual_sources != set(source_names):
+                missing = sorted(set(source_names) - actual_sources)
+                extra = sorted(actual_sources - set(source_names))
+                raise SystemExit("exported framework source set differs from the shared manifest "
+                                 "(missing=%s extra=%s)" % (missing, extra))
+        else:
+            export_matches = [path for path in sorted(glob.glob(os.path.join(export_root, export_dir, pattern)))
+                              if os.path.isfile(path)]
         if len(export_matches) < minimum:
             raise SystemExit("%s/%s matched %d < %d"
                              % (export_dir, pattern, len(export_matches), minimum))

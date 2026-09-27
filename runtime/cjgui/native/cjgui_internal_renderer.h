@@ -67,6 +67,14 @@ typedef enum CjguiInternalRendererStatus {
     // No accepted scene nodes are staged at all, as opposed to the requested id
     // being absent from a staged scene.
     CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED = 19,
+    // A staged effect group failed bounded target admission. The previous
+    // accepted scene and every texture generation it uses remain untouched.
+    CJGUI_INTERNAL_RENDERER_EFFECT_RESOURCE_BUDGET_EXCEEDED = 22,
+    CJGUI_INTERNAL_RENDERER_EFFECT_DECLARATION_REJECTED = 23,
+    CJGUI_INTERNAL_RENDERER_PNG_INVALID = 25,
+    CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED = 26,
+    CJGUI_INTERNAL_RENDERER_PNG_DECODE_FAILED = 27,
+    CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED = 28,
     // A1 票据协议：会话仍有未确认（未 ACK）的提交票据，销毁被拒绝。
     // 依据 Astra pending-transaction/answer.md 第 4 点：destroy 直接清 g_pending
     // 只能阻止槽位误认领，不能证明原事务结算完成；旧实例身份也不得在资源仍
@@ -170,8 +178,22 @@ typedef enum CjguiInternalRendererEventKind {
     // replacement string. Consumers that need the resulting value keep the
     // existing TEXT_CHANGED event; a range-text consumer uses this one and never
     // has to diff the full text.
-    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED = 51
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED = 51,
+    // One platform composition phase (IME marked text) routed to the single
+    // window-owned Cangjie text session bound to this node. `formText` carries
+    // the preedit on update (phase 1) or the final text on commit (phase 2);
+    // cancel (phase 3) carries no text. Emitted ONLY while the window's
+    // `set_composable_owned_text_session` declaration names this node with a
+    // matching binding epoch; every other node keeps the ordinary text events
+    // above and never receives this kind.
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_COMPOSITION = 52
 } CjguiInternalRendererEventKind;
+
+typedef enum CjguiInternalRendererTextCompositionPhase {
+    CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE = 1,
+    CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_COMMIT = 2,
+    CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_CANCEL = 3
+} CjguiInternalRendererTextCompositionPhase;
 
 typedef enum CjguiInternalRendererDataTransferRole {
     CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE = 1,
@@ -189,12 +211,14 @@ typedef enum CjguiInternalRendererComposableNodeKind {
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA = 8,
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE = 9,
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT = 10,
+    CJGUI_INTERNAL_RENDERER_COMPOSABLE_LAYER_BACKDROP = 12,
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_SPLIT_DIVIDER = 13,
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER = 14,
     // Bounded, Cangjie-described geometry. The payload is copied into the
     // existing generic scene-node value; this enum carries no GPU object or
     // public native rendering API.
     CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC = 15,
+    CJGUI_INTERNAL_RENDERER_COMPOSABLE_TABS = 16,
     // One tab TITLE inside a tab container's title row. It is an ordinary
     // focusable/actionable composable node: activation and AX press enqueue the
     // SAME generic ACTIVATE interaction a button uses, and Cangjie resolves it
@@ -273,13 +297,95 @@ typedef struct CjguiInternalRendererPresentReceipt {
 // Metal completion is recorded from an asynchronously completed command
 // buffer, GPU duration is -1 when Metal did not make timing available, and
 // overlay progress is known only after its AppKit drawRect ran.
+// One committed backdrop submission. Mode describes encoded work; completion
+// describes only that exact GPU submission, never physical window display.
+typedef enum CjguiInternalRendererBackdropMode {
+    CJGUI_INTERNAL_BACKDROP_UNAVAILABLE = 0,
+    CJGUI_INTERNAL_BACKDROP_NONE = 1,
+    CJGUI_INTERNAL_BACKDROP_BLURRED = 2,
+    CJGUI_INTERNAL_BACKDROP_UNBLURRED = 3,
+} CjguiInternalRendererBackdropMode;
+
+typedef enum CjguiInternalRendererBackdropReason {
+    CJGUI_INTERNAL_BACKDROP_REASON_NONE = 0,
+    CJGUI_INTERNAL_BACKDROP_REASON_NOT_REQUESTED = 1,
+    CJGUI_INTERNAL_BACKDROP_REASON_EMPTY_ROI = 2,
+    CJGUI_INTERNAL_BACKDROP_REASON_NON_OPAQUE_CLEAR = 3,
+    CJGUI_INTERNAL_BACKDROP_REASON_KERNEL_LIMIT = 4,
+    CJGUI_INTERNAL_BACKDROP_REASON_RESOURCE_BUDGET = 5,
+    CJGUI_INTERNAL_BACKDROP_REASON_ALLOCATION_FAILED = 6,
+    CJGUI_INTERNAL_BACKDROP_REASON_PIPELINE_UNAVAILABLE = 7,
+    CJGUI_INTERNAL_BACKDROP_REASON_ENCODE_FAILED = 8,
+} CjguiInternalRendererBackdropReason;
+
+typedef enum CjguiInternalRendererBackdropCompletion {
+    CJGUI_INTERNAL_BACKDROP_COMPLETION_UNAVAILABLE = 0,
+    CJGUI_INTERNAL_BACKDROP_COMPLETION_PENDING = 1,
+    CJGUI_INTERNAL_BACKDROP_COMPLETION_SUCCEEDED = 2,
+    CJGUI_INTERNAL_BACKDROP_COMPLETION_FAILED = 3,
+} CjguiInternalRendererBackdropCompletion;
+
 typedef struct CjguiInternalRendererComposableDisplayProgress {
     uint64_t submittedFrameIndex;
     uint64_t observedMetalCompletionFrameIndex;
     uint64_t observedMetalFailureFrameIndex;
     int64_t observedMetalGpuDurationMicros;
     uint64_t overlayDrawnProjectionVersion;
+    uint64_t effectSubmittedSceneVersion;
+    uint64_t effectSubmittedFrameIndex;
+    uint32_t effectRequestedRadiusPoints;
+    uint32_t effectMode;
+    uint32_t effectFallbackReason;
+    uint32_t effectCompletion;
 } CjguiInternalRendererComposableDisplayProgress;
+
+// Experimental read-only developer geometry. Every range is from the last
+// accepted native scene and last submitted drawable, in window points. Flags:
+// 1 output, 2 actual backdrop sample, 4 sample target redrawn in this frame.
+typedef struct CjguiInternalRendererDiagnosticNodeGeometry {
+    uint64_t sceneVersion;
+    uint64_t frameIndex;
+    double outputX, outputY, outputWidth, outputHeight;
+    double sampleX, sampleY, sampleWidth, sampleHeight;
+    uint32_t flags;
+    uint32_t reserved;
+} CjguiInternalRendererDiagnosticNodeGeometry;
+
+typedef struct CjguiInternalRendererDiagnosticResources {
+    uint64_t sceneVersion;
+    uint64_t frameIndex;
+    uint64_t liveEffectBytes;
+    uint64_t cachedEffectBytes;
+    uint64_t overlayDrawCount;
+} CjguiInternalRendererDiagnosticResources;
+
+// P4 system window background projection. This is an internal POD mirror;
+// AppKit host installation is not a claim that physical pixels were observed.
+typedef struct CjguiInternalRendererWindowBackgroundSnapshot {
+    uint64_t acceptedSceneVersion;
+    uint64_t frameIndex;
+    uint64_t requestRevision;
+    uint64_t environmentRevision;
+    uint64_t observationRevision;
+    uint32_t requestedMode;       // 0=opaque, 1=system_content_area
+    uint32_t backend;             // 0=unavailable, 1=appkit_behind_window
+    uint32_t actualMode;          // 0=opaque, 1=system_host_installed, 2=opaque_fallback
+    uint32_t fallbackReason;      // 0=not_requested,1=none,2=reduce_transparency,3=unsupported,4=material_prepare_failed,5=host_apply_failed,6=render_failed
+    uint32_t completion;          // 0=pending, 1=succeeded, 2=failed
+    uint32_t reduceTransparency;  // 0/1
+    uint32_t windowActive;        // 0/1
+    uint32_t colorScheme;         // 1=light, 2=dark
+} CjguiInternalRendererWindowBackgroundSnapshot;
+
+typedef enum CjguiInternalRendererWindowBackgroundMode {
+    CJGUI_INTERNAL_WINDOW_BACKGROUND_OPAQUE = 0,
+    CJGUI_INTERNAL_WINDOW_BACKGROUND_SYSTEM_CONTENT_AREA = 1,
+} CjguiInternalRendererWindowBackgroundMode;
+
+typedef enum CjguiInternalRendererWindowColorScheme {
+    CJGUI_INTERNAL_WINDOW_COLOR_SCHEME_LIGHT = 1,
+    CJGUI_INTERNAL_WINDOW_COLOR_SCHEME_DARK = 2,
+} CjguiInternalRendererWindowColorScheme;
 
 // Event POD returned by pumpEvent.
 typedef struct CjguiInternalRendererEvent {
@@ -303,7 +409,37 @@ typedef struct CjguiInternalRendererEvent {
     // Keyboard modifier flags of the pointer event that produced this intent
     // (AppKit NSEventModifierFlag* bits). Non-pointer intents leave it 0.
     int64_t modifierFlags;
+    // TEXT_COMPOSITION (kind 52) record. Zero for every other kind, so a
+    // consumer that does not know this kind still reads a valid event.
+    // `compositionPhase` is CjguiInternalRendererTextCompositionPhase;
+    // `compositionId` is monotonic per native session and identifies one
+    // composition across its update/terminal phases; `bindingEpoch` is the
+    // window's binding generation at capture time, so an event queued before a
+    // rebind is refused instead of editing the new session.
+    uint32_t compositionPhase;
+    // `replacementStart16`/`replacementLength16` describe the platform's
+    // intended replacement in UTF-16 units of the node's CURRENT proxy text
+    // (-1 location = the protocol's NSNotFound, i.e. "not specified").
+    // `markedStart16`/`markedLength16` are the actual marked range read after
+    // the platform mutation; a terminal phase may report -1/0 (no marked text).
+    // The inner selection of an update reuses selectionStart/selectionEnd.
+    int64_t replacementStart16;
+    int64_t replacementLength16;
+    int64_t markedStart16;
+    int64_t markedLength16;
+    uint64_t compositionId;
+    uint64_t bindingEpoch;
+    // Transfer events only: a one-shot FIFO identity for the binary byte
+    // getter. It prevents a later pump from supplying another event's data.
+    uint64_t dataTransferEventId;
 } CjguiInternalRendererEvent;
+
+// Layout: kind + recordIndex + selection pair (4x uint32), nodeId +
+// projectionVersion + resourceId (3x 64), nodeKind (uint32 + 4 pad),
+// pointer pair + modifiers (3x 64), then the kind-52 record as
+// uint32 phase + 4 pad + seven 64-bit fields. 136 bytes exactly.
+_Static_assert(sizeof(CjguiInternalRendererEvent) == 136,
+               "CjguiInternalRendererEvent layout drifted");
 
 // One native coordination declaration for one format on an already-staged
 // composable node. Format and UTF-8 payload are copied during the setter;
@@ -317,6 +453,7 @@ typedef struct CjguiInternalRendererComposableDataTransferItem {
     uint32_t role; // CjguiInternalRendererDataTransferRole
     uint32_t maximumPayloadBytes;
     int64_t sourceId;
+    uint64_t bindingEpoch;
 } CjguiInternalRendererComposableDataTransferItem;
 
 // Generic scene node. Geometry uses top-left point coordinates supplied by
@@ -392,6 +529,71 @@ typedef struct CjguiInternalRendererComposableNode {
     // Cangjie remains the sole selection/focus owner.
     uint64_t tabGroupId;
     uint32_t tabSelected;
+    // Platform-neutral accepted semantics. Selected and expanded are separate
+    // from focus and paint; bit 0=selected, bit 1=expandable, bit 2=expanded,
+    // bit 3=disabled. A semantic row may be an inert layout node containing
+    // a separate actionable child, so disabled cannot be inferred from kind.
+    uint32_t semanticRole;
+    uint32_t semanticState;
+    int64_t semanticLevel;
+    int64_t semanticIncarnation;
+    // ---- P1 shape effects (Cangjie @C mirror must match exactly) ----
+    // These fields describe a single outer shadow and/or a single linear
+    // gradient for this node. They never widen hit testing and never become a
+    // native retained object: the renderer only copies scalars per frame.
+    uint32_t shadowPresent;     // 1 = 绘制外阴影；0 = 无
+    double shadowOffsetX;       // 逻辑点，+x 右
+    double shadowOffsetY;       // 逻辑点，+y 下
+    double shadowBlurRadius;    // 逻辑点，>=0，<=256；sigma = blur/2
+    double shadowSpread;        // 逻辑点，>=0，<=128
+    double shadowRed;
+    double shadowGreen;
+    double shadowBlue;
+    double shadowAlpha;
+    uint32_t gradientPresent;   // 1 = 线性渐变填充；0 = 纯色 fill*
+    uint32_t gradientStopCount; // 2..4，按 position 升序
+    double gradientStartX;      // 归一化 [0,1]，相对节点自身 box
+    double gradientStartY;
+    double gradientEndX;
+    double gradientEndY;
+    double gradientStop0Position;
+    double gradientStop0Red;
+    double gradientStop0Green;
+    double gradientStop0Blue;
+    double gradientStop0Alpha;
+    double gradientStop1Position;
+    double gradientStop1Red;
+    double gradientStop1Green;
+    double gradientStop1Blue;
+    double gradientStop1Alpha;
+    double gradientStop2Position;
+    double gradientStop2Red;
+    double gradientStop2Green;
+    double gradientStop2Blue;
+    double gradientStop2Alpha;
+    double gradientStop3Position;
+    double gradientStop3Red;
+    double gradientStop3Green;
+    double gradientStop3Blue;
+    double gradientStop3Alpha;
+    // ---- P4 isolated effect group (Cangjie @C mirror must match exactly) ----
+    // The group begins at this node (including its own background/shadow) and
+    // covers the relative preorder span [index, index + subtreeCount). A zero
+    // present flag leaves the existing direct painter path unchanged.
+    uint32_t effectGroupPresent;
+    uint32_t effectGroupSubtreeCount;
+    double effectGroupOpacity;
+    uint32_t effectGroupBlendMode; // 0=normal, 1=multiply
+    uint32_t effectMaskPresent;
+    uint32_t effectMaskStopCount;
+    double effectMaskStartX, effectMaskStartY, effectMaskEndX, effectMaskEndY;
+    double effectMaskStop0Position, effectMaskStop0Alpha;
+    double effectMaskStop1Position, effectMaskStop1Alpha;
+    double effectMaskStop2Position, effectMaskStop2Alpha;
+    double effectMaskStop3Position, effectMaskStop3Alpha;
+    // ---- P4 in-app backdrop sample (Cangjie @C mirror must match exactly) ----
+    uint32_t effectBackdropBlurRadiusPoints; // 0 disables; admitted range 1..16
+    uint32_t effectBackdropBlurFallback; // 0=unblurred on resource/encode failure
 } CjguiInternalRendererComposableNode;
 
 typedef struct CjguiInternalRendererViewport {
@@ -491,6 +693,19 @@ cjgui_internal_renderer_set_window_title(uint64_t session, const char *title);
 int32_t
 cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session, int32_t enabled);
 
+// Declare (or withdraw) the single composable text node whose platform
+// composition phases belong to the window-owned text session. While the
+// declaration names an ACTIVE node, its IME marked-text lifecycle is delivered
+// as CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_COMPOSITION (kind 52)
+// and the corresponding ordinary text events are suppressed for that intent.
+// Every other node and every non-composition edit keeps the ordinary events.
+// `bindingEpoch` is echoed back on each phase so a queued event from before a
+// rebind can be refused by the window; `enabled = 0` withdraws the declaration.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint64_t nodeId,
+                                                          int64_t resourceId, uint32_t nodeKind,
+                                                          uint64_t bindingEpoch, uint32_t enabled);
+
 // Roll back the hidden text proxy after the application refused a human range
 // edit. Only restores text the owner already accepted; fails (and changes
 // nothing) when the target is not the active node, the accepted value no longer
@@ -526,6 +741,16 @@ cjgui_internal_renderer_set_composable_scene_node(
     const CjguiInternalRendererComposableNode *node,
     const char *label, const char *value, const char *imageResourcePath,
     const char *imageResourceId, uint64_t imageResourceVersion);
+CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_node_bytes(
+    uint64_t session, uint32_t nodeIndex, const CjguiInternalRendererComposableNode *node,
+    const char *label, const char *value, const char *imageResourcePath,
+    const char *imageResourceId, uint64_t imageResourceVersion,
+    const uint8_t *bytes, uint32_t length);
+CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_png_transfer(
+    uint64_t session, const char *resourceIdentity, const uint8_t *bytes, uint32_t length,
+    uint32_t *outWidth, uint32_t *outHeight, uint64_t *outDecodeMicros);
+CjguiInternalRendererStatus cjgui_internal_renderer_finish_composable_png_transfer(
+    uint64_t session, const char *resourceIdentity, uint8_t accepted);
 
 // Records the accepted public semantic identity of one staged composable node.
 // Kept separate from the node setter so existing native callers and probes keep
@@ -534,6 +759,14 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_set_composable_node_semantic_identity(uint64_t session,
                                                               uint32_t nodeIndex,
                                                               const char *semanticId);
+
+// Value-only sidecar staged with the same scene node. The binding key changes
+// when a local address targets a different owner/field/action; the row keys
+// describe logical outline ancestry without materializing hidden rows.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_node_semantic_metadata(uint64_t session,
+    uint32_t nodeIndex, const char *bindingKey, const char *rowKey, const char *parentRowKey,
+    const char *semanticLabel);
 
 // Replaces the complete native coordination declaration set (including an
 // empty set) for this staged composable scene. Promotion is atomic with the
@@ -548,10 +781,22 @@ cjgui_internal_renderer_set_composable_data_transfer_item(
     const CjguiInternalRendererComposableDataTransferItem *item,
     const char *format, const char *payload,
     const char *sourceKind, const char *sourceIdentity);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_data_transfer_item_bytes(
+    uint64_t session, uint32_t itemIndex, const uint8_t *bytes, uint32_t length);
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_present_composable_scene(
     uint64_t session, CjguiInternalRendererFrameObservation *outObservation);
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_stage_window_background(uint64_t session,
+                                                uint64_t projectionVersion,
+                                                uint32_t mode,
+                                                uint32_t colorScheme);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_window_background_snapshot(
+    uint64_t session, CjguiInternalRendererWindowBackgroundSnapshot *outSnapshot);
 
 // A1 票据协议：把“提交新候选”和“查询原提交”拆成两个入口。
 // `present_composable_scene` 仍然负责投递新候选（并在投递时登记票据），但它
@@ -630,6 +875,18 @@ cjgui_internal_renderer_composable_viewport(uint64_t session,
 CjguiInternalRendererStatus
 cjgui_internal_renderer_composable_display_progress(
     uint64_t session, CjguiInternalRendererComposableDisplayProgress *outProgress);
+
+// Bounded, non-mutating reads; neither entry requests a scene refresh or GPU
+// wait. The overlay is an AppKit view above the business drawing layers.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_diagnostic_node_geometry(
+    uint64_t session, uint32_t nodeIndex, CjguiInternalRendererDiagnosticNodeGeometry *outGeometry);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_diagnostic_resources(
+    uint64_t session, CjguiInternalRendererDiagnosticResources *outResources);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_diagnostic_overlay(
+    uint64_t session, uint32_t flags, uint64_t selectedNodeId, uint8_t hasSelection);
 
 // The accepted rect (x, y, width, height) of one scene node.
 CjguiInternalRendererStatus
@@ -859,6 +1116,14 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_test_set_composable_present_failures(uint64_t session,
                                                               uint32_t failureCount);
 
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_set_window_background_environment(uint64_t session,
+                                                                uint8_t reduceTransparency);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_set_window_background_failures(uint64_t session,
+                                                             uint32_t prepareFailures,
+                                                             uint32_t hostApplyFailures);
+
 // Rejects the next derived text-texture admission before allocation.  This is
 // a test-only substitute for an allocator/device failure and must leave the
 // previous committed scene/input projection intact.
@@ -1030,6 +1295,36 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_test_composable_drawable_pixel(uint64_t session,
                                                         uint8_t *outBlue, uint8_t *outGreen,
                                                         uint8_t *outRed, uint8_t *outAlpha);
+
+// Cumulative per-session facts for the P4 offscreen targets. current/peak
+// account for all live accepted, candidate and in-flight target generations;
+// no retired target pool is kept. A pass is one target content encode and a
+// composite draw is one fixed-function blend draw (multiply needs two).
+typedef struct CjguiInternalRendererEffectStats {
+    uint64_t targetAllocations;
+    uint64_t targetReuses;
+    uint64_t targetCurrentBytes;
+    uint64_t targetPeakBytes;
+    uint64_t contentRedraws;
+    uint64_t offscreenPasses;
+    uint64_t compositeDraws;
+    uint64_t backdropPrefixPasses;
+    uint64_t backdropHorizontalPasses;
+    uint64_t backdropVerticalPasses;
+    uint64_t backdropCacheHits;
+    uint64_t backdropFallbacks;
+} CjguiInternalRendererEffectStats;
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_effect_stats(uint64_t session,
+                                                      CjguiInternalRendererEffectStats *outStats);
+
+// Probe-only one-shot failure after a normal accepted redraw encoded at least
+// one effect target, before the main drawable encoder or command-buffer commit.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_fail_next_composable_main_encoder_after_effects(uint64_t session);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_fail_next_composable_backdrop_encode(uint64_t session);
 
 // Creates a small opaque local PNG fixture only for native renderer probes.
 // The test still exercises normal file URL decode, texture creation, draw and
@@ -1214,6 +1509,16 @@ cjgui_internal_renderer_test_scroll_composable_multiline(uint64_t session,
                                                           float *outScrollOffset,
                                                           uint32_t *outVisibleGlyphCount);
 
+// TESTING-only view of the active, accepted multiline viewport. A negative
+// maximum means its exact content extent has not been established yet.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_multiline_viewport(uint64_t session, const char *marker,
+                                                            float *outScrollOffset, float *outMaximumOffset,
+                                                            uint32_t *outVisibleCharacterStart,
+                                                            uint32_t *outVisibleCharacterLength,
+                                                            uint64_t *outProjectionVersion,
+                                                            int *outMarkerFullyVisible);
+
 // Drives the overlay's normal down/drag/up event methods with AppKit mouse
 // events expressed in composable-view coordinates. It is test-only so the
 // public framework never exposes native event or text-view objects.
@@ -1328,6 +1633,13 @@ cjgui_internal_renderer_test_toggle_composable_backing_scale(
     uint64_t session, uint64_t *outResizeVersion,
     double *outBeforeScale, double *outAfterScale,
     uint32_t *outDrawableWidth, uint32_t *outDrawableHeight);
+
+// Probe the native painter dependency after accepted text preparation without
+// changing scene bytes, texture, or caret geometry. This is test-only because
+// production derives the flag from its text/caret preparation path.
+CjguiInternalRendererStatus cjgui_internal_renderer_test_set_composable_caret_color_source(
+    uint64_t session, uint64_t nodeId, double x, double y, double width, double height,
+    uint32_t declared);
 #endif
 
 // Drives Cmd-C/X/V through the actual composable NSTextView first responder.
@@ -1468,6 +1780,29 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_test_commit_composable_marked_text(uint64_t session,
                                                             const char *text);
 
+// Drives one marked-text update with an EXPLICIT replacement range and inner
+// selection, so the range seam can be exercised without a system input source.
+// replacementStart < 0 means NSNotFound (protocol default: the platform
+// resolves it against the current marked range or selection).
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_set_composable_marked_text_ex(uint64_t session,
+                                                            uint32_t nodeIndex,
+                                                            const char *text,
+                                                            uint32_t innerStart,
+                                                            uint32_t innerEnd,
+                                                            int64_t replacementStart,
+                                                            int64_t replacementLength);
+
+// Drives `unmarkText` alone, which AppKit defines as accepting the preedit as
+// ordinary text (a COMMIT, never a cancel).
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_unmark_composable_marked_text(uint64_t session);
+
+// Drives the input source's cancellation shape: setMarkedText with an empty
+// string removes the preedit without inserting anything.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_cancel_composable_marked_text(uint64_t session);
+
 #endif
 
 // pumpEvent(session, timeoutMs) -> event.
@@ -1493,6 +1828,15 @@ cjgui_internal_renderer_restore_composable_selection(uint64_t session, uint64_t 
                                                      uint64_t sceneVersion, const char *expectedValue,
                                                      uint32_t selectionStart, uint32_t selectionEnd,
                                                      uint32_t *outSelectionStart, uint32_t *outSelectionEnd);
+
+// Read the active proxy's CURRENT UTF-16 selection under the same committed
+// text identity. A queued selection notification is only current if it still
+// equals this proxy state when Cangjie consumes it.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_read_composable_selection(uint64_t session, uint64_t nodeId,
+                                                  int64_t resourceId, uint32_t nodeKind,
+                                                  uint64_t sceneVersion, const char *expectedValue,
+                                                  uint32_t *outSelectionStart, uint32_t *outSelectionEnd);
 
 // Internal session-bound cancellation for a Cangjie-owned pointer revocation
 // such as an accepted external owner write or modal transition. The Cangjie
@@ -1569,6 +1913,9 @@ const char *cjgui_internal_renderer_data_transfer_event_format(uint64_t session)
 const char *cjgui_internal_renderer_data_transfer_event_source_kind(uint64_t session);
 const char *cjgui_internal_renderer_data_transfer_event_source_identity(uint64_t session);
 int64_t cjgui_internal_renderer_data_transfer_event_source_id(uint64_t session);
+uint32_t cjgui_internal_renderer_data_transfer_event_binary_size(uint64_t session, uint64_t eventId);
+CjguiInternalRendererStatus cjgui_internal_renderer_copy_data_transfer_event_binary(
+    uint64_t session, uint64_t eventId, uint8_t *outBytes, uint32_t capacity);
 
 #ifdef CJGUI_INTERNAL_TESTING
 // Test-only normal-pasteboard exercises. They conditionally restore the

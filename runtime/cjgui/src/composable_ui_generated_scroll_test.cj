@@ -754,3 +754,65 @@ func splitSizeRuleClampsBothEndsAndSurvivesResize(): Unit {
     // A drag after the resize is likewise bounded by the new track.
     @Assert(state.applyFirstSize(9000, state.acceptedTrack(), state.acceptedHandleSize()), 172)
 }
+
+/// The public generated grammar carries the same outline/row facts as the
+/// handwritten virtual tree. A rejected state change cannot replace the
+/// accepted owner binding or its accessibility projection.
+@Test
+func generatedOutlineSemanticStateAcceptsAndRejectsAtomically(): Unit {
+    let catalog = scrollTestCatalog()
+    let actionProperties = CjguiGeneratedUiPresentation.leafStyleProperties()
+    actionProperties.add(CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 40))
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("action", actionProperties, false))
+    let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("EXPAND", "展开"))
+    let provider = GeneratedTestProvider()
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+
+    let rowProperties = HashMap<String, String>()
+    rowProperties.add("label", "分组")
+    rowProperties.add("semanticRole", "row")
+    rowProperties.add("semanticRowKey", "group")
+    rowProperties.add("semanticExpandable", "true")
+    rowProperties.add("semanticExpanded", "true")
+    rowProperties.add("disabled", "true")
+    let row = CjguiGeneratedUiNodeSpec("row", "action", properties: rowProperties, actionName: "EXPAND")
+    let content = CjguiGeneratedUiNodeSpec("content", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([row]))
+    let outlineProperties = HashMap<String, String>()
+    outlineProperties.add("semanticRole", "outline")
+    outlineProperties.add("semanticLabel", "测试树")
+    let outline = CjguiGeneratedUiNodeSpec("outline", "scrollArea", properties: outlineProperties,
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([content]))
+    let root = CjguiGeneratedUiNodeSpec("root", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([outline]))
+    @Assert(scrollTestAccept(holder, provider, root), true)
+    let acceptedVersion = holder.structureVersion()
+    let built = holder.buildRefreshNode(provider)
+    let outlineNode = scrollTestFind(built, holder.nodeIdForKey("outline")).getOrThrow()
+    let rowNode = scrollTestFind(built, holder.nodeIdForKey("row")).getOrThrow()
+    @Assert(outlineNode.semanticRole, CJGUI_COMPOSABLE_UI_SEMANTIC_TREE)
+    @Assert(rowNode.semanticRole, CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW)
+    @Assert(rowNode.semanticKey, "group")
+    @Assert(rowNode.semanticExpandable, true)
+    @Assert(rowNode.semanticExpanded, true)
+    @Assert(rowNode.isEnabled, false)
+
+    let invalidProperties = HashMap<String, String>()
+    invalidProperties.add("label", "分组")
+    invalidProperties.add("semanticRole", "row")
+    invalidProperties.add("semanticRowKey", "group")
+    invalidProperties.add("semanticExpanded", "true")
+    let invalidRow = CjguiGeneratedUiNodeSpec("row", "action", properties: invalidProperties,
+        actionName: "EXPAND")
+    let invalidContent = CjguiGeneratedUiNodeSpec("content", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([invalidRow]))
+    let invalidOutline = CjguiGeneratedUiNodeSpec("outline", "scrollArea", properties: outlineProperties,
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([invalidContent]))
+    let invalid = holder.submit(CjguiGeneratedUiNodeSpec("root", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([invalidOutline])), provider)
+    @Assert(invalid.candidateAccepted, false)
+    @Assert(invalid.reason, "semantic_expanded_without_group")
+    @Assert(holder.structureVersion(), acceptedVersion)
+    @Assert(scrollTestFind(holder.buildRefreshNode(provider), holder.nodeIdForKey("row")).getOrThrow()
+        .semanticExpanded, true)
+}

@@ -33,7 +33,7 @@ source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
 # Public identities must stay values, and an external mutation must be
 # consumed once without globally forcing a rebuild. The normal-process checks
 # below verify the resulting targeted behavior.
-rg -q 'public class CjguiMacosApplicationWindowIdentifier' "$RUNTIME_DIR/src/macos_application_host.cj"
+rg -q 'public class CjguiMacosApplicationWindowIdentifier' "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/src/composable_ui_platform_state.cj"
 rg -q 'public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTargetProvider' "$RUNTIME_DIR/src/macos_application_host.cj"
 rg -q 'func requestApplicationExit\(\): Bool' "$RUNTIME_DIR/src/macos_application_host.cj"
 rg -q 'let _ = connection.consumeWindowRefreshRequest()' "$RUNTIME_DIR/src/macos_application_host.cj"

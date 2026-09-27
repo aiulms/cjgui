@@ -4,6 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 SDKROOT_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 OUTPUT_DIR="${CJGUI_POINTER_PUBLIC_INTERLEAVE_TMPDIR:-/private/tmp/cjgui-pointer-public-interleave}"
 CLIENT="$RUNTIME_DIR/shared_operation_core/client.py"
@@ -29,11 +32,7 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_pointer_public_interleave.a" \
 
 SHARED_CORE="$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core"
 cjc --sysroot "$SDKROOT_PATH" --import-path "$SHARED_CORE" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$RUNTIME_DIR/probe/pointer_public_interleaving_probe.cj" \
   -L "$SHARED_CORE" -lcjgui_shared_operation_core \
   -L "$OUTPUT_DIR/native" -lcjgui_pointer_public_interleave \

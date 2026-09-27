@@ -12,13 +12,6 @@ package cjgui
 import std.unittest.*
 import std.unittest.testmacro.*
 
-@C
-struct CjguiAbiFrameObservationCanary {
-    var observation: CjguiInternalRendererFrameObservation = CjguiInternalRendererFrameObservation()
-    var canaryTail1: UInt64 = 0xA5A5A5A55A5A5A5A
-    var canaryTail2: UInt64 = 0x5A5A5A5AA5A5A5A5
-}
-
 @Test
 func cjguiAbiFrameObservationLayoutLocked(): Unit {
     // 1) 镜像大小锁：8+4+4+8+1+1+1(+7 pad)+8 = 40
@@ -27,19 +20,27 @@ func cjguiAbiFrameObservationLayoutLocked(): Unit {
 }
 
 @Test
+func cjguiAbiWindowBackgroundSnapshotLayoutLocked(): Unit {
+    // Five 64-bit identities/revisions followed by eight 32-bit state words.
+    @Assert(unsafe { sizeOf<CjguiInternalRendererWindowBackgroundSnapshot>() }, 72)
+}
+
+@Test
 func cjguiAbiFrameObservationTailCanaryHoldsOnInvalidSession(): Unit {
     // 2/3) 无效会话路径：native 必须只清 observation 的 40 字节；
     // 尾部哨兵在调用前后保持不变，即"写入未越过结构边界"的直接证据。
-    var wrapper = CjguiAbiFrameObservationCanary()
-    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
-    unsafe {
-        status = cjgui_internal_renderer_present_clear(
-            987654321, CPointer<CjguiInternalRendererClearColor>(),
-            inout wrapper.observation)
-    }
-    @Assert(status == CJGUI_INTERNAL_RENDERER_INVALID_SESSION)
-    @Assert(wrapper.observation.frameIndex == 0)
-    @Assert(wrapper.observation.ticketId == 0)
-    @Assert(wrapper.canaryTail1 == 0xA5A5A5A55A5A5A5A)
-    @Assert(wrapper.canaryTail2 == 0x5A5A5A5AA5A5A5A5)
+    @Assert(internalRendererPresentClearCanaryInvalidSession())
+}
+
+@Test
+func cjguiAbiEventLayoutLocked(): Unit {
+    // 事件镜像大小锁：旧 128 字节布局 + 一次性二进制读取票据 dataTransferEventId = 136。
+    let observed = unsafe { sizeOf<CjguiInternalRendererEvent>() }
+    @Assert(observed, 136)
+}
+
+@Test
+func cjguiAbiEventTailCanaryHoldsOnInvalidSession(): Unit {
+    // pump_event 先按 native sizeof 清零整块：镜像尺寸或尾部写入越界都会踩掉哨兵。
+    @Assert(internalRendererPumpEventCanaryInvalidSession())
 }

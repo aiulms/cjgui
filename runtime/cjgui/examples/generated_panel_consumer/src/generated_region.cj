@@ -14,8 +14,39 @@ package cjgui_collaboration_starter
 import cjgui.*
 import cjgui_shared_operation_core.*
 import std.collection.*
+import std.env.*
 import std.sync.*
+import std.time.*
 import std.unicode.*
+
+/// P2: the generated key whose paint alpha this consumer animates, and the
+/// two targets the interactive control alternates between.
+private let GENERATED_OPACITY_KEY: String = "effectAnimate"
+private let GENERATED_OPACITY_HIGH: Float64 = 1.0
+private let GENERATED_OPACITY_LOW: Float64 = 0.3
+
+// B2: the app registers the shared bounded rule into its generated capability
+// catalog. The actual `effectAnimate` candidate references that rule, and the
+// action handler uses the holder's scene-accepted key→rule binding.
+
+/// A structured read of the generated node's current paint-alpha projection. The
+/// consumer and its self-verification read the SAME numbers the framework holds
+/// (no per-frame broadcast, no string parsing on the consumer side).
+public struct CjguiGeneratedAnimationSnapshot {
+    public let identity: String
+    public let presented: Float64
+    public let target: Float64
+    public let active: Int64
+    public let bindings: Int64
+
+    public init(identity: String, presented: Float64, target: Float64, active: Int64, bindings: Int64) {
+        this.identity = identity
+        this.presented = presented
+        this.target = target
+        this.active = active
+        this.bindings = bindings
+    }
+}
 
 /// One authored definition of a task field: the stable key, its business type,
 /// the shared resource, the owner operation that performs a write, that
@@ -230,6 +261,33 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     private var structureSerializationsValue: Int64
     private var instancesSerializationsValue: Int64
     private var acceptedInstanceSamplesValue: Int64
+    // P4 generated effect-group consumption: which group composition variant
+    // the generated structure currently declares, and whether the effects are
+    // present. Every
+    // transition re-submits a whole generated description through the SAME
+    // public submit entry, so the effect is always a generated declaration and
+    // never something this consumer paints itself.
+    private var effectVariantValue: Int64
+    private var effectVisibleValue: Bool
+    private var generatedTreeExpandedValue: Bool = true
+    private var generatedTreeSelectedValue: Bool = false
+    private var generatedControlActionCountValue: Int64 = 0
+    // The generated root owns this declaration. An empty value means the
+    // property is omitted and therefore resolves to the framework's opaque
+    // default when the candidate is accepted.
+    private var windowBackgroundValue: String = CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA
+    // The first frame uses the dark palette, matching the controller default
+    // until the platform supplies its initial effective scheme.
+    private var appliedPlatformColorSchemeValue: String = "dark"
+    private var platformAccentColorValue: ?CjguiComposableUiColor = None
+    private var platformAccentTokenValue: String = ""
+    private var platformAccentSourceValue: String = ""
+    // P2 paint-alpha animation of a GENERATED node. The animated key is the
+    // declared generated key, resolved to the accepted identity at drive time,
+    // so a rejected candidate or a removed/replaced node cannot keep the old
+    // animation alive on a new instance.
+    private var opacityHighValue: Bool = false
+    private var lastAnimationSummary: String = "尚未驱动动效"
 
     public init(domain: CjguiSharedOperationList, resourceId: Int64) {
         this.domain = domain
@@ -248,6 +306,8 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         this.structureSerializationsValue = 0
         this.instancesSerializationsValue = 0
         this.acceptedInstanceSamplesValue = 0
+        this.effectVariantValue = 0
+        this.effectVisibleValue = true
     }
 
     /// The application's resolved beacon declaration (the catalog builder and
@@ -260,11 +320,27 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     /// The application's ONE named paint role (paint only, own geometry stays in
     /// the helpers), so a theme or accent change never moves layout.
     public static func primaryActionStyle(): CjguiComposableUiNamedStyle {
-        let theme = CjguiComposableUiTheme.paperLight()
+        return primaryActionStyleFor(CjguiComposableUiColorScheme.Dark)
+    }
+
+    private static func themeFor(scheme: CjguiComposableUiColorScheme): CjguiComposableUiTheme {
+        return match (scheme) {
+            case Light => CjguiComposableUiTheme.paperLight()
+            case Dark => CjguiComposableUiTheme.beaconDark()
+        }
+    }
+
+    private static func primaryActionStyleFor(scheme: CjguiComposableUiColorScheme,
+        accent!: ?CjguiComposableUiColor = None): CjguiComposableUiNamedStyle {
+        let theme = CjguiTaskGeneratedRegion.themeFor(scheme)
+        let border = match (accent) {
+            case Some(value) => value
+            case None => theme.primaryAction.border
+        }
         return CjguiComposableUiNamedStyle("collaboration_primary_action",
             CjguiComposableUiStyle(background: theme.primaryAction.background,
-                border: theme.primaryAction.border, textColor: theme.primaryAction.textColor,
-                borderWidth: theme.primaryAction.borderWidth),
+                border: border, textColor: theme.primaryAction.textColor,
+                borderWidth: if (accent.isSome()) { 2 } else { theme.primaryAction.borderWidth }),
             interaction: theme.primaryActionInteraction, purpose: "任务面板主操作")
     }
 
@@ -272,15 +348,96 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     /// the tabs declaration's `titleStyle`, consumed by the SAME public tab
     /// container the handwritten pages use.
     public static func panelTabTitleStyle(): CjguiComposableUiNamedStyle {
-        // The task panel is a DARK surface: the title role uses the dark
-        // theme's heading paint, or the page titles render dark-on-dark.
-        let theme = CjguiComposableUiTheme.beaconDark()
+        return panelTabTitleStyleFor(CjguiComposableUiColorScheme.Dark)
+    }
+
+    private static func panelTabTitleStyleFor(scheme: CjguiComposableUiColorScheme,
+        accent!: ?CjguiComposableUiColor = None): CjguiComposableUiNamedStyle {
+        let theme = CjguiTaskGeneratedRegion.themeFor(scheme)
+        let selectedColor = match (accent) {
+            case Some(value) => value
+            case None => theme.heading.textColor
+        }
         return CjguiComposableUiNamedStyle("panel_tab_title",
             CjguiComposableUiStyle(textColor: theme.heading.textColor,
                 fontWeight: theme.heading.fontWeight),
             interaction: CjguiComposableUiInteractionStyle(
-                normal: CjguiComposableUiPaintStyle(textColor: Some(theme.heading.textColor))),
+                normal: CjguiComposableUiPaintStyle(textColor: Some(theme.heading.textColor)),
+                selected: CjguiComposableUiPaintStyle(textColor: Some(selectedColor)),
+                focused: CjguiComposableUiPaintStyle(border: Some(selectedColor), borderWidth: Some(2))),
             purpose: "任务面板页签标题")
+    }
+
+    /// Updates both generated named paint roles from one shared theme factory.
+    /// The catalog is desired state; ordinary scene acceptance is what makes
+    /// the resolved palette visible in the window.
+    public func applyPlatformColorScheme(scheme: CjguiComposableUiColorScheme): Bool {
+        let schemeToken = CjguiComposableUiPlatformStateCodec.colorSchemeToken(scheme)
+        return synchronized(lock) {
+            if (schemeToken == appliedPlatformColorSchemeValue) {
+                return false
+            }
+            let styles = catalog.namedStyles()
+            let previousAction = styles.forName("collaboration_primary_action")
+            let previousTitle = styles.forName("panel_tab_title")
+            if (previousAction.isNone() || previousTitle.isNone()) {
+                return false
+            }
+            let oldAction = match (previousAction) {
+                case Some(value) => value
+                case None => CjguiTaskGeneratedRegion.primaryActionStyle()
+            }
+            let oldTitle = match (previousTitle) {
+                case Some(value) => value
+                case None => CjguiTaskGeneratedRegion.panelTabTitleStyle()
+            }
+            if (!styles.update(CjguiTaskGeneratedRegion.primaryActionStyleFor(scheme,
+                accent: platformAccentColorValue))) {
+                return false
+            }
+            if (!styles.update(CjguiTaskGeneratedRegion.panelTabTitleStyleFor(scheme,
+                accent: platformAccentColorValue))) {
+                // Preserve the prior two-role palette if later style admission
+                // rules make the second update refuse.
+                let _ = styles.update(oldAction)
+                let _ = styles.update(oldTitle)
+                return false
+            }
+            appliedPlatformColorSchemeValue = schemeToken
+            revisionValue += 1
+            lastOutcome = "系统主题已应用 ${schemeToken}；等待 accepted scene"
+            return true
+        }
+    }
+
+    public func applyPlatformAccentColor(color: CjguiComposableUiColor, source: String): Bool {
+        let token = cjguiComposableUiColorToken(color)
+        return synchronized(lock) {
+            if (token == platformAccentTokenValue && source == platformAccentSourceValue) { return false }
+            let scheme = if (appliedPlatformColorSchemeValue == "light") {
+                CjguiComposableUiColorScheme.Light
+            } else {
+                CjguiComposableUiColorScheme.Dark
+            }
+            let styles = catalog.namedStyles()
+            let oldAction = styles.forName("collaboration_primary_action")
+            let oldTitle = styles.forName("panel_tab_title")
+            if (oldAction.isNone() || oldTitle.isNone()) { return false }
+            if (!styles.update(CjguiTaskGeneratedRegion.primaryActionStyleFor(scheme, accent: Some(color)))) {
+                return false
+            }
+            if (!styles.update(CjguiTaskGeneratedRegion.panelTabTitleStyleFor(scheme, accent: Some(color)))) {
+                if (let Some(previous) <- oldAction) { let _ = styles.update(previous) }
+                if (let Some(previous) <- oldTitle) { let _ = styles.update(previous) }
+                return false
+            }
+            platformAccentColorValue = Some(color)
+            platformAccentTokenValue = token
+            platformAccentSourceValue = source
+            revisionValue += 1
+            lastOutcome = "系统强调色 ${source} ${token}；等待 accepted scene"
+            return true
+        }
     }
 
     /// Withdraws a named style declaration. Instances already accepted keep the
@@ -324,7 +481,9 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
 
     static func buildCatalog(): CjguiGeneratedUiCapabilityCatalog {
         let catalog = CjguiGeneratedUiCapabilityCatalog(maxDepth: 8, maxNodes: 128,
-            maxPropertiesPerNode: 6, maxStringLength: 160)
+            maxPropertiesPerNode: 8, maxStringLength: 160)
+        catalog.enableWindowBackground()
+        let _ = catalog.registerMotionRule(CjguiGeneratedMotionRegistry.opacityTransitionRule())
         // The style vocabulary comes from the framework's ONE shared definition
         // (size constraints, growth, alignment, font); only the content
         // properties are this application's own.
@@ -403,6 +562,22 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         // title-role update reaches the ACCEPTED tabs titles through the one
         // named-style transaction (effective normal override, not just base).
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("TOGGLE_TITLE_ACCENT", "切换标题强调色"))
+        // P4 effect-group transitions. Each one re-submits the generated
+        // description with a different declared effectGroup, so the only way the effect
+        // changes is through the public generated submit entry.
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CYCLE_GENERATED_EFFECT", "切换生成效果组"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("REMOVE_GENERATED_EFFECT", "清除生成效果组"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("RESTORE_GENERATED_EFFECT", "恢复生成效果组"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("SUBMIT_INVALID_EFFECT", "提交非法效果组候选"))
+        // P2: a value transition on a GENERATED node. The action only requests a
+        // new target; the framework window owns the current visual value.
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("ANIMATE_GENERATED_OPACITY", "生成节点透明度过渡"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("TOGGLE_WINDOW_BACKGROUND", "切换系统窗口材质"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CLEAR_WINDOW_BACKGROUND", "清除系统窗口材质"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_TREE_GROUP", "展开或折叠生成树"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_TREE_LEAF", "选择生成树条目"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_BUTTON", "激活生成按钮"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_ACCENT", "切换窗口强调色策略"))
         let _ = catalog.registerFields(CjguiTaskFields.generatedSpecs())
         // The application's own composite card. Registering a second component
         // kind changes this registration call and that component's file only:
@@ -417,6 +592,463 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
 
     public func statusText(): String {
         return synchronized(lock) { lastOutcome }
+    }
+
+    // --- P4 generated effect-group declarations ------------------------------
+
+    /// The generated description's declared shadow token for one variant, in the
+    /// framework's public wire encoding (logical points + strict #RRGGBBAA).
+    private static func shadowTokenFor(variant: Int64): String {
+        if (variant == 0) {
+            return "0,3,10,0,#00000073"
+        }
+        if (variant == 1) {
+            return "0,8,24,3,#0000008c"
+        }
+        return "-6,8,30,0,#0f1f40b3"
+    }
+
+    private static func gradientTokenFor(variant: Int64): String {
+        if (variant == 0) {
+            return "0,0,100,0,0:#1c4f92ff|100:#3fa9f5ff"
+        }
+        if (variant == 1) {
+            return "0,0,0,100,0:#3b1c85ff|100:#ae4ff0ff"
+        }
+        return "0,0,100,100,0:#0d7a66ff|100:#ffd166ff"
+    }
+
+    /// Shared effect-group encoding: opacity percentage, blend mode, and a
+    /// group-local linear alpha mask. Coordinates, stop positions, and alpha
+    /// values use integer percentages.
+    private static func effectGroupTokenFor(variant: Int64): String {
+        if (variant == 0) {
+            return "50,normal,0,0,100,0,0:0|100:100"
+        }
+        if (variant == 1) {
+            return "70,multiply,0,0,0,100,0:0|100:100;blur=8,unblurred"
+        }
+        return "85,normal,0,0,100,100,0:100|100:0"
+    }
+
+    /// A complete generated description with one effect group containing the
+    /// shadowed card, gradient surface, generated controls, and registered
+    /// task-edit composite. `visible=false` uses the explicit `none` clear form.
+    /// The consumer never paints the effect itself: the ONLY source is this
+    /// textual declaration.
+    public static func effectStructure(variant: Int64, visible: Bool,
+        windowBackground!: String = CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA,
+        treeExpanded!: Bool = true, treeSelected!: Bool = false): String {
+        let shadow = if (visible) { CjguiTaskGeneratedRegion.shadowTokenFor(variant) } else { "none" }
+        let gradient = if (visible) { CjguiTaskGeneratedRegion.gradientTokenFor(variant) } else { "none" }
+        let group = if (visible) { CjguiTaskGeneratedRegion.effectGroupTokenFor(variant) } else { "none" }
+        let windowBackgroundProperty = if (windowBackground.isEmpty()) { "" } else {
+            "PROPERTY 0 board windowBackground ${windowBackground}\n"
+        }
+        let treeLeaf = if (treeExpanded) {
+            "NODE 5 controlLeaf action action=CONTROL_TREE_LEAF\n" +
+            "PROPERTY 5 controlLeaf label 生成树条目\n" +
+            "PROPERTY 5 controlLeaf semanticRole row\n" +
+            "PROPERTY 5 controlLeaf semanticRowKey generated-leaf\n" +
+            "PROPERTY 5 controlLeaf semanticParentKey generated-group\n" +
+            "PROPERTY 5 controlLeaf semanticLevel 1\n" +
+            "PROPERTY 5 controlLeaf semanticSelected ${if (treeSelected) { "true" } else { "false" }}\n" +
+            "PROPERTY 5 controlLeaf style collaboration_primary_action\n"
+        } else { "" }
+        return "GENERATED_UI_STRUCTURE 1\n" +
+            "NODE 0 board vertical\n" +
+            "PROPERTY 0 board gap 6\n" +
+            "PROPERTY 0 board padding 8\n" +
+            windowBackgroundProperty +
+            "NODE 1 effectGroup vertical\n" +
+            "PROPERTY 1 effectGroup effectGroup ${group}\n" +
+            "PROPERTY 1 effectGroup gap 6\n" +
+            "NODE 2 shadowCard label\n" +
+            "PROPERTY 2 shadowCard text 生成阴影卡片 v${variant}\n" +
+            "PROPERTY 2 shadowCard shadow ${shadow}\n" +
+            "PROPERTY 2 shadowCard background #1c2942ff\n" +
+            "PROPERTY 2 shadowCard border #3a5a8cff\n" +
+            "PROPERTY 2 shadowCard fixedWidth 260\n" +
+            "PROPERTY 2 shadowCard fixedHeight 44\n" +
+            "NODE 2 gradientCard vertical\n" +
+            "PROPERTY 2 gradientCard gradient ${gradient}\n" +
+            "PROPERTY 2 gradientCard padding 8\n" +
+            "NODE 3 gradientTitle label\n" +
+            "PROPERTY 3 gradientTitle text 生成渐变面板 v${variant}\n" +
+            "NODE 2 taskCard taskEditCard\n" +
+            "PROPERTY 2 taskCard caption 效果组内的任务编辑组合组件\n" +
+            "PROPERTY 2 taskCard gap 4\n" +
+            "NODE 2 effectToggle action action=CYCLE_GENERATED_EFFECT\n" +
+            "PROPERTY 2 effectToggle label 切换生成效果组\n" +
+            "PROPERTY 2 effectToggle style collaboration_primary_action\n" +
+            "NODE 2 effectRemove action action=REMOVE_GENERATED_EFFECT\n" +
+            "PROPERTY 2 effectRemove label 清除生成效果组\n" +
+            "PROPERTY 2 effectRemove style collaboration_primary_action\n" +
+            "NODE 2 effectInvalid action action=SUBMIT_INVALID_EFFECT\n" +
+            "PROPERTY 2 effectInvalid label 提交非法效果组候选\n" +
+            "PROPERTY 2 effectInvalid style collaboration_primary_action\n" +
+            "NODE 2 effectRestore action action=RESTORE_GENERATED_EFFECT\n" +
+            "PROPERTY 2 effectRestore label 恢复生成效果组\n" +
+            "PROPERTY 2 effectRestore style collaboration_primary_action\n" +
+            "NODE 2 effectAnimate action action=ANIMATE_GENERATED_OPACITY\n" +
+            "PROPERTY 2 effectAnimate label 透明度过渡\n" +
+            "PROPERTY 2 effectAnimate style collaboration_primary_action\n" +
+            "PROPERTY 2 effectAnimate motion " + CjguiGeneratedMotionRegistry.OPACITY_TRANSITION + "\n" +
+            "NODE 2 windowBackgroundToggle action action=TOGGLE_WINDOW_BACKGROUND\n" +
+            "PROPERTY 2 windowBackgroundToggle label 切换系统窗口材质\n" +
+            "PROPERTY 2 windowBackgroundToggle style collaboration_primary_action\n" +
+            "NODE 2 windowBackgroundClear action action=CLEAR_WINDOW_BACKGROUND\n" +
+            "PROPERTY 2 windowBackgroundClear label 清除系统窗口材质\n" +
+            "PROPERTY 2 windowBackgroundClear style collaboration_primary_action\n" +
+            "NODE 1 controlTabs tabs\n" +
+            "PROPERTY 1 controlTabs initialPage outline\n" +
+            "PROPERTY 1 controlTabs titleStyle panel_tab_title\n" +
+            "PROPERTY 1 controlTabs fixedHeight 134\n" +
+            "NODE 2 outlinePage tabPage\n" +
+            "PROPERTY 2 outlinePage pageKey outline\n" +
+            "PROPERTY 2 outlinePage pageTitle 树与滚动\n" +
+            "NODE 3 controlOutline scrollArea\n" +
+            "PROPERTY 3 controlOutline semanticRole outline\n" +
+            "PROPERTY 3 controlOutline semanticLabel 生成控件树\n" +
+            "PROPERTY 3 controlOutline fixedHeight 96\n" +
+            "NODE 4 controlRows vertical\n" +
+            "NODE 5 controlGroup action action=CONTROL_TREE_GROUP\n" +
+            "PROPERTY 5 controlGroup label ${if (treeExpanded) { "▾" } else { "▸" }} 生成树分组\n" +
+            "PROPERTY 5 controlGroup semanticRole row\n" +
+            "PROPERTY 5 controlGroup semanticRowKey generated-group\n" +
+            "PROPERTY 5 controlGroup semanticExpandable true\n" +
+            "PROPERTY 5 controlGroup semanticExpanded ${if (treeExpanded) { "true" } else { "false" }}\n" +
+            "PROPERTY 5 controlGroup style collaboration_primary_action\n" +
+            treeLeaf +
+            "NODE 5 controlDisabled action action=CONTROL_TREE_LEAF\n" +
+            "PROPERTY 5 controlDisabled label 禁用生成条目\n" +
+            "PROPERTY 5 controlDisabled semanticRole row\n" +
+            "PROPERTY 5 controlDisabled semanticRowKey generated-disabled\n" +
+            "PROPERTY 5 controlDisabled disabled true\n" +
+            "NODE 2 controlActionsPage tabPage\n" +
+            "PROPERTY 2 controlActionsPage pageKey actions\n" +
+            "PROPERTY 2 controlActionsPage pageTitle 操作\n" +
+            "NODE 3 controlActions vertical\n" +
+            "NODE 4 controlButton action action=CONTROL_BUTTON\n" +
+            "PROPERTY 4 controlButton label 生成按钮\n" +
+            "PROPERTY 4 controlButton style collaboration_primary_action\n" +
+            "NODE 4 controlAccent action action=CONTROL_ACCENT\n" +
+            "PROPERTY 4 controlAccent label 固定或跟随系统强调色\n" +
+            "PROPERTY 4 controlAccent style collaboration_primary_action\n" +
+            "NODE 4 controlCheckbox booleanInput field=marked\n" +
+            "PROPERTY 4 controlCheckbox label 任务标记\n" +
+            "END"
+    }
+
+    /// The initial description the normal window starts from: an elevated
+    /// generated card and a gradient generated surface, both declared textually
+    /// and submitted through the public generated entry by `main`.
+    public func initialEffectStructure(): String {
+        return CjguiTaskGeneratedRegion.effectStructure(effectVariantValue, effectVisibleValue,
+            windowBackground: windowBackgroundValue, treeExpanded: generatedTreeExpandedValue,
+            treeSelected: generatedTreeSelectedValue)
+    }
+
+    /// Window host read: pending candidate during scene preparation, otherwise
+    /// the accepted root policy. The holder normalizes omission to opaque.
+    public func candidateWindowBackground(): String {
+        return holder.candidateWindowBackground()
+    }
+
+    public func acceptedWindowBackground(): String {
+        return holder.acceptedWindowBackground()
+    }
+
+    // A public client may replace the accepted declaration between two owner
+    // actions. Derive the next toggle from that accepted structure, so a later
+    // pointer/keyboard/AX action never starts from this consumer's old cache.
+    private func acceptedTreeFlags(): (Bool, Bool) {
+        return synchronized(lock) {
+            let expanded = match (holder.acceptedNodeForKey("controlGroup")) {
+                case Some(node) => node.property("semanticExpanded") == "true"
+                case None => generatedTreeExpandedValue
+            }
+            let selected = match (holder.acceptedNodeForKey("controlLeaf")) {
+                case Some(node) => node.property("semanticSelected") == "true"
+                case None => generatedTreeSelectedValue
+            }
+            (expanded, selected)
+        }
+    }
+
+
+    /// Readable note of the last NON-FATAL declaration advisory (a malformed
+    /// encoded effect that was ignored while the scene stayed accepted).
+    public func lastDeclarationAdvisory(): String {
+        return synchronized(lock) { holder.lastDeclarationAdvisory() }
+    }
+
+    /// Submits a whole generated description carrying the current effect group
+    /// through the public submit entry. Returns whether the candidate was accepted.
+    private func submitEffectStructure(variant: Int64, visible: Bool): Bool {
+        let (treeExpanded, treeSelected) = acceptedTreeFlags()
+        let result = submitStructure(CjguiTaskGeneratedRegion.effectStructure(variant, visible,
+            windowBackground: windowBackgroundValue, treeExpanded: treeExpanded,
+            treeSelected: treeSelected), acceptedStructureVersion())
+        return result.candidateAccepted
+    }
+
+    private func submitWindowBackground(value: String): Bool {
+        let (treeExpanded, treeSelected) = acceptedTreeFlags()
+        let result = submitStructure(CjguiTaskGeneratedRegion.effectStructure(effectVariantValue, effectVisibleValue,
+            windowBackground: value, treeExpanded: treeExpanded,
+            treeSelected: treeSelected), acceptedStructureVersion())
+        return result.candidateAccepted
+    }
+
+
+    /// One stable, greppable line per generated effect transition: the anchor a
+    /// verification script correlates with the accepted generated scene.
+    private func emitGeneratedEffectState(action: String, applied: Bool): Unit {
+        let outcome = synchronized(lock) { lastOutcome }
+        let declaration = if (effectVisibleValue) {
+            CjguiTaskGeneratedRegion.effectGroupTokenFor(effectVariantValue)
+        } else { "none" }
+        getStdOut().writeln("CJGUI_GENERATED_EFFECT_STATE action=${action} " +
+            "visible=${if (effectVisibleValue) { 1 } else { 0 }} variant=${effectVariantValue} " +
+            "effectGroup=${declaration} applied=${if (applied) { 1 } else { 0 }} outcome=${outcome}")
+        getStdOut().flush()
+    }
+
+    /// Candidate attempts through the SAME public entry, proving the current
+    /// whole-candidate contract:
+    ///  (a) a syntactically complete description whose shadow text is malformed
+    ///      is refused WHOLE with the stable reason `shadow_value_invalid`;
+    ///  (b) a gradient coordinate outside the declared domain is refused whole
+    ///      with `gradient_value_invalid`;
+    ///  (c) the accepted structure version, the old control's identity and the
+    ///      declared shadow style are read back BEFORE any recovery, separating
+    ///      "candidate refused" from "scene replaced";
+    /// Only then does the application re-submit the legal effect through the same
+    /// entry so it keeps operating.
+    private func submitInvalidEffectCandidates(): String {
+        let versionBefore = acceptedStructureVersion()
+        let badShadowStructure = "GENERATED_UI_STRUCTURE 1\n" +
+            "NODE 0 board vertical\n" +
+            "NODE 1 badShadowCard label\n" +
+            "PROPERTY 1 badShadowCard text 非法效果编码卡片\n" +
+            "PROPERTY 1 badShadowCard shadow 12,oops,8,0,#000000\n" +
+            "END"
+        let shadowResult = submitStructure(badShadowStructure, versionBefore)
+        let badGradientStructure = "GENERATED_UI_STRUCTURE 1\n" +
+            "NODE 0 board vertical\n" +
+            "NODE 1 badGradientCard vertical\n" +
+            "PROPERTY 1 badGradientCard gradient 0,0,140,0,0:#112233ff|100:#445566ff\n" +
+            "END"
+        let gradientResult = submitStructure(badGradientStructure, versionBefore)
+        // Read the accepted state back BEFORE recovering: a refused candidate
+        // must not have moved the structure version, the old control identity or
+        // its declared sampling style.
+        let versionAfter = acceptedStructureVersion()
+        let oldControlNodeId = acceptedNodeIdForKey(GENERATED_OPACITY_KEY)
+        let shadowReadback = generatedShadowReadback()
+        let restored = submitEffectStructure(effectVariantValue, true)
+        effectVisibleValue = true
+        return "非法阴影 accepted=${shadowResult.candidateAccepted} reason=${shadowResult.reason} " +
+            "path=${shadowResult.path} | 非法渐变 accepted=${gradientResult.candidateAccepted} " +
+            "reason=${gradientResult.reason} path=${gradientResult.path} | 提交后读回 versionBefore=${versionBefore} " +
+            "versionAfter=${versionAfter} oldControlNode=${oldControlNodeId} ${shadowReadback} | " +
+            "合法效果恢复=${restored}"
+    }
+
+    /// Read back the declared shadow of the accepted generated sampling card.
+    /// It is a public-geometry read from the window's accepted scene, so it can
+    /// only show the state the framework really accepted.
+    private func generatedShadowReadback(): String {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return "shadowReadback=window_none"
+        }
+        let declaredNodeId = synchronized(lock) { holder.nodeIdForKey("shadowCard") }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == declaredNodeId) {
+                let hasShadow = node.declaredStyle.shadow.isSome()
+                return "shadowCardShadow=${if (hasShadow) { 1 } else { 0 }}"
+            }
+        }
+        return "shadowCardShadow=absent"
+    }
+
+    /// Drive the framework paint-alpha animation on an accepted GENERATED node.
+    /// The key is resolved against the window's accepted scene right now, so a
+    /// removed/replaced node has no identity and the drive is refused instead of
+    /// landing the old animation on a new instance. A rejected candidate never
+    /// changes the accepted scene, therefore it cannot disturb a running binding.
+    private func animateGeneratedOpacity(key: String, target: Float64, phase: String): Bool {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return false
+        }
+        var identity = ""
+        var nodeId: Int64 = -1
+        let declaredNodeId = synchronized(lock) { holder.nodeIdForKey(key) }
+        if (declaredNodeId < 0) {
+            return false
+        }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == declaredNodeId) {
+                identity = node.identityKey
+                nodeId = node.nodeId
+            }
+        }
+        if (identity.size == 0) {
+            return false
+        }
+        // The rule comes from the accepted generated description for this key.
+        // Candidate and catalog state cannot substitute for the value the window
+        // actually committed, and an omitted/unknown reference has no fallback.
+        let motionRule = match (synchronized(lock) { holder.acceptedMotionRuleForKey(key) }) {
+            case Some(value) => value
+            case None =>
+                getStdOut().writeln("CJGUI_GENERATED_MOTION_REJECTED " +
+                    "key=${key} reason=motion_reference_not_accepted")
+                getStdOut().flush()
+                return false
+        }
+        let ruleRejection = motionRule.rejectionReason()
+        if (ruleRejection.size != 0) {
+            getStdOut().writeln("CJGUI_GENERATED_MOTION_REJECTED rule=${motionRule.name} reason=${ruleRejection}")
+            getStdOut().flush()
+            return false
+        }
+        let motionSpec = match (motionRule.spec()) {
+            case Some(value) => value
+            case None => return false
+        }
+        let started = window.animateNodeOpacity(identity, target, spec: motionSpec, atTime: MonoTime.now())
+        let presented = match (window.animatedNodeOpacity(identity)) {
+            case Some(value) => value
+            case None => -1.0
+        }
+        lastAnimationSummary = "phase=${phase} target=${target} presented=${presented}"
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_STATE key=${key} identity=${identity} node=${nodeId} " +
+            "phase=${phase} started=${if (started) { 1 } else { 0 }} target=${target} presented=${presented} " +
+            "rule=${motionRule.name} duration=${motionRule.durationMs} easing=${motionRule.easingToken} " +
+            "active=${window.activeAnimationCount()} bindings=${window.animationBindingCount()}")
+        getStdOut().flush()
+        return started
+    }
+
+    /// Cancel this region's animation binding on close, so a stopped window
+    /// requests no further animation frames and the old completion cannot land
+    /// after teardown.
+    private func cancelGeneratedAnimation(): Unit {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return
+        }
+        let declaredNodeId = synchronized(lock) { holder.nodeIdForKey(GENERATED_OPACITY_KEY) }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == declaredNodeId) {
+                let cancelled = window.cancelNodeOpacityAnimation(node.identityKey)
+                getStdOut().writeln("CJGUI_GENERATED_ANIMATION_CANCELLED identity=${node.identityKey} " +
+                    "cancelled=${if (cancelled) { 1 } else { 0 }} active=${window.activeAnimationCount()}")
+                getStdOut().flush()
+            }
+        }
+    }
+
+    /// Close-time hook: cancel this region's animation bindings so a closing
+    /// window drops its bindings deterministically (the window's own teardown
+    /// also cancels, this makes the consumer-side fact explicit and greppable).
+    public func prepareWindowClose(): Unit {
+        cancelGeneratedAnimation()
+    }
+
+    /// Drive the generated node's paint alpha through the public window entry.
+    /// Used by the consumer's own `--verify-animation` check and by the button
+    /// action; both call the SAME private implementation, so there is no second
+    /// animation path.
+    public func driveGeneratedOpacity(target: Float64, phase: String): Bool {
+        return animateGeneratedOpacity(GENERATED_OPACITY_KEY, target, phase)
+    }
+
+    /// Read the current target/presented alpha and activity for the generated
+    /// node, so a consumer or a verification script observes the same facts the
+    /// framework holds without a per-frame broadcast.
+    public func animationObservation(): String {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return "window=none"
+        }
+        var identity = ""
+        let declaredNodeId = synchronized(lock) { holder.nodeIdForKey(GENERATED_OPACITY_KEY) }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == declaredNodeId) {
+                identity = node.identityKey
+            }
+        }
+        if (identity.size == 0) {
+            return "identity=absent"
+        }
+        let presented = match (window.animatedNodeOpacity(identity)) {
+            case Some(value) => value
+            case None => -1.0
+        }
+        let target = match (window.animatedNodeOpacityTarget(identity)) {
+            case Some(value) => value
+            case None => -1.0
+        }
+        return "identity=${identity} presented=${presented} target=${target} " +
+            "active=${window.activeAnimationCount()} bindings=${window.animationBindingCount()}"
+    }
+
+    /// Structured read of the SAME projection, for a caller that asserts exact
+    /// values instead of parsing a display string. Returns identity="" when the
+    /// generated node is absent from the accepted scene.
+    public func animationSnapshot(): CjguiGeneratedAnimationSnapshot {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return CjguiGeneratedAnimationSnapshot("", -1.0, -1.0, -1, -1)
+        }
+        var identity = ""
+        let declaredNodeId = synchronized(lock) { holder.nodeIdForKey(GENERATED_OPACITY_KEY) }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == declaredNodeId) {
+                identity = node.identityKey
+            }
+        }
+        if (identity.size == 0) {
+            return CjguiGeneratedAnimationSnapshot("", -1.0, -1.0, window.activeAnimationCount(),
+                window.animationBindingCount())
+        }
+        let presented = match (window.animatedNodeOpacity(identity)) {
+            case Some(value) => value
+            case None => -1.0
+        }
+        let target = match (window.animatedNodeOpacityTarget(identity)) {
+            case Some(value) => value
+            case None => -1.0
+        }
+        return CjguiGeneratedAnimationSnapshot(identity, presented, target,
+            window.activeAnimationCount(), window.animationBindingCount())
+    }
+
+    /// Whether the accepted scene currently carries the generated node this
+    /// region animates. A self-verification reads this before driving anything.
+    public func generatedAnimationNodeReady(): Bool {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return false
+        }
+        let declaredNodeId = synchronized(lock) { holder.nodeIdForKey(GENERATED_OPACITY_KEY) }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == declaredNodeId) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The published motion-rule capability line, re-exported so the consumer
+    /// entry can announce it on stdout.
+    public func motionCapabilityLine(): String {
+        return CjguiGeneratedMotionRegistry.capabilityLine()
     }
 
     private func selectedRecordId(): Int64 {
@@ -500,6 +1132,16 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             }
             return CjguiSharedAvailability.blocked("title_role_missing", resourceId, revision())
         }
+        // Effect transitions address the generated description itself, not a
+        // business record, so they are available whenever the region is live.
+        if (actionName == "CYCLE_GENERATED_EFFECT" || actionName == "REMOVE_GENERATED_EFFECT" ||
+            actionName == "RESTORE_GENERATED_EFFECT" || actionName == "SUBMIT_INVALID_EFFECT" ||
+            actionName == "ANIMATE_GENERATED_OPACITY" || actionName == "TOGGLE_WINDOW_BACKGROUND" ||
+            actionName == "CLEAR_WINDOW_BACKGROUND" || actionName == "CONTROL_TREE_GROUP" ||
+            actionName == "CONTROL_TREE_LEAF" || actionName == "CONTROL_BUTTON" ||
+            actionName == "CONTROL_ACCENT") {
+            return CjguiSharedAvailability.allowed(resourceId, revision())
+        }
         return CjguiSharedAvailability.unknown()
     }
 
@@ -537,6 +1179,15 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     public func actionAvailable(actionName: String): Bool {
         if (actionName == "SET_TITLE") { return selectedRecordId() >= 0 }
         if (actionName == "TOGGLE_MARKED") { return selectedRecordId() >= 0 }
+        // Effect transitions address the generated description, not a record.
+        if (actionName == "CYCLE_GENERATED_EFFECT" || actionName == "REMOVE_GENERATED_EFFECT" ||
+            actionName == "RESTORE_GENERATED_EFFECT" || actionName == "SUBMIT_INVALID_EFFECT" ||
+            actionName == "ANIMATE_GENERATED_OPACITY" || actionName == "TOGGLE_WINDOW_BACKGROUND" ||
+            actionName == "CLEAR_WINDOW_BACKGROUND" || actionName == "CONTROL_TREE_GROUP" ||
+            actionName == "CONTROL_TREE_LEAF" || actionName == "CONTROL_BUTTON" ||
+            actionName == "CONTROL_ACCENT") {
+            return true
+        }
         // Theme actions address the named-style catalog, not a selected record.
         // Keep the generated control enabled even when the data list is empty.
         if (actionName == "TOGGLE_TITLE_ACCENT") {
@@ -546,6 +1197,87 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     }
 
     public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        if (actionName == "CONTROL_ACCENT") {
+            let window = match (attachedWindow) {
+                case Some(value) => value
+                case None => return CjguiGeneratedUiActionResult(false, "window_unavailable")
+            }
+            let next = if (window.platformAccentStatus().preference == "system") { "#b02088ff" }
+                else { "system" }
+            let applied = window.selectAccentPreference(next)
+            if (applied) { generatedControlActionCountValue += 1 }
+            getStdOut().writeln("CJGUI_GENERATED_CONTROL action=accent preference=${next} " +
+                "applied=${applied} count=${generatedControlActionCountValue}")
+            return CjguiGeneratedUiActionResult(applied, if (applied) { "none" } else { "accent_unchanged" })
+        }
+        if (actionName == "CONTROL_BUTTON") {
+            generatedControlActionCountValue += 1
+            synchronized(lock) {
+                lastOutcome = "生成按钮 owner 激活 ${generatedControlActionCountValue} 次"
+                revisionValue += 1
+            }
+            getStdOut().writeln("CJGUI_GENERATED_CONTROL action=button count=${generatedControlActionCountValue}")
+            return CjguiGeneratedUiActionResult(true, "none")
+        }
+        if (actionName == "CONTROL_TREE_GROUP" || actionName == "CONTROL_TREE_LEAF") {
+            let (acceptedExpanded, acceptedSelected) = acceptedTreeFlags()
+            let nextExpanded = if (actionName == "CONTROL_TREE_GROUP") { !acceptedExpanded }
+                else { acceptedExpanded }
+            let nextSelected = if (actionName == "CONTROL_TREE_LEAF") { !acceptedSelected }
+                else { acceptedSelected }
+            let proposed = CjguiTaskGeneratedRegion.effectStructure(effectVariantValue, effectVisibleValue,
+                windowBackground: windowBackgroundValue, treeExpanded: nextExpanded, treeSelected: nextSelected)
+            let submitted = submitStructure(proposed, acceptedStructureVersion()).candidateAccepted
+            if (submitted) {
+                generatedTreeExpandedValue = nextExpanded
+                generatedTreeSelectedValue = nextSelected
+                generatedControlActionCountValue += 1
+            }
+            synchronized(lock) {
+                lastOutcome = if (submitted) { "生成树 owner 状态等待 accepted scene" }
+                    else { "生成树候选被拒" }
+                revisionValue += 1
+            }
+            getStdOut().writeln("CJGUI_GENERATED_CONTROL action=${actionName} accepted=${submitted} " +
+                "expanded=${generatedTreeExpandedValue} selected=${generatedTreeSelectedValue} " +
+                "count=${generatedControlActionCountValue}")
+            return CjguiGeneratedUiActionResult(submitted, if (submitted) { "none" } else { "control_candidate_rejected" })
+        }
+        if (actionName == "TOGGLE_WINDOW_BACKGROUND") {
+            let nextValue = if (windowBackgroundValue == CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA) {
+                CjguiWindowBackgroundPolicy.OPAQUE
+            } else {
+                CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA
+            }
+            let submitted = submitWindowBackground(nextValue)
+            if (submitted) {
+                windowBackgroundValue = nextValue
+            }
+            synchronized(lock) {
+                lastOutcome = if (submitted) {
+                    "生成根窗口材质已切换为 ${nextValue}，等待 accepted scene"
+                } else {
+                    "生成根窗口材质切换被拒"
+                }
+            }
+            return CjguiGeneratedUiActionResult(submitted,
+                if (submitted) { "none" } else { "window_background_structure_rejected" })
+        }
+        if (actionName == "CLEAR_WINDOW_BACKGROUND") {
+            let submitted = submitWindowBackground("")
+            if (submitted) {
+                windowBackgroundValue = ""
+            }
+            synchronized(lock) {
+                lastOutcome = if (submitted) {
+                    "生成根窗口材质属性已省略，默认 opaque，等待 accepted scene"
+                } else {
+                    "生成根窗口材质清除被拒"
+                }
+            }
+            return CjguiGeneratedUiActionResult(submitted,
+                if (submitted) { "none" } else { "window_background_structure_rejected" })
+        }
         // The title-accent toggle is a THEME operation on the named-style
         // catalog: it does not address a business record, so it runs before
         // the record-selection guard the data actions require.
@@ -584,6 +1316,79 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                     return CjguiGeneratedUiActionResult(false, "title_role_missing")
             }
         }
+        // P4 effect-group transitions: each re-submits a whole generated
+        // description carrying a different declared effectGroup. The effect therefore
+        // always originates in the generated declaration, never in consumer
+        // paint code.
+        if (actionName == "CYCLE_GENERATED_EFFECT") {
+            let nextVariant = (effectVariantValue + 1) % 3
+            let submitted = submitEffectStructure(nextVariant, true)
+            if (submitted) {
+                effectVariantValue = nextVariant
+                effectVisibleValue = true
+            }
+            synchronized(lock) {
+                lastOutcome = if (submitted) {
+                    "生成效果组已切换 → v${effectVariantValue}（经生成提交入口）"
+                } else {
+                    "生成效果切换被拒"
+                }
+            }
+            emitGeneratedEffectState("CYCLE_GENERATED_EFFECT", submitted)
+            return CjguiGeneratedUiActionResult(submitted, if (submitted) { "none" } else { "effect_structure_rejected" })
+        }
+        if (actionName == "REMOVE_GENERATED_EFFECT") {
+            let submitted = submitEffectStructure(effectVariantValue, false)
+            if (submitted) { effectVisibleValue = false }
+            synchronized(lock) {
+                lastOutcome = if (submitted) {
+                    "生成效果组已清除（effectGroup=none，经生成提交入口）"
+                } else {
+                    "生成效果组清除被拒"
+                }
+            }
+            emitGeneratedEffectState("REMOVE_GENERATED_EFFECT", submitted)
+            return CjguiGeneratedUiActionResult(submitted, if (submitted) { "none" } else { "effect_structure_rejected" })
+        }
+        if (actionName == "RESTORE_GENERATED_EFFECT") {
+            let submitted = submitEffectStructure(0, true)
+            if (submitted) {
+                effectVariantValue = 0
+                effectVisibleValue = true
+            }
+            synchronized(lock) {
+                lastOutcome = if (submitted) {
+                    "生成效果组已恢复（经生成提交入口）"
+                } else {
+                    "生成效果组恢复被拒"
+                }
+            }
+            emitGeneratedEffectState("RESTORE_GENERATED_EFFECT", submitted)
+            return CjguiGeneratedUiActionResult(submitted, if (submitted) { "none" } else { "effect_structure_rejected" })
+        }
+        if (actionName == "SUBMIT_INVALID_EFFECT") {
+            let summary = submitInvalidEffectCandidates()
+            synchronized(lock) { lastOutcome = summary }
+            emitGeneratedEffectState("SUBMIT_INVALID_EFFECT", true)
+            return CjguiGeneratedUiActionResult(true, "none")
+        }
+        if (actionName == "ANIMATE_GENERATED_OPACITY") {
+            // A value transition on the generated node. Repeating it fast, or
+            // reversing mid-flight, is a retarget on the same accepted identity:
+            // the framework keeps the current visual value and continues from it.
+            opacityHighValue = !opacityHighValue
+            let target = if (opacityHighValue) { GENERATED_OPACITY_HIGH } else { GENERATED_OPACITY_LOW }
+            let started = animateGeneratedOpacity(GENERATED_OPACITY_KEY, target,
+                if (opacityHighValue) { "high" } else { "low" })
+            synchronized(lock) {
+                lastOutcome = if (started) {
+                    "生成节点透明度目标 → ${target}（同一定义身份）"
+                } else {
+                    "生成节点透明度未驱动：accepted 场景暂无 ${GENERATED_OPACITY_KEY}"
+                }
+            }
+            return CjguiGeneratedUiActionResult(started, if (started) { "none" } else { "animation_identity_missing" })
+        }
         let recordId = selectedRecordId()
         if (recordId < 0) {
             return CjguiGeneratedUiActionResult(false, "no_selected_record")
@@ -610,7 +1415,22 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     // --- external structure provider ----------------------------------------
 
     public func capabilitiesPayload(): String {
-        return CjguiGeneratedUiEncoding.describe(catalog)
+        // The generated directory is also the discovery surface for the normal
+        // window's accepted PNG endpoints. The endpoint identities are the same
+        // stable semantic IDs used by the window data-transfer provider; the
+        // framework owns the actual binary read/validation path.
+        let png = CjguiComposableUiPngTransferCapability()
+        return CjguiGeneratedUiEncoding.describe(catalog) +
+            "DATA_TRANSFER ${png.mimeFormat} target=collaboration-png-target source=collaboration-png-source " +
+            "backend=${png.backend} system_format=${png.systemFormat} " +
+            "max_bytes=${png.maximumEncodedItemBytes} max_pixels=${png.maximumPixels} " +
+            "max_width=${png.maximumWidth} max_height=${png.maximumHeight} " +
+            "queue_bytes=${png.maximumQueuedBinaryBytes} decoded_bytes=${png.maximumDecodedTextureBytes} " +
+            "encoded_resource_bytes=${png.maximumRetainedEncodedResourceBytes} " +
+            "resource_records=${png.maximumResourceRecords} " +
+            "pending_events_per_window=${png.maximumPendingEventsPerWindow} " +
+            "system_fetch_preflight_bounded=${png.systemFetchPreflightBounded} " +
+            "owner=collaboration-image-slot\n"
     }
 
     /// The window this region's accepted instances belong to. The transport
@@ -806,6 +1626,8 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         var identity = ""
         var sceneVersion: Int64 = 0
         var interactionRevision: Int64 = 0
+        var effectFacts = ""
+        var platformFacts = ""
         var instances = ArrayList<CjguiGeneratedUiAcceptedInstance>()
         match (attachedWindow) {
             case Some(window) =>
@@ -815,6 +1637,8 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 identity = progress.sessionIdentity
                 sceneVersion = progress.acceptedSceneVersion
                 interactionRevision = progress.interactionVersion
+                effectFacts = progress.effectFactsPayload()
+                platformFacts = window.platformAccentStatus().describe()
             case None => identity = ""
         }
         return CjguiGeneratedUiObservationSource(identity, domain.snapshot().version,
@@ -826,7 +1650,8 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             resourceRevision: catalog.imageResourceRevision(),
             imageStateRevision: holder.imageResourceStateRevision(),
             styleRevision: catalog.namedStyles().revision(),
-            structureCandidatePending: holder.hasPendingCandidate())
+            structureCandidatePending: holder.hasPendingCandidate(),
+            effectFacts: effectFacts, platformFacts: platformFacts)
     }
 
     /// ONE atomic snapshot: every section is sampled inside this single call.
@@ -888,6 +1713,10 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 // without pulling a tree. It is the same encoder the capability
                 // text uses, so there is no second style table.
                 CjguiGeneratedUiEncoding.stylesPayload(catalog)
+            } else if (section == "EFFECTS") {
+                source.effectFacts
+            } else if (section == "PLATFORM") {
+                source.platformFacts
             } else {
                 ""
             }
@@ -965,6 +1794,7 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 return
             }
             if (holder.commitCandidateRefresh()) {
+                windowBackgroundValue = holder.acceptedWindowBackground()
                 lastOutcome = "结构已接受：v${holder.structureVersion()}"
             } else {
                 lastOutcome = "场景拒绝：${holder.lastSceneOutcome()}"
@@ -991,6 +1821,7 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 return
             }
             holder.rollbackCandidateRefresh()
+            windowBackgroundValue = holder.acceptedWindowBackground()
             lastOutcome = "场景拒绝：${holder.lastSceneOutcome()}"
             revisionValue += 1
         }
@@ -1020,7 +1851,53 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         return section
     }
 
+    /// Navigate the accepted generated outline. The common scroll-area key
+    /// channel brings the directional intent here; every target is read from
+    /// accepted instances, so a public replacement or rejected candidate never
+    /// makes an old row key address a new control. Expansion still enters the
+    /// same owner action as pointer and AX activation.
+    private func navigateAcceptedControlTree(direction: String): CjguiComposableUiDispatchResult {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return CjguiComposableUiDispatchResult(false)
+        }
+        var groupSemantic = ""
+        var leafSemantic = ""
+        var groupExpanded = false
+        for (instance in cjguiGeneratedUiAcceptedInstances(window, holder)) {
+            if (instance.key == "controlGroup" && instance.controlRole == "row" && instance.controlEnabled) {
+                groupSemantic = instance.semanticId
+                groupExpanded = instance.controlExpanded
+            } else if (instance.key == "controlLeaf" && instance.controlRole == "row" &&
+                instance.controlEnabled) {
+                leafSemantic = instance.semanticId
+            }
+        }
+        if (groupSemantic.size == 0) { return CjguiComposableUiDispatchResult(false) }
+        let focused = window.windowProgress().focusedControlId
+        if (direction == "right" && focused == groupSemantic && !groupExpanded) {
+            return CjguiComposableUiDispatchResult(executeAction("CONTROL_TREE_GROUP", "controlGroup").applied)
+        }
+        if (direction == "left" && focused == groupSemantic && groupExpanded) {
+            return CjguiComposableUiDispatchResult(executeAction("CONTROL_TREE_GROUP", "controlGroup").applied)
+        }
+        let target = if (direction == "up" || direction == "home" || direction == "page_up" ||
+            (direction == "left" && focused == leafSemantic)) {
+            groupSemantic
+        } else if (direction == "down" || direction == "end" || direction == "page_down" ||
+            (direction == "right" && focused == groupSemantic && groupExpanded)) {
+            if (groupExpanded && leafSemantic.size > 0) { leafSemantic } else { groupSemantic }
+        } else {
+            ""
+        }
+        if (target.size == 0 || target == focused) { return CjguiComposableUiDispatchResult(false) }
+        return CjguiComposableUiDispatchResult(window.focusAcceptedSemanticNode(target))
+    }
+
     public func handleEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == 35 && event.node.nodeId == holder.nodeIdForKey("controlOutline")) {
+            return navigateAcceptedControlTree(event.text)
+        }
         // One public adapter resolves the raw control event into a field edit
         // (with the fingerprint owner binding the accepted node carried) or a
         // declared action. It also serves COMPOSITE elements: a card field is not

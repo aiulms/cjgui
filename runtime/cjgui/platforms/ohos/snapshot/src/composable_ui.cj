@@ -3852,16 +3852,19 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
 /// role once brings hover/pressed/focused/disabled along. Old explicit
 /// `style`+`interactionStyle` parameters remain fully compatible; the bound
 /// value's fields install in the same order as the explicit pair.
-// NODE ID SPACE (measured 2026-09-25, cost two rounds):
-//   * ids <  200  -- ordinary controls. A button here activates normally.
-//   * ids >= 200  -- the PRESENTATION / POINTER space (text fragments, table cells,
-//                    notices). A CONTROL created with an id >= 200 renders and even
-//                    reports a rect, but NEVER activates: the click is routed on the
-//                    pointer/text path instead. Two conditional buttons at 300/301 were
-//                    dead for exactly this reason, and the same ids in the status bar made
-//                    it look like "the status bar cannot take clicks", which was wrong.
-// Keep control ids below 200. A product that needs a high-range id for data (fragments,
-// cells) must pick its control ids from the low range.
+// NODE IDS ARE OPAQUE IDENTITIES, NOT A PROTOCOL (corrected 2026-09-27).
+// A press is routed by the node's KIND plus its `isInteractive` / `isReadOnly` flags
+// (`CjguiComposableNodeIsPressable` in the native renderer), never by the numeric value of
+// `nodeId`. The one id rule the framework enforces is UNIQUENESS: a scene with a duplicated id
+// is rejected by name (`duplicate_node_id`), because a hit test and every later event would
+// otherwise be ambiguous.
+// Range conventions (e.g. "chrome below 1000, document fragments above it") belong to the
+// PRODUCT, which routes its own pointer events by those ranges. A control whose id lands inside
+// a range the product claims before its activate handler runs has its press consumed there; that
+// is a product-side allocation rule, not a framework id space. (Measured 2026-09-25: two
+// buttons at 312/313 never activated while identical ones at 116/117 did -- the product's own
+// fragment router claimed 312/313 first. Recorded in Pharos Mark's
+// `packages/app_services/src/node_id_ranges.cj`.)
 public func cjguiComposableButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
     resourceId: Int64, boundStyle: CjguiComposableUiBoundStyle, enabled!: Bool = true,
     operationActionName!: String = "", operationResourceId!: Int64 = -1,

@@ -51,7 +51,7 @@ is_system_lib() {
     libhilog.so|libhilog_ndk.z.so) return 0 ;;
     libhitrace.so|libhitrace_ndk.z.so) return 0 ;;
     libace_napi.z.so|libace_ndk.z.so) return 0 ;;
-    libnative_drawing.so|libnative_window.so) return 0 ;;
+    libnative_drawing.so|libnative_window.so|libimage_source.so|libpixelmap.so) return 0 ;;
     libkit.*.so) return 0 ;;
     # libohos.*.so 由系统 ArkTS 运行时提供（SDK 内是编译桩，入包会遮蔽真身）。
     libohos.*.so) return 0 ;;
@@ -59,10 +59,13 @@ is_system_lib() {
   return 1
 }
 
-# 应用自身必须产出的库（入口、核心、共享操作核心、应用、传输）
+# 应用自身必须产出的库（入口、核心、共享操作核心、应用、传输）。
+# 应用包名可变（第六次复核第 5 项：独立消费者），由 CJGUI_APP_PKG_LIB
+# 指定 lib<包名>.so；默认仍是设置计数示例。
+APP_PKG_LIB="${CJGUI_APP_PKG_LIB:-libcjgui_settings_counter_application.so}"
 OWN_LIBS=(
   libentry.so libcjgui_app.so libcjgui.so
-  libcjgui_shared_operation_core.so libcjgui_settings_counter_application.so
+  libcjgui_shared_operation_core.so "${APP_PKG_LIB}"
   libcjgui_ohos_transport.so
 )
 
@@ -173,24 +176,16 @@ else
   FAIL=1
 fi
 
-# 引用契约断言（第六次复核第 1 项 / Sol Q3）：libnative_window.so 的 sysroot
-# shim 遮蔽平台真身，真机产物必须不含；模拟器镜像无平台实现，产物必须携带。
-SHIM_IN_HAP=$(unzip -l "$HAP_PATH" 2>/dev/null | grep -c 'arm64-v8a/libnative_window.so' || true)
-if [ "${CJGUI_DEVICE_PACKAGING:-0}" = "1" ]; then
-  if [ "${SHIM_IN_HAP:-0}" != "0" ]; then
-    emit "  PRODUCT-FAIL 真机打包不得携带 libnative_window.so（sysroot shim 会遮蔽平台实现）"
+# These NDK libraries are linked at build time and resolved from the target
+# system at runtime. A packaged SDK link stub can mask the real implementation.
+for system_link_lib in libnative_window.so libnative_drawing.so libimage_source.so libpixelmap.so; do
+  if present_contains "$system_link_lib"; then
+    emit "  PRODUCT-FAIL HAP 携带 ${system_link_lib}，遮蔽系统运行库"
     FAIL=1
   else
-    emit "  OK   真机产物不含 libnative_window.so（平台实现可用，运行时 VerifiedNativeRef）"
+    emit "  OK   HAP 不携带 ${system_link_lib}（运行时仍需核对系统符号来源）"
   fi
-else
-  if [ "${SHIM_IN_HAP:-0}" = "0" ]; then
-    emit "  PRODUCT-FAIL 模拟器镜像无 libnative_window.so：不携带 shim 则 NEEDED 无法解析"
-    FAIL=1
-  else
-    emit "  OK   模拟器产物携带 libnative_window.so shim（运行时判定 KnownShimNoRef，引用能力不可用）"
-  fi
-fi
+done
 
 emit ""
 if [ "$FAIL" = "0" ]; then

@@ -10,6 +10,7 @@ DESTINATION="$1"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPOSITORY_ROOT="$(cd "$RUNTIME_DIR/../.." && pwd)"
+source "$RUNTIME_DIR/native/scripts/lib_cjgui_source_set.sh"
 if [[ -e "$DESTINATION" ]]; then
   print -u2 -- "cjgui preview: destination already exists: $DESTINATION"
   exit 2
@@ -49,25 +50,7 @@ for license_file in "${LICENSE_FILES[@]}"; do
   cp "$REPOSITORY_ROOT/$license_file" "$FRAMEWORK_DIR/shared_operation_core/$license_file"
 done
 
-# Keep only the implementation that backs today's public composable-window
-# surface. Historical internal probes and unrelated runtime sketches are not
-# a preview SDK dependency. Add a file here only when its exported type is
-# needed by one of these public entry points.
-typeset -a PREVIEW_CJGUI_SOURCES
-PREVIEW_CJGUI_SOURCES=(
-  composable_ui.cj
-  composable_ui_component_instance.cj
-  composable_vector_graphics.cj
-  composable_vector_graphics_component.cj
-  composable_ui_window.cj
-  composable_ui_tree.cj
-  composable_ui_generated.cj
-  composable_ui_named_style.cj
-  composable_ui_composite_component.cj
-  macos_application_host.cj
-  runtime_renderer_session.cj
-)
-for source_name in "${PREVIEW_CJGUI_SOURCES[@]}"; do
+for source_name in "${CJGUI_FRAMEWORK_SOURCE_NAMES[@]}" "${CJGUI_GENERATED_SOURCE_NAMES[@]}"; do
   cp "$RUNTIME_DIR/src/$source_name" "$FRAMEWORK_DIR/src/$source_name"
 done
 cp "$RUNTIME_DIR/shared_operation_core/cjpm.toml" "$FRAMEWORK_DIR/shared_operation_core/cjpm.toml"
@@ -90,6 +73,7 @@ PREVIEW_CORE_SOURCES=(
   shared_operation_list.cj
   shared_operation_transport.cj
   shared_operation_transfer.cj
+  shared_operation_image_owner.cj
   shared_text_document.cj
   shared_text_document_workspace.cj
   shared_text_document_file.cj
@@ -111,6 +95,7 @@ typeset -a PREVIEW_CONSUMERS
 PREVIEW_CONSUMERS=(
   "tree_outline_consumer:cjgui"
   "generated_panel_consumer:cjgui,cjgui_shared_operation_core"
+  "adaptive_layout_public_consumer:cjgui,cjgui_shared_operation_core"
   "rule_set_window_app:cjgui,cjgui_shared_operation_core,cjgui_rule_set_application"
 )
 mkdir -p "$STAGING_DIR/consumers"
@@ -135,6 +120,12 @@ for consumer_spec in "${PREVIEW_CONSUMERS[@]}"; do
   mkdir -p "$consumer_target"
   cp "$consumer_source/cjpm.toml" "$consumer_source/run.sh" "$consumer_source/cjgui_macos_app.sh" "$consumer_target/" 2>/dev/null || true
   cp -R "$consumer_source/src" "$consumer_target/src"
+  if [[ "$consumer_name" == "generated_panel_consumer" ]]; then
+    cp "$consumer_source/verify_generated_effect_candidates.py" "$consumer_target/"
+    cp "$consumer_source/verify_public_effect_observation.py" "$consumer_target/"
+    cp "$consumer_source/verify_public_window_material.py" "$consumer_target/"
+    cp "$consumer_source/verify_generated_diagnostics.py" "$consumer_target/"
+  fi
   # The exported launcher lives under framework/cjgui/scripts; point the
   # consumer runner at it so the export root is runnable by itself.
   if [[ -f "$consumer_target/run.sh" ]]; then

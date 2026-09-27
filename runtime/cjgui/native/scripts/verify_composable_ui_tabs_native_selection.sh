@@ -4,6 +4,9 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 runtime_dir="$(cd "$script_dir/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$runtime_dir" false)}")
 sdkroot_path="$(xcrun --sdk macosx --show-sdk-path)"
 output_dir="${CJGUI_TABS_NATIVE_SELECTION_TMPDIR:-/private/tmp/cjgui-tabs-native-selection}"
 mkdir -p "$output_dir/native"
@@ -23,11 +26,7 @@ ar rcs "$output_dir/native/libcjgui_tabs_native_selection.a" \
 
 cjc --sysroot "$sdkroot_path" \
   --import-path "$runtime_dir/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$runtime_dir/src/runtime_renderer_session.cj" \
-  "$runtime_dir/src/composable_ui.cj" \
-  "$runtime_dir/src/composable_ui_component_instance.cj" \
-  "$runtime_dir/src/composable_ui_window.cj" \
-  "$runtime_dir/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$runtime_dir/probe/composable_ui_tabs_native_selection_probe.cj" \
   -L "$runtime_dir/shared_operation_core/target/release/cjgui_shared_operation_core" \
   -lcjgui_shared_operation_core \

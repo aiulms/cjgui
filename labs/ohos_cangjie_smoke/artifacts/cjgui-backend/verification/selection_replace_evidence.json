@@ -1,0 +1,32 @@
+[
+  {
+    "check": "S1 基线提交精确",
+    "actual": "选区基线甲乙丙",
+    "expected": "选区基线甲乙丙",
+    "pass": true
+  },
+  {
+    "check": "S2a 系统全选产生非空选区事件（历史 FAIL#1）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "S2b 选区替换后 owner 读回精确（历史 FAIL#2）",
+    "actual": "替换后文本",
+    "expected": "替换后文本",
+    "pass": true
+  },
+  {
+    "check": "S3a 系统全选非空选区（第二次）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "S3b 空名被域规则拒绝，owner 保持原值",
+    "actual": "替换后文本",
+    "expected": "替换后文本",
+    "pass": true
+  }
+]

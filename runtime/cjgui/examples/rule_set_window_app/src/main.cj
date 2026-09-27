@@ -196,7 +196,7 @@ class CjguiRuleSetVirtualListSource <: CjguiComposableUiVariableHeightListSource
 /// A normal consumer of the experimental composable window. The component
 /// tree deliberately lives here, beside the rule-set choices and actions;
 /// native code receives no rule field names or fixed form layout.
-private class CjguiRuleSetComposableController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiDataTransferProvider {
+private class CjguiRuleSetComposableController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiDataTransferProvider & CjguiComposableUiPlatformThemeConsumer {
     private let domain: CjguiRuleSetEditingDomain
     private let listState: CjguiComposableUiVirtualListState
     private let componentRegistry: CjguiComposableUiComponentRegistry
@@ -277,6 +277,18 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         // capture below uses its narrower split owner revision instead.
         return domain.snapshot().version.saturatingAdd(localRevision).saturatingAdd(
             generatedRegion.revision()).saturatingAdd(treePanel.viewRevision())
+    }
+
+    public func applyPlatformColorScheme(scheme: CjguiComposableUiColorScheme): Bool {
+        let dark = CjguiComposableUiPlatformStateCodec.colorSchemeToken(scheme) ==
+            CJGUI_COMPOSABLE_UI_PLATFORM_COLOR_SCHEME_DARK
+        if (usesDarkAppearance == dark) {
+            return false
+        }
+        usesDarkAppearance = dark
+        let _ = generatedRegion.setAccentAppearance(dark)
+        localRevision += 1
+        return true
     }
 
     /// The generated region is the application-side owner of the accepted

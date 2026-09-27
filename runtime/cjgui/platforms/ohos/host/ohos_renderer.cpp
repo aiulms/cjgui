@@ -218,7 +218,82 @@ constexpr auto kRenderWaitTimeout = std::chrono::milliseconds{2000};
 // pump_event 的等待上限与 macOS 侧一致（16ms 量级），保证仓颉 owner 及时拿回控制权。
 constexpr auto kPumpWaitMax = std::chrono::milliseconds{16};
 
+// 第七次复核链2（Astra Q4）：平台调用生命周期计数——Create/Draw/Flush/
+// Destroy 的 enter/exit 按代际记录，供「回调返回边界后零悬空使用」验收。
+// enter 在调用前递增，exit 在调用返回后递增；enter!=exit 即在途访问。
+// 计数本身无条件编译（使用点在生产路径上）；packed 导出仅在测试变体。
+struct PlatformCallCounters {
+    std::atomic<int64_t> createEnter{0}, createExit{0};
+    std::atomic<int64_t> drawEnter{0}, drawExit{0};
+    std::atomic<int64_t> flushEnter{0}, flushExit{0};
+    std::atomic<int64_t> destroyEnter{0}, destroyExit{0};
+    std::atomic<uint64_t> lastAccessGen{0};
+    std::atomic<int64_t> postBoundaryAttempts{0};  // 返回边界后访问尝试
+};
+PlatformCallCounters g_pcCalls;
+
+// 第九次复核 A1：backend 类型固定在资源句柄上——创建时决定、销毁前不变；
+// ARM/DISARM 只影响后续准入，模式切换不改变既有对象的释放器。
+enum class SurfaceBackend : int32_t { None = 0, Real = 1, Stub = 2 };
+
 #ifdef CJGUI_OHOS_TEST_GATES
+// ---------------------------------------------------------------------------
+// 链2（Astra Q4）：可注入平台调用替身适配器。
+// 替身拥有自身对象（OhosStubSurface，由替身表管理生命周期），**不接收真实
+// XComponent/window 裸指针**（present 入参 window 在替身路径中原样丢弃）；
+// Create/Draw/Flush/Destroy 按**身份（generation）** enter/exit 计数，并可按
+// (阶段, 身份) 阻塞——制造 retire-during-held 确定性交错。替身租约
+// （g_stubLeaseGen）只 feed 生产 leaseValid 检查点（绘制前/Flush 前/许可后
+// 复核），不进宿主 surface 表、不发布 degradedActive。仅测试变体编入。
+struct OhosStubSurface {
+    uint64_t generation;
+    int32_t width;
+    int32_t height;
+    bool flushed;
+};
+struct OhosStubCounts {
+    std::atomic<int64_t> createEnter{0}, createExit{0};
+    std::atomic<int64_t> drawEnter{0}, drawExit{0};
+    std::atomic<int64_t> flushEnter{0}, flushExit{0};
+    std::atomic<int64_t> destroyEnter{0}, destroyExit{0};
+};
+constexpr int kOhosStubGenSlots = 8;   // 测试身份取 gen%8；探针用小代号
+OhosStubCounts g_stubCounts[kOhosStubGenSlots];
+std::mutex g_stubMutex;
+std::vector<OhosStubSurface *> g_stubLive;   // 替身拥有的活对象
+std::atomic<bool> g_stubArmed{false};
+std::atomic<uint64_t> g_stubLeaseGen{0};
+// 身份阻塞：命中 (stage, gen) 的调用在渲染线程 park（超时自动放行只作清理，
+// 语义由调用点后续的生产检查仲裁）。阶段：0=create(许可后/复核前)
+// 1=create_return(返回后) 2=draw 3=flush。
+std::mutex g_stubHoldMutex;
+std::condition_variable g_stubHoldCv;
+std::atomic<int> g_stubHoldStage{-1};
+std::atomic<uint64_t> g_stubHoldGen{0};
+std::atomic<int32_t> g_stubHoldMs{0};
+std::atomic<bool> g_stubHoldActive{false};
+std::atomic<bool> g_stubHoldRelease{false};
+
+inline int ohosStubSlot(uint64_t gen) { return static_cast<int>(gen % kOhosStubGenSlots); }
+
+void cjguiOhosStubHold(int stage, uint64_t gen)
+{
+    if (!g_stubArmed.load()) return;
+    if (g_stubHoldStage.load() != stage || g_stubHoldGen.load() != gen) return;
+    g_stubHoldActive.store(true);
+    auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(g_stubHoldMs.load());
+    std::unique_lock<std::mutex> lk(g_stubHoldMutex);
+    while (!g_stubHoldRelease.load() && std::chrono::steady_clock::now() < deadline) {
+        g_stubHoldCv.wait_for(lk, std::chrono::milliseconds(20));
+    }
+    g_stubHoldActive.store(false);
+    // 一次性：命中即解除配置，防止后续代误停。
+    g_stubHoldStage.store(-1);
+    g_stubHoldGen.store(0);
+    g_stubHoldRelease.store(false);
+}
+
 // ---------------------------------------------------------------------------
 // 受控测试闸门（仅 -DCJGUI_OHOS_TEST_GATES 的测试构建变体编译）。
 // 目的：用生产路径 + 可控时序制造超时/取消交错/退役竞态，不必等待模拟器
@@ -229,6 +304,7 @@ std::condition_variable g_gateCv;
 int g_gateFlushHoldMs = 0;         // Committing 内阻塞时长（制造 committing 超时）
 int g_gateFlushHoldRemaining = 0;  // 还要按住几次 Flush；-1 = 每次按住（默认 0 = 不按）
 int g_gateDequeueHoldMs = 0;       // 出队后执行前阻塞（制造 queued 超时）
+bool g_gateStopCancelled = false;  // 本 renderer 实例停止后，旧代闸门不得再持有任务
 int32_t g_gateFlushCount = 0;      // 统计真实进入 Flush 的次数
 int32_t g_gateFlushHeldCount = 0;  // 统计闸门**实际按住**的次数（取证用）
 // A1 矩阵注入：fail-next 在提交执行早期强制该票以非 OK 终态结束（生产结算
@@ -260,6 +336,30 @@ int32_t g_gateCreateOkCount = 0;
 int32_t g_gateDrawCount = 0;
 int32_t g_gateAdmissionCount = 0;
 
+// 第七次复核 A4：各阶段「真实 held」计数——只有闸门**实际按住**时才递增
+// （到达但未武装不计入）。绑定本实例生命周期，经 packed 导出供探针断言，
+// 替代易被轮转丢失的 hilog 见证。
+// 槽位：0=permit 1=create 2=create_return 3=draw 4=admission 5=flush 6=dequeue
+int32_t g_gateStageHeld[7] = {0, 0, 0, 0, 0, 0, 0};
+void gateStageHeldBump(int slot)
+{
+    if (slot >= 0 && slot < 7) {
+        g_gateStageHeld[slot] += 1;
+    }
+}
+int gateStageHeldSlot(const char *what)
+{
+    // strcmp 链（避免引入 <cstring> 之外的依赖；what 来自本文件字面量）。
+    if (std::strcmp(what, "permit") == 0) return 0;
+    if (std::strcmp(what, "create_before") == 0) return 1;
+    if (std::strcmp(what, "create_return") == 0) return 2;
+    if (std::strcmp(what, "draw") == 0) return 3;
+    if (std::strcmp(what, "admission") == 0) return 4;
+    if (std::strcmp(what, "flush") == 0) return 5;
+    if (std::strcmp(what, "dequeue") == 0) return 6;
+    return -1;
+}
+
 // 闸门必须在被按住的那一次 Flush 前生效、并在按住次数用尽后自动解除：
 // 否则首帧超时后每一帧都会继续超时，窗口永远到不了 Ready，矩阵只剩
 // 「停在 Pending」一个观测点，无法验证 Pending→Accepted 的推进。
@@ -267,7 +367,7 @@ void cjguiOhosTestGateBeforeFlush()
 {
     std::unique_lock<std::mutex> g(g_gateMutex);
     g_gateFlushCount += 1;
-    if (g_gateFlushHoldMs <= 0 || g_gateFlushHoldRemaining == 0) {
+    if (g_gateStopCancelled || g_gateFlushHoldMs <= 0 || g_gateFlushHoldRemaining == 0) {
         return;
     }
     if (g_gateFlushHoldRemaining > 0) {
@@ -277,14 +377,30 @@ void cjguiOhosTestGateBeforeFlush()
     // 直接留证：闸门**确实**按住了这一次 Flush（而不是仅仅被请求过）。
     RLOGW("test gate holding flush ms=%{public}d remaining=%{public}d held=%{public}d",
           g_gateFlushHoldMs, g_gateFlushHoldRemaining, g_gateFlushHeldCount);
-    g_gateCv.wait_for(g, std::chrono::milliseconds(g_gateFlushHoldMs));
+    gateStageHeldBump(5);
+    // 第七次复核 A4：deadline 循环等待——共享 cv 的提前通知/伪唤醒不得
+    // 提前放行；release（holdMs→0）才允许提前结束。
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(g_gateFlushHoldMs);
+    while (!g_gateStopCancelled && g_gateFlushHoldMs > 0 && std::chrono::steady_clock::now() < deadline) {
+        g_gateCv.wait_until(g, deadline);
+    }
 }
 
-void cjguiOhosTestGateBeforeExecute()
+void cjguiOhosTestGateBeforeExecute(uint64_t session, uint64_t ticketId, uint64_t generation)
 {
     std::unique_lock<std::mutex> g(g_gateMutex);
-    if (g_gateDequeueHoldMs > 0) {
-        g_gateCv.wait_for(g, std::chrono::milliseconds(g_gateDequeueHoldMs));
+    if (!g_gateStopCancelled && g_gateDequeueHoldMs > 0) {
+        gateStageHeldBump(6);
+        RLOGW("test gate holding dequeue session=%{public}llu ticket=%{public}llu gen=%{public}llu",
+              static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
+              static_cast<unsigned long long>(generation));
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(g_gateDequeueHoldMs);
+        while (!g_gateStopCancelled && g_gateDequeueHoldMs > 0 && std::chrono::steady_clock::now() < deadline) {
+            g_gateCv.wait_until(g, deadline);
+        }
+        RLOGW("test gate dequeue released session=%{public}llu ticket=%{public}llu gen=%{public}llu",
+              static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
+              static_cast<unsigned long long>(generation));
     }
 }
 
@@ -320,7 +436,7 @@ bool cjguiOhosTestGateConsumeFailNextAck()
 void cjguiOhosTestGateHold(const char *what, int &holdMs, int &remaining)
 {
     std::unique_lock<std::mutex> g(g_gateMutex);
-    if (holdMs <= 0 || remaining == 0) {
+    if (g_gateStopCancelled || holdMs <= 0 || remaining == 0) {
         return;
     }
     RLOGW("test gate holding %{public}s ms=%{public}d remaining=%{public}d",
@@ -328,7 +444,28 @@ void cjguiOhosTestGateHold(const char *what, int &holdMs, int &remaining)
     if (remaining > 0) {
         remaining -= 1;
     }
-    g_gateCv.wait_for(g, std::chrono::milliseconds(holdMs));
+    gateStageHeldBump(gateStageHeldSlot(what));
+    // 第七次复核 A4：deadline 循环——共享 cv 的提前通知/伪唤醒不可提前
+    // 放行；release（holdMs→0，gateSetHold 通知）才允许提前结束。
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(holdMs);
+    while (!g_gateStopCancelled && holdMs > 0 && std::chrono::steady_clock::now() < deadline) {
+        g_gateCv.wait_until(g, deadline);
+    }
+}
+
+void cjguiOhosTestGateBeginRendererEpoch()
+{
+    std::lock_guard<std::mutex> g(g_gateMutex);
+    g_gateStopCancelled = false;
+}
+
+void cjguiOhosTestGateCancelRendererEpoch()
+{
+    {
+        std::lock_guard<std::mutex> g(g_gateMutex);
+        g_gateStopCancelled = true;
+    }
+    g_gateCv.notify_all();
 }
 
 int32_t cjguiOhosTestFlushCount()
@@ -338,7 +475,9 @@ int32_t cjguiOhosTestFlushCount()
 }
 #else
 #define cjguiOhosTestGateBeforeFlush() ((void)0)
-#define cjguiOhosTestGateBeforeExecute() ((void)0)
+#define cjguiOhosTestGateBeforeExecute(session, ticketId, generation) ((void)0)
+#define cjguiOhosTestGateBeginRendererEpoch() ((void)0)
+#define cjguiOhosTestGateCancelRendererEpoch() ((void)0)
 static int32_t cjguiOhosTestFlushCount() { return 0; }
 #endif
 
@@ -516,6 +655,47 @@ extern "C" int32_t cjgui_ohos_test_gate_a2_counts(int32_t *out6)
     (void)out6; return -1;
 #endif
 }
+
+// 第七次复核 A4：各阶段真实 held 计数的 packed 读数（每槽 9 位饱和，
+// 槽位见 gateStageHeldSlot；顺序 permit/create/create_return/draw/
+// admission/flush/dequeue）。探针据此断言「该阶段确实被按住」，不再
+// 依赖可被轮转丢弃的 hilog 见证。
+extern "C" int64_t cjgui_ohos_test_gate_stage_held_packed(void)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    std::lock_guard<std::mutex> g(g_gateMutex);
+    int64_t packed = 0;
+    for (int i = 0; i < 7; ++i) {
+        int32_t v = g_gateStageHeld[i] > 511 ? 511 : g_gateStageHeld[i];
+        packed |= (static_cast<int64_t>(v) & 0x1FF) << (i * 9);
+    }
+    return packed;
+#else
+    return -1;
+#endif
+}
+
+// 第七次复核链2（Astra Q4）：平台调用生命周期计数 packed 读数——
+// 每 8 位饱和：createE/createX/drawE/drawX/flushE/flushX/destroyE/destroyX。
+// 验收断言：destroy 后 createE==createX（无在途）、返回边界后访问尝试为 0。
+extern "C" int64_t cjgui_ohos_test_platform_call_packed(void)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    int64_t packed = 0;
+    int64_t vals[8] = {
+        g_pcCalls.createEnter.load(), g_pcCalls.createExit.load(),
+        g_pcCalls.drawEnter.load(), g_pcCalls.drawExit.load(),
+        g_pcCalls.flushEnter.load(), g_pcCalls.flushExit.load(),
+        g_pcCalls.destroyEnter.load(), g_pcCalls.destroyExit.load()};
+    for (int i = 0; i < 8; ++i) {
+        int64_t v = vals[i] > 254 ? 254 : vals[i];
+        packed |= (v & 0xFF) << (i * 8);
+    }
+    return packed;
+#else
+    return -1;
+#endif
+}
 // M3 诊断：当前仍处于武装态的 fail-next 计数（区分「setter 未写入/状态副本
 // 分裂」与「消费点未命中」——派发后读到 1 而消费未发生即消费点问题）。
 extern "C" int32_t cjgui_ohos_test_gate_fail_armed(void)
@@ -626,7 +806,7 @@ struct Session {
     uint64_t loggedResizeVersion = 0;
 
     // 平台编辑缓冲：交互投影（非业务 owner）。偏移单位 = UTF-16 码元。
-    // 编辑值以本缓冲为准；owner 接受 28 事件后的新场景反向同步（预览激活时延后）。
+    // 编辑值以本缓冲为准；owner 的新场景必须先与活上下文对账，即使有预览。
     bool editing = false;
     uint64_t editingNodeId = 0;
     int64_t editingResourceId = -1;
@@ -638,10 +818,15 @@ struct Session {
     uint32_t selEndUtf16 = 0;
     // C selection：长按计时（文本节点 BEGIN 落账，END 判时长）；0 = 无按下。
     int64_t textPressBeginMs = 0;
-    std::u16string previewText;   // IME 组合态预览（纯视觉，不进 owner）
+    std::u16string previewText;   // 完整可见草稿（纯视觉，不进 owner）
     uint32_t previewStart = 0;
     uint32_t previewEnd = 0;
     bool previewActive = false;
+    // ArkUI PreviewText 的区间属于完整可见草稿，不是 editingText 的替换区间。
+    bool markedActive = false;
+    uint32_t markedStart = 0;
+    uint32_t markedEnd = 0;
+    bool markedCallbackObserved = false;
     bool pendingImeAttach = false;
     bool pendingImeDetach = false;
     // 框架主动结束编辑（点到别处/空白）时的失焦语义：未提交的组合预览必须
@@ -657,6 +842,8 @@ struct Session {
     double editingTapX = 0.0;
     bool editingTapPending = false;
     bool focusNotifyPending = false;
+    bool reconcileNotifyPending = false;
+    int64_t reconcileOldContextId = 0;
     // 通用文字代理上下文（不透明）：关联 session、节点/绑定、编辑代际与基版本。
     // 平台代理的每次延迟回调必须携带并校验它；不匹配的回调不得改写编辑状态。
     int64_t editingContextId = 0;
@@ -673,6 +860,9 @@ struct SessionTable {
 };
 
 SessionTable g_sessions;
+// 同一进程的 host STOP/RESTART 会重用 Session 槽；context 不可随槽重置而
+// 复用，否则旧 ArkTS end/submit 可以撞中新实例的相同数字。
+std::atomic<int64_t> g_nextEditingContextId{1};
 
 Session *lookupSessionLocked(uint64_t token)
 {
@@ -747,12 +937,27 @@ struct WaitableJob {
     {
         {
             std::lock_guard<std::mutex> g(mutex);
-            if (phase != JobPhase::Cancelled) {
+            if (phase != JobPhase::Cancelled && phase != JobPhase::Done) {
                 phase = JobPhase::Done;
                 status = result;
             }
         }
         cv.notify_all();
+    }
+
+    bool cancelBeforeCommit()
+    {
+        bool cancelled = false;
+        {
+            std::lock_guard<std::mutex> g(mutex);
+            if (phase == JobPhase::Queued || phase == JobPhase::Running) {
+                phase = JobPhase::Cancelled;
+                status = CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
+                cancelled = true;
+            }
+        }
+        if (cancelled) cv.notify_all();
+        return cancelled;
     }
 
     // 阶段快照（跨线程只读观察；不改变阶段）。
@@ -793,6 +998,8 @@ struct WaitableJob {
         }
         if (phase == JobPhase::Queued || phase == JobPhase::Running) {
             phase = JobPhase::Cancelled;
+            status = CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
+            cv.notify_all();
             return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
         }
         // committing：平台提交已不可撤销
@@ -816,7 +1023,7 @@ struct WaitableJob {
     bool acquireCommitPermission()
     {
         std::lock_guard<std::mutex> g(mutex);
-        if (phase == JobPhase::Cancelled || phase == JobPhase::Done) return false;
+        if (phase != JobPhase::Queued && phase != JobPhase::Running) return false;
         phase = JobPhase::Committing;
         return true;
     }
@@ -850,10 +1057,13 @@ struct CaretHitTestJob : WaitableJob {
 
 struct PresentJob : WaitableJob {
     PresentJob() : WaitableJob(JobKind::Present) {}
+    uint64_t session = 0;
+    uint64_t ticketId = 0;
     std::vector<SceneNode> nodes;
     uint64_t projectionVersion = 0;
     void *window = nullptr;
     uint64_t generation = 0;
+    uint64_t geometryRevision = 0;
     int32_t width = 0;
     int32_t height = 0;
     double clearR = 0, clearG = 0, clearB = 0, clearA = 1;
@@ -909,15 +1119,20 @@ constexpr int32_t kSettlementStillCommitting = 3;
 struct RenderThread {
     std::thread thread;
     std::mutex lock;
+    std::mutex shutdownJoinLock;
     std::condition_variable cv;
     std::deque<JobRef> jobs;
+    JobRef activeJob;
     bool running = false;
     bool stopping = false;
+    std::atomic<int32_t> lastShutdownStatus{0};
 
     OH_Drawing_GpuContext *gpuContext = nullptr;
     void *boundWindow = nullptr;
     uint64_t boundGeneration = 0;
     OH_Drawing_Surface *surface = nullptr;
+    // 第九次复核 A1：句柄的 backend 与句柄同生共死；释放器由它决定。
+    SurfaceBackend surfaceBackend = SurfaceBackend::None;
     int32_t surfaceW = 0;
     int32_t surfaceH = 0;
 
@@ -943,9 +1158,19 @@ struct RenderThread {
     std::atomic<int64_t> permitsAcquired{0};   // 跨线程只读取证
     std::atomic<int64_t> permitsReleased{0};   // 跨线程只读取证
 
+    // 第九次复核 A1：许可记账 backend 以**取得时**的准入模式为准（ARM/DISARM
+    // 切换不改变既有许可的记账路径）。
+    SurfaceBackend permitBackend = SurfaceBackend::None;
     bool acquireSurfacePermit(uint64_t generation)
     {
         if (generation == 0) return false;
+        // 第九次复核 A3：替身与真实路径共用同一套本地记账许可
+        //（宿主无 permit 入口时 renderer 记账；backend 随句柄记录）。
+#ifdef CJGUI_OHOS_TEST_GATES
+        permitBackend = g_stubArmed.load() ? SurfaceBackend::Stub : SurfaceBackend::Real;
+#else
+        permitBackend = SurfaceBackend::Real;
+#endif
         if (!g_ingress.surfacePermitAcquire) {
             permitGeneration = generation;   // 无宿主（测试环境）：只做本地记账
             return true;
@@ -970,6 +1195,14 @@ struct RenderThread {
     int32_t releaseSurfacePermit()
     {
         int32_t remaining = 0;
+#ifdef CJGUI_OHOS_TEST_GATES
+        // 链2 替身许可归还：只清本地记账（与替身取得对称；按取得时 backend）。
+        if (permitBackend == SurfaceBackend::Stub && permitGeneration != 0) {
+            permitGeneration = 0;
+            permitsReleased.fetch_add(1);
+            return 0;
+        }
+#endif
         if (permitGeneration != 0) {
             if (g_ingress.surfacePermitRelease) {
                 remaining = g_ingress.surfacePermitRelease(permitGeneration);
@@ -982,6 +1215,7 @@ struct RenderThread {
         permitAppInstance = 0;
         permitComponentInstance = 0;
         permitGeometryRevision = 0;
+        permitBackend = SurfaceBackend::None;
         return remaining;
     }
 
@@ -1003,25 +1237,30 @@ struct RenderThread {
     void ensureStarted()
     {
         std::lock_guard<std::mutex> g(lock);
-        if (running) return;
+        if (running || stopping) return;
         running = true;
-        stopping = false;
         // 上一轮已退出的线程必须先 join，避免 std::thread 赋值时 terminate。
         if (thread.joinable()) thread.join();
+        cjguiOhosTestGateBeginRendererEpoch();
         thread = std::thread([this]() { run(); });
     }
 
     void post(const JobRef &job)
     {
         ensureStarted();
+        bool rejected = false;
         {
             std::lock_guard<std::mutex> g(lock);
             if (stopping) {
                 // 停机中：拒收并立即以取消终态结算，调用方不会等待超时。
-                job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
-                return;
+                rejected = true;
+            } else {
+                jobs.push_back(job);
             }
-            jobs.push_back(job);
+        }
+        if (rejected) {
+            job->cancelBeforeCommit();
+            return;
         }
         cv.notify_all();
     }
@@ -1033,8 +1272,15 @@ struct RenderThread {
             cv.wait(g, [this]() { return !jobs.empty(); });
             JobRef job = jobs.front();
             jobs.pop_front();
+            activeJob = job;
             g.unlock();
-            cjguiOhosTestGateBeforeExecute();
+            // 出队闸门只作用于真实 PresentJob；停机和 teardown 不能再次被
+            // 测试闸门阻塞。票号由投递点绑定，便于核对同一票的阶段和终态。
+            if (job->kind == JobKind::Present) {
+                PresentJob *present = static_cast<PresentJob *>(job.get());
+                cjguiOhosTestGateBeforeExecute(present->session, present->ticketId,
+                                               present->generation);
+            }
             if (job->kind == JobKind::Shutdown) {
                 teardownSurface();
                 busyGeneration.store(0);
@@ -1048,8 +1294,8 @@ struct RenderThread {
                     pendingJob->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
                 }
                 jobs.clear();
+                activeJob.reset();
                 running = false;
-                stopping = false;
                 g.unlock();
                 job->finish(CJGUI_INTERNAL_RENDERER_OK);
                 g.lock();
@@ -1057,6 +1303,7 @@ struct RenderThread {
             }
             execute(job.get());   // 共享所有权：本函数返回即释放本线程这一份引用
             g.lock();
+            activeJob.reset();
         }
     }
 
@@ -1064,23 +1311,50 @@ struct RenderThread {
     // 复位启动身份。非渲染线程调用；返回真实终态而不是 Bool。
     CjguiInternalRendererStatus shutdownAndJoin()
     {
+        std::lock_guard<std::mutex> serial(shutdownJoinLock);
         JobRef job = std::make_shared<ShutdownJob>();
-        post(job);
+        std::vector<JobRef> cancelJobs;
+        {
+            std::lock_guard<std::mutex> g(lock);
+            // 重复关闭只复用上一次真实结果，不为它启动一个新工作线程。
+            if (!running && !thread.joinable()) {
+                return static_cast<CjguiInternalRendererStatus>(lastShutdownStatus.load());
+            }
+            stopping = true;
+            if (activeJob && activeJob->kind == JobKind::Present) cancelJobs.push_back(activeJob);
+            for (const JobRef &pendingJob : jobs) {
+                if (pendingJob->kind == JobKind::Present) cancelJobs.push_back(pendingJob);
+            }
+            // 不走 post：接单已经关闭，Shutdown 仍须作为本实例唯一终止任务入队。
+            jobs.push_back(job);
+        }
+        // 票据临界区独立于队列锁：Committing 不可撤销；其余任务有确定取消终态。
+        for (const JobRef &pendingJob : cancelJobs) pendingJob->cancelBeforeCommit();
+        // 本 renderer 实例的测试等待由停止所有者直接唤醒；不依赖已关闭的 owner 控制通道。
+        cjguiOhosTestGateCancelRendererEpoch();
+        cv.notify_all();
         std::unique_lock<std::mutex> g(job->mutex);
-        bool done = job->cv.wait_for(g, std::chrono::seconds{5}, [&job]() {
+        bool withinDeadline = job->cv.wait_for(g, std::chrono::seconds{5}, [&job]() {
             return job->phase == JobPhase::Done || job->phase == JobPhase::Cancelled;
         });
-        CjguiInternalRendererStatus result = done ? job->status : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         g.unlock();
         if (thread.joinable()) thread.join();
+        CjguiInternalRendererStatus result = job->phaseSnapshot() == JobPhase::Done
+            ? job->statusSnapshot() : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        if (!withinDeadline) {
+            RLOGW("renderer stop exceeded five-second settlement deadline; joined status=%{public}d",
+                  static_cast<int>(result));
+        }
         {
             std::lock_guard<std::mutex> gl(lock);
             jobs.clear();
+            activeJob.reset();
             running = false;
             stopping = false;
             hasLastFrame = false;
             lastNodes.clear();
         }
+        lastShutdownStatus.store(static_cast<int32_t>(result));
         return result;
     }
 
@@ -1090,8 +1364,27 @@ struct RenderThread {
     bool leaseValid(uint64_t generation)
     {
         if (generation == 0) return false;
+        // 第九次复核 A3：替身会话复用宿主 SurfaceRecord——租约由宿主表
+        // active 状态承载，本检查点直接走生产查询；退役仲裁点不变。
         if (!g_ingress.leaseValid) return true;   // 无租约观察（测试/无宿主）
         return g_ingress.leaseValid(generation) == 1;
+    }
+
+    // A geometry callback may reuse both the NativeWindow pointer and its
+    // dimensions. Compare the host's atomic surface snapshot as well as the
+    // generation; a stale frame must never become accepted for a new revision.
+    bool geometryMatches(void *window, uint64_t generation, int w, int h,
+                         uint64_t revision)
+    {
+        if (!g_ingress.surfaceActive) return true;
+        void *liveWindow = nullptr;
+        uint64_t liveGeneration = 0, liveRevision = 0;
+        int32_t liveW = 0, liveH = 0;
+        double liveDensity = 1.0;
+        return g_ingress.surfaceActive(&liveWindow, &liveGeneration, &liveW,
+                                       &liveH, &liveDensity, &liveRevision) == 1 &&
+            liveWindow == window && liveGeneration == generation &&
+            liveW == w && liveH == h && liveRevision == revision;
     }
 
     void execute(WaitableJob *job)
@@ -1130,6 +1423,49 @@ struct RenderThread {
     void executeRedraw()
     {
         if (!hasLastFrame || !surface) return;
+        // 第七次复核 B：无引用档下退役代的重绘同样不得触碰平台资源
+        // （SurfaceGetCanvas/SurfaceFlush 都作用在该代的 window 上）。
+        if (!leaseValid(boundGeneration)) {
+            RLOGW("redraw skipped on retired lease gen=%{public}llu",
+                  static_cast<unsigned long long>(boundGeneration));
+            return;
+        }
+        if (surfaceBackend == SurfaceBackend::Stub) {
+            // 第九次复核 A1：替身句柄的重绘由替身分派（身份计数），绝不把
+            // 替身假地址传入真实 GetCanvas/Flush——含 DISARM 后的旧句柄。
+#ifdef CJGUI_OHOS_TEST_GATES
+            g_stubCounts[ohosStubSlot(boundGeneration)].drawEnter.fetch_add(1);
+            g_stubCounts[ohosStubSlot(boundGeneration)].flushEnter.fetch_add(1);
+            g_stubCounts[ohosStubSlot(boundGeneration)].flushExit.fetch_add(1);
+            reinterpret_cast<OhosStubSurface *>(surface)->flushed = true;
+#endif
+            return;
+        }
+        if (surfaceBackend == SurfaceBackend::None) {
+            g_pcCalls.postBoundaryAttempts.fetch_add(1);
+            return;
+        }
+        if (!geometryMatches(boundWindow, boundGeneration, surfaceW, surfaceH,
+                             permitGeometryRevision)) {
+            // The keyboard can resize a live XComponent before the next owner
+            // scene is submitted. A preview redraw must rebind that same
+            // generation to its latest geometry; otherwise every draft frame
+            // is skipped until the eventual owner commit forces a PresentJob.
+            void *liveWindow = nullptr;
+            uint64_t liveGeneration = 0, liveRevision = 0;
+            int32_t liveW = 0, liveH = 0;
+            double liveDensity = 1.0;
+            if (!g_ingress.surfaceActive ||
+                g_ingress.surfaceActive(&liveWindow, &liveGeneration, &liveW,
+                                        &liveH, &liveDensity, &liveRevision) != 1 ||
+                liveWindow != boundWindow || liveGeneration != boundGeneration ||
+                !leaseValid(liveGeneration) ||
+                !ensureSurface(liveWindow, liveGeneration, liveW, liveH, liveRevision)) {
+                RLOGW("redraw skipped after geometry change gen=%{public}llu",
+                      static_cast<unsigned long long>(boundGeneration));
+                return;
+            }
+        }
         OH_Drawing_Canvas *canvas = OH_Drawing_SurfaceGetCanvas(surface);
         if (!canvas) return;
         OH_Drawing_Brush *bg = OH_Drawing_BrushCreate();
@@ -1145,6 +1481,12 @@ struct RenderThread {
                 drawNodeText(canvas, n);
             }
             OH_Drawing_CanvasRestore(canvas);
+        }
+        if (!leaseValid(boundGeneration) ||
+            !geometryMatches(boundWindow, boundGeneration, surfaceW, surfaceH,
+                             permitGeometryRevision)) {
+            teardownSurface(!leaseValid(boundGeneration));
+            return;
         }
         OH_Drawing_SurfaceFlush(surface);
     }
@@ -1236,18 +1578,12 @@ struct RenderThread {
             job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
             return;
         }
-#ifdef CJGUI_OHOS_TEST_GATES
-        // A2 闸门：取得许可后、创建前按住（反例 1：销毁重建落在许可窗口内）。
-        g_gatePermitCount += 1;
-        cjguiOhosTestGateHold("permit", g_gateHoldPermitMs, g_gateHoldPermitRemaining);
-        if (!leaseValid(job->generation)) {
-            RLOGW("present rejected after permit hold (retired during hold) gen=%{public}llu",
-                  static_cast<unsigned long long>(job->generation));
-            job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
-            return;
-        }
-#endif
-        if (!ensureSurface(job->window, job->generation, job->width, job->height)) {
+        // 第七次复核 B/Astra Q2：permit 闸门与 retire 仲裁已移入 ensureSurface
+        // （真 acquire 之后、SurfaceCreateOnScreen 之前），此处不再重复。
+        if (!geometryMatches(job->window, job->generation, job->width,
+                             job->height, job->geometryRevision) ||
+            !ensureSurface(job->window, job->generation, job->width,
+                           job->height, job->geometryRevision)) {
             job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
             return;
         }
@@ -1256,6 +1592,20 @@ struct RenderThread {
             job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
             return;
         }
+        if (surfaceBackend == SurfaceBackend::Stub) {
+            // 第九次复核 A1：替身句柄上的绘制由替身分派（身份计数；
+            // 身份阻塞制造「绘制窗口内退役」交错）——与 ARM 状态无关。
+#ifdef CJGUI_OHOS_TEST_GATES
+            cjguiOhosStubHold(2, job->generation);
+            g_stubCounts[ohosStubSlot(job->generation)].drawEnter.fetch_add(1);
+            g_stubCounts[ohosStubSlot(job->generation)].drawExit.fetch_add(1);
+#endif
+        } else if (surfaceBackend == SurfaceBackend::None) {
+            // 拦截器：无 backend 句柄不得触碰任何平台库。
+            g_pcCalls.postBoundaryAttempts.fetch_add(1);
+            job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
+            return;
+        } else {
         OH_Drawing_Canvas *canvas = OH_Drawing_SurfaceGetCanvas(surface);
         if (!canvas) {
             job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
@@ -1271,6 +1621,7 @@ struct RenderThread {
         g_gateDrawCount += 1;
         cjguiOhosTestGateHold("draw", g_gateHoldDrawMs, g_gateHoldDrawRemaining);
 #endif
+        g_pcCalls.drawEnter.fetch_add(1);
         for (const SceneNode &n : job->nodes) {
             if (n.pod.width <= 0 || n.pod.height <= 0) continue;
             OH_Drawing_CanvasSave(canvas);
@@ -1280,10 +1631,14 @@ struct RenderThread {
             }
             OH_Drawing_CanvasRestore(canvas);
         }
+        g_pcCalls.drawExit.fetch_add(1);
+        }   // 结束真实绘制 else 分支（替身分支已在上方计数返回同一汇合点）
 #ifdef CJGUI_OHOS_TEST_GATES
         // A2 闸门：最终提交准入前按住（反例 4：准入前销毁重建——旧代取消不得 Flush）。
         g_gateAdmissionCount += 1;
         cjguiOhosTestGateHold("admission", g_gateHoldAdmissionMs, g_gateHoldAdmissionRemaining);
+        // 链2：替身身份阻塞——提交准入前窗口（确定性 retire-during-held）。
+        cjguiOhosStubHold(4, job->generation);
 #endif
         // 提交许可：取消确认与进入 Committing 在同一临界区完成。未取得许可
         // 不得 Flush；取得许可后等待方超时也只返回 PENDING(20)，不改阶段。
@@ -1294,7 +1649,15 @@ struct RenderThread {
         }
 #ifdef CJGUI_OHOS_TEST_GATES
         // 在 Committing 内阻塞：制造真实 committing 超时（调用方拿 PENDING）。
+        RLOGW("flush hold enter gen=%{public}llu session=%{public}llu ticket=%{public}llu",
+              static_cast<unsigned long long>(job->generation),
+              static_cast<unsigned long long>(job->session),
+              static_cast<unsigned long long>(job->ticketId));
         cjguiOhosTestGateBeforeFlush();
+        RLOGW("flush hold exit gen=%{public}llu session=%{public}llu ticket=%{public}llu",
+              static_cast<unsigned long long>(job->generation),
+              static_cast<unsigned long long>(job->session),
+              static_cast<unsigned long long>(job->ticketId));
         // A1 注入第二落点：提交准入后的失败（核心已持 PENDING+票据 → 放行后
         // 生产结算裁决 Rejected）。两个落点共用同一计数器，先到先消耗。
         if (cjguiOhosTestGateConsumeFailNextJob()) {
@@ -1302,15 +1665,52 @@ struct RenderThread {
             return;
         }
 #endif
+        // 第七次复核 B（无引用退役安全）：committing 持有放行后、SurfaceFlush
+        // **前**必须复核租约——持有期间该代可能已被退役且（无引用档）系统
+        // 对象可能随 destroyed 回调返回而失效，Flush 前不查就是悬空使用。
+        // 命中则不触碰平台资源直接以 UNAVAILABLE 结算（票据按 Rejected 收口）。
+        if (!leaseValid(job->generation) ||
+            !geometryMatches(job->window, job->generation, job->width,
+                             job->height, job->geometryRevision)) {
+            RLOGW("present flush aborted on retired lease gen=%{public}llu "
+                  "(retired during committing hold)",
+                  static_cast<unsigned long long>(job->generation));
+            teardownSurface(!leaseValid(job->generation));
+            job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
+            return;
+        }
         // 退役屏障起点：宿主在 surface 卸载时等该代际静默。
+        OH_Drawing_ErrorCode flush = OH_DRAWING_SUCCESS;
+        if (surfaceBackend == SurfaceBackend::Stub) {
+            // 第九次复核 A1/A4：替身 Flush 由句柄 backend 分派。S3 身份阻塞
+            // 位于「enter 已增、exit 未增、在途数>0」的调用内部窗口。
+#ifdef CJGUI_OHOS_TEST_GATES
+            g_stubCounts[ohosStubSlot(job->generation)].flushEnter.fetch_add(1);
+            busyGeneration.store(job->generation);
+            cjguiOhosStubHold(3, job->generation);
+            g_stubCounts[ohosStubSlot(job->generation)].flushExit.fetch_add(1);
+            busyGeneration.store(0);
+#endif
+        } else if (surfaceBackend == SurfaceBackend::None) {
+            // 拦截器：无 backend 句柄不得触碰任何平台库。
+            g_pcCalls.postBoundaryAttempts.fetch_add(1);
+            job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
+            return;
+        } else {
+        g_pcCalls.flushEnter.fetch_add(1);
         busyGeneration.store(job->generation);
-        OH_Drawing_ErrorCode flush = OH_Drawing_SurfaceFlush(surface);
+        flush = OH_Drawing_SurfaceFlush(surface);
+        g_pcCalls.flushExit.fetch_add(1);
+        }
         // Flush 后复核：① 租约仍有效 ② 仍是本任务绑定的那一代。
-        if (!leaseValid(job->generation) || job->generation != boundGeneration) {
+        if (!leaseValid(job->generation) || job->generation != boundGeneration ||
+            !geometryMatches(job->window, job->generation, job->width,
+                             job->height, job->geometryRevision)) {
             RLOGW("present flush on retired surface gen=%{public}llu bound=%{public}llu",
                   static_cast<unsigned long long>(job->generation),
                   static_cast<unsigned long long>(boundGeneration));
-            teardownSurface();
+            teardownSurface(!leaseValid(job->generation) ||
+                            job->generation != boundGeneration);
             rejectedFlushes += 1;
             busyGeneration.store(0);
             job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
@@ -1334,12 +1734,50 @@ struct RenderThread {
         job->finish(CJGUI_INTERNAL_RENDERER_OK);
     }
 
-    void teardownSurface()
+    // 第九次复核 A1：统一释放器——由**句柄自身**的 backend 决定，与当前
+    // ARM/DISARM 状态无关（DISARM 后仍存活的替身对象仍由替身释放；
+    // 模式切换不改变旧对象的释放器）。
+    void destroyBoundHandle(void *handle, SurfaceBackend backend, uint64_t generation)
+    {
+        if (handle == nullptr) return;
+#ifdef CJGUI_OHOS_TEST_GATES
+        if (backend == SurfaceBackend::Stub) {
+            g_stubCounts[ohosStubSlot(generation)].destroyEnter.fetch_add(1);
+            g_pcCalls.lastAccessGen.store(generation);
+            OhosStubSurface *st = reinterpret_cast<OhosStubSurface *>(handle);
+            {
+                std::lock_guard<std::mutex> g(g_stubMutex);
+                for (size_t i = 0; i < g_stubLive.size(); ++i) {
+                    if (g_stubLive[i] == st) {
+                        g_stubLive.erase(g_stubLive.begin() + static_cast<long>(i));
+                        break;
+                    }
+                }
+            }
+            delete st;
+            g_stubCounts[ohosStubSlot(generation)].destroyExit.fetch_add(1);
+            return;
+        }
+        if (backend == SurfaceBackend::None) {
+            // None：无合法释放器——拦截记录，绝不传给真实平台库。
+            RLOGE("destroy on backend=None handle=%{public}p gen=%{public}llu (illegal, intercepted)",
+                  handle, static_cast<unsigned long long>(generation));
+            return;
+        }
+#endif
+        g_pcCalls.destroyEnter.fetch_add(1);
+        g_pcCalls.lastAccessGen.store(generation);
+        OH_Drawing_SurfaceDestroy(reinterpret_cast<OH_Drawing_Surface *>(handle));
+        g_pcCalls.destroyExit.fetch_add(1);
+    }
+
+    void teardownSurface(bool terminalGeneration = true)
     {
         const uint64_t tornGeneration = boundGeneration;
         if (surface) {
-            OH_Drawing_SurfaceDestroy(surface);
+            destroyBoundHandle(surface, surfaceBackend, tornGeneration);
             surface = nullptr;
+            surfaceBackend = SurfaceBackend::None;
         }
         boundWindow = nullptr;
         boundGeneration = 0;
@@ -1349,15 +1787,48 @@ struct RenderThread {
         // 再回传拆除确认；宿主收到确认后才归还 NativeWindow 引用。
         // 先归还引用会让「确认到达之前的任何平台访问」失去引用保护。
         releaseSurfacePermit();
-        notifyTornDown(tornGeneration);
+        if (terminalGeneration) notifyTornDown(tornGeneration);
     }
 
-    bool ensureSurface(void *window, uint64_t generation, int w, int h)
+    bool ensureSurface(void *window, uint64_t generation, int w, int h,
+                       uint64_t expectedGeometryRevision)
     {
-        if (surface && boundWindow == window && boundGeneration == generation && surfaceW == w && surfaceH == h) {
+        // 第九次复核 A1：backend 属于句柄——ARM/DISARM 切换后即使参数相同
+        // 也必须重建（旧句柄由其自身 backend 的释放器拆除）。
+        // 第九次复核 A（零错类型调用）：**会话/句柄类型**决定分派——替身
+        // 会话（宿主表 backend=1）且已 ARM → 替身；替身会话但已 DISARM →
+        // None（拒绝创建，假地址绝不进真实库）；其余 → 真实。ARM/DISARM
+        // 只影响后续准入，不改变既有句柄释放器。
+        SurfaceBackend wantBackend = SurfaceBackend::Real;
+        if (g_ingress.sessionBackend != nullptr &&
+            g_ingress.sessionBackend(generation) == 1) {
+#ifdef CJGUI_OHOS_TEST_GATES
+            wantBackend = g_stubArmed.load() ? SurfaceBackend::Stub
+                                             : SurfaceBackend::None;
+#else
+            wantBackend = SurfaceBackend::None;   // 普通产物：替身会话不可用
+#endif
+        }
+        RLOGI("ensureSurface dispatch gen=%{public}llu sessBackend=%{public}d armed=%{public}d want=%{public}d",
+              static_cast<unsigned long long>(generation),
+              g_ingress.sessionBackend ? g_ingress.sessionBackend(generation) : -1,
+#ifdef CJGUI_OHOS_TEST_GATES
+              g_stubArmed.load() ? 1 : 0,
+#else
+              0,
+#endif
+              static_cast<int>(wantBackend));
+        if (surface && surfaceBackend == wantBackend && boundWindow == window &&
+            boundGeneration == generation && surfaceW == w && surfaceH == h &&
+            permitGeometryRevision == expectedGeometryRevision) {
             return true;
         }
-        teardownSurface();
+        // A live geometry/backend rebind discards this drawing handle, not the
+        // host's reference to the same NativeWindow generation. A true retired
+        // lease or a different generation still needs its terminal ACK.
+        const bool sameLiveGeneration = boundGeneration == generation &&
+            boundWindow == window && leaseValid(generation);
+        teardownSurface(!sameLiveGeneration);
         if (!gpuContext) {
             gpuContext = OH_Drawing_GpuContextCreate();
             if (!gpuContext) {
@@ -1367,41 +1838,123 @@ struct RenderThread {
         }
 #ifdef CJGUI_OHOS_TEST_GATES
         // A2 闸门：创建调用前按住（销毁重建可与创建交错到任意点）。
+        RLOGW("create_before hold enter gen=%{public}llu",
+              static_cast<unsigned long long>(generation));
         cjguiOhosTestGateHold("create_before", g_gateHoldCreateMs, g_gateHoldCreateRemaining);
+        RLOGW("create_before hold exit gen=%{public}llu",
+              static_cast<unsigned long long>(generation));
         g_gateCreateCount += 1;
 #endif
-        OH_Drawing_Image_Info info{};
-        info.width = w;
-        info.height = h;
-        info.colorType = COLOR_FORMAT_RGBA_8888;
-        info.alphaType = ALPHA_FORMAT_PREMUL;
-        surface = OH_Drawing_SurfaceCreateOnScreen(gpuContext, info, window);
+        // 第七次复核 B/Astra Q2：**创建前先取得该代使用许可**（retire 仲裁
+        // 前移）——许可失败即不创建、不触碰 window；创建失败路径也必须
+        // 归还许可（不能漏还）。
+        if (!acquireSurfacePermit(generation)) {
+            RLOGW("surface create skipped: permit denied before create gen=%{public}llu",
+                  static_cast<unsigned long long>(generation));
+            return false;
+        }
+        if (permitGeometryRevision != expectedGeometryRevision) {
+            RLOGW("surface geometry changed before create gen=%{public}llu expected=%{public}llu actual=%{public}llu",
+                  static_cast<unsigned long long>(generation),
+                  static_cast<unsigned long long>(expectedGeometryRevision),
+                  static_cast<unsigned long long>(permitGeometryRevision));
+            releaseSurfacePermit();
+            return false;
+        }
 #ifdef CJGUI_OHOS_TEST_GATES
+        // permit 闸门（取得许可后、创建前）随仲裁前移：语义为
+        // 「已真实取得许可、尚未创建」窗口的销毁重建反例。
+        cjguiOhosTestGateHold("permit", g_gateHoldPermitMs, g_gateHoldPermitRemaining);
+        // 链2：替身身份阻塞——「已持许可、尚未创建」窗口的确定性 park
+        //（retire 可与创建交错到任意点；放行后由下方生产复核仲裁）。
+        cjguiOhosStubHold(0, generation);
+        if (!leaseValid(generation) ||
+            !geometryMatches(window, generation, w, h, expectedGeometryRevision)) {
+            releaseSurfacePermit();
+            RLOGW("present rejected after permit hold (retired during hold) gen=%{public}llu",
+                  static_cast<unsigned long long>(generation));
+            return false;
+        }
+#endif
+        // 第九次复核 A1/A2：创建分派由**本次准入**的 backend 决定；产物为
+        // **局部 owned resource**（未发布 bound）。真实/替身共用同一套
+        // 「创建 → 返回闸门 → retire 仲裁 → 发布 bound」生产逻辑。
+        void *localHandle = nullptr;
+        if (wantBackend == SurfaceBackend::None) {
+            // 第九次复核 A（零错类型调用）：替身会话未获准入（DISARM）→
+            // **拒绝创建**——席位/哨兵地址绝不进真实平台库；许可恰好归还一次。
+            RLOGW("create refused: backend=None (stub session without admission) gen=%{public}llu",
+                  static_cast<unsigned long long>(generation));
+            releaseSurfacePermit();
+            return false;
+        }
+        if (wantBackend == SurfaceBackend::Stub) {
+#ifdef CJGUI_OHOS_TEST_GATES
+            // 替身创建：替身自有对象，window 参数原样丢弃（不接收真实裸指针）；
+            // 按身份计数 enter/exit。
+            g_stubCounts[ohosStubSlot(generation)].createEnter.fetch_add(1);
+            g_pcCalls.lastAccessGen.store(generation);
+            OhosStubSurface *st = new OhosStubSurface{generation, static_cast<int32_t>(w),
+                                                      static_cast<int32_t>(h), false};
+            {
+                std::lock_guard<std::mutex> g(g_stubMutex);
+                g_stubLive.push_back(st);
+            }
+            g_stubCounts[ohosStubSlot(generation)].createExit.fetch_add(1);
+            localHandle = st;
+#endif
+        } else {
+            OH_Drawing_Image_Info info{};
+            info.width = w;
+            info.height = h;
+            info.colorType = COLOR_FORMAT_RGBA_8888;
+            info.alphaType = ALPHA_FORMAT_PREMUL;
+            g_pcCalls.createEnter.fetch_add(1);
+            g_pcCalls.lastAccessGen.store(generation);
+            localHandle = OH_Drawing_SurfaceCreateOnScreen(gpuContext, info, window);
+            g_pcCalls.createExit.fetch_add(1);
+            if (localHandle == nullptr) {
+                uint32_t err = OH_Drawing_ErrorCodeGet();
+                RLOGE("SurfaceCreateOnScreen failed w=%{public}d h=%{public}d window=%{public}p err=%{public}u",
+                      w, h, window, err);
+                // 创建失败：许可同步归还（不漏还，Astra Q2 失败路径要求）。
+                releaseSurfacePermit();
+                return false;
+            }
+        }
+
+        // 第九次复核 A4：S2 闸门位置——**对象已创建返回、bound 尚未发布**的窗口。
+#ifdef CJGUI_OHOS_TEST_GATES
+        cjguiOhosStubHold(1, generation);
         // A2 闸门：创建返回后立即按住（返回值已定、效果未观察的窗口）。
         cjguiOhosTestGateHold("create_return", g_gateHoldCreateReturnMs,
                               g_gateHoldCreateReturnRemaining);
 #endif
-        if (!surface) {
-            uint32_t err = OH_Drawing_ErrorCodeGet();
-            RLOGE("SurfaceCreateOnScreen failed w=%{public}d h=%{public}d window=%{public}p err=%{public}u",
-                  w, h, window, err);
+        // 第九次复核 A2：创建返回**与 retire 仲裁后**才发布 bound。已退役 →
+        // 局部资源按其 backend 自动拆除（destroy 恰好一次）、许可恰好归还一次；
+        // draw/flush/accepted 均不前进。
+        if (!leaseValid(generation) ||
+            !geometryMatches(window, generation, w, h, expectedGeometryRevision)) {
+            destroyBoundHandle(localHandle, wantBackend, generation);
+            releaseSurfacePermit();
+            RLOGW("create returned after retire: local resource destroyed, permit returned "
+                  "once, bound not published gen=%{public}llu",
+                  static_cast<unsigned long long>(generation));
             return false;
         }
-        // A2：取得该代使用许可后才发布绑定。取不到（该代已退役/身份不符/
-        // 宿主未持有 native 引用）就不得使用该 window——立即销毁并拒绝本次绘制。
-        if (!acquireSurfacePermit(generation)) {
-            OH_Drawing_SurfaceDestroy(surface);
-            surface = nullptr;
-            return false;
-        }
-        boundWindow = window;
+
+        surface = reinterpret_cast<OH_Drawing_Surface *>(localHandle);
+        surfaceBackend = wantBackend;
+        boundWindow = (wantBackend == SurfaceBackend::Real) ? window : nullptr;
         boundGeneration = generation;
         surfaceW = w;
         surfaceH = h;
 #ifdef CJGUI_OHOS_TEST_GATES
         g_gateCreateOkCount += 1;
 #endif
-        RLOGI("surface bound gen=%llu %dx%d", static_cast<unsigned long long>(generation), w, h);
+        RLOGI("surface bound gen=%{public}llu %dx%d backend=%{public}d",
+              static_cast<unsigned long long>(generation), w, h,
+              static_cast<int>(wantBackend));
         return true;
     }
 
@@ -1740,13 +2293,28 @@ bool hitTestAccepted(Session &s, float x, float y, size_t *outIndex)
 {
     // 自后向前：场景列表后段绘制在上层。
     // 命中必须与绘制使用同一有效裁剪：越界内容不可见也不可命中，
-    // 空裁剪（零尺寸约束）同理。
+    // 空裁剪（零尺寸约束）同理。圆角按钮（cornerRadius>0）四分圆外的
+    // 点不可命中——命中几何与绘制几何一致（第六次复核第 4 项：圆角命中
+    // 按已声明契约断言，D4 圆角外点必须不推进 owner）。
     for (size_t i = s.accepted.size(); i-- > 0;) {
         const CjguiInternalRendererComposableNode &n = s.accepted[i].pod;
         if (x >= static_cast<float>(n.x) && x < static_cast<float>(n.x + n.width) &&
             y >= static_cast<float>(n.y) && y < static_cast<float>(n.y + n.height)) {
             if (n.isInteractive == 0) continue;
             if (!RenderThread::pointInsideClips(n, x, y)) continue;
+            if (n.cornerRadius > 0.0) {
+                const float r = static_cast<float>(n.cornerRadius);
+                const float right = static_cast<float>(n.x) + static_cast<float>(n.width);
+                const float bottom = static_cast<float>(n.y) + static_cast<float>(n.height);
+                // 就近角心：只有落在四个角方框内时才需要圆弧判别。
+                const float cx = x < static_cast<float>(n.x) + r ? static_cast<float>(n.x) + r
+                                                                 : (x > right - r ? right - r : x);
+                const float cy = y < static_cast<float>(n.y) + r ? static_cast<float>(n.y) + r
+                                                                 : (y > bottom - r ? bottom - r : y);
+                const float dx = x - cx;
+                const float dy = y - cy;
+                if (dx * dx + dy * dy > r * r) continue;  // 圆弧外：不命中
+            }
             *outIndex = i;
             return true;
         }
@@ -1801,11 +2369,13 @@ void synthesizeEventsFromRawTouch(Session &s, uint32_t action, float x, float y)
             s.editingProjectionVersion = node.pod.projectionVersion;
             // 通用编辑上下文：每次绑定新节点/同一节点重新聚焦都分配新编号，
             // 旧上下文的延迟回调（提交/预览/失焦）从此失效，不得改写新焦点。
-            s.editingContextId += 1;
+            s.editingContextId = g_nextEditingContextId.fetch_add(1);
             s.editingFieldName = node.semanticId;
             s.editingContextGeneration = s.surfaceGeneration;
             s.editingContextBaseVersion = node.pod.projectionVersion;
             s.editingContextLive = true;
+            s.reconcileNotifyPending = false;
+            s.reconcileOldContextId = 0;
             s.pendingSettleOnDetach = false;  // 新焦点继承旧 detach 意图会重复结算
             if (!wasEditing) {
                 // 编辑缓冲从已接受场景值起步（外部值即起点）。
@@ -2019,6 +2589,7 @@ bool settleComposedBufferOnBlurLocked(Session &s)
     s.selEndUtf16 = s.caretUtf16;
     s.previewActive = false;
     s.previewText.clear();
+    s.markedActive = false;
     if (s.caretUtf16 > s.editingText.size()) s.caretUtf16 = static_cast<uint32_t>(s.editingText.size());
     s.selStartUtf16 = s.caretUtf16;
     s.selEndUtf16 = s.caretUtf16;
@@ -2067,6 +2638,7 @@ void ImeInsertText(InputMethod_TextEditorProxy *proxy, const char16_t *text, siz
         s->caretUtf16 = start + static_cast<uint32_t>(s->previewText.size());
         s->previewActive = false;
         s->previewText.clear();
+        s->markedActive = false;
     }
     uint32_t caret = s->caretUtf16;
     editorDeleteSelection(s);
@@ -2248,6 +2820,10 @@ int32_t ImeSetPreviewText(InputMethod_TextEditorProxy *proxy, const char16_t tex
     s->previewEnd = clampToCodePointBoundary(s->editingText, static_cast<uint32_t>(std::max(0, end)));
     s->previewEnd = std::min(std::max(s->previewEnd, s->previewStart), size);
     s->previewActive = true;
+    s->markedActive = true;
+    s->markedStart = s->previewStart;
+    s->markedEnd = s->previewStart + static_cast<uint32_t>(s->previewText.size());
+    s->markedCallbackObserved = true;
     return 0;
 }
 
@@ -2259,6 +2835,7 @@ void ImeFinishTextPreview(InputMethod_TextEditorProxy *proxy)
     if (!s) return;
     s->previewActive = false;
     s->previewText.clear();
+    s->markedActive = false;
 }
 
 bool imeAttach()
@@ -2400,6 +2977,26 @@ int32_t cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+// 共享仓颉运行时会链接该 ABI；当前 OHOS 文本链使用系统 IME 代理及既有
+// range/preview 入口，尚无 macOS 的窗口拥有文本会话事件桥。显式拒绝启用，
+// 避免缺符号使整个 HAP 无法加载，也不把未接通的组合态冒称为成功。
+extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_owned_text_session(
+    uint64_t session, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
+    uint64_t bindingEpoch, uint32_t enabled)
+{
+    (void)nodeId;
+    (void)resourceId;
+    (void)nodeKind;
+    (void)bindingEpoch;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (enabled != 0) {
+        RLOGW("window-owned text session unavailable on OHOS backend");
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 // 关闭链第 5 步：投递唯一 ShutdownJob、等待渲染线程 teardown surface/GPU
 // 并退出、join 线程、复位启动身份。非渲染线程调用。
 // 返回真实终态（OK=0 成功），调用方据此断言，不再用 Bool 误判。
@@ -2479,6 +3076,183 @@ extern "C" int32_t cjgui_ohos_request_surface_teardown(uint64_t generation)
 
 // A3 取证：许可配对打包读数（高 32 位 acquired，低 32 位 released）。
 // 重建循环收敛判据：acquired == released（每次取得许可恰好一次归还）。
+// --- 链2 替身适配器导出（仅测试变体）-------------------------------------
+
+// 武装替身：设置替身租约与一次性身份阻塞配置（stage: 0=create 1=create_return
+// 2=draw 3=flush 4=admission；holdGen<0 表示不阻塞）。
+// 第九次复核 A：ARM 只影响**后续准入**（新资源的 backend），不注册会话、
+// 不配置阻塞——会话经 STUB_SESSION（宿主表）、阻塞经 STUB_HOLD（直连，
+// 可在 owner 阻塞于 host.start 时任意设置）。
+extern "C" int32_t cjgui_ohos_test_stub_arm(int64_t enable)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    g_render.ensureStarted();
+    if (!g_render.running) return -1;
+    g_stubArmed.store(enable != 0);
+    RLOGI("stub armed=%{public}d (admission only)", enable != 0 ? 1 : 0);
+    return 0;
+#else
+    (void)enable;
+    return -1;
+#endif
+}
+
+// 第九次复核 C：渲染线程运行事实——owner 清理尾部据此判断是否需要
+// shutdown（真正未启动的部件才记 not_started，不伪造成功 shutdown）。
+extern "C" int32_t cjgui_ohos_renderer_running(void)
+{
+    return g_render.running ? 1 : 0;
+}
+
+// 第九次复核 A3：会话注册转发（cangjie foreign → 同库 → ingress → 宿主表；
+// 不直接 UND 引用 libentry 符号——该模拟器跨库解析不可靠，实测）。
+extern "C" int32_t cjgui_ohos_test_stub_session_register_cj(int64_t gen, int64_t w, int64_t h)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    return (g_ingress.stubSessionRegister != nullptr)
+        ? g_ingress.stubSessionRegister(gen, w, h) : -1;
+#else
+    (void)gen; (void)w; (void)h;
+    return -1;
+#endif
+}
+
+// 第九次复核 C：owner 退出原因声明（0=按请求停止，1=启动失败/异常退出）。
+// 宿主 dlsym 本库查询，按事实区分 stopped/failed。
+static std::atomic<int32_t> g_ownerExitReason{-1};
+extern "C" void cjgui_ohos_notify_owner_exit(int32_t reason)
+{
+    g_ownerExitReason.store(reason);
+}
+extern "C" int32_t cjgui_ohos_owner_exit_reason(void)
+{
+    return g_ownerExitReason.load();
+}
+
+// 第九次复核 A 验收：redraw 触发出入口（测试变体；普通产物拒 -1）。
+extern "C" int32_t cjgui_ohos_test_trigger_redraw(void)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    if (!g_render.running) return -1;
+    g_render.post(std::make_shared<RedrawJob>());
+    return 0;
+#else
+    return -1;
+#endif
+}
+
+// 第九次复核 B：NEG4 隔离夹具转发（cangjie foreign → ingress → 宿主）。
+extern "C" int32_t cjgui_ohos_test_audit_negative_fixture_cj(void)
+{
+    return (g_ingress.auditNegativeFixture != nullptr)
+        ? g_ingress.auditNegativeFixture() : -1;
+}
+
+// 阻塞配置（宿主直连通道，任意时刻可设；一次性命中后自动清除）。
+extern "C" int32_t cjgui_ohos_test_stub_hold_set(int32_t stage, int64_t gen, int32_t ms)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    g_stubHoldStage.store(gen < 0 ? -1 : stage);
+    g_stubHoldGen.store(gen < 0 ? 0 : static_cast<uint64_t>(gen));
+    g_stubHoldMs.store(ms);
+    g_stubHoldRelease.store(false);
+    RLOGI("stub hold set stage=%{public}d gen=%{public}lld ms=%{public}d",
+          stage, static_cast<long long>(gen), ms);
+    return 0;
+#else
+    (void)stage; (void)gen; (void)ms;
+    return -1;
+#endif
+}
+
+// 解除替身：清武装标志/租约/阻塞配置（对象回收由 teardown 路径负责）。
+extern "C" int32_t cjgui_ohos_test_stub_disarm(void)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    g_stubArmed.store(false);
+    g_stubHoldStage.store(-1);
+    g_stubHoldGen.store(0);
+    g_stubHoldRelease.store(false);
+    return 0;
+#else
+    return -1;
+#endif
+}
+
+// 退役仲裁点：清替身租约——生产 leaseValid 检查点立即翻转。
+// 第九次复核 A3：退役走宿主表生产 destroyed 路径（带目标 generation）。
+extern "C" int32_t cjgui_ohos_test_stub_lease_retire(int64_t generation)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    return (g_ingress.stubSessionRetire != nullptr)
+        ? g_ingress.stubSessionRetire(generation) : -1;
+#else
+    (void)generation;
+    return -1;
+#endif
+}
+
+// 放行身份阻塞。
+extern "C" int32_t cjgui_ohos_test_stub_release(void)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    g_stubHoldRelease.store(true);
+    std::lock_guard<std::mutex> lk(g_stubHoldMutex);
+    g_stubHoldCv.notify_all();
+    return 0;
+#else
+    return -1;
+#endif
+}
+
+// 第九次复核 A3：STUB_PRESENT 的「直接 post PresentJob」已删除——替身帧
+// 一律经**正常 session 提交**驱动（业务变更 → owner pump → 原票
+// queued/committing → present → ACK/结算），复用既有状态机，不另造替身
+// 提交协议。替身会话注册/退役见 cjgui_ohos_test_stub_session_*。
+
+// 第九次复核 A3：STUB_TEARDOWN 直接 post 已删除——退役走生产 destroyed
+// 路径（STUB_RETIRE → cjgui_ohos_test_stub_session_retire → 宿主表退役 +
+// 渲染器拆除请求），不另造替身关闭协议。
+
+extern "C" int64_t cjgui_ohos_test_stub_counts(int64_t gen)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    const OhosStubCounts &c = g_stubCounts[ohosStubSlot(static_cast<uint64_t>(gen))];
+    auto sat = [](int64_t v) { return v > 200 ? 200 : v; };
+    int64_t packed = 0;
+    packed |= sat(c.createEnter.load());
+    packed |= sat(c.createExit.load()) << 8;
+    packed |= sat(c.drawEnter.load()) << 16;
+    packed |= sat(c.drawExit.load()) << 24;
+    packed |= sat(c.flushEnter.load()) << 32;
+    packed |= sat(c.flushExit.load()) << 40;
+    packed |= sat(c.destroyEnter.load()) << 48;
+    packed |= sat(c.destroyExit.load()) << 56;
+    return packed;
+#else
+    (void)gen;
+    return -1;
+#endif
+}
+
+// 替身状态 packed：bit0 armed | bit1 holdActive | bit2 leaseSet | bit8.. 活对象数。
+extern "C" int64_t cjgui_ohos_test_stub_state(void)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    int64_t st = 0;
+    if (g_stubArmed.load()) st |= 1;
+    if (g_stubHoldActive.load()) st |= 2;
+    if (g_ingress.stubSessionActive != nullptr && g_ingress.stubSessionActive() > 0) st |= 4;
+    {
+        std::lock_guard<std::mutex> g(g_stubMutex);
+        st |= (static_cast<int64_t>(g_stubLive.size()) & 0xFF) << 8;
+    }
+    return st;
+#else
+    return -1;
+#endif
+}
+
 extern "C" int64_t cjgui_ohos_permit_pair_packed(void)
 {
     int64_t a = static_cast<int64_t>(g_render.permitsAcquired.load());
@@ -2573,6 +3347,7 @@ extern "C" int32_t cjgui_ohos_renderer_reset_instance_observations()
     g_ownerAppReady.store(false);
     g_rendererShutdownDone.store(false);
     g_applicationStopRequested.store(false);
+    g_ownerExitReason.store(-1);
     RLOGI("renderer instance observations reset for new owner start");
     return 0;
 }
@@ -2630,7 +3405,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composable_viewport(uint64_t
         uint64_t gen = 0;
         int32_t w = 0, h = 0;
         double density = 1.0;
-        if (g_ingress.surfaceActive(&window, &gen, &w, &h, &density) == 1) {
+        if (g_ingress.surfaceActive(&window, &gen, &w, &h, &density, nullptr) == 1) {
             s->surfaceGeneration = gen;
             s->surfaceWidth = w;
             s->surfaceHeight = h;
@@ -2920,27 +3695,78 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
-// 编辑缓冲同步：新场景到达后，编辑节点的 owner 值即编辑起点（外部修改落地 /
-// owner 拒绝回滚均走此路径）。组合预览激活时延后，待 FinishTextPreview/InsertText
-// 落盘后的下一场景再同步。
+// 编辑缓冲同步：accepted 场景是 owner 的新投影。活上下文绑定的基线版本
+// 不可被悄悄更新；外部换版必须先让旧上下文失效，再从 accepted 值建立新
+// 上下文。即使预览活跃也必须检查身份/可编辑性/版本，否则旧草稿会遮住
+// 已接受的外部值并借旧上下文继续提交。
 //
 // A1：同步成功路径与延迟成功（票据结算）必须走同一条收尾，否则延迟成功会
 // 漏掉编辑缓冲处理（Astra 指出的现有缺陷）。在 g_sessions.lock 内调用。
 static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
 {
-    if (!s->editing || s->previewActive) return;
+    if (!s->editing) return;
     bool found = false;
     for (const SceneNode &n : s->accepted) {
         if (n.pod.nodeId != s->editingNodeId || n.pod.resourceId != s->editingResourceId) continue;
         found = true;
-        if (n.pod.isReadOnly != 0 || n.pod.isInteractive == 0) {
+        if (n.pod.nodeKind != s->editingNodeKind ||
+            n.semanticId != s->editingFieldName ||
+            n.pod.isReadOnly != 0 || n.pod.isInteractive == 0) {
             s->pendingImeDetach = true;  // 换绑/禁用：旧上下文失效
+            s->pendingSettleOnDetach = false;
             s->editing = false;          // 节点不可编辑：连同绘制一起结束
             s->editorRetired = true;
             s->editingContextLive = false;
+            s->previewActive = false;
+            s->previewText.clear();
+            s->markedActive = false;
+            s->reconcileNotifyPending = false;
             break;
         }
         std::u16string ownerValue = utf8ToUtf16(n.value);
+        // The core marks a locally accepted text event explicitly and stages an
+        // empty native value so the active editor keeps drawing the event text.
+        // Its scene version advances too: carry that admission version forward
+        // without retiring this context or mistaking the staged empty value for
+        // an external replacement (including a legitimate empty local edit).
+        if (n.pod.preservesActiveLocalText != 0) {
+            s->editingContextBaseVersion = n.pod.projectionVersion;
+            s->editingProjectionVersion = n.pod.projectionVersion;
+            break;
+        }
+        if (s->editingContextLive &&
+            n.pod.projectionVersion != s->editingContextBaseVersion) {
+            // projectionVersion 与 editingContextBaseVersion 均取本节点入场时
+            // 的同一 scene.version；它是当前输入事件的准入版本。新 accepted
+            // 版本使旧整值草稿失效，不以字符串相等推断事务仍有效。
+            int64_t oldContext = s->editingContextId;
+            if (!s->reconcileNotifyPending) s->reconcileOldContextId = oldContext;
+            s->editingContextId = g_nextEditingContextId.fetch_add(1);
+            s->editingContextBaseVersion = n.pod.projectionVersion;
+            s->editingProjectionVersion = n.pod.projectionVersion;
+            s->editingFieldName = n.semanticId;
+            s->editingText = ownerValue;
+            s->previewActive = false;
+            s->previewText.clear();
+            s->markedActive = false;
+            s->markedStart = 0;
+            s->markedEnd = 0;
+            s->pendingSettleOnDetach = false;
+            s->caretUtf16 = static_cast<uint32_t>(ownerValue.size());
+            s->selStartUtf16 = s->caretUtf16;
+            s->selEndUtf16 = s->caretUtf16;
+            s->editingTapPending = false;
+            // 如果最初的 focus 还未送达，直接发送新 context 的 focus；
+            // 否则发送 reconcile，供页面先卸旧 TextInput 再挂新实例。
+            if (!s->focusNotifyPending) s->reconcileNotifyPending = true;
+            RLOGI("ime context reconcile old=%{public}lld new=%{public}lld base=%{public}llu",
+                  static_cast<long long>(oldContext),
+                  static_cast<long long>(s->editingContextId),
+                  static_cast<unsigned long long>(s->editingContextBaseVersion));
+            g_render.post(std::make_shared<RedrawJob>());
+            break;
+        }
+        if (s->previewActive) break;
         // 核心的「本地文字延续」窗口会把 native 值置空，约定由原生编辑器
         // 绘制可见文本（macOS 用输入代理字符串做同一件事）。这里的空值不是
         // 业务空值，用它同步会清掉本地缓冲，使随后任何纯重绘把字段画成空白。
@@ -2960,9 +3786,14 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
     }
     if (!found) {
         s->pendingImeDetach = true;  // 节点被移除：结束编辑
+        s->pendingSettleOnDetach = false;
         s->editing = false;
         s->editorRetired = true;
         s->editingContextLive = false;
+        s->previewActive = false;
+        s->previewText.clear();
+        s->markedActive = false;
+        s->reconcileNotifyPending = false;
     }
 }
 
@@ -3060,6 +3891,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     double clearR = 0, clearG = 0, clearB = 0, clearA = 1;
     void *window = nullptr;
     uint64_t gen = 0;
+    uint64_t geometryRevision = 0;
     int32_t w = 0, h = 0;
     double density = 1.0;
     {
@@ -3079,7 +3911,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             if (outObservation) outObservation->ticketId = g_pending[slot].ticketId;
             return static_cast<CjguiInternalRendererStatus>(CJGUI_INTERNAL_RENDERER_PENDING);
         }
-        if (g_ingress.surfaceActive(&window, &gen, &w, &h, &density) != 1) {
+        if (g_ingress.surfaceActive(&window, &gen, &w, &h, &density,
+                                    &geometryRevision) != 1) {
             // 无 surface：可恢复失败，不接受候选、不推进帧号。
             return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
         }
@@ -3095,10 +3928,13 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         clearA = s->clearA;
     }
     std::shared_ptr<PresentJob> presentJob = std::make_shared<PresentJob>();
+    presentJob->session = session;
+    presentJob->ticketId = ticketId;
     presentJob->nodes = nodes;
     presentJob->projectionVersion = projectionVersion;
     presentJob->window = window;
     presentJob->generation = gen;
+    presentJob->geometryRevision = geometryRevision;
     presentJob->width = w;
     presentJob->height = h;
     presentJob->clearR = clearR;
@@ -3134,6 +3970,9 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         return result;
     }
     if (result != CJGUI_INTERNAL_RENDERER_OK) {
+        RLOGW("present terminal session=%{public}llu ticket=%{public}llu status=%{public}d phase=%{public}d",
+              static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
+              static_cast<int>(result), static_cast<int>(job->phaseSnapshot()));
         return result;
     }
     {
@@ -3181,6 +4020,9 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             outObservation->readbackColorMatched = 0;
         }
     }
+    RLOGI("present terminal session=%{public}llu ticket=%{public}llu status=0 phase=%{public}d",
+          static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
+          static_cast<int>(job->phaseSnapshot()));
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -3664,6 +4506,25 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         if (sink) sink(payload.c_str());
         g.lock();
     }
+    if (s->reconcileNotifyPending) {
+        void (*sink)(const char *) = g_focusRequestSink;
+        if (sink) {
+            int64_t oldContext = s->reconcileOldContextId;
+            int64_t newContext = s->editingContextId;
+            std::string payload = "{\"action\":\"reconcile\",\"oldContext\":" +
+                std::to_string(oldContext) + ",\"context\":" + std::to_string(newContext);
+            payload += ",\"field\":\"";
+            appendJsonEscaped(payload, s->editingFieldName);
+            payload += "\"}";
+            s->reconcileNotifyPending = false;
+            s->reconcileOldContextId = 0;
+            RLOGI("ime reconcile notification old=%{public}lld new=%{public}lld",
+                  static_cast<long long>(oldContext), static_cast<long long>(newContext));
+            g.unlock();
+            sink(payload.c_str());
+            g.lock();
+        }
+    }
     if (s->pendingImeDetach) {
         s->pendingImeDetach = false;
         // 框架主动结束编辑（点到别处/空白）先做一次失焦结算：把用户已看见的
@@ -3737,7 +4598,8 @@ uint8_t cjgui_ohos_surface_ready(void)
     uint64_t generation = 0;
     int32_t w = 0, h = 0;
     double density = 1.0;
-    return g_ingress.surfaceActive(&window, &generation, &w, &h, &density) == 1 ? 1u : 0u;
+    return g_ingress.surfaceActive(&window, &generation, &w, &h, &density,
+                                   nullptr) == 1 ? 1u : 0u;
 }
 
 
@@ -3793,7 +4655,9 @@ extern "C" int32_t ohos_renderer_ime_context_json(char *out, int32_t capacity)
     double fontSize = 13.0;
     bool found = false;
     for (const SceneNode &n : s->accepted) {
-        if (n.pod.nodeId == s->editingNodeId && n.pod.resourceId == s->editingResourceId) {
+        if (n.pod.nodeId == s->editingNodeId && n.pod.resourceId == s->editingResourceId &&
+            n.pod.nodeKind == s->editingNodeKind && n.semanticId == s->editingFieldName &&
+            n.pod.isReadOnly == 0 && n.pod.isInteractive != 0) {
             x = n.pod.x;
             y = n.pod.y;
             w = n.pod.width;
@@ -3824,7 +4688,23 @@ extern "C" int32_t ohos_renderer_ime_context_json(char *out, int32_t capacity)
     json += ",\"selEnd\":" + std::to_string(s->selEndUtf16);
     json += ",\"generation\":" + std::to_string(s->editingContextGeneration);
     json += ",\"baseVersion\":" + std::to_string(s->editingContextBaseVersion);
+    json += ",\"sessionToken\":" + std::to_string(s->token);
     json += ",\"mode\":\"immediate\"";
+    json += ",\"inputCapabilities\":{\"fullDraft\":\"available\",\"selectionUtf16\":\"available\",";
+    json += "\"markedRange\":\"callback_conditional\",\"markedRangeObserved\":";
+    json += (s->markedCallbackObserved ? "true" : "false");
+    json += ",\"cancelEvent\":\"not_observed\"}";
+    if (s->previewActive) {
+        json += ",\"previewStart\":" + std::to_string(s->previewStart);
+        json += ",\"previewEnd\":" + std::to_string(s->previewEnd);
+        json += ",\"previewText\":\"";
+        appendJsonEscaped(json, utf16ToUtf8(s->previewText));
+        json += "\"";
+        if (s->markedActive) {
+            json += ",\"markedStart\":" + std::to_string(s->markedStart);
+            json += ",\"markedEnd\":" + std::to_string(s->markedEnd);
+        }
+    }
     json += ",\"text\":\"";
     appendJsonEscaped(json, utf16ToUtf8(s->editingText));
     json += "\"}";
@@ -3864,6 +4744,7 @@ extern "C" int32_t ohos_renderer_ime_commit_text_ctx(const char *text, size_t le
     s->selEndUtf16 = s->caretUtf16;
     s->previewActive = false;
     s->previewText.clear();
+    s->markedActive = false;
     editorEnqueueTextChanged(*s);
     return 0;
 }
@@ -3883,7 +4764,49 @@ extern "C" int32_t ohos_renderer_ime_preview_text_ctx(const char *text, size_t l
         s->previewStart = 0;
         s->previewEnd = static_cast<uint32_t>(s->editingText.size());
         s->previewActive = true;
+        s->markedActive = false;
         s->caretUtf16 = static_cast<uint32_t>(s->previewText.size());
+    }
+    g_render.post(std::make_shared<RedrawJob>());
+    return 0;
+}
+
+// 全文草稿 + 可选 marked 区间。ArkUI 的 offset 属于显示全文的 UTF-16 坐标；
+// 它不是旧 owner 正文的替换范围。全文始终只作为视觉预览，marked 元数据
+// 单独记录，缺失/无效时仍可保留全文草稿而不推断取消。
+extern "C" int32_t ohos_renderer_ime_preview_range_ctx(const char *text, size_t length,
+                                                       int32_t start, int32_t end,
+                                                       int64_t contextId)
+{
+    std::string input(text ? text : "", text ? length : 0);
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        Session *s = takeEditingContextLocked(contextId);
+        if (!s) {
+            RLOGW("ime composition rejected: stale context=%{public}lld",
+                  static_cast<long long>(contextId));
+            return 1;
+        }
+        s->previewText = utf8ToUtf16(input);
+        s->previewStart = 0;
+        s->previewEnd = static_cast<uint32_t>(s->editingText.size());
+        s->previewActive = true;
+        const uint32_t size = static_cast<uint32_t>(s->previewText.size());
+        bool valid = start >= 0 && end > start && static_cast<uint32_t>(end) <= size;
+        if (valid) {
+            valid = clampToCodePointBoundary(s->previewText, static_cast<uint32_t>(start)) ==
+                static_cast<uint32_t>(start) &&
+                clampToCodePointBoundary(s->previewText, static_cast<uint32_t>(end)) ==
+                static_cast<uint32_t>(end);
+        }
+        s->markedActive = valid;
+        s->markedStart = valid ? static_cast<uint32_t>(start) : 0;
+        s->markedEnd = valid ? static_cast<uint32_t>(end) : 0;
+        if (valid) s->markedCallbackObserved = true;
+        s->caretUtf16 = valid ? s->markedEnd : size;
+        RLOGI("ime composition ctx=%{public}lld marked=%{public}d start=%{public}u end=%{public}u bytes=%{public}zu",
+              static_cast<long long>(contextId), valid ? 1 : 0,
+              s->markedStart, s->markedEnd, input.size());
     }
     g_render.post(std::make_shared<RedrawJob>());
     return 0;
@@ -3903,6 +4826,7 @@ extern "C" int32_t ohos_renderer_ime_finish_editing_ctx(int64_t contextId)
     s->editorRetired = true;           // 逻辑结束；绘制与 accepted 同步保留到下次聚焦
     s->previewActive = false;
     s->previewText.clear();
+    s->markedActive = false;
     s->pendingSettleOnDetach = false;  // 平台已提交，不再重复结算
     s->pendingImeDetach = true;
     return 0;
@@ -3916,9 +4840,10 @@ extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t en
         std::lock_guard<std::mutex> g(g_sessions.lock);
         Session *s = takeEditingContextLocked(contextId);
         if (!s) return 1;
-        uint32_t size = static_cast<uint32_t>(s->editingText.size());
-        uint32_t a = clampToCodePointBoundary(s->editingText, static_cast<uint32_t>(std::max(0, start)));
-        uint32_t b = clampToCodePointBoundary(s->editingText, static_cast<uint32_t>(std::max(0, end)));
+        const std::u16string visible = composedBuffer(*s);
+        uint32_t size = static_cast<uint32_t>(visible.size());
+        uint32_t a = clampToCodePointBoundary(visible, static_cast<uint32_t>(std::max(0, start)));
+        uint32_t b = clampToCodePointBoundary(visible, static_cast<uint32_t>(std::max(0, end)));
         a = std::min(a, size);
         b = std::min(b, size);
         changed = (s->selStartUtf16 != a) || (s->selEndUtf16 != b) || (s->caretUtf16 != b);

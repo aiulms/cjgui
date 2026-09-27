@@ -7,6 +7,8 @@
 .idea/
 .vscode/
 .opencode/
+.arts/
+.resultverify/
 *.swp
 *.swo
 
@@ -71,6 +73,25 @@ sources/
 /labs/ohos_cjgui_app/entry/src/main/cpp/
 /labs/ohos_cjgui_app/entry/src/main/ets/proxy/
 /labs/ohos_cjgui_app/entry/cjgui_sync_*.manifest
+
+# Thermostat HarmonyOS consumer: keep the project shell and app-owned sources,
+# but exclude build state and synchronized framework/application copies.
+/labs/ohos_thermo_app/.hvigor/
+/labs/ohos_thermo_app/oh_modules/
+/labs/ohos_thermo_app/labs/
+/labs/ohos_thermo_app/entry/.hvigor/
+/labs/ohos_thermo_app/entry/.cxx/
+/labs/ohos_thermo_app/entry/oh_modules/
+/labs/ohos_thermo_app/entry/libs/
+/labs/ohos_thermo_app/entry/cjgui/
+/labs/ohos_thermo_app/entry/shared_operation_core/
+/labs/ohos_thermo_app/entry/settings_counter_application/
+/labs/ohos_thermo_app/entry/thermostat_application/
+/labs/ohos_thermo_app/entry/ohos_transport/
+/labs/ohos_thermo_app/entry/oh_renderer/
+/labs/ohos_thermo_app/entry/src/main/cpp/
+/labs/ohos_thermo_app/entry/src/main/ets/proxy/
+/labs/ohos_thermo_app/entry/cjgui_sync_*.manifest
 
 # Keep concise verification evidence; local build, run, and consultation
 # archives remain available in the workspace without entering Git history.

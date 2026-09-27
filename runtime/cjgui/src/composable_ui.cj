@@ -191,6 +191,18 @@ public let CJGUI_COMPOSABLE_UI_ALIGN_STRETCH: Int64 = 4
 // logical source count or changes its selection/scroll truth.
 public let CJGUI_COMPOSABLE_UI_MAX_VIRTUAL_MATERIALIZED_ROWS: Int64 = 128
 
+/// Platform-independent roles carried by an accepted control scene. These
+/// numbers are transport values, never AppKit roles or business permissions.
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_AUTO: Int64 = 0
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_TAB_GROUP: Int64 = 1
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_TAB: Int64 = 2
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA: Int64 = 3
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_TREE: Int64 = 4
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW: Int64 = 5
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON: Int64 = 6
+public let CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX: Int64 = 7
+
+/// Stability: experimental.
 public class CjguiComposableUiColor {
     public let red: Float64
     public let green: Float64
@@ -201,6 +213,14 @@ public class CjguiComposableUiColor {
         this.green = green
         this.blue = blue
         this.alpha = alpha
+    }
+    /// `None` when every component is finite; otherwise a stable, readable
+    /// reason. Finite components are stored exactly as declared (alpha 0 is a
+    /// legal fully transparent colour); only NaN and +/-Infinity are refused.
+    /// The decision is the shared effect contract, so the handwritten and the
+    /// generated token paths agree.
+    public func rejectionReason(): ?String {
+        return CjguiComposableUiEffectValidation.colorRejectionReason(this)
     }
 }
 
@@ -316,6 +336,509 @@ public class CjguiComposableUiClipConstraint {
 
 private let CJGUI_COMPOSABLE_UI_MAX_CLIP_CONSTRAINTS: Int64 = 4
 
+/// One colour stop of a linear gradient. `position` is normalized to the
+/// node's own box: 0 is the start edge along the gradient axis and 1 is the end
+/// edge. The value is stored exactly as declared: a finite position outside
+/// [0,1] is NOT clamped and a NaN/Infinity is NOT folded to 0. Either one is
+/// refused by name through `rejectionReason`, and the owning style normalizes
+/// the illegal gradient away instead of staging a rewritten declaration.
+///
+/// Stability: experimental.
+public class CjguiComposableUiGradientStop {
+    public let position: Float64
+    public let color: CjguiComposableUiColor
+    public init(position!: Float64, color!: CjguiComposableUiColor) {
+        this.position = position
+        this.color = color
+    }
+    /// `None` when the stop is legal; otherwise a stable, readable reason. The
+    /// decision is the shared effect contract, so the generated token path and
+    /// the handwritten constructor accept exactly the same values.
+    public func rejectionReason(): ?String {
+        return CjguiComposableUiEffectValidation.stopRejectionReason(this)
+    }
+}
+
+/// A linear gradient declared in the node's own normalized box. Coordinates
+/// are fractions in [0,1] (0,0 is the top-left and 1,1 the bottom-right), so
+/// the effect is resolution independent and never a device-pixel value. A legal
+/// gradient carries two to four stops; the count is admitted BEFORE the list is
+/// sorted, so an over-long declaration is refused in O(n) and never truncated.
+/// Only an admitted list is ordered (stable by position, equal positions keep
+/// declaration order). Coordinates and positions are NOT clamped: an
+/// out-of-range or non-finite value has a named rejection reason, and the
+/// owning style normalizes it away rather than staging a rewritten declaration.
+///
+/// Stability: experimental.
+public class CjguiComposableUiLinearGradient {
+    public let startX: Float64
+    public let startY: Float64
+    public let endX: Float64
+    public let endY: Float64
+    public let stops: Array<CjguiComposableUiGradientStop>
+    public init(startX!: Float64 = 0.0, startY!: Float64 = 0.5, endX!: Float64 = 1.0, endY!: Float64 = 0.5,
+        stops!: Array<CjguiComposableUiGradientStop> = Array<CjguiComposableUiGradientStop>()) {
+        this.startX = startX
+        this.startY = startY
+        this.endX = endX
+        this.endY = endY
+        // Admission first: the shared predicate checks the stop count and every
+        // scalar before any ordering happens, so a declaration with more than
+        // four stops is refused instead of sorted and truncated. An illegal
+        // list is kept in declaration order for inspection; the style layer
+        // normalizes it to None so the accepted scene never carries it.
+        this.stops = if (CjguiComposableUiEffectValidation
+            .gradientRejectionReason(startX, startY, endX, endY, stops)
+            .isNone()) {
+            CjguiComposableUiEffectValidation.orderAdmittedStops(stops)
+        } else {
+            stops
+        }
+    }
+    /// `None` when the declaration is legal; otherwise a stable, readable
+    /// reason naming the first failed admission rule.
+    public func rejectionReason(): ?String {
+        return CjguiComposableUiEffectValidation.gradientRejectionReason(this.startX, this.startY, this.endX, this.endY,
+            this.stops)
+    }
+    public func isValid(): Bool {
+        return rejectionReason().isNone()
+    }
+}
+
+/// One stop of the P4 group's linear alpha mask. Position and alpha are both
+/// normalized [0,1] values. Equal positions are retained in declaration order;
+/// sampling exactly at a repeated position uses the final stop in that run.
+///
+/// Stability: experimental.
+public class CjguiComposableUiAlphaMaskStop {
+    public let position: Float64
+    public let alpha: Float64
+
+    public init(position!: Float64, alpha!: Float64) {
+        this.position = position
+        this.alpha = alpha
+    }
+
+    public func rejectionReason(): ?String {
+        return CjguiComposableUiEffectValidation.alphaMaskStopRejectionReason(this)
+    }
+}
+
+/// Group-local linear alpha mask. The normalized coordinates are measured in
+/// the group's layout rectangle. Samples outside that rectangle are fully
+/// transparent; inside it, the projected stop value holds the first/last alpha
+/// beyond the stop range. Repeated positions are stable and exact samples use
+/// the last declared stop at that position.
+///
+/// Stability: experimental.
+public class CjguiComposableUiLinearAlphaMask {
+    public let startX: Float64
+    public let startY: Float64
+    public let endX: Float64
+    public let endY: Float64
+    public let stops: Array<CjguiComposableUiAlphaMaskStop>
+
+    public init(startX!: Float64 = 0.0, startY!: Float64 = 0.5, endX!: Float64 = 1.0, endY!: Float64 = 0.5,
+        stops!: Array<CjguiComposableUiAlphaMaskStop> = Array<CjguiComposableUiAlphaMaskStop>()) {
+        this.startX = startX
+        this.startY = startY
+        this.endX = endX
+        this.endY = endY
+        this.stops = if (CjguiComposableUiEffectValidation
+            .alphaMaskRejectionReason(startX, startY, endX, endY, stops)
+            .isNone()) {
+            CjguiComposableUiEffectValidation.orderAdmittedAlphaMaskStops(stops)
+        } else {
+            stops
+        }
+    }
+
+    public func rejectionReason(): ?String {
+        return CjguiComposableUiEffectValidation.alphaMaskRejectionReason(this.startX, this.startY, this.endX,
+            this.endY, this.stops)
+    }
+
+    public func isValid(): Bool {
+        return rejectionReason().isNone()
+    }
+
+    /// Returns the mask alpha at a point in normalized group-local coordinates.
+    /// The point is first projected onto the start/end vector, then interpolated
+    /// between the admitted stops. A degenerate/invalid declaration is fail-closed.
+    public func alphaAt(x: Float64, y: Float64): Float64 {
+        if (rejectionReason().isSome() || !CjguiComposableUiEffectValidation.isFinite(x) ||
+            !CjguiComposableUiEffectValidation.isFinite(y) || x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) {
+            return 0.0
+        }
+        let dx = endX - startX
+        let dy = endY - startY
+        let projected = ((x - startX) * dx + (y - startY) * dy) / (dx * dx + dy * dy)
+        var rightIndex: Int64 = 0
+        while (rightIndex < stops.size && stops[rightIndex].position <= projected) {
+            rightIndex += 1
+        }
+        if (rightIndex == 0) {
+            return stops[0].alpha
+        }
+        if (rightIndex >= stops.size) {
+            return stops[stops.size - 1].alpha
+        }
+        let left = stops[rightIndex - 1]
+        let right = stops[rightIndex]
+        let amount = (projected - left.position) / (right.position - left.position)
+        return left.alpha + (right.alpha - left.alpha) * amount
+    }
+}
+
+/// The public P4 effect declaration for one isolated UI subtree. Opacity is
+/// applied once to the flattened subtree; blendMode is `normal` or `multiply`;
+/// mask is an optional group-local linear alpha mask.
+///
+/// Stability: experimental.
+public class CjguiComposableUiEffectGroup {
+    public let opacity: Float64
+    public let blendMode: String
+    public let mask: ?CjguiComposableUiLinearAlphaMask
+    /// Backdrop blur radius in logical points. Zero disables backdrop blur.
+    /// The first experimental contract admits only 0..16 points.
+    public let backdropBlurRadiusPoints: Int64
+    /// Explicit behavior when blur cannot fit the backend resource budget.
+    /// The initial contract supports only `unblurred`.
+    public let backdropBlurFallback: String
+
+    public init(opacity!: Float64 = 1.0, blendMode!: String = "normal",
+        mask!: ?CjguiComposableUiLinearAlphaMask = None, backdropBlurRadiusPoints!: Int64 = 0,
+        backdropBlurFallback!: String = "unblurred") {
+        this.opacity = opacity
+        this.blendMode = blendMode
+        this.mask = mask
+        this.backdropBlurRadiusPoints = backdropBlurRadiusPoints
+        this.backdropBlurFallback = backdropBlurFallback
+    }
+
+    public func rejectionReason(): ?String {
+        return CjguiComposableUiEffectValidation.effectGroupRejectionReason(this.opacity, this.blendMode, this.mask,
+            this.backdropBlurRadiusPoints, this.backdropBlurFallback)
+    }
+
+    public func isValid(): Bool {
+        return rejectionReason().isNone()
+    }
+}
+
+/// A rectangular outer drop shadow, declared in logical points. It is a
+/// paint-only effect: it never participates in layout, measurement or hit
+/// testing, and its support domain is reported separately by
+/// `CjguiComposableUiLayoutNode.effectOutputBounds`. Every scalar is stored as
+/// declared and admitted against the published bounds (offset [-4096,4096],
+/// blur [0,256], spread [0,128]); an out-of-range or non-finite value is refused
+/// by name instead of being clamped and then declared legal.
+///
+/// Stability: experimental.
+public class CjguiComposableUiShadowStyle {
+    public let color: CjguiComposableUiColor
+    public let offsetX: Int64
+    public let offsetY: Int64
+    public let blurRadius: Int64
+    public let spread: Int64
+    public init(color!: CjguiComposableUiColor = CjguiComposableUiColor(0.0, 0.0, 0.0, 0.35), offsetX!: Int64 = 0,
+        offsetY!: Int64 = 2, blurRadius!: Int64 = 8, spread!: Int64 = 0) {
+        this.color = color
+        this.offsetX = offsetX
+        this.offsetY = offsetY
+        this.blurRadius = blurRadius
+        this.spread = spread
+    }
+    /// `None` when the shadow is legal; otherwise a stable, readable reason.
+    public func rejectionReason(): ?String {
+        return CjguiComposableUiEffectValidation.shadowRejectionReason(this.color, this.offsetX, this.offsetY,
+            this.blurRadius, this.spread)
+    }
+    public func isVisible(): Bool {
+        return color.alpha > 0.0
+    }
+}
+
+/// ONE shared admission contract for encoded effects. Handwritten construction,
+/// generated tokens and discovery all consult these predicates and constants.
+///
+/// Admission rules (identical for handwritten values and generated tokens):
+///  - a gradient carries 2..4 stops. Fewer than two or more than four is
+///    refused by name; the list is NEVER truncated and is never sorted before
+///    the count is admitted, so a 10,000-stop declaration costs one count check
+///    and no per-stop rebuild.
+///  - every coordinate (`startX/startY/endX/endY`) and every stop `position`
+///    must be FINITE and inside [0,1]. Finite out-of-range values are NOT
+///    clamped and NOT accepted: clamping would silently rewrite the author's
+///    declaration. NaN and +/-Infinity are refused with a dedicated reason.
+///  - a colour's four components must be finite (NaN/+/-Infinity refused);
+///    finite values are stored exactly as declared. Alpha 0 is a legal fully
+///    transparent colour and a legal invisible shadow.
+///  - shadow scalars are logical points: offset in [-4096,4096], blur in
+///    [0,256], spread in [0,128]. Out-of-range values are refused by name.
+///  - a group mask carries 2..4 finite normalized positions/alpha stops, with
+///    finite normalized coordinates and distinct start/end points. Count is
+///    checked before stable ordering.
+///  - `none` and the empty string mean "clear the effect"; an ABSENT property
+///    means "inherit the base". The generated side applies that mapping before
+///    it builds the style.
+///
+/// Stability: experimental.
+public class CjguiComposableUiEffectValidation {
+    public static let MIN_GRADIENT_STOPS: Int64 = 2
+    public static let MAX_GRADIENT_STOPS: Int64 = 4
+    public static let SHADOW_OFFSET_MIN: Int64 = -4096
+    public static let SHADOW_OFFSET_MAX: Int64 = 4096
+    public static let SHADOW_BLUR_MIN: Int64 = 0
+    public static let SHADOW_BLUR_MAX: Int64 = 256
+    public static let SHADOW_SPREAD_MIN: Int64 = 0
+    public static let SHADOW_SPREAD_MAX: Int64 = 128
+    public static let MIN_ALPHA_MASK_STOPS: Int64 = 2
+    public static let MAX_ALPHA_MASK_STOPS: Int64 = 4
+
+    // Published discovery vocabulary. Every string is space-free so it can ride
+    // the one-line `PROPERTY` protocol unchanged; the encoder in the named-style
+    // module produces exactly the grammar named here.
+    public static let SHADOW_ENCODING: String = "offX,offY,blur,spread,#RRGGBBAA"
+    public static let SHADOW_UNIT: String = "logical_points"
+    public static let SHADOW_RANGE: String = "offset:-4096..4096,blur:0..256,spread:0..128"
+    public static let GRADIENT_ENCODING: String = "sx,sy,ex,ey,pos:color|pos:color"
+    // The normalized [0,1] value is the accepted semantic domain (what the
+    // handwritten constructor and `rejectionReason` enforce); the wire token
+    // carries the same value as an integer percent in 0..100.
+    public static let GRADIENT_UNIT: String = "wire_percent_0..100,normalized_0..1"
+    public static let GRADIENT_RANGE: String = "coordinate:0..1,position:0..1,stops:2..4"
+    public static let EFFECT_GROUP_ENCODING: String = "opacityPercent,mode,maskOrNone(sx,sy,ex,ey,pos:alpha|...);blur=radiusPoints,unblurred"
+    public static let EFFECT_GROUP_UNIT: String = "wire_percent_0..100,normalized_0..1,blur_radius_logical_points"
+    public static let EFFECT_GROUP_RANGE: String = "opacity:0..1,blend:normal|multiply,mask_coordinate:0..1,mask_position:0..1,mask_alpha:0..1,mask_stops:2..4,target_edge:4096,target_pixels:4194304,total_budget_bytes:100663296,groups:16,depth:4,backdrop_blur_radius_points:0..16,backdrop_blur_fallback:unblurred"
+    public static let EFFECT_NONE_SEMANTICS: String = "none_or_empty=clear,absent=inherit"
+    public static let EFFECT_STABILITY: String = "experimental"
+    public static let EFFECT_BACKEND_SUPPORT: String = "macos:supported,ohos:unpublished_snapshot"
+    public static let EFFECT_GROUP_BACKEND_SUPPORT: String = "macos:supported,ohos:unpublished_snapshot;backdrop_blur=macos:experimental_supported,ohos:unpublished_snapshot"
+
+    /// A finite float satisfies `value - value == 0`; NaN and both infinities
+    /// produce NaN here, which is never equal to zero.
+    public static func isFinite(value: Float64): Bool {
+        return value - value == 0.0
+    }
+
+    public static func colorRejectionReason(color: CjguiComposableUiColor): ?String {
+        if (!isFinite(color.red) || !isFinite(color.green) || !isFinite(color.blue) || !isFinite(color.alpha)) {
+            return Some("color_component_not_finite")
+        }
+        return None
+    }
+
+    public static func stopRejectionReason(stop: CjguiComposableUiGradientStop): ?String {
+        if (!isFinite(stop.position)) {
+            return Some("gradient_stop_position_not_finite")
+        }
+        if (stop.position < 0.0 || stop.position > 1.0) {
+            return Some("gradient_stop_position_out_of_range")
+        }
+        if (let Some(reason) <- colorRejectionReason(stop.color)) {
+            return Some(reason)
+        }
+        return None
+    }
+
+    public static func gradientRejectionReason(startX: Float64, startY: Float64, endX: Float64, endY: Float64,
+        stops: Array<CjguiComposableUiGradientStop>): ?String {
+        // Count admission runs first and walks nothing: an over-long list is
+        // refused before any ordering or allocation.
+        if (stops.size < MIN_GRADIENT_STOPS) {
+            return Some("gradient_stop_count_below_minimum")
+        }
+        if (stops.size > MAX_GRADIENT_STOPS) {
+            return Some("gradient_stop_count_above_maximum")
+        }
+        for (coordinate in [startX, startY, endX, endY]) {
+            if (!isFinite(coordinate)) {
+                return Some("gradient_coordinate_not_finite")
+            }
+            if (coordinate < 0.0 || coordinate > 1.0) {
+                return Some("gradient_coordinate_out_of_range")
+            }
+        }
+        for (stop in stops) {
+            if (let Some(reason) <- stopRejectionReason(stop)) {
+                return Some(reason)
+            }
+        }
+        return None
+    }
+
+    public static func alphaMaskStopRejectionReason(stop: CjguiComposableUiAlphaMaskStop): ?String {
+        if (!isFinite(stop.position)) {
+            return Some("effect_mask_stop_position_not_finite")
+        }
+        if (stop.position < 0.0 || stop.position > 1.0) {
+            return Some("effect_mask_stop_position_out_of_range")
+        }
+        if (!isFinite(stop.alpha)) {
+            return Some("effect_mask_stop_alpha_not_finite")
+        }
+        if (stop.alpha < 0.0 || stop.alpha > 1.0) {
+            return Some("effect_mask_stop_alpha_out_of_range")
+        }
+        return None
+    }
+
+    public static func alphaMaskRejectionReason(startX: Float64, startY: Float64, endX: Float64, endY: Float64,
+        stops: Array<CjguiComposableUiAlphaMaskStop>): ?String {
+        // Bound work before scalar iteration and, in the constructor, before sorting.
+        if (stops.size < MIN_ALPHA_MASK_STOPS) {
+            return Some("effect_mask_stop_count_below_minimum")
+        }
+        if (stops.size > MAX_ALPHA_MASK_STOPS) {
+            return Some("effect_mask_stop_count_above_maximum")
+        }
+        for (coordinate in [startX, startY, endX, endY]) {
+            if (!isFinite(coordinate)) {
+                return Some("effect_mask_coordinate_not_finite")
+            }
+            if (coordinate < 0.0 || coordinate > 1.0) {
+                return Some("effect_mask_coordinate_out_of_range")
+            }
+        }
+        if (startX == endX && startY == endY) {
+            return Some("effect_mask_endpoints_coincident")
+        }
+        for (stop in stops) {
+            if (let Some(reason) <- alphaMaskStopRejectionReason(stop)) {
+                return Some(reason)
+            }
+        }
+        return None
+    }
+
+    /// Stable insertion sort, called only after the 2..4 stop admission check.
+    /// Equal positions keep declaration order so exact sampling can choose the
+    /// final stop at that position deterministically.
+    public static func orderAdmittedAlphaMaskStops(
+        stops: Array<CjguiComposableUiAlphaMaskStop>): Array<CjguiComposableUiAlphaMaskStop> {
+        var ordered = ArrayList<CjguiComposableUiAlphaMaskStop>()
+        for (stop in stops) {
+            let next = ArrayList<CjguiComposableUiAlphaMaskStop>()
+            var inserted = false
+            for (existing in ordered) {
+                if (!inserted && stop.position < existing.position) {
+                    next.add(stop)
+                    inserted = true
+                }
+                next.add(existing)
+            }
+            if (!inserted) {
+                next.add(stop)
+            }
+            ordered = next
+        }
+        return ordered.toArray()
+    }
+
+    public static func effectGroupRejectionReason(opacity: Float64, blendMode: String,
+        mask: ?CjguiComposableUiLinearAlphaMask, backdropBlurRadiusPoints: Int64,
+        backdropBlurFallback: String): ?String {
+        if (!isFinite(opacity)) {
+            return Some("effect_group_opacity_not_finite")
+        }
+        if (opacity < 0.0 || opacity > 1.0) {
+            return Some("effect_group_opacity_out_of_range")
+        }
+        if (blendMode != "normal" && blendMode != "multiply") {
+            return Some("effect_group_blend_mode_unsupported")
+        }
+        if (backdropBlurRadiusPoints < 0 || backdropBlurRadiusPoints > 16) {
+            return Some("effect_group_backdrop_blur_radius_out_of_range")
+        }
+        if (backdropBlurFallback != "unblurred") {
+            return Some("effect_group_backdrop_blur_fallback_unsupported")
+        }
+        if (let Some(value) <- mask) {
+            if (let Some(reason) <- value.rejectionReason()) {
+                return Some(reason)
+            }
+        }
+        return None
+    }
+
+    public static func shadowRejectionReason(color: CjguiComposableUiColor, offsetX: Int64, offsetY: Int64,
+        blurRadius: Int64, spread: Int64): ?String {
+        if (let Some(reason) <- colorRejectionReason(color)) {
+            return Some(reason)
+        }
+        if (offsetX < SHADOW_OFFSET_MIN || offsetX > SHADOW_OFFSET_MAX || offsetY < SHADOW_OFFSET_MIN || offsetY >
+            SHADOW_OFFSET_MAX) {
+            return Some("shadow_offset_out_of_range")
+        }
+        if (blurRadius < SHADOW_BLUR_MIN || blurRadius > SHADOW_BLUR_MAX) {
+            return Some("shadow_blur_out_of_range")
+        }
+        if (spread < SHADOW_SPREAD_MIN || spread > SHADOW_SPREAD_MAX) {
+            return Some("shadow_spread_out_of_range")
+        }
+        return None
+    }
+
+    /// Stable insertion sort by ascending position, applied ONLY after the stop
+    /// count has been admitted. Equal positions keep declaration order so a
+    /// sharp colour break is deterministic. The list is at most four entries
+    /// here, so both the rebuild count and the total allocation are bounded.
+    public static func orderAdmittedStops(stops: Array<CjguiComposableUiGradientStop>): Array<CjguiComposableUiGradientStop> {
+        var ordered = ArrayList<CjguiComposableUiGradientStop>()
+        for (stop in stops) {
+            let next = ArrayList<CjguiComposableUiGradientStop>()
+            var inserted = false
+            var index: Int64 = 0
+            while (index < ordered.size) {
+                if (!inserted && stop.position < ordered[index].position) {
+                    next.add(stop)
+                    inserted = true
+                }
+                next.add(ordered[index])
+                index += 1
+            }
+            if (!inserted) {
+                next.add(stop)
+            }
+            ordered = next
+        }
+        return ordered.toArray()
+    }
+}
+
+/// Window content background is a window-scoped declaration, never a node
+/// effect. The system may vary its appearance with the environment. The
+/// supported request is deliberately about purpose, not an AppKit material
+/// enum or a blur radius; an unsupported backend keeps an opaque background.
+public class CjguiWindowBackgroundPolicy {
+    public static let OPAQUE: String = "opaque"
+    public static let SYSTEM_CONTENT_AREA: String = "system_content_area"
+    public static let STABILITY: String = "experimental"
+    public static let BACKEND_SUPPORT: String = "macos:experimental_supported,ohos:unpublished_snapshot"
+
+    public static func isValidToken(token: String): Bool {
+        return token == OPAQUE || token == SYSTEM_CONTENT_AREA
+    }
+}
+
+/// A named, stable reason for an effect declaration that the shared contract
+/// refused. It is carried by the style itself so a handwritten candidate is
+/// rejected BEFORE the accepted scene, with the same vocabulary the generated
+/// token path uses (`shadow_value_invalid` / `gradient_value_invalid`) and a
+/// protocol path pointing at the refused property (`/shadow` or `/gradient`).
+/// Stability: experimental.
+public class CjguiComposableUiEffectRejection {
+    public let reason: String
+    public let path: String
+
+    public init(reason: String, path: String) {
+        this.reason = reason
+        this.path = path
+    }
+}
+
 public class CjguiComposableUiStyle {
     public let background: CjguiComposableUiColor
     public let border: CjguiComposableUiColor
@@ -355,6 +878,26 @@ public class CjguiComposableUiStyle {
     public let idealHeight: Int64
     public let alignX: Int64
     public let alignY: Int64
+    /// Optional outer drop shadow. `None` and an invisible shadow both mean
+    /// "draw nothing"; the constructor normalizes an invisible declaration to
+    /// `None` so no accepted style carries a shadow that cannot be seen.
+    public let shadow: ?CjguiComposableUiShadowStyle
+    /// Optional linear gradient. When valid it replaces the flat `background`
+    /// fill; an invalid declaration (fewer than two stops) is normalized to
+    /// `None` rather than producing an illegal scene.
+    public let gradient: ?CjguiComposableUiLinearGradient
+    /// Optional isolated subtree effect. It is a declaration carried with this
+    /// style; layout and input geometry remain unchanged.
+    ///
+    /// Stability: experimental.
+    public let effectGroup: ?CjguiComposableUiEffectGroup
+    /// A named rejection for an effect declaration that was refused by the
+    /// shared contract. `None` means both declarations were legal (or absent),
+    /// so the style is safe to accept. A non-None value lets the window refuse
+    /// the WHOLE candidate before the accepted scene, instead of silently
+    /// dropping the effect. Copied through by the style-composition helpers so
+    /// the reason cannot be lost on the way to consumption.
+    public let effectRejection: ?CjguiComposableUiEffectRejection
     public init(
         background!: CjguiComposableUiColor = CjguiComposableUiColor(0.0, 0.0, 0.0, 0.0),
         border!: CjguiComposableUiColor = CjguiComposableUiColor(0.0, 0.0, 0.0, 0.0),
@@ -379,7 +922,11 @@ public class CjguiComposableUiStyle {
         alignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
         cornerRadius!: Int64 = 0,
         clipsContent!: Bool = false,
-        pointerInteractive!: Bool = false
+        pointerInteractive!: Bool = false,
+        shadow!: ?CjguiComposableUiShadowStyle = None,
+        gradient!: ?CjguiComposableUiLinearGradient = None,
+        effectGroup!: ?CjguiComposableUiEffectGroup = None,
+        effectRejection!: ?CjguiComposableUiEffectRejection = None
     ) {
         this.background = background
         this.border = border
@@ -508,6 +1055,72 @@ public class CjguiComposableUiStyle {
         } else {
             CJGUI_COMPOSABLE_UI_ALIGN_START
         }
+        // A shadow is admitted only when every scalar passes the shared effect
+        // contract AND it could actually be seen; an invisible or illegal
+        // declaration is normalized to None so "declared but unusable" and "not
+        // declared" are the same accepted state. Nothing is clamped into range
+        // and then declared legal.
+        this.shadow = if (let Some(value) <- shadow) {
+            if (value.rejectionReason().isNone() && value.isVisible()) {
+                Some(value)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+        // An illegal gradient (wrong stop count, non-finite or out-of-range
+        // coordinate/position, non-finite colour) is refused here, not at the
+        // native boundary: a style either carries a legal gradient or none.
+        this.gradient = if (let Some(value) <- gradient) {
+            if (value.rejectionReason().isNone()) {
+                Some(value)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+        this.effectGroup = if (let Some(value) <- effectGroup) {
+            if (value.rejectionReason().isNone()) {
+                Some(value)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+        // Preserve the FIRST refused declaration using the SAME vocabulary as
+        // the generated token path, so a handwritten refusal is indistinguishable
+        // from a generated one to an external operator. A style copied from
+        // another style carries the existing rejection through the explicit
+        // parameter; a fresh handwritten declaration is inspected here.
+        this.effectRejection = if (let Some(value) <- effectRejection) {
+            Some(value)
+        } else {
+            CjguiComposableUiStyle.declaredEffectRejection(shadow, gradient, effectGroup)
+        }
+    }
+
+    private static func declaredEffectRejection(shadow: ?CjguiComposableUiShadowStyle,
+        gradient: ?CjguiComposableUiLinearGradient,
+        effectGroup: ?CjguiComposableUiEffectGroup): ?CjguiComposableUiEffectRejection {
+        if (let Some(value) <- shadow) {
+            if (let Some(_) <- value.rejectionReason()) {
+                return Some(CjguiComposableUiEffectRejection("shadow_value_invalid", "/shadow"))
+            }
+        }
+        if (let Some(value) <- gradient) {
+            if (let Some(_) <- value.rejectionReason()) {
+                return Some(CjguiComposableUiEffectRejection("gradient_value_invalid", "/gradient"))
+            }
+        }
+        if (let Some(value) <- effectGroup) {
+            if (let Some(_) <- value.rejectionReason()) {
+                return Some(CjguiComposableUiEffectRejection("effect_group_value_invalid", "/effectGroup"))
+            }
+        }
+        return None
     }
 }
 
@@ -520,17 +1133,15 @@ public class CjguiComposableUiStyle {
 /// background/border/textColor/borderWidth replace the paint. A named style can
 /// therefore be a pure paint role whose switching never moves layout, re-measures
 /// text or rebuilds identity.
-public func cjguiComposableUiPaintOverlay(base: CjguiComposableUiStyle,
-                                          paint: CjguiComposableUiStyle): CjguiComposableUiStyle {
-    return CjguiComposableUiStyle(
-        background: paint.background, border: paint.border, textColor: paint.textColor,
+public func cjguiComposableUiPaintOverlay(base: CjguiComposableUiStyle, paint: CjguiComposableUiStyle): CjguiComposableUiStyle {
+    return CjguiComposableUiStyle(background: paint.background, border: paint.border, textColor: paint.textColor,
         padding: base.padding, gap: base.gap, fixedWidth: base.fixedWidth, fixedHeight: base.fixedHeight,
-        growX: base.growX, growY: base.growY, borderWidth: paint.borderWidth,
-        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily,
-        minWidth: base.minWidth, maxWidth: base.maxWidth, idealWidth: base.idealWidth,
-        minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
-        alignX: base.alignX, alignY: base.alignY, cornerRadius: base.cornerRadius,
-        clipsContent: base.clipsContent)
+        growX: base.growX, growY: base.growY, borderWidth: paint.borderWidth, fontSize: base.fontSize,
+        fontWeight: base.fontWeight, fontFamily: base.fontFamily, minWidth: base.minWidth, maxWidth: base.maxWidth,
+        idealWidth: base.idealWidth, minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
+        alignX: base.alignX, alignY: base.alignY, cornerRadius: base.cornerRadius, clipsContent: base.clipsContent,
+        shadow: base.shadow, gradient: base.gradient, effectGroup: base.effectGroup,
+        effectRejection: base.effectRejection)
 }
 
 public class CjguiComposableUiPaintStyle {
@@ -602,12 +1213,27 @@ public class CjguiComposableUiInteractionStyle {
         this.checked = checked
     }
 
-    private static func applyPaint(base: CjguiComposableUiStyle,
-        paint: CjguiComposableUiPaintStyle): CjguiComposableUiStyle {
-        let background = if (let Some(value) <- paint.background) { value } else { base.background }
-        let border = if (let Some(value) <- paint.border) { value } else { base.border }
-        let textColor = if (let Some(value) <- paint.textColor) { value } else { base.textColor }
-        let borderWidth = if (let Some(value) <- paint.borderWidth) { value } else { base.borderWidth }
+    private static func applyPaint(base: CjguiComposableUiStyle, paint: CjguiComposableUiPaintStyle): CjguiComposableUiStyle {
+        let background = if (let Some(value) <- paint.background) {
+            value
+        } else {
+            base.background
+        }
+        let border = if (let Some(value) <- paint.border) {
+            value
+        } else {
+            base.border
+        }
+        let textColor = if (let Some(value) <- paint.textColor) {
+            value
+        } else {
+            base.textColor
+        }
+        let borderWidth = if (let Some(value) <- paint.borderWidth) {
+            value
+        } else {
+            base.borderWidth
+        }
         return CjguiComposableUiStyle(
             background: background,
             border: border,
@@ -631,7 +1257,11 @@ public class CjguiComposableUiInteractionStyle {
             alignX: base.alignX,
             alignY: base.alignY,
             cornerRadius: base.cornerRadius,
-            clipsContent: base.clipsContent
+            clipsContent: base.clipsContent,
+            shadow: base.shadow,
+            gradient: base.gradient,
+            effectGroup: base.effectGroup,
+            effectRejection: base.effectRejection
         )
     }
 
@@ -715,44 +1345,32 @@ public class CjguiComposableUiTheme {
                 border: CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0),
                 textColor: CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0), fontWeight: 1),
             inputInteraction: CjguiComposableUiInteractionStyle(
-                normal: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.42, 0.56, 0.80, 1.0)),
+                normal: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.42, 0.56, 0.80, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.12, 0.16, 0.24, 1.0))),
-                hover: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.90, 0.94, 1.0, 1.0)),
+                hover: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.90, 0.94, 1.0, 1.0)),
                     border: Some(CjguiComposableUiColor(0.36, 0.62, 0.96, 1.0))),
-                pressed: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.84, 0.90, 1.0, 1.0))),
-                focused: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.24, 0.72, 1.0, 1.0)), borderWidth: Some(2)),
-                disabled: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.34, 0.39, 0.48, 1.0)),
+                pressed: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.84, 0.90, 1.0, 1.0))),
+                focused: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.24, 0.72, 1.0, 1.0)),
+                    borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.34, 0.39, 0.48, 1.0)),
                     border: Some(CjguiComposableUiColor(0.28, 0.32, 0.40, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.60, 0.64, 0.72, 1.0))),
-                selected: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.22, 0.36, 0.58, 1.0))),
-                checked: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.32, 0.88, 0.68, 1.0)))),
+                selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.22, 0.36, 0.58, 1.0))),
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.32, 0.88, 0.68, 1.0)))),
             primaryActionInteraction: CjguiComposableUiInteractionStyle(
-                normal: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0)),
+                normal: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0)),
                     border: Some(CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0))),
-                hover: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.28, 0.56, 0.94, 1.0)),
+                hover: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.28, 0.56, 0.94, 1.0)),
                     border: Some(CjguiComposableUiColor(0.52, 0.74, 1.0, 1.0))),
-                pressed: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.12, 0.30, 0.68, 1.0))),
-                focused: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.62, 0.86, 1.0, 1.0)), borderWidth: Some(2)),
-                disabled: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.24, 0.28, 0.36, 1.0)),
+                pressed: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.12, 0.30, 0.68, 1.0))),
+                focused: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.62, 0.86, 1.0, 1.0)),
+                    borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.24, 0.28, 0.36, 1.0)),
                     border: Some(CjguiComposableUiColor(0.28, 0.34, 0.44, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.56, 0.62, 0.72, 1.0))),
-                selected: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.30, 0.60, 0.92, 1.0))),
-                checked: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.44, 0.94, 0.78, 1.0))))
+                selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.30, 0.60, 0.92, 1.0))),
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.44, 0.94, 0.78, 1.0))))
         )
     }
     public static func paperLight(): CjguiComposableUiTheme {
@@ -769,44 +1387,32 @@ public class CjguiComposableUiTheme {
                 border: CjguiComposableUiColor(0.12, 0.32, 0.68, 1.0),
                 textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0), fontWeight: 1),
             inputInteraction: CjguiComposableUiInteractionStyle(
-                normal: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.64, 0.68, 0.75, 1.0)),
+                normal: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.64, 0.68, 0.75, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.18, 0.22, 0.30, 1.0))),
-                hover: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0)),
+                hover: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0)),
                     border: Some(CjguiComposableUiColor(0.38, 0.54, 0.86, 1.0))),
-                pressed: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.90, 0.94, 1.0, 1.0))),
-                focused: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.18, 0.42, 0.84, 1.0)), borderWidth: Some(2)),
-                disabled: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.88, 0.89, 0.92, 1.0)),
+                pressed: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.90, 0.94, 1.0, 1.0))),
+                focused: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.18, 0.42, 0.84, 1.0)),
+                    borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.88, 0.89, 0.92, 1.0)),
                     border: Some(CjguiComposableUiColor(0.76, 0.78, 0.82, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.52, 0.54, 0.60, 1.0))),
-                selected: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.84, 0.90, 1.0, 1.0))),
-                checked: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.12, 0.62, 0.38, 1.0)))),
+                selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.84, 0.90, 1.0, 1.0))),
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.12, 0.62, 0.38, 1.0)))),
             primaryActionInteraction: CjguiComposableUiInteractionStyle(
-                normal: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0)),
+                normal: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0)),
                     border: Some(CjguiComposableUiColor(0.12, 0.32, 0.68, 1.0)),
                     textColor: Some(CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0))),
-                hover: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.28, 0.56, 0.94, 1.0)),
+                hover: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.28, 0.56, 0.94, 1.0)),
                     border: Some(CjguiComposableUiColor(0.18, 0.40, 0.84, 1.0))),
-                pressed: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.14, 0.34, 0.70, 1.0))),
-                focused: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.10, 0.26, 0.62, 1.0)), borderWidth: Some(2)),
-                disabled: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.72, 0.74, 0.78, 1.0)),
+                pressed: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.14, 0.34, 0.70, 1.0))),
+                focused: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.10, 0.26, 0.62, 1.0)),
+                    borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.72, 0.74, 0.78, 1.0)),
                     border: Some(CjguiComposableUiColor(0.64, 0.66, 0.70, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.86, 0.87, 0.90, 1.0))),
-                selected: CjguiComposableUiPaintStyle(
-                    background: Some(CjguiComposableUiColor(0.34, 0.58, 0.92, 1.0))),
-                checked: CjguiComposableUiPaintStyle(
-                    border: Some(CjguiComposableUiColor(0.10, 0.52, 0.30, 1.0))))
+                selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.34, 0.58, 0.92, 1.0))),
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.10, 0.52, 0.30, 1.0))))
         )
     }
 }
@@ -1099,8 +1705,8 @@ public class CjguiComposableUiSplitState {
     /// a size the accepted geometry never used (and then poisoned the drag origin
     /// derived from it).
     public func applyFirstSize(requested: Int64, track: Int64, handleSize: Int64): Int64 {
-        let bounded = CjguiComposableUiSplitGeometry.firstSizeForTrack(requested, track, handleSize,
-            firstMinimumValue, secondMinimumValue)
+        let bounded = CjguiComposableUiSplitGeometry.firstSizeForTrack(requested, track, handleSize, firstMinimumValue,
+            secondMinimumValue)
         firstSizeValue = bounded
         return bounded
     }
@@ -2590,10 +3196,9 @@ public class CjguiComposableUiTextStyleRun {
     public let backgroundBlue: Float64
     public let backgroundAlpha: Float64
 
-    public init(start: Int64, end: Int64, fontSize: Float64, fontWeight: Int64,
-        fontFamily: String, red: Float64, green: Float64, blue: Float64, alpha: Float64,
-        hasBackground!: Bool = false, backgroundRed!: Float64 = 0.0, backgroundGreen!: Float64 = 0.0,
-        backgroundBlue!: Float64 = 0.0, backgroundAlpha!: Float64 = 1.0) {
+    public init(start: Int64, end: Int64, fontSize: Float64, fontWeight: Int64, fontFamily: String, red: Float64,
+        green: Float64, blue: Float64, alpha: Float64, hasBackground!: Bool = false, backgroundRed!: Float64 = 0.0,
+        backgroundGreen!: Float64 = 0.0, backgroundBlue!: Float64 = 0.0, backgroundAlpha!: Float64 = 1.0) {
         this.start = start
         this.end = end
         this.fontSize = fontSize
@@ -2667,6 +3272,9 @@ public class CjguiComposableUiNode {
     /// same-path content without inventing a new business object.
     public let imageResourceId: String
     public let imageResourceVersion: Int64
+    /// Immutable binary offer retained by an in-memory image projection.
+    /// The native side receives a bounded copy only while staging the scene.
+    public let imageTransferOffer: ?CjguiSharedOperationTransferOffer
     public let imageContentMode: Int64
     public let style: CjguiComposableUiStyle
     /// Optional presentation style runs for this node. Empty means "use the
@@ -2678,6 +3286,20 @@ public class CjguiComposableUiNode {
     /// The application owns only selected/checked data. Hover, pressed,
     /// focus and disabled are derived by the framework at projection time.
     public let ownerInteractionState: Int64
+    /// Optional semantic override for a component whose paint kind is only a
+    /// layout wrapper (notably a tree row). Tree builders set these before the
+    /// candidate snapshot; the accepted layout copies them as value facts.
+    public var semanticRole: Int64
+    public var semanticLabel: String
+    public var semanticSelected: Bool
+    public var semanticExpandable: Bool
+    public var semanticExpanded: Bool
+    public var semanticLevel: Int64
+    public var semanticKey: String
+    public var semanticParentKey: String
+    /// Explicit owner generation for same-address business rebinding where
+    /// resource/action/field scalars do not change.
+    public var semanticIncarnation: Int64
     /// Enabled controls can receive UI intents. Read-only applies only to
     /// editable field kinds and is distinct from invisible/absent nodes.
     public let isEnabled: Bool
@@ -2756,14 +3378,14 @@ public class CjguiComposableUiNode {
 
     public init(nodeId: Int64, semanticId: String, nodeKind: Int64, label: String, value: String, actionName: String,
         resourceId: Int64, style: CjguiComposableUiStyle, scrollOffset!: Int64 = 0,
-        scrollViewport!: ?CjguiComposableUiScrollViewport = None,
-        splitState!: ?CjguiComposableUiSplitState = None, enabled!: Bool = true,
-        tabsState!: ?CjguiComposableUiTabsState = None, tabsPageKey!: String = "", tabsPageActive!: Bool = false,
-        tabsTitleHeight!: Int64 = 0,
+        scrollViewport!: ?CjguiComposableUiScrollViewport = None, splitState!: ?CjguiComposableUiSplitState = None,
+        enabled!: Bool = true, tabsState!: ?CjguiComposableUiTabsState = None, tabsPageKey!: String = "",
+        tabsPageActive!: Bool = false, tabsTitleHeight!: Int64 = 0,
         textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>(),
         readOnly!: Bool = false, fieldId!: String = "", operationActionName!: String = "",
         operationResourceId!: Int64 = -1, displayValueRole!: String = "", imageResourcePath!: String = "",
         imageResourceId!: String = "", imageResourceVersion!: Int64 = 0, imageContentMode!: Int64 = 1,
+        imageTransferOffer!: ?CjguiSharedOperationTransferOffer = None,
         tabInsertsText!: Bool = false, virtualListSource!: ?CjguiComposableUiVirtualListSource = None,
         variableHeightListSource!: ?CjguiComposableUiVariableHeightListSource = None,
         virtualListState!: ?CjguiComposableUiVirtualListState = None, virtualListContentNodeId!: Int64 = -1,
@@ -2772,14 +3394,18 @@ public class CjguiComposableUiNode {
         layerKind!: String = "", layerOwnerSemanticId!: String = "", layerAnchorSemanticId!: String = "",
         layerAnchorNodeId!: Int64 = -1, layerAnchorReference!: ?CjguiComposableUiNodeReference = None,
         layerIsModal!: Bool = false, layerInitialFocusNodeId!: Int64 = -1,
-        layerInitialFocusReference!: ?CjguiComposableUiNodeReference = None,
-        layoutHeightOverride!: Int64 = 0, inputScopeId!: String = "", layoutReuseKey!: String = "",
-        pointerControlRole!: String = "", pointerControlAxis!: Int64 = CjguiComposableUiSplitAxis.HORIZONTAL,
-        pointerControlMinimum!: Int64 = 0, pointerControlMaximum!: Int64 = 0, pointerControlStep!: Int64 = 1,
-        pointerControlHandleThickness!: Int64 = 8, pointerControlFirstSize!: Int64 = 0,
-        pointerControlSecondMinimum!: Int64 = 0,
+        layerInitialFocusReference!: ?CjguiComposableUiNodeReference = None, layoutHeightOverride!: Int64 = 0,
+        inputScopeId!: String = "", layoutReuseKey!: String = "", pointerControlRole!: String = "",
+        pointerControlAxis!: Int64 = CjguiComposableUiSplitAxis.HORIZONTAL, pointerControlMinimum!: Int64 = 0,
+        pointerControlMaximum!: Int64 = 0, pointerControlStep!: Int64 = 1, pointerControlHandleThickness!: Int64 = 8,
+        pointerControlFirstSize!: Int64 = 0, pointerControlSecondMinimum!: Int64 = 0,
         interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
         ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
+        semanticRole!: Int64 = CJGUI_COMPOSABLE_UI_SEMANTIC_AUTO,
+        semanticLabel!: String = "",
+        semanticSelected!: Bool = false, semanticExpandable!: Bool = false, semanticExpanded!: Bool = false,
+        semanticLevel!: Int64 = 0, semanticKey!: String = "", semanticParentKey!: String = "",
+        semanticIncarnation!: Int64 = 0,
         identity!: ?CjguiComposableUiIdentity = None) {
         this.nodeId = nodeId
         this.semanticId = semanticId
@@ -2803,6 +3429,7 @@ public class CjguiComposableUiNode {
         } else {
             imageResourceVersion
         }
+        this.imageTransferOffer = imageTransferOffer
         this.imageContentMode = if (imageContentMode == 2) {
             2
         } else {
@@ -2812,6 +3439,15 @@ public class CjguiComposableUiNode {
         this.textStyleRuns = textStyleRuns
         this.interactionStyle = interactionStyle
         this.ownerInteractionState = CjguiComposableUiInteractionState.ownerBits(ownerInteractionState)
+        this.semanticRole = semanticRole
+        this.semanticLabel = semanticLabel
+        this.semanticSelected = semanticSelected
+        this.semanticExpandable = semanticExpandable
+        this.semanticExpanded = semanticExpanded
+        this.semanticLevel = semanticLevel
+        this.semanticKey = semanticKey
+        this.semanticParentKey = semanticParentKey
+        this.semanticIncarnation = semanticIncarnation
         this.scrollOffset = if (scrollOffset < 0) {
             0
         } else {
@@ -3066,15 +3702,13 @@ public class CjguiComposableUiNode {
             // The window snapshots the declaration; presentation runs are part of
             // the declaration and must survive the snapshot, otherwise every
             // accepted node silently loses its inline styles.
-            textStyleRuns: textStyleRuns,
-            scrollOffset: scrollOffset, scrollViewport: scrollViewport, splitState: splitState,
-            tabsState: tabsState, tabsPageKey: tabsPageKey, tabsPageActive: tabsPageActive,
-            tabsTitleHeight: tabsTitleHeight,
-            enabled: isEnabled, readOnly: isReadOnly,
-            fieldId: fieldId,
+            textStyleRuns: textStyleRuns, scrollOffset: scrollOffset, scrollViewport: scrollViewport,
+            splitState: splitState, tabsState: tabsState, tabsPageKey: tabsPageKey, tabsPageActive: tabsPageActive,
+            tabsTitleHeight: tabsTitleHeight, enabled: isEnabled, readOnly: isReadOnly, fieldId: fieldId,
             operationActionName: operationActionName, operationResourceId: operationResourceId,
             displayValueRole: displayValueRole, imageResourcePath: imageResourcePath, imageResourceId: imageResourceId,
             imageResourceVersion: imageResourceVersion, imageContentMode: imageContentMode,
+            imageTransferOffer: imageTransferOffer,
             tabInsertsText: tabInsertsText, virtualListSource: virtualListSourceValue,
             variableHeightListSource: variableHeightListSourceValue, virtualListState: virtualListStateValue,
             virtualListContentNodeId: virtualListContentNodeIdValue, virtualListRowHeight: virtualListRowHeightValue,
@@ -3091,10 +3725,18 @@ public class CjguiComposableUiNode {
             pointerControlStep: pointerControlStep, pointerControlHandleThickness: pointerControlHandleThickness,
             pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
             interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
+            semanticRole: semanticRole, semanticLabel: semanticLabel, semanticSelected: semanticSelected,
+            semanticExpandable: semanticExpandable,
+            semanticExpanded: semanticExpanded, semanticLevel: semanticLevel, semanticKey: semanticKey,
+            semanticParentKey: semanticParentKey, semanticIncarnation: semanticIncarnation,
             identity: scopedIdentityValue)
         var ownsVirtualChildren = false
-        if (let Some(_) <- virtualListSourceValue) { ownsVirtualChildren = true }
-        if (let Some(_) <- variableHeightListSourceValue) { ownsVirtualChildren = true }
+        if (let Some(_) <- virtualListSourceValue) {
+            ownsVirtualChildren = true
+        }
+        if (let Some(_) <- variableHeightListSourceValue) {
+            ownsVirtualChildren = true
+        }
         if (!ownsVirtualChildren) {
             for (child in childNodes) {
                 cloned.add(child.cloneForWindowCandidate())
@@ -3530,15 +4172,13 @@ public class CjguiComposableUiIdentityRegistry {
 }
 
 public func cjguiComposableVertical(nodeId: Int64, semanticId: String, style: CjguiComposableUiStyle,
-    inputScopeId!: String = "", layoutReuseKey!: String = "",
-    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    inputScopeId!: String = "", layoutReuseKey!: String = "", identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, style,
         inputScopeId: inputScopeId, layoutReuseKey: layoutReuseKey, identity: identity)
 }
 
 public func cjguiComposableHorizontal(nodeId: Int64, semanticId: String, style: CjguiComposableUiStyle,
-    inputScopeId!: String = "", layoutReuseKey!: String = "",
-    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    inputScopeId!: String = "", layoutReuseKey!: String = "", identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_HORIZONTAL, "", "", "", -1, style,
         inputScopeId: inputScopeId, layoutReuseKey: layoutReuseKey, identity: identity)
 }
@@ -3631,9 +4271,8 @@ public class CjguiComposableUiTabPage {
 /// ONE component, and the title row's identities come from `scope`, so no caller
 /// owns an implementation-defined node id.
 public func cjguiComposableTabs(scope: CjguiComposableUiIdentityScope, semanticId: String,
-    pages: ArrayList<CjguiComposableUiTabPage>, state: CjguiComposableUiTabsState,
-    style: CjguiComposableUiStyle, titleHeight!: Int64 = 28,
-    titleStyle!: CjguiComposableUiStyle = CjguiComposableUiStyle(),
+    pages: ArrayList<CjguiComposableUiTabPage>, state: CjguiComposableUiTabsState, style: CjguiComposableUiStyle,
+    titleHeight!: Int64 = 28, titleStyle!: CjguiComposableUiStyle = CjguiComposableUiStyle(),
     titleInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
     containerNodeId!: Int64 = -1): CjguiComposableUiNode {
     let safeTitleHeight = if (titleHeight > 0) {
@@ -3650,9 +4289,9 @@ public func cjguiComposableTabs(scope: CjguiComposableUiIdentityScope, semanticI
     } else {
         Some(scope.local("container"))
     }
-    let container = CjguiComposableUiNode(containerNodeId, semanticId, CJGUI_COMPOSABLE_UI_TABS,
-        "", "", "", -1, style, tabsState: state, tabsTitleHeight: safeTitleHeight,
-        identity: containerIdentity)
+    let container = CjguiComposableUiNode(containerNodeId, semanticId, CJGUI_COMPOSABLE_UI_TABS, "", "", "", -1, style,
+        tabsState: state, tabsTitleHeight: safeTitleHeight,
+        semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_TAB_GROUP, identity: containerIdentity)
     let titleRow = CjguiComposableUiNode(-1, "${semanticId}-titles", CJGUI_COMPOSABLE_UI_HORIZONTAL, "", "", "", -1,
         titleRowStyle, identity: scope.local("titles"))
     // A title keeps the row's own centred geometry and takes only PAINT from
@@ -3661,23 +4300,16 @@ public func cjguiComposableTabs(scope: CjguiComposableUiIdentityScope, semanticI
     // exact title it had before (implicit defaults); a dark-surface consumer can
     // make its titles readable without a second focus owner or an inherited
     // colour system.
-    let titleNodeStyle = CjguiComposableUiStyle(
-        background: titleStyle.background,
-        border: titleStyle.border,
-        textColor: titleStyle.textColor,
-        borderWidth: titleStyle.borderWidth,
-        fontSize: titleStyle.fontSize,
-        fontWeight: titleStyle.fontWeight,
-        growX: 1,
-        alignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
+    let titleNodeStyle = CjguiComposableUiStyle(background: titleStyle.background, border: titleStyle.border,
+        textColor: titleStyle.textColor, borderWidth: titleStyle.borderWidth, fontSize: titleStyle.fontSize,
+        fontWeight: titleStyle.fontWeight, growX: 1, alignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
     var index = 0
     while (index < pages.size) {
         let page = pages[index]
-        let title = CjguiComposableUiNode(-1, "${semanticId}-tab-${page.key}", CJGUI_COMPOSABLE_UI_TAB_TITLE,
-            page.title, page.key, "ACTIVATE_TAB", -1,
-            titleNodeStyle, enabled: page.enabled,
-            tabsState: state, tabsPageKey: page.key, tabsTitleHeight: safeTitleHeight,
-            interactionStyle: titleInteraction,
+        let title = CjguiComposableUiNode(-1, "${semanticId}-tab-${page.key}", CJGUI_COMPOSABLE_UI_TAB_TITLE, page.title,
+            page.key, "ACTIVATE_TAB", -1, titleNodeStyle, enabled: page.enabled, tabsState: state, tabsPageKey: page.key,
+            tabsTitleHeight: safeTitleHeight, interactionStyle: titleInteraction,
+            semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_TAB, semanticSelected: page.key == state.activeKey(),
             identity: scope.local("tab-${page.key}"))
         titleRow.add(title)
         index += 1
@@ -3689,8 +4321,8 @@ public func cjguiComposableTabs(scope: CjguiComposableUiIdentityScope, semanticI
         let active = page.key == state.activeKey()
         // The page keeps the caller's subtree, and the ACTIVE flag lives on the
         // page root so the layout presents exactly one page.
-        let pageRoot = CjguiComposableUiNode(-1, page.content.semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "",
-            -1, CjguiComposableUiStyle(growX: 1), tabsState: state, tabsPageKey: page.key, tabsPageActive: active,
+        let pageRoot = CjguiComposableUiNode(-1, page.content.semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1,
+            CjguiComposableUiStyle(growX: 1), tabsState: state, tabsPageKey: page.key, tabsPageActive: active,
             identity: scope.local("page-${page.key}"))
         pageRoot.add(page.content)
         container.add(pageRoot)
@@ -3706,8 +4338,7 @@ public func cjguiComposableTabs(scope: CjguiComposableUiIdentityScope, semanticI
 public func cjguiComposableScopedSplitView(scope: CjguiComposableUiIdentityScope, semanticId: String,
     first: CjguiComposableUiNode, second: CjguiComposableUiNode, axis: Int64, firstSize: Int64, minFirst: Int64,
     minSecond: Int64, style: CjguiComposableUiStyle, operationActionName!: String = "SET_SPLIT_SIZE",
-    operationResourceId!: Int64 = -1, handleThickness!: Int64 = 8,
-    splitState!: ?CjguiComposableUiSplitState = None): CjguiComposableUiNode {
+    operationResourceId!: Int64 = -1, handleThickness!: Int64 = 8, splitState!: ?CjguiComposableUiSplitState = None): CjguiComposableUiNode {
     let safeAxis = if (axis == CjguiComposableUiSplitAxis.VERTICAL) {
         CjguiComposableUiSplitAxis.VERTICAL
     } else {
@@ -3829,9 +4460,9 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
     identity!: ?CjguiComposableUiIdentity = None,
     textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>()): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT, "", value, "", resourceId, style,
-        textStyleRuns: textStyleRuns,
-        fieldId: fieldId, operationResourceId: operationResourceId, displayValueRole: displayValueRole,
-        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, identity: identity)
+        textStyleRuns: textStyleRuns, fieldId: fieldId, operationResourceId: operationResourceId,
+        displayValueRole: displayValueRole, interactionStyle: interactionStyle,
+        ownerInteractionState: ownerInteractionState, identity: identity)
 }
 
 /// Whole-group binding for a static text node (same one-argument contract as
@@ -3839,12 +4470,10 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
 public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String,
     boundStyle: CjguiComposableUiBoundStyle, resourceId!: Int64 = -1, fieldId!: String = "",
     displayValueRole!: String = "", operationResourceId!: Int64 = -1,
-    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
-    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
-    return cjguiComposableText(nodeId, semanticId, value, boundStyle.style,
-        resourceId: resourceId, fieldId: fieldId, displayValueRole: displayValueRole,
-        operationResourceId: operationResourceId, interactionStyle: boundStyle.interaction,
-        ownerInteractionState: ownerInteractionState, identity: identity)
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE, identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    return cjguiComposableText(nodeId, semanticId, value, boundStyle.style, resourceId: resourceId, fieldId: fieldId,
+        displayValueRole: displayValueRole, operationResourceId: operationResourceId,
+        interactionStyle: boundStyle.interaction, ownerInteractionState: ownerInteractionState, identity: identity)
 }
 
 /// Whole-group binding: the component receives ONE bound value carrying both
@@ -3852,36 +4481,37 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
 /// role once brings hover/pressed/focused/disabled along. Old explicit
 /// `style`+`interactionStyle` parameters remain fully compatible; the bound
 /// value's fields install in the same order as the explicit pair.
-// NODE ID SPACE (measured 2026-09-25, cost two rounds):
-//   * ids <  200  -- ordinary controls. A button here activates normally.
-//   * ids >= 200  -- the PRESENTATION / POINTER space (text fragments, table cells,
-//                    notices). A CONTROL created with an id >= 200 renders and even
-//                    reports a rect, but NEVER activates: the click is routed on the
-//                    pointer/text path instead. Two conditional buttons at 300/301 were
-//                    dead for exactly this reason, and the same ids in the status bar made
-//                    it look like "the status bar cannot take clicks", which was wrong.
-// Keep control ids below 200. A product that needs a high-range id for data (fragments,
-// cells) must pick its control ids from the low range.
+// NODE IDS ARE OPAQUE IDENTITIES, NOT A PROTOCOL (corrected 2026-09-27).
+// A press is routed by the node's KIND plus its `isInteractive` / `isReadOnly` flags
+// (`CjguiComposableNodeIsPressable` in the native renderer), never by the numeric value of
+// `nodeId`. The one id rule the framework enforces is UNIQUENESS: a scene with a duplicated id
+// is rejected by name (`duplicate_node_id`), because a hit test and every later event would
+// otherwise be ambiguous.
+// Range conventions (e.g. "chrome below 1000, document fragments above it") belong to the
+// PRODUCT, which routes its own pointer events by those ranges. A control whose id lands inside
+// a range the product claims before its activate handler runs has its press consumed there; that
+// is a product-side allocation rule, not a framework id space. (Measured 2026-09-25: two
+// buttons at 312/313 never activated while identical ones at 116/117 did -- the product's own
+// fragment router claimed 312/313 first. Recorded in Pharos Mark's
+// `packages/app_services/src/node_id_ranges.cj`.)
 public func cjguiComposableButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
     resourceId: Int64, boundStyle: CjguiComposableUiBoundStyle, enabled!: Bool = true,
     operationActionName!: String = "", operationResourceId!: Int64 = -1,
-    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
-    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
-    return cjguiComposableButton(nodeId, semanticId, label, actionName, resourceId,
-        boundStyle.style, enabled: enabled, operationActionName: operationActionName,
-        operationResourceId: operationResourceId, interactionStyle: boundStyle.interaction,
-        ownerInteractionState: ownerInteractionState, identity: identity)
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE, identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    return cjguiComposableButton(nodeId, semanticId, label, actionName, resourceId, boundStyle.style, enabled: enabled,
+        operationActionName: operationActionName, operationResourceId: operationResourceId,
+        interactionStyle: boundStyle.interaction, ownerInteractionState: ownerInteractionState, identity: identity)
 }
 
 public func cjguiComposableButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
     resourceId: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true, operationActionName!: String = "",
     operationResourceId!: Int64 = -1,
     interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
-    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
-    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE, identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_BUTTON, label, label, actionName, resourceId,
         style, enabled: enabled, operationActionName: operationActionName, operationResourceId: operationResourceId,
-        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, identity: identity)
+        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
+        semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON, identity: identity)
 }
 
 public func cjguiComposableTextInput(nodeId: Int64, semanticId: String, label: String, value: String, resourceId: Int64,
@@ -3898,22 +4528,21 @@ public func cjguiComposableTextInput(nodeId: Int64, semanticId: String, label: S
 
 /// Whole-group binding for a text input (same one-argument contract as the
 /// button overload).
-public func cjguiComposableTextInput(nodeId: Int64, semanticId: String, label: String, value: String,
-    resourceId: Int64, boundStyle: CjguiComposableUiBoundStyle, enabled!: Bool = true,
-    readOnly!: Bool = false, fieldId!: String = "", operationActionName!: String = "",
-    operationResourceId!: Int64 = -1, displayValueRole!: String = "draft",
+public func cjguiComposableTextInput(nodeId: Int64, semanticId: String, label: String, value: String, resourceId: Int64,
+    boundStyle: CjguiComposableUiBoundStyle, enabled!: Bool = true, readOnly!: Bool = false, fieldId!: String = "",
+    operationActionName!: String = "", operationResourceId!: Int64 = -1, displayValueRole!: String = "draft",
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
-    return cjguiComposableTextInput(nodeId, semanticId, label, value, resourceId,
-        boundStyle.style, enabled: enabled, readOnly: readOnly, fieldId: fieldId,
-        operationActionName: operationActionName, operationResourceId: operationResourceId,
-        displayValueRole: displayValueRole, interactionStyle: boundStyle.interaction,
-        ownerInteractionState: ownerInteractionState)
+    return cjguiComposableTextInput(nodeId, semanticId, label, value, resourceId, boundStyle.style, enabled: enabled,
+        readOnly: readOnly, fieldId: fieldId, operationActionName: operationActionName,
+        operationResourceId: operationResourceId, displayValueRole: displayValueRole,
+        interactionStyle: boundStyle.interaction, ownerInteractionState: ownerInteractionState)
 }
 
 public func cjguiComposableIntegerInput(nodeId: Int64, semanticId: String, label: String, value: String,
     resourceId: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true, readOnly!: Bool = false,
     fieldId!: String = "", operationActionName!: String = "", operationResourceId!: Int64 = -1,
-    displayValueRole!: String = "draft", interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    displayValueRole!: String = "draft",
+    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_INTEGER_INPUT, label, value, "EDIT_INTEGER",
         resourceId, style, enabled: enabled, readOnly: readOnly, fieldId: fieldId,
@@ -3947,8 +4576,8 @@ public func cjguiComposableBooleanInput(nodeId: Int64, semanticId: String, label
     } else {
         "false"
     }, "EDIT_BOOLEAN", resourceId, style, enabled: enabled, fieldId: fieldId, operationActionName: operationActionName,
-        operationResourceId: operationResourceId, displayValueRole: displayValueRole,
-        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState)
+        operationResourceId: operationResourceId, displayValueRole: displayValueRole, interactionStyle: interactionStyle,
+        ownerInteractionState: ownerInteractionState, semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX)
 }
 
 /// Compose one application-owned form descriptor and its current field
@@ -4082,14 +4711,33 @@ public func cjguiComposableImage(nodeId: Int64, semanticId: String, localRasterP
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_IMAGE, "", "", "", -1, style,
         imageResourcePath: localRasterPath, imageResourceId: imageResourceId, imageResourceVersion: imageResourceVersion,
-        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
-        imageContentMode: contentMode)
+        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, imageContentMode: contentMode)
+}
+
+/// Normal image component backed by a bounded, immutable PNG transfer value.
+/// The offer remains application-owned; no temporary file or native handle is
+/// part of the public resource identity.
+func cjguiComposableTransferImageResourceIdentity(offer: CjguiSharedOperationTransferOffer): String {
+    return "cjgui-transfer:${offer.offerIdentity}"
+}
+
+public func cjguiComposableImageFromTransfer(nodeId: Int64, semanticId: String,
+    offer: CjguiSharedOperationTransferOffer, style: CjguiComposableUiStyle,
+    contentMode!: Int64 = 1): CjguiComposableUiNode {
+    if (offer.format.kind != "BINARY" || offer.format.identifier != "image/png" ||
+        offer.payloadByteCount <= 0 || offer.payloadByteCount > 512 * 1024) {
+        throw IllegalArgumentException("image_transfer_requires_bounded_png")
+    }
+    let identity = cjguiComposableTransferImageResourceIdentity(offer)
+    return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_IMAGE, "", "", "", -1, style,
+        imageResourcePath: identity, imageResourceId: identity,
+        imageTransferOffer: Some(offer), imageContentMode: contentMode)
 }
 
 public func cjguiComposableScrollArea(nodeId: Int64, semanticId: String, scrollOffset: Int64,
     style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
-        scrollOffset: scrollOffset, enabled: enabled)
+        scrollOffset: scrollOffset, enabled: enabled, semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
 }
 
 /// The SAME public scroll container bound to a shared viewport state. The build
@@ -4100,7 +4748,8 @@ public func cjguiComposableScrollArea(nodeId: Int64, semanticId: String, scrollO
 public func cjguiComposableScrollArea(nodeId: Int64, semanticId: String, viewport: CjguiComposableUiScrollViewport,
     style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
-        scrollOffset: viewport.offset(), scrollViewport: Some(viewport), enabled: enabled)
+        scrollOffset: viewport.offset(), scrollViewport: Some(viewport), enabled: enabled,
+        semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
 }
 
 /// Compose a fixed-row list without first creating every logical row. The
@@ -4112,7 +4761,8 @@ public func cjguiComposableVirtualList(nodeId: Int64, semanticId: String, conten
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
         scrollOffset: state.scrollOffset(), enabled: enabled, virtualListSource: Some(source),
         virtualListState: Some(state), virtualListContentNodeId: contentNodeId, virtualListRowHeight: rowHeight,
-        virtualListRowGap: rowGap, virtualListOverscan: overscan)
+        virtualListRowGap: rowGap, virtualListOverscan: overscan,
+        semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
 }
 
 /// Compose an experimental variable-height list. The height argument is an
@@ -4125,7 +4775,8 @@ public func cjguiComposableVariableHeightList(nodeId: Int64, semanticId: String,
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
         scrollOffset: state.scrollOffset(), enabled: enabled, variableHeightListSource: Some(source),
         virtualListState: Some(state), virtualListContentNodeId: contentNodeId, virtualListRowHeight: estimatedRowHeight,
-        virtualListRowGap: rowGap, virtualListOverscan: overscan)
+        virtualListRowGap: rowGap, virtualListOverscan: overscan,
+        semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
 }
 
 /// The first child is ordinary base content; subsequent children made with
@@ -4153,8 +4804,7 @@ public func cjguiComposableAnchoredLayer(nodeId: Int64, semanticId: String, laye
 /// is resolved by the owning candidate after any visible virtual rows have
 /// been materialised; legacy numeric anchors above remain source-compatible.
 public func cjguiComposableAnchoredLayerWithReference(nodeId: Int64, semanticId: String, layerId: String,
-    layerKind: String, ownerSemanticId: String, anchor: CjguiComposableUiNodeReference,
-    style: CjguiComposableUiStyle): CjguiComposableUiNode {
+    layerKind: String, ownerSemanticId: String, anchor: CjguiComposableUiNodeReference, style: CjguiComposableUiStyle): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, style,
         layerId: layerId, layerKind: if (layerKind == "popup") {
             "popup"
@@ -4204,6 +4854,7 @@ public class CjguiComposableUiLayoutNode {
     public let imageResourcePath: String
     public let imageResourceId: String
     public let imageResourceVersion: Int64
+    public let imageTransferOffer: ?CjguiSharedOperationTransferOffer
     public let imageContentMode: Int64
     public let isEnabled: Bool
     public let isReadOnly: Bool
@@ -4217,6 +4868,10 @@ public class CjguiComposableUiLayoutNode {
     public let pointerControlFirstSize: Int64
     public let pointerControlSecondMinimum: Int64
     public let bounds: CjguiComposableUiRect
+    /// Number of preorder scene records in this node's subtree, including self.
+    /// The value is relative to this record, so it is unchanged when a cached
+    /// subtree slice is replayed elsewhere in the scene array.
+    public var subtreeNodeCount: Int64 = 1
     /// The shared viewport of this scroll area, when its author bound one. The
     /// layout reports the accepted extents through it; the value-based scroll
     /// area keeps `None`.
@@ -4248,6 +4903,15 @@ public class CjguiComposableUiLayoutNode {
     public let textStyleRuns: Array<CjguiComposableUiTextStyleRun>
     public let interactionStyle: CjguiComposableUiInteractionStyle
     public let ownerInteractionState: Int64
+    public let semanticRole: Int64
+    public let semanticLabel: String
+    public let semanticSelected: Bool
+    public let semanticExpandable: Bool
+    public let semanticExpanded: Bool
+    public let semanticLevel: Int64
+    public let semanticKey: String
+    public let semanticParentKey: String
+    public let semanticIncarnation: Int64
     /// A non-empty scope traps native focus navigation to a currently visible
     /// layer. It is derived during Cangjie layout, never guessed by AppKit.
     public let inputScopeId: String
@@ -4278,6 +4942,7 @@ public class CjguiComposableUiLayoutNode {
         this.imageResourcePath = node.imageResourcePath
         this.imageResourceId = node.imageResourceId
         this.imageResourceVersion = node.imageResourceVersion
+        this.imageTransferOffer = node.imageTransferOffer
         this.imageContentMode = node.imageContentMode
         this.isEnabled = node.isEnabled
         this.isReadOnly = node.isReadOnly
@@ -4305,10 +4970,23 @@ public class CjguiComposableUiLayoutNode {
         }
         this.resolvedClipConstraints = ArrayList<CjguiComposableUiClipConstraint>(clipConstraints)
         this.declaredStyle = node.style
-        this.style = if (let Some(value) <- resolvedPaintStyle) { value } else { node.style }
+        this.style = if (let Some(value) <- resolvedPaintStyle) {
+            value
+        } else {
+            node.style
+        }
         this.textStyleRuns = node.textStyleRuns
         this.interactionStyle = node.interactionStyle
         this.ownerInteractionState = node.ownerInteractionState
+        this.semanticRole = node.semanticRole
+        this.semanticLabel = node.semanticLabel
+        this.semanticSelected = node.semanticSelected
+        this.semanticExpandable = node.semanticExpandable
+        this.semanticExpanded = node.semanticExpanded
+        this.semanticLevel = node.semanticLevel
+        this.semanticKey = node.semanticKey
+        this.semanticParentKey = node.semanticParentKey
+        this.semanticIncarnation = node.semanticIncarnation
         this.inputScopeId = if (node.layerId().size > 0) {
             node.layerId()
         } else {
@@ -4347,38 +5025,83 @@ public class CjguiComposableUiLayoutNode {
             CJGUI_COMPOSABLE_UI_INTEGER_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT || nodeKind ==
             CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_LAYER_BACKDROP || nodeKind ==
             CJGUI_COMPOSABLE_UI_SCROLL_AREA || nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE || nodeKind ==
-            CJGUI_COMPOSABLE_UI_SLIDER || nodeKind == CJGUI_COMPOSABLE_UI_TAB_TITLE ||
-            (nodeKind == CJGUI_COMPOSABLE_UI_VECTOR_GRAPHIC && actionName.size > 0)
+            CJGUI_COMPOSABLE_UI_SLIDER || nodeKind == CJGUI_COMPOSABLE_UI_TAB_TITLE || (nodeKind ==
+            CJGUI_COMPOSABLE_UI_VECTOR_GRAPHIC && actionName.size > 0)
     }
     public func clipConstraints(): ArrayList<CjguiComposableUiClipConstraint> {
         return ArrayList<CjguiComposableUiClipConstraint>(resolvedClipConstraints)
+    }
+    /// The rectangular region this node's visual output can touch, which is
+    /// `bounds` widened by the support domain of a visible outer shadow. The
+    /// effect is paint-only, so `bounds`, `clip` and hit testing are unchanged;
+    /// this derived rectangle exists so an incremental-invalidation or
+    /// diagnostic pass can distinguish "where the node is" from "where its
+    /// pixels can land". With no visible shadow it equals `bounds`.
+    public func effectOutputBounds(): CjguiComposableUiRect {
+        if (let Some(shadow) <- this.style.shadow) {
+            if (shadow.isVisible()) {
+                // A Gaussian-style blur is approximated by three times its
+                // radius; spread grows the shape on every side.
+                let support = shadow.blurRadius * 3 + shadow.spread
+                let offsetLeft = if (shadow.offsetX < 0) {
+                    shadow.offsetX
+                } else {
+                    0
+                }
+                let offsetRight = if (shadow.offsetX > 0) {
+                    shadow.offsetX
+                } else {
+                    0
+                }
+                let offsetTop = if (shadow.offsetY < 0) {
+                    shadow.offsetY
+                } else {
+                    0
+                }
+                let offsetBottom = if (shadow.offsetY > 0) {
+                    shadow.offsetY
+                } else {
+                    0
+                }
+                let left = offsetLeft - support
+                let right = offsetRight + support
+                let top = offsetTop - support
+                let bottom = offsetBottom + support
+                return CjguiComposableUiRect(bounds.x + left, bounds.y + top, bounds.width + (right - left),
+                    bounds.height + (bottom - top))
+            }
+        }
+        return bounds
     }
     /// Create a paint-only snapshot for an already resolved layout node. This
     /// deliberately rebuilds no geometry or text metrics: every structural
     /// field is copied verbatim and callers supply only a style produced by
     /// `CjguiComposableUiInteractionStyle.resolve`.
     public func withResolvedPaintStyle(resolvedStyle: CjguiComposableUiStyle): CjguiComposableUiLayoutNode {
-        let projectionNode = CjguiComposableUiNode(
-            nodeId, semanticId, nodeKind, label, value, actionName, resourceId, declaredStyle,
-            scrollViewport: scrollViewport, splitState: splitState,
-            enabled: isEnabled, readOnly: isReadOnly, fieldId: fieldId,
-            tabsState: tabsState, tabsPageKey: tabsPageKey, tabsPageActive: tabsPageActive,
-            tabsTitleHeight: tabsTitleHeight,
-            operationActionName: operationActionName, operationResourceId: operationResourceId,
-            displayValueRole: displayValueRole, imageResourcePath: imageResourcePath,
-            imageResourceId: imageResourceId, imageResourceVersion: imageResourceVersion,
-            imageContentMode: imageContentMode, tabInsertsText: tabInsertsText,
-            layerId: layerId, layerKind: layerKind, inputScopeId: inputScopeId,
+        let projectionNode = CjguiComposableUiNode(nodeId, semanticId, nodeKind, label, value, actionName, resourceId,
+            declaredStyle, scrollViewport: scrollViewport, splitState: splitState, enabled: isEnabled,
+            readOnly: isReadOnly, fieldId: fieldId, tabsState: tabsState, tabsPageKey: tabsPageKey,
+            tabsPageActive: tabsPageActive, tabsTitleHeight: tabsTitleHeight, operationActionName: operationActionName,
+            operationResourceId: operationResourceId, displayValueRole: displayValueRole,
+            imageResourcePath: imageResourcePath, imageResourceId: imageResourceId,
+            imageResourceVersion: imageResourceVersion, imageContentMode: imageContentMode,
+            imageTransferOffer: imageTransferOffer,
+            tabInsertsText: tabInsertsText, layerId: layerId, layerKind: layerKind, inputScopeId: inputScopeId,
             pointerControlRole: pointerControlRole, pointerControlAxis: pointerControlAxis,
             pointerControlMinimum: pointerControlMinimum, pointerControlMaximum: pointerControlMaximum,
             pointerControlStep: pointerControlStep, pointerControlHandleThickness: pointerControlHandleThickness,
             pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
             interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
+            semanticRole: semanticRole, semanticLabel: semanticLabel, semanticSelected: semanticSelected,
+            semanticExpandable: semanticExpandable,
+            semanticExpanded: semanticExpanded, semanticLevel: semanticLevel, semanticKey: semanticKey,
+            semanticParentKey: semanticParentKey, semanticIncarnation: semanticIncarnation,
             identity: scopedIdentityValue)
-        return CjguiComposableUiLayoutNode(
-            projectionNode, bounds, clip, inputScopeId: inputScopeId,
+        let resolved = CjguiComposableUiLayoutNode(projectionNode, bounds, clip, inputScopeId: inputScopeId,
             clipCornerRadius: clipCornerRadius, clipConstraints: resolvedClipConstraints,
             resolvedPaintStyle: Some(resolvedStyle))
+        resolved.subtreeNodeCount = subtreeNodeCount
+        return resolved
     }
     public func containsResolvedClip(x: Int64, y: Int64): Bool {
         if (!clip.contains(x, y)) {
@@ -4441,8 +5164,7 @@ public class CjguiComposableUiLayoutNode {
 /// inside the scroll area keeps winning over its container).
 public func cjguiComposableHitMayTakeOver(bestX: Int64, bestY: Int64, bestWidth: Int64, bestHeight: Int64,
     candidateX: Int64, candidateY: Int64, candidateWidth: Int64, candidateHeight: Int64): Bool {
-    return candidateX >= bestX && candidateY >= bestY &&
-        candidateX + candidateWidth <= bestX + bestWidth &&
+    return candidateX >= bestX && candidateY >= bestY && candidateX + candidateWidth <= bestX + bestWidth &&
         candidateY + candidateHeight <= bestY + bestHeight
 }
 
@@ -4492,8 +5214,7 @@ public class CjguiComposableUiScene {
     /// `resolveInput` refuses anything that cannot receive editable input, which
     /// left its ACTIVATE/FOCUS events rejected before reaching the controller.
     /// Identity and version checks stay identical to `resolveInput`.
-    public func resolvePointerTarget(nodeId: Int64, resourceId: Int64, nodeKind: Int64,
-        projectionVersion: Int64): CjguiComposableUiLayoutNode {
+    public func resolvePointerTarget(nodeId: Int64, resourceId: Int64, nodeKind: Int64, projectionVersion: Int64): CjguiComposableUiLayoutNode {
         if (!validValue || projectionVersion != version) {
             return CjguiComposableUiLayoutNode.missing()
         }
@@ -4541,9 +5262,8 @@ public class CjguiComposableUiScene {
                 // inside the current best. Comparing AREA alone let a small sibling in a LOWER layer beat a
                 // large upper layer that also contained the point (regression introduced 2026-09-25), while
                 // containment still keeps the original fix: the body fragment inside the scroll node wins.
-                let insideBest = cjguiComposableHitMayTakeOver(best.bounds.x, best.bounds.y,
-                    best.bounds.width, best.bounds.height, node.bounds.x, node.bounds.y,
-                    node.bounds.width, node.bounds.height)
+                let insideBest = cjguiComposableHitMayTakeOver(best.bounds.x, best.bounds.y, best.bounds.width,
+                    best.bounds.height, node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height)
                 if (!found || insideBest) {
                     best = node
                     bestArea = node.bounds.width * node.bounds.height
@@ -4622,8 +5342,7 @@ public interface CjguiComposableUiTextMeasurer {
 /// `None` means this query failed; callers may calculate a temporary fallback,
 /// but a production measurer must reject the candidate through its status.
 public interface CjguiComposableUiMultilineNaturalHeightMeasurer {
-    func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle,
-        contentWidth: Int64): ?Int64
+    func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64
 }
 
 /// An opt-in invalidation contract for a cross-pass layout cache. A text
@@ -4800,8 +5519,7 @@ private class CjguiComposableUiLayoutWorkCounter {
     /// Distinct public viewports staged by this solve.
     var stagedViewports: ArrayList<CjguiComposableUiScrollViewport> = ArrayList<CjguiComposableUiScrollViewport>()
     /// Candidate split track facts staged by this solve.
-    var stagedSplitTracks: ArrayList<CjguiComposableUiSplitTrackFact> =
-        ArrayList<CjguiComposableUiSplitTrackFact>()
+    var stagedSplitTracks: ArrayList<CjguiComposableUiSplitTrackFact> = ArrayList<CjguiComposableUiSplitTrackFact>()
 }
 
 /// One immutable, Cangjie-owned entry for a stable top-level composition
@@ -5157,7 +5875,10 @@ public class CjguiComposableUiLayoutReuseCache {
                 .imageResourceId
                 .size + node.style.fontFamily.size + node.inputScopeId.size + node.layerId.size + node.layerKind.size
             // Fixed scalar/array headers plus all retained clipping scalars.
-            scalarBytes += 320 + node.clipConstraints().size * 40
+            let imageBytes = if (let Some(offer) <- node.imageTransferOffer) {
+                offer.payloadByteCount
+            } else { 0 }
+            scalarBytes += 320 + node.clipConstraints().size * 40 + imageBytes
         }
         return CjguiComposableUiLayoutReuseRetention(nodes.size, stringBytes, scalarBytes + stringBytes)
     }
@@ -5197,6 +5918,15 @@ public class CjguiComposableUiLayoutReuseCache {
         appendString(builder, byteCount, cacheable, node.value)
         appendString(builder, byteCount, cacheable, node.actionName)
         appendInt(builder, byteCount, cacheable, node.resourceId)
+        appendInt(builder, byteCount, cacheable, node.semanticRole)
+        appendString(builder, byteCount, cacheable, node.semanticLabel)
+        appendBool(builder, byteCount, cacheable, node.semanticSelected)
+        appendBool(builder, byteCount, cacheable, node.semanticExpandable)
+        appendBool(builder, byteCount, cacheable, node.semanticExpanded)
+        appendInt(builder, byteCount, cacheable, node.semanticLevel)
+        appendString(builder, byteCount, cacheable, node.semanticKey)
+        appendString(builder, byteCount, cacheable, node.semanticParentKey)
+        appendInt(builder, byteCount, cacheable, node.semanticIncarnation)
         appendString(builder, byteCount, cacheable, node.fieldId)
         appendString(builder, byteCount, cacheable, node.operationActionName)
         appendInt(builder, byteCount, cacheable, node.operationResourceId)
@@ -5254,6 +5984,58 @@ public class CjguiComposableUiLayoutReuseCache {
         appendInt(builder, byteCount, cacheable, style.idealHeight)
         appendInt(builder, byteCount, cacheable, style.alignX)
         appendInt(builder, byteCount, cacheable, style.alignY)
+        // Effects are part of the style's identity: changing ONLY a shadow
+        // parameter or one gradient stop must produce a different signature, or
+        // a cached region would keep the previous picture. The optional value is
+        // framed by an explicit present flag so "no effect" and "effect whose
+        // first scalar is zero" cannot collide.
+        if (let Some(value) <- style.shadow) {
+            appendInt(builder, byteCount, cacheable, 1)
+            appendColor(builder, byteCount, cacheable, value.color)
+            appendInt(builder, byteCount, cacheable, value.offsetX)
+            appendInt(builder, byteCount, cacheable, value.offsetY)
+            appendInt(builder, byteCount, cacheable, value.blurRadius)
+            appendInt(builder, byteCount, cacheable, value.spread)
+        } else {
+            appendInt(builder, byteCount, cacheable, 0)
+        }
+        if (let Some(value) <- style.gradient) {
+            appendInt(builder, byteCount, cacheable, 1)
+            appendFloat(builder, byteCount, cacheable, value.startX)
+            appendFloat(builder, byteCount, cacheable, value.startY)
+            appendFloat(builder, byteCount, cacheable, value.endX)
+            appendFloat(builder, byteCount, cacheable, value.endY)
+            appendInt(builder, byteCount, cacheable, value.stops.size)
+            for (stop in value.stops) {
+                appendFloat(builder, byteCount, cacheable, stop.position)
+                appendColor(builder, byteCount, cacheable, stop.color)
+            }
+        } else {
+            appendInt(builder, byteCount, cacheable, 0)
+        }
+        if (let Some(value) <- style.effectGroup) {
+            appendInt(builder, byteCount, cacheable, 1)
+            appendFloat(builder, byteCount, cacheable, value.opacity)
+            appendString(builder, byteCount, cacheable, value.blendMode)
+            appendInt(builder, byteCount, cacheable, value.backdropBlurRadiusPoints)
+            appendString(builder, byteCount, cacheable, value.backdropBlurFallback)
+            if (let Some(mask) <- value.mask) {
+                appendInt(builder, byteCount, cacheable, 1)
+                appendFloat(builder, byteCount, cacheable, mask.startX)
+                appendFloat(builder, byteCount, cacheable, mask.startY)
+                appendFloat(builder, byteCount, cacheable, mask.endX)
+                appendFloat(builder, byteCount, cacheable, mask.endY)
+                appendInt(builder, byteCount, cacheable, mask.stops.size)
+                for (stop in mask.stops) {
+                    appendFloat(builder, byteCount, cacheable, stop.position)
+                    appendFloat(builder, byteCount, cacheable, stop.alpha)
+                }
+            } else {
+                appendInt(builder, byteCount, cacheable, 0)
+            }
+        } else {
+            appendInt(builder, byteCount, cacheable, 0)
+        }
     }
 
     private func appendColor(builder: StringBuilder, byteCount: ArrayList<Int64>, cacheable: ArrayList<Bool>,
@@ -5344,20 +6126,18 @@ private class CjguiComposableUiLayoutMeasurementCacheEntry {
         this.measurement = measurement
     }
     func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, queryKind: Int64): Bool {
-        return this.queryKind == queryKind && this.value == value && this.maximumWidth == maximumWidth && this.style.background.red == style
+        return this.queryKind == queryKind && this.value == value && this.maximumWidth == maximumWidth &&
+            this.style.background.red == style.background.red && this.style.background.green == style.background.green &&
+            this.style.background.blue == style.background.blue && this.style.background.alpha == style
             .background
-            .red && this.style.background.green == style.background.green && this.style.background.blue == style
-            .background
-            .blue && this.style.background.alpha == style.background.alpha && this.style.border.red == style
-            .border
-            .red && this.style.border.green == style.border.green && this.style.border.blue == style.border.blue &&
-            this.style.border.alpha == style.border.alpha && this.style.textColor.red == style.textColor.red &&
-            this.style.textColor.green == style.textColor.green && this.style.textColor.blue == style.textColor.blue &&
-            this.style.textColor.alpha == style.textColor.alpha && this.style.padding == style.padding &&
-            this.style.gap == style.gap && this.style.fixedWidth == style.fixedWidth && this.style.fixedHeight == style
-            .fixedHeight && this.style.growX == style.growX && this.style.growY == style.growY &&
-            this.style.borderWidth == style.borderWidth && this.style.fontSize == style.fontSize &&
-            this.style.fontWeight == style.fontWeight && this.style.fontFamily == style.fontFamily &&
+            .alpha && this.style.border.red == style.border.red && this.style.border.green == style.border.green &&
+            this.style.border.blue == style.border.blue && this.style.border.alpha == style.border.alpha &&
+            this.style.textColor.red == style.textColor.red && this.style.textColor.green == style.textColor.green &&
+            this.style.textColor.blue == style.textColor.blue && this.style.textColor.alpha == style.textColor.alpha &&
+            this.style.padding == style.padding && this.style.gap == style.gap && this.style.fixedWidth == style
+            .fixedWidth && this.style.fixedHeight == style.fixedHeight && this.style.growX == style.growX &&
+            this.style.growY == style.growY && this.style.borderWidth == style.borderWidth && this.style.fontSize == style
+            .fontSize && this.style.fontWeight == style.fontWeight && this.style.fontFamily == style.fontFamily &&
             this.style.minWidth == style.minWidth && this.style.maxWidth == style.maxWidth && this.style.idealWidth == style
             .idealWidth && this.style.minHeight == style.minHeight && this.style.maxHeight == style.maxHeight &&
             this.style.idealHeight == style.idealHeight && this.style.alignX == style.alignX && this.style.alignY == style
@@ -5365,8 +6145,7 @@ private class CjguiComposableUiLayoutMeasurementCacheEntry {
     }
 }
 
-private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
-    CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
+private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
     // This bounded cache has one measurer identity because a wrapper belongs
     // to exactly one `layout` call. A later layout starts empty and asks the
     // supplied measurer again, so a changed font/session/generation cannot be
@@ -5419,8 +6198,7 @@ private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
         }
         return measurement
     }
-    public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle,
-        contentWidth: Int64): ?Int64 {
+    public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
         let capable = baseMeasurer as CjguiComposableUiMultilineNaturalHeightMeasurer
         if (let Some(multiline) <- capable) {
             measurementRequestCount += 1
@@ -5442,8 +6220,9 @@ private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
                     if (cache.size >= 1024) {
                         cache = ArrayList<CjguiComposableUiLayoutMeasurementCacheEntry>()
                     }
-                    cache.add(CjguiComposableUiLayoutMeasurementCacheEntry(value, style, contentWidth, 1,
-                        CjguiComposableUiTextMeasurement(0, result, 1, 0)))
+                    cache.add(
+                        CjguiComposableUiLayoutMeasurementCacheEntry(value, style, contentWidth, 1,
+                            CjguiComposableUiTextMeasurement(0, result, 1, 0)))
                 }
             }
             return height
@@ -5600,6 +6379,7 @@ public class CjguiComposableUiLayoutEngine {
         inheritedInputScope: String, work: CjguiComposableUiLayoutWorkCounter,
         reuseCache!: ?CjguiComposableUiLayoutReuseCache = None, reuseDepth!: Int64 = 0,
         identityRegistry!: ?CjguiComposableUiIdentityRegistry = None): Unit {
+        let subtreeStartIndex = output.size
         work.recursiveNodeLayoutCount += 1
         let nodeClip = clipConstraintBounds(parentClipConstraints).intersect(bounds)
         let inputScope = if (node.layerId().size > 0) {
@@ -5632,19 +6412,22 @@ public class CjguiComposableUiLayoutEngine {
             if (childClipConstraints.size >= CJGUI_COMPOSABLE_UI_MAX_CLIP_CONSTRAINTS) {
                 work.clipConstraintCapacityExceeded = true
             } else {
-                childClipConstraints.add(CjguiComposableUiClipConstraint(inner, cornerRadius: radius,
-                    ownerIdentity: CjguiComposableUiLayoutNode.identityKeyFor(node)))
+                childClipConstraints.add(
+                    CjguiComposableUiClipConstraint(inner, cornerRadius: radius,
+                        ownerIdentity: CjguiComposableUiLayoutNode.identityKeyFor(node)))
             }
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_LAYER_HOST) {
             layoutLayerHost(node, bounds, childClipConstraints, output, measurer, work, reuseCache, reuseDepth,
                 identityRegistry)
+            finishSubtreeNode(output, subtreeStartIndex)
             return
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
             work.scrollAreaSolveCount += 1
             materializeVirtualList(node, inner, measurer, work, identityRegistry)
             if (work.dynamicIdentityIssue.size > 0) {
+                finishSubtreeNode(output, subtreeStartIndex)
                 return
             }
         }
@@ -5659,6 +6442,7 @@ public class CjguiComposableUiLayoutEngine {
                     CjguiComposableUiLayoutEngine.recordStagedViewport(work, viewport)
                 }
             }
+            finishSubtreeNode(output, subtreeStartIndex)
             return
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
@@ -5710,25 +6494,37 @@ public class CjguiComposableUiLayoutEngine {
             // than entering the stable-region cache.
             layoutNode(content, contentBounds, childClipConstraints, output, measurer, inputScope, work,
                 reuseCache: reuseCache, reuseDepth: reuseDepth + 1, identityRegistry: identityRegistry)
+            finishSubtreeNode(output, subtreeStartIndex)
             return
         }
         if (node.isTabsContainer()) {
             layoutTabs(node, children, inner, childClipConstraints, output, measurer, inputScope, work, reuseCache,
                 reuseDepth, identityRegistry)
+            finishSubtreeNode(output, subtreeStartIndex)
             return
         }
         if (node.isSplitView()) {
             layoutSplitView(node, children, inner, childClipConstraints, output, measurer, inputScope, work, reuseCache,
                 reuseDepth, identityRegistry)
+            finishSubtreeNode(output, subtreeStartIndex)
             return
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_HORIZONTAL) {
             layoutHorizontal(children, inner, childClipConstraints, node.style.gap, output, measurer, inputScope, work,
                 reuseCache, reuseDepth, identityRegistry)
+            finishSubtreeNode(output, subtreeStartIndex)
             return
         }
         layoutVertical(node, children, inner, childClipConstraints, node.style.gap, output, measurer, inputScope, work,
             reuseCache, reuseDepth, identityRegistry)
+        finishSubtreeNode(output, subtreeStartIndex)
+    }
+
+    /// Backfills the preorder subtree extent after every child path has either
+    /// returned or completed. Spans are local counts and therefore cache-slice
+    /// independent; no parent offset is captured here.
+    private static func finishSubtreeNode(output: ArrayList<CjguiComposableUiLayoutNode>, startIndex: Int64): Unit {
+        output[startIndex].subtreeNodeCount = output.size - startIndex
     }
 
     /// Only direct regions below the declared root are independently cached.
@@ -5989,8 +6785,8 @@ public class CjguiComposableUiLayoutEngine {
     /// snapshot; it is deliberately not a measure-refresh feedback loop.
     private static func materializeVariableHeightList(node: CjguiComposableUiNode,
         source: CjguiComposableUiVariableHeightListSource, state: CjguiComposableUiVirtualListState,
-        inner: CjguiComposableUiRect, measurer: CjguiComposableUiTextMeasurer,
-        work: CjguiComposableUiLayoutWorkCounter, identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
+        inner: CjguiComposableUiRect, measurer: CjguiComposableUiTextMeasurer, work: CjguiComposableUiLayoutWorkCounter,
+        identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
         state.prepareVariableMeasurementContext(source, inner.width)
         let _ = state.updateVariableMaterializedRange(source, node.virtualListRowHeight(), node.virtualListRowGap(),
             inner.height, node.virtualListOverscan())
@@ -6018,8 +6814,8 @@ public class CjguiComposableUiLayoutEngine {
         // row projection budget until the actual layout reaches the viewport.
         while (measuredEnd < viewportEnd && state.extendVariableMaterializedEnd(count)) {
             let nextEnd = state.materializedEnd()
-            let appended = buildVariableHeightRows(node, source, state, builtEnd, nextEnd, inner.width, measurer,
-                work, identityRegistry)
+            let appended = buildVariableHeightRows(node, source, state, builtEnd, nextEnd, inner.width, measurer, work,
+                identityRegistry)
             measuredRows.add(all: appended)
             if (work.dynamicIdentityIssue.size > 0) {
                 return
@@ -6033,8 +6829,9 @@ public class CjguiComposableUiLayoutEngine {
         var appendedBuffer: Int64 = 0
         while (appendedBuffer < node.virtualListOverscan() && state.extendVariableMaterializedEnd(count)) {
             let nextEnd = state.materializedEnd()
-            measuredRows.add(all: buildVariableHeightRows(node, source, state, builtEnd, nextEnd, inner.width, measurer,
-                work, identityRegistry))
+            measuredRows.add(
+                all: buildVariableHeightRows(node, source, state, builtEnd, nextEnd, inner.width, measurer, work,
+                    identityRegistry))
             if (work.dynamicIdentityIssue.size > 0) {
                 return
             }
@@ -6066,8 +6863,9 @@ public class CjguiComposableUiLayoutEngine {
             // just the current bounded range and publish its own final total;
             // normal stable sources always take the reuse branch above.
             state.noteDataIssue("range_changed_during_measurement")
-            finalRows.add(all: buildVariableHeightRows(node, source, state, finalStart, finalEnd, inner.width, measurer,
-                work, identityRegistry))
+            finalRows.add(
+                all: buildVariableHeightRows(node, source, state, finalStart, finalEnd, inner.width, measurer, work,
+                    identityRegistry))
             if (work.dynamicIdentityIssue.size > 0) {
                 return
             }
@@ -6113,8 +6911,7 @@ public class CjguiComposableUiLayoutEngine {
     private static func buildVariableHeightRows(node: CjguiComposableUiNode,
         source: CjguiComposableUiVariableHeightListSource, state: CjguiComposableUiVirtualListState, start: Int64,
         end: Int64, availableWidth: Int64, measurer: CjguiComposableUiTextMeasurer,
-        work: CjguiComposableUiLayoutWorkCounter,
-        identityRegistry: ?CjguiComposableUiIdentityRegistry): ArrayList<CjguiComposableUiNode> {
+        work: CjguiComposableUiLayoutWorkCounter, identityRegistry: ?CjguiComposableUiIdentityRegistry): ArrayList<CjguiComposableUiNode> {
         let rows = ArrayList<CjguiComposableUiNode>()
         let seenKeys = ArrayList<String>()
         var index = start
@@ -6362,11 +7159,19 @@ public class CjguiComposableUiLayoutEngine {
     /// not measured, hit-tested or drawn — hiding is not deletion, and a hidden
     /// page never pays text measurement or paint cost.
     private static func tabsTitleBandHeight(owner: CjguiComposableUiNode): Int64 {
-        return if (owner.tabsTitleHeight > 0) { owner.tabsTitleHeight } else { 1 }
+        return if (owner.tabsTitleHeight > 0) {
+            owner.tabsTitleHeight
+        } else {
+            1
+        }
     }
 
     private static func tabsPageGap(owner: CjguiComposableUiNode): Int64 {
-        return if (owner.style.gap > 0) { owner.style.gap } else { 0 }
+        return if (owner.style.gap > 0) {
+            owner.style.gap
+        } else {
+            0
+        }
     }
 
     private static func tabsPageIsActive(owner: CjguiComposableUiNode, page: CjguiComposableUiNode): Bool {
@@ -6396,7 +7201,11 @@ public class CjguiComposableUiLayoutEngine {
             }
             index += 1
         }
-        let activeContribution = if (hasActivePage) { tabsPageGap(owner) + bodyHeight } else { 0 }
+        let activeContribution = if (hasActivePage) {
+            tabsPageGap(owner) + bodyHeight
+        } else {
+            0
+        }
         return owner.style.padding * 2 + tabsTitleBandHeight(owner) + activeContribution
     }
 
@@ -6435,8 +7244,9 @@ public class CjguiComposableUiLayoutEngine {
                 // A hidden page keeps its identity in the scene with an EMPTY rect:
                 // the instance projection publishes it as inactive/invisible and
                 // no text is measured for it.
-                output.add(CjguiComposableUiLayoutNode(page, CjguiComposableUiRect(inner.x, bodyTop, 0, 0),
-                    CjguiComposableUiRect(inner.x, bodyTop, 0, 0), inputScopeId: inputScope))
+                output.add(
+                    CjguiComposableUiLayoutNode(page, CjguiComposableUiRect(inner.x, bodyTop, 0, 0),
+                        CjguiComposableUiRect(inner.x, bodyTop, 0, 0), inputScopeId: inputScope))
                 work.hiddenTabPageCount += 1
             }
             index += 1
@@ -6827,10 +7637,11 @@ public class CjguiComposableUiLayoutEngine {
                 if (nodes[outer].nodeId == nodes[inner].nodeId) {
                     // Keep the contract string unchanged (tests assert on it) but name
                     // the offending id for diagnosis.
-                    println("PHAROS_DUPLICATE_NODE_ID id=${nodes[outer].nodeId} " +
-                        "outer=${outer} inner=${inner} count=${nodes.size} " +
-                        "a=${nodes[outer].semanticId} b=${nodes[inner].semanticId} " +
-                        "ak=${nodes[outer].nodeKind} bk=${nodes[inner].nodeKind}")
+                    println(
+                        "PHAROS_DUPLICATE_NODE_ID id=${nodes[outer].nodeId} " +
+                            "outer=${outer} inner=${inner} count=${nodes.size} " +
+                            "a=${nodes[outer].semanticId} b=${nodes[inner].semanticId} " +
+                            "ak=${nodes[outer].nodeKind} bk=${nodes[inner].nodeKind}")
                     return "duplicate_node_id"
                 }
                 inner += 1

@@ -1,0 +1,5 @@
+09-27 18:19:33.628 28616 28616 I A00000/ImeControl: loadContent ready
+09-27 18:20:01.611 28616 28616 I A00000/ImeControl: focused
+09-27 18:21:14.100 28616 28616 I A00000/ImeControl: onChange seq=1 value=你好 previewPresent=1 previewOffset=-1 previewValue= optionsPresent=1
+09-27 18:22:11.868 28616 28616 I A00000/ImeControl: submitted after 1 changes
+09-27 18:22:11.874 28616 28616 I A00000/ImeControl: blurred

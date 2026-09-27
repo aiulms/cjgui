@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 SDKROOT_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 OUTPUT_DIR="${CJGUI_CANDIDATE_TMPDIR:-/private/tmp/cjgui-candidate-text-resource}"
 
@@ -27,11 +30,7 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_candidate.a" \
 
 cjc --sysroot "$SDKROOT_PATH" \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$RUNTIME_DIR/probe/candidate_text_resource_probe.cj" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
   -lcjgui_shared_operation_core \

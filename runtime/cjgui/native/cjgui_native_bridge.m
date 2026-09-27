@@ -51,6 +51,8 @@
 #define CJGUI_NATIVE_BRIDGE_HAS_QUARTZCORE_IMPORT 0
 #endif
 #include <pthread.h>
+#include <stdatomic.h>
+#include <math.h>
 #include <string.h>
 
 /*
@@ -5455,4 +5457,127 @@ void *CjguiNativeBridgeViewForToken(uint64_t viewToken) {
     }
     pthread_mutex_unlock(&g_cjgui_native_bridge_nsview_table_mutex);
     return result;
+}
+// 2026-09-26(B2):系统“减少动态效果”偏好查询。只读一个 AppKit 布尔事实，
+// 不创建对象、不改窗口、不返回 pointer。NSWorkspace.sharedWorkspace 与
+// accessibilityDisplayShouldReduceMotion 都是只读访问；在非 Apple 平台或
+// AppKit import 不可用时返回确定的默认值 0（关闭），不静默当作开启。
+int32_t cjgui_macos_reduce_motion_enabled(void) {
+#if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
+    if (NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) {
+        return 1;
+    }
+    return 0;
+#else
+    return 0;
+#endif
+}
+// 2026-09-27(C):系统外观（浅色/深色）查询。只读 NSApp.effectiveAppearance；
+// NSApp 尚未创建时退化为 NSAppearance.currentAppearance；两者都不可用或非
+// Apple 平台返回确定的默认值 0（浅色）。不创建对象、不改变外观、不返回
+// pointer。bestMatchFromAppearancesWithNames: 是 macOS 10.14+ 的只读匹配，
+// 不触发任何界面重建。
+int32_t cjgui_macos_effective_dark_mode(void) {
+#if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
+    NSAppearance *appearance = nil;
+    if (NSApp != nil) {
+        appearance = NSApp.effectiveAppearance;
+    }
+    if (appearance == nil) {
+        appearance = NSAppearance.currentAppearance;
+    }
+    if (appearance == nil) {
+        return 0;
+    }
+    NSString *best = [appearance bestMatchFromAppearancesWithNames:@[
+        NSAppearanceNameAqua, NSAppearanceNameDarkAqua
+    ]];
+    return [best isEqualToString:NSAppearanceNameDarkAqua] ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+// The Cangjie application entry runs on its runtime worker while AppKit owns
+// the process main thread. One global sample is sufficient for the system
+// accent fact; windows retain independent follow/fixed policies and receipts.
+// A worker never waits for the main queue (which may synchronously call into
+// the renderer during a scene transaction).
+#if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
+static _Atomic bool cjguiAccentSamplingEnabled = false;
+static _Atomic bool cjguiAccentSamplePending = false;
+static _Atomic int64_t cjguiAccentLastSample = -1;
+
+static int64_t CjguiControlAccentSampleOnMain(void) {
+    if (![NSThread isMainThread]) return -1;
+    NSColor *color = [[NSColor controlAccentColor] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!color) return -1;
+    double r = color.redComponent, g = color.greenComponent, b = color.blueComponent;
+    if (!isfinite(r) || !isfinite(g) || !isfinite(b)) return -1;
+    uint64_t red = (uint64_t)llround(fmin(1.0, fmax(0.0, r)) * 255.0);
+    uint64_t green = (uint64_t)llround(fmin(1.0, fmax(0.0, g)) * 255.0);
+    uint64_t blue = (uint64_t)llround(fmin(1.0, fmax(0.0, b)) * 255.0);
+    return (int64_t)(0x1000000u | (red << 16) | (green << 8) | blue);
+}
+#endif
+
+void cjgui_macos_enable_accent_sampling(void) {
+#if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
+    if ([NSThread isMainThread]) atomic_store_explicit(&cjguiAccentSamplingEnabled, true, memory_order_release);
+#endif
+}
+
+int64_t cjgui_macos_control_accent_srgb8(void) {
+#if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
+    if ([NSThread isMainThread]) return CjguiControlAccentSampleOnMain();
+    if (!atomic_load_explicit(&cjguiAccentSamplingEnabled, memory_order_acquire)) return -1;
+    bool expected = false;
+    if (atomic_compare_exchange_strong_explicit(&cjguiAccentSamplePending, &expected, true,
+            memory_order_acq_rel, memory_order_acquire)) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @autoreleasepool {
+                atomic_store_explicit(&cjguiAccentLastSample, CjguiControlAccentSampleOnMain(),
+                    memory_order_release);
+                atomic_store_explicit(&cjguiAccentSamplePending, false, memory_order_release);
+            }
+        });
+    }
+    return atomic_load_explicit(&cjguiAccentLastSample, memory_order_acquire);
+#else
+    return -1;
+#endif
+}
+// 2026-09-27(C):按窗口号查询可见性。NSApp windowWithWindowNumber: 只解析已存在
+// 的窗口；窗口号无效、窗口不存在、NSApp 尚未创建或非 Apple 平台返回确定的
+// 默认值 0。只读、不创建/不改变窗口、不返回 pointer。
+int32_t cjgui_macos_window_visible(int64_t window_number) {
+#if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
+    if (window_number <= 0 || NSApp == nil) {
+        return 0;
+    }
+    NSWindow *window = [NSApp windowWithWindowNumber:(NSInteger)window_number];
+    if (window == nil) {
+        return 0;
+    }
+    return window.isVisible ? 1 : 0;
+#else
+    (void)window_number;
+    return 0;
+#endif
+}
+// 2026-09-27(C):按窗口号查询最小化状态。语义与 cjgui_macos_window_visible 相同：
+// 不可用返回确定的 0，且不创建/不改变窗口。
+int32_t cjgui_macos_window_minimized(int64_t window_number) {
+#if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
+    if (window_number <= 0 || NSApp == nil) {
+        return 0;
+    }
+    NSWindow *window = [NSApp windowWithWindowNumber:(NSInteger)window_number];
+    if (window == nil) {
+        return 0;
+    }
+    return window.isMiniaturized ? 1 : 0;
+#else
+    (void)window_number;
+    return 0;
+#endif
 }

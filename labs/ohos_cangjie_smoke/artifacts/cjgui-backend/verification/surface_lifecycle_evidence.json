@@ -1,85 +1,522 @@
 {
   "matrix": {
-    "C1_sim": [
-      "2",
-      "3"
-    ],
-    "C1_hilog": "",
-    "C4_stats": "cleared=00 committed=1 aborted=0 job_fails=0 ack_fails=0",
-    "C6_hilog": "09-26 15:39:37.453 32066 32438 I A00000/CjguiApp: host closed; stop_requested=false render_shutdown_status=0 shutdown_done=1 ticks=558"
+    "C2_fence_timeout": "",
+    "C3_witness": "",
+    "C4_witness": "",
+    "C4_stats": "cleared=00 committed=0 aborted=0 job_fails=0 ack_fails=0",
+    "C5_witness": "",
+    "C5_release": "flush_release=0",
+    "C5_stats": "cleared=00 committed=0 aborted=0 job_fails=0 ack_fails=0",
+    "C6_terminal": {
+      "closed": "09-27 15:05:07.440 10843 11309 I A00000/CjguiApp: cleanup tail [stand-in stopped]: renderer_started=false shutdown_status=-1 shutdown_done=-1 transport_closed=true queued=0 conns=0 inflight=0 lifecycle=2",
+      "transport_closed": true,
+      "owner_really_exited": true
+    },
+    "C7_hilog": "uiApp: cleanup tail [stand-in stopped]: renderer_started=false shutdown_status=-1 shutdown_done=-1 transport_closed=true queued=0 conns=0 inflight=0 lifecycle=2"
   },
   "checks": [
     {
-      "check": "C1: INCREMENT APPLIED",
-      "actual": "true",
-      "expected": "true",
-      "pass": true
+      "check": "C1: permit 真实 held 增量>=1",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
     },
     {
-      "check": "C1: 公开读回版本精确",
-      "actual": 2,
-      "expected": 2,
-      "pass": true
+      "check": "C2: 真实 CYCLE×10 完成",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C2: create 真实 held 增量>=1",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
+    },
+    {
+      "check": "C2: 真实 destroy 与 held 交错（fence 超时日志在场）",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
     },
     {
       "check": "C2: INCREMENT APPLIED",
       "actual": "true",
       "expected": "true",
-      "pass": true
+      "pass": true,
+      "status": "PASS"
     },
     {
       "check": "C2: 公开读回版本精确",
-      "actual": 4,
-      "expected": 4,
-      "pass": true
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C2b: create_return 真实 held 增量>=1",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
+    },
+    {
+      "check": "C2b: INCREMENT APPLIED",
+      "actual": "true",
+      "expected": "true",
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C2b: 公开读回版本精确",
+      "actual": 2,
+      "expected": 2,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C3: 阶段见证（draw 真实 held 增量>=1）",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
     },
     {
       "check": "C3: INCREMENT APPLIED",
       "actual": "true",
       "expected": "true",
-      "pass": true
+      "pass": true,
+      "status": "PASS"
     },
     {
       "check": "C3: 公开读回版本精确",
-      "actual": 6,
-      "expected": 6,
-      "pass": true
+      "actual": 4,
+      "expected": 4,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C4: 阶段见证（admission 真实 held 增量>=1）",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
     },
     {
       "check": "C4: INCREMENT APPLIED",
       "actual": "true",
       "expected": "true",
-      "pass": true
+      "pass": true,
+      "status": "PASS"
     },
     {
       "check": "C4: 公开读回版本精确",
-      "actual": 8,
-      "expected": 8,
-      "pass": true
+      "actual": 7,
+      "expected": 7,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C5 前置: surface 恢复绑定/活跃",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
+    },
+    {
+      "check": "C5: 阶段见证（flush 真实 held 增量>=1）",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档渲染阶段不可达（published=0，无 create/draw/flush 可按住）"
     },
     {
       "check": "C5: INCREMENT APPLIED",
       "actual": "true",
       "expected": "true",
-      "pass": true
+      "pass": true,
+      "status": "PASS"
     },
     {
       "check": "C5: 公开读回版本精确",
       "actual": 10,
       "expected": 10,
-      "pass": true
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "NEG1: 未知操作被握手拒绝",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "NEG2: 未触发帧时 admission held 增量为 0",
+      "actual": 0,
+      "expected": 0,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S1: 替身会话就绪（Phase B 业务通道可达）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S1 基线: gen=91 已创建（首帧 createEnter==1）",
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S1: 替身 create 身份阻塞到位（holdActive，直连观测）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S1 硬判据: retire 后旧代 createEnter==0（不得创建）",
+      "actual": 0,
+      "expected": 0,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S1 硬判据: 旧代 flushEnter==0",
+      "actual": 0,
+      "expected": 0,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S1: 替身会话已退役（active=0）",
+      "actual": false,
+      "expected": false,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2: 替身 create_return 身份阻塞到位（已创建返回、bound 未发布）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2 硬判据: 创建发生过（createEnter==1）",
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2 硬判据: retire 后旧代不 flush（flushEnter==0）",
+      "actual": 0,
+      "expected": 0,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2 硬判据: 自动 destroy 恰好一次（destroyEnter 增量==1）",
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2 硬判据: 许可恰好归还一次（released 增量==1）",
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2 硬判据: 退役窗口无新增许可（acquired 增量==0）",
+      "actual": 0,
+      "expected": 0,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2b 硬判据: 新代原票正常结算（INCREMENT APPLIED）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S2b 硬判据: 新代创建并正常 flush（createEnter=1 flushEnter=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S3: 替身 flush 身份阻塞到位（在途窗口）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S3 硬判据: flush 在途发生过（替身对象，flushEnter=1）",
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S3 硬判据: flush 后生产复核拒绝并自动拆除恰一次（destroyEnter==1）",
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "D: 身份绑定贯穿 S 段（同 PID + 同 appInstance）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S4: redraw 经替身 backend 分发（flushE>=2）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S4 硬判据: DISARM 后 teardown 仍由替身释放（stub destroyE>=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S4 硬判据: 替身全生命周期真实平台调用零增（create/flush/destroy==0）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S4 硬判据: DISARM 下新替身代被拒绝且真实计数零增（createE==0）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S5: 结算统计不可达（owner 已退出控制通道关闭）",
+      "status": "BLOCKED",
+      "reason": "close 后控制通道随 owner 收敛关闭；结算读数以设备日志为准"
+    },
+    {
+      "check": "S5 硬判据: 关闭后渲染收尾完成（shutdown_done=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S5 硬判据: 目标票各恰一次终态（客户端回执唯一）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S5 硬判据: 无重复渲染 ACK（ack 增量<=1 且与结算行一致）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S5 硬判据: 许可归还（设备日志 surface permit released 在场）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "S5 新代恢复: 实例重开后业务可达",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg1: 无窗口正常关闭收敛（连接被拒）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg1: 统一清理尾部在场（按事实收敛，not_started 如实记录）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg1 后新实例业务可达",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "NEG5a: 错 ID 等待被判失败（不误配结果）",
+      "actual": false,
+      "expected": false,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "NEG5b: 旧日志按 PID 判别",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "NEG5c: 阶段已结束（无武装时 held 不自增）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "NEG5d: 释放失败码如实返回（负值必判失败）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg2: 首帧注入启动失败被接住（host start failed）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg2: 启动失败汇入统一清理尾部（cleanup tail [host start failed]）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg2: 宿主按事实记 failed（可重试）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg2: 失败后重试业务可达",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg3: ARM/present 后业务通道可达（Phase B）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg3: 关闭后停止链收敛（连接被拒）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg3: Phase B 统一清理尾部在场（cleanup tail [phase-b closed]）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C-neg3: 渲染收尾真实完成（render_shutdown_status=0 shutdown_done=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "NEG4: 隔离夹具三场景全零 Reference 调用（自检 rc=0）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
     },
     {
       "check": "C6: 关闭后停止链收敛（连接被拒）",
       "actual": true,
       "expected": true,
-      "pass": true
+      "pass": true,
+      "status": "PASS"
     },
     {
-      "check": "C6: 宿主关闭日志存在（render teardown 完成）",
+      "check": "C6: 停止终态真实（替身档: owner 实退+传输收敛+未启动部件如实记录）",
       "actual": true,
       "expected": true,
-      "pass": true
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C6 重开: 新实例业务写读可用（INCREMENT APPLIED）",
+      "actual": "true",
+      "expected": "true",
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C6 重开: 公开读回版本精确",
+      "actual": 1,
+      "expected": 1,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C7: queued 渲染票阶段语义",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 拒绝发布 surface（published=0），渲染票不存在；真实卸载/在途渲染票关闭待真实引用平台"
+    },
+    {
+      "check": "C7: 关闭前精确在途确认（COUNTERS INFLIGHT>=1）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C7 替身档: 关闭后停止链收敛（连接被拒）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C7 替身档: owner 实退+传输收敛（stand-in closed）",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
+    },
+    {
+      "check": "C8: committing/flush 阶段语义",
+      "status": "BLOCKED",
+      "reason": "KnownShimNoRef 档无渲染路径（published=0），Committing/Flush 不存在；待真实引用平台执行"
+    },
+    {
+      "check": "C8 后重建：新实例业务可用",
+      "actual": true,
+      "expected": true,
+      "pass": true,
+      "status": "PASS"
     }
   ]
 }

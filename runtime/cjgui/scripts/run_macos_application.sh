@@ -252,7 +252,16 @@ export SDKROOT="$SDKROOT_PATH"
 APP_EXECUTABLE="$APP_DIR/target/release/bin/main"
 # A changed native key forces only this app's executable to relink; cjpm retains its package graph.
 if (( NEEDS_NATIVE_REBUILD )); then rm -f "$APP_EXECUTABLE"; fi
-(cd "$APP_DIR" && cjpm build -i)
+# cjpm 1.1.3 splits a dependency build-script path at spaces while compiling
+# build.cj. The host has already materialized the fingerprint-checked native
+# archive above, which is exactly what cjgui/build.cj would create. In a
+# spaced source export, skip that redundant script invocation while retaining
+# normal package compilation and linking from the actual source directory.
+if [[ "$APP_DIR" == *' '* || "$RUNTIME_DIR" == *' '* ]]; then
+  (cd "$APP_DIR" && cjpm build --skip-script -i)
+else
+  (cd "$APP_DIR" && cjpm build -i)
+fi
 if [[ ! -x "$APP_EXECUTABLE" ]]; then
   echo "cjgui macOS application host: cjpm did not publish executable $APP_EXECUTABLE" >&2
   exit 2

@@ -200,3 +200,69 @@ class BoundedExchange:
             body = self.read_frame_bounded(sock, deadline)
             self._archive("response", body)
         return payload, body
+
+
+class GateCommandError(RuntimeError):
+    """第七次复核 A1：闸门命令握手/执行失败（未发布、未知操作、错 ID、负返回）。"""
+
+
+def gate_command(exchange, token: str, op: str, expect_tokens=(), timeout: float = 12.0) -> str:
+    """发布闸门命令并等待**同 PUBLISHED ID** 的执行回执。
+
+    - 发布回执必须含 PUBLISHED <id>（缺失/非正 = 命令未被接受）；
+    - 轮询 GATE_STATE 直到 RESULT_ID == 本次 PUBLISHED id（不读"最新任意结果"）；
+    - RESULT 含 unknown/error、或缺少 expect_tokens 中任一成功码 → 失败。
+    返回 RESULT 文本；失败抛 GateCommandError。单执行者串行握手：调用方
+    必须等上一条命令的结果回来再发下一条（单槽语义）。
+    """
+    _, body = exchange.exchange_strict(
+        ["CONTROL CJGUI_VERIFY/1", f"TOKEN {token}", f"OP {op}", "END"], timeout)
+    published = None
+    for line in body.splitlines():
+        if line.startswith("PUBLISHED "):
+            try:
+                published = int(line.split(" ", 1)[1])
+            except ValueError:
+                published = None
+    if not published or published <= 0:
+        raise GateCommandError(f"{op}: 命令未被发布（body={body[:120]!r}）")
+    deadline = time.monotonic() + timeout
+    result = ""
+    while time.monotonic() < deadline:
+        _, gs = exchange.exchange_strict(
+            ["CONTROL CJGUI_VERIFY/1", f"TOKEN {token}", "OP GATE_STATE", "END"], timeout)
+        rid = None
+        for line in gs.splitlines():
+            if line.startswith("RESULT_ID "):
+                try:
+                    rid = int(line.split(" ", 1)[1])
+                except ValueError:
+                    rid = None
+            if line.startswith("RESULT "):
+                result = line.split(" ", 1)[1]
+        if rid == published:
+            low = result.lower()
+            if "unknown" in low or "error" in low:
+                raise GateCommandError(f"{op}: 执行失败（{result!r}）")
+            for tok in expect_tokens:
+                if tok not in result:
+                    raise GateCommandError(f"{op}: 成功码缺失（{tok!r} 不在 {result!r}）")
+            return result
+        time.sleep(0.15)
+    raise GateCommandError(f"{op}: 等待 RESULT_ID={published} 超时（最后 RESULT={result!r}）")
+
+
+def gate_stage_held(exchange, token: str, slot: int, timeout: float = 6.0) -> int:
+    """读 stageHeld packed 计数的指定槽位（0=permit 1=create 2=create_return
+    3=draw 4=admission 5=flush 6=dequeue；每槽 9 位饱和）。
+    GATE_A2_STATS 同为发布式命令：经 gate_command 等同 ID 回执后解析。"""
+    result = gate_command(exchange, token, "GATE_A2_STATS", timeout=timeout)
+    held = None
+    for token_str in result.split():
+        if token_str.startswith("stageHeld="):
+            v = token_str.split("=", 1)[1].strip()
+            if v.lstrip("-").isdigit():
+                held = int(v)
+    if held is None or held < 0:
+        return -1
+    return (held >> (slot * 9)) & 0x1FF

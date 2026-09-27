@@ -7,6 +7,9 @@ set -euo pipefail
 # refresh-timing probe.
 SCRIPT_DIR="${0:A:h}"
 RUNTIME_DIR="${SCRIPT_DIR}/../.."
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 OUTPUT_DIR="${1:-/private/tmp/cjgui-complex-scene-scope-timing}"
 MIN_SAMPLES="${2:-30}"
 SDKROOT_PATH="${CJ_GUI_SDKROOT:-${SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk}}"
@@ -60,11 +63,7 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_complex_scene_scope_timing.a" \
 
 cjc --sysroot "$SDKROOT_PATH" \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$PROBE_SOURCE" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
   -lcjgui_shared_operation_core -L "$OUTPUT_DIR/native" -lcjgui_complex_scene_scope_timing \

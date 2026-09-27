@@ -2,6 +2,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$SCRIPT_DIR/lib_cjgui_source_set.sh"
 OUTPUT_DIR="${CJGUI_INTERACTION_STYLE_NATIVE_TMPDIR:-/private/tmp/cjgui-interaction-style-native}"
 SDKROOT_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 set +u
@@ -18,10 +19,11 @@ clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-st
 clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong -isysroot "$SDKROOT_PATH" \
   -mmacosx-version-min=12.0 -c "$RUNTIME_DIR/native/cjgui_native_bridge.m" -o "$OUTPUT_DIR/native/cjgui_native_bridge.o"
 ar rcs "$OUTPUT_DIR/native/libcjgui_interaction_style_native.a" "$OUTPUT_DIR/native/cjgui_internal_renderer.o" "$OUTPUT_DIR/native/cjgui_native_bridge.o"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 cjc --sysroot "$SDKROOT_PATH" --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/probe/composable_ui_interaction_style_native_probe.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
+  "$RUNTIME_DIR/probe/composable_ui_interaction_style_native_probe.cj" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" -lcjgui_shared_operation_core \
   -L "$OUTPUT_DIR/native" -lcjgui_interaction_style_native \
   --link-options "-framework AppKit -framework Metal -framework MetalKit -framework QuartzCore -lobjc" \

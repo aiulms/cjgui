@@ -11,7 +11,6 @@ package cjgui
 
 import std.env.*
 import std.random.*
-
 import std.collection.*
 import cjgui_shared_operation_core.*
 
@@ -25,12 +24,13 @@ import cjgui_shared_operation_core.*
 public class CjguiGeneratedUiFieldSpec {
     public let fieldId: String
     public let label: String
-    public let editorKind: String       // "TEXT" | "INTEGER" | "BOOLEAN"
+    public let editorKind: String // "TEXT" | "INTEGER" | "BOOLEAN"
     public let resourceId: Int64
-    public let writeActionName: String  // "" when the framework has no writer
+    public let writeActionName: String // "" when the framework has no writer
     public let minimum: Int64
     public let maximum: Int64
-    public let required: Bool           // declared by the application's binding
+    public let required: Bool // declared by the application's binding
+
     // Declared TEXT length limit in Unicode scalar values (Rune); 0 = none.
     public let maximumLength: Int64
     /// The writer operation's own ARGUMENT name, from the application's single
@@ -42,9 +42,9 @@ public class CjguiGeneratedUiFieldSpec {
     /// writes immediately (for example SET_TITLE) instead of through the
     /// shared draft operations. It is still a single declared value, so no
     /// consumer re-derives the writer from a field name.
-    public init(fieldId: String, label: String, editorKind: String, resourceId: Int64,
-                minimum!: Int64 = 0, maximum!: Int64 = 0, writeActionName!: String = "",
-                required!: Bool = false, maximumLength!: Int64 = 0, argumentName!: String = "") {
+    public init(fieldId: String, label: String, editorKind: String, resourceId: Int64, minimum!: Int64 = 0,
+        maximum!: Int64 = 0, writeActionName!: String = "", required!: Bool = false, maximumLength!: Int64 = 0,
+        argumentName!: String = "") {
         this.fieldId = fieldId
         this.label = label
         this.editorKind = editorKind
@@ -122,7 +122,7 @@ public class CjguiGeneratedUiFieldSpec {
     /// carries them with the field, so an external caller (or a composite element)
     /// never guesses which argument `EDIT_DRAFT_TEXT`/`EDIT_DRAFT_BOOLEAN` takes.
     public static func fromFormBinding(binding: CjguiSharedFormBinding, textArgument!: String = "",
-                                       booleanArgument!: String = ""): ArrayList<CjguiGeneratedUiFieldSpec> {
+        booleanArgument!: String = ""): ArrayList<CjguiGeneratedUiFieldSpec> {
         let result = ArrayList<CjguiGeneratedUiFieldSpec>()
         for (descriptor in binding.allFields()) {
             // The declared business constraints travel with the field: the
@@ -134,10 +134,11 @@ public class CjguiGeneratedUiFieldSpec {
             } else {
                 textArgument
             }
-            result.add(CjguiGeneratedUiFieldSpec(descriptor.fieldId, descriptor.label,
-                descriptor.editorKind, descriptor.resourceId, minimum: descriptor.minimum,
-                maximum: descriptor.maximum, required: descriptor.required,
-                maximumLength: descriptor.maximumLength, argumentName: declaredArgument))
+            result.add(
+                CjguiGeneratedUiFieldSpec(descriptor.fieldId, descriptor.label, descriptor.editorKind,
+                    descriptor.resourceId, minimum: descriptor.minimum, maximum: descriptor.maximum,
+                    required: descriptor.required, maximumLength: descriptor.maximumLength,
+                    argumentName: declaredArgument))
         }
         return result
     }
@@ -152,7 +153,7 @@ public let CJGUI_GENERATED_UI_COMPONENT_INSTANCE_CAPACITY: Int64 = 64
 /// One property an application-registered component accepts.
 public class CjguiGeneratedUiPropertySpec {
     public let name: String
-    public let valueType: String      // "STRING" | "INTEGER" | "BOOLEAN"
+    public let valueType: String // "STRING" | "INTEGER" | "BOOLEAN"
     public let required: Bool
     public let minimum: Int64
     public let maximum: Int64
@@ -166,10 +167,27 @@ public class CjguiGeneratedUiPropertySpec {
     /// simply not set). It is published so a reader never has to guess what an
     /// omitted property means.
     public let defaultValue: String
+    /// Wire grammar of a structured STRING value ("" = a plain scalar token).
+    /// Published from the SAME constant the parser/encoder obey, so discovery
+    /// and acceptance cannot drift apart.
+    public let encoding: String
+    /// Unit of a structured/numeric value ("" = unitless).
+    public let unit: String
+    /// Accepted value domain for a structured value ("" = described by the
+    /// numeric minimum/maximum or the enumerated `values`).
+    public let valueRange: String
+    /// Meaning of the explicit empty/`none` form and of an omitted property
+    /// ("" = the property has no such dual meaning).
+    public let semantics: String
+    /// Stability marker of the property's contract ("" = stable).
+    public let stability: String
+    /// Backend support surface of the property ("" = all publishing backends).
+    public let backendSupport: String
 
-    public init(name: String, valueType: String, required!: Bool = false,
-                minimum!: Int64 = 0, maximum!: Int64 = 0, maxLength!: Int64 = 0,
-                values!: ArrayList<String> = ArrayList<String>(), defaultValue!: String = "") {
+    public init(name: String, valueType: String, required!: Bool = false, minimum!: Int64 = 0, maximum!: Int64 = 0,
+        maxLength!: Int64 = 0, values!: ArrayList<String> = ArrayList<String>(), defaultValue!: String = "",
+        encoding!: String = "", unit!: String = "", valueRange!: String = "", semantics!: String = "",
+        stability!: String = "", backendSupport!: String = "") {
         this.name = name
         this.valueType = valueType
         this.required = required
@@ -178,6 +196,12 @@ public class CjguiGeneratedUiPropertySpec {
         this.maxLength = maxLength
         this.values = values
         this.defaultValue = defaultValue
+        this.encoding = encoding
+        this.unit = unit
+        this.valueRange = valueRange
+        this.semantics = semantics
+        this.stability = stability
+        this.backendSupport = backendSupport
     }
 }
 
@@ -240,29 +264,23 @@ public class CjguiGeneratedUiImageResourceSpec {
     }
 
     public func isValid(): Bool {
-        return key.size > 0 && contentType == "PNG" && version >= 1 &&
-            name.size > 0 && rasterPath.size > 0
+        return key.size > 0 && contentType == "PNG" && version >= 1 && name.size > 0 && rasterPath.size > 0
     }
 }
 
 public class CjguiGeneratedUiPresentation {
     public static func isImplemented(presentation: String): Bool {
-        return presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_LABEL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_ACTION ||
-            presentation == CJGUI_GENERATED_PRESENTATION_IMAGE ||
-            presentation == CJGUI_GENERATED_PRESENTATION_SCROLL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_SPLIT ||
-            presentation == CJGUI_GENERATED_PRESENTATION_TABS ||
-            presentation == CJGUI_GENERATED_PRESENTATION_TAB_PAGE ||
+        return presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL || presentation == CJGUI_GENERATED_PRESENTATION_LABEL ||
+            presentation == CJGUI_GENERATED_PRESENTATION_ACTION || presentation == CJGUI_GENERATED_PRESENTATION_IMAGE ||
+            presentation == CJGUI_GENERATED_PRESENTATION_SCROLL || presentation == CJGUI_GENERATED_PRESENTATION_SPLIT ||
+            presentation == CJGUI_GENERATED_PRESENTATION_TABS || presentation == CJGUI_GENERATED_PRESENTATION_TAB_PAGE ||
             // An application composite is presented by its own registered
             // factory; the catalog only stores this presentation together with
             // that factory, so accepting it here cannot degrade an unregistered
             // kind into a label.
-            presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE ||
-            presentation == "FIELD_TEXT" || presentation == "FIELD_INTEGER" ||
-            presentation == "FIELD_BOOLEAN"
+            presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE || presentation == "FIELD_TEXT" || presentation ==
+            "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN"
     }
 
     /// Presentation inferred from a built-in kind. An application kind must
@@ -340,10 +358,10 @@ public class CjguiGeneratedUiPresentation {
         let properties = ArrayList<CjguiGeneratedUiPropertySpec>()
         properties.add(CjguiGeneratedUiPropertySpec("firstSize", "INTEGER", minimum: 0, maximum: 10000,
             defaultValue: "0"))
-        properties.add(CjguiGeneratedUiPropertySpec("firstMinimum", "INTEGER", minimum: 0, maximum: 10000,
-            defaultValue: "120"))
-        properties.add(CjguiGeneratedUiPropertySpec("secondMinimum", "INTEGER", minimum: 0, maximum: 10000,
-            defaultValue: "120"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("firstMinimum", "INTEGER", minimum: 0, maximum: 10000, defaultValue: "120"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("secondMinimum", "INTEGER", minimum: 0, maximum: 10000, defaultValue: "120"))
         return properties
     }
 
@@ -353,8 +371,7 @@ public class CjguiGeneratedUiPresentation {
     /// re-submitting the same structure never resets a human's scroll position.
     public static func scrollContentProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
         let properties = ArrayList<CjguiGeneratedUiPropertySpec>()
-        properties.add(CjguiGeneratedUiPropertySpec("offset", "INTEGER", minimum: 0, maximum: 1000000,
-            defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("offset", "INTEGER", minimum: 0, maximum: 1000000, defaultValue: "0"))
         return properties
     }
 
@@ -365,10 +382,11 @@ public class CjguiGeneratedUiPresentation {
     public static func imageContentProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
         let properties = ArrayList<CjguiGeneratedUiPropertySpec>()
         properties.add(CjguiGeneratedUiPropertySpec("resource", "STRING", required: true, maxLength: 64))
-        properties.add(CjguiGeneratedUiPropertySpec("resourceVersion", "INTEGER", required: true,
-            minimum: 1, maximum: 1000000))
-        properties.add(CjguiGeneratedUiPropertySpec("contentMode", "STRING", maxLength: 8,
-            values: ArrayList<String>(["fit", "fill"]), defaultValue: "fit"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("resourceVersion", "INTEGER", required: true, minimum: 1, maximum: 1000000))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("contentMode", "STRING", maxLength: 8,
+                values: ArrayList<String>(["fit", "fill"]), defaultValue: "fit"))
         return properties
     }
 
@@ -376,49 +394,42 @@ public class CjguiGeneratedUiPresentation {
     /// constraints, growth, alignment and font. They map onto the SAME
     /// `CjguiComposableUiStyle` the handwritten tree uses.
     /// The paint vocabulary every presentation carries: strict color tokens plus a
-    /// named-style reference. `borderWidth` is a numeric style name because it is
-    /// a real layout/paint field on the shared Style.
+    /// named-style reference, plus the two encoded effects (`shadow` and
+    /// `gradient`) whose tokens carry their own color stops. `borderWidth` is a
+    /// numeric style name because it is a real layout/paint field on the shared
+    /// Style.
     public static func isPaintPropertyName(name: String): Bool {
-        return name == "background" || name == "border" || name == "textColor"
+        return name == "background" || name == "border" || name == "textColor" || name == "shadow" ||
+            name == "gradient" || name == "effectGroup"
     }
 
     public static func isStylePropertyName(name: String): Bool {
-        return name == "fixedWidth" || name == "fixedHeight" ||
-            name == "minWidth" || name == "maxWidth" ||
-            name == "minHeight" || name == "maxHeight" ||
-            name == "growX" || name == "growY" ||
-            name == "alignX" || name == "alignY" ||
-            name == "fontSize" || name == "fontWeight" || name == "borderWidth"
+        return name == "fixedWidth" || name == "fixedHeight" || name == "minWidth" || name == "maxWidth" || name ==
+            "minHeight" || name == "maxHeight" || name == "growX" || name == "growY" || name == "alignX" || name ==
+            "alignY" || name == "fontSize" || name == "fontWeight" || name == "borderWidth"
     }
 
     /// Whether one presentation consumes one style property. A container also
     /// consumes its own gap/padding; a leaf does not (a leaf's padding would be
     /// declared but the same leaf the handwritten builder writes carries none).
     public static func consumesStyleProperty(presentation: String, name: String): Bool {
-        if (presentation != CJGUI_GENERATED_PRESENTATION_VERTICAL &&
-            presentation != CJGUI_GENERATED_PRESENTATION_HORIZONTAL &&
-            presentation != CJGUI_GENERATED_PRESENTATION_SCROLL &&
-            presentation != CJGUI_GENERATED_PRESENTATION_SPLIT &&
-            presentation != CJGUI_GENERATED_PRESENTATION_TABS &&
-            presentation != CJGUI_GENERATED_PRESENTATION_TAB_PAGE &&
-            presentation != CJGUI_GENERATED_PRESENTATION_LABEL &&
-            presentation != CJGUI_GENERATED_PRESENTATION_ACTION &&
-            presentation != CJGUI_GENERATED_PRESENTATION_IMAGE &&
-            presentation != "FIELD_TEXT" && presentation != "FIELD_INTEGER" &&
-            presentation != "FIELD_BOOLEAN") {
+        if (presentation != CJGUI_GENERATED_PRESENTATION_VERTICAL && presentation !=
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL && presentation != CJGUI_GENERATED_PRESENTATION_SCROLL &&
+            presentation != CJGUI_GENERATED_PRESENTATION_SPLIT && presentation != CJGUI_GENERATED_PRESENTATION_TABS &&
+            presentation != CJGUI_GENERATED_PRESENTATION_TAB_PAGE && presentation != CJGUI_GENERATED_PRESENTATION_LABEL &&
+            presentation != CJGUI_GENERATED_PRESENTATION_ACTION && presentation != CJGUI_GENERATED_PRESENTATION_IMAGE &&
+            presentation != "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN") {
             return false
         }
-        if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_TABS) {
+        if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL || presentation == CJGUI_GENERATED_PRESENTATION_TABS) {
             // A tab container stacks its title row above the active page, so it
             // consumes the same gap/padding vocabulary as any other container.
             if (name == "gap" || name == "padding") {
                 return true
             }
         }
-        if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) ||
-            name == "style") {
+        if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) || name == "style") {
             return true
         }
         return isStylePropertyName(name)
@@ -443,6 +454,12 @@ public class CjguiGeneratedUiPresentation {
         if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) || name == "style") {
             return consumesStyleProperty(presentation, name) && valueType == "STRING"
         }
+        // A motion reference is consumed by the holder's accepted key→rule
+        // binding. It is valid on an implemented node because the public window
+        // animation entry addresses every accepted node identity.
+        if (name == "motion") {
+            return isImplemented(presentation) && valueType == "STRING"
+        }
         if (isStylePropertyName(name)) {
             return consumesStyleProperty(presentation, name) && valueType == "INTEGER"
         }
@@ -456,21 +473,18 @@ public class CjguiGeneratedUiPresentation {
             // consumes the container gap/padding vocabulary. `titleStyle` is a
             // registered named-style reference feeding the title row's base
             // paint AND interaction states through the same resolution as `style`.
-            return (name == "initialPage" && valueType == "STRING") ||
-                (name == "titleHeight" && valueType == "INTEGER") ||
-                (name == "titleStyle" && valueType == "STRING") ||
-                ((name == "gap" || name == "padding") && valueType == "INTEGER")
+            return (name == "initialPage" && valueType == "STRING") || (name == "titleHeight" && valueType == "INTEGER") ||
+                (name == "titleStyle" && valueType == "STRING") || ((name == "gap" || name == "padding") && valueType ==
+                "INTEGER")
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_TAB_PAGE) {
-            return (name == "pageKey" && valueType == "STRING") ||
-                (name == "pageTitle" && valueType == "STRING")
+            return (name == "pageKey" && valueType == "STRING") || (name == "pageTitle" && valueType == "STRING")
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_SPLIT) {
-            return (name == "firstSize" || name == "firstMinimum" || name == "secondMinimum") &&
-                valueType == "INTEGER"
+            return (name == "firstSize" || name == "firstMinimum" || name == "secondMinimum") && valueType == "INTEGER"
         }
-        if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
+        if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
             return (name == "gap" || name == "padding") && valueType == "INTEGER"
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_LABEL) {
@@ -494,8 +508,7 @@ public class CjguiGeneratedUiPresentation {
             }
             return false
         }
-        if (presentation == "FIELD_TEXT" || presentation == "FIELD_INTEGER" ||
-            presentation == "FIELD_BOOLEAN") {
+        if (presentation == "FIELD_TEXT" || presentation == "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN") {
             return name == "label" && valueType == "STRING"
         }
         return false
@@ -511,33 +524,62 @@ public class CjguiGeneratedUiPresentation {
             defaultValue: "0"))
         properties.add(CjguiGeneratedUiPropertySpec("fixedHeight", "INTEGER", minimum: 0, maximum: 4096,
             defaultValue: "0"))
-        properties.add(CjguiGeneratedUiPropertySpec("minWidth", "INTEGER", minimum: 0, maximum: 4096,
-            defaultValue: "0"))
-        properties.add(CjguiGeneratedUiPropertySpec("maxWidth", "INTEGER", minimum: 0, maximum: 4096,
-            defaultValue: "0"))
-        properties.add(CjguiGeneratedUiPropertySpec("minHeight", "INTEGER", minimum: 0, maximum: 4096,
-            defaultValue: "0"))
-        properties.add(CjguiGeneratedUiPropertySpec("maxHeight", "INTEGER", minimum: 0, maximum: 4096,
-            defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("minWidth", "INTEGER", minimum: 0, maximum: 4096, defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("maxWidth", "INTEGER", minimum: 0, maximum: 4096, defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("minHeight", "INTEGER", minimum: 0, maximum: 4096, defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("maxHeight", "INTEGER", minimum: 0, maximum: 4096, defaultValue: "0"))
         properties.add(CjguiGeneratedUiPropertySpec("growX", "INTEGER", minimum: 0, maximum: 8, defaultValue: "0"))
         properties.add(CjguiGeneratedUiPropertySpec("growY", "INTEGER", minimum: 0, maximum: 8, defaultValue: "0"))
-        properties.add(CjguiGeneratedUiPropertySpec("alignX", "STRING", maxLength: 8,
-            values: ArrayList<String>(["start", "center", "end", "stretch"]), defaultValue: "stretch"))
-        properties.add(CjguiGeneratedUiPropertySpec("alignY", "STRING", maxLength: 8,
-            values: ArrayList<String>(["start", "center", "end", "stretch"]), defaultValue: "start"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("alignX", "STRING", maxLength: 8,
+                values: ArrayList<String>(["start", "center", "end", "stretch"]), defaultValue: "stretch"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("alignY", "STRING", maxLength: 8,
+                values: ArrayList<String>(["start", "center", "end", "stretch"]), defaultValue: "start"))
         // Shared paint vocabulary: a strict color token or a named-style
         // reference. `borderWidth` joins the numeric style names so its range is
         // validated by the same INTEGER path.
-        properties.add(CjguiGeneratedUiPropertySpec("style", "STRING", maxLength: 64,
-            defaultValue: ""))
-        properties.add(CjguiGeneratedUiPropertySpec("background", "STRING", maxLength: 9,
-            defaultValue: ""))
-        properties.add(CjguiGeneratedUiPropertySpec("border", "STRING", maxLength: 9,
-            defaultValue: ""))
-        properties.add(CjguiGeneratedUiPropertySpec("textColor", "STRING", maxLength: 9,
-            defaultValue: ""))
-        properties.add(CjguiGeneratedUiPropertySpec("borderWidth", "INTEGER", minimum: 0, maximum: 64,
-            defaultValue: "1"))
+        properties.add(CjguiGeneratedUiPropertySpec("style", "STRING", maxLength: 64, defaultValue: ""))
+        properties.add(CjguiGeneratedUiPropertySpec("background", "STRING", maxLength: 9, defaultValue: ""))
+        properties.add(CjguiGeneratedUiPropertySpec("border", "STRING", maxLength: 9, defaultValue: ""))
+        properties.add(CjguiGeneratedUiPropertySpec("textColor", "STRING", maxLength: 9, defaultValue: ""))
+        // Encoded effects: an outer shadow / linear gradient carried on one
+        // string token. The grammar, unit, domain, `none` semantics, stability
+        // and backend support are all published from the ONE shared effect
+        // contract, so a client can assemble a legal effect from discovery
+        // alone. `none` and the empty string CLEAR the effect; an absent
+        // property INHERITS the named base; malformed text is refused as a
+        // whole candidate with a stable reason, never ignored.
+        properties.add(
+            CjguiGeneratedUiPropertySpec("shadow", "STRING", maxLength: 64, values: ArrayList<String>(["none"]),
+                defaultValue: "", encoding: CjguiComposableUiEffectValidation.SHADOW_ENCODING,
+                unit: CjguiComposableUiEffectValidation.SHADOW_UNIT,
+                valueRange: CjguiComposableUiEffectValidation.SHADOW_RANGE,
+                semantics: CjguiComposableUiEffectValidation.EFFECT_NONE_SEMANTICS,
+                stability: CjguiComposableUiEffectValidation.EFFECT_STABILITY,
+                backendSupport: CjguiComposableUiEffectValidation.EFFECT_BACKEND_SUPPORT))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("gradient", "STRING", maxLength: 256, values: ArrayList<String>(["none"]),
+                defaultValue: "", encoding: CjguiComposableUiEffectValidation.GRADIENT_ENCODING,
+                unit: CjguiComposableUiEffectValidation.GRADIENT_UNIT,
+                valueRange: CjguiComposableUiEffectValidation.GRADIENT_RANGE,
+                semantics: CjguiComposableUiEffectValidation.EFFECT_NONE_SEMANTICS,
+                stability: CjguiComposableUiEffectValidation.EFFECT_STABILITY,
+                backendSupport: CjguiComposableUiEffectValidation.EFFECT_BACKEND_SUPPORT))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("effectGroup", "STRING", maxLength: 256, defaultValue: "",
+                encoding: CjguiComposableUiEffectValidation.EFFECT_GROUP_ENCODING,
+                unit: CjguiComposableUiEffectValidation.EFFECT_GROUP_UNIT,
+                valueRange: CjguiComposableUiEffectValidation.EFFECT_GROUP_RANGE,
+                semantics: "none_or_empty=clear,absent=inherit,mask=sx,sy,ex,ey,pos:alpha|...,stops=2..4,blur=radiusPoints,unblurred",
+                stability: CjguiComposableUiEffectValidation.EFFECT_STABILITY,
+                backendSupport: CjguiComposableUiEffectValidation.EFFECT_GROUP_BACKEND_SUPPORT))
+        properties.add(CjguiGeneratedUiPropertySpec("borderWidth", "INTEGER", minimum: 0, maximum: 64, defaultValue: "1"))
+        // A registered app rule may be referenced by any accepted generated
+        // instance. The holder publishes the resolved rule only with that
+        // instance's accepted structure transaction.
+        properties.add(CjguiGeneratedUiPropertySpec("motion", "STRING", maxLength: 64,
+            stability: "experimental", backendSupport: "accepted generated node animation"))
         return properties
     }
 
@@ -546,10 +588,8 @@ public class CjguiGeneratedUiPresentation {
     /// consumed by its own layout, a leaf's is not.
     public static func containerStyleProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
         let properties = boxProperties()
-        properties.add(CjguiGeneratedUiPropertySpec("gap", "INTEGER", minimum: 0, maximum: 32,
-            defaultValue: "4"))
-        properties.add(CjguiGeneratedUiPropertySpec("padding", "INTEGER", minimum: 0, maximum: 32,
-            defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("gap", "INTEGER", minimum: 0, maximum: 32, defaultValue: "4"))
+        properties.add(CjguiGeneratedUiPropertySpec("padding", "INTEGER", minimum: 0, maximum: 32, defaultValue: "0"))
         return properties
     }
 
@@ -558,10 +598,8 @@ public class CjguiGeneratedUiPresentation {
     /// fractional type); the mapping passes it to the same Float64 Style field.
     public static func leafStyleProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
         let properties = boxProperties()
-        properties.add(CjguiGeneratedUiPropertySpec("fontSize", "INTEGER", minimum: 1, maximum: 128,
-            defaultValue: "13"))
-        properties.add(CjguiGeneratedUiPropertySpec("fontWeight", "INTEGER", minimum: 0, maximum: 1,
-            defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("fontSize", "INTEGER", minimum: 1, maximum: 128, defaultValue: "13"))
+        properties.add(CjguiGeneratedUiPropertySpec("fontWeight", "INTEGER", minimum: 0, maximum: 1, defaultValue: "0"))
         return properties
     }
 
@@ -591,8 +629,8 @@ public class CjguiGeneratedUiComponentSpec {
     /// kind (which registration rejects).
     public let presentation: String
 
-    public init(kind: String, properties: ArrayList<CjguiGeneratedUiPropertySpec>,
-                allowsChildren: Bool, childLimit!: Int64 = 0, presentation!: String = "") {
+    public init(kind: String, properties: ArrayList<CjguiGeneratedUiPropertySpec>, allowsChildren: Bool,
+        childLimit!: Int64 = 0, presentation!: String = "") {
         this.kind = kind
         this.properties = properties
         this.allowsChildren = allowsChildren
@@ -649,17 +687,25 @@ public class CjguiGeneratedUiCapabilityCatalog {
     // authoritative check.
     private let imageContentIdentities: HashMap<String, String>
     private let imageContentIdentityOrder: ArrayList<String>
+    // App-owned motion declarations accepted by this catalog. The window's
+    // built-in interaction rule is separate; generated candidates may only name
+    // rules this application registered here.
+    private let motionRuleRegistryValue: CjguiGeneratedMotionRegistry
     // Application-visible named styles. ONE definition feeds handwritten helpers,
     // generated nodes and registered composites through the same resolution, and
     // the capability text publishes it beside the kinds/properties.
     private let namedStyleCatalog: CjguiComposableUiNamedStyleCatalog
+    // Window appearance changes affect the host window rather than a generated
+    // node. Each application must explicitly opt its generated directory in
+    // before the root-only declaration is discoverable or accepted.
+    private var windowBackgroundEnabledValue: Bool = false
     public let maxDepth: Int64
     public let maxNodes: Int64
     public let maxPropertiesPerNode: Int64
     public let maxStringLength: Int64
 
     public init(maxDepth!: Int64 = 12, maxNodes!: Int64 = 512, maxPropertiesPerNode!: Int64 = 8,
-                maxStringLength!: Int64 = 256) {
+        maxStringLength!: Int64 = 256) {
         this.components = ArrayList<CjguiGeneratedUiComponentSpec>()
         this.actions = ArrayList<CjguiGeneratedUiActionSpec>()
         this.fields = ArrayList<CjguiGeneratedUiFieldSpec>()
@@ -669,6 +715,7 @@ public class CjguiGeneratedUiCapabilityCatalog {
         this.imageContentIdentities = HashMap<String, String>()
         this.liveImageIdentities = HashMap<String, Int64>()
         this.imageContentIdentityOrder = ArrayList<String>()
+        this.motionRuleRegistryValue = CjguiGeneratedMotionRegistry()
         this.namedStyleCatalog = CjguiComposableUiNamedStyleCatalog()
         this.lastRegistrationIssue = ""
         this.maxDepth = maxDepth
@@ -703,13 +750,11 @@ public class CjguiGeneratedUiCapabilityCatalog {
             return false
         }
         for (property in spec.properties) {
-            if (property.valueType != "STRING" && property.valueType != "INTEGER" &&
-                property.valueType != "BOOLEAN") {
+            if (property.valueType != "STRING" && property.valueType != "INTEGER" && property.valueType != "BOOLEAN") {
                 lastRegistrationIssue = "unknown_property_type:${spec.kind}:${property.name}"
                 return false
             }
-            if (!CjguiGeneratedUiPresentation.isPropertyImplemented(spec.presentation, property.name,
-                property.valueType)) {
+            if (!CjguiGeneratedUiPresentation.isPropertyImplemented(spec.presentation, property.name, property.valueType)) {
                 lastRegistrationIssue = "property_not_implemented:${spec.kind}:${property.name}"
                 return false
             }
@@ -717,6 +762,29 @@ public class CjguiGeneratedUiCapabilityCatalog {
         components.add(spec)
         lastRegistrationIssue = ""
         return true
+    }
+
+    /// Registers one rule the application's generated descriptions may use.
+    /// It shares the framework tween value contract with handwritten motion but
+    /// remains scoped to this catalog/application.
+    public func registerMotionRule(rule: CjguiGeneratedMotionRule): Bool {
+        let accepted = motionRuleRegistryValue.registerRule(rule)
+        lastRegistrationIssue = if (accepted) { "" } else { motionRuleRegistryValue.lastIssue() }
+        return accepted
+    }
+
+    /// Explicitly publishes and enables the generated root `windowBackground`
+    /// declaration for this application. The default remains disabled.
+    public func enableWindowBackground(): Unit {
+        windowBackgroundEnabledValue = true
+    }
+
+    public func windowBackgroundEnabled(): Bool {
+        return windowBackgroundEnabledValue
+    }
+
+    public func motionRuleRegistry(): CjguiGeneratedMotionRegistry {
+        return motionRuleRegistryValue
     }
 
     public func registerAction(spec: CjguiGeneratedUiActionSpec): Bool {
@@ -833,8 +901,7 @@ public class CjguiGeneratedUiCapabilityCatalog {
     /// `image_resource_content_identity_conflict` (the same published identity
     /// already means another raster) or `image_resource_identity_capacity` (every
     /// slot is held by a live reference and nothing may be forgotten).
-    private func admitImageContentIdentityReason(key: String, version: Int64,
-                                                 rasterPath: String): String {
+    private func admitImageContentIdentityReason(key: String, version: Int64, rasterPath: String): String {
         // The current directory is authoritative and does not depend on the
         // bounded history table: a declared key/version already means the raster
         // it was declared with, so reclaiming its history slot can never let the
@@ -855,10 +922,13 @@ public class CjguiGeneratedUiCapabilityCatalog {
                 imageContentIdentities.add(identity, rasterPath)
                 return ""
             }
-            return if (existing == rasterPath) { "" } else { "image_resource_content_identity_conflict" }
+            return if (existing == rasterPath) {
+                ""
+            } else {
+                "image_resource_content_identity_conflict"
+            }
         }
-        if (imageContentIdentityOrder.size >=
-            CjguiGeneratedUiCapabilityCatalog.imageContentIdentityLimit) {
+        if (imageContentIdentityOrder.size >= CjguiGeneratedUiCapabilityCatalog.imageContentIdentityLimit) {
             // Drop the oldest record that NO accepted/candidate binding holds.
             var index = 0
             var evicted: Option<String> = None
@@ -1062,8 +1132,7 @@ public class CjguiGeneratedUiCapabilityCatalog {
     /// and the derived component spec uses the COMPOSITE presentation. Because
     /// spec and factory are stored atomically, a kind can never be registered
     /// with the composite presentation but no real implementation.
-    public func registerComposite(spec: CjguiCompositeComponentSpec,
-                                  factory: CjguiCompositeComponentFactory): Bool {
+    public func registerComposite(spec: CjguiCompositeComponentSpec, factory: CjguiCompositeComponentFactory): Bool {
         lastRegistrationIssue = ""
         if (spec.kind.size == 0) {
             lastRegistrationIssue = "empty_component_kind"
@@ -1113,8 +1182,7 @@ public class CjguiGeneratedUiCapabilityCatalog {
         // consume is rejected exactly like a built-in property that no
         // presentation reads.
         for (property in spec.properties) {
-            if (property.valueType != "STRING" && property.valueType != "INTEGER" &&
-                property.valueType != "BOOLEAN") {
+            if (property.valueType != "STRING" && property.valueType != "INTEGER" && property.valueType != "BOOLEAN") {
                 lastRegistrationIssue = "unknown_property_type:${spec.kind}:${property.name}"
                 return false
             }
@@ -1129,8 +1197,7 @@ public class CjguiGeneratedUiCapabilityCatalog {
         return true
     }
 
-    private func validateCompositeElement(spec: CjguiCompositeComponentSpec,
-                                          element: CjguiCompositeElementSpec): Unit {
+    private func validateCompositeElement(spec: CjguiCompositeComponentSpec, element: CjguiCompositeElementSpec): Unit {
         let role = element.role
         if (role == CJGUI_COMPOSITE_ELEMENT_CONTAINER) {
             if (!element.fieldId.isEmpty() || !element.actionName.isEmpty()) {
@@ -1311,10 +1378,9 @@ public class CjguiGeneratedUiNodeSpec {
     public let actionName: String
     public let children: ArrayList<CjguiGeneratedUiNodeSpec>
 
-    public init(key: String, kind: String,
-                properties!: HashMap<String, String> = HashMap<String, String>(),
-                fieldId!: String = "", actionName!: String = "",
-                children!: ArrayList<CjguiGeneratedUiNodeSpec> = ArrayList<CjguiGeneratedUiNodeSpec>()) {
+    public init(key: String, kind: String, properties!: HashMap<String, String> = HashMap<String, String>(),
+        fieldId!: String = "", actionName!: String = "",
+        children!: ArrayList<CjguiGeneratedUiNodeSpec> = ArrayList<CjguiGeneratedUiNodeSpec>()) {
         this.key = key
         this.kind = kind
         this.properties = properties
@@ -1359,20 +1425,33 @@ public class CjguiGeneratedUiValidator {
     // validator (reset per validate call) because the tree walk must count
     // every node once, not only the current path.
     private var nodesSeen: Int64
+    // Reserved for future NON-FATAL declaration advisories. The encoded-effect
+    // path no longer uses it: a malformed `shadow`/`gradient` now refuses the
+    // whole candidate through the ordinary rejection path with a stable reason.
+    private var lastAdvisory: String
 
     public init(catalog: CjguiGeneratedUiCapabilityCatalog) {
         this.catalog = catalog
         this.nodesSeen = 0
+        this.lastAdvisory = ""
     }
 
     public func validate(root: CjguiGeneratedUiNodeSpec): CjguiGeneratedUiValidation {
         let seen = HashSet<String>()
         nodesSeen = 0
+        lastAdvisory = ""
         return validateNode(root, "root", 0, seen)
     }
 
-    private func validateNode(node: CjguiGeneratedUiNodeSpec, path: String, depth: Int64,
-                              seen: HashSet<String>): CjguiGeneratedUiValidation {
+    /// Readable note of the last non-fatal declaration problem seen by this
+    /// validator ("" when none). It is reserved for future advisories; a
+    /// malformed `shadow`/`gradient` is no longer advisory and instead rejects
+    /// the candidate with a stable reason.
+    public func lastAdvisoryNote(): String {
+        return lastAdvisory
+    }
+
+    private func validateNode(node: CjguiGeneratedUiNodeSpec, path: String, depth: Int64, seen: HashSet<String>): CjguiGeneratedUiValidation {
         if (depth > catalog.maxDepth) {
             return CjguiGeneratedUiValidation.reject("max_depth_exceeded", path)
         }
@@ -1401,6 +1480,64 @@ public class CjguiGeneratedUiValidator {
                 return CjguiGeneratedUiValidation.reject("too_many_properties", "${path}/${node.key}")
             }
             for ((name, value) in node.properties) {
+                if (name == "windowBackground") {
+                    if (!catalog.windowBackgroundEnabled()) {
+                        return CjguiGeneratedUiValidation.reject("window_background_not_enabled",
+                            "${path}/${node.key}/${name}")
+                    }
+                    if (depth != 0) {
+                        return CjguiGeneratedUiValidation.reject("window_background_root_only",
+                            "${path}/${node.key}/${name}")
+                    }
+                    if (!CjguiWindowBackgroundPolicy.isValidToken(value)) {
+                        return CjguiGeneratedUiValidation.reject("window_background_value_invalid",
+                            "${path}/${node.key}/${name}")
+                    }
+                    continue
+                }
+                // A small common semantic vocabulary is available to every
+                // registered author without copying role properties into each
+                // application component catalog. Kind/role admission remains
+                // strict so a label cannot claim to be an actionable tree row.
+                if (name == "semanticRole") {
+                    if (!((value == "outline" && spec.presentation == CJGUI_GENERATED_PRESENTATION_SCROLL) ||
+                        (value == "row" && spec.presentation == CJGUI_GENERATED_PRESENTATION_ACTION))) {
+                        return CjguiGeneratedUiValidation.reject("semantic_role_kind_invalid", "${path}/${node.key}/${name}")
+                    }
+                    continue
+                }
+                if (name == "semanticSelected" || name == "semanticExpandable" || name == "semanticExpanded" ||
+                    name == "disabled") {
+                    if ((value != "true" && value != "false") ||
+                        (name != "disabled" && node.property("semanticRole") != "row") ||
+                        (name == "disabled" && spec.presentation != CJGUI_GENERATED_PRESENTATION_ACTION)) {
+                        return CjguiGeneratedUiValidation.reject("semantic_boolean_invalid", "${path}/${node.key}/${name}")
+                    }
+                    continue
+                }
+                if (name == "semanticLevel") {
+                    let level = match (parseGeneratedInteger(value)) {
+                        case Some(number) => number
+                        case None => -1
+                    }
+                    if (node.property("semanticRole") != "row" || level < 0 || level > 32) {
+                        return CjguiGeneratedUiValidation.reject("semantic_level_invalid", "${path}/${node.key}/${name}")
+                    }
+                    continue
+                }
+                if (name == "semanticRowKey" || name == "semanticParentKey") {
+                    if (node.property("semanticRole") != "row" || value.size == 0 || value.size > 64 ||
+                        !CjguiComposableUiNamedStyleCatalog.isValidName(value)) {
+                        return CjguiGeneratedUiValidation.reject("semantic_key_invalid", "${path}/${node.key}/${name}")
+                    }
+                    continue
+                }
+                if (name == "semanticLabel") {
+                    if (value.size == 0 || value.size > 256) {
+                        return CjguiGeneratedUiValidation.reject("semantic_label_invalid", "${path}/${node.key}/${name}")
+                    }
+                    continue
+                }
                 if (let Some(property) <- propertySpec(spec, name)) {
                     let rejected = validatePropertyValue(property, value, "${path}/${node.key}/${name}")
                     if (let Some(reason) <- rejected) {
@@ -1408,6 +1545,16 @@ public class CjguiGeneratedUiValidator {
                     }
                 } else {
                     return CjguiGeneratedUiValidation.reject("unknown_property", "${path}/${node.key}/${name}")
+                }
+            }
+            if (node.property("semanticRole") == "row") {
+                if (node.property("semanticExpanded") == "true" &&
+                    node.property("semanticExpandable") != "true") {
+                    return CjguiGeneratedUiValidation.reject("semantic_expanded_without_group", "${path}/${node.key}")
+                }
+                if (node.property("semanticParentKey").size > 0 &&
+                    node.property("semanticParentKey") == node.property("semanticRowKey")) {
+                    return CjguiGeneratedUiValidation.reject("semantic_parent_cycle", "${path}/${node.key}")
                 }
             }
             // Required properties must actually be present; an omitted required
@@ -1436,8 +1583,7 @@ public class CjguiGeneratedUiValidator {
                 // key is what a restored active page refers to, so a duplicate or
                 // a missing key is refused as a whole candidate.
                 if (node.children.size < 2 || node.children.size > 3) {
-                    return CjguiGeneratedUiValidation.reject("tabs_require_two_or_three_pages",
-                        "${path}/${node.key}")
+                    return CjguiGeneratedUiValidation.reject("tabs_require_two_or_three_pages", "${path}/${node.key}")
                 }
                 let seenKeys = ArrayList<String>()
                 for (child in node.children) {
@@ -1481,8 +1627,7 @@ public class CjguiGeneratedUiValidator {
                         }
                     }
                     if (!declaredFound) {
-                        return CjguiGeneratedUiValidation.reject("tabs_initial_page_unknown",
-                            "${path}/${node.key}")
+                        return CjguiGeneratedUiValidation.reject("tabs_initial_page_unknown", "${path}/${node.key}")
                     }
                 }
             }
@@ -1546,8 +1691,7 @@ public class CjguiGeneratedUiValidator {
         return Some("image_resource_not_registered")
     }
 
-    private func propertySpec(spec: CjguiGeneratedUiComponentSpec,
-                              name: String): ?CjguiGeneratedUiPropertySpec {
+    private func propertySpec(spec: CjguiGeneratedUiComponentSpec, name: String): ?CjguiGeneratedUiPropertySpec {
         for (property in spec.properties) {
             if (property.name == name) {
                 return Some(property)
@@ -1560,8 +1704,7 @@ public class CjguiGeneratedUiValidator {
     /// type is a contract: a non-numeric value for an INTEGER property or an
     /// out-of-range number is rejected with its own reason instead of being
     /// forwarded to the renderer as text.
-    private func validatePropertyValue(property: CjguiGeneratedUiPropertySpec, value: String,
-                                       path: String): ?String {
+    private func validatePropertyValue(property: CjguiGeneratedUiPropertySpec, value: String, path: String): ?String {
         if (property.valueType == "STRING") {
             if (property.maxLength > 0 && value.size > property.maxLength) {
                 return "property_too_long"
@@ -1569,6 +1712,33 @@ public class CjguiGeneratedUiValidator {
             if (property.name == "style" || property.name == "titleStyle") {
                 if (catalog.namedStyles().forName(value).isNone()) {
                     return "style_reference_not_registered"
+                }
+            } else if (property.name == "shadow" || property.name == "gradient" || property.name == "effectGroup") {
+                // An encoded effect is a real contract, not an advisory: `none`
+                // and the empty value explicitly CLEAR the effect, a legal token
+                // REPLACES it, and malformed text refuses the WHOLE candidate
+                // with a stable reason (the caller adds the property path). A
+                // bad effect never half-applies while the previous accepted
+                // structure is silently kept.
+                if (!cjguiComposableUiEffectTokenIsNone(value)) {
+                    if (property.name == "shadow") {
+                        if (cjguiComposableUiParseShadowToken(value).isNone()) {
+                            return "shadow_value_invalid"
+                        }
+                    } else if (property.name == "gradient") {
+                        if (cjguiComposableUiParseGradientToken(value).isNone()) {
+                            return "gradient_value_invalid"
+                        }
+                    } else {
+                        if (cjguiComposableUiParseEffectGroupToken(value).isNone()) {
+                            return "effect_group_value_invalid"
+                        }
+                    }
+                }
+            } else if (property.name == "motion") {
+                let reason = catalog.motionRuleRegistry().rejectionReasonForName(value)
+                if (reason.size > 0) {
+                    return reason
                 }
             } else if (CjguiGeneratedUiPresentation.isPaintPropertyName(property.name)) {
                 if (cjguiComposableUiParseColorToken(value).isNone()) {
@@ -1625,8 +1795,7 @@ public class CjguiGeneratedUiValidator {
         return ""
     }
 
-    private func validateBinding(node: CjguiGeneratedUiNodeSpec, spec: CjguiGeneratedUiComponentSpec,
-                                 path: String): ?String {
+    private func validateBinding(node: CjguiGeneratedUiNodeSpec, spec: CjguiGeneratedUiComponentSpec, path: String): ?String {
         let requiredEditor = CjguiGeneratedUiPresentation.requiredEditorKind(spec.presentation)
         if (requiredEditor.size > 0) {
             if (node.fieldId.isEmpty()) {
@@ -1677,6 +1846,23 @@ private func cjguiCollectGeneratedSpecKeys(spec: CjguiGeneratedUiNodeSpec, keys:
     }
 }
 
+/// Resolves every declared motion reference to its app-registered rule value.
+/// The validator has already proved each reference exists, so a missing value
+/// here is treated defensively by omitting it; such a candidate cannot reach
+/// this helper through the public submit path.
+private func cjguiCollectGeneratedMotionRules(spec: CjguiGeneratedUiNodeSpec,
+    registry: CjguiGeneratedMotionRegistry, bindings: HashMap<String, CjguiGeneratedMotionRule>): Unit {
+    let motionName = spec.property("motion")
+    if (motionName.size > 0) {
+        if (let Some(rule) <- registry.ruleFor(motionName)) {
+            bindings.add(spec.key, rule)
+        }
+    }
+    for (child in spec.children) {
+        cjguiCollectGeneratedMotionRules(child, registry, bindings)
+    }
+}
+
 func parseGeneratedInteger(value: String): ?Int64 {
     if (value.size == 0) {
         return None
@@ -1696,7 +1882,22 @@ func parseGeneratedInteger(value: String): ?Int64 {
         result = result * 10 + Int64(byte - 48)
         index += 1
     }
-    return Some(if (negative) { -result } else { result })
+    return Some(if (negative) {
+        -result
+    } else {
+        result
+    })
+}
+
+// Stable, bounded binding generation for generated action rows. Reordering
+// keeps the same AX wrapper; changing the public action target under the same
+// key retires it even though its numeric layout id stays stable.
+private func generatedSemanticActionIncarnation(actionName: String): Int64 {
+    var result: Int64 = 7
+    for (byte in actionName.toArray()) {
+        result = (result * 31 + Int64(byte)) % 2147483647
+    }
+    return result
 }
 
 /// Application-owned bindings for generated fields and actions. Implementors
@@ -1768,8 +1969,8 @@ public class CjguiGeneratedUiSubmitResult {
     public let receipt: String
 
     public init(candidateAccepted: Bool, sceneAccepted: Bool, reason: String, path: String,
-                structureVersionBefore: Int64, structureVersionAfter: Int64,
-                candidateVersion!: Int64 = 0, candidateToken!: Int64 = 0, receipt!: String = "") {
+        structureVersionBefore: Int64, structureVersionAfter: Int64, candidateVersion!: Int64 = 0,
+        candidateToken!: Int64 = 0, receipt!: String = "") {
         this.candidateAccepted = candidateAccepted
         this.sceneAccepted = sceneAccepted
         this.reason = reason
@@ -1964,10 +2165,8 @@ public class CjguiGeneratedUiStructureHolder {
     // True while the tree being rendered is the ACCEPTED one (an immediate build
     // outside a candidate transaction), false for a candidate build.
     private var buildIntoAcceptedTable: Bool = true
-    private var candidateTouchedSplitStates: ArrayList<CjguiComposableUiSplitState> =
-        ArrayList<CjguiComposableUiSplitState>()
-    private var candidateTouchedTabsStates: ArrayList<CjguiComposableUiTabsState> =
-        ArrayList<CjguiComposableUiTabsState>()
+    private var candidateTouchedSplitStates: ArrayList<CjguiComposableUiSplitState> = ArrayList<CjguiComposableUiSplitState>()
+    private var candidateTouchedTabsStates: ArrayList<CjguiComposableUiTabsState> = ArrayList<CjguiComposableUiTabsState>()
     // Definition each named style LAST resolved to. A named style may carry
     // geometry and typography, not only paint, so removing its declaration must
     // not silently turn an accepted instance back into the framework default:
@@ -1989,6 +2188,10 @@ public class CjguiGeneratedUiStructureHolder {
     // consumer re-derives it from a control type or a field name.
     private var acceptedCompositeElements: HashMap<Int64, CjguiCompositeElementBinding>
     private var candidateCompositeElements: HashMap<Int64, CjguiCompositeElementBinding>
+    // Motion references are staged with the generated candidate and promoted
+    // only when the corresponding scene transaction commits.
+    private var acceptedMotionRules: HashMap<String, CjguiGeneratedMotionRule>
+    private var candidateMotionRules: HashMap<String, CjguiGeneratedMotionRule>
     // Counters proving the expanded-subtree budget is really checked.
     private var lastExpandedNodeCount: Int64
     private var lastExpandedDepth: Int64
@@ -2003,7 +2206,7 @@ public class CjguiGeneratedUiStructureHolder {
     private static let candidateRecordLimit: Int64 = 64
 
     public init(catalog: CjguiGeneratedUiCapabilityCatalog,
-                rootScope!: CjguiComposableUiIdentityScope = CjguiComposableUiIdentityScope("generated-root")) {
+        rootScope!: CjguiComposableUiIdentityScope = CjguiComposableUiIdentityScope("generated-root")) {
         this.catalog = catalog
         this.validator = CjguiGeneratedUiValidator(catalog)
         this.registry = CjguiComposableUiComponentRegistry()
@@ -2030,6 +2233,8 @@ public class CjguiGeneratedUiStructureHolder {
         this.imageResourceStates = HashMap<String, String>()
         this.acceptedCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
         this.candidateCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
+        this.acceptedMotionRules = HashMap<String, CjguiGeneratedMotionRule>()
+        this.candidateMotionRules = HashMap<String, CjguiGeneratedMotionRule>()
         this.lastExpandedNodeCount = 0
         this.lastExpandedDepth = 0
         this.nextCandidateToken = 0
@@ -2045,8 +2250,9 @@ public class CjguiGeneratedUiStructureHolder {
     public func allocateCandidateAttempt(): Int64 {
         nextCandidateToken += 1
         let token = nextCandidateToken
-        recordCandidate(CjguiGeneratedUiCandidateRecord(token,
-            CjguiGeneratedUiStructureHolder.receiptForToken(token), acceptedVersion, acceptedVersion + 1))
+        recordCandidate(
+            CjguiGeneratedUiCandidateRecord(token, CjguiGeneratedUiStructureHolder.receiptForToken(token),
+                acceptedVersion, acceptedVersion + 1))
         return token
     }
 
@@ -2219,6 +2425,38 @@ public class CjguiGeneratedUiStructureHolder {
         return accepted
     }
 
+    /// Host window policy read for a scene being prepared. While a generated
+    /// candidate is pending its root declaration is staged; otherwise the
+    /// accepted declaration is the source. Omission always resolves to opaque.
+    public func candidateWindowBackground(): String {
+        if (let Some(root) <- candidate) {
+            return windowBackgroundToken(root)
+        }
+        return windowBackgroundToken(accepted)
+    }
+
+    /// Host window policy published only from the scene accepted transaction.
+    public func acceptedWindowBackground(): String {
+        return windowBackgroundToken(accepted)
+    }
+
+    private func windowBackgroundToken(root: ?CjguiGeneratedUiNodeSpec): String {
+        if (let Some(spec) <- root) {
+            let declared = spec.property("windowBackground")
+            if (CjguiWindowBackgroundPolicy.isValidToken(declared)) {
+                return declared
+            }
+        }
+        return CjguiWindowBackgroundPolicy.OPAQUE
+    }
+
+    /// The rule referenced by one scene-accepted generated key. Candidate
+    /// declarations remain invisible until `commitCandidateRefresh` accepts the
+    /// matching rendered scene; an absent key/reference returns None.
+    public func acceptedMotionRuleForKey(key: String): ?CjguiGeneratedMotionRule {
+        return acceptedMotionRules.get(key)
+    }
+
     /// Version the pending candidate would install (0 when none is pending).
     public func candidateStructureVersion(): Int64 {
         return candidateVersion
@@ -2250,19 +2488,29 @@ public class CjguiGeneratedUiStructureHolder {
         return registry.lastIssue()
     }
 
+    /// Readable note of the last NON-FATAL declaration problem ("" when none):
+    /// an encoded `shadow`/`gradient` whose text was malformed was ignored
+    /// instead of rejecting the candidate. The scene is still accepted.
+    public func lastDeclarationAdvisory(): String {
+        return validator.lastAdvisoryNote()
+    }
+
     /// Validates the candidate and records it as pending, but does NOT publish
     /// it: the accepted structure, its version and the event identity table
     /// stay exactly as they were until the window commits the candidate in the
     /// same transaction that accepts the scene. Rendering happens inside that
     /// transaction, so a candidate that cannot be built is rejected at scene
     /// time without ever destroying an accepted instance.
-    public func submit(candidate: CjguiGeneratedUiNodeSpec,
-                       provider: CjguiGeneratedUiBindingProvider,
-                       attemptToken!: Int64 = 0): CjguiGeneratedUiSubmitResult {
+    public func submit(candidate: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
+        attemptToken!: Int64 = 0): CjguiGeneratedUiSubmitResult {
         let before = acceptedVersion
         // An application that decoded CAS before this call owns the token it
         // allocated; otherwise the attempt gets its own token here.
-        let token = if (attemptToken > 0) { attemptToken } else { allocateCandidateAttempt() }
+        let token = if (attemptToken > 0) {
+            attemptToken
+        } else {
+            allocateCandidateAttempt()
+        }
         let validation = validator.validate(candidate)
         if (!validation.accepted) {
             lastReason = validation.reason
@@ -2270,7 +2518,8 @@ public class CjguiGeneratedUiStructureHolder {
                 record.markRejected("candidate_rejected", validation.reason, validation.path)
             }
             return CjguiGeneratedUiSubmitResult(false, false, validation.reason, validation.path, before, before,
-                candidateVersion: candidateVersion, candidateToken: token, receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
+                candidateVersion: candidateVersion, candidateToken: token,
+                receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
         }
         // Superseding an uncommitted candidate is legal: the previous one was
         // never published, so only its (unaccepted) identities are dropped. Its
@@ -2287,6 +2536,9 @@ public class CjguiGeneratedUiStructureHolder {
             // rejected candidate's does.
             restoreStagedInstanceViewStates()
         }
+        let motionBindings = HashMap<String, CjguiGeneratedMotionRule>()
+        cjguiCollectGeneratedMotionRules(candidate, catalog.motionRuleRegistry(), motionBindings)
+        candidateMotionRules = motionBindings
         this.candidate = Some(candidate)
         this.candidateVersion = before + 1
         this.candidatePrepared = false
@@ -2296,8 +2548,8 @@ public class CjguiGeneratedUiStructureHolder {
         if (let Some(record) <- candidateRecord(token)) {
             record.markReceived()
         }
-        return CjguiGeneratedUiSubmitResult(true, false, "", "", before, before,
-            candidateVersion: candidateVersion, candidateToken: token, receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
+        return CjguiGeneratedUiSubmitResult(true, false, "", "", before, before, candidateVersion: candidateVersion,
+            candidateToken: token, receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
     }
 
     /// Opens the component-identity transaction for the pending candidate.
@@ -2383,8 +2635,7 @@ public class CjguiGeneratedUiStructureHolder {
             if (!lastSceneOutcomeValue.startsWith("scene_rejected:")) {
                 lastSceneOutcomeValue = "scene_rejected:candidate_not_prepared"
             }
-            rejectPendingWith(lastSceneOutcomeValue,
-                lastSceneOutcomeValue.replace("scene_rejected:", ""))
+            rejectPendingWith(lastSceneOutcomeValue, lastSceneOutcomeValue.replace("scene_rejected:", ""))
             return false
         }
         if (!registry.prepareTransaction()) {
@@ -2410,6 +2661,8 @@ public class CjguiGeneratedUiStructureHolder {
             registry.commitTransaction()
             accepted = Some(structure)
             acceptedVersion = candidateVersion
+            acceptedMotionRules = candidateMotionRules
+            candidateMotionRules = HashMap<String, CjguiGeneratedMotionRule>()
             // Ownership transfer, once: the PREVIOUS accepted scene's holds are
             // released and the candidate's own holds become the accepted ones.
             // Each accepted binding therefore owns exactly one hold no matter how
@@ -2448,6 +2701,7 @@ public class CjguiGeneratedUiStructureHolder {
             acceptedCandidateTokenValue = pendingCandidateTokenValue
             pendingCandidateTokenValue = 0
             candidate = None
+            candidateMotionRules = HashMap<String, CjguiGeneratedMotionRule>()
             candidatePrepared = false
             candidateCompositionUsed = false
             // No candidate is pending any more: the public candidate read must
@@ -2484,8 +2738,7 @@ public class CjguiGeneratedUiStructureHolder {
             // Keep the SPECIFIC reason a failed build or prepare already
             // recorded; only fill in the generic layout/native reason when the
             // attempt has no reason of its own.
-            rejectPendingWith(lastSceneOutcomeValue,
-                lastSceneOutcomeValue.replace("scene_rejected:", ""))
+            rejectPendingWith(lastSceneOutcomeValue, lastSceneOutcomeValue.replace("scene_rejected:", ""))
             pendingCandidateTokenValue = 0
             candidate = None
             candidatePrepared = false
@@ -2524,9 +2777,8 @@ public class CjguiGeneratedUiStructureHolder {
 
     /// Renders the accepted structure through the immediate composition path
     /// (begin/finish). Used outside a refresh transaction only.
-    private func renderInto(structure: CjguiGeneratedUiNodeSpec,
-                            provider: CjguiGeneratedUiBindingProvider,
-                            intoAcceptedTable: Bool): CjguiGeneratedUiRendered {
+    private func renderInto(structure: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
+        intoAcceptedTable: Bool): CjguiGeneratedUiRendered {
         buildIntoAcceptedTable = true
         nodeIdToKey = HashMap<Int64, String>()
         acceptedCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
@@ -2551,8 +2803,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// Renders the pending candidate inside the identity transaction already
     /// opened by `beginCandidateRefresh`. It never commits and never destroys
     /// an accepted instance.
-    private func renderIntoCandidate(structure: CjguiGeneratedUiNodeSpec,
-                                     provider: CjguiGeneratedUiBindingProvider): CjguiGeneratedUiRendered {
+    private func renderIntoCandidate(structure: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider): CjguiGeneratedUiRendered {
         buildIntoAcceptedTable = false
         candidateNodeIdToKey = HashMap<Int64, String>()
         candidateCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
@@ -2631,32 +2882,27 @@ public class CjguiGeneratedUiStructureHolder {
     /// the ordinary generated node's `node_binding_mismatch` check: an object
     /// that was replaced while keeping the same node id must not be able to route
     /// its late event through the new object's owner binding.
-    private func compositeElementNodeMatches(element: CjguiCompositeElementBinding,
-                                             node: CjguiComposableUiLayoutNode): Bool {
+    private func compositeElementNodeMatches(element: CjguiCompositeElementBinding, node: CjguiComposableUiLayoutNode): Bool {
         if (element.role == CJGUI_COMPOSITE_ELEMENT_FIELD) {
-            return node.fieldId == element.fieldId &&
-                node.operationActionName == element.writerOperation &&
-                node.operationResourceId == element.ownerTargetResourceId &&
-                (element.bindingResourceId <= 0 || node.resourceId == element.bindingResourceId)
+            return node.fieldId == element.fieldId && node.operationActionName == element.writerOperation &&
+                node.operationResourceId == element.ownerTargetResourceId && (element.bindingResourceId <= 0 ||
+                node.resourceId == element.bindingResourceId)
         }
         if (element.role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
-            return node.nodeKind == CJGUI_COMPOSABLE_UI_BUTTON &&
-                (element.bindingResourceId <= 0 || node.resourceId == element.bindingResourceId) &&
-                node.operationActionName == element.writerOperation &&
+            return node.nodeKind == CJGUI_COMPOSABLE_UI_BUTTON && (element.bindingResourceId <= 0 || node.resourceId == element
+                .bindingResourceId) && node.operationActionName == element.writerOperation &&
                 node.operationResourceId == element.ownerTargetResourceId
         }
         if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
             // The declared action reaches the owner through the adapter, so the
             // control itself must be the framework's generic action button.
-            return node.nodeKind == CJGUI_COMPOSABLE_UI_BUTTON &&
-                node.actionName == "GENERATED_ACTION"
+            return node.nodeKind == CJGUI_COMPOSABLE_UI_BUTTON && node.actionName == "GENERATED_ACTION"
         }
         // A container element carries no owner binding; its identity is the check.
         return true
     }
 
-    public func resolveIntent(node: CjguiComposableUiLayoutNode, eventKind: Int64,
-                              text: String): CjguiGeneratedUiIntent {
+    public func resolveIntent(node: CjguiComposableUiLayoutNode, eventKind: Int64, text: String): CjguiGeneratedUiIntent {
         let key = keyForNodeId(node.nodeId)
         if (key.isEmpty()) {
             return CjguiGeneratedUiIntent.none("unknown_node")
@@ -2691,9 +2937,8 @@ public class CjguiGeneratedUiStructureHolder {
                 } else {
                     CjguiSharedOperationValue.string(text)
                 }
-                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "",
-                    fieldId: element.fieldId, writerOperation: element.writerOperation,
-                    ownerTargetResourceId: element.ownerTargetResourceId,
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "", fieldId: element.fieldId,
+                    writerOperation: element.writerOperation, ownerTargetResourceId: element.ownerTargetResourceId,
                     argumentName: element.argumentName, value: value)
             }
             if (element.role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
@@ -2703,18 +2948,15 @@ public class CjguiGeneratedUiStructureHolder {
                 // The declared constant goes to the owner unchanged: an
                 // out-of-range preset must be refused by the owner's rule, never
                 // clamped here.
-                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "",
-                    fieldId: element.fieldId, writerOperation: element.writerOperation,
-                    ownerTargetResourceId: element.ownerTargetResourceId,
-                    argumentName: element.argumentName,
-                    value: CjguiSharedOperationValue.string(element.presetValue))
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "", fieldId: element.fieldId,
+                    writerOperation: element.writerOperation, ownerTargetResourceId: element.ownerTargetResourceId,
+                    argumentName: element.argumentName, value: CjguiSharedOperationValue.string(element.presetValue))
             }
             if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
                 if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
                     return CjguiGeneratedUiIntent.none("event_not_an_activation")
                 }
-                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_ACTION, key, "",
-                    actionName: element.actionName)
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_ACTION, key, "", actionName: element.actionName)
             }
             return CjguiGeneratedUiIntent.none("composite_container_event")
         }
@@ -2747,9 +2989,8 @@ public class CjguiGeneratedUiStructureHolder {
                 } else {
                     CjguiSharedOperationValue.string(text)
                 }
-                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "",
-                    fieldId: spec.fieldId, writerOperation: field.writeActionName,
-                    ownerTargetResourceId: node.operationResourceId,
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "", fieldId: spec.fieldId,
+                    writerOperation: field.writeActionName, ownerTargetResourceId: node.operationResourceId,
                     argumentName: field.argumentName, value: value)
             }
             // Not a change for that field: fall through to the action intent so an
@@ -2759,6 +3000,13 @@ public class CjguiGeneratedUiStructureHolder {
             let actionName = actionNameForKey(key)
             if (actionName.isEmpty()) {
                 return CjguiGeneratedUiIntent.none("unknown_action_key")
+            }
+            // A stable key keeps its node id across a candidate rebind. The
+            // event still carries the old accepted node object, so its declared
+            // owner action must match the CURRENT accepted binding before a
+            // late activation can reach the new action.
+            if (node.operationActionName != actionName) {
+                return CjguiGeneratedUiIntent.none("node_binding_mismatch")
             }
             if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
                 return CjguiGeneratedUiIntent.none("event_not_an_activation")
@@ -2773,13 +3021,12 @@ public class CjguiGeneratedUiStructureHolder {
     /// explicit render failure - it never degrades into a label. `nodeIdToKey`
     /// is updated for whichever table this render targets (accepted or
     /// candidate), so a candidate never mutates the accepted identity table.
-    private func nodeFor(spec: CjguiGeneratedUiNodeSpec,
-                         provider: CjguiGeneratedUiBindingProvider,
-                         intoAcceptedTable: Bool): CjguiComposableUiNode {
+    private func nodeFor(spec: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
+        intoAcceptedTable: Bool): CjguiComposableUiNode {
         let declared = match (catalog.componentFor(spec.kind)) {
             case Some(value) => value
-            case None => CjguiGeneratedUiComponentSpec("__unregistered__",
-                ArrayList<CjguiGeneratedUiPropertySpec>(), false)
+            case None => CjguiGeneratedUiComponentSpec("__unregistered__", ArrayList<CjguiGeneratedUiPropertySpec>(),
+                false)
         }
         if (!declared.isImplemented()) {
             noteRenderFailure("component_not_implemented", spec.key)
@@ -2791,7 +3038,11 @@ public class CjguiGeneratedUiStructureHolder {
         // object while the node id never overlaps the window's manual ids.
         let instance = registry.use("generated-${spec.key}")
         let registryNodeId = instance.nodeId("node")
-        let nodeId = if (registryNodeId > 0) { 800000 + registryNodeId } else { -1 }
+        let nodeId = if (registryNodeId > 0) {
+            800000 + registryNodeId
+        } else {
+            -1
+        }
         let semanticId = instance.semanticId("node")
         if (intoAcceptedTable) {
             nodeIdToKey.add(nodeId, spec.key)
@@ -2803,8 +3054,8 @@ public class CjguiGeneratedUiStructureHolder {
         if (presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE) {
             return compositeFor(spec, provider, instance, intoAcceptedTable)
         }
-        if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
+        if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
             let group = if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL) {
                 cjguiComposableVertical(nodeId, semanticId, style)
             } else {
@@ -2845,8 +3096,9 @@ public class CjguiGeneratedUiStructureHolder {
                 let pageTitle = pageSpec.property("pageTitle")
                 let enabled = !(pageSpec.property("disabled") == "true")
                 keys.add(pageKey)
-                pages.add(CjguiComposableUiTabPage(pageKey, pageTitle,
-                    nodeFor(pageSpec, provider, intoAcceptedTable), enabled: enabled))
+                pages.add(
+                    CjguiComposableUiTabPage(pageKey, pageTitle, nodeFor(pageSpec, provider, intoAcceptedTable),
+                        enabled: enabled))
             }
             if (candidateViewStateStagingActive && !intoAcceptedTable) {
                 // A candidate build must not publish a page reconcile into the
@@ -2865,14 +3117,11 @@ public class CjguiGeneratedUiStructureHolder {
             // ONE resolution of the role packages base + interaction together
             // (the same whole-group binding the handwritten entry accepts).
             let titleBound = match (namedStyleDefinition(spec.property("titleStyle"), intoAcceptedTable)) {
-                case Some(definition) =>
-                    CjguiComposableUiBoundStyle(definition.base, definition.interaction)
-                case None =>
-                    CjguiComposableUiBoundStyle(CjguiComposableUiStyle(), CjguiComposableUiInteractionStyle())
+                case Some(definition) => CjguiComposableUiBoundStyle(definition.base, definition.interaction)
+                case None => CjguiComposableUiBoundStyle(CjguiComposableUiStyle(), CjguiComposableUiInteractionStyle())
             }
             return cjguiComposableTabs(scope, semanticId, pages, state, style, titleHeight: titleHeight,
-                titleStyle: titleBound.style, titleInteraction: titleBound.interaction,
-                containerNodeId: nodeId)
+                titleStyle: titleBound.style, titleInteraction: titleBound.interaction, containerNodeId: nodeId)
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_SPLIT) {
             if (spec.children.size != 2) {
@@ -2901,8 +3150,8 @@ public class CjguiGeneratedUiStructureHolder {
             // drag is never reset by re-submitting the same structure; the state
             // object is attached to BOTH panes' container and divider so the
             // framework can apply its ONE size rule to the accepted track.
-            let splitState = splitStateForInstance(spec.key, firstSize,
-                firstMinimum: firstMinimum, secondMinimum: secondMinimum)
+            let splitState = splitStateForInstance(spec.key, firstSize, firstMinimum: firstMinimum,
+                secondMinimum: secondMinimum)
             let effectiveFirstSize = splitState.firstSize()
             return cjguiComposableScopedSplitView(scope, semanticId, first, second,
                 CjguiComposableUiSplitAxis.HORIZONTAL, effectiveFirstSize, firstMinimum, secondMinimum, style,
@@ -2918,6 +3167,10 @@ public class CjguiGeneratedUiStructureHolder {
             }
             let viewport = scrollViewportForInstance(spec.key, initialOffset)
             let scroll = cjguiComposableScrollArea(nodeId, semanticId, viewport, style)
+            if (spec.property("semanticRole") == "outline") {
+                scroll.semanticRole = CJGUI_COMPOSABLE_UI_SEMANTIC_TREE
+                scroll.semanticLabel = spec.property("semanticLabel")
+            }
             for (child in spec.children) {
                 scroll.add(nodeFor(child, provider, intoAcceptedTable))
             }
@@ -2931,10 +3184,10 @@ public class CjguiGeneratedUiStructureHolder {
             }
             let bindingKey = CjguiGeneratedUiStructureHolder.imageBindingKey(key, version)
             let resolved = match (if (intoAcceptedTable) {
-                    acceptedImageBindings.get(bindingKey)
-                } else {
-                    candidateImageBindings.get(bindingKey)
-                }) {
+                acceptedImageBindings.get(bindingKey)
+            } else {
+                candidateImageBindings.get(bindingKey)
+            }) {
                 case Some(value) => value
                 case None => match (catalog.imageResourceFor(key, version)) {
                     case Some(value) =>
@@ -2963,9 +3216,13 @@ public class CjguiGeneratedUiStructureHolder {
             // The SAME native image node the handwritten tree builds: the
             // application-resolved raster path plus the logical identity and
             // version, with the shared Style driving its size/layout.
-            let mode = if (spec.property("contentMode") == "fill") { 2 } else { 1 }
-            return cjguiComposableImage(nodeId, semanticId, resolved.rasterPath, style,
-                contentMode: mode, imageResourceId: resolved.key, imageResourceVersion: resolved.version,
+            let mode = if (spec.property("contentMode") == "fill") {
+                2
+            } else {
+                1
+            }
+            return cjguiComposableImage(nodeId, semanticId, resolved.rasterPath, style, contentMode: mode,
+                imageResourceId: resolved.key, imageResourceVersion: resolved.version,
                 interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_LABEL) {
@@ -2980,9 +3237,33 @@ public class CjguiGeneratedUiStructureHolder {
             } else {
                 spec.actionName
             }
-            return cjguiComposableButton(nodeId, semanticId, label, "GENERATED_ACTION", nodeId, style,
-                enabled: actionEnabledFor(provider, spec.actionName),
+            let action = cjguiComposableButton(nodeId, semanticId, label, "GENERATED_ACTION", nodeId, style,
+                enabled: actionEnabledFor(provider, spec.actionName) && spec.property("disabled") != "true",
+                operationActionName: spec.actionName,
                 interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+            action.semanticIncarnation = generatedSemanticActionIncarnation(spec.actionName)
+            if (spec.property("semanticRole") == "row") {
+                action.semanticRole = CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW
+                action.semanticLabel = if (spec.property("semanticLabel").size > 0) {
+                    spec.property("semanticLabel")
+                } else {
+                    label
+                }
+                action.semanticSelected = spec.property("semanticSelected") == "true"
+                action.semanticExpandable = spec.property("semanticExpandable") == "true"
+                action.semanticExpanded = spec.property("semanticExpanded") == "true"
+                action.semanticLevel = match (parseGeneratedInteger(spec.property("semanticLevel"))) {
+                    case Some(value) => value
+                    case None => 0
+                }
+                action.semanticKey = if (spec.property("semanticRowKey").size > 0) {
+                    spec.property("semanticRowKey")
+                } else {
+                    spec.key
+                }
+                action.semanticParentKey = spec.property("semanticParentKey")
+            }
+            return action
         }
         let fieldOption = catalog.fieldFor(spec.fieldId)
         if (let None <- fieldOption) {
@@ -2999,29 +3280,33 @@ public class CjguiGeneratedUiStructureHolder {
         }
         // The shared field resource and the owner target come from the field
         // definition plus the live provider, never from a kind-name switch.
-        let bindingResourceId = if (field.resourceId > 0) { field.resourceId } else { nodeId }
+        let bindingResourceId = if (field.resourceId > 0) {
+            field.resourceId
+        } else {
+            nodeId
+        }
         let ownerTarget = provider.fieldOperationResourceId(spec.fieldId)
         // The declared field value comes from the application's live draft,
         // exactly like the handwritten form: a legally empty draft is a draft
         // and must not be replaced by the applied value.
         if (presentation == "FIELD_BOOLEAN") {
             let draft = provider.draftBoolean(spec.fieldId) ?? false
-            return cjguiComposableBooleanInput(nodeId, semanticId, spec.property("label"), draft,
-                bindingResourceId, style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
-                operationActionName: field.writeActionName, operationResourceId: ownerTarget,
-                displayValueRole: "draft", interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+            return cjguiComposableBooleanInput(nodeId, semanticId, spec.property("label"), draft, bindingResourceId,
+                style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
+                operationActionName: field.writeActionName, operationResourceId: ownerTarget, displayValueRole: "draft",
+                interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
         }
         let value = provider.draftText(spec.fieldId)
         if (presentation == "FIELD_INTEGER") {
-            return cjguiComposableIntegerInput(nodeId, semanticId, spec.property("label"), value,
-                bindingResourceId, style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
-                operationActionName: field.writeActionName, operationResourceId: ownerTarget,
-                displayValueRole: "draft", interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+            return cjguiComposableIntegerInput(nodeId, semanticId, spec.property("label"), value, bindingResourceId,
+                style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
+                operationActionName: field.writeActionName, operationResourceId: ownerTarget, displayValueRole: "draft",
+                interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
         }
-        return cjguiComposableTextInput(nodeId, semanticId, spec.property("label"), value,
-            bindingResourceId, style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
-            operationActionName: field.writeActionName, operationResourceId: ownerTarget,
-            displayValueRole: "draft", interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+        return cjguiComposableTextInput(nodeId, semanticId, spec.property("label"), value, bindingResourceId, style,
+            enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
+            operationActionName: field.writeActionName, operationResourceId: ownerTarget, displayValueRole: "draft",
+            interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
     }
 
     private func noteRenderFailure(reason: String, key: String): Unit {
@@ -3036,8 +3321,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// provider reports it cannot evaluate a condition. The control keeps its
     /// target and its draft either way: becoming unavailable must not silently
     /// move the edit to another object or discard what was typed.
-    private func fieldEnabledFor(provider: CjguiGeneratedUiBindingProvider, fieldId: String,
-                                 ownerTarget: Int64): Bool {
+    private func fieldEnabledFor(provider: CjguiGeneratedUiBindingProvider, fieldId: String, ownerTarget: Int64): Bool {
         let availability = provider.fieldAvailability(fieldId)
         if (availability.known) {
             // The enabled state is the projection of the owner's answer AND the
@@ -3049,8 +3333,7 @@ public class CjguiGeneratedUiStructureHolder {
     }
 
     /// The enabled projection of one action, on the same terms.
-    private func actionEnabledFor(provider: CjguiGeneratedUiBindingProvider,
-                                  actionName: String): Bool {
+    private func actionEnabledFor(provider: CjguiGeneratedUiBindingProvider, actionName: String): Bool {
         let availability = provider.actionAvailability(actionName)
         if (availability.known) {
             return availability.isAvailable
@@ -3060,8 +3343,7 @@ public class CjguiGeneratedUiStructureHolder {
 
     /// The owner's reason when a field is currently blocked ("" otherwise), so a
     /// frozen control can explain itself while staying readable.
-    private func fieldBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider,
-                                       fieldId: String): String {
+    private func fieldBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider, fieldId: String): String {
         let availability = provider.fieldAvailability(fieldId)
         if (availability.known && !availability.isAvailable) {
             return availability.reason
@@ -3069,8 +3351,7 @@ public class CjguiGeneratedUiStructureHolder {
         return ""
     }
 
-    private func actionBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider,
-                                        actionName: String): String {
+    private func actionBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider, actionName: String): String {
         let availability = provider.actionAvailability(actionName)
         if (availability.known && !availability.isAvailable) {
             return availability.reason
@@ -3081,8 +3362,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// Framework-allocated node identity for one composite element. The formula
     /// matches the ordinary generated identity allocation, so a composite element
     /// can never collide with a window's own manual node ids.
-    private func allocatedElementNodeId(instance: CjguiComposableUiComponentInstance,
-                                        elementKey: String): Int64 {
+    private func allocatedElementNodeId(instance: CjguiComposableUiComponentInstance, elementKey: String): Int64 {
         let registryNodeId = instance.nodeId(elementKey)
         if (registryNodeId > 0) {
             return 800000 + registryNodeId
@@ -3093,12 +3373,11 @@ public class CjguiGeneratedUiStructureHolder {
     /// Resolves one composite element from the registered field/action
     /// definitions and the live provider. The factory never sees the catalog, so
     /// it cannot substitute a different owner or writer.
-    private func resolveCompositeElement(element: CjguiCompositeElementSpec, instanceKey: String,
-                                         nodeId: Int64, semanticId: String,
-                                         provider: CjguiGeneratedUiBindingProvider): CjguiCompositeElementBinding {
+    private func resolveCompositeElement(element: CjguiCompositeElementSpec, instanceKey: String, nodeId: Int64,
+        semanticId: String, provider: CjguiGeneratedUiBindingProvider): CjguiCompositeElementBinding {
         if (element.role == CJGUI_COMPOSITE_ELEMENT_CONTAINER) {
-            return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId,
-                element.label, instanceKey: instanceKey)
+            return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, element.label,
+                instanceKey: instanceKey)
         }
         if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
             let label = if (element.label.size > 0) {
@@ -3117,23 +3396,29 @@ public class CjguiGeneratedUiStructureHolder {
             case Some(value) => value
             case None => CjguiGeneratedUiFieldSpec("", "", "", -1)
         }
-        let resourceId = if (field.resourceId > 0) { field.resourceId } else { nodeId }
+        let resourceId = if (field.resourceId > 0) {
+            field.resourceId
+        } else {
+            nodeId
+        }
         let ownerTarget = provider.fieldOperationResourceId(element.fieldId)
-        let label = if (element.label.size > 0) { element.label } else { field.label }
+        let label = if (element.label.size > 0) {
+            element.label
+        } else {
+            field.label
+        }
         if (field.editorKind == "BOOLEAN") {
             return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
                 instanceKey: instanceKey, fieldId: element.fieldId, argumentName: element.argumentName,
-                writerOperation: field.writeActionName,
-                ownerTargetResourceId: ownerTarget, bindingResourceId: resourceId,
-                editorKind: field.editorKind, presetValue: element.presetValue,
+                writerOperation: field.writeActionName, ownerTargetResourceId: ownerTarget,
+                bindingResourceId: resourceId, editorKind: field.editorKind, presetValue: element.presetValue,
                 draftBoolean: provider.draftBoolean(element.fieldId) ?? false,
                 ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget),
                 blockedReason: fieldBlockedReasonFor(provider, element.fieldId))
         }
         return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
             instanceKey: instanceKey, fieldId: element.fieldId, argumentName: element.argumentName,
-            writerOperation: field.writeActionName,
-            ownerTargetResourceId: ownerTarget, bindingResourceId: resourceId,
+            writerOperation: field.writeActionName, ownerTargetResourceId: ownerTarget, bindingResourceId: resourceId,
             editorKind: field.editorKind, presetValue: element.presetValue,
             draftText: provider.draftText(element.fieldId),
             ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget),
@@ -3145,10 +3430,8 @@ public class CjguiGeneratedUiStructureHolder {
     /// subtree the factory returns against the declared budget before any
     /// identity table is published. A failure keeps the previously accepted
     /// scene and its routes.
-    private func compositeFor(spec: CjguiGeneratedUiNodeSpec,
-                              provider: CjguiGeneratedUiBindingProvider,
-                              instance: CjguiComposableUiComponentInstance,
-                              intoAcceptedTable: Bool): CjguiComposableUiNode {
+    private func compositeFor(spec: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
+        instance: CjguiComposableUiComponentInstance, intoAcceptedTable: Bool): CjguiComposableUiNode {
         if (let None <- catalog.compositeFor(spec.kind)) {
             noteRenderFailure("composite_not_registered", spec.key)
             return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
@@ -3179,8 +3462,9 @@ public class CjguiGeneratedUiStructureHolder {
                 return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
             }
             allocated.add(elementNodeId)
-            bindings.add(resolveCompositeElement(element, spec.key, elementNodeId,
-                instance.semanticId(element.elementKey), provider))
+            bindings.add(
+                resolveCompositeElement(element, spec.key, elementNodeId, instance.semanticId(element.elementKey),
+                    provider))
         }
         let children = ArrayList<CjguiComposableUiNode>()
         for (child in spec.children) {
@@ -3247,9 +3531,8 @@ public class CjguiGeneratedUiStructureHolder {
     /// identity must be one the framework allocated for this instance exactly
     /// once. A custom declaration therefore cannot expand past capacity, invent
     /// an id, drop a declared element or reuse an identity.
-    private func auditExpanded(node: CjguiComposableUiNode, depth: Int64,
-                               composite: CjguiCompositeComponentSpec, allocated: HashSet<Int64>,
-                               audit: CjguiCompositeExpansionAudit): Unit {
+    private func auditExpanded(node: CjguiComposableUiNode, depth: Int64, composite: CjguiCompositeComponentSpec,
+        allocated: HashSet<Int64>, audit: CjguiCompositeExpansionAudit): Unit {
         if (!audit.issue.isEmpty()) {
             return
         }
@@ -3296,7 +3579,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// an element with another field, writer, owner target or action. The
     /// expansion audit alone (identity/count/depth) could not prove this.
     private func auditElementBindings(bindings: ArrayList<CjguiCompositeElementBinding>,
-                                      audit: CjguiCompositeExpansionAudit): String {
+        audit: CjguiCompositeExpansionAudit): String {
         for (binding in bindings) {
             let node = match (audit.nodesById.get(binding.nodeId)) {
                 case Some(value) => value
@@ -3307,10 +3590,9 @@ public class CjguiGeneratedUiStructureHolder {
                 // including the editor's own binding resource: comparing only the
                 // id/writer/target would accept a control bound to another
                 // resource and then route the owner write from the declaration.
-                if (node.fieldId != binding.fieldId ||
-                    node.operationActionName != binding.writerOperation ||
-                    node.operationResourceId != binding.ownerTargetResourceId ||
-                    node.resourceId != binding.bindingResourceId) {
+                if (node.fieldId != binding.fieldId || node.operationActionName != binding.writerOperation ||
+                    node.operationResourceId != binding.ownerTargetResourceId || node.resourceId != binding
+                    .bindingResourceId) {
                     return "composite_element_binding_mismatch"
                 }
             } else if (binding.role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
@@ -3320,10 +3602,9 @@ public class CjguiGeneratedUiStructureHolder {
                 // target (plus its own binding resource), otherwise a same-key
                 // rebind to another target would be indistinguishable from the old
                 // object and a late press would write the new owner.
-                if (node.nodeKind != CJGUI_COMPOSABLE_UI_BUTTON ||
-                    node.resourceId != binding.bindingResourceId ||
-                    node.operationActionName != binding.writerOperation ||
-                    node.operationResourceId != binding.ownerTargetResourceId) {
+                if (node.nodeKind != CJGUI_COMPOSABLE_UI_BUTTON || node.resourceId != binding.bindingResourceId ||
+                    node.operationActionName != binding.writerOperation || node.operationResourceId != binding
+                    .ownerTargetResourceId) {
                     return "composite_element_binding_mismatch"
                 }
             } else if (binding.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
@@ -3332,8 +3613,7 @@ public class CjguiGeneratedUiStructureHolder {
                 // action button in the declared enabled state. A raw
                 // business-action token or a different enabled state would mean
                 // the control the user sees disagrees with the declaration.
-                if (node.nodeKind != CJGUI_COMPOSABLE_UI_BUTTON ||
-                    node.actionName != "GENERATED_ACTION" ||
+                if (node.nodeKind != CJGUI_COMPOSABLE_UI_BUTTON || node.actionName != "GENERATED_ACTION" ||
                     node.isEnabled != binding.actionEnabled) {
                     return "composite_element_binding_mismatch"
                 }
@@ -3355,8 +3635,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// ACCEPTED build (the instance stays as it was accepted), while a candidate
     /// gets nothing: validation refuses the candidate with
     /// `style_reference_not_registered` instead of rendering a silent default.
-    private func namedStyleDefinition(reference: String,
-                                      intoAcceptedTable: Bool): ?CjguiComposableUiNamedStyle {
+    private func namedStyleDefinition(reference: String, intoAcceptedTable: Bool): ?CjguiComposableUiNamedStyle {
         if (reference.size == 0) {
             return None
         }
@@ -3405,8 +3684,8 @@ public class CjguiGeneratedUiStructureHolder {
     /// A declaration that was removed from the description therefore falls back to
     /// the public default at the call site instead of silently keeping an old
     /// value, and a read-only size query can never rewrite the constraints.
-    public func splitStateForInstance(key: String, declaredFirstSize: Int64,
-        firstMinimum!: ?Int64 = None, secondMinimum!: ?Int64 = None): CjguiComposableUiSplitState {
+    public func splitStateForInstance(key: String, declaredFirstSize: Int64, firstMinimum!: ?Int64 = None,
+        secondMinimum!: ?Int64 = None): CjguiComposableUiSplitState {
         if (let Some(existing) <- instanceSplitStates.get(key)) {
             // The instance already exists: the declaration may still have changed
             // its CONSTRAINTS, which must be consumed. The person's current size is
@@ -3633,8 +3912,7 @@ public class CjguiGeneratedUiStructureHolder {
         return names
     }
 
-    private func collectReferencedStyleNames(spec: CjguiGeneratedUiNodeSpec,
-                                             names: ArrayList<String>): Unit {
+    private func collectReferencedStyleNames(spec: CjguiGeneratedUiNodeSpec, names: ArrayList<String>): Unit {
         // `style` covers the node itself; `titleStyle` covers a tabs container's
         // title row. Both are named-style references with the same lifetime, so
         // both keep their definition while the structure references them.
@@ -3661,8 +3939,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// The named base style of one node, or None when no `style` reference is
     /// declared or the reference no longer resolves (validation refuses the
     /// latter before a candidate is received).
-    private func namedBaseStyle(properties: HashMap<String, String>,
-                                intoAcceptedTable: Bool): ?CjguiComposableUiStyle {
+    private func namedBaseStyle(properties: HashMap<String, String>, intoAcceptedTable: Bool): ?CjguiComposableUiStyle {
         return match (namedStyleDefinition(propertyOf(properties, "style"), intoAcceptedTable)) {
             case Some(style) => Some(style.base)
             case None => None
@@ -3672,16 +3949,14 @@ public class CjguiGeneratedUiStructureHolder {
     /// The interaction paint of one node's named style (empty when none). A named
     /// style is the ONLY way a generated node gets interaction paint, so an
     /// external author cannot invent a second state machine.
-    private func interactionStyleFor(spec: CjguiGeneratedUiNodeSpec,
-                                     intoAcceptedTable: Bool): CjguiComposableUiInteractionStyle {
+    private func interactionStyleFor(spec: CjguiGeneratedUiNodeSpec, intoAcceptedTable: Bool): CjguiComposableUiInteractionStyle {
         return match (namedStyleDefinition(spec.property("style"), intoAcceptedTable)) {
             case Some(style) => style.interaction
             case None => CjguiComposableUiInteractionStyle()
         }
     }
 
-    private func declaredColor(properties: HashMap<String, String>, name: String,
-                               fallback: CjguiComposableUiColor): CjguiComposableUiColor {
+    private func declaredColor(properties: HashMap<String, String>, name: String, fallback: CjguiComposableUiColor): CjguiComposableUiColor {
         let declared = propertyOf(properties, name)
         if (declared.size == 0) {
             return fallback
@@ -3692,13 +3967,61 @@ public class CjguiGeneratedUiStructureHolder {
         }
     }
 
+    /// Resolves the declared outer shadow with the shared three-way contract:
+    ///  - an ABSENT property INHERITS the base (a node's unrelated declaration
+    ///    must not erase a named style's effect);
+    ///  - an explicit `none` or the empty string CLEARS it (returns None);
+    ///  - a legal token REPLACES it.
+    /// Malformed text is refused as a whole candidate by the validator before
+    /// this mapping runs; should one reach here defensively, the base is kept.
+    private func declaredShadowOf(properties: HashMap<String, String>, fallback: ?CjguiComposableUiShadowStyle): ?CjguiComposableUiShadowStyle {
+        if (let None <- properties.get("shadow")) {
+            return fallback
+        }
+        let declared = propertyOf(properties, "shadow")
+        if (cjguiComposableUiEffectTokenIsNone(declared)) {
+            return None
+        }
+        return match (cjguiComposableUiParseShadowToken(declared)) {
+            case Some(value) => Some(value)
+            case None => fallback
+        }
+    }
+
+    /// Same three-way contract as `declaredShadowOf` for the linear gradient.
+    private func declaredGradientOf(properties: HashMap<String, String>, fallback: ?CjguiComposableUiLinearGradient): ?CjguiComposableUiLinearGradient {
+        if (let None <- properties.get("gradient")) {
+            return fallback
+        }
+        let declared = propertyOf(properties, "gradient")
+        if (cjguiComposableUiEffectTokenIsNone(declared)) {
+            return None
+        }
+        return match (cjguiComposableUiParseGradientToken(declared)) {
+            case Some(value) => Some(value)
+            case None => fallback
+        }
+    }
+
+    /// Same three-way contract as the existing encoded style effects. Absence
+    /// inherits a named base group; empty/none clears it; a valid token replaces.
+    private func declaredEffectGroupOf(properties: HashMap<String, String>, fallback: ?CjguiComposableUiEffectGroup): ?CjguiComposableUiEffectGroup {
+        if (let None <- properties.get("effectGroup")) {
+            return fallback
+        }
+        let declared = propertyOf(properties, "effectGroup")
+        if (cjguiComposableUiEffectTokenIsNone(declared)) {
+            return None
+        }
+        return cjguiComposableUiParseEffectGroupToken(declared)
+    }
+
     /// Resolution order: framework default -> named base style -> the node's own
     /// explicit properties -> (later, at paint time) the interaction-state
     /// overrides. Only a DECLARED property overrides the named base, so a
     /// reference does not reset values the author did not mention.
     private func styleFromDeclaredProperties(properties: HashMap<String, String>, container: Bool,
-                                             intoAcceptedTable: Bool):
-        CjguiComposableUiStyle {
+        intoAcceptedTable: Bool): CjguiComposableUiStyle {
         let named = namedBaseStyle(properties, intoAcceptedTable)
         let base = match (named) {
             case Some(value) => value
@@ -3706,7 +4029,12 @@ public class CjguiGeneratedUiStructureHolder {
         }
         var gap: Int64 = match (named) {
             case Some(value) => value.gap
-            case None => if (container) { 4 } else { 0 }
+            case None =>
+                if (container) {
+                    4
+                } else {
+                    0
+                }
         }
         if (let Some(value) <- parseGeneratedInteger(propertyOf(properties, "gap"))) {
             gap = value
@@ -3728,16 +4056,20 @@ public class CjguiGeneratedUiStructureHolder {
         let borderWidth = declaredStyleValue(properties, "borderWidth", base.borderWidth)
         let alignX = declaredAlignmentOf(properties, "alignX", base.alignX)
         let alignY = declaredAlignmentOf(properties, "alignY", base.alignY)
-        return CjguiComposableUiStyle(
-            background: declaredColor(properties, "background", base.background),
+        // The rebuilt style carries the base's named effect rejection through, so
+        // a definition the shared contract already refused can never be laundered
+        // into a clean `None` by the ordinary property-resolution rebuild. The
+        // window refuses such a candidate before the accepted scene, exactly like
+        // a handwritten illegal effect.
+        return CjguiComposableUiStyle(background: declaredColor(properties, "background", base.background),
             border: declaredColor(properties, "border", base.border),
-            textColor: declaredColor(properties, "textColor", base.textColor),
-            padding: padding, gap: gap, fixedWidth: fixedWidth,
-            fixedHeight: fixedHeight, growX: growX, growY: growY, borderWidth: borderWidth,
-            fontSize: fontSize,
-            fontWeight: fontWeight, minWidth: minWidth, maxWidth: maxWidth, minHeight: minHeight,
+            textColor: declaredColor(properties, "textColor", base.textColor), padding: padding, gap: gap,
+            fixedWidth: fixedWidth, fixedHeight: fixedHeight, growX: growX, growY: growY, borderWidth: borderWidth,
+            fontSize: fontSize, fontWeight: fontWeight, minWidth: minWidth, maxWidth: maxWidth, minHeight: minHeight,
             maxHeight: maxHeight, alignX: alignX, alignY: alignY, cornerRadius: base.cornerRadius,
-            clipsContent: base.clipsContent)
+            clipsContent: base.clipsContent, shadow: declaredShadowOf(properties, base.shadow),
+            gradient: declaredGradientOf(properties, base.gradient),
+            effectGroup: declaredEffectGroupOf(properties, base.effectGroup), effectRejection: base.effectRejection)
     }
 
     private func propertyOf(properties: HashMap<String, String>, name: String): String {
@@ -3747,8 +4079,7 @@ public class CjguiGeneratedUiStructureHolder {
         return ""
     }
 
-    private func declaredStyleValue(properties: HashMap<String, String>, name: String,
-                                    fallback: Int64): Int64 {
+    private func declaredStyleValue(properties: HashMap<String, String>, name: String, fallback: Int64): Int64 {
         let parsed = parseGeneratedInteger(propertyOf(properties, name))
         return match (parsed) {
             case Some(value) => value
@@ -3756,18 +4087,24 @@ public class CjguiGeneratedUiStructureHolder {
         }
     }
 
-    private func declaredAlignmentOf(properties: HashMap<String, String>, name: String,
-                                     fallback: Int64): Int64 {
+    private func declaredAlignmentOf(properties: HashMap<String, String>, name: String, fallback: Int64): Int64 {
         let declared = propertyOf(properties, name)
-        if (declared == "start") { return CJGUI_COMPOSABLE_UI_ALIGN_START }
-        if (declared == "center") { return CJGUI_COMPOSABLE_UI_ALIGN_CENTER }
-        if (declared == "end") { return CJGUI_COMPOSABLE_UI_ALIGN_END }
-        if (declared == "stretch") { return CJGUI_COMPOSABLE_UI_ALIGN_STRETCH }
+        if (declared == "start") {
+            return CJGUI_COMPOSABLE_UI_ALIGN_START
+        }
+        if (declared == "center") {
+            return CJGUI_COMPOSABLE_UI_ALIGN_CENTER
+        }
+        if (declared == "end") {
+            return CJGUI_COMPOSABLE_UI_ALIGN_END
+        }
+        if (declared == "stretch") {
+            return CJGUI_COMPOSABLE_UI_ALIGN_STRETCH
+        }
         return fallback
     }
 
-    private func styleFor(spec: CjguiGeneratedUiNodeSpec,
-                          intoAcceptedTable: Bool): CjguiComposableUiStyle {
+    private func styleFor(spec: CjguiGeneratedUiNodeSpec, intoAcceptedTable: Bool): CjguiComposableUiStyle {
         let declared = match (catalog.componentFor(spec.kind)) {
             case Some(value) => value
             case None => CjguiGeneratedUiComponentSpec("", ArrayList<CjguiGeneratedUiPropertySpec>(), false)
@@ -3778,28 +4115,23 @@ public class CjguiGeneratedUiStructureHolder {
             // only passes the declared properties through the shared context.
             return CjguiComposableUiStyle()
         }
-        let isContainer = presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_HORIZONTAL
+        let isContainer = presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL
         // The scroll container and the generated split consume the shared leaf
         // style vocabulary exactly like a label (`consumesStyleProperty` accepts
         // it for them), so their RESOLUTION must not silently drop it: a declared
         // `fixedHeight`, growth, alignment, font or paint has to reach the node
         // the framework really builds.
-        if (presentation == CJGUI_GENERATED_PRESENTATION_SCROLL ||
-            presentation == CJGUI_GENERATED_PRESENTATION_SPLIT) {
+        if (presentation == CJGUI_GENERATED_PRESENTATION_SCROLL || presentation == CJGUI_GENERATED_PRESENTATION_SPLIT) {
             return styleFromDeclaredProperties(spec.properties, isContainer, intoAcceptedTable)
         }
-        if (!isContainer && presentation != CJGUI_GENERATED_PRESENTATION_LABEL &&
-            presentation != CJGUI_GENERATED_PRESENTATION_ACTION &&
-            presentation != CJGUI_GENERATED_PRESENTATION_IMAGE &&
-            presentation != "FIELD_TEXT" && presentation != "FIELD_INTEGER" &&
-            presentation != "FIELD_BOOLEAN") {
+        if (!isContainer && presentation != CJGUI_GENERATED_PRESENTATION_LABEL && presentation !=
+            CJGUI_GENERATED_PRESENTATION_ACTION && presentation != CJGUI_GENERATED_PRESENTATION_IMAGE && presentation !=
+            "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN") {
             return CjguiComposableUiStyle()
         }
         return styleFromDeclaredProperties(spec.properties, isContainer, intoAcceptedTable)
     }
-
-
 
     /// The accepted spec for a stable key, or None when that key is not part
     /// of the currently accepted structure. Event routing uses this to verify
@@ -3861,8 +4193,8 @@ public class CjguiGeneratedUiDecoded {
 
 /// Hex alphabet for encoding arbitrary text (labels/captions) on one protocol
 /// token, so a caption containing any character can never split a line.
-private let CJGUI_GENERATED_UI_HEX_DIGITS: Array<String> = ["0", "1", "2", "3", "4", "5", "6", "7",
-    "8", "9", "A", "B", "C", "D", "E", "F"]
+private let CJGUI_GENERATED_UI_HEX_DIGITS: Array<String> = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B",
+    "C", "D", "E", "F"]
 
 private func cjguiGeneratedUiHexEncode(text: String): String {
     let builder = StringBuilder()
@@ -3901,11 +4233,26 @@ public class CjguiGeneratedUiAcceptedInstance {
     /// "the scene accepted this reference" from "the raster is ready", and it
     /// never exposes a path or a native handle.
     public let imageResourceState: String
+    /// Canonical accepted effect group declaration (`none` when no group is
+    /// present). This reads the accepted scene style; it does not claim that a
+    /// renderer has completed or presented the effect.
+    public let effectGroupToken: String
+    public let controlRole: String
+    public let controlSelected: Bool
+    public let controlExpandable: Bool
+    public let controlExpanded: Bool
+    public let controlEnabled: Bool
+    public let controlLevel: Int64
+    public let controlRowKey: String
+    public let controlParentKey: String
 
-    public init(key: String, elementKey: String, role: String, nodeId: Int64, semanticId: String,
-                kindToken: String, fieldId: String, actionName: String, label: String, visible: Bool,
-                bounds: CjguiComposableUiRect, imageResourceId!: String = "",
-                imageResourceVersion!: Int64 = 0, imageResourceState!: String = "unrequested") {
+    public init(key: String, elementKey: String, role: String, nodeId: Int64, semanticId: String, kindToken: String,
+        fieldId: String, actionName: String, label: String, visible: Bool, bounds: CjguiComposableUiRect,
+        imageResourceId!: String = "", imageResourceVersion!: Int64 = 0, imageResourceState!: String = "unrequested",
+        effectGroupToken!: String = "none", controlRole!: String = "none",
+        controlSelected!: Bool = false, controlExpandable!: Bool = false,
+        controlExpanded!: Bool = false, controlEnabled!: Bool = true, controlLevel!: Int64 = 0,
+        controlRowKey!: String = "", controlParentKey!: String = "") {
         this.key = key
         this.elementKey = elementKey
         this.role = role
@@ -3920,6 +4267,15 @@ public class CjguiGeneratedUiAcceptedInstance {
         this.imageResourceId = imageResourceId
         this.imageResourceVersion = imageResourceVersion
         this.imageResourceState = imageResourceState
+        this.effectGroupToken = effectGroupToken
+        this.controlRole = controlRole
+        this.controlSelected = controlSelected
+        this.controlExpandable = controlExpandable
+        this.controlExpanded = controlExpanded
+        this.controlEnabled = controlEnabled
+        this.controlLevel = controlLevel
+        this.controlRowKey = controlRowKey
+        this.controlParentKey = controlParentKey
     }
 }
 
@@ -3927,25 +4283,52 @@ public class CjguiGeneratedUiAcceptedInstance {
 /// whether an accepted instance is an editor, a button or a container without
 /// interpreting a private numeric enum.
 public func cjguiGeneratedUiKindToken(nodeKind: Int64): String {
-    if (nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) { return "vertical" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_HORIZONTAL) { return "horizontal" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_TEXT) { return "label" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_BUTTON) { return "action" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT) { return "textInput" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT) { return "integerInput" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) { return "booleanInput" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) { return "scrollArea" }
-    if (nodeKind == CJGUI_COMPOSABLE_UI_IMAGE) { return "image" }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) {
+        return "vertical"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_HORIZONTAL) {
+        return "horizontal"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_TEXT) {
+        return "label"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_BUTTON) {
+        return "action"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT) {
+        return "textInput"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT) {
+        return "integerInput"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
+        return "booleanInput"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
+        return "scrollArea"
+    }
+    if (nodeKind == CJGUI_COMPOSABLE_UI_IMAGE) {
+        return "image"
+    }
     return "unknown"
+}
+
+public func cjguiGeneratedUiControlRoleToken(role: Int64): String {
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TAB_GROUP) { return "tab_group" }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TAB) { return "tab" }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA) { return "scroll_area" }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TREE) { return "outline" }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW) { return "row" }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON) { return "button" }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX) { return "checkbox" }
+    return "none"
 }
 
 /// Every accepted generated instance of one window, addressed by its declared
 /// key. `visible` is the accepted clipped intersection with area on an enabled
 /// node: a projection of the accepted layout, never a claim about GPU
 /// presentation.
-public func cjguiGeneratedUiAcceptedInstances(window: CjguiComposableUiWindow,
-                                              holder: CjguiGeneratedUiStructureHolder):
-    ArrayList<CjguiGeneratedUiAcceptedInstance> {
+public func cjguiGeneratedUiAcceptedInstances(window: CjguiComposableUiWindow, holder: CjguiGeneratedUiStructureHolder): ArrayList<CjguiGeneratedUiAcceptedInstance> {
     let result = ArrayList<CjguiGeneratedUiAcceptedInstance>()
     for (node in window.acceptedSceneNodes()) {
         let key = holder.keyForNodeId(node.nodeId)
@@ -3963,12 +4346,22 @@ public func cjguiGeneratedUiAcceptedInstances(window: CjguiComposableUiWindow,
         } else {
             node.actionName
         }
-        let visible = node.clip.width > 0 && node.clip.height > 0 && node.isEnabled
-        result.add(CjguiGeneratedUiAcceptedInstance(key, elementKey, role, node.nodeId, node.semanticId,
-            cjguiGeneratedUiKindToken(node.nodeKind), node.fieldId, publicActionName, node.label, visible,
-            node.bounds, imageResourceId: node.imageResourceId,
-            imageResourceVersion: node.imageResourceVersion,
-            imageResourceState: holder.imageResourceState(node.imageResourceId, node.imageResourceVersion)))
+        let visible = node.bounds.width > 0 && node.bounds.height > 0 &&
+            node.clip.width > 0 && node.clip.height > 0
+        result.add(
+            CjguiGeneratedUiAcceptedInstance(key, elementKey, role, node.nodeId, node.semanticId,
+                cjguiGeneratedUiKindToken(node.nodeKind), node.fieldId, publicActionName, node.label, visible,
+                node.bounds, imageResourceId: node.imageResourceId, imageResourceVersion: node.imageResourceVersion,
+                imageResourceState: holder.imageResourceState(node.imageResourceId, node.imageResourceVersion),
+                effectGroupToken: if (let Some(group) <- node.style.effectGroup) {
+                    cjguiComposableUiEffectGroupToken(group)
+                } else {
+                    "none"
+                }, controlRole: cjguiGeneratedUiControlRoleToken(node.semanticRole),
+                controlSelected: node.semanticSelected, controlExpandable: node.semanticExpandable,
+                controlExpanded: node.semanticExpanded, controlEnabled: node.isEnabled,
+                controlLevel: node.semanticLevel, controlRowKey: node.semanticKey,
+                controlParentKey: node.semanticParentKey))
     }
     return result
 }
@@ -4028,12 +4421,30 @@ public class CjguiGeneratedUiEncoding {
         builder.append("GENERATED_UI 1\n")
         builder.append("STYLE_REVISION ${catalog.namedStyles().revision()}\n")
         builder.append(catalog.namedStyles().describe())
-        builder.append("BOUNDS ${catalog.maxDepth} ${catalog.maxNodes} ${catalog.maxPropertiesPerNode} " +
-            "${catalog.maxStringLength}\n")
+        builder.append(
+            "BOUNDS ${catalog.maxDepth} ${catalog.maxNodes} ${catalog.maxPropertiesPerNode} " +
+                "${catalog.maxStringLength}\n")
+        builder.append("SEMANTIC_PROPERTY semanticRole outline:scrollArea,row:action " +
+            "semanticLabel semanticSelected semanticExpandable semanticExpanded semanticLevel " +
+            "semanticRowKey semanticParentKey disabled stability=experimental\n")
+        builder.append("PLATFORM_ACCENT ${CJGUI_COMPOSABLE_UI_PLATFORM_SYSTEM_ACCENT_COLOR} " +
+            "scope=window source=system,fixed color=srgb8 status=PLATFORM " +
+            "support=macos_appkit,ohos_unverified stability=experimental\n")
+        builder.append(catalog.motionRuleRegistry().describe())
+        if (catalog.windowBackgroundEnabled()) {
+            // This property belongs to the structure root, not to a component
+            // presentation. Its grammar and support labels come from the same
+            // public policy contract that the validator consumes.
+            builder.append("WINDOW_BACKGROUND_PROPERTY windowBackground STRING root_only=1 " +
+                "encoding=${CjguiGeneratedUiEncoding.windowBackgroundEncoding()} " +
+                "default=${CjguiWindowBackgroundPolicy.OPAQUE} omitted=${CjguiWindowBackgroundPolicy.OPAQUE} " +
+                "stability=${CjguiWindowBackgroundPolicy.STABILITY} " +
+                "support=${CjguiWindowBackgroundPolicy.BACKEND_SUPPORT}\n")
+        }
         for (kind in catalog.componentKinds()) {
             if (let Some(spec) <- catalog.componentFor(kind)) {
-                builder.append("COMPONENT ${spec.kind} ${if (spec.allowsChildren) { 1 } else { 0 }} " +
-                    "${spec.childLimit}\n")
+                builder.append(
+                    "COMPONENT ${spec.kind} ${if (spec.allowsChildren) { 1 } else { 0 }} " + "${spec.childLimit}\n")
                 for (property in spec.properties) {
                     // The optional trailing tokens publish an enumerated value
                     // list and the effective default, so an external reader never
@@ -4053,9 +4464,33 @@ public class CjguiGeneratedUiEncoding {
                     if (property.defaultValue.size > 0) {
                         extras.append(" default=${property.defaultValue}")
                     }
-                    builder.append("PROPERTY ${spec.kind} ${property.name} ${property.valueType} " +
-                        "${if (property.required) { 1 } else { 0 }} ${property.minimum} ${property.maximum} " +
-                        "${property.maxLength}${extras.toString()}\n")
+                    // Structured-value discovery: grammar, unit, domain, the
+                    // `none`/omitted meaning, the stability marker and the
+                    // backend support surface. A client that only reads this
+                    // line can still assemble a legal value, and the tokens come
+                    // from the same constants acceptance uses.
+                    if (property.encoding.size > 0) {
+                        extras.append(" encoding=${property.encoding}")
+                    }
+                    if (property.unit.size > 0) {
+                        extras.append(" unit=${property.unit}")
+                    }
+                    if (property.valueRange.size > 0) {
+                        extras.append(" range=${property.valueRange}")
+                    }
+                    if (property.semantics.size > 0) {
+                        extras.append(" semantics=${property.semantics}")
+                    }
+                    if (property.stability.size > 0) {
+                        extras.append(" stability=${property.stability}")
+                    }
+                    if (property.backendSupport.size > 0) {
+                        extras.append(" support=${property.backendSupport}")
+                    }
+                    builder.append(
+                        "PROPERTY ${spec.kind} ${property.name} ${property.valueType} " +
+                            "${if (property.required) { 1 } else { 0 }} ${property.minimum} ${property.maximum} " +
+                            "${property.maxLength}${extras.toString()}\n")
                 }
             }
         }
@@ -4068,19 +4503,19 @@ public class CjguiGeneratedUiEncoding {
         // other field is a single token, `none` when unset.
         for (kind in catalog.compositeKinds()) {
             if (let Some(composite) <- catalog.compositeFor(kind)) {
-                builder.append("COMPOSITE ${composite.kind} " +
-                    "children=${if (composite.allowsChildren) { 1 } else { 0 }} " +
-                    "child_limit=${composite.childLimit} " +
-                    "expanded_nodes=${composite.expandedNodeLimit} " +
-                    "expanded_depth=${composite.expandedDepthLimit}\n")
+                builder.append(
+                    "COMPOSITE ${composite.kind} " + "children=${if (composite.allowsChildren) { 1 } else { 0 }} " +
+                        "child_limit=${composite.childLimit} " + "expanded_nodes=${composite.expandedNodeLimit} " +
+                        "expanded_depth=${composite.expandedDepthLimit}\n")
                 for (element in composite.elements) {
-                    builder.append("ELEMENT ${composite.kind} ${element.elementKey} ${element.role} " +
-                        "parent=${if (element.parentKey.size > 0) { element.parentKey } else { "root" }} " +
-                        "field=${if (element.fieldId.size > 0) { element.fieldId } else { "none" }} " +
-                        "argument=${if (element.argumentName.size > 0) { element.argumentName } else { "none" }} " +
-                        "preset=${if (element.presetValue.size > 0) { element.presetValue } else { "none" }} " +
-                        "action=${if (element.actionName.size > 0) { element.actionName } else { "none" }} " +
-                        "label=${element.label}\n")
+                    builder.append(
+                        "ELEMENT ${composite.kind} ${element.elementKey} ${element.role} " +
+                            "parent=${if (element.parentKey.size > 0) { element.parentKey } else { "root" }} " +
+                            "field=${if (element.fieldId.size > 0) { element.fieldId } else { "none" }} " +
+                            "argument=${if (element.argumentName.size > 0) { element.argumentName } else { "none" }} " +
+                            "preset=${if (element.presetValue.size > 0) { element.presetValue } else { "none" }} " +
+                            "action=${if (element.actionName.size > 0) { element.actionName } else { "none" }} " +
+                            "label=${element.label}\n")
                 }
             }
         }
@@ -4097,9 +4532,9 @@ public class CjguiGeneratedUiEncoding {
                     argumentNames += spec.parameterNames[argumentIndex]
                     argumentIndex += 1
                 }
-                builder.append("ACTION ${spec.name} " +
-                    "argument=${if (argumentNames.size > 0) { argumentNames } else { "none" }} " +
-                    "${spec.label}\n")
+                builder.append(
+                    "ACTION ${spec.name} " + "argument=${if (argumentNames.size > 0) { argumentNames } else { "none" }} " +
+                        "${spec.label}\n")
             }
         }
         // One line per declared field, carrying everything an external caller
@@ -4112,17 +4547,18 @@ public class CjguiGeneratedUiEncoding {
         // may contain spaces.
         for (fieldId in catalog.fieldIds()) {
             if (let Some(field) <- catalog.fieldFor(fieldId)) {
-                builder.append("FIELD ${field.fieldId} ${field.editorKind} resource=${field.resourceId} " +
-                    "writer=${if (field.writeActionName.size > 0) { field.writeActionName } else { "none" }} " +
-                    "required=${if (field.required) { 1 } else { 0 }} " +
-                    "min=${field.minimum} max=${field.maximum} " +
-                    "maxlen=${field.maximumLength} " +
-                    "callable=${if (field.isWritable()) { 1 } else { 0 }} " +
-                    "argument=${if (field.argumentName.size > 0) { field.argumentName } else { "none" }} " +
-                    "input=${field.inputKind()} label=${field.label}\n")
+                builder.append(
+                    "FIELD ${field.fieldId} ${field.editorKind} resource=${field.resourceId} " +
+                        "writer=${if (field.writeActionName.size > 0) { field.writeActionName } else { "none" }} " +
+                        "required=${if (field.required) { 1 } else { 0 }} " +
+                        "min=${field.minimum} max=${field.maximum} " + "maxlen=${field.maximumLength} " +
+                        "callable=${if (field.isWritable()) { 1 } else { 0 }} " +
+                        "argument=${if (field.argumentName.size > 0) { field.argumentName } else { "none" }} " +
+                        "input=${field.inputKind()} label=${field.label}\n")
             } else {
-                builder.append("FIELD ${fieldId} unknown writer=none required=0 min=0 max=0 maxlen=0 " +
-                    "callable=0 argument=none input= label=\n")
+                builder.append(
+                    "FIELD ${fieldId} unknown writer=none required=0 min=0 max=0 maxlen=0 " +
+                        "callable=0 argument=none input= label=\n")
             }
         }
         // One line per registered image resource, published from the SAME table
@@ -4138,13 +4574,16 @@ public class CjguiGeneratedUiEncoding {
         return builder.toString()
     }
 
+    private static func windowBackgroundEncoding(): String {
+        return "${CjguiWindowBackgroundPolicy.OPAQUE}|${CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA}"
+    }
+
     /// Line protocol for accepted generated instances. One `INSTANCE` line per
     /// accepted node, addressed by its DECLARED key; `element`/`role` identify a
-    /// composite element, and the label is the LAST token because a caption may
-    /// contain spaces. This is its own documented protocol, not the internal
-    /// scene dump.
-    public static func acceptedInstancesPayload(
-        instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): String {
+    /// composite element, `effectGroup` is the canonical accepted declaration,
+    /// and the label is the LAST token because a caption may contain spaces.
+    /// This does not assert completed renderer presentation.
+    public static func acceptedInstancesPayload(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): String {
         let builder = StringBuilder()
         var index: Int64 = 0
         while (index < instances.size) {
@@ -4152,22 +4591,66 @@ public class CjguiGeneratedUiEncoding {
             if (index > 0) {
                 builder.append("\n")
             }
-            builder.append("INSTANCE ${instance.key} " +
-                "element=${if (instance.elementKey.size > 0) { instance.elementKey } else { "-" }} " +
-                "role=${if (instance.role.size > 0) { instance.role } else { "-" }} " +
-                "id=${instance.nodeId} kind=${instance.kindToken} semantic=${instance.semanticId} " +
-                "field=${if (instance.fieldId.size > 0) { instance.fieldId } else { "-" }} " +
-                "action=${if (instance.actionName.size > 0) { instance.actionName } else { "-" }} " +
-                "resource=${if (instance.imageResourceId.size > 0) { instance.imageResourceId } else { "-" }} " +
-                "resource_version=${instance.imageResourceVersion} " +
-                "resource_state=${if (instance.imageResourceId.size > 0) { instance.imageResourceState } else { "-" }} " +
-                "visible=${if (instance.visible) { 1 } else { 0 }} " +
-                "bounds=${instance.bounds.x},${instance.bounds.y}," +
-                "${instance.bounds.width},${instance.bounds.height} " +
-                "label_hex=${if (instance.label.size > 0) { cjguiGeneratedUiHexEncode(instance.label) } else { "-" }}")
+            builder.append(
+                "INSTANCE ${instance.key} " +
+                    "element=${if (instance.elementKey.size > 0) { instance.elementKey } else { "-" }} " +
+                    "role=${if (instance.role.size > 0) { instance.role } else { "-" }} " +
+                    "id=${instance.nodeId} kind=${instance.kindToken} semantic=${instance.semanticId} " +
+                    "field=${if (instance.fieldId.size > 0) { instance.fieldId } else { "-" }} " +
+                    "action=${if (instance.actionName.size > 0) { instance.actionName } else { "-" }} " +
+                    "resource=${if (instance.imageResourceId.size > 0) { instance.imageResourceId } else { "-" }} " +
+                    "resource_version=${instance.imageResourceVersion} " +
+                    "resource_state=${if (instance.imageResourceId.size > 0) { instance.imageResourceState } else { "-" }} " +
+                    "effectGroup=${instance.effectGroupToken} " +
+                    "control_role=${instance.controlRole} selected=${if (instance.controlSelected) { 1 } else { 0 }} " +
+                    "expandable=${if (instance.controlExpandable) { 1 } else { 0 }} " +
+                    "expanded=${if (instance.controlExpanded) { 1 } else { 0 }} " +
+                    "enabled=${if (instance.controlEnabled) { 1 } else { 0 }} level=${instance.controlLevel} " +
+                    "row_key=${if (instance.controlRowKey.size > 0) { instance.controlRowKey } else { "-" }} " +
+                    "parent_key=${if (instance.controlParentKey.size > 0) { instance.controlParentKey } else { "-" }} " +
+                    "visible=${if (instance.visible) { 1 } else { 0 }} " +
+                    "bounds=${instance.bounds.x},${instance.bounds.y}," +
+                    "${instance.bounds.width},${instance.bounds.height} " +
+                    "label_hex=${if (instance.label.size > 0) { cjguiGeneratedUiHexEncode(instance.label) } else { "-" }}")
             index += 1
         }
         return builder.toString()
+    }
+
+    /// The transport rejects an EMPTY field on ANY one-line protocol response
+    /// (`client.parse_response` -> "response field is malformed"), so an empty
+    /// property value can never be written as a trailing space. The structure
+    /// protocol therefore gives the empty string an explicit, non-empty token
+    /// (`\e`) and - to stay reversible - doubles the leading backslash of any
+    /// value that already begins with one. Decoding strips the escape. This keeps
+    /// `none`, the empty string and an ABSENT property three distinguishable
+    /// states: `none`, `""` (encoded as `\e`) and no property line at all.
+    private static let CJGUI_GENERATED_UI_EMPTY_VALUE_TOKEN: String = "\\e"
+
+    /// Encode one property value for the accepted-structure payload. Empty is
+    /// the only value that cannot ride the protocol literally; a value that
+    /// already starts with a backslash is escaped so the mapping is lossless.
+    public static func encodePropertyValue(value: String): String {
+        if (value.size == 0) {
+            return CJGUI_GENERATED_UI_EMPTY_VALUE_TOKEN
+        }
+        if (value[0] == 92) {
+            return "\\" + value
+        }
+        return value
+    }
+
+    /// Inverse of `encodePropertyValue`. An empty token (a legacy trailing space
+    /// that older clients still submit) is read as the empty string too, so the
+    /// pair stays backward compatible.
+    public static func decodePropertyValue(token: String): String {
+        if (token == CJGUI_GENERATED_UI_EMPTY_VALUE_TOKEN) {
+            return ""
+        }
+        if (token.size > 0 && token[0] == 92) {
+            return token[1..token.size]
+        }
+        return token
     }
 
     public static func encode(structure: ?CjguiGeneratedUiNodeSpec, version: Int64): String {
@@ -4180,8 +4663,7 @@ public class CjguiGeneratedUiEncoding {
         return builder.toString()
     }
 
-    private static func encodeNode(node: CjguiGeneratedUiNodeSpec, depth: Int64,
-                                   builder: StringBuilder): Unit {
+    private static func encodeNode(node: CjguiGeneratedUiNodeSpec, depth: Int64, builder: StringBuilder): Unit {
         builder.append("NODE ${depth} ${node.key} ${node.kind}")
         if (node.fieldId.size > 0) {
             builder.append(" field=${node.fieldId}")
@@ -4191,7 +4673,7 @@ public class CjguiGeneratedUiEncoding {
         }
         builder.append("\n")
         for ((name, value) in node.properties) {
-            builder.append("PROPERTY ${depth} ${node.key} ${name} ${value}\n")
+            builder.append("PROPERTY ${depth} ${node.key} ${name} ${encodePropertyValue(value)}\n")
         }
         for (child in node.children) {
             encodeNode(child, depth + 1, builder)
@@ -4259,8 +4741,8 @@ public class CjguiGeneratedUiEncoding {
                 }
                 let key = fields[2]
                 let kind = fields[3]
-                if (key.size > CJGUI_GENERATED_UI_DECODE_MAX_STRING_LENGTH ||
-                    kind.size > CJGUI_GENERATED_UI_DECODE_MAX_STRING_LENGTH) {
+                if (key.size > CJGUI_GENERATED_UI_DECODE_MAX_STRING_LENGTH || kind.size >
+                    CJGUI_GENERATED_UI_DECODE_MAX_STRING_LENGTH) {
                     return CjguiGeneratedUiDecoded(false, "node_text_too_long:${index}", None)
                 }
                 nodeCount += 1
@@ -4364,16 +4846,25 @@ public class CjguiGeneratedUiEncoding {
                 // space (PROPERTY depth key name value...).
                 var spacesSeen = 0
                 var scan: Int64 = 0
-                var value = ""
+                var rawValue = ""
                 while (scan < line.size) {
                     if (line[scan] == 32) {
                         spacesSeen += 1
                         if (spacesSeen == 4) {
-                            value = line[scan + 1..line.size]
+                            rawValue = line[scan + 1..line.size]
                             break
                         }
                     }
                     scan += 1
+                }
+                // The empty string rides the one-line protocol as an explicit
+                // token (the transport rejects an empty field) and a leading
+                // backslash is escaped, so `\e` decodes back to "". A value that
+                // would still begin or end with a space cannot be framed
+                // unambiguously, so it is refused instead of silently trimmed.
+                let value = CjguiGeneratedUiEncoding.decodePropertyValue(rawValue)
+                if (value.size > 0 && (value[0] == 32 || value[value.size - 1] == 32)) {
+                    return CjguiGeneratedUiDecoded(false, "property_value_edge_space:${index}", None)
                 }
                 if (value.size > CJGUI_GENERATED_UI_DECODE_MAX_STRING_LENGTH) {
                     return CjguiGeneratedUiDecoded(false, "string_budget_exceeded:${index}", None)
@@ -4455,13 +4946,16 @@ public class CjguiGeneratedUiObservationSource {
     /// bindings. A completion or a failure moves it, so image readiness is
     /// observable without an external structure resubmission.
     public let imageStateRevision: Int64
+    /// Bounded scalar facts describing actual accepted effect presentation.
+    /// This is sampled from window progress, not inferred from declarations.
+    public let effectFacts: String
+    public let platformFacts: String
 
-    public init(endpointIdentity: String, ownerRevision: Int64, draftRevision: Int64,
-                bindingRevision: Int64, acceptedStructureVersion: Int64, candidateToken: Int64,
-                candidateState: String, acceptedSceneVersion: Int64, geometryRevision: Int64,
-                interactionRevision: Int64, instanceRevision: Int64, ownerPendingScene: Bool,
-                resourceRevision!: Int64 = 0, structureCandidatePending!: Bool = false,
-                imageStateRevision!: Int64 = 0, styleRevision!: Int64 = 0) {
+    public init(endpointIdentity: String, ownerRevision: Int64, draftRevision: Int64, bindingRevision: Int64,
+        acceptedStructureVersion: Int64, candidateToken: Int64, candidateState: String, acceptedSceneVersion: Int64,
+        geometryRevision: Int64, interactionRevision: Int64, instanceRevision: Int64, ownerPendingScene: Bool,
+        resourceRevision!: Int64 = 0, structureCandidatePending!: Bool = false, imageStateRevision!: Int64 = 0,
+        styleRevision!: Int64 = 0, effectFacts!: String = "", platformFacts!: String = "") {
         this.endpointIdentity = endpointIdentity
         this.ownerRevision = ownerRevision
         this.draftRevision = draftRevision
@@ -4478,6 +4972,8 @@ public class CjguiGeneratedUiObservationSource {
         this.resourceRevision = resourceRevision
         this.styleRevision = styleRevision
         this.imageStateRevision = imageStateRevision
+        this.effectFacts = effectFacts
+        this.platformFacts = platformFacts
     }
 
     /// A source for an application that has not attached its window yet.
@@ -4503,13 +4999,21 @@ public class CjguiGeneratedUiObservationTracker {
     private var lastSource: ?CjguiGeneratedUiObservationSource
 
     public init(historyLimit!: Int64 = 128) {
-        this.historyLimit = if (historyLimit > 0) { historyLimit } else { 128 }
+        this.historyLimit = if (historyLimit > 0) {
+            historyLimit
+        } else {
+            128
+        }
         // The stream epoch identifies ONE endpoint instance. A process-local
         // counter that restarts at a fixed value would let a client that holds
         // an old (epoch, cursor) believe a RESTARTED endpoint is the same
         // stream, so the initial value is a random nonce instead.
         let streamNonce = Int64(Random().nextUInt64() & 0x7FFFFFFFFFFFFFFF)
-        this.streamEpochValue = if (streamNonce > 0) { streamNonce } else { 1 }
+        this.streamEpochValue = if (streamNonce > 0) {
+            streamNonce
+        } else {
+            1
+        }
         this.streamIdentityValue = ""
         this.cursorValue = 0
         this.history = ArrayList<CjguiGeneratedUiObservationChange>()
@@ -4564,27 +5068,24 @@ public class CjguiGeneratedUiObservationTracker {
     /// Categories implied by a source difference. A structure change also
     /// re-creates instances and the scene; the order is stable so evidence and
     /// test expectations do not depend on map iteration order.
-    private func categoriesBetween(old: CjguiGeneratedUiObservationSource,
-                                   current: CjguiGeneratedUiObservationSource):
-        ArrayList<(String, String)> {
+    private func categoriesBetween(old: CjguiGeneratedUiObservationSource, current: CjguiGeneratedUiObservationSource): ArrayList<(String,
+        String)> {
         let categories = ArrayList<(String, String)>()
         let structureChanged = current.acceptedStructureVersion != old.acceptedStructureVersion
         if (structureChanged) {
             categories.add(("STRUCTURE", "version=${current.acceptedStructureVersion}"))
         }
-        if (current.candidateToken != old.candidateToken ||
-            current.candidateState != old.candidateState ||
+        if (current.candidateToken != old.candidateToken || current.candidateState != old.candidateState ||
             current.structureCandidatePending != old.structureCandidatePending) {
-            categories.add(("CANDIDATE", "token=${current.candidateToken} state=${current.candidateState} " +
-                "pending=${if (current.structureCandidatePending) { 1 } else { 0 }}"))
+            categories.add(
+                ("CANDIDATE", "token=${current.candidateToken} state=${current.candidateState} " +
+                        "pending=${if (current.structureCandidatePending) { 1 } else { 0 }}"))
         }
         if (current.ownerRevision != old.ownerRevision || current.draftRevision != old.draftRevision) {
             categories.add(("FIELDS", "owner=${current.ownerRevision} draft=${current.draftRevision}"))
         }
-        if (current.resourceRevision != old.resourceRevision ||
-            current.imageStateRevision != old.imageStateRevision) {
-            categories.add(("RESOURCES", "revision=${current.resourceRevision} " +
-                "state=${current.imageStateRevision}"))
+        if (current.resourceRevision != old.resourceRevision || current.imageStateRevision != old.imageStateRevision) {
+            categories.add(("RESOURCES", "revision=${current.resourceRevision} " + "state=${current.imageStateRevision}"))
         }
         // The named-style directory is reported on its own; it deliberately does
         // NOT imply STRUCTURE/SCENE/FIELDS, so a theme change never looks like a
@@ -4592,17 +5093,25 @@ public class CjguiGeneratedUiObservationTracker {
         if (current.styleRevision != old.styleRevision) {
             categories.add(("STYLES", "revision=${current.styleRevision}"))
         }
+        if (current.effectFacts != old.effectFacts) {
+            // The bounded change stream carries only the category signal. The
+            // potentially multi-line facts are re-read from the guarded section.
+            categories.add(("EFFECTS", "changed"))
+        }
+        if (current.platformFacts != old.platformFacts) {
+            categories.add(("PLATFORM", "changed"))
+        }
         if (current.bindingRevision != old.bindingRevision) {
             categories.add(("BINDINGS", "revision=${current.bindingRevision}"))
         }
         if (structureChanged || current.instanceRevision != old.instanceRevision) {
             categories.add(("INSTANCES", "revision=${current.instanceRevision}"))
         }
-        if (structureChanged || current.acceptedSceneVersion != old.acceptedSceneVersion ||
-            current.geometryRevision != old.geometryRevision ||
-            current.interactionRevision != old.interactionRevision) {
-            categories.add(("SCENE", "scene=${current.acceptedSceneVersion} " +
-                "geometry=${current.geometryRevision} interaction=${current.interactionRevision}"))
+        if (structureChanged || current.acceptedSceneVersion != old.acceptedSceneVersion || current.geometryRevision != old
+            .geometryRevision || current.interactionRevision != old.interactionRevision) {
+            categories.add(
+                ("SCENE", "scene=${current.acceptedSceneVersion} " +
+                        "geometry=${current.geometryRevision} interaction=${current.interactionRevision}"))
         }
         return categories
     }
@@ -4675,15 +5184,14 @@ private func snapshotSection(marker: String, payload: String): String {
 /// three payloads. The response carries its section name and stream identity, so
 /// a client can reject a section that belongs to another stream, cursor or type
 /// even when the provider did not set the revision flag.
-public func cjguiGeneratedUiSectionPayload(tracker: CjguiGeneratedUiObservationTracker,
-                                           section: String,
-                                           expectedCursor: Int64,
-                                           payload: String): String {
+public func cjguiGeneratedUiSectionPayload(tracker: CjguiGeneratedUiObservationTracker, section: String,
+    expectedCursor: Int64, payload: String): String {
     let builder = StringBuilder()
     let current = tracker.currentCursor()
     builder.append("SECTION ${section}\n")
     builder.append("STREAM_EPOCH ${tracker.streamEpoch()}\n")
-    builder.append("STREAM_IDENTITY ${if (tracker.streamIdentity().size > 0) { tracker.streamIdentity() } else { "none" }}\n")
+    builder.append(
+        "STREAM_IDENTITY ${if (tracker.streamIdentity().size > 0) { tracker.streamIdentity() } else { "none" }}\n")
     builder.append("CURSOR ${current}\n")
     if (current != expectedCursor) {
         builder.append("SNAPSHOT_REVISION_CHANGED 1")
@@ -4700,6 +5208,11 @@ public func cjguiGeneratedUiSectionPayload(tracker: CjguiGeneratedUiObservationT
         // The style-definition directory is a section of its own: a client that
         // saw a STYLES change re-reads definitions without pulling a tree.
         marker = "SNAPSHOT_STYLE"
+    } else if (section == "EFFECTS") {
+        // Actual renderer effect mode/reason is a separate, guarded section.
+        marker = "SNAPSHOT_EFFECT"
+    } else if (section == "PLATFORM") {
+        marker = "SNAPSHOT_PLATFORM"
     } else {
         // An unknown section is never answered with another one.
         builder.append("SNAPSHOT_REVISION_CHANGED 1")
@@ -4717,14 +5230,12 @@ public func cjguiGeneratedUiSectionPayload(tracker: CjguiGeneratedUiObservationT
 /// separated owner/scene facts, and the field/structure/instance sections the
 /// application sampled in the SAME provider call.
 public func cjguiGeneratedUiSnapshotPayload(tracker: CjguiGeneratedUiObservationTracker,
-                                            source: CjguiGeneratedUiObservationSource,
-                                            fieldsPayload: String,
-                                            structurePayload: String,
-                                            instancesPayload: String,
-                                            stylesPayload!: String = ""): String {
+    source: CjguiGeneratedUiObservationSource, fieldsPayload: String, structurePayload: String,
+    instancesPayload: String, stylesPayload!: String = ""): String {
     let builder = StringBuilder()
     builder.append("STREAM_EPOCH ${tracker.streamEpoch()}\n")
-    builder.append("STREAM_IDENTITY ${if (tracker.streamIdentity().size > 0) { tracker.streamIdentity() } else { "none" }}\n")
+    builder.append(
+        "STREAM_IDENTITY ${if (tracker.streamIdentity().size > 0) { tracker.streamIdentity() } else { "none" }}\n")
     builder.append("CURSOR ${tracker.currentCursor()}\n")
     builder.append("OWNER_FIELD_REVISION ${source.ownerRevision}\n")
     builder.append("OWNER_DRAFT_REVISION ${source.draftRevision}\n")
@@ -4742,9 +5253,14 @@ public func cjguiGeneratedUiSnapshotPayload(tracker: CjguiGeneratedUiObservation
     builder.append("OWNER_PENDING_SCENE ${if (source.ownerPendingScene) { 1 } else { 0 }}\n")
     builder.append("STRUCTURE_CANDIDATE_PENDING ${if (source.structureCandidatePending) { 1 } else { 0 }}\n")
     let sections = ArrayList<String>()
-    for ((marker, payload) in [("SNAPSHOT_FIELD", fieldsPayload),
-        ("SNAPSHOT_STRUCTURE", structurePayload), ("SNAPSHOT_INSTANCE", instancesPayload),
-        ("SNAPSHOT_STYLE", stylesPayload)]) {
+    let effectFacts = snapshotSection("SNAPSHOT_EFFECT", source.effectFacts)
+    if (effectFacts.size > 0) {
+        sections.add(effectFacts)
+    }
+    let platformFacts = snapshotSection("SNAPSHOT_PLATFORM", source.platformFacts)
+    if (platformFacts.size > 0) { sections.add(platformFacts) }
+    for ((marker, payload) in [("SNAPSHOT_FIELD", fieldsPayload), ("SNAPSHOT_STRUCTURE", structurePayload),
+        ("SNAPSHOT_INSTANCE", instancesPayload), ("SNAPSHOT_STYLE", stylesPayload)]) {
         let encoded = snapshotSection(marker, payload)
         if (encoded.size > 0) {
             sections.add(encoded)
@@ -4800,8 +5316,7 @@ private func fingerprintText(text: String): Int64 {
 /// Fingerprint of what the window ACCEPTED as the generated geometry: the
 /// declared keys with their node identity and bounds. A resize changes it even
 /// when the structure version does not.
-public func cjguiGeneratedUiGeometryRevision(
-    instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
+public func cjguiGeneratedUiGeometryRevision(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
     var hash = CJGUI_GENERATED_UI_FNV_OFFSET
     for (instance in instances) {
         hash = hash ^ fingerprintMix(instance.nodeId)
@@ -4809,7 +5324,11 @@ public func cjguiGeneratedUiGeometryRevision(
         hash = hash ^ fingerprintMix(instance.bounds.y)
         hash = hash ^ fingerprintMix(instance.bounds.width)
         hash = hash ^ fingerprintMix(instance.bounds.height)
-        hash = hash ^ fingerprintMix(if (instance.visible) { 1 } else { 0 })
+        hash = hash ^ fingerprintMix(if (instance.visible) {
+            1
+        } else {
+            0
+        })
     }
     return hash
 }
@@ -4819,8 +5338,7 @@ public func cjguiGeneratedUiGeometryRevision(
 /// action) must not report a rebind, while the same declared key pointing at a
 /// different owner field must. The number of BOUND elements is mixed in, so
 /// adding or removing a bound element changes the revision too.
-public func cjguiGeneratedUiBindingRevision(
-    instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
+public func cjguiGeneratedUiBindingRevision(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
     var hash = CJGUI_GENERATED_UI_FNV_OFFSET
     var bound: Int64 = 0
     for (instance in instances) {
@@ -4828,20 +5346,22 @@ public func cjguiGeneratedUiBindingRevision(
             continue
         }
         bound += 1
-        hash = hash ^ fingerprintText("${instance.key}|${instance.elementKey}|${instance.role}|" +
-            "${instance.fieldId}|${instance.actionName}")
+        hash = hash ^ fingerprintText(
+            "${instance.key}|${instance.elementKey}|${instance.role}|" + "${instance.fieldId}|${instance.actionName}")
     }
     return hash ^ fingerprintMix(bound)
 }
 
 /// Fingerprint of the accepted instance IDENTITY set (which declared keys exist
 /// and what node identity each one owns).
-public func cjguiGeneratedUiInstanceRevision(
-    instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
+public func cjguiGeneratedUiInstanceRevision(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
     var hash = CJGUI_GENERATED_UI_FNV_OFFSET
     for (instance in instances) {
         hash = hash ^ fingerprintText(instance.key)
         hash = hash ^ fingerprintMix(instance.nodeId)
+        hash = hash ^ fingerprintText("${instance.controlRole}|${instance.controlRowKey}|" +
+            "${instance.controlParentKey}|${instance.controlSelected}|${instance.controlExpandable}|" +
+            "${instance.controlExpanded}|${instance.controlEnabled}|${instance.controlLevel}|${instance.label}")
     }
     return hash
 }

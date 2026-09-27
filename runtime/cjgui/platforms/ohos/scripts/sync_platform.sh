@@ -85,17 +85,24 @@ cat > "$MODULE/shared_operation_core/cjpm.toml" <<'TOML'
   package-option = {}
 TOML
 
-# 5) 设置与计数共享应用（runtime/cjgui/examples 是唯一来源，macOS 与鸿蒙同源）
+# 5) 共享应用（runtime/cjgui/examples 是唯一来源，macOS 与鸿蒙同源）
 # E.3：应用源码目录可由公共入口参数化（CJGUI_APP_SRC），默认仍是共享示例。
-# 独立消费者（不同字段结构、含空格目录）由此接入同一构建链。
+# 第六次复核第 5 项：目录名与仓颉包名同步参数化（CJGUI_APP_DIR_NAME /
+# CJGUI_APP_PKG_NAME）——独立消费者不再被写死为设置计数示例的私有包名；
+# 默认值保持原状，既有构建不受影响。
 APP_SRC="${CJGUI_APP_SRC:-$REPO_ROOT/runtime/cjgui/examples/settings_counter_application/src}"
+APP_DIR_NAME="${CJGUI_APP_DIR_NAME:-settings_counter_application}"
+APP_PKG_NAME="${CJGUI_APP_PKG_NAME:-cjgui_settings_counter_application}"
 [ -d "$APP_SRC" ] || { echo "缺少共享应用源码: $APP_SRC"; exit 1; }
-mkdir -p "$MODULE/settings_counter_application/src"
-rsync -a --delete --exclude 'target' --exclude 'build' "$APP_SRC/" "$MODULE/settings_counter_application/src/"
-cat > "$MODULE/settings_counter_application/cjpm.toml" <<'TOML'
+mkdir -p "$MODULE/$APP_DIR_NAME/src"
+# Cangjie unit tests live beside the application source for local `cjpm test`.
+# They are not part of either normal HarmonyOS consumer's runtime package.
+rsync -a --delete --exclude 'target' --exclude 'build' --exclude '*_test.cj' \
+  "$APP_SRC/" "$MODULE/$APP_DIR_NAME/src/"
+cat > "$MODULE/$APP_DIR_NAME/cjpm.toml" <<TOML
 [package]
   cjc-version = "1.1.3"
-  name = "cjgui_settings_counter_application"
+  name = "${APP_PKG_NAME}"
   version = "0.0.0"
   output-type = "static"
   src-dir = "src"
@@ -105,9 +112,9 @@ cat > "$MODULE/settings_counter_application/cjpm.toml" <<'TOML'
   cjgui_shared_operation_core = { path = "../shared_operation_core" }
 
 [target.aarch64-linux-ohos]
-  compile-option = "-B \"${DEVECO_CANGJIE_HOME}/build-tools/third_party/llvm/bin\" -B \"${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"${DEVECO_OH_NATIVE_HOME}/llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos\" -L \"${DEVECO_OH_NATIVE_HOME}/llvm/lib/aarch64-linux-ohos\" --sysroot \"${DEVECO_OH_NATIVE_HOME}/sysroot\""
+  compile-option = "-B \"\${DEVECO_CANGJIE_HOME}/build-tools/third_party/llvm/bin\" -B \"\${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"\${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"\${DEVECO_OH_NATIVE_HOME}/llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos\" -L \"\${DEVECO_OH_NATIVE_HOME}/llvm/lib/aarch64-linux-ohos\" --sysroot \"\${DEVECO_OH_NATIVE_HOME}/sysroot\""
 [target.aarch64-linux-ohos.bin-dependencies]
-  path-option = ["${AARCH64_LIBS}", "${AARCH64_MACRO_LIBS}", "${AARCH64_KIT_LIBS}"]
+  path-option = ["\${AARCH64_LIBS}", "\${AARCH64_MACRO_LIBS}", "\${AARCH64_KIT_LIBS}"]
   package-option = {}
 TOML
 
@@ -160,7 +167,7 @@ find "$MODULE" -maxdepth 1 -name 'cjgui_sync_*.manifest' ! -name "cjgui_sync_$SH
 {
   echo "platform_fingerprint=$FINGERPRINT"
   echo "synced_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  find "$MODULE/cjgui/src" "$MODULE/shared_operation_core/src" "$MODULE/settings_counter_application/src" \
+  find "$MODULE/cjgui/src" "$MODULE/shared_operation_core/src" "$MODULE/$APP_DIR_NAME/src" \
     "$MODULE/src/main/cpp" "$MODULE/ohos_transport/src" -type f | sort | while read -r f; do
     shasum -a 256 "$f"
   done

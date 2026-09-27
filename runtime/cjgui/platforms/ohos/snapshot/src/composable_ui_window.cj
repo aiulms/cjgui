@@ -267,6 +267,70 @@ public interface CjguiComposableUiController {
     func requestWindowClose(): CjguiComposableUiDispatchResult
 }
 
+/// Optional revision of accepted business owner truth, independent of
+/// `uiSceneVersion()` and generated structure versions. Advance it for every
+/// independently accepted owner write, including a same-value replacement;
+/// a generated structure reorder alone must leave it unchanged. Without this
+/// boundary the window conservatively rotates native text editing context.
+/// Return a nonnegative monotonic revision; -1 disables this continuation.
+public interface CjguiComposableUiBusinessOwnerRevisionProvider {
+    func uiBusinessOwnerRevision(): Int64
+}
+
+// A recycled renderer slot cannot inherit either a local-edit handoff or an
+// owner-stable reordering handoff. Compare the whole field binding and focus
+// domain; geometry, paint and caption may change without changing ownership.
+func cjguiSameFocusedTextBinding(previous: CjguiComposableUiLayoutNode,
+    candidate: CjguiComposableUiLayoutNode,
+    focusedNodeId: Int64, focusedResourceId: Int64, focusedNodeKind: Int64): Bool {
+    if (focusedNodeId < 0 || previous.nodeId != focusedNodeId || previous.resourceId != focusedResourceId ||
+        previous.nodeKind != focusedNodeKind || !previous.canReceiveInput() || !candidate.canReceiveInput()) {
+        return false
+    }
+    if (candidate.nodeKind != CJGUI_COMPOSABLE_UI_TEXT_INPUT && candidate.nodeKind !=
+        CJGUI_COMPOSABLE_UI_INTEGER_INPUT && candidate.nodeKind != CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) {
+        return false
+    }
+    return previous.nodeId == candidate.nodeId && previous.identityKey == candidate.identityKey &&
+        previous.semanticId == candidate.semanticId && previous.nodeKind == candidate.nodeKind &&
+        previous.resourceId == candidate.resourceId && previous.fieldId == candidate.fieldId &&
+        previous.actionName == candidate.actionName && previous.operationActionName == candidate.operationActionName &&
+        previous.operationResourceId == candidate.operationResourceId && previous.displayValueRole == candidate
+        .displayValueRole && previous.inputScopeId == candidate.inputScopeId && previous.layerId == candidate.layerId &&
+        previous.layerKind == candidate.layerKind && previous.isEnabled == candidate.isEnabled && previous.isReadOnly ==
+        candidate.isReadOnly && previous.tabInsertsText == candidate.tabInsertsText
+}
+
+// A native present may be needed only because another node moved or repainted.
+// Restage the focused editor with the existing native continuation hint only
+// when the accepted owner and every field-binding identity still match.
+func cjguiPreservesOwnerStableText(previous: CjguiComposableUiLayoutNode,
+    candidate: CjguiComposableUiLayoutNode, acceptedOwnerRevision: Int64, candidateOwnerRevision: Int64,
+    focusedNodeId: Int64, focusedResourceId: Int64, focusedNodeKind: Int64): Bool {
+    return acceptedOwnerRevision >= 0 && candidateOwnerRevision == acceptedOwnerRevision &&
+        cjguiSameFocusedTextBinding(previous, candidate, focusedNodeId, focusedResourceId, focusedNodeKind) &&
+        previous.value == candidate.value
+}
+
+func cjguiLocalTextOwnerRevisionMatches(providerExists: Bool, localRevision: Int64,
+    candidateRevision: Int64): Bool {
+    return !providerExists || (localRevision >= 0 && candidateRevision == localRevision)
+}
+
+func cjguiOwnerRevisionRequiresNativeTextReconcile(acceptedRevision: Int64, candidateRevision: Int64,
+    focused: CjguiComposableUiLayoutNode, focusedNodeId: Int64, focusedResourceId: Int64,
+    focusedNodeKind: Int64): Bool {
+    return (acceptedRevision >= 0 || candidateRevision >= 0) && candidateRevision != acceptedRevision &&
+        cjguiSameFocusedTextBinding(focused, focused, focusedNodeId, focusedResourceId, focusedNodeKind)
+}
+
+func cjguiFocusedTextBindingRequiresNativeReconcile(accepted: CjguiComposableUiLayoutNode,
+    candidate: CjguiComposableUiLayoutNode, focusedNodeId: Int64, focusedResourceId: Int64,
+    focusedNodeKind: Int64): Bool {
+    return cjguiSameFocusedTextBinding(accepted, accepted, focusedNodeId, focusedResourceId, focusedNodeKind) &&
+        !cjguiSameFocusedTextBinding(accepted, candidate, focusedNodeId, focusedResourceId, focusedNodeKind)
+}
+
 /// Optional invalidation boundary for a captured continuous control. A
 /// controller may expose an owner-scoped revision for one pointer target so
 /// unrelated scene changes (for example a different document or status row)
@@ -697,6 +761,7 @@ private class CjguiComposableUiPendingPresentTransaction {
     let candidateCommands: ?ArrayList<CjguiComposableUiCommand>
     let candidateDataTransferBindings: ?ArrayList<CjguiComposableUiDataTransferBinding>
     let declaredVersion: Int64
+    let candidateBusinessOwnerRevision: Int64
     let viewportResizeVersion: UInt64
     let viewportResourceCompletionVersion: UInt64
     // ---- kind = 1（交互投影）专用 ----
@@ -721,7 +786,8 @@ private class CjguiComposableUiPendingPresentTransaction {
         participant!: ?CjguiComposableUiSceneRefreshParticipant = None,
         candidateCommands!: ?ArrayList<CjguiComposableUiCommand> = None,
         candidateDataTransferBindings!: ?ArrayList<CjguiComposableUiDataTransferBinding> = None,
-        declaredVersion!: Int64 = 0, viewportResizeVersion!: UInt64 = 0u64,
+        declaredVersion!: Int64 = 0, candidateBusinessOwnerRevision!: Int64 = -1,
+        viewportResizeVersion!: UInt64 = 0u64,
         viewportResourceCompletionVersion!: UInt64 = 0u64,
         interactionDataTransferBindings!: ?ArrayList<CjguiComposableUiDataTransferBinding> = None) {
         this.kind = kind
@@ -735,6 +801,7 @@ private class CjguiComposableUiPendingPresentTransaction {
         this.candidateCommands = candidateCommands
         this.candidateDataTransferBindings = candidateDataTransferBindings
         this.declaredVersion = declaredVersion
+        this.candidateBusinessOwnerRevision = candidateBusinessOwnerRevision
         this.viewportResizeVersion = viewportResizeVersion
         this.viewportResourceCompletionVersion = viewportResourceCompletionVersion
         this.interactionDataTransferBindings = interactionDataTransferBindings
@@ -792,6 +859,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // native resize revision before it asks the controller to build/layout.
     // It never substitutes a domain/content-only version for that contract.
     private var lastControllerSceneVersion: Int64
+    // Promoted only with an accepted owner projection, never with a rejected
+    // or still-pending candidate. -1 means no reliable owner revision exists.
+    private var lastAcceptedBusinessOwnerRevision: Int64
     private var lastViewportResizeVersion: UInt64
     private var lastResourceCompletionVersion: UInt64
     // Failed candidates must retain the last successful conditions above for
@@ -873,6 +943,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var pendingLocalTextResourceId: Int64
     private var pendingLocalTextNodeKind: Int64
     private var pendingLocalTextValue: String
+    private var pendingLocalTextOwnerRevision: Int64
     // One immediately preceding text generation can arrive while its
     // successor scene is being assembled.  Retain only the owner-accepted
     // value/identity needed to distinguish that local continuation from an
@@ -1122,6 +1193,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             ArrayList<CjguiComposableUiLayoutNode>())
         this.nextProjectionVersion = 0
         this.lastControllerSceneVersion = -1
+        this.lastAcceptedBusinessOwnerRevision = -1
         this.lastViewportResizeVersion = 0u64
         this.lastResourceCompletionVersion = 0u64
         this.lastAttemptedControllerSceneVersion = -1
@@ -1176,6 +1248,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         this.pendingLocalTextResourceId = -1
         this.pendingLocalTextNodeKind = -1
         this.pendingLocalTextValue = ""
+        this.pendingLocalTextOwnerRevision = -1
         this.localTextContinuationNodeId = -1
         this.localTextContinuationResourceId = -1
         this.localTextContinuationNodeKind = -1
@@ -1299,6 +1372,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         lastLayoutReuseReplayedNodeCount = 0
         lastLayoutReuseEntryCount = 0
         lastControllerSceneVersion = -1
+        lastAcceptedBusinessOwnerRevision = -1
         lastViewportResizeVersion = 0u64
         lastResourceCompletionVersion = 0u64
         lastAttemptedControllerSceneVersion = -1
@@ -1945,6 +2019,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         pendingLocalTextResourceId = continuation.resourceId
                         pendingLocalTextNodeKind = continuation.nodeKind
                         pendingLocalTextValue = eventText
+                        pendingLocalTextOwnerRevision = currentBusinessOwnerRevision()
                         localTextContinuationNodeId = continuation.nodeId
                         localTextContinuationResourceId = continuation.resourceId
                         localTextContinuationNodeKind = continuation.nodeKind
@@ -2650,6 +2725,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
     }
 
+    private func currentBusinessOwnerRevision(): Int64 {
+        if (let Some(provider) <- (controller as CjguiComposableUiBusinessOwnerRevisionProvider)) {
+            return provider.uiBusinessOwnerRevision()
+        }
+        return -1
+    }
+
     private func syncProjection(viewport: InternalRendererViewportResult, declaredVersion: Int64): Bool {
         // A participant prepares only a Cangjie candidate. It is deliberately
         // opened before buildUi, then either promoted with the accepted native
@@ -2695,6 +2777,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
             let buildStarted = MonoTime.now()
             startupPhase = "controller_build"
+            let ownerRevisionBeforeBuild = currentBusinessOwnerRevision()
             let declaredRoot = controller.buildUi()
             let buildElapsed = MonoTime.now() - buildStarted
             lastBuildElapsedMs = buildElapsed.toMilliseconds()
@@ -2863,6 +2946,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
                     reason: "data_transfer_bindings_invalid")
             }
+            let candidateBusinessOwnerRevision = if (ownerRevisionBeforeBuild == currentBusinessOwnerRevision()) {
+                ownerRevisionBeforeBuild
+            } else {
+                -1
+            }
             // `refresh()` is deliberately conservative for compatibility. Once a
             // real invalidation reaches this point, compare the resolved scene as
             // the correctness gate: a Cangjie UI revision may describe an
@@ -2882,7 +2970,18 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             let sameSceneComparisonStarted = MonoTime.now()
             let matchesRenderedScene = sameRenderedScene(paintScene)
             lastRefreshTiming.sameSceneComparisonNanoseconds = elapsedNanoseconds(sameSceneComparisonStarted)
+            // Same pixels do not prove the text owner is unchanged. A same-value
+            // external write still needs a native generation with hint=0 so its
+            // old editing context cannot survive a semantic-only acceptance.
+            let ownerRevisionRequiresNativeTextReconcile = focusedNodeId >= 0 &&
+                cjguiOwnerRevisionRequiresNativeTextReconcile(
+                lastAcceptedBusinessOwnerRevision, candidateBusinessOwnerRevision,
+                nativeInputScene.nodeForId(focusedNodeId), focusedNodeId, focusedResourceId, focusedNodeKind)
+            let focusedTextBindingRequiresNativeReconcile = focusedNodeId >= 0 &&
+                cjguiFocusedTextBindingRequiresNativeReconcile(nativeInputScene.nodeForId(focusedNodeId),
+                paintScene.nodeForId(focusedNodeId), focusedNodeId, focusedResourceId, focusedNodeKind)
             if (!resourceCompletionChanged && !geometryChanged && matchesRenderedScene &&
+                !ownerRevisionRequiresNativeTextReconcile && !focusedTextBindingRequiresNativeReconcile &&
                 sameDataTransferBindings(candidateDataTransferBindings, dataTransferBindings)) {
                 // Transparent non-interactive grouping nodes can change only their
                 // containment while leaving every rendered/hit-testable node
@@ -2922,6 +3021,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 reconcileOwnedViewStateAfterAcceptance(root)
                 acceptedSceneVersion = renderedScene.version
                 lastControllerSceneVersion = declaredVersion
+                lastAcceptedBusinessOwnerRevision = candidateBusinessOwnerRevision
                 lastViewportResizeVersion = viewport.resizeVersion
                 lastResourceCompletionVersion = viewport.resourceCompletionVersion
                 refreshRequested = false
@@ -2971,6 +3071,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             for (scopeNode in previousNativeNodes) {
                 let _ = previousInputScopes.codeFor(scopeNode.inputScopeId)
             }
+            let hasBusinessOwnerRevisionProvider =
+                (controller as CjguiComposableUiBusinessOwnerRevisionProvider).isSome()
             var index: Int64 = 0
             while (index < nodes.size) {
                 let node = nodes[index]
@@ -2981,8 +3083,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     0u64
                 }
                 let completionNeedsImageRestage = resourceCompletionChanged && node.nodeKind == CJGUI_COMPOSABLE_UI_IMAGE
+                let preservesOwnerStableText = node.nodeId == focusedNodeId && cjguiPreservesOwnerStableText(
+                    previouslySubmittedScene.nodeForId(node.nodeId), node, lastAcceptedBusinessOwnerRevision,
+                    candidateBusinessOwnerRevision, focusedNodeId, focusedResourceId, focusedNodeKind)
+                // The accepted COW node can carry an earlier preserve bit.
+                // Restage the focused editor on every native generation so this
+                // transaction explicitly sets or clears that one-shot hint.
                 let canReuseStagedNativeNode = !completionNeedsImageRestage && index < previousNativeNodes.size &&
-                    sameLayoutNode(previousNativeNodes[index], node) && previousNativeInputScope == nativeInputScope
+                    sameLayoutNode(previousNativeNodes[index], node) && previousNativeInputScope == nativeInputScope &&
+                    !(node.nodeId == focusedNodeId && isEditableTextNodeKind(node.nodeKind))
                 if (canReuseStagedNativeNode) {
                     index += 1
                     continue
@@ -2992,10 +3101,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 // from the adapter's point of view. Only the exact event value
                 // for this still-focused text identity may skip the full
                 // Cangjie-to-NSString round trip.
-                let preservesActiveLocalText = node.nodeId == pendingLocalTextNodeId && node.resourceId ==
+                let preservesRecentLocalText = node.nodeId == pendingLocalTextNodeId && node.resourceId ==
                     pendingLocalTextResourceId && node.nodeKind == pendingLocalTextNodeKind && isEditableTextNodeKind(
                     node.nodeKind) && node.value == pendingLocalTextValue && focusedNodeId == node.nodeId &&
-                    focusedResourceId == node.resourceId && focusedNodeKind == node.nodeKind
+                    focusedResourceId == node.resourceId && focusedNodeKind == node.nodeKind &&
+                    cjguiLocalTextOwnerRevisionMatches(hasBusinessOwnerRevisionProvider,
+                    pendingLocalTextOwnerRevision, candidateBusinessOwnerRevision) &&
+                    cjguiSameFocusedTextBinding(
+                    previouslySubmittedScene.nodeForId(node.nodeId), node, focusedNodeId, focusedResourceId,
+                    focusedNodeKind)
+                let preservesActiveLocalText = preservesRecentLocalText || preservesOwnerStableText
                 let clipConstraints = node.clipConstraints()
                 let clip0 = if (clipConstraints.size > 0) {
                     clipConstraints[0]
@@ -3167,6 +3282,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 // 不再由下一次 present“顺便结算”。
                 return beginPendingTransaction(participant: participant, root: root, paintScene: paintScene,
                     previouslySubmittedScene: previouslySubmittedScene, declaredVersion: declaredVersion,
+                    candidateBusinessOwnerRevision: candidateBusinessOwnerRevision,
                     viewport: viewport, candidateCommands: candidateCommands,
                     candidateDataTransferBindings: candidateDataTransferBindings, ticketId: frame.ticketId,
                     consumedRequestEpoch: refreshRequestEpoch)
@@ -3185,6 +3301,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 previouslySubmittedScene: previouslySubmittedScene, participant: participant,
                 candidateCommands: candidateCommands,
                 candidateDataTransferBindings: candidateDataTransferBindings, declaredVersion: declaredVersion,
+                candidateBusinessOwnerRevision: candidateBusinessOwnerRevision,
                 viewportResizeVersion: viewport.resizeVersion,
                 viewportResourceCompletionVersion: viewport.resourceCompletionVersion,
                 frameIndex: Int64(frame.frameIndex), readbackCompleted: frame.readbackCompleted,
@@ -4073,12 +4190,20 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// callers decide whether an unchanged node can be reused before entering
     /// here. No layout, measurement, or controller callback happens here.
     private func stageComposableSceneNode(node: CjguiComposableUiLayoutNode, projectionVersion: Int64,
-        index: Int64, nativeInputScope: UInt64): Int32 {
+        index: Int64, nativeInputScope: UInt64, candidateBusinessOwnerRevision: Int64,
+        preservesOwnerStableText: Bool): Int32 {
         let style = node.style
-        let preservesActiveLocalText = node.nodeId == pendingLocalTextNodeId && node.resourceId ==
+        let hasBusinessOwnerRevisionProvider =
+            (controller as CjguiComposableUiBusinessOwnerRevisionProvider).isSome()
+        let preservesRecentLocalText = node.nodeId == pendingLocalTextNodeId && node.resourceId ==
             pendingLocalTextResourceId && node.nodeKind == pendingLocalTextNodeKind && isEditableTextNodeKind(
             node.nodeKind) && node.value == pendingLocalTextValue && focusedNodeId == node.nodeId &&
-            focusedResourceId == node.resourceId && focusedNodeKind == node.nodeKind
+            focusedResourceId == node.resourceId && focusedNodeKind == node.nodeKind &&
+            cjguiLocalTextOwnerRevisionMatches(hasBusinessOwnerRevisionProvider,
+            pendingLocalTextOwnerRevision, candidateBusinessOwnerRevision) &&
+            cjguiSameFocusedTextBinding(
+            nativeInputScene.nodeForId(node.nodeId), node, focusedNodeId, focusedResourceId, focusedNodeKind)
+        let preservesActiveLocalText = preservesRecentLocalText || preservesOwnerStableText
         let clipConstraints = node.clipConstraints()
         let clip0 = if (clipConstraints.size > 0) {
             clipConstraints[0]
@@ -4252,6 +4377,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         lastRefreshTiming.interactionPaintResolutionNanoseconds = elapsedNanoseconds(resolutionStarted)
         let previousNodes = nativeInputScene.nodes()
         let nextNodes = paintScene.nodes()
+        let candidateBusinessOwnerRevision = currentBusinessOwnerRevision()
         lastRefreshTiming.candidateNodeCount = nextNodes.size
         if (previousNodes.size != nextNodes.size) {
             return noteInteractionPaintFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
@@ -4309,8 +4435,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             let node = nextNodes[index]
             let nativeInputScope = nextInputScopes.codeFor(node.inputScopeId)
             let previousNativeInputScope = previousInputScopes.codeFor(previousNodes[index].inputScopeId)
-            if (!sameLayoutNode(previousNodes[index], node) || previousNativeInputScope != nativeInputScope) {
-                lastNativeStatus = stageComposableSceneNode(node, candidateVersion, index, nativeInputScope)
+            let preservesOwnerStableText = node.nodeId == focusedNodeId && cjguiPreservesOwnerStableText(
+                nativeInputScene.nodeForId(node.nodeId), node, lastAcceptedBusinessOwnerRevision,
+                candidateBusinessOwnerRevision, focusedNodeId, focusedResourceId, focusedNodeKind)
+            // Paint-only native generations must also replace a stale COW hint.
+            if (!sameLayoutNode(previousNodes[index], node) || previousNativeInputScope != nativeInputScope ||
+                (node.nodeId == focusedNodeId && isEditableTextNodeKind(node.nodeKind))) {
+                lastNativeStatus = stageComposableSceneNode(node, candidateVersion, index, nativeInputScope,
+                    candidateBusinessOwnerRevision, preservesOwnerStableText)
                 if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
                     lastRefreshTiming.nativeStageAndSubmitNanoseconds = elapsedNanoseconds(stageStarted)
                     return noteInteractionPaintFailure(lastNativeStatus)
@@ -5116,6 +5248,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pendingLocalTextResourceId = -1
         pendingLocalTextNodeKind = -1
         pendingLocalTextValue = ""
+        pendingLocalTextOwnerRevision = -1
     }
     private func clearLocalTextContinuation(): Unit {
         localTextContinuationNodeId = -1
@@ -5164,7 +5297,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         participant!: ?CjguiComposableUiSceneRefreshParticipant,
         candidateCommands!: ArrayList<CjguiComposableUiCommand>,
         candidateDataTransferBindings!: ArrayList<CjguiComposableUiDataTransferBinding>,
-        declaredVersion!: Int64, viewportResizeVersion!: UInt64, viewportResourceCompletionVersion!: UInt64,
+        declaredVersion!: Int64, candidateBusinessOwnerRevision!: Int64,
+        viewportResizeVersion!: UInt64, viewportResourceCompletionVersion!: UInt64,
         frameIndex!: Int64, readbackCompleted!: UInt8, consumedRequestEpoch!: Int64): Bool {
         renderedRoot = root
         renderedScene = paintScene
@@ -5190,6 +5324,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             observedMetalCompletionFrameIndex = frameIndex
         }
         lastControllerSceneVersion = declaredVersion
+        lastAcceptedBusinessOwnerRevision = candidateBusinessOwnerRevision
         lastViewportResizeVersion = viewportResizeVersion
         lastResourceCompletionVersion = viewportResourceCompletionVersion
         // A1：只消费原事务记录的那个 epoch。等待期间若有更新的刷新请求，必须
@@ -5231,6 +5366,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pendingLocalTextResourceId = -1
         pendingLocalTextNodeKind = -1
         pendingLocalTextValue = ""
+        pendingLocalTextOwnerRevision = -1
         return true
     }
 
@@ -5270,6 +5406,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private func beginPendingTransaction(participant!: ?CjguiComposableUiSceneRefreshParticipant,
         root!: CjguiComposableUiNode, paintScene!: CjguiComposableUiScene,
         previouslySubmittedScene!: CjguiComposableUiScene, declaredVersion!: Int64,
+        candidateBusinessOwnerRevision!: Int64,
         viewport!: InternalRendererViewportResult,
         candidateCommands!: ArrayList<CjguiComposableUiCommand>,
         candidateDataTransferBindings!: ArrayList<CjguiComposableUiDataTransferBinding>,
@@ -5277,7 +5414,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return recordPendingTransaction(0, ticketId, consumedRequestEpoch, paintScene, root: root,
             previouslySubmittedScene: previouslySubmittedScene, participant: participant,
             candidateCommands: candidateCommands, candidateDataTransferBindings: candidateDataTransferBindings,
-            declaredVersion: declaredVersion, viewportResizeVersion: viewport.resizeVersion,
+            declaredVersion: declaredVersion, candidateBusinessOwnerRevision: candidateBusinessOwnerRevision,
+            viewportResizeVersion: viewport.resizeVersion,
             viewportResourceCompletionVersion: viewport.resourceCompletionVersion)
     }
 
@@ -5297,7 +5435,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         participant!: ?CjguiComposableUiSceneRefreshParticipant = None,
         candidateCommands!: ?ArrayList<CjguiComposableUiCommand> = None,
         candidateDataTransferBindings!: ?ArrayList<CjguiComposableUiDataTransferBinding> = None,
-        declaredVersion!: Int64 = 0, viewportResizeVersion!: UInt64 = 0u64,
+        declaredVersion!: Int64 = 0, candidateBusinessOwnerRevision!: Int64 = -1,
+        viewportResizeVersion!: UInt64 = 0u64,
         viewportResourceCompletionVersion!: UInt64 = 0u64,
         interactionDataTransferBindings!: ?ArrayList<CjguiComposableUiDataTransferBinding> = None): Bool {
         lastNativeStatus = CJGUI_INTERNAL_RENDERER_PRESENT_PENDING
@@ -5317,7 +5456,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             ticketId, consumedRequestEpoch, paintScene, root: root,
             previouslySubmittedScene: previouslySubmittedScene, participant: participant,
             candidateCommands: candidateCommands, candidateDataTransferBindings: candidateDataTransferBindings,
-            declaredVersion: declaredVersion, viewportResizeVersion: viewportResizeVersion,
+            declaredVersion: declaredVersion, candidateBusinessOwnerRevision: candidateBusinessOwnerRevision,
+            viewportResizeVersion: viewportResizeVersion,
             viewportResourceCompletionVersion: viewportResourceCompletionVersion,
             interactionDataTransferBindings: interactionDataTransferBindings))
         return false
@@ -5507,6 +5647,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return finishAcceptedScene(root: rootValue, paintScene: tx.paintScene,
             previouslySubmittedScene: previous, participant: tx.participant, candidateCommands: commands,
             candidateDataTransferBindings: bindings, declaredVersion: tx.declaredVersion,
+            candidateBusinessOwnerRevision: tx.candidateBusinessOwnerRevision,
             viewportResizeVersion: tx.viewportResizeVersion,
             viewportResourceCompletionVersion: tx.viewportResourceCompletionVersion,
             frameIndex: Int64(settledFrameIndex), readbackCompleted: 0u8,
@@ -5878,6 +6019,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pendingLocalTextResourceId = -1
         pendingLocalTextNodeKind = -1
         pendingLocalTextValue = ""
+        pendingLocalTextOwnerRevision = -1
         localTextContinuationNodeId = -1
         localTextContinuationResourceId = -1
         localTextContinuationNodeKind = -1

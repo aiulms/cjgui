@@ -1915,7 +1915,7 @@ public class CjguiSharedOperationExternalConnection {
         // STYLES is a section of its own: a client that observed a style
         // definition change re-reads the directory without pulling a tree.
         if (section != "FIELDS" && section != "STRUCTURE" && section != "INSTANCES" &&
-            section != "STYLES") {
+            section != "STYLES" && section != "EFFECTS" && section != "PLATFORM") {
             return errorPayload("invalid_request")
         }
         if (let Some(provider) <- generatedUiProvider) {
@@ -2271,11 +2271,51 @@ public class CjguiSharedOperationExternalConnection {
             progress.observedMetalGpuDurationMicros < -1 || progress.overlayDrawnSceneVersion < -1 ||
             !isSafeIdentifier(progress.presentationState) || !isSafeIdentifier(progress.sessionIdentity) ||
             !isSafeWindowDiagnostic(progress.pendingRefreshReason) ||
-            !isSafeWindowDiagnostic(progress.lastNativeFailure)) {
+            !isSafeWindowDiagnostic(progress.lastNativeFailure) ||
+            progress.effectRequestedRadiusPoints < 0 || progress.effectRequestedRadiusPoints > 16 ||
+            progress.effectSubmittedSceneVersion < -1 || progress.effectSubmittedFrameIndex < -1 ||
+            progress.effectSubmittedRadiusPoints < 0 || progress.effectSubmittedRadiusPoints > 16 ||
+            !isSafeIdentifier(progress.effectIdentity) || !isSafeIdentifier(progress.effectSubmittedMode) ||
+            !isSafeIdentifier(progress.effectFallbackReason) || !isSafeIdentifier(progress.effectCompletion) ||
+            !isSafeIdentifier(progress.windowBackgroundIdentity) ||
+            !isSafeIdentifier(progress.windowBackgroundRequested) ||
+            !isSafeIdentifier(progress.windowBackgroundBackend) ||
+            !isSafeIdentifier(progress.windowBackgroundActual) ||
+            !isSafeIdentifier(progress.windowBackgroundFallbackReason) ||
+            progress.windowBackgroundAcceptedSceneVersion < -1 || progress.windowBackgroundFrameIndex < -1 ||
+            progress.windowBackgroundRequestRevision < 0 || progress.windowBackgroundEnvironmentRevision < 0 ||
+            progress.windowBackgroundObservationRevision < 0 ||
+            !isSafeIdentifier(progress.windowBackgroundCompletion) ||
+            progress.windowBackgroundVisualResult != "unobserved" ||
+            (progress.windowBackgroundColorScheme != "light" &&
+                progress.windowBackgroundColorScheme != "dark" &&
+                progress.windowBackgroundColorScheme != "unavailable")) {
             return errorPayload("invalid_window_progress")
         }
         var payload = "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND WINDOW_PROGRESS\n${targetLine}WINDOW_PROJECTION ACTIVE\nWINDOW_SCENE_VERSION ${progress.sceneVersion}\nWINDOW_NATIVE_SUBMISSION_VERSION ${progress.nativeSubmissionVersion}\nWINDOW_PRESENTATION_STATE ${progress.presentationState}\nWINDOW_SESSION ${progress.sessionIdentity}\nWINDOW_ACCEPTED_SCENE_VERSION ${progress.acceptedSceneVersion}\nWINDOW_SUBMITTED_SCENE_VERSION ${progress.submittedSceneVersion}\nWINDOW_SUBMITTED_FRAME_INDEX ${progress.submittedFrameIndex}\nWINDOW_METAL_COMPLETED_FRAME_INDEX ${progress.observedMetalCompletionFrameIndex}\nWINDOW_METAL_FAILED_FRAME_INDEX ${progress.observedMetalFailureFrameIndex}\nWINDOW_METAL_GPU_DURATION_MICROS ${progress.observedMetalGpuDurationMicros}\nWINDOW_OVERLAY_DRAWN_SCENE_VERSION ${progress.overlayDrawnSceneVersion}\nWINDOW_REFRESH_PENDING ${progress.pendingRefreshReason}\nWINDOW_LAST_NATIVE_FAILURE ${progress.lastNativeFailure}\n"
-        payload = "${payload}END"
+        payload = "${payload}WINDOW_EFFECT_ID ${progress.effectIdentity}\n" +
+            "WINDOW_EFFECT_REQUESTED_RADIUS_POINTS ${progress.effectRequestedRadiusPoints}\n" +
+            "WINDOW_EFFECT_SUBMITTED_SCENE_VERSION ${progress.effectSubmittedSceneVersion}\n" +
+            "WINDOW_EFFECT_SUBMITTED_FRAME_INDEX ${progress.effectSubmittedFrameIndex}\n" +
+            "WINDOW_EFFECT_SUBMITTED_RADIUS_POINTS ${progress.effectSubmittedRadiusPoints}\n" +
+            "WINDOW_EFFECT_SUBMITTED_MODE ${progress.effectSubmittedMode}\n" +
+            "WINDOW_EFFECT_FALLBACK_REASON ${progress.effectFallbackReason}\n" +
+            "WINDOW_EFFECT_COMPLETION ${progress.effectCompletion}\n" +
+            "WINDOW_BACKGROUND_IDENTITY ${progress.windowBackgroundIdentity}\n" +
+            "WINDOW_BACKGROUND_REQUESTED ${progress.windowBackgroundRequested}\n" +
+            "WINDOW_BACKGROUND_BACKEND ${progress.windowBackgroundBackend}\n" +
+            "WINDOW_BACKGROUND_ACTUAL ${progress.windowBackgroundActual}\n" +
+            "WINDOW_BACKGROUND_FALLBACK_REASON ${progress.windowBackgroundFallbackReason}\n" +
+            "WINDOW_BACKGROUND_ACCEPTED_SCENE_VERSION ${progress.windowBackgroundAcceptedSceneVersion}\n" +
+            "WINDOW_BACKGROUND_FRAME_INDEX ${progress.windowBackgroundFrameIndex}\n" +
+            "WINDOW_BACKGROUND_REQUEST_REVISION ${progress.windowBackgroundRequestRevision}\n" +
+            "WINDOW_BACKGROUND_ENVIRONMENT_REVISION ${progress.windowBackgroundEnvironmentRevision}\n" +
+            "WINDOW_BACKGROUND_OBSERVATION_REVISION ${progress.windowBackgroundObservationRevision}\n" +
+            "WINDOW_BACKGROUND_COMPLETION ${progress.windowBackgroundCompletion}\n" +
+            "WINDOW_BACKGROUND_REDUCE_TRANSPARENCY ${progress.windowBackgroundReduceTransparency}\n" +
+            "WINDOW_BACKGROUND_ACTIVE ${progress.windowBackgroundActive}\n" +
+            "WINDOW_BACKGROUND_VISUAL_RESULT ${progress.windowBackgroundVisualResult}\n" +
+            "WINDOW_BACKGROUND_COLOR_SCHEME ${progress.windowBackgroundColorScheme}\nEND"
         if (!isBoundedPayload(payload)) {
             return errorPayload("response_too_large")
         }

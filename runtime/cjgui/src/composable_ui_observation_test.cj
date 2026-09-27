@@ -21,12 +21,13 @@ private func observationSource(endpoint: String, owner: Int64, draft: Int64, bin
                               instances: Int64, pendingScene!: Bool = false,
                               resourceRevision!: Int64 = 0,
                               structurePending!: Bool = false,
-                              styleRevision!: Int64 = 0):
+                              styleRevision!: Int64 = 0,
+                              effectFacts!: String = ""):
     CjguiGeneratedUiObservationSource {
     return CjguiGeneratedUiObservationSource(endpoint, owner, draft, binding, structure,
         candidateToken, candidateState, scene, geometry, interaction, instances, pendingScene,
         resourceRevision: resourceRevision, structureCandidatePending: structurePending,
-        styleRevision: styleRevision)
+        styleRevision: styleRevision, effectFacts: effectFacts)
 }
 
 @Test
@@ -258,4 +259,97 @@ func generatedObservationTracksStyleDirectoryChanges(): Unit {
 
     // No further change: the cursor stays where it was.
     @Assert(tracker.observeSource(restyled), 1)
+}
+
+/// Actual effect presentation changes independently of generated declarations,
+/// fields, structure and scene revisions. Snapshots and guarded reads must carry
+/// the same sampled scalar lines.
+@Test
+func generatedObservationTracksActualEffectPresentation(): Unit {
+    let tracker = CjguiGeneratedUiObservationTracker()
+    let fallback = observationSource("session-e", 1, 0, 10, 1, 0, "scene_accepted", 5, 100, 7, 4,
+        effectFacts: "owner=effect-1 commit=10 requested=blur actual=unblurred reason=budget")
+    @Assert(tracker.observeSource(fallback), 0)
+    let snapshot = cjguiGeneratedUiSnapshotPayload(tracker, fallback, "", "", "")
+    @Assert(snapshot.contains(
+        "SNAPSHOT_EFFECT owner=effect-1 commit=10 requested=blur actual=unblurred reason=budget"), true)
+
+    let recovered = observationSource("session-e", 1, 0, 10, 1, 0, "scene_accepted", 5, 100, 7, 4,
+        effectFacts: "owner=effect-1 commit=11 requested=blur actual=blurred reason=none")
+    @Assert(tracker.observeSource(recovered), 1)
+    let changes = tracker.changesPayload(tracker.streamEpoch(), 0)
+    @Assert(changes.contains("CHANGE 1 EFFECTS changed"), true)
+    @Assert(changes.contains("CHANGE 1 SCENE"), false)
+    @Assert(tracker.observeSource(recovered), 1)
+
+    let effects = cjguiGeneratedUiSectionPayload(tracker, "EFFECTS", 1, recovered.effectFacts)
+    @Assert(effects.contains("SECTION EFFECTS"), true)
+    @Assert(effects.contains("SNAPSHOT_EFFECT owner=effect-1 commit=11 requested=blur actual=blurred reason=none"), true)
+    let stale = cjguiGeneratedUiSectionPayload(tracker, "EFFECTS", 0, recovered.effectFacts)
+    @Assert(stale.contains("SNAPSHOT_REVISION_CHANGED 1"), true)
+    @Assert(stale.contains("SNAPSHOT_EFFECT"), false)
+}
+
+/// System window background facts share EFFECTS' cursor while blur facts and
+/// every scene/declaration revision stay fixed. Request and backend changes
+/// each advance that cursor on their own.
+@Test
+func generatedObservationTracksWindowBackgroundOnlyChanges(): Unit {
+    let tracker = CjguiGeneratedUiObservationTracker()
+    let blurFacts = "EFFECT_ID none\nEFFECT_REQUESTED_RADIUS_POINTS 0\nEFFECT_SUBMITTED_MODE unavailable"
+    let requested = observationSource("session-bg", 1, 0, 10, 1, 0, "scene_accepted", 5, 100, 7, 4,
+        effectFacts: blurFacts + "\nWINDOW_BACKGROUND_IDENTITY window_content_background\n" +
+            "WINDOW_BACKGROUND_REQUESTED system_material\nWINDOW_BACKGROUND_BACKEND unavailable\n" +
+            "WINDOW_BACKGROUND_ACTUAL opaque\nWINDOW_BACKGROUND_FALLBACK_REASON not_requested\n" +
+            "WINDOW_BACKGROUND_REQUEST_REVISION 1\nWINDOW_BACKGROUND_ENVIRONMENT_REVISION 1\n" +
+            "WINDOW_BACKGROUND_OBSERVATION_REVISION 1\nWINDOW_BACKGROUND_ACTIVE false\n" +
+            "WINDOW_BACKGROUND_VISUAL_RESULT unobserved\nWINDOW_BACKGROUND_COLOR_SCHEME unavailable")
+    @Assert(tracker.observeSource(requested), 0)
+
+    let unsupported = observationSource("session-bg", 1, 0, 10, 1, 0, "scene_accepted", 5, 100, 7, 4,
+        effectFacts: blurFacts + "\nWINDOW_BACKGROUND_IDENTITY window_content_background\n" +
+            "WINDOW_BACKGROUND_REQUESTED system_material\nWINDOW_BACKGROUND_BACKEND unsupported\n" +
+            "WINDOW_BACKGROUND_ACTUAL opaque\nWINDOW_BACKGROUND_FALLBACK_REASON backend_unsupported\n" +
+            "WINDOW_BACKGROUND_REQUEST_REVISION 1\nWINDOW_BACKGROUND_ENVIRONMENT_REVISION 1\n" +
+            "WINDOW_BACKGROUND_OBSERVATION_REVISION 2\nWINDOW_BACKGROUND_ACTIVE false\n" +
+            "WINDOW_BACKGROUND_VISUAL_RESULT unobserved\nWINDOW_BACKGROUND_COLOR_SCHEME unavailable")
+    @Assert(tracker.observeSource(unsupported), 1)
+    let firstChange = tracker.changesPayload(tracker.streamEpoch(), 0)
+    @Assert(firstChange.contains("CHANGE 1 EFFECTS changed"), true)
+    @Assert(firstChange.contains("CHANGE 1 SCENE"), false)
+    @Assert(firstChange.contains("CHANGE 1 FIELDS"), false)
+    @Assert(firstChange.contains("CHANGE 1 STRUCTURE"), false)
+
+    let active = observationSource("session-bg", 1, 0, 10, 1, 0, "scene_accepted", 5, 100, 7, 4,
+        effectFacts: blurFacts + "\nWINDOW_BACKGROUND_IDENTITY window_content_background\n" +
+            "WINDOW_BACKGROUND_REQUESTED system_material\nWINDOW_BACKGROUND_BACKEND appkit_behind_window\n" +
+            "WINDOW_BACKGROUND_ACTUAL system_material\nWINDOW_BACKGROUND_FALLBACK_REASON none\n" +
+            "WINDOW_BACKGROUND_REQUEST_REVISION 1\nWINDOW_BACKGROUND_ENVIRONMENT_REVISION 2\n" +
+            "WINDOW_BACKGROUND_OBSERVATION_REVISION 3\nWINDOW_BACKGROUND_ACTIVE true\n" +
+            "WINDOW_BACKGROUND_VISUAL_RESULT unobserved\nWINDOW_BACKGROUND_COLOR_SCHEME light")
+    @Assert(tracker.observeSource(active), 2)
+    let secondChange = tracker.changesPayload(tracker.streamEpoch(), 1)
+    @Assert(secondChange.contains("CHANGE 2 EFFECTS changed"), true)
+    @Assert(secondChange.contains("CHANGE 2 SCENE"), false)
+    @Assert(secondChange.contains("CHANGE 2 FIELDS"), false)
+    @Assert(secondChange.contains("CHANGE 2 STRUCTURE"), false)
+
+    let dark = observationSource("session-bg", 1, 0, 10, 1, 0, "scene_accepted", 5, 100, 7, 4,
+        effectFacts: blurFacts + "\nWINDOW_BACKGROUND_IDENTITY window_content_background\n" +
+            "WINDOW_BACKGROUND_REQUESTED system_material\nWINDOW_BACKGROUND_BACKEND appkit_behind_window\n" +
+            "WINDOW_BACKGROUND_ACTUAL system_material\nWINDOW_BACKGROUND_FALLBACK_REASON none\n" +
+            "WINDOW_BACKGROUND_REQUEST_REVISION 1\nWINDOW_BACKGROUND_ENVIRONMENT_REVISION 2\n" +
+            "WINDOW_BACKGROUND_OBSERVATION_REVISION 3\nWINDOW_BACKGROUND_ACTIVE true\n" +
+            "WINDOW_BACKGROUND_VISUAL_RESULT unobserved\nWINDOW_BACKGROUND_COLOR_SCHEME dark")
+    @Assert(tracker.observeSource(dark), 3)
+    let themeChange = tracker.changesPayload(tracker.streamEpoch(), 2)
+    @Assert(themeChange.contains("CHANGE 3 EFFECTS changed"), true)
+    @Assert(themeChange.contains("CHANGE 3 SCENE"), false)
+    @Assert(themeChange.contains("CHANGE 3 FIELDS"), false)
+    @Assert(themeChange.contains("CHANGE 3 STRUCTURE"), false)
+
+    let effects = cjguiGeneratedUiSectionPayload(tracker, "EFFECTS", 3, dark.effectFacts)
+    @Assert(effects.contains("WINDOW_BACKGROUND_BACKEND appkit_behind_window"), true)
+    @Assert(effects.contains("WINDOW_BACKGROUND_VISUAL_RESULT unobserved"), true)
+    @Assert(effects.contains("WINDOW_BACKGROUND_COLOR_SCHEME dark"), true)
 }

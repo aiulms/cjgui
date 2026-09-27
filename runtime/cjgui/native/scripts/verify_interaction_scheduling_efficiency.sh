@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 RUN_MODE="${CJGUI_INTERACTION_SCHEDULING_RUN_MODE:-full}"
 if [[ "$RUN_MODE" == "latency" ]]; then
   OUTPUT_DIR="${CJGUI_INTERACTION_SCHEDULING_TMPDIR:-/private/tmp/cjgui-dual-window-latency/$(date +%Y%m%d-%H%M%S)-$$}"
@@ -79,12 +82,7 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_interaction_scheduling.a" \
   "$OUTPUT_DIR/native/cjgui_macos_application_launcher.o"
 
 cjc --sysroot "$SDKROOT_PATH" --import-path "$SHARED_CORE" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_named_style.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$PROBE_SRC" \
   -L "$SHARED_CORE" -lcjgui_shared_operation_core \
   -L "$OUTPUT_DIR/native" -lcjgui_interaction_scheduling \
@@ -187,6 +185,9 @@ write_latency_fingerprints() {
     "$LATENCY_CLIENT_SRC" \
     "$RUNTIME_DIR/shared_operation_core/src/shared_operation_transport.cj" \
     "$RUNTIME_DIR/src/composable_ui_window.cj" \
+    "$RUNTIME_DIR/src/composable_ui_animation.cj" \
+    "$RUNTIME_DIR/src/runtime_renderer_text_geometry_query.cj" \
+    "$RUNTIME_DIR/src/composable_ui_named_style.cj" \
     "$RUNTIME_DIR/shared_operation_core/src/shared_text_document_workspace.cj" \
     "$CLIENT" \
     "$OUTPUT_DIR/interaction_scheduling_efficiency_probe" \

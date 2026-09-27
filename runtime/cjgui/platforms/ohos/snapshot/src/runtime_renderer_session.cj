@@ -157,6 +157,14 @@ struct CjguiInternalRendererEvent {
     var pointerX: Int64 = 0
     var pointerY: Int64 = 0
     var modifierFlags: Int64 = 0
+    // kind 52 组字相位记录（其余 kind 恒为 0/-1，与 C 头逐字段同序）。
+    var compositionPhase: UInt32 = 0
+    var replacementStart16: Int64 = -1
+    var replacementLength16: Int64 = 0
+    var markedStart16: Int64 = -1
+    var markedLength16: Int64 = 0
+    var compositionId: UInt64 = 0
+    var bindingEpoch: UInt64 = 0
 }
 
 @C
@@ -468,9 +476,18 @@ struct InternalRendererPumpResult {
     let pointerX: Int64
     let pointerY: Int64
     let modifierFlags: Int64
+    let compositionPhase: UInt32
+    let replacementStart16: Int64
+    let replacementLength16: Int64
+    let markedStart16: Int64
+    let markedLength16: Int64
+    let compositionId: UInt64
+    let bindingEpoch: UInt64
     init(status: Int32, eventKind: UInt32, recordIndex: UInt32, selectionStart: UInt32, selectionEnd: UInt32,
         nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64, nodeKind: UInt32, pointerX: Int64,
-        pointerY: Int64, modifierFlags: Int64) {
+        pointerY: Int64, modifierFlags: Int64, compositionPhase: UInt32, replacementStart16: Int64,
+        replacementLength16: Int64, markedStart16: Int64, markedLength16: Int64, compositionId: UInt64,
+        bindingEpoch: UInt64) {
         this.status = status
         this.eventKind = eventKind
         this.recordIndex = recordIndex
@@ -483,6 +500,13 @@ struct InternalRendererPumpResult {
         this.pointerX = pointerX
         this.pointerY = pointerY
         this.modifierFlags = modifierFlags
+        this.compositionPhase = compositionPhase
+        this.replacementStart16 = replacementStart16
+        this.replacementLength16 = replacementLength16
+        this.markedStart16 = markedStart16
+        this.markedLength16 = markedLength16
+        this.compositionId = compositionId
+        this.bindingEpoch = bindingEpoch
     }
 }
 
@@ -550,6 +574,15 @@ foreign {
     func cjgui_internal_renderer_set_window_title(session: UInt64, title: CString): Int32
 
     func cjgui_internal_renderer_set_composable_range_edit_delta(session: UInt64, enabled: Int32): Int32
+
+    func cjgui_internal_renderer_set_composable_owned_text_session(
+        session: UInt64,
+        nodeId: UInt64,
+        resourceId: Int64,
+        nodeKind: UInt32,
+        bindingEpoch: UInt64,
+        enabled: Int32
+    ): Int32
 
     func cjgui_internal_renderer_recover_active_text_proxy(
         session: UInt64,
@@ -923,7 +956,8 @@ func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32): InternalRend
     }
     return InternalRendererPumpResult(status, event.kind, event.recordIndex, event.selectionStart, event.selectionEnd,
         event.nodeId, event.projectionVersion, event.resourceId, event.nodeKind, event.pointerX, event.pointerY,
-        event.modifierFlags)
+        event.modifierFlags, event.compositionPhase, event.replacementStart16, event.replacementLength16,
+        event.markedStart16, event.markedLength16, event.compositionId, event.bindingEpoch)
 }
 
 func internalRendererConfigureComposableScene(session: UInt64, projectionVersion: UInt64, nodeCount: UInt32): Int32 {
@@ -1637,6 +1671,22 @@ func internalRendererSetComposableRangeEditDelta(session: UInt64, enabled: Bool)
         0
     }
     return unsafe { cjgui_internal_renderer_set_composable_range_edit_delta(session, flag) }
+}
+
+/// 声明(或撤回)窗口拥有的那个文本节点:它的平台组字相位以 kind 52 送达该
+/// 会话,对应整值/范围事件被抑制。`bindingEpoch` 原样回传,供窗口拒绝换绑前
+/// 入队的旧回调;`enabled` 为 false 时撤回声明。
+func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt64, resourceId: Int64,
+    nodeKind: UInt32, bindingEpoch: UInt64, enabled: Bool): Int32 {
+    let flag: Int32 = if (enabled) {
+        1
+    } else {
+        0
+    }
+    return unsafe {
+        cjgui_internal_renderer_set_composable_owned_text_session(session, nodeId, resourceId, nodeKind,
+            bindingEpoch, flag)
+    }
 }
 
 func internalRendererFormEventText(session: UInt64): String {

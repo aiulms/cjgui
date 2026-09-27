@@ -62,6 +62,9 @@ elif [ "$TEST_GATES" = "1" ]; then
 else
   BUILD_VARIANT="normal"
 fi
+if [ "$TEST_GATES" = "1" ]; then
+  export CJGUI_TEST_GATES=1
+fi
 echo "BUILD_VARIANT=$BUILD_VARIANT"
 
 # A1 §5 闸门参数：按住首帧 Flush 的时长与次数。默认 4000ms / 1 次——
@@ -81,6 +84,18 @@ echo "RUN_ID=$RUN_ID"
 echo "== 0/7 平台指纹 + 同步框架平台源码 =="
 bash "$HERE/fingerprint.sh"
 bash "$HERE/sync_platform.sh" "$LAB"
+if [ "$TEST_GATES" = "1" ]; then
+  export CJGUI_TEST_GATES=1
+  # 第九次复核 B：host 侧闸门/夹具 define 必须进入 hvigor CMake（renderer.a
+  # 由 build_renderer.sh 注入，host_bridge 由本入口幂等注入 lab CMakeLists）。
+  for cm in "$LAB/entry/src/main/cpp/CMakeLists.txt"; do
+    if [ -f "$cm" ] && ! grep -q "CJGUI_OHOS_TEST_GATES" "$cm"; then
+      sed -i.bak 's/add_library(entry SHARED/add_compile_definitions(CJGUI_OHOS_TEST_GATES)\nadd_library(entry SHARED/' "$cm"
+      rm -f "$cm.bak"
+    fi
+  done
+fi
+
 
 echo "== 0b/7 编译宿主渲染器静态库 =="
 # shellcheck disable=SC2086  # GATE_RENDERER_ARG 为空时不应产生空参数
@@ -125,7 +140,17 @@ if ! "$DEVECO_CLI" build --build-mode debug >>"$LOG" 2>&1; then
 fi
 
 HAP="$LAB/entry/build/default/outputs/default/entry-default-unsigned.hap"
-[ -f "$HAP" ] || { echo "PRODUCT-FAIL 未找到 HAP: $HAP"; exit 1; }
+# devecocli 返回时大 HAP 可能仍在落盘（实测 33MB 包在返回后数秒才完成写入），
+# 有界等待而非立即失败；超时才是真失败。
+HAP_WAIT=0
+while [ ! -f "${HAP}" ] && [ "${HAP_WAIT}" -lt 20 ]; do
+  sleep 2
+  HAP_WAIT=$((HAP_WAIT + 2))
+done
+if [ ! -f "${HAP}" ]; then
+  echo "PRODUCT-FAIL 未找到 HAP: ${HAP}（等待 ${HAP_WAIT}s 后仍不存在）"
+  exit 1
+fi
 HAP_SHA="$(shasum -a 256 "$HAP" | awk '{print $1}')"
 echo "HAP: $HAP ($(du -h "$HAP" | cut -f1)) sha256=$HAP_SHA"
 cp "$HAP" "$ARTIFACTS/build/entry-default-unsigned-last.hap"
@@ -163,7 +188,10 @@ echo "== 2/7 依赖闭包校验（实际 NEEDED + 系统库白名单，缺一即
 if [ -n "${CJGUI_NEGATIVE_MISSING_LIB:-}" ]; then
   export CJGUI_EXTRA_REQUIRED_LIBS="${CJGUI_EXTRA_REQUIRED_LIBS:-$CJGUI_NEGATIVE_MISSING_LIB}"
 fi
-if ! bash "$HERE/verify_hap_closure.sh" "$HAP" "$RUN_DIR/closure_$RUN_ID.txt"; then
+# E.3：应用自身库名随 CJGUI_APP_DIR_NAME 参数化（库名 = libcjgui_<目录名>；
+# 独立消费者不再被写死为设置计数示例的库名，默认值保持原状）。
+if ! CJGUI_APP_PKG_LIB="libcjgui_${CJGUI_APP_DIR_NAME:-settings_counter_application}.so" \
+    bash "$HERE/verify_hap_closure.sh" "$HAP" "$RUN_DIR/closure_$RUN_ID.txt"; then
   if [ -n "${CJGUI_NEGATIVE_MISSING_LIB:-}" ]; then
     echo "NEGATIVE-CONTROL OK：缺库时闭包校验按预期失败"
     exit 0
@@ -173,13 +201,17 @@ if ! bash "$HERE/verify_hap_closure.sh" "$HAP" "$RUN_DIR/closure_$RUN_ID.txt"; t
 fi
 
 # 断言函数：只接受本轮日志（缓冲已清空）。
+# 双档语义（第八次复核链1/Q3）：
+#  - 真实渲染档：surface 发布 → owner 进入 Phase B（host started; pumping turns）
+#    且必须见场景提交（present frame ok）。
+#  - 未分类的 Surface 在 Phase A 暂时等待；这条日志不能决定最终档位。
+#  - 替身服务档须另见 KnownShimNoRef 与 published=0，才接受 owner 服务。
 assert_started() {
   local logfile="$1"
   local want_pid="${2:-}"
   local ok=0
   if grep -q "host started; pumping turns" "$logfile"; then
-    # E.2：marker 必须绑定本轮实例——hilog 行第 3 列是 PID，与本次启动 PID
-    # 核对；旧实例残留 marker（PID 不符）不能满足本轮断言。
+    # Surface 可能在 Phase A 暂时未发布；以之后的真实渲染结论为准。
     if [ -n "$want_pid" ] && [ "$want_pid" != "unknown" ]; then
       if grep "host started; pumping turns" "$logfile" | awk '{print $3}' | grep -qx "$want_pid"; then
         echo "  OK   marker 归属本轮 PID（pid=${want_pid}）"
@@ -189,14 +221,36 @@ assert_started() {
       fi
     fi
     echo "  OK   owner 启动（host started; pumping turns）"
+    if grep -q "present frame ok" "$logfile"; then
+      echo "  OK   场景提交（present frame ok）"
+    else
+      echo "  FAIL 缺场景提交日志"
+      ok=1
+    fi
+  elif grep -qE "surface pending; owner service active|stand-in serving" "$logfile"; then
+    # 确认最终分类后才接受无渲染 owner 服务。
+    if [ -n "$want_pid" ] && [ "$want_pid" != "unknown" ]; then
+      if grep -E "surface pending; owner service active|stand-in serving" "$logfile" | awk '{print $3}' | grep -qx "$want_pid"; then
+        echo "  OK   marker 归属本轮 PID（pid=${want_pid}）"
+      else
+        echo "  FAIL owner marker 的 PID 不是本轮实例（期望 pid=${want_pid}，属旧实例残留）"
+        ok=1
+      fi
+    fi
+    if grep -q "capability=KnownShimNoRef" "$logfile"; then
+      echo "  OK   已确认 KnownShimNoRef，owner 保持服务"
+    else
+      echo "  FAIL 等待期未确认 KnownShimNoRef"
+      ok=1
+    fi
+    if grep -q "published=0" "$logfile"; then
+      echo "  OK   surface 未发布（published=0）"
+    else
+      echo "  FAIL 替身档缺明确不发布证据（published=0）"
+      ok=1
+    fi
   else
-    echo "  FAIL 缺 owner 启动日志"
-    ok=1
-  fi
-  if grep -q "present frame ok" "$logfile"; then
-    echo "  OK   场景提交（present frame ok）"
-  else
-    echo "  FAIL 缺场景提交日志"
+    echo "  FAIL 缺 owner 启动日志（渲染档 host started / 无 Surface 档 owner service 均未出现）"
     ok=1
   fi
   if grep -q "app_main_cangjie: ingress registered" "$logfile"; then
@@ -254,8 +308,12 @@ assert_variant() {
         echo "  FAIL 测试产物未受理闸门请求（缺 rc=0 证据）"
         ok=1
       fi
-      # 仅受理不够：必须**真的**在生产 Flush 路径上按住过，否则闸门是空壳。
-      if grep -q "test gate holding flush ms=" "$logfile"; then
+      # 仅受理不够：渲染档必须**真的**在生产 Flush 路径上按住过，否则闸门
+      # 是空壳。替身档（KnownShimNoRef 拒绝发布，published=0）无渲染、无
+      # Flush 可按住——受理 rc=0 即可，不得以「未按住」否认闸门接线。
+      if grep -q "published=0" "$logfile" && grep -q "capability=KnownShimNoRef" "$logfile"; then
+        echo "  OK   替身档无渲染：闸门受理即足够（无 Flush 可按住）"
+      elif grep -q "test gate holding flush ms=" "$logfile"; then
         echo "  OK   闸门确实按住了生产 Flush"
       else
         echo "  FAIL 闸门只被请求、从未按住 Flush（时序注入未生效）"
@@ -308,6 +366,12 @@ if [ "$NO_START" = "0" ]; then
 fi
 "$HDC" list targets | tee "$RUN_DIR/targets_$RUN_ID.txt"
 "$HDC" install -r "$HAP" | tee "$RUN_DIR/install_$RUN_ID.txt"
+# 安装替换是异步生效的（实测：install 返回后立即启动，进程可能还跑旧镜像
+# ——旧 verify 镜像的接缝注册冒充本轮 normal 产物）。先停旧进程并给系统
+# 一小段完成镜像切换的时间，再启动本轮实例。
+BUNDLE_NAME="$(grep -oE '"bundleName"\s*:\s*"[^"]+"' "$LAB/AppScope/app.json5" | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+"$HDC" shell "aa force-stop $BUNDLE_NAME" >/dev/null 2>&1 || true
+sleep 2
 
 echo "== 4/7 启动本轮实例（先清空日志缓冲，旧日志不能冒充本轮）=="
 # E 返工：清日志的真实结果要被记录，不能写常量 cleared_before_launch=1 冒充成功。

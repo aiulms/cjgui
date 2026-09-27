@@ -389,6 +389,98 @@ private class ImageTestController <: CjguiComposableUiController & CjguiComposab
     }
 }
 
+/// A generated region shares the window's already prepared image. Its first
+/// accepted snapshot must report that native fact even when no later loader
+/// completion will request another frame.
+private class ImageRegionTestBinding <: CjguiGeneratedUiRegionBinding {
+    public func ownerRevision(): Int64 { return 1 }
+    public func fieldResourceId(fieldId: String): Int64 { return -1 }
+    public func fieldOperationResourceId(fieldId: String): Int64 { return -1 }
+    public func draftText(fieldId: String): String { return "" }
+    public func appliedText(fieldId: String): String { return "" }
+    public func draftBoolean(fieldId: String): ?Bool { return None }
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        return CjguiGeneratedUiActionResult(false, "")
+    }
+    public func actionAvailable(actionName: String): Bool { return false }
+    public func applyFieldIntent(intent: CjguiGeneratedUiIntent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+}
+
+private class ImageRegionTestController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant {
+    let region: CjguiGeneratedUiWindowRegion
+
+    init(catalog: CjguiGeneratedUiCapabilityCatalog) {
+        region = CjguiGeneratedUiWindowRegion(catalog, ImageRegionTestBinding(), "image-hot-region")
+    }
+
+    public func uiSceneVersion(): Int64 { return region.revision() }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(81000, "image-hot-root", CjguiComposableUiStyle())
+        root.add(region.buildNode())
+        return root
+    }
+    public func beginSceneRefresh(): Bool { return region.beginSceneRefresh() }
+    public func prepareSceneRefresh(): Bool { return region.prepareSceneRefresh() }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>()
+    }
+    public func commitSceneRefresh(): Unit { region.commitSceneRefresh() }
+    public func rollbackSceneRefresh(): Unit { region.rollbackSceneRefresh() }
+    public func disposeSceneRefreshResources(): Unit { region.disposeSceneRefreshResources() }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return region.handleEvent(event)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@Test
+func hotImageAcceptedByGeneratedRegionPublishesReadyWithoutAnotherCompletion(): Unit {
+    let path = "resources/composable-beacon.png"
+    let key = "image-hot-icon"
+    let catalog = imageTestCatalog()
+    @Assert(catalog.registerImageResource(imageTestSpec(key, 1, path)), true)
+    let controller = ImageRegionTestController(catalog)
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    controller.region.attachWindow(window)
+    let requested = window.prepareImageResource(path, key, 1)
+    @Assert(requested.state == "loading" || requested.state == "ready", true)
+    var ready = requested.state == "ready"
+    var turns: Int64 = 0
+    while (!ready && turns < 80) {
+        let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(window, turnBudgetMs: 4u32)
+        ready = window.imageResourceStatus(path, key, 1).state == "ready"
+        turns += 1
+    }
+    @Assert(ready, true)
+    // Consume the loader's completion BEFORE the generated candidate. There is
+    // no subsequent completion epoch to repair a stale public state snapshot.
+    @Assert(window.refreshIfNeeded(), true)
+    let submitted = controller.region.submitStructure("""
+GENERATED_UI_STRUCTURE 1
+NODE 0 imageRoot vertical
+NODE 1 icon image
+PROPERTY 1 icon resource image-hot-icon
+PROPERTY 1 icon resourceVersion 1
+PROPERTY 1 icon fixedWidth 48
+PROPERTY 1 icon fixedHeight 48
+END
+""", 0)
+    @Assert(submitted.candidateAccepted, true)
+    @Assert(window.refreshIfNeeded(), true)
+    @Assert(controller.region.acceptedStructureVersion(), 1)
+    @Assert(controller.region.acceptedInstancesPayload().contains(
+        "resource=image-hot-icon resource_version=1 resource_state=ready"), true)
+    window.close()
+}
+
 /// Content identity: ONE published `(key, version)` denotes ONE resolved raster.
 /// Replacing the actual resource description behind the same identity would make
 /// two different results share a public identity — an accepted instance still

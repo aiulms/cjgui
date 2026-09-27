@@ -276,17 +276,18 @@ cjgui_prepare_app_copy() {
   cp -R "$template/src" "$dest/src"
   cp "$template/cjpm.toml" "$dest/cjpm.toml"
   cp "$template/cjgui_macos_app.sh" "$dest/cjgui_macos_app.sh"
-  python3 - "$dest" "$template" "$name_token" "$suffix" "$bundle_token" <<'PYID' || return 1
+  python3 - "$dest" "$template" "$name_token" "$suffix" "$bundle_token" "$runtime" <<'PYID' || return 1
 import os
 import re
 import sys
 
-dest, template, name_token, suffix, bundle_token = sys.argv[1:6]
+dest, template, name_token, suffix, bundle_token, runtime = sys.argv[1:7]
 toml = open(f"{template}/cjpm.toml").read()
 
 
 def rewrite_path(match):
-    real = os.path.normpath(os.path.join(template, match.group(1)))
+    declared = match.group(1)
+    real = os.path.abspath(runtime) if declared == "${CJGUI_ROOT}" else os.path.abspath(os.path.join(template, declared))
     return 'path = "%s"' % os.path.relpath(real, dest)
 
 

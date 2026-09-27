@@ -30,6 +30,22 @@ class MemoryRangeStore <: CjguiRangeTextSource & CjguiRangeTextEditSink {
         return this.version
     }
 
+    public func confirmRangeTextVersion(expectedVersion: Int64, action: () -> Bool): Bool {
+        if (this.version != expectedVersion) {
+            return false
+        }
+        return action()
+    }
+
+    public func rebaseRangeTextSelection(fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64) {
+        if (fromVersion == this.rangeTextVersion() && startByte >= 0 &&
+            endByte >= startByte && endByte <= this.rangeTextByteLength()) {
+            return Some((fromVersion, startByte, endByte))
+        }
+        return None
+    }
+
     public func rangeTextByteLength(): Int64 {
         return Int64(this.bytes.size)
     }
@@ -51,12 +67,9 @@ class MemoryRangeStore <: CjguiRangeTextSource & CjguiRangeTextEditSink {
         }
         let end = cjguiValidUtf8End(this.bytes, aligned, limit)
         let content = String.fromUtf8(this.bytes.slice(aligned, end - aligned))
-        let complete = end == size
-        var reason = ""
-        if (!complete) {
-            reason = "window_truncated"
-        }
-        return CjguiRangeTextSlice(startByte, aligned, content, this.version, size, complete, reason)
+        // This read fulfilled its bounded request even when the document has
+        // more bytes. Whole-document coverage is computed by the window.
+        return CjguiRangeTextSlice(startByte, aligned, content, this.version, size, true, "")
     }
 
     public func applyRangeTextEdit(
@@ -146,8 +159,9 @@ func testWindowMaterialisesBoundedSliceOfLargeText(): Unit {
     @Assert(window.refresh())
     // The materialised projection is bounded, never the whole text.
     @Assert(cjguiUtf8Length(window.text()) <= 8)
+    @Assert(window.isPrepared())
     @Assert(!window.isComplete())
-    @Assert(window.unpreparedReason(), "window_truncated")
+    @Assert(window.unpreparedReason(), "")
     @Assert(window.windowStartByte(), 0)
     @Assert(window.contentVersion(), 1)
     @Assert(window.sourceByteLength(), Int64(store.bytes.size))

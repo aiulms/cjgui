@@ -96,6 +96,16 @@ static BOOL writeExpectedTransferSource(NSString *path, NSString *format, NSStri
     return serialized && !error && [serialized writeToFile:path options:NSDataWritingAtomic error:&error] && !error;
 }
 
+static BOOL startPNGFixture(NSString *originalPath, NSString *expectedPath, NSString *pngPath,
+                            NSPasteboard *pasteboard) {
+    NSData *pngBytes = [NSData dataWithContentsOfFile:pngPath];
+    if (!pngBytes || !writeSnapshot(originalPath, pasteboard) || ![pasteboard clearContents]) return NO;
+    NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+    [item setData:pngBytes forType:NSPasteboardTypePNG];
+    if (![pasteboard writeObjects:@[ item ]]) return NO;
+    return writeSnapshot(expectedPath, pasteboard);
+}
+
 // Optional `--pb <name>` selects a named (non-user) pasteboard for branch
 // tests; without it the general pasteboard is used for the real input chain.
 static NSString *pasteboardNameFromArguments(int argc, const char *argv[]) {
@@ -139,6 +149,13 @@ int main(int argc, const char *argv[]) {
             [item setString:@"external-text" forType:NSPasteboardTypeString];
             if (![pasteboard writeObjects:@[ item ]]) return 1;
             return writeSnapshot(expected, pasteboard) ? 0 : 1;
+        }
+        if ([command isEqualToString:@"start-png"] && count == 5) {
+            // Independent standard PNG producer: the file contents are copied
+            // verbatim to NSPasteboardTypePNG, with no CJGUI transfer metadata.
+            return startPNGFixture([NSString stringWithUTF8String:args[2]],
+                [NSString stringWithUTF8String:args[3]],
+                [NSString stringWithUTF8String:args[4]], pasteboard) ? 0 : 1;
         }
         if ([command isEqualToString:@"is-current"] && count == 3) {
             NSDictionary *expected = readSnapshot([NSString stringWithUTF8String:args[2]]);

@@ -6,7 +6,7 @@
     "pass": true
   },
   {
-    "check": "D 夹具节点已渲染（40/41/42/43）",
+    "check": "D 夹具节点已渲染（40/41/42/43/44/45/46/47）",
     "actual": true,
     "expected": true,
     "pass": true
@@ -24,16 +24,27 @@
     "pass": true
   },
   {
-    "band": [
-      773,
-      820
-    ],
-    "text_px": 18,
-    "inside_text_sample": [
-      77,
-      31,
-      31
-    ]
+    "cross_visible_px": 53,
+    "cross_hidden_px": 0,
+    "out_rect_px": 0
+  },
+  {
+    "check": "跨边界可见区出现目标文字像素（>=6）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "跨边界被裁区无目标文字像素",
+    "actual": 0,
+    "expected": 0,
+    "pass": true
+  },
+  {
+    "check": "界外节点区域无目标文字像素",
+    "actual": 0,
+    "expected": 0,
+    "pass": true
   },
   {
     "check": "截图像素采样完成",
@@ -60,7 +71,33 @@
     "pass": true
   },
   {
-    "corner_point_hit": true,
-    "note": "cornerRadius=14; behavior recorded as-is"
+    "check": "D4 圆角外点不命中（owner 不变）",
+    "actual": 2,
+    "expected": 2,
+    "pass": true
+  },
+  {
+    "check": "D5 裁剪按钮可见区命中 → owner +1",
+    "actual": 3,
+    "expected": 3,
+    "pass": true
+  },
+  {
+    "check": "D6 裁剪按钮被裁区点击 → owner 不变",
+    "actual": 3,
+    "expected": 3,
+    "pass": true
+  },
+  {
+    "check": "D7 noclip 负控可见区命中",
+    "actual": 4,
+    "expected": 4,
+    "pass": true
+  },
+  {
+    "check": "D7 noclip 负控同几何被裁位命中（+1 累计）",
+    "actual": 5,
+    "expected": 5,
+    "pass": true
   }
 ]

@@ -973,8 +973,34 @@ public class CjguiComposableUiTreeListSource <: CjguiComposableUiVirtualListSour
             // collapsed away). Build a stable placeholder for that key only;
             // never bind a stale input to a different object.
             let stale = CjguiComposableUiTreeRow(item.key, item.title, item.resourceId, 0, false, false, false)
-            return builder(stale, false, false)
+            let placeholder = builder(stale, false, false)
+            placeholder.semanticRole = CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW
+            placeholder.semanticLabel = item.title
+            placeholder.semanticKey = item.key
+            return placeholder
         }
-        return builder(projection.rowAt(index), isSelected, isFocused)
+        let row = projection.rowAt(index)
+        let node = builder(row, isSelected, isFocused)
+        node.semanticRole = CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW
+        node.semanticLabel = row.label
+        node.semanticSelected = isSelected
+        node.semanticExpandable = row.isGroup
+        node.semanticExpanded = row.isGroup && row.expanded
+        node.semanticLevel = row.depth
+        node.semanticKey = row.key
+        node.semanticParentKey = projection.parentKeyOf(row.key)
+        return node
     }
+}
+
+/// The same bounded virtual-list engine with an explicit outline semantic
+/// container. A generic scroll area remains a scroll area; only a tree source
+/// makes this promise to assistive clients and keyboard navigation.
+public func cjguiComposableTree(nodeId: Int64, semanticId: String, contentNodeId: Int64,
+    source: CjguiComposableUiTreeListSource, state: CjguiComposableUiVirtualListState, rowHeight: Int64,
+    rowGap: Int64, overscan: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
+    let node = cjguiComposableVirtualList(nodeId, semanticId, contentNodeId, source, state, rowHeight,
+        rowGap, overscan, style, enabled: enabled)
+    node.semanticRole = CJGUI_COMPOSABLE_UI_SEMANTIC_TREE
+    return node
 }

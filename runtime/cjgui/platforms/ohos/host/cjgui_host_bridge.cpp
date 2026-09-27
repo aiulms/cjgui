@@ -79,6 +79,10 @@ struct SurfaceRecord {
     uint64_t geometryRevision = 0;
     std::string componentId;
     // 平台对象与几何
+// 第九次复核 A3：backend 0=真实 XComponent window；1=测试后端替身会话
+    // （身份/准入/许可/退役规则与真实记录完全同一套；window 为非空哨兵，
+    //  绝不发布真实 XComponent 裸指针，真实引用路径一律跳过）。
+    int32_t backend = 0;
     void *window = nullptr;
     int32_t width = 0;
     int32_t height = 0;
@@ -94,8 +98,11 @@ struct SurfaceRecord {
                                        // （degradedActive：可发布但不持有、不归还）
     bool teardownAcked = false;     // destroyed fence：渲染线程拆除确认已收到
     int64_t teardownAckedAtMs = 0;
+    bool admissionClosed = false;   // 第七次复核 Q1：fence 超时后该代准入永久关闭
     // 审计指针存根：window 在 fence ACK/归还后被清除；仅受控模拟重建路径
     // （真实 XComponent 仍在、对象确定存活）允许读取，真实运行路径禁止触碰。
+    // 审计存根：window 清除时的最后指针身份，仅诊断读数；
+    // 复核8 §2.4 后**没有**任何路径从 auditWindow 取指针做 Reference/Create。
     void *auditWindow = nullptr;
     bool tornDown = false;          // 渲染线程已确认拆除该代（SurfaceDestroy + GPU 释放）
     int32_t inFlight = 0;           // 渲染线程当前持有的使用许可数
@@ -105,6 +112,20 @@ struct SurfaceRecord {
     int64_t retireRequestedAtMs = 0;
     int64_t refReleasedAtMs = 0;
 };
+
+    // 第九次复核 B：UI 线程维护的**当前挂载事实**（与退休记录分离）。
+// onSurfaceCreated 登记、onSurfaceDestroyed 使失效——即使对应记录未获
+// 渲染准入也照样失效；退休记录只用于结算与诊断，不再是资源来源。
+struct MountFact {
+    void *window = nullptr;
+    uint64_t mountEpoch = 0;      // 每次登记递增（带身份）
+    uint64_t appInstance = 0;
+    std::string componentId;
+    int32_t width = 0;
+    int32_t height = 0;
+    bool valid = false;
+};
+MountFact g_mountFact;            // g_leaseMutex 同锁保护
 
 std::mutex g_leaseMutex;
 std::vector<SurfaceRecord> g_surfaces;
@@ -149,6 +170,34 @@ std::atomic<int64_t> g_nativeRefCount{0};
 std::atomic<int64_t> g_nativeUnrefCount{0};
 // 未能归还的引用数（超时/未收敛时保留，用于「不谎称已释放」的取证）。
 std::atomic<int64_t> g_nativeRefPendingCount{0};
+// verify-transport 测试接缝在场（HostState/闸门命令通道可用）——
+// 同时作为 KnownShimNoRef 替身模式的门控条件（仅测试变体发布）。
+static bool g_transportVerifyPresent = false;
+// 跨接缝解析完成标志：surface 回调（UI 线程）可能早于独立准备过程，
+// 分类前不得凭空调用 provider 符号；未解析时挂起事实，解析完成后补分类。
+static std::atomic<bool> g_entryPointsResolved{false};
+// 第八次复核链1：独立启动准备过程——库装载+入口解析由 napi Init 启动的
+// 准备线程执行，不依赖 XComponent onLoad→startHost。实测 OnSurfaceCreated
+// 先于 onLoad 到达时，回调内等待解析会与 startHost 形成互等死锁
+// （appfreeze THREAD_BLOCK_6S：vsync→SyncGeometryNode→libentry sleep_for）。
+static std::mutex g_prepareMutex;
+static std::condition_variable g_prepareCv;
+static std::atomic<bool> g_prepareStarted{false};
+static bool g_prepareDone = false;
+static std::thread g_prepareThread;
+// 链1：surface 先于解析到达时的挂起事实。UI 线程写，补分类在 UI 线程
+//（TSFN call_js_cb）消费；destroyed 到来即取消——窗口保活由 destroyed 界定。
+struct DeferredSurface {
+    bool valid = false;
+    OH_NativeXComponent *component = nullptr;
+    void *window = nullptr;
+    char id[128] = {0};
+    uint64_t width = 0;
+    uint64_t height = 0;
+};
+static std::mutex g_deferredSurfaceMutex;
+static DeferredSurface g_deferredSurface;
+static napi_threadsafe_function g_surfaceClassifyFn = nullptr;
 // 第六次复核第 1 项（Sol Q1/Q4）：引用能力三态与生命周期收敛计数。
 enum class RefCapability {
     kUndetermined,       // 尚未判定（首代创建时判定一次）
@@ -176,11 +225,17 @@ RefCapability classifyRefCall(void *window, int32_t rc) {
     Dl_info info;
     std::memset(&info, 0, sizeof(info));
     const char *lib = "unresolved";
-    if (dladdr(reinterpret_cast<void *>(&OH_NativeWindow_NativeObjectReference), &info) &&
-        info.dli_fname != nullptr) {
+    const bool haveLib = dladdr(reinterpret_cast<void *>(&OH_NativeWindow_NativeObjectReference), &info) &&
+                         info.dli_fname != nullptr;
+    if (haveLib) {
         lib = info.dli_fname;
     }
     g_refProviderLib = lib;
+    // 第七次复核 B：无法核验符号来源（dladdr 失败）时，即使 rc==0 也不得
+    // 判定 VerifiedNativeRef——来源未知的能力必须失败关闭。
+    if (!haveLib) {
+        return RefCapability::kRefUnavailable;
+    }
     const bool fromAppPrivate =
         std::strstr(lib, "/data/storage/el1/bundle/libs/") != nullptr ||
         std::strstr(lib, "/data/app/") != nullptr;
@@ -204,6 +259,11 @@ struct RefOutcome {
     bool degradedActive = false; // KnownShimNoRef：可发布 active 但不持有
     bool failed = false;      // 引用未取得（含 shim 档语义上的「未持有」）
 };
+// 第九次复核 B：夹具拦截器（TEST_GATES 变体定义；普通构建裁剪）。
+#ifdef CJGUI_OHOS_TEST_GATES
+static std::atomic<bool> g_refFixtureArmed{false};
+static std::atomic<int64_t> g_refFixtureReferenceCalls{0};
+#endif
 RefOutcome acquireNativeRef(void *window) {
     RefOutcome o;
     if (window == nullptr) {
@@ -211,14 +271,26 @@ RefOutcome acquireNativeRef(void *window) {
         g_refCapability = RefCapability::kRefUnavailable;
         return o;
     }
+#ifdef CJGUI_OHOS_TEST_GATES
+    if (g_refFixtureArmed.load()) {
+        // The negative fixture must count attempted references without ever
+        // passing its poison pointer to the platform implementation.
+        g_refFixtureReferenceCalls.fetch_add(1);
+        o.failed = true;
+        return o;
+    }
+#endif
     o.rc = OH_NativeWindow_NativeObjectReference(window);
     if (g_refCapability == RefCapability::kUndetermined) {
         g_refCapability = classifyRefCall(window, o.rc);
-        HLOGI("ref capability decided: %{public}s provider=%{public}s rc=%{public}d",
-              g_refCapability == RefCapability::kVerifiedNativeRef ? "VerifiedNativeRef"
+        HLOGI("ref capability decided: resolved=%{public}d transportPresent=%{public}d capability=%{public}s provider=%{public}s rc=%{public}d",
+          g_entryPointsResolved.load() ? 1 : 0,
+          g_transportVerifyPresent ? 1 : 0,
+          g_refCapability == RefCapability::kVerifiedNativeRef ? "VerifiedNativeRef"
               : g_refCapability == RefCapability::kKnownShimNoRef ? "KnownShimNoRef"
                                                                   : "RefUnavailable",
-              g_refProviderLib.c_str(), static_cast<int>(o.rc));
+          g_refProviderLib.c_str(),
+          static_cast<int>(o.rc));
     }
     switch (g_refCapability) {
         case RefCapability::kVerifiedNativeRef:
@@ -226,8 +298,14 @@ RefOutcome acquireNativeRef(void *window) {
             o.failed = !o.held;
             break;
         case RefCapability::kKnownShimNoRef:
-            o.degradedActive = true;
-            o.failed = true;   // 语义上「未持有」；绝不记 nativeRefHeld
+            // 第七次复核 Q3（Astra 裁决）：非测试构建拒绝发布 degradedActive
+            // ——无真实引用时无法证明 destroyed 回调返回后零悬空使用（已
+            // 实测 SIGSEGV 复现）。verify-transport 测试构建允许替身模式
+            // （fence + 恢复即中止 + 零引用账目），账目/识别保留。
+            if (g_transportVerifyPresent) {
+                o.degradedActive = true;
+            }
+            o.failed = true;
             break;
         default:
             o.failed = true;
@@ -341,6 +419,7 @@ bool ownerThreadJoinedForInstance(uint64_t instance) {
     if (!g_ownerExited.load()) return false;
     if (!g_appThread.joinable()) return true;   // 已 join（或被重开时回收）
     if (g_appThread.get_id() != g_ownerThreadId) return false;
+    if (g_appThread.get_id() == std::this_thread::get_id()) return false;
     // join 期间持有本锁是安全的：owner 线程不取 g_ownerThreadMutex。
     g_appThread.join();
     return true;
@@ -376,6 +455,10 @@ enum HostPhase : int {
 
 std::atomic<int> g_hostPhase{kHostIdle};
 std::atomic<bool> g_stopRequested{false};
+// 相位、实例编号、owner 终态和 monitor 归属一起切换；不跨调用、等待或 join 持锁。
+std::mutex g_hostTransitionMutex;
+uint64_t g_ownerOutcomeInstance = 0;
+int32_t g_ownerOutcome = -1;  // -1=未返回，0=有序退出，1=失败
 
 // 「是否已启动」由 phase 推导（唯一真相）。
 bool hostStarted() {
@@ -399,6 +482,7 @@ const char *hostPhaseName(int phase) {
 // 只有处于 starting 时才推进到 running；其他状态下只如实记录，不覆盖真相。
 void ingressAppReady() {
     g_ownerReady.store(true);
+    std::lock_guard<std::mutex> lock(g_hostTransitionMutex);
     int phase = g_hostPhase.load();
     if (phase == kHostStarting) {
         int expected = kHostStarting;
@@ -420,7 +504,8 @@ using ProbeHeapFn = uint64_t (*)();
 // --- ingress implementations (called from the Cangjie app thread) ---------
 
 int ingressSurfaceActive(void **outWindow, uint64_t *outGeneration, int32_t *outWidth,
-                         int32_t *outHeight, double *outDensity) {
+                         int32_t *outHeight, double *outDensity,
+                         uint64_t *outGeometryRevision) {
     std::lock_guard<std::mutex> lock(g_leaseMutex);
     SurfaceRecord *rec = findSurfaceByGenerationLocked(g_currentGeneration);
     if (rec == nullptr || !rec->active) {
@@ -431,6 +516,7 @@ int ingressSurfaceActive(void **outWindow, uint64_t *outGeneration, int32_t *out
     if (outWidth) *outWidth = rec->width;
     if (outHeight) *outHeight = rec->height;
     if (outDensity) *outDensity = rec->density;
+    if (outGeometryRevision) *outGeometryRevision = rec->geometryRevision;
     return 1;
 }
 
@@ -465,6 +551,14 @@ int ingressForegroundLevel() { return g_foreground.load() ? 1 : 0; }
 // **仍允许使用**的这一代」返回 1；退役后旧代立即返回 0。
 // 注意：这里只回答「是否还允许继续使用」，它**不是**资源安全判据——
 // 真正的安全由「宿主持有 native 引用 + 渲染线程持有一份使用许可」共同保证。
+int ingressSessionBackend(uint64_t generation) {
+    std::lock_guard<std::mutex> lock(g_leaseMutex);
+    for (const SurfaceRecord &rec : g_surfaces) {
+        if (rec.generation == generation) return rec.backend;
+    }
+    return 0;
+}
+
 int ingressLeaseValid(uint64_t generation) {
     std::lock_guard<std::mutex> lock(g_leaseMutex);
     SurfaceRecord *rec = findSurfaceByGenerationLocked(generation);
@@ -481,8 +575,12 @@ int ingressSurfacePermitAcquire(uint64_t generation, uint64_t *outAppInstance,
     SurfaceRecord *rec = findSurfaceByGenerationLocked(generation);
     // KnownShimNoRef 档（nativeRefUnavailable）发布 degradedActive：许可照常
     // 发放（生命周期安全由 destroyed fence 保证），但绝不虚记 nativeRefHeld。
-    if (rec == nullptr || !rec->active || rec->retired ||
-        (!rec->nativeRefHeld && !rec->nativeRefUnavailable)) {
+    // 第九次复核 A3：替身会话（backend=1）不持真实引用，准入照常发放——
+    // 身份/准入/退役规则与真实记录同一套（nativeRefFailed 不构成拒绝）。
+    const bool stubSession = rec != nullptr && rec->backend == 1;
+    if (rec == nullptr || !rec->active || rec->retired || rec->admissionClosed ||
+        (!stubSession && !rec->nativeRefHeld && !rec->nativeRefUnavailable)) {
+        // admissionClosed（fence 超时）永久拒绝：恢复后的访问尝试一并计数
         g_oldGenEventsRejected.fetch_add(1);
         return 0;
     }
@@ -536,7 +634,7 @@ void performRefRelease(uint64_t generation, void *window) {
                 rec->nativeRefReleased = true;
                 rec->nativeRefHeld = false;
                 rec->refReleasedAtMs = nowMs();
-                rec->auditWindow = rec->window;  // 审计存根（仅受控模拟重建可用）
+                rec->auditWindow = rec->window;  // 审计存根（仅诊断读数，不复用）
                 rec->window = nullptr;           // 引用已归还：退休记录清除平台指针
             }
         }
@@ -608,6 +706,19 @@ void ingressSurfaceTornDown(uint64_t generation) {
             g_teardownCv.notify_all();  // fence 等待方需要被唤醒以重新检查
             return;
         }
+        // A drawing-handle replacement inside an active generation is not the
+        // end of the XComponent window. Only destroy/stop/supersession closes
+        // permit admission and permits the sole native reference to be returned.
+        if (!rec->retired || rec->active) {
+            HLOGW("torn down notify ignored for live generation=%{public}llu",
+                  static_cast<unsigned long long>(generation));
+            return;
+        }
+        if (rec->inFlight != 0) {
+            HLOGW("torn down gen=%{public}llu but inFlight=%{public}d: reference retained",
+                  static_cast<unsigned long long>(generation), rec->inFlight);
+            return;
+        }
         rec->tornDown = true;
         if (rec->nativeRefFailed) {
             // 引用从未取到（含 KnownShimNoRef 档）：无引用可归还，账目闭合
@@ -622,12 +733,6 @@ void ingressSurfaceTornDown(uint64_t generation) {
             HLOGI("torn down gen=%{public}llu: reference already released/queued (dedup)",
                   static_cast<unsigned long long>(generation));
             g_teardownCv.notify_all();
-            return;
-        }
-        if (rec->inFlight != 0) {
-            // 渲染线程声称已拆除却仍有在途许可：如实记录为未完成，**不归还**。
-            HLOGW("torn down gen=%{public}llu but inFlight=%{public}d: reference retained",
-                  static_cast<unsigned long long>(generation), rec->inFlight);
             return;
         }
         rec->nativeRefReleasePending = true;
@@ -648,7 +753,79 @@ void ingressAppReady();
 // created 复用最近一条退役记录的 window/尺寸重新发布为新代（重新引用 + 新
 // generation/geometryRevision），与平台「销毁后同尺寸重建」语义一致。
 static int32_t bridgeSimulateSurfaceRetiredImpl(void);
+
+// 第八次复核 §2.4 负例：伪造「已退休、window 已清除、auditWindow=毒指针」
+// 记录后调 SIM_CREATED——必须拒绝复活（-2），且 created/nativeRef 计数零增
+// （auditWindow 指针不得触发任何平台调用）。仅测试变体导出。
 static int32_t bridgeSimulateSurfaceCreatedImpl(void);
+
+static std::atomic<bool> g_auditSelfCheckRunning{false};
+
+static void auditStubNegativeSelfCheck(void)
+{
+    if (g_auditSelfCheckRunning.exchange(true)) return;   // 防重入
+    {
+    const int64_t createdBefore = g_surfaceCreatedCount.load();
+    const int64_t refsBefore = g_nativeRefCount.load();
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        SurfaceRecord bad;
+        bad.appInstance = g_appInstance;
+        bad.componentInstance = 0;
+        bad.generation = 0xDEAD;      // 显式假身份（不与真实代混淆）
+        bad.geometryRevision = 0;
+        bad.componentId = "audit_stub_negative";
+        bad.window = nullptr;          // fence 后已清除的事实
+        bad.auditWindow = reinterpret_cast<void *>(0xBADBAD);  // 毒指针存根
+        bad.width = 10;
+        bad.height = 10;
+        bad.density = 1.0;
+        bad.retired = true;
+        bad.active = false;
+        g_surfaces.push_back(bad);
+    }
+    const int32_t rc = bridgeSimulateSurfaceCreatedImpl();
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        for (auto it = g_surfaces.begin(); it != g_surfaces.end(); ++it) {
+            if (it->generation == 0xDEAD && it->componentId == "audit_stub_negative") {
+                g_surfaces.erase(it);
+                break;
+            }
+        }
+    }
+    const int64_t createdAfter = g_surfaceCreatedCount.load();
+    const int64_t refsAfter = g_nativeRefCount.load();
+    HLOGI("audit stub negative: rc=%{public}d created %{public}lld->%{public}lld refs %{public}lld->%{public}lld",
+          rc, static_cast<long long>(createdBefore), static_cast<long long>(createdAfter),
+          static_cast<long long>(refsBefore), static_cast<long long>(refsAfter));
+    // 判定：auditWindow 毒指针**从未**被消费为新记录/平台调用。
+    //  - badUsed：表中出现 window==0xBADBAD 或假身份的新记录 → 毒指针被用（FAIL）；
+    //  - rc==0：扫描跳过毒记录（window==nullptr 永不提供指针）、改用真实存活
+    //    window 合法重建——auditWindow 未参与；
+    //  - rc==-2：无任何真实存活 window（毒记录不算）——拒绝复活。
+    bool badUsed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        for (const SurfaceRecord &rec : g_surfaces) {
+            if (rec.window == reinterpret_cast<void *>(0xBADBAD) ||
+                rec.componentInstance == 0xDEADDEAD) {
+                badUsed = true;
+            }
+        }
+    }
+    if (badUsed || (rc != 0 && rc != -2)) {
+        HLOGE("audit stub negative: FAIL rc=%{public}d badUsed=%{public}d created %{public}lld->%{public}lld refs %{public}lld->%{public}lld",
+              rc, badUsed ? 1 : 0,
+              static_cast<long long>(createdBefore), static_cast<long long>(createdAfter),
+              static_cast<long long>(refsBefore), static_cast<long long>(refsAfter));
+        return;
+    }
+    HLOGI("audit stub negative: PASS rc=%{public}d (auditWindow pointer triggered no platform call)", rc);
+    }
+    g_auditSelfCheckRunning.store(false);
+}
+
 
 // D 夹具：探针注入触摸（与 XComponent dispatchTouchImpl 进入同一条
 // g_touchQueue，带当前代际）。仅供测试链路调用；普通产物无调用者。
@@ -697,27 +874,30 @@ static int32_t bridgeSimulateSurfaceRetiredImpl(void)
 
 static int32_t bridgeSimulateSurfaceCreatedImpl(void)
 {
+    // 第九次复核 B：NEG4 已独立为隔离夹具命令（拦截 Reference/Create 逐
+    // 命令断言调用次数）——生产模拟命令一次只做一次明确转换，不夹带自检。
+    // 第八次复核 §2.4 + 第九次复核 B：模拟重建只取当前挂载事实（带身份）；
+    // 退休记录/auditWindow 不复活。
+    // 模拟重建的唯一来源是**当前挂载事实**（UI 线程维护、
+    // 带身份；destroyed 已使其失效）——不再扫描退休记录（退休记录的
+    // window 非空不证明仍挂载；auditWindow 只诊断）。实例不符（重开后
+    // 旧实例事实）同样拒绝。
     void *win = nullptr;
     int32_t w = 0;
     int32_t h = 0;
     std::string id;
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
-        for (auto it = g_surfaces.rbegin(); it != g_surfaces.rend(); ++it) {
-            if (it->retired) {
-                // 受控模拟重建：真实 XComponent 仍在，window（或清除后的审计
-                // 存根）确定存活；这是显式测试路径，真实运行路径禁止触碰存根。
-                win = it->window != nullptr ? it->window : it->auditWindow;
-                w = it->width;
-                h = it->height;
-                id = it->componentId;
-                if (win != nullptr) {
-                    break;
-                }
-            }
+        if (g_mountFact.valid && g_mountFact.window != nullptr &&
+            g_mountFact.appInstance == g_appInstance) {
+            win = g_mountFact.window;
+            w = g_mountFact.width;
+            h = g_mountFact.height;
+            id = g_mountFact.componentId;
         }
     }
     if (win == nullptr) {
+        HLOGW("simulate created rejected: no live mount fact (destroyed or wrong instance)");
         return -2;
     }
     int32_t refRc = -1;
@@ -753,10 +933,10 @@ static int32_t bridgeSimulateSurfaceCreatedImpl(void)
         rec.height = h;
         rec.density = 1.0;
         rec.nativeRefHeld = refHeld;
-        rec.nativeRefUnavailable = refDegraded;
+        rec.nativeRefUnavailable = refDegraded;   // Q3 后恒 false（拒绝发布）
         rec.nativeRefFailed = !refHeld;
-        rec.active = refHeld || refDegraded;
-        rec.retired = !(refHeld || refDegraded);
+        rec.active = refHeld;
+        rec.retired = !refHeld;
         g_surfaces.push_back(rec);
         g_currentGeneration = rec.active ? rec.generation : 0;
         HLOGI("simulate surface created gen=%{public}llu %dx%d refs=%{public}lld",
@@ -772,10 +952,22 @@ CjguiOhosIngress g_ingress = {
     ingressForegroundLevel,
     ingressLeaseValid,
     ingressSurfacePermitAcquire,
+    nullptr,   // stubSessionRegister（第九次复核 A3，静态注册器填入）
+    nullptr,   // stubSessionRetire
+    nullptr,   // stubSessionActive
+    nullptr,   // auditNegativeFixture（第九次复核 B）
+    ingressSessionBackend,
     ingressSurfacePermitRelease,
     ingressSurfaceTornDown,
     ingressAppReady,
 };
+
+
+extern "C" int32_t cjgui_ohos_test_stub_session_register(int64_t generation,
+                                                         int64_t width, int64_t height);
+static int32_t stubSessionRetireImpl(int64_t generation);
+static int32_t stubSessionActiveImpl(void);
+extern "C" int32_t cjgui_ohos_test_audit_negative_fixture(void);
 
 // 把模拟入口挂进 ingress（渲染器 export 经此转回宿主真实逻辑）。
 static struct IngressSimulateRegistrar {
@@ -783,6 +975,13 @@ static struct IngressSimulateRegistrar {
         g_ingress.simulateSurfaceRetired = &bridgeSimulateSurfaceRetiredImpl;
         g_ingress.simulateSurfaceCreated = &bridgeSimulateSurfaceCreatedImpl;
         g_ingress.injectTouch = &bridgeInjectTouchImpl;
+        // 第九次复核 A3：替身会话表经 ingress 提供给渲染器（同进程跨 so
+        // 函数指针，无跨库符号依赖）。
+        g_ingress.stubSessionRegister = &cjgui_ohos_test_stub_session_register;
+        g_ingress.stubSessionRetire = &stubSessionRetireImpl;
+        g_ingress.stubSessionActive = &stubSessionActiveImpl;
+        // 静态注册器与 RunAuditNegativeFixture（同 TU static）可见性一致；
+        // 该指针由 ingress 注册器填入（同 libentry 内部，无跨库符号）。
     }
 } g_ingressSimulateRegistrar;
 
@@ -803,14 +1002,11 @@ std::vector<std::string> libraryCandidates() {
 
 OH_NativeXComponent_Callback g_xcomponentCallback;
 
-void onSurfaceCreatedImpl(OH_NativeXComponent *component, void *window) {
-    char id[128] = {0};
-    uint64_t idSize = sizeof(id);
-    OH_NativeXComponent_GetXComponentId(component, id, &idSize);
-    id[sizeof(id) - 1] = '\0';
-    uint64_t width = 0;
-    uint64_t height = 0;
-    OH_NativeXComponent_GetXComponentSize(component, window, &width, &height);
+// 链1：surface 分类与发布（引用取证 + 三态准入 + 记录创建）。只在 UI 线程
+// 调用——同步路径（回调内）与补分类路径（TSFN call_js_cb）都是 UI 线程。
+static void classifyAndPublishSurface(OH_NativeXComponent *component, void *window,
+                                      const char *id, uint64_t width, uint64_t height) {
+    (void)component;
     // A2 第 ① 步：先在 UI 线程串行取得原生对象引用（非线程安全接口，
     // 只在 UI 回调里成对调用）。引用成功是发布 active 的**前提**。
     // 顺序重要：记录一旦 active，渲染线程就可能立刻用这个 window 去创建
@@ -819,8 +1015,6 @@ void onSurfaceCreatedImpl(OH_NativeXComponent *component, void *window) {
     bool refHeld = false;
     bool refDegraded = false;
     if (window != nullptr) {
-        // 单次 Reference 取证 + 三态判定（不用带副作用的多次调用实验——Sol Q1）。
-        // 证据归档：run/ref_abi_probe/ref_contract_analysis.md。
         RefOutcome ro = acquireNativeRef(window);
         refRc = ro.rc;
         refHeld = ro.held;
@@ -837,7 +1031,6 @@ void onSurfaceCreatedImpl(OH_NativeXComponent *component, void *window) {
             g_nativeRefCount.fetch_add(1);
         }
     }
-    g_surfaceCreatedCount.fetch_add(1);
     uint64_t generation = 0;
     uint64_t componentInstance = 0;
     bool published = false;
@@ -865,15 +1058,26 @@ void onSurfaceCreatedImpl(OH_NativeXComponent *component, void *window) {
         // 三态准入（Sol Q1）：Verified 档持有引用才发布；KnownShimNoRef 档发布
         // degradedActive（nativeRefUnavailable，绝不虚记 held）；其余失败关闭。
         rec.nativeRefHeld = refHeld;
-        rec.nativeRefUnavailable = refDegraded;
+        rec.nativeRefUnavailable = refDegraded;   // Q3 后恒 false（拒绝发布）
         rec.nativeRefFailed = !refHeld;
-        rec.active = refHeld || refDegraded;
-        rec.retired = !(refHeld || refDegraded);
+        rec.active = refHeld;
+        rec.retired = !refHeld;
         generation = rec.generation;
         componentInstance = rec.componentInstance;
         published = rec.active;
         g_surfaces.push_back(rec);
         g_currentGeneration = rec.active ? rec.generation : 0;
+    }
+    // 第九次复核 B：登记当前挂载事实（UI 线程；无论是否获渲染准入）。
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        g_mountFact.window = window;
+        g_mountFact.mountEpoch += 1;
+        g_mountFact.appInstance = g_appInstance;
+        g_mountFact.componentId = std::string(id);
+        g_mountFact.width = static_cast<int32_t>(width);
+        g_mountFact.height = static_cast<int32_t>(height);
+        g_mountFact.valid = true;
     }
     HLOGI("surface created id=%{public}s %{public}llux%{public}llu gen=%{public}llu comp=%{public}llu app=%{public}llu nativeref rc=%{public}d published=%{public}d refs=%{public}lld",
           id, static_cast<unsigned long long>(width), static_cast<unsigned long long>(height),
@@ -882,6 +1086,36 @@ void onSurfaceCreatedImpl(OH_NativeXComponent *component, void *window) {
           static_cast<unsigned long long>(g_appInstance),
           static_cast<int>(refRc), published ? 1 : 0,
           static_cast<long long>(g_nativeRefCount.load()));
+}
+
+void onSurfaceCreatedImpl(OH_NativeXComponent *component, void *window) {
+    char id[128] = {0};
+    uint64_t idSize = sizeof(id);
+    OH_NativeXComponent_GetXComponentId(component, id, &idSize);
+    id[sizeof(id) - 1] = '\0';
+    uint64_t width = 0;
+    uint64_t height = 0;
+    OH_NativeXComponent_GetXComponentSize(component, window, &width, &height);
+    g_surfaceCreatedCount.fetch_add(1);
+    if (!g_entryPointsResolved.load()) {
+        // 链1：surface 回调只发布事实并立即返回，绝不在 UI 线程等待必须由
+        // 后续 UI 事件（onLoad→startHost）启动的解析。挂起事实，解析完成后
+        // 经 TSFN 回 UI 线程补分类；destroyed 到来即取消（窗口保活由
+        // destroyed 界定，不缓存无保活指针）。
+        std::lock_guard<std::mutex> lk(g_deferredSurfaceMutex);
+        g_deferredSurface.valid = true;
+        g_deferredSurface.component = component;
+        g_deferredSurface.window = window;
+        memset(g_deferredSurface.id, 0, sizeof(g_deferredSurface.id));
+        memcpy(g_deferredSurface.id, id, sizeof(g_deferredSurface.id) - 1);
+        g_deferredSurface.width = width;
+        g_deferredSurface.height = height;
+        HLOGI("surface created before entry points resolved; classification deferred "
+              "id=%{public}s %{public}llux%{public}llu",
+              id, static_cast<unsigned long long>(width), static_cast<unsigned long long>(height));
+        return;
+    }
+    classifyAndPublishSurface(component, window, id, width, height);
 }
 
 void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
@@ -907,6 +1141,23 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
                     old.active = false;
                     old.retireRequestedAtMs = nowMs();
                 }
+            }
+            if (window != nullptr && !g_entryPointsResolved.load()) {
+                // 链1：解析未完成时不做引用/分类；更新挂起事实的几何，
+                // 由解析完成后的补分类统一处理。
+                std::lock_guard<std::mutex> lk(g_deferredSurfaceMutex);
+                g_deferredSurface.valid = true;
+                g_deferredSurface.component = component;
+                g_deferredSurface.window = window;
+                memset(g_deferredSurface.id, 0, sizeof(g_deferredSurface.id));
+                memcpy(g_deferredSurface.id, id, sizeof(g_deferredSurface.id) - 1);
+                g_deferredSurface.width = width;
+                g_deferredSurface.height = height;
+                HLOGI("surface changed before resolution; deferred geometry updated "
+                      "%{public}llux%{public}llu",
+                      static_cast<unsigned long long>(width),
+                      static_cast<unsigned long long>(height));
+                return;
             }
             int32_t refRc = -1;
             bool refHeld = false;
@@ -934,10 +1185,19 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
             nrec.nativeRefHeld = refHeld;
             nrec.nativeRefUnavailable = refDegraded;
             nrec.nativeRefFailed = !refHeld;
-            nrec.active = refHeld || refDegraded;
-            nrec.retired = !(refHeld || refDegraded);
+            nrec.active = refHeld;
+            nrec.retired = !refHeld;
             g_surfaces.push_back(nrec);
             g_currentGeneration = nrec.active ? nrec.generation : 0;
+            // The native callback, not a retired SurfaceRecord, is the
+            // authority for which physical window remains mounted.
+            g_mountFact.window = window;
+            g_mountFact.mountEpoch += 1;
+            g_mountFact.appInstance = g_appInstance;
+            g_mountFact.componentId = std::string(id);
+            g_mountFact.width = static_cast<int32_t>(width);
+            g_mountFact.height = static_cast<int32_t>(height);
+            g_mountFact.valid = true;
             generation = nrec.generation;
             geometryRevision = nrec.geometryRevision;
             HLOGI("surface changed: window re-registered as new gen=%{public}llu "
@@ -952,6 +1212,10 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
         // 几何变更必须分配**不复用**的 geometryRevision：同尺寸重建也要能被
         // 识别为一次新的几何（旧代用旧版本，渲染线程据此拒绝混用）。
         rec->geometryRevision = g_nextGeometryRevision++;
+        if (g_mountFact.valid && g_mountFact.window == window) {
+            g_mountFact.width = static_cast<int32_t>(width);
+            g_mountFact.height = static_cast<int32_t>(height);
+        }
         generation = rec->generation;
         geometryRevision = rec->geometryRevision;
     }
@@ -961,10 +1225,111 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
           static_cast<unsigned long long>(width), static_cast<unsigned long long>(height));
 }
 
+// --- 第九次复核 A3：替身会话复用 SurfaceRecord（宿主表生产语义）------------
+
+
+extern "C" int32_t cjgui_ohos_test_stub_session_register(int64_t generation,
+                                                         int64_t width, int64_t height)
+{
+    std::lock_guard<std::mutex> lock(g_leaseMutex);
+    for (const SurfaceRecord &old : g_surfaces) {
+        if (old.generation == static_cast<uint64_t>(generation)) {
+            HLOGW("stub session register: generation %{public}lld already exists",
+                  static_cast<long long>(generation));
+            return -2;
+        }
+    }
+    SurfaceRecord rec;
+    rec.appInstance = g_appInstance;
+    rec.componentInstance = g_nextComponentInstance++;
+    rec.generation = static_cast<uint64_t>(generation);
+    rec.geometryRevision = g_nextGeometryRevision++;
+    rec.componentId = "cjgui_stub_session";
+    rec.backend = 1;
+    rec.window = reinterpret_cast<void *>(static_cast<uintptr_t>(0x577B0000ULL |
+                                                                     static_cast<uint64_t>(generation)));
+    rec.width = static_cast<int32_t>(width);
+    rec.height = static_cast<int32_t>(height);
+    rec.density = 1.0;
+    // 替身会话不持真实原生引用：三态字段如实记录（不虚记 held）。
+    rec.nativeRefHeld = false;
+    rec.nativeRefUnavailable = false;
+    rec.nativeRefFailed = true;
+    rec.active = true;     // 租约承载：active 即渲染准入有效（发布模式由能力决定）
+    rec.retired = false;
+    g_surfaces.push_back(rec);
+    // 当前代指向替身会话：owner 的 surfaceReady 轮询与渲染准入都经
+    // g_currentGeneration 查询——不置位则 owner 永远停在替身档 Phase A。
+    g_currentGeneration = rec.generation;
+    g_surfaceCreatedCount.fetch_add(1);
+    HLOGI("stub session registered gen=%{public}lld %{public}lldx%{public}lld active=1 (backend=stub)",
+          static_cast<long long>(generation), static_cast<long long>(width),
+          static_cast<long long>(height));
+    return 0;
+}
+
+// 只读取数：当前 active 替身会话数（探针断言租约状态用）。
+static int32_t stubSessionActiveImpl(void)
+{
+    std::lock_guard<std::mutex> lock(g_leaseMutex);
+    int32_t n = 0;
+    for (const SurfaceRecord &rec : g_surfaces) {
+        if (rec.backend == 1 && rec.active && !rec.retired) n += 1;
+    }
+    return n;
+}
+
+// 生产退役路径：与真实 destroyed 同一实现（退役记录、失效租约、向渲染器
+// 请求该代拆除），不经任何替身专用关闭协议。
+static int32_t stubSessionRetireImpl(int64_t generation)
+{
+    void *sentinel = nullptr;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        for (SurfaceRecord &rec : g_surfaces) {
+            if (rec.generation == static_cast<uint64_t>(generation) && rec.backend == 1) {
+                sentinel = rec.window;
+                found = true;
+                break;
+            }
+        }
+    }
+    if (!found || sentinel == nullptr) {
+        HLOGW("stub session retire: active session gen=%{public}lld not found",
+              static_cast<long long>(generation));
+        return -2;
+    }
+    // 复用真实 destroyed 实现：退役 + 失效 + （无真实引用，无 fence 需求）
+    // + 向渲染器请求该代拆除（renderer 收尾生产路径）。
+    onSurfaceDestroyedImpl(nullptr, sentinel);
+    HLOGI("stub session retired gen=%{public}lld via production destroy path",
+          static_cast<long long>(generation));
+    return 0;
+}
+
 void onSurfaceDestroyedImpl(OH_NativeXComponent *component, void *window) {
     (void)component;
     uint64_t generation = 0;
     bool needFence = false;
+    // 第九次复核 B：destroyed **无条件**失效挂载事实——即使该记录从未获
+    // 渲染准入（active=false）也照样失效；退休记录不再承载挂载语义。
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        if (g_mountFact.valid && g_mountFact.window == window) {
+            g_mountFact.valid = false;
+            HLOGI("mount fact invalidated by destroy (unconditional)");
+        }
+    }
+    {
+        // 链1：挂起中的补分类请求随 destroyed 取消——窗口保活由 destroyed
+        // 界定，销毁后不得再对挂起指针做引用/分类。
+        std::lock_guard<std::mutex> lk(g_deferredSurfaceMutex);
+        if (g_deferredSurface.valid && g_deferredSurface.window == window) {
+            g_deferredSurface.valid = false;
+            HLOGI("deferred surface classification cancelled by destroy");
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
         SurfaceRecord *rec = findSurfaceLocked(window);
@@ -1009,14 +1374,15 @@ void onSurfaceDestroyedImpl(OH_NativeXComponent *component, void *window) {
         if (acked && rec != nullptr) {
             rec->teardownAcked = true;
             rec->teardownAckedAtMs = nowMs();
-            rec->auditWindow = rec->window;   // 审计存根（仅受控模拟重建可用）
+            rec->auditWindow = rec->window;   // 审计存根（仅诊断读数，不复用）
             rec->window = nullptr;            // 指针清除：退休记录只留身份/几何/审计
             HLOGI("destroy fence gen=%{public}llu: renderer ACK in callback; window pointer cleared",
                   static_cast<unsigned long long>(generation));
         } else {
             g_destroyFenceTimeouts.fetch_add(1);
+            if (rec != nullptr) rec->admissionClosed = true;  // 永久关闭该代准入
             HLOGE("destroy fence gen=%{public}llu TIMEOUT: generation FAILED (renderer not converged "
-                  "within %{public}lld ms); not available for reuse",
+                  "within %{public}lld ms); admission permanently closed",
                   static_cast<unsigned long long>(generation),
                   static_cast<long long>(kDestroyFenceTimeoutMs));
         }
@@ -1106,14 +1472,15 @@ using TransportVerifyInstallFn = int32_t (*)();
 using TestGateFailFirstFn = int32_t (*)();
 using TestGateSetHoldFn = int32_t (*)(int32_t, int32_t);
 using TestGateCountFn = int32_t (*)();
+using TestGateI64Fn = int64_t (*)();
 // 本进程是否解析到验证接缝（普通产物为 false）。这个值只用于「可否显示测试入口」
 // 与取证读数，不能改变任何生产行为。
-static bool g_transportVerifyPresent = false;
 static TestGateSetHoldFn g_testGateSetHoldFn = nullptr;
 static TestGateFailFirstFn g_testGateFailFirstFn = nullptr;
 static bool g_testGateFailFirstRequested = false;
 static TestGateCountFn g_testGateFlushCountFn = nullptr;
 static TestGateCountFn g_testGateFlushHeldCountFn = nullptr;
+static TestGateI64Fn g_testGatePlatformCallPackedFn = nullptr;
 // 最近一次闸门请求的原始事实（-2 = 从未请求，-1 = 产物不支持/普通产物）。
 static std::atomic<int32_t> g_testGateLastRc{-2};
 static std::atomic<int32_t> g_testGateLastMs{-1};
@@ -1124,11 +1491,85 @@ static ShutdownRenderFn shutdownRenderFn = nullptr;
 static ShutdownDoneFn shutdownDoneFn = nullptr;
 static ImeContextCommitFn imeContextCommitFn = nullptr;
 static ImeContextPreviewFn imeContextPreviewFn = nullptr;
+// 第九次复核 §E：组合预览（text + marked 范围）；缺符号时能力不可用（如实）。
+using ImeContextPreviewRangeFn = int32_t (*)(const char *, size_t, int32_t, int32_t, int64_t);
+static ImeContextPreviewRangeFn imeContextPreviewRangeFn = nullptr;
 static ImeContextEndFn imeContextEndFn = nullptr;
 static ImeContextQueryFn imeContextQueryFn = nullptr;
 static ImeSetSelectionFn imeSetSelectionFn = nullptr;
 // 通用文字代理上下文：ArkTS 侧聚焦时得到的编辑上下文编号，回调必须原样带回。
 static std::atomic<int64_t> g_editingContext{0};
+
+// --- 链1：独立启动准备过程 + 挂起 surface 补分类 -----------------------------
+
+// TSFN call_js_cb：UI（JS）线程执行。消费挂起事实，走与回调内同步路径完全
+// 相同的分类函数；挂起已被 destroyed 取消时无事可做。
+static void SurfaceClassifyCall(napi_env env, napi_value js_cb, void *context, void *data)
+{
+    (void)env; (void)js_cb; (void)context; (void)data;
+    OH_NativeXComponent *component = nullptr;
+    void *window = nullptr;
+    char id[128] = {0};
+    uint64_t width = 0;
+    uint64_t height = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_deferredSurfaceMutex);
+        if (!g_deferredSurface.valid) return;
+        component = g_deferredSurface.component;
+        window = g_deferredSurface.window;
+        memcpy(id, g_deferredSurface.id, sizeof(id));
+        width = g_deferredSurface.width;
+        height = g_deferredSurface.height;
+        g_deferredSurface.valid = false;
+    }
+    if (window == nullptr) return;
+    classifyAndPublishSurface(component, window, id, width, height);
+}
+
+// 解析完成（或 napi 兜底路径）后检查挂起事实；有则投递 UI 线程补分类。
+static void maybeDispatchDeferredSurfaceClassify()
+{
+    bool need = false;
+    {
+        std::lock_guard<std::mutex> lk(g_deferredSurfaceMutex);
+        need = g_deferredSurface.valid;
+    }
+    if (!need) return;
+    if (g_surfaceClassifyFn == nullptr) {
+        // 通道尚未建立（TSFN 在 napi Init 创建）：如实记录，不静默丢弃。
+        HLOGW("deferred surface classification pending but classify channel unavailable");
+        return;
+    }
+    HLOGI("dispatching deferred surface classification on UI thread");
+    napi_call_threadsafe_function(g_surfaceClassifyFn, nullptr, napi_tsfn_nonblocking);
+}
+
+// 独立启动准备线程：库装载 + 全量入口解析，不依赖 XComponent onLoad/startHost。
+// startHost 的 owner 线程只等待本过程结果；准备先行、start 先行两种顺序都合法。
+static void resolvePlatformEntryPoints(void *handle);
+
+static void entryPrepareProc()
+{
+    std::lock_guard<std::mutex> lock(g_prepareMutex);
+    if (g_cangjieLib == nullptr) {
+        for (const std::string &candidate : libraryCandidates()) {
+            g_cangjieLib = dlopen(candidate.c_str(), RTLD_NOW);
+            if (g_cangjieLib != nullptr) {
+                HLOGI("prepare: cangjie library loaded: %{public}s", candidate.c_str());
+                break;
+            }
+            HLOGW("prepare: dlopen %{public}s failed: %{public}s", candidate.c_str(), dlerror());
+        }
+    }
+    if (g_cangjieLib != nullptr) {
+        resolvePlatformEntryPoints(g_cangjieLib);
+    }
+    if (!g_entryPointsResolved.load()) {
+        HLOGE("prepare: entry points unresolved (library load failed?); startHost will retry inline");
+    }
+    g_prepareDone = true;
+    g_prepareCv.notify_all();
+}
 
 // 所有跨库入口的解析集中在唯一一处。
 //
@@ -1174,6 +1615,8 @@ static void resolvePlatformEntryPoints(void *handle)
         dlsym(handle, "ohos_renderer_ime_commit_text_ctx"));
     imeContextPreviewFn = reinterpret_cast<ImeContextPreviewFn>(
         dlsym(handle, "ohos_renderer_ime_preview_text_ctx"));
+    imeContextPreviewRangeFn = reinterpret_cast<ImeContextPreviewRangeFn>(
+        dlsym(handle, "ohos_renderer_ime_preview_range_ctx"));
     imeContextEndFn = reinterpret_cast<ImeContextEndFn>(
         dlsym(handle, "ohos_renderer_ime_finish_editing_ctx"));
     imeContextQueryFn = reinterpret_cast<ImeContextQueryFn>(
@@ -1194,6 +1637,7 @@ static void resolvePlatformEntryPoints(void *handle)
     if (g_settlementReadoutFn == nullptr) HLOGW("symbol missing: settlement_readout (stop convergence criterion)");
     if (imeContextCommitFn == nullptr) HLOGW("symbol missing: ime_commit_text_ctx");
     if (imeContextPreviewFn == nullptr) HLOGW("symbol missing: ime_preview_text_ctx");
+    if (imeContextPreviewRangeFn == nullptr) HLOGW("symbol missing: ime_preview_range_ctx (composition)");
     if (imeContextEndFn == nullptr) HLOGW("symbol missing: ime_finish_editing_ctx");
     if (imeContextQueryFn == nullptr) HLOGW("symbol missing: ime_context_json");
     if (imeSetSelectionFn == nullptr) HLOGW("symbol missing: ime_set_selection_ctx");
@@ -1210,6 +1654,16 @@ static void resolvePlatformEntryPoints(void *handle)
         g_transportVerifyPresent = false;
         HLOGI("transport verify seam: absent (normal product)");
     }
+    // 全部跨接缝解析（含 transport verify install）完成，分类可安全进行。
+    // 第七次复核 Q1/A4：仅当 handle 非空（owner 已 dlopen cangjie 库，解析
+    // 真实发生）才置位——兜底路径以空 handle 调入时置位会虚假放行 surface
+    // 回调的分类等待（实测 1ms 竞态根因）。
+    if (handle != nullptr) {
+        g_entryPointsResolved.store(true);
+    }
+    // 链1：解析完成时若有挂起 surface 事实（surface 先于解析到达），经 TSFN
+    // 回 UI 线程补分类——两种先后顺序都汇入同一条分类路径。
+    maybeDispatchDeferredSurfaceClassify();
     // A1 §5 受控闸门入口：两个变体都有符号，用**返回值**区分产物身份。
     // 这里只解析指针并记一行状态；真正是否生效由 setTestGate 的返回码判定。
     g_testGateSetHoldFn = reinterpret_cast<TestGateSetHoldFn>(
@@ -1221,6 +1675,8 @@ static void resolvePlatformEntryPoints(void *handle)
         dlsym(handle, "cjgui_ohos_test_gate_flush_count"));
     g_testGateFlushHeldCountFn = reinterpret_cast<TestGateCountFn>(
         dlsym(handle, "cjgui_ohos_test_gate_flush_held_count"));
+    g_testGatePlatformCallPackedFn = reinterpret_cast<TestGateI64Fn>(
+        dlsym(handle, "cjgui_ohos_test_platform_call_packed"));
     HLOGI("renderer test gate entry: %{public}s (rc 语义: 0=测试产物生效, -1=普通产物不可用)",
           g_testGateSetHoldFn != nullptr ? "symbol present" : "symbol absent");
     HLOGI("platform entry points resolved (ime_context_json=%d)",
@@ -1254,6 +1710,25 @@ static void FocusRequestSink(const char *payload)
     RequestFocusFromRenderer(payload);
 }
 
+// 同进程重开（第七次复核 A3/B）：stopped→startHost 后 owner 阻塞在 surface
+// 等待，而 XComponent 仍存活、不会再发 created 回调，surface 重发布命令又
+// 依赖 owner pump（鸡生蛋）。此入口让重开流程在 UI 线程直接把现存 window
+// 以新代重新发布（与 SIM_CREATED 同一宿主路径，不经过控制通道/owner）。
+static napi_value RepublishSurface(napi_env env, napi_callback_info info) {
+    (void)env;
+    (void)info;
+    int32_t rc = -1;
+    if (g_ingress.simulateSurfaceCreated != nullptr) {
+        rc = g_ingress.simulateSurfaceCreated();
+    }
+    HLOGI("republish surface requested rc=%{public}d", static_cast<int>(rc));
+    napi_value result;
+    napi_create_int32(env, static_cast<int32_t>(rc), &result);
+    return result;
+}
+
+static void startStopMonitorOnce(uint64_t stopAppInstance);
+
 static napi_value StartHost(napi_env env, napi_callback_info info) {
     (void)env;
     (void)info;
@@ -1269,10 +1744,9 @@ static napi_value StartHost(napi_env env, napi_callback_info info) {
     // 顺序（A3）：先在**尚未进入 starting** 时完成线程记账与实例分配，
     // 再 CAS 到 starting。这样一旦 phase 变成 starting，owner 线程句柄、
     // 线程身份与本实例编号都已经是最终值，停止路径不会看到半成品状态。
-    g_stopRequested.store(false);
-    g_ownerReady.store(false);
-    g_ownerExited.store(false);
     uint64_t startAppInstance = 0;
+    uint64_t previousAppInstance = 0;
+    bool restartFromSettledStop = false;
     {
         std::lock_guard<std::mutex> lock(g_ownerThreadMutex);
         // 上一实例的 owner 线程必须先真实回收，才允许开新实例：否则两个 owner
@@ -1283,46 +1757,119 @@ static napi_value StartHost(napi_env env, napi_callback_info info) {
                   static_cast<unsigned long long>(g_threadOwnerInstance));
             g_appThread.join();
         }
+        std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+        phase = g_hostPhase.load();
+        if (phase != kHostIdle && phase != kHostStopped && phase != kHostFailed) {
+            HLOGW("startHost rejected: phase changed to %{public}s", hostPhaseName(phase));
+            return nullptr;
+        }
+        restartFromSettledStop = phase == kHostStopped;
+        previousAppInstance = g_appInstance.load();
         // A3：本次启动分配一个**不复用**的 appInstance。surface 身份、停止判据
         // 都挂在它上面；重开后不能继承上一实例的任何身份。
         g_appInstance.store(g_nextAppInstance++);
         startAppInstance = g_appInstance.load();
         g_threadOwnerInstance = startAppInstance;
         g_ownerThreadId = std::thread::id{};
-    }
-    if (!g_hostPhase.compare_exchange_strong(phase, kHostStarting)) {
-        HLOGW("startHost rejected: phase changed concurrently to %{public}s", hostPhaseName(phase));
-        return nullptr;
+        g_ownerOutcomeInstance = startAppInstance;
+        g_ownerOutcome = -1;
+        g_stopRequested.store(false);
+        g_ownerReady.store(false);
+        g_ownerExited.store(false);
+        g_hostPhase.store(kHostStarting);
     }
     HLOGI("startHost accepted: phase=starting appInstance=%{public}llu",
           static_cast<unsigned long long>(startAppInstance));
+    if (restartFromSettledStop) {
+        // The owner of the previous instance has exited and its renderer,
+        // permits and native reference have all reached zero. The XComponent
+        // may still be physically mounted, so it need not send another
+        // OnSurfaceCreated. This NAPI call runs on the same UI thread as the
+        // native mount/destroy callbacks: only its current mount fact may be
+        // rebound, and classifyAndPublishSurface takes a fresh system ref and
+        // allocates a new record/generation for this appInstance.
+        MountFact mounted;
+        {
+            std::lock_guard<std::mutex> lock(g_leaseMutex);
+            if (g_mountFact.valid && g_mountFact.window != nullptr &&
+                g_mountFact.appInstance == previousAppInstance) {
+                mounted = g_mountFact;
+            }
+        }
+        if (mounted.valid) {
+            HLOGI("restart live mount rebind oldApp=%{public}llu newApp=%{public}llu epoch=%{public}llu",
+                  static_cast<unsigned long long>(previousAppInstance),
+                  static_cast<unsigned long long>(startAppInstance),
+                  static_cast<unsigned long long>(mounted.mountEpoch));
+            classifyAndPublishSurface(nullptr, mounted.window, mounted.componentId.c_str(),
+                                      static_cast<uint64_t>(mounted.width),
+                                      static_cast<uint64_t>(mounted.height));
+        } else {
+            HLOGI("restart awaits native mount: no live previous-instance mount fact");
+        }
+        // The verify seam belongs to an owner instance, not the process. A
+        // fresh token makes old control frames invalid after full-zero STOP.
+        if (g_transportVerifyPresent && g_cangjieLib != nullptr) {
+            auto install = reinterpret_cast<TransportVerifyInstallFn>(
+                dlsym(g_cangjieLib, "cjgui_ohos_transport_verify_install"));
+            int32_t rc = install != nullptr ? install() : -1;
+            HLOGI("restart verify seam install appInstance=%{public}llu rc=%{public}d",
+                  static_cast<unsigned long long>(startAppInstance), rc);
+        }
+    }
     g_appThread = std::thread([startAppInstance]() {
         {
             std::lock_guard<std::mutex> lock(g_ownerThreadMutex);
             g_ownerThreadId = std::this_thread::get_id();
         }
+        auto failBeforeOwnerEntry = [startAppInstance]() {
+            {
+                std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+                if (g_appInstance.load() == startAppInstance &&
+                    g_ownerOutcomeInstance == startAppInstance) {
+                    g_ownerOutcome = 1;
+                    g_hostPhase.store(kHostFailed);
+                }
+            }
+            g_ownerExited.store(true);
+        };
         HLOGI("owner thread started (appInstance=%{public}llu)",
               static_cast<unsigned long long>(startAppInstance));
-        bool loaded = false;
-        for (const std::string &candidate : libraryCandidates()) {
-            g_cangjieLib = dlopen(candidate.c_str(), RTLD_NOW);
-            if (g_cangjieLib != nullptr) {
-                HLOGI("cangjie library loaded: %{public}s", candidate.c_str());
-                loaded = true;
-                break;
+        // 链1：库装载与入口解析已由独立准备过程执行（napi Init 启动的准备
+        // 线程）。owner 只等待其完成；准备失败/未跑时在本线程兜底重试一次
+        // ——准备先行与 start 先行两种顺序都合法，最终都汇入同一解析结果。
+        {
+            std::unique_lock<std::mutex> lock(g_prepareMutex);
+            if (!g_prepareCv.wait_for(lock, std::chrono::seconds(30),
+                                      [] { return g_prepareDone; })) {
+                HLOGW("startHost: entry preparation wait timed out; retrying inline");
             }
-            HLOGW("dlopen %{public}s failed: %{public}s", candidate.c_str(), dlerror());
         }
-        if (!loaded) {
-            // 启动失败必须可重试：进入 failed（可重开），而不是卡在 starting。
-            HLOGE("cangjie library not loadable; host phase=failed");
-            g_ownerExited.store(true);
-            g_hostPhase.store(kHostFailed);
+        if (!g_entryPointsResolved.load()) {
+            std::lock_guard<std::mutex> lock(g_prepareMutex);
+            bool loaded = false;
+            for (const std::string &candidate : libraryCandidates()) {
+                g_cangjieLib = dlopen(candidate.c_str(), RTLD_NOW);
+                if (g_cangjieLib != nullptr) {
+                    HLOGI("cangjie library loaded (owner retry): %{public}s", candidate.c_str());
+                    loaded = true;
+                    break;
+                }
+                HLOGW("dlopen %{public}s failed: %{public}s", candidate.c_str(), dlerror());
+            }
+            if (!loaded) {
+                // 启动失败必须可重试：进入 failed（可重开），而不是卡在 starting。
+                HLOGE("cangjie library not loadable; host phase=failed");
+                failBeforeOwnerEntry();
+                return;
+            }
+            resolvePlatformEntryPoints(g_cangjieLib);
+        }
+        if (!g_entryPointsResolved.load()) {
+            HLOGE("entry points unresolved after prepare+retry; host phase=failed");
+            failBeforeOwnerEntry();
             return;
         }
-        // 一次性解析全部跨库入口（含文字代理的 5 个符号）。任何缺失都会
-        // 在日志里点名，不再依赖各回调各自的惰性解析。
-        resolvePlatformEntryPoints(g_cangjieLib);
         // A3：复位**上一实例遗留**的观察位（就绪/停止完成/停止请求），
         // 使它们不会被新实例误当作自己的事实。
         if (g_resetInstanceObservationsFn != nullptr) {
@@ -1332,79 +1879,69 @@ static napi_value StartHost(napi_env env, napi_callback_info info) {
         auto appMain = reinterpret_cast<AppMainFn>(dlsym(g_cangjieLib, "cjgui_ohos_app_main"));
         if (appMain == nullptr) {
             HLOGE("cjgui_ohos_app_main missing: %s", dlerror());
-            g_ownerExited.store(true);
-            g_hostPhase.store(kHostFailed);
+            failBeforeOwnerEntry();
             return;
         }
         HLOGI("calling cjgui_ohos_app_main (appInstance=%{public}llu; entry blocks until owner exits)",
               static_cast<unsigned long long>(startAppInstance));
         int rc = appMain(&g_ingress);
-        HLOGI("cjgui_ohos_app_main returned rc=%{public}d (appInstance=%{public}llu): owner really exited",
-              rc, static_cast<unsigned long long>(startAppInstance));
-        g_ownerExited.store(true);
-        int after = g_hostPhase.load();
-        if (after == kHostStopping) {
-            // 停止路径：由停止监控线程按同一 appInstance 判定收口（判据见下）。
-            HLOGI("owner exited during stop; stop monitor owns the settlement");
-        } else if (after == kHostStarting) {
-            // 启动阶段就退出（surface 60s 未就绪 / host.start 失败 / appMain 失败）：
-            // 进 failed，保留可重试性，**不**冒充 running、也不冒充 stopped。
-            int expected = kHostStarting;
-            if (g_hostPhase.compare_exchange_strong(expected, kHostFailed)) {
-                HLOGE("owner exited before becoming ready (rc=%{public}d): host phase=failed", rc);
-            }
-        } else if (after == kHostRunning) {
-            // running 下 owner 未经停止请求自行退出：owner 已不在，但传输收敛、
-            // 渲染线程 teardown、surface 引用归还**都未验证**，因此报 failed
-            // 而不是 stopped——不能用一个未经核实的终态冒充「已停止」。
-            int expected = kHostRunning;
-            if (g_hostPhase.compare_exchange_strong(expected, kHostFailed)) {
-                HLOGW("owner exited while running without stop request: host phase=failed (settlement unverified)");
-            }
-        } else {
-            HLOGI("owner exited while phase=%{public}s: recorded only", hostPhaseName(after));
+        // 第九次复核 C：owner 是否**声明过停止**（同一 cangjie 库导出，dlsym 取）。
+        // rc==0 且声明过停止 → 真实 stopped；否则（启动失败/异常退出）→ failed。
+        using OwnerExitReasonFn = int32_t (*)();
+        static OwnerExitReasonFn ownerExitReasonFn = nullptr;
+        if (ownerExitReasonFn == nullptr) {
+            ownerExitReasonFn = reinterpret_cast<OwnerExitReasonFn>(
+                dlsym(g_cangjieLib, "cjgui_ohos_owner_exit_reason"));
         }
+        const int32_t ownerExitReason = (ownerExitReasonFn != nullptr) ? ownerExitReasonFn() : -1;
+        const bool ownerStopDeclared = (ownerExitReason == 0);
+        const bool orderly = rc == 0 && ownerStopDeclared;
+        HLOGI("cjgui_ohos_app_main returned rc=%{public}d (appInstance=%{public}llu): owner really exited"
+              " stop_declared=%{public}d",
+              rc, static_cast<unsigned long long>(startAppInstance), ownerStopDeclared ? 1 : 0);
+        bool startMonitor = false;
+        int after = kHostFailed;
+        {
+            std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+            if (g_appInstance.load() != startAppInstance ||
+                g_ownerOutcomeInstance != startAppInstance) {
+                HLOGE("stale owner exit ignored appInstance=%{public}llu",
+                      static_cast<unsigned long long>(startAppInstance));
+                return;
+            }
+            g_ownerOutcome = orderly ? 0 : 1;
+            after = g_hostPhase.load();
+            if (!orderly && (after == kHostStarting || after == kHostRunning || after == kHostStopping)) {
+                g_hostPhase.store(kHostFailed);
+                HLOGE("owner exited without orderly cleanup: host phase=failed rc=%{public}d reason=%{public}d",
+                      rc, ownerExitReason);
+            } else if (orderly && (after == kHostStarting || after == kHostRunning)) {
+                // 正常窗口关闭只认领观察，不重发应用停止、surface 退役或 renderer teardown。
+                g_hostPhase.store(kHostStopping);
+                startMonitor = true;
+                HLOGI("orderly owner exit adopted: host phase=stopping appInstance=%{public}llu",
+                      static_cast<unsigned long long>(startAppInstance));
+            } else {
+                HLOGI("owner exited while phase=%{public}s: recorded outcome only", hostPhaseName(after));
+            }
+        }
+        // 先发布本实例结果，再发布退出位；之后不得再取 owner 线程句柄锁。
+        g_ownerExited.store(true);
+        if (startMonitor) startStopMonitorOnce(startAppInstance);
     });
     return nullptr;
 }
 
-// A3：一次性停止请求。starting/running 都可进入 stopping——「启动中关闭」
-// 必须能被接住，否则这次关闭没有归属方，owner 会一直留在 starting。
-static void requestHostStopOnce(const char *origin) {
-    int phase = g_hostPhase.load();
-    if (phase != kHostRunning && phase != kHostStarting) {
-        HLOGW("%{public}s ignored: host phase=%{public}s (only starting/running can stop)", origin, hostPhaseName(phase));
-        return;
-    }
-    int expected = phase;
-    if (!g_hostPhase.compare_exchange_strong(expected, kHostStopping)) {
-        HLOGW("%{public}s ignored: phase raced to %{public}s", origin, hostPhaseName(expected));
-        return;
-    }
-    const uint64_t stopAppInstance = g_appInstance.load();
-    g_stopRequested.store(true);
-    HLOGI("%{public}s: host phase=stopping appInstance=%{public}llu; requesting application stop",
-          origin, static_cast<unsigned long long>(stopAppInstance));
-    // 停止接单（surface 侧）：本实例的 surface 立即退役并投递拆除，
-    // 使其使用许可与 native 引用走正常路径闭合。这不阻塞 UI 线程。
-    int32_t retiredRequests = retireAllSurfacesOfInstance();
-    HLOGI("stop: %{public}d surface(s) retired for appInstance=%{public}llu",
-          retiredRequests, static_cast<unsigned long long>(stopAppInstance));
-    if (requestAppStopFn != nullptr) {
-        int32_t epoch = requestAppStopFn();
-        HLOGI("application stop requested (renderer epoch=%{public}d)", epoch);
-    } else {
-        HLOGW("stop symbol missing; owner keeps running (start identity retained)");
-    }
-    // 收敛监控：只观察与判定，不代替 owner/渲染线程做它们自己的收尾。
+// 收敛监控只观察与判定；由外部停止请求或有序 owner 退出中的唯一相位
+// Stopping 转换者启动。绝不在 owner 线程里 join 自己。
+static void startStopMonitorOnce(uint64_t stopAppInstance) {
     // 判据（对**同一个 appInstance**）：
     //   ① owner 线程真实退出并被 join；
     //   ② 渲染线程 teardown 完成（不是只看一个可能过期的全局值——该值已在
     //      本次启动时复位过，且这里与①②③④同时成立才算数）；
     //   ③ 窗口会话/票据收敛（occupied=0、unacked=0、pending=0）；
     //   ④ 本实例 surface 使用许可与 native 引用全部归还。
-    // 传输侧的收敛（listener/连接/队列/票据）由 owner 的关闭链在②之前完成，
-    // 并以其自己的 `transport closing: closed=...` 行留证：②成立即说明该链已跑完。
+    // 传输侧的结果由 owner 清理后声明，失败不会发布有序 owner 结果。
     std::thread([stopAppInstance]() {
         const int maxRounds = 1000;   // ≤10s 有界观察
         bool ownerJoined = false;
@@ -1415,31 +1952,60 @@ static void requestHostStopOnce(const char *origin) {
         int32_t activeSurfaces = -1;
         int64_t refsUnclosed = -1;
         bool converged = false;
+        bool rendererNotStarted = false;
         for (int i = 0; i < maxRounds; ++i) {
+            int32_t ownerOutcome = -1;
+            int phase = kHostFailed;
+            {
+                std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+                if (g_appInstance.load() != stopAppInstance ||
+                    g_ownerOutcomeInstance != stopAppInstance) {
+                    HLOGW("stop monitor abandoned stale appInstance=%{public}llu",
+                          static_cast<unsigned long long>(stopAppInstance));
+                    return;
+                }
+                ownerOutcome = g_ownerOutcome;
+                phase = g_hostPhase.load();
+            }
+            if (phase == kHostFailed) break;
             if (!ownerJoined) {
                 ownerJoined = ownerThreadJoinedForInstance(stopAppInstance);
             }
             rendererDone = (shutdownDoneFn != nullptr) && (shutdownDoneFn() == 1);
+            rendererNotStarted = !g_ownerReady.load() && ownerOutcome == 0 && !rendererDone;
             if (g_settlementReadoutFn != nullptr) {
                 g_settlementReadoutFn(&occupied, &unacked, &pending);
             }
             refsUnclosed = surfaceAccountingForInstance(stopAppInstance, &activeSurfaces);
-            if (ownerJoined && rendererDone && occupied == 0 && unacked == 0 && pending == 0 &&
+            if (ownerJoined && ownerOutcome == 0 && (rendererDone || rendererNotStarted) &&
+                occupied == 0 && unacked == 0 && pending == 0 &&
                 refsUnclosed == 0 && activeSurfaces == 0) {
                 converged = true;
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        int after = g_hostPhase.load();
-        if (converged && after == kHostStopping) {
-            int expectedPhase = kHostStopping;
-            if (g_hostPhase.compare_exchange_strong(expectedPhase, kHostStopped)) {
-                HLOGI("stop settled appInstance=%{public}llu ownerJoined=1 rendererDone=1 sessions=0 unacked=0 pending=0 refsUnclosed=0 activeSurfaces=0 (phase=stopped)",
+        int after = kHostFailed;
+        bool settled = false;
+        {
+            std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+            if (g_appInstance.load() != stopAppInstance ||
+                g_ownerOutcomeInstance != stopAppInstance) {
+                HLOGW("stop monitor finalization abandoned stale appInstance=%{public}llu",
                       static_cast<unsigned long long>(stopAppInstance));
                 return;
             }
-            after = expectedPhase;
+            after = g_hostPhase.load();
+            if (converged && g_ownerOutcome == 0 && after == kHostStopping) {
+                g_hostPhase.store(kHostStopped);
+                settled = true;
+            }
+        }
+        if (settled) {
+            HLOGI("stop settled appInstance=%{public}llu ownerJoined=1 rendererDone=%{public}d rendererNotStarted=%{public}d sessions=0 unacked=0 pending=0 refsUnclosed=0 activeSurfaces=0 (phase=stopped)",
+                  static_cast<unsigned long long>(stopAppInstance), rendererDone ? 1 : 0,
+                  rendererNotStarted ? 1 : 0);
+            return;
         }
         if (after == kHostFailed) {
             HLOGW("stop monitor: host phase=failed; settlement not claimed appInstance=%{public}llu",
@@ -1452,6 +2018,35 @@ static void requestHostStopOnce(const char *origin) {
               occupied, static_cast<long long>(unacked), static_cast<long long>(pending),
               static_cast<long long>(refsUnclosed), activeSurfaces, hostPhaseName(g_hostPhase.load()));
     }).detach();
+}
+
+// A3：外部停止只负责下发一次停止请求；正常 owner 窗口关闭仅复用上面的观察者。
+static void requestHostStopOnce(const char *origin) {
+    uint64_t stopAppInstance = 0;
+    {
+        std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+        int phase = g_hostPhase.load();
+        if (phase != kHostRunning && phase != kHostStarting) {
+            HLOGW("%{public}s ignored: host phase=%{public}s (only starting/running can stop)",
+                  origin, hostPhaseName(phase));
+            return;
+        }
+        stopAppInstance = g_appInstance.load();
+        g_stopRequested.store(true);
+        g_hostPhase.store(kHostStopping);
+    }
+    HLOGI("%{public}s: host phase=stopping appInstance=%{public}llu; requesting application stop",
+          origin, static_cast<unsigned long long>(stopAppInstance));
+    int32_t retiredRequests = retireAllSurfacesOfInstance();
+    HLOGI("stop: %{public}d surface(s) retired for appInstance=%{public}llu",
+          retiredRequests, static_cast<unsigned long long>(stopAppInstance));
+    if (requestAppStopFn != nullptr) {
+        int32_t epoch = requestAppStopFn();
+        HLOGI("application stop requested (renderer epoch=%{public}d)", epoch);
+    } else {
+        HLOGW("stop symbol missing; owner keeps running (start identity retained)");
+    }
+    startStopMonitorOnce(stopAppInstance);
 }
 
 // 关闭完成观察：owner 退出 + 渲染线程 shutdown 后由宿主断言。
@@ -1530,6 +2125,119 @@ static napi_value SetTestGateFailFirst(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// 第九次复核 B：NEG4 隔离夹具 napi 入口（libentry 内部直调，无跨库解析）。
+static int32_t RunAuditNegativeFixture(void);
+// 测试后端的合法资源记录：注册 active 替身会话（window 为非空哨兵，不发布
+// 真实 XComponent 裸指针；backend=1）。身份/准入/许可/退役规则与真实记录
+// 完全同一套——租约由本表 active 状态承载，渲染器经正常 session 提交驱动
+// 原票结算与 ACK，不再另造替身关闭协议。
+// 第九次复核 A3：cangjie foreign 直调导出（经 renderer ingress 双通道：
+// 渲染线程侧同签名转发；本导出供 owner 线程直接注册）。
+// 第九次复核 B：NEG4 隔离测试夹具——拦截 Reference（零真实平台调用），
+// 逐场景构造表状态并断言 SIM_CREATED 的调用次数：
+//   a) 拒准入后真实 destroyed（mount 失效、退休 window 非空）→ 0 次
+//   b) 只剩 audit 存根（window=nullptr）→ 0 次
+//   c) 错实例挂载事实（appInstance 不符）→ 0 次
+static int32_t RunAuditNegativeFixture(void)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    // NAPI invokes this synchronously on the UI thread, where native mount
+    // callbacks are serialized. Restore the live mount after the isolated
+    // negative states; the fixture must not erase production restart truth.
+    MountFact liveMount;
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        liveMount = g_mountFact;
+    }
+    g_refFixtureArmed.store(true);
+    const int64_t base = g_refFixtureReferenceCalls.load();
+    int32_t verdict = 0;
+    const void *kPoison = reinterpret_cast<void *>(0xBAD0BAD0);
+
+    // 场景 a：拒准入后真实 destroyed——mount 事实已失效，退休 window 非空。
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        g_mountFact.valid = false;   // destroyed 已失效
+        SurfaceRecord bad;
+        bad.appInstance = g_appInstance;
+        bad.generation = 0xAA01;
+        bad.componentId = "neg_a";
+        bad.window = const_cast<void *>(kPoison);   // 退休记录 window 非空（不证明挂载）
+        bad.width = 10; bad.height = 10; bad.density = 1.0;
+        bad.retired = true; bad.active = false;
+        g_surfaces.push_back(bad);
+    }
+    if (bridgeSimulateSurfaceCreatedImpl() != -2) verdict = 1;
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        for (auto it = g_surfaces.begin(); it != g_surfaces.end(); ++it)
+            if (it->generation == 0xAA01) { g_surfaces.erase(it); break; }
+    }
+
+    // 场景 b：只剩 audit 存根。
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        g_mountFact.valid = false;
+        SurfaceRecord bad;
+        bad.appInstance = g_appInstance;
+        bad.generation = 0xAA02;
+        bad.componentId = "neg_b";
+        bad.window = nullptr;
+        bad.auditWindow = const_cast<void *>(kPoison);
+        bad.width = 10; bad.height = 10; bad.density = 1.0;
+        bad.retired = true; bad.active = false;
+        g_surfaces.push_back(bad);
+    }
+    if (bridgeSimulateSurfaceCreatedImpl() != -2) verdict = 2;
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        for (auto it = g_surfaces.begin(); it != g_surfaces.end(); ++it)
+            if (it->generation == 0xAA02) { g_surfaces.erase(it); break; }
+    }
+
+    // 场景 c：错实例/错挂载代——mount 事实属旧实例（appInstance 不符）。
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        g_mountFact.window = const_cast<void *>(kPoison);
+        g_mountFact.mountEpoch += 1;
+        g_mountFact.appInstance = g_appInstance + 1;   // 错实例
+        g_mountFact.valid = true;
+    }
+    if (bridgeSimulateSurfaceCreatedImpl() != -2) verdict = 3;
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        if (g_mountFact.window != kPoison ||
+            g_mountFact.appInstance != g_appInstance + 1 || !g_mountFact.valid) {
+            verdict = 4;  // another writer changed the mount; never resurrect it
+        } else {
+            const uint64_t nextEpoch = g_mountFact.mountEpoch + 1;
+            g_mountFact = liveMount;
+            g_mountFact.mountEpoch = nextEpoch;
+        }
+    }
+
+    const int64_t calls = g_refFixtureReferenceCalls.load() - base;
+    g_refFixtureArmed.store(false);   // 判定后立即解除：并发首帧 Reference 不入窗
+    HLOGI("audit negative fixture: calls=%{public}lld verdict=%{public}d (0=all rejected)",
+          static_cast<long long>(calls), verdict);
+    if (calls != 0 || verdict != 0) {
+        HLOGE("audit negative fixture FAILED: Reference attempted in NEG scenario");
+        return -1;
+    }
+    return 0;
+#else
+    return -1;
+#endif
+}
+
+static napi_value AuditNegativeFixture(napi_env env, napi_callback_info info) {
+    (void)env; (void)info;
+    int32_t rc = RunAuditNegativeFixture();
+    napi_value result;
+    napi_create_int32(env, rc, &result);
+    return result;
+}
+
 static napi_value SetTestGate(napi_env env, napi_callback_info info) {
     size_t argc = 2;
     napi_value argv[2] = {nullptr, nullptr};
@@ -1557,6 +2265,7 @@ static napi_value SetTestGate(napi_env env, napi_callback_info info) {
     napi_create_int32(env, rc, &result);
     return result;
 }
+
 
 // 闸门读数（只读取证）：请求值、返回码、真实进入 Flush 次数、闸门实际按住次数。
 // 普通产物上三个计数入口返回 -1，读数里如实体现为不可用，不伪造 0。
@@ -1696,7 +2405,8 @@ static napi_value ImeEditingContext(napi_env env, napi_callback_info info)
 {
     (void)info;
     resolveImeEntryPoints();
-    char buffer[1024];
+    // 快照现在同时带能力/marked 元数据；给正常字段全文留出明确上界。
+    char buffer[8192];
     buffer[0] = '\0';
     int32_t ok = 0;
     if (imeContextQueryFn != nullptr) {
@@ -1732,6 +2442,27 @@ static napi_value ImeCommitText(napi_env env, napi_callback_info info)
 }
 
 // 预览（text, context）→ 同上；预览只写视觉投影，不进 owner。
+// 第九次复核 §E：组合态预览（text + marked 范围）。
+static napi_value ImePreviewRange(napi_env env, napi_callback_info info)
+{
+    size_t argc = 4;
+    napi_value argv[4] = {nullptr, nullptr, nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    std::string text;
+    int64_t ctx = readInt64Arg(env, argc >= 4 ? argv[3] : nullptr);
+    int64_t start = readInt64Arg(env, argc >= 2 ? argv[1] : nullptr);
+    int64_t end = readInt64Arg(env, argc >= 3 ? argv[2] : nullptr);
+    int32_t rc = 1;
+    resolveImeEntryPoints();
+    if (argc >= 1 && readStringArg(env, argv[0], &text) && imeContextPreviewRangeFn != nullptr) {
+        rc = imeContextPreviewRangeFn(text.c_str(), text.size(),
+                                      static_cast<int32_t>(start), static_cast<int32_t>(end), ctx);
+    }
+    napi_value result;
+    napi_create_string_utf8(env, rc == 0 ? "0" : "1", NAPI_AUTO_LENGTH, &result);
+    return result;
+}
+
 static napi_value ImePreviewText(napi_env env, napi_callback_info info)
 {
     size_t argc = 2;
@@ -1797,6 +2528,7 @@ static napi_value Init(napi_env env, napi_value exports) {
     napi_property_descriptor descriptors[] = {
         {"probeCangjie", nullptr, ProbeCangjie, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startHost", nullptr, StartHost, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"republishSurface", nullptr, RepublishSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"stopHost", nullptr, StopHost, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"appForeground", nullptr, AppForeground, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"appShutdown", nullptr, AppShutdown, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -1804,12 +2536,14 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"shutdownState", nullptr, ShutdownState, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"hostState", nullptr, HostState, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setTestGate", nullptr, SetTestGate, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"auditNegativeFixture", nullptr, AuditNegativeFixture, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setTestGateFailFirst", nullptr, SetTestGateFailFirst, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setTestGateFailFirst", nullptr, SetTestGateFailFirst, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"testGateState", nullptr, TestGateState, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeEditingContext", nullptr, ImeEditingContext, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeCommitText", nullptr, ImeCommitText, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePreviewText", nullptr, ImePreviewText, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imePreviewRange", nullptr, ImePreviewRange, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeSetSelection", nullptr, ImeSetSelection, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeFinishEditing", nullptr, ImeFinishEditing, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
@@ -1827,6 +2561,27 @@ static napi_value Init(napi_env env, napi_value exports) {
                                                         RefReleaseCall, &g_refReleaseFn);
         HLOGI("ref release threadsafe function: status=%{public}d handle=%{public}s",
               static_cast<int>(ts), g_refReleaseFn != nullptr ? "ready" : "unavailable");
+    }
+    // 链1：挂起 surface 的补分类通道（同上模式：不调 JS 回调，只在 JS 线程
+    // 执行 C++ 分类函数）——surface 先于解析到达时，解析完成后回 UI 线程。
+    {
+        napi_value resourceName = nullptr;
+        napi_create_string_utf8(env, "CjguiSurfaceClassify", NAPI_AUTO_LENGTH, &resourceName);
+        napi_status ts = napi_create_threadsafe_function(env, nullptr, nullptr, resourceName,
+                                                        0, 1, nullptr, nullptr, nullptr,
+                                                        SurfaceClassifyCall, &g_surfaceClassifyFn);
+        HLOGI("surface classify threadsafe function: status=%{public}d handle=%{public}s",
+              static_cast<int>(ts), g_surfaceClassifyFn != nullptr ? "ready" : "unavailable");
+    }
+    // 链1：独立启动准备过程（一次性）。库装载+入口解析不再等待 XComponent
+    // onLoad→startHost——那是 surface 回调卡死互等的根因。
+    {
+        bool expected = false;
+        if (g_prepareStarted.compare_exchange_strong(expected, true)) {
+            g_prepareThread = std::thread(entryPrepareProc);
+            g_prepareThread.detach();
+            HLOGI("entry preparation thread started");
+        }
     }
 
     napi_value exportedNativeXComponent = nullptr;

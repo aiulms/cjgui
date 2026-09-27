@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 SDKROOT_PATH="${CJ_GUI_SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk}"
 OUTPUT_DIR="${CJGUI_VECTOR_SCALE_TMPDIR:-/private/tmp/cjgui-composable-vector-scale-final}"
 PROBE="$RUNTIME_DIR/probe/vector_geometry_cache_scale_probe.cj"
@@ -25,10 +28,8 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_vector_scale.a" \
   "$OUTPUT_DIR/native/cjgui_internal_renderer.o" "$OUTPUT_DIR/native/cjgui_native_bridge.o"
 cjc --sysroot "$SDKROOT_PATH" \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" "$RUNTIME_DIR/src/composable_vector_graphics.cj" \
-  "$RUNTIME_DIR/src/composable_vector_graphics_component.cj" "$PROBE" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}"  \
+   "$PROBE" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" -lcjgui_shared_operation_core \
   -L "$OUTPUT_DIR/native" -lcjgui_vector_scale \
   --link-options "-framework AppKit -framework Metal -framework MetalKit -framework QuartzCore -lobjc" \

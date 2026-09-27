@@ -352,7 +352,7 @@ def normal_report(arguments: argparse.Namespace, output: Path) -> None:
     for name, results in scenario_results.items():
         (raw_root / f"{name}.json").write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     all_samples = [sample for samples in scenario_samples.values() for sample in samples]
-    source_files = [RUNTIME / "src" / "composable_ui_window.cj", RUNTIME / "src" / "composable_ui.cj", RUNTIME / "native" / "cjgui_internal_renderer.m", BASELINE_PATH, SCRIPT]
+    source_files = [RUNTIME / "src" / "composable_ui_window.cj", RUNTIME / "src" / "composable_ui_animation.cj", RUNTIME / "src" / "composable_ui.cj", RUNTIME / "native" / "cjgui_internal_renderer.m", BASELINE_PATH, SCRIPT]
     source_fingerprint = {str(path.relative_to(RUNTIME)): sha256(path) for path in source_files}
     binary_fingerprint = {"rule_executable_sha256": sha256(RULE_APP), "document_executable_sha256": sha256(DOCUMENT_APP), "rule_executable": str(RULE_APP), "document_executable": str(DOCUMENT_APP)}
     report = {

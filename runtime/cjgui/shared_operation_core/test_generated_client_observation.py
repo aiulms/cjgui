@@ -77,7 +77,9 @@ def snapshot_body(*, cursor: int = 0, stream_epoch: int = 1, endpoint_epoch: int
                   candidate_state: str = "none", scene_version: int = 44,
                   geometry_revision: int = 55, interaction_revision: int = 66,
                   instance_revision: int = 77, owner_pending_scene: int = 0,
-                  style_revision: int = 0, tree_nodes: int = 40) -> str:
+                  style_revision: int = 0, tree_nodes: int = 40,
+                  effect_facts: str = "accepted=8 actual=unblurred reason=budget",
+                  platform_facts: str = "accent=system source=system color=srgb8") -> str:
     lines = [
         f"PROTOCOL {client.PROTOCOL}",
         "KIND GENERATED_UI_SNAPSHOT",
@@ -99,6 +101,8 @@ def snapshot_body(*, cursor: int = 0, stream_epoch: int = 1, endpoint_epoch: int
         f"INSTANCE_REVISION {instance_revision}",
         f"STYLE_REVISION {style_revision}",
         f"OWNER_PENDING_SCENE {owner_pending_scene}",
+        f"SNAPSHOT_EFFECT {effect_facts}",
+        f"SNAPSHOT_PLATFORM {platform_facts}",
         "SNAPSHOT_FIELD FIELD label 81001 DRAFT_HEX 41 VERSION 3",
         "SNAPSHOT_FIELD END",
         "SNAPSHOT_STRUCTURE GENERATED_UI_STRUCTURE 1",
@@ -135,7 +139,9 @@ def changes_body(*, stream_epoch: int = 1, endpoint_epoch: int = 7, since: int =
 
 
 def section_body(section: str, *, cursor: int = 0, endpoint_epoch: int = 7,
-                 revision_changed: bool = False) -> str:
+                 revision_changed: bool = False,
+                 effect_facts: str = "accepted=8 actual=unblurred reason=budget",
+                 platform_facts: str = "accent=system source=system color=srgb8") -> str:
     lines = [
         f"PROTOCOL {client.PROTOCOL}",
         "KIND GENERATED_UI_SECTION",
@@ -157,6 +163,10 @@ def section_body(section: str, *, cursor: int = 0, endpoint_epoch: int = 7,
             lines.append("SNAPSHOT_STRUCTURE END")
         elif section == "STYLES":
             lines.append("SNAPSHOT_STYLE STYLE panel_accent background=#e63333ff")
+        elif section == "EFFECTS":
+            lines.append(f"SNAPSHOT_EFFECT {effect_facts}")
+        elif section == "PLATFORM":
+            lines.append(f"SNAPSHOT_PLATFORM {platform_facts}")
         else:
             lines.append("SNAPSHOT_INSTANCE INSTANCE edit element=root role=field id=812001")
     lines.append("END")
@@ -389,6 +399,75 @@ class ObservationTests(unittest.TestCase):
             ])
             for text in server.reply_texts[1:]:
                 self.assertNotIn("SNAPSHOT_STRUCTURE", text)
+        finally:
+            server.close()
+
+    def test_effect_status_change_rereads_only_actual_effect_facts(self) -> None:
+        server = ScriptedServer([
+            snapshot_body(cursor=0, effect_facts="owner=effect-1 commit=10 requested=blur actual=unblurred reason=budget"),
+            changes_body(since=0, current=1, changes=((1, "EFFECTS"),)),
+            section_body("EFFECTS", cursor=1,
+                         effect_facts="owner=effect-1 commit=11 requested=blur actual=blurred reason=none"),
+        ])
+        try:
+            session = generated.GeneratedUiSession.connect(str(server.descriptor_path))
+            first = session.observe_once()
+            self.assertEqual(first.snapshot.effects_text,
+                             "owner=effect-1 commit=10 requested=blur actual=unblurred reason=budget")
+            observed = session.observe_once()
+            self.assertEqual(observed.kind, "changes")
+            self.assertEqual([change.category for change in observed.changes.changes], ["EFFECTS"])
+            self.assertEqual(sorted(observed.sections), ["EFFECTS"])
+            self.assertEqual(observed.sections["EFFECTS"],
+                             "owner=effect-1 commit=11 requested=blur actual=blurred reason=none")
+            self.assertEqual([payload.split("\n")[2] for payload in server.requests], [
+                "GET_GENERATED_UI_SNAPSHOT",
+                "GET_GENERATED_UI_CHANGES 1 0",
+                "GET_GENERATED_UI_SECTION EFFECTS 1",
+            ])
+        finally:
+            server.close()
+
+    def test_platform_accent_change_rereads_only_platform_facts(self) -> None:
+        server = ScriptedServer([
+            snapshot_body(cursor=0, platform_facts="accent=blue source=system accepted=8"),
+            changes_body(since=0, current=1, changes=((1, "PLATFORM"),)),
+            section_body("PLATFORM", cursor=1,
+                         platform_facts="accent=plum source=system accepted=9"),
+        ])
+        try:
+            session = generated.GeneratedUiSession.connect(str(server.descriptor_path))
+            first = session.observe_once()
+            self.assertEqual(first.snapshot.platform_text,
+                             "accent=blue source=system accepted=8")
+            observed = session.observe_once()
+            self.assertEqual(observed.kind, "changes")
+            self.assertEqual([change.category for change in observed.changes.changes], ["PLATFORM"])
+            self.assertEqual(observed.sections, {
+                "PLATFORM": "accent=plum source=system accepted=9"})
+            self.assertEqual([payload.split("\n")[2] for payload in server.requests], [
+                "GET_GENERATED_UI_SNAPSHOT",
+                "GET_GENERATED_UI_CHANGES 1 0",
+                "GET_GENERATED_UI_SECTION PLATFORM 1",
+            ])
+        finally:
+            server.close()
+
+    def test_platform_section_advancing_during_read_resyncs(self) -> None:
+        server = ScriptedServer([
+            snapshot_body(cursor=0),
+            changes_body(since=0, current=1, changes=((1, "PLATFORM"),)),
+            section_body("PLATFORM", cursor=2, revision_changed=True),
+            snapshot_body(cursor=2, platform_facts="accent=plum source=fixed accepted=9"),
+        ])
+        try:
+            session = generated.GeneratedUiSession.connect(str(server.descriptor_path))
+            session.observe_once()
+            observed = session.observe_once()
+            self.assertEqual(observed.kind, "snapshot")
+            self.assertEqual(observed.snapshot.cursor, 2)
+            self.assertEqual(observed.snapshot.platform_text,
+                             "accent=plum source=fixed accepted=9")
         finally:
             server.close()
 

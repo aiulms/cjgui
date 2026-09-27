@@ -216,6 +216,70 @@ scale 入口保留 8、128、960 个控件各 30 次跨控件 hover 的原始单
 节点 paint 更新、零 build/layout/文本测量增量。它用于检测局部更新回退，不把 `pump_ns` 解释成 GPU 完成、
 物理呈现或人工输入延迟。
 
+### 效果组与 alpha 遮罩（experimental，macOS）
+
+`CjguiComposableUiStyle(effectGroup: Some(CjguiComposableUiEffectGroup(...)))` 把节点背景、阴影、文字、
+图片、控件及其子树先按原绘制顺序合成，再对整个结果施加可选 `CjguiComposableUiLinearAlphaMask` 和组
+`opacity`，最后以 `normal` 或 `multiply` 合入此前已绘制的父背景。嵌套组逐层结算；组 opacity 与每个
+节点自身的 paint opacity 分开。mask 使用组布局矩形内的归一化坐标、2–4 个位置和 alpha 均为 0..1
+的 stop；域外全透明，重复位置在准确采样点取最后声明的 stop。mask 只改变画面，命中、enabled、焦点、
+AX 和业务 owner 继续使用原几何与身份。
+
+手写与命名样式共用此声明；生成目录的 `effectGroup` 属性使用
+`opacityPercent,mode,maskOrNone(sx,sy,ex,ey,pos:alpha|...)`，例如
+`70,multiply,0,0,0,100,0:0|100:100`；wire 数值为 0..100 的整数百分比，入场后转换为归一化值。
+属性缺席继承命名样式，`none` 或空字符串明确清除。非法候选
+会以稳定原因和属性 path 整份拒绝，旧 accepted 场景保留。生成外部客户端、手写应用和导出预览分别见
+`examples/generated_panel_consumer/`、`examples/adaptive_layout_public_consumer/` 与
+`scripts/export_framework_preview.sh`。
+
+macOS 使用非 sRGB 格式 `BGRA8Unorm`，按现有 sRGB 数值分量合成，不宣称线性光运算。组离屏目标存
+预乘 RGB；`normal` 以预乘 source-over 回写，`multiply` 取组之前的父目标内容，不采样未来兄弟。
+每个目标边长最多 4096 像素、面积最多 4,194,304 像素；同时最多 16 组、嵌套深度最多 4，总存活
+离屏目标预算 96 MiB，含 accepted、候选和 GPU 在途代次。超限拒绝候选并保留旧场景；静态内容和仅改
+组 opacity 可复用内容目标。OHOS 后端尚无此能力的 accepted snapshot，目录按
+`macos:supported,ohos:unpublished_snapshot` 发布，不把公共声明当成跨平台绘制证明。
+
+组 opacity 动画通过 `window.animateEffectGroupOpacity(identityKey, target, spec:, atTime:)` 显式启动，
+`animatedEffectGroupOpacity` / `animatedEffectGroupOpacityTarget` 可读当前值和目标，
+`cancelEffectGroupOpacityAnimation` 可停止并恢复 accepted 声明。它只接受当前 accepted 场景中声明了
+`effectGroup` 的节点，并支持 `acceptedToken` 拒绝旧代异步请求。现有 `animateNodeOpacity` 保持节点 paint
+语义，单独缩放该节点的背景、边框、文字、阴影和渐变；增加或清除中性组声明不会改变该通道的目标。
+两个通道共享窗口单调时钟和调度，但分别投影：节点 paint 通道只改本节点 paint alpha，组通道只改组的
+绝对 opacity，由 renderer 一次作用于该组展平后的子树。
+
+应用内部背景模糊在同一实验声明上设置
+`backdropBlurRadiusPoints: 1..16`（默认 `0` 关闭）和固定的
+`backdropBlurFallback: "unblurred"`。生成 token 保持原三段前缀，启用时追加
+`;blur=8,unblurred`；旧 token 的含义不变。首片 macOS 后端每个场景只准一个未嵌在其他
+效果组内的背景模糊组；普通效果组仍可嵌套。非法半径、未知 fallback、嵌套或第二个模糊组
+拒绝候选，不把它们静默当作成功。OHOS snapshot 尚未发布该能力，目录单列
+`backdrop_blur=macos:experimental_supported,ohos:unpublished_snapshot`。
+
+模糊采样的是该组在根画面 painter 顺序之前的已接受内容：以组布局矩形和继承 clip 的交集为
+输出区域，向外取 Gaussian halo 后重放此前节点到私有目标，先横向后纵向滤波，最后把模糊
+背景放在透明组内容之后，对整体只施加一次组 opacity/mask，再按 normal/multiply 合入现场
+画面。标准差为 `radiusPoints × backingScale / 2`，离散核截到 `ceil(3σ)` 并归一化；
+屏幕边缘采样 clamp 到 drawable，输出继续服从组矩形和完整圆角 clip chain。缓存依赖采样区内
+此前节点的实际绘制资源、文字装饰、clear 色、drawable/scale、MSAA 和核参数；组自身内容或
+后序兄弟的普通 paint 不使它失效，后序兄弟若改变整帧 MSAA 则会失效。只有 GPU 成功完成的
+模糊目标可供后续帧缓存命中。前景光标不进入背景键；背景区内此前节点的光标几何进入。
+
+当前重放要求根 clear 为不透明；透明 clear 按同一回退策略处理。前景目标、背景结果、
+整帧重放目标、滤波中间目标及在途旧代同计入上述 96 MiB 效果预算。
+全帧重放的尺寸/像素上限及 48 设备像素的核半径上限为首片资源边界；分配或滤波编码失败
+时，以新的命令缓冲正常绘制原组但省略背景模糊，按声明的 `unblurred` 回退。该能力是应用
+内部内容采样，不采样系统候选窗或其他 AppKit/window-server 覆盖物，也不是系统窗口材质。
+
+实际呈现状态由窗口 `windowProgress()` 和公开 `GET_WINDOW_PROGRESS` 的 `WINDOW_EFFECT_*`
+字段读取；生成界面的 `EFFECTS` 快照/增量节从同一次窗口进度采样得到对应 `EFFECT_*` 字段。
+`REQUESTED_RADIUS_POINTS` 属当前 accepted 声明；`SUBMITTED_SCENE_VERSION`、`SUBMITTED_FRAME_INDEX`
+和 `SUBMITTED_MODE` 属已 commit 的帧，`COMPLETION` 再区分 `pending/succeeded/failed`。
+`SUBMITTED_MODE` 为 `none/blurred/unblurred/unavailable`，回退原因是稳定码
+`empty_roi/non_opaque_clear/kernel_limit/resource_budget/allocation_failed/pipeline_unavailable/encode_failed`；
+正常关闭模糊为 `not_requested`。客户端应同时核对 session、accepted scene 与提交 scene/frame，
+不能把 accepted `blur=8` 当成该帧实际完成了 blur。
+
 ### 表单与选择列表组合（experimental）
 
 `cjguiComposableBoundFormField(...)` 接收已有 core 的
@@ -422,6 +486,23 @@ text measurement、native staging/present 四项单调时钟诊断，`WINDOW_MEA
 `unavailable`。临时测量或 drawable/encoder 不可用会保留上一有效场景和输入映射，标记
 `refresh_*` pending，等待一次显式 `retryPendingRefresh()`、真实外部变更、resize 或人机事件；
 不会在空闲循环无限重试。
+
+## 开发者诊断（experimental，macOS）
+
+普通窗口可调用 `window.diagnosticSnapshot(maximumNodes: 128)` 读取有界只读值，
+用 `window.setDiagnosticOverlay(CjguiComposableUiDiagnosticOverlayOptions(true,
+selectedIdentityKey: "semantic:..."))` 显示布局、祖先裁剪、效果输出与实际背景采样框；
+传入 `CjguiComposableUiDiagnosticOverlayOptions(false)` 关闭。叠加层默认隐藏，
+位于原生业务画面和文字之上，不建立业务节点或 AX 元素，不参与命中、焦点与背景采样。
+
+快照分页上限为每次 256 个可见节点，携带窗口 session 与 accepted scene version；
+后续页传入 `expectedSessionIdentity`、`expectedAcceptedSceneVersion`，过期返回
+`stale_accepted` 和空节点。节点只含身份、几何、有效祖先裁剪及同版本原生几何，
+不复制正文值。`acceptedSceneVersion` 与 `submittedFrameIndex`、`completedFrameIndex`
+分别表示声明接受、提交与异步 GPU 完成，不能混读；最近一次 build/layout/submit
+时长属于刷新尝试，可能来自被拒候选。后端尚未发布的 raster/upload、效果 pass、
+缓存命中及在途字节返回 `-1`，不解释为零。当前叠加层仍随整幅场景重绘，
+开启或关闭诊断自身不要求 GPU 提交。
 
 ## 已有检查入口
 

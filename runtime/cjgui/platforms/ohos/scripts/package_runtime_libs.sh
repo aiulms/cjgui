@@ -19,10 +19,33 @@ OUT="$LAB/entry/libs/$ABI"
 BUILD_LIBS="$LAB/entry/build/default/intermediates/libs/default/$ABI"
 SDK_OHOS_LIB="$DEVECO_CANGJIE_HOME/api/lib/linux_ohos_aarch64_cjnative/ohos"
 SDK_RUNTIME="$DEVECO_CANGJIE_HOME/build-tools/runtime/lib/linux_ohos_aarch64_cjnative"
-SYSROOT_LIB="$DEVECO_OH_NATIVE_HOME/sysroot/usr/lib/$ABI"
+NDK_LINK_DIR="$DEVECO_OH_NATIVE_HOME/sysroot/usr/lib/aarch64-linux-ohos"
 READOBJ="$DEVECO_OH_NATIVE_HOME/llvm/bin/llvm-readobj"
 
 mkdir -p "$OUT"
+
+# These SDK .so files carry link symbols, not the device runtime. An app copy
+# can mask the system implementation. Remove only byte-identical old copies;
+# any different private implementation needs explicit investigation.
+ndk_link_only=(libnative_window.so libnative_drawing.so libimage_source.so libpixelmap.so)
+for lib in "${ndk_link_only[@]}"; do
+  link_stub="$NDK_LINK_DIR/$lib"
+  [ -f "$link_stub" ] || {
+    echo "PRODUCT-FAIL 缺少 SDK 链接库: $link_stub" >&2
+    exit 1
+  }
+  for root in "$OUT" "$LAB/entry/build/default/intermediates"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r stale; do
+      if ! cmp -s "$stale" "$link_stub"; then
+        echo "PRODUCT-FAIL 应用目录存在非 SDK 占位的 $lib: $stale" >&2
+        exit 1
+      fi
+      rm -f "$stale"
+      echo "移除旧 SDK 链接占位库: $stale"
+    done < <(find "$root" -type f -name "$lib")
+  done
+done
 
 # 参与闭包的搜索目录；libboundscheck.so/libc++.so 模拟器镜像不提供，从 NDK 补齐。
 # 注意：SDK 的 libohos.*.so 是编译期 mock 桩（14KB，无真实导出），真实实现在
@@ -66,18 +89,9 @@ while [ $idx -lt ${#queue[@]} ]; do
   case "$lib" in
     libc.so|libc++_shared.so|libm.so|libdl.so|libhilog.so|ld-musl-aarch64.so*|*libace_napi*|*libace_ndk*|*libhilog_ndk*|*libhitrace*|libohos.*.so)
       continue ;;  # 系统提供
-    libnative_window.so)
-      # 引用契约（第六次复核/Sol Q3）：sysroot 的该文件是链接 shim（三符号
-      # 别名 bare-ret）。真机打包（CJGUI_DEVICE_PACKAGING=1）必须跳过——
-      # 平台提供真实现，打包会遮蔽平台库；模拟器镜像无平台实现，不打包则
-      # NEEDED 解析失败、应用无法启动，故模拟器产物允许打包并在运行时被
-      # dladdr 判定为 KnownShimNoRef（引用能力不可用，绝不虚记引用成功）。
-      if [ "${CJGUI_DEVICE_PACKAGING:-0}" = "1" ]; then
-        echo "跳过（真机打包禁止携带链接 shim）: $lib"
-        continue
-      fi
-      echo "警告：打包 ${lib} sysroot shim（仅限模拟器变体，KnownShimNoRef）"
-      ;;
+    libnative_window.so|libnative_drawing.so|libimage_source.so|libpixelmap.so)
+      echo "跳过 SDK 链接占位库（运行时使用系统实现）: $lib"
+      continue ;;
   esac
   src=$(wanted "$lib") || { echo "跳过（非 SDK 提供）: $lib"; continue; }
   if [ ! -f "$OUT/$lib" ]; then

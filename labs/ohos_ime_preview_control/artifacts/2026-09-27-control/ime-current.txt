@@ -1,0 +1,2 @@
+The current input method is: com.huawei.hmos.inputmethod, status: BASIC_MODE
+bundle: com.huawei.hmos.inputmethod

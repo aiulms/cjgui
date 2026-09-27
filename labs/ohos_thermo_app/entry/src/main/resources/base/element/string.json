@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "internet_reason",
+      "value": "Local loopback state channel for the external-operation experiment"
+    },
+    {
+      "name": "module_desc",
+      "value": "CJGUI thermo host module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "CJGUI 恒温示例 host"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "CJGUI 恒温示例"
+    }
+  ]
+}

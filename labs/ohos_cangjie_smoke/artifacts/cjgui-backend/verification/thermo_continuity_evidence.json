@@ -1,0 +1,104 @@
+[
+  {
+    "check": "恒温夹具节点几何可读（12/21/22/24）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "T0 起点字段独立（targetTemp/eco/note）",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "T0 resourceId 独立（无 count/name 字段）",
+    "actual": false,
+    "expected": false,
+    "pass": true
+  },
+  {
+    "check": "T1 人改升温 → targetTemp=23",
+    "actual": "23",
+    "expected": "23",
+    "pass": true
+  },
+  {
+    "check": "T1 版本 +1",
+    "actual": 1,
+    "expected": 1,
+    "pass": true
+  },
+  {
+    "check": "T2 外部 SET_NOTE 应用",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "T2 外部写入逐码元读回（含 emoji）",
+    "actual": "外部备注🚰",
+    "expected": "外部备注🚰",
+    "pass": true
+  },
+  {
+    "check": "T2 版本 +1",
+    "actual": 2,
+    "expected": 2,
+    "pass": true
+  },
+  {
+    "check": "T3 画面出现外部后的目标温度",
+    "actual": "目标温度：23℃",
+    "expected": "目标温度：23℃",
+    "pass": true
+  },
+  {
+    "check": "T4 旧版本写入被拒（version_conflict）",
+    "actual": false,
+    "expected": false,
+    "pass": true
+  },
+  {
+    "check": "T4 版本不变",
+    "actual": 2,
+    "expected": 2,
+    "pass": true
+  },
+  {
+    "check": "T5 人续写升温 → targetTemp=24",
+    "actual": "24",
+    "expected": "24",
+    "pass": true
+  },
+  {
+    "check": "T5 版本 +1",
+    "actual": 3,
+    "expected": 3,
+    "pass": true
+  },
+  {
+    "check": "T6 空串备注合法应用",
+    "actual": true,
+    "expected": true,
+    "pass": true
+  },
+  {
+    "check": "T6 空串读回",
+    "actual": "",
+    "expected": "",
+    "pass": true
+  },
+  {
+    "check": "T7 越界升温被拒（temp_out_of_range）",
+    "actual": false,
+    "expected": false,
+    "pass": true
+  },
+  {
+    "check": "T7 越界拒绝后版本不变",
+    "actual": 10,
+    "expected": 10,
+    "pass": true
+  }
+]

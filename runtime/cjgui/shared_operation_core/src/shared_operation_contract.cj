@@ -550,6 +550,35 @@ public class CjguiSharedOperationWindowProgress {
     /// content exists, whether it is clipped, and which viewport owns it, without
     /// serializing the capability catalog again.
     public let viewportFacts: ArrayList<String>
+    /// Current accepted scene's one admitted in-app backdrop request. The
+    /// fixed identity is scoped by sessionIdentity and acceptedSceneVersion.
+    public let effectIdentity: String
+    public let effectRequestedRadiusPoints: Int64
+    /// The newest COMMITTED Metal command buffer's effect decision. Completion
+    /// is a separate observation of that exact frame, not physical display.
+    public let effectSubmittedSceneVersion: Int64
+    public let effectSubmittedFrameIndex: Int64
+    public let effectSubmittedRadiusPoints: Int64
+    public let effectSubmittedMode: String
+    public let effectFallbackReason: String
+    public let effectCompletion: String
+    /// Platform-neutral observation of the system window background material.
+    /// This does not claim that a desktop display showed the requested result.
+    public let windowBackgroundIdentity: String
+    public let windowBackgroundRequested: String
+    public let windowBackgroundBackend: String
+    public let windowBackgroundActual: String
+    public let windowBackgroundFallbackReason: String
+    public let windowBackgroundAcceptedSceneVersion: Int64
+    public let windowBackgroundFrameIndex: Int64
+    public let windowBackgroundRequestRevision: Int64
+    public let windowBackgroundEnvironmentRevision: Int64
+    public let windowBackgroundObservationRevision: Int64
+    public let windowBackgroundCompletion: String
+    public let windowBackgroundReduceTransparency: Bool
+    public let windowBackgroundActive: Bool
+    public let windowBackgroundVisualResult: String
+    public let windowBackgroundColorScheme: String
 
     public init(
         isActive: Bool,
@@ -573,7 +602,29 @@ public class CjguiSharedOperationWindowProgress {
         selectionEnd: Int64,
         activeLayerId: String,
         focusState!: String = CJGUI_WINDOW_FOCUS_STATE_UNKNOWN,
-        viewportFacts!: ArrayList<String> = ArrayList<String>()
+        viewportFacts!: ArrayList<String> = ArrayList<String>(),
+        effectIdentity!: String = "none",
+        effectRequestedRadiusPoints!: Int64 = 0,
+        effectSubmittedSceneVersion!: Int64 = -1,
+        effectSubmittedFrameIndex!: Int64 = -1,
+        effectSubmittedRadiusPoints!: Int64 = 0,
+        effectSubmittedMode!: String = "unavailable",
+        effectFallbackReason!: String = "none",
+        effectCompletion!: String = "unavailable",
+        windowBackgroundIdentity!: String = "window_content_background",
+        windowBackgroundRequested!: String = "opaque",
+        windowBackgroundBackend!: String = "unavailable",
+        windowBackgroundActual!: String = "opaque",
+        windowBackgroundFallbackReason!: String = "not_requested",
+        windowBackgroundAcceptedSceneVersion!: Int64 = -1,
+        windowBackgroundFrameIndex!: Int64 = -1,
+        windowBackgroundRequestRevision!: Int64 = 0,
+        windowBackgroundEnvironmentRevision!: Int64 = 0,
+        windowBackgroundObservationRevision!: Int64 = 0,
+        windowBackgroundCompletion!: String = "unavailable",
+        windowBackgroundReduceTransparency!: Bool = false,
+        windowBackgroundActive!: Bool = false,
+        windowBackgroundColorScheme!: String = "unavailable"
     ) {
         this.isActive = isActive; this.sceneVersion = sceneVersion
         this.nativeSubmissionVersion = nativeSubmissionVersion; this.presentationState = presentationState
@@ -589,6 +640,59 @@ public class CjguiSharedOperationWindowProgress {
         this.selectionEnd = selectionEnd; this.activeLayerId = activeLayerId
         this.focusState = focusState
         this.viewportFacts = ArrayList<String>(viewportFacts)
+        this.effectIdentity = effectIdentity
+        this.effectRequestedRadiusPoints = effectRequestedRadiusPoints
+        this.effectSubmittedSceneVersion = effectSubmittedSceneVersion
+        this.effectSubmittedFrameIndex = effectSubmittedFrameIndex
+        this.effectSubmittedRadiusPoints = effectSubmittedRadiusPoints
+        this.effectSubmittedMode = effectSubmittedMode
+        this.effectFallbackReason = effectFallbackReason
+        this.effectCompletion = effectCompletion
+        this.windowBackgroundIdentity = windowBackgroundIdentity
+        this.windowBackgroundRequested = windowBackgroundRequested
+        this.windowBackgroundBackend = windowBackgroundBackend
+        this.windowBackgroundActual = windowBackgroundActual
+        this.windowBackgroundFallbackReason = windowBackgroundFallbackReason
+        this.windowBackgroundAcceptedSceneVersion = windowBackgroundAcceptedSceneVersion
+        this.windowBackgroundFrameIndex = windowBackgroundFrameIndex
+        this.windowBackgroundRequestRevision = windowBackgroundRequestRevision
+        this.windowBackgroundEnvironmentRevision = windowBackgroundEnvironmentRevision
+        this.windowBackgroundObservationRevision = windowBackgroundObservationRevision
+        this.windowBackgroundCompletion = windowBackgroundCompletion
+        this.windowBackgroundReduceTransparency = windowBackgroundReduceTransparency
+        this.windowBackgroundActive = windowBackgroundActive
+        this.windowBackgroundVisualResult = "unobserved"
+        this.windowBackgroundColorScheme = windowBackgroundColorScheme
+    }
+
+    /// A bounded scalar section sampled with this progress object. It is also
+    /// the generated observer's EFFECTS fingerprint, so one cursor and section
+    /// describe the same native receipt instead of two independent reads.
+    public func effectFactsPayload(): String {
+        return "EFFECT_ID ${effectIdentity}\n" +
+            "EFFECT_ACCEPTED_SCENE_VERSION ${acceptedSceneVersion}\n" +
+            "EFFECT_REQUESTED_RADIUS_POINTS ${effectRequestedRadiusPoints}\n" +
+            "EFFECT_SUBMITTED_SCENE_VERSION ${effectSubmittedSceneVersion}\n" +
+            "EFFECT_SUBMITTED_FRAME_INDEX ${effectSubmittedFrameIndex}\n" +
+            "EFFECT_SUBMITTED_RADIUS_POINTS ${effectSubmittedRadiusPoints}\n" +
+            "EFFECT_SUBMITTED_MODE ${effectSubmittedMode}\n" +
+            "EFFECT_FALLBACK_REASON ${effectFallbackReason}\n" +
+            "EFFECT_COMPLETION ${effectCompletion}\n" +
+            "WINDOW_BACKGROUND_IDENTITY ${windowBackgroundIdentity}\n" +
+            "WINDOW_BACKGROUND_REQUESTED ${windowBackgroundRequested}\n" +
+            "WINDOW_BACKGROUND_BACKEND ${windowBackgroundBackend}\n" +
+            "WINDOW_BACKGROUND_ACTUAL ${windowBackgroundActual}\n" +
+            "WINDOW_BACKGROUND_FALLBACK_REASON ${windowBackgroundFallbackReason}\n" +
+            "WINDOW_BACKGROUND_ACCEPTED_SCENE_VERSION ${windowBackgroundAcceptedSceneVersion}\n" +
+            "WINDOW_BACKGROUND_FRAME_INDEX ${windowBackgroundFrameIndex}\n" +
+            "WINDOW_BACKGROUND_REQUEST_REVISION ${windowBackgroundRequestRevision}\n" +
+            "WINDOW_BACKGROUND_ENVIRONMENT_REVISION ${windowBackgroundEnvironmentRevision}\n" +
+            "WINDOW_BACKGROUND_OBSERVATION_REVISION ${windowBackgroundObservationRevision}\n" +
+            "WINDOW_BACKGROUND_COMPLETION ${windowBackgroundCompletion}\n" +
+            "WINDOW_BACKGROUND_REDUCE_TRANSPARENCY ${windowBackgroundReduceTransparency}\n" +
+            "WINDOW_BACKGROUND_ACTIVE ${windowBackgroundActive}\n" +
+            "WINDOW_BACKGROUND_VISUAL_RESULT ${windowBackgroundVisualResult}\n" +
+            "WINDOW_BACKGROUND_COLOR_SCHEME ${windowBackgroundColorScheme}"
     }
 
     public static func inactive(): CjguiSharedOperationWindowProgress {

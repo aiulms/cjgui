@@ -1,0 +1,1679 @@
+com.huawei.hmos.inputmethod:
+{
+    "appId": "com.huawei.hmos.inputmethod_BLWhnHf/QTpoUsk1EPfW7kBmXh5FWmG0JLaWsfx0ZvRYmequ9lgyWD1ROC2vcDGhCXKEP854gmtokI+KR4jreTHlHb91RY7GryugRER7O+MfTtwjPCKG89e13NdkjgmHTQ==",
+    "appIdentifier": "1265956504964495936",
+    "appIndex": 0,
+    "applicationInfo": {
+        "GWPAsanEnabled": false,
+        "accessTokenId": 537725669,
+        "accessTokenIdEx": 4832692965,
+        "accessible": false,
+        "allowAppRunWhenDeviceFirstLocked": false,
+        "allowArkTsLargeHeap": false,
+        "allowCommonEvent": [],
+        "allowEnableNotification": false,
+        "allowMultiProcess": false,
+        "apiCompatibleVersion": 50001013,
+        "apiReleaseType": "Release",
+        "apiTargetVersion": 60100023,
+        "appDetailAbilityLibraryPath": "",
+        "appDistributionType": "os_integration",
+        "appEnvironments": [],
+        "appIndex": 0,
+        "appPreloadPhase": 0,
+        "appPrivilegeLevel": "normal",
+        "appProvisionType": "release",
+        "appQuickFix": {
+            "bundleName": "",
+            "deployedAppqfInfo": {
+                "cpuAbi": "",
+                "hqfInfos": [],
+                "nativeLibraryPath": "",
+                "type": 0,
+                "versionCode": 0,
+                "versionName": ""
+            },
+            "deployingAppqfInfo": {
+                "cpuAbi": "",
+                "hqfInfos": [],
+                "nativeLibraryPath": "",
+                "type": 0,
+                "versionCode": 0,
+                "versionName": ""
+            },
+            "versionCode": 0,
+            "versionName": ""
+        },
+        "appSignType": "none",
+        "applicationFlags": 35,
+        "applicationReservedFlag": 0,
+        "arkNativeFileAbi": "",
+        "arkNativeFilePath": "",
+        "arkTSMode": "dynamic",
+        "asanEnabled": false,
+        "asanLogPath": "",
+        "assetAccessGroups": [],
+        "associatedWakeUp": false,
+        "bundleName": "com.huawei.hmos.inputmethod",
+        "bundleType": 0,
+        "cacheDir": "",
+        "cloudFileSyncEnabled": false,
+        "cloudStructuredDataSyncEnabled": false,
+        "codePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod",
+        "compileSdkType": "HarmonyOS",
+        "compileSdkVersion": "6.1.0.105",
+        "configuration": "{\"configuration\":{\"fontSizeMaxScale\":\"3.2\",\"fontSizeScale\":\"followSystem\"}}",
+        "cpuAbi": "arm64-v8a",
+        "crowdtestDeadline": -1,
+        "dataBaseDir": "/data/app/el2/database/com.huawei.hmos.inputmethod",
+        "dataDir": "",
+        "debug": false,
+        "description": "",
+        "descriptionId": 0,
+        "descriptionResource": {
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "id": 0,
+            "moduleName": "default"
+        },
+        "deviceId": "PHONE-001",
+        "distributedNotificationEnabled": true,
+        "enabled": true,
+        "entityType": "unspecified",
+        "entryDir": "",
+        "entryModuleName": "",
+        "fingerprint": "8100BECC26DD76A5A8D71C7AA01C5374F9E407EE8C1EEA5A321D3A459D823048",
+        "flags": 0,
+        "formVisibleNotify": false,
+        "hasPlugin": false,
+        "hideDesktopIcon": true,
+        "hnpPackages": {},
+        "hwasanEnabled": false,
+        "icon": "",
+        "iconId": 419430402,
+        "iconPath": "$media:app_icon",
+        "iconResource": {
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "id": 419430402,
+            "moduleName": "default"
+        },
+        "installSource": "pre-installed",
+        "installedForAllUser": false,
+        "isCompressNativeLibs": true,
+        "isForceRotate": false,
+        "isFreeInstallApp": false,
+        "isLauncherApp": false,
+        "isSystemApp": true,
+        "keepAlive": false,
+        "label": "$string:app_name",
+        "labelId": 419434318,
+        "labelResource": {
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "id": 419434318,
+            "moduleName": "default"
+        },
+        "maxChildProcess": 512,
+        "metaData": {},
+        "metadata": {},
+        "minCompatibleVersionCode": 102001307,
+        "moduleInfos": [
+            {
+                "moduleName": "clipboardHap",
+                "moduleSourceDir": "",
+                "preloads": []
+            },
+            {
+                "moduleName": "default",
+                "moduleSourceDir": "",
+                "preloads": []
+            },
+            {
+                "moduleName": "previewscanHap",
+                "moduleSourceDir": "",
+                "preloads": []
+            },
+            {
+                "moduleName": "skin",
+                "moduleSourceDir": "",
+                "preloads": []
+            }
+        ],
+        "moduleSourceDirs": [],
+        "multiAppMode": {
+            "maxCount": 0,
+            "multiAppModeType": 0
+        },
+        "multiProjects": false,
+        "name": "com.huawei.hmos.inputmethod",
+        "nativeLibraryPath": "libs/arm64",
+        "needAppDetail": false,
+        "organization": "Huawei",
+        "overlayState": 0,
+        "permissions": [],
+        "process": "com.huawei.hmos.inputmethod",
+        "profileable": false,
+        "removable": false,
+        "resourcesApply": [
+            2
+        ],
+        "runningResourcesApply": true,
+        "signatureKey": "",
+        "singleton": false,
+        "startMode": 1,
+        "supportedModes": 0,
+        "targetBundleList": [],
+        "targetBundleName": "",
+        "targetMinorApiVersion": 0,
+        "targetPatchApiVersion": 0,
+        "targetPriority": 0,
+        "tsanEnabled": false,
+        "ubsanEnabled": false,
+        "uid": 20020013,
+        "userDataClearable": true,
+        "vendor": "ohos",
+        "versionCode": 102001307,
+        "versionName": "1.2.1.307"
+    },
+    "buildVersion": "",
+    "compatibleVersion": 50001013,
+    "cpuAbi": "",
+    "defPermissions": [],
+    "description": "",
+    "entryInstallationFree": false,
+    "entryModuleName": "default",
+    "firstInstallTime": 1533657660000,
+    "gid": 20020013,
+    "hapModuleInfos": [
+        {
+            "abilityInfos": [],
+            "abilitySrcEntryDelegator": "",
+            "abilityStageSrcEntryDelegator": "",
+            "aotCompileStatus": 0,
+            "appEnvironments": [],
+            "appStartup": "",
+            "arkTSMode": "dynamic",
+            "backgroundImg": "",
+            "buildHash": "",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "colorMode": -1,
+            "compileMode": 1,
+            "compressNativeLibs": true,
+            "cpuAbi": "",
+            "crossAppSharedConfig": "",
+            "deduplicateHar": false,
+            "deliveryWithInstall": true,
+            "dependencies": [],
+            "description": "$string:module_desc",
+            "descriptionId": 268435492,
+            "deviceTypes": [
+                "phone",
+                "tablet",
+                "car"
+            ],
+            "easyGo": "",
+            "extensionInfos": [],
+            "fileContextMenu": "",
+            "formExtensionModule": "",
+            "formWidgetModule": "",
+            "hapPath": "/system/app/CeliaKeyboard/clipboardHap-default-release-signed.hap",
+            "hasIntent": false,
+            "hashValue": "",
+            "hqfInfo": {
+                "cpuAbi": "",
+                "hapSha256": "",
+                "hqfFilePath": "",
+                "moduleName": "",
+                "nativeLibraryPath": "",
+                "type": 0
+            },
+            "iconId": 0,
+            "iconPath": "",
+            "installationFree": false,
+            "isLibIsolated": false,
+            "isModuleJson": true,
+            "isRemovable": {},
+            "isRemovableSet": [],
+            "isStageBasedModel": true,
+            "isolationMode": 0,
+            "label": "",
+            "labelId": 0,
+            "mainAbility": "ClipboardHapAbility",
+            "mainElementName": "ClipboardHapAbility",
+            "metadata": [],
+            "moduleArkTSMode": "dynamic",
+            "moduleName": "clipboardHap",
+            "moduleSourceDir": "",
+            "moduleType": 2,
+            "name": "clipboardHap",
+            "nativeLibraryFileNames": [],
+            "nativeLibraryPath": "",
+            "overlayModuleInfos": [],
+            "package": "clipboardHap",
+            "packageName": "clipboardhap",
+            "pages": "$profile:main_pages",
+            "preloads": [],
+            "process": "com.huawei.hmos.inputmethod",
+            "proxyDatas": [],
+            "reqCapabilities": [],
+            "requiredDeviceFeatures": {},
+            "resizeable": false,
+            "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/clipboardHap/resources.index",
+            "routerArray": [],
+            "routerMap": "",
+            "shareFiles": "",
+            "srcEntrance": "",
+            "srcPath": "",
+            "supportedModes": 0,
+            "systemTheme": "",
+            "uiSyntax": "hml",
+            "upgradeFlag": 0,
+            "versionCode": 102001307,
+            "virtualMachine": ""
+        },
+        {
+            "abilityInfos": [
+                {
+                    "allowSelfRedirect": true,
+                    "appIndex": 0,
+                    "applicationName": "com.huawei.hmos.inputmethod",
+                    "arkTSMode": "dynamic",
+                    "backgroundModes": 0,
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "codePath": "",
+                    "compileMode": 1,
+                    "configChanges": [],
+                    "continuable": false,
+                    "continueBundleName": [],
+                    "continueType": [
+                        "MainAbility"
+                    ],
+                    "defaultFormHeight": 0,
+                    "defaultFormWidth": 0,
+                    "description": "$string:MainAbility_desc",
+                    "descriptionId": 419431659,
+                    "deviceCapabilities": [],
+                    "deviceTypes": [
+                        "phone",
+                        "tablet",
+                        "2in1",
+                        "car"
+                    ],
+                    "enabled": true,
+                    "excludeFromDock": false,
+                    "excludeFromMissions": false,
+                    "extensionAbilityType": 255,
+                    "formEnabled": false,
+                    "formEntity": 0,
+                    "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+                    "iconId": 419430402,
+                    "iconPath": "$media:app_icon",
+                    "isLauncherAbility": false,
+                    "isModuleJson": true,
+                    "isNativeAbility": false,
+                    "isStageBasedModel": true,
+                    "isolationProcess": false,
+                    "kind": "",
+                    "label": "$string:MainAbility_label",
+                    "labelId": 419434318,
+                    "launchMode": 0,
+                    "maxWindowHeight": 0,
+                    "maxWindowRatio": 0,
+                    "maxWindowWidth": 0,
+                    "metaData": {
+                        "customizeData": []
+                    },
+                    "metadata": [
+                        {
+                            "name": "ohos.ability.window.height",
+                            "resource": "",
+                            "value": "772",
+                            "valueId": 0
+                        },
+                        {
+                            "name": "ohos.ability.window.width",
+                            "resource": "",
+                            "value": "840",
+                            "valueId": 0
+                        }
+                    ],
+                    "minFormHeight": 0,
+                    "minFormWidth": 0,
+                    "minWindowHeight": 540,
+                    "minWindowRatio": 0,
+                    "minWindowWidth": 720,
+                    "moduleName": "default",
+                    "name": "MainAbility",
+                    "orientation": 14,
+                    "orientationId": 0,
+                    "package": "default",
+                    "permissions": [],
+                    "preferMultiWindowOrientation": "default",
+                    "priority": 0,
+                    "process": "",
+                    "readPermission": "",
+                    "recoverable": false,
+                    "removeMissionAfterTerminate": true,
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+                    "skills": [
+                        {
+                            "actions": [
+                                "action.system.home"
+                            ],
+                            "domainVerify": false,
+                            "entities": [
+                                "entity.system.home"
+                            ],
+                            "permissions": [],
+                            "uris": []
+                        },
+                        {
+                            "actions": [
+                                "com.celia.keyboard.action",
+                                "ohos.want.action.viewData"
+                            ],
+                            "domainVerify": false,
+                            "entities": [],
+                            "permissions": [],
+                            "uris": [
+                                {
+                                    "host": "inputmethod.hmos.huawei.com",
+                                    "linkFeature": "",
+                                    "maxFileSupported": 0,
+                                    "path": "",
+                                    "pathRegex": "",
+                                    "pathStartWith": "",
+                                    "port": "",
+                                    "scheme": "celiaKeyboard",
+                                    "type": "",
+                                    "utd": ""
+                                },
+                                {
+                                    "host": "inputmethod.hmos.huawei.com",
+                                    "linkFeature": "",
+                                    "maxFileSupported": 0,
+                                    "path": "",
+                                    "pathRegex": "",
+                                    "pathStartWith": "",
+                                    "port": "",
+                                    "scheme": "celiakeyboard",
+                                    "type": "",
+                                    "utd": ""
+                                }
+                            ]
+                        }
+                    ],
+                    "srcEntrance": "./ets/ability/MainAbility.ets",
+                    "srcLanguage": "js",
+                    "srcPath": "",
+                    "startWindow": "",
+                    "startWindowBackground": "$color:start_window_background_color",
+                    "startWindowBackgroundId": 419433439,
+                    "startWindowIcon": "$media:icon",
+                    "startWindowIconId": 419434068,
+                    "startWindowId": 0,
+                    "startWindowResource": {
+                        "startWindowAppIconId": 0,
+                        "startWindowBackgroundColorId": 0,
+                        "startWindowBackgroundImageFit": "Cover",
+                        "startWindowBackgroundImageId": 0,
+                        "startWindowBrandingImageId": 0,
+                        "startWindowIllustrationId": 0
+                    },
+                    "supportExtNames": [],
+                    "supportMimeTypes": [],
+                    "supportPipMode": false,
+                    "supportWindowMode": [
+                        0,
+                        1,
+                        2
+                    ],
+                    "targetAbility": "",
+                    "theme": "",
+                    "type": 1,
+                    "uid": -1,
+                    "unclearableMission": false,
+                    "uri": "",
+                    "visible": true,
+                    "writePermission": ""
+                }
+            ],
+            "abilitySrcEntryDelegator": "",
+            "abilityStageSrcEntryDelegator": "",
+            "aotCompileStatus": 0,
+            "appEnvironments": [],
+            "appStartup": "",
+            "arkTSMode": "dynamic",
+            "backgroundImg": "",
+            "buildHash": "",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "colorMode": -1,
+            "compileMode": 1,
+            "compressNativeLibs": true,
+            "cpuAbi": "",
+            "crossAppSharedConfig": "",
+            "deduplicateHar": false,
+            "deliveryWithInstall": true,
+            "dependencies": [],
+            "description": "$string:entry_desc",
+            "descriptionId": 419431909,
+            "deviceTypes": [
+                "phone",
+                "tablet",
+                "2in1",
+                "car"
+            ],
+            "easyGo": "",
+            "extensionInfos": [
+                {
+                    "appIdentifierAllowList": [],
+                    "appIndex": 0,
+                    "arkTSMode": "dynamic",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "compileMode": 1,
+                    "customProcess": "",
+                    "dataGroupIds": [],
+                    "description": "",
+                    "descriptionId": 0,
+                    "enabled": true,
+                    "extensionProcessMode": -1,
+                    "extensionTypeName": "backup",
+                    "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+                    "icon": "",
+                    "iconId": 0,
+                    "isolationProcess": false,
+                    "label": "",
+                    "labelId": 0,
+                    "metadata": [
+                        {
+                            "name": "ohos.extension.backup",
+                            "resource": "$profile:backup_config",
+                            "value": "",
+                            "valueId": 0
+                        }
+                    ],
+                    "moduleName": "default",
+                    "name": "CeliaBackupExtenAbility",
+                    "needCreateSandbox": false,
+                    "permissions": [],
+                    "priority": 0,
+                    "process": "com.huawei.hmos.inputmethod:backup",
+                    "readPermission": "",
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+                    "skills": [],
+                    "srcEntrance": "./ets/sync/CeliaBackupExtenAbility.ets",
+                    "type": 9,
+                    "uid": -1,
+                    "uri": "",
+                    "validDataGroupIds": [],
+                    "visible": false,
+                    "writePermission": ""
+                },
+                {
+                    "appIdentifierAllowList": [],
+                    "appIndex": 0,
+                    "arkTSMode": "dynamic",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "compileMode": 1,
+                    "customProcess": "",
+                    "dataGroupIds": [],
+                    "description": "$string:MainAbility_desc",
+                    "descriptionId": 419431659,
+                    "enabled": true,
+                    "extensionProcessMode": -1,
+                    "extensionTypeName": "sys/commonUI",
+                    "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+                    "icon": "",
+                    "iconId": 0,
+                    "isolationProcess": false,
+                    "label": "$string:MainAbility_label",
+                    "labelId": 419434318,
+                    "metadata": [
+                        {
+                            "name": "metadata.access.business_and_privacy_statement",
+                            "resource": "",
+                            "value": "oobe/OobeDataPrivacy.json",
+                            "valueId": 0
+                        }
+                    ],
+                    "moduleName": "default",
+                    "name": "DataPrivacyExtAbility",
+                    "needCreateSandbox": false,
+                    "permissions": [
+                        "ohos.permission.ACCESS_SECURITY_PRIVACY_CENTER"
+                    ],
+                    "priority": 0,
+                    "process": "com.huawei.hmos.inputmethod:sys/commonUI",
+                    "readPermission": "",
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+                    "skills": [
+                        {
+                            "actions": [
+                                "action.access.business_and_privacy_statement"
+                            ],
+                            "domainVerify": false,
+                            "entities": [
+                                "entity.system.home"
+                            ],
+                            "permissions": [],
+                            "uris": []
+                        }
+                    ],
+                    "srcEntrance": "./ets/ability/DataPrivacyExtAbility.ets",
+                    "type": 500,
+                    "uid": -1,
+                    "uri": "",
+                    "validDataGroupIds": [],
+                    "visible": true,
+                    "writePermission": ""
+                },
+                {
+                    "appIdentifierAllowList": [],
+                    "appIndex": 0,
+                    "arkTSMode": "dynamic",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "compileMode": 1,
+                    "customProcess": "",
+                    "dataGroupIds": [],
+                    "description": "",
+                    "descriptionId": 0,
+                    "enabled": true,
+                    "extensionProcessMode": -1,
+                    "extensionTypeName": "inputMethod",
+                    "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+                    "icon": "",
+                    "iconId": 0,
+                    "isolationProcess": false,
+                    "label": "",
+                    "labelId": 0,
+                    "metadata": [
+                        {
+                            "name": "ohos.extension.input_method",
+                            "resource": "$profile:input_method_config",
+                            "value": "",
+                            "valueId": 0
+                        },
+                        {
+                            "name": "ohos.extension.smart_menu",
+                            "resource": "$profile:input_smart_menu",
+                            "value": "",
+                            "valueId": 0
+                        }
+                    ],
+                    "moduleName": "default",
+                    "name": "InputService",
+                    "needCreateSandbox": true,
+                    "permissions": [],
+                    "priority": 0,
+                    "process": "com.huawei.hmos.inputmethod:inputMethod",
+                    "readPermission": "",
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+                    "skills": [],
+                    "srcEntrance": "./ets/inputService/InputService.ets",
+                    "type": 2,
+                    "uid": -1,
+                    "uri": "",
+                    "validDataGroupIds": [],
+                    "visible": true,
+                    "writePermission": ""
+                },
+                {
+                    "appIdentifierAllowList": [],
+                    "appIndex": 0,
+                    "arkTSMode": "dynamic",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "compileMode": 1,
+                    "customProcess": "",
+                    "dataGroupIds": [],
+                    "description": "$string:MainAbility_desc",
+                    "descriptionId": 419431659,
+                    "enabled": true,
+                    "extensionProcessMode": -1,
+                    "extensionTypeName": "sys/commonUI",
+                    "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+                    "icon": "",
+                    "iconId": 0,
+                    "isolationProcess": false,
+                    "label": "$string:MainAbility_label",
+                    "labelId": 419434318,
+                    "metadata": [],
+                    "moduleName": "default",
+                    "name": "LanguageSettingAbility",
+                    "needCreateSandbox": false,
+                    "permissions": [],
+                    "priority": 0,
+                    "process": "com.huawei.hmos.inputmethod:sys/commonUI",
+                    "readPermission": "",
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+                    "skills": [],
+                    "srcEntrance": "./ets/ability/LanguageSettingAbility.ets",
+                    "type": 500,
+                    "uid": -1,
+                    "uri": "",
+                    "validDataGroupIds": [],
+                    "visible": true,
+                    "writePermission": ""
+                },
+                {
+                    "appIdentifierAllowList": [],
+                    "appIndex": 0,
+                    "arkTSMode": "dynamic",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "compileMode": 1,
+                    "customProcess": "",
+                    "dataGroupIds": [],
+                    "description": "$string:MainAbility_desc",
+                    "descriptionId": 419431659,
+                    "enabled": true,
+                    "extensionProcessMode": -1,
+                    "extensionTypeName": "sys/commonUI",
+                    "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+                    "icon": "",
+                    "iconId": 0,
+                    "isolationProcess": false,
+                    "label": "$string:MainAbility_label",
+                    "labelId": 419434318,
+                    "metadata": [],
+                    "moduleName": "default",
+                    "name": "SettingExtAbility",
+                    "needCreateSandbox": false,
+                    "permissions": [
+                        "ohos.permission.ACCESS_SYSTEM_SETTINGS"
+                    ],
+                    "priority": 0,
+                    "process": "com.huawei.hmos.inputmethod:sys/commonUI",
+                    "readPermission": "",
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+                    "skills": [],
+                    "srcEntrance": "./ets/ability/SettingExtAbility.ets",
+                    "type": 500,
+                    "uid": -1,
+                    "uri": "",
+                    "validDataGroupIds": [],
+                    "visible": true,
+                    "writePermission": ""
+                },
+                {
+                    "appIdentifierAllowList": [],
+                    "appIndex": 0,
+                    "arkTSMode": "dynamic",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "compileMode": 1,
+                    "customProcess": "",
+                    "dataGroupIds": [],
+                    "description": "$string:SlowWorkExtensionAbility_desc",
+                    "descriptionId": 419431661,
+                    "enabled": true,
+                    "extensionProcessMode": -1,
+                    "extensionTypeName": "workScheduler",
+                    "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+                    "icon": "",
+                    "iconId": 0,
+                    "isolationProcess": false,
+                    "label": "$string:SlowWorkExtensionAbility_label",
+                    "labelId": 419431662,
+                    "metadata": [],
+                    "moduleName": "default",
+                    "name": "WorkExtensionAbility",
+                    "needCreateSandbox": false,
+                    "permissions": [],
+                    "priority": 0,
+                    "process": "com.huawei.hmos.inputmethod:workScheduler",
+                    "readPermission": "",
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+                    "skills": [],
+                    "srcEntrance": "./ets/work/WorkExtensionAbility.ets",
+                    "type": 1,
+                    "uid": -1,
+                    "uri": "",
+                    "validDataGroupIds": [],
+                    "visible": false,
+                    "writePermission": ""
+                }
+            ],
+            "fileContextMenu": "",
+            "formExtensionModule": "",
+            "formWidgetModule": "",
+            "hapPath": "/system/app/CeliaKeyboard/CeliaKeyboard.hap",
+            "hasIntent": false,
+            "hashValue": "",
+            "hqfInfo": {
+                "cpuAbi": "",
+                "hapSha256": "",
+                "hqfFilePath": "",
+                "moduleName": "",
+                "nativeLibraryPath": "",
+                "type": 0
+            },
+            "iconId": 419430402,
+            "iconPath": "$media:app_icon",
+            "installationFree": false,
+            "isLibIsolated": false,
+            "isModuleJson": true,
+            "isRemovable": {},
+            "isRemovableSet": [],
+            "isStageBasedModel": true,
+            "isolationMode": 0,
+            "label": "$string:MainAbility_label",
+            "labelId": 419434318,
+            "mainAbility": "MainAbility",
+            "mainElementName": "MainAbility",
+            "metadata": [
+                {
+                    "name": "client_id",
+                    "resource": "",
+                    "value": "109385615",
+                    "valueId": 0
+                },
+                {
+                    "name": "inputmethod_enhance_statement",
+                    "resource": "",
+                    "value": "rawfile:oobe/enhance_service_statements.json",
+                    "valueId": 0
+                },
+                {
+                    "name": "inputmethod_enhance_statement_pc",
+                    "resource": "",
+                    "value": "rawfile:oobe/enhance_service_statements_pc.json",
+                    "valueId": 0
+                },
+                {
+                    "name": "action.settings.app.can_not_disable",
+                    "resource": "",
+                    "value": "true",
+                    "valueId": 0
+                },
+                {
+                    "name": "ArkTSBuilderCheck",
+                    "resource": "",
+                    "value": "false",
+                    "valueId": 0
+                }
+            ],
+            "moduleArkTSMode": "dynamic",
+            "moduleName": "default",
+            "moduleSourceDir": "",
+            "moduleType": 1,
+            "name": "default",
+            "nativeLibraryFileNames": [],
+            "nativeLibraryPath": "",
+            "overlayModuleInfos": [],
+            "package": "default",
+            "packageName": "entry",
+            "pages": "$profile:main_pages",
+            "preloads": [],
+            "process": "com.huawei.hmos.inputmethod",
+            "proxyDatas": [],
+            "reqCapabilities": [],
+            "requiredDeviceFeatures": {},
+            "resizeable": false,
+            "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+            "routerArray": [
+                {
+                    "buildFunction": "feedbackPreviewBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "feedback_preview",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackPreview&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/pages/FeedbackPreview.js"
+                },
+                {
+                    "buildFunction": "feedbackProblemBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "feedback_problem",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackProblem&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/pages/FeedbackProblem.js"
+                },
+                {
+                    "buildFunction": "feedbackResultBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "feedback_result",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackResult&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/pages/FeedbackResult.js"
+                },
+                {
+                    "buildFunction": "livechatBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "wisesupport_main_page",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/Livechat&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/pages/Livechat.js"
+                },
+                {
+                    "buildFunction": "livechatWebBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "livechat_web",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/LivechatWeb&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/pages/LivechatWeb.js"
+                },
+                {
+                    "buildFunction": "feedbackViewBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "feedback",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/feedback/FeedbackView&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/view/feedback/FeedbackView.js"
+                },
+                {
+                    "buildFunction": "feedbackDetailBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "feedback_details",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackDetails&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/pages/FeedbackDetails.js"
+                },
+                {
+                    "buildFunction": "feedbackHistoryViewBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "feedback_history",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/feedback/FeedbackHistoryView&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/view/feedback/FeedbackHistoryView.js"
+                },
+                {
+                    "buildFunction": "wiseSupportNavSheetBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "wiseSupportNavSheet",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/WiseSupportNavSheet&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/view/WiseSupportNavSheet.js"
+                },
+                {
+                    "buildFunction": "livechatQRCodeBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "livechat_QRCode",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/livechat/LivechatQRCode&1.25.10-300",
+                    "pageSourceFile": "src/main/ets/view/livechat/LivechatQRCode.js"
+                },
+                {
+                    "buildFunction": "ComplainBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "WISE_SUPPORT_COMPLAIN",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/complain/src/main/ets/components/Complain&1.25.9-307",
+                    "pageSourceFile": "src/main/ets/components/Complain.js"
+                },
+                {
+                    "buildFunction": "ServerErrorViewBuilder",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "customData": "",
+                    "data": {},
+                    "moduleName": "default",
+                    "name": "complain_no_server_page",
+                    "ohmurl": "@normalized:N&&&@hms-wisesupport/complain/src/main/ets/components/ServerErrorView&1.25.9-307",
+                    "pageSourceFile": "src/main/ets/components/ServerErrorView.js"
+                }
+            ],
+            "routerMap": "$profile:default-router-map",
+            "shareFiles": "",
+            "srcEntrance": "./ets/application/AbilityStage.ets",
+            "srcPath": "",
+            "supportedModes": 0,
+            "systemTheme": "",
+            "uiSyntax": "hml",
+            "upgradeFlag": 0,
+            "versionCode": 102001307,
+            "virtualMachine": ""
+        },
+        {
+            "abilityInfos": [],
+            "abilitySrcEntryDelegator": "",
+            "abilityStageSrcEntryDelegator": "",
+            "aotCompileStatus": 0,
+            "appEnvironments": [],
+            "appStartup": "",
+            "arkTSMode": "dynamic",
+            "backgroundImg": "",
+            "buildHash": "",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "colorMode": -1,
+            "compileMode": 1,
+            "compressNativeLibs": true,
+            "cpuAbi": "",
+            "crossAppSharedConfig": "",
+            "deduplicateHar": false,
+            "deliveryWithInstall": true,
+            "dependencies": [],
+            "description": "$string:module_desc",
+            "descriptionId": 855638063,
+            "deviceTypes": [
+                "tablet",
+                "phone"
+            ],
+            "easyGo": "",
+            "extensionInfos": [
+                {
+                    "appIdentifierAllowList": [],
+                    "appIndex": 0,
+                    "arkTSMode": "dynamic",
+                    "bundleName": "com.huawei.hmos.inputmethod",
+                    "compileMode": 1,
+                    "customProcess": "",
+                    "dataGroupIds": [],
+                    "description": "$string:PreviewScanUIExtensionAbility_desc",
+                    "descriptionId": 855638056,
+                    "enabled": true,
+                    "extensionProcessMode": -1,
+                    "extensionTypeName": "sys/commonUI",
+                    "hapPath": "/system/app/CeliaKeyboard/previewscanHap.hap",
+                    "icon": "$media:icon",
+                    "iconId": 855638072,
+                    "isolationProcess": false,
+                    "label": "$string:PreviewScanUIExtensionAbility_label",
+                    "labelId": 855638057,
+                    "metadata": [
+                        {
+                            "name": "ohos.extension.servicetype",
+                            "resource": "",
+                            "value": "share",
+                            "valueId": 0
+                        }
+                    ],
+                    "moduleName": "previewscanHap",
+                    "name": "PreviewScanUIExtensionAbility",
+                    "needCreateSandbox": false,
+                    "permissions": [],
+                    "priority": 0,
+                    "process": "com.huawei.hmos.inputmethod:sys/commonUI",
+                    "readPermission": "",
+                    "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/previewscanHap/resources.index",
+                    "skills": [],
+                    "srcEntrance": "./ets/previewscanuiextensionability/PreviewScanUIExtensionAbility.ets",
+                    "type": 500,
+                    "uid": -1,
+                    "uri": "",
+                    "validDataGroupIds": [],
+                    "visible": false,
+                    "writePermission": ""
+                }
+            ],
+            "fileContextMenu": "",
+            "formExtensionModule": "",
+            "formWidgetModule": "",
+            "hapPath": "/system/app/CeliaKeyboard/previewscanHap.hap",
+            "hasIntent": false,
+            "hashValue": "",
+            "hqfInfo": {
+                "cpuAbi": "",
+                "hapSha256": "",
+                "hqfFilePath": "",
+                "moduleName": "",
+                "nativeLibraryPath": "",
+                "type": 0
+            },
+            "iconId": 855638072,
+            "iconPath": "$media:icon",
+            "installationFree": false,
+            "isLibIsolated": false,
+            "isModuleJson": true,
+            "isRemovable": {},
+            "isRemovableSet": [],
+            "isStageBasedModel": true,
+            "isolationMode": 0,
+            "label": "$string:PreviewScanUIExtensionAbility_label",
+            "labelId": 855638057,
+            "mainAbility": "PreviewScanUIExtensionAbility",
+            "mainElementName": "PreviewScanUIExtensionAbility",
+            "metadata": [],
+            "moduleArkTSMode": "dynamic",
+            "moduleName": "previewscanHap",
+            "moduleSourceDir": "",
+            "moduleType": 2,
+            "name": "previewscanHap",
+            "nativeLibraryFileNames": [],
+            "nativeLibraryPath": "",
+            "overlayModuleInfos": [],
+            "package": "previewscanHap",
+            "packageName": "@ime/previewscanHap",
+            "pages": "$profile:main_pages",
+            "preloads": [],
+            "process": "com.huawei.hmos.inputmethod",
+            "proxyDatas": [],
+            "reqCapabilities": [],
+            "requiredDeviceFeatures": {},
+            "resizeable": false,
+            "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/previewscanHap/resources.index",
+            "routerArray": [],
+            "routerMap": "",
+            "shareFiles": "",
+            "srcEntrance": "",
+            "srcPath": "",
+            "supportedModes": 0,
+            "systemTheme": "",
+            "uiSyntax": "hml",
+            "upgradeFlag": 0,
+            "versionCode": 102001307,
+            "virtualMachine": ""
+        },
+        {
+            "abilityInfos": [],
+            "abilitySrcEntryDelegator": "",
+            "abilityStageSrcEntryDelegator": "",
+            "aotCompileStatus": 0,
+            "appEnvironments": [],
+            "appStartup": "",
+            "arkTSMode": "dynamic",
+            "backgroundImg": "",
+            "buildHash": "",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "colorMode": -1,
+            "compileMode": 1,
+            "compressNativeLibs": true,
+            "cpuAbi": "",
+            "crossAppSharedConfig": "",
+            "deduplicateHar": false,
+            "deliveryWithInstall": true,
+            "dependencies": [],
+            "description": "$string:shared_desc",
+            "descriptionId": 956301606,
+            "deviceTypes": [
+                "phone",
+                "tablet",
+                "2in1"
+            ],
+            "easyGo": "",
+            "extensionInfos": [],
+            "fileContextMenu": "",
+            "formExtensionModule": "",
+            "formWidgetModule": "",
+            "hapPath": "/system/app/CeliaKeyboard/skin-default-release-signed.hsp",
+            "hasIntent": false,
+            "hashValue": "",
+            "hqfInfo": {
+                "cpuAbi": "",
+                "hapSha256": "",
+                "hqfFilePath": "",
+                "moduleName": "",
+                "nativeLibraryPath": "",
+                "type": 0
+            },
+            "iconId": 0,
+            "iconPath": "",
+            "installationFree": false,
+            "isLibIsolated": false,
+            "isModuleJson": true,
+            "isRemovable": {},
+            "isRemovableSet": [],
+            "isStageBasedModel": true,
+            "isolationMode": 0,
+            "label": "",
+            "labelId": 0,
+            "mainAbility": "",
+            "mainElementName": "",
+            "metadata": [],
+            "moduleArkTSMode": "dynamic",
+            "moduleName": "skin",
+            "moduleSourceDir": "",
+            "moduleType": 3,
+            "name": "skin",
+            "nativeLibraryFileNames": [],
+            "nativeLibraryPath": "",
+            "overlayModuleInfos": [],
+            "package": "skin",
+            "packageName": "@ime/skin",
+            "pages": "$profile:main_pages",
+            "preloads": [],
+            "process": "com.huawei.hmos.inputmethod",
+            "proxyDatas": [],
+            "reqCapabilities": [],
+            "requiredDeviceFeatures": {},
+            "resizeable": false,
+            "resourcePath": "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/skin/resources.index",
+            "routerArray": [],
+            "routerMap": "",
+            "shareFiles": "",
+            "srcEntrance": "",
+            "srcPath": "",
+            "supportedModes": 0,
+            "systemTheme": "",
+            "uiSyntax": "hml",
+            "upgradeFlag": 0,
+            "versionCode": 102001307,
+            "virtualMachine": ""
+        }
+    ],
+    "hapModuleNames": [
+        "clipboardHap",
+        "default",
+        "previewscanHap",
+        "skin"
+    ],
+    "installTime": 1779334836452,
+    "isDifferentName": false,
+    "isKeepAlive": false,
+    "isNativeApp": false,
+    "isNewVersion": true,
+    "isPreInstallApp": true,
+    "jointUserId": "",
+    "label": "",
+    "mainEntry": "default",
+    "maxSdkVersion": -1,
+    "minCompatibleVersionCode": 102001307,
+    "minSdkVersion": -1,
+    "moduleDirs": [
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/clipboardHap",
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default",
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/previewscanHap",
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/skin"
+    ],
+    "moduleNames": [
+        "clipboardHap",
+        "default",
+        "previewscanHap",
+        "skin"
+    ],
+    "modulePublicDirs": [
+        "",
+        "",
+        "",
+        ""
+    ],
+    "moduleResPaths": [
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/clipboardHap/resources.index",
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/default/resources.index",
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/previewscanHap/resources.index",
+        "/data/app/el1/bundle/public/com.huawei.hmos.inputmethod/skin/resources.index"
+    ],
+    "name": "com.huawei.hmos.inputmethod",
+    "oldAppIds": [
+        "com.huawei.hmos.inputmethod_BLWhnHf/QTpoUsk1EPfW7kBmXh5FWmG0JLaWsfx0ZvRYmequ9lgyWD1ROC2vcDGhCXKEP854gmtokI+KR4jreTHlHb91RY7GryugRER7O+MfTtwjPCKG89e13NdkjgmHTQ=="
+    ],
+    "overlayBundleInfos": [],
+    "overlayType": 3,
+    "pluginBundleInfos": {},
+    "releaseType": "Release",
+    "reqPermissionDetails": [
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.ACCELEROMETER",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.ACCESS_CAR_DISTRIBUTED_ENGINE",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.ALLOW_UPGRADE_GUIDE_ACCESS",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "previewscanHap",
+            "name": "ohos.permission.CAMERA",
+            "reason": "$string:camera_permission_used_reason",
+            "reasonId": 855638059,
+            "usedScene": {
+                "abilities": [
+                    "ExtensionAbility"
+                ],
+                "when": "inuse"
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.CAPTURE_SCREEN",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [
+                    "UIAbility",
+                    "ExtensionAbility"
+                ],
+                "when": "inuse"
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.DETECT_GESTURE",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.GET_BUNDLE_INFO",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.GET_NETWORK_INFO",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.INPUT_KEYBOARD_CONTROLLER",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.INTERNET",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.LAUNCH_DATA_PRIVACY_CENTER",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.MANAGE_SECURE_SETTINGS",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.MANAGE_SETTINGS",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.MICROPHONE",
+            "reason": "$string:microphone_permission_used_reason",
+            "reasonId": 419432066,
+            "usedScene": {
+                "abilities": [
+                    "ExtensionAbility"
+                ],
+                "when": "inuse"
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.PRIVACY_WINDOW",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.READ_CONTACTS",
+            "reason": "$string:read_contacts_permission_used_reason",
+            "reasonId": 419432205,
+            "usedScene": {
+                "abilities": [
+                    "UIAbility"
+                ],
+                "when": "inuse"
+            }
+        },
+        {
+            "moduleName": "clipboardHap",
+            "name": "ohos.permission.READ_PASTEBOARD",
+            "reason": "$string:clip_open_function_title_text",
+            "reasonId": 268435491,
+            "usedScene": {
+                "abilities": [
+                    "ExtensionAbility"
+                ],
+                "when": "inuse"
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.RUNNING_STATE_OBSERVER",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.START_ABILITIES_FROM_BACKGROUND",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.SYSTEM_FLOAT_WINDOW",
+            "reason": "$string:float_window_permission_used_reason",
+            "reasonId": 419431919,
+            "usedScene": {
+                "abilities": [
+                    "UIAbility",
+                    "ExtensionAbility"
+                ],
+                "when": "inuse"
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.VIBRATE",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.WAKEUP_VOICE",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.WRITE_ACCESSIBILITY_CONFIG",
+            "reason": "",
+            "reasonId": 0,
+            "usedScene": {
+                "abilities": [],
+                "when": ""
+            }
+        },
+        {
+            "moduleName": "default",
+            "name": "ohos.permission.WRITE_IMAGEVIDEO",
+            "reason": "$string:write_image_video_permission_used_reason",
+            "reasonId": 419432567,
+            "usedScene": {
+                "abilities": [
+                    "UIAbility",
+                    "ExtensionAbility"
+                ],
+                "when": "inuse"
+            }
+        }
+    ],
+    "reqPermissionStates": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        -1
+    ],
+    "reqPermissions": [
+        "ohos.permission.ACCELEROMETER",
+        "ohos.permission.ACCESS_CAR_DISTRIBUTED_ENGINE",
+        "ohos.permission.ALLOW_UPGRADE_GUIDE_ACCESS",
+        "ohos.permission.CAMERA",
+        "ohos.permission.CAPTURE_SCREEN",
+        "ohos.permission.DETECT_GESTURE",
+        "ohos.permission.GET_BUNDLE_INFO",
+        "ohos.permission.GET_NETWORK_INFO",
+        "ohos.permission.INPUT_KEYBOARD_CONTROLLER",
+        "ohos.permission.INTERNET",
+        "ohos.permission.LAUNCH_DATA_PRIVACY_CENTER",
+        "ohos.permission.MANAGE_SECURE_SETTINGS",
+        "ohos.permission.MANAGE_SETTINGS",
+        "ohos.permission.MICROPHONE",
+        "ohos.permission.PRIVACY_WINDOW",
+        "ohos.permission.READ_CONTACTS",
+        "ohos.permission.READ_PASTEBOARD",
+        "ohos.permission.RUNNING_STATE_OBSERVER",
+        "ohos.permission.START_ABILITIES_FROM_BACKGROUND",
+        "ohos.permission.SYSTEM_FLOAT_WINDOW",
+        "ohos.permission.VIBRATE",
+        "ohos.permission.WAKEUP_VOICE",
+        "ohos.permission.WRITE_ACCESSIBILITY_CONFIG",
+        "ohos.permission.WRITE_IMAGEVIDEO"
+    ],
+    "routerArray": [
+        {
+            "buildFunction": "ComplainBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "WISE_SUPPORT_COMPLAIN",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/complain/src/main/ets/components/Complain&1.25.9-307",
+            "pageSourceFile": "src/main/ets/components/Complain.js"
+        },
+        {
+            "buildFunction": "ServerErrorViewBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "complain_no_server_page",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/complain/src/main/ets/components/ServerErrorView&1.25.9-307",
+            "pageSourceFile": "src/main/ets/components/ServerErrorView.js"
+        },
+        {
+            "buildFunction": "feedbackViewBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "feedback",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/feedback/FeedbackView&1.25.10-300",
+            "pageSourceFile": "src/main/ets/view/feedback/FeedbackView.js"
+        },
+        {
+            "buildFunction": "feedbackDetailBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "feedback_details",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackDetails&1.25.10-300",
+            "pageSourceFile": "src/main/ets/pages/FeedbackDetails.js"
+        },
+        {
+            "buildFunction": "feedbackHistoryViewBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "feedback_history",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/feedback/FeedbackHistoryView&1.25.10-300",
+            "pageSourceFile": "src/main/ets/view/feedback/FeedbackHistoryView.js"
+        },
+        {
+            "buildFunction": "feedbackPreviewBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "feedback_preview",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackPreview&1.25.10-300",
+            "pageSourceFile": "src/main/ets/pages/FeedbackPreview.js"
+        },
+        {
+            "buildFunction": "feedbackProblemBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "feedback_problem",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackProblem&1.25.10-300",
+            "pageSourceFile": "src/main/ets/pages/FeedbackProblem.js"
+        },
+        {
+            "buildFunction": "feedbackResultBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "feedback_result",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/FeedbackResult&1.25.10-300",
+            "pageSourceFile": "src/main/ets/pages/FeedbackResult.js"
+        },
+        {
+            "buildFunction": "livechatQRCodeBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "livechat_QRCode",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/livechat/LivechatQRCode&1.25.10-300",
+            "pageSourceFile": "src/main/ets/view/livechat/LivechatQRCode.js"
+        },
+        {
+            "buildFunction": "livechatWebBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "livechat_web",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/LivechatWeb&1.25.10-300",
+            "pageSourceFile": "src/main/ets/pages/LivechatWeb.js"
+        },
+        {
+            "buildFunction": "wiseSupportNavSheetBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "wiseSupportNavSheet",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/view/WiseSupportNavSheet&1.25.10-300",
+            "pageSourceFile": "src/main/ets/view/WiseSupportNavSheet.js"
+        },
+        {
+            "buildFunction": "livechatBuilder",
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "customData": "",
+            "data": {},
+            "moduleName": "default",
+            "name": "wisesupport_main_page",
+            "ohmurl": "@normalized:N&&&@hms-wisesupport/wisesupport/src/main/ets/pages/Livechat&1.25.10-300",
+            "pageSourceFile": "src/main/ets/pages/Livechat.js"
+        }
+    ],
+    "seInfo": "",
+    "singleton": false,
+    "targetMinorApiVersion": 0,
+    "targetPatchApiVersion": 0,
+    "targetVersion": 60100023,
+    "uid": 20020013,
+    "updateTime": 1779334836535,
+    "userInfo": [
+        {
+            "accessTokenId": 537725669,
+            "accessTokenIdEx": 4832692965,
+            "bundleName": "com.huawei.hmos.inputmethod",
+            "bundleUserInfo": {
+                "disabledAbilities": [],
+                "enabled": true,
+                "overlayState": [],
+                "setEnabledCaller": "",
+                "userId": 100
+            },
+            "canUninstall": true,
+            "cloneInfos": {},
+            "curDynamicIconModule": "",
+            "firstInstallTime": 1533657660000,
+            "gids": [
+                20020013
+            ],
+            "installTime": 1779334836452,
+            "installedPluginSet": [],
+            "isBundleFirstLaunched": true,
+            "isRemovable": true,
+            "uid": 20020013,
+            "updateTime": 1779334836535
+        }
+    ],
+    "vendor": "ohos",
+    "versionCode": 102001307,
+    "versionName": "1.2.1.307"
+}

@@ -4,14 +4,39 @@ import cjgui.*
 import cjgui_shared_operation_core.*
 import std.collection.*
 import std.env.*
+import std.fs.*
+import std.time.*
 import std.unicode.*
 
 private let TASK_RESOURCE_ID: Int64 = 8101
 
+// B1/P2 consumer-side alpha invariant control. It is a plain handwritten control
+// whose interaction state is an OWNER bit (CHECKED), not a pointer gesture, so
+// the consumer can drive the same framework interaction-paint channel
+// deterministically. The checked paint declares background alpha 0.75; the base
+// style declares 0.8. With a 0.5 paint-alpha animation the displayed background
+// alpha must be 0.75 * 0.5 = 0.375 (interaction resolved once, animation applied
+// once). Discriminating counter-examples: double animation would give 0.1875,
+// re-multiplying the base alpha would give 0.3.
+private let ALPHA_INVARIANT_SEMANTIC: String = "collaboration-alpha-invariant"
+private let ALPHA_INVARIANT_NODE_ID: Int64 = 9001
+private let ALPHA_INVARIANT_BASE_ALPHA: Float64 = 0.8
+private let ALPHA_INVARIANT_CHECKED_ALPHA: Float64 = 0.75
+private let ALPHA_INVARIANT_ANIMATION_ALPHA: Float64 = 0.5
+private let ALPHA_INVARIANT_EXPECTED: Float64 = 0.375
+private let GENERATED_CONSUMER_PNG_TARGET: String = "collaboration-png-target"
+private let GENERATED_CONSUMER_PNG_SOURCE: String = "collaboration-png-source"
+private let GENERATED_CONSUMER_PNG_TARGET_NODE: Int64 = 9002
+private let GENERATED_CONSUMER_PNG_SOURCE_NODE: Int64 = 9003
+private let GENERATED_CONSUMER_PNG_PREVIEW_NODE: Int64 = 9004
+private let GENERATED_CONSUMER_PNG_STATUS_NODE: Int64 = 9005
+
 /// A small normal-window consumer.  Its task content and submitted state are
 /// fields on one CjguiSharedOperationList resource: controller state holds
 /// only presentation revision/status and never a second writable task copy.
-class CollaborationStarterController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant {
+class CollaborationStarterController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant &
+    CjguiComposableUiPlatformThemeConsumer & CjguiComposableUiPlatformAccentConsumer &
+    CjguiComposableUiWindowBackgroundProvider & CjguiComposableUiDataTransferProvider {
     private let domain: CjguiSharedOperationList
     private let components: CjguiComposableUiComponentRegistry
     private var revision: Int64 = 1
@@ -25,6 +50,11 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
     // wheel step, a keyboard reveal and a theme change all read and write the
     // same object instead of each author remembering an offset.
     private let editorViewport: CjguiComposableUiScrollViewport
+    private var usesDarkAppearance: Bool = true
+    private var platformAccentColor: ?CjguiComposableUiColor = None
+    private let pngOwner: CjguiSharedOperationImageOwner
+    private var pngReceiverIncarnation: Int64 = 1
+    private var pngOutcome: String = "等待 PNG 粘贴或拖入"
 
     init(domain: CjguiSharedOperationList) {
         this.domain = domain
@@ -32,19 +62,61 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
         this.textInputFields = HashMap<Int64, String>()
         this.generatedRegion = CjguiTaskGeneratedRegion(domain, TASK_RESOURCE_ID)
         this.editorViewport = CjguiComposableUiScrollViewport()
+        this.pngOwner = CjguiSharedOperationImageOwner()
     }
 
     public func generatedUiRegion(): CjguiTaskGeneratedRegion { return generatedRegion }
 
+    public func candidateWindowBackground(): String {
+        return generatedRegion.candidateWindowBackground()
+    }
+
     public func uiSceneVersion(): Int64 {
-        return revision + domain.snapshot().version + generatedRegion.revision()
+        return revision + domain.snapshot().version + generatedRegion.revision() + pngOwner.version()
+    }
+
+    public func imageOwner(): CjguiSharedOperationImageOwner { return pngOwner }
+
+    public func applyPlatformColorScheme(scheme: CjguiComposableUiColorScheme): Bool {
+        let dark = CjguiComposableUiPlatformStateCodec.colorSchemeToken(scheme) ==
+            CJGUI_COMPOSABLE_UI_PLATFORM_COLOR_SCHEME_DARK
+        if (usesDarkAppearance == dark) {
+            return false
+        }
+        usesDarkAppearance = dark
+        let _ = generatedRegion.applyPlatformColorScheme(scheme)
+        revision += 1
+        return true
+    }
+
+    public func applyPlatformAccentColor(color: CjguiComposableUiColor, source: String): Bool {
+        if (!generatedRegion.applyPlatformAccentColor(color, source)) { return false }
+        platformAccentColor = Some(color)
+        revision += 1
+        return true
     }
 
     public func buildUi(): CjguiComposableUiNode {
-        let theme = CjguiComposableUiTheme.beaconDark()
+        let theme = if (usesDarkAppearance) {
+            CjguiComposableUiTheme.beaconDark()
+        } else {
+            CjguiComposableUiTheme.paperLight()
+        }
         let snapshot = domain.snapshot()
         let task = taskFromSnapshot(snapshot)
-        let root = cjguiComposableHorizontal(1, "collaboration-root", theme.page)
+        // The native content-area material sits behind the Metal scene. Keep
+        // this window-sized root transparent only for the accepted/requested
+        // material; ordinary opaque mode retains the original themed page.
+        let page = if (generatedRegion.candidateWindowBackground() ==
+            CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA) {
+            CjguiComposableUiStyle(
+                background: CjguiComposableUiColor(theme.page.background.red,
+                    theme.page.background.green, theme.page.background.blue, 0.0),
+                padding: theme.page.padding, gap: theme.page.gap)
+        } else {
+            theme.page
+        }
+        let root = cjguiComposableHorizontal(1, "collaboration-root", page)
         // The handwritten editors, the generated section and the composite card
         // together are longer than one screen. They live in ONE public scroll
         // container sharing ONE public viewport, so the framework can present the
@@ -56,11 +128,32 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             // height that a scroll container does not have.
             CjguiComposableUiStyle(growX: 1, growY: 1, alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH,
                 cornerRadius: 16, clipsContent: true,
-                background: CjguiComposableUiColor(0.12, 0.18, 0.30, 0.88),
-                border: CjguiComposableUiColor(0.25, 0.38, 0.60, 0.82)))
+                background: theme.card.background,
+                border: theme.card.border))
         let editorContent = cjguiComposableVertical(2002, "collaboration-editor-content",
             CjguiComposableUiStyle(padding: 14, gap: 8))
         editorContent.add(cjguiComposableText(3, "collaboration-title", "协作任务板", theme.heading))
+        let pngSnapshot = pngOwner.snapshot()
+        let pngRow = cjguiComposableHorizontal(8998, "collaboration-png-transfer-row",
+            CjguiComposableUiStyle(growX: 1, gap: 8, fixedHeight: 40))
+        pngRow.add(cjguiComposableButton(GENERATED_CONSUMER_PNG_TARGET_NODE, GENERATED_CONSUMER_PNG_TARGET,
+            "PNG 粘贴 / 跨窗拖入", "PNG_TARGET", 8901,
+            CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 34)))
+        pngRow.add(cjguiComposableButton(GENERATED_CONSUMER_PNG_SOURCE_NODE, GENERATED_CONSUMER_PNG_SOURCE,
+            "拖出当前 PNG", "PNG_SOURCE", 8901,
+            CjguiComposableUiStyle(fixedWidth: 150, fixedHeight: 34), enabled: pngSnapshot.offer.isSome()))
+        editorContent.add(pngRow)
+        let pngPreview = cjguiComposableHorizontal(9006, "collaboration-png-preview",
+            CjguiComposableUiStyle(growX: 1, gap: 8, fixedHeight: 76))
+        if (let Some(offer) <- pngSnapshot.offer) {
+            pngPreview.add(cjguiComposableImageFromTransfer(GENERATED_CONSUMER_PNG_PREVIEW_NODE,
+                "collaboration-png-image", offer,
+                CjguiComposableUiStyle(fixedWidth: 72, fixedHeight: 72, cornerRadius: 6, clipsContent: true)))
+        }
+        pngPreview.add(cjguiComposableText(GENERATED_CONSUMER_PNG_STATUS_NODE, "collaboration-png-status",
+            "PNG v${pngSnapshot.version} ${pngSnapshot.width}×${pngSnapshot.height} " +
+            "${pngSnapshot.encodedBytes} B · ${pngOutcome}", theme.body))
+        editorContent.add(pngPreview)
         // The handwritten beacon resolves from the application's ONE declaration,
         // the same one the generated side and the registered card consume.
         let beacon = generatedRegion.beaconResource()
@@ -89,18 +182,45 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
                     currentText(field.fieldId, task), TASK_RESOURCE_ID, theme.input,
                     enabled: if (availability.known) { availability.isAvailable } else { true },
                     fieldId: field.fieldId,
-                    operationActionName: field.writer, displayValueRole: "applied"))
+                    operationActionName: field.writer, displayValueRole: "applied",
+                    interactionStyle: theme.inputInteraction))
             }
             textIndex += 1
         }
+        let actionAccent = match (platformAccentColor) {
+            case Some(value) => value
+            case None => theme.primaryAction.border
+        }
+        let handwrittenActionStyle = cjguiComposableUiPaintOverlay(theme.primaryAction,
+            CjguiComposableUiStyle(background: theme.primaryAction.background, border: actionAccent,
+                textColor: theme.primaryAction.textColor, borderWidth: 2))
         editorContent.add(cjguiComposableButton(7, "collaboration-submit", "提交当前任务", "HUMAN_SUBMIT", TASK_RESOURCE_ID,
-            theme.primaryAction, operationActionName: markedField.writer))
+            handwrittenActionStyle, operationActionName: markedField.writer,
+            interactionStyle: theme.primaryActionInteraction))
         editorContent.add(cjguiComposableText(8, "collaboration-status", status, theme.body))
         editorContent.add(generatedRegion.buildSection(theme))
+        // B1/P2: one plain control that carries an OWNER interaction state
+        // (CHECKED) and a checked paint, so the consumer can read the displayed
+        // interaction-resolved paint and prove the alpha composition rule without
+        // a pointer gesture. Placed after the generated section so it does not
+        // move the nodes the existing checks address.
+        editorContent.add(cjguiComposableButton(ALPHA_INVARIANT_NODE_ID, ALPHA_INVARIANT_SEMANTIC,
+            "alpha 不变式卡片（checked × 动画）", "ALPHA_INVARIANT_NOOP", 0,
+            CjguiComposableUiStyle(
+                background: CjguiComposableUiColor(0.20, 0.30, 0.52, ALPHA_INVARIANT_BASE_ALPHA),
+                border: CjguiComposableUiColor(0.62, 0.78, 0.98, ALPHA_INVARIANT_BASE_ALPHA),
+                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, ALPHA_INVARIANT_BASE_ALPHA),
+                fixedWidth: 240, fixedHeight: 36, cornerRadius: 6, padding: 8),
+            interactionStyle: CjguiComposableUiInteractionStyle(
+                checked: CjguiComposableUiPaintStyle(
+                    background: Some(CjguiComposableUiColor(0.20, 0.30, 0.52, ALPHA_INVARIANT_CHECKED_ALPHA)),
+                    border: Some(CjguiComposableUiColor(0.62, 0.78, 0.98, ALPHA_INVARIANT_CHECKED_ALPHA)),
+                    textColor: Some(CjguiComposableUiColor(1.0, 1.0, 1.0, ALPHA_INVARIANT_CHECKED_ALPHA)))),
+            ownerInteractionState: CjguiComposableUiInteractionState.CHECKED))
         let activityPane = cjguiComposableVertical(20, "collaboration-activity", CjguiComposableUiStyle(
             growX: 1, padding: 14, gap: 8, cornerRadius: 16, clipsContent: true,
-            background: CjguiComposableUiColor(0.07, 0.12, 0.22, 0.82),
-            border: CjguiComposableUiColor(0.22, 0.34, 0.56, 0.78)
+            background: theme.card.background,
+            border: theme.card.border
         ))
         activityPane.add(cjguiComposableText(21, "collaboration-activity-title", "实际业务投影", theme.heading))
         activityPane.add(cjguiComposableText(22, "collaboration-summary",
@@ -176,7 +296,54 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
         revision += 1
         return CjguiComposableUiDispatchResult(true)
     }
+
+    public func dataTransferDeclarations(): ArrayList<CjguiComposableUiDataTransferDeclaration> {
+        let declarations = ArrayList<CjguiComposableUiDataTransferDeclaration>()
+        declarations.add(CjguiComposableUiDataTransferDeclaration.target(GENERATED_CONSUMER_PNG_TARGET,
+            CjguiSharedOperationTransferFormat.png(), receiverIncarnation: pngReceiverIncarnation))
+        if (let Some(offer) <- pngOwner.snapshot().offer) {
+            declarations.add(CjguiComposableUiDataTransferDeclaration.source(GENERATED_CONSUMER_PNG_SOURCE, offer))
+        }
+        return declarations
+    }
+
+    public func dataTransferOwnerVersion(node: CjguiComposableUiLayoutNode): Int64 {
+        return if (node.semanticId == GENERATED_CONSUMER_PNG_TARGET) { pngOwner.version() } else { -1 }
+    }
+
+    public func applyDataTransfer(event: CjguiComposableUiDataTransferEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
+            getStdOut().writeln("CJGUI_PNG_COPY consumer=generated-panel version=${pngOwner.version()}")
+            getStdOut().flush()
+            return CjguiComposableUiDispatchResult(false)
+        }
+        let result = pngOwner.accept(event.offer, event.expectedOwnerVersion,
+            event.imageWidth, event.imageHeight)
+        if (!result.applied) {
+            return rejectDataTransfer(event.node.nodeId, event.eventKind, result.reason)
+        }
+        pngOutcome = "accepted ${event.offer.contentDigest}"
+        revision += 1
+        getStdOut().writeln("CJGUI_PNG_OWNER consumer=generated-panel kind=${event.eventKind} " +
+            "version=${pngOwner.version()} bytes=${event.offer.payloadByteCount} " +
+            "digest=${event.offer.contentDigest} width=${event.imageWidth} height=${event.imageHeight} " +
+            "decode_us=${event.decodeMicros} epoch=${event.bindingEpoch}")
+        getStdOut().flush()
+        return CjguiComposableUiDispatchResult(true)
+    }
+
+    public func rejectDataTransfer(nodeId: Int64, eventKind: Int64, reason: String): CjguiComposableUiDispatchResult {
+        pngOutcome = "rejected ${reason}"
+        revision += 1
+        getStdOut().writeln("CJGUI_PNG_REJECT consumer=generated-panel kind=${eventKind} " +
+            "node=${nodeId} reason=${reason} version=${pngOwner.version()}")
+        getStdOut().flush()
+        return CjguiComposableUiDispatchResult(false)
+    }
     public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        // P2: cancel this region's paint-alpha binding on the close path so no
+        // old animation completion lands after teardown.
+        generatedRegion.prepareWindowClose()
         return CjguiComposableUiDispatchResult(true, shouldClose: true)
     }
     public func beginSceneRefresh(): Bool {
@@ -271,9 +438,96 @@ private func authorization(): CjguiSharedOperationExternalAuthorization {
     )
 }
 
+/// Absolute difference helper for the consumer's own float assertions (the
+/// dispatch module does not import std.math just for a comparison).
+private func cjguiConsumerAbs(value: Float64): Float64 {
+    return if (value < 0.0) { -value } else { value }
+}
+
+private func cjguiConsumerApprox(actual: Float64, expected: Float64, tolerance: Float64): Bool {
+    return cjguiConsumerAbs(actual - expected) <= tolerance
+}
+
+/// Read one accepted node by semantic id so the self-verification asserts the
+/// SAME committed projection the window displays (never a controller field).
+private func acceptedNodeForSemantic(window: CjguiComposableUiWindow,
+    semanticId: String): ?CjguiComposableUiLayoutNode {
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == semanticId) {
+            return Some(node)
+        }
+    }
+    return None
+}
+
+private func generatedDiagnosticNode(snapshot: CjguiComposableUiDiagnosticSnapshot,
+    identity: String): ?CjguiComposableUiDiagnosticNode {
+    for (node in snapshot.nodes) {
+        if (node.identityKey == identity) { return Some(node) }
+    }
+    return None
+}
+
+private func generatedWaitDiagnosticIdle(host: CjguiMacosApplicationHost,
+    window: CjguiComposableUiWindow): Int64 {
+    var stable = 0
+    var turns = 0
+    var previous = window.diagnosticSnapshot(maximumNodes: 1).nativeSubmissionCount
+    while (host.isOpen() && turns < 100 && stable < 4) {
+        let _ = host.pumpOneTurn()
+        let current = window.diagnosticSnapshot(maximumNodes: 1).nativeSubmissionCount
+        if (current == previous && !window.needsAnimationTick()) { stable += 1 } else { stable = 0 }
+        previous = current
+        turns += 1
+    }
+    return turns
+}
+
+private func generatedDiagnosticReadBatch(window: CjguiComposableUiWindow): Int64 {
+    let started = MonoTime.now()
+    var count = 0
+    while (count < 24) {
+        let _ = window.diagnosticSnapshot(maximumNodes: 256)
+        count += 1
+    }
+    return (MonoTime.now() - started).toMicroseconds()
+}
+
 main(args: Array<String>): Int64 {
-    let verifiesNormalClose = args.size == 1 && args[0] == "--verify-normal-close"
-    if (args.size != 0 && !verifiesNormalClose) { return 2 }
+    // `--verify-animation` / `--verify-normal-close` are self-verification
+    // entries. A verification script may launch this instance with a
+    // round-unique token so the exact process of THIS round can be identified by
+    // its own command line (never "newest pid matching the binary path").
+    // `--inject-verify-failure` makes one assertion fail on purpose so a caller
+    // can prove the exit code and the completion marker really fail the chain.
+    var verifiesNormalClose = false
+    var verifiesAnimation = false
+    var effectProbeReleasePath = ""
+    var diagnosticGatePath = ""
+    var instanceToken = ""
+    var injectVerifyFailure = false
+    var argIndex = 0
+    while (argIndex < args.size) {
+        if (args[argIndex] == "--verify-normal-close") {
+            verifiesNormalClose = true
+        } else if (args[argIndex] == "--verify-animation") {
+            verifiesAnimation = true
+        } else if (args[argIndex] == "--verify-effect-fallback" && argIndex + 1 < args.size) {
+            effectProbeReleasePath = args[argIndex + 1]
+            argIndex += 1
+        } else if (args[argIndex] == "--verify-diagnostics" && argIndex + 1 < args.size) {
+            diagnosticGatePath = args[argIndex + 1]
+            argIndex += 1
+        } else if (args[argIndex] == "--inject-verify-failure") {
+            injectVerifyFailure = true
+        } else if (args[argIndex] == "--instance-token" && argIndex + 1 < args.size) {
+            instanceToken = args[argIndex + 1]
+            argIndex += 1
+        } else {
+            return 2
+        }
+        argIndex += 1
+    }
     let domain = CjguiSharedOperationList(ArrayList<CjguiSharedOperationRecord>([
         CjguiSharedOperationRecord(TASK_RESOURCE_ID, "", false)
     ]))
@@ -305,6 +559,523 @@ main(args: Array<String>): Int64 {
         getStdOut().writeln("CJGUI_COLLABORATION_READY DESCRIPTOR_PATH ${info.descriptorPath}")
         getStdOut().flush()
     }
+    // P1: the normal window's generated description is submitted through the
+    // public generated submit entry before the first frame, so the declared
+    // shadow and gradient are really rendered by the framework and are never
+    // painted by this consumer. The description also carries the generated
+    // controls that later re-declare the effect.
+    let generatedRegion = controller.generatedUiRegion()
+    // Announce this instance's identity and the registered motion surface before
+    // any transition: a verifier binds the exact process by token, and an
+    // external reader can see the real supported parameters and backend.
+    getStdOut().writeln("CJGUI_COLLABORATION_SELF instance_token=${instanceToken} pid=${getProcessId()} " +
+        "role=generated-panel-consumer verifyAnimation=${if (verifiesAnimation) { 1 } else { 0 }}")
+    getStdOut().writeln("CJGUI_GENERATED_MOTION_CAPABILITY ${generatedRegion.motionCapabilityLine()}")
+    getStdOut().flush()
+    // The older backdrop-blur probe needs an opaque root to distinguish its
+    // own fallback. Keep that probe on its established scene while ordinary
+    // generated windows start with the new system material declaration.
+    let initialStructure = if (effectProbeReleasePath.size > 0 || diagnosticGatePath.size > 0) {
+        CjguiTaskGeneratedRegion.effectStructure(0, true,
+            windowBackground: CjguiWindowBackgroundPolicy.OPAQUE)
+    } else {
+        generatedRegion.initialEffectStructure()
+    }
+    let initialSubmit = generatedRegion.submitStructure(initialStructure,
+        generatedRegion.acceptedStructureVersion())
+    getStdOut().writeln("CJGUI_GENERATED_EFFECT_SUBMIT accepted=${initialSubmit.candidateAccepted} " +
+        "reason=${if (initialSubmit.reason.size == 0) { "none" } else { initialSubmit.reason }}")
+    getStdOut().flush()
+    // A public client supplies the legal and rejected generated candidates.
+    // Gate files only let this ordinary window sample each settled scene before
+    // the next candidate; no private holder operation creates those candidates.
+    if (diagnosticGatePath.size > 0) {
+        var failed = 0
+        let initialIdleTurns = generatedWaitDiagnosticIdle(host, window)
+        let groupId = generatedRegion.acceptedNodeIdForKey("effectGroup")
+        var groupIdentity = ""
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == groupId) { groupIdentity = node.identityKey }
+        }
+        let initialStarted = MonoTime.now()
+        let initial = window.diagnosticSnapshot(maximumNodes: 256)
+        let initialReadMicros = (MonoTime.now() - initialStarted).toMicroseconds()
+        let offReadBatchMicros = generatedDiagnosticReadBatch(window)
+        let initialOk = groupIdentity.size > 0 && initial.status == "ok" &&
+            generatedDiagnosticNode(initial, groupIdentity).isSome() &&
+            initial.nodes.size <= 256 && initial.acceptedSceneVersion > 0
+        if (!initialOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=initial_generated ok=${if (initialOk) { 1 } else { 0 }} " +
+            "scene=${initial.acceptedSceneVersion} identity=${groupIdentity} " +
+            "nodes=${initial.nodes.size}/${initial.totalNodes} read_us=${initialReadMicros} " +
+            "live_bytes=${initial.effectLiveBytes} idle_turns=${initialIdleTurns} " +
+            "off_read_24_us=${offReadBatchMicros}")
+        let enabled = window.setDiagnosticOverlay(CjguiComposableUiDiagnosticOverlayOptions(true,
+            selectedIdentityKey: groupIdentity))
+        let immediate = window.diagnosticSnapshot(maximumNodes: 1)
+        let overlayStarted = MonoTime.now()
+        let overlay = window.diagnosticSnapshot(maximumNodes: 256)
+        let overlayReadMicros = (MonoTime.now() - overlayStarted).toMicroseconds()
+        let onReadBatchMicros = generatedDiagnosticReadBatch(window)
+        let overlayOk = enabled && overlay.overlayEnabled &&
+            immediate.nativeSubmissionCount == initial.nativeSubmissionCount &&
+            overlay.nativeSubmissionCount == initial.nativeSubmissionCount &&
+            overlay.acceptedSceneVersion == initial.acceptedSceneVersion &&
+            overlay.effectLiveBytes == initial.effectLiveBytes &&
+            overlay.effectCachedBytes == initial.effectCachedBytes
+        if (!overlayOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=overlay_isolated ok=${if (overlayOk) { 1 } else { 0 }} " +
+            "scene=${overlay.acceptedSceneVersion} submissions=${initial.nativeSubmissionCount}->${overlay.nativeSubmissionCount} " +
+            "read_us=${overlayReadMicros} on_read_24_us=${onReadBatchMicros} " +
+            "live_bytes=${initial.effectLiveBytes}->${overlay.effectLiveBytes} " +
+            "cached_bytes=${initial.effectCachedBytes}->${overlay.effectCachedBytes}")
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_READY scene=${overlay.acceptedSceneVersion} identity=${groupIdentity}")
+        getStdOut().flush()
+        let started = MonoTime.now()
+        while (host.isOpen() && !exists(diagnosticGatePath + ".accepted") &&
+            (MonoTime.now() - started).toMilliseconds() < 30000) {
+            let _ = host.pumpOneTurn()
+        }
+        let accepted = window.diagnosticSnapshot(maximumNodes: 256)
+        let acceptedNode = generatedDiagnosticNode(accepted, groupIdentity)
+        let nativeState = match (acceptedNode) {
+            case Some(node) => node.nativeGeometryState
+            case None => "absent"
+        }
+        let nativeOutput = match (acceptedNode) {
+            case Some(node) => node.nativeOutputBounds.isSome()
+            case None => false
+        }
+        let nativeSample = match (acceptedNode) {
+            case Some(node) => node.nativeBackdropSampleBounds.isSome()
+            case None => false
+        }
+        let effect = window.windowProgress()
+        let acceptedOk = exists(diagnosticGatePath + ".accepted") &&
+            accepted.acceptedSceneVersion > overlay.acceptedSceneVersion &&
+            acceptedNode.isSome() && accepted.overlayEnabled &&
+            accepted.sessionIdentity == initial.sessionIdentity &&
+            nativeState == "available" && nativeOutput &&
+            (effect.effectSubmittedMode != "blurred" || nativeSample)
+        if (!acceptedOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=external_accepted ok=${if (acceptedOk) { 1 } else { 0 }} " +
+            "scene=${overlay.acceptedSceneVersion}->${accepted.acceptedSceneVersion} " +
+            "submitted=${accepted.submittedSceneVersion}/${accepted.submittedFrameIndex} " +
+            "complete=${accepted.completedFrameIndex} native=${nativeState} output=${if (nativeOutput) { 1 } else { 0 }} " +
+            "sample=${if (nativeSample) { 1 } else { 0 }} effect=${effect.effectSubmittedMode}")
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_PHASE accepted")
+        getStdOut().flush()
+        let rejectStarted = MonoTime.now()
+        while (host.isOpen() && !exists(diagnosticGatePath + ".rejected") &&
+            (MonoTime.now() - rejectStarted).toMilliseconds() < 30000) {
+            let _ = host.pumpOneTurn()
+        }
+        let rejected = window.diagnosticSnapshot(maximumNodes: 256)
+        let stale = window.diagnosticSnapshot(maximumNodes: 8,
+            expectedSessionIdentity: initial.sessionIdentity,
+            expectedAcceptedSceneVersion: overlay.acceptedSceneVersion)
+        let rejectedOk = exists(diagnosticGatePath + ".rejected") &&
+            rejected.acceptedSceneVersion == accepted.acceptedSceneVersion &&
+            generatedDiagnosticNode(rejected, groupIdentity).isSome() &&
+            stale.status == "stale_accepted" && stale.nodes.size == 0
+        if (!rejectedOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=rejected_keeps_accepted ok=${if (rejectedOk) { 1 } else { 0 }} " +
+            "scene=${rejected.acceptedSceneVersion}")
+        let preDisableIdleTurns = generatedWaitDiagnosticIdle(host, window)
+        let disabled = window.setDiagnosticOverlay(CjguiComposableUiDiagnosticOverlayOptions(false))
+        let disabledSnap = window.diagnosticSnapshot(maximumNodes: 1)
+        var turns = 0
+        while (turns < 4 && host.isOpen()) { let _ = host.pumpOneTurn(); turns += 1 }
+        let settled = window.diagnosticSnapshot(maximumNodes: 1)
+        let disabledReadBatchMicros = generatedDiagnosticReadBatch(window)
+        let idleOk = disabled && !settled.overlayEnabled &&
+            settled.nativeSubmissionCount == disabledSnap.nativeSubmissionCount &&
+            settled.overlayDrawCount == disabledSnap.overlayDrawCount
+        if (!idleOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=disable_idle ok=${if (idleOk) { 1 } else { 0 }} " +
+            "draws=${disabledSnap.overlayDrawCount}->${settled.overlayDrawCount} " +
+            "submissions=${disabledSnap.nativeSubmissionCount}->${settled.nativeSubmissionCount} " +
+            "idle_turns=${preDisableIdleTurns} disabled_read_24_us=${disabledReadBatchMicros}")
+        if (injectVerifyFailure) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_DONE instance_token=${instanceToken} failed=${failed}")
+        getStdOut().flush()
+        if (failed != 0) { exit(1) }
+        host.close()
+        exit(0)
+        return 0
+    }
+    // Test-only normal application leg. An external public client submits the
+    // blur candidate, then reads the committed fallback before releasing this
+    // round's private gate. The gate only schedules a root-clear change; all
+    // effect facts still come from real scene/Metal submissions and the socket.
+    if (effectProbeReleasePath.size > 0) {
+        let started = MonoTime.now()
+        var phase = 0
+        while (host.isOpen() && (MonoTime.now() - started).toMilliseconds() < 30000) {
+            if (phase == 1) {
+                // Keep the submitted transparent-root frame stable while the
+                // public client reads its receipt and guarded EFFECTS section.
+                // Continue serving the real socket; a normal host turn would
+                // schedule another opaque present before that read completes.
+                let _ = connection.pump(1u32)
+                sleep(Duration.millisecond)
+            } else {
+                let _ = host.pumpOneTurn()
+            }
+            let progress = window.windowProgress()
+            if (phase == 0 && progress.effectRequestedRadiusPoints == 8 &&
+                progress.effectSubmittedMode == "blurred") {
+                if (!window.testPresentEffectClear(0.0)) { host.close(); return 4 }
+                phase = 1
+                getStdOut().writeln("CJGUI_EFFECT_PROBE phase=fallback")
+                getStdOut().flush()
+            } else if (phase == 1 && exists(effectProbeReleasePath)) {
+                if (!window.testPresentEffectClear(1.0)) { host.close(); return 5 }
+                phase = 2
+                getStdOut().writeln("CJGUI_EFFECT_PROBE phase=restored")
+                getStdOut().flush()
+            }
+        }
+        host.close()
+        return if (phase == 2) { 0 } else { 6 }
+    }
+    // P2 animation verification: drive the generated node's paint alpha through
+    // the public window entry, reverse it mid-flight, then submit a malformed
+    // effect candidate (refused whole) and prove the running binding is NOT
+    // disturbed. Finally cancel through the close hook. This is the consumer's
+    // own check; a real mouse press uses the same public entry through the
+    // generated control.
+    if (verifiesAnimation) {
+        let region = controller.generatedUiRegion()
+        // Each assertion is evaluated and reported; any failure (or an injected
+        // failure) makes this process exit non-zero and the completion marker
+        // name the failing count.
+        var failed = 0
+        var waited = 0
+        while (waited < 400 && host.isOpen() && !region.generatedAnimationNodeReady()) {
+            let _ = host.pumpOneTurn()
+            waited += 1
+        }
+        // 1. the accepted scene really carries the generated node.
+        let nodeReady = region.generatedAnimationNodeReady()
+        if (!nodeReady) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=generated_node_ready ok=${if (nodeReady) { 1 } else { 0 }}")
+        // 2. The actual consumer palette follows the normal host's accepted
+        // platform preference, including the system source. Read the committed
+        // scene paint rather than treating a tracker token as a visual result.
+        let lightSelected = host.setThemePreference("light")
+        let _ = host.pumpOneTurn()
+        let lightRed = match (acceptedNodeForSemantic(window, "collaboration-root")) {
+            case Some(node) => node.style.background.red
+            case None => -1.0
+        }
+        let lightMaterial = window.windowProgress()
+        let darkSelected = host.setThemePreference("dark")
+        let _ = host.pumpOneTurn()
+        let darkRed = match (acceptedNodeForSemantic(window, "collaboration-root")) {
+            case Some(node) => node.style.background.red
+            case None => -1.0
+        }
+        let darkMaterial = window.windowProgress()
+        let systemSelected = host.setThemePreference("system")
+        let _ = host.pumpOneTurn()
+        let systemRed = match (acceptedNodeForSemantic(window, "collaboration-root")) {
+            case Some(node) => node.style.background.red
+            case None => -1.0
+        }
+        let systemMaterial = window.windowProgress()
+        let effectiveSystemRed = match (host.platformState()) {
+            case Some(snapshot) =>
+                if (CjguiComposableUiPlatformStateCodec.colorSchemeToken(snapshot.effectiveColorScheme()) == "dark") {
+                    CjguiComposableUiTheme.beaconDark().page.background.red
+                } else { CjguiComposableUiTheme.paperLight().page.background.red }
+            case None => -1.0
+        }
+        let acceptedSystemFact = host.platformState()
+        let repeatedSystemSelected = host.setThemePreference("system")
+        let _ = host.pumpOneTurn()
+        let repeatedSystemRed = match (acceptedNodeForSemantic(window, "collaboration-root")) {
+            case Some(node) => node.style.background.red
+            case None => -1.0
+        }
+        let sameAcceptedFact = match (acceptedSystemFact) {
+            case Some(before) => match (host.platformState()) {
+                case Some(after) => before.equals(after)
+                case None => false
+            }
+            case None => false
+        }
+        let sameFactStable = repeatedSystemSelected && sameAcceptedFact &&
+            cjguiConsumerApprox(repeatedSystemRed, systemRed, 0.0001)
+        let unknownThemeRejected = !host.setThemePreference("unknown")
+        let themePaintOk = lightSelected && darkSelected && systemSelected && unknownThemeRejected &&
+            cjguiConsumerApprox(lightRed, CjguiComposableUiTheme.paperLight().page.background.red, 0.0001) &&
+            cjguiConsumerApprox(darkRed, CjguiComposableUiTheme.beaconDark().page.background.red, 0.0001) &&
+            cjguiConsumerApprox(systemRed, effectiveSystemRed, 0.0001) && sameFactStable
+        let expectedSystemMaterialScheme = match (host.platformState()) {
+            case Some(snapshot) => CjguiComposableUiPlatformStateCodec.colorSchemeToken(snapshot.effectiveColorScheme())
+            case None => "unavailable"
+        }
+        let materialThemeOk = lightMaterial.windowBackgroundRequested ==
+            CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA &&
+            lightMaterial.windowBackgroundColorScheme == "light" &&
+            darkMaterial.windowBackgroundColorScheme == "dark" &&
+            darkMaterial.windowBackgroundFrameIndex > lightMaterial.windowBackgroundFrameIndex &&
+            systemMaterial.windowBackgroundColorScheme == expectedSystemMaterialScheme
+        if (!themePaintOk) { failed += 1 }
+        if (!materialThemeOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=host_theme_accepted_paint " +
+            "ok=${if (themePaintOk) { 1 } else { 0 }} light=${lightRed} dark=${darkRed} " +
+            "system=${systemRed} effective=${effectiveSystemRed} sameFact=${if (sameFactStable) { 1 } else { 0 }}")
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=window_material_theme_accepted " +
+            "ok=${if (materialThemeOk) { 1 } else { 0 }} light=${lightMaterial.windowBackgroundColorScheme} " +
+            "dark=${darkMaterial.windowBackgroundColorScheme} system=${systemMaterial.windowBackgroundColorScheme} " +
+            "frames=${lightMaterial.windowBackgroundFrameIndex}/${darkMaterial.windowBackgroundFrameIndex}/" +
+            "${systemMaterial.windowBackgroundFrameIndex}")
+        // 3. the registered restricted motion rule drives a real low transition.
+        let lowDrive = region.driveGeneratedOpacity(0.3, "verify-low")
+        var frames = 0
+        while (frames < 6 && host.isOpen()) {
+            let _ = host.pumpOneTurn()
+            frames += 1
+        }
+        let afterLowSnap = region.animationSnapshot()
+        // The drive really changed the projection toward the low target: the
+        // presented value left the base 1.0 and the target is the low value. The
+        // exact arrival is checked by the reverse step (which continues from
+        // this in-flight value), so a partial tween is not a failure.
+        let lowChanged = lowDrive && afterLowSnap.presented >= 0.3 - 0.0001 &&
+            afterLowSnap.presented < 1.0 && afterLowSnap.target <= 0.3 + 0.0001
+        if (!lowChanged) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=low_transition_drove " +
+            "ok=${if (lowChanged) { 1 } else { 0 }} drive=${if (lowDrive) { 1 } else { 0 }} " +
+            "presented=${afterLowSnap.presented} target=${afterLowSnap.target}")
+        // 3. an explicit reverse continues from the current visual value.
+        let reverseDrive = region.driveGeneratedOpacity(1.0, "verify-reverse")
+        var frames2 = 0
+        while (frames2 < 6 && host.isOpen()) {
+            let _ = host.pumpOneTurn()
+            frames2 += 1
+        }
+        let afterReverseSnap = region.animationSnapshot()
+        let reverseContinued = reverseDrive && afterReverseSnap.presented > afterLowSnap.presented
+        if (!reverseContinued) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=reverse_continues_current " +
+            "ok=${if (reverseContinued) { 1 } else { 0 }} drive=${if (reverseDrive) { 1 } else { 0 }} " +
+            "from=${afterLowSnap.presented} after=${afterReverseSnap.presented}")
+        // 4. a malformed candidate is refused WHOLE (no silent normalization);
+        //    the accepted structure version and the running binding are untouched.
+        let versionBefore = region.acceptedStructureVersion()
+        let identityBefore = region.animationSnapshot().identity
+        let malformed = "GENERATED_UI_STRUCTURE 1\n" +
+            "NODE 0 board vertical\n" +
+            "NODE 1 verifyBad label\n" +
+            "PROPERTY 1 verifyBad text 验证非法效果\n" +
+            "PROPERTY 1 verifyBad shadow 12,oops,8,0,#000000\n" +
+            "END"
+        let rejected = region.submitStructure(malformed, versionBefore)
+        let versionAfter = region.acceptedStructureVersion()
+        let identityAfter = region.animationSnapshot().identity
+        let rejectWhole = !rejected.candidateAccepted && rejected.reason.contains("shadow_value_invalid") &&
+            versionAfter == versionBefore && identityAfter == identityBefore && identityAfter.size > 0
+        if (!rejectWhole) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=malformed_candidate_refused_whole " +
+            "ok=${if (rejectWhole) { 1 } else { 0 }} accepted=${if (rejected.candidateAccepted) { 1 } else { 0 }} " +
+            "reason=${rejected.reason} versionBefore=${versionBefore} versionAfter=${versionAfter} " +
+            "identityStable=${if (identityAfter == identityBefore) { 1 } else { 0 }}")
+        // 5. B2: the consumer references the FRAMEWORK-level common motion
+        //    definition (its local copy is gone). The published capability line
+        //    is the framework's, the registered transition resolves, and an
+        //    unregistered name is a NAMED refusal instead of an invented default.
+        let capability = region.motionCapabilityLine()
+        let frameworkCapability = CjguiGeneratedMotionRegistry.capabilityLine()
+        let frameworkDefinitionOk = capability == frameworkCapability &&
+            capability.contains("interaction_rule=interaction.state") &&
+            capability.contains("color_space=srgb_component_linear") &&
+            CjguiGeneratedMotionRegistry.specFor(CjguiGeneratedMotionRegistry.OPACITY_TRANSITION).isSome() &&
+            CjguiGeneratedMotionRegistry.specFor("generated.unknown").isNone() &&
+            CjguiGeneratedMotionRegistry.rejectionReasonFor("generated.unknown") == "motion_rule_unregistered"
+        if (!frameworkDefinitionOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=framework_common_definition " +
+            "ok=${if (frameworkDefinitionOk) { 1 } else { 0 }} " +
+            "interaction_rule=${if (capability.contains("interaction_rule=interaction.state")) { 1 } else { 0 }} " +
+            "color_space=${if (capability.contains("color_space=srgb_component_linear")) { 1 } else { 0 }}")
+        // 6. B1: the checked OWNER interaction state resolves the invariant card's
+        //    background alpha to 0.75; the interaction channel settles at that
+        //    target on first projection (no pointer gesture needed).
+        var alphaWaited = 0
+        while (alphaWaited < 200 && host.isOpen() &&
+            acceptedNodeForSemantic(window, ALPHA_INVARIANT_SEMANTIC).isNone()) {
+            let _ = host.pumpOneTurn()
+            alphaWaited += 1
+        }
+        let alphaNode = acceptedNodeForSemantic(window, ALPHA_INVARIANT_SEMANTIC)
+        let alphaResolved = match (alphaNode) {
+            case Some(node) => node.style.background.alpha
+            case None => -1.0
+        }
+        let alphaIdentity = match (alphaNode) {
+            case Some(node) => node.identityKey
+            case None => ""
+        }
+        let resolvedOk = cjguiConsumerApprox(alphaResolved, ALPHA_INVARIANT_CHECKED_ALPHA, 0.01)
+        if (!resolvedOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=alpha_interaction_resolved " +
+            "ok=${if (resolvedOk) { 1 } else { 0 }} resolved=${alphaResolved} " +
+            "expected=${ALPHA_INVARIANT_CHECKED_ALPHA}")
+        // 7. B1: a 0.5 paint-alpha animation composes with the 0.75 interaction
+        //    resolution exactly once -> 0.375. Discriminating counter-examples:
+        //    double animation = 0.1875, re-multiplying the 0.8 base = 0.3.
+        let zeroSpec = CjguiComposableUiAnimationSpec.tween(durationMs: 0)
+        let alphaDriven = alphaIdentity.size > 0 &&
+            window.animateNodeOpacity(alphaIdentity, ALPHA_INVARIANT_ANIMATION_ALPHA, spec: zeroSpec,
+                atTime: MonoTime.now())
+        let _ = host.pumpOneTurn()
+        let composed = match (acceptedNodeForSemantic(window, ALPHA_INVARIANT_SEMANTIC)) {
+            case Some(node) => node.style.background.alpha
+            case None => -1.0
+        }
+        let composeOk = alphaDriven && cjguiConsumerApprox(composed, ALPHA_INVARIANT_EXPECTED, 0.01) &&
+            !cjguiConsumerApprox(composed, 0.1875, 0.01) && !cjguiConsumerApprox(composed, 0.3, 0.01)
+        if (!composeOk) { failed += 1 }
+        // Release the invariant card's binding again so the close-time binding
+        // count asserts only the generated region's own lifecycle.
+        if (alphaIdentity.size > 0) {
+            let _ = window.cancelNodeOpacityAnimation(alphaIdentity)
+        }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=alpha_composed_once " +
+            "ok=${if (composeOk) { 1 } else { 0 }} composed=${composed} expected=${ALPHA_INVARIANT_EXPECTED} " +
+            "double=${0.1875} baseAgain=${0.3}")
+        // 8. B3 reduce-motion: an active animation converges to its terminal
+        //    value, the terminal value is really committed, and the window stops
+        //    requesting frames. Turning the preference off lets the next
+        //    transition advance again.
+        let _ = window.setReduceMotionEnabled(false)
+        let _ = region.driveGeneratedOpacity(0.3, "b3-reduce")
+        let _ = host.pumpOneTurn()
+        let midReduce = region.animationSnapshot()
+        let _ = window.setReduceMotionEnabled(true)
+        let _ = host.pumpOneTurn()
+        let convergedSnap = region.animationSnapshot()
+        let reduceOk = midReduce.presented > 0.3 + 0.001 && midReduce.presented < 1.0 &&
+            cjguiConsumerApprox(convergedSnap.presented, 0.3, 0.001) && !window.needsAnimationTick()
+        if (!reduceOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=reduce_motion_converges_and_stops " +
+            "ok=${if (reduceOk) { 1 } else { 0 }} mid=${midReduce.presented} converged=${convergedSnap.presented} " +
+            "needsTick=${if (window.needsAnimationTick()) { 1 } else { 0 }}")
+        // 9. B3 resume: with the preference off again a fresh transition runs and
+        //    the window requests frames.
+        let _ = window.setReduceMotionEnabled(false)
+        let resumedDrive = region.driveGeneratedOpacity(1.0, "b3-resume")
+        let _ = host.pumpOneTurn()
+        let resumedSnap = region.animationSnapshot()
+        let resumeOk = resumedDrive && resumedSnap.active > 0 && window.needsAnimationTick()
+        if (!resumeOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=reduce_off_resumes " +
+            "ok=${if (resumeOk) { 1 } else { 0 }} active=${resumedSnap.active} " +
+            "needsTick=${if (window.needsAnimationTick()) { 1 } else { 0 }}")
+        // 10. B3 pause: pausing stops advancing and frame requests while keeping
+        //     the binding; resuming continues from the same value. The previous
+        //     step left an active transition toward 1.0, so pause it in flight.
+        let beforePause = region.animationSnapshot()
+        window.setAnimationsPaused(true)
+        let _ = host.pumpOneTurn()
+        let pausedTick = window.needsAnimationTick()
+        let afterPause = region.animationSnapshot()
+        window.setAnimationsPaused(false)
+        let pauseOk = beforePause.active > 0 && !pausedTick &&
+            cjguiConsumerApprox(afterPause.presented, beforePause.presented, 0.000000001)
+        if (!pauseOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=pause_stops_and_resumes " +
+            "ok=${if (pauseOk) { 1 } else { 0 }} before=${beforePause.presented} " +
+            "after=${afterPause.presented} pausedTick=${if (pausedTick) { 1 } else { 0 }}")
+        // 11. B3 controllable platform-state source: a tracker fed with EXPLICIT
+        //     facts (never the user's global preference) proves the whole policy
+        //     chain - only-change updates, visible advance, hidden/minimized
+        //     converge, restore advance, fixed theme priority, unknown rejected.
+        let tracker = CjguiComposableUiPlatformStateTracker()
+        let platformFirst = tracker.observe(reduceMotion: false, systemColorScheme: CjguiComposableUiColorScheme.Dark,
+            themePreference: CjguiComposableUiThemePreference.SystemFollow, windowVisible: true, windowMinimized: false)
+        let platformSame = tracker.observe(reduceMotion: false, systemColorScheme: CjguiComposableUiColorScheme.Dark,
+            themePreference: CjguiComposableUiThemePreference.SystemFollow, windowVisible: true, windowMinimized: false)
+        let visibleAdvance = match (tracker.accepted()) {
+            case Some(snapshot) => !snapshot.motionConverges()
+            case None => false
+        }
+        let _ = tracker.observe(reduceMotion: false, systemColorScheme: CjguiComposableUiColorScheme.Dark,
+            themePreference: CjguiComposableUiThemePreference.SystemFollow, windowVisible: false, windowMinimized: false)
+        let hiddenConverge = match (tracker.accepted()) {
+            case Some(snapshot) => snapshot.motionConverges()
+            case None => false
+        }
+        let _ = tracker.observe(reduceMotion: false, systemColorScheme: CjguiComposableUiColorScheme.Dark,
+            themePreference: CjguiComposableUiThemePreference.SystemFollow, windowVisible: true, windowMinimized: false)
+        let restoreAdvance = match (tracker.accepted()) {
+            case Some(snapshot) => !snapshot.motionConverges()
+            case None => false
+        }
+        let _ = tracker.observe(reduceMotion: false, systemColorScheme: CjguiComposableUiColorScheme.Dark,
+            themePreference: CjguiComposableUiThemePreference.SystemFollow, windowVisible: true, windowMinimized: true)
+        let minimizedConverge = match (tracker.accepted()) {
+            case Some(snapshot) => snapshot.motionConverges()
+            case None => false
+        }
+        let _ = tracker.observe(reduceMotion: false, systemColorScheme: CjguiComposableUiColorScheme.Dark,
+            themePreference: CjguiComposableUiThemePreference.SystemFollow, windowVisible: true, windowMinimized: false)
+        let minimizedRestore = match (tracker.accepted()) {
+            case Some(snapshot) => !snapshot.motionConverges()
+            case None => false
+        }
+        // User fixed theme wins over the system appearance.
+        let _ = tracker.observe(reduceMotion: false, systemColorScheme: CjguiComposableUiColorScheme.Dark,
+            themePreference: CjguiComposableUiThemePreference.FixedLight, windowVisible: true, windowMinimized: false)
+        let fixedThemeLight = match (tracker.accepted()) {
+            case Some(snapshot) => CjguiComposableUiPlatformStateCodec.colorSchemeToken(
+                snapshot.effectiveColorScheme()) == CJGUI_COMPOSABLE_UI_PLATFORM_COLOR_SCHEME_LIGHT
+            case None => false
+        }
+        let unknownRejected = !tracker.selectThemePreference("neon") &&
+            tracker.lastRejectionReason() == "unknown_theme_preference"
+        // The policy the window chain consumes: converge on hidden/minimized.
+        let windowChainConverge = window.setReduceMotionEnabled(hiddenConverge)
+        let _ = window.setReduceMotionEnabled(false)
+        let platformOk = platformFirst && !platformSame && visibleAdvance && hiddenConverge &&
+            restoreAdvance && minimizedConverge && minimizedRestore && fixedThemeLight && unknownRejected
+        if (!platformOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=platform_state_chain " +
+            "ok=${if (platformOk) { 1 } else { 0 }} first=${if (platformFirst) { 1 } else { 0 }} " +
+            "same=${if (platformSame) { 1 } else { 0 }} visibleAdvance=${if (visibleAdvance) { 1 } else { 0 }} " +
+            "hiddenConverge=${if (hiddenConverge) { 1 } else { 0 }} restoreAdvance=${if (restoreAdvance) { 1 } else { 0 }} " +
+            "minimizedConverge=${if (minimizedConverge) { 1 } else { 0 }} " +
+            "minimizedRestore=${if (minimizedRestore) { 1 } else { 0 }} " +
+            "fixedThemeLight=${if (fixedThemeLight) { 1 } else { 0 }} " +
+            "unknownRejected=${if (unknownRejected) { 1 } else { 0 }} windowChainConverge=${if (windowChainConverge) { 1 } else { 0 }}")
+        // 12. close cancels the region's binding and requests no further
+        //     animation frame (the interaction-paint color channel of the
+        //     invariant card is independent of the region's opacity binding).
+        region.prepareWindowClose()
+        let afterCancelSnap = region.animationSnapshot()
+        let cancelSettled = afterCancelSnap.active == 0 && afterCancelSnap.presented < 0.0
+        if (!cancelSettled) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=cancel_settles " +
+            "ok=${if (cancelSettled) { 1 } else { 0 }} active=${afterCancelSnap.active} " +
+            "presented=${afterCancelSnap.presented}")
+        if (injectVerifyFailure) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_VERDICT assertions=13 failed=${failed} " +
+            "inject=${if (injectVerifyFailure) { 1 } else { 0 }} " +
+            "reduceMotion=${if (window.reduceMotionEnabled()) { 1 } else { 0 }}")
+        getStdOut().writeln("CJGUI_GENERATED_ANIMATION_DONE instance_token=${instanceToken} failed=${failed}")
+        getStdOut().flush()
+        // The host owns the NSApplication run loop, so a graceful close can end
+        // the process before any later return value is seen. A failing assertion
+        // therefore exits explicitly with the non-zero status the caller reads.
+        if (failed != 0) {
+            exit(1)
+        }
+        host.close()
+        exit(0)
+        return 0
+    }
     // A consumer-level close probe uses the same controller decision and
     // Host cleanup as the visible close button. It is intentionally separate
     // from any external client or model claim.
@@ -317,7 +1088,34 @@ main(args: Array<String>): Int64 {
         getStdOut().flush()
         return 0
     }
-    while (host.isOpen()) { let _ = host.pumpOneTurn() }
+    let imageOwnerSlot: Int64 = 8199
+    let imageAuthorization = CjguiSharedOperationExternalAuthorization(
+        "generated-png-owner-client", "demo-only-authorized-image-capability",
+        ArrayList<CjguiSharedOperationExternalActionScope>([
+            CjguiSharedOperationExternalActionScope("GET_CONTEXT",
+                ArrayList<Int64>([imageOwnerSlot]), false),
+            CjguiSharedOperationExternalActionScope("SELECT_OWNED_IMAGE",
+                ArrayList<Int64>([imageOwnerSlot]), false)
+        ]))
+    let imageConnection = CjguiSharedOperationExternalConnection(
+        CjguiSharedOperationImageOwnerDomain(controller.imageOwner(), imageOwnerSlot), imageAuthorization)
+    if (!imageConnection.start()) { host.close(); return 1 }
+    if (let Some(info) <- imageConnection.connectionInfo()) {
+        getStdOut().writeln("CJGUI_PNG_EXTERNAL_READY consumer=generated-panel descriptor=${info.descriptorPath} " +
+            "slot=${imageOwnerSlot}")
+        getStdOut().flush()
+    }
+    while (host.isOpen()) {
+        let _ = imageConnection.pumpBurst(4u32, 0u32, 0u32)
+        if (imageConnection.consumeWindowRefreshRequest()) {
+            let state = controller.imageOwner().snapshot()
+            getStdOut().writeln("CJGUI_PNG_EXTERNAL_APPLIED consumer=generated-panel version=${state.version} " +
+                "digest=${state.contentDigest}")
+            getStdOut().flush()
+        }
+        let _ = host.pumpOneTurn()
+    }
+    imageConnection.close()
     host.close()
     return 0
 }

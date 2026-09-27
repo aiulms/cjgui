@@ -8,6 +8,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$SCRIPT_DIR/lib_cjgui_source_set.sh"
 
 # RED contract: an exported consumer must exercise the public window/platform
 # transfer route. A probe that manufactures CjguiComposableUiDataTransferEvent
@@ -42,17 +43,6 @@ typeset -a SOURCE_PAYLOAD_RELATIVE
 SOURCE_PAYLOAD_RELATIVE=(
   README.md
   cjpm.toml
-  src/composable_ui.cj
-  src/composable_ui_component_instance.cj
-  src/composable_vector_graphics.cj
-  src/composable_vector_graphics_component.cj
-  src/composable_ui_window.cj
-  src/composable_ui_tree.cj
-  src/composable_ui_generated.cj
-  src/composable_ui_named_style.cj
-  src/composable_ui_composite_component.cj
-  src/macos_application_host.cj
-  src/runtime_renderer_session.cj
   shared_operation_core/cjpm.toml
   shared_operation_core/client.py
   shared_operation_core/src/shared_editing_form_contract.cj
@@ -80,6 +70,9 @@ SOURCE_PAYLOAD_RELATIVE=(
   templates/macos_application/collaboration/cjpm.toml
   templates/macos_application/collaboration/run.sh
 )
+for source_name in "${CJGUI_FRAMEWORK_SOURCE_NAMES[@]}" "${CJGUI_GENERATED_SOURCE_NAMES[@]}"; do
+  SOURCE_PAYLOAD_RELATIVE+=("src/$source_name")
+done
 
 payload_sha256() {
   local root="$1"
@@ -150,8 +143,20 @@ mkdir -p "$APPLICATIONS_DIR"
 zsh "$RUNTIME_DIR/scripts/export_framework_preview.sh" "$PREVIEW_DIR"
 
 FRAMEWORK_DIR="$PREVIEW_DIR/framework/cjgui"
+ADAPTIVE_CONSUMER="$PREVIEW_DIR/consumers/adaptive_layout_public_consumer"
 test -f "$PREVIEW_DIR/preview-manifest.md"
 test -f "$FRAMEWORK_DIR/README.md"
+test -f "$ADAPTIVE_CONSUMER/src/main.cj"
+# RED contract: the exported handwritten UI-only consumer must include the
+# P4 accepted-owner assertions in its existing --verify-hit path. This catches
+# the old P2/P3-only implementation before any target build starts.
+for assertion in effect_group_opacity_control effect_group_mask_control \
+    effect_group_blend_control effect_group_blur_control effect_group_owner_readback; do
+  if ! rg -q "name=${assertion} " "$ADAPTIVE_CONSUMER/src/main.cj"; then
+    print -u2 -- "RED: exported adaptive UI-only consumer has no ${assertion} assertion"
+    exit 1
+  fi
+done
 test -f "$FRAMEWORK_DIR/shared_operation_core/client.py"
 for document_source in shared_text_document.cj shared_text_document_workspace.cj shared_text_document_file.cj; do
   if [[ ! -f "$FRAMEWORK_DIR/shared_operation_core/src/$document_source" ]]; then
@@ -259,13 +264,15 @@ rm -rf "$FRAMEWORK_DIR/native/lib" \
   "$COMMAND_CONSUMER/.cjgui" "$COMMAND_CONSUMER/target" \
   "$VECTOR_CONSUMER/.cjgui" "$VECTOR_CONSUMER/target" \
   "$TRANSFER_CONSUMER/.cjgui" "$TRANSFER_CONSUMER/target" \
-  "$DOCUMENT_CONSUMER/.cjgui" "$DOCUMENT_CONSUMER/target"
+  "$DOCUMENT_CONSUMER/.cjgui" "$DOCUMENT_CONSUMER/target" \
+  "$ADAPTIVE_CONSUMER/.cjgui" "$ADAPTIVE_CONSUMER/target"
 test ! -e "$FRAMEWORK_DIR/native/lib"
 
 mv "$INITIAL_ROOT" "$RELOCATED_ROOT"
 PREVIEW_DIR="$RELOCATED_ROOT/CJGUI Framework Preview"
 APPLICATIONS_DIR="$RELOCATED_ROOT/Generated Applications"
 FRAMEWORK_DIR="$PREVIEW_DIR/framework/cjgui"
+ADAPTIVE_CONSUMER="$PREVIEW_DIR/consumers/adaptive_layout_public_consumer"
 DOCUMENT_CONSUMER="$APPLICATIONS_DIR/Document Consumer"
 IMAGE_CONSUMER="$APPLICATIONS_DIR/Image Multiwindow Consumer"
 COMMAND_CONSUMER="$APPLICATIONS_DIR/Command Menu Consumer"
@@ -307,10 +314,38 @@ build_from_isolated_preview "$COMMAND_CONSUMER" "$COMMAND_BUILD_LOG" 1
 build_from_isolated_preview "$VECTOR_CONSUMER" "$VECTOR_BUILD_LOG" 1
 TRANSFER_BUILD_LOG="$TEMP_ROOT/data-transfer-preview-build.log"
 build_from_isolated_preview "$TRANSFER_CONSUMER" "$TRANSFER_BUILD_LOG" 1
+ADAPTIVE_BUILD_LOG="$TEMP_ROOT/adaptive-layout-preview-build.log"
+build_from_isolated_preview "$ADAPTIVE_CONSUMER" "$ADAPTIVE_BUILD_LOG" 1
+
+# Run the exported handwritten consumer's own accepted-scene verification.
+ADAPTIVE_BIN="$ADAPTIVE_CONSUMER/target/release/AdaptiveLayoutPublicConsumer.app/Contents/MacOS/AdaptiveLayoutPublicConsumer"
+ADAPTIVE_RUN_LOG="$TEMP_ROOT/adaptive-layout-preview-run.log"
+set +e
+( cd "$ADAPTIVE_CONSUMER" && "$ADAPTIVE_BIN" --verify-hit --instance-token "preview-$$" ) >"$ADAPTIVE_RUN_LOG" 2>&1
+ADAPTIVE_RUN_EXIT=$?
+set -e
+if (( ADAPTIVE_RUN_EXIT != 0 )); then
+  cat "$ADAPTIVE_RUN_LOG" >&2
+  print -u2 -- "adaptive UI-only preview --verify-hit exited $ADAPTIVE_RUN_EXIT"
+  exit 1
+fi
+grep -q '^CJGUI_ADAPTIVE_HIT_VERDICT assertions=14 failed=0 ' "$ADAPTIVE_RUN_LOG"
+grep -q '^CJGUI_ADAPTIVE_HIT_DONE .*failed=0$' "$ADAPTIVE_RUN_LOG"
+for assertion in effect_group_opacity_control effect_group_mask_control \
+    effect_group_blend_control effect_group_blur_control effect_group_owner_readback; do
+  grep -q "CJGUI_ADAPTIVE_HIT_ASSERT name=${assertion} ok=1" "$ADAPTIVE_RUN_LOG" || {
+    cat "$ADAPTIVE_RUN_LOG" >&2
+    print -u2 -- "adaptive UI-only preview failed/missed assertion: $assertion"
+    exit 1
+  }
+done
+grep -q 'CJGUI_ADAPTIVE_HIT_ASSERT name=platform_state_chain ok=1' "$ADAPTIVE_RUN_LOG"
+grep -q 'CJGUI_ADAPTIVE_HIT_ASSERT name=cancel_settles ok=1' "$ADAPTIVE_RUN_LOG"
 
 for application in "$APPLICATIONS_DIR/UI Only Consumer" "$APPLICATIONS_DIR/Collaboration Consumer" "$DOCUMENT_CONSUMER" "$IMAGE_CONSUMER" "$COMMAND_CONSUMER" "$VECTOR_CONSUMER" "$TRANSFER_CONSUMER"; do
   test -d "$application/target"
 done
+test -d "$ADAPTIVE_CONSUMER/target"
 
 UI_BUNDLE_SHA256="$(bundle_sha256 "$APPLICATIONS_DIR/UI Only Consumer/target/release/CJGUIUiOnlyStarter.app")"
 COLLABORATION_BUNDLE_SHA256="$(bundle_sha256 "$APPLICATIONS_DIR/Collaboration Consumer/target/release/CJGUICollaborationStarter.app")"
@@ -319,6 +354,8 @@ IMAGE_BUNDLE_SHA256="$(bundle_sha256 "$IMAGE_CONSUMER/target/release/CJGUIUiOnly
 COMMAND_BUNDLE_SHA256="$(bundle_sha256 "$COMMAND_CONSUMER/target/release/CJGUIUiOnlyStarter.app")"
 VECTOR_BUNDLE_SHA256="$(bundle_sha256 "$VECTOR_CONSUMER/target/release/CJGUIUiOnlyStarter.app")"
 TRANSFER_BUNDLE_SHA256="$(bundle_sha256 "$TRANSFER_CONSUMER/target/release/CJGUIUiOnlyStarter.app")"
+ADAPTIVE_BUNDLE_SHA256="$(bundle_sha256 "$ADAPTIVE_CONSUMER/target/release/AdaptiveLayoutPublicConsumer.app")"
+ADAPTIVE_CONSUMER_SOURCE_SHA256="$(shasum -a 256 "$ADAPTIVE_CONSUMER/src/main.cj" | awk '{print $1}')"
 
 test -x "$APPLICATIONS_DIR/UI Only Consumer/target/release/CJGUIUiOnlyStarter.app/Contents/MacOS/CJGUIUiOnlyStarter"
 test -x "$APPLICATIONS_DIR/Collaboration Consumer/target/release/CJGUICollaborationStarter.app/Contents/MacOS/CJGUICollaborationStarter"
@@ -713,4 +750,5 @@ fi
 HANDOFF_PID=""
 HANDOFF_DESCRIPTOR=""
 
-print -r -- "cjgui_framework_preview_consumption=ok ui_only=build collaboration=build document=build image_multiwindow=build_and_run command_menu=build_and_run vector=build_and_run data_transfer=build_and_run relocated_with_spaces=ok source_origin=exported_preview native_override=cleared dependency_origin=exported_preview resource_origin=exported_preview image_resource_origin=exported_preview image_private_native_copy=false image_shared_loads=1 image_a_close_b_ready=true command_owners=2 command_stable_targets=true command_button_menu_same_action=true command_projection_readback=true command_disabled_rejected=true vector_chart_consumer=true vector_shared_operation_consumer=true vector_external_color_write=true vector_window_projection_readback=true data_transfer_platform_window=true data_transfer_external_text=true data_transfer_structured=true data_transfer_fifo=true data_transfer_identity_readback=true data_transfer_disabled_endpoint_rebind=true data_transfer_disabled_endpoint_platform_paste_rejected=true data_transfer_native_private_copy=false vector_human_action_after_external=not_run public_empty_title=accepted stale_rejected=true normal_close=endpoint_cleared source_payload_sha256=$SOURCE_PAYLOAD_SHA256 preview_payload_sha256=$PREVIEW_PAYLOAD_SHA256 runner_sha256=$RUNNER_SHA256 exporter_sha256=$EXPORTER_SHA256 document_consumer_source_sha256=$DOCUMENT_CONSUMER_SOURCE_SHA256 image_consumer_source_sha256=$IMAGE_CONSUMER_SOURCE_SHA256 command_consumer_source_sha256=$COMMAND_CONSUMER_SOURCE_SHA256 vector_consumer_source_sha256=$VECTOR_CONSUMER_SOURCE_SHA256 transfer_consumer_source_sha256=$TRANSFER_CONSUMER_SOURCE_SHA256 ui_bundle_sha256=$UI_BUNDLE_SHA256 collaboration_bundle_sha256=$COLLABORATION_BUNDLE_SHA256 document_bundle_sha256=$DOCUMENT_BUNDLE_SHA256 image_bundle_sha256=$IMAGE_BUNDLE_SHA256 command_bundle_sha256=$COMMAND_BUNDLE_SHA256 vector_bundle_sha256=$VECTOR_BUNDLE_SHA256 transfer_bundle_sha256=$TRANSFER_BUNDLE_SHA256 image_manifest=$IMAGE_MANIFEST command_manifest=$COMMAND_MANIFEST vector_manifest=$VECTOR_MANIFEST transfer_manifest=$TRANSFER_MANIFEST evidence_tmp_root=$TEMP_ROOT"
+print -r -- "cjgui_preview_adaptive_layout=ok source_sha256=$ADAPTIVE_CONSUMER_SOURCE_SHA256 bundle_sha256=$ADAPTIVE_BUNDLE_SHA256 run_exit=$ADAPTIVE_RUN_EXIT assertions=14 p4_effect_group=opacity_mask_multiply_blur_accepted_owner_readback run_log=$ADAPTIVE_RUN_LOG"
+print -r -- "cjgui_framework_preview_consumption=ok ui_only=build collaboration=build document=build image_multiwindow=build_and_run command_menu=build_and_run vector=build_and_run data_transfer=build_and_run relocated_with_spaces=ok source_origin=exported_preview native_override=cleared dependency_origin=exported_preview resource_origin=exported_preview image_resource_origin=exported_preview image_private_native_copy=false image_shared_loads=1 image_a_close_b_ready=true command_owners=2 command_stable_targets=true command_button_menu_same_action=true command_projection_readback=true command_disabled_rejected=true vector_chart_consumer=true vector_shared_operation_consumer=true vector_external_color_write=true vector_window_projection_readback=true data_transfer_platform_window=true data_transfer_external_text=true data_transfer_structured=true data_transfer_fifo=true data_transfer_identity_readback=true data_transfer_disabled_endpoint_rebind=true data_transfer_disabled_platform_paste_rejected=true vector_human_action_after_external=not_run public_empty_title=accepted stale_rejected=true normal_close=endpoint_cleared source_payload_sha256=$SOURCE_PAYLOAD_SHA256 preview_payload_sha256=$PREVIEW_PAYLOAD_SHA256 runner_sha256=$RUNNER_SHA256 exporter_sha256=$EXPORTER_SHA256 document_consumer_source_sha256=$DOCUMENT_CONSUMER_SOURCE_SHA256 image_consumer_source_sha256=$IMAGE_CONSUMER_SOURCE_SHA256 command_consumer_source_sha256=$COMMAND_CONSUMER_SOURCE_SHA256 vector_consumer_source_sha256=$VECTOR_CONSUMER_SOURCE_SHA256 transfer_consumer_source_sha256=$TRANSFER_CONSUMER_SOURCE_SHA256 ui_bundle_sha256=$UI_BUNDLE_SHA256 collaboration_bundle_sha256=$COLLABORATION_BUNDLE_SHA256 document_bundle_sha256=$DOCUMENT_BUNDLE_SHA256 image_bundle_sha256=$IMAGE_BUNDLE_SHA256 command_bundle_sha256=$COMMAND_BUNDLE_SHA256 vector_bundle_sha256=$VECTOR_BUNDLE_SHA256 transfer_bundle_sha256=$TRANSFER_BUNDLE_SHA256 image_manifest=$IMAGE_MANIFEST command_manifest=$COMMAND_MANIFEST vector_manifest=$VECTOR_MANIFEST transfer_manifest=$TRANSFER_MANIFEST evidence_tmp_root=$TEMP_ROOT"

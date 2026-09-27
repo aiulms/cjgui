@@ -1,0 +1,5 @@
+# D/第六次复核第 4 项：三路径逐请求单调阶段样本（verify_response_stages.py）
+# P1 触摸（TOUCH 注入）：逐样本 touch<=accepted<=present（设备单调时钟）+ 版本+1
+# P2 连续输入（uitest inputText）：onChange<=accepted + 预览不推进 owner（提交才推进）
+# P3 外部请求（transport INCREMENT）：版本+1，往返耗时（13-14ms 热）单列不作分段时延
+# 停止后收敛：C6（空闲关闭）/C7（queued）/C8（committing）——见 surface_lifecycle_evidence.json

@@ -15,6 +15,7 @@
 # options: this file does not change `set -u`/`set -e`.
 DRIVER_SOURCE="$RUNTIME_DIR/native/tests/desktop_input_driver.swift"
 DRIVER=""
+APP_ACTIVATOR=""
 INPUT_BLOCKED=""
 REAL_EDIT_MODE=""
 REAL_EDIT_BEFORE=""
@@ -58,6 +59,31 @@ prepare_desktop_driver() {
 AX_PID=""
 drive() { "$DRIVER" "$@" >> "$WORK/driver.log" 2>&1; }
 
+# prepare_app_activator: build the pid-addressed activation tool into WORK
+# (source native/tests/app_activate.swift). Non-fatal on failure: activate_app
+# then keeps its guarded AppleScript fallback, which refuses to act when the
+# process it resolved is not the requested pid.
+prepare_app_activator() {
+  APP_ACTIVATOR=""
+  local source="$RUNTIME_DIR/native/tests/app_activate.swift"
+  if [[ ! -f "$source" ]]; then
+    log "BLOCKED app_activator reason=source_missing path=$source"
+    return 1
+  fi
+  if ! command -v swiftc >/dev/null 2>&1; then
+    log "BLOCKED app_activator reason=swiftc_unavailable"
+    return 1
+  fi
+  APP_ACTIVATOR="$WORK/cjgui_app_activate"
+  if ! swiftc -O "$source" -o "$APP_ACTIVATOR" > "$WORK/app-activator-build.log" 2>&1; then
+    APP_ACTIVATOR=""
+    log "BLOCKED app_activator reason=build_failed log=$WORK/app-activator-build.log"
+    return 1
+  fi
+  log "step0 app_activator=built tool=$APP_ACTIVATOR source=$source role=verification_tool"
+  return 0
+}
+
 # real_input_preflight
 # Prints "post_event_access=granted|refused" (the driver's own measurement of
 # the synthetic-event post permission) and returns 0 only when posting is
@@ -79,12 +105,27 @@ activate_app() {
   # bundle is the canonical way to make it frontmost AND key; the AX attributes
   # are requested as well. AX_APP_PATH is optional and only ever points at the
   # caller's OWN round bundle.
+  #
+  # The activation itself is pid-addressed (app_activate: NSRunningApplication
+  # + AX raise of that pid's window 1). Measured 2026-09-27: the System Events
+  # form `first process whose unix id is N` can resolve to a DIFFERENT running
+  # process with the same application name -- a query made with our round's pid
+  # answered the other instance -- so `set frontmost of p to true` raised the
+  # OTHER app's window above ours and every posted click landed there, while
+  # `frontmost of p` still answered true. The AppleScript form survives only as
+  # a fallback and now refuses to act whenever the pid it resolved is not the
+  # requested one.
   if [[ -n "${AX_APP_PATH:-}" && -d "$AX_APP_PATH" ]]; then
     open "$AX_APP_PATH" >/dev/null 2>&1 || true
     sleep 0.4
   fi
+  if [[ -n "${APP_ACTIVATOR:-}" && -x "${APP_ACTIVATOR:-}" ]]; then
+    "$APP_ACTIVATOR" "$AX_PID" >/dev/null 2>&1 || true
+    return 0
+  fi
   cjgui_ax 15 -e "tell application \"System Events\"
     set p to first process whose unix id is $AX_PID
+    if (unix id of p) is not $AX_PID then return
     set frontmost of p to true
     try
       perform action \"AXRaise\" of window 1 of p
@@ -98,8 +139,18 @@ activate_app() {
   end tell" >/dev/null 2>&1 || true
 }
 app_frontmost() {
+  # NSWorkspace answers "which application is frontmost" authoritatively; the
+  # System Events read is kept as a guarded fallback: it refuses to answer when
+  # the process it resolved is not the requested pid (the 2026-09-27 name
+  # collision answered `true` for our pid while another same-named instance was
+  # the frontmost application).
+  if [[ -n "${APP_ACTIVATOR:-}" && -x "${APP_ACTIVATOR:-}" ]]; then
+    "$APP_ACTIVATOR" "$AX_PID" --frontmost 2>/dev/null || true
+    return 0
+  fi
   cjgui_ax 10 -e "tell application \"System Events\"
     set p to first process whose unix id is $AX_PID
+    if (unix id of p) is not $AX_PID then return \"pid_mismatch\"
     return frontmost of p
   end tell" 2>/dev/null | tail -1 || true
 }

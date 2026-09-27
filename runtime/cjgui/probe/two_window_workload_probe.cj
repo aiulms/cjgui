@@ -28,6 +28,12 @@ foreign {
         session: UInt64, deltaY: Float32, outScrollOffset: CPointer<Float32>,
         outVisibleGlyphCount: CPointer<UInt32>
     ): Int32
+    func cjgui_internal_renderer_test_composable_multiline_viewport(
+        session: UInt64, marker: CString, outScrollOffset: CPointer<Float32>,
+        outMaximumOffset: CPointer<Float32>, outVisibleCharacterStart: CPointer<UInt32>,
+        outVisibleCharacterLength: CPointer<UInt32>, outProjectionVersion: CPointer<UInt64>,
+        outMarkerFullyVisible: CPointer<Int32>
+    ): Int32
     func cjgui_internal_renderer_test_resize_composable_window(
         session: UInt64, outResizeVersion: CPointer<UInt64>
     ): Int32
@@ -96,6 +102,43 @@ private func utf16Units(value: String): Int64 {
         count += if (UInt32(scalar) > 0xffffu32) { 2 } else { 1 }
     }
     return count
+}
+
+private class MarkedViewportSample {
+    let status: Int32
+    let offset: Float32
+    let maximum: Float32
+    let characterStart: UInt32
+    let characterLength: UInt32
+    let projectionVersion: UInt64
+    let markerVisible: Bool
+    init(status: Int32, offset: Float32, maximum: Float32, characterStart: UInt32,
+        characterLength: UInt32, projectionVersion: UInt64, markerVisible: Bool) {
+        this.status = status
+        this.offset = offset
+        this.maximum = maximum
+        this.characterStart = characterStart
+        this.characterLength = characterLength
+        this.projectionVersion = projectionVersion
+        this.markerVisible = markerVisible
+    }
+}
+
+private func readMarkedViewport(window: CjguiComposableUiWindow, marker: String): MarkedViewportSample {
+    var offset: Float32 = 0.0f32
+    var maximum: Float32 = -1.0f32
+    var start: UInt32 = 0u32
+    var length: UInt32 = 0u32
+    var version: UInt64 = 0u64
+    var visible: Int32 = 0
+    var status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    let nativeMarker = unsafe { LibC.mallocCString(marker) }
+    try (markerResource = nativeMarker.asResource()) {
+        status = unsafe { cjgui_internal_renderer_test_composable_multiline_viewport(
+            window.testSessionToken(), markerResource.value, inout offset, inout maximum,
+            inout start, inout length, inout version, inout visible) }
+    }
+    return MarkedViewportSample(status, offset, maximum, start, length, version, visible != 0)
 }
 
 /// Window A: the heavy long-text workload. `updateText` changes the body so a
@@ -485,18 +528,25 @@ private func runMidworkArrival(windowA: CjguiComposableUiWindow, windowB: CjguiC
     let accepted = ArrayList<Int64>()
     var allApplied = true
     var maximumA: Int64 = 0
-    var sample: Int64 = 0
-    while (sample < 20) {
-        let unique = "B-midwork-${sample} 😀"
+    var attempt: Int64 = 0
+    var inFlightSamples: Int64 = 0
+    var missedStage: Int64 = 0
+    // The previous 9/15 ms delayed arms landed after a 6-9 ms A stage and
+    // were incorrectly counted as in-flight failures. Keep the raw old FAIL;
+    // here collect twenty ACTUAL in-flight arrivals without delaying A or
+    // relaxing the original owner/accepted latency budgets. A bounded retry
+    // counts misses separately and cannot pass without twenty stage matches.
+    while (attempt < 40 && inFlightSamples < 20) {
+        let unique = "B-midwork-${attempt} 😀"
         responsive.resetOwnerHook()
         var actualWidth: UInt32 = 0u32; var actualHeight: UInt32 = 0u32
-        let width = UInt32(900 + sample * 23)
+        let width = UInt32(900 + attempt * 13)
         let resize = unsafe { cjgui_internal_renderer_test_set_composable_content_size(
             windowA.testSessionToken(), width, 620u32, inout actualWidth, inout actualHeight) }
         heavy.updateText()
         windowA.requestRefresh()
         let rasterBefore = activeRasterCount(windowA)
-        let delay = if (sample % 3 == 0) { 2000u32 } else if (sample % 3 == 1) { 9000u32 } else { 15000u32 }
+        let delay = 1000u32
         let nativeText = unsafe { LibC.mallocCString(unique) }
         var arm = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
         try (textResource = nativeText.asResource()) {
@@ -534,27 +584,35 @@ private func runMidworkArrival(windowA: CjguiComposableUiWindow, windowB: CjguiC
         let acceptedMs = if (acceptedOk) { Int64((acceptedAt - producerPost) / 1000u64) } else { -1 }
         let aMs = if (aEnd > aStart) { Int64((aEnd - aStart) / 1000u64) } else { -1 }
         if (aMs > maximumA) { maximumA = aMs }
-        let sampleOk = resize == CJGUI_INTERNAL_RENDERER_OK && arm == CJGUI_INTERNAL_RENDERER_OK &&
-            enqueueStatus == CJGUI_INTERNAL_RENDERER_OK && postDuringA && ownerOk && acceptedOk &&
+        let deliveryOk = resize == CJGUI_INTERNAL_RENDERER_OK && arm == CJGUI_INTERNAL_RENDERER_OK &&
+            enqueueStatus == CJGUI_INTERNAL_RENDERER_OK && ownerOk && acceptedOk &&
             aAdvanced && rasterDelta >= 2u64 && actualWidth == width
-        println("CJGUI_TWO_WINDOW_MIDWORK_SAMPLE sample=${sample} phase=${if (delay == 2000u32) { "early" } else if (delay == 9000u32) { "middle" } else { "late" }} " +
+        let sampleOk = deliveryOk && postDuringA
+        println("CJGUI_TWO_WINDOW_MIDWORK_SAMPLE attempt=${attempt} qualifying=${inFlightSamples} " +
             "width=${actualWidth} delay_us=${delay} producer_ready=${producerReady} producer_post=${producerPost} " +
             "native_enqueue=${nativeEnqueue} a_start=${aStart} a_end=${aEnd} " +
             "post_during_a=${postDuringA} post_to_enqueue_ms=${if (nativeEnqueue >= producerPost && producerPost > 0) { Int64((nativeEnqueue - producerPost) / 1000u64) } else { -1 }} " +
             "owner_ms=${ownerMs} accepted_upper_ms=${acceptedMs} a_ms=${aMs} host_ms=${hostElapsed} " +
-            "raster_delta=${rasterDelta} turns=${turn} owner_ok=${ownerOk} accepted_ok=${acceptedOk} a_advanced=${aAdvanced} passed=${sampleOk}")
-        if (!sampleOk) { allApplied = false }
-        owners.add(ownerMs)
-        accepted.add(acceptedMs)
-        sample += 1
+            "raster_delta=${rasterDelta} turns=${turn} owner_ok=${ownerOk} accepted_ok=${acceptedOk} " +
+            "a_advanced=${aAdvanced} delivery_ok=${deliveryOk} stage_match=${postDuringA} passed=${sampleOk}")
+        if (!deliveryOk) { allApplied = false }
+        if (postDuringA) {
+            inFlightSamples += 1
+            owners.add(ownerMs)
+            accepted.add(acceptedMs)
+        } else {
+            missedStage += 1
+        }
+        attempt += 1
     }
     let ownerSorted = sortedCopy(owners)
     let acceptedSorted = sortedCopy(accepted)
     let ownerP95 = percentile(ownerSorted, 19)
     let acceptedP95 = percentile(acceptedSorted, 19)
-    let passed = allApplied && ownerP95 >= 0 && ownerP95 <= 100 &&
+    let passed = allApplied && inFlightSamples == 20 && ownerP95 >= 0 && ownerP95 <= 100 &&
         acceptedP95 >= 0 && acceptedP95 <= 150
-    println("CJGUI_TWO_WINDOW_MIDWORK samples=20 owner_p95_ms=${ownerP95} " +
+    println("CJGUI_TWO_WINDOW_MIDWORK attempts=${attempt} in_flight_samples=${inFlightSamples} " +
+        "missed_stage=${missedStage} owner_p95_ms=${ownerP95} " +
         "accepted_upper_p95_ms=${acceptedP95} maximum_a_ms=${maximumA} " +
         "all_applied=${allApplied} passed=${passed}")
     return passed
@@ -612,17 +670,15 @@ private func runNegativeControl(windowA: CjguiComposableUiWindow, windowB: Cjgui
     return ok
 }
 
-/// Marked-content correctness: scroll the accepted long body to head/mid/tail
-/// and prove content identity through the owner/accepted values plus real
-/// glyph runs in the scrolled tiles (markers travel with the text).
+/// Start from a known head viewport and follow the production scroll path.
+/// The previous check began after many workload scrolls (often at the bottom),
+/// then treated any nonzero tile alpha as proof that a particular marker was
+/// visible. Neither fact established the visible content of a step.
 private func runMarkedContent(windowA: CjguiComposableUiWindow): Bool {
     let value = windowA.acceptedSceneNodes()[0].value
     let headOk = value.contains("头部标记XYZ") && value.startsWith("负载正文行")
     let midOk = value.contains("中部标记ABC")
     let tailOk = value.contains("尾部标记QWE")
-    // Scroll towards the middle and the tail; each stop must show real glyph
-    // runs in the visible tiles (non-zero alpha) and the accepted value stays
-    // the full document (scroll is view state, never a content write).
     var tiles: UInt32 = 0u32
     var tileBytes: UInt64 = 0u64
     var x: Float32 = 0.0f32
@@ -632,33 +688,80 @@ private func runMarkedContent(windowA: CjguiComposableUiWindow): Bool {
     let tileStatus = unsafe { cjgui_internal_renderer_test_composable_text_tile_stats(
         windowA.testSessionToken(), 0u32, 0u32, inout tiles, inout tileBytes,
         inout x, inout y, inout w, inout h) }
-    var midAlpha: UInt64 = 0u64
-    let midStatus = unsafe { cjgui_internal_renderer_test_composable_text_tile_alpha_pixels(
-        windowA.testSessionToken(), 0u32, 0u32, inout midAlpha) }
     var offset: Float32 = 0.0f32
     var glyphs: UInt32 = 0u32
-    var previousOffset: Float32 = -1.0f32
+    let resetStatus = unsafe { cjgui_internal_renderer_test_scroll_composable_multiline(
+        windowA.testSessionToken(), 1000000.0f32, inout offset, inout glyphs) }
+    let head = readMarkedViewport(windowA, "头部标记XYZ")
+    println("CJGUI_MARKED_HEAD reset_status=${resetStatus} offset=${offset} glyphs=${glyphs} " +
+        "viewport_status=${head.status} max=${head.maximum} visible_start=${head.characterStart} " +
+        "visible_length=${head.characterLength} native_version=${head.projectionVersion} " +
+        "accepted_version=${windowA.windowProjection().acceptedSceneVersion} marker_visible=${head.markerVisible}")
+    var midSeen = false
+    var tailSeen = false
+    var midAlpha: UInt64 = 0u64
+    var tailAlpha: UInt64 = 0u64
     var monotonic = true
     var scrolls = 0
-    while (scrolls < 12) {
+    while (scrolls < 180 && !tailSeen) {
+        let before = readMarkedViewport(windowA, "中部标记ABC")
         let status = unsafe { cjgui_internal_renderer_test_scroll_composable_multiline(
             windowA.testSessionToken(), -300.0f32, inout offset, inout glyphs) }
-        if (status != CJGUI_INTERNAL_RENDERER_OK) { monotonic = false; break }
-        if (offset <= previousOffset) { monotonic = false }
-        previousOffset = offset
+        let middle = readMarkedViewport(windowA, "中部标记ABC")
+        let tail = readMarkedViewport(windowA, "尾部标记QWE")
+        let acceptedVersion = windowA.windowProjection().acceptedSceneVersion
+        let atKnownEnd = middle.maximum >= 0.0f32 && before.offset >= middle.maximum - 0.5f32
+        let stepOk = status == CJGUI_INTERNAL_RENDERER_OK && middle.status == CJGUI_INTERNAL_RENDERER_OK &&
+            tail.status == CJGUI_INTERNAL_RENDERER_OK && offset >= before.offset &&
+            (offset > before.offset || atKnownEnd) &&
+            middle.projectionVersion == UInt64(acceptedVersion) &&
+            tail.projectionVersion == middle.projectionVersion
+        println("CJGUI_MARKED_SCROLL step=${scrolls} before=${before.offset} after=${offset} " +
+            "max=${middle.maximum} api_status=${status} viewport_status=${middle.status} " +
+            "glyphs=${glyphs} visible_start=${middle.characterStart} visible_length=${middle.characterLength} " +
+            "mid_visible=${middle.markerVisible} tail_visible=${tail.markerVisible} " +
+            "accepted_version=${acceptedVersion} native_version=${middle.projectionVersion} " +
+            "at_known_end=${atKnownEnd} step_ok=${stepOk}")
+        if (!stepOk) { monotonic = false }
+        if (middle.markerVisible && !midSeen) {
+            midSeen = true
+            let _ = unsafe { cjgui_internal_renderer_test_composable_text_tile_alpha_pixels(
+                windowA.testSessionToken(), 0u32, 0u32, inout midAlpha) }
+        }
+        if (tail.markerVisible && !tailSeen) {
+            tailSeen = true
+            let _ = unsafe { cjgui_internal_renderer_test_composable_text_tile_alpha_pixels(
+                windowA.testSessionToken(), 0u32, 0u32, inout tailAlpha) }
+        }
+        if (atKnownEnd && !tailSeen) { break }
         scrolls += 1
     }
-    let reached = offset > 0.0f32 && monotonic
-    var tailAlpha: UInt64 = 0u64
-    let tailStatus = unsafe { cjgui_internal_renderer_test_composable_text_tile_alpha_pixels(
-        windowA.testSessionToken(), 0u32, 0u32, inout tailAlpha) }
-    let scrolled = offset > 0.0f32 && glyphs > 0u32 && reached &&
-        midStatus == CJGUI_INTERNAL_RENDERER_OK && midAlpha > 0u64 &&
-        tailStatus == CJGUI_INTERNAL_RENDERER_OK && tailAlpha > 0u64 &&
-        tileStatus == CJGUI_INTERNAL_RENDERER_OK && tiles >= 1u32
+    // A separate end control distinguishes a legal clamp from a stuck scroll.
+    // It is excluded from the head/middle/tail traversal above.
+    var endOffset: Float32 = 0.0f32
+    var endGlyphs: UInt32 = 0u32
+    let endStatus = unsafe { cjgui_internal_renderer_test_scroll_composable_multiline(
+        windowA.testSessionToken(), -1000000.0f32, inout endOffset, inout endGlyphs) }
+    let end = readMarkedViewport(windowA, "尾部标记QWE")
+    var clampedOffset: Float32 = 0.0f32
+    var clampedGlyphs: UInt32 = 0u32
+    let clampStatus = unsafe { cjgui_internal_renderer_test_scroll_composable_multiline(
+        windowA.testSessionToken(), -300.0f32, inout clampedOffset, inout clampedGlyphs) }
+    let legalEnd = endStatus == CJGUI_INTERNAL_RENDERER_OK && clampStatus == CJGUI_INTERNAL_RENDERER_OK &&
+        end.status == CJGUI_INTERNAL_RENDERER_OK && end.maximum >= 0.0f32 &&
+        endOffset == end.maximum && clampedOffset == endOffset && end.markerVisible
+    println("CJGUI_MARKED_BOUNDARY after_jump=${endOffset} max=${end.maximum} clamp_after=${clampedOffset} " +
+        "jump_status=${endStatus} clamp_status=${clampStatus} tail_visible=${end.markerVisible} " +
+        "accepted_version=${windowA.windowProjection().acceptedSceneVersion} " +
+        "native_version=${end.projectionVersion} legal_end=${legalEnd}")
+    let scrolled = resetStatus == CJGUI_INTERNAL_RENDERER_OK && head.status == CJGUI_INTERNAL_RENDERER_OK &&
+        head.offset == 0.0f32 && head.markerVisible && monotonic && midSeen && tailSeen &&
+        offset > 0.0f32 && glyphs > 0u32 && midAlpha > 0u64 && tailAlpha > 0u64 &&
+        tileStatus == CJGUI_INTERNAL_RENDERER_OK && tiles >= 1u32 && legalEnd
     println("CJGUI_MARKED_CONTENT head=${headOk} mid=${midOk} tail=${tailOk} " +
         "tiles=${tiles} tile_bytes=${tileBytes} mid_alpha=${midAlpha} tail_alpha=${tailAlpha} " +
-        "offset=${offset} visible_glyphs=${glyphs} scrolls=${scrolls} scrolled_ok=${scrolled}")
+        "offset=${offset} visible_glyphs=${glyphs} scrolls=${scrolls} mid_seen=${midSeen} " +
+        "tail_seen=${tailSeen} monotonic=${monotonic} scrolled_ok=${scrolled}")
     return headOk && midOk && tailOk && scrolled
 }
 

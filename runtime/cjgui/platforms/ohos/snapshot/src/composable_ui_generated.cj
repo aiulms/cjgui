@@ -2760,6 +2760,12 @@ public class CjguiGeneratedUiStructureHolder {
             if (actionName.isEmpty()) {
                 return CjguiGeneratedUiIntent.none("unknown_action_key")
             }
+            // A stable key keeps its node id across a candidate rebind. Check
+            // the originating accepted node's owner action before routing a
+            // late activation to the current structure.
+            if (node.operationActionName != actionName) {
+                return CjguiGeneratedUiIntent.none("node_binding_mismatch")
+            }
             if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
                 return CjguiGeneratedUiIntent.none("event_not_an_activation")
             }
@@ -2982,6 +2988,7 @@ public class CjguiGeneratedUiStructureHolder {
             }
             return cjguiComposableButton(nodeId, semanticId, label, "GENERATED_ACTION", nodeId, style,
                 enabled: actionEnabledFor(provider, spec.actionName),
+                operationActionName: spec.actionName,
                 interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
         }
         let fieldOption = catalog.fieldFor(spec.fieldId)

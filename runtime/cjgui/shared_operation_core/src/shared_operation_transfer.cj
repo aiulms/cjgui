@@ -1,9 +1,51 @@
 package cjgui_shared_operation_core
 
+import std.sync.*
+
 private const CJGUI_SHARED_OPERATION_TRANSFER_TEXT_FORMAT: String = "text/utf-8"
+private const CJGUI_SHARED_OPERATION_TRANSFER_PNG_FORMAT: String = "image/png"
 private const CJGUI_SHARED_OPERATION_TRANSFER_MAXIMUM_BYTES: Int64 = 512 * 1024
 private const CJGUI_SHARED_OPERATION_TRANSFER_MAX_IDENTIFIER_BYTES: Int64 = 128
 private const CJGUI_SHARED_OPERATION_TRANSFER_MAX_IDENTITY_BYTES: Int64 = 256
+private let CJGUI_TRANSFER_OFFER_ID_LOCK = Mutex()
+private var cjguiTransferOfferSequence: Int64 = 0
+
+private func nextTransferOfferIdentity(): Int64 {
+    return synchronized(CJGUI_TRANSFER_OFFER_ID_LOCK) {
+        // Once exhausted, fail closed instead of reusing an image identity.
+        if (cjguiTransferOfferSequence >= 0x7FFFFFFFFFFFFFFE) {
+            throw IllegalArgumentException("transfer_offer_identity_exhausted")
+        }
+        cjguiTransferOfferSequence += 1
+        cjguiTransferOfferSequence
+    }
+}
+
+private func copyTransferBytes(source: Array<Byte>): Array<Byte> {
+    let copy = Array<Byte>(source.size, repeat: 0)
+    var index: Int64 = 0
+    while (index < source.size) {
+        copy[index] = source[index]
+        index += 1
+    }
+    return copy
+}
+
+// A deterministic content checksum for readback and diagnostics. It is not an
+// authorization token; consumers comparing untrusted content must compare the
+// bytes as well. The bounded 30-bit lanes avoid checked integer overflow.
+private func transferContentDigest(bytes: Array<Byte>): String {
+    var first: Int64 = 2166136261 & 0x3FFFFFFF
+    var second: Int64 = 0x185AC1D
+    var index: Int64 = 0
+    while (index < bytes.size) {
+        let value = Int64(bytes[index])
+        first = ((first ^ value) * 16777619) & 0x3FFFFFFF
+        second = ((second ^ (value + index)) * 65599) & 0x3FFFFFFF
+        index += 1
+    }
+    return "fnv30x2:${first}:${second}:${bytes.size}"
+}
 
 /// Experimental format declaration for one bounded transfer payload.  The
 /// transfer layer validates framing and size only; structured payload fields
@@ -36,8 +78,22 @@ public class CjguiSharedOperationTransferFormat {
         return CjguiSharedOperationTransferFormat("STRUCTURED", identifier, version, maximumBytes)
     }
 
+    /// Binary formats remain distinct from UTF-8 and structured text. The
+    /// platform adapter decides which system representation maps to each ID.
+    public static func binary(
+        identifier: String,
+        version!: Int64 = 1,
+        maximumBytes!: Int64 = CJGUI_SHARED_OPERATION_TRANSFER_MAXIMUM_BYTES
+    ): CjguiSharedOperationTransferFormat {
+        return CjguiSharedOperationTransferFormat("BINARY", identifier, version, maximumBytes)
+    }
+
+    public static func png(maximumBytes!: Int64 = CJGUI_SHARED_OPERATION_TRANSFER_MAXIMUM_BYTES): CjguiSharedOperationTransferFormat {
+        return binary(CJGUI_SHARED_OPERATION_TRANSFER_PNG_FORMAT, maximumBytes: maximumBytes)
+    }
+
     public func isValid(): Bool {
-        if (kind != "UTF8_TEXT" && kind != "STRUCTURED") { return false }
+        if (kind != "UTF8_TEXT" && kind != "STRUCTURED" && kind != "BINARY") { return false }
         if (identifier.size == 0 || identifier.size > CJGUI_SHARED_OPERATION_TRANSFER_MAX_IDENTIFIER_BYTES ||
             version <= 0 || maximumBytes <= 0 || maximumBytes > CJGUI_SHARED_OPERATION_TRANSFER_MAXIMUM_BYTES) {
             return false
@@ -49,7 +105,11 @@ public class CjguiSharedOperationTransferFormat {
     }
 
     public func acceptsPayload(payload: String): Bool {
-        return isValid() && payload.size <= maximumBytes
+        return kind != "BINARY" && isValid() && payload.size <= maximumBytes
+    }
+
+    public func acceptsBinaryPayload(bytes: Array<Byte>): Bool {
+        return kind == "BINARY" && isValid() && bytes.size > 0 && bytes.size <= maximumBytes
     }
 }
 
@@ -63,6 +123,11 @@ public class CjguiSharedOperationTransferOffer {
     public let format: CjguiSharedOperationTransferFormat
     public let payload: String
     public let payloadByteCount: Int64
+    public let contentDigest: String
+    /// Process-local immutable incarnation, used for scene/resource signatures.
+    /// Content equality is still checked by bytes; this is not authority.
+    public let offerIdentity: Int64
+    private let binaryPayload: Array<Byte>
 
     private init(
         operation: String,
@@ -70,7 +135,8 @@ public class CjguiSharedOperationTransferOffer {
         sourceIdentity: String,
         sourceId: Int64,
         format: CjguiSharedOperationTransferFormat,
-        payload: String
+        payload: String,
+        binaryPayload: Array<Byte>
     ) {
         this.operation = operation
         this.sourceKind = sourceKind
@@ -78,7 +144,10 @@ public class CjguiSharedOperationTransferOffer {
         this.sourceId = sourceId
         this.format = format
         this.payload = payload
-        this.payloadByteCount = payload.size
+        this.binaryPayload = binaryPayload
+        this.payloadByteCount = if (format.kind == "BINARY") { binaryPayload.size } else { payload.size }
+        this.contentDigest = if (format.kind == "BINARY") { transferContentDigest(binaryPayload) } else { "" }
+        this.offerIdentity = nextTransferOfferIdentity()
     }
 
     public static func create(
@@ -96,7 +165,39 @@ public class CjguiSharedOperationTransferOffer {
             return None
         }
         return Some(CjguiSharedOperationTransferOffer(
-            operation, sourceKind, sourceIdentity, sourceId, format, payload))
+            operation, sourceKind, sourceIdentity, sourceId, format, payload, Array<Byte>()))
+    }
+
+    public static func createBinary(
+        operation: String,
+        sourceKind: String,
+        sourceIdentity: String,
+        sourceId: Int64,
+        format: CjguiSharedOperationTransferFormat,
+        bytes: Array<Byte>
+    ): ?CjguiSharedOperationTransferOffer {
+        if (operation != "COPY" || sourceKind.size == 0 || sourceIdentity.size == 0 || sourceId < 0 ||
+            sourceKind.size > CJGUI_SHARED_OPERATION_TRANSFER_MAX_IDENTIFIER_BYTES ||
+            sourceIdentity.size > CJGUI_SHARED_OPERATION_TRANSFER_MAX_IDENTITY_BYTES ||
+            !format.acceptsBinaryPayload(bytes)) {
+            return None
+        }
+        return Some(CjguiSharedOperationTransferOffer(
+            operation, sourceKind, sourceIdentity, sourceId, format, "", copyTransferBytes(bytes)))
+    }
+
+    /// Never expose the stored mutable array. Native and application callers
+    /// each receive their own bounded copy with no pointer lifetime contract.
+    public func binaryBytes(): Array<Byte> {
+        return copyTransferBytes(binaryPayload)
+    }
+
+    public func fitsFormat(format: CjguiSharedOperationTransferFormat): Bool {
+        return if (this.format.kind == "BINARY") {
+            format.acceptsBinaryPayload(binaryPayload)
+        } else {
+            format.acceptsPayload(payload)
+        }
     }
 }
 
@@ -141,7 +242,7 @@ public class CjguiSharedOperationTransferAcceptRequest {
             acceptedFormat.kind != offer.format.kind ||
             acceptedFormat.identifier != offer.format.identifier ||
             acceptedFormat.version != offer.format.version ||
-            !acceptedFormat.acceptsPayload(offer.payload)) {
+            !offer.fitsFormat(acceptedFormat)) {
             return None
         }
         return Some(CjguiSharedOperationTransferAcceptRequest(

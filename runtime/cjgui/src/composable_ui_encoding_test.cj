@@ -230,3 +230,35 @@ func generatedDecodeRejectionKeepsAcceptedStructureAndRoutes(): Unit {
     @Assert(holder.acceptedNodeForKey("edit").isSome(), true)
     @Assert(holder.keyForNodeId(holder.nodeIdForKey("edit")), "edit")
 }
+@Test
+func generatedEmptyPropertyValueRidesTheProtocolAsAnExplicitToken(): Unit {
+    // Empty is published as an explicit token, NEVER as a trailing space the
+    // transport would reject as "response field is malformed".
+    @Assert(CjguiGeneratedUiEncoding.encodePropertyValue(""), "\\e")
+    @Assert(CjguiGeneratedUiEncoding.decodePropertyValue("\\e"), "")
+    // `none`, the empty string and a legal token stay three DISTINCT states.
+    @Assert(CjguiGeneratedUiEncoding.encodePropertyValue("none"), "none")
+    @Assert(CjguiGeneratedUiEncoding.decodePropertyValue("none"), "none")
+    // A value that already begins with a backslash round-trips losslessly.
+    @Assert(CjguiGeneratedUiEncoding.encodePropertyValue("\\shadow"), "\\\\shadow")
+    @Assert(CjguiGeneratedUiEncoding.decodePropertyValue("\\\\shadow"), "\\shadow")
+
+    // The accepted payload carries the explicit token (no empty field leaves the
+    // encoder), and the strict candidate decoder reads it back as "".
+    let properties = HashMap<String, String>()
+    properties.add("shadow", "")
+    let root = CjguiGeneratedUiNodeSpec("card", "label", properties: properties)
+    let payload = CjguiGeneratedUiEncoding.encode(Some(root), 4)
+    @Assert(payload.contains("PROPERTY 0 card shadow \\e\n"), true)
+    let decoded = CjguiGeneratedUiEncoding.decode(
+        "GENERATED_UI_STRUCTURE 1\nNODE 0 card label\nPROPERTY 0 card shadow \\e\nEND")
+    @Assert(decoded.ok, true)
+    @Assert(decoded.root.getOrThrow().property("shadow"), "")
+
+    // A value that would still begin/end with a space cannot be framed
+    // unambiguously, so it is refused instead of being silently trimmed.
+    let edge = CjguiGeneratedUiEncoding.decode(
+        "GENERATED_UI_STRUCTURE 1\nNODE 0 card label\nPROPERTY 0 card shadow  x\nEND")
+    @Assert(edge.ok, false)
+    @Assert(edge.reason.startsWith("property_value_edge_space"), true)
+}

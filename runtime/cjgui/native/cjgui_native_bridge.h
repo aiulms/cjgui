@@ -605,6 +605,34 @@ uint32_t cjgui_native_bridge_surface_capabilities(void);
 uint32_t cjgui_native_bridge_status_ok(void);
 uint32_t cjgui_native_bridge_no_resource_admission(void);
 int32_t cjgui_native_bridge_is_main_thread(void);
+/*
+ * macOS 系统“减少动态效果”偏好（accessibilityDisplayShouldReduceMotion）。
+ * 只返回 0/1 的 dehydrated fact，不返回 pointer、不扩 public runtime API，
+ * 也不表示 backend ready。非 Apple 平台或实现不可用时返回确定的 0。
+ */
+int32_t cjgui_macos_reduce_motion_enabled(void);
+/*
+ * macOS 系统外观（浅色/深色）与窗口可见/最小化的 dehydrated facts，供平台
+ * 状态快照使用。只返回 0/1，不返回 pointer、不创建或改变任何对象，也不扩
+ * public runtime API。
+ * - cjgui_macos_effective_dark_mode：1 = 当前有效外观为深色，0 = 浅色或不可用。
+ * - cjgui_macos_window_visible / _minimized：按 AppKit window number 查询已存在
+ *   窗口；window_number <= 0、窗口不存在、NSApp 尚未创建或非 Apple 平台都返回
+ *   确定的默认值 0。调用方不得用 0 断言“窗口不存在”，只应把它当作不可用。
+ */
+int32_t cjgui_macos_effective_dark_mode(void);
+/*
+ * Read NSColor.controlAccentColor after explicit conversion to sRGB. The
+ * return value is -1 when unavailable; otherwise bit 24 is the success flag
+ * and the low 24 bits are RRGGBB. Quantization bounds platform change
+ * detection without exposing an AppKit object or an unspecified color space.
+ */
+int64_t cjgui_macos_control_accent_srgb8(void);
+/// The normal AppKit launcher enables coalesced main-queue system-color reads.
+/// No native object or application callback crosses this ABI.
+void cjgui_macos_enable_accent_sampling(void);
+int32_t cjgui_macos_window_visible(int64_t window_number);
+int32_t cjgui_macos_window_minimized(int64_t window_number);
 uint64_t cjgui_native_bridge_token_invalid(void);
 uint32_t cjgui_native_bridge_token_table_capacity(void);
 uint32_t cjgui_native_bridge_token_table_enabled(void);

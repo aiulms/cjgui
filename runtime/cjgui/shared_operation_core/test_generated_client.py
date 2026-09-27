@@ -48,6 +48,41 @@ CAPABILITIES = "\n".join([
     "END",
 ])
 
+# A capability payload that publishes the structured-value tokens the framework
+# added for encoded effects. The values stay space-free in the published form,
+# but the tokenizer must survive a value that does contain spaces.
+EFFECT_CAPABILITIES = "\n".join([
+    "PROTOCOL CJGUI_SHARED_OPERATION/2",
+    "KIND GENERATED_UI_CAPABILITIES",
+    "PAYLOAD_LENGTH 900",
+    "GENERATED_UI 1",
+    "BOUNDS 12 64 8 256",
+    "COMPONENT vertical 1 64",
+    "PROPERTY vertical shadow STRING 0 0 0 64 values=none "
+    "encoding=offX,offY,blur,spread,#RRGGBBAA unit=logical_points "
+    "range=offset:-4096..4096,blur:0..256,spread:0..128 "
+    "semantics=none_or_empty=clear,absent=inherit stability=experimental "
+    "support=macos:supported,ohos:unpublished_snapshot",
+    "PROPERTY vertical gradient STRING 0 0 0 256 values=none "
+    "encoding=sx,sy,ex,ey,pos:color|pos:color unit=wire_percent_0..100,normalized_0..1 "
+    "range=coordinate:0..1,position:0..1,stops:2..4 "
+    "semantics=none_or_empty=clear,absent=inherit stability=experimental "
+    "support=macos:supported,ohos:unpublished_snapshot",
+    "END",
+])
+
+WINDOW_BACKGROUND_CAPABILITIES = "\n".join([
+    "PROTOCOL CJGUI_SHARED_OPERATION/2",
+    "KIND GENERATED_UI_CAPABILITIES",
+    "PAYLOAD_LENGTH 300",
+    "GENERATED_UI 1",
+    "BOUNDS 12 64 8 256",
+    "WINDOW_BACKGROUND_PROPERTY windowBackground STRING root_only=1 "
+    "encoding=opaque|system_content_area default=opaque omitted=opaque "
+    "stability=experimental support=macos:experimental_supported,ohos:unpublished_snapshot",
+    "END",
+])
+
 STRUCTURE_VERSION_0 = "\n".join([
     "PROTOCOL CJGUI_SHARED_OPERATION/2",
     "KIND GENERATED_UI_STRUCTURE",
@@ -150,6 +185,25 @@ SNAPSHOT_TYPED = "\n".join([
 
 
 class CapabilityTests(unittest.TestCase):
+    def test_window_background_discovery_is_typed_and_root_scoped(self) -> None:
+        capabilities = generated.parse_generated_capabilities(response(WINDOW_BACKGROUND_CAPABILITIES))
+        material = capabilities.window_background
+        self.assertIsNotNone(material)
+        self.assertEqual(material.name, "windowBackground")
+        self.assertEqual(material.value_type, "STRING")
+        self.assertTrue(material.root_only)
+        self.assertEqual(material.values, ("opaque", "system_content_area"))
+        self.assertEqual(material.default, "opaque")
+        self.assertEqual(material.omitted, "opaque")
+        self.assertEqual(material.stability, "experimental")
+        self.assertEqual(material.backend_support,
+                         "macos:experimental_supported,ohos:unpublished_snapshot")
+
+    def test_window_background_unknown_discovery_token_is_rejected(self) -> None:
+        body = WINDOW_BACKGROUND_CAPABILITIES.replace("root_only=1", "root_only=1 bogus=1")
+        with self.assertRaises(generated.GeneratedUiError):
+            generated.parse_generated_capabilities(response(body))
+
     def test_capabilities_are_typed(self) -> None:
         capabilities = generated.parse_generated_capabilities(response(CAPABILITIES))
         self.assertEqual(capabilities.max_depth, 12)
@@ -173,6 +227,41 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(elements[2].preset, "90")
         self.assertEqual(elements[2].label, "设为 90")
         self.assertEqual(capabilities.composites[0].expanded_nodes, 4)
+
+    def test_structured_value_tokens_are_exposed_on_the_property(self) -> None:
+        capabilities = generated.parse_generated_capabilities(response(EFFECT_CAPABILITIES))
+        vertical = capabilities.component("vertical")
+        shadow = vertical.properties[0]
+        self.assertEqual(shadow.name, "shadow")
+        self.assertEqual(shadow.values, ("none",))
+        self.assertEqual(shadow.encoding, "offX,offY,blur,spread,#RRGGBBAA")
+        self.assertEqual(shadow.unit, "logical_points")
+        self.assertEqual(shadow.value_range, "offset:-4096..4096,blur:0..256,spread:0..128")
+        self.assertEqual(shadow.semantics, "none_or_empty=clear,absent=inherit")
+        self.assertEqual(shadow.stability, "experimental")
+        self.assertEqual(shadow.backend_support,
+                         "macos:supported,ohos:unpublished_snapshot")
+        # A caller can recover the encoded grammar, unit, UPPER BOUNDS and support
+        # surface from discovery alone, without reading application source.
+        self.assertEqual(shadow.range_entries(),
+                         (("offset", "-4096", "4096"), ("blur", "0", "256"), ("spread", "0", "128")))
+        gradient = vertical.properties[1]
+        self.assertEqual(gradient.unit, "wire_percent_0..100,normalized_0..1")
+        self.assertEqual(gradient.range_entries(),
+                         (("coordinate", "0", "1"), ("position", "0", "1"), ("stops", "2", "4")))
+
+    def test_unknown_property_token_is_refused_not_skipped(self) -> None:
+        body = CAPABILITIES.replace("PROPERTY vertical gap INTEGER 0 0 32 0",
+                                    "PROPERTY vertical gap INTEGER 0 0 32 0 bogus=1")
+        with self.assertRaises(generated.GeneratedUiError):
+            generated.parse_generated_capabilities(response(body))
+
+    def test_property_token_value_may_contain_spaces(self) -> None:
+        body = CAPABILITIES.replace("PROPERTY vertical gap INTEGER 0 0 32 0",
+                                    "PROPERTY vertical gap INTEGER 0 0 32 0 semantics=none or empty=clear")
+        capabilities = generated.parse_generated_capabilities(response(body))
+        self.assertEqual(capabilities.component("vertical").properties[0].semantics,
+                         "none or empty=clear")
 
 
 class StructureTests(unittest.TestCase):
@@ -206,6 +295,29 @@ class StructureTests(unittest.TestCase):
                                          (generated.GeneratedProperty("gap", "4"),)),)
         self.assertFalse(generated.same_structure(left, right))
 
+    def test_empty_property_value_round_trips(self) -> None:
+        nodes = (generated.GeneratedNode(0, "card", "label", None, None,
+                                         (generated.GeneratedProperty("shadow", ""),)),)
+        payload = generated.encode_generated_structure(nodes)
+        # Empty never becomes an empty protocol token: the shared escape is used.
+        self.assertIn("PROPERTY 0 card shadow \\e", payload.split("\n"))
+        self.assertNotIn("PROPERTY 0 card shadow ", payload.split("\n"))
+        body = STRUCTURE_VERSION_1.replace(
+            "\n".join(STRUCTURE_VERSION_1.split("\n")[5:8]),
+            "STRUCTURE_LENGTH %d\n%s" % (len(payload.encode()), payload),
+        )
+        parsed = generated.parse_generated_structure(response(body))
+        self.assertEqual(parsed.nodes[0].properties,
+                         (generated.GeneratedProperty("shadow", ""),))
+        self.assertEqual(parsed.nodes[0].property("shadow"), "")
+        self.assertTrue(generated.same_structure(nodes, parsed.nodes))
+
+    def test_edge_space_property_value_is_rejected(self) -> None:
+        with self.assertRaises(generated.GeneratedUiError):
+            generated.encode_generated_structure((
+                generated.GeneratedNode(0, "root", "vertical", None, None,
+                                        (generated.GeneratedProperty("text", " leading"),)),))
+
     def test_newline_and_identifier_are_rejected(self) -> None:
         with self.assertRaises(generated.GeneratedUiError):
             generated.encode_generated_structure((
@@ -221,6 +333,27 @@ class StructureTests(unittest.TestCase):
 
 
 class InstanceTests(unittest.TestCase):
+    def test_control_semantics_survive_typed_public_readback(self) -> None:
+        body = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2",
+            "KIND GENERATED_UI_INSTANCES",
+            "STRUCTURE_VERSION 4",
+            "CANDIDATE_VERSION 4",
+            "SCENE_STATE accepted",
+            "INSTANCE_LENGTH 1",
+            "INSTANCE row element=- role=- id=33 kind=action semantic=group-row field=- "
+            "action=EXPAND resource=- resource_version=0 resource_state=- effectGroup=none "
+            "control_role=row selected=1 expandable=1 expanded=0 enabled=0 level=2 "
+            "row_key=group-leaf parent_key=group visible=1 bounds=1,2,30,20 label_hex=526f77",
+            "END",
+        ])
+        row = generated.parse_generated_instances(response(body)).instance("row")
+        self.assertIsNotNone(row)
+        self.assertEqual((row.control_role, row.control_selected, row.control_expandable,
+                          row.control_expanded, row.control_enabled, row.control_level,
+                          row.control_row_key, row.control_parent_key),
+                         ("row", True, True, False, False, 2, "group-leaf", "group"))
+
     def test_instances_expose_identity_and_geometry(self) -> None:
         instances = generated.parse_generated_instances(response(INSTANCES))
         self.assertEqual(instances.structure_version, 2)

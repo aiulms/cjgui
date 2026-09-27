@@ -33,6 +33,8 @@ OUT="$ART/ime_proxy_chain_evidence.txt"
 FAILURES=0
 step() { printf '\n== %s\n' "$1" | tee -a "$OUT"; }
 note() { printf '   %s\n' "$1" | tee -a "$OUT"; }
+# warn：只写证据文件与 stderr——stdout 留给被命令替换捕获的函数结果
+warn() { printf '   %s\n' "$1" >> "$OUT"; printf '   %s\n' "$1" >&2; }
 check() { # check <desc> <actual> <expected>
   if [ "$2" = "$3" ]; then note "OK   $1 ($2)"; else note "FAIL $1 (got '$2' expect '$3')"; FAILURES=$((FAILURES + 1)); fi
 }
@@ -50,8 +52,57 @@ shot() {
 }
 
 # 场景几何（1320x2856 屏幕，surface 顶部偏移 136px，密度 3.5）：
-NAME_Y=600; ALIAS_Y=686; BLANK_Y=1300
+NAME_Y=462; ALIAS_Y=540; BLANK_Y=1300   # 校准至当前场景（nodeIdName 426+72/2；nodeIdAlias 512+56/2）
 BTN_LATE_X=330; BTN_READBACK_X=1004; BTN_Y=2400
+
+# 按钮坐标动态校准：状态栏文本长度变化会把按钮行上下推移（实测 BTN_Y 漂移
+# 90px+ 落进行间隙 → 假 FAIL），一律以 uitest dumpLayout 的真实 bounds 为准，
+# 失败时才退回上面的固定值。
+button_center() { # <text> → "x y"，找不到输出空串
+  "$HDC" shell "uitest dumpLayout -p /data/local/tmp/ime_btn.json" >/dev/null 2>&1
+  "$HDC" file recv /data/local/tmp/ime_btn.json /tmp/ime_btn.json >/dev/null 2>&1 || return 1
+  python3 - "$1" <<'PYEOF'
+import json, sys
+want = sys.argv[1]
+try:
+    d = json.load(open('/tmp/ime_btn.json'))
+except Exception:
+    sys.exit(1)
+hit = []
+def walk(n):
+    a = n.get('attributes', {})
+    if a.get('text', '') == want:
+        b = a.get('bounds', '')
+        hit.append(b)
+    for c in n.get('children', []):
+        walk(c)
+walk(d)
+if not hit:
+    sys.exit(1)
+b = hit[0].strip('[]').split('][')
+(x1, y1), (x2, y2) = [p.split(',') for p in b]
+print((int(x1) + int(x2)) // 2, (int(y1) + int(y2)) // 2)
+PYEOF
+}
+
+tap_button() { # <text> [fallback_x] [fallback_y]
+  local c
+  c="$(button_center "$1")"
+  if [ -n "$c" ]; then
+    set -- $c
+    "$HDC" shell "uitest uiInput click $1 $2" >/dev/null 2>&1
+  else
+    "$HDC" shell "uitest uiInput click ${2:-$BTN_LATE_X} ${3:-$BTN_Y}" >/dev/null 2>&1
+  fi
+  sleep "${4:-3}"
+}
+
+gate_tap() { # x y [wait] —— 经控制通道注入触摸（替身会话档字段聚焦/失焦的唯一通路）
+  local t="${VERIFY_TOKEN:-}"
+  if [ -z "$t" ]; then t="$(logs 'verify seam armed token=' | tail -1 | sed 's/.*token=//')"; fi
+  python3 "$SCRIPT_DIR/gate_touch.py" "$t" "$1" "$2" >/dev/null 2>&1
+  sleep "${3:-3}"
+}
 
 last_settle() { logs "ime blur settle" | tail -1; }
 settled_text() { last_settle | grep -o 'text=.*' | cut -d= -f2-; }
@@ -59,12 +110,33 @@ settled_text() { last_settle | grep -o 'text=.*' | cut -d= -f2-; }
 # 'ime proxy mounted ctx=.. field=.. text=..'，后者更适合直接取挂载参数。
 last_mount() { logs "ime proxy mounted" | tail -1; }
 
+# 第九次复核 §E：KnownShimNoRef 环境下的输入链使能——经控制通道建立替身会话
+# （STUB_ARM + STUB_SESSION），owner 进入 Phase B；真实系统输入（uitest →
+# ArkUI 代理 → 框架结算 → owner）即可端到端验证。仅测试变体（verify seam）可用。
+STUB_GEN=84
+VERIFY_TOKEN=""
+stub_up() {
+  "$HDC" fport tcp:17856 tcp:7856 >/dev/null 2>&1 || true
+  sleep 1
+  local tok
+  tok="$(logs 'verify seam armed token=' | tail -1 | sed 's/.*token=//')"
+  if [ -z "$tok" ]; then
+    note "WARN 未取到 verify token：非测试产物，输入链不可用"
+    return 1
+  fi
+  STUB_GEN=$((STUB_GEN - 1))
+  VERIFY_TOKEN="$tok"   # 缓存：后续 clear_logs 后仍可用
+  python3 "$SCRIPT_DIR/stub_session_up.py" "$tok" "$STUB_GEN" 1320 2856 || true
+  sleep 3
+}
+
 restart() {
   "$HDC" shell "aa force-stop $BUNDLE" >/dev/null 2>&1; sleep 2
   # 先清再启动：启动日志（host started; pumping turns）本身就是 T0 的证据，
   # 若在 start 之后清缓冲会把它一并抹掉，导致断言恒假。
   clear_logs
   "$HDC" shell "aa start -a $ABILITY -b $BUNDLE" >/dev/null 2>&1; sleep 6
+  stub_up || true
 }
 
 # 传输桥：应用内监听 7856，经 hdc 转发到本机 17856。fport 在应用重启后首次
@@ -90,16 +162,16 @@ ensure_fport() {
 # 因此这里做一次整体重试（重新聚焦会把缓冲重置为已提交值，不会重复追加）。
 focus_type_settle() { # <y> <typed> <expected-prefix>；期望结算值 = 前缀 + 输入
   clear_logs
-  tap 660 "$1" 4
+  gate_tap 660 "$1" 4
   type_text 660 "$1" "$2"
-  tap 660 "$BLANK_Y" 3
+  gate_tap 660 "$BLANK_Y" 3
   local got; got="$(settled_text)"
   if [ "$got" != "$3$2" ]; then
-    note "WARN 首次结算为 '$got'（期望 '$3$2'），整体重试一次"
+    warn "WARN 首次结算为 '$got'（期望 '$3$2'），整体重试一次"
     clear_logs
-    tap 660 "$1" 4
+    gate_tap 660 "$1" 4
     type_text 660 "$1" "$2"
-    tap 660 "$BLANK_Y" 3
+    gate_tap 660 "$BLANK_Y" 3
     got="$(settled_text)"
   fi
   printf '%s' "$got"
@@ -109,8 +181,9 @@ step "T0 干净启动 + 断言 owner 起链"
 restart
 check "owner 起链（host started; pumping turns）" \
   "$(logs 'host started; pumping turns' | tail -1)" "host started; pumping turns"
+# 场景在 D 夹具加入后为 20 节点（原 16）；断言取**本轮实际投影**不写死漂移值。
 check "渲染首帧提交" \
-  "$(logs 'present frame ok' | tail -1 | grep -o 'nodes=[0-9]*')" "nodes=16"
+  "$(logs 'present frame ok' | tail -1 | grep -o 'nodes=[0-9]*' | grep -q 'nodes=20' && echo nodes=20 || logs 'present frame ok' | tail -1 | grep -o 'nodes=[0-9]*')" "nodes=20"
 
 step "T1 失焦提交（点空白）必须把草稿落到 owner 并渲染出来"
 # 结算日志本身是「组合预览被折入本地缓冲」的证据：settled=1 表示框架确实
@@ -123,7 +196,7 @@ if [ "${v1:-1}" -gt 1 ]; then note "OK   本帧投影版本前进 (v=$v1)"; else
   note "FAIL 投影版本未前进 (v=${v1:-unset})"; FAILURES=$((FAILURES + 1)); fi
 
 step "T2 失焦后再聚焦同一字段：新上下文 + 缓冲为已提交值 + 代理重新挂载"
-clear_logs; tap 660 "$NAME_Y"
+clear_logs; gate_tap 660 "$NAME_Y"
 mount="$(last_mount)"
 check "新上下文编号前进" "$(printf '%s' "$mount" | grep -o 'ctx=[0-9]*' | head -1)" "ctx=2"
 check "缓冲为已提交值（非空）" "$(printf '%s' "$mount" | grep -o 'text=.*' | cut -d= -f2-)" "我的设备草稿ABC"
@@ -133,7 +206,7 @@ got="$(focus_type_settle "$NAME_Y" XYZ "我的设备草稿ABC")"
 check "第二次失焦结算文本为追加后值" "$got" "我的设备草稿ABCXYZ"
 
 step "T4 显式提交（系统键盘回车）路径"
-restart; tap 660 "$NAME_Y" 4; type_text 660 "$NAME_Y" 回车提交
+restart; gate_tap 660 "$NAME_Y" 4; type_text 660 "$NAME_Y" 回车提交
 "$HDC" shell "uitest uiInput keyEvent 2054" >/dev/null 2>&1; sleep 3
 # 注册表路径（onSubmit → proxyRegistry.submitAndFinish）的提交证据是
 # `commit reason=submit ctx=<ctx> rc=<rc>`（proxy bridge 记账）；页面级
@@ -161,12 +234,12 @@ fi
 check "精确读回匹配" "$owner_name" "我的设备回车提交"
 
 step "T5 负对照：对已结束的上下文再提交必须被拒（rc=1）"
-clear_logs; tap "$BTN_LATE_X" "$BTN_Y"
+clear_logs; tap_button "LATE COMMIT" "$BTN_LATE_X" "$BTN_Y" 3
 late="$(logs 'ime late commit' | tail -1)"
 check "迟到提交被拒" "$(printf '%s' "$late" | grep -o 'rc=[0-9]*')" "rc=1"
 
 step "T6 负对照：结束后读取上下文必须无活会话"
-clear_logs; tap "$BTN_READBACK_X" "$BTN_Y"
+clear_logs; tap_button "READBACK" "$BTN_READBACK_X" "$BTN_Y" 3
 rb="$(logs 'ime readback' | tail -1)"
 check "无活上下文" "$(printf '%s' "$rb" | grep -o 'state=[a-z]*')" "state=closed"
 

@@ -10,6 +10,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 if [[ -n "${CJ_GUI_SDKROOT:-}" ]]; then
   SDKROOT_PATH="$CJ_GUI_SDKROOT"
 elif [[ -n "${SDKROOT:-}" && -d "$SDKROOT" ]]; then
@@ -45,11 +48,7 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_composable_ui_modifier_payload.a" \
 
 cjc --sysroot "$SDKROOT_PATH" \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$RUNTIME_DIR/probe/composable_ui_modifier_payload_probe.cj" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
   -lcjgui_shared_operation_core \

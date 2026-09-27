@@ -14,6 +14,7 @@ import cjgui.*
 import cjgui_shared_operation_core.*
 import std.collection.*
 import std.random.*
+import std.unicode.*
 
 /// 已应用的真实业务状态（无草稿层：设置类动作直接生效）。
 public class CjguiSettingsCounterSnapshot {
@@ -22,9 +23,12 @@ public class CjguiSettingsCounterSnapshot {
     public let enabled: Bool
     public let name: String
     public let alias: String
-    public init(version: Int64, count: Int64, enabled: Bool, name: String, alias: String) {
+    public let imageVersion: Int64
+    public init(version: Int64, count: Int64, enabled: Bool, name: String, alias: String,
+        imageVersion: Int64) {
         this.version = version; this.count = count; this.enabled = enabled; this.name = name
         this.alias = alias
+        this.imageVersion = imageVersion
     }
 }
 
@@ -33,7 +37,7 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
     public static let counterMin: Int64 = 0
     public static let counterMax: Int64 = 99
     // 双字段表单：同一后端，两条不同的业务规则。
-    // name：1–32 个 UTF-16 码元；alias：1–8 个 UTF-16 码元（更短、独立版本提交）。
+    // name：1–32 个 Unicode scalar；alias：1–8 个 Unicode scalar。
     public static let nameMaxUnits: Int64 = 32
     public static let aliasMaxUnits: Int64 = 8
 
@@ -42,6 +46,8 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
     private var enabledValue: Bool
     private var nameValue: String
     private var aliasValue: String
+    private var imageVersionValue: Int64
+    private var imageCatalog: ?CjguiGeneratedUiCapabilityCatalog
     private let streamIdentity: String
     private let changeLog: ArrayList<CjguiSharedOperationChangeEntry>
 
@@ -51,6 +57,8 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
         this.enabledValue = true
         this.nameValue = "我的设备"
         this.aliasValue = "前台"
+        this.imageVersionValue = 1
+        this.imageCatalog = None
         // 每次启动的 capability 均为新发；把它编入流标识，防止重启后
         // 调用方把数值版本当作同一游标续读。
         this.streamIdentity = "settings_counter_stream_${Random().nextUInt64()}"
@@ -60,7 +68,16 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
     public func resourceType(): String { return "settings_counter" }
 
     public func counterSnapshot(): CjguiSettingsCounterSnapshot {
-        return CjguiSettingsCounterSnapshot(versionValue, countValue, enabledValue, nameValue, aliasValue)
+        return CjguiSettingsCounterSnapshot(versionValue, countValue, enabledValue, nameValue, aliasValue,
+            imageVersionValue)
+    }
+
+    public func imageResourceSpec(): CjguiGeneratedUiImageResourceSpec {
+        return CjguiSettingsCounterImage.spec(imageVersionValue)
+    }
+
+    public func bindImageCatalog(catalog: CjguiGeneratedUiCapabilityCatalog): Unit {
+        imageCatalog = Some(catalog)
     }
 
     public func contextSnapshot(): CjguiSharedOperationContextSnapshot {
@@ -72,7 +89,8 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
                         CjguiSharedOperationField("enabled", CjguiSharedOperationValue.boolean(enabledValue)),
                         CjguiSharedOperationField("counterRange", CjguiSharedOperationValue.string("0-99")),
                         CjguiSharedOperationField("name", CjguiSharedOperationValue.string(nameValue)),
-                        CjguiSharedOperationField("alias", CjguiSharedOperationValue.string(aliasValue))
+                        CjguiSharedOperationField("alias", CjguiSharedOperationValue.string(aliasValue)),
+                        CjguiSharedOperationField("imageVersion", CjguiSharedOperationValue.integer(imageVersionValue))
                     ]))
             ]))
     }
@@ -82,6 +100,8 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
             CjguiSharedOperationActionDescriptor("INCREMENT", "计数加一",
                 ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1),
             CjguiSharedOperationActionDescriptor("DECREMENT", "计数减一",
+                ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1),
+            CjguiSharedOperationActionDescriptor("SWITCH_IMAGE", "切换设置标志图",
                 ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1),
             CjguiSharedOperationActionDescriptor("SET_ENABLED", "设置启用开关",
                 ArrayList<CjguiSharedOperationParameterDescriptor>([
@@ -139,12 +159,25 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
         if (invocation.actionName == "DECREMENT") {
             return applyCount(before, countValue - 1)
         }
+        if (invocation.actionName == "SWITCH_IMAGE") {
+            let nextVersion: Int64 = if (imageVersionValue == 1) { 2 } else { 1 }
+            if (let Some(catalog) <- imageCatalog) {
+                if (!catalog.updateImageResource(CjguiSettingsCounterImage.spec(nextVersion))) {
+                    return rejected(before, false, catalog.lastRegistrationRejection())
+                }
+            }
+            imageVersionValue = nextVersion
+            versionValue += 1
+            recordChange("image_changed")
+            return accepted(before, "image_changed")
+        }
         if (invocation.actionName == "EDIT_NAME") {
             for (argument in invocation.arguments) {
                 if (argument.name == "text" && argument.value.valueType == "STRING") {
                     let next = argument.value.stringValue
-                    // 名称规则：非空且不超过 32 个 UTF-16 码元（与 UI 提示一致）。
-                    if (next.size == 0 || next.size > CjguiSettingsCounterDomain.nameMaxUnits) {
+                    // 唯一 owner 规则的单位与公共 FieldSpec 相同：Unicode scalar。
+                    if (unicodeScalarCount(next) == 0 ||
+                        unicodeScalarCount(next) > CjguiSettingsCounterDomain.nameMaxUnits) {
                         return rejected(before, false, "name_out_of_range")
                     }
                     nameValue = next
@@ -159,9 +192,10 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
             for (argument in invocation.arguments) {
                 if (argument.name == "text" && argument.value.valueType == "STRING") {
                     let next = argument.value.stringValue
-                    // 别名规则：非空且不超过 8 个 UTF-16 码元（与 name 不同，
+                    // 别名规则：非空且不超过 8 个 Unicode scalar（与 name 不同，
                     // 只有这一份定义；人与外部走同一入口）。
-                    if (next.size == 0 || next.size > CjguiSettingsCounterDomain.aliasMaxUnits) {
+                    if (unicodeScalarCount(next) == 0 ||
+                        unicodeScalarCount(next) > CjguiSettingsCounterDomain.aliasMaxUnits) {
                         return rejected(before, false, "alias_out_of_range")
                     }
                     aliasValue = next
@@ -211,17 +245,29 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
     private func rejected(before: Int64, conflict: Bool, reason: String): CjguiSharedOperationActionResult {
         return CjguiSharedOperationActionResult(false, conflict, before, before, reason)
     }
+
+    private func unicodeScalarCount(value: String): Int64 {
+        var count: Int64 = 0
+        for (scalar in value.runes()) {
+            let _ = scalar
+            count += 1
+        }
+        return count
+    }
 }
 
-/// 授权：外部 Agent 可读取上下文/变更并调用与人类相同的三个动作。
+/// 授权：外部 Agent 可读业务与生成界面，并调用同一组 owner 动作。
 public func settingsCounterAuthorization(): CjguiSharedOperationExternalAuthorization {
     let all = ArrayList<Int64>()
     return CjguiSharedOperationExternalAuthorization("设置与计数本地 Agent", "cjgui-settings-counter-agent-20260925",
         ArrayList<CjguiSharedOperationExternalActionScope>([
             CjguiSharedOperationExternalActionScope("GET_CONTEXT", all, true),
             CjguiSharedOperationExternalActionScope("GET_CHANGES", all, true),
+            CjguiSharedOperationExternalActionScope("GET_GENERATED_UI", all, true),
+            CjguiSharedOperationExternalActionScope("SUBMIT_GENERATED_UI", all, true),
             CjguiSharedOperationExternalActionScope("INCREMENT", all, true),
             CjguiSharedOperationExternalActionScope("DECREMENT", all, true),
+            CjguiSharedOperationExternalActionScope("SWITCH_IMAGE", all, true),
             CjguiSharedOperationExternalActionScope("SET_ENABLED", all, true),
             CjguiSharedOperationExternalActionScope("EDIT_NAME", all, true),
             CjguiSharedOperationExternalActionScope("EDIT_ALIAS", all, true)
@@ -230,24 +276,45 @@ public func settingsCounterAuthorization(): CjguiSharedOperationExternalAuthoriz
 
 /// 控制器：把领域状态投影为 CJGUI 组件树；人机共用同一身份与样式。
 /// 节点身份固定（1/10/11/12/20/21/22/23/30，控制 id 均低于 200）。
-public class CjguiSettingsCounterController <: CjguiComposableUiController {
+public class CjguiSettingsCounterController <: CjguiComposableUiController &
+    CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiBusinessOwnerRevisionProvider {
     public static let nodeIdDecrement: Int64 = 21
     public static let nodeIdIncrement: Int64 = 22
     public static let nodeIdEnabled: Int64 = 23
     public static let nodeIdName: Int64 = 24
     public static let nodeIdAlias: Int64 = 25
+    public static let nodeIdImage: Int64 = 31
+    public static let nodeIdImageSwitch: Int64 = 32
 
     private let domain: CjguiSettingsCounterDomain
+    private let generatedRegion: CjguiGeneratedUiWindowRegion
     private var localRevision: Int64
     private var statusText: String
 
     public init(domain: CjguiSettingsCounterDomain) {
         this.domain = domain
+        this.generatedRegion = CjguiGeneratedUiWindowRegion(settingsGeneratedCatalog(domain),
+            CjguiSettingsCounterGeneratedBinding(domain), "settings-generated")
         this.localRevision = 1
         this.statusText = "编辑后应用计数配置"
     }
 
-    public func uiSceneVersion(): Int64 { return localRevision }
+    public func generatedUiRegion(): CjguiGeneratedUiWindowRegion { return generatedRegion }
+
+    public func uiBusinessOwnerRevision(): Int64 { return domain.counterSnapshot().version }
+
+    public func uiSceneVersion(): Int64 {
+        return localRevision + domain.counterSnapshot().version + generatedRegion.revision()
+    }
+
+    public func beginSceneRefresh(): Bool { return generatedRegion.beginSceneRefresh() }
+    public func prepareSceneRefresh(): Bool { return generatedRegion.prepareSceneRefresh() }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>()
+    }
+    public func commitSceneRefresh(): Unit { generatedRegion.commitSceneRefresh() }
+    public func rollbackSceneRefresh(): Unit { generatedRegion.rollbackSceneRefresh() }
+    public func disposeSceneRefreshResources(): Unit { generatedRegion.disposeSceneRefreshResources() }
 
     public func buildUi(): CjguiComposableUiNode {
         let snapshot = domain.counterSnapshot()
@@ -277,6 +344,18 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController {
         cardBox.add(cjguiComposableText(12, "counter-value", "计数：${snapshot.count}",
             value, resourceId: CjguiSettingsCounterDomain.resourceId, fieldId: "count",
             displayValueRole: "applied"))
+        let image = domain.imageResourceSpec()
+        let imageRow = cjguiComposableHorizontal(29, "counter-image-row",
+            CjguiComposableUiStyle(fixedHeight: 72, gap: 16))
+        imageRow.add(cjguiComposableImage(CjguiSettingsCounterController.nodeIdImage, "counter-beacon",
+            image.rasterPath, CjguiComposableUiStyle(fixedWidth: 160, fixedHeight: 72),
+            contentMode: 1, imageResourceId: image.key, imageResourceVersion: image.version))
+        imageRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdImageSwitch,
+            "counter-image-switch", "切换图片", "SWITCH_IMAGE", CjguiSettingsCounterDomain.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 180, fixedHeight: 60,
+                background: CjguiComposableUiColor(0.23, 0.30, 0.48, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
+        cardBox.add(imageRow)
         let actions = cjguiComposableHorizontal(20, "counter-actions",
             CjguiComposableUiStyle(fixedHeight: 64, gap: 16))
         actions.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdDecrement, "counter-decrement",
@@ -300,7 +379,7 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController {
                 cornerRadius: 10, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0)),
             fieldId: "name", operationActionName: "EDIT_NAME", displayValueRole: "applied"))
         // 第二个文字字段：与 name 不同的几何（更矮、更小字号、不同配色）与
-        // 不同的规则（1-8 码元），但使用完全相同的后端与文字代理上下文机制。
+        // 不同的规则（1-8 个 Unicode scalar），但使用相同的文字代理上下文机制。
         // 它用于验证「同一后端 + 应用侧声明即可复用」，不是新增业务能力。
         cardBox.add(cjguiComposableTextInput(CjguiSettingsCounterController.nodeIdAlias, "counter-alias",
             "别名", snapshot.alias, CjguiSettingsCounterDomain.resourceId,
@@ -320,16 +399,66 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController {
                 background: CjguiComposableUiColor(0.30, 0.12, 0.12, 1.0),
                 clipsContent: true))
         clipBox.add(cjguiComposableText(41, "d-clip-in", "界内文字 ABC", body))
-        clipBox.add(cjguiComposableText(42, "d-clip-cross", "跨边界文字 DEF", body))
-        clipBox.add(cjguiComposableText(43, "d-clip-out", "界外文字 XYZ", body))
+        // 42 用专属底色覆盖跨界节点的整块布局，避免只采到别处的同色文字。
+        clipBox.add(cjguiComposableText(42, "d-clip-cross", "跨边界文字 DEF",
+            CjguiComposableUiStyle(fixedHeight: 40, fontSize: 22.0,
+                background: CjguiComposableUiColor(0.04, 0.82, 0.75, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
+        // 43 必须有正尺寸布局；其专属底色在关闭 clip 的负控里应真实可见。
+        clipBox.add(cjguiComposableText(43, "d-clip-out", "界外文字 XYZ",
+            CjguiComposableUiStyle(fixedHeight: 40, fontSize: 20.0,
+                background: CjguiComposableUiColor(0.95, 0.45, 0.10, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
         cardBox.add(clipBox)
+        // 透明观察区隔开后续不透明按钮：关闭 clip 时 42/43 的像素不会被遮住。
+        cardBox.add(cjguiComposableVertical(48, "d-clip-observation-space",
+            CjguiComposableUiStyle(fixedWidth: 400, fixedHeight: 70)))
+        // D2 夹具（第六次复核第 4 项）：跨边界的**可交互按钮**。容器高 50、
+        // 按钮高 80 → 可见部分 0..50、被裁部分 50..80。可见区命中必须推进
+        // owner，被裁区命中必须不推进（裁剪边界命中的真负控）；noclip 孪生
+        // 容器（clipsContent:false）同几何同动作，两处都命中——证明被裁区
+        // 未命中确由裁剪所致，而非几何不可达。
+        let clipBtnBox = cjguiComposableVertical(44, "d-clip-btn-box",
+            CjguiComposableUiStyle(fixedWidth: 400, fixedHeight: 50, gap: 0,
+                background: CjguiComposableUiColor(0.12, 0.30, 0.14, 1.0),
+                clipsContent: true))
+        clipBtnBox.add(cjguiComposableButton(45, "d-clip-btn", "裁剪增加",
+            "INCREMENT", CjguiSettingsCounterDomain.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 380, fixedHeight: 80, cornerRadius: 0,
+                background: CjguiComposableUiColor(0.16, 0.44, 0.20, 1.0),
+                textColor: CjguiComposableUiColor(0.90, 0.95, 0.88, 1.0))))
+        cardBox.add(clipBtnBox)
+        // 被裁按钮下方保留无交互空间；负控点击落在按钮自身布局内且不被孪生按钮覆盖。
+        cardBox.add(cjguiComposableVertical(49, "d-clip-hit-observation-space",
+            CjguiComposableUiStyle(fixedWidth: 400, fixedHeight: 50)))
+        let noclipBtnBox = cjguiComposableVertical(46, "d-noclip-btn-box",
+            CjguiComposableUiStyle(fixedWidth: 400, fixedHeight: 50, gap: 0,
+                background: CjguiComposableUiColor(0.30, 0.22, 0.08, 1.0),
+                clipsContent: false))
+        noclipBtnBox.add(cjguiComposableButton(47, "d-noclip-btn", "不裁增加",
+            "INCREMENT", CjguiSettingsCounterDomain.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 380, fixedHeight: 80, cornerRadius: 0,
+                background: CjguiComposableUiColor(0.44, 0.34, 0.12, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.92, 0.85, 1.0))))
+        cardBox.add(noclipBtnBox)
         root.add(cardBox)
+        root.add(generatedRegion.buildNode())
         return root
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        let generated = generatedRegion.handleEvent(event)
+        if (generated.didApply) {
+            localRevision += 1
+            return generated
+        }
         let snapshot = domain.counterSnapshot()
-        if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdIncrement) {
+        if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdImageSwitch) {
+            return applyImage(domain.executeFromHuman(invoke("SWITCH_IMAGE", snapshot.version)))
+        }
+        if (event.eventKind == 27 && (event.node.nodeId == CjguiSettingsCounterController.nodeIdIncrement
+            || event.node.nodeId == 45 || event.node.nodeId == 47)) {
+            // 45/47：D2 裁剪命中夹具按钮，走同一条 INCREMENT owner 入口。
             return applyCounter(domain.executeFromHuman(invoke("INCREMENT", snapshot.version)))
         }
         if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdDecrement) {
@@ -430,6 +559,13 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController {
         } else {
             "未应用：${result.reason}"
         }
+        localRevision += 1
+        return CjguiComposableUiDispatchResult(result.applied)
+    }
+
+    private func applyImage(result: CjguiSharedOperationActionResult): CjguiComposableUiDispatchResult {
+        statusText = if (result.applied) { "标志图已切换到 v${domain.counterSnapshot().imageVersion}" }
+            else { "标志图未切换：${result.reason}" }
         localRevision += 1
         return CjguiComposableUiDispatchResult(result.applied)
     }

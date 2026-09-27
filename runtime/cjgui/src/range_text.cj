@@ -71,6 +71,18 @@ public interface CjguiRangeTextSource {
     /// Monotonic content version. It advances once per accepted edit.
     func rangeTextVersion(): Int64
 
+    /// Run a short restoration confirmation only while this same source still
+    /// publishes `expectedVersion`. The owner must serialize this callback with
+    /// every content write; it must not read text, call native, or re-enter Sink.
+    func confirmRangeTextVersion(expectedVersion: Int64, action: () -> Bool): Bool
+
+    /// Map a view's absolute source-byte selection from one owner version to
+    /// the current one. Return None if the map chain has a gap or either
+    /// endpoint was replaced ambiguously. The owner must do this atomically
+    /// with its version and change-map history reads.
+    func rebaseRangeTextSelection(fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64)
+
     /// Total byte length, or -1 when not yet known.
     func rangeTextByteLength(): Int64
 
@@ -130,6 +142,7 @@ public let CJGUI_RANGE_TEXT_REASON_UNPREPARED: String = "source_unprepared"
 public let CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY: String = "not_utf8_boundary"
 public let CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW: String = "outside_materialized_window"
 public let CJGUI_RANGE_TEXT_REASON_VERSION: String = "version_conflict"
+public let CJGUI_RANGE_TEXT_REASON_BUDGET: String = "range_exceeds_materialize_budget"
 
 /// UTF-8 byte length of a string.
 public func cjguiUtf8Length(value: String): Int64 {
@@ -290,6 +303,7 @@ public class CjguiRangeTextWindow {
     private var value: String = ""
     private var version: Int64 = 0
     private var totalBytes: Int64 = -1
+    private var prepared: Bool = false
     private var complete: Bool = false
     private var pendingReason: String = CJGUI_RANGE_TEXT_REASON_UNPREPARED
     private var refreshCount: Int64 = 0
@@ -306,7 +320,8 @@ public class CjguiRangeTextWindow {
         this.semanticIdValue = semanticId
         this.source = source
         this.sink = sink
-        this.materializeLimit = if (materializeLimit < 1) { 1 } else { materializeLimit }
+        // A UTF-8 scalar may occupy four bytes; smaller windows cannot hold one.
+        this.materializeLimit = if (materializeLimit < 4) { 4 } else { materializeLimit }
     }
 
     public func nodeId(): Int64 {
@@ -332,13 +347,43 @@ public class CjguiRangeTextWindow {
         return this.version
     }
 
+    /// The version the owner reports RIGHT NOW, which can be ahead of the
+    /// materialised projection: an agent or another window may have written
+    /// through the sink since the last `refresh`. A caller that must detect a
+    /// stale mirror (an input session holding a composition, for instance) has
+    /// to compare against this, not against `contentVersion()`.
+    public func sourceVersion(): Int64 {
+        return this.source.rangeTextVersion()
+    }
+
+    /// The callback is the final session-only state transition. Source/owner
+    /// protects the version comparison and that transition in one write boundary.
+    public func confirmContentVersion(action: () -> Bool): Bool {
+        return this.source.confirmRangeTextVersion(this.version, action)
+    }
+
+    public func rebaseSelection(fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64) {
+        return this.source.rebaseRangeTextSelection(fromVersion, startByte, endByte)
+    }
+
     /// Total document byte length, or -1 when the source does not know it yet.
     public func sourceByteLength(): Int64 {
         return this.totalBytes
     }
 
-    /// False when the projection covers only part of the document.
+    /// Whether the local slice is fully prepared for range conversion/editing.
+    /// A healthy bounded page is prepared even when more document bytes exist.
+    public func isPrepared(): Bool {
+        return this.prepared
+    }
+
+    /// Whether this prepared slice covers the whole document.
     public func isComplete(): Bool {
+        return this.complete
+    }
+
+    public func coversWholeDocument(): Bool {
         return this.complete
     }
 
@@ -363,40 +408,102 @@ public class CjguiRangeTextWindow {
     }
 
     /// Load (or reload) the projection at the current window start.
-    /// Returns true when the visible text changed.
+    /// Returns true when the mirror's IDENTITY changed -- text, document anchor or
+    /// content version. A same-text reload at a different anchor, or an owner write that
+    /// happens to produce the same visible bytes, is still a new mirror: callers advance
+    /// the mirror revision from this return value, so reporting only "the string differs"
+    /// would leave ranges expressed against the previous mirror looking still valid.
     public func refresh(): Bool {
         // The window keeps its document anchor across edits: the caret stays
         // where the user put it and only the text in view changes.
         let slice = this.source.readRangeText(this.startByte, this.materializeLimit)
         let previous = this.value
+        let previousStart = this.startByte
+        let previousVersion = this.version
+        let previousTotal = this.totalBytes
+        let previousPrepared = this.prepared
+        let previousComplete = this.complete
+        let previousReason = this.pendingReason
         this.startByte = slice.actualStart
         this.value = slice.content
         this.version = slice.contentVersion
         this.totalBytes = slice.byteLength
-        this.complete = slice.complete
-        this.pendingReason = slice.pendingReason
+        let contentBytes = Int64(slice.content.toArray().size)
+        let endByte = slice.actualStart + contentBytes
+        let validSpan = slice.actualStart >= 0 && slice.actualStart >= slice.requestedStart &&
+            contentBytes <= this.materializeLimit &&
+            (slice.byteLength < 0 || endByte <= slice.byteLength)
+        this.prepared = slice.complete && validSpan &&
+            (slice.byteLength < 0 || slice.actualStart == slice.byteLength ||
+                contentBytes > 0)
+        this.complete = this.prepared && slice.byteLength >= 0 &&
+            slice.actualStart == 0 && endByte == slice.byteLength
+        this.pendingReason = if (this.prepared) { "" } else if (slice.pendingReason != "") {
+            slice.pendingReason
+        } else { "invalid_local_slice" }
         this.refreshCount += 1
-        return previous != this.value
+        return previous != this.value || previousStart != this.startByte ||
+            previousVersion != this.version || previousTotal != this.totalBytes ||
+            previousPrepared != this.prepared || previousComplete != this.complete ||
+            previousReason != this.pendingReason
     }
 
     /// Recentre the projection so `anchorByte` is visible. Returns true when
     /// the window moved (the caller must then reload layout).
     public func revealByte(anchorByte: Int64): Bool {
-        if (anchorByte >= this.startByte && anchorByte <= this.startByte + Int64(this.value.toArray().size)) {
+        if (this.prepared && anchorByte >= this.startByte &&
+            anchorByte <= this.startByte + Int64(this.value.toArray().size)) {
             return false
         }
         var target = anchorByte - this.materializeLimit / 4
         if (target < 0) {
             target = 0
         }
+        // The anchor moved even when the re-read text happens to be identical (a
+        // filler document, an unchanged window of repeats): callers key their
+        // remap/relayout on this return value, so it must report the move.
+        let moved = target != this.startByte
         this.startByte = target
         let changed = this.refresh()
-        return changed || target != this.startByte
+        return moved || changed
+    }
+
+    /// Prepare one exact absolute source span, never a guessed pair of
+    /// separately revealed endpoints. The read remains within this window's
+    /// fixed budget and does not call Sink.
+    public func prepareByteRange(startByte: Int64, endByte: Int64): String {
+        if (startByte < 0 || endByte < startByte ||
+            (this.totalBytes >= 0 && endByte > this.totalBytes)) {
+            return "invalid_range"
+        }
+        if (endByte - startByte > this.materializeLimit) {
+            return CJGUI_RANGE_TEXT_REASON_BUDGET
+        }
+        let coverEnd = this.startByte + cjguiUtf8Length(this.value)
+        if (!this.prepared || startByte < this.startByte || endByte > coverEnd) {
+            this.startByte = startByte
+            let _ = this.refresh()
+        }
+        if (!this.prepared) {
+            return this.pendingReason
+        }
+        if (startByte < this.startByte || endByte > this.startByte + cjguiUtf8Length(this.value)) {
+            return CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW
+        }
+        let bytes = this.value.toArray()
+        if (!cjguiIsUtf8Boundary(bytes, startByte - this.startByte) ||
+            !cjguiIsUtf8Boundary(bytes, endByte - this.startByte)) {
+            return CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY
+        }
+        return ""
     }
 
     /// Map a UTF-16 range inside the materialised text into document byte
     /// coordinates. Returns None when the range splits a scalar.
     public func documentRangeForUtf16(location: Int64, length: Int64): ?(Int64, Int64) {
+        if (!this.prepared || length < 0) {
+            return None
+        }
         let localStart = cjguiUtf16OffsetToUtf8(this.value, location)
         if (let Some(s) <- localStart) {
             let localEnd = cjguiUtf16OffsetToUtf8(this.value, location + length)
@@ -426,9 +533,24 @@ public class CjguiRangeTextWindow {
         startByte: Int64,
         endByte: Int64,
         inserted: String): CjguiRangeTextEditOutcome {
+        if (!this.prepared) {
+            this.rejectedEditCount += 1
+            return CjguiRangeTextEditOutcome.rejected(this.version, this.pendingReason)
+        }
         if (startByte < 0 || endByte < startByte) {
             this.rejectedEditCount += 1
             return CjguiRangeTextEditOutcome.rejected(this.version, "invalid_range")
+        }
+        let coverEnd = this.startByte + Int64(this.value.toArray().size)
+        if (startByte < this.startByte || endByte > coverEnd) {
+            this.rejectedEditCount += 1
+            return CjguiRangeTextEditOutcome.rejected(this.version, CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW)
+        }
+        let currentBytes = this.value.toArray()
+        if (!cjguiIsUtf8Boundary(currentBytes, startByte - this.startByte) ||
+            !cjguiIsUtf8Boundary(currentBytes, endByte - this.startByte)) {
+            this.rejectedEditCount += 1
+            return CjguiRangeTextEditOutcome.rejected(this.version, CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY)
         }
         let outcome = this.sink.applyRangeTextEdit(this.version, startByte, endByte, inserted)
         if (!outcome.applied) {

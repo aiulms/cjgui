@@ -7,6 +7,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 if [[ -n "${CJ_GUI_SDKROOT:-}" ]]; then
   SDKROOT_PATH="$CJ_GUI_SDKROOT"
 elif [[ -n "${SDKROOT:-}" && -d "$SDKROOT" ]]; then
@@ -42,11 +45,7 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_scene_submission_scale.a" \
 
 cjc --sysroot "$SDKROOT_PATH" \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$RUNTIME_DIR/probe/scene_submission_scale_probe.cj" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
   -lcjgui_shared_operation_core \
@@ -55,4 +54,9 @@ cjc --sysroot "$SDKROOT_PATH" \
   -o "$OUTPUT_DIR/scene_submission_scale_probe"
 
 export DYLD_LIBRARY_PATH="$CANGJIE_HOME/runtime/lib/darwin_aarch64_cjnative:${DYLD_LIBRARY_PATH:-}"
-"$OUTPUT_DIR/scene_submission_scale_probe"
+# Mode selection is parameterised so the legacy baseline and the new
+# no_effect/effect_static/animation_active comparison can be sampled and
+# reported separately.  The default keeps every mode, preserving the original
+# invocation for existing callers.
+PROBE_MODES="${CJGUI_SCENE_SCALE_MODES:-local_color,component_add_remove,reorder,image_replace,resize,no_effect,effect_static,animation_active}"
+"$OUTPUT_DIR/scene_submission_scale_probe" "--modes=$PROBE_MODES"

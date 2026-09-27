@@ -24,7 +24,19 @@ package cjgui_ohos_transport
 import std.sync.*
 import std.time.*
 import std.collection.ArrayList
+import std.convert.*
+
+// 第九次复核 C/D：替身状态/放行/退役的**宿主直连通道**——不依赖 owner
+// serveOnce 转发（owner 阻塞于 host.start 首帧或退出时仍可达）。
 import kit.PerformanceAnalysisKit.Hilog
+
+// 第九次复核 C/D：替身状态/放行/退役的**宿主直连通道**——不依赖 owner
+// serveOnce 转发（owner 阻塞于 host.start 首帧或退出时仍可达）。
+foreign func cjgui_ohos_test_stub_release(): Int32
+foreign func cjgui_ohos_test_stub_lease_retire(gen: Int64): Int32
+foreign func cjgui_ohos_test_stub_state(): Int64
+foreign func cjgui_ohos_test_stub_counts(gen: Int64): Int64
+foreign func cjgui_ohos_test_platform_call_packed(): Int64
 
 // 控制协议常量（整帧严格匹配，不做子串搜索）。
 @When[cjgui_transport_verify == "on"]
@@ -255,7 +267,10 @@ func handleVerifyControl(payload: String): ?String {
         let gid = VerificationSeam.publishGateCommand(op)
         return verifyOkFrame(op, "PUBLISHED " + gid.toString())
     }
-    match (op) {
+    // 链2：替身命令带空格参数（如 "STUB_ARM 91 0 91 8000"）——按首词路由，
+    // 完整 op 原样发布给 owner 派发（gateName 携带参数，executeGateCommand 解析）。
+    let opKey = if (op.startsWith("STUB_")) { op.split(" ")[0] } else { op }
+    match (opKey) {
         case "PAUSE_CLAIM" =>
             let ok = VerificationSeam.setClaimPaused(true)
             Hilog.info(0, TAG_VERIFY, "verify gate: claim paused ok=" + ok.toString())
@@ -307,12 +322,35 @@ func handleVerifyControl(payload: String): ?String {
            | "GATE_HOLD_PERMIT_8000" | "GATE_HOLD_CREATE_8000" | "GATE_HOLD_CREATE_RET_8000"
            | "GATE_HOLD_DRAW_8000" | "GATE_HOLD_ADMIT_8000" | "GATE_SIM_RETIRED"
            | "GATE_SIM_CREATED" | "GATE_A2_STATS" | "GATE_FLUSH_HOLD_30000"
-           | "GATE_ACCEPT_THROW" | "GATE_ROLLBACK_THROW" | "GATE_THROW_CLEAR" =>
+           | "GATE_FLUSH_HOLD_RELEASE" | "GATE_ACCEPT_THROW" | "GATE_ROLLBACK_THROW"
+           | "GATE_THROW_CLEAR"
+           | "STUB_DISARM"
+           | "STUB_ARM" | "STUB_HOLD" | "STUB_SESSION" | "GATE_AUDIT_FIXTURE"
+           | "GATE_REDRAW" =>
             // A1 矩阵：发布渲染器闸门命令。owner 循环在本进程执行（renderer
             // test-gates 的 foreign 入口），结果经 GATE_STATE 读回。这里只发布
             // 不执行——执行与结果归属在 owner 派发处记录，不在此伪造。
             let gid = VerificationSeam.publishGateCommand(op)
             return verifyOkFrame(op, "PUBLISHED " + gid.toString())
+        case "STUB_RELEASE" =>
+            let r = unsafe { cjgui_ohos_test_stub_release() }
+            return verifyOkFrame(op, "stub_release=" + r.toString())
+        case "STUB_RETIRE" =>
+            let parts = op.split(" ")
+            if (parts.size < 2) { return verifyOkFrame(op, "stub_retire=-1") }
+            let r = unsafe { cjgui_ohos_test_stub_lease_retire(Int64.parse(parts[1])) }
+            return verifyOkFrame(op, "stub_retire=" + r.toString())
+        case "STUB_STATE" =>
+            let st = unsafe { cjgui_ohos_test_stub_state() }
+            return verifyOkFrame(op, "stub_state=" + st.toString())
+        case "GATE_PC_CALLS" =>
+            let p = unsafe { cjgui_ohos_test_platform_call_packed() }
+            return verifyOkFrame(op, "pc_calls=" + p.toString())
+        case "STUB_COUNTS" =>
+            let parts = op.split(" ")
+            if (parts.size < 2) { return verifyOkFrame(op, "stub_counts=-1") }
+            let c = unsafe { cjgui_ohos_test_stub_counts(Int64.parse(parts[1])) }
+            return verifyOkFrame(op, "stub_counts=" + c.toString())
         case "GATE_STATE" =>
             let (lastId, doneId, result) = VerificationSeam.gateState()
             return verifyOkFrame(op, "LAST_COMMAND " + lastId.toString() +

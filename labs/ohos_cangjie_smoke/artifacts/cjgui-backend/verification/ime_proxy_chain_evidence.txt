@@ -1,7 +1,7 @@
 
 == T0 干净启动 + 断言 owner 起链
    OK   owner 起链（host started; pumping turns） (host started; pumping turns)
-   OK   渲染首帧提交 (nodes=16)
+   OK   渲染首帧提交 (nodes=20)
 
 == T1 失焦提交（点空白）必须把草稿落到 owner 并渲染出来
    OK   失焦结算文本为草稿（预览已折入） (我的设备草稿ABC)
@@ -13,6 +13,7 @@
    OK   缓冲为已提交值（非空） (我的设备草稿ABC)
 
 == T3 失焦后继续编辑：追加文本再次提交
+   WARN 首次结算为 '我的设备草稿ABC'（期望 '我的设备草稿ABCXYZ'），整体重试一次
    OK   第二次失焦结算文本为追加后值 (我的设备草稿ABCXYZ)
 
 == T4 显式提交（系统键盘回车）路径

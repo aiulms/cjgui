@@ -189,10 +189,14 @@ public class CjguiMacosApplicationTurnResult {
 private class CjguiMacosApplicationWindowEntry {
     let identifier: CjguiMacosApplicationWindowIdentifier
     let composableWindow: CjguiComposableUiWindow
+    /// C：每个窗口自己的平台状态追踪器，仅在系统/窗口事实变化时推一次动效策略；
+    /// 同一事实重复出现不重发。
+    let platformStateTracker: CjguiComposableUiPlatformStateTracker
 
     init(identifier: CjguiMacosApplicationWindowIdentifier, composableWindow: CjguiComposableUiWindow) {
         this.identifier = identifier
         this.composableWindow = composableWindow
+        this.platformStateTracker = CjguiComposableUiPlatformStateTracker()
     }
 }
 
@@ -241,6 +245,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     private var ownsProcessLoopReference: Bool
     private var ownsApplicationExitLifecycleReference: Bool
     private var testPostRefreshObserver: ?CjguiMacosApplicationPostRefreshObserver
+    /// C：应用级主题策略。固定值优先于系统跟随；默认跟随系统。
+    private var selectedThemePreference: CjguiComposableUiThemePreference
+    private var selectedAccentPreferenceToken: String = "system"
 
     public init(
         maximumWindowCount!: Int64 = 4,
@@ -269,12 +276,35 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         this.ownsProcessLoopReference = false
         this.ownsApplicationExitLifecycleReference = false
         this.testPostRefreshObserver = None
+        this.selectedThemePreference = CjguiComposableUiThemePreference.SystemFollow
     }
 
     /// Test-only: registers the post-refresh/pre-pump observer (see
     /// CjguiMacosApplicationPostRefreshObserver). Passing None removes it.
     public func setTestPostRefreshObserver(observer: ?CjguiMacosApplicationPostRefreshObserver): Unit {
         testPostRefreshObserver = observer
+    }
+
+    /// C：应用选择的主题策略（token 形式）。固定浅色/深色优先于系统跟随；
+    /// 未知 token 被拒并保持当前选择，不做静默归一化。
+    public func setThemePreference(token: String): Bool {
+        if (let Some(preference) <- CjguiComposableUiPlatformStateCodec.themePreferenceFromToken(token)) {
+            selectedThemePreference = preference
+            return true
+        }
+        return false
+    }
+
+    /// C：当前应用级主题策略。
+    public func themePreference(): CjguiComposableUiThemePreference {
+        return selectedThemePreference
+    }
+
+    public func setAccentPreference(token: String): Bool {
+        if (CjguiComposableUiAccentPreference.fromToken(token).isNone()) { return false }
+        selectedAccentPreferenceToken = token
+        for (entry in windows) { let _ = entry.composableWindow.selectAccentPreference(token) }
+        return true
     }
 
     /// Opens one independent projection/session. The controller and its
@@ -309,6 +339,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             return CjguiMacosApplicationWindowOpenResult(false, None, "window_generation_exhausted")
         }
         let window = CjguiComposableUiWindow(controller, configuration: configuration)
+        let _ = window.selectAccentPreference(selectedAccentPreferenceToken)
+        let _ = window.offerPlatformColorScheme(CjguiComposableUiPlatformStateResolution.resolveColorScheme(
+            selectedThemePreference, CjguiComposableUiPlatformFacts.systemColorScheme()))
+        let _ = window.observeSystemAccent()
         // A1：受理（首帧 PENDING）不是失败——窗口已打开且留在泵送集合里，
         // 由后续 turn 的前置结算门推进到 Ready/失败。只有 StartFailed 才拒绝。
         var windowStartFailed = false
@@ -324,9 +358,15 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         }
         let generation = nextGeneration
         let following = generation.saturatingAdd(1)
-        nextGeneration = if (following <= generation) { 0 } else { following }
+        nextGeneration = if (following <= generation) {
+            0
+        } else {
+            following
+        }
         let identifier = CjguiMacosApplicationWindowIdentifier(
-            applicationIdentity, "${applicationIdentity}_window_${generation}", generation
+            applicationIdentity,
+            "${applicationIdentity}_window_${generation}",
+            generation
         )
         if (!ownsProcessLoopReference) {
             if (!CjguiMacosApplicationLoopReferenceRegistry.retain(applicationIdentity)) {
@@ -434,9 +474,15 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// and whether an application-exit intent was consumed. They add no business
     /// semantics and only exist so a bounded scheduler probe can localize the first
     /// state change.
-    public func testRetirementTrace(): String { return testRetirementTraceValue }
-    public func testApplicationCloseTrace(): String { return testCloseTraceValue }
-    public func testExitIntentTrace(): String { return testExitIntentTraceValue }
+    public func testRetirementTrace(): String {
+        return testRetirementTraceValue
+    }
+    public func testApplicationCloseTrace(): String {
+        return testCloseTraceValue
+    }
+    public func testExitIntentTrace(): String {
+        return testExitIntentTraceValue
+    }
 
     /// Ask the target controller's established close decision. A rejection is
     /// local to that window and leaves all siblings, the connection and the
@@ -540,13 +586,17 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             // The explicitly installed testing seam observes the historical
             // refreshed-scene boundary before injecting a native event.
             for (identifier in nonBlockingIdentifiers) {
-                if (closed) { break }
+                if (closed) {
+                    break
+                }
                 if (let Some(composableWindow) <- window(identifier)) {
                     let _ = composableWindow.refreshIfNeeded()
                     if (let Some(liveWindow) <- window(identifier)) {
                         observer.postRefreshBeforePump(liveWindow)
                         let result = liveWindow.pump(0u32)
-                        if (!result.isOpen) { retire(identifier) }
+                        if (!result.isOpen) {
+                            retire(identifier)
+                        }
                     }
                 }
             }
@@ -557,7 +607,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             let eventWindows = ArrayList<CjguiMacosApplicationWindowIdentifier>()
             let otherWindows = ArrayList<CjguiMacosApplicationWindowIdentifier>()
             for (identifier in nonBlockingIdentifiers) {
-                if (closed) { break }
+                if (closed) {
+                    break
+                }
                 if (let Some(composableWindow) <- window(identifier)) {
                     let result = composableWindow.pumpEventsWithoutRefresh(0u32)
                     if (!result.isOpen) {
@@ -570,7 +622,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 }
             }
             for (identifier in eventWindows) {
-                if (closed) { break }
+                if (closed) {
+                    break
+                }
                 if (let Some(composableWindow) <- window(identifier)) {
                     let _ = composableWindow.refreshAfterDeferredPump()
                 }
@@ -590,7 +644,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                     while (offset < otherWindows.size) {
                         let index = (nextPreparationIndex + offset) % otherWindows.size
                         let identifier = otherWindows[index]
-                        if (closed) { break }
+                        if (closed) {
+                            break
+                        }
                         if (let Some(composableWindow) <- window(identifier)) {
                             let _ = composableWindow.refreshAfterDeferredPump()
                         }
@@ -607,6 +663,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         if (!isOpen()) {
             return CjguiMacosApplicationTurnResult(false, 0, externalActionCount, 0u32, elapsedMs(started), None)
         }
+        // P2：在任何 AppKit 长等待之前推进所有窗口的动效，并把系统“减少动态
+        // 效果”偏好推给每个窗口。只有仍有活动动效时才收缩等待预算——静止后
+        // 帧请求自然收敛，另一窗的输入不受影响。
+        let anyActiveAnimation = serviceWindowAnimations()
 
         let waitIdentifiers = windowIdentifiers()
         if (nextWaitIndex < 0 || nextWaitIndex >= waitIdentifiers.size) {
@@ -618,10 +678,15 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             nextWaitIndex = 0
         }
         let elapsed = elapsedMs(started)
-        let waitBudget: UInt32 = if (elapsed >= Int64(turnBudgetMs)) {
+        var waitBudget: UInt32 = if (elapsed >= Int64(turnBudgetMs)) {
             0u32
         } else {
             UInt32(Int64(turnBudgetMs) - elapsed)
+        }
+        // P2：有活动动效时申请下一帧而不是长睡。无活动动效时保留原休眠预算，
+        // 因此静止窗口不会持续唤醒，帧请求与提交收敛。
+        if (anyActiveAnimation && waitBudget > CJGUI_COMPOSABLE_UI_ANIMATION_FRAME_WAIT_MS) {
+            waitBudget = CJGUI_COMPOSABLE_UI_ANIMATION_FRAME_WAIT_MS
         }
         if (let Some(waitedWindow) <- window(waitedIdentifier)) {
             let waited = if (hasPostRefreshObserver) {
@@ -660,9 +725,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         // when the reference registry proves that this is the one live
         // application owner; otherwise leave the native intent pending and
         // fail closed instead of selecting an arbitrary sibling window.
-        if (ownsApplicationExitLifecycleReference &&
-            CjguiMacosApplicationLoopReferenceRegistry.isExclusiveOwner(applicationIdentity) &&
-            internalRendererHasUnkeyedApplicationExitRequest()) {
+        if (ownsApplicationExitLifecycleReference && CjguiMacosApplicationLoopReferenceRegistry.isExclusiveOwner(
+            applicationIdentity) && internalRendererHasUnkeyedApplicationExitRequest()) {
             internalRendererCompleteApplicationExitRequest()
             testExitIntentTraceValue = "unkeyed_exit_intent_consumed"
             let _ = requestApplicationExit()
@@ -724,8 +788,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             return None
         }
         for (entry in windows) {
-            if (entry.identifier.applicationIdentifier == identifier.applicationIdentifier &&
-                entry.identifier.value == identifier.value && entry.identifier.generation == identifier.generation) {
+            if (entry.identifier.applicationIdentifier == identifier.applicationIdentifier && entry.identifier.value == identifier
+                .value && entry.identifier.generation == identifier.generation) {
                 return Some(entry)
             }
         }
@@ -734,13 +798,17 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
 
     private func retire(identifier: CjguiMacosApplicationWindowIdentifier) {
         if (testRetirementTraceValue.size == 0) {
-            let trace = if (let Some(retiring) <- window(identifier)) { retiring.testCloseTrace() } else { "missing" }
+            let trace = if (let Some(retiring) <- window(identifier)) {
+                retiring.testCloseTrace()
+            } else {
+                "missing"
+            }
             testRetirementTraceValue = "window=${identifier.value} gen=${identifier.generation} ${trace} live_windows_before=${liveWindowCount()}"
         }
         let remaining = ArrayList<CjguiMacosApplicationWindowEntry>()
         for (entry in windows) {
-            if (entry.identifier.applicationIdentifier == identifier.applicationIdentifier &&
-                entry.identifier.value == identifier.value && entry.identifier.generation == identifier.generation) {
+            if (entry.identifier.applicationIdentifier == identifier.applicationIdentifier && entry.identifier.value == identifier
+                .value && entry.identifier.generation == identifier.generation) {
                 entry.composableWindow.close()
             } else {
                 remaining.add(entry)
@@ -798,6 +866,50 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         return (MonoTime.now() - started).toMilliseconds()
     }
 
+    /// P2/C：推进本应用所有窗口的动效。每个窗口先采集一次最小平台状态，只有
+    /// 系统“减少动态效果”、系统外观、窗口可见/最小化或应用主题策略真正变化时
+    /// 才把动效策略推给该窗口；同值重复出现不重发，也不重建主题。返回是否有
+    /// 任一窗口仍有活动动效。
+    private func serviceWindowAnimations(): Bool {
+        let now = MonoTime.now()
+        var anyActive = false
+        for (entry in windows) {
+            if (closed) {
+                break
+            }
+            if (!entry.composableWindow.isOpen()) {
+                continue
+            }
+            servicePlatformStateFor(entry)
+            if (entry.composableWindow.advanceAnimations(atTime: now)) {
+                anyActive = true
+            }
+        }
+        return anyActive
+    }
+
+    /// C：采集一个窗口的最小平台状态，仅在事实变化时把动效策略推给该窗口。
+    /// 系统减少动效、窗口隐藏或最小化都会让该窗口确定收敛；恢复可见后回到系统
+    /// 策略。同值重复采样不重发动效策略，避免每帧重建。
+    private func servicePlatformStateFor(entry: CjguiMacosApplicationWindowEntry): Bool {
+        let windowNumber = entry.composableWindow.windowNumber()
+        let accentChanged = entry.composableWindow.observeSystemAccent()
+        let changed = entry.platformStateTracker.observe(
+            reduceMotion: CjguiComposableUiPlatformFacts.reduceMotionEnabled(),
+            systemColorScheme: CjguiComposableUiPlatformFacts.systemColorScheme(),
+            themePreference: selectedThemePreference,
+            windowVisible: CjguiComposableUiPlatformFacts.windowVisible(windowNumber),
+            windowMinimized: CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+        )
+        if (changed) {
+            if (let Some(snapshot) <- entry.platformStateTracker.accepted()) {
+                let _ = entry.composableWindow.setReduceMotionEnabled(snapshot.motionConverges())
+                let _ = entry.composableWindow.offerPlatformColorScheme(snapshot.effectiveColorScheme())
+            }
+        }
+        return changed || accentChanged
+    }
+
     private func containsIdentifier(
         identifiers: ArrayList<CjguiMacosApplicationWindowIdentifier>,
         target: CjguiMacosApplicationWindowIdentifier
@@ -821,6 +933,10 @@ public class CjguiMacosApplicationHost {
     private var externalConnection: ?CjguiSharedOperationExternalConnection
     private var started: Bool
     private var closed: Bool
+    /// C：本窗最小平台状态追踪器与主题策略。只有事实变化时才重发动效策略。
+    private var platformStateTracker: CjguiComposableUiPlatformStateTracker
+    private var selectedThemePreference: CjguiComposableUiThemePreference
+    private var selectedAccentPreferenceToken: String = "system"
 
     public init(controller: CjguiComposableUiController,
         configuration!: CjguiMacosApplicationWindowConfiguration = CjguiMacosApplicationWindowConfiguration.standard()) {
@@ -829,6 +945,8 @@ public class CjguiMacosApplicationHost {
         this.externalConnection = None
         this.started = false
         this.closed = false
+        this.platformStateTracker = CjguiComposableUiPlatformStateTracker()
+        this.selectedThemePreference = CjguiComposableUiThemePreference.SystemFollow
     }
 
     /// The framework window remains a Cangjie projection surface. Returning it
@@ -836,6 +954,33 @@ public class CjguiMacosApplicationHost {
     /// external connection without exposing a native session token.
     public func window(): CjguiComposableUiWindow {
         return composableWindow
+    }
+
+    /// C：应用选择的主题策略（token 形式）。固定浅色/深色优先于系统跟随；
+    /// 未知 token 被拒并保持当前选择。
+    public func setThemePreference(token: String): Bool {
+        if (let Some(preference) <- CjguiComposableUiPlatformStateCodec.themePreferenceFromToken(token)) {
+            selectedThemePreference = preference
+            return true
+        }
+        return false
+    }
+
+    /// C：当前应用级主题策略。
+    public func themePreference(): CjguiComposableUiThemePreference {
+        return selectedThemePreference
+    }
+
+    public func setAccentPreference(token: String): Bool {
+        if (CjguiComposableUiAccentPreference.fromToken(token).isNone()) { return false }
+        selectedAccentPreferenceToken = token
+        let _ = composableWindow.selectAccentPreference(token)
+        return true
+    }
+
+    /// C：最近一次采集到的平台状态快照（未采集时为 None）。
+    public func platformState(): ?CjguiComposableUiPlatformStateSnapshot {
+        return platformStateTracker.accepted()
     }
 
     /// Attach at most one optional external connection before startup. Its
@@ -858,6 +1003,9 @@ public class CjguiMacosApplicationHost {
         if (started) {
             return true
         }
+        // The first frame consumes the current platform theme through the same
+        // controller projection used by later host turns.
+        let _ = servicePlatformState()
         // A1：受理（首帧 PENDING）也继续：宿主泵送经前置结算门推进到 Ready。
         var hostStartFailed = false
         match (composableWindow.startWithOutcome()) {
@@ -889,6 +1037,28 @@ public class CjguiMacosApplicationHost {
         return composableWindow.settlementFault()
     }
 
+    /// C：采集本窗最小平台状态并在事实变化时把动效策略推给本窗。系统减少动效、
+    /// 窗口隐藏或最小化都会让本窗确定收敛；恢复可见后回到系统策略。同值重复
+    /// 采样不重发、不重建主题。返回是否发生变化。
+    private func servicePlatformState(): Bool {
+        let windowNumber = composableWindow.windowNumber()
+        let accentChanged = composableWindow.observeSystemAccent()
+        let changed = platformStateTracker.observe(
+            reduceMotion: CjguiComposableUiPlatformFacts.reduceMotionEnabled(),
+            systemColorScheme: CjguiComposableUiPlatformFacts.systemColorScheme(),
+            themePreference: selectedThemePreference,
+            windowVisible: CjguiComposableUiPlatformFacts.windowVisible(windowNumber),
+            windowMinimized: CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+        )
+        if (changed) {
+            if (let Some(snapshot) <- platformStateTracker.accepted()) {
+                let _ = composableWindow.setReduceMotionEnabled(snapshot.motionConverges())
+                let _ = composableWindow.offerPlatformColorScheme(snapshot.effectiveColorScheme())
+            }
+        }
+        return changed || accentChanged
+    }
+
     /// One bounded normal turn. The existing scheduler remains the only
     /// source of AppKit event waiting and optional external action pacing.
     public func pumpOneTurn(): Bool {
@@ -896,6 +1066,10 @@ public class CjguiMacosApplicationHost {
             close()
             return false
         }
+        // C：先采集本窗最小平台状态，只有事实变化时才重发动效策略；随后推进
+        // 本窗动效。无活动动画时保持原有休眠。
+        let _ = servicePlatformState()
+        let _ = composableWindow.advanceAnimations(atTime: MonoTime.now())
         if (let Some(connection) <- externalConnection) {
             let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternal(composableWindow, connection)
         } else {

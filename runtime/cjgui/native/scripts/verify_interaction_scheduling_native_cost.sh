@@ -4,6 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
+typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
+CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 OUTPUT_DIR="${CJGUI_INTERACTION_SCHEDULING_NATIVE_COST_TMPDIR:-/private/tmp/cjgui-interaction-scheduling-native-cost}"
 SDKROOT_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 SHARED_CORE="$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core"
@@ -63,11 +66,7 @@ ar rcs "$OUTPUT_DIR/native/libcjgui_interaction_scheduling_native_cost.a" \
   "$OUTPUT_DIR/native/cjgui_internal_renderer.o" "$OUTPUT_DIR/native/cjgui_native_bridge.o"
 
 cjc --sysroot "$SDKROOT_PATH" --import-path "$SHARED_CORE" \
-  "$RUNTIME_DIR/src/runtime_renderer_session.cj" \
-  "$RUNTIME_DIR/src/composable_ui.cj" \
-  "$RUNTIME_DIR/src/composable_ui_component_instance.cj" \
-  "$RUNTIME_DIR/src/composable_ui_window.cj" \
-  "$RUNTIME_DIR/src/macos_application_host.cj" \
+  "${CJGUI_FRAMEWORK_SOURCE_PATHS[@]}" \
   "$PROBE_SRC" \
   -L "$SHARED_CORE" -lcjgui_shared_operation_core \
   -L "$OUTPUT_DIR/native" -lcjgui_interaction_scheduling_native_cost \

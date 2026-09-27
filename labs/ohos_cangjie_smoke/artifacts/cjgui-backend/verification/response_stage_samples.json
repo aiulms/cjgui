@@ -1,0 +1,470 @@
+{
+  "samples": {
+    "touch": [
+      {
+        "i": 0,
+        "phase": "cold",
+        "t_req": 74236973,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 0,
+        "v_after": 1
+      },
+      {
+        "i": 1,
+        "phase": "hot",
+        "t_req": 74237915,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 1,
+        "v_after": 2
+      },
+      {
+        "i": 2,
+        "phase": "hot",
+        "t_req": 74238871,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 2,
+        "v_after": 3
+      },
+      {
+        "i": 3,
+        "phase": "hot",
+        "t_req": 74239840,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 3,
+        "v_after": 4
+      },
+      {
+        "i": 4,
+        "phase": "hot",
+        "t_req": 74240794,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 4,
+        "v_after": 5
+      },
+      {
+        "i": 5,
+        "phase": "hot",
+        "t_req": 74241744,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 5,
+        "v_after": 6
+      },
+      {
+        "i": 6,
+        "phase": "hot",
+        "t_req": 74242675,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 6,
+        "v_after": 7
+      },
+      {
+        "i": 7,
+        "phase": "hot",
+        "t_req": 74243591,
+        "t_accepted": null,
+        "t_present": null,
+        "v_before": 7,
+        "v_after": 8
+      }
+    ],
+    "input": [
+      {
+        "i": 0,
+        "phase": "cold",
+        "t_change": 74248464,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      },
+      {
+        "i": 1,
+        "phase": "hot",
+        "t_change": 74255336,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      },
+      {
+        "i": 2,
+        "phase": "hot",
+        "t_change": 74262163,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      },
+      {
+        "i": 3,
+        "phase": "hot",
+        "t_change": 74269035,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      },
+      {
+        "i": 4,
+        "phase": "hot",
+        "t_change": 74275924,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      },
+      {
+        "i": 5,
+        "phase": "hot",
+        "t_change": 74282737,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      },
+      {
+        "i": 6,
+        "phase": "hot",
+        "t_change": 74289563,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      },
+      {
+        "i": 7,
+        "phase": "hot",
+        "t_change": 74296423,
+        "t_acc": null,
+        "v_before": 8,
+        "v_after": 8
+      }
+    ],
+    "external": [
+      {
+        "i": 0,
+        "phase": "cold",
+        "rtt_ms": 18,
+        "t_acc": 74301400,
+        "v_before": 8,
+        "v_after": 9
+      },
+      {
+        "i": 1,
+        "phase": "hot",
+        "rtt_ms": 15,
+        "t_acc": 74302327,
+        "v_before": 9,
+        "v_after": 10
+      },
+      {
+        "i": 2,
+        "phase": "hot",
+        "rtt_ms": 14,
+        "t_acc": 74303254,
+        "v_before": 10,
+        "v_after": 11
+      },
+      {
+        "i": 3,
+        "phase": "hot",
+        "rtt_ms": 15,
+        "t_acc": 74304180,
+        "v_before": 11,
+        "v_after": 12
+      },
+      {
+        "i": 4,
+        "phase": "hot",
+        "rtt_ms": 12,
+        "t_acc": 74305079,
+        "v_before": 12,
+        "v_after": 13
+      },
+      {
+        "i": 5,
+        "phase": "hot",
+        "rtt_ms": 12,
+        "t_acc": 74306002,
+        "v_before": 13,
+        "v_after": 14
+      },
+      {
+        "i": 6,
+        "phase": "hot",
+        "rtt_ms": 26,
+        "t_acc": 74306931,
+        "v_before": 14,
+        "v_after": 15
+      },
+      {
+        "i": 7,
+        "phase": "hot",
+        "rtt_ms": 26,
+        "t_acc": 74307865,
+        "v_before": 15,
+        "v_after": 16
+      }
+    ]
+  },
+  "checks": [
+    {
+      "check": "P1[0](cold) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[0] 版本 +1",
+      "actual": 1,
+      "expected": 1,
+      "pass": true
+    },
+    {
+      "check": "P1[1](hot) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[1] 版本 +1",
+      "actual": 2,
+      "expected": 2,
+      "pass": true
+    },
+    {
+      "check": "P1[2](hot) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[2] 版本 +1",
+      "actual": 3,
+      "expected": 3,
+      "pass": true
+    },
+    {
+      "check": "P1[3](hot) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[3] 版本 +1",
+      "actual": 4,
+      "expected": 4,
+      "pass": true
+    },
+    {
+      "check": "P1[4](hot) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[4] 版本 +1",
+      "actual": 5,
+      "expected": 5,
+      "pass": true
+    },
+    {
+      "check": "P1[5](hot) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[5] 版本 +1",
+      "actual": 6,
+      "expected": 6,
+      "pass": true
+    },
+    {
+      "check": "P1[6](hot) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[6] 版本 +1",
+      "actual": 7,
+      "expected": 7,
+      "pass": true
+    },
+    {
+      "check": "P1[7](hot) 阶段单调 touch<=accepted<=present",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P1[7] 版本 +1",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[0](cold) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[0] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[1](hot) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[1] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[2](hot) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[2] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[3](hot) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[3] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[4](hot) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[4] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[5](hot) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[5] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[6](hot) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[6] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P2[7](hot) 阶段单调 change<=accepted",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "P2[7] 预览不推进 owner 版本",
+      "actual": 8,
+      "expected": 8,
+      "pass": true
+    },
+    {
+      "check": "P3[0](cold) 版本 +1（往返 18ms 另列）",
+      "actual": 9,
+      "expected": 9,
+      "pass": true
+    },
+    {
+      "check": "P3[1](hot) 版本 +1（往返 15ms 另列）",
+      "actual": 10,
+      "expected": 10,
+      "pass": true
+    },
+    {
+      "check": "P3[2](hot) 版本 +1（往返 14ms 另列）",
+      "actual": 11,
+      "expected": 11,
+      "pass": true
+    },
+    {
+      "check": "P3[3](hot) 版本 +1（往返 15ms 另列）",
+      "actual": 12,
+      "expected": 12,
+      "pass": true
+    },
+    {
+      "check": "P3[4](hot) 版本 +1（往返 12ms 另列）",
+      "actual": 13,
+      "expected": 13,
+      "pass": true
+    },
+    {
+      "check": "P3[5](hot) 版本 +1（往返 12ms 另列）",
+      "actual": 14,
+      "expected": 14,
+      "pass": true
+    },
+    {
+      "check": "P3[6](hot) 版本 +1（往返 26ms 另列）",
+      "actual": 15,
+      "expected": 15,
+      "pass": true
+    },
+    {
+      "check": "P3[7](hot) 版本 +1（往返 26ms 另列）",
+      "actual": 16,
+      "expected": 16,
+      "pass": true
+    },
+    {
+      "check": "touch 路径版本全程严格单调",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "input 路径版本全程严格单调",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "check": "external 路径版本全程严格单调",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    }
+  ]
+}

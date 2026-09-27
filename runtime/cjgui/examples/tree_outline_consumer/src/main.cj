@@ -478,7 +478,7 @@ public class CatalogController <: CjguiComposableUiController {
         // Row declarations carry a scoped identity derived from that key, so
         // the window's identity registry allocates their node ids instead of a
         // hand-reserved numeric block per consumer.
-        rowsPage.add(cjguiComposableVirtualList(CJGUI_CATALOG_LIST_NODE_ID, "catalog-tree-list", 28,
+        rowsPage.add(cjguiComposableTree(CJGUI_CATALOG_LIST_NODE_ID, "catalog-tree-list", 28,
             catalogListSource(), listState, 30, 4, 6,
             CjguiComposableUiStyle(minHeight: 220, maxHeight: 320, background:
                 CjguiComposableUiColor(0.04, 0.07, 0.11, 1.0))))

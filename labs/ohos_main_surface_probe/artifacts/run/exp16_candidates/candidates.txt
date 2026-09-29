@@ -1,0 +1,15 @@
+09-28 16:42:37.657 19222 19222 I A01234/MainSurfaceProbe: L2 INFER [候选1] 返回 Window* = 0x7fa39c2400 (sret slot2=0x7f93085dbc)
+09-28 16:42:37.657 19222 19222 I A01234/MainSurfaceProbe: L2 INFER GetSurfaceNode() -> RSSurfaceNode* = 0x7fa3b1a000 (sret slot2=0x7fa225a2e0)
+09-28 16:42:37.657 19222 19222 I A01234/MainSurfaceProbe: L3 INFER RSSurfaceNode::GetSurface() -> Surface* = 0x7fa30fa500 (sret slot2=0x7f930838e9)
+09-28 16:42:37.658 19222 19222 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_GetSurfaceId rc=0 surfaceId=3289944948868
+09-28 16:42:37.658 19222 19222 I A01234/MainSurfaceProbe: === probeRun end level=3 ===
+09-28 16:42:49.880 20651 20651 I A01234/MainSurfaceProbe: L2 INFER [候选3] 返回 Window* = 0x7fa39a0800 (sret slot2=0x7f93085dbc)
+09-28 16:42:49.880 20651 20651 I A01234/MainSurfaceProbe: L2 INFER GetSurfaceNode() -> RSSurfaceNode* = 0x7fa3b1c800 (sret slot2=0x7fa2246380)
+09-28 16:42:49.880 20651 20651 I A01234/MainSurfaceProbe: L3 INFER RSSurfaceNode::GetSurface() -> Surface* = 0x7fa30f9000 (sret slot2=0x7f930838e9)
+09-28 16:42:49.881 20651 20651 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_GetSurfaceId rc=0 surfaceId=3289944948869
+09-28 16:42:49.881 20651 20651 I A01234/MainSurfaceProbe: === probeRun end level=3 ===
+09-28 16:43:02.227 20937 20937 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowSessionImpl::GetSurfaceNode() -> 0x7fb766d63c
+09-28 16:43:02.227 20937 20937 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK RSSurfaceNode::GetSurface() -> 0x7fb7b8fa1c
+09-28 16:43:02.227 20937 20937 I A01234/MainSurfaceProbe: L2 INFER [候选4] 调用 WindowImpl::GetWindowWithId(99) …
+09-28 16:43:02.227 20937 20937 I A01234/MainSurfaceProbe: L2 INFER [候选4] 返回 Window* = 0 (sret slot2=0x7f92e45dbc)
+09-28 16:43:02.227 20937 20937 I A01234/MainSurfaceProbe: === probeRun end level=3 ===

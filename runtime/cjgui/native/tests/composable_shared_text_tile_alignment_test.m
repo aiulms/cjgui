@@ -1,9 +1,7 @@
 // RED-first native regression for candidate-scoped shared TextKit drawing.
 // It compiles the current production renderer into this translation unit and
-// compares its tiled shared-layout pixels to the renderer's fused
-// drawWithRect reference, using a node at nonzero scene coordinates whose
-// visible texture is clipped at nonzero x/y. Scale 1 must use one fused tile;
-// the same geometry at scale 2 must exercise multiple shared TextKit tiles.
+// compares its stable local-grid tile pixels to a forced fresh preparation,
+// using a node at nonzero scene coordinates and a clipped text window.
 #define CJGUI_INTERNAL_TESTING 1
 #import "../cjgui_internal_renderer.m"
 
@@ -216,16 +214,16 @@ static BOOL compareForcedPartition(CJGuiInternalMetalView *view, NSString *text,
     geometry.clipHeight = 1360;
     node.node = geometry;
     NSRect visibleRect = CjguiComposableTextTextureRectForNode(node);
-    if (!NSEqualRects(visibleRect, NSMakeRect(geometry.clipX, geometry.clipY, 250, 1360))) {
+    if (!NSEqualRects(visibleRect, NSMakeRect(geometry.clipX - 2, geometry.clipY - 2, 254, 1364))) {
         fprintf(stderr, "PARTITION_FAIL fixture=%s unexpected rect=(%.1f,%.1f,%.1f,%.1f)\n",
                 unicodeFixture ? "unicode" : "ascii", visibleRect.origin.x, visibleRect.origin.y,
                 visibleRect.size.width, visibleRect.size.height);
         return NO;
     }
 
-    // At scale 2 this complete 250 x 1360pt rectangle is a legal single
-    // 5.44MB native bitmap. Both outputs below use this one prepared layout.
-    CjguiPreparedTextNodeLayout *shared = CjguiPrepareTextNodeLayout(node, text, 2.0);
+    // One full preparation and two halves use the same TextKit layout; their
+    // stitched pixels must agree at the seam despite the coverage guard.
+    CjguiPreparedTextNodeLayout *shared = CjguiPrepareTextNodeLayout(node, text, 2.0, nil);
     if (!shared) {
         fprintf(stderr, "PARTITION_FAIL fixture=%s shared TextKit preparation returned nil\n",
                 unicodeFixture ? "unicode" : "ascii");
@@ -234,15 +232,17 @@ static BOOL compareForcedPartition(CJGuiInternalMetalView *view, NSString *text,
     uint64_t fullBytes = 0, upperBytes = 0, lowerBytes = 0;
     id<MTLTexture> full = CjguiRasterComposableTextTexture(
         view, node, 2.0, 2.0, text, visibleRect, &fullBytes, shared,
-        CjguiInternalTextWorkReasonUnknown);
-    NSRect upperRect = NSMakeRect(NSMinX(visibleRect), NSMinY(visibleRect), NSWidth(visibleRect), 680);
-    NSRect lowerRect = NSMakeRect(NSMinX(visibleRect), NSMinY(visibleRect) + 680, NSWidth(visibleRect), 680);
+        CjguiInternalTextWorkReasonUnknown, NULL, 0);
+    CGFloat halfHeight = NSHeight(visibleRect) / 2.0;
+    NSRect upperRect = NSMakeRect(NSMinX(visibleRect), NSMinY(visibleRect), NSWidth(visibleRect), halfHeight);
+    NSRect lowerRect = NSMakeRect(NSMinX(visibleRect), NSMinY(visibleRect) + halfHeight,
+                                  NSWidth(visibleRect), halfHeight);
     id<MTLTexture> upper = CjguiRasterComposableTextTexture(
         view, node, 2.0, 2.0, text, upperRect, &upperBytes, shared,
-        CjguiInternalTextWorkReasonUnknown);
+        CjguiInternalTextWorkReasonUnknown, NULL, 0);
     id<MTLTexture> lower = CjguiRasterComposableTextTexture(
         view, node, 2.0, 2.0, text, lowerRect, &lowerBytes, shared,
-        CjguiInternalTextWorkReasonUnknown);
+        CjguiInternalTextWorkReasonUnknown, NULL, 0);
     NSData *fullPixels = readTexture(full), *upperPixels = readTexture(upper), *lowerPixels = readTexture(lower);
     if (!fullPixels || !upperPixels || !lowerPixels || full.width != upper.width ||
         full.width != lower.width || upper.height + lower.height != full.height ||
@@ -360,6 +360,11 @@ static BOOL verifyPreparationRollbackAndEmptyInset(CJGuiInternalMetalView *view)
     acceptedGeometry.nodeId = 0xA19;
     acceptedGeometry.resourceId = 0xB20;
     acceptedGeometry.projectionVersion = 1;
+    // Both old and new full candidate allocations must fit the explicit
+    // old-plus-new 24 MiB union budget; this fixture isolates rollback after
+    // TextKit failure rather than attempting an over-budget replacement.
+    acceptedGeometry.height = 1400;
+    acceptedGeometry.clipHeight = 1360;
     accepted.node = acceptedGeometry;
     id<MTLTexture> acceptedTexture = CjguiComposableTextTexture(
         view, accepted, scale, scale, accepted.value, CjguiInternalTextWorkReasonUnknown);
@@ -419,7 +424,7 @@ static BOOL verifyPreparationRollbackAndEmptyInset(CJGuiInternalMetalView *view)
     emptyInset.node = emptyGeometry;
     NSRect emptyTextRect = NSInsetRect(NSMakeRect(0, 0, emptyGeometry.width, emptyGeometry.height), 7.0, 6.0);
     BOOL prepareNilIsLegal = NSIsEmptyRect(emptyTextRect) &&
-        CjguiPrepareTextNodeLayout(emptyInset, emptyInset.value, scale) == nil;
+        CjguiPrepareTextNodeLayout(emptyInset, emptyInset.value, scale, nil) == nil;
     id<MTLTexture> emptyInsetTexture = CjguiComposableTextTexture(
         view, emptyInset, scale, scale, emptyInset.value, CjguiInternalTextWorkReasonUnknown);
     uint64_t emptyInsetBytes = emptyInset.textTextureByteCount;
@@ -434,7 +439,7 @@ static BOOL verifyPreparationRollbackAndEmptyInset(CJGuiInternalMetalView *view)
 static BOOL compareUnicodeScale(CJGuiInternalMetalView *view, NSString *text, CGFloat scale,
                                 NSUInteger expectedTileCount) {
     CJGuiInternalComposableSceneNode *node = unicodeNearWrapNode(text);
-    NSRect expectedRect = NSMakeRect(131, 161, 250, 3460);
+    NSRect expectedRect = NSMakeRect(129, 159, 254, 3464);
     NSRect actualRect = CjguiComposableTextTextureRectForNode(node);
     if (!NSEqualRects(actualRect, expectedRect)) {
         fprintf(stderr, "UNICODE_FAIL scale=%.0f textureRect=(%.1f,%.1f,%.1f,%.1f)\n",
@@ -442,7 +447,8 @@ static BOOL compareUnicodeScale(CJGuiInternalMetalView *view, NSString *text, CG
         return NO;
     }
     uint64_t plannedBytes = 0;
-    NSArray<NSValue *> *plannedRects = CjguiPlanComposableTextTiles(actualRect, scale, &plannedBytes);
+    NSArray<NSValue *> *plannedRects = CjguiPlanComposableTextTiles(actualRect,
+        CjguiComposableTextNodeLayoutRect(node), scale, &plannedBytes);
     if (plannedRects.count != expectedTileCount) {
         fprintf(stderr, "UNICODE_FAIL scale=%.0f tileCount=%lu expected=%lu bytes=%llu\n",
                 scale, (unsigned long)plannedRects.count, (unsigned long)expectedTileCount,
@@ -467,7 +473,7 @@ static BOOL compareUnicodeScale(CJGuiInternalMetalView *view, NSString *text, CG
         uint64_t referenceBytes = 0;
         id<MTLTexture> reference = CjguiRasterComposableTextTexture(
             view, node, scale, scale, text, tileRect, &referenceBytes, nil,
-            CjguiInternalTextWorkReasonUnknown);
+            CjguiInternalTextWorkReasonUnknown, NULL, 0);
         NSData *actualPixels = readTexture(actualTiles[index]);
         NSData *referencePixels = readTexture(reference);
         NSUInteger lineWindowRows = (NSUInteger)ceil(20.0 * scale);
@@ -528,7 +534,7 @@ static BOOL compareUnicodeScale(CJGuiInternalMetalView *view, NSString *text, CG
 static BOOL compareScale(CJGuiInternalMetalView *view, NSString *text, CGFloat scale,
                         NSUInteger expectedTileCount) {
     CJGuiInternalComposableSceneNode *node = alignmentProbeNode(text);
-    NSRect expectedRect = NSMakeRect(87, 103, 250, 3460);
+    NSRect expectedRect = NSMakeRect(85, 101, 254, 3464);
     NSRect actualRect = CjguiComposableTextTextureRectForNode(node);
     if (!NSEqualRects(actualRect, expectedRect)) {
         fprintf(stderr, "ALIGNMENT_FAIL scale=%.0f textureRect=(%.1f,%.1f,%.1f,%.1f) expected=(87,103,250,3460)\n",
@@ -537,7 +543,8 @@ static BOOL compareScale(CJGuiInternalMetalView *view, NSString *text, CGFloat s
     }
 
     uint64_t plannedBytes = 0;
-    NSArray<NSValue *> *plannedRects = CjguiPlanComposableTextTiles(actualRect, scale, &plannedBytes);
+    NSArray<NSValue *> *plannedRects = CjguiPlanComposableTextTiles(actualRect,
+        CjguiComposableTextNodeLayoutRect(node), scale, &plannedBytes);
     if (plannedRects.count != expectedTileCount) {
         fprintf(stderr, "ALIGNMENT_FAIL scale=%.0f tileCount=%lu expected=%lu bytes=%llu\n",
                 scale, (unsigned long)plannedRects.count, (unsigned long)expectedTileCount,
@@ -563,7 +570,7 @@ static BOOL compareScale(CJGuiInternalMetalView *view, NSString *text, CGFloat s
         uint64_t referenceBytes = 0;
         id<MTLTexture> reference = CjguiRasterComposableTextTexture(
             view, node, scale, scale, text, tileRect, &referenceBytes, nil,
-            CjguiInternalTextWorkReasonUnknown);
+            CjguiInternalTextWorkReasonUnknown, NULL, 0);
         NSData *actualPixels = readTexture(actualTiles[index]);
         NSData *referencePixels = readTexture(reference);
         InkBand actualBand = firstInkBand(actualTiles[index]);
@@ -610,8 +617,8 @@ int main(void) {
             initWithFrame:NSMakeRect(0, 0, 320, 240) device:device
             commandQueue:[device newCommandQueue]];
         NSString *text = alignmentProbeText();
-        if (!compareScale(view, text, 1.0, 1)) return 1;
-        if (!compareScale(view, text, 2.0, 2)) return 3;
+        if (!compareScale(view, text, 1.0, 14)) return 1;
+        if (!compareScale(view, text, 2.0, 14)) return 3;
         NSString *unicodeText = unicodeNearWrapText();
         NSString *nearWrapLine = [unicodeText componentsSeparatedByString:@"\n"].firstObject;
         NSFont *nearWrapFont = [NSFont systemFontOfSize:13.0];
@@ -619,8 +626,8 @@ int main(void) {
         printf("UNICODE_FIXTURE utf16=%lu rows=320 near_wrap_width=%.2f near_wrap_utf16=%lu utf8=%lu\n",
                (unsigned long)unicodeText.length, nearWrapWidth, (unsigned long)nearWrapLine.length,
                (unsigned long)[unicodeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
-        BOOL unicodeOneX = compareUnicodeScale(view, unicodeText, 1.0, 1);
-        BOOL unicodeTwoX = compareUnicodeScale(view, unicodeText, 2.0, 2);
+        BOOL unicodeOneX = compareUnicodeScale(view, unicodeText, 1.0, 14);
+        BOOL unicodeTwoX = compareUnicodeScale(view, unicodeText, 2.0, 14);
         if (!unicodeOneX) return 4;
         if (!unicodeTwoX) return 5;
         BOOL asciiPartition = compareForcedPartition(view, text, NO);

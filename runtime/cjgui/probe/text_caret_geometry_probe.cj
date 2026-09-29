@@ -27,9 +27,18 @@ foreign {
     func cjgui_internal_renderer_test_request_composable_drawable_pixel(
         session: UInt64, pointX: UInt32, pointY: UInt32
     ): Int32
+    func cjgui_internal_renderer_test_request_composable_drawable_pixel_precise(
+        session: UInt64, pointX: Float64, pointY: Float64
+    ): Int32
     func cjgui_internal_renderer_test_composable_drawable_pixel(
         session: UInt64, outBlue: CPointer<UInt8>, outGreen: CPointer<UInt8>,
         outRed: CPointer<UInt8>, outAlpha: CPointer<UInt8>
+    ): Int32
+    // Deterministic test clock for the production caret decoration. The
+    // accepted caret rectangle remains available while its paint phase hides.
+    func cjgui_internal_renderer_test_caret_blink_clock(
+        session: UInt64, action: UInt32, nowMicros: UInt64, outVisible: CPointer<Int32>,
+        outHasCaretRect: CPointer<Int32>, outDeadlineMicros: CPointer<UInt64>
     ): Int32
 }
 
@@ -130,6 +139,40 @@ private class CaretReuseController <: CjguiComposableUiController {
     }
 }
 
+/// A conventional editable field consumed through the public controller and
+/// window APIs. The test clock controls only phase timing; focus, accepted
+/// caret geometry, scene submission, and Metal drawing remain framework-owned.
+private class CaretBlinkController <: CjguiComposableUiController {
+    private var revision: Int64 = 1
+
+    public func uiSceneVersion(): Int64 { return this.revision }
+
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(31, "caret-blink-root",
+            CjguiComposableUiStyle(padding: 0, gap: 0, fixedWidth: 260, fixedHeight: 52))
+        root.add(cjguiComposableTextInput(32, "caret-blink-field", "Blink field", "phase",
+            32, CjguiComposableUiStyle(background: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0),
+                textColor: CjguiComposableUiColor(0.85, 0.10, 0.10, 1.0),
+                fixedWidth: 240, fixedHeight: 32, fontSize: 16.0)))
+        return root
+    }
+
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        let _ = event
+        return CjguiComposableUiDispatchResult(false)
+    }
+
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        let _ = eventKind
+        let _ = nodeId
+        return CjguiComposableUiDispatchResult(false)
+    }
+
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
 private func settle(window: CjguiComposableUiWindow): Bool {
     var i: Int64 = 0
     while (i < 12) {
@@ -169,6 +212,13 @@ private func yOf(rect: ?Array<Float64>): Float64 {
 private func heightOf(rect: ?Array<Float64>): Float64 {
     return match (rect) {
         case Some(v) => v[3]
+        case None => 0.0
+    }
+}
+
+private func widthOf(rect: ?Array<Float64>): Float64 {
+    return match (rect) {
+        case Some(v) => v[2]
         case None => 0.0
     }
 }
@@ -224,6 +274,30 @@ private func textWork(window: CjguiComposableUiWindow): TextWorkSnapshot {
     return TextWorkSnapshot(status, rasterCount, rasterBytes, rasterMicros, uploadCount, uploadBytes, uploadMicros)
 }
 
+private class CaretBlinkSnapshot {
+    let status: Int32
+    let visible: Int32
+    let hasCaretRect: Int32
+    let deadlineMicros: UInt64
+
+    init(status: Int32, visible: Int32, hasCaretRect: Int32, deadlineMicros: UInt64) {
+        this.status = status
+        this.visible = visible
+        this.hasCaretRect = hasCaretRect
+        this.deadlineMicros = deadlineMicros
+    }
+}
+
+private func blinkClock(window: CjguiComposableUiWindow, action: UInt32,
+    nowMicros: UInt64): CaretBlinkSnapshot {
+    var visible: Int32 = 0
+    var hasCaretRect: Int32 = 0
+    var deadlineMicros: UInt64 = 0u64
+    let status = unsafe { cjgui_internal_renderer_test_caret_blink_clock(window.testSessionToken(),
+        action, nowMicros, inout visible, inout hasCaretRect, inout deadlineMicros) }
+    return CaretBlinkSnapshot(status, visible, hasCaretRect, deadlineMicros)
+}
+
 /// 六个计数全部相等才算"没有重做正文工作":只比 rasterCount 会漏掉同一次重上传。
 private func sameWork(before: TextWorkSnapshot, after: TextWorkSnapshot): Bool {
     return before.status == CJGUI_INTERNAL_RENDERER_OK && after.status == CJGUI_INTERNAL_RENDERER_OK &&
@@ -262,11 +336,28 @@ private class PixelSample {
 }
 
 private func capturePixel(window: CjguiComposableUiWindow, controller: CaretReuseController,
-    x: UInt32, y: UInt32): PixelSample {
+    x: Float64, y: Float64): PixelSample {
     let session = window.testSessionToken()
-    let request = unsafe { cjgui_internal_renderer_test_request_composable_drawable_pixel(session, x, y) }
+    let request = unsafe { cjgui_internal_renderer_test_request_composable_drawable_pixel_precise(session, x, y) }
     controller.requestDrawableFrame()
     let _ = window.refresh()
+    let _ = window.pump(4u32)
+    var blue: UInt8 = 0u8
+    var green: UInt8 = 0u8
+    var red: UInt8 = 0u8
+    var alpha: UInt8 = 0u8
+    let result = unsafe {
+        cjgui_internal_renderer_test_composable_drawable_pixel(session, inout blue, inout green, inout red,
+            inout alpha)
+    }
+    return PixelSample(request, result, red, green, blue, alpha)
+}
+
+/// Request and read one actual Metal drawable pixel without changing the
+/// consumer scene. A blink-only present must not reraster or upload body text.
+private func captureBlinkPixel(window: CjguiComposableUiWindow, x: Float64, y: Float64): PixelSample {
+    let session = window.testSessionToken()
+    let request = unsafe { cjgui_internal_renderer_test_request_composable_drawable_pixel_precise(session, x, y) }
     let _ = window.pump(4u32)
     var blue: UInt8 = 0u8
     var green: UInt8 = 0u8
@@ -294,13 +385,14 @@ private func isBackground(pixel: PixelSample): Bool {
     return pixel.captured() && pixel.red > 240u8 && pixel.green > 240u8 && pixel.blue > 240u8
 }
 
-private func pointOf(rect: ?Array<Float64>): UInt32 {
-    // 装饰矩形按 floor(origin)/ceil(size) 落到像素,所以取整后的原点一定在条内。
-    return UInt32(Int64(xOf(rect)))
+private func pointOf(rect: ?Array<Float64>): Float64 {
+    // Sample the logical center, not floor(origin): a fractional caret origin
+    // can place floor(x) outside the rasterized rectangle.
+    return xOf(rect) + widthOf(rect) / 2.0
 }
 
-private func midHeightOf(rect: ?Array<Float64>): UInt32 {
-    return UInt32(Int64(yOf(rect) + heightOf(rect) / 2.0))
+private func midHeightOf(rect: ?Array<Float64>): Float64 {
+    return yOf(rect) + heightOf(rect) / 2.0
 }
 
 private func runCaretGeometryProbe(): Bool {
@@ -447,10 +539,88 @@ private func runCaretReuseProbe(): Bool {
     return passed
 }
 
+private func runCaretBlinkConsumerProbe(): Bool {
+    let controller = CaretBlinkController()
+    let window = CjguiComposableUiWindow(controller)
+    if (!window.start()) {
+        println("CJGUI_CARET_BLINK_CONSUMER_RESULT start_failed=true")
+        return false
+    }
+    if (!settle(window) || !window.focusAcceptedSemanticNode("caret-blink-field") || !settle(window)) {
+        println("CJGUI_CARET_BLINK_CONSUMER_RESULT focus_or_settle_failed=true")
+        window.close()
+        return false
+    }
+
+    // The rendered input includes the "Blink field " prefix; focus starts the
+    // selection at the end of "phase", display byte 17, rather than byte 0.
+    let geometryBefore = caretRect(window, 32, 17)
+    if (!present(geometryBefore)) {
+        println("CJGUI_CARET_BLINK_CONSUMER_RESULT caret_geometry_unavailable reason=[${caretReason(window, 32, 17)}]")
+        window.close()
+        return false
+    }
+    let sampleX = pointOf(geometryBefore)
+    let sampleY = midHeightOf(geometryBefore)
+    // Focus may already have painted a visible caret before the manual clock
+    // is installed. Force a real hidden→visible paint transition so the first
+    // captured pixel is backed by a blink-scheduled drawable frame.
+    let stopped = blinkClock(window, 3u32, 0u64)
+    let stoppedPixel = captureBlinkPixel(window, sampleX, sampleY)
+    let beforeWork = textWork(window)
+    let started = blinkClock(window, 0u32, 5000000u64)
+    let visiblePixel = captureBlinkPixel(window, sampleX, sampleY)
+    let visibleWork = textWork(window)
+    let hidden = blinkClock(window, 1u32, started.deadlineMicros)
+    let hiddenPixel = captureBlinkPixel(window, sampleX, sampleY)
+    let hiddenGeometry = caretRect(window, 32, 17)
+    let hiddenWork = textWork(window)
+    let visibleAgain = blinkClock(window, 1u32, hidden.deadlineMicros)
+    let visibleAgainPixel = captureBlinkPixel(window, sampleX, sampleY)
+    let afterWork = textWork(window)
+    var passed = true
+
+    passed = report("normal_input_focus_starts_visible_caret_phase",
+        stopped.status == CJGUI_INTERNAL_RENDERER_OK && stopped.visible == 0 && stopped.hasCaretRect == 1 &&
+            started.status == CJGUI_INTERNAL_RENDERER_OK && started.visible == 1 && started.hasCaretRect == 1 &&
+            started.deadlineMicros > 5000000u64,
+        "stopped=${stopped.visible}/${stopped.hasCaretRect} started=${started.status}/${started.visible}/" +
+            "${started.hasCaretRect} deadline=${started.deadlineMicros}") && passed
+    passed = report("blink_phase_changes_real_drawable_pixel",
+        stoppedPixel.captured() && visiblePixel.captured() && hiddenPixel.captured() &&
+            visibleAgainPixel.captured() && samePixel(stoppedPixel, hiddenPixel) &&
+            !samePixel(visiblePixel, hiddenPixel) && samePixel(visiblePixel, visibleAgainPixel),
+        "stopped=[${stoppedPixel.describe()}] visible=[${visiblePixel.describe()}] " +
+        "hidden=[${hiddenPixel.describe()}] " +
+            "visible_again=[${visibleAgainPixel.describe()}]") && passed
+    passed = report("blink_phase_preserves_accepted_caret_geometry",
+        hidden.status == CJGUI_INTERNAL_RENDERER_OK && hidden.visible == 0 && hidden.hasCaretRect == 1 &&
+            present(hiddenGeometry) && distance(xOf(geometryBefore), xOf(hiddenGeometry)) < 0.5 &&
+            distance(yOf(geometryBefore), yOf(hiddenGeometry)) < 0.5 &&
+            distance(heightOf(geometryBefore), heightOf(hiddenGeometry)) < 0.5,
+        "before=${describe(geometryBefore)} hidden=${describe(hiddenGeometry)} " +
+            "visible=${hidden.visible} rect=${hidden.hasCaretRect}") && passed
+    passed = report("blink_only_frames_do_not_rasterize_or_upload_body",
+        sameWork(beforeWork, visibleWork) && sameWork(beforeWork, hiddenWork) && sameWork(beforeWork, afterWork),
+        "before=[${beforeWork.describe()}] visible=[${visibleWork.describe()}] " +
+            "hidden=[${hiddenWork.describe()}] after=[${afterWork.describe()}]") && passed
+
+    let _ = blinkClock(window, 3u32, 0u64)
+    let _ = window.pump(4u32)
+    window.close()
+    println("CJGUI_CARET_BLINK_CONSUMER_SUMMARY passed=${passed}")
+    return passed
+}
+
 main(args: Array<String>): Int64 {
+    if (args.size == 1 && args[0] == "--blink-only") {
+        return if (runCaretBlinkConsumerProbe()) { 0 } else { 91 }
+    }
+    if (args.size != 0) { return 2 }
     let geometry = runCaretGeometryProbe()
     let reuse = runCaretReuseProbe()
-    if (geometry && reuse) {
+    let blinkConsumer = runCaretBlinkConsumerProbe()
+    if (geometry && reuse && blinkConsumer) {
         return 0
     }
     return 91

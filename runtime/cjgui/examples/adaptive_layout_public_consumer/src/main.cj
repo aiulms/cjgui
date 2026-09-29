@@ -149,6 +149,10 @@ private let NODE_EFFECT_GROUP_MASK: Int64 = 80
 private let NODE_EFFECT_GROUP_BLEND: Int64 = 81
 private let NODE_EFFECT_GROUP_MOVE: Int64 = 82
 private let NODE_EFFECT_GROUP_BLUR: Int64 = 87
+private let NODE_SUBPOINT_TRANSLATION_TOGGLE: Int64 = 95
+private let NODE_POSITION_MOTION: Int64 = 96
+private let NODE_POSITION_MOTION_CLEAR: Int64 = 97
+private let NODE_TRANSLATED_TITLE_INPUT: Int64 = 9708
 private let NODE_PNG_TARGET: Int64 = 210
 private let NODE_PNG_SOURCE: Int64 = 211
 private let NODE_PNG_ROW: Int64 = 212
@@ -226,6 +230,9 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
     /// the handwritten Style both resolve their values from it.
     let namedStyles: CjguiComposableUiNamedStyleCatalog
     private let effectViewport: CjguiComposableUiScrollViewport
+    private let translationViewport: CjguiComposableUiScrollViewport
+    private let translationSplitState: CjguiComposableUiSplitState
+    private let translationLongBody: String
     private var showShadow: Bool = true
     private var showGradient: Bool = true
     private var shadowVariant: Int64 = 0
@@ -243,6 +250,10 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
     private var effectGroupBlendMode: String = "normal"
     private var effectGroupBlurRadiusPoints: Int64 = 0
     private var effectGroupActionCount: Int64 = 0
+    // F11: fractional, far and cleared accepted translations. The same group
+    // contains a named-style card, image, text and composite action.
+    private var translationVariant: Int64 = 0
+    private var positionMotionHigh: Bool = false
     private var lastEffectGroupAcceptedLine: String = ""
     private var systemContentAreaRequested: Bool = false
     private var platformAccentColor: ?CjguiComposableUiColor = None
@@ -276,6 +287,15 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
         this.componentRegistry = CjguiComposableUiComponentRegistry()
         this.namedStyles = CjguiComposableUiNamedStyleCatalog()
         this.effectViewport = CjguiComposableUiScrollViewport()
+        this.translationViewport = CjguiComposableUiScrollViewport()
+        this.translationSplitState = CjguiComposableUiSplitState(360, 150, 150)
+        var longBody = ""
+        var line = 0
+        while (line < 720) {
+            longBody += "第${line}行：可见文字窗口 · 中文🙂 tile 连续性。\n"
+            line += 1
+        }
+        this.translationLongBody = longBody
         this.controlTreeProjection = CjguiComposableUiTreeProjection(controlTreeSource)
         this.controlTreeSelection = CjguiComposableUiTreeSelection(controlTreeProjection)
         let _ = controlTreeProjection.toggleExpand("branch")
@@ -316,7 +336,9 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             AdaptiveEffects.cardBase(showShadow, showGradient, shadowVariant, gradientVariant),
             purpose: "效果卡片：阴影浮起 + 线性渐变表面"))
         if (let Some(card) <- namedStyles.forName("adaptive_effect_card")) {
-            return card.localStyle(fixedHeight: 92, growX: 1)
+            return card.localStyle(fixedHeight: 92, growX: 1,
+                translateX: Some(if (translationVariant == 2) { 0.0 } else { 0.125 }),
+                translateY: Some(if (translationVariant == 2) { 0.0 } else { -0.25 }))
         }
         // Defensive fallback: the definition was never registered.
         return AdaptiveEffects.cardBase(showShadow, showGradient, shadowVariant, gradientVariant)
@@ -394,10 +416,19 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
         if (!foundGroup) {
             return ""
         }
+        let groupVisualFrame = match (window.acceptedNodeVisualBounds(NODE_EFFECT_GROUP_SEMANTIC)) {
+            case Some(rect) => "${rect.x},${rect.y},${rect.width},${rect.height}"
+            case None => "missing"
+        }
+        let actionVisualFrame = match (window.acceptedNodeVisualBounds("adaptive-effect-group-action")) {
+            case Some(rect) => "${rect.x},${rect.y},${rect.width},${rect.height}"
+            case None => "missing"
+        }
         return "CJGUI_ADAPTIVE_EFFECT_GROUP_ACCEPTED owner=${ownerIdentity} " +
             "opacity=${acceptedOpacity} blend=${acceptedBlend} mask=${if (acceptedMask) { 1 } else { 0 }} " +
             "blurRadiusPoints=${acceptedBlurRadiusPoints} blurFallback=${acceptedBlurFallback} " +
             "groupFrame=${groupX},${groupY},${groupWidth},${groupHeight} " +
+            "groupVisualFrame=${groupVisualFrame} actionVisualFrame=${actionVisualFrame} " +
             "cardFrame=${if (hasCard) { "${cardX},${cardY},${cardWidth},${cardHeight}" } else { "missing" }} " +
             "scrollOffset=${scrollOffset} actions=${effectGroupActionCount}"
     }
@@ -467,10 +498,59 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
     /// Effect panel subtree: a clipping scroll viewport holding the elevated
     /// named-style card, a handwritten shadow panel and a handwritten gradient
     /// button, followed by filler content so a real wheel step is observable.
+    private func buildTranslationContainers(): CjguiComposableUiNode {
+        let scroll = cjguiComposableScrollArea(9701, "adaptive-translated-text-scroll", translationViewport,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 174, clipsContent: true,
+                background: CjguiComposableUiColor(0.07, 0.12, 0.19, 1.0)))
+        let content = cjguiComposableVertical(9702, "adaptive-translated-text-content",
+            CjguiComposableUiStyle(growX: 1, gap: 4))
+        content.add(cjguiComposableText(9703, "adaptive-translated-long-text", translationLongBody,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 10000, fontSize: 14.0,
+                textColor: CjguiComposableUiColor(0.91, 0.95, 1.0, 1.0))))
+        content.add(cjguiComposableButton(9704, "adaptive-translated-tail-action", "长文末尾：切换资源",
+            "TOGGLE_RESOURCE", 0, CjguiComposableUiStyle(fixedHeight: 34, growX: 1,
+                background: CjguiComposableUiColor(0.18, 0.39, 0.70, 1.0),
+                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0))))
+        scroll.add(content)
+        let ownerPane = cjguiComposableVertical(9705, "adaptive-translated-owner-pane",
+            CjguiComposableUiStyle(growX: 1, padding: 8, gap: 8,
+                background: CjguiComposableUiColor(0.89, 0.93, 0.98, 1.0)))
+        ownerPane.add(cjguiComposableText(9706, "adaptive-translated-owner-status",
+            "平移分栏 · 首栏 ${translationSplitState.firstSize()} · 列表版本 ${domain.version()} · " +
+            "资源 ${if (domain.snapshot().recordAt(0).isMarked) { "选中" } else { "未选中" }}",
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 62, fontSize: 14.0,
+                textColor: CjguiComposableUiColor(0.08, 0.15, 0.25, 1.0))))
+        ownerPane.add(cjguiComposableTextInput(NODE_TRANSLATED_TITLE_INPUT,
+            "adaptive-translated-title-input", "资源标题", domain.snapshot().recordAt(0).title, 7101,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 36, fontSize: 14.0,
+                background: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0),
+                textColor: CjguiComposableUiColor(0.08, 0.15, 0.25, 1.0),
+                border: CjguiComposableUiColor(0.28, 0.44, 0.68, 1.0)),
+            fieldId: "title", operationActionName: "SET_TITLE", displayValueRole: "applied"))
+        ownerPane.add(cjguiComposableButton(9707, "adaptive-translated-owner-action", "切换同一资源",
+            "TOGGLE_RESOURCE", 0, CjguiComposableUiStyle(growX: 1, fixedHeight: 36,
+                background: CjguiComposableUiColor(0.19, 0.42, 0.73, 1.0),
+                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0))))
+        let shiftX = if (translationVariant == 2) { 0.0 } else if (translationVariant == 1) {
+            30.25
+        } else { 0.25 }
+        let shiftY = if (translationVariant == 2) { 0.0 } else if (translationVariant == 1) {
+            12.5
+        } else { 0.5 }
+        return cjguiComposableScopedSplitView(CjguiComposableUiIdentityScope("adaptive-translated-split"),
+            "adaptive-translated-split", scroll, ownerPane, CjguiComposableUiSplitAxis.HORIZONTAL,
+            translationSplitState.firstSize(), 150, 150,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 180, translateX: shiftX, translateY: shiftY,
+                border: CjguiComposableUiColor(0.28, 0.44, 0.68, 1.0)),
+            splitState: translationSplitState)
+    }
+
     private func buildEffectRegion(): CjguiComposableUiNode {
         let theme = CjguiComposableUiTheme.beaconDark()
         let groupOwner = cjguiComposableVertical(NODE_EFFECT_GROUP_OWNER, NODE_EFFECT_GROUP_SEMANTIC,
             CjguiComposableUiStyle(fixedHeight: 150, growX: 1,
+                translateX: if (translationVariant == 2) { 0.0 } else if (translationVariant == 1) { 30.25 } else { 0.25 },
+                translateY: if (translationVariant == 2) { 0.0 } else if (translationVariant == 1) { 12.5 } else { 0.5 },
                 effectGroup: Some(effectGroupDeclaration())))
         let scroll = cjguiComposableScrollArea(NODE_EFFECT_SCROLL, "adaptive-effect-scroll", effectViewport,
             CjguiComposableUiStyle(fixedHeight: 150, growX: 1, cornerRadius: 12, clipsContent: true,
@@ -512,7 +592,9 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             "adaptive-effect-group-overlay-title", "上层卡片覆盖底卡内容", theme.body))
         overlayCard.add(cjguiComposableButton(NODE_EFFECT_GROUP_ACTION, "adaptive-effect-group-action",
             "同 owner 交互 · ${effectGroupActionCount}", "EFFECT_GROUP_ACTION", 0,
-            CjguiComposableUiStyle(fixedHeight: 30, cornerRadius: 6,
+            CjguiComposableUiStyle(fixedHeight: 30, cornerRadius: 6, offsetX: 2,
+                translateX: if (translationVariant == 2) { 0.0 } else { -0.75 },
+                translateY: if (translationVariant == 2) { 0.0 } else { 0.25 },
                 background: CjguiComposableUiColor(0.12, 0.22, 0.38, 1.0),
                 textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)),
             interactionStyle: theme.primaryActionInteraction))
@@ -788,11 +870,20 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
         let pngSnapshot = pngOwner.snapshot()
         let pngRow = cjguiComposableHorizontal(NODE_PNG_ROW, "adaptive-png-row",
             CjguiComposableUiStyle(growX: 1, gap: 8, fixedHeight: 42))
+        let pngTargetStyle = CjguiComposableUiStyle(fixedWidth: 180, fixedHeight: 34,
+            background: theme.primaryAction.background, border: theme.primaryAction.border,
+            textColor: theme.primaryAction.textColor, fontWeight: theme.primaryAction.fontWeight,
+            cornerRadius: 6)
+        let pngSourceStyle = CjguiComposableUiStyle(fixedWidth: 160, fixedHeight: 34,
+            background: theme.primaryAction.background, border: theme.primaryAction.border,
+            textColor: theme.primaryAction.textColor, fontWeight: theme.primaryAction.fontWeight,
+            cornerRadius: 6)
         pngRow.add(cjguiComposableButton(NODE_PNG_TARGET, "adaptive-png-target", "PNG 粘贴 / 拖入",
-            "PNG_TARGET", 8801, CjguiComposableUiStyle(fixedWidth: 180, fixedHeight: 34), enabled: true))
+            "PNG_TARGET", 8801, pngTargetStyle, enabled: true,
+            interactionStyle: theme.primaryActionInteraction))
         pngRow.add(cjguiComposableButton(NODE_PNG_SOURCE, "adaptive-png-source", "拖出当前 PNG",
-            "PNG_SOURCE", 8801, CjguiComposableUiStyle(fixedWidth: 160, fixedHeight: 34),
-            enabled: pngSnapshot.offer.isSome()))
+            "PNG_SOURCE", 8801, pngSourceStyle, enabled: pngSnapshot.offer.isSome(),
+            interactionStyle: theme.primaryActionInteraction))
         root.add(pngRow)
         let pngPreview = cjguiComposableHorizontal(NODE_PNG_PREVIEW, "adaptive-png-preview",
             CjguiComposableUiStyle(growX: 1, gap: 8, fixedHeight: 78))
@@ -830,6 +921,26 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             "背景模糊 0 / 8", "EFFECT_GROUP_BLUR", 0, theme.primaryAction,
             interactionStyle: theme.primaryActionInteraction))
         root.add(groupActions)
+        root.add(cjguiComposableButton(NODE_SUBPOINT_TRANSLATION_TOGGLE,
+            "adaptive-subpoint-translation-toggle", "亚点平移：小数 / 远移 / 清除",
+            "SUBPOINT_TRANSLATION_TOGGLE", 0,
+            CjguiComposableUiStyle(fixedHeight: 32, growX: 1,
+                background: CjguiComposableUiColor(0.20, 0.37, 0.64, 1.0),
+                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)),
+            interactionStyle: theme.primaryActionInteraction))
+        root.add(cjguiComposableButton(NODE_POSITION_MOTION, "adaptive-position-motion",
+            "连续平移分栏：往返", "POSITION_MOTION_TOGGLE", 0,
+            CjguiComposableUiStyle(fixedHeight: 32, growX: 1,
+                background: CjguiComposableUiColor(0.20, 0.37, 0.64, 1.0),
+                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)),
+            interactionStyle: theme.primaryActionInteraction))
+        root.add(cjguiComposableButton(NODE_POSITION_MOTION_CLEAR, "adaptive-position-motion-clear",
+            "清除连续平移", "POSITION_MOTION_CLEAR", 0,
+            CjguiComposableUiStyle(fixedHeight: 32, growX: 1,
+                background: CjguiComposableUiColor(0.20, 0.37, 0.64, 1.0),
+                textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)),
+            interactionStyle: theme.primaryActionInteraction))
+        root.add(buildTranslationContainers())
         // P1 effect consumption surface (shadow / gradient).
         root.add(buildEffectRegion())
         root.add(
@@ -1127,6 +1238,62 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             effectOutcome = "效果组内真实按钮已操作 ${effectGroupActionCount} 次"
             return true
         }
+        if (actionName == "SUBPOINT_TRANSLATION_TOGGLE") {
+            translationVariant = (translationVariant + 1) % 3
+            effectOutcome = "亚点平移变体 ${translationVariant}（accepted 几何与点击同源）"
+            return true
+        }
+        if (actionName == "POSITION_MOTION_TOGGLE") {
+            let window = match (hitWindow) {
+                case Some(value) => value
+                case None => return false
+            }
+            var identity = ""
+            var baseX = 0.0
+            var baseY = 0.0
+            for (node in window.acceptedSceneNodes()) {
+                if (node.semanticId == "adaptive-translated-split") {
+                    identity = node.identityKey
+                    baseX = node.declaredStyle.translateX
+                    baseY = node.declaredStyle.translateY
+                }
+            }
+            if (identity.size == 0) { return false }
+            let nextHigh = !positionMotionHigh
+            let spec = CjguiGeneratedMotionRegistry.positionTransitionRule().spec() ??
+                CjguiComposableUiAnimationSpec.tween(durationMs: 240)
+            let targetX = baseX + (if (nextHigh) { 24.0 } else { 0.0 })
+            let targetY = baseY + (if (nextHigh) { 12.0 } else { 0.0 })
+            let started = window.animateNodeTranslation(identity, targetX, targetY, spec: spec,
+                atTime: MonoTime.now())
+            if (started) { positionMotionHigh = nextHigh }
+            let status = window.animatedNodeTranslation(identity)
+            let accepted = match (status) {
+                case Some(value) => "${value.presented.x},${value.presented.y}"
+                case None => "none"
+            }
+            effectOutcome = "连续平移 target=${targetX},${targetY} accepted=${accepted}"
+            getStdOut().writeln("CJGUI_ADAPTIVE_POSITION_STATE identity=${identity} " +
+                "started=${if (started) { 1 } else { 0 }} target=${targetX},${targetY} " +
+                "accepted=${accepted} owner_version=${domain.version()}")
+            getStdOut().flush()
+            return started
+        }
+        if (actionName == "POSITION_MOTION_CLEAR") {
+            let window = match (hitWindow) {
+                case Some(value) => value
+                case None => return false
+            }
+            for (node in window.acceptedSceneNodes()) {
+                if (node.semanticId == "adaptive-translated-split") {
+                    let cleared = window.cancelNodeTranslationAnimation(node.identityKey)
+                    if (cleared) { positionMotionHigh = false }
+                    effectOutcome = "连续平移清除=${if (cleared) { 1 } else { 0 }}"
+                    return cleared
+                }
+            }
+            return false
+        }
         if (actionName == "EFFECT_REMOVE") {
             showShadow = false
             showGradient = false
@@ -1327,6 +1494,11 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
 
+        if (event.eventKind == 28 && event.node.nodeId == NODE_TRANSLATED_TITLE_INPUT) {
+            let changed = domain.setTitleFromHuman(7101, event.text)
+            return CjguiComposableUiDispatchResult(changed.applied)
+        }
+
         if (event.eventKind == 35 && event.node.nodeId == 192) {
             let moved = controlTreeSelection.navigate(event.text,
                 (event.modifierFlags & CJGUI_UI_MODIFIER_SHIFT) != 0)
@@ -1430,7 +1602,7 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
         let declarations = ArrayList<CjguiComposableUiDataTransferDeclaration>()
         declarations.add(CjguiComposableUiDataTransferDeclaration.target(
             "adaptive-png-target", CjguiSharedOperationTransferFormat.png(),
-            receiverIncarnation: pngReceiverIncarnation))
+            receiverIncarnation: pngReceiverIncarnation, localPngFileAllowed: true))
         if (let Some(offer) <- pngOwner.snapshot().offer) {
             declarations.add(CjguiComposableUiDataTransferDeclaration.source("adaptive-png-source", offer))
         }
@@ -1447,10 +1619,13 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             getStdOut().flush()
             return CjguiComposableUiDispatchResult(false)
         }
+        let ownerStarted = MonoTime.now()
         let result = pngOwner.accept(event.offer, event.expectedOwnerVersion,
             event.imageWidth, event.imageHeight)
+        let ownerMicros = (MonoTime.now() - ownerStarted).toMicroseconds()
         if (!result.applied) {
-            return rejectDataTransfer(event.node.nodeId, event.eventKind, result.reason)
+            let _ = rejectDataTransfer(event.node.nodeId, event.eventKind, result.reason)
+            return CjguiComposableUiDispatchResult(false, transferResult: Some(result))
         }
         lastPngDecodeMicros = event.decodeMicros
         lastPngOutcome = "accepted ${event.offer.contentDigest}"
@@ -1458,9 +1633,9 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
         getStdOut().writeln("CJGUI_PNG_OWNER consumer=adaptive kind=${event.eventKind} " +
             "version=${pngOwner.version()} bytes=${event.offer.payloadByteCount} " +
             "digest=${event.offer.contentDigest} width=${event.imageWidth} height=${event.imageHeight} " +
-            "decode_us=${event.decodeMicros} epoch=${event.bindingEpoch}")
+            "decode_us=${event.decodeMicros} owner_us=${ownerMicros} epoch=${event.bindingEpoch}")
         getStdOut().flush()
-        return CjguiComposableUiDispatchResult(true)
+        return CjguiComposableUiDispatchResult(true, transferResult: Some(result))
     }
 
     public func rejectDataTransfer(nodeId: Int64, eventKind: Int64, reason: String): CjguiComposableUiDispatchResult {
@@ -1545,6 +1720,11 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
     public func rollbackSceneRefresh(): Unit {
         componentRegistry.rollbackTransaction()
     }
+
+    public func translationContainerObservation(): String {
+        return "split=${translationSplitState.firstSize()}/${translationSplitState.acceptedFirstSize()} " +
+            "viewport=${translationViewport.offset()}/${translationViewport.acceptedOffset()}"
+    }
 }
 
 /// Float comparison helper for the consumer's own B3 assertions.
@@ -1554,6 +1734,19 @@ private func cjguiAdaptiveAbs(value: Float64): Float64 {
 
 private func cjguiAdaptiveApprox(actual: Float64, expected: Float64, tolerance: Float64): Bool {
     return cjguiAdaptiveAbs(actual - expected) <= tolerance
+}
+
+private func cjguiAdaptiveVisualOffsetIs(window: CjguiComposableUiWindow,
+    semanticId: String, expectedX: Float64, expectedY: Float64): Bool {
+    if (let Some(layout) <- window.acceptedNodeBounds(semanticId)) {
+        if (let Some(visual) <- window.acceptedNodeVisualBounds(semanticId)) {
+            return cjguiAdaptiveApprox(visual.x - Float64(layout.x), expectedX, 0.0001) &&
+                cjguiAdaptiveApprox(visual.y - Float64(layout.y), expectedY, 0.0001) &&
+                cjguiAdaptiveApprox(visual.width, Float64(layout.width), 0.0001) &&
+                cjguiAdaptiveApprox(visual.height, Float64(layout.height), 0.0001)
+        }
+    }
+    return false
 }
 
 /// Resolve the ordinary button from the accepted scene, then dispatch the same
@@ -1703,6 +1896,8 @@ main(args: Array<String>): Int64 {
     var verifiesHit = false
     var verifiesWindowMaterial = false
     var verifiesDiagnostics = false
+    var verifiesTranslation = false
+    var verifiesPositionMotion = false
     var observesDiagnostics = false
     var observesInteraction = false
     var instanceToken = ""
@@ -1715,6 +1910,10 @@ main(args: Array<String>): Int64 {
             verifiesWindowMaterial = true
         } else if (args[argIndex] == "--verify-diagnostics") {
             verifiesDiagnostics = true
+        } else if (args[argIndex] == "--verify-translation") {
+            verifiesTranslation = true
+        } else if (args[argIndex] == "--verify-position-motion") {
+            verifiesPositionMotion = true
         } else if (args[argIndex] == "--observe-diagnostics") {
             observesDiagnostics = true
         } else if (args[argIndex] == "--observe-interaction") {
@@ -1730,7 +1929,9 @@ main(args: Array<String>): Int64 {
         argIndex += 1
     }
     if ((verifiesHit && verifiesWindowMaterial) ||
-        (verifiesDiagnostics && (verifiesHit || verifiesWindowMaterial))) {
+        (verifiesDiagnostics && (verifiesHit || verifiesWindowMaterial || verifiesTranslation || verifiesPositionMotion)) ||
+        (verifiesTranslation && (verifiesHit || verifiesWindowMaterial || verifiesPositionMotion)) ||
+        (verifiesPositionMotion && (verifiesHit || verifiesWindowMaterial))) {
         return 2
     }
     let targetId: Int64 = 7101
@@ -1743,17 +1944,25 @@ main(args: Array<String>): Int64 {
             [
                 CjguiSharedOperationExternalActionScope("GET_CONTEXT", ArrayList<Int64>(), true),
                 CjguiSharedOperationExternalActionScope("GET_WINDOW_PROGRESS", ArrayList<Int64>(), true),
+                CjguiSharedOperationExternalActionScope("GET_WINDOW_INTERACTION", ArrayList<Int64>(), true),
+                CjguiSharedOperationExternalActionScope("GET_NODE_TRANSLATION", ArrayList<Int64>(), true),
+                CjguiSharedOperationExternalActionScope("SET_NODE_TRANSLATION", ArrayList<Int64>(), true),
+                CjguiSharedOperationExternalActionScope("CLEAR_NODE_TRANSLATION", ArrayList<Int64>(), true),
                 CjguiSharedOperationExternalActionScope("SET_MARKED", ArrayList<Int64>([targetId]), false)
             ]
         )
     )
     let controller = AdaptiveController(domain)
+    // The F11 normal scroll/split section adds 180 points before this older
+    // shadow-hit fixture. Keep the card and its separated shadow band inside
+    // the accepted window clip when --verify-hit tests real hit ownership.
+    let windowHeight = if (verifiesHit) { 900u32 } else { 700u32 }
     let host = CjguiMacosApplicationHost(
         controller,
         configuration: CjguiMacosApplicationWindowConfiguration(
             "Adaptive Layout Public Consumer",
             640u32,
-            700u32
+            windowHeight
         )
     )
     let window = host.window()
@@ -1768,10 +1977,29 @@ main(args: Array<String>): Int64 {
     controller.attachWindow(window)
     let _ = window.setReduceMotionEnabled(CjguiComposableUiReduceMotion.isEnabled())
     let connection = CjguiSharedOperationExternalConnection(domain, authorization, window)
-    if (!connection.enableWindowProgressReads(window) || !host.attachExternalConnection(connection) || !host.start()) {
+    if (!connection.enableWindowProgressReads(window) || !connection.enableTransferReceiptReads(window) ||
+        !connection.enablePositionMotion(window) ||
+        !host.attachExternalConnection(connection) || !host.start()) {
         host.close()
         return 1
     }
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == "adaptive-translated-split") {
+            let _ = window.exposeAcceptedPositionMotionTarget(node.identityKey)
+        }
+    }
+    let scaleReadStarted = MonoTime.now()
+    let scaleProgress = window.windowProgress()
+    let scaleDiagnostic = window.diagnosticSnapshot(maximumNodes: 1)
+    let scaleReadMicros = (MonoTime.now() - scaleReadStarted).toMicroseconds()
+    getStdOut().writeln("CJGUI_SCALE_CONSUMER consumer=adaptive session=${scaleProgress.sessionIdentity} " +
+        "scene=${scaleProgress.acceptedSceneVersion} frame=${scaleProgress.geometry.submittedFrameIndex} " +
+        "points=${scaleProgress.geometry.currentWidthPoints}x${scaleProgress.geometry.currentHeightPoints} " +
+        "pixels=${scaleProgress.geometry.currentDrawableWidthPixels}x${scaleProgress.geometry.currentDrawableHeightPixels} " +
+        "scale=${scaleProgress.geometry.currentBackingScale} revision=${scaleProgress.geometry.currentRevision} " +
+        "diagnostic_same_revision=${if (scaleDiagnostic.geometry.currentRevision == scaleProgress.geometry.currentRevision) { 1 } else { 0 }} " +
+        "read_us=${scaleReadMicros}")
+    getStdOut().flush()
     // Register this instance's identity BEFORE any operation: a round-unique
     // token in the process command line lets a verifier bind the exact process
     // it launched (never "newest pid matching the binary path"), and the
@@ -1825,9 +2053,16 @@ main(args: Array<String>): Int64 {
             "live_bytes=${initial.effectLiveBytes}->${overlay.effectLiveBytes} " +
             "cached_bytes=${initial.effectCachedBytes}->${overlay.effectCachedBytes}")
         let priorVersion = overlay.acceptedSceneVersion
+        // F-C: publish the bounded workload scalars for the next real control
+        // change. Enabling costs nothing on the refresh path; the snapshot
+        // reads below must not create work themselves.
+        let workloadEnabled = window.setWorkloadDiagnostics(true)
+        let workloadBefore = window.diagnosticSnapshot(maximumNodes: 1)
         let moved = cjguiAdaptiveActivateAcceptedButton(window, controller, NODE_SCROLL_PANE, "EFFECT_SCROLL_STEP")
         let _ = cjguiAdaptivePumpUntilAcceptedSceneAdvance(host, window, priorVersion)
         let scrolled = window.diagnosticSnapshot(maximumNodes: 256)
+        let workloadAfter = window.diagnosticSnapshot(maximumNodes: 1)
+        let workloadReread = window.diagnosticSnapshot(maximumNodes: 1)
         let stale = window.diagnosticSnapshot(maximumNodes: 8,
             expectedSessionIdentity: initial.sessionIdentity,
             expectedAcceptedSceneVersion: priorVersion)
@@ -1839,6 +2074,36 @@ main(args: Array<String>): Int64 {
         getStdOut().writeln("CJGUI_ADAPTIVE_DIAGNOSTIC_ASSERT name=scroll_accepted ok=${if (scrollOk) { 1 } else { 0 }} " +
             "scene=${priorVersion}->${scrolled.acceptedSceneVersion} " +
             "owner=${controller.effectGroupAcceptedLine()}")
+        // The same control change must be attributable from the public
+        // snapshot: an accepted attempt wrote and cloned a bounded part of the
+        // scene, the cumulative totals advanced by at least that attempt, and
+        // repeated reads neither add work nor submit anything.
+        let workloadOk = workloadEnabled && workloadAfter.workloadEnabled &&
+            workloadAfter.workloadStatus == "enabled" &&
+            workloadAfter.lastAttemptWorkloadResult == "accepted" &&
+            workloadBefore.nodeWriteCount >= 0 && workloadAfter.nodeWriteCount >= 0 &&
+            workloadAfter.lastAttemptNodeWrites >= 1 &&
+            workloadAfter.lastAttemptNodeWrites <= workloadAfter.totalNodes &&
+            workloadAfter.lastAttemptNodeClones >= 1 &&
+            workloadAfter.lastAttemptNodeClones <= workloadAfter.totalNodes &&
+            workloadAfter.nodeWriteCount - workloadBefore.nodeWriteCount >= workloadAfter.lastAttemptNodeWrites &&
+            workloadAfter.reusableResourceBytes >= 0 &&
+            workloadReread.nodeWriteCount == workloadAfter.nodeWriteCount &&
+            workloadReread.lastAttemptNodeWrites == workloadAfter.lastAttemptNodeWrites &&
+            workloadReread.nativeSubmissionCount == workloadAfter.nativeSubmissionCount
+        if (!workloadOk) { failed += 1 }
+        let workloadReadsIdle = workloadReread.nodeWriteCount == workloadAfter.nodeWriteCount &&
+            workloadReread.nativeSubmissionCount == workloadAfter.nativeSubmissionCount
+        getStdOut().writeln("CJGUI_ADAPTIVE_DIAGNOSTIC_ASSERT name=workload_observed ok=${if (workloadOk) { 1 } else { 0 }} " +
+            "status=${workloadAfter.workloadStatus} result=${workloadAfter.lastAttemptWorkloadResult} " +
+            "attempt_writes=${workloadAfter.lastAttemptNodeWrites} attempt_clones=${workloadAfter.lastAttemptNodeClones} " +
+            "attempt_allocations=${workloadAfter.lastAttemptNodeAllocations} " +
+            "attempt_text_prepares=${workloadAfter.lastAttemptTextLayoutPreparations} " +
+            "attempt_decode_starts=${workloadAfter.lastAttemptImageDecodeStarts} " +
+            "cumulative=${workloadBefore.nodeWriteCount}->${workloadAfter.nodeWriteCount}/" +
+            "${workloadAfter.nodeCloneCount}/${workloadAfter.nodeAllocationCount} " +
+            "scene=${workloadAfter.workloadSceneVersion} reusable_bytes=${workloadAfter.reusableResourceBytes} " +
+            "reads_idle=${if (workloadReadsIdle) { 1 } else { 0 }}")
         let rejected = controller.rejectInvalidEffects().contains("均被拒绝")
         let afterReject = window.diagnosticSnapshot(maximumNodes: 256)
         let rejectOld = rejected && afterReject.acceptedSceneVersion == scrolled.acceptedSceneVersion &&
@@ -1861,6 +2126,20 @@ main(args: Array<String>): Int64 {
             "draws=${closedOverlay.overlayDrawCount}->${settled.overlayDrawCount} " +
             "native_submissions=${closedOverlay.nativeSubmissionCount}->${settled.nativeSubmissionCount} " +
             "idle_turns=${preDisableIdleTurns} disabled_read_24_us=${disabledReadBatchMicros}")
+        let workloadStopped = window.setWorkloadDiagnostics(false)
+        let workloadDisabled = window.diagnosticSnapshot(maximumNodes: 1)
+        var workloadIdleTurns = 0
+        while (workloadIdleTurns < 2) { let _ = host.pumpOneTurn(); workloadIdleTurns += 1 }
+        let workloadSettled = window.diagnosticSnapshot(maximumNodes: 1)
+        let workloadDisabledOk = workloadStopped && !workloadDisabled.workloadEnabled &&
+            workloadDisabled.workloadStatus == "disabled" && workloadDisabled.nodeWriteCount == -1 &&
+            workloadDisabled.nodeCloneCount == -1 && workloadDisabled.lastAttemptNodeWrites == -1 &&
+            workloadSettled.nativeSubmissionCount == workloadDisabled.nativeSubmissionCount
+        if (!workloadDisabledOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_ADAPTIVE_DIAGNOSTIC_ASSERT name=workload_disabled ok=${if (workloadDisabledOk) { 1 } else { 0 }} " +
+            "status=${workloadDisabled.workloadStatus} writes=${workloadDisabled.nodeWriteCount} " +
+            "attempt_writes=${workloadDisabled.lastAttemptNodeWrites} " +
+            "submissions=${workloadDisabled.nativeSubmissionCount}->${workloadSettled.nativeSubmissionCount}")
         if (injectVerifyFailure) { failed += 1 }
         getStdOut().writeln("CJGUI_ADAPTIVE_DIAGNOSTIC_DONE instance_token=${instanceToken} failed=${failed}")
         getStdOut().flush()
@@ -1919,6 +2198,259 @@ main(args: Array<String>): Int64 {
     if (initialEffectGroupLine.size > 0) {
         getStdOut().writeln(initialEffectGroupLine)
         getStdOut().flush()
+    }
+    if (verifiesPositionMotion) {
+        var failed = 0
+        let _ = window.setReduceMotionEnabled(false)
+        let _ = window.setWorkloadDiagnostics(true)
+        let ownerBefore = domain.version()
+        var splitIdentity = ""
+        var baseX = 0.0
+        var baseY = 0.0
+        for (node in window.acceptedSceneNodes()) {
+            if (node.semanticId == "adaptive-translated-split") {
+                splitIdentity = node.identityKey
+                baseX = node.declaredStyle.translateX
+                baseY = node.declaredStyle.translateY
+            }
+        }
+        let staticSample = window.diagnosticSnapshot(maximumNodes: 1)
+        let first = cjguiAdaptiveActivateAcceptedButton(window, controller,
+            NODE_POSITION_MOTION, "POSITION_MOTION_TOGGLE")
+        var turns = 0
+        while (turns < 4 && host.isOpen()) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let mid = window.animatedNodeTranslation(splitIdentity)
+        let midX = match (mid) {
+            case Some(value) => value.presented.x
+            case None => -10000.0
+        }
+        let midScene = window.diagnosticSnapshot(maximumNodes: 1)
+        let moving = first && midX > baseX && midX < baseX + 24.0 &&
+            midScene.acceptedSceneVersion > staticSample.acceptedSceneVersion
+        if (!moving) { failed += 1 }
+        let reverse = cjguiAdaptiveActivateAcceptedButton(window, controller,
+            NODE_POSITION_MOTION, "POSITION_MOTION_TOGGLE")
+        let reverseAt = window.animatedNodeTranslation(splitIdentity)
+        let continuous = reverse && (match (reverseAt) {
+            case Some(value) => value.presented.x == midX && value.target.x == baseX
+            case None => false
+        })
+        if (!continuous) { failed += 1 }
+        turns = 0
+        while (turns < 100 && host.isOpen() && window.needsAnimationTick()) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let within = window.diagnosticSnapshot(maximumNodes: 1)
+        let terminal = window.animatedNodeTranslation(splitIdentity)
+        let returned = match (terminal) {
+            case Some(value) => value.presented.x == baseX && value.presented.y == baseY && !value.active
+            case None => false
+        }
+        if (!returned || window.needsAnimationTick()) { failed += 1 }
+        getStdOut().writeln("CJGUI_ADAPTIVE_POSITION_COST phase=within ok=${if (moving && continuous && returned) { 1 } else { 0 }} " +
+            "build_ns=${within.totalBuildNanoseconds - staticSample.totalBuildNanoseconds} " +
+            "layout_ns=${within.totalLayoutNanoseconds - staticSample.totalLayoutNanoseconds} " +
+            "submit_ns=${within.totalNativeStageAndSubmitNanoseconds - staticSample.totalNativeStageAndSubmitNanoseconds} " +
+            "text_prepares=${within.textLayoutPreparationCount - staticSample.textLayoutPreparationCount} " +
+            "raster_tiles=${within.textRasterCount - staticSample.textRasterCount} " +
+            "upload_tiles=${within.textUploadCount - staticSample.textUploadCount} " +
+            "decode_starts=${within.imageDecodeStartCount - staticSample.imageDecodeStartCount} " +
+            "live_bytes=${staticSample.textTextureLiveBytes}->${within.textTextureLiveBytes} " +
+            "peak_bytes=${within.textCandidatePeakBytes} " +
+            "scene=${staticSample.acceptedSceneVersion}->${within.acceptedSceneVersion} " +
+            "submissions=${staticSample.nativeSubmissionCount}->${within.nativeSubmissionCount}")
+        let spec = CjguiGeneratedMotionRegistry.positionTransitionRule().spec() ??
+            CjguiComposableUiAnimationSpec.tween(durationMs: 240)
+        let crossStarted = window.animateNodeTranslation(splitIdentity, baseX + 280.0, baseY,
+            spec: spec, atTime: MonoTime.now())
+        turns = 0
+        while (turns < 100 && host.isOpen() && window.needsAnimationTick()) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let cross = window.diagnosticSnapshot(maximumNodes: 1)
+        let crossStatus = window.animatedNodeTranslation(splitIdentity)
+        let crossAccepted = crossStarted && (match (crossStatus) {
+            case Some(value) => value.presented.x == baseX + 280.0 && !value.active
+            case None => false
+        }) && cross.totalBuildNanoseconds == within.totalBuildNanoseconds &&
+            cross.totalLayoutNanoseconds == within.totalLayoutNanoseconds
+        if (!crossAccepted) { failed += 1 }
+        getStdOut().writeln("CJGUI_ADAPTIVE_POSITION_COST phase=cross_coverage ok=${if (crossAccepted) { 1 } else { 0 }} " +
+            "build_ns=${cross.totalBuildNanoseconds - within.totalBuildNanoseconds} " +
+            "layout_ns=${cross.totalLayoutNanoseconds - within.totalLayoutNanoseconds} " +
+            "submit_ns=${cross.totalNativeStageAndSubmitNanoseconds - within.totalNativeStageAndSubmitNanoseconds} " +
+            "text_prepares=${cross.textLayoutPreparationCount - within.textLayoutPreparationCount} " +
+            "raster_tiles=${cross.textRasterCount - within.textRasterCount} " +
+            "upload_tiles=${cross.textUploadCount - within.textUploadCount} " +
+            "decode_starts=${cross.imageDecodeStartCount - within.imageDecodeStartCount} " +
+            "live_bytes=${within.textTextureLiveBytes}->${cross.textTextureLiveBytes} " +
+            "peak_bytes=${cross.textCandidatePeakBytes} " +
+            "scene=${within.acceptedSceneVersion}->${cross.acceptedSceneVersion} " +
+            "submissions=${within.nativeSubmissionCount}->${cross.nativeSubmissionCount}")
+        let cleared = cjguiAdaptiveActivateAcceptedButton(window, controller,
+            NODE_POSITION_MOTION_CLEAR, "POSITION_MOTION_CLEAR")
+        let clearedOk = cleared && window.animatedNodeTranslation(splitIdentity).isNone() &&
+            domain.version() == ownerBefore && !window.needsAnimationTick()
+        if (!clearedOk || injectVerifyFailure) { failed += 1 }
+        getStdOut().writeln("CJGUI_ADAPTIVE_POSITION_DONE instance_token=${instanceToken} " +
+            "moving=${if (moving) { 1 } else { 0 }} reverse=${if (continuous) { 1 } else { 0 }} " +
+            "terminal=${if (returned) { 1 } else { 0 }} cross=${if (crossAccepted) { 1 } else { 0 }} " +
+            "clear=${if (clearedOk) { 1 } else { 0 }} owner=${ownerBefore}->${domain.version()} failed=${failed}")
+        getStdOut().flush()
+        host.close()
+        return if (failed == 0) { 0 } else { 1 }
+    }
+    if (verifiesTranslation) {
+        var failed = 0
+        let ownerBefore = controller.effectGroupAcceptedOwnerIdentity()
+        let initial = cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_SEMANTIC, 0.25, 0.5) &&
+            cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_CARD_SEMANTIC, 0.25, 0.5) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-effect-card", 0.375, 0.25) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-effect-group-action", -0.5, 0.75) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-translated-split", 0.25, 0.5) &&
+            window.acceptedNodeBounds("adaptive-translated-long-text").isSome() &&
+            window.acceptedNodeBounds("adaptive-translated-tail-action").isSome()
+        if (!initial) { failed += 1 }
+        let _ = window.setWorkloadDiagnostics(true)
+        let before = window.diagnosticSnapshot(maximumNodes: 1)
+        let started = MonoTime.now()
+        let moved = cjguiAdaptiveActivateAcceptedButton(window, controller,
+            NODE_SUBPOINT_TRANSLATION_TOGGLE, "SUBPOINT_TRANSLATION_TOGGLE")
+        var turns = 0
+        while (turns < 40 && host.isOpen() &&
+            !cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_SEMANTIC, 30.25, 12.5)) {
+            let _ = host.pumpOneTurn()
+            turns += 1
+        }
+        let after = window.diagnosticSnapshot(maximumNodes: 1)
+        let movedOk = moved &&
+            cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_SEMANTIC, 30.25, 12.5) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-effect-card", 30.375, 12.25) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-effect-group-action", 29.5, 12.75) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-translated-split", 30.25, 12.5) &&
+            controller.effectGroupAcceptedOwnerIdentity() == ownerBefore &&
+            after.acceptedSceneVersion > before.acceptedSceneVersion
+        if (!movedOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_ADAPTIVE_TRANSLATION_SAMPLE phase=far ok=${if (movedOk) { 1 } else { 0 }} " +
+            "scene=${before.acceptedSceneVersion}->${after.acceptedSceneVersion} " +
+            "build_ns=${after.buildNanoseconds} layout_ns=${after.layoutNanoseconds} " +
+            "submit_ns=${after.nativeStageAndSubmitNanoseconds} " +
+            "text_prepares=${after.lastAttemptTextLayoutPreparations} " +
+            "decode_starts=${after.lastAttemptImageDecodeStarts} " +
+            "native_submissions=${before.nativeSubmissionCount}->${after.nativeSubmissionCount} " +
+            "elapsed_us=${(MonoTime.now() - started).toMicroseconds()}")
+        let cleared = cjguiAdaptiveActivateAcceptedButton(window, controller,
+            NODE_SUBPOINT_TRANSLATION_TOGGLE, "SUBPOINT_TRANSLATION_TOGGLE")
+        turns = 0
+        while (turns < 40 && host.isOpen() &&
+            !cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_SEMANTIC, 0.0, 0.0)) {
+            let _ = host.pumpOneTurn()
+            turns += 1
+        }
+        let clearSample = window.diagnosticSnapshot(maximumNodes: 1)
+        let clearedOk = cleared &&
+            cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_SEMANTIC, 0.0, 0.0) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-effect-card", 0.0, 0.0) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-effect-group-action", 0.0, 0.0) &&
+            cjguiAdaptiveVisualOffsetIs(window, "adaptive-translated-split", 0.0, 0.0) &&
+            controller.effectGroupAcceptedOwnerIdentity() == ownerBefore &&
+            clearSample.acceptedSceneVersion > after.acceptedSceneVersion
+        if (!clearedOk) { failed += 1 }
+        // Fixed ordinary panel load: zero, the accepted static small/far
+        // positions, then three cycles of continuous translation. Each line is
+        // a real accepted refresh with its own build/layout/native costs.
+        var costBefore = clearSample
+        var costIndex = 0
+        while (costIndex < 9 && host.isOpen()) {
+            let variant = costIndex % 3
+            let expectedX = if (variant == 0) { 0.25 } else if (variant == 1) { 30.25 } else { 0.0 }
+            let expectedY = if (variant == 0) { 0.5 } else if (variant == 1) { 12.5 } else { 0.0 }
+            let costStarted = MonoTime.now()
+            let dispatched = cjguiAdaptiveActivateAcceptedButton(window, controller,
+                NODE_SUBPOINT_TRANSLATION_TOGGLE, "SUBPOINT_TRANSLATION_TOGGLE")
+            var costTurns = 0
+            while (costTurns < 40 && host.isOpen() &&
+                (window.windowProgress().acceptedSceneVersion <= costBefore.acceptedSceneVersion ||
+                !cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_SEMANTIC, expectedX, expectedY))) {
+                let _ = host.pumpOneTurn()
+                costTurns += 1
+            }
+            let costAfter = window.diagnosticSnapshot(maximumNodes: 1)
+            let costOk = dispatched &&
+                cjguiAdaptiveVisualOffsetIs(window, NODE_EFFECT_GROUP_SEMANTIC, expectedX, expectedY) &&
+                costAfter.acceptedSceneVersion > costBefore.acceptedSceneVersion &&
+                costAfter.nativeSubmissionCount > costBefore.nativeSubmissionCount &&
+                controller.effectGroupAcceptedOwnerIdentity() == ownerBefore
+            if (!costOk) { failed += 1 }
+            getStdOut().writeln("CJGUI_ADAPTIVE_TRANSLATION_COST sample=${costIndex} " +
+                "variant=${variant} ok=${if (costOk) { 1 } else { 0 }} " +
+                "operation_build_ns=${costAfter.totalBuildNanoseconds - costBefore.totalBuildNanoseconds} " +
+                "operation_layout_ns=${costAfter.totalLayoutNanoseconds - costBefore.totalLayoutNanoseconds} " +
+                "operation_submit_ns=${costAfter.totalNativeStageAndSubmitNanoseconds - costBefore.totalNativeStageAndSubmitNanoseconds} " +
+                "last_refresh_build_ns=${costAfter.buildNanoseconds} " +
+                "last_refresh_layout_ns=${costAfter.layoutNanoseconds} " +
+                "last_refresh_submit_ns=${costAfter.nativeStageAndSubmitNanoseconds} " +
+                "text_prepares=${costAfter.textLayoutPreparationCount - costBefore.textLayoutPreparationCount} " +
+                "raster_tiles=${costAfter.textRasterCount - costBefore.textRasterCount} " +
+                "raster_bytes=${costAfter.textRasterBytes - costBefore.textRasterBytes} " +
+                "raster_us=${costAfter.textRasterMicros - costBefore.textRasterMicros} " +
+                "upload_tiles=${costAfter.textUploadCount - costBefore.textUploadCount} " +
+                "upload_bytes=${costAfter.textUploadBytes - costBefore.textUploadBytes} " +
+                "upload_us=${costAfter.textUploadMicros - costBefore.textUploadMicros} " +
+                "decode_starts=${costAfter.imageDecodeStartCount - costBefore.imageDecodeStartCount} " +
+                "text_live_bytes=${costBefore.textTextureLiveBytes}->${costAfter.textTextureLiveBytes} " +
+                "text_candidate_peak_bytes=${costAfter.textCandidatePeakBytes} " +
+                "scene=${costBefore.acceptedSceneVersion}->${costAfter.acceptedSceneVersion} " +
+                "submissions=${costBefore.nativeSubmissionCount}->${costAfter.nativeSubmissionCount} " +
+                "elapsed_us=${(MonoTime.now() - costStarted).toMicroseconds()}")
+            costBefore = costAfter
+            costIndex += 1
+        }
+        var idleTurns = 0
+        var stableTurns = 0
+        var previousSubmissions = costBefore.nativeSubmissionCount
+        let idleStarted = MonoTime.now()
+        while (host.isOpen() && stableTurns < 4 &&
+            (MonoTime.now() - idleStarted).toMilliseconds() < 1000) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            let current = window.diagnosticSnapshot(maximumNodes: 1).nativeSubmissionCount
+            if (current == previousSubmissions && !window.needsAnimationTick()) {
+                stableTurns += 1
+            } else { stableTurns = 0 }
+            previousSubmissions = current
+            idleTurns += 1
+        }
+        let settled = window.diagnosticSnapshot(maximumNodes: 1)
+        var confirmationTurns = 0
+        while (confirmationTurns < 4 && host.isOpen()) {
+            let _ = host.pumpOneTurn()
+            confirmationTurns += 1
+        }
+        let idle = window.diagnosticSnapshot(maximumNodes: 1)
+        let idleOk = stableTurns == 4 && idle.nativeSubmissionCount == settled.nativeSubmissionCount
+        if (!idleOk) { failed += 1 }
+        if (injectVerifyFailure) { failed += 1 }
+        getStdOut().writeln("CJGUI_ADAPTIVE_TRANSLATION_DONE instance_token=${instanceToken} " +
+            "initial=${if (initial) { 1 } else { 0 }} moved=${if (movedOk) { 1 } else { 0 }} " +
+            "cleared=${if (clearedOk) { 1 } else { 0 }} idle=${if (idleOk) { 1 } else { 0 }} " +
+            "scene=${before.acceptedSceneVersion}->${after.acceptedSceneVersion}->${clearSample.acceptedSceneVersion} " +
+            "submissions=${before.nativeSubmissionCount}->${after.nativeSubmissionCount}->" +
+            "${clearSample.nativeSubmissionCount}->${costBefore.nativeSubmissionCount}->" +
+            "${settled.nativeSubmissionCount}->${idle.nativeSubmissionCount} " +
+            "idle_turns=${idleTurns} idle_ms=${(MonoTime.now() - idleStarted).toMilliseconds()} " +
+            "failed=${failed}")
+        getStdOut().flush()
+        host.close()
+        return if (failed != 0) { 1 } else { 0 }
     }
     // Consumer-level hit negative control + paint-alpha animation check. The
     // probe reads the ACCEPTED scene; the animation is driven through the same
@@ -2306,16 +2838,18 @@ main(args: Array<String>): Int64 {
             "requestRevision=${opaque.windowBackgroundRequestRevision} " +
             "scene=${opaque.windowBackgroundAcceptedSceneVersion}/${opaque.acceptedSceneVersion}")
 
-        // Explicit clear while already opaque must still reach the same owner
-        // and produce a new accepted scene. Since the native request is already
-        // opaque, it need not invent another material request frame.
-        let beforeClearVersion = opaque.acceptedSceneVersion
+        // An explicit clear while already opaque still reaches the owner. It
+        // is an idempotent material request, so the accepted material frame
+        // and request revision must remain stable after the host settles.
         let acceptedClear = cjguiAdaptiveActivateWindowMaterialButton(window, controller,
             NODE_WINDOW_MATERIAL_CLEAR, "CLEAR_WINDOW_MATERIAL")
         let ownerCleared = controller.candidateWindowBackground() == CjguiWindowBackgroundPolicy.OPAQUE
-        let cleared = cjguiAdaptivePumpUntilAcceptedSceneAdvance(host, window, beforeClearVersion)
-        let clearOk = acceptedClear && ownerCleared && cleared.acceptedSceneVersion > beforeClearVersion &&
+        let _ = host.pumpOneTurn()
+        let cleared = window.windowProgress()
+        let clearOk = acceptedClear && ownerCleared &&
             ownerIdentity == cleared.windowBackgroundIdentity &&
+            cleared.windowBackgroundFrameIndex == opaque.windowBackgroundFrameIndex &&
+            cleared.windowBackgroundRequestRevision == opaque.windowBackgroundRequestRevision &&
             cjguiAdaptiveWindowMaterialMatches(cleared, CjguiWindowBackgroundPolicy.OPAQUE, false)
         if (!clearOk) { failed += 1 }
         getStdOut().writeln("CJGUI_ADAPTIVE_WINDOW_MATERIAL_ASSERT name=explicit_clear_while_opaque " +
@@ -2374,6 +2908,11 @@ main(args: Array<String>): Int64 {
         ]))
     let imageConnection = CjguiSharedOperationExternalConnection(
         CjguiSharedOperationImageOwnerDomain(controller.imageOwner(), imageOwnerSlot), imageAuthorization)
+    if (!host.adoptExternalConnectionForClose(imageConnection)) {
+        imageConnection.close()
+        host.close()
+        return 1
+    }
     if (!imageConnection.start()) { host.close(); return 1 }
     if (let Some(info) <- imageConnection.connectionInfo()) {
         getStdOut().writeln("CJGUI_PNG_EXTERNAL_READY consumer=adaptive descriptor=${info.descriptorPath} slot=${imageOwnerSlot}")
@@ -2397,6 +2936,12 @@ main(args: Array<String>): Int64 {
                     "session=${sample.sessionIdentity} scene=${sample.acceptedSceneVersion} " +
                     "nodes=${sample.nodes.size}/${sample.totalNodes} " +
                     "submissions=${sample.nativeSubmissionCount} draws=${sample.overlayDrawCount}")
+                if (let Some(split) <- window.acceptedNodeVisualBounds("adaptive-translated-split")) {
+                    getStdOut().writeln("CJGUI_F11_ADAPTIVE_CONTAINER scene=${sample.acceptedSceneVersion} " +
+                        "${controller.translationContainerObservation()} " +
+                        "visual=${split.x},${split.y},${split.width},${split.height} " +
+                        "owner=${domain.version()}:${if (domain.snapshot().recordAt(0).isMarked) { 1 } else { 0 }}")
+                }
                 getStdOut().flush()
             }
         }
@@ -2413,7 +2958,6 @@ main(args: Array<String>): Int64 {
             }
         }
     }
-    imageConnection.close()
     host.close()
     return 0
 }

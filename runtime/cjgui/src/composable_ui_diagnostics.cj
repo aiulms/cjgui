@@ -1,5 +1,6 @@
 package cjgui
 
+import cjgui_shared_operation_core.*
 import std.collection.*
 
 /// Experimental, bounded, read-only developer view of one accepted scene.
@@ -81,6 +82,7 @@ public class CjguiComposableUiDiagnosticFloatRect {
 
 public class CjguiComposableUiDiagnosticSnapshot {
     public let status: String
+    public let geometry: CjguiSharedOperationWindowGeometry
     public let sessionIdentity: String
     public let acceptedSceneVersion: Int64
     public let submittedSceneVersion: Int64
@@ -98,6 +100,10 @@ public class CjguiComposableUiDiagnosticSnapshot {
     public let buildNanoseconds: Int64
     public let layoutNanoseconds: Int64
     public let nativeStageAndSubmitNanoseconds: Int64
+    /// Cumulative completed refresh attempts, for whole-operation deltas.
+    public let totalBuildNanoseconds: Int64
+    public let totalLayoutNanoseconds: Int64
+    public let totalNativeStageAndSubmitNanoseconds: Int64
     public let buildPassCount: Int64
     public let layoutPassCount: Int64
     public let nativeSubmissionCount: Int64
@@ -114,6 +120,45 @@ public class CjguiComposableUiDiagnosticSnapshot {
     public let overlayStatus: String
     public let overlayFlags: Int64
     public let overlayDrawCount: Int64
+    /// Explicitly enabled bounded workload observation. Counting is a scalar
+    /// increment at real work points and stays on in normal builds; this switch
+    /// only decides whether the snapshot publishes the values, so a disabled
+    /// read costs nothing and no read ever triggers a refresh, a clone or a
+    /// submission. Negative values mean "not published"; `workloadStatus`
+    /// carries "disabled", "enabled" or "native_unavailable".
+    public let workloadEnabled: Bool
+    public let workloadStatus: String
+    /// Accepted-scene identity of the native read that produced the cumulative
+    /// totals below; -1 when the values were not published.
+    public let workloadSceneVersion: Int64
+    public let nodeWriteCount: Int64
+    public let nodeCloneCount: Int64
+    public let nodeAllocationCount: Int64
+    public let textLayoutPreparationCount: Int64
+    public let imageDecodeStartCount: Int64
+    /// Current (not cumulative) reusable bytes: this session's accepted text
+    /// textures and resident vector buffers plus the shared image texture
+    /// cache. A rejected candidate keeps the accepted scene's values.
+    public let reusableResourceBytes: Int64
+    /// Cumulative normal-build text work; the resource values are current
+    /// accepted bytes and the accepted-plus-candidate high water respectively.
+    public let textRasterCount: Int64
+    public let textRasterBytes: Int64
+    public let textRasterMicros: Int64
+    public let textUploadCount: Int64
+    public let textUploadBytes: Int64
+    public let textUploadMicros: Int64
+    public let textTextureLiveBytes: Int64
+    public let textCandidatePeakBytes: Int64
+    /// The last completed refresh attempt's workload deltas, measured from the
+    /// attempt start to its accept or reject terminal. "none" until one
+    /// completed attempt has been observed with observation enabled.
+    public let lastAttemptWorkloadResult: String
+    public let lastAttemptNodeWrites: Int64
+    public let lastAttemptNodeClones: Int64
+    public let lastAttemptNodeAllocations: Int64
+    public let lastAttemptTextLayoutPreparations: Int64
+    public let lastAttemptImageDecodeStarts: Int64
 
     public init(status: String, sessionIdentity: String, acceptedSceneVersion: Int64,
         submittedSceneVersion: Int64, submittedFrameIndex: Int64, completedFrameIndex: Int64,
@@ -123,8 +168,23 @@ public class CjguiComposableUiDiagnosticSnapshot {
         buildPassCount: Int64, layoutPassCount: Int64, nativeSubmissionCount: Int64,
         effectLiveBytes: Int64, effectCachedBytes: Int64, effectInFlightBytes: Int64,
         rasterCount: Int64, uploadCount: Int64, effectPassCount: Int64, effectCacheHitCount: Int64,
-        overlayEnabled: Bool, overlayStatus: String, overlayFlags: Int64, overlayDrawCount: Int64) {
+        overlayEnabled: Bool, overlayStatus: String, overlayFlags: Int64, overlayDrawCount: Int64,
+        workloadEnabled!: Bool = false, workloadStatus!: String = "disabled",
+        workloadSceneVersion!: Int64 = -1, nodeWriteCount!: Int64 = -1, nodeCloneCount!: Int64 = -1,
+        nodeAllocationCount!: Int64 = -1, textLayoutPreparationCount!: Int64 = -1,
+        imageDecodeStartCount!: Int64 = -1, reusableResourceBytes!: Int64 = -1,
+        lastAttemptWorkloadResult!: String = "none", lastAttemptNodeWrites!: Int64 = -1,
+        lastAttemptNodeClones!: Int64 = -1, lastAttemptNodeAllocations!: Int64 = -1,
+        lastAttemptTextLayoutPreparations!: Int64 = -1, lastAttemptImageDecodeStarts!: Int64 = -1,
+        geometry!: CjguiSharedOperationWindowGeometry = CjguiSharedOperationWindowGeometry.unavailable(),
+        totalBuildNanoseconds!: Int64 = -1, totalLayoutNanoseconds!: Int64 = -1,
+        totalNativeStageAndSubmitNanoseconds!: Int64 = -1,
+        textRasterCount!: Int64 = -1, textRasterBytes!: Int64 = -1,
+        textRasterMicros!: Int64 = -1, textUploadCount!: Int64 = -1,
+        textUploadBytes!: Int64 = -1, textUploadMicros!: Int64 = -1,
+        textTextureLiveBytes!: Int64 = -1, textCandidatePeakBytes!: Int64 = -1) {
         this.status = status; this.sessionIdentity = sessionIdentity
+        this.geometry = geometry
         this.acceptedSceneVersion = acceptedSceneVersion
         this.submittedSceneVersion = submittedSceneVersion
         this.submittedFrameIndex = submittedFrameIndex
@@ -137,6 +197,9 @@ public class CjguiComposableUiDiagnosticSnapshot {
         this.buildNanoseconds = buildNanoseconds
         this.layoutNanoseconds = layoutNanoseconds
         this.nativeStageAndSubmitNanoseconds = nativeStageAndSubmitNanoseconds
+        this.totalBuildNanoseconds = totalBuildNanoseconds
+        this.totalLayoutNanoseconds = totalLayoutNanoseconds
+        this.totalNativeStageAndSubmitNanoseconds = totalNativeStageAndSubmitNanoseconds
         this.buildPassCount = buildPassCount; this.layoutPassCount = layoutPassCount
         this.nativeSubmissionCount = nativeSubmissionCount
         this.effectLiveBytes = effectLiveBytes; this.effectCachedBytes = effectCachedBytes
@@ -146,6 +209,27 @@ public class CjguiComposableUiDiagnosticSnapshot {
         this.overlayEnabled = overlayEnabled; this.overlayFlags = overlayFlags
         this.overlayStatus = overlayStatus
         this.overlayDrawCount = overlayDrawCount
+        this.workloadEnabled = workloadEnabled; this.workloadStatus = workloadStatus
+        this.workloadSceneVersion = workloadSceneVersion
+        this.nodeWriteCount = nodeWriteCount; this.nodeCloneCount = nodeCloneCount
+        this.nodeAllocationCount = nodeAllocationCount
+        this.textLayoutPreparationCount = textLayoutPreparationCount
+        this.imageDecodeStartCount = imageDecodeStartCount
+        this.reusableResourceBytes = reusableResourceBytes
+        this.textRasterCount = textRasterCount
+        this.textRasterBytes = textRasterBytes
+        this.textRasterMicros = textRasterMicros
+        this.textUploadCount = textUploadCount
+        this.textUploadBytes = textUploadBytes
+        this.textUploadMicros = textUploadMicros
+        this.textTextureLiveBytes = textTextureLiveBytes
+        this.textCandidatePeakBytes = textCandidatePeakBytes
+        this.lastAttemptWorkloadResult = lastAttemptWorkloadResult
+        this.lastAttemptNodeWrites = lastAttemptNodeWrites
+        this.lastAttemptNodeClones = lastAttemptNodeClones
+        this.lastAttemptNodeAllocations = lastAttemptNodeAllocations
+        this.lastAttemptTextLayoutPreparations = lastAttemptTextLayoutPreparations
+        this.lastAttemptImageDecodeStarts = lastAttemptImageDecodeStarts
     }
 }
 

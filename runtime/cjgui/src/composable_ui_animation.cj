@@ -25,7 +25,7 @@ public let CJGUI_COMPOSABLE_UI_ANIMATION_FRAME_WAIT_MS: UInt32 = 8u32
 
 /// 动画标量的有限性判据：有限值满足 `value - value == 0`，NaN 与 ±Infinity
 /// 都得到 NaN。放在文件级，让规格与时间通道共用同一判据。
-private func cjguiAnimationIsFiniteScalar(value: Float64): Bool {
+func cjguiAnimationIsFiniteScalar(value: Float64): Bool {
     return value - value == 0.0
 }
 
@@ -1109,6 +1109,12 @@ public class CjguiComposableUiAnimationDriver {
     /// 上限与推进/收敛/清理流程，但运动学彼此独立：颜色改变 RGB（native 需重建
     /// 文字纹理），alpha 只改绘制乘子（零重建）。
     private var colorEntries: ArrayList<CjguiComposableUiNodePaintColorAnimation>
+    /// Local X/Y channels share this driver's clock and accepted binding
+    /// budget, but retain a separate successful-scene checkpoint.
+    private var positionEntries: ArrayList<CjguiComposableUiNodePositionAnimation>
+    private var positionMutationRevisionValue: Int64
+    private var positionCommittedRevisionValue: Int64
+    private var nextPositionChannelGeneration: Int64
     private var reduceMotionValue: Bool
     private var pausedValue: Bool
     private var projectionEpochValue: Int64
@@ -1116,7 +1122,8 @@ public class CjguiComposableUiAnimationDriver {
     /// 时间通道是否仍在推进，与「当前视觉投影是否尚未成功提交」是两件事：
     /// reduce-motion 收敛、零时长补间、或最后一帧提交失败后，通道已 inactive
     /// 但终值尚未落到画面。这个独立的脏标记保证终值一定被提交一次（失败可重试）。
-    private var pendingPresentationValue: Bool
+    private var presentationMutationRevisionValue: Int64
+    private var presentationCommittedRevisionValue: Int64
     /// 最近一次显式推进的时间戳（毫秒）。交互状态变化由投影触发 retarget，而
     /// 投影没有时间参数：它使用本值作为 retarget 时间起点，因此整条交互过渡
     /// 只由显式的 `advance` 序列驱动，确定性可复现。
@@ -1127,11 +1134,16 @@ public class CjguiComposableUiAnimationDriver {
         this.entries = ArrayList<CjguiComposableUiNodePaintAnimation>()
         this.effectGroupEntries = ArrayList<CjguiComposableUiNodePaintAnimation>()
         this.colorEntries = ArrayList<CjguiComposableUiNodePaintColorAnimation>()
+        this.positionEntries = ArrayList<CjguiComposableUiNodePositionAnimation>()
+        this.positionMutationRevisionValue = 0
+        this.positionCommittedRevisionValue = 0
+        this.nextPositionChannelGeneration = 0
         this.reduceMotionValue = false
         this.pausedValue = false
         this.projectionEpochValue = 0
         this.rejectedBindingCountValue = 0
-        this.pendingPresentationValue = false
+        this.presentationMutationRevisionValue = 0
+        this.presentationCommittedRevisionValue = 0
         this.currentTimeMsValue = 0.0
     }
 
@@ -1151,7 +1163,7 @@ public class CjguiComposableUiAnimationDriver {
             // 收敛改变了当前视觉值：即使通道随即 inactive，也必须再提交一次终值，
             // 否则画面可能停在中间值。
             if (hasAnyBinding()) {
-                pendingPresentationValue = true
+                presentationMutationRevisionValue += 1
             }
         }
         return true
@@ -1228,7 +1240,7 @@ public class CjguiComposableUiAnimationDriver {
                     existing.converge()
                 }
                 existing.markSeen(projectionEpochValue)
-                pendingPresentationValue = true
+                presentationMutationRevisionValue += 1
                 return true
             }
             // 换绑：同 key 已指向新的槽位身份（新代际或同槽换 resource/action/
@@ -1237,7 +1249,7 @@ public class CjguiComposableUiAnimationDriver {
             reboundIndex = existingIndex
         }
         let capacityExceeded = reboundIndex < 0 &&
-            entries.size + effectGroupEntries.size + colorEntries.size >= CjguiComposableUiAnimationDriver
+            entries.size + effectGroupEntries.size + colorEntries.size + positionEntries.size >= CjguiComposableUiAnimationDriver
                 .MAXIMUM_BINDING_COUNT
         if (capacityExceeded) {
             rejectedBindingCountValue += 1
@@ -1260,7 +1272,7 @@ public class CjguiComposableUiAnimationDriver {
             }
             entries.add(entry)
             // 新绑定的初始视觉值（可能已 settled）同样需要一次投影提交。
-            pendingPresentationValue = true
+            presentationMutationRevisionValue += 1
             return true
         }
         return false
@@ -1310,13 +1322,13 @@ public class CjguiComposableUiAnimationDriver {
                     existing.converge()
                 }
                 existing.markSeen(projectionEpochValue)
-                pendingPresentationValue = true
+                presentationMutationRevisionValue += 1
                 return true
             }
             reboundIndex = existingIndex
         }
         let capacityExceeded = reboundIndex < 0 &&
-            entries.size + effectGroupEntries.size + colorEntries.size >= CjguiComposableUiAnimationDriver.MAXIMUM_BINDING_COUNT
+            entries.size + effectGroupEntries.size + colorEntries.size + positionEntries.size >= CjguiComposableUiAnimationDriver.MAXIMUM_BINDING_COUNT
         if (capacityExceeded) {
             rejectedBindingCountValue += 1
             return false
@@ -1338,7 +1350,7 @@ public class CjguiComposableUiAnimationDriver {
                 entry.converge()
             }
             effectGroupEntries.add(entry)
-            pendingPresentationValue = true
+            presentationMutationRevisionValue += 1
             return true
         }
         return false
@@ -1372,9 +1384,15 @@ public class CjguiComposableUiAnimationDriver {
                 changed = true
             }
         }
+        for (entry in positionEntries) {
+            if (entry.advanceTo(nowMs)) {
+                changed = true
+                positionMutationRevisionValue += 1
+            }
+        }
         if (changed) {
             // 视觉值发生了变化，终值尚未（或尚未确认）落到画面。
-            pendingPresentationValue = true
+            presentationMutationRevisionValue += 1
         }
         // 只有严格向前的合法时间才推进"交互 retarget 的当前时间"，时间倒退/非法
         // 输入不改变它（与标量通道的拒绝语义一致）。
@@ -1387,12 +1405,20 @@ public class CjguiComposableUiAnimationDriver {
     /// 是否必须为本窗再提交一次视觉投影：有未提交的终值。与「时间通道是否活动」
     /// 分开保存，所以 reduce-motion 收敛、零时长补间和提交失败重试都能收敛。
     public func hasPendingPresentation(): Bool {
-        return pendingPresentationValue
+        return presentationMutationRevisionValue > presentationCommittedRevisionValue ||
+            positionMutationRevisionValue > positionCommittedRevisionValue
     }
 
     /// 一次投影确认成功（native 已受理或已提交）后由窗口调用，清除脏标记。
-    public func markPresentationCommitted(): Unit {
-        pendingPresentationValue = false
+    public func presentationRevision(): Int64 { return presentationMutationRevisionValue }
+
+    /// A receipt acknowledges only visual work that existed when its picture was
+    /// projected. A later request remains dirty even if an older ticket accepts.
+    public func markPresentationCommitted(revision!: Int64 = -1): Unit {
+        let acknowledged = if (revision < 0) { presentationMutationRevisionValue } else { revision }
+        if (acknowledged > presentationCommittedRevisionValue && acknowledged <= presentationMutationRevisionValue) {
+            presentationCommittedRevisionValue = acknowledged
+        }
     }
 
     /// 调度是否仍需要下一次机会：有活动通道，或有未提交的终值。暂停时返回假：
@@ -1401,7 +1427,7 @@ public class CjguiComposableUiAnimationDriver {
         if (pausedValue) {
             return false
         }
-        return hasActive() || pendingPresentationValue
+        return hasActive() || hasPendingPresentation()
     }
 
     /// 是否仍有活动通道。停止后为假：宿主不再为本窗申请下一帧，帧请求收敛。
@@ -1420,6 +1446,9 @@ public class CjguiComposableUiAnimationDriver {
             if (entry.isActive()) {
                 return true
             }
+        }
+        for (entry in positionEntries) {
+            if (entry.isActive()) { return true }
         }
         return false
     }
@@ -1441,16 +1470,19 @@ public class CjguiComposableUiAnimationDriver {
                 count += 1
             }
         }
+        for (entry in positionEntries) {
+            if (entry.isActive()) { count += 1 }
+        }
         return count
     }
 
     public func boundCount(): Int64 {
-        return entries.size + effectGroupEntries.size + colorEntries.size
+        return entries.size + effectGroupEntries.size + colorEntries.size + positionEntries.size
     }
 
     /// 是否已有任一类绑定（alpha 或颜色过渡）。
     func hasAnyBinding(): Bool {
-        return entries.size > 0 || effectGroupEntries.size > 0 || colorEntries.size > 0
+        return entries.size > 0 || effectGroupEntries.size > 0 || colorEntries.size > 0 || positionEntries.size > 0
     }
 
     /// 是否已有该身份的颜色过渡绑定（窗口据此决定是否读取呈现色）。
@@ -1567,14 +1599,15 @@ public class CjguiComposableUiAnimationDriver {
                     if (reduceMotionValue) {
                         existing.converge()
                     }
-                    pendingPresentationValue = true
+                    presentationMutationRevisionValue += 1
                 }
                 return true
             }
             // 换绑：旧颜色过渡失效，丢弃后按新槽位身份重建。
             let _ = colorEntries.remove(at: existingIndex)
         }
-        if (entries.size + effectGroupEntries.size + colorEntries.size >= CjguiComposableUiAnimationDriver.MAXIMUM_BINDING_COUNT) {
+        if (entries.size + effectGroupEntries.size + colorEntries.size + positionEntries.size >=
+            CjguiComposableUiAnimationDriver.MAXIMUM_BINDING_COUNT) {
             rejectedBindingCountValue += 1
             return false
         }
@@ -1587,7 +1620,7 @@ public class CjguiComposableUiAnimationDriver {
             built.converge()
         }
         colorEntries.add(built)
-        pendingPresentationValue = true
+        presentationMutationRevisionValue += 1
         return true
     }
 
@@ -1643,6 +1676,120 @@ public class CjguiComposableUiAnimationDriver {
         return colorEntries[index].binding.matches(binding) && colorEntries[index].isActive()
     }
 
+    /// Set a node's local post-layout translation in logical points. A new
+    /// channel begins at the accepted local value; retargets begin at the last
+    /// accepted sample, never at a speculative or rejected scalar advance.
+    public func animatePosition(identityKey: String, binding: CjguiComposableUiAnimationBinding,
+        initial: CjguiComposableUiPositionValue, target: CjguiComposableUiPositionValue,
+        spec: CjguiComposableUiAnimationSpec, nowMs: Float64): Bool {
+        if (identityKey.size == 0 || binding.nodeId < 0 || spec.isRejected() ||
+            !cjguiAnimationIsFiniteScalar(nowMs) || !CjguiComposableUiAnimationDriver.validPosition(initial) ||
+            !CjguiComposableUiAnimationDriver.validPosition(target)) { return false }
+        let index = positionIndexOf(identityKey)
+        var replacing = false
+        if (index >= 0) {
+            let existing = positionEntries[index]
+            if (existing.binding.matches(binding)) {
+                if (nowMs < existing.lastTime()) { return false }
+                let oldTarget = existing.target()
+                if (oldTarget.x == target.x && oldTarget.y == target.y && existing.matchesSpec(spec)) { return true }
+                if (!existing.retarget(target, spec, nowMs)) { return false }
+                if (reduceMotionValue) { let _ = existing.converge() }
+                positionMutationRevisionValue += 1
+                return true
+            }
+            replacing = true
+        }
+        if (!replacing && boundCount() >= CjguiComposableUiAnimationDriver.MAXIMUM_BINDING_COUNT) {
+            rejectedBindingCountValue += 1
+            return false
+        }
+        let builtX = CjguiComposableUiScalarAnimation.retuned(initial.x, target.x, 0.0, nowMs, spec)
+        let builtY = CjguiComposableUiScalarAnimation.retuned(initial.y, target.y, 0.0, nowMs, spec)
+        if (let Some(x) <- builtX) {
+            if (let Some(y) <- builtY) {
+                if (replacing) { let _ = positionEntries.remove(at: index) }
+                nextPositionChannelGeneration += 1
+                let entry = CjguiComposableUiNodePositionAnimation(identityKey, binding, x, y, initial,
+                    channelGeneration: nextPositionChannelGeneration)
+                if (reduceMotionValue) { let _ = entry.converge() }
+                positionEntries.add(entry)
+                positionMutationRevisionValue += 1
+                return true
+            }
+        }
+        return false
+    }
+
+    func positionSampleFor(identityKey: String,
+        binding: CjguiComposableUiAnimationBinding): ?CjguiComposableUiPositionSample {
+        let index = positionIndexOf(identityKey)
+        if (index < 0 || !positionEntries[index].binding.matches(binding)) { return None }
+        return Some(positionEntries[index].sample())
+    }
+
+    public func positionRevision(): Int64 { return positionMutationRevisionValue }
+
+    /// Publish only the samples of the scene that native accepted. A later
+    /// retarget keeps its pending revision, including across an in-flight
+    /// ticket that accepts an older candidate.
+    func markPositionSamplesAccepted(samples: HashMap<String, CjguiComposableUiPositionSample>,
+        stagedRevision: Int64): Unit {
+        for ((identityKey, sample) in samples) {
+            let index = positionIndexOf(identityKey)
+            if (index >= 0) { positionEntries[index].accept(sample, currentTimeMsValue) }
+        }
+        if (stagedRevision > positionCommittedRevisionValue && stagedRevision <= positionMutationRevisionValue) {
+            positionCommittedRevisionValue = stagedRevision
+        }
+    }
+
+    public func positionTargetFor(identityKey: String): ?CjguiComposableUiPositionValue {
+        let index = positionIndexOf(identityKey)
+        if (index < 0) { return None }
+        return Some(positionEntries[index].target())
+    }
+
+    public func positionAcceptedFor(identityKey: String): ?CjguiComposableUiPositionValue {
+        let index = positionIndexOf(identityKey)
+        if (index < 0) { return None }
+        return Some(positionEntries[index].accepted())
+    }
+
+    public func isPositionActiveFor(identityKey: String): Bool {
+        let index = positionIndexOf(identityKey)
+        return index >= 0 && positionEntries[index].isActive()
+    }
+
+    public func stopPositionAtAccepted(identityKey: String, nowMs: Float64): Bool {
+        let index = positionIndexOf(identityKey)
+        if (index < 0 || !cjguiAnimationIsFiniteScalar(nowMs) || nowMs < positionEntries[index].lastTime()) {
+            return false
+        }
+        positionEntries[index].stopAtAccepted(nowMs)
+        positionMutationRevisionValue += 1
+        return true
+    }
+
+    public func cancelPosition(identityKey: String): Bool {
+        let index = positionIndexOf(identityKey)
+        if (index < 0) { return false }
+        let _ = positionEntries.remove(at: index)
+        positionMutationRevisionValue += 1
+        return true
+    }
+
+    func convergePositions(): Unit {
+        for (entry in positionEntries) {
+            if (entry.converge()) { positionMutationRevisionValue += 1 }
+        }
+    }
+
+    private static func validPosition(value: CjguiComposableUiPositionValue): Bool {
+        return cjguiAnimationIsFiniteScalar(value.x) && cjguiAnimationIsFiniteScalar(value.y) &&
+            value.x >= -1024.0 && value.x <= 1024.0 && value.y >= -1024.0 && value.y <= 1024.0
+    }
+
     public func targetFor(identityKey: String): ?Float64 {
         let index = indexOf(identityKey)
         if (index < 0) {
@@ -1675,7 +1822,7 @@ public class CjguiComposableUiAnimationDriver {
         }
         let _ = entries.remove(at: index)
         // 取消恢复了该节点的 accepted 样式，画面需要一次重新投影。
-        pendingPresentationValue = true
+        presentationMutationRevisionValue += 1
         return true
     }
 
@@ -1683,17 +1830,19 @@ public class CjguiComposableUiAnimationDriver {
         let index = effectGroupIndexOf(identityKey)
         if (index < 0) { return false }
         let _ = effectGroupEntries.remove(at: index)
-        pendingPresentationValue = true
+        presentationMutationRevisionValue += 1
         return true
     }
 
     public func cancelAll(): Unit {
         if (hasAnyBinding()) {
-            pendingPresentationValue = true
+            presentationMutationRevisionValue += 1
         }
         entries.clear()
         effectGroupEntries.clear()
         colorEntries.clear()
+        if (positionEntries.size > 0) { positionMutationRevisionValue += 1 }
+        positionEntries.clear()
     }
 
     /// 把所有活动通道立即收敛到目标（减少动态效果切换、窗口关闭前的确定收尾）。
@@ -1707,8 +1856,11 @@ public class CjguiComposableUiAnimationDriver {
         for (entry in colorEntries) {
             entry.converge()
         }
+        for (entry in positionEntries) {
+            if (entry.converge()) { positionMutationRevisionValue += 1 }
+        }
         if (hasAnyBinding()) {
-            pendingPresentationValue = true
+            presentationMutationRevisionValue += 1
         }
     }
 
@@ -1717,7 +1869,7 @@ public class CjguiComposableUiAnimationDriver {
     /// 同槽换 resource/action/节点种类的身份在这里释放——包括已经收敛（inactive）
     /// 的残留绑定，旧完成不会落在新实例上。
     public func reconcileAccepted(liveBindings: HashMap<String, CjguiComposableUiAnimationBinding>): Unit {
-        if (entries.size == 0 && effectGroupEntries.size == 0 && colorEntries.size == 0) {
+        if (entries.size == 0 && effectGroupEntries.size == 0 && colorEntries.size == 0 && positionEntries.size == 0) {
             return
         }
         if (entries.size > 0) {
@@ -1740,6 +1892,17 @@ public class CjguiComposableUiAnimationDriver {
             }
             if (remainingColors.size != colorEntries.size) {
                 colorEntries = remainingColors
+            }
+        }
+        if (positionEntries.size > 0) {
+            let remainingPositions = ArrayList<CjguiComposableUiNodePositionAnimation>()
+            for (entry in positionEntries) {
+                if (let Some(binding) <- liveBindings.get(entry.identityKey)) {
+                    if (binding.matches(entry.binding)) { remainingPositions.add(entry) }
+                }
+            }
+            if (remainingPositions.size != positionEntries.size) {
+                positionEntries = remainingPositions
             }
         }
         reconcileEffectGroupAccepted(liveBindings)
@@ -1797,6 +1960,15 @@ public class CjguiComposableUiAnimationDriver {
             if (colorEntries[index].identityKey == identityKey) {
                 return index
             }
+            index += 1
+        }
+        return -1
+    }
+
+    private func positionIndexOf(identityKey: String): Int64 {
+        var index: Int64 = 0
+        while (index < positionEntries.size) {
+            if (positionEntries[index].identityKey == identityKey) { return index }
             index += 1
         }
         return -1
@@ -1921,6 +2093,7 @@ public class CjguiGeneratedMotionRule {
 public class CjguiGeneratedMotionRegistry {
     public static let OPACITY_TRANSITION: String = "generated.opacity"
     public static let INTERACTION_TRANSITION: String = "interaction.state"
+    public static let POSITION_TRANSITION: String = "generated.position"
     public static let MAX_REGISTERED_RULES: Int64 = 32
 
     private let rules: HashMap<String, CjguiGeneratedMotionRule>
@@ -1941,6 +2114,10 @@ public class CjguiGeneratedMotionRegistry {
 
     public static func interactionTransitionRule(): CjguiGeneratedMotionRule {
         return CjguiGeneratedMotionRule(INTERACTION_TRANSITION, 180, CjguiGeneratedMotionRule.TOKEN_EASE_OUT)
+    }
+
+    public static func positionTransitionRule(): CjguiGeneratedMotionRule {
+        return CjguiGeneratedMotionRule(POSITION_TRANSITION, 240, CjguiGeneratedMotionRule.TOKEN_EASE_IN_OUT)
     }
 
     public func registerRule(rule: CjguiGeneratedMotionRule): Bool {
@@ -2008,6 +2185,7 @@ public class CjguiGeneratedMotionRegistry {
         let registry = CjguiGeneratedMotionRegistry()
         let _ = registry.registerRule(opacityTransitionRule())
         let _ = registry.registerRule(interactionTransitionRule())
+        let _ = registry.registerRule(positionTransitionRule())
         return registry
     }
 
@@ -2039,6 +2217,8 @@ public class CjguiGeneratedMotionRegistry {
 
     public static func capabilityLine(): String {
         return "motion_rule=${OPACITY_TRANSITION} interaction_rule=${INTERACTION_TRANSITION} " +
+            "position_rule=${POSITION_TRANSITION} position_unit=logical_points " +
+            "position_local_limit=-1024..1024 position_cumulative_limit=-4096..4096 " +
             "duration_range=${CjguiGeneratedMotionRule.MIN_DURATION_MS}..${CjguiGeneratedMotionRule.MAX_DURATION_MS} " +
             "easing_tokens=${CjguiGeneratedMotionRule.TOKEN_EASE_IN_OUT}|${CjguiGeneratedMotionRule.TOKEN_EASE_OUT} " +
             "backend=CjguiComposableUiAnimationSpec.tween stability=experimental " +

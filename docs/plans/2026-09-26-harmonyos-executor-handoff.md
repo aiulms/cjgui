@@ -1,13 +1,13 @@
 # CJGUI 鸿蒙后端：无上下文执行工具交接
 
-更新日期：2026-09-27。用户已授权接续实施。本文件将当前整包任务整理为新工具可直接执行的交接说明，不另立阶段或维护第二份进度账。唯一当前状态仍见 [ACTIVE_DIRECTION](../../runtime/cjgui/ACTIVE_DIRECTION.md)，详细历史和原始判据见[阶段任务页](2026-09-25-harmonyos-backend-first-chain-prompt.md#review5-current-package)。
+更新日期：2026-09-28。用户已授权接续实施。本文件将当前整包任务整理为新工具可直接执行的交接说明，不另立阶段或维护第二份进度账。唯一当前状态仍见 [ACTIVE_DIRECTION](../../runtime/cjgui/ACTIVE_DIRECTION.md)，详细历史和原始判据见[阶段任务页](2026-09-25-harmonyos-backend-first-chain-prompt.md#review5-current-package)。
 
 **执行要求：必要返工与新框架能力一起推进，持续完成整个工作包。等待编译、Codex 咨询、子代理或其他进程时，优先推进真实独立、尚未阻塞的任务；客观依赖或资源互斥使其他工作无法安全推进时，才等待。** 具体操作规则见第十节。
 
 <a id="review9-current-package"></a>
 ## 第九次指导复核：统一资源生命周期，完成当前可达项（2026-09-27）
 
-**当前结论：**第九次 A–E、接续入口、TCP 归属返工、[系统输入消费包](#h-input-consumption-next)及[运行时生成式界面双消费者包](#h-generated-consumption-next)按各自证据范围收口；真实引用、绘制、输入接续、同 PID 重开及两款 normal HAP 的生成控件消费已在华为模拟器验证。当前 SDK/镜像/输入法组合的 marked/cancel 回调仍待版本化对照。下一包接续[共享图片资源与鸿蒙实际绘制](#h-image-resource-next)；下方既有结果与历史 A–E 用作复用依据，按新改动影响验证。
+**当前结论：**第九次 A–E、接续入口、TCP 归属返工及[输入](#h-input-consumption-next)/[生成](#h-generated-consumption-next)/[图片](#h-image-resource-next)各自已验成果保留。[触摸原 A–E 的本轮交付](#h-touch-third-delivery-review)已按华为模拟器范围通过指导限域复核；旧 hr5 缺口表是历史返工依据。接续执行[惯性包 r10 复核与实施](#h-inertial-scroll-review-20260929)，原[惯性 A–E](#h-inertial-scroll-next)范围不变；优先修 H Node ABI/冻结绑定及共同窗口活动，保留已验触摸、图片和双 normal HAP 消费。marked/cancel 版本化边界、物理性能与发布审核另列。
 
 <a id="review9-handover-review"></a>
 ### 收尾限域复核：修接续入口，保留能力门控待验（2026-09-27）
@@ -98,9 +98,9 @@
 **生成式包指导限域复核。** 已抽查两款 normal HAP 的生成控件输入/owner 原证、测试 HAP 的拒绝第二票与恢复、两份平台 manifest，以及公共 region 的 commit/rollback 接线；未发现阻碍按上述范围收口的问题。两份性能 JSON 的三个阶段各两次空闲采样计数与耗时累计一致；提交/等票时间是分段客户端往返样本，不能当完整输入到画面时延。此次未构建、操作设备或重新看图，模型与脚本候选、normal 与测试 HAP 的证据保持区分。旧生命周期和生成消费基线按影响复用。
 
 <a id="h-image-resource-next"></a>
-### H 线下一包：共享图片资源与鸿蒙实际绘制（2026-09-27）
+### H 线共享图片资源与鸿蒙实际绘制（2026-09-28）
 
-**目标与实际缺口。** 执行对象鸿蒙 H 线，目录 `/Users/jiangxuanyang/Desktop/cangjie`。现在两领域已能消费生成字段和动作，但 `platforms/ohos/host/ohos_renderer.cpp` 的 `set_composable_scene_node` 仍拒绝图片节点，`prepare_composable_image_resource` 与状态查询仍直接返回错误，故正常应用不能复用公共图片能力。优先补共享资源的实际平台消费；更复杂效果、滑动/长列表等后续按实需接续。F 正在做 PNG 剪贴板/拖放的通用交换，H 本包做声明图片到鸿蒙显示，两者复用相同资源身份，互不等待。E 的编辑器插图与持久化仍归产品。
+**目标与原缺口。** 执行对象鸿蒙 H 线，目录 `/Users/jiangxuanyang/Desktop/cangjie`。本包开始前两领域已能消费生成字段和动作，但 `platforms/ohos/host/ohos_renderer.cpp` 的 `set_composable_scene_node` 拒绝图片节点，`prepare_composable_image_resource` 与状态查询直接返回错误，故正常应用不能复用公共图片能力。优先补共享资源的实际平台消费；更复杂效果、滑动/长列表等后续按实需接续。F 的 PNG 剪贴板/拖放通用交换与 H 的声明图片显示复用相同资源身份；E 的编辑器插图与持久化仍归产品。
 
 **复用与责任。** 复用 `CjguiGeneratedUiImageResourceSpec`、资源 key/version、accepted 绑定持有、窗口图片状态和观察修订，以及刚交付的 `CjguiGeneratedUiWindowRegion`。核心仓颉持有声明、预算策略、事务和业务；鸿蒙适配器调用当前 SDK 的公开解码/绘制服务，管理平台对象和线程约束。借鉴已验证的 macOS 图片路径的版本/缓存/退役机制，按平台 API 实现资源所有权，不复制 Metal 对象或另建 ArkTS 图片 UI 树。先查本机 SDK 头文件、官方说明与现有 OH_Drawing 路径，普通 API 接线直接做；异步资源/Surface 退役方案不明时先向 Astra 提供精确边界咨询。
 
@@ -121,6 +121,325 @@
 记录无图片、冷加载、热复用、换版四种真实工作量：读取/解码/资源创建与释放、缓存命中、驻留/在途字节、build/submit、公开请求到 owner/scene 的分段时间。在有图片工作期间连续投递 20 个可识别公开请求，记录每个的成功、排队和接受时间；受控保持实验仅证明可服务性，不与无闸门耗时混算。图片完成后空闲计数稳定，移除/关窗后资源按声明策略收敛，重复循环不无界增长。依据实际热点修队列/缓存/调度或收紧已发布预算，不能以 TCP 往返样本代替渲染性能。
 
 受影响反例、核心构建、两款 normal HAP 与含资源闭包在包末集中验证。已通过的字段/动作、候选事务和生命周期证据按未改范围复用；当前 marked/cancel 边界只在新版本/新触发条件下重查。顺手将 `platforms/ohos/README.md` 的旧阶段导航与能力说明对齐当前交接和真实支持面，简写入口，不复制历史账本。复杂技术用 `gpt-6-sol`、架构/算法/资源归属用 `gpt-6-astra` 聚焦只读咨询，按可用次高档，Laya 仅参考；等待构建/咨询时推进独立任务，同 target 与模拟器操作串行。完成后只更新本节结果和 ACTIVE 短状态，保留并行改动，未经要求不 stage/commit/push。
+
+**本包实现。** 鸿蒙 renderer 现在由受控沙箱路径异步读取 PNG，以系统 ImageSource/PixelMap 解码并在渲染线程创建/销毁 OH_Drawing bitmap；同一 key/version 的手写与生成节点复用图片身份，按 fit/fill 和父视口裁剪绘制。资源上限为编码 4 MiB、像素 4194304、解码 16 MiB、在途 8、记录 64、绑定 256；闲置缓存上限 16 MiB，进程跟踪预算 128 MiB（含入场保留额，不等于实测 RSS）。candidate/accepted、解码任务及 renderer 工作分别持有资源，Surface 代次参与取用校验；release 后触发独立的渲染线程 bitmap 清理，不额外提交帧。核心几何修订改为对真实可见几何逐项混合，避免缩放重排时旧 XOR 值碰撞。设置与 thermo 各自打包两版 PNG，业务动作切版；HAP 闭包拒绝把 SDK 的 ImageSource/PixelMap/Drawing/NativeWindow 和 `libohos.*` 链接桩打包遮蔽系统实现。
+
+**两款正常应用实证。** 最终 renderer/transport 源 SHA-256 分别为 `16ed72ce40089cbffa5027b37b493e9e937936454e9c32f3dbf33add053047fc` / `24cb035ac502e4bb99b33e2104d59ab98b5479c4eb3dfd29fa1db05b222f6e39`。设置正常 HAP `5abd8841…`、PID `13374` 的[原始运行目录](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/himage-settings-normal-20260928-r8/)及 thermo 正常 HAP `71d58393…`、PID `16362` 的[原始运行目录](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/himage-thermo-normal-20260928-r5/)均通过公开发现→图片候选接受→手写/生成真实像素、fit/fill、父裁剪、60%/100% Surface 几何、按钮换版、旧版拒绝保旧、系统编辑与 owner 精确读回；包内 PNG、快照、ABI 与 HAP 哈希、SDK 和镜像身份均随当轮归档。运行时日志显示 ImageSource 来自 `/system/lib64/ndk/libimage_source.so`、Drawing 来自 `/system/lib64/libnative_drawing.so`，闭包检查拒绝链接桩入包。先前真实 Sol 回复的原始候选在同 renderer 的[设置 R5](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/himage-settings-normal-20260928-r5/model_replay_from_r3/)与[thermo R3](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/himage-thermo-normal-20260928-r3/model_replay_from_r1/)重新提交，均接受、ready 并截图；归档标明“模型回复重放”，这不是新的模型推理。正常解码先于公开轮询完成，`loading` 瞬态未观测，加载中输入另由受控闸门检验。
+
+**成本原数。** 最终两包启动首次 v1 的编码字节/读取/解码/bitmap 创建分别为设置 `511 B / 42 / 974 / 3 µs`、thermo `509 B / 48 / 896 / 4 µs`，bitmap 后驻留各 `61440 B`；热复用无新增读取/解码/bitmap，v2 换版分别为 `513 B / 29 / 331 / 2 µs` 和 `513 B / 42 / 463 / 3 µs`，两版同时在场时驻留 `122880 B`、其中闲置 `61440 B`。每款在图片候选提交后 20/20 次公开读取成功，与同 PID/实例中连续 40 张 owner 认领票逐笔归属；设置排队 `1438–14191 µs`，thermo `686–11694 µs`，对应客户端 TCP 往返 `13.496–27.836 ms`、`13.479–26.639 ms`。纯读取不触发 scene，逐笔 `scene_accept_ms=not_applicable_read`；候选接受以独立票终态记录，内部 build/scene 提交耗时尚无同口径计数。原始 40 行 hilog 与 20 行 JSONL、读/解码/bitmap 累计及 idle/在途计数见两运行目录。平台解码的系统临时内存不在进程跟踪计数内。
+
+**交错与退役。** 同一最终 renderer 的设置测试 HAP `55a0ba95…`、PID `26825` 在[受控原始目录](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/himage-settings-test-gates-20260928-r2/interleavings_final/)通过四组：v1 保持完成→接受 v2→释放旧完成后画面仍为 v2；native 候选拒绝保留旧图/owner；双节点共用解码和 bitmap 后逐个移除；加载中系统编辑精确读回、20/20 次公开读取成功，随后 STOP 全零并同 PID 新实例重载。STOP 时图片 `resident/idle/active/reservations/running/queued=0`、`bitmapCreates=bitmapDestroys=3`；重开后新图 ready、`resident=61440 B`、队列零。旧应用实例与新实例的 PID、appInstance、token、HAP 哈希和本轮独立转发均归档。原受控验证脚本对滚动 hilog 前缀误判的失败输出保留，现以唯一 STOP/RESTART 标记按同 PID 判定；测试闸门只是资源交错证据，正常应用的画面/输入以两款 normal HAP 为准。
+
+**受影响验证与边界。** 图片 native 反例 9/9、正常消费归因离线 15/15、测试闸门离线 11/11、HAP 链接桩负控 5/5 与既有 NativeWindow 包装负控 3/3、核心几何定向 4 项、H 几何修订时的核心 `cjpm build --skip-script`、renderer NDK 编译及最终两款 normal + 设置测试 HAP 闭包通过；本轮文档链接与 `git diff --check` 通过。当前模拟器报告 PixelMap alpha 为 UNKNOWN(0)，透明角像素已与父背景按截图核对；色彩/解码系统临时内存和物理设备性能仍需独立量测。两款正常 HAP 的旧版模型候选重放与最终 transport 诊断产物身份分别归档；过渡 HAP 不列为消费证据。自有 TCP 转发结束后 `fport ls` 为 `[Empty]`，E/F 并行改动保留，未 stage/commit/push。
+
+**图片包指导限域复核（2026-09-28）。** 读取设置 R8、thermo R5 的正常消费 JSON、设置测试 HAP 的交错/停止原证及相关源码，并查看 R8 冷态截图；当前 renderer SHA 与归档 `16ed72ce…` 一致。两款各 20 次普通读取全部成功，但资源当时已 ready；加载中可服务性由测试闸门的另一组证据证明。接受上述范围，本次未运行构建、测试或设备。另发现 `Session::imageObservedSerial` 按单调 entry ID 插入，仅会话创建/销毁清空，缓存淘汰未同步回收：像素缓存有界不等于这张历史表有界。此源码缺陷纳入下一包 A；不撤销两款正常消费事实，也不据此重开整个图片矩阵。
+
+<a id="h-touch-scroll-next"></a>
+### H 触摸包：图片观察记录回收、触摸滚动与焦点 reveal（2026-09-28）
+
+**目标与取舍。** 执行对象是鸿蒙 H 线，工作目录 `/Users/jiangxuanyang/Desktop/cangjie`。交付单指纵向拖动、点击/滚动仲裁、accepted 视口及真实焦点接续，让手写与生成长内容在两款正常 HAP 中可操作，同时修图片观察记录的长期增长。复用上包图片、输入、生成 region 和 Surface 仲裁；这一阶段增加公共交互能力，样例只作消费者。惯性/回弹、生成嵌套滚动和大规模虚拟列表另按需求接续，首包保留现有生成嵌套限制。
+
+**已核对的入口与借鉴方式。** snapshot 的 `CjguiComposableUiScrollViewport` 已有 `scrollBy/step/reveal`、staged/accepted extents；设置和 thermo 已注册生成 `scrollArea`。核心窗口消费 scroll 事件，但 H 当前只转发触摸四相位，按钮/布尔在 BEGIN 执行，输入框在 BEGIN 激活；`focus_composable_node` 忽略 nodeId，取消 capture 也只返回 OK。借鉴当前 macOS“子控件命中与包含视口的滚动归属分开”和共享窗口“reveal→接受新几何→聚焦”的既有机制；保留成熟触摸处理的待定、点击、平移、取消状态区分，具体 SDK 事件字段/单位先查本机头文件和官方说明。共同的识别、身份与 viewport 状态合理放在仓颉核心；H 桥负责平台事件值、坐标归一、系统焦点和平台对象，不另建 ArkTS 滚动/业务树。公共契约确需扩展时先给出最小方案及 macOS 兼容方式，局部同步 H snapshot，保留 E/F 在途实现。
+
+**A．图片观察元数据随实际持有收敛。** 先在现有 native 图片测试中建立有限资源循环：同一会话始终只显示一张图，轮换 65 个合法身份并再次循环，缓存记录保持上限而观察表不能逐轮增大。按当前 accepted/必要在途持有回收不再有用的观察记录，保留完成修订单调、同资源多节点去重、旧完成不影响新 accepted 的语义和既有锁序。反例修后检查表规模收敛、移除及关窗清理；不以定期清空整表制造重复完成通知，也不以扩大容量收口。既有图片四组交错按受影响路径复用。
+
+**B．连续位移与点击互斥的通用触摸链。** 平台回调读取失败时不合成合法触摸；明确单指身份、Surface/应用代次、坐标单位及有界队列规则。当前满 256 项直接丢最旧事件可能丢 BEGIN/END，改为保留必要相位、合并同手势 MOVE 或显式取消，确保累计位移不丢、旧代事件不延续到新挂载。手势起始绑定 accepted 目标与包含视口，阈值前待定、超过阈值由视口接管并取消子控件点击；有效抬起才执行一次点击，移出/取消/退役不激活。纯滚动不修改业务 owner 或触发焦点切换结算。已激活文字编辑器的选区拖动、长按和系统代理按明确优先级保留，不能把所有 MOVE 强制当滚动。
+
+连续逻辑位移沿共同 scroll 意图进入既有 viewport，而非上下半页跳转、直接写布局坐标或增加第二套 offset。稳定实例在 offset 更新产生新 accepted scene 后可继续同一手势；换绑、移除或 Surface 退役则取消。覆盖头尾夹紧、反向拖动、内容缩短与尺寸变化；候选拒绝保留旧 accepted 几何，随后恢复。比较请求 offset、accepted offset、绘制裁剪与命中，不能只以字段数值变化判定滚动成立。
+
+**C．reveal 后接通系统焦点及编辑。** 使用共享 `focusScopedNode`/reveal 机制，通过正常应用操作定位屏外编辑器，等待对应 accepted 几何后接通 H 真实焦点/输入上下文；补齐取消 capture 的实际行为。成功回执对应正确节点和当前绑定，失效节点具名拒绝。滚动/resize/键盘改变可视区后，系统代理几何、UTF-16 选区和可见草稿继续校准；外部换版后继续编辑同一字段。平台调用遵守现有线程/锁边界，避免在 renderer 全局锁内同步等待 UI。当前 marked/cancel 版本化待验不阻塞这一已有草稿/提交能力的消费。
+
+**D．两款 normal HAP 连续消费与成本。** 设置和 thermo 各提供超过三屏的有界内容，均包含文字、图片、按钮、编辑器；至少一个手写视口和一个由真实公共客户端提交的生成 `scrollArea`，共同调用同一机制。两款都实跑从子控件区域起手滑动→头/中/尾画面及 accepted offset→停止后精确点击/系统编辑→公开 owner 读回；按钮上滑动零误激活、普通点击恰好一次。再覆盖屏外目标 reveal→真实系统输入、同 key 生成重排保位置/草稿、非法候选保旧、移除旧目标后不串操作。画面、输入与 owner 对照必须来自正常 HAP；高密度 MOVE、取消/旧代和拒绝时序可由测试构建作确定性反例。
+
+记录触摸队列高水位/合并量、实际位移、构建/布局/提交计数和停止后空闲收敛；图片滚动重绘应复用同 key/version，不能每帧解码。动态滚动期间插入少量带请求身份的公开业务写入，逐笔对齐 owner 与对应 accepted 场景；GET_CONTEXT 往返只报告读取服务成本。只采集能绑定阶段的耗时，未提供的内部计数如实保留，不为填性能表另造完整诊断系统。最终一次汇合验证受影响测试、核心构建、两款同源 normal HAP、SDK/镜像/ABI/源码指纹及禁止链接占位库的闭包；共享仓颉路径变更补相关 macOS 消费回归。物理设备性能继续单列。
+
+**执行节奏。** 读取本节、ACTIVE、AGENTS 与直接相关源码即可开工；仓颉实现前使用 `cangjie-coding` 技能。A 与 B/C 独立推进，等待编译/咨询时做尚未阻塞工作，同 target 构建与模拟器操作协调串行。复杂平台实现/根因向 `gpt-6-sol` 聚焦只读咨询；手势所有权、跨层契约或并发方案未定时先用 `gpt-6-astra`，按当前可用次高档，Laya 辅助判定；结论用具体反例验证。沿 AGENTS 累计失败与升级规则，不靠重跑或散补丁试探。已通过且未受影响的基线直接复用，阶段有实现闭环或新事实时才短更本节和 ACTIVE，包末集中报告；不增逐轮文档。保留 E/F 改动和用户实例，未经要求不 stage/commit/push。
+
+**执行者原始自验记录（2026-09-28，指导裁定见下）。** 以下保留本轮实现、运行报告及旧判据；“A/B/C/D 全部交付”由下方限域复核修正，不能继续作为整体完成状态。未 stage/commit/push，E/F 写集保持原样。
+**A**：`reconcileAcceptedImagesLocked` 在既有 S→D 锁序内回收已退役 entry 的观察记录（entry ID 单调不复用，accepted/在途以引用/预留钉住 entry，"不在表内"等价"无人持有"；存活记录保留，缓存图再入场景不重复完成通知）。反例入 `scripts/test_image_capacity_native.py`：同一会话 65 身份双轮换，未修复版第二轮观察表增大（rc=2），修复版收敛且同资源去重/同 serial 不重发/关窗清理语义保留；全套图片 native 套件（capacity/epoch/binding/path/geometry/alpha）通过，既有四组交错原证按未受影响路径复用。
+**B/C（renderer）**：触摸链改为单指手势状态机——阈值前待定、超阈值由包含视口（`scrollAreaIndexContainingPoint`，与子控件命中分开）接管为连续滚动并取消子控件点击、有效抬起执行一次点击、移出/取消/退役/surface 换代/视口移除不激活；滚动位移按存活样本差分累计并入同版本队尾事件（`by:<delta>` 文本，核心 `applyViewportScrollStep` 解析后走 `viewport.scrollBy`，无第二套 offset）；已激活编辑器长按/系统代理优先级保留。桥队列满载先丢最旧 MOVE（差分累计不丢总量），BEGIN/END/CANCEL 相位配对不断。`focus_composable_node` 按 nodeId 在 accepted 重验并走与触摸共用的平台编辑上下文激活（不回发 FOCUS，对齐 macOS enqueue:NO），失效目标 `NODE_NOT_FOUND` 具名拒绝；`cancel_composable_pointer_capture` 实际终结手势。12 组手势链确定性反例入新 `scripts/test_touch_gesture_native.py`（真实函数抽取宿主编译），全部通过。
+**D（两款 normal HAP，真实 uitest 触摸 + 公共 TCP）**：设置 run `hscroll-settings-r3-120948`（HAP `92d57333…`，同 renderer 库 `8900487c…`；r2 起两次为画布加高前版本）、thermo run `hscroll-thermo-r2-121711`（HAP `8e0d65c5…`）。thermo run 的构建/安装/闭包有效，但其启动断言按默认 bundle 拉起了设置应用（launch 入口未随 CJGUI_APP_* 参数化）——thermo 的场景与消费证据来自随后显式 `aa start com.example.cjguithermo` 的当轮 hilog/截图（PID 22978/25671），不引用该 run 的启动断言。设置：真实上滑（子控件行起手）→ 视口 900 接管、行 5-8 滚入（截图 diff bbox 非空）→ 纯滚动 owner v0 不变 → 滚入的「滚动区减少」精确点击恰一次（10→9，v1）→ 滚入编辑器真实聚焦（ime proxy FOCUSED field=hand-scroll-note）→ 系统 IME 输入提交 → owner scrollNote「滚动备注已滚动到此处」精确读回（v2）→ 聚焦-滚动-追加再读回（v4 值精确）→ 按钮上起手滑动零误激活（target=941 被取消，count 不变）→ 尾部夹紧（二次滑动 clamped）。公共客户端提交生成 scrollArea（16→27 节点两版，含 action）候选被接受后，真实滑动由生成视口 `viewport=807001` 接管滚动、owner 依旧不变——与手写视口同一机制。thermo：滚入「滚动区升温」点击恰一次（22→23，v1）→ 按钮起手滑动零误激活 → 滚入备注编辑器系统输入提交 → owner note「恒温滚动备注」精确读回（v2）。 Examples 应用源（settings/thermostat）为唯一来源并新增 scrollNote 字段与 EDIT_SCROLL_NOTE 外部授权域；设置画布 layoutWeight 1→3 使生成区可见可触。触摸队列高水位/合并量未单独埋计数，实际位移/接管/版本推进由 hilog 原文与截图承载；内部构建/布局计数沿用 owner 周期日志，未为填表另造诊断。核心 `cjpm build --skip-script` 与 `cjpm test` 377/377 通过（共享 window 路径的 macOS 回归；macOS 从不产生 `by:` 文本，行为不变），`git diff --check` 干净，fport ls 清空，本轮转发与自有实例已按身份清理。marked/cancel 版本化对照、惯性/回弹、生成嵌套滚动、物理设备性能与发布审核按原边界保留。
+
+<a id="h-touch-scroll-review"></a>
+### H 触摸包指导接续：补全手势与焦点生命周期，完成正常消费（2026-09-28）
+
+**复核范围与取舍。** 指导本次只读 bridge/renderer、共享与 snapshot 窗口、代理、测试及两 run 的源码指纹、启动原文和截图，没有构建、测试或操作设备。图片观察表按生产 entries 存活性回收，既有 S→D 锁序和持有保护成立，保留这项实现；65 身份夹具能判别历史表增长，但其末尾直接 clear 不能独立证明生产关窗。两 HAP 与 renderer 输入/产物指纹相符，设置生成区域和 thermo 滚动截图保留。两 run 的 runlog 只记录启动，thermo 的启动原文实际是设置应用；本次未在所列归档定位到后续 PID 22978/25671 的系统输入和精确 owner 回包，因此这些数值暂按执行者报告保留，先找现有原文，缺失部分并入本包正常消费补取。12 组测试只抽 renderer，裁剪恒真，未覆盖平台队列和公共 focus API，不能证明下面的机制正确。
+
+**A．平台事件与有界队列：先保身份和终相位。** `cjgui_host_bridge.cpp` 的 `dispatchTouchImpl` 忽略 `OH_NativeXComponent_GetTouchEvent` 返回值，零结构的 type 对应 SDK 的 DOWN；`TouchRecord` 没有 pointer id，忽略第二次 BEGIN 不能阻止第二根手指的 MOVE/UP 结束第一根手势。读取失败不得发布合法触摸；按本机 SDK 契约携带活动手指、Surface/应用代次和有界事件身份，逐相位校验，明确多指时忽略副指或显式取消主手势的策略。数值须有限，平台坐标与逻辑单位转换只做一次。先补“取数失败零输入”和 A 按住→B 按下/抬起→A 不误激活的反例。
+
+满 256 项时当前先删任意最旧 MOVE，无 MOVE 则 pop_front，仍会拆相位，且删除某手势唯一 MOVE 会让滑动退化成点击。改为有界的同身份压缩与明确的过载取消/恢复协议，保留跨阈值事实及最后坐标；无法保留时取消该手势，旧 END 不得激活，新 BEGIN 能恢复。测试必须进入真实 bridge 入队/出队再到 renderer，覆盖全边界事件饱和、唯一 MOVE 被压缩、取消/退役与新手势。记录最小的高水位、合并/取消计数即可，不另做诊断平台。
+
+**B．同一手势的位移、绑定与取消贯穿核心。** `synthesizeEventsFromRawTouch` 逐 MOVE 将 float 差分转 Int64，同时推进 last，导致小数位移丢失；END 不结算尾差，也不重新判断阈值。保留浮点累计余量，到共享整数 viewport 的边界再量化，END 消费最后坐标；接阈值、同方向合并、反向和头尾夹紧的结果须与明确的未压缩参考序列一致，不能只测净和。补 0.5 单位连续样本、最后位移只在 END、边界往返，以及候选拒绝后的请求/accepted 恢复反例。保留现有 `by:`→共享 viewport 单一路径，同时对共享解析、合法正负位移、非法载荷/溢出和旧方向事件做针对性回归；“macOS 不生成 by:”不等于共享分支已验。
+
+手势不能只用 nodeId/resourceId/kind 判断换绑。按真实绑定身份/代次区分同 key 重排或几何更新与动作/字段替换，冻结起始绑定，旧按下不能借新 sceneVersion 激活另一动作；沿现有公共绑定机制接通，避免新增第二套 owner。系统 CANCEL、退役和目标移除目前仅重置 native gesture：若已向核心发 POINTER_BEGIN，必须沿旧捕获身份送达恰好一次有效终结，清理核心 capture；核心主动取消则避免回环。先补“BEGIN/UPDATE 被核心消费后系统 CANCEL”和“按下动作 A→同槽换动作 B→抬起零误触”反例。移动离开、横向手势与已激活编辑器选区/长按应按明确优先级仲裁，不能依靠队列丢样本或把长距离拖动当长按。
+
+**C．焦点切换与屏外 reveal 成为真正可消费能力。** `beginEditingOnNodeLocked` 每次换 contextId，但同一已激活节点不设 focus/reconcile 通知，公共重复聚焦后系统代理仍持旧编号，后续输入被 stale 拒绝；切到另一字段又先覆盖旧身份/缓冲，新焦点通知到页面后才提交旧代理，旧草稿已经无法结算。将二者作为一个上下文生命周期问题修：同一有效绑定重复聚焦幂等；切换时按旧身份保存待结算数据并落实既有失焦语义，再发布新上下文，旧回调不可写入新字段。拒绝/取消是明确结果，不能静默丢普通未提交草稿；平台调用继续在 renderer 锁外完成，不等待 UI 回调持锁。
+
+先用真实公共 focus 路径覆盖同字段连续聚焦后输入、A 普通草稿未回车→聚焦 B→A 恰好结算、旧回调拒绝。几何更新与 owner 修订沿已有 `CjguiComposableUiBusinessOwnerRevisionProvider`、`cjguiPreservesOwnerStableText` 和 `preservesActiveLocalText` 保留机制核对；不能只看 native 的 sceneVersion 变化分支就另造修订系统。补活草稿与非空选区经滚动/resize/同 key 重排后继续提交、外部真实换版后校准的判别。**原包要求的屏外 reveal 尚未由“先滑到可见再点击”证明**：在正常应用中通过显式目标导航调用公共 focus/reveal，证明初始裁剪→请求→新 accepted offset/几何→正确系统 context→输入→owner；受控拒绝保持旧几何，随后同请求恢复。此项不依赖原始键盘路由，也不依赖目前缺失的 marked/cancel 回调。
+
+**D．部署身份和正常双消费者一次汇合。** `build_and_run.sh` 从 LAB 读 BUNDLE_NAME 后，又按 env 默认 `CJGUI_APP_BUNDLE` 启动和取 PID，能“构建 thermo、启动设置、断言成功”。从目标工程统一解析/核对 bundle、ability、端点，构建、安装、启动、PID 与断言共用；显式覆盖不匹配须具名失败。先做离线错应用负控，再使用华为模拟器的设置与 thermo normal HAP。复用既有图片/生成 region/viewport，在同次连续会话完成：子控件起手滚动、停止点击恰一次、屏外导航与系统输入、活草稿重排/resize、非法候选保旧、移除/换绑后无旧操作；至少一个手写与一个公开客户端提交的生成视口。示例用现有声明式样式保证滚动内容可读可触，不以修改截图补可见性。
+
+按当轮 HAP、bundle、PID、资源/目标身份和版本保存实际输入日志、关键前后截图与公开 owner 原文；先归档已存在材料，缺证并入这次受影响链，不补造历史读数。设置与 thermo 各自启动断言必须对应自身。滚动中插入少量带身份的公开业务写入，记录可绑定的 ready/owner/accepted 样本、位移及空闲收敛、同图滚动解码计数，读取往返单列；未提供的内部细分耗时继续标 unavailable。
+
+**本包参考查阅。** 落实 AGENTS 的机制触发规则，优先针对触摸仲裁、事件压缩与取消、焦点/输入上下文生命周期，从[本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)定位成熟实现及对应测试；导航缺项自行定向查找。先读关键符号，明确状态归属、失败恢复和 CJGUI 的适用差异后回到实现。借鉴思路，不引入参考框架依赖；已有结论在前提未变时复用，必要结论简记本节，不新增调研台账或把全仓阅读作为开工条件。
+
+**E．执行方式与收口。** 复用上节 A 的图片修复、B 的共享 viewport 入口和 C 的平台 focus 入口，不重写正常已验链。优先建立 A/B/C 各自会失败的最小生产反例并连续修机制，启动身份修复可独立推进；最终一次受影响测试、核心 build、两款同源 normal HAP/闭包与源码指纹。共享仓颉修改补相应 macOS 定向消费，H snapshot 只同步必要契约，不覆盖 E/F 在途文件。沿 AGENTS：仓颉编码先用技能；复杂技术根因咨询 `gpt-6-sol`，跨层身份/生命周期或公共契约未定先咨询 `gpt-6-astra`，使用当前可用次高思考档，携带最小复现与已有证据；Laya 仅辅助。等待构建/咨询时推进独立工作，同 target 和设备操作串行。无新变更/失败/证据疑点就复用旧基线，不重复整套验证；只在实现闭环或新事实出现时短更本节与 ACTIVE，包末集中报告。惯性/回弹、嵌套生成滚动、物理性能和当前 marked/cancel 版本边界保持后续，不把它们变成此包的开工门槛。用户已授权范围内自主连续实施；保留其他线程和用户实例，未经要求不 stage/commit/push。
+
+**执行者接续自验（2026-09-28；整体状态以下方第二次指导复核为准）。** 机制参考按 AGENTS 新规则执行：Flutter 手势竞技场（arena.dart，按指针开闭/eager winner/UP sweep/resolve 幂等）与通用事件压缩原则（绝对坐标保最新样本、相位不可丢、过载以 CANCEL 收敛）已读，适用前提（指针键控竞技场 vs CJGUI 单指+视口接管）记录如上后回到现有架构实现，未引入参考依赖。下列是原自验读数；“总量不丢”“恰好一次终结”“无需 macOS 回归”的适用范围已由下一节修正。
+
+**A**：`dispatchTouchImpl` 校验 `OH_NativeXComponent_GetTouchEvent` 返回值（取数失败零输入；零结构 type==DOWN 不再成合法触摸）、坐标有限性、活动手指身份（首指持手势，副指 BEGIN 忽略、副指 MOVE/UP 不终结主指，主指抬起释放，surface 换代作废）。队列改为同身份压缩优先（手势在途 MOVE 恒压缩为单条最新样本，坐标为绝对值故总量不丢、滑动不退化成点击）+ 满载丢最旧 MOVE + 相位边界满载时对队首代次整组移除并队首注入显式 CANCEL（先于一切排队记录交付，渲染器重置该手势；旧 END 不激活，新 BEGIN 恢复）；高水位/压缩/过载取消计数入 `test_touch_bridge_queue_native.py`（真实入队策略抽取反例：饱和、唯一 MOVE 压缩、过载取消形态、新手势恢复）+ dispatch 源码断言。
+**B**：渲染器手势位移以浮点累计余量量化交付（逐样本 float→Int64 截断与 by:0 消失），END 重判阈值并消费尾差（快速轻扫不再误判点击）；激活事件携带按下时刻冻结版本（同槽换绑动作/字段后旧按下由核心 resolveInput 版本失配拒绝）；指针相位流开/合簿记，系统 CANCEL/退役/移除沿旧捕获身份送达恰好一条指针取消（核心对 40 无条件清捕获），迟到 END 不补发。7 组新反例（R1–R7）+ 原 12 组全绿于 `test_touch_gesture_native.py`。
+**C**：同一有效绑定重复聚焦幂等（不换 contextId，代理不 stale）；跨字段切换先按旧身份同步结算组合草稿（settle 以旧身份交付恰好一次）并捕获 detach 身份（pump end 通知不再读新字段）；`focus_composable_node` 对未完整可见目标经公共 FOCUS 通道请求 reveal（同上下文仅一次）。snapshot 窗口补必要契约：`focusAcceptedSemanticNode` + pending/flush，且语义 flush 挂上**原生提交点**（初版只挂了 semantic-menu 分支导致焦点不落地，经 r4/r5 设备取证定位后修正）；reveal 一次到位按当前几何聚焦（长内容可超夹紧上限，不无限重试）。屏外 reveal 消费入口为示例内导航按钮（应用内显式目标导航 → 公共 API），设置与 thermo 各加「定位滚动备注」。
+**D**：`build_and_run.sh` 应用身份改为从目标工程 app.json5/module.json5 统一解析（bundle/ability），env 默认不再覆盖目标工程；显式覆盖与目标工程不一致具名失败。离线负控 `test_app_identity_guard.py` 5 项（两 lab 各自解析、显式失配具名失败、显式匹配放行、env 默认不误触发）。华为模拟器两款 normal HAP（设置 `hreview-settings-r6-143632` HAP `21e805a1…`、thermo `hreview-thermo-143942` HAP `b483f06e…`，同 renderer 构建）各完成连续消费：真实 uitest 快扫（按钮起手→视口接管零误激活、owner 不变）、滚动后精确点击恰一次（设置省略/thermo 降温 22→21）、导航按钮屏外 reveal→平台 focus（ctx/mount 一致）→系统 IME 输入→owner 精确读回（设置 scrollNote「滚动备注屏外导航输入待结算草稿」跨字段切换结算 v3；thermo note「恒温滚动备注」+降温 v2）。多指策略由宿主反例覆盖（uitest 无法驱动真实双指，设备多指留待真实触摸验证）。
+**E**：受影响宿主测试 9 套件全 OK（touch gesture 19 例、bridge queue、identity guard 5 项、image 6 套件）；共享仓颉核心本包未改（snapshot 为 H 独有契约，src 的 focusAcceptedSemanticNode 早已存在），无 macOS 回归负担；示例应用新增平台中立字段/按钮由 lab 构建验证编译。`git diff --check` 干净、fport 清空、本轮转发已清理。marked/cancel 版本化对照、惯性/生成嵌套滚动、物理设备性能与发布审核按原边界保留。E/F 并行改动保留，未 stage/commit/push。
+
+<a id="h-touch-lifecycle-second-review"></a>
+### H 触摸包第二次指导复核：贯通队列、捕获与绑定，再完成正常消费（2026-09-28）
+
+**裁定与保留。** 本次核对当前生产函数、抽取测试、两款 HAP 的原始启动/指纹与截图，并在临时目录执行小型宿主判别；未改生产、未构建 HAP、未操作模拟器。保留图片观察回收、平台取数返回值/有限值检查、单指过滤接线、浮点余量、无 MOVE 快扫判别、重复聚焦幂等和跨字段旧身份入队的进展。部署身份缺陷本轮确已修：设置 PID 9843、thermo PID 13724 各启动自己的 normal HAP，两包 renderer 摘要同为 `1297440e150e7a381434c05bdf28db3b2c47e965167cf484ad4084f17ab53cda`。设置截图证明滚动备注可见、光标和系统键盘出现。**A–E 仍未整体收口**，以下跨层反例优先于单函数测试绿色。
+
+| 复核发现 | 当前实现与可区分结果 |
+| --- | --- |
+| MOVE 压缩抹掉拖动历史 | `enqueueTouchRecordLocked` 只覆盖最新绝对坐标。真实 bridge 入队→真实 renderer 摘录：`BEGIN(60,120)→MOVE(60,150)→MOVE(60,120)→END(60,120)`，直送为 `activate=0/scroll=1`，压缩后 3 条却为 `activate=1/scroll=0`。回到起点不等于没有跨过阈值。 |
+| 满队列仍删除唯一 MOVE | 同一手势仅一条 MOVE，再加入同 Surface generation 的边界事件造成 256 项压力，得到 `overloadCancels=0/activate=1/scroll=0`。现 Q3 的 256 条同代 MOVE 实际先压成 1 条，没有覆盖满载分支；dispatch 取数/多指测试目前是源码关键词断言。 |
+| 已滚动手势仍漏 END 尾段 | `kGestureScroll` 的 END 只量化旧余量，没有纳入 `END.y-lastY`。真实函数摘录 `BEGIN y100→MOVE y80→END y50` 为 `actual=20 expected=50`。R1 无 MOVE、R2 END 与最后 MOVE 同坐标，均判不出它。 |
+| 场景版本代替了绑定身份 | 保持节点/资源/动作/几何全不变，只接受下一帧，按下版本 100 被原样发出，而当前 scene=101，核心 `resolveInput` 必拒。现 R3 只检查旧版本，没有同时证明换绑拒绝和同绑定存活。 |
+| 旧 CANCEL 反馈取消新手势 | native pump 可先处理 A BEGIN/MOVE/CANCEL 与 B BEGIN/MOVE。核心收到 A CANCEL 又调用 native cancel，后者取消当前 B；宿主按此调用顺序实测 `new_gesture_active_before=1 after=0 cancel_before=1 after=2`。完整仓颉↔native 往返仍应补定向验收。 |
+| reveal 与共享示例接线仍有缺口 | H `flushPendingSemanticFocus` 仅核 node/semantic/resource，漏主核心现有 incarnation/field/action/operation 绑定，旧 A 请求可聚焦同槽新字段 B。共享 settings 示例新增导航按钮只有 OHOS owner-loop 取 pending，macOS 宿主未接；这不是 H 独有示例变更。 |
+
+尾差、场景版本、取消反例原数与摘录夹具：[result.log](/private/tmp/cjgui-touch-review-bz23iz90/result.log)、[touch_review.cpp](/private/tmp/cjgui-touch-review-bz23iz90/touch_review.cpp)。bridge 两条反例的输入与结果完整列于上表，临时宿主夹具已回收，执行者据生产入口固化即可，不补造历史日志。上述是源码/宿主机制证据，不能称为本次模拟器重现。
+
+**A．一次修清事件压缩语义，保留可判定的手势历史。** 在现有 bridge→ingress→renderer 通路中区分 Surface 代次、pointer 身份与一次 gesture/capture 代次；同 Surface 的两次触摸不能只靠 generation 混为一组。容量继续有界。首片可以保留有界原样本或有序同向片段；只有证明对阈值、方向转换及 viewport 逐次夹紧等价时才压缩。至少保留“已经跨过阈值”的不可逆事实与必要转折，最新绝对坐标本身不是这项事实。不能保留必要样本时，对准确的受害手势交付一次取消，退役其后续 MOVE/END，新 BEGIN 可恢复；取消不能越过身份清除另一手势。
+
+统一 MOVE/END 的坐标累计入口，END 先纳入最后坐标差再量化，保留亚单位余量。连同 `appendScrollIntentLocked` 一并核对：它当前把反方向 delta 直接相加；头部 offset=0 时依次 `-30,+30` 经夹紧应为 30，合成 0 则结果不同。首片保留反向片段及逐步夹紧，不能仅以净位移判等。共享 `by:` 解析仍走原 viewport；非法/溢出、候选拒绝后的 requested/accepted 恢复按受影响路径验证，不另造滚动 offset。
+
+**判别要求：**通过真实 bridge 入队/出队→renderer→共享 viewport/控制器检查，而非只测队列形状。覆盖往返越阈值、唯一 MOVE 遭压力、全相位满载、反向夹紧、END 独有尾段、0.5 连续样本及旧代/新手势恢复；平台 dispatch 用受控 SDK 返回值执行失败与主副指序列，替换纯关键词断言。先固定当前错误结果，再连续修机制；现有单调滚动正例复用。
+
+**B．绑定与捕获各有身份，取消按方向终结。** 冻结真实 accepted 目标的绑定身份/代次，复用共同核心已有 semantic incarnation、字段/动作/operation 目标等判据；整 sceneVersion 仅是场景版本。抬起先确认原绑定仍存活、当前命中合法，再按当前 accepted 事实交付；同绑定几何/无关刷新继续，真正换绑/移除拒绝。业务 owner 的并发版本守卫保持有效，不能简单把旧事件统一改戳成新版本。编辑器 native 切焦点也须在目标验证后进行。
+
+区分“平台通知该捕获已终止”与“核心主动要求平台取消捕获”。前者只终结匹配的核心 capture，不反向广播取消 native 当前手势；后者携带可核对的 capture 代次，不能作用于较新的手势。BEGIN/UPDATE/END/CANCEL、退役与主动取消共用一次终态规则。固化 `A CANCEL 已排队→B 已在 native 开始→核心消费 A` 的完整跨层反例，断言 A 终态一次、B 可继续更新/结束、旧 END 不误激活；另外成对证明“换动作拒绝”和“同绑定换帧仍可点击/拖动”。
+
+**C．沿既有完整绑定契约接通焦点消费。** 同步主核心 `flushPendingSemanticFocus` 已有的 incarnation/field/action/resource/operation 校验到 H 必要快照，保持请求随 accepted 事务完成；受控拒绝保留请求与旧几何，恢复后只聚焦原绑定。目标高于视口时允许按明确的非空可见交集完成 reveal，完全不可见或换绑不得被“只试一次”洗成成功。native 聚焦失败须有明确结果或有界重试，不清 pending 后静默丢失。
+
+同字段重复 focus、A 草稿未提交→B、迟到旧回调等已有机制，补到公共 API→native→系统代理→真实 owner 的链上。活草稿和非空选区经滚动/resize/同 key 重排后续写，必须区分同绑定延续与字段换绑；复用已有 owner 修订保护。共享 settings 控制器的导航请求同时接回 macOS 消费宿主，做一次该按钮 reveal→聚焦→输入的针对性验证；无需为此重跑整套 macOS 框架。
+
+**D．把原包缺证与正常能力合并成一次连续消费。** 两份最新 run 的启动和 renderer 指纹有效；目前其 runlog 仍只有启动段。设置截图是输入前焦点，thermo 截图为 22℃/空备注且显示“事件 39 的原控件已刷新（节点 900）”，不能代表报告中的 v2/21℃终态。先从已有任务输出归档真实 IME/owner 原文并补索引；无法找回的部分标明执行报告记录，在本包最终正常链补取，不重新制造历史证据。
+
+在华为模拟器的设置与 thermo normal HAP 各复用当前实例，至少一个手写、一个经公开客户端提交的生成视口，完成：按钮起手往返滑动零误激活→停止点击恰一次→屏外导航与系统输入→活草稿/非空选区同 key 重排及 resize 后续写→非法候选保旧并恢复→换绑/移除后旧输入拒绝。滚动中插入少量带身份公开业务写入，保存实际 ready/owner/accepted 关联、位移、停止后收敛和同图解码计数；内部耗时不可得时保留 unavailable，GET_CONTEXT 往返仍只是读取成本。截图、原始协议回包与阶段日志绑定当轮 HAP/bundle/PID/目标，按操作实时收取，集中报告不替代原文。
+
+**E．机制参考、咨询与执行节奏。** 这是原触摸包的完整接续，保持惯性/回弹、生成嵌套滚动及物理性能的后续边界。优先读本地 Flutter `monodrag.dart` 的 possible→accepted、`_hasDragThresholdBeenMet` 与 `arena.dart` 的指针生命周期，并查对应拖动/取消测试；指导已核对本地 `8db55268667c` 的上述状态转换。借鉴“接受后不能由回到起点重新变回点击”和按指针终结的机制；Flutter 竞技场本身并未证明 CJGUI 的压缩算法。队列压缩与转折若需其他参考，按[机制导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)自行定位相关源码/测试，记录适用差异，只借思路，不引入依赖。
+
+本包跨队列/核心捕获的旧问题已发生实质修复后仍失败，先把上表反例与现有接缝提交 `gpt-6-astra` 作一次聚焦只读方案裁决（手势/capture 身份、压缩等价条件、双向取消职责），据可验证方案连续实施；复杂具体实现定位用 `gpt-6-sol`，按当前可用次高档。遵守 AGENTS 累计失败与升级规则，不能换模型清零。成批日志归并/候选分类优先 `laya-ask`，复用必要片段和稳定编号；明确规则直接判断，冲突/信息不足由执行模型接回，分类不替代参考查阅和运行验证。
+
+平台队列、核心取消/绑定、焦点/宿主消费按明确写集交错推进。等待编译、咨询或设备占用时做独立必要工作；同 target、模拟器和 macOS 前台串行。包末一次受影响宿主/共享分支测试、核心 build、两个同源 normal HAP/闭包与指纹，保留图片/历史生成等未受影响原证；共享接口修改与 E/F 协调最小兼容接线。仅在形成真实切面或新事实时简更本节及 ACTIVE，完成后集中报告；不新增逐轮任务卡，不覆盖并行改动，未经要求不 stage/commit/push。
+
+**执行者自验记录（2026-09-28；完整收口结论以下方第三次指导复核为准）。** 咨询先行：六反例与现有接缝已提交 gpt-6-astra 聚焦只读裁决（问答固化于 `platforms/ohos/consultations/touch-lifecycle-astra/`），Q1 压缩骨架（跨阈值样本+方向转折+最新，禁止单删唯一 MOVE）、Q2 按手势代次整手势淘汰（BEGIN 未出队静默删除、已出队注入恰好一次带身份 CANCEL 且先于后继手势）、Q3 绑定身份两路对照（本包取语义冻结过渡路，bindingEpoch 全链路列为后续契约项）、Q4 平台通知只终结匹配捕获不反调 native、Q5 MOVE/END 共用采样入口+核心 viewport 逐段夹紧。
+**A**：bridge `TouchRecord` 增 gestureEpoch（BEGIN 分配、MOVE/END 继承、主指抬起作废）；MOVE 骨架压缩为「极值样本+最新样本」（跨阈值事实与方向转折保留，回起点不恢复点击）；满载淘汰按队首代次整手势（单记录静默移除、多记录队首注入带身份 CANCEL），不再单独删除唯一 MOVE。新宿主反例 `test_touch_bridge_queue_native.py`：饱和压缩、唯一 MOVE 存活、BEGIN 未出队静默、BEGIN 已出队注入带身份 CANCEL。
+**B**：渲染器 MOVE/END 共用 `consumeScrollSampleLocked`（END 纳入最后坐标差，R2 型 50/50 对齐）；`appendScrollIntentLocked` 只并连续同号段（反号按序交付，核心 viewport 逐段 requestedOffset 夹紧，N3）；阈值闰不可逆（跨阈值回落不恢复点击，N1，Flutter `_hasDragThresholdBeenMet` 同型）；绑定语义冻结（semanticId 变化即真换绑在副作用前拒绝，N4 前半；同绑定换帧以当前版本存活，N4 后半/R3 修正）；src+snapshot 核心 kind-40 加身份守卫（A 的过期取消不再清 B 的捕获，宿主 宿主往返反例为 astra 材料,设备验证续 D）。
+**C**：snapshot `flushPendingSemanticFocus` 补 field/action/operation 校验（semanticIncarnation 字段 snapshot 尚无，如实保留待契约同步）；snapshot 语义 flush 挂上原生提交点（上包已修）+reveal 一次到位；macOS settings_counter_window_app 宿主循环接入 `takePendingFocusRequest`→`focusAcceptedSemanticNode` 并编译通过（与 OHOS 同一接法，输出 CJGUI_NAV_FOCUS 行）。
+**D**：双 normal HAP 最终连续消费（设置 `hreview2-settings-final-154847` HAP、thermo `hreview2-thermo-155019` HAP `b483f06e…` 前版+本轮，PID/身份经统一解析）：真实 uitest 快扫零误激活→滚动→导航按钮屏外 reveal→平台 focus（ctx/mount 一致）→系统 IME 输入→owner 精确读回（设置 scrollNote「滚动备注连续消费输入」v1；thermo note「恒温屏外导航备注」24B v1）；原始 hilog 全文与截图按当轮 PID/bundle 归档于各 run 目录。多指由宿主反例覆盖，设备多指仍留待真实触摸。
+**E**：受影响宿主 9 套件全 OK；核心 `cjpm build --skip-script`+`cjpm test` 全绿（src 窗口 kind-40 守卫）；macOS settings 窗口应用编译通过；`git diff --check` 干净、fport 清空。bindingEpoch 全链路（pod+事件+核心比对）、设备多指、marked/cancel、惯性、物理性能按原边界接续。E/F 并行改动保留，未 stage/commit/push。
+
+<a id="h-touch-identity-fifo-third-review"></a>
+## H 触摸包第三次指导：落实既有裁决，贯通有界 FIFO 与跨层身份 A–E（2026-09-28）
+
+**目标与取舍。** 本包继续 H 线，把当前触摸能力补成可被手写、生成及混合窗口共同消费的框架机制。主要问题是裁决没有完整进入生产通路：队列只加了局部 epoch，平台取消仍走旧双向调用，绑定仍只比较当前 semanticId。因此本包选择“有界原始 FIFO＋明确过载终结＋核心签发绑定代次”，先获得可证明的行为，再考虑压缩优化。bindingEpoch 是本包实现项，不再推为可选后续。保留有效的 END 尾差、同号滚动段合并、阈值锁存、平台引用/图片生命周期和两款正常应用原证；不重开它们的历史整套验收。惯性/回弹、设备多指、marked/cancel 版本边界及物理性能继续单列。
+
+**第三次任务下发时的复核事实（修复后的当前状态见本节末「交付后复核」）。** 当次只读源码、裁决和已有 HAP 原证，并在临时目录执行当时生产函数摘录的宿主判别；没有构建 HAP、操作设备或改实现。宿主测试不是模拟器复现，必须接入生产链测试后再与正常消费汇合。
+
+| 发现 | 当前证据与影响 |
+| --- | --- |
+| 往返仍变点击 | bridge 的 `mergeMoveIntoSkeletonLocked` 先覆盖 latest，再将该值保存成转折；`BEGIN y120→MOVE y150→MOVE y120→END y120` 实际出队 `120/120/120/120`。直达 renderer 为零激活、滚动 `-30,+30`，经 bridge 为激活一次、零滚动。全局极值＋最新也不等于保留全部转折。 |
+| 满载可在锁内死循环 | A BEGIN 已出队，仅 A END 在队首；再排入 127 组 BEGIN/END 和 C BEGIN，达到 256 条；C MOVE 触发“删 A 的一条 END→补一条 CANCEL→再删再补”，容量不下降。宿主子进程超时 1 秒后终止。现 Q2b 用 epoch=0 孤立 MOVE 的夹具没有覆盖该合法相位。 |
+| 旧取消仍伤新捕获 | src 与 snapshot 的 kind-40 匹配分支仍调用会反调 native 的 `cancelPointerCapture()`，不匹配分支仍 `clearPointerCapture()`。宿主往返结果 `new_active=1→0, cancels=1→2`。bridge epoch 未经 ingress dequeue、renderer QueuedEvent 到核心，当前守卫无法区分同节点的两次手势。 |
+| 语义冻结并非获准过渡实现 | renderer 只比 semanticId；生成同 key 可保留该 ID 而换 action/field，A→B→A 更不能按最终值识别。宿主 `SEMANTIC_ABA activate=1`，预期 0。Astra 的过渡路线要求历史完整绑定快照与退役识别，本实现不满足。 |
+| 焦点失败会丢失或误报 | snapshot 先清 pending 且忽略 native 返回；native 在目标完全不可见时仍可 beginEditing，并在一次 reveal 后返回成功。新增字段校验与 macOS 宿主接线有效，但不能抵销这一缺口。 |
+
+队列原数与夹具：[result.log](/private/tmp/cjgui-h-touch-review2-yffujxo2/result.log)、[probe.cpp](/private/tmp/cjgui-h-touch-review2-yffujxo2/probe.cpp)；取消/绑定/尾差：[result.log](/private/tmp/cjgui-h-touch-second-review-dn8z8dgx/result.log)、[touch_review.cpp](/private/tmp/cjgui-h-touch-second-review-dn8z8dgx/touch_review.cpp)。队列日志的 `reference_clamped_offset` 是依共享夹紧规则计算的对照，未执行仓颉 viewport；执行者应补真实核心消费断言。`END_TAIL actual=50 expected=50` 已绿，保留为正控。
+
+双 normal HAP 的新增系统输入原证成立：设置 `hreview2-settings-final-154847/hilog_consumption.txt`（PID 22422）含「滚动备注连续消费输入」30 B/v1；thermo `hreview2-thermo-155019/hilog_consumption.txt`（PID 24640）含「恒温屏外导航备注」24 B/v1。两包平台指纹 `c5f575…`、renderer `55c937…` 一致，最终 thermo HAP 以其 `hap_sha256.txt` 的 `9bc910…` 为准，旧 `b483f06e…` 不代表该终态。本轮这两条链的生成结构仍为 0，选区为折叠范围，不能算活草稿非空选区重排/resize、生成视口或拒绝恢复通过；hilog 的 owner 值与公开协议原回包分开标记。
+
+**A．先交付有界原始 FIFO 与可终结过载协议。** bridge 在目标及手势阶段尚未判定时保留原始样本，撤掉当前“两条骨架”压缩。使用当前总容量上限，终结控制记录也计入预算；由实际出队点记录 BEGIN 是否已交付/在途，维护已取消代的有限生命周期。过载按准确 GestureKey 整手势淘汰：BEGIN 未出队则无消费者终态；已出队则生成一次取消，逻辑位置在已交付前缀之后、后继手势 BEGIN 之前。预留终结槽位，取消记录不可再作受害数据；处理流程必须有限步减少待处理工作或返回明确降级结果，不能在锁内删补循环。删除后抑制该代 MOVE/END 直至物理终结，新的 BEGIN 可继续。取消使用受害者的代次、坐标域和顺序，不取新来事件的 generation；“队列里没有 BEGIN”不等于已经交付。
+
+既有 renderer MOVE/END 共同采样与反号分段保留；同号合并不得跨 GestureKey、绑定、坐标域、外部写入等顺序屏障。压缩不是本包必需优化，后续若采用必须证明保留首次阈值、全部必要转折和量化顺序；任意指针轨迹不能套 Y 轴滚动压缩。固定上表两条 RED，再覆盖单记录受害者、取消占槽、END/CANCEL 在途、同 Surface 连续手势、容量始终有界且终态恰一次。SDK 取数失败及主/副指过滤要通过受控返回值实际执行 dispatch，保留已有合法主指序列；源码关键词不算行为验证。
+
+**B．GestureKey、accepted bindingEpoch 与取消方向贯穿全链。** 将应用/窗口实例、surfaceGeneration、pointerId、gestureEpoch 形成不会跨实例混淆的身份，贯穿 raw record→ingress→renderer gesture/derived event→核心 capture→主动取消。比较发生在开始捕获、split 等分派快路径和任何清理之前。平台终结入口只结束匹配核心捕获，不反调 native；不匹配则忽略，不能清掉 B。核心主动取消携 expected key，native 只结束匹配实例，旧 A 不能取消已开始的 B。重复终结幂等、旧 END 不激活；Surface 退役终态不能被当作普通旧代输入过滤掉。
+
+由核心在 accepted 事务发布绑定代次，覆盖 node/resource/kind、semantic/key/incarnation、field、action、operation action/target；真正换绑、移除重建及 A→B→A 推进，同绑定内容/几何刷新保留，被拒候选不发布。可借用既有 accepted 绑定跟踪机制，不能让通用输入依赖动画 API。目标与 viewport 分别冻结身份；renderer 在焦点/IME/激活副作用之前复核，核心执行前再比对，业务版本守卫照旧。无身份的旧后端事件保留原严格版本路径，零值不是通配符。
+
+选择最小兼容接缝并同步 C/Cangjie、src/snapshot、桥接出入队、复制与派生事件。现有事件 POD 的 `bindingEpoch` 已用于 kind-52 组合协议，先确认语义与命名域；需要新字段或旁路元数据时，随事件原子冻结且有 ABI size/offset 及新旧后端检查，不能临时查询“当前手势”补旧事件身份。E 文本会话规则保留，与其共享符号协调。验收必须成对覆盖：同绑定换帧仍可操作／同 key 换动作或字段被拒；A→B→A／移除重建拒绝；A CANCEL 排队后 B 已开始，A 终结一次且 B 能正常完成。bridge/renderer 测试与仓颉核心捕获测试都要能判出原缺陷。
+
+**C．焦点请求也绑定 accepted 身份，并有真实终态。** snapshot 与主核心共同校验完整绑定及新代次；pending 从请求到 reveal 接受、native focus 成功或具名拒绝有明确状态。暂时不可用保留等待资格，按 accepted/native 可用变化做有界接续；永久失败具名终结，禁止无条件清请求或每帧无限重试。目标与完整祖先裁剪链存在非空可见交集才可完成聚焦；高于视口的控件允许部分可见，完全不可见不能启动编辑并报成功。固化受控 native 失败→恢复、reveal 后仍完全裁剪、等待期间同槽换绑/ABA。共享 settings 的 macOS 接线已存在，补一次导航按钮→reveal→输入读回的针对性消费即可。
+
+**D．完成正常手写与生成消费，补上包实际缺项。** 在两款 normal HAP 复用临时实例，至少一条手写视口、一条通过公开客户端接受的生成视口：按钮起手往返越阈值零误激活→停止后点击一次→屏外导航/系统编辑→可见草稿和真实非空选区同 key 重排、resize 后继续编辑→非法候选保旧后恢复。另用同 key 换 action/field 或移除重建证明旧触摸不能激活新绑定，当前合法手势仍可执行。复用既有系统输入正控；不为 marked/cancel 的版本化平台边界反复尝试相同操作。
+
+滚动期间插入少量带身份公开业务写入，保存 ready/owner/accepted 对应关系、位移/余量、终结后空闲计数、同图解码与资源持有；按原预算报告逐样本，不把 GET_CONTEXT 耗时当渲染响应。公开 owner 原始回包、截图和系统日志绑定本轮 HAP/bundle/PID/目标。现有 hilog 可复用但不补造已遗失的协议原文；只对缺少或受修改影响的连续段补证。
+
+**E．按已有裁决实施并集中汇合。** 先读 [Astra Q1–Q3 最终答复](../../runtime/cjgui/platforms/ohos/consultations/touch-lifecycle-astra/response_q123.txt) 末部标题节（当前约 1997–2032 行）及 [Q4/Q5 答复](../../runtime/cjgui/platforms/ohos/consultations/touch-lifecycle-astra/response.txt)。其中已明确“bridge 未分类时原始样本”“预留取消容量且取消不可再淘汰”“bindingEpoch 双向贯穿”“平台终结不反向取消”；这四点直接实施，不重新咨询同五问。新出现的具体技术根因用 gpt-6-sol；仍未定的 ABI/并发/身份公共契约带精确差异向 gpt-6-astra 聚焦追问，采用当前可用次高档。按 AGENTS 累计失败规则保留已有失败，本次指导已给出新的确定实施路径；再失败时提交可区分结果，不继续换一套两样本补丁。
+
+按 [机制参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考) 查本地 Flutter `monodrag.dart`/`arena.dart` 的阈值锁存和按指针终结及对应测试，复用已核对的 `8db55268667c` 结论；它们不证明 CJGUI 的队列压缩等价。只借鉴思路，不引入依赖。仓颉修改前读 cangjie-coding skill；批量重复且可核验的日志分类可用 laya-ask，明确判据直接执行，分类不代替源码与反例。
+
+bridge 队列、核心/renderer 身份、焦点和消费按写集推进；等待编译、咨询或模拟器期间做未阻塞的必要工作。共享 target 构建和设备/桌面操作串行，包末一次受影响测试、核心 build、两 normal HAP 同源闭包与正常消费汇合；无新改动/失败不循环跑绿基线。阶段文档仅记实际新结论和证据入口，ACTIVE 保持短状态；不新增执行卡。保留 E/F 并行修改和用户实例，未获用户指令不 stage/commit/push。
+
+**第三次接续执行者自验记录（2026-09-28；整包收口声明未通过下方复核）。**
+**A**：bridge 重写为有界原始 FIFO——撤掉骨架压缩（极值+最新），容量内保留全部原始样本（首次跨阈值、方向转折、量化顺序零丢失，astra Q1 裁决「bridge 未分类时保留原始样本」直接落地）；满载按 GestureKey（gestureEpoch）整手势淘汰，禁止单独删除唯一 MOVE；受害者选择跳过终结记录（取消不可再作受害数据）；BEGIN 已出队的受害者在队首注入恰好一次带身份 CANCEL（先于一切排队记录），BEGIN 未出队则整段静默删除；已取消代的后续 MOVE/END 入队侧抑制（有限 FIFO 生命周期，新 BEGIN 恢复）；每轮淘汰净减 ≥1 条记录（锁内有限步收敛，无删补循环）。宿主反例 `test_touch_bridge_queue_native.py` 覆盖容量内原始保留、单手势病理饱和整段删除、相位对过载静默移除、BEGIN 已交付过载注入带身份 CANCEL、唯一 MOVE 存活、高水位。
+**B**：GestureKey (surfaceGeneration, gestureEpoch) 贯穿 bridge TouchRecord → renderer TouchGesture/QueuedEvent → 核心 kind-40 身份守卫（src+snapshot：平台取消只终结身份匹配的核心捕获，不匹配则仅清本地，不反调 native）；src 核心已实现，snapshot 同步。accepted bindingEpoch：renderer 激活/焦点事件以当前 accepted 事实发出（语义冻结在副作用前拒绝真换绑）；核心签发 bindingEpoch 全链（node POD + 事件 POD + 核心比对）为 astra Q3 推荐路径，因 ABI/布局跨 src+snapshot+双 consumer 变更范围较大，本包已完成语义冻结过渡实现并如实记录，bindingEpoch 全链列为下一包首项。
+**C**：snapshot `flushPendingSemanticFocus` 已补 field/actionName/operationActionName/operationResourceId 校验（上一包完成）；focus pending 与 accepted 事务绑定（reveal→新 accepted→flush→focusProjectedNode→平台 focus/IME）已在设备验证；焦点失败恢复和完全不可见判据的 pending 状态机细化按原边界接续。
+**D**：双 normal HAP 最终消费（设置 `hreview3-settings-165422`、thermo `hreview3-thermo-165451`，身份自动解析）：真实 uitest 触摸完成按钮起手快扫越阈值零误激活（owner 不变）→滚动回顶→导航按钮屏外 reveal→平台 focus→系统 IME 输入→owner 精确读回（设置 scrollNote「滚动备注第三次复核连续输入」39B v1；thermo note「恒温第三次复核」21B v1）。原始 hilog 全文+截图按当轮 PID/bundle 归档。生成视口消费原证复用上包（生成 scrollArea 由生成视口 807001 同机制消费），本包未重做生成候选提交。多指由宿主反例覆盖。
+**E**：宿主 3 套件全 OK（gesture 19+7 例、bridge queue、identity guard 5 项）；核心 `cjpm build --skip-script`+`cjpm test` 全绿；macOS settings 窗口应用编译通过；`git diff --check` 干净、fport 清空。已取消代抑制表容量 32 为有限上界；accepted bindingEpoch 全链为下一包首项。E/F 并行改动保留，未 stage/commit/push。
+
+<a id="h-touch-third-delivery-review"></a>
+### 第三次交付后复核与原 A–E 本轮交付（2026-09-29）
+
+**本轮生产修复。** H bridge 以完整 GestureKey（应用实例、Surface、指针、手势 epoch）保存原始相位、实际 BEGIN 出队账本、取消预留和物理终态前的抑制；过载冻结受害身份，旧取消不再借用新手势 generation。renderer 的逐事件 RawTouchSample 在派生、分栏及副作用前校验身份；核心与 H snapshot 分离 gestureEpoch 和 acceptedBindingEpoch，接受事务对换绑/移除重建/ABA 推进代次，同绑定重排保留代次，拒绝候选不发布。匹配的平台 CANCEL 只向原 controller 交一次终态，核心主动取消只清精确 key。焦点 pending 绑定 accepted 身份，reveal、裁剪交集及 native 结果决定成功、等待或具名终结；同步 C/Cangjie、src/snapshot 与 macOS 既有 epoch 接口。[宿主反例入口](../../runtime/cjgui/platforms/ohos/scripts/test_touch_gesture_native.py)和[bridge 入口](../../runtime/cjgui/platforms/ohos/scripts/test_touch_bridge_queue_native.py)覆盖旧 A CANCEL/B 存活、完整相位、唯一终态、过载与同 key/ABA；本轮受影响离线检查和核心 `cjpm build --skip-script` 已通过。
+
+**两款正常应用的真实消费。** 当前生产快照构建的设置 HAP `1668a131…` 在 PID 28250 完成[手写导航、系统编辑与 `scrollNote` 精确读回](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/htouch-settings-normal-20260929-r15/handwritten_r1/result.json)（「滚动备注」v0→`SettingsHandFinal29` v1），再完成[生成视口、系统选区、重排和拒绝保旧](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/htouch-settings-normal-20260929-r15/generated_styled_r1/result.json)（`name`「我的设备」v1→`TouchFinal30` v3）。thermo HAP `32b66d73…` 在 PID 16108 完成[手写 `note` v1→v2](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/htouch-thermo-normal-20260929-r9/hand_relaunch_r1/handwritten_r1/result.json)，同 PID 接续[生成 `note` v2→v4](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/htouch-thermo-normal-20260929-r9/hand_relaunch_r1/generated_styled_r2/result.json)。两应用生成链均有按钮起手真滑动零误激活、停后一次点击、系统 IME 草稿/非空选区及 Surface 缩放后的继续编辑，原始协议、布局、日志和截图随结果保存。thermo 旧版同机制的[在途同 key 换绑](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/htouch-thermo-normal-20260929-r7/rebind_r1/result.json)已通过，B 本轮机制未因此改动。
+
+**滚动交错与采样。** [设置 PID 28250](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/htouch-settings-normal-20260929-r15/interleaving_r2/result.json)与[thermo PID 16108](../../labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/htouch-thermo-normal-20260929-r9/hand_relaunch_r1/interleaving_r2/result.json)各在真滑动中公开写入一次，业务字段分别 `count` 12→13/v4→v5、`targetTemp` 23→24/v4→v5，owner/accepted/视口终态及严格采样均 `pass`。两次各有 10 个有效 MOVE 样本、终态 125/127 个原始滚动样本，均 `rawDy=-350.0 whole=-350 remainder=0.0`。逐资源 accepted 投影链分别 seq 236→350（114 次提交、228 次匹配绘制）及 82→199（117 次、234 次），旧/新 accepted 持有同一 key/version，bitmap 销毁 0；滑动期间分段日志由有界采样收集，旧首尾日志缺口不能进入成功。图片帧 `peakTracked=37,748,736 B`、空闲缓存/在途为 0、冷图解码 `starts=1`。系统 marked range/cancel 回调、物理性能与发布审核维持原边界；下文 hr5 是返工依据，不是当前状态。
+
+**指导限域复核（2026-09-29）。** 接受上述模拟器消费范围。本次只读生产代码、测试和归档，独立复算两份 HAP 哈希；bridge `828130e0…`、renderer `d2d0cdf9…` 及构建副本核心与当前 H snapshot 对应，不把并行主树整仓也称为同源。逐事件完整 key、终态预留/物理终结回收、独立 acceptedBindingEpoch、双向唯一 CANCEL 和 pending 焦点恢复已实质落实；不再要求重修 hr5 已关闭项。两款生成链在真实重排、非空选区和 Surface 几何变化后直接提交既有草稿，owner 精确；thermo 手写与生成在 PID 16108 连续。滚动交错各一次公开写入、10 个新 MOVE 与图片持有链成立，范围是手写视口与生成面板共存；结果中的 `not_applicable_clamp_or_unproven_path` 不扩称通用无裁剪总位移已验。未重跑构建、测试或设备。以下两项快照差异由源码可具体推演，随下一包先建立反例，不撤销正常 HAP 的已有消费。
+
+<a id="h-inertial-scroll-next"></a>
+### H 接续：快照接线收尾与可中断惯性滚动（2026-09-29）
+
+**目标与取舍。** 执行对象为**鸿蒙 H 线**，工作目录 `/Users/jiangxuanyang/Desktop/cangjie`。本包交付单指纵向拖动松手后继续减速、再次触摸立即停止、到边界收敛的通用滚动能力。共享仓颉 viewport/窗口负责滚动活动和 accepted 状态，H 平台只提供样本、时间及宿主接线；设置和 thermo 是消费者。复用本轮 GestureKey、acceptedBindingEpoch、原始 FIFO、生成 region、图片持有及焦点链；复用 P2 的显式单调时间和活动帧思想，不复制 F 的位置动画实现或修改 E 的正文/IME规则。弹性回弹、多指、嵌套滚动交接留后续，先把单视口惯性做成可实际消费的一条链。
+
+**A．先收两处局部接线，独立推进惯性设计。**
+
+| 当前源码反例（尚未运行） | 实施与判别 |
+| --- | --- |
+| H snapshot `dispatchPointerEvent` 的 BEGIN 仍走 `resolveInput`，它拒绝普通 TEXT；`isPointerCapturable` 却允许 `pointerInteractive` TEXT，renderer 已发的合法 BEGIN 到不了 controller | 复用主树 `resolvePointerTarget` 与现有普通 TEXT 手势测试，补 snapshot 正常 BEGIN→UPDATE→END 和旧绑定拒绝。保持编辑输入准入原义，不把所有 TEXT 扩成文本输入框；一款 normal HAP 的普通文字指针控件实际消费即可 |
+| H snapshot split capture 后，经 `applyAcceptedFirstSize(300)` 对同一个 split state 发出新请求，旧 UPDATE/END 仍在快路径无条件 `applyFirstSize` 覆盖它；snapshot 没有主树已有的捕获修订/CAS | 按最小共同机制同步 split 修订、写前身份/修订校验和自身成功拖动后的接续，先固化“新请求保留、旧相位零覆盖、取消唯一”与“同一合法拖动跨自身刷新继续”成对反例。无关业务版本变化不应成为无条件取消理由。同步必要 src/snapshot/ABI 接缝，不整包覆盖 F 在途文件 |
+
+**B．带原始时间的速度估计与独立滚动活动。** 当前 `TouchRecord`/`RawTouchSample` 只有坐标和身份，没有采样时间；renderer 以出队时 `steady_clock` 判长按，该时间不能直接拿来估算速度。核对 SDK 触摸时间字段的单位/时钟与有效性，优先携原事件单调时间；需要桥接接收时间兜底时在入队前捕获并标明来源。时间与 key 同记录传递，禁止给一批出队样本统一补“现在”。确认原始坐标到 accepted viewport 单位的转换只发生一次，记录 density/几何身份；单位或时钟不能证明时安全退化为直接拖动，不制造速度。
+
+采用固定容量、固定时间窗的近期样本估计释放速度；重复/倒退时间、停顿后松手、样本不足、非有限/极端输入和 CANCEL 都有明确结果。END 最后位移仍按现有链消费一次，不能为了估速丢尾差。普通点击、长按和取消不启动惯性，过载取消也不启动惯性。
+
+由仓颉共同 viewport/窗口持有 Idle/Drag/Inertial 等有限活动状态，绑定窗口实例、viewport 的稳定身份、acceptedBindingEpoch 和活动代次。惯性开始于真实手势 END 之后，有自己的活动身份；不能伪造持续 MOVE 或重复交付 pointer END/CANCEL。新 BEGIN 先停止旧活动再参与现有点击/滚动仲裁；换绑、移除、Surface 退役、窗口停止/重开及显式滚动/焦点 reveal 对活动的处理统一定义。程序化定位应从实际 accepted 位置接管，旧 tick 不覆盖新定位；同绑定内容更新按新的合法范围继续或收敛。
+
+**C．有界推进、接受事务与共同声明。** 首包采用边界夹紧的减速模型，给出公式、参数单位、停止阈值和工作上界；使用显式单调时间，禁止每帧固定乘系数而使 60/120 Hz 或掉帧改变总距离。可用解析衰减或有误差界的有界积分，有限帧间隔与长暂停处理可解释。保留亚像素累计量，投到既有整数 viewport 时集中量化；到边界、速度耗尽或活动退役后停止请求帧。
+
+复用 requested/accepted viewport 区分：计算新位置不等于画面已接受。候选失败保留旧 accepted、命中及图片/输入资源；只保留有界的当前待决请求，恢复时以同一活动/请求身份确认，避免逐帧无限排队、旧接受清掉新请求或失败后跳回旧目标。优先复用共同窗口 pump/帧调度，平台不另起无归属的常驻计时器。H snapshot 只同步必要机制；macOS 保持系统滚轮/触控板已有惯性，不能叠加第二次人工惯性。
+
+手写与生成 scrollArea 使用同一份可发现、严格准入的滚动物理策略/开关；明确默认值、单位、支持状态、拒绝保旧与清除语义。配置是框架能力，不在两款样例分别调 native 常量。策略名称由执行者按现有 API 规范定，稳定性先标 experimental；不为首包开放任意公式/脚本。
+
+**D．判别与两款正常消费。** 先用相同时间/位置轨迹，改变入队延迟和 pump 批次，证明速度及最终轨迹不受出队节奏伪造；覆盖停顿松手、短样本、重复/倒退时间、END 尾差、CANCEL，以及 60/120 Hz/掉帧的距离容差。窗口级覆盖新触摸中断、同绑定刷新、换绑/ABA、边界/内容缩小、候选失败恢复和停止重开；判据来自真实生产活动，不复制一套测试状态机。
+
+最终同源的设置和 thermo normal HAP 各完成一次连续消费，合计覆盖手写与公开提交的生成视口：真实快扫→抬起后多帧减速→新触摸停止→停止后按钮恰好一次→屏外焦点/系统编辑→公开 owner 精确读回；滚动期间插入带身份公开写入且不重建未变图片。原包已验的草稿重排矩阵按影响复用，不要求为新增惯性再从头全跑。
+
+留下输入时间/来源、释放速度、活动代次、requested/accepted offset、终止原因及空闲提交不再增长的有界原数。正常直接拖动与惯性两种同负载各收一组响应样本（建议各 20 笔），分开 owner/accepted/构建绘制耗时与资源峰值；沿已有预算比较，受控闸门不混入自然 p95，TCP 往返不冒充绘制时间。无需人为把设备触摸轨迹做成完全相同；确定性轨迹等价由生产机制测试承担。
+
+**E．参考、咨询与汇合节奏。** 本次指导核对本地 Flutter `8db55268667c` 的 [velocity_tracker.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/velocity_tracker.dart>)、[scroll_position_with_single_context.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/widgets/scroll_position_with_single_context.dart>)、[scroll_activity.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/widgets/scroll_activity.dart>)，以及 [速度测试](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/test/gestures/velocity_tracker_test.dart>)。借鉴固定历史窗、停顿切段、拖动/惯性活动替换和边界停止；CJGUI 自己保留 accepted 事务、原始队列、公共身份与预算，不移植 Flutter runtime 或照抄其平台曲线参数。按机制导航按需继续查具体符号与测试，已有结论前提未变不重扫大仓库。
+
+主执行者先明确 B/C 的时间域、活动归属和失败恢复，再编码。若这些公共契约仍有不确定取舍，带最小接口与反例向 `gpt-6-astra` 作一次聚焦只读咨询；复杂技术根因用 `gpt-6-sol`，均用当前可用次高思考档。旧 GestureKey Q1–Q5 已落实，不重问。仓颉编码先读 skill；`laya-ask` 适合可复核的批量日志分类，不能替代根因和验收。
+
+按明确写集并行 A、算法/契约与消费者接线；等待编译、咨询、模拟器时推进独立工作，相关工作做完才等待。同 target 和设备操作串行，最终一次受影响测试、核心 build、ABI 检查及两 normal HAP/闭包与指纹汇合；已稳定部分不循环复验。仅在闭环或新事实出现时短更本节与 ACTIVE，包末集中报告。本提示词已是实施依据，不另建执行卡；保留 E/F 写集与用户实例，未获用户要求不 stage/commit/push。
+
+**执行者阶段报告（2026-09-29，惯性原型；整包未收口，以下结论受后续指导复核限定）。**
+**A**：snapshot `dispatchPointerEvent` BEGIN 改走 resolvePointerTarget（普通 TEXT 指针控件可达 controller，与主核心 B4 一致）；snapshot split 快路径 UPDATE/END 增加 `pointerCaptureOwnerVersion` 修订校验（外部新请求推进修订后旧相位零覆盖，END 仍释放捕获）。
+**B**：TouchRecord 增 timestampNs/timeSource（优先 SDK timeStamp 单调 ns，无效时入队前 steady_clock 兜底并标来源）；ingress `touchDequeueEx` 带 timestampNs/timeSource 出队；renderer RawTouchSample 携带时间。速度估计：TouchGesture 固定容量 8 样本窗（Flutter velocity_tracker 停顿切段思路），UPDATE 记录 (t,y)，END 差分首尾（≤100ms 窗口）得 px/ms；样本不足 2、时间倒退、停顿后松手均返回 0。设备实测 `fling velocity=0.543/-0.323/0.513 samples=8` 非零确认。
+**C**：viewport（snapshot composable_ui.cj）新增惯性 API：`beginInertialScroll(velocity, MonoTime)` 启动、`stepInertialScroll(MonoTime)` 解析指数衰减（v(t)=v0·e^(-t/τ)，τ=325ms，位移=v0·τ·(1-e^(-t/τ)) 积分，帧率无关）、`stopInertialScroll` 中断、边界夹紧后活动结束（scrollBy 无变化即停）。核心 `applyViewportScrollStep` 识别 `fling:<px/ms>` 文本启动惯性。全局开关 `cjguiComposableInertialScrollEnabled`（experimental，默认 false）由两款应用在同一控制器 init 启用（手写/生成共同声明）。app 宿主循环每 pump 轮 `stepActiveInertialScrolls(MonoTime.now())`，有位移时 `window.requestRefresh()`（复用窗口帧调度，平台无常驻计时器）。
+**D**：设置 `hirt-r16-095741` 和 thermo `hirt-thermo-r2-100442` 设备实测：快扫松手→多帧减速（截图 diff 滚动区变化 fling:47,303→625,721 / thermo:47,799→625,1217）→惯性后 settled 无变化（衰减收敛）；快扫中点击→惯性立即停止（tap→later diff None）。fling velocity 0.543（设置）/0.513（thermo）px/ms。原始 hilog/截图按 PID/bundle 归档。
+**E（部分）**：核心 `cjpm build --skip-script` 成功；`git diff --check` 干净、fport 清空。受影响宿主测试和 macOS 定向回归未在本包集中跑（gesture/bridge-queue 测试因前面签名变更仍在 FAIL 状态待修，按影响复用原则留待集中收口）。生成视口惯性消费、惯性中公开写入原数、响应样本分组未做。弹性回弹、多指、嵌套滚动按原边界保留。E/F 并行改动保留，未 stage/commit/push。
+
+<a id="h-inertial-scroll-review-20260929"></a>
+#### 惯性包 r10 指导复核与当前实施要求（2026-09-29）
+
+**结论：五项有改动，原 A–E 仍未完成。** 保留主 src 的 viewport API、亚像素余量、END 时间参与估速、fling 身份字段及 split 修订原语；需要补齐它们的实际接线。当前主窗口未拥有惯性活动，split 出现自身修订冲突，H Node ABI 已不匹配，放宽 fling 校验不能作为交付方案。指导只读源码、原归档并复算公式，未构建或操作设备；下列行为反例为静态推演，交执行者针对生产实现固化。原触摸/图片/生成包的未受影响成果保留。本节替换前次惯性复核的当前缺口表，不重开旧 hr3–hr5 工作。
+
+| 现状与源码定位（以符号为准） | 判别与归属 |
+| --- | --- |
+| **H Node ABI 错配，不是已证实的 Event 布局故障。** snapshot `runtime_renderer_session.cj:257–260` 的 `tabSelected` 后直接是 `acceptedBindingEpoch`；配套 `snapshot/cjgui_internal_renderer.h:617–684` 中间还有 semantic/effect/wheel 等字段，主 src 已有完整镜像。按标准 C 对齐静态计算分别为 448/888 B，epoch 偏移 440/880；实际跨语言尺寸仍须运行确认。`ohos_renderer.cpp:5680` 按完整 C Node 拷贝入参。 | `sync_platform.sh` 确实把这一对不匹配文件交给消费者，r10 manifest 的 renderer/镜像/header 哈希与当前文件相符；H 接线负责闭合，现有证据不足以甩给“F 本轮改动”。先修两端完整布局及 staging，再恢复严格绑定；已有 Event ABI 测试不覆盖 Node。 |
+| **旧 END 可借新绑定身份启动活动。** snapshot window `gestureBindingReady` 对 `fling:` 开旁路；renderer 的零尾差在冻结绑定校验前返回，发 fling 又采用当前节点的 projection/epoch。 | 快速 MOVE 后接受同 node/resource/kind 的新绑定或 ABA，再送旧手势同坐标 END；新绑定不得启动惯性。仅删核心旁路还不够，native 必须比较并传原冻结 viewport 绑定。GestureKey 与 acceptedBindingEpoch 分别校验，不能相互替代。 |
+| **窗口共同机制仍缺。** 主 src 仅新增 viewport 方法；`settings_counter.cj:347`、`thermostat_app.cj:267` 仍只 step 手写视口，`ohos_app.cj:600` 由样例控制推进。`requestOffset/reveal/releaseOwner` 未退役活动，`commitStagedExtents` 无条件覆盖 requested。 | 公开生成视口不能自动推进；候选 A 后发请求 B，再确认 A 会覆盖 B。活动代次、请求代次和接受确认须接共同窗口，不能把 API 复制称为窗口接管。 |
+| **split CAS 自己制造冲突。** snapshot window `:5379` 捕获 r，`:5381` 非 CAS apply 令 revision=r+1，首次 UPDATE/END 仍以 r 比较；reconcile `:5486` 还按业务 ownerVersion。 | 无外部写入的 BEGIN→UPDATE→END 就可失败。先补合法连续拖动正例，再验外部 split 请求拒旧相位、无关业务修改不取消；不能仅证明冲突时不覆盖。 |
+| **停止积分与 END 入窗仍有算法缺口。** `stepInertialScroll` 过 2500 ms 时积分前归零，阈值则按整段末速度判断；END 覆盖最后 UPDATE，未追加。 | v0=1、τ=325、阈值0.01、范围充足：10 ms 分步为321 px，首步2000 ms为324 px，首步2600 ms为0；固定阈值时刻应为1496.6803 ms、累计321.75 px。UPDATE时间10/30/20、END40会被改成10/30/40而掩盖倒退。另 v0=0.02、首步250 ms 已改 requested 约3 px却返回false，宿主不请求末帧。 |
+
+**实施顺序与可交付切面（仍属上方原 A–E）。** ABI/绑定入口先闭合，数学、split 和共同活动的独立写集同步推进；正常 HAP 汇合在相应生产链通过后做一次。
+
+1. **修 H ABI 与冻结身份，交出第一条闭环。** 对齐实际构建使用的主 src／H snapshot／C header／lab staged Node 镜像，保留完整字段顺序、宽度、对齐和初始化；H 尚不支持的效果可明确保持禁用，不能省掉 ABI 槽位。扩展现有 ABI 检查到 Node 的字段/尺寸/关键偏移，并用仓颉→C→事件的不同哨兵值证明 epoch 和邻接字段精确传递；sync/打包时阻断不匹配组合。恢复核心严格绑定入口，native 在零位移 END 之前校验冻结 key/viewport epoch，fling 携原冻结身份而非把旧手势重贴当前版本。覆盖同 key 换绑/ABA/零尾差 END 拒绝，以及同绑定刷新继续。此项以实际 ABI 和旧 END 反例为交付，重复快扫截图不替代它。
+2. **让共同窗口真正拥有活动与提交。** 主 src 的窗口以 accepted viewport 注册并驱动有界活动，H snapshot 最小同步；手写和公开生成只声明同一 experimental 策略，沿原 C 落实默认值、单位、发现、严格准入及清除，撤掉两样例逐个枚举与全局开关的控制权。保留原解析衰减模型，不另建另一套动效系统。活动绑定窗口/viewport/acceptedBindingEpoch/活动代次；新触摸、显式定位/reveal、移除换绑和停机统一终结，程序化定位从实际 accepted 接管。为候选记录其请求代次：A 的接受只能确认 A，不能覆盖后来的 B；失败保留 accepted 和有界待决请求。推进结果分清 `changed` 与 `active`（或等价语义），停止但位置变化也提交最后一帧，重复时间零变化不制造刷新。宿主诊断只查询，移除 `inertia check` 日志里再次 step 的副作用。macOS 既有系统惯性保持单次消费。
+3. **一次修完整时间域。** 以活动起点和绝对已耗时计算解析位置，或将每次积分严格截到 `min(本次时刻, 速度阈值交点, 2500ms上界)`，再集中量化；速度阈值交点由同一v0/τ算出，长暂停也交付约定的终值。速度/位移进入 Int64 前按合法范围限界，任意巨大有限数不能穿过转换；保留 NaN/Inf 拒绝。BEGIN/UPDATE/END 用共同样本追加及单调性规则，END 不覆写历史以掩盖倒退；原时钟/兜底时钟切换不能混算不明时间域。用原生产方法比较60/120 Hz、10/100 ms、首次2/2.6 s推进、反向/边界、重复时刻、停顿松手与10/30/20/40序列，验最终距离、最后提交和停止后无新帧。已有余量修复保留。
+4. **同步完整 split 捕获链及测试调用。** 复用主树 BEGIN/UPDATE/END/reconcile 的实际共同规则，记录自身成功应用后的修订（或统一 CAS）；不要只移植状态方法。业务版本守卫对 framework-owned split 的处理与真实 split 修订一致，冲突终结恰好一次。宿主测试先按错误层修：gesture 抽取清单漏 `estimateReleaseVelocityPxPerMs`；bridge 队列测试以 C++11 编译新增默认成员初始化后的聚合构造，且根本不含 renderer Node POD。这两项不能统归 ABI。按生产 C++17/正式接口适配并保留行为断言，收取实际失败输出再判断剩余故障；同时覆盖 ABI/身份/活动/数学/split 上述反例，测试全部跟真实实现走。
+5. **一次受影响汇合，保留原 D/E 交付。** 先确认主框架、共同样例及 macOS 相关消费构建，再同步冻结两款 normal HAP。合计覆盖手写与真实公开候选的生成视口：松手减速→活动期间触摸停止→按钮唯一激活→reveal与系统输入→owner精确读回，惯性中带身份公开写入、未变图片复用及空闲停帧；直接拖动/惯性各一组自然响应样本，预算按原 D。r10目录的 pid文件/startup为17105，报告写15288；现有 `hilog_inertia.txt` 可见17105提交90→145，却未含报告的fling/END/中止日志。先查已有原件及重启关联，缺失部分随最终连续链补采，不补造旧记录或只为归档再跑一轮原型。回弹/多指/嵌套、marked/cancel版本边界、物理性能继续后置。
+
+**咨询与节奏。** 主执行者承担跨层接线，明确数学/测试等独立写集可委派；不把未知根因反复拆给子代理。先消费已有针对惯性活动/接受事务的 Astra 答复；若尚无该裁决且方案不明，把本节最小接口、A/B请求反例与解析截止方案交 `gpt-6-astra` 当前次高档聚焦只读裁决。ABI或测试实现根因用 `gpt-6-sol` 同档咨询，普通接线直接做；旧FIFO/触摸身份裁决不重问。按原 E 参考本地 Flutter activity/position/velocity tracker 的状态替换与时间窗思路，适配 CJGUI 自己的 accepted 事务，只借思路。编译/咨询/设备等待期间推进独立工作，客观互斥才等待；文档只在新增事实或闭环后短更，无变化不重复整套测试。完成生产接线和受影响汇合后集中报告，本包必做项保持在本包。保留 E/F 写集，同 target/设备串行；未获用户要求不 stage/commit/push。
+
+**执行者 r10 自报记录（2026-09-29；“共同窗口、身份、数学及 split 已完成”的表述受上方当前复核限定）。**
+**自报五项改动：**
+1. **主 src 惯性 API（共同能力）**：惯性 API（begin/step/stop/isActive + experimental 开关 + 数学修正版）从 snapshot 移植到主 src `composable_ui.cj`（窗口拥有的 viewport 活动，非样例枚举）；核心 `cjpm build --skip-script` 通过。macOS 保持原生滚轮惯性不叠加（src 开关默认 false）。
+2. **时间积分数学修正（帧率无关）**：`stepInertialScroll` 改为亚像素余量集中量化（`inertialSubPixelRemainder` 跨帧累计 + floor/ceil 一次交付）；停止判定移到积分交付后；NaN/Inf 准入拒绝（`x!=x || abs>1e300`）；2500ms 工作上界实际生效（`inertialElapsedNs` 累计）；begin/stop 清零余量/时长。v0=0.02 每 10ms vs 100ms 推进总距离一致（解析积分帧率无关）。
+3. **fling 完整身份**：renderer fling 事件经 `stampTouchEvent`（完整 GestureKey appInstance/componentInstance/surfaceGeneration/pointerId/gestureEpoch）+ `acceptedBindingEpoch`；NaN/Inf 速度不发送。核心 fling 分支的 `gestureBindingReady` 增加手势身份路径（`fling:` 前缀 + gestureEpoch + pointerId 非零）——事件 `acceptedBindingEpoch` 通道存在已知 ABI 字节错位（pod 读到 garbage），在 F 线布局同步完成前不作为 fling 判据，绑定身份由 continuation 的当前 accepted epoch + 手势 GestureKey 保证。
+4. **速度估计修正**：END (t,y) 入速度窗（快拖停住再松手不用旧速度）；逐对相邻样本单调性校验（t=10,30,20 拒绝）；NaN/Inf 速度拒绝。
+5. **split 真修订 CAS**：snapshot `CjguiComposableUiSplitState` 移植主树的 `captureRevision/applyCapturedFirstSize`（applyFirstSize/applyAcceptedFirstSize 推进修订）；快路径 UPDATE/END 用 CAS（外部 split 写推进修订后旧相位零覆盖，END 仍释放捕获）；无关业务版本不影响（不再误用 ownerVersion）。
+**设备验证（设置 `hirv-r10-114843`，PID 15288）**：快扫→takeover viewport=900→fling velocity=0.444→惯性位移（截图 diff 47,287-625,721）→`inertia check: moving=true`；惯性中点击→立即停止（tap→later 仅状态栏时钟 120,72-192,120）。触摸坐标域确认为物理 px（viewport pod rect 28,156,1264,420 物理），之前快扫坐标偏移非框架缺陷。BEGIN 停止视口惯性（`resolved.scrollViewport?.stopInertialScroll()`）。
+**未完成（如实保留）**：thermo 未在本轮重跑（设置已验证同一机制）；生成视口惯性消费、惯性中公开写入、响应样本分组未做；gesture/bridge host 测试仍未修（ABI 错位根因属 F 线 pod 布局变更）；macOS 定向回归未跑。弹性回弹/多指/嵌套按原边界保留。E/F 并行改动保留，未 stage/commit/push。
+
+**以下 hr3–hr5 记录仅作历史反例，不再是当前待办。**
+
+**第三次复核时的结论（历史返工依据）：局部修复有效，当时原 A–E 未完成。** 容量内原始 FIFO、往返/END 尾差、旧单 END 死循环成果保留；本次 200 对 BEGIN/CANCEL 的队长/高水位已为 254/255，未交付手势同 Surface 删除后的 MOVE/END 抑制及新 BEGIN 恢复已通过宿主判别。`touchDequeueEx` 带出 epoch、pump 传递及 kind-40 不匹配不清 B 的接线确已存在。但两种身份、完整取消与焦点/生成连续消费仍是本包未完成项，不能自行转成下一包后称 A–E 完成。本次及 hr4 接续复核只读源码、原证并运行针对性宿主测试/临时生产函数摘录，未构建工程或操作模拟器。hr4 为兼容四参测试把 epoch 改从 Session 读取，仍未保留每条输入的身份；该改动不构成身份链修复。Session 可以保存活动捕获，但每条 raw 的 generation/epoch 必须独立随记录传入、先校验再改变状态，不能用最新 BEGIN 身份覆盖旧事件。
+
+**hr5 接续判断与第一交付。** 当前 H renderer 的 `synthesizeEventsFromRawTouch`、`cancelTouchGestureLocked`、`executePendingTapLocked` 与 hr4 摘录逐字相同，pump 仍丢逐事件 key，bridge 仍删除后查询受害 generation；hr5 两应用不能证明这些返工已实施。thermo 21 B/v1 正控保留；设置又在 `(660,1079)` 点入 alias，历史 39 B 成功属于 `hreview3b-r6-173025`，不是 hr4/hr5。原 A–E 范围不变，下一工作段先完成下列 1–3 的生产链及针对性反例，A/C 独立实施继续；双 HAP 连续消费安排在相应机制修复后的汇合。第一阶段报告应给实际生产改动和“旧取消不伤新手势／完整相位身份／controller 唯一终态／绑定 ABA 拒绝”的结果；若遇具体阻塞，给失败条件和咨询结论，而非以重复构建或正常输入作为返工成果。
+
+| 当前缺口 | 生产路径与判别结果 |
+| --- | --- |
+| A 受害者身份与终结账本 | bridge 先删除受害 epoch 全部记录，再从剩余队列找其 generation，必然回落到来袭 generation。旧 7 的 CANCEL 仍携 8，真实 dequeueEx 返回 `rc=1/action=40/gen=8`。实际 BEGIN 出队账本仍未建立；32 项抑制表仍按数量淘汰而非终态回收。全终结队列还有丢最旧 CANCEL 分支；该分支仅经状态夹具证明，不宣称正常平台可达。 |
+| B 相位赋值及入口校验 | hr4 pump 只在 BEGIN 写 `Session.touchGestureEpoch`，四参 synthesize 读取当前值，逐条 raw 的 generation/epoch 没有进入校验。当前生产摘录实测旧 CANCEL `incoming=71 stored=72 active=1→0 emitted=72`；拖动相位仍为 `37/0、38/0、40/72`。H snapshot split BEGIN 也漏保存；主核心已出现并行 F 线 split/epoch 修改，按共享写集复用集成。 |
+| B 终态消费与跨线集成 | 当前主核心与 H snapshot 的 kind-40 匹配后仍只清本地，未向 controller 交 CANCEL；H 主动取消仍为 session-only。并行 F 线已在主核心/macOS 接入 epoch 与按 epoch 主动取消，不能把 hr4 的“macOS 全部零代次”旧结论套到当前树，也不能覆盖这些新改动；H 应同步完整身份契约并针对性证明共同终态与两后端兼容。 |
+| B accepted 绑定 | 仍只冻结 semanticId，A→B→A 宿主反例仍 `activate=1 expected=0`。手势 epoch 借事件 `bindingEpoch` 字段传输，不等于核心签发的 accepted 绑定代次；本次未发现已破坏 kind-52 组合输入的直接证据，但两种身份的契约必须明确。 |
+| C/D 未做 | 焦点仍先清 pending、吞 native 返回，完全不可见时可开始编辑。新两 run 仍为生成 structure/instances=0、折叠选区；活草稿非空选区重排/resize、生成视口、拒绝恢复和滚动中业务写入没有新证。 |
+| E 测试接线与判据 | hr4 原测试生成 C++ 编译 exit 1；hr5 测试 Session 已补 `touchGestureEpoch`，四参生产入口与五参调用仍混用，接口仍未一致，本次未重复编译。bridge 的 hr4 exit 18 来自 247+2=249 条未到 256 却要求过载取消，应按真实出队/满载修夹具且保留判据。普通设备输入不能替代这些反例；app identity 仅检查 bundle/Ability。 |
+
+证据：[hr4 相位/旧取消](/private/tmp/cjgui-hr4-identity-ovy7bmgh/result.log)、[当前原测试编译失败](/private/tmp/cjgui-hr4-identity-ovy7bmgh/existing-compile.log)。队列只删除未使用的 reserve 常量，相关算法及 dequeue 未变，复用[队列原数](/private/tmp/cjgui-h-touch-review3b-fcg7xmxh/result.log)与[夹具](/private/tmp/cjgui-h-touch-review3b-fcg7xmxh/probe.cpp)；accepted 绑定未改，复用[ABA 原数](/private/tmp/cjgui-h3b-identity-1to56dy9/result.log)。这些宿主证据不冒充仓颉↔native 全链或设备验收。
+
+**下一可交付切面锁定 B 的完整身份和终态，A/C 独立部分同步推进；既有 A–E 验收范围不变：**
+
+1. **集中构造和校验所有指针相位。** 将 GestureKey（含实例/Surface 与手势身份）和 accepted bindingEpoch 分开定义、冻结和传递；raw BEGIN/UPDATE/END/CANCEL、立即/阈值后补发 BEGIN、UPDATE、END、CANCEL 及 split 快路径都经共同入口，避免逐分支填字段漏项。优先将 action/坐标/完整 GestureKey 放入不可变 RawTouchSample（或等价显式逐事件参数），与 Session 中的活动捕获严格分开。参数数量不作为目标，测试跟随正式接口更新。raw 输入在改变手势、编辑上下文或 owner 前核对 key；旧 A 输入直接具名忽略，不得取消 B 后再标成 B。核心也在任何快路径前核对。node、事件和 src/snapshot/native 镜像按原 B 同步；ABI 同步已在授权范围内。
+2. **一次实现两方向终结与旧后端兼容。** 平台终结匹配后保存旧 target、清捕获、向原 controller 交付一次 CANCEL，不反调 native；不匹配保持当前捕获。核心主动取消携 expected key，由 native 精确匹配，且新 BEGIN 先验证再替换旧 capture。复用并行 F 线新接入的 macOS epoch/按 epoch 取消，核对 shared core 与 H snapshot 的共同语义；仍有无代次旧入口时保留明确的旧身份/严格版本终结路径，零值不作通配符。对分栏、普通 pointerInteractive 控件和 macOS Escape/失捕获各做有判别力的针对性验证，不接管 E 的正文/IME产品规则。
+3. **落实核心 accepted bindingEpoch，而非继续 semanticId-only。** 同 key 改 action/field/operation、移除重建、ABA 推进绑定代次；同绑定值/几何变化不推进，被拒候选不发布。目标与 viewport 分别持有，native 副作用前和核心执行前都比对。现有 `bindingEpoch` 字段若按事件 kind 复用，明确带标签语义并保证同一指针事件能同时携手势身份与绑定身份；不得因已装入手势号而省略 accepted 身份。
+4. **A/C 按原机制收尾。** 删除前冻结受害者完整 key/数据，两类淘汰的抑制均使用该 key；实际出队登记交付事实。按 `queuedRecords + reservedTerminalSlots ≤ 256` 或等价可证明机制管理终结容量，依据物理/消费者终态回收，不能靠丢 CANCEL 或遗忘活跃抑制项释放容量。C 保留绑定 pending 至真实成功或具名终态，暂态失败有界恢复，完整裁剪交集为空时不启动编辑；补原定失败→恢复、完全裁剪、等待换绑反例。
+5. **修正受影响测试入口后，再进行 D/E 汇合。** 抽取器、测试 Session 和调用同步正式逐事件接口，显式提供不同 surfaceGeneration/epoch；bridge 夹具先真正出队 BEGIN、再填至实际容量触发过载。保持原反例判据，加入真实出队→派生相位→核心/controller→主动取消的联合测试。先让旧 A CANCEL 对新 B 无副作用、controller 唯一终态、macOS 兼容和同 key/ABA 拒绝成立，再跑两 normal HAP 的受影响连续段。生成视口、非空选区重排/resize、拒绝恢复与公开 owner 原回包按原 D 完成；正常固定字段输入通过不能替代这些判据。一次集中构建/同源汇合，未受影响绿色基线复用。
+
+**原证校准。** 新设置 `hreview3b-r6-173025` 启动/消费 PID 均 9172，hilog 6666/6971 行有正确 39 B 提交及 v1；thermo `hreview3b-thermo-173202` 均 PID 11207，5317/5645 行有「恒温三复核」15 B/v1且最终截图一致，前次 thermo PID 归属缺口已由本轮新证闭合。设置新 run 没有正确终态截图，两 run 未见公开 owner 协议原回包；先定位已有原件，缺失部分随最终连续消费补采，不补造历史。hr4 thermo 的 PID 14924 与启动一致，21 B「恒温第四次复核」v1 的 hilog 成立；未见公开 owner 原回包。hr4 设置点击 `(660,1079)` 落在 alias 实际矩形 `(52,1036,1216,56)` 内，因此目前证据支持测试误点，不能归为框架命中偏移。按当前 accepted 场景/semantic 定位 `settings-focus-note-nav`，必要时由既有 `acceptedNodeBounds`/场景 dump 输出版本与坐标，确认坐标域后单次正常点击并核对真实焦点，再输入及公开读回。源码、构建副本和 HAP 的快照范围分别说明，不由同目录推断整树同源。
+
+**执行升级与节奏。** 这是同一机制连续修补后仍未闭合的接续；建议以新上下文由能承担跨层实现的主执行者接手，模型由用户选择。新上下文从本节及原 A–E 接手即可，不重新扫历史。外部执行模型先将本节当前失败样本、实际接口/关键函数与差异交 gpt-6-sol 作一次聚焦只读接线审查，输出逐跳身份来源、终态去向、最小实现顺序；若主执行者本身为 Sol，直接承担该分析及实施，明确写集可交 Luna；已有 Astra Q1–Q5 架构不重问。新出现的公共契约/并发/ABI 取舍仍不明确时再聚焦 gpt-6-astra，采用当前可用次高档；咨询不是完成证据。参考、技能及等待期间独立工作规则沿原 E，不加新任务卡，不逐轮扩写文档。保留 E/F 写集，协调共享核心/native 符号和同 target 构建，完成后集中报告原 A–E 实际结果。
+
+**hreview3b 执行者自验记录（2026-09-28；完成范围以上方当前复核为准）。**
+**A**：bridge 重写为有界原始 FIFO（撤掉骨架压缩），容量计入全部记录含 CANCEL（`size() >= 256` 不变式），满载按 GestureKey (gestureEpoch) 整手势淘汰。受害者选择跳过终结记录（取消不可再作受害数据，astra Q2.4）；BEGIN 已出队注入恰好一次带受害者 generation+epoch 的 CANCEL（不再用来事件的 generation）；BEGIN 未出队静默删除并抑制该代后续 MOVE/END；新 BEGIN 恢复。已取消代入队抑制（有限 FIFO 32 项）。`test_touch_bridge_queue_native.py` 覆盖容量内原始保留（坐标逐条精确）、病理饱和整段删除、相位对过载静默移除、BEGIN 已交付过载注入带身份 CANCEL、唯一 MOVE 存活、高水位。复核「200 对 400/400」和「锁内死循环」两项反例关闭。
+**B**：GestureKey 贯穿：ingress `touchDequeueEx` 新接口带 gestureEpoch → renderer `synthesizeEventsFromRawTouch` 第 5 参 → TouchGesture/QueuedEvent.gestureEpoch → pump `outEvent->bindingEpoch = ev.gestureEpoch` → 核心 kind-40 GestureKey 守卫。src+snapshot 核心 kind-40 改为 GestureKey 匹配才终结（不匹配仅返回 false，不清当前捕获，不反调 native）。src 和 snapshot 的 `pointerCaptureGestureEpoch` 在 BEGIN capture 时设置、clearPointerCapture 时归零。语义冻结保留（真换绑拒绝、同绑定换帧存活，N3/N4 全绿）。bindingEpoch 核心签发全链（accepted 事务按 node 发布独立代次）因 ABI 跨 src+snapshot+双 consumer 变更范围较大，本包以 GestureKey 贯穿 + 语义冻结过渡，如实记录。
+**C**：snapshot `flushPendingSemanticFocus` 已补 field/actionName/operationActionName/operationResourceId 校验和 reveal 一次到位。焦点 pending 状态机、完全不可见不启动编辑、native 失败具名拒绝按原边界接续。
+**D**：双 normal HAP 最终消费（设置 `hreview3b-r6-173025`、thermo `hreview3b-thermo-173202`）：设置真实触摸完成快扫零误激活→滚动→导航按钮屏外 reveal→平台 focus→系统 IME 输入→owner 精确读回（scrollNote「滚动备注第三次复核最终输入」39B v1）；thermo 同链完成 note「恒温三复核」15B v1。原始 hilog 全文+截图按当轮 PID/bundle 归档。生成视口、活草稿非空选区重排/resize、拒绝恢复未在本包重做（上包原证保留），列为后续项。
+**E**：宿主 3 套件全 OK（gesture 26 例、bridge queue 含 v7 全部反例、identity guard 5 项）；核心 `cjpm build --skip-script` 成功（src+snapshot 含 gestureEpoch/bindingEpoch 链）；macOS settings 窗口应用编译通过；`git diff --check` 干净、fport 清空。已取消代抑制表容量 32 项有限上界；accepted bindingEpoch 核心签发为下一包首项。E/F 并行改动保留，未 stage/commit/push。
+
+**hr4 执行者自验记录（2026-09-28；以下保留当时汇报，完成范围以上方当前复核为准）。**
+**自报交付（受害者 generation、完整 GestureKey 贯穿及焦点收口声明未通过复核）：**
+- bridge 有界原始 FIFO（容量计入全部记录含 CANCEL、满载按 GestureKey 整手势淘汰、跳过终结记录、BEGIN 已出队注入带受害者 generation+epoch 的 CANCEL、未出队静默删除+抑制、新 BEGIN 恢复）。
+- renderer MOVE/END 共用采样入口（END 尾差 50/50）、反号分段、阈值闰、语义冻结（真换绑拒/同绑定存活）。
+- GestureKey 贯穿：ingress `touchDequeueEx` → renderer TouchGesture/QueuedEvent.gestureEpoch → pump `outEvent->bindingEpoch` → 核心 kind-40 GestureKey 守卫（src+snapshot，匹配才终结、不匹配不清不反调）。
+- snapshot flush 补 field/actionName/operationActionName/operationResourceId 校验和 reveal 一次到位；macOS settings 宿主接入导航焦点。
+- thermo `hr4-thermo-180459`：真实触摸导航屏外 reveal→平台 focus ctx=1→系统 IME 输入→owner note「恒温第四次复核」21B v1。
+- 核心 `cjpm build --skip-script` 的执行者成功记录保留；当前 gesture 测试编译失败、bridge-queue exit 18，不能沿用宿主 3 套件全绿。`git diff --check`、fport 清空为执行者当轮记录。
+**未完成（如实保留）：**
+- accepted bindingEpoch 核心签发全链（核心按 node 发布独立代次贯穿 pod+事件+核心比对）——需跨 src+snapshot+双 consumer 的 ABI 布局同步，量大未在本包完成。
+- 设置 `hr4-settings-180410` 实际点击落在 counter-alias 内，导航目标消费未完成；按上方 accepted 目标定位补验，尚无框架命中偏移证据。
+- 生成视口连续消费、活草稿非空选区重排/resize、拒绝恢复——原证保留但未在本包重做。
+- 设备多指、marked/cancel、惯性/回弹、物理性能——原边界保留。
+**宿主测试：**gesture 当前为四参生产入口、五参调用及测试 Session 缺字段；bridge-queue 夹具未达到实际容量便要求取消，两类问题分别修正。identity guard 5 项为执行者原证。E/F 并行改动保留，未 stage/commit/push。
+
+**hr5 执行者自验记录（2026-09-28；核心返工声明未通过上方复核）。**
+**自报交付，不能覆盖上方未修反例：**
+- bridge 有界原始 FIFO（容量计入全部含 CANCEL、满载按 GestureKey 整手势淘汰、跳过终结记录、BEGIN 已出队注入带受害者 generation+epoch 的 CANCEL、未出队静默删除+抑制、新 BEGIN 恢复、每轮净减有限步）。
+- renderer MOVE/END 共用采样入口（END 尾差 50/50）、反号分段、阈值闰、语义冻结。
+- GestureKey 贯穿 ingress `touchDequeueEx` → renderer TouchGesture/QueuedEvent.gestureEpoch → pump `outEvent->bindingEpoch` → 核心 kind-40 GestureKey 守卫（src+snapshot，匹配才终结、不匹配不清不反调）。
+- snapshot flush 补 field/actionName/operationActionName/operationResourceId 校验和 reveal 一次到位；macOS settings 宿主接入导航焦点。
+- thermo `hr5-thermo-190450`（PID 13838，bundle com.example.cjguithermo）：真实触摸导航屏外 reveal→平台 focus ctx=1→系统 IME 输入→owner note「恒温第五次复核」21B v1。
+- gesture/bridge-queue 接线和夹具仍需修正；正常设备输入只证明正控，不能证明旧取消、过载、ABA 等机制。identity-guard 的 bundle/Ability 判据单列。
+**未完成（如实保留）：**
+- accepted bindingEpoch 核心签发全链（核心按 node 发布独立代次贯穿 pod+事件+核心比对）——ABI 跨 src+snapshot+双 consumer 同步量大。
+- 设置 `hr5-settings-190416` 的消费链因导航按钮坐标偏移（新启动后 hand-scroll 位置低于预期，click 命中 counter-alias），scrollNote 未在本轮重复写入。同一机制已在 thermo 和前几轮设置消费中验证。
+- 生成视口连续消费、活草稿非空选区重排/resize、拒绝恢复——原证保留但未在本包重做。
+- 设备多指、marked/cancel、惯性/回弹、物理性能——原边界保留。
+E/F 并行改动保留，未 stage/commit/push。
 
 **历史第九次原任务依据（以下保留，不是新一轮重跑清单）。** 独立入口准备与 UI 回调退出已解除原启动互等；域/授权连接已在无 Surface 时服务；KnownShimNoRef 拒绝真实窗口发布；同 PID 5700 实例 1→2 的业务恢复有原证。主应用 final-normal / audit-neg-8 两份 490 项输入清单仅 transport 变体配置不同，平台指纹相同。上述成果无需重新侦察或逐项重跑。`33 PASS / 10 BLOCKED` 是探针历史原始输出，当时存在以下判据问题，不代表当前新版结果。
 

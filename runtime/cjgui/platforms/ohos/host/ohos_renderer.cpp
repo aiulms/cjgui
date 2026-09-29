@@ -19,7 +19,9 @@
 // 能力边界（未支持能力显式失败，不做空成功）：
 //  - 支持：容器/文本/按钮/整数与布尔输入的场景提交与自绘、文字四指标测量、
 //    空命令菜单与空数据传输、viewport/进度/生命周期诊断。
-//  - 不支持（显式失败）：图片资源、可编辑文本与选区恢复/文本命中、
+//  - 图片资源：应用沙箱 PNG 有界异步解码、fit/fill 与圆角裁剪；
+//    key/version/path 由应用声明，已接受场景保持精确资源绑定。
+//  - 不支持（显式失败）：可编辑文本与选区恢复/文本命中、
 //    非空 text runs、非空命令菜单、非空数据传输、IME caret、悬停/按压
 //    视觉层（不影响业务正确性，视觉反馈后续阶段接回）。
 
@@ -29,12 +31,14 @@
 #include <hilog/log.h>
 
 #include <native_drawing/drawing_brush.h>
+#include <native_drawing/drawing_bitmap.h>
 #include <native_drawing/drawing_canvas.h>
 #include <native_drawing/drawing_font_collection.h>
 #include <native_drawing/drawing_gpu_context.h>
 #include <native_drawing/drawing_pen.h>
 #include <native_drawing/drawing_rect.h>
 #include <native_drawing/drawing_round_rect.h>
+#include <native_drawing/drawing_sampling_options.h>
 #include <native_drawing/drawing_surface.h>
 #include <native_drawing/drawing_text_typography.h>
 #include <native_drawing/drawing_types.h>
@@ -45,18 +49,29 @@
 #include <inputmethod/inputmethod_attach_options_capi.h>
 #include <inputmethod/inputmethod_text_avoid_info_capi.h>
 #include <native_window/external_window.h>
+#include <multimedia/image_framework/image/image_source_native.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <map>
 #include <memory>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <time.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <utility>
 #include <vector>
 
 #define RLOG(...) OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "CjguiRenderer", __VA_ARGS__)
@@ -186,6 +201,52 @@ constexpr uint32_t kKindScrollArea = 8;
 constexpr uint32_t kKindImage = 9;
 constexpr uint32_t kKindMultiline = 10;
 
+// BEGIN CJGUI OHOS IMAGE GEOMETRY
+struct OhosImageGeometry {
+    float sourceLeft = 0, sourceTop = 0, sourceRight = 0, sourceBottom = 0;
+    float destLeft = 0, destTop = 0, destRight = 0, destBottom = 0;
+};
+
+// Source crop and destination are computed together, so fit/fill and node
+// clipping cannot disagree about the part of the image that is presented.
+static bool cjguiOhosImageGeometry(uint32_t sourceWidth, uint32_t sourceHeight,
+                                   int64_t boxX, int64_t boxY, int64_t boxWidth,
+                                   int64_t boxHeight, uint32_t contentMode,
+                                   OhosImageGeometry *out)
+{
+    if (!out || sourceWidth == 0 || sourceHeight == 0 || boxWidth <= 0 || boxHeight <= 0) return false;
+    const double sx = static_cast<double>(boxWidth) / sourceWidth;
+    const double sy = static_cast<double>(boxHeight) / sourceHeight;
+    const double scale = contentMode == 2 ? std::max(sx, sy) : std::min(sx, sy);
+    if (!std::isfinite(scale) || scale <= 0) return false;
+    double srcL = 0, srcT = 0, srcR = sourceWidth, srcB = sourceHeight;
+    double dstL = boxX, dstT = boxY, dstR = static_cast<double>(boxX) + boxWidth;
+    double dstB = static_cast<double>(boxY) + boxHeight;
+    if (contentMode == 2) {
+        const double croppedW = static_cast<double>(boxWidth) / scale;
+        const double croppedH = static_cast<double>(boxHeight) / scale;
+        srcL = (sourceWidth - croppedW) / 2.0;
+        srcT = (sourceHeight - croppedH) / 2.0;
+        srcR = srcL + croppedW;
+        srcB = srcT + croppedH;
+    } else {
+        const double drawnW = sourceWidth * scale;
+        const double drawnH = sourceHeight * scale;
+        dstL += (boxWidth - drawnW) / 2.0;
+        dstT += (boxHeight - drawnH) / 2.0;
+        dstR = dstL + drawnW;
+        dstB = dstT + drawnH;
+    }
+    if (!std::isfinite(dstL) || !std::isfinite(dstT) || !std::isfinite(dstR) ||
+        !std::isfinite(dstB)) return false;
+    *out = {static_cast<float>(srcL), static_cast<float>(srcT),
+            static_cast<float>(srcR), static_cast<float>(srcB),
+            static_cast<float>(dstL), static_cast<float>(dstT),
+            static_cast<float>(dstR), static_cast<float>(dstB)};
+    return true;
+}
+// END CJGUI OHOS IMAGE GEOMETRY
+
 // 提交未定状态（Sol 协议；核心 isRecoverable 白名单不含它 → 保留 accepted 不重试）
 constexpr int32_t CJGUI_INTERNAL_RENDERER_PENDING = 20;
 
@@ -210,8 +271,13 @@ static std::atomic<int32_t> g_rendererEpoch{0};
 constexpr uint32_t kEvActivate = 27;
 constexpr uint32_t kEvTextChanged = 28;
 constexpr uint32_t kEvBooleanChanged = 29;
+constexpr uint32_t kEvScroll = 30;
 constexpr uint32_t kEvFocus = 31;
+constexpr uint32_t kEvSelectionChanged = 33;
+constexpr uint32_t kEvPointerBegin = 37;
 constexpr uint32_t kEvPointerUpdate = 38;
+constexpr uint32_t kEvPointerEnd = 39;
+constexpr uint32_t kEvPointerCancel = 40;
 
 // 渲染等待上限：present/measure 事务超时后不得再推进任何已接受状态。
 constexpr auto kRenderWaitTimeout = std::chrono::milliseconds{2000};
@@ -739,12 +805,128 @@ extern "C" int32_t cjgui_ohos_test_gate_ack_fail_count(void)
 #endif
 }
 
+// One application incarnation owns one immutable mapping from key/version to
+// its sandbox asset. The decoder never holds a Surface permit. The only data
+// crossing into the fixed drawing thread is ordinary owned pixel storage.
+constexpr size_t kImageMaxEncoded = 4u * 1024u * 1024u;
+constexpr size_t kImageMaxPixels = 4194304u;
+constexpr size_t kImageMaxDecoded = 16u * 1024u * 1024u;
+constexpr size_t kImageMaxOutstanding = 8u;
+constexpr size_t kImageMaxRecords = 64u;
+constexpr size_t kImageMaxBindings = 256u;
+constexpr size_t kImageIdleBytes = 16u * 1024u * 1024u;
+constexpr size_t kImageProcessBytes = 128u * 1024u * 1024u;
+std::atomic<size_t> g_imageLiveBytes{0};
+std::atomic<size_t> g_imageDecoderActiveBytes{0};
+std::atomic<size_t> g_imageDecoderPeakBytes{0};
+
+static void cjguiOhosRecordDecoderBytes(size_t bytes)
+{
+    g_imageDecoderActiveBytes.store(bytes);
+    size_t peak = g_imageDecoderPeakBytes.load();
+    while (peak < bytes && !g_imageDecoderPeakBytes.compare_exchange_weak(peak, bytes)) {}
+}
+
+struct OhosDecodedImage {
+    uint32_t width = 0, height = 0, stride = 0;
+    OH_Drawing_ColorFormat colorFormat = COLOR_FORMAT_BGRA_8888;
+    OH_Drawing_AlphaFormat alphaFormat = ALPHA_FORMAT_PREMUL;
+    std::vector<uint8_t> pixels;
+    size_t accountedBytes = 0;
+    ~OhosDecodedImage() { if (accountedBytes) g_imageLiveBytes.fetch_sub(accountedBytes); }
+};
+
+struct OhosImageEntry {
+    const uint64_t id;
+    const uint64_t epoch;
+    const std::string key;
+    const uint64_t version;
+    const std::string path;
+    uint64_t attempt = 0;
+    uint64_t completionSerial = 0;
+    uint64_t lastUse = 0;
+    uint32_t state = 0;  // ABI: unrequested/loading/ready/failed/busy
+    size_t reservation = 0;
+    std::string failure;
+    std::shared_ptr<OhosDecodedImage> decoded;
+    std::shared_ptr<OhosDecodedImage> awaiting;
+    bool realizationPosted = false;
+    bool decoding = false;
+#ifdef CJGUI_OHOS_TEST_GATES
+    bool completionHeld = false;
+#endif
+    OhosImageEntry(uint64_t entryId, uint64_t domainEpoch, std::string resourceKey,
+                   uint64_t resourceVersion, std::string assetPath)
+        : id(entryId), epoch(domainEpoch), key(std::move(resourceKey)),
+          version(resourceVersion), path(std::move(assetPath)) {}
+};
+
+using OhosImageRef = std::shared_ptr<OhosImageEntry>;
+
+struct OhosImageDomain {
+    std::mutex lock;
+    std::condition_variable cv;
+    std::thread decoder;
+    bool decoderStarted = false;
+    bool quitting = false;
+    uint64_t epoch = 1;
+    uint64_t nextEntryId = 1;
+    uint64_t accessClock = 0;
+    std::map<std::pair<std::string, uint64_t>, std::string> bindings;
+    std::map<std::pair<std::string, uint64_t>, OhosImageRef> entries;
+    std::deque<OhosImageRef> pending;
+    size_t outstanding = 0;
+    size_t reservedBytes = 0;
+    uint64_t decodeStarts = 0, encodedReadBytes = 0, decodeMicros = 0, cacheHits = 0;
+    uint64_t encodedReadMicros = 0;
+    uint64_t staleDiscards = 0;
+    size_t peakTrackedBytes = 0;
+    size_t queued = 0;
+    size_t inFlight = 0;
+#ifdef CJGUI_OHOS_TEST_GATES
+    uint64_t heldVersion = 0;
+    bool holdEnabled = false;
+#endif
+    ~OhosImageDomain();
+    CjguiInternalRendererStatus access(const char *path, const char *key, uint64_t version,
+                                        bool request, bool explicitRetry, OhosImageRef *outEntry,
+                                        uint32_t *outState);
+    void invalidate();
+    void decoderLoop();
+    void releaseReservationLocked(const OhosImageRef &entry);
+    bool validLocked(const OhosImageRef &entry) const;
+    void trimIdleLocked(std::vector<OhosImageRef> *retired, bool reserveAdmissionSlot);
+    bool pruneReleasedIdle();
+};
+
+OhosImageDomain g_images;
+void cjguiOhosPostImageRealization(const OhosImageRef &entry);
+void cjguiOhosNotifyImageCompletion(const OhosImageRef &entry);
+void cjguiOhosPruneReleasedImages();
+void cjguiOhosRequestImageBitmapPrune();
+
+struct OhosImageRetirementWake {
+    std::vector<OhosImageRef> retired;
+    ~OhosImageRetirementWake() noexcept
+    {
+        if (retired.empty()) return;
+        // Admission can evict an old entry without any subsequent render job
+        // (including on a capacity return). Drop all refs before waking the
+        // renderer, otherwise its weak-entry bitmap pass can run too early.
+        retired.clear();
+        cjguiOhosRequestImageBitmapPrune();
+    }
+};
+
 struct SceneNode {
     CjguiInternalRendererComposableNode pod{};
     std::string label;
     std::string value;
     std::string semanticId;
+    OhosImageRef image;
 };
+
+
 
 struct QueuedEvent {
     uint32_t kind = 0;
@@ -757,7 +939,28 @@ struct QueuedEvent {
     uint32_t nodeKind = 0;
     int64_t pointerX = 0;
     int64_t pointerY = 0;
+    int64_t scrollDelta = 0;  // B：滚动意图的累计逻辑位移（text = "by:<delta>"）
+    uint64_t gestureEpoch = 0; // B：GestureKey 贯穿事件到核心捕获
+    uint64_t appInstance = 0;
+    uint64_t componentInstance = 0;
+    uint64_t surfaceGeneration = 0;
+    int64_t pointerId = -1;
+    uint64_t acceptedBindingEpoch = 0;
     std::string text;
+};
+
+struct RawTouchSample {
+    uint32_t action;
+    float x;
+    float y;
+    uint64_t appInstance;
+    uint64_t componentInstance;
+    uint64_t surfaceGeneration;
+    int64_t pointerId;
+    uint64_t gestureEpoch;
+    // B（惯性包）：原始采样时间（随记录传递，与 key 绑定）。
+    int64_t timestampNs = 0;
+    uint32_t timeSource = 0;  // 0=平台单调 ns 1=桥接收时间
 };
 
 struct Session {
@@ -773,6 +976,8 @@ struct Session {
 
     // 最近一次观察到的 surface 事实（viewport 与 resizeVersion 的来源）
     uint64_t surfaceGeneration = 0;
+    uint64_t surfaceGeometryRevision = 0;
+    uint64_t surfaceResizeVersion = 0;
     int32_t surfaceWidth = 0;
     int32_t surfaceHeight = 0;
     double surfaceDensity = 1.0;
@@ -784,6 +989,8 @@ struct Session {
     bool candidateOpen = false;
     uint64_t candidateProjectionVersion = 0;
     std::vector<SceneNode> candidate;
+    uint64_t imageCompletionVersion = 0;
+    std::map<uint64_t, uint64_t> imageObservedSerial;
 
     // 事件 FIFO 与最近一次 pump 出的事件文本（form_event_text 的生命周期）
     std::deque<QueuedEvent> events;
@@ -802,7 +1009,64 @@ struct Session {
     int64_t ticketAckCount = 0;
     int64_t ticketDuplicateSettlementCount = 0;
     int64_t ticketDestroyRefusedCount = 0;
-    int64_t pressedNodeIndex = -1;  // 当前按下的目标（仅指针相位期间有效）
+    // B：单指触摸手势（待定点击 / 视口滚动 / 指针拖动 / 已激活编辑器长按）。
+    // 起始绑定 accepted 目标身份、包含视口身份与 surface 代次；阈值前待定，
+    // 超阈值由视口接管并取消子控件点击；有效抬起才执行一次点击，移出、
+    // 取消、退役或换代都不激活。纯滚动不修改业务 owner、不结算焦点。
+    struct TouchGesture {
+        // 0=pending 1=scroll 2=pointer-drag 3=editor-hold（已激活编辑器优先）
+        enum Phase : uint32_t {
+            kGesturePending = 0,
+            kGestureScroll = 1,
+            kGesturePointerDrag = 2,
+            kGestureEditorHold = 3,
+        };
+        bool active = false;
+        uint32_t phase = kGesturePending;
+        float startX = 0.0f, startY = 0.0f;
+        float lastX = 0.0f, lastY = 0.0f;
+        bool hasTarget = false;          // BEGIN 命中的子控件（滚动接管后取消）
+        bool targetEditableText = false; // 单行/整数编辑器（与既有激活语义同集）
+        uint64_t targetNodeId = 0;
+        uint64_t targetBindingEpoch = 0;
+        int64_t targetResourceId = -1;
+        uint32_t targetNodeKind = 0;
+        bool hasViewport = false;        // 包含视口（SCROLL_AREA 身份，与命中分开）
+        uint64_t viewportNodeId = 0;
+        uint64_t viewportBindingEpoch = 0;
+        int64_t viewportResourceId = -1;
+        uint64_t surfaceGeneration = 0;  // 手势起始的 surface 代次
+        int64_t pressBeginMs = 0;        // 可编辑文本长按计时
+        // B：起始绑定冻结与位移/捕获簿记。
+        uint64_t targetProjectionVersion = 0; // 按下时场景版本（记录用；绑定以 accepted epoch 判定）
+        std::string targetSemanticId;         // 语义快照（诊断用）
+        bool thresholdLatch = false;          // A：跨阈值不可逆闰（回起点不恢复点击）
+        float scrollAccumY = 0.0f;            // 浮点位移余量（整数交付后保留小数）
+        double scrollRawSumY = 0.0;           // 当前 GestureKey 消费的原始逻辑位移
+        int64_t scrollWholeDeliveredY = 0;    // 已送入共享 viewport 的整数位移
+        uint64_t scrollSampleCount = 0;       // UPDATE/END 共用采样入口次数
+        bool scrollEndConfirmed = false;       // 真实 END；其他终结按取消记录
+        bool pointerStreamOpen = false;       // 指针相位流已开（37 已入队）
+        bool pointerStreamEnded = false;      // 终结恰好一次（END/CANCEL 任一）
+        uint64_t gestureEpoch = 0;             // B：GestureKey 贯穿全链
+        // B（惯性包）：近期样本窗（固定容量，Flutter velocity_tracker 思路），
+        // 用于 END 后估计释放速度。样本为 (timestampNs, y) 对。
+        static constexpr size_t kVelocityWindow = 8;
+        float velWindowY[kVelocityWindow] = {0};
+        int64_t velWindowT[kVelocityWindow] = {0};
+        size_t velWindowCount = 0;
+        uint64_t appInstance = 0;
+        uint64_t componentInstance = 0;
+        int64_t pointerId = -1;
+    };
+    TouchGesture gesture;
+    // C：字段切换时旧编辑上下文的收场身份（pump 的 end 通知按此取值，
+    // 不得读新上下文字段）。
+    int64_t detachContextId = 0;
+    std::string detachFieldName;
+    // C：本编辑上下文是否已经公共通道请求过屏外 reveal（核心 flush 一次到
+    // 位后按当前几何聚焦；超出夹紧上限时按可见部分聚焦，不重复请求）。
+    bool editingContextRevealRequested = false;
     uint64_t loggedResizeVersion = 0;
 
     // 平台编辑缓冲：交互投影（非业务 owner）。偏移单位 = UTF-16 码元。
@@ -853,6 +1117,85 @@ struct Session {
     bool editingContextLive = false;
 };
 
+// BEGIN CJGUI OHOS IMAGE LEASE DIAGNOSTICS
+// A normal-HAP, identity-scoped account of accepted scene ownership. This
+// reads only immutable entry identity and SceneNode refs while sessions.lock is
+// held; it neither takes the image-domain lock nor extends a resource lifetime.
+constexpr size_t kImageLeaseKeyHexCapacity = 321;  // admitted key <= 160 bytes
+std::atomic<uint64_t> g_imageLeaseSwapSeq{0};
+
+static bool cjguiOhosImageKeyHex(const std::string &key,
+                                 std::array<char, kImageLeaseKeyHexCapacity> *out)
+{
+    static constexpr char digits[] = "0123456789abcdef";
+    const size_t count = std::min(key.size(), (out->size() - 1) / 2);
+    for (size_t i = 0; i < count; ++i) {
+        const unsigned char byte = static_cast<unsigned char>(key[i]);
+        (*out)[2 * i] = digits[byte >> 4];
+        (*out)[2 * i + 1] = digits[byte & 0xf];
+    }
+    (*out)[2 * count] = '\0';
+    return count == key.size();
+}
+
+struct OhosImageLeaseRow {
+    const OhosImageEntry *entry = nullptr;
+    size_t oldCount = 0;
+    size_t newCount = 0;
+};
+
+static void cjguiOhosLogAcceptedImageSwap(const Session &session,
+    const std::vector<SceneNode> &previous, uint64_t previousProjection,
+    uint64_t ticket, const char *cause)
+{
+    // At most the old and new domain's admitted 64 identities can be present.
+    // If an unusual retired-domain overlap exceeds this bound, the summary
+    // exposes omitted node rows rather than silently claiming exact coverage.
+    std::array<OhosImageLeaseRow, 2 * kImageMaxRecords> rows{};
+    size_t used = 0;
+    size_t omitted = 0;
+    auto count = [&](const std::vector<SceneNode> &nodes, bool old) {
+        for (const SceneNode &node : nodes) {
+            const OhosImageEntry *entry = node.image.get();
+            if (!entry) continue;
+            size_t index = 0;
+            while (index < used && rows[index].entry != entry) ++index;
+            if (index == used) {
+                if (used == rows.size()) { ++omitted; continue; }
+                rows[used++].entry = entry;
+            }
+            if (old) ++rows[index].oldCount; else ++rows[index].newCount;
+        }
+    };
+    count(previous, true);
+    count(session.accepted, false);
+    const uint64_t seq = g_imageLeaseSwapSeq.fetch_add(1, std::memory_order_relaxed) + 1;
+    RLOGI("image-lease stage=accepted-swap seq=%{public}llu session=%{public}llu ticket=%{public}llu cause=%{public}s oldProjection=%{public}llu newProjection=%{public}llu rows=%{public}zu omitted=%{public}zu wrapped=%{public}d",
+          static_cast<unsigned long long>(seq),
+          static_cast<unsigned long long>(session.token),
+          static_cast<unsigned long long>(ticket), cause,
+          static_cast<unsigned long long>(previousProjection),
+          static_cast<unsigned long long>(session.acceptedProjectionVersion), used, omitted,
+          seq == 0 ? 1 : 0);
+    for (size_t i = 0; i < used; ++i) {
+        const OhosImageEntry &entry = *rows[i].entry;
+        std::array<char, kImageLeaseKeyHexCapacity> keyHex{};
+        const bool keyComplete = cjguiOhosImageKeyHex(entry.key, &keyHex);
+        RLOGI("image-lease stage=accepted-entry seq=%{public}llu epoch=%{public}llu entry=%{public}llu keyHex=%{public}s version=%{public}llu oldCount=%{public}zu newCount=%{public}zu session=%{public}llu ticket=%{public}llu oldProjection=%{public}llu newProjection=%{public}llu keyBytes=%{public}zu keyTruncated=%{public}d",
+              static_cast<unsigned long long>(seq),
+              static_cast<unsigned long long>(entry.epoch),
+              static_cast<unsigned long long>(entry.id), keyHex.data(),
+              static_cast<unsigned long long>(entry.version),
+              rows[i].oldCount, rows[i].newCount,
+              static_cast<unsigned long long>(session.token),
+              static_cast<unsigned long long>(ticket),
+              static_cast<unsigned long long>(previousProjection),
+              static_cast<unsigned long long>(session.acceptedProjectionVersion),
+              entry.key.size(), keyComplete ? 0 : 1);
+    }
+}
+// END CJGUI OHOS IMAGE LEASE DIAGNOSTICS
+
 struct SessionTable {
     std::mutex lock;
     Session sessions[kMaxSessions];
@@ -875,6 +1218,39 @@ Session *lookupSessionLocked(uint64_t token)
     return nullptr;
 }
 
+static void cjguiOhosObserveSurfaceLocked(Session *s, uint64_t generation,
+    uint64_t geometryRevision, int32_t width, int32_t height, double density)
+{
+    if (!std::isfinite(density) || density <= 0.0) density = 1.0;
+    if (!s->surfaceSeen || s->surfaceGeneration != generation ||
+        s->surfaceGeometryRevision != geometryRevision || s->surfaceWidth != width ||
+        s->surfaceHeight != height || s->surfaceDensity != density) {
+        // The host geometry revision is unique across same-generation resize
+        // and Surface replacement. Keep a local monotonic fallback if density
+        // changes without a new host revision.
+        s->surfaceResizeVersion = std::max(s->surfaceResizeVersion + 1, geometryRevision);
+    }
+    s->surfaceGeneration = generation;
+    s->surfaceGeometryRevision = geometryRevision;
+    s->surfaceWidth = width;
+    s->surfaceHeight = height;
+    s->surfaceDensity = density;
+    s->surfaceSeen = true;
+}
+
+static void cjguiOhosRefreshSurfaceLocked(Session *s)
+{
+    if (!g_ingress.surfaceActive) return;
+    void *window = nullptr;
+    uint64_t generation = 0, geometryRevision = 0;
+    int32_t width = 0, height = 0;
+    double density = 1.0;
+    if (g_ingress.surfaceActive(&window, &generation, &width, &height,
+                                &density, &geometryRevision) == 1) {
+        cjguiOhosObserveSurfaceLocked(s, generation, geometryRevision, width, height, density);
+    }
+}
+
 // 会话槽位（结算记录 g_pending 与 session 同索引）。
 int sessionSlotLocked(uint64_t token)
 {
@@ -887,6 +1263,536 @@ int sessionSlotLocked(uint64_t token)
     return -1;
 }
 
+static bool cjguiOhosImagePathAllowed(const char *path)
+{
+    // startHost publishes the OS-provided filesDir before starting the owner.
+    // On some devices it is .../haps/entry/files rather than the short alias
+    // .../base/files. Match that one bound directory exactly; never accept an
+    // arbitrary caller-supplied path or an old app instance's directory.
+    constexpr char sandboxPrefix[] = "/data/storage/el2/base/";
+    constexpr char filesSuffix[] = "/files";
+    const char *root = std::getenv("CJGUI_IMAGE_FIXTURE_DIR");
+    if (!root || !path) return false;
+    const size_t rootLength = std::strlen(root);
+    const size_t length = std::strlen(path);
+    if (rootLength < 28 || rootLength > 255 || length <= rootLength + 1 || length > 512 ||
+        std::strncmp(root, sandboxPrefix, sizeof(sandboxPrefix) - 1) != 0 ||
+        std::strcmp(root + rootLength - (sizeof(filesSuffix) - 1), filesSuffix) != 0 ||
+        std::strncmp(path, root, rootLength) != 0 || path[rootLength] != '/') return false;
+    for (const char *p = root; *p; ++p) {
+        if ((*p == '.' && p[1] == '.') || (*p == '/' && p[1] == '/') ||
+            !( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+               (*p >= '0' && *p <= '9') || *p == '/' || *p == '_' || *p == '-' || *p == '.')) {
+            return false;
+        }
+    }
+    const char *name = path + rootLength + 1;
+    const size_t nameLength = length - rootLength - 1;
+    if (nameLength < 5 || nameLength > 255 || name[0] == '.' ||
+        std::strcmp(name + nameLength - 4, ".png") != 0) return false;
+    for (const char *p = name; *p; ++p) {
+        if ((*p == '.' && p[1] == '.') ||
+            !( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+               (*p >= '0' && *p <= '9') || *p == '_' || *p == '-' || *p == '.')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint32_t cjguiOhosPngWord(const uint8_t *bytes)
+{
+    return (static_cast<uint32_t>(bytes[0]) << 24) | (static_cast<uint32_t>(bytes[1]) << 16) |
+           (static_cast<uint32_t>(bytes[2]) << 8) | bytes[3];
+}
+
+static bool cjguiOhosUnknownAlphaNeedsPremultiply(const uint8_t *pixels, uint32_t width,
+    uint32_t height, uint32_t stride, uint32_t *witnessX, uint32_t *witnessY)
+{
+    for (uint32_t y = 0; y < height; ++y) {
+        const uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+        for (uint32_t x = 0; x < width; ++x) {
+            const uint8_t *p = row + x * 4u;
+            if (p[0] > p[3] || p[1] > p[3] || p[2] > p[3]) {
+                if (witnessX) *witnessX = x;
+                if (witnessY) *witnessY = y;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static void cjguiOhosPremultiplyBgra(uint8_t *pixels, uint32_t width,
+    uint32_t height, uint32_t stride)
+{
+    for (uint32_t y = 0; y < height; ++y) {
+        uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+        for (uint32_t x = 0; x < width; ++x) {
+            uint8_t *p = row + x * 4u;
+            for (int c = 0; c < 3; ++c) {
+                p[c] = static_cast<uint8_t>((p[c] * p[3] + 127) / 255);
+            }
+        }
+    }
+}
+
+struct OhosDecodeResult {
+    std::shared_ptr<OhosDecodedImage> image;
+    std::string failure;
+    uint64_t readBytes = 0;
+    uint64_t readMicros = 0;
+    uint64_t decodeMicros = 0;
+};
+
+static OhosDecodeResult cjguiOhosDecodePng(const std::string &path)
+{
+    // One runtime check per process: the NDK libraries are link-only inputs,
+    // so this records the libraries that actually provide the image symbols on
+    // device without packaging SDK stubs into the HAP.
+    static std::atomic<bool> providerReported{false};
+    bool expected = false;
+    if (providerReported.compare_exchange_strong(expected, true)) {
+        Dl_info sourceInfo{};
+        Dl_info bitmapInfo{};
+        const bool sourceResolved =
+            dladdr(reinterpret_cast<void *>(&OH_ImageSourceNative_CreateFromData), &sourceInfo) &&
+            sourceInfo.dli_fname != nullptr;
+        const bool bitmapResolved =
+            dladdr(reinterpret_cast<void *>(&OH_Drawing_BitmapCreateFromPixels), &bitmapInfo) &&
+            bitmapInfo.dli_fname != nullptr;
+        RLOGI("image-provider imageSource=%{public}s drawingBitmap=%{public}s",
+              sourceResolved ? sourceInfo.dli_fname : "unresolved",
+              bitmapResolved ? bitmapInfo.dli_fname : "unresolved");
+    }
+    OhosDecodeResult result;
+    struct ResetActiveBytes { ~ResetActiveBytes() { cjguiOhosRecordDecoderBytes(0); } } resetBytes;
+    const auto readStart = std::chrono::steady_clock::now();
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) { result.failure = "open"; return result; }
+    struct stat fileInfo{};
+    if (fstat(fd, &fileInfo) != 0 || !S_ISREG(fileInfo.st_mode) || fileInfo.st_size < 24 ||
+        static_cast<uint64_t>(fileInfo.st_size) > kImageMaxEncoded) {
+        close(fd); result.failure = "encoded-limit"; return result;
+    }
+    std::vector<uint8_t> encoded(static_cast<size_t>(fileInfo.st_size));
+    cjguiOhosRecordDecoderBytes(encoded.size());
+    size_t offset = 0;
+    while (offset < encoded.size()) {
+        ssize_t count = read(fd, encoded.data() + offset, encoded.size() - offset);
+        if (count <= 0) { close(fd); result.failure = "read"; return result; }
+        offset += static_cast<size_t>(count);
+    }
+    close(fd);
+    result.readBytes = encoded.size();
+    result.readMicros = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - readStart).count());
+    static constexpr uint8_t signature[] = {137, 80, 78, 71, 13, 10, 26, 10};
+    if (std::memcmp(encoded.data(), signature, sizeof(signature)) != 0 ||
+        cjguiOhosPngWord(encoded.data() + 8) != 13 ||
+        std::memcmp(encoded.data() + 12, "IHDR", 4) != 0) {
+        result.failure = "png-header"; return result;
+    }
+    uint32_t headerW = cjguiOhosPngWord(encoded.data() + 16);
+    uint32_t headerH = cjguiOhosPngWord(encoded.data() + 20);
+    if (!headerW || !headerH || headerW > 4096 || headerH > 4096 ||
+        static_cast<uint64_t>(headerW) * headerH > kImageMaxPixels) {
+        result.failure = "dimension-limit"; return result;
+    }
+    const auto decodeStart = std::chrono::steady_clock::now();
+    OH_ImageSourceNative *source = nullptr;
+    OH_ImageSource_Info *sourceInfo = nullptr;
+    OH_DecodingOptions *options = nullptr;
+    OH_PixelmapNative *pixelmap = nullptr;
+    OH_Pixelmap_ImageInfo *pixelInfo = nullptr;
+    struct SdkHandles {
+        OH_ImageSourceNative *&source;
+        OH_ImageSource_Info *&sourceInfo;
+        OH_DecodingOptions *&options;
+        OH_PixelmapNative *&pixelmap;
+        OH_Pixelmap_ImageInfo *&pixelInfo;
+        void release() {
+            if (pixelInfo) { OH_PixelmapImageInfo_Release(pixelInfo); pixelInfo = nullptr; }
+            if (pixelmap) { OH_PixelmapNative_Release(pixelmap); pixelmap = nullptr; }
+            if (options) { OH_DecodingOptions_Release(options); options = nullptr; }
+            if (sourceInfo) { OH_ImageSourceInfo_Release(sourceInfo); sourceInfo = nullptr; }
+            if (source) { OH_ImageSourceNative_Release(source); source = nullptr; }
+        }
+        ~SdkHandles() { release(); }
+    } sdk{source, sourceInfo, options, pixelmap, pixelInfo};
+    auto imageApiOk = [&](const char *stage, Image_ErrorCode code) {
+        if (code == IMAGE_SUCCESS) return true;
+        result.failure = stage;
+        RLOGE("image-decode-failure stage=%{public}s rc=%{public}d", stage, static_cast<int>(code));
+        return false;
+    };
+    do {
+        if (!imageApiOk("source-create", OH_ImageSourceNative_CreateFromData(
+                encoded.data(), encoded.size(), &source))) break;
+        if (!source) { result.failure = "source-null"; break; }
+        if (!imageApiOk("source-info-create", OH_ImageSourceInfo_Create(&sourceInfo))) break;
+        if (!sourceInfo) { result.failure = "source-info-null"; break; }
+        if (!imageApiOk("source-info-read", OH_ImageSourceNative_GetImageInfo(
+                source, 0, sourceInfo))) break;
+        uint32_t sourceW = 0, sourceH = 0;
+        if (!imageApiOk("source-width", OH_ImageSourceInfo_GetWidth(sourceInfo, &sourceW)) ||
+            !imageApiOk("source-height", OH_ImageSourceInfo_GetHeight(sourceInfo, &sourceH))) break;
+        if (sourceW != headerW || sourceH != headerH) {
+            result.failure = "source-dimension";
+            RLOGE("image-decode-failure stage=source-dimension header=%{public}ux%{public}u sdk=%{public}ux%{public}u",
+                  headerW, headerH, sourceW, sourceH);
+            break;
+        }
+        if (!imageApiOk("options-create", OH_DecodingOptions_Create(&options))) break;
+        if (!options) { result.failure = "options-null"; break; }
+        if (!imageApiOk("options-format", OH_DecodingOptions_SetPixelFormat(
+                options, PIXEL_FORMAT_BGRA_8888))) break;
+        if (!imageApiOk("options-range", OH_DecodingOptions_SetDesiredDynamicRange(
+                options, IMAGE_DYNAMIC_RANGE_SDR))) break;
+        if (!imageApiOk("pixelmap-create", OH_ImageSourceNative_CreatePixelmap(
+                source, options, &pixelmap))) break;
+        if (!pixelmap) { result.failure = "pixelmap-null"; break; }
+        if (!imageApiOk("pixelmap-info-create", OH_PixelmapImageInfo_Create(&pixelInfo))) break;
+        if (!pixelInfo) { result.failure = "pixelmap-info-null"; break; }
+        if (!imageApiOk("pixelmap-info-read", OH_PixelmapNative_GetImageInfo(
+                pixelmap, pixelInfo))) break;
+        uint32_t width = 0, height = 0, stride = 0;
+        int32_t format = 0, alpha = 0;
+        if (!imageApiOk("pixelmap-width", OH_PixelmapImageInfo_GetWidth(pixelInfo, &width)) ||
+            !imageApiOk("pixelmap-height", OH_PixelmapImageInfo_GetHeight(pixelInfo, &height)) ||
+            !imageApiOk("pixelmap-stride", OH_PixelmapImageInfo_GetRowStride(pixelInfo, &stride)) ||
+            !imageApiOk("pixelmap-format-read", OH_PixelmapImageInfo_GetPixelFormat(pixelInfo, &format)) ||
+            !imageApiOk("pixelmap-alpha-read", OH_PixelmapImageInfo_GetAlphaType(pixelInfo, &alpha))) break;
+        if (width != headerW || height != headerH || stride < width * 4u ||
+            static_cast<uint64_t>(stride) * height > kImageMaxDecoded ||
+            format != PIXEL_FORMAT_BGRA_8888) {
+            result.failure = "pixelmap-format";
+            RLOGE("image-decode-failure stage=pixelmap-format header=%{public}ux%{public}u sdk=%{public}ux%{public}u stride=%{public}u format=%{public}d alpha=%{public}d",
+                  headerW, headerH, width, height, stride, format, alpha);
+            break;
+        }
+        std::shared_ptr<OhosDecodedImage> decoded = std::make_shared<OhosDecodedImage>();
+        decoded->width = width;
+        decoded->height = height;
+        decoded->stride = stride;
+        if (alpha != PIXELMAP_ALPHA_TYPE_UNKNOWN && alpha != PIXELMAP_ALPHA_TYPE_OPAQUE &&
+            alpha != PIXELMAP_ALPHA_TYPE_PREMULTIPLIED &&
+            alpha != PIXELMAP_ALPHA_TYPE_UNPREMULTIPLIED) {
+            result.failure = "alpha-format";
+            RLOGE("image-decode-failure stage=alpha-format alpha=%{public}d", alpha);
+            break;
+        }
+        decoded->pixels.resize(static_cast<size_t>(stride) * height);
+        cjguiOhosRecordDecoderBytes(encoded.size() + decoded->pixels.size());
+        size_t bytes = decoded->pixels.size();
+        if (!imageApiOk("pixel-read", OH_PixelmapNative_ReadPixels(
+                pixelmap, decoded->pixels.data(), &bytes))) break;
+        if (bytes > decoded->pixels.size() || bytes < static_cast<size_t>(stride) * height) {
+            result.failure = "pixel-read-size";
+            RLOGE("image-decode-failure stage=pixel-read-size bytes=%{public}zu allocated=%{public}zu stride=%{public}u height=%{public}u",
+                  bytes, decoded->pixels.size(), stride, height);
+            break;
+        }
+        if (alpha == PIXELMAP_ALPHA_TYPE_UNKNOWN) {
+            // UNKNOWN is a documented PixelMap alpha value, but it does not
+            // promise a byte representation. A color channel above alpha is
+            // impossible in premultiplied data and proves straight alpha.
+            // Otherwise we follow this SDK path's measured behavior: the H
+            // normal HAP read BGRA=(81,62,8,120) from a PNG source pixel
+            // RGBA=(17,132,173,120). This does not prove the representation
+            // of every other PNG; keep the inference visible in hilog.
+            bool sampled = false;
+            for (uint32_t y = 0; y < height && !sampled; ++y) {
+                const uint8_t *row = decoded->pixels.data() + static_cast<size_t>(y) * stride;
+                for (uint32_t x = 0; x < width; ++x) {
+                    const uint8_t *p = row + x * 4u;
+                    if (p[3] == 0 || p[3] == 255) continue;
+                    RLOGI("image-alpha-sample x=%{public}u y=%{public}u b=%{public}u g=%{public}u r=%{public}u a=%{public}u",
+                          x, y, p[0], p[1], p[2], p[3]);
+                    sampled = true;
+                    break;
+                }
+            }
+            uint32_t witnessX = 0, witnessY = 0;
+            const bool straight = cjguiOhosUnknownAlphaNeedsPremultiply(decoded->pixels.data(),
+                width, height, stride, &witnessX, &witnessY);
+            RLOGI("image-alpha-inference mode=%{public}s witnessX=%{public}u witnessY=%{public}u translucentSample=%{public}d",
+                  straight ? "proven-unpremul" : "sdk-observed-premul", witnessX, witnessY,
+                  sampled ? 1 : 0);
+            if (straight) cjguiOhosPremultiplyBgra(decoded->pixels.data(), width, height, stride);
+        }
+        if (alpha == PIXELMAP_ALPHA_TYPE_OPAQUE) decoded->alphaFormat = ALPHA_FORMAT_OPAQUE;
+        if (alpha == PIXELMAP_ALPHA_TYPE_UNPREMULTIPLIED) {
+            cjguiOhosPremultiplyBgra(decoded->pixels.data(), width, height, stride);
+        }
+        decoded->accountedBytes = decoded->pixels.size();
+        g_imageLiveBytes.fetch_add(decoded->accountedBytes);
+        result.image = std::move(decoded);
+    } while (false);
+    sdk.release();
+    result.decodeMicros = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - decodeStart).count());
+    return result;
+}
+
+OhosImageDomain::~OhosImageDomain()
+{
+    {
+        std::lock_guard<std::mutex> g(lock);
+        quitting = true;
+    }
+    cv.notify_all();
+    if (decoder.joinable()) decoder.join();
+}
+
+bool OhosImageDomain::validLocked(const OhosImageRef &entry) const
+{
+    auto it = entries.find({entry->key, entry->version});
+    return entry->epoch == epoch && it != entries.end() && it->second == entry;
+}
+
+void OhosImageDomain::releaseReservationLocked(const OhosImageRef &entry)
+{
+    if (entry->reservation == 0) return;
+    reservedBytes -= entry->reservation;
+    entry->reservation = 0;
+    outstanding -= 1;
+}
+
+void OhosImageDomain::trimIdleLocked(std::vector<OhosImageRef> *retired, bool reserveAdmissionSlot)
+{
+    size_t idleBytes = 0;
+    for (const auto &pair : entries) {
+        if (pair.second.use_count() == 1 && pair.second->decoded) {
+            idleBytes += pair.second->decoded->pixels.size();
+        }
+    }
+    // Admission reserves one slot; release maintenance only enforces the idle
+    // budget. An accepted scene may legitimately keep all 64 slots active.
+    while ((reserveAdmissionSlot && entries.size() >= kImageMaxRecords) ||
+           idleBytes > kImageIdleBytes) {
+        auto victim = entries.end();
+        for (auto it = entries.begin(); it != entries.end(); ++it) {
+            if (it->second.use_count() != 1 || it->second->reservation != 0) continue;
+            if (victim == entries.end() || it->second->lastUse < victim->second->lastUse) victim = it;
+        }
+        if (victim == entries.end()) break;
+        if (victim->second->decoded) idleBytes -= victim->second->decoded->pixels.size();
+        retired->push_back(std::move(victim->second));
+        // The immutable path binding lives exactly as long as this entry's
+        // ownership. use_count()==1 proves no candidate, accepted scene,
+        // queued job, decoder, or drawing snapshot can still refer to it.
+        bindings.erase(victim->first);
+        entries.erase(victim);
+    }
+}
+
+bool OhosImageDomain::pruneReleasedIdle()
+{
+    std::vector<OhosImageRef> retired;
+    {
+        std::lock_guard<std::mutex> g(lock);
+        trimIdleLocked(&retired, false);
+    }
+    // Release decoded bytes after unlocking the domain; the renderer's weak
+    // bitmap entry is pruned separately on its owning thread.
+    return !retired.empty();
+}
+
+CjguiInternalRendererStatus OhosImageDomain::access(const char *path, const char *key,
+    uint64_t version, bool request, bool explicitRetry, OhosImageRef *outEntry, uint32_t *outState)
+{
+    if (outEntry) outEntry->reset();
+    if (outState) *outState = 0;
+    if (!key || !key[0] || std::strlen(key) > 160 || !cjguiOhosImagePathAllowed(path)) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    const std::pair<std::string, uint64_t> identity{key, version};
+    OhosImageRetirementWake retirement;
+    OhosImageRef entry;
+    bool notify = false;
+    {
+        std::lock_guard<std::mutex> g(lock);
+        auto binding = bindings.find(identity);
+        if (binding != bindings.end() && binding->second != path) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        auto found = entries.find(identity);
+        if (found == entries.end() && request) {
+            trimIdleLocked(&retirement.retired, true);
+            // trimIdleLocked can erase a binding; do not use a pre-trim map
+            // iterator for the capacity check or registration below.
+            binding = bindings.find(identity);
+            if (entries.size() >= kImageMaxRecords ||
+                (binding == bindings.end() && bindings.size() >= kImageMaxBindings)) {
+                if (outState) *outState = 4;
+                return CJGUI_INTERNAL_RENDERER_OK;
+            }
+            if (binding == bindings.end()) bindings.emplace(identity, path);
+            entry = std::make_shared<OhosImageEntry>(nextEntryId++, epoch, identity.first, version, path);
+            entries.emplace(identity, entry);
+        } else if (found != entries.end()) {
+            entry = found->second;
+        }
+        if (entry) {
+            if (request) {
+                entry->lastUse = ++accessClock;
+                if (entry->state == 2) cacheHits += 1;
+            }
+            if (request && (entry->state == 0 || (explicitRetry && (entry->state == 3 || entry->state == 4)))) {
+                constexpr size_t reservation = kImageMaxEncoded + 2 * kImageMaxDecoded;
+                if (outstanding >= kImageMaxOutstanding ||
+                    reservedBytes + g_imageLiveBytes.load() + reservation > kImageProcessBytes) {
+                    entry->state = 4;
+                } else {
+                    pending.push_back(entry);  // may allocate; all accounting still unchanged
+                    entry->attempt += 1;
+                    entry->state = 1;
+                    entry->failure.clear();
+                    entry->reservation = reservation;
+                    reservedBytes += reservation;
+                    peakTrackedBytes = std::max(peakTrackedBytes,
+                        reservedBytes + g_imageLiveBytes.load());
+                    outstanding += 1;
+                    queued += 1;
+                    if (!decoderStarted) {
+                        try {
+                            decoder = std::thread([this]() { decoderLoop(); });
+                            decoderStarted = true;
+                        } catch (...) {
+                            pending.pop_back();
+                            queued -= 1;
+                            releaseReservationLocked(entry);
+                            entry->state = 3;
+                            entry->failure = "decoder-start";
+                            entry->completionSerial += 1;
+                        }
+                    }
+                    notify = entry->state == 1;
+                }
+            }
+            if (outEntry) *outEntry = entry;
+            if (outState) *outState = entry->state;
+        }
+    }
+    if (notify) cv.notify_one();
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+static CjguiInternalRendererStatus cjguiOhosImageAccessNoThrow(const char *path,
+    const char *key, uint64_t version, bool request, bool explicitRetry,
+    OhosImageRef *outEntry, uint32_t *outState) noexcept
+{
+    try {
+        CjguiInternalRendererStatus status =
+            g_images.access(path, key, version, request, explicitRetry, outEntry, outState);
+        cjguiOhosPruneReleasedImages();  // access() has released its local entry
+        return status;
+    } catch (...) {
+        RLOGE("image resource admission allocation failed");
+        if (outEntry) outEntry->reset();
+        if (outState) *outState = 3;
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+}
+
+void OhosImageDomain::invalidate()
+{
+    std::map<std::pair<std::string, uint64_t>, OhosImageRef> retired;
+    std::map<std::pair<std::string, uint64_t>, std::string> retiredBindings;
+    {
+        std::lock_guard<std::mutex> g(lock);
+        epoch += 1;
+        retiredBindings.swap(bindings);
+#ifdef CJGUI_OHOS_TEST_GATES
+        heldVersion = 0;
+        holdEnabled = false;
+#endif
+        for (OhosImageRef &entry : pending) {
+            releaseReservationLocked(entry);
+            queued -= 1;
+        }
+        pending.clear();
+        for (auto &pair : entries) {
+            if (!pair.second->decoding) releaseReservationLocked(pair.second);
+        }
+        retired.swap(entries);
+    }
+}
+
+void OhosImageDomain::decoderLoop()
+{
+    for (;;) {
+        OhosImageRef entry;
+        uint64_t attempt = 0;
+        {
+            std::unique_lock<std::mutex> g(lock);
+            cv.wait(g, [this]() { return quitting || !pending.empty(); });
+            if (quitting) return;
+            entry = std::move(pending.front());
+            pending.pop_front();
+            queued -= 1;
+            inFlight += 1;
+            entry->decoding = true;
+            attempt = entry->attempt;
+            decodeStarts += 1;
+        }
+        OhosDecodeResult result;
+        try {
+            result = cjguiOhosDecodePng(entry->path);
+        } catch (...) {
+            // A bounded request can still fail allocation. It is a terminal
+            // resource failure, not an exception crossing the worker entry.
+            result.failure = "decode-allocation";
+            cjguiOhosRecordDecoderBytes(0);
+        }
+        const size_t ownedBytes = result.image ? result.image->pixels.size() : 0;
+        const bool decoded = result.image != nullptr;
+        const std::string failure = result.failure;
+        bool publishFailure = false, postRealization = false;
+        {
+            std::lock_guard<std::mutex> g(lock);
+            inFlight -= 1;
+            entry->decoding = false;
+            encodedReadBytes += result.readBytes;
+            encodedReadMicros += result.readMicros;
+            decodeMicros += result.decodeMicros;
+            if (!validLocked(entry) || entry->attempt != attempt || entry->state != 1) {
+                staleDiscards += 1;
+                releaseReservationLocked(entry);
+            } else if (!result.image) {
+                entry->failure = std::move(result.failure);
+                entry->state = 3;
+                entry->completionSerial += 1;
+                releaseReservationLocked(entry);
+                publishFailure = true;
+            } else {
+                entry->awaiting = std::move(result.image);
+                bool shouldPost = true;
+#ifdef CJGUI_OHOS_TEST_GATES
+                entry->completionHeld = holdEnabled && heldVersion == entry->version;
+                shouldPost = !entry->completionHeld;
+#endif
+                if (shouldPost) {
+                    entry->realizationPosted = true;
+                    postRealization = true;
+                }
+            }
+        }
+        RLOGI("image-cost stage=decode entry=%{public}llu version=%{public}llu encoded=%{public}llu readUs=%{public}llu decodeUs=%{public}llu owned=%{public}zu ok=%{public}d failure=%{public}s resident=%{public}zu",
+              static_cast<unsigned long long>(entry->id),
+              static_cast<unsigned long long>(entry->version),
+              static_cast<unsigned long long>(result.readBytes),
+              static_cast<unsigned long long>(result.readMicros),
+              static_cast<unsigned long long>(result.decodeMicros),
+              ownedBytes, decoded ? 1 : 0, decoded ? "none" : failure.c_str(),
+              g_imageLiveBytes.load());
+        if (postRealization) cjguiOhosPostImageRealization(entry);
+        if (publishFailure) cjguiOhosNotifyImageCompletion(entry);
+        result.image.reset();
+        entry.reset();
+        cjguiOhosPruneReleasedImages();
+    }
+}
+
 // 场景逐项相等：用于确认「结算已提交的帧就是本轮候选」而不二次绘制。
 bool sameSceneNodes(const std::vector<SceneNode> &a, const std::vector<SceneNode> &b)
 {
@@ -895,6 +1801,7 @@ bool sameSceneNodes(const std::vector<SceneNode> &a, const std::vector<SceneNode
         if (a[i].pod.nodeId != b[i].pod.nodeId) return false;
         if (a[i].pod.resourceId != b[i].pod.resourceId) return false;
         if (a[i].pod.projectionVersion != b[i].pod.projectionVersion) return false;
+        if (a[i].image != b[i].image) return false;
     }
     return true;
 }
@@ -911,6 +1818,7 @@ enum class JobKind {
     CaretHitTest,
     Present,
     Redraw,      // 用末帧节点副本重绘（预览态视觉更新），不晋升任何状态
+    ImageRealize, // plain pixels → renderer-owned Drawing bitmap; no Surface lease
     Teardown,    // A2：宿主请求拆除某一代 surface（含许可归还与拆除确认回传）
     Shutdown,
 };
@@ -1079,6 +1987,12 @@ struct RedrawJob : WaitableJob {
     RedrawJob() : WaitableJob(JobKind::Redraw) {}
 };
 
+struct ImageRealizeJob : WaitableJob {
+    explicit ImageRealizeJob(OhosImageRef resource)
+        : WaitableJob(JobKind::ImageRealize), entry(std::move(resource)) {}
+    OhosImageRef entry;
+};
+
 // A2 拆除任务：宿主 surface 退役时投递。渲染线程据此结束该代的真实使用
 // （SurfaceDestroy + GPU 资源释放 + 许可归还），然后回传拆除确认。
 // 非等待式：宿主 UI 回调只投递即返回，不阻塞 UI 线程。
@@ -1125,7 +2039,22 @@ struct RenderThread {
     JobRef activeJob;
     bool running = false;
     bool stopping = false;
+    bool imagePruneRequested = false;  // coalesced, allocation-free cleanup wakeup
     std::atomic<int32_t> lastShutdownStatus{0};
+
+    struct ImageBitmap {
+        uint64_t id = 0;
+        uint64_t epoch = 0;
+        uint64_t version = 0;
+        std::array<char, kImageLeaseKeyHexCapacity> keyHex{};
+        bool published = false;
+        OH_Drawing_Bitmap *bitmap = nullptr;
+        std::shared_ptr<OhosDecodedImage> backing;
+        std::weak_ptr<OhosImageEntry> entry;
+    };
+    std::map<uint64_t, ImageBitmap> imageBitmaps;
+    std::atomic<uint64_t> bitmapCreates{0}, bitmapDestroys{0};
+    std::atomic<uint64_t> bitmapCreateMicros{0}, bitmapDestroyMicros{0};
 
     OH_Drawing_GpuContext *gpuContext = nullptr;
     void *boundWindow = nullptr;
@@ -1265,11 +2194,73 @@ struct RenderThread {
         cv.notify_all();
     }
 
+    bool postIfRunning(const JobRef &job)
+    {
+        {
+            std::lock_guard<std::mutex> g(lock);
+            if (!running || stopping) return false;
+            jobs.push_back(job);
+        }
+        cv.notify_all();
+        return true;
+    }
+
+    void requestImagePrune()
+    {
+        {
+            std::lock_guard<std::mutex> g(lock);
+            if (!running || stopping) return;  // shutdown destroys every bitmap
+            imagePruneRequested = true;
+        }
+        cv.notify_one();
+    }
+
+    void destroyImageBitmap(ImageBitmap &image)
+    {
+        if (!image.bitmap) return;
+        const auto start = std::chrono::steady_clock::now();
+        OH_Drawing_BitmapDestroy(image.bitmap);
+        const uint64_t elapsed = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - start).count());
+        bitmapDestroyMicros.fetch_add(elapsed);
+        bitmapDestroys.fetch_add(1);
+        RLOGI("image-lease stage=bitmap-destroy epoch=%{public}llu entry=%{public}llu keyHex=%{public}s version=%{public}llu published=%{public}d",
+              static_cast<unsigned long long>(image.epoch),
+              static_cast<unsigned long long>(image.id), image.keyHex.data(),
+              static_cast<unsigned long long>(image.version), image.published ? 1 : 0);
+        RLOGI("image-cost stage=bitmap-destroy entry=%{public}llu version=%{public}llu us=%{public}llu resident=%{public}zu",
+              static_cast<unsigned long long>(image.id),
+              static_cast<unsigned long long>(image.version),
+              static_cast<unsigned long long>(elapsed), g_imageLiveBytes.load());
+        image.bitmap = nullptr;
+        image.backing.reset();
+    }
+
+    void pruneImageBitmaps()
+    {
+        for (auto it = imageBitmaps.begin(); it != imageBitmaps.end();) {
+            if (it->second.entry.expired()) {
+                destroyImageBitmap(it->second);
+                it = imageBitmaps.erase(it);
+            } else ++it;
+        }
+    }
+
     void run()
     {
         std::unique_lock<std::mutex> g(lock);
         for (;;) {
-            cv.wait(g, [this]() { return !jobs.empty(); });
+            cv.wait(g, [this]() { return !jobs.empty() || imagePruneRequested; });
+            if (jobs.empty()) {
+                imagePruneRequested = false;
+                g.unlock();
+                pruneImageBitmaps();  // no Surface access, draw, or Flush
+                g.lock();
+                continue;
+            }
+            const bool pruneAfterJob = imagePruneRequested;
+            imagePruneRequested = false;
             JobRef job = jobs.front();
             jobs.pop_front();
             activeJob = job;
@@ -1284,6 +2275,8 @@ struct RenderThread {
             if (job->kind == JobKind::Shutdown) {
                 teardownSurface();
                 busyGeneration.store(0);
+                for (auto &pair : imageBitmaps) destroyImageBitmap(pair.second);
+                imageBitmaps.clear();
                 if (gpuContext) {
                     OH_Drawing_GpuContextDestroy(gpuContext);
                     gpuContext = nullptr;
@@ -1304,6 +2297,18 @@ struct RenderThread {
             execute(job.get());   // 共享所有权：本函数返回即释放本线程这一份引用
             g.lock();
             activeJob.reset();
+            g.unlock();
+            job.reset();
+            // finish() can wake the owner before this thread releases its own
+            // Present/ImageRealize reference. This is the renderer-side release
+            // opportunity; the owner has its separate settlement hook.
+            try {
+                const bool evicted = g_images.pruneReleasedIdle();
+                if (pruneAfterJob || evicted) pruneImageBitmaps();
+            } catch (...) {
+                RLOGE("image idle prune failed after renderer job");
+            }
+            g.lock();
         }
     }
 
@@ -1399,9 +2404,103 @@ struct RenderThread {
             executePresent(static_cast<PresentJob *>(job));
         } else if (job->kind == JobKind::Redraw) {
             executeRedraw();
+        } else if (job->kind == JobKind::ImageRealize) {
+            executeImageRealize(static_cast<ImageRealizeJob *>(job));
         } else if (job->kind == JobKind::Teardown) {
             executeTeardown(static_cast<TeardownJob *>(job));
         }
+    }
+
+    void executeImageRealize(ImageRealizeJob *job)
+    {
+        OhosImageRef entry = job->entry;
+        std::shared_ptr<OhosDecodedImage> pixels;
+        uint64_t attempt = 0;
+        {
+            std::lock_guard<std::mutex> g(g_images.lock);
+            if (!g_images.validLocked(entry) || entry->state != 1 || !entry->awaiting) {
+                job->finish(CJGUI_INTERNAL_RENDERER_OK);
+                return;
+            }
+#ifdef CJGUI_OHOS_TEST_GATES
+            if (entry->completionHeld) {
+                entry->realizationPosted = false;
+                job->finish(CJGUI_INTERNAL_RENDERER_OK);
+                return;
+            }
+#endif
+            pixels = entry->awaiting;
+            attempt = entry->attempt;
+        }
+        OH_Drawing_Image_Info imageInfo{static_cast<int32_t>(pixels->width),
+            static_cast<int32_t>(pixels->height), pixels->colorFormat, pixels->alphaFormat};
+        const auto start = std::chrono::steady_clock::now();
+        OH_Drawing_Bitmap *bitmap = OH_Drawing_BitmapCreateFromPixels(&imageInfo,
+            pixels->pixels.data(), pixels->stride);
+        const bool bitmapCreated = bitmap != nullptr;
+        const uint64_t createUs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - start).count());
+        bitmapCreateMicros.fetch_add(createUs);
+        if (bitmap) bitmapCreates.fetch_add(1);
+        RLOGI("image-cost stage=bitmap-create entry=%{public}llu version=%{public}llu us=%{public}llu ok=%{public}d resident=%{public}zu",
+              static_cast<unsigned long long>(entry->id),
+              static_cast<unsigned long long>(entry->version),
+              static_cast<unsigned long long>(createUs), bitmap ? 1 : 0,
+              g_imageLiveBytes.load());
+        bool publish = false;
+        bool bitmapPublished = false;
+        {
+            std::lock_guard<std::mutex> g(g_images.lock);
+            if (g_images.validLocked(entry) && entry->state == 1 &&
+                entry->attempt == attempt && entry->awaiting == pixels) {
+                if (bitmap) {
+                    ImageBitmap image;
+                    image.id = entry->id;
+                    image.epoch = entry->epoch;
+                    image.version = entry->version;
+                    cjguiOhosImageKeyHex(entry->key, &image.keyHex);
+                    image.published = true;
+                    image.bitmap = bitmap;
+                    image.backing = pixels;
+                    image.entry = entry;
+                    imageBitmaps.emplace(entry->id, std::move(image));
+                    bitmapPublished = true;
+                    entry->decoded = pixels;
+                    entry->state = 2;
+                } else {
+                    entry->failure = "bitmap";
+                    entry->state = 3;
+                }
+                entry->awaiting.reset();
+                entry->completionSerial += 1;
+                g_images.releaseReservationLocked(entry);
+                publish = true;
+                bitmap = nullptr;  // render-thread map now owns it
+            } else {
+                g_images.staleDiscards += 1;
+            }
+        }
+        std::array<char, kImageLeaseKeyHexCapacity> keyHex{};
+        const bool keyComplete = cjguiOhosImageKeyHex(entry->key, &keyHex);
+        RLOGI("image-lease stage=bitmap-create epoch=%{public}llu entry=%{public}llu keyHex=%{public}s version=%{public}llu ok=%{public}d published=%{public}d keyBytes=%{public}zu keyTruncated=%{public}d",
+              static_cast<unsigned long long>(entry->epoch),
+              static_cast<unsigned long long>(entry->id), keyHex.data(),
+              static_cast<unsigned long long>(entry->version),
+              bitmapCreated ? 1 : 0, bitmapPublished ? 1 : 0,
+              entry->key.size(), keyComplete ? 0 : 1);
+        if (bitmap) {
+            ImageBitmap unused;
+            unused.id = entry->id;
+            unused.epoch = entry->epoch;
+            unused.version = entry->version;
+            unused.keyHex = keyHex;
+            unused.bitmap = bitmap;
+            destroyImageBitmap(unused);
+        }
+        pruneImageBitmaps();
+        if (publish) cjguiOhosNotifyImageCompletion(entry);
+        job->finish(CJGUI_INTERNAL_RENDERER_OK);
     }
 
     // A2 拆除：宿主已退役该代 surface，渲染线程结束真实使用。
@@ -1422,6 +2521,7 @@ struct RenderThread {
     // 不 Flush 前不查取消（无票据）；Flush 后不推进任何会话状态。
     void executeRedraw()
     {
+        pruneImageBitmaps();
         if (!hasLastFrame || !surface) return;
         // 第七次复核 B：无引用档下退役代的重绘同样不得触碰平台资源
         // （SurfaceGetCanvas/SurfaceFlush 都作用在该代的 window 上）。
@@ -1477,7 +2577,9 @@ struct RenderThread {
             if (n.pod.width <= 0 || n.pod.height <= 0) continue;
             OH_Drawing_CanvasSave(canvas);
             if (applyClipChain(canvas, n.pod)) {   // 空裁剪：不可见
-                drawFillAndBorder(canvas, n.pod);
+                drawFill(canvas, n.pod);
+                drawNodeImage(canvas, n);
+                drawBorder(canvas, n.pod);
                 drawNodeText(canvas, n);
             }
             OH_Drawing_CanvasRestore(canvas);
@@ -1550,6 +2652,7 @@ struct RenderThread {
 
     void executePresent(PresentJob *job)
     {
+        pruneImageBitmaps();
         job->markRunning();
         // 取消检查点 1（出队后；准备阶段可取消）
         if (job->consumeCancelIfRequested()) {
@@ -1626,7 +2729,9 @@ struct RenderThread {
             if (n.pod.width <= 0 || n.pod.height <= 0) continue;
             OH_Drawing_CanvasSave(canvas);
             if (applyClipChain(canvas, n.pod)) {   // 空裁剪：不可见
-                drawFillAndBorder(canvas, n.pod);
+                drawFill(canvas, n.pod);
+                drawNodeImage(canvas, n);
+                drawBorder(canvas, n.pod);
                 drawNodeText(canvas, n);
             }
             OH_Drawing_CanvasRestore(canvas);
@@ -2056,7 +3161,7 @@ struct RenderThread {
         return true;
     }
 
-    void drawFillAndBorder(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n)
+    void drawFill(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n)
     {
         float x = static_cast<float>(n.x);
         float y = static_cast<float>(n.y);
@@ -2077,6 +3182,14 @@ struct RenderThread {
             OH_Drawing_CanvasDetachBrush(canvas);
             OH_Drawing_BrushDestroy(brush);
         }
+    }
+
+    void drawBorder(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n)
+    {
+        float x = static_cast<float>(n.x);
+        float y = static_cast<float>(n.y);
+        float w = static_cast<float>(n.width);
+        float h = static_cast<float>(n.height);
         if (n.borderWidth > 0 && n.borderAlpha > 0.0) {
             OH_Drawing_Pen *pen = OH_Drawing_PenCreate();
             OH_Drawing_PenSetAntiAlias(pen, true);
@@ -2096,6 +3209,76 @@ struct RenderThread {
             OH_Drawing_CanvasDetachPen(canvas);
             OH_Drawing_PenDestroy(pen);
         }
+    }
+
+    void drawNodeImage(OH_Drawing_Canvas *canvas, const SceneNode &node)
+    {
+        if (node.pod.nodeKind != kKindImage || !node.image) return;
+        // The same native bounds clip applies to both fitting modes. Round
+        // corners are additional to the inherited clip chain, not a replacement.
+        OH_Drawing_CanvasSave(canvas);
+        const float x = static_cast<float>(node.pod.x);
+        const float y = static_cast<float>(node.pod.y);
+        const float w = static_cast<float>(node.pod.width);
+        const float h = static_cast<float>(node.pod.height);
+        OH_Drawing_Rect *bounds = OH_Drawing_RectCreate(x, y, x + w, y + h);
+        if (node.pod.cornerRadius > 0) {
+            const float radius = std::min(static_cast<float>(node.pod.cornerRadius),
+                                          std::min(w, h) / 2.0f);
+            OH_Drawing_RoundRect *rounded = OH_Drawing_RoundRectCreate(bounds, radius, radius);
+            OH_Drawing_CanvasClipRoundRect(canvas, rounded, INTERSECT, true);
+            OH_Drawing_RoundRectDestroy(rounded);
+        } else {
+            OH_Drawing_CanvasClipRect(canvas, bounds, INTERSECT, true);
+        }
+        auto found = imageBitmaps.find(node.image->id);
+        if (found != imageBitmaps.end() && found->second.bitmap && found->second.backing) {
+#ifdef CJGUI_OHOS_TEST_GATES
+            RLOGI("image-draw entry=%{public}llu version=%{public}llu state=ready",
+                  static_cast<unsigned long long>(node.image->id),
+                  static_cast<unsigned long long>(node.image->version));
+#endif
+            const OhosDecodedImage &pixels = *found->second.backing;
+            OhosImageGeometry geometry;
+            if (cjguiOhosImageGeometry(pixels.width, pixels.height, node.pod.x, node.pod.y,
+                                       node.pod.width, node.pod.height,
+                                       node.pod.imageContentMode, &geometry)) {
+                OH_Drawing_Rect *source = OH_Drawing_RectCreate(geometry.sourceLeft,
+                    geometry.sourceTop, geometry.sourceRight, geometry.sourceBottom);
+                OH_Drawing_Rect *destination = OH_Drawing_RectCreate(geometry.destLeft,
+                    geometry.destTop, geometry.destRight, geometry.destBottom);
+                OH_Drawing_SamplingOptions *sampling = OH_Drawing_SamplingOptionsCreate(
+                    FILTER_MODE_LINEAR, MIPMAP_MODE_NONE);
+                OH_Drawing_CanvasDrawBitmapRect(canvas, found->second.bitmap, source, destination, sampling);
+                std::array<char, kImageLeaseKeyHexCapacity> keyHex{};
+                const bool keyComplete = cjguiOhosImageKeyHex(node.image->key, &keyHex);
+                RLOGI("image-lease stage=draw epoch=%{public}llu entry=%{public}llu keyHex=%{public}s version=%{public}llu projection=%{public}llu node=%{public}llu keyBytes=%{public}zu keyTruncated=%{public}d",
+                      static_cast<unsigned long long>(node.image->epoch),
+                      static_cast<unsigned long long>(node.image->id), keyHex.data(),
+                      static_cast<unsigned long long>(node.image->version),
+                      static_cast<unsigned long long>(node.pod.projectionVersion),
+                      static_cast<unsigned long long>(node.pod.nodeId),
+                      node.image->key.size(), keyComplete ? 0 : 1);
+                if (sampling) OH_Drawing_SamplingOptionsDestroy(sampling);
+                OH_Drawing_RectDestroy(source);
+                OH_Drawing_RectDestroy(destination);
+            }
+        } else if (node.pod.fillAlpha <= 0.0) {
+#ifdef CJGUI_OHOS_TEST_GATES
+            RLOGI("image-draw entry=%{public}llu version=%{public}llu state=placeholder",
+                  static_cast<unsigned long long>(node.image->id),
+                  static_cast<unsigned long long>(node.image->version));
+#endif
+            // Loading/failed is visibly neutral even when the node is clear.
+            OH_Drawing_Brush *placeholder = OH_Drawing_BrushCreate();
+            OH_Drawing_BrushSetColor(placeholder, packColor(0.42, 0.45, 0.48, 0.24));
+            OH_Drawing_CanvasAttachBrush(canvas, placeholder);
+            OH_Drawing_CanvasDrawRect(canvas, bounds);
+            OH_Drawing_CanvasDetachBrush(canvas);
+            OH_Drawing_BrushDestroy(placeholder);
+        }
+        OH_Drawing_RectDestroy(bounds);
+        OH_Drawing_CanvasRestore(canvas);
     }
 
     void drawRoundRect(OH_Drawing_Canvas *canvas, float x, float y, float w, float h, float radius)
@@ -2285,6 +3468,144 @@ struct RenderThread {
 
 RenderThread g_render;
 
+void cjguiOhosRequestImageBitmapPrune()
+{
+    g_render.requestImagePrune();
+}
+
+void cjguiOhosPruneReleasedImages()
+{
+    try {
+        // This may be called after an owner-side scene/candidate release or
+        // after a decoder-local reference disappears. Never post while holding
+        // the domain lock, and never destroy OH_Drawing objects off-thread.
+        if (g_images.pruneReleasedIdle()) cjguiOhosRequestImageBitmapPrune();
+    } catch (...) {
+        RLOGE("image idle prune failed after owner release");
+    }
+}
+
+void cjguiOhosLogImageSnapshot(const char *stage)
+{
+    uint64_t starts, encoded, readUs, decodeUs, hits;
+    size_t reserved, peak, idle = 0, running, queued;
+    {
+        std::lock_guard<std::mutex> g(g_images.lock);
+        starts = g_images.decodeStarts;
+        encoded = g_images.encodedReadBytes;
+        readUs = g_images.encodedReadMicros;
+        decodeUs = g_images.decodeMicros;
+        hits = g_images.cacheHits;
+        reserved = g_images.reservedBytes;
+        peak = g_images.peakTrackedBytes;
+        running = g_images.inFlight;
+        queued = g_images.queued;
+        for (const auto &pair : g_images.entries) {
+            if (pair.second.use_count() == 1 && pair.second->decoded) {
+                idle += pair.second->decoded->pixels.size();
+            }
+        }
+    }
+    RLOGI("image-cost stage=%{public}s starts=%{public}llu encoded=%{public}llu readUs=%{public}llu decodeUs=%{public}llu hits=%{public}llu",
+          stage, static_cast<unsigned long long>(starts),
+          static_cast<unsigned long long>(encoded), static_cast<unsigned long long>(readUs),
+          static_cast<unsigned long long>(decodeUs), static_cast<unsigned long long>(hits));
+    RLOGI("image-cost stage=%{public}s resident=%{public}zu idle=%{public}zu activeBytes=%{public}zu peakActiveBytes=%{public}zu reservations=%{public}zu peakTracked=%{public}zu running=%{public}zu queued=%{public}zu bitmapCreates=%{public}llu bitmapDestroys=%{public}llu bitmapCreateUs=%{public}llu bitmapDestroyUs=%{public}llu",
+          stage, g_imageLiveBytes.load(), idle, g_imageDecoderActiveBytes.load(),
+          g_imageDecoderPeakBytes.load(), reserved, peak, running, queued,
+          static_cast<unsigned long long>(g_render.bitmapCreates.load()),
+          static_cast<unsigned long long>(g_render.bitmapDestroys.load()),
+          static_cast<unsigned long long>(g_render.bitmapCreateMicros.load()),
+          static_cast<unsigned long long>(g_render.bitmapDestroyMicros.load()));
+}
+
+void cjguiOhosPostImageRealization(const OhosImageRef &entry)
+{
+    try {
+        if (g_render.postIfRunning(std::make_shared<ImageRealizeJob>(entry))) return;
+    } catch (...) {
+        RLOGE("image realization queue allocation failed entry=%{public}llu",
+              static_cast<unsigned long long>(entry->id));
+    }
+    std::lock_guard<std::mutex> g(g_images.lock);
+    if (g_images.validLocked(entry) && entry->state == 1) entry->realizationPosted = false;
+}
+
+void cjguiOhosScheduleUnpostedImages()
+{
+    std::array<OhosImageRef, kImageMaxRecords> ready{};
+    size_t count = 0;
+    {
+        std::lock_guard<std::mutex> g(g_images.lock);
+        for (auto &pair : g_images.entries) {
+            OhosImageRef &entry = pair.second;
+            if (entry->state != 1 || !entry->awaiting || entry->realizationPosted) continue;
+#ifdef CJGUI_OHOS_TEST_GATES
+            if (entry->completionHeld) continue;
+#endif
+            if (count >= ready.size()) break;
+            entry->realizationPosted = true;
+            ready[count++] = entry;
+        }
+    }
+    for (size_t i = 0; i < count; ++i) cjguiOhosPostImageRealization(ready[i]);
+    for (size_t i = 0; i < count; ++i) ready[i].reset();
+    cjguiOhosPruneReleasedImages();
+}
+
+static bool reconcileAcceptedImagesLocked(Session *session)
+{
+    bool changed = false;
+    std::lock_guard<std::mutex> resource(g_images.lock);  // sole nested order: S -> D
+    // 观察记录随实际持有收敛：entry 被 trimIdleLocked 退役后其 ID 单调递增
+    // 不复用，记录永远不会再被 reconcile 观察到；accepted 场景与在途解码都
+    // 以引用/预留把 entry 钉在表内，因此“不在表内”等价于“无人持有”。只回
+    // 收已退役身份，存活 entry 的记录保留，缓存中的图再次入场景不会因补记
+    // 而重复完成通知；表规模随图片表上限收敛，不靠清空整表或扩大容量。
+    for (auto it = session->imageObservedSerial.begin();
+         it != session->imageObservedSerial.end();) {
+        bool live = false;
+        for (const auto &pair : g_images.entries) {
+            if (pair.second->id == it->first) { live = true; break; }
+        }
+        if (live) ++it; else it = session->imageObservedSerial.erase(it);
+    }
+    for (const SceneNode &node : session->accepted) {
+        const OhosImageRef &entry = node.image;
+        if (!entry || !g_images.validLocked(entry) ||
+            (entry->state != 2 && entry->state != 3) || entry->completionSerial == 0) continue;
+        uint64_t &seen = session->imageObservedSerial[entry->id];
+        if (seen < entry->completionSerial) {
+            seen = entry->completionSerial;
+            session->imageCompletionVersion += 1;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+void cjguiOhosNotifyImageCompletion(const OhosImageRef &entry)
+{
+    try {
+        bool acceptedChanged = false;
+        {
+            std::lock_guard<std::mutex> sessions(g_sessions.lock);
+            for (Session &session : g_sessions.sessions) {
+                if (!session.inUse) continue;
+                bool holdsEntry = false;
+                for (const SceneNode &node : session.accepted) {
+                    if (node.image == entry) { holdsEntry = true; break; }
+                }
+                if (holdsEntry && reconcileAcceptedImagesLocked(&session)) acceptedChanged = true;
+            }
+        }
+        if (acceptedChanged) g_render.postIfRunning(std::make_shared<RedrawJob>());
+    } catch (...) {
+        RLOGE("image completion notification allocation failed entry=%{public}llu",
+              static_cast<unsigned long long>(entry->id));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 事件合成（已接受场景命中 → 带身份的意图），对齐 macOS mouseDownForNode
 // ---------------------------------------------------------------------------
@@ -2322,201 +3643,709 @@ bool hitTestAccepted(Session &s, float x, float y, size_t *outIndex)
     return false;
 }
 
-void synthesizeEventsFromRawTouch(Session &s, uint32_t action, float x, float y)
+// B：滚动归属与子控件命中分开（macOS scrollNodeContainingPoint 的 H 对应）。
+// 自后向前取最上层包含触点且完整落在裁剪内的 SCROLL_AREA；嵌套时后绘制
+// （更内层）者先命中。几何与绘制同域：越界内容不命中。
+bool scrollAreaIndexContainingPoint(Session &s, float x, float y, size_t *outIndex)
 {
-    // 阶段1合成策略（对齐 macOS mouseDownForNode 的即时激活语义）：
-    //  - BEGIN 命中按钮 → ACTIVATE；命中布尔输入 → BOOLEAN_CHANGED；
-    //    命中其他交互节点 → 指针相位（焦点/视觉由核心处理）。
-    //  - 未命中不产生任何事件（原控件未刷新就不存在 reject 语义）。
-    //  - UPDATE 仅在按下同一可捕获目标时上报，并做同目标合并。
-    //  - END/CANCEL 仅在存在按下目标时上报，且身份取按下时的目标。
-    size_t index = 0;
-    bool hit = hitTestAccepted(s, x, y, &index);
-    if (action == CJGUI_OHOS_TOUCH_BEGIN) {
-        RLOGI("hit=%{public}d index=%{public}zu", hit ? 1 : 0, index);
-        if (!hit) {
-            // 未命中任何可交互节点——点击落在框架层空白、或落在非交互节点上。
-            // 语义与「点到其他控件」一致：结束当前编辑，旧上下文立即失效，
-            // 平台代理通过 end 通知同步收场（否则系统键盘不会收起）。
-            // 未命中仍不产生指针事件：没有可上报的目标节点。
-            if (s.editing && !s.editorRetired) {
-                s.editorRetired = true;  // 逻辑结束；原生编辑器继续绘制本轮投影
-                s.editingContextLive = false;
-                s.pendingSettleOnDetach = true;
-                s.pendingImeDetach = true;
-            }
-            s.pressedNodeIndex = -1;  // 空白按下不携带任何按下目标
-            return;
+    for (size_t i = s.accepted.size(); i-- > 0;) {
+        const CjguiInternalRendererComposableNode &n = s.accepted[i].pod;
+        if (n.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA) continue;
+        RLOGI("scroll hit test: touch=(%{public}.0f,%{public}.0f) viewport=(%{public}lld,%{public}lld,%{public}lld,%{public}lld) density=%{public}.2f",
+              x, y, static_cast<long long>(n.x), static_cast<long long>(n.y),
+              static_cast<long long>(n.width), static_cast<long long>(n.height), s.surfaceDensity);
+        if (x < static_cast<float>(n.x) || x >= static_cast<float>(n.x + n.width) ||
+            y < static_cast<float>(n.y) || y >= static_cast<float>(n.y + n.height)) continue;
+        if (!RenderThread::pointInsideClips(n, x, y)) continue;
+        *outIndex = i;
+        return true;
+    }
+    return false;
+}
+
+// B：按身份（nodeId+resourceId+kind）在当前 accepted 里重验节点。返回当前
+// 下标；场景更新后同一节点以新版本继续手势，节点移除/换绑则找不到。
+bool sceneIndexByIdentityLocked(Session &s, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
+                                size_t *outIndex)
+{
+    for (size_t i = s.accepted.size(); i-- > 0;) {
+        const CjguiInternalRendererComposableNode &n = s.accepted[i].pod;
+        if (n.nodeId == nodeId && n.resourceId == resourceId && n.nodeKind == nodeKind) {
+            *outIndex = i;
+            return true;
         }
-        const SceneNode &node = s.accepted[index];
-        uint32_t kind = node.pod.nodeKind;
-        if (node.pod.isReadOnly != 0) return;
-        bool isTextEditor = kind == kKindTextInput || kind == kKindIntegerInput;
-        if (isTextEditor) {
-            // C selection：文本节点 BEGIN 落账按下时刻（长按 ≥400ms → 全选）。
-            s.textPressBeginMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            // 单行编辑器：BEGIN = 请求焦点（渲染器在锁内设置编辑缓冲并排队
-            // FOCUS(31)；IME attach 与 caret 命中由 pump 在锁外完成）。
-            bool wasEditing = s.editing && !s.editorRetired && s.editingNodeId == node.pod.nodeId;
-            bool sameNodeAsBefore = s.editingNodeId == node.pod.nodeId &&
-                s.editingResourceId == node.pod.resourceId;
-            s.editing = true;
-            s.editorRetired = false;          // 新交互：重新成为绘制方与回调接收方
-            s.editingNodeId = node.pod.nodeId;
-            s.editingResourceId = node.pod.resourceId;
-            s.editingNodeKind = kind;
-            s.editingProjectionVersion = node.pod.projectionVersion;
-            // 通用编辑上下文：每次绑定新节点/同一节点重新聚焦都分配新编号，
-            // 旧上下文的延迟回调（提交/预览/失焦）从此失效，不得改写新焦点。
-            s.editingContextId = g_nextEditingContextId.fetch_add(1);
-            s.editingFieldName = node.semanticId;
-            s.editingContextGeneration = s.surfaceGeneration;
-            s.editingContextBaseVersion = node.pod.projectionVersion;
-            s.editingContextLive = true;
-            s.reconcileNotifyPending = false;
-            s.reconcileOldContextId = 0;
-            s.pendingSettleOnDetach = false;  // 新焦点继承旧 detach 意图会重复结算
-            if (!wasEditing) {
-                // 编辑缓冲从已接受场景值起步（外部值即起点）。
-                // 例外：核心的「本地文字延续」窗口会把 native 值置空，并约定由
-                // 原生编辑器绘制该节点的可见文本。此时 accepted 里的空值不是
-                // 业务空值；同一节点刚提交过的本地缓冲仍然权威，用空值重置会
-                // 让重新聚焦得到一个空字段。
-                std::u16string ownerValue = utf8ToUtf16(node.value);
-                // C：重新聚焦只从 accepted 规范值初始化——空就是空。保留本地
-                // 缓冲的唯一条件是节点带延续旗标（owner 接受了本地编辑且处于
-                // 延续窗口），不得由空值推断。
-                if (sameNodeAsBefore && ownerValue.empty() && !s.editingText.empty()
-                    && node.pod.preservesActiveLocalText != 0) {
-                    RLOGW("ime refocus keeps local buffer: continuation window node=%{public}lld",
-                          static_cast<long long>(node.pod.nodeId));
-                } else {
-                    s.editingText = ownerValue;
-                }
-                s.caretUtf16 = static_cast<uint32_t>(s.editingText.size());
-                s.selStartUtf16 = s.caretUtf16;
-                s.selEndUtf16 = s.caretUtf16;
-                s.previewActive = false;
-                s.previewText.clear();
-                s.focusNotifyPending = true;   // ArkTS TextInput 代理路径
-            }
-            s.editingTapX = x - static_cast<double>(node.pod.x);   // 节点内相对坐标
-            s.editingTapPending = true;
-            QueuedEvent focus;
-            focus.kind = kEvFocus;
-            focus.recordIndex = static_cast<uint32_t>(index);
-            focus.nodeId = node.pod.nodeId;
-            focus.projectionVersion = node.pod.projectionVersion;
-            focus.resourceId = node.pod.resourceId;
-            focus.nodeKind = kind;
-            s.events.push_back(focus);
-            s.pressedNodeIndex = -1;
-            return;
-        }
-        if (s.editing && !s.editorRetired) {
-            // 点到其他控件：结束编辑（IME detach 在 pump 锁外执行）。
-            // 旧上下文立即失效：晚到的提交/预览/失焦回调不得改写新焦点。
-            // 组合预览不在此丢弃——pump 的 detach 分支按失焦语义把它结算给
-            // owner（恰好一次）；否则用户已经看见的草稿会静默消失。
-            // 绘制不停：本轮投影仍由原生编辑器提供可见文本（见 editorRetired）。
-            s.editorRetired = true;
-            s.editingContextLive = false;
-            s.pendingSettleOnDetach = true;
-            s.pendingImeDetach = true;
-        }
-        s.pressedNodeIndex = static_cast<int64_t>(index);
-        if (kind == kKindBooleanInput) {
-            QueuedEvent ev;
-            ev.kind = kEvBooleanChanged;
-            ev.recordIndex = static_cast<uint32_t>(index);
-            ev.nodeId = node.pod.nodeId;
-            ev.projectionVersion = node.pod.projectionVersion;
-            ev.resourceId = node.pod.resourceId;
-            ev.nodeKind = kind;
-            ev.text = (node.value == "true") ? "false" : "true";
-            s.events.push_back(ev);
-            s.pressedNodeIndex = -1;  // 布尔切换即时生效，无后续相位
-            return;
-        }
-        if (kind == kKindButton) {
-            QueuedEvent ev;
-            ev.kind = kEvActivate;
-            ev.recordIndex = static_cast<uint32_t>(index);
-            ev.nodeId = node.pod.nodeId;
-            ev.projectionVersion = node.pod.projectionVersion;
-            ev.resourceId = node.pod.resourceId;
-            ev.nodeKind = kind;
-            ev.pointerX = static_cast<int64_t>(x);
-            ev.pointerY = static_cast<int64_t>(y);
-            s.events.push_back(ev);
-            s.pressedNodeIndex = -1;  // 按钮已激活，无后续相位
-            return;
-        }
+    }
+    return false;
+}
+
+bool settleComposedBufferOnBlurLocked(Session &s);  // C：跨字段切换同步结算（定义在编辑缓冲区）
+void stampTouchEvent(const Session &s, QueuedEvent &ev)
+{
+    ev.appInstance = s.gesture.appInstance;
+    ev.componentInstance = s.gesture.componentInstance;
+    ev.surfaceGeneration = s.gesture.surfaceGeneration;
+    ev.pointerId = s.gesture.pointerId;
+    ev.gestureEpoch = s.gesture.gestureEpoch;
+}
+// B（惯性包）：由近期样本窗估计释放速度（px/ms）。取窗口内首尾有效样本
+// 差分；样本不足 2 个、时间重复/倒退、间隔过长（停顿后松手）返回 0。
+double estimateReleaseVelocityPxPerMs(const Session::TouchGesture &g)
+{
+    if (g.velWindowCount < 2) return 0.0;
+    // 取最近的连续单调样本；从尾部向前找最近一段（≤100ms 窗口）。
+    const size_t last = g.velWindowCount - 1;
+    size_t first = last;
+    for (size_t i = last; i > 0; --i) {
+        if (g.velWindowT[last] - g.velWindowT[i - 1] > 100'000'000LL) break;  // 100ms
+        first = i - 1;
+    }
+    if (first >= last) return 0.0;
+    // 逐对单调性校验（复核反例：t=10,30,20 不得被接受）。
+    for (size_t i = first + 1; i <= last; ++i) {
+        if (g.velWindowT[i] <= g.velWindowT[i - 1]) return 0.0;
+    }
+    const double dtNs = static_cast<double>(g.velWindowT[last] - g.velWindowT[first]);
+    if (dtNs <= 0.0) return 0.0;  // 重复/倒退时间
+    const double dy = static_cast<double>(g.velWindowY[last] - g.velWindowY[first]);
+    // 返回 px/ms（y 减小 = 内容上滚 = 正方向）。
+    return -dy / (dtNs / 1'000'000.0);
+}
+
+void cancelTouchGestureLocked(Session &s)
+{
+    if (s.gesture.active && s.gesture.scrollSampleCount > 0) {
+        RLOGI("gesture-scroll-terminal terminal=%{public}s app=%{public}llu comp=%{public}llu surface=%{public}llu pointer=%{public}lld epoch=%{public}llu samples=%{public}llu rawDy=%{public}.6f whole=%{public}lld remainder=%{public}.6f",
+              s.gesture.scrollEndConfirmed ? "END" : "CANCEL",
+              static_cast<unsigned long long>(s.gesture.appInstance),
+              static_cast<unsigned long long>(s.gesture.componentInstance),
+              static_cast<unsigned long long>(s.gesture.surfaceGeneration),
+              static_cast<long long>(s.gesture.pointerId),
+              static_cast<unsigned long long>(s.gesture.gestureEpoch),
+              static_cast<unsigned long long>(s.gesture.scrollSampleCount),
+              s.gesture.scrollRawSumY,
+              static_cast<long long>(s.gesture.scrollWholeDeliveredY),
+              static_cast<double>(s.gesture.scrollAccumY));
+    }
+    // 捕获恰好一次终结：指针相位流已被核心消费（37 已入队）而尚未终结时，
+    // 系统取消/退役/移除必须沿旧捕获身份送达恰好一条指针取消；核心按
+    // 完整 GestureKey 匹配后清理。此后迟到的 END 不再补发。
+    if (s.gesture.active && s.gesture.pointerStreamOpen && !s.gesture.pointerStreamEnded) {
         QueuedEvent ev;
-        ev.kind = CJGUI_OHOS_TOUCH_BEGIN;
-        ev.recordIndex = static_cast<uint32_t>(index);
+        ev.kind = kEvPointerCancel;
+        ev.nodeId = s.gesture.targetNodeId;
+        ev.resourceId = s.gesture.targetResourceId;
+        ev.nodeKind = s.gesture.targetNodeKind;
+        ev.projectionVersion = s.gesture.targetProjectionVersion;
+        ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+        stampTouchEvent(s, ev);
+        ev.pointerX = static_cast<int64_t>(s.gesture.lastX);
+        ev.pointerY = static_cast<int64_t>(s.gesture.lastY);
+        s.events.push_back(ev);
+        s.gesture.pointerStreamEnded = true;
+    }
+    // 有效取消：终结手势，不激活、不结算、不改 owner。长按计时一并清除
+    // （系统夺走事件流后不再补发全选）。
+    s.gesture = Session::TouchGesture{};
+    s.textPressBeginMs = 0;
+}
+
+void enqueueEndEditingForTapLocked(Session &s)
+{
+    // 点击落到其他控件/空白：结束编辑（IME detach 在 pump 锁外执行）。
+    // 旧上下文立即失效：晚到的提交/预览/失焦回调不得改写新焦点。
+    // 组合预览不在此丢弃——pump 的 detach 分支按失焦语义把它结算给 owner
+    // （恰好一次）。绘制不停：本轮投影仍由原生编辑器提供可见文本。
+    if (s.editing && !s.editorRetired) {
+        s.editorRetired = true;
+        s.editingContextLive = false;
+        s.pendingSettleOnDetach = true;
+        s.pendingImeDetach = true;
+    }
+}
+
+// 文本编辑器的平台编辑上下文激活（触摸点击与 focus API 共用一条路径）。
+// 编辑缓冲从已接受场景值起步；每次激活分配新编辑上下文编号，旧上下文的
+// 延迟回调从此失效。调用方负责 FOCUS 事件是否回发（核心发起的焦点不回发，
+// 避免事件环；触摸点击回发，由核心按 accepted 场景判决并驱动 reveal）。
+void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
+{
+    const uint32_t kind = node.pod.nodeKind;
+    const bool wasEditing = s.editing && !s.editorRetired && s.editingNodeId == node.pod.nodeId;
+    const bool sameNodeAsBefore = s.editingNodeId == node.pod.nodeId &&
+        s.editingResourceId == node.pod.resourceId;
+    // C：同一有效绑定重复聚焦幂等——不换上下文编号，系统代理继续持旧编号，
+    // 后续输入不会因换号被 stale 拒绝；caret 重定位由调用方按需触发。
+    if (wasEditing && sameNodeAsBefore && s.editingContextLive) {
+        return;
+    }
+    // C：跨字段切换——先按旧身份落实失焦语义（组合草稿折进缓冲并以旧身份
+    // 交付 owner 恰好一次），再发布新上下文；旧编号从此失效（stale 拒绝），
+    // 旧回调不可写入新字段。end 通知的身份在切换时捕获，pump 不得读新字段。
+    if (s.editing && !s.editorRetired && s.editingContextLive && !sameNodeAsBefore) {
+        s.detachContextId = s.editingContextId;
+        s.detachFieldName = s.editingFieldName;
+        settleComposedBufferOnBlurLocked(s);
+        s.pendingSettleOnDetach = false;  // 已同步结算，pump 不再重复
+        s.pendingImeDetach = true;        // 旧代理收场通知
+    }
+    s.editing = true;
+    s.editorRetired = false;          // 新交互：重新成为绘制方与回调接收方
+    s.editingNodeId = node.pod.nodeId;
+    s.editingResourceId = node.pod.resourceId;
+    s.editingNodeKind = kind;
+    s.editingProjectionVersion = node.pod.projectionVersion;
+    // 通用编辑上下文：每次绑定新节点/同一节点重新聚焦都分配新编号，
+    // 旧上下文的延迟回调（提交/预览/失焦）从此失效，不得改写新焦点。
+    s.editingContextId = g_nextEditingContextId.fetch_add(1);
+    s.editingFieldName = node.semanticId;
+    s.editingContextGeneration = s.surfaceGeneration;
+    s.editingContextBaseVersion = node.pod.projectionVersion;
+    s.editingContextLive = true;
+    s.editingContextRevealRequested = false;  // 新上下文重置 reveal 请求
+    s.reconcileNotifyPending = false;
+    s.reconcileOldContextId = 0;
+    s.pendingSettleOnDetach = false;  // 新焦点继承旧 detach 意图会重复结算
+    if (!wasEditing) {
+        // 编辑缓冲从已接受场景值起步（外部值即起点）。
+        // 例外：核心的「本地文字延续」窗口会把 native 值置空，并约定由
+        // 原生编辑器绘制该节点的可见文本。此时 accepted 里的空值不是
+        // 业务空值；同一节点刚提交过的本地缓冲仍然权威，用空值重置会
+        // 让重新聚焦得到一个空字段。
+        std::u16string ownerValue = utf8ToUtf16(node.value);
+        // C：重新聚焦只从 accepted 规范值初始化——空就是空。保留本地
+        // 缓冲的唯一条件是节点带延续旗标（owner 接受了本地编辑且处于
+        // 延续窗口），不得由空值推断。
+        if (sameNodeAsBefore && ownerValue.empty() && !s.editingText.empty()
+            && node.pod.preservesActiveLocalText != 0) {
+            RLOGW("ime refocus keeps local buffer: continuation window node=%{public}llu",
+                  static_cast<long long>(node.pod.nodeId));
+        } else {
+            s.editingText = ownerValue;
+        }
+        s.caretUtf16 = static_cast<uint32_t>(s.editingText.size());
+        s.selStartUtf16 = s.caretUtf16;
+        s.selEndUtf16 = s.caretUtf16;
+        s.previewActive = false;
+        s.previewText.clear();
+        s.focusNotifyPending = true;   // ArkTS TextInput 代理路径
+    }
+}
+
+// A：MOVE/END 共用的位移采样入口。差分由调用方以（y − lastY）传入（last
+// 的推进在调用点统一负责），浮点余量保留，只有整数部分按序交付共享整数
+// viewport（逐段由核心夹紧）；END 经同一入口消费最后坐标差，尾段不再丢失。
+void appendScrollIntentLocked(Session &s, uint64_t nodeId, int64_t resourceId, uint64_t version,
+                              int64_t delta);  // A：采样入口交付整数段（定义见下）
+int64_t consumeScrollSampleLocked(Session &s, float dySample)
+{
+    s.gesture.scrollRawSumY += static_cast<double>(dySample);
+    ++s.gesture.scrollSampleCount;
+    s.gesture.scrollAccumY += dySample;
+    int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);  // 截断保余量
+    if (whole == 0) return 0;
+    s.gesture.scrollAccumY -= static_cast<float>(whole);
+    size_t index = 0;
+    if (!sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                    CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+        cancelTouchGestureLocked(s);  // 视口移除/换绑：手势取消
+        return 0;
+    }
+    if (s.gesture.viewportBindingEpoch == 0 ||
+        s.accepted[index].pod.acceptedBindingEpoch != s.gesture.viewportBindingEpoch) {
+        cancelTouchGestureLocked(s);
+        return 0;
+    }
+    appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                             s.accepted[index].pod.projectionVersion, -whole);
+    s.gesture.scrollWholeDeliveredY += whole;
+    return -whole;
+}
+
+// B：滚动意图进入共同 scroll 事件通道。位移按存活样本差分累计，同手势
+// 且同场景版本的连续位移并入队尾事件（保留累计位移、约束队列长度）。
+// 版本随当前 accepted 重验刷新：offset 更新产生新 accepted 场景后，
+// 同一手势以新版本继续；视口移除/换绑由调用方取消手势。
+void appendScrollIntentLocked(Session &s, uint64_t nodeId, int64_t resourceId, uint64_t version,
+                              int64_t delta)
+{
+    if (!s.events.empty()) {
+        QueuedEvent &tail = s.events.back();
+        // A：只合并连续同号整数段——反号段按序交付，共享 viewport 逐段按
+        // requestedOffset 夹紧（offset=0 时 -30,+30 的净效果是 30 而非 0）。
+        const bool sameSign = (tail.scrollDelta >= 0) == (delta >= 0);
+        if (sameSign && tail.kind == kEvScroll && tail.nodeId == nodeId &&
+            tail.resourceId == resourceId && tail.projectionVersion == version &&
+            tail.appInstance == s.gesture.appInstance &&
+            tail.componentInstance == s.gesture.componentInstance &&
+            tail.surfaceGeneration == s.gesture.surfaceGeneration &&
+            tail.pointerId == s.gesture.pointerId &&
+            tail.gestureEpoch == s.gesture.gestureEpoch &&
+            tail.acceptedBindingEpoch == s.gesture.viewportBindingEpoch) {
+            tail.scrollDelta += delta;
+            tail.text = "by:" + std::to_string(tail.scrollDelta);
+            return;
+        }
+    }
+    QueuedEvent ev;
+    ev.kind = kEvScroll;
+    ev.nodeId = nodeId;
+    ev.resourceId = resourceId;
+    ev.nodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA;
+    ev.projectionVersion = version;
+    ev.scrollDelta = delta;
+    ev.acceptedBindingEpoch = s.gesture.viewportBindingEpoch;
+    ev.text = "by:" + std::to_string(delta);
+    stampTouchEvent(s, ev);
+    s.events.push_back(ev);
+}
+
+// B：待定手势在有效抬起时执行一次点击。移出目标、目标退役/换绑、
+// surface 换代都不激活；命中目标以当前 accepted 场景重验身份。
+void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
+{
+    if (!s.gesture.hasTarget) {
+        // 空白点击：语义与「点到其他控件」一致，结束当前编辑（否则系统
+        // 键盘不会收起）。未命中不产生指针事件：没有可上报的目标节点。
+        enqueueEndEditingForTapLocked(s);
+        return;
+    }
+    size_t liftIndex = 0;
+    if (!hitTestAccepted(s, x, y, &liftIndex) ||
+        s.accepted[liftIndex].pod.nodeId != s.gesture.targetNodeId ||
+        s.accepted[liftIndex].pod.resourceId != s.gesture.targetResourceId ||
+        s.accepted[liftIndex].pod.nodeKind != s.gesture.targetNodeKind) {
+        // 移出目标：不激活（不改 owner、不结算焦点）。
+        return;
+    }
+    // B：绑定语义冻结——语义名变化即真换绑（同槽换动作/字段），在副作用
+    // （结束/启动编辑上下文）发生前拒绝；同绑定换帧以当前 accepted 事实交付。
+    if (s.gesture.targetBindingEpoch == 0 ||
+        s.accepted[liftIndex].pod.acceptedBindingEpoch != s.gesture.targetBindingEpoch) {
+        return;
+    }
+    const SceneNode &node = s.accepted[liftIndex];
+    const uint32_t kind = node.pod.nodeKind;
+    const bool longPress = s.gesture.pressBeginMs > 0 &&
+        (nowMs - s.gesture.pressBeginMs) >= 400;
+    if (kind == kKindBooleanInput) {
+        enqueueEndEditingForTapLocked(s);  // 点击布尔：结束其他编辑（键盘收起）
+        QueuedEvent ev;
+        ev.kind = kEvBooleanChanged;
+        ev.recordIndex = static_cast<uint32_t>(liftIndex);
         ev.nodeId = node.pod.nodeId;
+        // B：同绑定换帧存活——版本取当前 accepted 事实（真换绑已被语义
+        // 冻结拒绝，不会走到这里）。
         ev.projectionVersion = node.pod.projectionVersion;
         ev.resourceId = node.pod.resourceId;
         ev.nodeKind = kind;
+        ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+        ev.text = (node.value == "true") ? "false" : "true";
+        stampTouchEvent(s, ev);
+        s.events.push_back(ev);
+        return;
+    }
+    if (kind == kKindButton) {
+        enqueueEndEditingForTapLocked(s);  // 点击按钮：结束其他编辑（键盘收起）
+        QueuedEvent ev;
+        ev.kind = kEvActivate;
+        ev.recordIndex = static_cast<uint32_t>(liftIndex);
+        ev.nodeId = node.pod.nodeId;
+        // B：同绑定换帧存活——版本取当前 accepted 事实（真换绑已被语义
+        // 冻结拒绝，不会走到这里）。
+        ev.projectionVersion = node.pod.projectionVersion;
+        ev.resourceId = node.pod.resourceId;
+        ev.nodeKind = kind;
+        ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
         ev.pointerX = static_cast<int64_t>(x);
         ev.pointerY = static_cast<int64_t>(y);
+        stampTouchEvent(s, ev);
         s.events.push_back(ev);
+        return;
+    }
+    if (s.gesture.targetEditableText) {
+        // 点击编辑器：直接激活本节点的平台编辑上下文并回发 FOCUS。不在此
+        // 结束旧编辑上下文——pump 的 detach/end 通知按当前编辑状态取上下文，
+        // 先 end 后 begin 会把旧字段的收场报成新字段（编辑器间切换维持
+        // 既有语义：旧缓冲随新焦点初始化被替换，不经失焦结算）。
+        beginEditingOnNodeLocked(s, node);
+        s.editingTapX = x - static_cast<double>(node.pod.x);   // 节点内相对坐标
+        s.editingTapPending = true;
+        QueuedEvent focus;
+        focus.kind = kEvFocus;
+        focus.recordIndex = static_cast<uint32_t>(liftIndex);
+        focus.nodeId = node.pod.nodeId;
+        focus.projectionVersion = node.pod.projectionVersion;
+        focus.resourceId = node.pod.resourceId;
+        focus.nodeKind = kind;
+        focus.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+        stampTouchEvent(s, focus);
+        s.events.push_back(focus);
+        if (longPress) {
+            // 长按 ≥400ms → 全选（移动端长按选择的最小实现），与既有
+            // 语义一致：caret 点击先入队，全选在其后落账并触发重绘。
+            s.selStartUtf16 = 0;
+            s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
+            RLOGI("long-press selection: select-all len=%{public}u",
+                  static_cast<unsigned>(s.selEndUtf16));
+            g_render.post(std::make_shared<RedrawJob>());
+        }
+        return;
+    }
+    // 其他交互节点（展示文本/背景层等）：点击 = 完整指针相位对，
+    // 身份取当前 accepted 场景的该节点。指针相位同样结束其他编辑。
+    enqueueEndEditingForTapLocked(s);
+    QueuedEvent begin;
+    begin.kind = kEvPointerBegin;
+    begin.recordIndex = static_cast<uint32_t>(liftIndex);
+    begin.nodeId = node.pod.nodeId;
+    begin.projectionVersion = node.pod.projectionVersion;
+    stampTouchEvent(s, begin);
+    begin.resourceId = node.pod.resourceId;
+    begin.nodeKind = kind;
+    begin.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+    begin.pointerX = static_cast<int64_t>(x);
+    begin.pointerY = static_cast<int64_t>(y);
+    s.events.push_back(begin);
+    QueuedEvent end = begin;
+    end.kind = kEvPointerEnd;
+    end.pointerX = static_cast<int64_t>(x);
+    end.pointerY = static_cast<int64_t>(y);
+    s.events.push_back(end);
+}
+
+void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
+{
+    const uint32_t action = sample.action;
+    const float x = sample.x, y = sample.y;
+    // Validate the immutable record before changing gesture, editing or owner
+    // state. An old A terminal must never be relabelled using B's latest BEGIN.
+    if (sample.appInstance == 0 || sample.componentInstance == 0 ||
+        sample.surfaceGeneration == 0 || sample.gestureEpoch == 0 || sample.pointerId < 0) return;
+    if (action == CJGUI_OHOS_TOUCH_BEGIN) {
+        if (sample.surfaceGeneration != s.surfaceGeneration) return;
+    } else if (!s.gesture.active ||
+               s.gesture.appInstance != sample.appInstance ||
+               s.gesture.componentInstance != sample.componentInstance ||
+               s.gesture.surfaceGeneration != sample.surfaceGeneration ||
+               s.gesture.pointerId != sample.pointerId ||
+               s.gesture.gestureEpoch != sample.gestureEpoch) {
+        return;
+    }
+    // B 合成策略：单指手势，阈值前待定、超阈值由包含视口接管为连续滚动；
+    // 有效抬起才执行一次点击。已激活编辑器保持长按/系统代理优先级，位移
+    // 不强制当滚动。平台回调读取失败（queue 空/旧代拒绝）不会到达这里，
+    // 也不合成合法触摸；坐标域与已接受场景节点一致。
+    const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    constexpr float kTouchScrollThresholdPx = 12.0f;
+
+    if (action == CJGUI_OHOS_TOUCH_BEGIN) {
+        // A newer primary BEGIN replaces the old primary only after its own
+        // immutable identity has been validated. Queue A's terminal before B.
+        if (s.gesture.active) {
+            if (s.gesture.appInstance == sample.appInstance &&
+                s.gesture.componentInstance == sample.componentInstance &&
+                s.gesture.surfaceGeneration == sample.surfaceGeneration &&
+                s.gesture.pointerId == sample.pointerId &&
+                s.gesture.gestureEpoch == sample.gestureEpoch) return;
+            cancelTouchGestureLocked(s);
+        }
+        s.gesture = Session::TouchGesture{};
+        s.gesture.active = true;
+        s.gesture.startX = s.gesture.lastX = x;
+        s.gesture.startY = s.gesture.lastY = y;
+        s.gesture.surfaceGeneration = sample.surfaceGeneration;
+        s.gesture.gestureEpoch = sample.gestureEpoch;
+        s.gesture.appInstance = sample.appInstance;
+        s.gesture.componentInstance = sample.componentInstance;
+        s.gesture.pointerId = sample.pointerId;
+        size_t viewportIndex = 0;
+        s.gesture.hasViewport = scrollAreaIndexContainingPoint(s, x, y, &viewportIndex);
+        RLOGI("touch begin: viewport=%{public}d acceptedCount=%{public}zu",
+              s.gesture.hasViewport ? 1 : 0, s.accepted.size());
+        {
+            uint64_t vpEpoch = 0;
+            for (const SceneNode &n : s.accepted) {
+                if (n.pod.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA) {
+                    vpEpoch = n.pod.acceptedBindingEpoch;
+                    break;
+                }
+            }
+            RLOGI("viewport pod acceptedBindingEpoch=%{public}llu",
+                  static_cast<unsigned long long>(vpEpoch));
+        }
+        for (size_t i = 0; i < s.accepted.size(); ++i) {
+            if (s.accepted[i].pod.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA) {
+                const auto &n = s.accepted[i].pod;
+                RLOGI("scroll viewport node=%{public}lld rect=(%{public}lld,%{public}lld,%{public}lld,%{public}lld)",
+                      static_cast<long long>(n.nodeId),
+                      static_cast<long long>(n.x), static_cast<long long>(n.y),
+                      static_cast<long long>(n.width), static_cast<long long>(n.height));
+            }
+        }
+        if (s.gesture.hasViewport) {
+            s.gesture.viewportNodeId = s.accepted[viewportIndex].pod.nodeId;
+            s.gesture.viewportResourceId = s.accepted[viewportIndex].pod.resourceId;
+            s.gesture.viewportBindingEpoch = s.accepted[viewportIndex].pod.acceptedBindingEpoch;
+        }
+        size_t index = 0;
+        if (!hitTestAccepted(s, x, y, &index)) {
+            return;  // 空白/非交互内容：无点击目标；滚动仍由包含视口接管。
+        }
+        const SceneNode &node = s.accepted[index];
+        if (node.pod.isReadOnly != 0) return;  // 只读内容可滚动，不可激活
+        const uint32_t kind = node.pod.nodeKind;
+        const bool isEditableText = kind == kKindTextInput || kind == kKindIntegerInput;
+        s.gesture.hasTarget = true;
+        s.gesture.targetEditableText = isEditableText;
+        s.gesture.targetNodeId = node.pod.nodeId;
+        s.gesture.targetBindingEpoch = node.pod.acceptedBindingEpoch;
+        s.gesture.targetResourceId = node.pod.resourceId;
+        s.gesture.targetNodeKind = kind;
+        // B：起始绑定冻结——绑定身份取 semanticId（同一控制器把动作/字段
+        // 绑定在同 nodeId 的语义名上；语义名变化即真换绑）。projectionVersion
+        // 只是场景版本：同绑定换帧存活（激活以当前版本发出，核心按当前场景
+        // 解析），真换绑在副作用发生前拒绝。
+        s.gesture.targetSemanticId = node.semanticId;
+        s.gesture.targetProjectionVersion = node.pod.projectionVersion;
+        if (isEditableText && s.editing && !s.editorRetired &&
+            s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId) {
+            // 已激活编辑器优先：caret 点击立即落账，长按计时开始；位移不
+            // 接管为滚动（选区拖动/系统代理按明确优先级保留）。
+            s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
+            s.gesture.pressBeginMs = nowMs;
+            s.textPressBeginMs = nowMs;
+            s.editingTapX = x - static_cast<double>(node.pod.x);
+            s.editingTapPending = true;
+        }
         return;
     }
     if (action == CJGUI_OHOS_TOUCH_UPDATE) {
-        if (s.pressedNodeIndex < 0) return;
-        const SceneNode &node = s.accepted[static_cast<size_t>(s.pressedNodeIndex)];
-        QueuedEvent ev;
-        ev.kind = kEvPointerUpdate;
-        ev.recordIndex = static_cast<uint32_t>(s.pressedNodeIndex);
-        ev.nodeId = node.pod.nodeId;
-        ev.projectionVersion = node.pod.projectionVersion;
-        ev.resourceId = node.pod.resourceId;
-        ev.nodeKind = node.pod.nodeKind;
-        ev.pointerX = static_cast<int64_t>(x);
-        ev.pointerY = static_cast<int64_t>(y);
-        if (!s.events.empty()) {
-            QueuedEvent &tail = s.events.back();
-            if (tail.kind == kEvPointerUpdate && tail.nodeId == ev.nodeId) {
-                tail.pointerX = ev.pointerX;
-                tail.pointerY = ev.pointerY;
+        if (!s.gesture.active) return;  // 无手势的孤立位移不成合法触摸
+        if (s.gesture.surfaceGeneration != s.surfaceGeneration) {
+            // Surface 换代/退役：旧代手势不得延续到新挂载。
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        const float dx = x - s.gesture.startX;
+        const float dy = y - s.gesture.startY;
+        // 差分样本必须在 last 更新前计算。待定期间样本不推进 last；
+        // 视口接管后的首个差分即从起始点累计的全部位移，总量不丢。
+        const float dySample = y - s.gesture.lastY;
+        if (s.gesture.phase == Session::TouchGesture::kGesturePending) {
+            if (std::fabs(dx) >= kTouchScrollThresholdPx || std::fabs(dy) >= kTouchScrollThresholdPx) {
+                // A：跨阈值不可逆闰（Flutter monodrag 的
+                // _hasDragThresholdBeenMet 同型）——回到起点不恢复点击资格。
+                s.gesture.thresholdLatch = true;
+            }
+            if (!s.gesture.thresholdLatch &&
+                std::fabs(dx) < kTouchScrollThresholdPx && std::fabs(dy) < kTouchScrollThresholdPx) {
+                return;
+            }
+            if (s.gesture.hasViewport) {
+                // 视口接管：取消子控件点击。纯滚动不结束编辑、不触发焦点
+                // 切换结算，业务 owner 与草稿保持不动。
+                s.gesture.phase = Session::TouchGesture::kGestureScroll;
+                RLOGI("gesture scroll takeover viewport=%{public}llu target=%{public}llu",
+                      static_cast<unsigned long long>(s.gesture.viewportNodeId),
+                      static_cast<unsigned long long>(s.gesture.targetNodeId));
+            } else if (s.gesture.hasTarget && !s.gesture.targetEditableText) {
+                // 无包含视口：维持指针相位流（BEGIN 立即补发，保持序列）。
+                s.gesture.phase = Session::TouchGesture::kGesturePointerDrag;
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                               s.gesture.targetNodeKind, &index)) {
+                    const SceneNode &node = s.accepted[index];
+                    QueuedEvent ev;
+                    ev.kind = kEvPointerBegin;
+                    ev.recordIndex = static_cast<uint32_t>(index);
+                    ev.nodeId = node.pod.nodeId;
+                    ev.projectionVersion = node.pod.projectionVersion;
+                    ev.resourceId = node.pod.resourceId;
+                    ev.nodeKind = node.pod.nodeKind;
+                    ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+                    ev.pointerX = static_cast<int64_t>(x);
+                    ev.pointerY = static_cast<int64_t>(y);
+                    stampTouchEvent(s, ev);
+                    s.events.push_back(ev);
+                    s.gesture.pointerStreamOpen = true;
+                } else {
+                    cancelTouchGestureLocked(s);  // 目标退役：无流可续
+                    return;
+                }
+            } else {
+                // 可编辑文本上起手且无包含视口：不滚动不拖动，待定到抬起。
                 return;
             }
         }
-        s.events.push_back(ev);
+        s.gesture.lastX = x;
+        s.gesture.lastY = y;
+        // B（惯性包）：UPDATE 记录速度窗样本（固定容量 FIFO 覆盖）。
+        {
+            auto &g = s.gesture;
+            if (g.velWindowCount < Session::TouchGesture::kVelocityWindow) {
+                g.velWindowY[g.velWindowCount] = y;
+                g.velWindowT[g.velWindowCount] = sample.timestampNs;
+                g.velWindowCount += 1;
+            } else {
+                for (size_t i = 1; i < Session::TouchGesture::kVelocityWindow; ++i) {
+                    g.velWindowY[i - 1] = g.velWindowY[i];
+                    g.velWindowT[i - 1] = g.velWindowT[i];
+                }
+                g.velWindowY[Session::TouchGesture::kVelocityWindow - 1] = y;
+                g.velWindowT[Session::TouchGesture::kVelocityWindow - 1] = sample.timestampNs;
+            }
+        }
+        if (s.gesture.phase == Session::TouchGesture::kGestureScroll) {
+            // 连续逻辑位移：共同 scroll 意图，不做半页跳转、不写布局坐标。
+            // 手指下拖（dySample>0）露出上方内容 → offset 减小（delta 取负）。
+            if (dySample == 0.0f) return;
+            consumeScrollSampleLocked(s, dySample);
+            return;
+        }
+        if (s.gesture.phase == Session::TouchGesture::kGesturePointerDrag) {
+            size_t index = 0;
+            if (!sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                            s.gesture.targetNodeKind, &index)) {
+                cancelTouchGestureLocked(s);
+                return;
+            }
+            const SceneNode &node = s.accepted[index];
+            QueuedEvent ev;
+            ev.kind = kEvPointerUpdate;
+            ev.recordIndex = static_cast<uint32_t>(index);
+            ev.nodeId = node.pod.nodeId;
+            ev.projectionVersion = node.pod.projectionVersion;
+            ev.resourceId = node.pod.resourceId;
+            ev.nodeKind = node.pod.nodeKind;
+            ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+            ev.pointerX = static_cast<int64_t>(x);
+            ev.pointerY = static_cast<int64_t>(y);
+            stampTouchEvent(s, ev);
+            if (!s.events.empty()) {
+                QueuedEvent &tail = s.events.back();
+                if (tail.kind == kEvPointerUpdate && tail.nodeId == ev.nodeId &&
+                    tail.appInstance == ev.appInstance &&
+                    tail.componentInstance == ev.componentInstance &&
+                    tail.surfaceGeneration == ev.surfaceGeneration &&
+                    tail.pointerId == ev.pointerId && tail.gestureEpoch == ev.gestureEpoch) {
+                    tail.pointerX = ev.pointerX;
+                    tail.pointerY = ev.pointerY;
+                    return;
+                }
+            }
+            s.events.push_back(ev);
+            return;
+        }
         return;
     }
     if (action == CJGUI_OHOS_TOUCH_END || action == CJGUI_OHOS_TOUCH_CANCEL) {
-        // C selection：文本节点长按 ≥400ms → 全选（移动端长按选择的最小实现）。
-        if (s.editing && !s.editorRetired && s.textPressBeginMs > 0) {
-            auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            if (nowMs - s.textPressBeginMs >= 400) {
-                s.selStartUtf16 = 0;
-                s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
-                RLOGI("long-press selection: select-all len=%{public}u",
-                      static_cast<unsigned>(s.selEndUtf16));
-                // 全选同样是纯视觉投影：调用方（pump）持有 g_sessions.lock，
-                // post 只是非阻塞入队，绘制线程会在本轮锁释放后重绘。
-                g_render.post(std::make_shared<RedrawJob>());
-            }
-            s.textPressBeginMs = 0;
+        if (!s.gesture.active) return;
+        // Surface 换代：旧代相位不得影响新挂载，等价取消。
+        if (s.gesture.surfaceGeneration != s.surfaceGeneration) {
+            cancelTouchGestureLocked(s);
+            return;
         }
-        if (s.pressedNodeIndex < 0) return;
-        const SceneNode &node = s.accepted[static_cast<size_t>(s.pressedNodeIndex)];
-        QueuedEvent ev;
-        ev.kind = action;
-        ev.recordIndex = static_cast<uint32_t>(s.pressedNodeIndex);
-        ev.nodeId = node.pod.nodeId;
-        ev.projectionVersion = node.pod.projectionVersion;
-        ev.resourceId = node.pod.resourceId;
-        ev.nodeKind = node.pod.nodeKind;
-        ev.pointerX = static_cast<int64_t>(x);
-        ev.pointerY = static_cast<int64_t>(y);
-        s.events.push_back(ev);
-        s.pressedNodeIndex = -1;
+        if (action == CJGUI_OHOS_TOUCH_CANCEL) {
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        const uint32_t phase = s.gesture.phase;
+        switch (phase) {
+            case Session::TouchGesture::kGesturePending: {
+                // B：END 重判阈值——快速轻扫（BEGIN 后无 UPDATE）的全部位移在
+                // 抬起结算为一次滚动，不得当作点击激活；仅有界视口接管。
+                const float endDx = x - s.gesture.startX;
+                const float endDy = y - s.gesture.startY;
+                if (s.gesture.hasViewport &&
+                    (std::fabs(endDx) >= kTouchScrollThresholdPx ||
+                     std::fabs(endDy) >= kTouchScrollThresholdPx)) {
+                    // A：无 MOVE 快扫（含中途回落的轻扫）——全部位移经同一
+                    // 采样入口在抬起结算，不得当点击激活。
+                    consumeScrollSampleLocked(s, y - s.gesture.lastY);
+                    break;
+                }
+                executePendingTapLocked(s, x, y, nowMs);
+                break;
+            }
+            case Session::TouchGesture::kGestureScroll: {
+                // A：END 消费最后坐标差 + 浮点余量（同一采样入口，尾段不丢）。
+                consumeScrollSampleLocked(s, y - s.gesture.lastY);
+                // B（复核修）：END (t,y) 也入速度窗——快拖后停住再松手时，
+                // END 样本刷新窗口尾部，不沿用停顿前的旧速度。
+                {
+                    auto &g = s.gesture;
+                    if (g.velWindowCount > 0) {
+                        g.velWindowY[g.velWindowCount - 1] = y;
+                        g.velWindowT[g.velWindowCount - 1] = sample.timestampNs;
+                    }
+                }
+                // B（惯性包）：END 后估计释放速度，若有效则发惯性启动意图
+                // （kind 30 滚动通道附带速度文本 "fling:<pxPerMs>"）。
+                const double velocity = estimateReleaseVelocityPxPerMs(s.gesture);
+                RLOGI("fling velocity=%{public}.3f samples=%{public}zu", velocity,
+                      static_cast<size_t>(s.gesture.velWindowCount));
+                if (velocity != 0.0 && velocity == velocity &&
+                    velocity > -1.0e300 && velocity < 1.0e300) {
+                    size_t index = 0;
+                    if (sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId,
+                                                    s.gesture.viewportResourceId,
+                                                    CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+                        // B（复核修）：fling 携带完整身份——GestureKey + 当前
+                        // accepted 事实的 acceptedBindingEpoch（同 node/resource
+                        // 的旧 END 不给新绑定启动活动，核心执行前比对）。
+                        char buf[48];
+                        std::snprintf(buf, sizeof(buf), "fling:%.3f", velocity);
+                        QueuedEvent ev;
+                        ev.kind = kEvScroll;
+                        ev.nodeId = s.gesture.viewportNodeId;
+                        ev.resourceId = s.gesture.viewportResourceId;
+                        ev.nodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA;
+                        ev.projectionVersion = s.accepted[index].pod.projectionVersion;
+                        ev.acceptedBindingEpoch = s.accepted[index].pod.acceptedBindingEpoch;
+                        stampTouchEvent(s, ev);  // 完整 GestureKey（appInstance 等）
+                        ev.text = buf;
+                        s.events.push_back(ev);
+                    }
+                }
+                break;
+            }
+            case Session::TouchGesture::kGesturePointerDrag: {
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                               s.gesture.targetNodeKind, &index)) {
+                    const SceneNode &node = s.accepted[index];
+                    QueuedEvent ev;
+                    ev.kind = kEvPointerEnd;
+                    ev.recordIndex = static_cast<uint32_t>(index);
+                    ev.nodeId = node.pod.nodeId;
+                    ev.projectionVersion = node.pod.projectionVersion;
+                    ev.resourceId = node.pod.resourceId;
+                    ev.nodeKind = node.pod.nodeKind;
+                    ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+                    ev.pointerX = static_cast<int64_t>(x);
+                    ev.pointerY = static_cast<int64_t>(y);
+                    stampTouchEvent(s, ev);
+                    s.events.push_back(ev);
+                    if (s.gesture.pointerStreamOpen) s.gesture.pointerStreamEnded = true;
+                }
+                break;
+            }
+            case Session::TouchGesture::kGestureEditorHold:
+                // 已激活编辑器长按 ≥400ms → 全选（既有语义保持）。
+                if (s.editing && !s.editorRetired && s.textPressBeginMs > 0 &&
+                    nowMs - s.textPressBeginMs >= 400) {
+                    s.selStartUtf16 = 0;
+                    s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
+                    RLOGI("long-press selection: select-all len=%{public}u",
+                          static_cast<unsigned>(s.selEndUtf16));
+                    g_render.post(std::make_shared<RedrawJob>());
+                }
+                break;
+        }
+        if (s.gesture.active) s.gesture.scrollEndConfirmed = true;
+        cancelTouchGestureLocked(s);
+        return;
     }
 }
 
@@ -2568,6 +4397,40 @@ void editorEnqueueTextChanged(Session &s)
     ev.nodeKind = s.editingNodeKind;
     ev.text = utf16ToUtf8(composedBuffer(s));
     s.events.push_back(ev);
+}
+
+// The system IME reports selection changes independently from text commits.
+// Forward that view state through the same event FIFO as other native input so
+// the Cangjie window can update its focused-selection ledger. Stamp the event
+// with the exact accepted editor binding; a callback that races a rebind must
+// not be able to update a new node that happens to reuse its semantic identity.
+bool editorEnqueueSelectionChanged(Session &s, uint32_t start, uint32_t end)
+{
+    const SceneNode *acceptedNode = nullptr;
+    for (const SceneNode &node : s.accepted) {
+        if (node.pod.nodeId == s.editingNodeId &&
+            node.pod.resourceId == s.editingResourceId &&
+            node.pod.nodeKind == s.editingNodeKind &&
+            node.pod.projectionVersion == s.editingProjectionVersion &&
+            node.pod.isInteractive != 0 && node.pod.isReadOnly == 0 &&
+            node.pod.acceptedBindingEpoch != 0) {
+            acceptedNode = &node;
+            break;
+        }
+    }
+    if (!acceptedNode) return false;
+
+    QueuedEvent ev;
+    ev.kind = kEvSelectionChanged;
+    ev.nodeId = acceptedNode->pod.nodeId;
+    ev.resourceId = acceptedNode->pod.resourceId;
+    ev.nodeKind = acceptedNode->pod.nodeKind;
+    ev.projectionVersion = acceptedNode->pod.projectionVersion;
+    ev.acceptedBindingEpoch = acceptedNode->pod.acceptedBindingEpoch;
+    ev.selectionStart = start;
+    ev.selectionEnd = end;
+    s.events.push_back(ev);
+    return true;
 }
 
 // 失焦结算（框架主动结束编辑，恰好一次）：把当前未提交的组合预览折进编辑
@@ -2920,9 +4783,13 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
         s.clearA = config->clearColorAlpha;
         s.rangeEditDeltaRequested = false;
         s.accepted.clear();
+        s.acceptedProjectionVersion = 0;
         s.candidate.clear();
+        s.imageCompletionVersion = 0;
+        s.imageObservedSerial.clear();
         s.candidateOpen = false;
         s.events.clear();
+        s.gesture = Session::TouchGesture{};  // B：新实例不得继承旧手势状态
         s.editorRetired = false;
         s.pendingSettleOnDetach = false;
         s.submittedFrameIndex = 0;
@@ -3002,7 +4869,11 @@ extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_ow
 // 返回真实终态（OK=0 成功），调用方据此断言，不再用 Bool 误判。
 int32_t ohos_renderer_shutdown_render_thread()
 {
+    // STOP invalidates queued work and makes the running decode discard-only.
+    // It never waits for image SDK work while retiring the Surface.
+    g_images.invalidate();
     CjguiInternalRendererStatus result = g_render.shutdownAndJoin();
+    cjguiOhosLogImageSnapshot("stop");
     if (result == CJGUI_INTERNAL_RENDERER_OK) {
         g_rendererShutdownDone.store(true);
         RLOGI("render thread shutdown confirmed (frames=%{public}llu rejected=%{public}lld)",
@@ -3030,6 +4901,125 @@ extern "C" int32_t cjgui_ohos_settlement_counters(int64_t *committed, int64_t *a
 extern "C" int32_t cjgui_ohos_renderer_epoch()
 {
     return static_cast<int32_t>(g_rendererEpoch.load());
+}
+
+// Device acceptance seam. Both symbols also exist in normal HAPs so the
+// shared CJ file can link unchanged; normal calls explicitly report disabled.
+extern "C" int32_t cjgui_ohos_test_image_hold_completion(uint64_t resourceVersion, int32_t held)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    std::vector<OhosImageRef> toPost;
+    {
+        std::lock_guard<std::mutex> g(g_images.lock);
+        if (held) {
+            g_images.heldVersion = resourceVersion;
+            g_images.holdEnabled = true;
+            return 1;
+        }
+        if (g_images.holdEnabled && g_images.heldVersion == resourceVersion) {
+            g_images.heldVersion = 0;
+            g_images.holdEnabled = false;
+        }
+        for (auto &pair : g_images.entries) {
+            OhosImageRef &entry = pair.second;
+            if (entry->version != resourceVersion || !entry->completionHeld) continue;
+            entry->completionHeld = false;
+            if (entry->state == 1 && entry->awaiting && !entry->realizationPosted) {
+                entry->realizationPosted = true;
+                toPost.push_back(entry);
+            }
+        }
+    }
+    for (const OhosImageRef &entry : toPost) cjguiOhosPostImageRealization(entry);
+    return 1;
+#else
+    (void)resourceVersion; (void)held;
+    return -1;
+#endif
+}
+
+extern "C" int32_t cjgui_ohos_test_image_forget(uint64_t resourceVersion)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    std::vector<OhosImageRef> retired;
+    {
+        std::lock_guard<std::mutex> g(g_images.lock);
+        for (auto it = g_images.entries.begin(); it != g_images.entries.end();) {
+            if (it->second->version == resourceVersion && it->second.use_count() == 1 &&
+                it->second->reservation == 0) {
+                retired.push_back(std::move(it->second));
+                g_images.bindings.erase(it->first);
+                it = g_images.entries.erase(it);
+            } else ++it;
+        }
+    }
+    if (!retired.empty()) g_render.postIfRunning(std::make_shared<RedrawJob>());
+    return retired.empty() ? 0 : 1;
+#else
+    (void)resourceVersion;
+    return -1;
+#endif
+}
+
+// Slots: starts, encoded bytes, SDK decode us, ready cache hits, decoder
+// running, queued, awaiting bitmap, ready entries, resident owned pixel bytes,
+// bitmap creates, bitmap destroys, stale completion discards.
+extern "C" int32_t cjgui_ohos_test_image_stats(int64_t *out12)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    if (!out12) return -2;
+    std::lock_guard<std::mutex> g(g_images.lock);
+    size_t awaiting = 0, ready = 0;
+    for (const auto &pair : g_images.entries) {
+        if (pair.second->awaiting) awaiting += 1;
+        if (pair.second->state == 2) ready += 1;
+    }
+    out12[0] = static_cast<int64_t>(g_images.decodeStarts);
+    out12[1] = static_cast<int64_t>(g_images.encodedReadBytes);
+    out12[2] = static_cast<int64_t>(g_images.decodeMicros);
+    out12[3] = static_cast<int64_t>(g_images.cacheHits);
+    out12[4] = static_cast<int64_t>(g_images.inFlight);
+    out12[5] = static_cast<int64_t>(g_images.queued);
+    out12[6] = static_cast<int64_t>(awaiting);
+    out12[7] = static_cast<int64_t>(ready);
+    out12[8] = static_cast<int64_t>(g_imageLiveBytes.load());
+    out12[9] = static_cast<int64_t>(g_render.bitmapCreates.load());
+    out12[10] = static_cast<int64_t>(g_render.bitmapDestroys.load());
+    out12[11] = static_cast<int64_t>(g_images.staleDiscards);
+    return 0;
+#else
+    (void)out12;
+    return -1;
+#endif
+}
+
+// Extended raw costs: file read us, decoder-owned in-flight bytes/current
+// peak, admission reservations/current peak, bitmap create/destroy us, and
+// bounded idle-cache pixel bytes. SDK-private temporary storage is excluded.
+extern "C" int32_t cjgui_ohos_test_image_stats_ext(int64_t *out8)
+{
+#ifdef CJGUI_OHOS_TEST_GATES
+    if (!out8) return -2;
+    std::lock_guard<std::mutex> g(g_images.lock);
+    size_t idleBytes = 0;
+    for (const auto &pair : g_images.entries) {
+        if (pair.second.use_count() == 1 && pair.second->decoded) {
+            idleBytes += pair.second->decoded->pixels.size();
+        }
+    }
+    out8[0] = static_cast<int64_t>(g_images.encodedReadMicros);
+    out8[1] = static_cast<int64_t>(g_imageDecoderActiveBytes.load());
+    out8[2] = static_cast<int64_t>(g_imageDecoderPeakBytes.load());
+    out8[3] = static_cast<int64_t>(g_images.reservedBytes);
+    out8[4] = static_cast<int64_t>(g_images.peakTrackedBytes);
+    out8[5] = static_cast<int64_t>(g_render.bitmapCreateMicros.load());
+    out8[6] = static_cast<int64_t>(g_render.bitmapDestroyMicros.load());
+    out8[7] = static_cast<int64_t>(idleBytes);
+    return 0;
+#else
+    (void)out8;
+    return -1;
+#endif
 }
 
 // 退役屏障查询（**仅取证读数**）：返回 1 = 该代际当前没有处于 Flush 在途。
@@ -3354,7 +5344,7 @@ extern "C" int32_t cjgui_ohos_renderer_reset_instance_observations()
 
 CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t session)
 {
-    std::lock_guard<std::mutex> g(g_sessions.lock);
+    std::unique_lock<std::mutex> g(g_sessions.lock);
     int slot = sessionSlotLocked(session);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
@@ -3367,11 +5357,18 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t session)
               static_cast<unsigned long long>(g_pending[slot].ticketId));
         return CJGUI_INTERNAL_RENDERER_PENDING_SETTLEMENT_UNRESOLVED;
     }
+    const uint64_t oldProjection = s->acceptedProjectionVersion;
+    std::vector<SceneNode> oldAccepted;
+    oldAccepted.swap(s->accepted);
+    s->acceptedProjectionVersion = 0;
+    cjguiOhosLogAcceptedImageSwap(*s, oldAccepted, oldProjection, 0, "destroy");
+    oldAccepted.clear();
     s->inUse = false;
     s->token = 0;
-    s->accepted.clear();
     s->candidate.clear();
+    s->imageObservedSerial.clear();
     s->events.clear();
+    s->gesture = Session::TouchGesture{};  // B：销毁即取消，旧相位不得延续
     s->editing = false;
     s->editingText.clear();
     s->previewText.clear();
@@ -3383,6 +5380,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t session)
         g_pending[slot].valid = false;
     }
     g_sessions.occupied -= 1;
+    g.unlock();
+    cjguiOhosPruneReleasedImages();
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -3398,31 +5397,19 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composable_viewport(uint64_t
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    // 以 ingress 的实时租约为准；无 surface 时返回最后已知尺寸（宿主层保证
-    // 在 surface Ready 后才启动窗口会话，此分支只是防御）。
-    if (g_ingress.surfaceActive) {
-        void *window = nullptr;
-        uint64_t gen = 0;
-        int32_t w = 0, h = 0;
-        double density = 1.0;
-        if (g_ingress.surfaceActive(&window, &gen, &w, &h, &density, nullptr) == 1) {
-            s->surfaceGeneration = gen;
-            s->surfaceWidth = w;
-            s->surfaceHeight = h;
-            s->surfaceDensity = density;
-            s->surfaceSeen = true;
-        }
-    }
+    // 以 ingress 的实时租约为准；无 surface 时保留最后已知尺寸与版本。
+    cjguiOhosRefreshSurfaceLocked(s);
     outViewport->width = static_cast<uint32_t>(std::max(0, s->surfaceWidth));
     outViewport->height = static_cast<uint32_t>(std::max(0, s->surfaceHeight));
-    // resizeVersion 直接以 surface 代际为准：同尺寸重建也会递增。
-    outViewport->resizeVersion = s->surfaceGeneration;
-    outViewport->resourceCompletionVersion = 0;
+    outViewport->resizeVersion = s->surfaceResizeVersion;
+    outViewport->resourceCompletionVersion = s->imageCompletionVersion;
     if (outViewport->resizeVersion != s->loggedResizeVersion) {
         s->loggedResizeVersion = outViewport->resizeVersion;
-        RLOGI("viewport %{public}ux%{public}u gen=%{public}llu",
+        RLOGI("viewport %{public}ux%{public}u gen=%{public}llu geo=%{public}llu resize=%{public}llu density=%{public}f",
               outViewport->width, outViewport->height,
-              static_cast<unsigned long long>(outViewport->resizeVersion));
+              static_cast<unsigned long long>(s->surfaceGeneration),
+              static_cast<unsigned long long>(s->surfaceGeometryRevision),
+              static_cast<unsigned long long>(outViewport->resizeVersion), s->surfaceDensity);
     }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -3434,6 +5421,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_window_frame(uint64_t sessio
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    cjguiOhosRefreshSurfaceLocked(s);
     *outX = 0;
     *outY = 0;
     *outWidth = s->surfaceWidth;
@@ -3641,20 +5629,23 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
 CjguiInternalRendererStatus cjgui_internal_renderer_configure_composable_scene(uint64_t session, uint64_t projectionVersion,
                                                            uint32_t nodeCount)
 {
-    std::lock_guard<std::mutex> g(g_sessions.lock);
-    Session *s = lookupSessionLocked(session);
-    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    s->candidateOpen = true;
-    s->candidateProjectionVersion = projectionVersion;
-    // 增量事务语义：候选从"已接受场景"播种（保留未重新 stage 的节点内容/
-    // 身份/文字），随后核心只覆盖变化的槽位；present 成功才整体晋升。
-    // 播种节点统一采用本事务的 projectionVersion：整个场景共享一个版本，
-    // 未变化节点同样要跟随推进，否则合成事件带旧版本会被核心拒绝。
-    s->candidate.assign(nodeCount, SceneNode{});
-    for (size_t i = 0; i < nodeCount && i < s->accepted.size(); ++i) {
-        s->candidate[i] = s->accepted[i];
-        s->candidate[i].pod.projectionVersion = projectionVersion;
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        Session *s = lookupSessionLocked(session);
+        if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        s->candidateOpen = true;
+        s->candidateProjectionVersion = projectionVersion;
+        // 增量事务语义：候选从"已接受场景"播种（保留未重新 stage 的节点内容/
+        // 身份/文字），随后核心只覆盖变化的槽位；present 成功才整体晋升。
+        // 播种节点统一采用本事务的 projectionVersion：整个场景共享一个版本，
+        // 未变化节点同样要跟随推进，否则合成事件带旧版本会被核心拒绝。
+        s->candidate.assign(nodeCount, SceneNode{});
+        for (size_t i = 0; i < nodeCount && i < s->accepted.size(); ++i) {
+            s->candidate[i] = s->accepted[i];
+            s->candidate[i].pod.projectionVersion = projectionVersion;
+        }
     }
+    cjguiOhosPruneReleasedImages();  // a replaced rejected candidate may have been the last owner
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -3666,12 +5657,23 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_node(ui
                                                           uint64_t imageResourceVersion)
 {
     if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    std::lock_guard<std::mutex> g(g_sessions.lock);
+    OhosImageRef image;
+    bool replacedImage = false;
+    std::unique_lock<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!s->candidateOpen || nodeIndex >= s->candidate.size()) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    if (node->nodeKind == kKindImage || (imageResourcePath && imageResourcePath[0] != '\0')) {
-        // 图片资源阶段1不支持：显式失败，候选不入接受。
+    if (node->nodeKind == kKindImage) {
+        if (!imageResourcePath || !imageResourceId || !imageResourceId[0] ||
+            (node->imageContentMode != 1 && node->imageContentMode != 2)) {
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+        uint32_t state = 0;
+        CjguiInternalRendererStatus status = cjguiOhosImageAccessNoThrow(imageResourcePath, imageResourceId,
+            imageResourceVersion, true, false, &image, &state);
+        if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+        if (!image) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    } else if (imageResourcePath && imageResourcePath[0] != '\0') {
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
     SceneNode &dst = s->candidate[nodeIndex];
@@ -3679,8 +5681,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_node(ui
     dst.label = label ? label : "";
     dst.value = value ? value : "";
     dst.semanticId = "";
-    (void)imageResourceId;
-    (void)imageResourceVersion;
+    replacedImage = static_cast<bool>(dst.image);
+    dst.image = std::move(image);
+    g.unlock();
+    if (replacedImage) cjguiOhosPruneReleasedImages();
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -3805,7 +5809,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
 //
 // A1：终态写入后不再改变（重复调用直接返回同一 decision），记录保留到 ACK。
 // 这是“重复查询返回相同结果”“原候选只结算一次”的实现点。
-static uint32_t settlePendingTicketLocked(Session *s, int slot)
+static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageChanged)
 {
     PendingSettlement &p = g_pending[slot];
     if (!p.valid) {
@@ -3826,8 +5830,11 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot)
         p.job ? p.job->statusSnapshot() : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     if (phase == JobPhase::Done && status == CJGUI_INTERNAL_RENDERER_OK) {
         // 唯一一次 commit：native accepted 与命中同时切到该候选。
+        const uint64_t oldProjection = s->acceptedProjectionVersion;
         s->accepted.swap(p.nodes);
         s->acceptedProjectionVersion = p.projectionVersion;
+        cjguiOhosLogAcceptedImageSwap(*s, p.nodes, oldProjection, p.ticketId, "commit");
+        bool imageChanged = reconcileAcceptedImagesLocked(s);
 #ifdef CJGUI_OHOS_TEST_GATES
         // D 夹具取证：输出 accepted 节点几何与裁剪框（探针据此计算触摸坐标、
         // 核对裁剪边界）。
@@ -3857,6 +5864,7 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot)
         g_lastSettlementVerdict.store(kSettlementCommitted);
         // A1：延迟成功与同步成功共用收尾，避免漏掉编辑缓冲处理。
         syncEditingBufferAfterAcceptedSceneLocked(s);
+        if (outImageChanged) *outImageChanged = imageChanged;
         RLOGI("pending settlement committed ticket=%{public}llu frame=%{public}llu",
               static_cast<unsigned long long>(p.ticketId),
               static_cast<unsigned long long>(s->submittedFrameIndex));
@@ -3943,6 +5951,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     presentJob->clearA = clearA;
     JobRef job = presentJob;   // 队列/等待者共享同一所有权
     g_render.post(job);
+    cjguiOhosScheduleUnpostedImages();
     CjguiInternalRendererStatus result = job->waitFor();
     if (result == static_cast<CjguiInternalRendererStatus>(CJGUI_INTERNAL_RENDERER_PENDING)) {
         // 提交未定：把原票据与候选身份交给 session 的结算槽（共享所有权，
@@ -3973,14 +5982,22 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         RLOGW("present terminal session=%{public}llu ticket=%{public}llu status=%{public}d phase=%{public}d",
               static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
               static_cast<int>(result), static_cast<int>(job->phaseSnapshot()));
+        nodes.clear();
+        job.reset();
+        presentJob.reset();
+        cjguiOhosPruneReleasedImages();
         return result;
     }
+    bool imageChanged = false;
     {
         std::lock_guard<std::mutex> g(g_sessions.lock);
         Session *s = lookupSessionLocked(session);
         if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        const uint64_t oldProjection = s->acceptedProjectionVersion;
         s->accepted.swap(nodes);
         s->acceptedProjectionVersion = projectionVersion;
+        cjguiOhosLogAcceptedImageSwap(*s, nodes, oldProjection, ticketId, "commit");
+        imageChanged = reconcileAcceptedImagesLocked(s);
 #ifdef CJGUI_OHOS_TEST_GATES
         // D 夹具取证：同步 settle 路径的 accepted 几何（与 PENDING-settle 路径
         // 同格式，resize 后几何采样两条路径都能取到）。
@@ -4004,11 +6021,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         s->submittedFrameIndex += 1;
         // A1：同步成功与延迟成功（票据结算）共用同一条收尾，避免两条路径分叉。
         syncEditingBufferAfterAcceptedSceneLocked(s);
-        s->surfaceGeneration = gen;
-        s->surfaceWidth = w;
-        s->surfaceHeight = h;
-        s->surfaceDensity = density;
-        s->surfaceSeen = true;
+        cjguiOhosObserveSurfaceLocked(s, gen, geometryRevision, w, h, density);
         if (outObservation) {
             // flush 成功 = 提交成功；GPU 完成观察在 OHOS 路径不可得，保持 0。
             outObservation->frameIndex = s->submittedFrameIndex;
@@ -4020,9 +6033,19 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             outObservation->readbackColorMatched = 0;
         }
     }
+    const int terminalPhase = static_cast<int>(job->phaseSnapshot());
+    // The successful swap leaves the former accepted scene in this local
+    // vector. Release it and both waiter aliases before idle-cache pruning;
+    // the renderer epilogue covers the opposite waiter/renderer ordering.
+    nodes.clear();
+    job.reset();
+    presentJob.reset();
+    cjguiOhosPruneReleasedImages();
+    if (imageChanged) g_render.postIfRunning(std::make_shared<RedrawJob>());
+    cjguiOhosLogImageSnapshot("frame");
     RLOGI("present terminal session=%{public}llu ticket=%{public}llu status=0 phase=%{public}d",
-          static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
-          static_cast<int>(job->phaseSnapshot()));
+              static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
+              terminalPhase);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -4033,7 +6056,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_query_present(
 {
     if (outReceipt) std::memset(outReceipt, 0, sizeof(*outReceipt));
     if (ticketId == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    std::lock_guard<std::mutex> g(g_sessions.lock);
+    std::unique_lock<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     int slot = sessionSlotLocked(session);
@@ -4049,7 +6072,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_query_present(
         }
         return CJGUI_INTERNAL_RENDERER_OK;
     }
-    uint32_t decision = settlePendingTicketLocked(s, slot);
+    bool imageChanged = false;
+    uint32_t decision = settlePendingTicketLocked(s, slot, &imageChanged);
     if (outReceipt) {
         outReceipt->ticketId = p.ticketId;
         outReceipt->projectionVersion = p.projectionVersion;
@@ -4068,6 +6092,16 @@ CjguiInternalRendererStatus cjgui_internal_renderer_query_present(
             outReceipt->observation.readbackCompleted = 0;
             outReceipt->observation.readbackColorMatched = 0;
         }
+    }
+    g.unlock();
+    // Terminal pending settlement has released p.job/p.nodes. Rejected
+    // candidates still owned by s->candidate remain protected by use_count.
+    if (decision != CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING) {
+        cjguiOhosPruneReleasedImages();
+    }
+    if (imageChanged) g_render.postIfRunning(std::make_shared<RedrawJob>());
+    if (decision == CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_ACCEPTED) {
+        cjguiOhosLogImageSnapshot("frame");
     }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -4250,16 +6284,99 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_image_res
                                                                   const char *resourceId, uint64_t resourceVersion,
                                                                   uint32_t *outState)
 {
-    (void)session; (void)resourcePath; (void)resourceId; (void)resourceVersion; (void)outState;
-    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;  // 图片资源阶段1不支持
+    if (!outState) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiInternalRendererStatus status;
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        status = cjguiOhosImageAccessNoThrow(resourcePath, resourceId, resourceVersion,
+                                 true, true, nullptr, outState);
+    }
+    cjguiOhosScheduleUnpostedImages();
+    return status;
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_composable_image_resource_state(uint64_t session, const char *resourcePath,
                                                                 const char *resourceId, uint64_t resourceVersion,
                                                                 uint32_t *outState)
 {
-    (void)session; (void)resourcePath; (void)resourceId; (void)resourceVersion; (void)outState;
-    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (!outState) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    return cjguiOhosImageAccessNoThrow(resourcePath, resourceId, resourceVersion,
+                           false, false, nullptr, outState);
+}
+
+static CjguiInternalRendererStatus focusComposableNodeLocked(Session &s, uint64_t nodeId,
+                                                            bool checkBindingEpoch, uint64_t expectedBindingEpoch)
+{
+    RLOGI("focus api enter node=%{public}llu accepted=%{public}zu",
+          static_cast<unsigned long long>(nodeId), s.accepted.size());
+    if (nodeId == 0) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    for (const SceneNode &node : s.accepted) {
+        if (node.pod.nodeId != nodeId) continue;
+        const uint32_t kind = node.pod.nodeKind;
+        const bool editable = kind == kKindTextInput || kind == kKindIntegerInput;
+        if (!editable || node.pod.isReadOnly != 0 || node.pod.isInteractive == 0) {
+            return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+        }
+        const auto &n = node.pod;
+        // The Cangjie caller names the accepted binding it resolved. An ABA
+        // replacement may reuse the numeric node id and every visible string.
+        // The legacy two-argument entry remains available to older consumers.
+        if (checkBindingEpoch && (expectedBindingEpoch == 0 || n.acceptedBindingEpoch == 0 ||
+                                  n.acceptedBindingEpoch != expectedBindingEpoch)) {
+            return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+        }
+        if (n.width <= 0 || n.height <= 0) {
+            return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+        }
+        // Match the renderer's active rectangle chain: 1..4 original clips,
+        // otherwise the inherited legacy clip. Any empty intersection means
+        // no editor may be started, even when core geometry was valid earlier.
+        __int128 left = n.x;
+        __int128 top = n.y;
+        __int128 right = left + n.width;
+        __int128 bottom = top + n.height;
+        auto intersectClip = [&](int64_t x, int64_t y, int64_t width, int64_t height) {
+            if (width <= 0 || height <= 0) return false;
+            const __int128 clipLeft = x;
+            const __int128 clipTop = y;
+            const __int128 clipRight = clipLeft + width;
+            const __int128 clipBottom = clipTop + height;
+            left = std::max(left, clipLeft);
+            top = std::max(top, clipTop);
+            right = std::min(right, clipRight);
+            bottom = std::min(bottom, clipBottom);
+            return left < right && top < bottom;
+        };
+        bool visible = true;
+        if (n.clipConstraintCount >= 1u && n.clipConstraintCount <= 4u) {
+            visible = intersectClip(n.clip0X, n.clip0Y, n.clip0Width, n.clip0Height);
+            if (visible && n.clipConstraintCount > 1u) {
+                visible = intersectClip(n.clip1X, n.clip1Y, n.clip1Width, n.clip1Height);
+            }
+            if (visible && n.clipConstraintCount > 2u) {
+                visible = intersectClip(n.clip2X, n.clip2Y, n.clip2Width, n.clip2Height);
+            }
+            if (visible && n.clipConstraintCount > 3u) {
+                visible = intersectClip(n.clip3X, n.clip3Y, n.clip3Width, n.clip3Height);
+            }
+        } else {
+            visible = intersectClip(n.clipX, n.clipY, n.clipWidth, n.clipHeight);
+        }
+        if (!visible) {
+            return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+        }
+        // Core owns reveal and retries after a new accepted scene. No focus
+        // event is returned for this programmatic request, preventing a loop.
+        beginEditingOnNodeLocked(s, node);
+        RLOGI("platform focus node=%{public}llu ctx=%{public}lld field=%{public}s",
+              static_cast<unsigned long long>(nodeId),
+              static_cast<long long>(s.editingContextId), s.editingFieldName.c_str());
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64_t session, uint64_t nodeId)
@@ -4267,8 +6384,16 @@ CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    (void)nodeId;  // 简单逻辑焦点：核心已维护投影焦点，无需平台动作
-    return CJGUI_INTERNAL_RENDERER_OK;
+    return focusComposableNodeLocked(*s, nodeId, false, 0);
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node_checked(
+    uint64_t session, uint64_t nodeId, uint64_t expectedBindingEpoch)
+{
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    return focusComposableNodeLocked(*s, nodeId, true, expectedBindingEpoch);
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_capture(uint64_t session)
@@ -4276,6 +6401,28 @@ CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_ca
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    // B/C：取消 capture 的实际行为——终结当前触摸手势（不激活、不结算），
+    // 长按计时一并清除；正在进行的编辑上下文不受影响。
+    cancelTouchGestureLocked(*s);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(
+    uint64_t session, uint64_t appInstance, uint64_t componentInstance,
+    uint64_t surfaceGeneration, int64_t pointerId, uint64_t gestureEpoch)
+{
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (appInstance == 0 || componentInstance == 0 || surfaceGeneration == 0 ||
+        pointerId < 0 || gestureEpoch == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    const Session::TouchGesture &active = s->gesture;
+    if (active.active && active.appInstance == appInstance &&
+        active.componentInstance == componentInstance &&
+        active.surfaceGeneration == surfaceGeneration &&
+        active.pointerId == pointerId && active.gestureEpoch == gestureEpoch) {
+        cancelTouchGestureLocked(*s);
+    }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -4410,15 +6557,25 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     auto drainTouches = [&s]()
     {
         // 调用方必须已持有 g_sessions.lock（合成只触碰会话内状态）。
-        if (!g_ingress.touchDequeue) return;
+        if (!g_ingress.touchDequeueEx) return;
         for (int drained = 0; drained < 64; ++drained) {
-            uint32_t action = 0;
-            float x = 0, y = 0;
-            uint64_t gen = 0;
-            int rc = g_ingress.touchDequeue(&action, &x, &y, &gen);
+            RawTouchSample sample{};
+            sample.pointerId = -1;
+            int rc = g_ingress.touchDequeueEx(&sample.action, &sample.x, &sample.y,
+                &sample.appInstance, &sample.componentInstance,
+                &sample.surfaceGeneration, &sample.pointerId, &sample.gestureEpoch,
+                &sample.timestampNs, &sample.timeSource);
             if (rc != 1) break;  // 0 空 / -1 旧代已丢弃
-            RLOGI("raw touch action=%{public}u x=%{public}.0f y=%{public}.0f", action, x, y);
-            synthesizeEventsFromRawTouch(*s, action, x, y);
+            RLOGI("raw touch action=%{public}u x=%{public}.0f y=%{public}.0f ep=%{public}llu",
+                  sample.action, sample.x, sample.y, static_cast<unsigned long long>(sample.gestureEpoch));
+            // B（复核修）：坐标域统一——XComponent 回调给物理 px，核心投影
+            // 的 accepted 节点是布局 vp；在此一次性除以 surfaceDensity（只在
+            // 此处转换，其余路径不再二次转换）。
+            if (s->surfaceDensity > 0.0 && s->surfaceDensity != 1.0) {
+                sample.x = static_cast<float>(sample.x / s->surfaceDensity);
+                sample.y = static_cast<float>(sample.y / s->surfaceDensity);
+            }
+            synthesizeEventsFromRawTouch(*s, sample);
         }
     };
 
@@ -4542,10 +6699,17 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         // 结束通知（与 focus 成对）：框架侧结束编辑（点到别的控件/换绑/节点移除）
         // 时，平台代理必须同步收场，否则代理会带着已被回收的上下文继续持有
         // 焦点与系统键盘（实测：点空白处结束编辑后键盘不收起）。
-        // 这里带的是刚被回收的上下文编号，平台只对「当前挂载的那一个」响应。
-        std::string payload = "{\"action\":\"end\",\"context\":" + std::to_string(s->editingContextId);
+        // 跨字段切换时身份在切换点捕获（detachContextId/detachFieldName），
+        // 不得读新上下文字段；普通结束（空白/退役）两者为空，取当前值。
+        const int64_t endContextId = s->detachContextId != 0
+            ? s->detachContextId : s->editingContextId;
+        const std::string endFieldName = !s->detachFieldName.empty()
+            ? s->detachFieldName : s->editingFieldName;
+        s->detachContextId = 0;
+        s->detachFieldName.clear();
+        std::string payload = "{\"action\":\"end\",\"context\":" + std::to_string(endContextId);
         payload += ",\"field\":\"";
-        appendJsonEscaped(payload, s->editingFieldName);
+        appendJsonEscaped(payload, endFieldName);
         payload += "\"}";
         g.unlock();
         imeDetach();
@@ -4569,6 +6733,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     outEvent->pointerX = ev.pointerX;
     outEvent->pointerY = ev.pointerY;
     outEvent->modifierFlags = 0;
+    outEvent->gestureAppInstance = ev.appInstance;
+    outEvent->gestureComponentInstance = ev.componentInstance;
+    outEvent->gestureSurfaceGeneration = ev.surfaceGeneration;
+    outEvent->gesturePointerId = ev.pointerId;
+    outEvent->gestureEpoch = ev.gestureEpoch;
+    outEvent->acceptedBindingEpoch = ev.acceptedBindingEpoch;
     s->lastEventText = ev.text;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -4588,6 +6758,13 @@ int32_t cjgui_ohos_app_main(const CjguiOhosIngress *ingress)
     g_ingress = *ingress;
     RLOGI("ingress registered; starting cangjie app loop");
     return cjgui_ohos_app_main_cangjie(ingress);
+}
+
+// Short-lived owner-entry diagnostic: the Cangjie @C entry can call this
+// before println, making its actual execution visible in native hilog.
+extern "C" void cjgui_ohos_trace_mark(int32_t code)
+{
+    RLOGI("owner trace marker code=%{public}d", code);
 }
 
 // ingress 观察：仓颉宿主在启动窗口会话前轮询（宿主须等到 surface Ready）。
@@ -4847,6 +7024,11 @@ extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t en
         a = std::min(a, size);
         b = std::min(b, size);
         changed = (s->selStartUtf16 != a) || (s->selEndUtf16 != b) || (s->caretUtf16 != b);
+        if (changed && !editorEnqueueSelectionChanged(*s, a, b)) {
+            RLOGW("ime selection rejected: no matching accepted binding ctx=%{public}lld node=%{public}llu",
+                  static_cast<long long>(contextId), static_cast<unsigned long long>(s->editingNodeId));
+            return 1;
+        }
         s->selStartUtf16 = a;
         s->selEndUtf16 = b;
         s->caretUtf16 = b;

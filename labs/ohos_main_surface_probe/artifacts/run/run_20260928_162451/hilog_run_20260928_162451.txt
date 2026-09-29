@@ -1,0 +1,4 @@
+09-28 16:24:42.355 28800 28800 I A01234/MainSurfaceProbe: onCreate
+09-28 16:24:42.355 28800 28800 I A01234/MainSurfaceProbe: launch param probeLevel=0
+09-28 16:24:42.370 28800 28800 I A01234/MainSurfaceProbe: PUBLIC ArkTS main window id=85 displayId=0 rect=0,0 1320x2856
+09-28 16:24:42.370 28800 28800 E A01234/MainSurfaceProbe: setWindowBackgroundColor failed: {"code":1300002}

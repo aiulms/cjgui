@@ -27,6 +27,7 @@ SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk \
 cjc --sysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
   "$RUNTIME_DIR/src/composable_ui.cj" \
+  "$RUNTIME_DIR/src/composable_ui_named_style.cj" \
   "$RUNTIME_DIR/probe/composable_ui_layout_probe.cj" \
   -L "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \
   -lcjgui_shared_operation_core \

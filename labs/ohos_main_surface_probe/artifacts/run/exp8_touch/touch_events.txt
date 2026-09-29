@@ -1,0 +1,6 @@
+09-28 16:34:37.524  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#1 action=1 finger=10000 xy=283,534 windowId=93 time=18359188484
+09-28 16:34:37.624  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#2 action=3 finger=10000 xy=283,534 windowId=93 time=18359293694
+09-28 16:34:37.646  9261  9261 I A01234/MainSurfaceProbe: submitFrame frame=0 rc=0 status=windowId=93 window=0x7fa399e000 node=0x7fa3b1a500 surface=0x7fa30f9f00 nativeWindow=0x7fa23d3640 surfaceId=3289944948857 reqRc=0 flushRc=0 frames=1 touchFilterRc=0 keyFilterRc=0 touchEvents=2 keyEvents=0
+09-28 16:34:40.823  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#3 action=1 finger=10000 xy=538,534 windowId=93 time=18362490685
+09-28 16:34:40.925  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#4 action=3 finger=10000 xy=538,534 windowId=93 time=18362593700
+09-28 16:34:40.946  9261  9261 I A01234/MainSurfaceProbe: submitFrame frame=1 rc=0 status=windowId=93 window=0x7fa399e000 node=0x7fa3b1a500 surface=0x7fa30f9f00 nativeWindow=0x7fa23d3640 surfaceId=3289944948857 reqRc=0 flushRc=0 frames=2 touchFilterRc=0 keyFilterRc=0 touchEvents=4 keyEvents=0

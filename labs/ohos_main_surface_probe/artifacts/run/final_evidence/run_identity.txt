@@ -1,0 +1,4 @@
+hap_sha256=7fa850f10b70eb8923862f9bc38854becf0b359ea1b657d3616471470a7b403f
+pid=18775
+bundle=com.example.ohosmainsurfaceprobe ability=EntryAbility
+launch: probeLevel=3 probeCandidate=2 (透明由 ArkTS 页面设置)

@@ -581,15 +581,18 @@ func windowFinalAlphaAppliesInteractionAndAnimationExactlyOnce(): Unit {
 
 @Test
 func frameworkMotionRegistryPublishesBoundedRulesAndCapability(): Unit {
-    @Assert(CjguiGeneratedMotionRegistry.supportedRuleNames().size, 2)
+    @Assert(CjguiGeneratedMotionRegistry.supportedRuleNames().size, 3)
     @Assert(CjguiGeneratedMotionRegistry.specFor(CjguiGeneratedMotionRegistry.OPACITY_TRANSITION).isSome(), true)
     @Assert(CjguiGeneratedMotionRegistry.specFor(CjguiGeneratedMotionRegistry.INTERACTION_TRANSITION).isSome(), true)
+    @Assert(CjguiGeneratedMotionRegistry.specFor(CjguiGeneratedMotionRegistry.POSITION_TRANSITION).isSome(), true)
     let interaction = CjguiGeneratedMotionRegistry.interactionSpec()
     @Assert(interaction.durationMs, 180)
     @Assert(interaction.easing, CjguiComposableUiAnimationEasing.EASE_OUT)
     let capability = CjguiGeneratedMotionRegistry.capabilityLine()
     @Assert(capability.contains("motion_rule=generated.opacity"), true)
     @Assert(capability.contains("interaction_rule=interaction.state"), true)
+    @Assert(capability.contains("position_rule=generated.position"), true)
+    @Assert(capability.contains("position_unit=logical_points"), true)
     @Assert(capability.contains("duration_range=40..2000"), true)
     @Assert(capability.contains("easing_tokens=ease_in_out|ease_out"), true)
     @Assert(capability.contains("backend=CjguiComposableUiAnimationSpec.tween"), true)

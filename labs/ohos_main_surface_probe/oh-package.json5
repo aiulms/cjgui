@@ -1,0 +1,8 @@
+{
+  "modelVersion": "26.0.0",
+  "description": "独立实验：普通 normal HAP 不创建 XComponent，尝试取得主窗口可提交 Surface",
+  "dependencies": {
+  },
+  "devDependencies": {
+  }
+}

@@ -333,6 +333,26 @@ class StructureTests(unittest.TestCase):
 
 
 class InstanceTests(unittest.TestCase):
+    def test_image_resource_state_survives_typed_public_readback(self) -> None:
+        body = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2",
+            "KIND GENERATED_UI_INSTANCES",
+            "STRUCTURE_VERSION 2",
+            "CANDIDATE_VERSION 0",
+            "SCENE_STATE scene_accepted",
+            "INSTANCE_LENGTH 2",
+            "INSTANCE root element=- role=- id=1 kind=vertical semantic=root field=- "
+            "action=- resource=- resource_version=0 resource_state=- visible=1 "
+            "bounds=0,0,100,100 label_hex=-",
+            "INSTANCE art element=- role=- id=2 kind=image semantic=art field=- "
+            "action=- resource=icon resource_version=7 resource_state=ready visible=1 "
+            "bounds=0,0,80,40 label_hex=-",
+            "END",
+        ])
+        instances = generated.parse_generated_instances(response(body))
+        self.assertEqual(instances.instance("root").resource_state, "")
+        self.assertEqual(instances.instance("art").resource_state, "ready")
+
     def test_control_semantics_survive_typed_public_readback(self) -> None:
         body = "\n".join([
             "PROTOCOL CJGUI_SHARED_OPERATION/2",

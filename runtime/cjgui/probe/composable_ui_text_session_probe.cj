@@ -430,6 +430,15 @@ private class TextSessionController <: CjguiComposableUiController {
             case None => ""
         }
     }
+
+    /// 组合期间的外部(Agent/另一窗口)写:直接经 owner Sink 在文档末尾追加,不经过
+    /// 窗口与会话。owner 版本前进对会话只在下一次 sourceVersion 读取时可见——正是
+    /// "活动组合的基点被外部写推进"的生产形态。返回这笔外部写是否真正落笔。
+    public func externalOwnerAppend(text: String): Bool {
+        let end = this.store.rangeTextByteLength()
+        let outcome = this.store.applyRangeTextEdit(this.store.rangeTextVersion(), end, end, text)
+        return outcome.applied
+    }
 }
 
 private func insertText(window: CjguiComposableUiWindow, text: String): Bool {
@@ -854,6 +863,158 @@ private func runSessionProbe(): Bool {
         "owner=${controller.ownerText()} sink=${controller.sinkStart()}:${controller.sinkEnd()} " +
         "sink_calls=${controller.sinkCalls()} decisions=${controller.compositionDecisions()} " +
         "refusals=${controller.compositionRefusals()} stale=${controller.staleCompositionRefusals()}") && passed
+
+    // A was terminal and B now owns the same accepted native proxy. Deliver
+    // A's delayed terminal through the window's real phase router: a duplicate
+    // rejection must not schedule restoration of A's accepted bytes over B's
+    // marked text or selection. B then commits one exact owner transaction.
+    let oldStart = setMarkedEx(window, "旧", 1, 1, -1, 0) && settle(window)
+    let oldId = match (rebound.compositionFrozenRange()) {
+        case Some(frozen) => frozen[0]
+        case None => -1
+    }
+    let oldCommit = commitMarked(window, "旧") && settle(window)
+    let beforeB = controller.ownerText()
+    let beforeBWrites = controller.ownerWrites()
+    let beforeBSink = controller.sinkCalls()
+    let newStart = setMarkedEx(window, "新", 1, 1, -1, 0) && settle(window)
+    let newId = match (rebound.compositionFrozenRange()) {
+        case Some(frozen) => frozen[0]
+        case None => -1
+    }
+    let recoveryBeforeLate = window.refusedRangeTextRecoveryCount()
+    let restoresBeforeLate = controller.restoredContexts()
+    let lateCommit = window.testRouteLateOwnedCompositionPhase(2u32, oldId)
+    let lateCancel = window.testRouteLateOwnedCompositionPhase(3u32, oldId)
+    let lateSettled = settle(window)
+    let bStillOwned = !lateCommit && !lateCancel && lateSettled && oldId >= 0 && newId > oldId &&
+        controller.hasComposition() && controller.compositionText() == "新" &&
+        controller.ownerText() == beforeB && controller.ownerWrites() == beforeBWrites &&
+        controller.sinkCalls() == beforeBSink &&
+        window.refusedRangeTextRecoveryCount() == recoveryBeforeLate &&
+        controller.restoredContexts() == restoresBeforeLate
+    let visualStaleBefore = window.textSessionCompositionStaleRefusalCount()
+    let visualLateCommit = window.testRouteLatePresentationCompositionPhase(2u32, oldId, newId)
+    let visualLateCancel = window.testRouteLatePresentationCompositionPhase(3u32, oldId, newId)
+    let visualLateSettled = settle(window)
+    let visualBStillOwned = !visualLateCommit && !visualLateCancel && visualLateSettled &&
+        window.textSessionCompositionStaleRefusalCount() == visualStaleBefore + 2 &&
+        controller.hasComposition() && controller.compositionText() == "新" &&
+        controller.ownerText() == beforeB && controller.ownerWrites() == beforeBWrites &&
+        controller.sinkCalls() == beforeBSink &&
+        window.refusedRangeTextRecoveryCount() == recoveryBeforeLate &&
+        controller.restoredContexts() == restoresBeforeLate
+    passed = report("late_visual_A_terminal_cannot_restore_live_B",
+        oldStart && oldCommit && newStart && bStillOwned && visualBStillOwned,
+        "A=${oldId} B=${newId} visual_commit=${visualLateCommit} " +
+        "visual_cancel=${visualLateCancel} B_live=${visualBStillOwned} " +
+        "stale=${visualStaleBefore}->${window.textSessionCompositionStaleRefusalCount()} " +
+        "recoveries=${window.refusedRangeTextRecoveryCount()} " +
+        "restores=${controller.restoredContexts()} owner=${controller.ownerText()}") && passed
+    let newCommit = commitMarked(window, "新") && settle(window)
+    var expectedB = ""
+    if (controller.sinkStart() >= 0 && controller.sinkEnd() >= controller.sinkStart() &&
+        controller.sinkEnd() <= Int64(beforeB.toArray().size)) {
+        let expectedBytes = ArrayList<Byte>()
+        expectedBytes.add(all: beforeB.toArray())
+        if (controller.sinkEnd() > controller.sinkStart()) {
+            expectedBytes.remove(controller.sinkStart()..controller.sinkEnd())
+        }
+        let inserted = "新".toArray()
+        var i: Int64 = 0
+        while (i < Int64(inserted.size)) {
+            expectedBytes.add(inserted[i], at: controller.sinkStart() + i)
+            i += 1
+        }
+        expectedB = String.fromUtf8(expectedBytes.toArray())
+    }
+    passed = report("late_A_terminal_cannot_restore_live_B",
+        oldStart && oldCommit && newStart && bStillOwned && visualBStillOwned && newCommit &&
+            !controller.hasComposition() && controller.ownerText() == expectedB &&
+            controller.ownerWrites() == beforeBWrites + 1 &&
+            controller.sinkCalls() == beforeBSink + 1 &&
+            window.refusedRangeTextRecoveryCount() == recoveryBeforeLate &&
+            controller.restoredContexts() == restoresBeforeLate &&
+            controller.pendingCount() == 0,
+        "A=${oldId} B=${newId} A_started=${oldStart} A_committed=${oldCommit} " +
+        "B_started=${newStart} B_live=${bStillOwned} B_committed=${newCommit} " +
+        "owner=${controller.ownerText()} expected=${expectedB} writes=${controller.ownerWrites()} " +
+        "recoveries=${window.refusedRangeTextRecoveryCount()} restores=${controller.restoredContexts()}") && passed
+
+    // 15. B 持有活组合且基点被外部写推进后,A(上一已终结组合)的迟到终态只能留下
+    //     具名拒绝:身份门先于 rebase/清 pending/终态/恢复副作用。核对 B 的 claim、
+    //     preedit、恢复槽与扰动状态都不被 A 改动;B 自己的取消相位照常保存恢复草稿
+    //     并调度一次代理恢复(正控),恢复后普通输入照常可用。
+    let staleOwnerBefore = controller.ownerText()
+    let staleWritesBase = controller.ownerWrites()
+    let staleSinkBase = controller.sinkCalls()
+    let staleRecoveriesBase = window.refusedRangeTextRecoveryCount()
+    let staleStaleBase = controller.staleCompositionRefusals()
+    let staleRefusalBase = controller.compositionRefusals()
+    let staleRestoresBase = controller.restoredContexts()
+    let bStaleStart = setMarkedEx(window, "乙", 1, 1, -1, 0) && settle(window)
+    let bStaleId = match (rebound.compositionFrozenRange()) {
+        case Some(frozen) => frozen[0]
+        case None => -1
+    }
+    let bStaleBaseVersion = controller.compositionBaseVersion()
+    let externalAdvanced = controller.externalOwnerAppend("外") && settle(window)
+    let baseNowStale = externalAdvanced && bStaleId >= 0 && bStaleId != newId &&
+        controller.compositionBaseVersion() == bStaleBaseVersion &&
+        controller.hasComposition() && controller.compositionText() == "乙"
+    // 迟到 A COMMIT:旧代码在会话拒绝前就清了 B 的 pending 扰动标志;身份门后它
+    // 必须在任何副作用之前被拒绝。
+    let lateStaleCommit = window.testRouteLateOwnedCompositionPhase(2u32, newId)
+    // 迟到 A CANCEL:B 的 stale 终态照常保存草稿并恢复,旧 A 不产生恢复意图。
+    let lateStaleCancel = window.testRouteLateOwnedCompositionPhase(3u32, newId)
+    let lateStaleSettled = settle(window)
+    let lateStaleReason = controller.lastCompositionReason()
+    let lateStaleDraftPresent = match (rebound.recoveryDraftValue()) {
+        case Some(_) => true
+        case None => false
+    }
+    let bKeptThroughLateTerminals = !lateStaleCommit && !lateStaleCancel && lateStaleSettled &&
+        lateStaleReason == "composition_terminal_duplicate" &&
+        controller.staleCompositionRefusals() == staleStaleBase + 2 &&
+        controller.compositionRefusals() == staleRefusalBase &&
+        controller.hasComposition() && controller.compositionText() == "乙" &&
+        controller.ownerText() == "${staleOwnerBefore}外" &&
+        controller.ownerWrites() == staleWritesBase + 1 &&
+        controller.sinkCalls() == staleSinkBase + 1 &&
+        window.refusedRangeTextRecoveryCount() == staleRecoveriesBase &&
+        controller.restoredContexts() == staleRestoresBase &&
+        !lateStaleDraftPresent && !controller.isCalibrating()
+    passed = report("late_A_terminal_after_external_advance_cannot_touch_live_B",
+        bStaleStart && baseNowStale && bKeptThroughLateTerminals,
+        "B=${bStaleId} last_A=${newId} base_stale=${baseNowStale} reason=${lateStaleReason} " +
+            "stale=${staleStaleBase}->${controller.staleCompositionRefusals()} " +
+            "refusals=${staleRefusalBase}->${controller.compositionRefusals()} " +
+            "owner=${controller.ownerText()} writes=${controller.ownerWrites()} " +
+            "recoveries=${window.refusedRangeTextRecoveryCount()} " +
+            "draft_present=${lateStaleDraftPresent}") && passed
+    // 正控:B 自己的取消相位按 Q4 契约处理——保存"乙"的独立恢复草稿、精确结束
+    // claim、调度一次代理恢复;正文零事务,恢复后普通输入继续可用。
+    let bOwnCancel = cancelMarked(window) && settle(window)
+    let bDraft = match (rebound.recoveryDraftValue()) {
+        case Some(draft) => draft
+        case None => CjguiTextSessionRecoveryDraft(-1, "", -1, -1, -1, -1, -1, -1, "", -1, "", "")
+    }
+    let draftDiscarded = rebound.discardRecoveryDraft(bDraft.draftId)
+    let resumeEnd = cjguiUtf16Length(controller.ownerText())
+    let staleResumeSelect = selectRange(window, UInt32(resumeEnd), UInt32(resumeEnd))
+    let staleResumeEdit = insertText(window, "!") && settle(window)
+    passed = report("stale_B_cancel_still_saves_draft_and_recovers",
+        bOwnCancel && !controller.hasComposition() && bDraft.content == "乙" &&
+            bDraft.compositionId == bStaleId && draftDiscarded &&
+            window.refusedRangeTextRecoveryCount() == staleRecoveriesBase + 1 &&
+            controller.compositionRefusals() == staleRefusalBase + 1 &&
+            controller.ownerText() == "${staleOwnerBefore}外!" &&
+            controller.ownerWrites() == staleWritesBase + 2 &&
+            staleResumeSelect && staleResumeEdit && !controller.isCalibrating() &&
+            controller.pendingCount() == 0,
+        "cancel=${bOwnCancel} draft=${bDraft.content}/id=${bDraft.compositionId} " +
+            "reason=${controller.lastCompositionReason()} " +
+            "recoveries=${window.refusedRangeTextRecoveryCount()} owner=${controller.ownerText()}") && passed
 
     println("CJGUI_SESSION_SUMMARY range_events=${controller.rangeEvents()} " +
         "full_value_events=${controller.fullValueEvents} accepted=${controller.acceptedEdits()} " +

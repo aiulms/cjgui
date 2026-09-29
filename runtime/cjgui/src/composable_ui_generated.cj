@@ -406,7 +406,8 @@ public class CjguiGeneratedUiPresentation {
     public static func isStylePropertyName(name: String): Bool {
         return name == "fixedWidth" || name == "fixedHeight" || name == "minWidth" || name == "maxWidth" || name ==
             "minHeight" || name == "maxHeight" || name == "growX" || name == "growY" || name == "alignX" || name ==
-            "alignY" || name == "fontSize" || name == "fontWeight" || name == "borderWidth"
+            "alignY" || name == "fontSize" || name == "fontWeight" || name == "borderWidth" ||
+            name == "translateX" || name == "translateY"
     }
 
     /// Whether one presentation consumes one style property. A container also
@@ -451,6 +452,9 @@ public class CjguiGeneratedUiPresentation {
         if (name == "alignX" || name == "alignY") {
             return consumesStyleProperty(presentation, name) && valueType == "STRING"
         }
+        if (name == "translateX" || name == "translateY") {
+            return consumesStyleProperty(presentation, name) && valueType == "STRING"
+        }
         if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) || name == "style") {
             return consumesStyleProperty(presentation, name) && valueType == "STRING"
         }
@@ -492,8 +496,12 @@ public class CjguiGeneratedUiPresentation {
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_ACTION) {
             // `label` is the button caption; `action` is the declared action
-            // name the validator checks against the node's own binding.
-            return (name == "label" || name == "action") && valueType == "STRING"
+            // name the validator checks against the node's own binding. A
+            // generated action may also declare a transfer endpoint; the
+            // application validates its role/format and stages a real window
+            // provider binding with the scene before it becomes accepted.
+            return (name == "label" || name == "action" || name == "transferRole" ||
+                name == "transferFormat" || name == "transferFileSource") && valueType == "STRING"
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_IMAGE) {
             // The logical resource key and its version are resolved against the
@@ -575,6 +583,16 @@ public class CjguiGeneratedUiPresentation {
                 stability: CjguiComposableUiEffectValidation.EFFECT_STABILITY,
                 backendSupport: CjguiComposableUiEffectValidation.EFFECT_GROUP_BACKEND_SUPPORT))
         properties.add(CjguiGeneratedUiPropertySpec("borderWidth", "INTEGER", minimum: 0, maximum: 64, defaultValue: "1"))
+        properties.add(CjguiGeneratedUiPropertySpec("translateX", "STRING", maxLength: 12,
+            defaultValue: "", encoding: "signed decimal, at most 3 fractional digits",
+            unit: "logical points", valueRange: "[-1024,1024]; cumulative [-4096,4096]",
+            semantics: "absent=inherit named style; empty=clear to 0",
+            stability: "experimental", backendSupport: "macOS; other backends unsupported"))
+        properties.add(CjguiGeneratedUiPropertySpec("translateY", "STRING", maxLength: 12,
+            defaultValue: "", encoding: "signed decimal, at most 3 fractional digits",
+            unit: "logical points", valueRange: "[-1024,1024]; cumulative [-4096,4096]",
+            semantics: "absent=inherit named style; empty=clear to 0",
+            stability: "experimental", backendSupport: "macOS; other backends unsupported"))
         // A registered app rule may be referenced by any accepted generated
         // instance. The holder publishes the resolved rule only with that
         // instance's accepted structure transaction.
@@ -1713,6 +1731,10 @@ public class CjguiGeneratedUiValidator {
                 if (catalog.namedStyles().forName(value).isNone()) {
                     return "style_reference_not_registered"
                 }
+            } else if (property.name == "translateX" || property.name == "translateY") {
+                if (value.size > 0 && cjguiComposableUiParseTranslationScalar(value).isNone()) {
+                    return "translation_value_invalid"
+                }
             } else if (property.name == "shadow" || property.name == "gradient" || property.name == "effectGroup") {
                 // An encoded effect is a real contract, not an advisory: `none`
                 // and the empty value explicitly CLEAR the effect, a legal token
@@ -2099,6 +2121,18 @@ public class CjguiGeneratedUiCandidateRecord {
 /// version, allocates stable node identities per accepted key, and renders the
 /// accepted structure through ordinary component builders. Business fields and
 /// drafts remain with the application provider.
+/// Identity emitted by this holder's current render attempt. It is only a
+/// staging value; accepted instance reads continue to use the committed map.
+public class CjguiGeneratedUiRefreshIdentity {
+    public let nodeId: Int64
+    public let semanticId: String
+
+    public init(nodeId: Int64, semanticId: String) {
+        this.nodeId = nodeId
+        this.semanticId = semanticId
+    }
+}
+
 public class CjguiGeneratedUiStructureHolder {
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let validator: CjguiGeneratedUiValidator
@@ -2127,6 +2161,10 @@ public class CjguiGeneratedUiStructureHolder {
     private var nodeIdToKey: HashMap<Int64, String>
     // Candidate identity table, published only by the commit hook.
     private var candidateNodeIdToKey: HashMap<Int64, String>
+    // Current build's exact key -> semantic identity. Candidate declarations
+    // need this before acceptance to stage native bindings with that scene.
+    // Rebuilt attempts replace the map; commit/rollback remove it.
+    private var refreshIdentities: HashMap<String, CjguiGeneratedUiRefreshIdentity>
     // Resource binding each image reference was resolved with. The ACCEPTED map
     // is part of the accepted scene: an application that redeclares the same key
     // at a new version must not make the accepted interface unresolvable, so an
@@ -2223,6 +2261,7 @@ public class CjguiGeneratedUiStructureHolder {
         this.renderFailurePath = ""
         this.nodeIdToKey = HashMap<Int64, String>()
         this.candidateNodeIdToKey = HashMap<Int64, String>()
+        this.refreshIdentities = HashMap<String, CjguiGeneratedUiRefreshIdentity>()
         this.acceptedImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>()
         this.candidateImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>()
         this.instanceScrollViewports = HashMap<String, CjguiComposableUiScrollViewport>()
@@ -2556,6 +2595,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// Called from the window's begin-scene-refresh hook, before the scene is
     /// built; it publishes nothing.
     public func beginCandidateRefresh(): Bool {
+        refreshIdentities.clear()
         if (candidate.isNone()) {
             return true
         }
@@ -2651,6 +2691,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// component identities are promoted in the same step, and only then are
     /// the instances it dropped destroyed.
     public func commitCandidateRefresh(): Bool {
+        refreshIdentities.clear()
         let pending = candidate
         if (let Some(structure) <- pending) {
             if (!candidatePrepared) {
@@ -2724,6 +2765,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// structure, version, identity table and component instances are
     /// untouched, so the old interface stays addressable and editable.
     public func rollbackCandidateRefresh(): Unit {
+        refreshIdentities.clear()
         rollbackStyleRefresh()
         releaseCandidateImageHolds()
         // Give back every instance view state this CANDIDATE build created or
@@ -2770,6 +2812,7 @@ public class CjguiGeneratedUiStructureHolder {
             // placeholder so the rest of the window scene still commits.
             return cjguiComposableVertical(900001, "generated-empty", CjguiComposableUiStyle(gap: 4))
         }
+        refreshIdentities.clear()
         // A dedicated placeholder id: node id 1 belongs to the window's own
         // layer host, and a duplicate id rejects the whole scene commit.
         return cjguiComposableVertical(900001, "generated-empty", CjguiComposableUiStyle(gap: 4))
@@ -2780,6 +2823,7 @@ public class CjguiGeneratedUiStructureHolder {
     private func renderInto(structure: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
         intoAcceptedTable: Bool): CjguiGeneratedUiRendered {
         buildIntoAcceptedTable = true
+        refreshIdentities.clear()
         nodeIdToKey = HashMap<Int64, String>()
         acceptedCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
         lastExpandedNodeCount = 0
@@ -2805,6 +2849,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// an accepted instance.
     private func renderIntoCandidate(structure: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider): CjguiGeneratedUiRendered {
         buildIntoAcceptedTable = false
+        refreshIdentities.clear()
         candidateNodeIdToKey = HashMap<Int64, String>()
         candidateCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
         // A pending candidate may be built more than once (a retried or rebuilt
@@ -2836,6 +2881,13 @@ public class CjguiGeneratedUiStructureHolder {
             }
         }
         return -1
+    }
+
+    /// The exact identity created by the latest build, valid only until that
+    /// build commits or rolls back. A candidate transfer provider uses this
+    /// narrow lookup to stage its declaration with the candidate scene.
+    public func refreshIdentityForKey(key: String): ?CjguiGeneratedUiRefreshIdentity {
+        return refreshIdentities.get(key)
     }
 
     /// Accepted stable key for a generated node identity. Events resolve their
@@ -3044,6 +3096,7 @@ public class CjguiGeneratedUiStructureHolder {
             -1
         }
         let semanticId = instance.semanticId("node")
+        refreshIdentities.add(spec.key, CjguiGeneratedUiRefreshIdentity(nodeId, semanticId))
         if (intoAcceptedTable) {
             nodeIdToKey.add(nodeId, spec.key)
         } else {
@@ -3155,7 +3208,7 @@ public class CjguiGeneratedUiStructureHolder {
             let effectiveFirstSize = splitState.firstSize()
             return cjguiComposableScopedSplitView(scope, semanticId, first, second,
                 CjguiComposableUiSplitAxis.HORIZONTAL, effectiveFirstSize, firstMinimum, secondMinimum, style,
-                splitState: splitState)
+                splitState: splitState, containerNodeId: nodeId)
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_SCROLL) {
             // Exactly one content child (validation enforces the declared
@@ -4056,6 +4109,22 @@ public class CjguiGeneratedUiStructureHolder {
         let borderWidth = declaredStyleValue(properties, "borderWidth", base.borderWidth)
         let alignX = declaredAlignmentOf(properties, "alignX", base.alignX)
         let alignY = declaredAlignmentOf(properties, "alignY", base.alignY)
+        let translateX = if (let Some(token) <- properties.get("translateX")) {
+            if (token.size == 0) { 0.0 } else {
+                match (cjguiComposableUiParseTranslationScalar(token)) {
+                    case Some(value) => value
+                    case None => base.translateX
+                }
+            }
+        } else { base.translateX }
+        let translateY = if (let Some(token) <- properties.get("translateY")) {
+            if (token.size == 0) { 0.0 } else {
+                match (cjguiComposableUiParseTranslationScalar(token)) {
+                    case Some(value) => value
+                    case None => base.translateY
+                }
+            }
+        } else { base.translateY }
         // The rebuilt style carries the base's named effect rejection through, so
         // a definition the shared contract already refused can never be laundered
         // into a clean `None` by the ordinary property-resolution rebuild. The
@@ -4067,6 +4136,9 @@ public class CjguiGeneratedUiStructureHolder {
             fixedWidth: fixedWidth, fixedHeight: fixedHeight, growX: growX, growY: growY, borderWidth: borderWidth,
             fontSize: fontSize, fontWeight: fontWeight, minWidth: minWidth, maxWidth: maxWidth, minHeight: minHeight,
             maxHeight: maxHeight, alignX: alignX, alignY: alignY, cornerRadius: base.cornerRadius,
+            offsetX: base.offsetX, offsetY: base.offsetY, translateX: translateX, translateY: translateY,
+            wheelScrollable: base.wheelScrollable, scrollContentAlignY: base.scrollContentAlignY,
+            pointerInteractive: base.pointerInteractive,
             clipsContent: base.clipsContent, shadow: declaredShadowOf(properties, base.shadow),
             gradient: declaredGradientOf(properties, base.gradient),
             effectGroup: declaredEffectGroupOf(properties, base.effectGroup), effectRejection: base.effectRejection)
@@ -5317,18 +5389,19 @@ private func fingerprintText(text: String): Int64 {
 /// declared keys with their node identity and bounds. A resize changes it even
 /// when the structure version does not.
 public func cjguiGeneratedUiGeometryRevision(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
-    var hash = CJGUI_GENERATED_UI_FNV_OFFSET
+    var hash = CJGUI_GENERATED_UI_FNV_OFFSET & CJGUI_GENERATED_UI_FNV_MASK
     for (instance in instances) {
-        hash = hash ^ fingerprintMix(instance.nodeId)
-        hash = hash ^ fingerprintMix(instance.bounds.x)
-        hash = hash ^ fingerprintMix(instance.bounds.y)
-        hash = hash ^ fingerprintMix(instance.bounds.width)
-        hash = hash ^ fingerprintMix(instance.bounds.height)
-        hash = hash ^ fingerprintMix(if (instance.visible) {
+        hash = fingerprintAccumulate(hash, fingerprintText(instance.key))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.nodeId))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.x))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.y))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.width))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.height))
+        hash = fingerprintAccumulate(hash, fingerprintMix(if (instance.visible) {
             1
         } else {
             0
-        })
+        }))
     }
     return hash
 }

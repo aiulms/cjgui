@@ -1,0 +1,30 @@
+Follow-up in this same Sol session. Read-only analysis only: do not modify files, run builds, or operate the desktop. Exact current source hashes:
+- `/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m`: `f0bedad2bb5fb7d23646e082decc0622fb43e70d8ce353d5dd07578591b39d7a`
+- `/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark/src/main.cj`: `636ae9bae6cc057c0b7a4691c90f7659c3dabbeb9c144c87e90872a8a581515a`
+The exact staged app binary SHA-256 is `962679b81891b25da62877c0dc8775d314a882250a3ac5f5c1917a4f94960ad6` at `/private/tmp/pharos-e-final-stage-20260929/run/apps/pharos_mark/target/release/PharosMark.app/Contents/MacOS/PharosMark`.
+
+## New normal-product evidence
+
+This is the requested source/visual live-window check, not the CJGUI internal TextInput fixture from the prior consultation. The fresh product was launched on its own with `--open <fixture.md> --window-size 1100x812 --visual --caret-probe 1000:6 --post-click 253:96 --input-state-probe`; fixture UTF-8 byte length 21 and text is `**甲乙🙂丙丁**\n`. Full artifacts are under `/Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/a2-caret-blink-pixel/source-visual-click-20260929/`.
+
+- PID 37850, exact staged executable above, owned window 238827, key/main/active all 1 (`run.log`, `PHAROS_ACTIVATED`). The test performed a real click on the app's own window: `PHAROS_POST_CLICK at=253:96 status=0`; `PHAROS_HVP` begin/end both hit display offset 6, affinity 0, version 1.
+- Native input-proxy query succeeded: `PHAROS_INPUT_STATE_CALL status=1`; `client=CJGuiInternalComposableInputProxy marked=6+0 selected=2+0 proxyLen=6 substrLen=6 substr=[甲乙🙂丙丁]`. This is not an explicit native first-responder or `caretBlinkTarget` observation, so do not overstate focus beyond key/main + successful click/input query.
+- Product caret wire is node 1000, display byte 6. Accepted geometry stayed available at `x=252.684825 y=87 w=1 h=21` in repeated `PHAROS_TEXT_GEOMETRY` reports. Its prior wrong-version control remains named `stale_layout`.
+- Same window's public normal-build workload diagnostics were enabled. Baseline and six blink-phase snapshots all available, status enabled, same session and scene 2. Raster remained `26/8063552/0`, upload `26/8063552/0`; each six-field raster/upload delta was exactly zero and pass=true.
+- The own-window Metal screen capture is `calibration.png` (2336x1824); a zoom is `text-crop.png`. Five seconds of own-window sampling produced 42 samples at 120ms. The chosen caret ROI was `(568,270,16,70)` and stable white control ROI `(606,270,16,70)`; all caret/control adjacent-frame changed-pixel counts were zero and ROI hashes unchanged. The caret was not visible at the accepted text insertion location, nor did it blink. Raw sampler output and screenshots are in `frames/` with `samples.json`.
+- First no-click source/visual run is in sibling `source-visual-20260929/`: key/main were 1; geometry and zero text-work deltas passed; 22 screenshots were identical with no caret. The click run is the stronger focus/hit/input-state discriminator.
+
+## Relevant code path to assess
+
+Product's `--caret-probe` branch only calls `controller.setVisualCaret(node, local)` and turns on workload diagnostics. The ordinary visual product consumes that caret through `declareVisualInputCaret` in `main.cj` (around line 1944): it maps accepted geometry with `window.declareTextInteraction`, then calls `window.declareInputCaretBar(nodeId, rect...)`; each rendered turn calls this path around line 8331. It does not call `focusAcceptedSemanticNode` in this probe branch. `--post-click` invokes the normal pointer/hit path and got HVP offset 6, but no explicit native focus/first-responder snapshot is printed by this normal staged binary.
+
+Current renderer source has `caretBlinkTarget` around 8708: it requires a live key/visible/active window, `firstResponder == inputProxy`, editable proxy, active focused node identity, collapsed selection, and accepted caret rect. `applyCaretBlinkPaintState` immediately below sets every caret-bearing node's hidden state as `node != target || !caretBlinkVisible`. Native drawing only paints `textCaretRect` when not hidden (around 7064). Separately, `applyDeclaredInputCaretToNode` (around 11751) applies the product's explicit declared bar. Inspect exact code and its callers before concluding.
+
+## Questions
+
+1. Does this evidence already distinguish the source/visual no-pixel failure from failed Metal readback? The product screenshot is a real window drawable with a stable control and accepted caret location; the internal focus target state was not directly logged. Which missing state is decisive: proxy first-responder/target gate, declared bar hidden flag, or whether a bar rectangle reaches the view node?
+2. Given the exact source path, is the smallest likely framework defect that `applyCaretBlinkPaintState` hides all non-target declared caret bars, including an ordinary visual/source owner caret that is declared via `declareInputCaretBar` but has no native TextInput active target? Identify any counterevidence or alternate path that prevents that conclusion. Do not treat the separate public TextInput phase test passing as proof for this visual owner caret path.
+3. Recommend one bounded native/source test that keeps the declared-caret positive control and demonstrates the red product case before a framework fix. What exact flag/state and pixel should it observe? Then recommend the minimal framework change and targeted real-consumer acceptance; preserve ordinary TextInput blink semantics, geometry identity, and zero raster/upload delta.
+4. Explain whether the successful click/hit and input proxy status meaningfully increase evidence of focus. Do not equate query success with `firstResponder == inputProxy`.
+
+Do not suggest weakening the pixel criterion, assuming the test probe creates focus, or treating geometry/workload counters as proof that a caret is drawn. Preserve the distinction between the passing standard TextInput blink test and this failing source/visual declared-owner caret consumer.

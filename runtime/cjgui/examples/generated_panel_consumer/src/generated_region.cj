@@ -24,6 +24,8 @@ import std.unicode.*
 private let GENERATED_OPACITY_KEY: String = "effectAnimate"
 private let GENERATED_OPACITY_HIGH: Float64 = 1.0
 private let GENERATED_OPACITY_LOW: Float64 = 0.3
+private let GENERATED_POSITION_RULE_KEY: String = "positionAnimate"
+private let GENERATED_POSITION_TARGET_KEY: String = "translatedSplit"
 
 // B2: the app registers the shared bounded rule into its generated capability
 // catalog. The actual `effectAnimate` candidate references that rule, and the
@@ -118,6 +120,56 @@ private class CjguiTaskTitleFrozenWhenSubmitted <: CjguiSharedFieldWriteConditio
             return "title_frozen_after_submit"
         }
         return ""
+    }
+}
+
+private class CjguiTaskGeneratedTransferCandidate {
+    public var targetKey: String = ""
+    public var sourceKey: String = ""
+    public var targetFormat: String = ""
+    public var targetLocalPngFileAllowed: Bool = false
+    public var targetActionName: String = ""
+    public var reason: String = ""
+    public var path: String = ""
+}
+
+/// Transfer declarations frozen from one exact generated build. The public
+/// endpoint array is copied at the boundary; candidate metadata and receiver
+/// generation are promoted only by the matching scene commit.
+private class CjguiTaskGeneratedTransferSnapshot {
+    public let candidate: CjguiTaskGeneratedTransferCandidate
+    public let endpoints: ArrayList<CjguiTaskGeneratedTransferEndpoint>
+    public let receiverIncarnation: Int64
+
+    public init(candidate: CjguiTaskGeneratedTransferCandidate,
+        endpoints: ArrayList<CjguiTaskGeneratedTransferEndpoint>, receiverIncarnation: Int64) {
+        this.candidate = candidate
+        this.endpoints = endpoints
+        this.receiverIncarnation = receiverIncarnation
+    }
+}
+
+/// One transfer endpoint declared by an accepted generated action. The semantic
+/// identity is resolved from the committed window scene, so a pending candidate
+/// can never become a native pasteboard receiver or drag source.
+public class CjguiTaskGeneratedTransferEndpoint {
+    public let declaredKey: String
+    public let role: String
+    public let format: String
+    public let nodeId: Int64
+    public let semanticId: String
+    public let receiverIncarnation: Int64
+    public let localPngFileAllowed: Bool
+
+    public init(declaredKey: String, role: String, format: String, nodeId: Int64, semanticId: String,
+        receiverIncarnation: Int64, localPngFileAllowed!: Bool = false) {
+        this.declaredKey = declaredKey
+        this.role = role
+        this.format = format
+        this.nodeId = nodeId
+        this.semanticId = semanticId
+        this.receiverIncarnation = receiverIncarnation
+        this.localPngFileAllowed = localPngFileAllowed
     }
 }
 
@@ -287,7 +339,30 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     // so a rejected candidate or a removed/replaced node cannot keep the old
     // animation alive on a new instance.
     private var opacityHighValue: Bool = false
+    private var positionHighValue: Bool = false
     private var lastAnimationSummary: String = "尚未驱动动效"
+    // Transfer declarations are promoted only by the same scene commit that
+    // promotes the generated structure. A candidate or rejected refresh never
+    // changes these accepted endpoint keys.
+    private var acceptedTransferTargetKey: String = ""
+    private var acceptedTransferSourceKey: String = ""
+    private var acceptedTransferTargetFormat: String = ""
+    private var acceptedTransferTargetActionName: String = ""
+    private var transferReceiverIncarnation: Int64 = 0
+    // A successful structure submission owns this validated metadata until its
+    // holder token is committed or rolled back. It is never inferred from an
+    // unaccepted display tree during provider reads.
+    private var pendingTransferCandidate: ?CjguiTaskGeneratedTransferCandidate = None
+    private var pendingTransferToken: Int64 = 0
+    // Refresh is pinned from begin through native settlement. A second
+    // candidate cannot supersede the holder while its identities are staged.
+    private var refreshInFlight: Bool = false
+    private var refreshCandidateToken: Int64 = 0
+    private var refreshCandidateMetadata: ?CjguiTaskGeneratedTransferCandidate = None
+    private var acceptedTransferSnapshot: CjguiTaskGeneratedTransferSnapshot =
+        CjguiTaskGeneratedTransferSnapshot(CjguiTaskGeneratedTransferCandidate(),
+            ArrayList<CjguiTaskGeneratedTransferEndpoint>(), 0)
+    private var refreshTransferSnapshot: ?CjguiTaskGeneratedTransferSnapshot = None
 
     public init(domain: CjguiSharedOperationList, resourceId: Int64) {
         this.domain = domain
@@ -481,9 +556,10 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
 
     static func buildCatalog(): CjguiGeneratedUiCapabilityCatalog {
         let catalog = CjguiGeneratedUiCapabilityCatalog(maxDepth: 8, maxNodes: 128,
-            maxPropertiesPerNode: 8, maxStringLength: 160)
+            maxPropertiesPerNode: 8, maxStringLength: CJGUI_GENERATED_UI_DECODE_MAX_STRING_LENGTH)
         catalog.enableWindowBackground()
         let _ = catalog.registerMotionRule(CjguiGeneratedMotionRegistry.opacityTransitionRule())
+        let _ = catalog.registerMotionRule(CjguiGeneratedMotionRegistry.positionTransitionRule())
         // The style vocabulary comes from the framework's ONE shared definition
         // (size constraints, growth, alignment, font); only the content
         // properties are this application's own.
@@ -495,6 +571,13 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             taskWithStyle(ArrayList<CjguiGeneratedUiPropertySpec>([
                 CjguiGeneratedUiPropertySpec("text", "STRING", required: true, maxLength: 160)
             ])), false))
+        // A separate bounded content kind keeps ordinary labels small while a
+        // generated scroll may declare one genuinely long visible text owner.
+        let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("longLabel",
+            taskWithStyle(ArrayList<CjguiGeneratedUiPropertySpec>([
+                CjguiGeneratedUiPropertySpec("text", "STRING", required: true,
+                    maxLength: CJGUI_GENERATED_UI_DECODE_MAX_STRING_LENGTH)
+            ])), false, presentation: CJGUI_GENERATED_PRESENTATION_LABEL))
         let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("textInput",
             taskWithStyle(ArrayList<CjguiGeneratedUiPropertySpec>([
                 CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 60)
@@ -506,7 +589,13 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("action",
             taskWithStyle(ArrayList<CjguiGeneratedUiPropertySpec>([
                 CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 40),
-                CjguiGeneratedUiPropertySpec("action", "STRING", maxLength: 40)
+                CjguiGeneratedUiPropertySpec("action", "STRING", maxLength: 40),
+                CjguiGeneratedUiPropertySpec("transferRole", "STRING", maxLength: 6,
+                    values: ArrayList<String>(["TARGET", "SOURCE"]), stability: "experimental"),
+                CjguiGeneratedUiPropertySpec("transferFormat", "STRING", maxLength: 9,
+                    values: ArrayList<String>(["image/png"]), stability: "experimental"),
+                CjguiGeneratedUiPropertySpec("transferFileSource", "STRING", maxLength: 14,
+                    values: ArrayList<String>(["none", "local_file_url"]), stability: "experimental")
             ])), false))
         let imageProperties = CjguiGeneratedUiPresentation.imageContentProperties()
         for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
@@ -572,12 +661,15 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         // P2: a value transition on a GENERATED node. The action only requests a
         // new target; the framework window owns the current visual value.
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("ANIMATE_GENERATED_OPACITY", "生成节点透明度过渡"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("ANIMATE_GENERATED_POSITION", "生成分栏连续平移"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CLEAR_GENERATED_POSITION", "清除生成分栏平移"))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("TOGGLE_WINDOW_BACKGROUND", "切换系统窗口材质"))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CLEAR_WINDOW_BACKGROUND", "清除系统窗口材质"))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_TREE_GROUP", "展开或折叠生成树"))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_TREE_LEAF", "选择生成树条目"))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_BUTTON", "激活生成按钮"))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CONTROL_ACCENT", "切换窗口强调色策略"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("PNG_TRANSFER_ENDPOINT", "声明 PNG 端点元数据"))
         let _ = catalog.registerFields(CjguiTaskFields.generatedSpecs())
         // The application's own composite card. Registering a second component
         // kind changes this registration call and that component's file only:
@@ -623,7 +715,10 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     /// values use integer percentages.
     private static func effectGroupTokenFor(variant: Int64): String {
         if (variant == 0) {
-            return "50,normal,0,0,100,0,0:0|100:100"
+            // The ordinary task editor lives inside this group. Its previous
+            // 50% opacity plus a mask starting at alpha zero made the left
+            // text field almost unreadable; keep the initial workspace clear.
+            return "90,normal,none"
         }
         if (variant == 1) {
             return "70,multiply,0,0,0,100,0:0|100:100;blur=8,unblurred"
@@ -638,10 +733,17 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     /// textual declaration.
     public static func effectStructure(variant: Int64, visible: Bool,
         windowBackground!: String = CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA,
-        treeExpanded!: Bool = true, treeSelected!: Bool = false): String {
+        treeExpanded!: Bool = true, treeSelected!: Bool = false,
+        translationVariant!: Int64 = 0): String {
         let shadow = if (visible) { CjguiTaskGeneratedRegion.shadowTokenFor(variant) } else { "none" }
         let gradient = if (visible) { CjguiTaskGeneratedRegion.gradientTokenFor(variant) } else { "none" }
         let group = if (visible) { CjguiTaskGeneratedRegion.effectGroupTokenFor(variant) } else { "none" }
+        let groupTranslateX = if (translationVariant == 2) { "0" } else if (translationVariant == 1) { "30.25" } else { "0.25" }
+        let groupTranslateY = if (translationVariant == 2) { "0" } else if (translationVariant == 1) { "12.5" } else { "0.5" }
+        let childTranslateX = if (translationVariant == 2) { "0" } else { "-0.75" }
+        let childTranslateY = if (translationVariant == 2) { "0" } else { "0.25" }
+        let compositeTranslateX = if (translationVariant == 2) { "0" } else { "0.125" }
+        let compositeTranslateY = if (translationVariant == 2) { "0" } else { "-0.25" }
         let windowBackgroundProperty = if (windowBackground.isEmpty()) { "" } else {
             "PROPERTY 0 board windowBackground ${windowBackground}\n"
         }
@@ -655,19 +757,79 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             "PROPERTY 5 controlLeaf semanticSelected ${if (treeSelected) { "true" } else { "false" }}\n" +
             "PROPERTY 5 controlLeaf style collaboration_primary_action\n"
         } else { "" }
+        var longBody = ""
+        var row = 0
+        while (row < 100) {
+            longBody += "中文长文🙂 第${row}段·"
+            row += 1
+        }
         return "GENERATED_UI_STRUCTURE 1\n" +
             "NODE 0 board vertical\n" +
             "PROPERTY 0 board gap 6\n" +
             "PROPERTY 0 board padding 8\n" +
             windowBackgroundProperty +
+            // Keep the actual generated transfer controls in the visible
+            // portion of the normal panel. They bind through this candidate's
+            // accepted identity, not through the hand-written PNG row.
+            "NODE 1 generatedPngTarget action action=PNG_TRANSFER_ENDPOINT\n" +
+            "PROPERTY 1 generatedPngTarget label 生成 PNG 粘贴 / 拖入\n" +
+            "PROPERTY 1 generatedPngTarget transferRole TARGET\n" +
+            "PROPERTY 1 generatedPngTarget transferFormat image/png\n" +
+            "PROPERTY 1 generatedPngTarget transferFileSource local_file_url\n" +
+            "PROPERTY 1 generatedPngTarget style collaboration_primary_action\n" +
+            "NODE 1 generatedPngSource action action=PNG_TRANSFER_ENDPOINT\n" +
+            "PROPERTY 1 generatedPngSource label 生成 PNG 拖出\n" +
+            "PROPERTY 1 generatedPngSource transferRole SOURCE\n" +
+            "PROPERTY 1 generatedPngSource transferFormat image/png\n" +
+            "PROPERTY 1 generatedPngSource style collaboration_primary_action\n" +
+            "NODE 1 translatedSplit split\n" +
+            "PROPERTY 1 translatedSplit fixedHeight 180\n" +
+            "PROPERTY 1 translatedSplit firstSize 340\n" +
+            "PROPERTY 1 translatedSplit firstMinimum 150\n" +
+            "PROPERTY 1 translatedSplit secondMinimum 150\n" +
+            "PROPERTY 1 translatedSplit translateX ${groupTranslateX}\n" +
+            "PROPERTY 1 translatedSplit translateY ${groupTranslateY}\n" +
+            "NODE 2 translatedScroll scrollArea\n" +
+            "PROPERTY 2 translatedScroll fixedHeight 174\n" +
+            "NODE 3 translatedContent vertical\n" +
+            "NODE 4 translatedLongText longLabel\n" +
+            "PROPERTY 4 translatedLongText text ${longBody}\n" +
+            "PROPERTY 4 translatedLongText fixedHeight 4096\n" +
+            "PROPERTY 4 translatedLongText fontSize 20\n" +
+            "PROPERTY 4 translatedLongText textColor #eaf2ffff\n" +
+            "NODE 4 translatedOffscreenNotes textInput field=notes\n" +
+            "PROPERTY 4 translatedOffscreenNotes label 屏外备注（同一任务）\n" +
+            "PROPERTY 4 translatedOffscreenNotes fixedHeight 44\n" +
+            "PROPERTY 4 translatedOffscreenNotes background #eaf2ffff\n" +
+            "PROPERTY 4 translatedOffscreenNotes textColor #142438ff\n" +
+            "PROPERTY 4 translatedOffscreenNotes border #759bd0ff\n" +
+            "NODE 4 translatedTail action action=CONTROL_BUTTON\n" +
+            "PROPERTY 4 translatedTail label 长文末尾动作\n" +
+            "PROPERTY 4 translatedTail style collaboration_primary_action\n" +
+            "NODE 2 translatedOwner vertical\n" +
+            "NODE 3 translatedOwnerTitle label\n" +
+            "PROPERTY 3 translatedOwnerTitle text 生成平移分栏 · 同一任务 owner\n" +
+            "PROPERTY 3 translatedOwnerTitle textColor #eaf2ffff\n" +
+            "NODE 3 translatedOwnerNotes textInput field=notes\n" +
+            "PROPERTY 3 translatedOwnerNotes label 生成移动备注\n" +
+            "PROPERTY 3 translatedOwnerNotes fixedHeight 42\n" +
+            "PROPERTY 3 translatedOwnerNotes background #eaf2ffff\n" +
+            "PROPERTY 3 translatedOwnerNotes textColor #142438ff\n" +
+            "PROPERTY 3 translatedOwnerNotes border #759bd0ff\n" +
+            "NODE 3 translatedOwnerAction action action=CONTROL_BUTTON\n" +
+            "PROPERTY 3 translatedOwnerAction label 更新同一任务\n" +
+            "PROPERTY 3 translatedOwnerAction style collaboration_primary_action\n" +
             "NODE 1 effectGroup vertical\n" +
             "PROPERTY 1 effectGroup effectGroup ${group}\n" +
             "PROPERTY 1 effectGroup gap 6\n" +
+            "PROPERTY 1 effectGroup translateX ${groupTranslateX}\n" +
+            "PROPERTY 1 effectGroup translateY ${groupTranslateY}\n" +
             "NODE 2 shadowCard label\n" +
             "PROPERTY 2 shadowCard text 生成阴影卡片 v${variant}\n" +
             "PROPERTY 2 shadowCard shadow ${shadow}\n" +
             "PROPERTY 2 shadowCard background #1c2942ff\n" +
             "PROPERTY 2 shadowCard border #3a5a8cff\n" +
+            "PROPERTY 2 shadowCard textColor #f2f6ffff\n" +
             "PROPERTY 2 shadowCard fixedWidth 260\n" +
             "PROPERTY 2 shadowCard fixedHeight 44\n" +
             "NODE 2 gradientCard vertical\n" +
@@ -675,9 +837,15 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             "PROPERTY 2 gradientCard padding 8\n" +
             "NODE 3 gradientTitle label\n" +
             "PROPERTY 3 gradientTitle text 生成渐变面板 v${variant}\n" +
+            "PROPERTY 3 gradientTitle textColor #f2f6ffff\n" +
+            "PROPERTY 3 gradientTitle translateX ${childTranslateX}\n" +
+            "PROPERTY 3 gradientTitle translateY ${childTranslateY}\n" +
             "NODE 2 taskCard taskEditCard\n" +
             "PROPERTY 2 taskCard caption 效果组内的任务编辑组合组件\n" +
             "PROPERTY 2 taskCard gap 4\n" +
+            "PROPERTY 2 taskCard textColor #f2f6ffff\n" +
+            "PROPERTY 2 taskCard translateX ${compositeTranslateX}\n" +
+            "PROPERTY 2 taskCard translateY ${compositeTranslateY}\n" +
             "NODE 2 effectToggle action action=CYCLE_GENERATED_EFFECT\n" +
             "PROPERTY 2 effectToggle label 切换生成效果组\n" +
             "PROPERTY 2 effectToggle style collaboration_primary_action\n" +
@@ -694,6 +862,13 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             "PROPERTY 2 effectAnimate label 透明度过渡\n" +
             "PROPERTY 2 effectAnimate style collaboration_primary_action\n" +
             "PROPERTY 2 effectAnimate motion " + CjguiGeneratedMotionRegistry.OPACITY_TRANSITION + "\n" +
+            "NODE 2 positionAnimate action action=ANIMATE_GENERATED_POSITION\n" +
+            "PROPERTY 2 positionAnimate label 生成分栏连续平移\n" +
+            "PROPERTY 2 positionAnimate style collaboration_primary_action\n" +
+            "PROPERTY 2 positionAnimate motion " + CjguiGeneratedMotionRegistry.POSITION_TRANSITION + "\n" +
+            "NODE 2 positionClear action action=CLEAR_GENERATED_POSITION\n" +
+            "PROPERTY 2 positionClear label 清除生成分栏平移\n" +
+            "PROPERTY 2 positionClear style collaboration_primary_action\n" +
             "NODE 2 windowBackgroundToggle action action=TOGGLE_WINDOW_BACKGROUND\n" +
             "PROPERTY 2 windowBackgroundToggle label 切换系统窗口材质\n" +
             "PROPERTY 2 windowBackgroundToggle style collaboration_primary_action\n" +
@@ -725,6 +900,7 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             "PROPERTY 5 controlDisabled semanticRole row\n" +
             "PROPERTY 5 controlDisabled semanticRowKey generated-disabled\n" +
             "PROPERTY 5 controlDisabled disabled true\n" +
+            "PROPERTY 5 controlDisabled style collaboration_primary_action\n" +
             "NODE 2 controlActionsPage tabPage\n" +
             "PROPERTY 2 controlActionsPage pageKey actions\n" +
             "PROPERTY 2 controlActionsPage pageTitle 操作\n" +
@@ -934,6 +1110,50 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         return started
     }
 
+    /// Resolve both target and rule from one accepted generated description.
+    /// The button's accepted motion reference supplies the common tween spec;
+    /// a rejected candidate cannot replace either identity or rule.
+    private func animateGeneratedPosition(high: Bool): Bool {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return false
+        }
+        let targetId = synchronized(lock) { holder.nodeIdForKey(GENERATED_POSITION_TARGET_KEY) }
+        var identity = ""
+        var baseX = 0.0
+        var baseY = 0.0
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == targetId) {
+                identity = node.identityKey
+                baseX = node.declaredStyle.translateX
+                baseY = node.declaredStyle.translateY
+            }
+        }
+        if (identity.size == 0) { return false }
+        let rule = match (synchronized(lock) { holder.acceptedMotionRuleForKey(GENERATED_POSITION_RULE_KEY) }) {
+            case Some(value) => value
+            case None => return false
+        }
+        let spec = match (rule.spec()) {
+            case Some(value) => value
+            case None => return false
+        }
+        let targetX = baseX + (if (high) { 24.0 } else { 0.0 })
+        let targetY = baseY + (if (high) { 12.0 } else { 0.0 })
+        let started = window.animateNodeTranslation(identity, targetX, targetY, spec: spec,
+            atTime: MonoTime.now())
+        let status = window.animatedNodeTranslation(identity)
+        let acceptedToken = match (status) {
+            case Some(value) => "${value.presented.x},${value.presented.y}"
+            case None => "none"
+        }
+        getStdOut().writeln("CJGUI_GENERATED_POSITION_STATE identity=${identity} " +
+            "started=${if (started) { 1 } else { 0 }} target=${targetX},${targetY} " +
+            "accepted=${acceptedToken} rule=${rule.name} owner_version=${domain.version()}")
+        getStdOut().flush()
+        return started
+    }
+
     /// Cancel this region's animation binding on close, so a stopped window
     /// requests no further animation frames and the old completion cannot land
     /// after teardown.
@@ -949,6 +1169,12 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 getStdOut().writeln("CJGUI_GENERATED_ANIMATION_CANCELLED identity=${node.identityKey} " +
                     "cancelled=${if (cancelled) { 1 } else { 0 }} active=${window.activeAnimationCount()}")
                 getStdOut().flush()
+            }
+        }
+        let positionNodeId = synchronized(lock) { holder.nodeIdForKey(GENERATED_POSITION_TARGET_KEY) }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == positionNodeId) {
+                let _ = window.cancelNodeTranslationAnimation(node.identityKey)
             }
         }
     }
@@ -1027,6 +1253,18 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         }
         return CjguiGeneratedAnimationSnapshot(identity, presented, target,
             window.activeAnimationCount(), window.animationBindingCount())
+    }
+
+    public func positionMotionStatus(): ?CjguiComposableUiPositionStatus {
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return None
+        }
+        let targetId = synchronized(lock) { holder.nodeIdForKey(GENERATED_POSITION_TARGET_KEY) }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == targetId) { return window.animatedNodeTranslation(node.identityKey) }
+        }
+        return None
     }
 
     /// Whether the accepted scene currently carries the generated node this
@@ -1136,10 +1374,12 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         // business record, so they are available whenever the region is live.
         if (actionName == "CYCLE_GENERATED_EFFECT" || actionName == "REMOVE_GENERATED_EFFECT" ||
             actionName == "RESTORE_GENERATED_EFFECT" || actionName == "SUBMIT_INVALID_EFFECT" ||
-            actionName == "ANIMATE_GENERATED_OPACITY" || actionName == "TOGGLE_WINDOW_BACKGROUND" ||
+            actionName == "ANIMATE_GENERATED_OPACITY" || actionName == "ANIMATE_GENERATED_POSITION" ||
+            actionName == "CLEAR_GENERATED_POSITION" ||
+            actionName == "TOGGLE_WINDOW_BACKGROUND" ||
             actionName == "CLEAR_WINDOW_BACKGROUND" || actionName == "CONTROL_TREE_GROUP" ||
             actionName == "CONTROL_TREE_LEAF" || actionName == "CONTROL_BUTTON" ||
-            actionName == "CONTROL_ACCENT") {
+            actionName == "CONTROL_ACCENT" || actionName == "PNG_TRANSFER_ENDPOINT") {
             return CjguiSharedAvailability.allowed(resourceId, revision())
         }
         return CjguiSharedAvailability.unknown()
@@ -1182,7 +1422,9 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         // Effect transitions address the generated description, not a record.
         if (actionName == "CYCLE_GENERATED_EFFECT" || actionName == "REMOVE_GENERATED_EFFECT" ||
             actionName == "RESTORE_GENERATED_EFFECT" || actionName == "SUBMIT_INVALID_EFFECT" ||
-            actionName == "ANIMATE_GENERATED_OPACITY" || actionName == "TOGGLE_WINDOW_BACKGROUND" ||
+            actionName == "ANIMATE_GENERATED_OPACITY" || actionName == "ANIMATE_GENERATED_POSITION" ||
+            actionName == "CLEAR_GENERATED_POSITION" ||
+            actionName == "TOGGLE_WINDOW_BACKGROUND" ||
             actionName == "CLEAR_WINDOW_BACKGROUND" || actionName == "CONTROL_TREE_GROUP" ||
             actionName == "CONTROL_TREE_LEAF" || actionName == "CONTROL_BUTTON" ||
             actionName == "CONTROL_ACCENT") {
@@ -1197,6 +1439,9 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     }
 
     public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        if (actionName == "PNG_TRANSFER_ENDPOINT") {
+            return CjguiGeneratedUiActionResult(false, "transfer_requires_clipboard_or_drag")
+        }
         if (actionName == "CONTROL_ACCENT") {
             let window = match (attachedWindow) {
                 case Some(value) => value
@@ -1389,6 +1634,35 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             }
             return CjguiGeneratedUiActionResult(started, if (started) { "none" } else { "animation_identity_missing" })
         }
+        if (actionName == "ANIMATE_GENERATED_POSITION") {
+            let nextHigh = !positionHighValue
+            let started = animateGeneratedPosition(nextHigh)
+            if (started) { positionHighValue = nextHigh }
+            synchronized(lock) {
+                lastOutcome = if (started) { "生成分栏平移目标已接受" } else { "生成分栏平移被拒" }
+            }
+            return CjguiGeneratedUiActionResult(started,
+                if (started) { "none" } else { "position_motion_rejected" })
+        }
+        if (actionName == "CLEAR_GENERATED_POSITION") {
+            let window = match (attachedWindow) {
+                case Some(value) => value
+                case None => return CjguiGeneratedUiActionResult(false, "window_unavailable")
+            }
+            let targetId = synchronized(lock) { holder.nodeIdForKey(GENERATED_POSITION_TARGET_KEY) }
+            for (node in window.acceptedSceneNodes()) {
+                if (node.nodeId == targetId) {
+                    let cleared = window.cancelNodeTranslationAnimation(node.identityKey)
+                    if (cleared) { positionHighValue = false }
+                    getStdOut().writeln("CJGUI_GENERATED_POSITION_CLEAR identity=${node.identityKey} " +
+                        "cleared=${if (cleared) { 1 } else { 0 }} owner_version=${domain.version()}")
+                    getStdOut().flush()
+                    return CjguiGeneratedUiActionResult(cleared,
+                        if (cleared) { "none" } else { "position_motion_absent" })
+                }
+            }
+            return CjguiGeneratedUiActionResult(false, "position_identity_missing")
+        }
         let recordId = selectedRecordId()
         if (recordId < 0) {
             return CjguiGeneratedUiActionResult(false, "no_selected_record")
@@ -1415,14 +1689,17 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     // --- external structure provider ----------------------------------------
 
     public func capabilitiesPayload(): String {
-        // The generated directory is also the discovery surface for the normal
-        // window's accepted PNG endpoints. The endpoint identities are the same
-        // stable semantic IDs used by the window data-transfer provider; the
-        // framework owns the actual binary read/validation path.
+        // Generated actions resolve into the normal window transfer provider
+        // from the same build identity snapshot. The owner remains application
+        // code; declarations are installed only with their accepted scene.
         let png = CjguiComposableUiPngTransferCapability()
         return CjguiGeneratedUiEncoding.describe(catalog) +
-            "DATA_TRANSFER ${png.mimeFormat} target=collaboration-png-target source=collaboration-png-source " +
+            "\nTRANSFER_ENDPOINT_METADATA ${png.mimeFormat} roles=TARGET,SOURCE " +
+            "binding=accepted_generated_scene_snapshot status=provider_connected " +
             "backend=${png.backend} system_format=${png.systemFormat} " +
+            "file_url_format=${png.localFileSystemFormat} file_source_order=${png.optInSourceOrder} " +
+            "image_class=${png.imageClass} bit_depths=${png.supportedBitDepths} " +
+            "color_types=${png.supportedColorTypes} interlace=${png.supportedInterlaceModes} " +
             "max_bytes=${png.maximumEncodedItemBytes} max_pixels=${png.maximumPixels} " +
             "max_width=${png.maximumWidth} max_height=${png.maximumHeight} " +
             "queue_bytes=${png.maximumQueuedBinaryBytes} decoded_bytes=${png.maximumDecodedTextureBytes} " +
@@ -1430,7 +1707,70 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             "resource_records=${png.maximumResourceRecords} " +
             "pending_events_per_window=${png.maximumPendingEventsPerWindow} " +
             "system_fetch_preflight_bounded=${png.systemFetchPreflightBounded} " +
-            "owner=collaboration-image-slot\n"
+            "owner=application_provider"
+    }
+
+    /// Accepted generated endpoints are the immutable identity snapshot promoted
+    /// with the exact scene transaction. No join against a later holder build is
+    /// performed here.
+    public func acceptedTransferEndpoints(): ArrayList<CjguiTaskGeneratedTransferEndpoint> {
+        return synchronized(lock) {
+            let result = ArrayList<CjguiTaskGeneratedTransferEndpoint>()
+            for (endpoint in acceptedTransferSnapshot.endpoints) {
+                result.add(endpoint)
+            }
+            result
+        }
+    }
+
+    /// Endpoints corresponding to the current scene build. The window calls
+    /// this from its transfer provider while staging declarations for that same
+    /// scene. Before the region has completed a build in this transaction the
+    /// result is empty, which prevents stale or unaccepted identities escaping.
+    public func refreshTransferEndpoints(): ArrayList<CjguiTaskGeneratedTransferEndpoint> {
+        return synchronized(lock) {
+            let result = ArrayList<CjguiTaskGeneratedTransferEndpoint>()
+            if (let Some(snapshot) <- refreshTransferSnapshot) {
+                for (endpoint in snapshot.endpoints) {
+                    result.add(endpoint)
+                }
+            }
+            result
+        }
+    }
+
+    /// Protocol readback of only scene-accepted generated endpoint identities.
+    public func acceptedTransferEndpointsPayload(): String {
+        let endpoints = acceptedTransferEndpoints()
+        let builder = StringBuilder()
+        builder.append("TRANSFER_ENDPOINTS ${endpoints.size}\n")
+        for (endpoint in endpoints) {
+            builder.append("TRANSFER_ENDPOINT ${endpoint.declaredKey} ${endpoint.role} ${endpoint.format} " +
+                "node=${endpoint.nodeId} " +
+                "semantic=${endpoint.semanticId} incarnation=${endpoint.receiverIncarnation} " +
+                "file_source=${if (endpoint.localPngFileAllowed) { "local_file_url" } else { "none" }}\n")
+        }
+        return builder.toString()
+    }
+
+    /// Accepted-key metadata can be inspected without a native window. This is
+    /// deliberately separate from the binding list: application code must still
+    /// pass these keys through its data-transfer provider before OS input is read.
+    public func acceptedTransferMetadataPayload(): String {
+        return synchronized(lock) {
+            let fileSource = if (acceptedTransferSnapshot.candidate.targetLocalPngFileAllowed) {
+                "local_file_url"
+            } else {
+                "none"
+            }
+            "TRANSFER_METADATA version=${holder.structureVersion()} " +
+                "target=${if (acceptedTransferTargetKey.size > 0) { acceptedTransferTargetKey } else { "none" }} " +
+                "source=${if (acceptedTransferSourceKey.size > 0) { acceptedTransferSourceKey } else { "none" }} " +
+                "format=${if (acceptedTransferTargetFormat.size > 0) { acceptedTransferTargetFormat } else { "none" }} " +
+                "file_source=${fileSource} " +
+                "target_action=${if (acceptedTransferTargetActionName.size > 0) { acceptedTransferTargetActionName } else { "none" }} " +
+                "receiver_incarnation=${transferReceiverIncarnation}\n"
+        }
     }
 
     /// The window this region's accepted instances belong to. The transport
@@ -1638,7 +1978,8 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 sceneVersion = progress.acceptedSceneVersion
                 interactionRevision = progress.interactionVersion
                 effectFacts = progress.effectFactsPayload()
-                platformFacts = window.platformAccentStatus().describe()
+                platformFacts = window.platformAccentStatus().describe() + "\n" +
+                    progress.geometryFactsPayload()
             case None => identity = ""
         }
         return CjguiGeneratedUiObservationSource(identity, domain.snapshot().version,
@@ -1724,6 +2065,147 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         }
     }
 
+    private func collectTransferCandidate(node: CjguiGeneratedUiNodeSpec, path: String,
+        candidate: CjguiTaskGeneratedTransferCandidate): Unit {
+        if (candidate.reason.size == 0) {
+            let role = node.property("transferRole")
+            let format = node.property("transferFormat")
+            let fileSource = node.property("transferFileSource")
+            if (role.size > 0 || format.size > 0) {
+                if (node.kind != "action") {
+                    candidate.reason = "transfer_endpoint_must_be_action"
+                    candidate.path = "${path}/${node.key}"
+                } else if (role.size == 0) {
+                    candidate.reason = "transfer_role_required"
+                    candidate.path = "${path}/${node.key}/transferRole"
+                } else if (format != "image/png") {
+                    candidate.reason = "transfer_format_unsupported"
+                    candidate.path = "${path}/${node.key}/transferFormat"
+                } else if (fileSource.size > 0 && fileSource != "none" && fileSource != "local_file_url") {
+                    candidate.reason = "transfer_file_source_unsupported"
+                    candidate.path = "${path}/${node.key}/transferFileSource"
+                } else if (role != "TARGET" && fileSource == "local_file_url") {
+                    candidate.reason = "transfer_file_source_requires_target"
+                    candidate.path = "${path}/${node.key}/transferFileSource"
+                } else if (role == "TARGET") {
+                    if (candidate.targetKey.size > 0) {
+                        candidate.reason = "duplicate_transfer_target"
+                        candidate.path = "${path}/${node.key}/transferRole"
+                    } else {
+                        candidate.targetKey = node.key
+                        candidate.targetFormat = format
+                        candidate.targetLocalPngFileAllowed = fileSource == "local_file_url"
+                        candidate.targetActionName = node.actionName
+                    }
+                } else if (role == "SOURCE") {
+                    if (candidate.sourceKey.size > 0) {
+                        candidate.reason = "duplicate_transfer_source"
+                        candidate.path = "${path}/${node.key}/transferRole"
+                    } else {
+                        candidate.sourceKey = node.key
+                    }
+                } else {
+                    candidate.reason = "transfer_role_invalid"
+                    candidate.path = "${path}/${node.key}/transferRole"
+                }
+            }
+        }
+        var childIndex: Int64 = 0
+        while (childIndex < node.children.size && candidate.reason.size == 0) {
+            collectTransferCandidate(node.children[childIndex], "${path}/${node.key}", candidate)
+            childIndex += 1
+        }
+    }
+
+    private func transferCandidateFor(root: CjguiGeneratedUiNodeSpec): CjguiTaskGeneratedTransferCandidate {
+        let candidate = CjguiTaskGeneratedTransferCandidate()
+        collectTransferCandidate(root, "root", candidate)
+        return candidate
+    }
+
+    private func acceptedTransferCandidate(): CjguiTaskGeneratedTransferCandidate {
+        let candidate = CjguiTaskGeneratedTransferCandidate()
+        if (let Some(root) <- holder.acceptedStructure()) {
+            collectTransferCandidate(root, "root", candidate)
+        }
+        return candidate
+    }
+
+    private func copyTransferCandidate(source: CjguiTaskGeneratedTransferCandidate): CjguiTaskGeneratedTransferCandidate {
+        let copy = CjguiTaskGeneratedTransferCandidate()
+        copy.targetKey = source.targetKey
+        copy.sourceKey = source.sourceKey
+        copy.targetFormat = source.targetFormat
+        copy.targetLocalPngFileAllowed = source.targetLocalPngFileAllowed
+        copy.targetActionName = source.targetActionName
+        copy.reason = source.reason
+        copy.path = source.path
+        return copy
+    }
+
+    private func makeRefreshTransferSnapshot(): ?CjguiTaskGeneratedTransferSnapshot {
+        let isCandidateBuild = holder.hasPendingCandidate() && refreshCandidateToken > 0 &&
+            holder.pendingCandidateToken() == refreshCandidateToken
+        let candidate = if (isCandidateBuild) {
+            match (refreshCandidateMetadata) {
+                case Some(value) => copyTransferCandidate(value)
+                case None => copyTransferCandidate(acceptedTransferSnapshot.candidate)
+            }
+        } else {
+            copyTransferCandidate(acceptedTransferSnapshot.candidate)
+        }
+        let nextIncarnation = if (candidate.targetKey == acceptedTransferSnapshot.candidate.targetKey &&
+            candidate.targetFormat == acceptedTransferSnapshot.candidate.targetFormat &&
+            candidate.targetLocalPngFileAllowed == acceptedTransferSnapshot.candidate.targetLocalPngFileAllowed &&
+            candidate.targetActionName == acceptedTransferSnapshot.candidate.targetActionName) {
+            acceptedTransferSnapshot.receiverIncarnation
+        } else {
+            if (acceptedTransferSnapshot.receiverIncarnation >= 0x7FFFFFFFFFFFFFFE) {
+                lastOutcome = "PNG 接收端代次耗尽，拒绝场景提交"
+                return None
+            }
+            acceptedTransferSnapshot.receiverIncarnation + 1
+        }
+        let endpoints = ArrayList<CjguiTaskGeneratedTransferEndpoint>()
+        var targetAdded = candidate.targetKey.size == 0
+        var sourceAdded = candidate.sourceKey.size == 0
+        if (candidate.targetKey.size > 0) {
+            if (let Some(identity) <- holder.refreshIdentityForKey(candidate.targetKey)) {
+                if (identity.nodeId > 0 && identity.semanticId.size > 0) {
+                    endpoints.add(CjguiTaskGeneratedTransferEndpoint(candidate.targetKey, "TARGET",
+                        candidate.targetFormat, identity.nodeId, identity.semanticId, nextIncarnation,
+                        localPngFileAllowed: candidate.targetLocalPngFileAllowed))
+                    targetAdded = true
+                }
+            }
+        }
+        if (candidate.sourceKey.size > 0) {
+            if (let Some(identity) <- holder.refreshIdentityForKey(candidate.sourceKey)) {
+                if (identity.nodeId > 0 && identity.semanticId.size > 0) {
+                    endpoints.add(CjguiTaskGeneratedTransferEndpoint(candidate.sourceKey, "SOURCE",
+                        "image/png", identity.nodeId, identity.semanticId, 0))
+                    sourceAdded = true
+                }
+            }
+        }
+        // A declared key that failed to resolve against this exact build is a
+        // stale provider contract. Fail preparation instead of allowing the
+        // window to bind a previous semantic identity.
+        if (!targetAdded || !sourceAdded) {
+            lastOutcome = "PNG 端点身份未出现在本轮生成构建中"
+            return None
+        }
+        return Some(CjguiTaskGeneratedTransferSnapshot(candidate, endpoints, nextIncarnation))
+    }
+
+    private func updateAcceptedTransferMetadata(candidate: CjguiTaskGeneratedTransferCandidate): Unit {
+        acceptedTransferTargetKey = candidate.targetKey
+        acceptedTransferSourceKey = candidate.sourceKey
+        acceptedTransferTargetFormat = candidate.targetFormat
+        acceptedTransferTargetActionName = candidate.targetActionName
+        transferReceiverIncarnation = acceptedTransferSnapshot.receiverIncarnation
+    }
+
     public func submitStructure(candidatePayload: String, expectedVersion: Int64):
         CjguiSharedOperationGeneratedUiSubmit {
         // Allocated before decoding: a rejected payload still belongs to exactly
@@ -1744,6 +2226,14 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                     receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
         }
         return synchronized(lock) {
+            if (refreshInFlight) {
+                holder.rejectCandidateAttempt(token, "scene_refresh_busy", "")
+                lastOutcome = "生成结构提交拒绝：场景刷新仍在途"
+                let current = holder.structureVersion()
+                return CjguiSharedOperationGeneratedUiSubmit(false, "scene_refresh_busy", "",
+                    current, current, candidateToken: token,
+                    receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
+            }
             let current = holder.structureVersion()
             if (expectedVersion != current) {
                 holder.rejectCandidateAttempt(token, "structure_version_conflict", "")
@@ -1752,10 +2242,20 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                     current, current, candidateToken: token,
                     receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
             }
+            let transferCandidate = transferCandidateFor(root)
+            if (transferCandidate.reason.size > 0) {
+                holder.rejectCandidateAttempt(token, transferCandidate.reason, transferCandidate.path)
+                lastOutcome = "PNG 端点候选被拒：${transferCandidate.reason} @${transferCandidate.path}"
+                return CjguiSharedOperationGeneratedUiSubmit(false, transferCandidate.reason,
+                    transferCandidate.path, current, current, candidateToken: token,
+                    receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
+            }
             let result = holder.submit(root, this, attemptToken: token)
             if (!result.candidateAccepted) {
                 lastOutcome = "结构被拒：${result.reason} @${result.path}"
             } else {
+                pendingTransferCandidate = Some(copyTransferCandidate(transferCandidate))
+                pendingTransferToken = result.candidateToken
                 lastOutcome = "候选已接收 v${result.candidateVersion}，等待场景接受"
                 revisionValue += 1
             }
@@ -1770,36 +2270,79 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
 
     public func beginSceneRefresh(): Bool {
         return synchronized(lock) {
+            if (refreshInFlight) {
+                return false
+            }
             // Style resolutions belong to the scene built from here on.
             holder.beginStyleRefresh()
-            return holder.beginCandidateRefresh()
+            if (!holder.beginCandidateRefresh()) {
+                holder.rollbackStyleRefresh()
+                return false
+            }
+            refreshInFlight = true
+            refreshCandidateToken = if (holder.hasPendingCandidate()) { holder.pendingCandidateToken() } else { 0 }
+            refreshCandidateMetadata = if (refreshCandidateToken > 0 && refreshCandidateToken == pendingTransferToken) {
+                pendingTransferCandidate
+            } else {
+                None
+            }
+            refreshTransferSnapshot = None
+            return true
         }
     }
 
     public func prepareSceneRefresh(): Bool {
-        return synchronized(lock) { holder.prepareCandidateRefresh() }
+        return synchronized(lock) {
+            if (!refreshInFlight || !holder.prepareCandidateRefresh()) {
+                return false
+            }
+            match (makeRefreshTransferSnapshot()) {
+                case Some(snapshot) =>
+                    refreshTransferSnapshot = Some(snapshot)
+                    return true
+                case None =>
+                    return false
+            }
+        }
     }
 
     public func commitSceneRefresh(): Unit {
         synchronized(lock) {
+            if (!refreshInFlight) { return }
             // The accepted scene consumed the owner projection it was built from,
             // ordinary refresh or not.
             acceptedOwnerStamp = pendingOwnerStamp
             // Promote the style resolutions this accepted scene used, and drop
             // records no longer referenced by the accepted structure.
             holder.commitStyleRefresh()
-            // An ordinary refresh has no candidate and must not advance this
-            // region's revision.
-            if (!holder.hasPendingCandidate()) {
-                return
-            }
-            if (holder.commitCandidateRefresh()) {
-                windowBackgroundValue = holder.acceptedWindowBackground()
-                lastOutcome = "结构已接受：v${holder.structureVersion()}"
-            } else {
+            let hadCandidate = holder.hasPendingCandidate()
+            let candidateToken = refreshCandidateToken
+            let candidateCommitted = if (hadCandidate) { holder.commitCandidateRefresh() } else { true }
+            if (candidateCommitted) {
+                if (let Some(snapshot) <- refreshTransferSnapshot) {
+                    acceptedTransferSnapshot = snapshot
+                    updateAcceptedTransferMetadata(snapshot.candidate)
+                }
+                if (hadCandidate) {
+                    // A startup refresh can commit before the first generated
+                    // structure is submitted. Keep its intended initial window
+                    // declaration until an actual candidate is accepted.
+                    windowBackgroundValue = holder.acceptedWindowBackground()
+                    lastOutcome = "结构已接受：v${holder.structureVersion()}"
+                    revisionValue += 1
+                }
+            } else if (hadCandidate) {
                 lastOutcome = "场景拒绝：${holder.lastSceneOutcome()}"
+                revisionValue += 1
             }
-            revisionValue += 1
+            if (candidateToken > 0 && candidateToken == pendingTransferToken) {
+                pendingTransferCandidate = None
+                pendingTransferToken = 0
+            }
+            refreshInFlight = false
+            refreshCandidateToken = 0
+            refreshCandidateMetadata = None
+            refreshTransferSnapshot = None
         }
     }
 
@@ -1816,26 +2359,43 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
 
     public func rollbackSceneRefresh(): Unit {
         synchronized(lock) {
+            if (!refreshInFlight) { return }
             holder.rollbackStyleRefresh()
-            if (!holder.hasPendingCandidate()) {
-                return
+            if (holder.hasPendingCandidate()) {
+                holder.rollbackCandidateRefresh()
+                windowBackgroundValue = holder.acceptedWindowBackground()
+                lastOutcome = "场景拒绝：${holder.lastSceneOutcome()}"
+                revisionValue += 1
             }
-            holder.rollbackCandidateRefresh()
-            windowBackgroundValue = holder.acceptedWindowBackground()
-            lastOutcome = "场景拒绝：${holder.lastSceneOutcome()}"
-            revisionValue += 1
+            if (refreshCandidateToken > 0 && refreshCandidateToken == pendingTransferToken) {
+                pendingTransferCandidate = None
+                pendingTransferToken = 0
+            }
+            refreshInFlight = false
+            refreshCandidateToken = 0
+            refreshCandidateMetadata = None
+            refreshTransferSnapshot = None
         }
     }
 
     // --- section + events ---------------------------------------------------
 
     public func buildSection(theme: CjguiComposableUiTheme): CjguiComposableUiNode {
+        // This section owns a fixed dark surface even when the surrounding
+        // window follows the light system theme. Its own labels therefore use
+        // the surface foreground rather than the outer page's dark text.
+        let sectionHeading = CjguiComposableUiStyle(
+            textColor: CjguiComposableUiColor(0.94, 0.97, 1.0, 1.0),
+            fontSize: theme.heading.fontSize, fontWeight: theme.heading.fontWeight)
+        let sectionBody = CjguiComposableUiStyle(
+            textColor: CjguiComposableUiColor(0.80, 0.88, 0.97, 1.0),
+            fontSize: theme.body.fontSize, fontWeight: theme.body.fontWeight)
         let section = cjguiComposableVertical(900, "task-generated-section",
             CjguiComposableUiStyle(padding: 10, gap: 6, growX: 1,
                 background: CjguiComposableUiColor(0.10, 0.16, 0.26, 0.9),
                 border: CjguiComposableUiColor(0.26, 0.40, 0.62, 0.9)))
         section.add(cjguiComposableText(901, "task-generated-title",
-            "生成区域 · 结构 v${holder.structureVersion()}", theme.heading))
+            "生成区域 · 结构 v${holder.structureVersion()}", sectionHeading))
         section.add(synchronized(lock) {
             pendingOwnerStamp = ownerStamp()
             // Sample the native preparation state of the ACCEPTED image bindings
@@ -1845,9 +2405,11 @@ public class CjguiTaskGeneratedRegion <: CjguiGeneratedUiBindingProvider &
                 case Some(window) => holder.sampleImageResourceStates(window)
                 case None => ()
             }
-            holder.buildRefreshNode(this)
+            let node = holder.buildRefreshNode(this)
+            refreshTransferSnapshot = makeRefreshTransferSnapshot()
+            node
         })
-        section.add(cjguiComposableText(902, "task-generated-status", statusText(), theme.body))
+        section.add(cjguiComposableText(902, "task-generated-status", statusText(), sectionBody))
         return section
     }
 

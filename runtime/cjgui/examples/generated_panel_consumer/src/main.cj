@@ -136,12 +136,21 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
         let pngSnapshot = pngOwner.snapshot()
         let pngRow = cjguiComposableHorizontal(8998, "collaboration-png-transfer-row",
             CjguiComposableUiStyle(growX: 1, gap: 8, fixedHeight: 40))
+        let pngTargetStyle = CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 34,
+            background: theme.primaryAction.background, border: theme.primaryAction.border,
+            textColor: theme.primaryAction.textColor, fontWeight: theme.primaryAction.fontWeight,
+            cornerRadius: 6)
+        let pngSourceStyle = CjguiComposableUiStyle(fixedWidth: 150, fixedHeight: 34,
+            background: theme.primaryAction.background, border: theme.primaryAction.border,
+            textColor: theme.primaryAction.textColor, fontWeight: theme.primaryAction.fontWeight,
+            cornerRadius: 6)
         pngRow.add(cjguiComposableButton(GENERATED_CONSUMER_PNG_TARGET_NODE, GENERATED_CONSUMER_PNG_TARGET,
             "PNG 粘贴 / 跨窗拖入", "PNG_TARGET", 8901,
-            CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 34)))
+            pngTargetStyle, interactionStyle: theme.primaryActionInteraction))
         pngRow.add(cjguiComposableButton(GENERATED_CONSUMER_PNG_SOURCE_NODE, GENERATED_CONSUMER_PNG_SOURCE,
             "拖出当前 PNG", "PNG_SOURCE", 8901,
-            CjguiComposableUiStyle(fixedWidth: 150, fixedHeight: 34), enabled: pngSnapshot.offer.isSome()))
+            pngSourceStyle, enabled: pngSnapshot.offer.isSome(),
+            interactionStyle: theme.primaryActionInteraction))
         editorContent.add(pngRow)
         let pngPreview = cjguiComposableHorizontal(9006, "collaboration-png-preview",
             CjguiComposableUiStyle(growX: 1, gap: 8, fixedHeight: 76))
@@ -154,6 +163,10 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             "PNG v${pngSnapshot.version} ${pngSnapshot.width}×${pngSnapshot.height} " +
             "${pngSnapshot.encodedBytes} B · ${pngOutcome}", theme.body))
         editorContent.add(pngPreview)
+        // Keep the generated transfer actions and the first part of their
+        // effect group inside the initial viewport. The older placement after
+        // the handwritten form pushed the blur sample region below the clip.
+        editorContent.add(generatedRegion.buildSection(theme))
         // The handwritten beacon resolves from the application's ONE declaration,
         // the same one the generated side and the registered card consume.
         let beacon = generatedRegion.beaconResource()
@@ -198,7 +211,6 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             handwrittenActionStyle, operationActionName: markedField.writer,
             interactionStyle: theme.primaryActionInteraction))
         editorContent.add(cjguiComposableText(8, "collaboration-status", status, theme.body))
-        editorContent.add(generatedRegion.buildSection(theme))
         // B1/P2: one plain control that carries an OWNER interaction state
         // (CHECKED) and a checked paint, so the consumer can read the displayed
         // interaction-resolved paint and prove the alpha composition rule without
@@ -300,15 +312,46 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
     public func dataTransferDeclarations(): ArrayList<CjguiComposableUiDataTransferDeclaration> {
         let declarations = ArrayList<CjguiComposableUiDataTransferDeclaration>()
         declarations.add(CjguiComposableUiDataTransferDeclaration.target(GENERATED_CONSUMER_PNG_TARGET,
-            CjguiSharedOperationTransferFormat.png(), receiverIncarnation: pngReceiverIncarnation))
+            CjguiSharedOperationTransferFormat.png(), receiverIncarnation: pngReceiverIncarnation,
+            localPngFileAllowed: true))
+        // The region freezes these identities for the scene currently being
+        // prepared. Its accepted readback stays on the previous scene until
+        // the same native presentation commits.
+        let refreshEndpoints = generatedRegion.refreshTransferEndpoints()
+        for (endpoint in refreshEndpoints) {
+            if (endpoint.role == "TARGET" && endpoint.format == "image/png") {
+                declarations.add(CjguiComposableUiDataTransferDeclaration.target(endpoint.semanticId,
+                    CjguiSharedOperationTransferFormat.png(),
+                    receiverIncarnation: endpoint.receiverIncarnation,
+                    localPngFileAllowed: endpoint.localPngFileAllowed))
+            }
+        }
         if (let Some(offer) <- pngOwner.snapshot().offer) {
             declarations.add(CjguiComposableUiDataTransferDeclaration.source(GENERATED_CONSUMER_PNG_SOURCE, offer))
+            for (endpoint in refreshEndpoints) {
+                if (endpoint.role == "SOURCE" && endpoint.format == "image/png") {
+                    declarations.add(CjguiComposableUiDataTransferDeclaration.source(endpoint.semanticId, offer))
+                }
+            }
         }
         return declarations
     }
 
     public func dataTransferOwnerVersion(node: CjguiComposableUiLayoutNode): Int64 {
-        return if (node.semanticId == GENERATED_CONSUMER_PNG_TARGET) { pngOwner.version() } else { -1 }
+        if (node.semanticId == GENERATED_CONSUMER_PNG_TARGET) { return pngOwner.version() }
+        for (endpoint in generatedRegion.refreshTransferEndpoints()) {
+            if (endpoint.role == "TARGET" && endpoint.nodeId == node.nodeId &&
+                endpoint.semanticId == node.semanticId) {
+                return pngOwner.version()
+            }
+        }
+        for (endpoint in generatedRegion.acceptedTransferEndpoints()) {
+            if (endpoint.role == "TARGET" && endpoint.nodeId == node.nodeId &&
+                endpoint.semanticId == node.semanticId) {
+                return pngOwner.version()
+            }
+        }
+        return -1
     }
 
     public func applyDataTransfer(event: CjguiComposableUiDataTransferEvent): CjguiComposableUiDispatchResult {
@@ -317,19 +360,22 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             getStdOut().flush()
             return CjguiComposableUiDispatchResult(false)
         }
+        let ownerStarted = MonoTime.now()
         let result = pngOwner.accept(event.offer, event.expectedOwnerVersion,
             event.imageWidth, event.imageHeight)
+        let ownerMicros = (MonoTime.now() - ownerStarted).toMicroseconds()
         if (!result.applied) {
-            return rejectDataTransfer(event.node.nodeId, event.eventKind, result.reason)
+            let _ = rejectDataTransfer(event.node.nodeId, event.eventKind, result.reason)
+            return CjguiComposableUiDispatchResult(false, transferResult: Some(result))
         }
         pngOutcome = "accepted ${event.offer.contentDigest}"
         revision += 1
         getStdOut().writeln("CJGUI_PNG_OWNER consumer=generated-panel kind=${event.eventKind} " +
             "version=${pngOwner.version()} bytes=${event.offer.payloadByteCount} " +
             "digest=${event.offer.contentDigest} width=${event.imageWidth} height=${event.imageHeight} " +
-            "decode_us=${event.decodeMicros} epoch=${event.bindingEpoch}")
+            "decode_us=${event.decodeMicros} owner_us=${ownerMicros} epoch=${event.bindingEpoch}")
         getStdOut().flush()
-        return CjguiComposableUiDispatchResult(true)
+        return CjguiComposableUiDispatchResult(true, transferResult: Some(result))
     }
 
     public func rejectDataTransfer(nodeId: Int64, eventKind: Int64, reason: String): CjguiComposableUiDispatchResult {
@@ -419,6 +465,9 @@ private func authorization(): CjguiSharedOperationExternalAuthorization {
         ArrayList<CjguiSharedOperationExternalActionScope>([
             CjguiSharedOperationExternalActionScope("GET_CONTEXT", ArrayList<Int64>(), true),
             CjguiSharedOperationExternalActionScope("GET_WINDOW_PROGRESS", ArrayList<Int64>(), true),
+            CjguiSharedOperationExternalActionScope("GET_NODE_TRANSLATION", ArrayList<Int64>(), true),
+            CjguiSharedOperationExternalActionScope("SET_NODE_TRANSLATION", ArrayList<Int64>(), true),
+            CjguiSharedOperationExternalActionScope("CLEAR_NODE_TRANSLATION", ArrayList<Int64>(), true),
             // The interaction projection is the second consumer's OWN focus
             // answer: it publishes the accepted scene identity (control id,
             // field/object, focus, selection) with the three distinct facts
@@ -483,6 +532,57 @@ private func generatedWaitDiagnosticIdle(host: CjguiMacosApplicationHost,
     return turns
 }
 
+private func generatedVisualOffsetIs(window: CjguiComposableUiWindow,
+    region: CjguiTaskGeneratedRegion, key: String, expectedX: Float64, expectedY: Float64): Bool {
+    let nodeId = if (key == "taskCard") {
+        region.acceptedCompositeElementNodeId("taskCard", "root")
+    } else { region.acceptedNodeIdForKey(key) }
+    if (nodeId < 0) { return false }
+    for (node in window.acceptedSceneNodes()) {
+        if (node.nodeId == nodeId) {
+            if (let Some(visual) <- window.acceptedNodeVisualBounds(node.semanticId)) {
+                let actualX = visual.x - Float64(node.bounds.x)
+                let actualY = visual.y - Float64(node.bounds.y)
+                let deltaX = actualX - expectedX
+                let deltaY = actualY - expectedY
+                return (if (deltaX < 0.0) { -deltaX } else { deltaX }) < 0.0001 &&
+                    (if (deltaY < 0.0) { -deltaY } else { deltaY }) < 0.0001
+            }
+        }
+    }
+    return false
+}
+
+private func generatedVisualOffsetLine(window: CjguiComposableUiWindow,
+    region: CjguiTaskGeneratedRegion, key: String): String {
+    let nodeId = if (key == "taskCard") {
+        region.acceptedCompositeElementNodeId("taskCard", "root")
+    } else { region.acceptedNodeIdForKey(key) }
+    for (node in window.acceptedSceneNodes()) {
+        if (node.nodeId == nodeId) {
+            if (let Some(visual) <- window.acceptedNodeVisualBounds(node.semanticId)) {
+                return "${key}:node=${nodeId}:semantic=${node.semanticId}:layout=${node.bounds.x},${node.bounds.y}:" +
+                    "visual=${visual.x},${visual.y}:delta=${visual.x - Float64(node.bounds.x)}," +
+                    "${visual.y - Float64(node.bounds.y)}"
+            }
+        }
+    }
+    return "${key}:node=${nodeId}:missing"
+}
+
+private func generatedActivateAcceptedAction(window: CjguiComposableUiWindow,
+    controller: CollaborationStarterController, region: CjguiTaskGeneratedRegion,
+    key: String, actionName: String): Bool {
+    let nodeId = region.acceptedNodeIdForKey(key)
+    for (node in window.acceptedSceneNodes()) {
+        if (node.nodeId == nodeId && node.actionName == "GENERATED_ACTION" &&
+            node.operationActionName == actionName) {
+            return controller.applyUiEvent(CjguiComposableUiEvent(node, 27, "", 0, 0, 0)).didApply
+        }
+    }
+    return false
+}
+
 private func generatedDiagnosticReadBatch(window: CjguiComposableUiWindow): Int64 {
     let started = MonoTime.now()
     var count = 0
@@ -502,6 +602,8 @@ main(args: Array<String>): Int64 {
     // can prove the exit code and the completion marker really fail the chain.
     var verifiesNormalClose = false
     var verifiesAnimation = false
+    var verifiesTranslation = false
+    var verifiesPositionMotion = false
     var effectProbeReleasePath = ""
     var diagnosticGatePath = ""
     var instanceToken = ""
@@ -512,6 +614,10 @@ main(args: Array<String>): Int64 {
             verifiesNormalClose = true
         } else if (args[argIndex] == "--verify-animation") {
             verifiesAnimation = true
+        } else if (args[argIndex] == "--verify-translation") {
+            verifiesTranslation = true
+        } else if (args[argIndex] == "--verify-position-motion") {
+            verifiesPositionMotion = true
         } else if (args[argIndex] == "--verify-effect-fallback" && argIndex + 1 < args.size) {
             effectProbeReleasePath = args[argIndex + 1]
             argIndex += 1
@@ -542,7 +648,7 @@ main(args: Array<String>): Int64 {
     let controller = CollaborationStarterController(domain)
     let host = CjguiMacosApplicationHost(
         controller,
-        configuration: CjguiMacosApplicationWindowConfiguration("协作任务板", 840u32, 520u32)
+        configuration: CjguiMacosApplicationWindowConfiguration("协作任务板", 840u32, 800u32)
     )
     let window = host.window()
     // Address generated instances by declared key: the projection needs the
@@ -550,6 +656,8 @@ main(args: Array<String>): Int64 {
     controller.generatedUiRegion().attachWindow(window)
     let connection = CjguiSharedOperationExternalConnection(domain, authorization(), window)
     if (!connection.enableWindowProgressReads(window) ||
+        !connection.enableTransferReceiptReads(window) ||
+        !connection.enablePositionMotion(window) ||
         !connection.enableGeneratedUiProvider(controller.generatedUiRegion()) ||
         !host.attachExternalConnection(connection) || !host.start()) {
         host.close()
@@ -583,9 +691,305 @@ main(args: Array<String>): Int64 {
     }
     let initialSubmit = generatedRegion.submitStructure(initialStructure,
         generatedRegion.acceptedStructureVersion())
+    // The generated holder can accept its candidate before the window has
+    // presented the corresponding scene. Expose an external motion target only
+    // after the same scene reaches the window's accepted binding table.
+    if (initialSubmit.candidateAccepted) { let _ = window.refresh() }
+    var positionMotionNodeId: Int64 = -1
+    var positionMotionExposed = false
+    var positionExposeTurns = 0
+    while (initialSubmit.candidateAccepted && !positionMotionExposed && positionExposeTurns < 16 && host.isOpen()) {
+        positionMotionNodeId = generatedRegion.acceptedNodeIdForKey("translatedSplit")
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == positionMotionNodeId) {
+                positionMotionExposed = window.exposeAcceptedPositionMotionTarget(node.identityKey)
+            }
+        }
+        if (!positionMotionExposed) {
+            let _ = host.pumpOneTurn()
+            positionExposeTurns += 1
+        }
+    }
+    getStdOut().writeln("CJGUI_GENERATED_POSITION_EXPOSURE accepted=${if (positionMotionExposed) { 1 } else { 0 }} " +
+        "node=${positionMotionNodeId} settle_turns=${positionExposeTurns}")
     getStdOut().writeln("CJGUI_GENERATED_EFFECT_SUBMIT accepted=${initialSubmit.candidateAccepted} " +
         "reason=${if (initialSubmit.reason.size == 0) { "none" } else { initialSubmit.reason }}")
+    let scaleReadStarted = MonoTime.now()
+    let scaleProgress = window.windowProgress()
+    let scaleDiagnostic = window.diagnosticSnapshot(maximumNodes: 1)
+    let scaleReadMicros = (MonoTime.now() - scaleReadStarted).toMicroseconds()
+    getStdOut().writeln("CJGUI_SCALE_CONSUMER consumer=generated-panel session=${scaleProgress.sessionIdentity} " +
+        "scene=${scaleProgress.acceptedSceneVersion} frame=${scaleProgress.geometry.submittedFrameIndex} " +
+        "points=${scaleProgress.geometry.currentWidthPoints}x${scaleProgress.geometry.currentHeightPoints} " +
+        "pixels=${scaleProgress.geometry.currentDrawableWidthPixels}x${scaleProgress.geometry.currentDrawableHeightPixels} " +
+        "scale=${scaleProgress.geometry.currentBackingScale} revision=${scaleProgress.geometry.currentRevision} " +
+        "diagnostic_same_revision=${if (scaleDiagnostic.geometry.currentRevision == scaleProgress.geometry.currentRevision) { 1 } else { 0 }} " +
+        "read_us=${scaleReadMicros}")
     getStdOut().flush()
+    if (verifiesPositionMotion) {
+        var failed = 0
+        let _ = window.setReduceMotionEnabled(false)
+        let _ = window.setWorkloadDiagnostics(true)
+        var turns = 0
+        while (turns < 60 && host.isOpen() &&
+            (generatedRegion.acceptedNodeIdForKey("positionAnimate") < 0 ||
+                !generatedVisualOffsetIs(window, generatedRegion, "translatedSplit", 0.25, 0.5))) {
+            let _ = host.pumpOneTurn()
+            turns += 1
+        }
+        let splitId = generatedRegion.acceptedNodeIdForKey("translatedSplit")
+        var splitIdentity = ""
+        var baseX = 0.0
+        var baseY = 0.0
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == splitId) {
+                splitIdentity = node.identityKey
+                baseX = node.declaredStyle.translateX
+                baseY = node.declaredStyle.translateY
+            }
+        }
+        let ownerBefore = domain.version()
+        let staticSample = window.diagnosticSnapshot(maximumNodes: 1)
+        let first = generatedActivateAcceptedAction(window, controller, generatedRegion,
+            "positionAnimate", "ANIMATE_GENERATED_POSITION")
+        turns = 0
+        while (turns < 4 && host.isOpen()) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let mid = generatedRegion.positionMotionStatus()
+        let midX = match (mid) {
+            case Some(value) => value.presented.x
+            case None => -10000.0
+        }
+        let midScene = window.diagnosticSnapshot(maximumNodes: 1)
+        let moving = first && midX > baseX && midX < baseX + 24.0 &&
+            midScene.acceptedSceneVersion > staticSample.acceptedSceneVersion
+        if (!moving) { failed += 1 }
+        let reverse = generatedActivateAcceptedAction(window, controller, generatedRegion,
+            "positionAnimate", "ANIMATE_GENERATED_POSITION")
+        let reverseAt = generatedRegion.positionMotionStatus()
+        let continuous = reverse && (match (reverseAt) {
+            case Some(value) => value.presented.x == midX && value.target.x == baseX
+            case None => false
+        })
+        if (!continuous) { failed += 1 }
+        turns = 0
+        while (turns < 100 && host.isOpen() && window.needsAnimationTick()) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let within = window.diagnosticSnapshot(maximumNodes: 1)
+        let returned = match (generatedRegion.positionMotionStatus()) {
+            case Some(value) => value.presented.x == baseX && value.presented.y == baseY && !value.active
+            case None => false
+        }
+        if (!returned || window.needsAnimationTick()) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_POSITION_COST phase=within ok=${if (moving && continuous && returned) { 1 } else { 0 }} " +
+            "build_ns=${within.totalBuildNanoseconds - staticSample.totalBuildNanoseconds} " +
+            "layout_ns=${within.totalLayoutNanoseconds - staticSample.totalLayoutNanoseconds} " +
+            "submit_ns=${within.totalNativeStageAndSubmitNanoseconds - staticSample.totalNativeStageAndSubmitNanoseconds} " +
+            "text_prepares=${within.textLayoutPreparationCount - staticSample.textLayoutPreparationCount} " +
+            "raster_tiles=${within.textRasterCount - staticSample.textRasterCount} " +
+            "upload_tiles=${within.textUploadCount - staticSample.textUploadCount} " +
+            "decode_starts=${within.imageDecodeStartCount - staticSample.imageDecodeStartCount} " +
+            "live_bytes=${staticSample.textTextureLiveBytes}->${within.textTextureLiveBytes} " +
+            "peak_bytes=${within.textCandidatePeakBytes} " +
+            "scene=${staticSample.acceptedSceneVersion}->${within.acceptedSceneVersion} " +
+            "submissions=${staticSample.nativeSubmissionCount}->${within.nativeSubmissionCount}")
+        let spec = CjguiGeneratedMotionRegistry.positionTransitionRule().spec() ??
+            CjguiComposableUiAnimationSpec.tween(durationMs: 240)
+        let crossStarted = window.animateNodeTranslation(splitIdentity, baseX + 280.0, baseY,
+            spec: spec, atTime: MonoTime.now())
+        turns = 0
+        while (turns < 100 && host.isOpen() && window.needsAnimationTick()) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let cross = window.diagnosticSnapshot(maximumNodes: 1)
+        let crossAccepted = crossStarted && (match (generatedRegion.positionMotionStatus()) {
+            case Some(value) => value.presented.x == baseX + 280.0 && !value.active
+            case None => false
+        }) && cross.totalBuildNanoseconds == within.totalBuildNanoseconds &&
+            cross.totalLayoutNanoseconds == within.totalLayoutNanoseconds
+        if (!crossAccepted) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_POSITION_COST phase=cross_coverage ok=${if (crossAccepted) { 1 } else { 0 }} " +
+            "build_ns=${cross.totalBuildNanoseconds - within.totalBuildNanoseconds} " +
+            "layout_ns=${cross.totalLayoutNanoseconds - within.totalLayoutNanoseconds} " +
+            "submit_ns=${cross.totalNativeStageAndSubmitNanoseconds - within.totalNativeStageAndSubmitNanoseconds} " +
+            "text_prepares=${cross.textLayoutPreparationCount - within.textLayoutPreparationCount} " +
+            "raster_tiles=${cross.textRasterCount - within.textRasterCount} " +
+            "upload_tiles=${cross.textUploadCount - within.textUploadCount} " +
+            "decode_starts=${cross.imageDecodeStartCount - within.imageDecodeStartCount} " +
+            "live_bytes=${within.textTextureLiveBytes}->${cross.textTextureLiveBytes} " +
+            "peak_bytes=${cross.textCandidatePeakBytes} " +
+            "scene=${within.acceptedSceneVersion}->${cross.acceptedSceneVersion} " +
+            "submissions=${within.nativeSubmissionCount}->${cross.nativeSubmissionCount}")
+        let cleared = generatedActivateAcceptedAction(window, controller, generatedRegion,
+            "positionClear", "CLEAR_GENERATED_POSITION")
+        let clearedOk = cleared && generatedRegion.positionMotionStatus().isNone() &&
+            domain.version() == ownerBefore && !window.needsAnimationTick()
+        if (!clearedOk || injectVerifyFailure) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_POSITION_DONE instance_token=${instanceToken} " +
+            "moving=${if (moving) { 1 } else { 0 }} reverse=${if (continuous) { 1 } else { 0 }} " +
+            "terminal=${if (returned) { 1 } else { 0 }} cross=${if (crossAccepted) { 1 } else { 0 }} " +
+            "clear=${if (clearedOk) { 1 } else { 0 }} owner=${ownerBefore}->${domain.version()} failed=${failed}")
+        getStdOut().flush()
+        host.close()
+        return if (failed == 0) { 0 } else { 1 }
+    }
+    if (verifiesTranslation) {
+        var failed = 0
+        var turns = 0
+        while (turns < 60 && host.isOpen() &&
+            !generatedVisualOffsetIs(window, generatedRegion, "effectGroup", 0.25, 0.5)) {
+            let _ = host.pumpOneTurn()
+            turns += 1
+        }
+        let initialOk = generatedVisualOffsetIs(window, generatedRegion, "effectGroup", 0.25, 0.5) &&
+            generatedVisualOffsetIs(window, generatedRegion, "gradientTitle", -0.5, 0.75) &&
+            generatedVisualOffsetIs(window, generatedRegion, "taskCard", 0.375, 0.25) &&
+            generatedVisualOffsetIs(window, generatedRegion, "translatedSplit", 0.25, 0.5) &&
+            generatedRegion.acceptedNodeIdForKey("translatedOffscreenNotes") >= 0
+        let titleNodeId = generatedRegion.acceptedCompositeElementNodeId("taskCard", "title")
+        let initialTextIdentity = window.textGeometryIdentity(titleNodeId)
+        let initialCaret = window.textCaretRect(titleNodeId, 0,
+            initialTextIdentity.contentVersion, initialTextIdentity.layoutVersion)
+        if (!initialOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_TRANSLATION_GEOMETRY phase=initial " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "effectGroup")} " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "gradientTitle")} " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "taskCard")} " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "translatedSplit")} " +
+            "offscreen=${generatedRegion.acceptedNodeIdForKey("translatedOffscreenNotes")}")
+        let ownerBefore = domain.version()
+        let _ = window.setWorkloadDiagnostics(true)
+        let before = window.diagnosticSnapshot(maximumNodes: 1)
+        let farStructure = CjguiTaskGeneratedRegion.effectStructure(0, true, translationVariant: 1)
+        let started = MonoTime.now()
+        let farAttempt = generatedRegion.submitStructure(farStructure, generatedRegion.acceptedStructureVersion())
+        turns = 0
+        while (turns < 60 && host.isOpen() &&
+            !generatedVisualOffsetIs(window, generatedRegion, "effectGroup", 30.25, 12.5)) {
+            let _ = host.pumpOneTurn()
+            turns += 1
+        }
+        let far = window.diagnosticSnapshot(maximumNodes: 1)
+        let farOk = farAttempt.candidateAccepted &&
+            generatedVisualOffsetIs(window, generatedRegion, "effectGroup", 30.25, 12.5) &&
+            generatedVisualOffsetIs(window, generatedRegion, "gradientTitle", 29.5, 12.75) &&
+            generatedVisualOffsetIs(window, generatedRegion, "taskCard", 30.375, 12.25) &&
+            domain.version() == ownerBefore && far.acceptedSceneVersion > before.acceptedSceneVersion
+        let farTextIdentity = window.textGeometryIdentity(titleNodeId)
+        let farCaret = window.textCaretRect(titleNodeId, 0,
+            farTextIdentity.contentVersion, farTextIdentity.layoutVersion)
+        let caretMoved = initialCaret.available && farCaret.available &&
+            farTextIdentity.transformVersion > initialTextIdentity.transformVersion &&
+            (farCaret.xPt - initialCaret.xPt - 30.0) < 0.0001 &&
+            (farCaret.xPt - initialCaret.xPt - 30.0) > -0.0001 &&
+            (farCaret.yPt - initialCaret.yPt - 12.0) < 0.0001 &&
+            (farCaret.yPt - initialCaret.yPt - 12.0) > -0.0001
+        if (!caretMoved) { failed += 1 }
+        if (!farOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_TRANSLATION_GEOMETRY phase=far " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "effectGroup")} " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "gradientTitle")} " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "taskCard")}")
+        getStdOut().writeln("CJGUI_GENERATED_TRANSLATION_SAMPLE phase=far ok=${if (farOk) { 1 } else { 0 }} " +
+            "scene=${before.acceptedSceneVersion}->${far.acceptedSceneVersion} " +
+            "build_ns=${far.buildNanoseconds} layout_ns=${far.layoutNanoseconds} " +
+            "submit_ns=${far.nativeStageAndSubmitNanoseconds} " +
+            "text_prepares=${far.lastAttemptTextLayoutPreparations} " +
+            "decode_starts=${far.lastAttemptImageDecodeStarts} " +
+            "native_submissions=${before.nativeSubmissionCount}->${far.nativeSubmissionCount} " +
+            "elapsed_us=${(MonoTime.now() - started).toMicroseconds()}")
+        getStdOut().writeln("CJGUI_GENERATED_TRANSLATION_COST phase=far " +
+            "operation_build_ns=${far.totalBuildNanoseconds - before.totalBuildNanoseconds} " +
+            "operation_layout_ns=${far.totalLayoutNanoseconds - before.totalLayoutNanoseconds} " +
+            "operation_submit_ns=${far.totalNativeStageAndSubmitNanoseconds - before.totalNativeStageAndSubmitNanoseconds} " +
+            "text_prepares=${far.textLayoutPreparationCount - before.textLayoutPreparationCount} " +
+            "raster_tiles=${far.textRasterCount - before.textRasterCount} " +
+            "raster_bytes=${far.textRasterBytes - before.textRasterBytes} " +
+            "raster_us=${far.textRasterMicros - before.textRasterMicros} " +
+            "upload_tiles=${far.textUploadCount - before.textUploadCount} " +
+            "upload_bytes=${far.textUploadBytes - before.textUploadBytes} " +
+            "upload_us=${far.textUploadMicros - before.textUploadMicros} " +
+            "decode_starts=${far.imageDecodeStartCount - before.imageDecodeStartCount} " +
+            "text_live_bytes=${before.textTextureLiveBytes}->${far.textTextureLiveBytes} " +
+            "text_candidate_peak_bytes=${far.textCandidatePeakBytes} " +
+            "submissions=${before.nativeSubmissionCount}->${far.nativeSubmissionCount}")
+        getStdOut().writeln("CJGUI_GENERATED_TRANSLATION_CARET ok=${if (caretMoved) { 1 } else { 0 }} " +
+            "node=${titleNodeId} before=${initialCaret.xPt},${initialCaret.yPt}/${initialCaret.reason} " +
+            "after=${farCaret.xPt},${farCaret.yPt}/${farCaret.reason} " +
+            "content=${initialTextIdentity.contentVersion}->${farTextIdentity.contentVersion} " +
+            "transform=${initialTextIdentity.transformVersion}->${farTextIdentity.transformVersion}")
+        let illegal = farStructure.replace("PROPERTY 1 effectGroup translateX 30.25",
+            "PROPERTY 1 effectGroup translateX 1025")
+        let refused = generatedRegion.submitStructure(illegal, generatedRegion.acceptedStructureVersion())
+        let rejected = window.diagnosticSnapshot(maximumNodes: 1)
+        let rejectedOk = !refused.candidateAccepted && refused.reason == "translation_value_invalid" &&
+            rejected.acceptedSceneVersion == far.acceptedSceneVersion &&
+            generatedVisualOffsetIs(window, generatedRegion, "effectGroup", 30.25, 12.5) &&
+            domain.version() == ownerBefore
+        if (!rejectedOk) { failed += 1 }
+        let cleared = generatedRegion.submitStructure(
+            CjguiTaskGeneratedRegion.effectStructure(0, true, translationVariant: 2),
+            generatedRegion.acceptedStructureVersion())
+        turns = 0
+        while (turns < 60 && host.isOpen() &&
+            !generatedVisualOffsetIs(window, generatedRegion, "effectGroup", 0.0, 0.0)) {
+            let _ = host.pumpOneTurn()
+            turns += 1
+        }
+        let clearSample = window.diagnosticSnapshot(maximumNodes: 1)
+        let clearedOk = cleared.candidateAccepted &&
+            generatedVisualOffsetIs(window, generatedRegion, "effectGroup", 0.0, 0.0) &&
+            generatedVisualOffsetIs(window, generatedRegion, "gradientTitle", 0.0, 0.0) &&
+            generatedVisualOffsetIs(window, generatedRegion, "taskCard", 0.0, 0.0) &&
+            clearSample.acceptedSceneVersion > far.acceptedSceneVersion && domain.version() == ownerBefore
+        if (!clearedOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_TRANSLATION_GEOMETRY phase=clear " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "effectGroup")} " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "gradientTitle")} " +
+            "${generatedVisualOffsetLine(window, generatedRegion, "taskCard")}")
+        var stableTurns = 0
+        var idleTurns = 0
+        var previousSubmissions = clearSample.nativeSubmissionCount
+        let idleStarted = MonoTime.now()
+        while (host.isOpen() && stableTurns < 4 &&
+            (MonoTime.now() - idleStarted).toMilliseconds() < 1000) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            let current = window.diagnosticSnapshot(maximumNodes: 1).nativeSubmissionCount
+            if (current == previousSubmissions && !window.needsAnimationTick()) {
+                stableTurns += 1
+            } else { stableTurns = 0 }
+            previousSubmissions = current
+            idleTurns += 1
+        }
+        let settled = window.diagnosticSnapshot(maximumNodes: 1)
+        turns = 0
+        while (turns < 4 && host.isOpen()) { let _ = host.pumpOneTurn(); turns += 1 }
+        let idle = window.diagnosticSnapshot(maximumNodes: 1)
+        let idleOk = stableTurns == 4 && idle.nativeSubmissionCount == settled.nativeSubmissionCount
+        if (!idleOk) { failed += 1 }
+        if (injectVerifyFailure) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_TRANSLATION_DONE instance_token=${instanceToken} " +
+            "initial=${if (initialOk) { 1 } else { 0 }} far=${if (farOk) { 1 } else { 0 }} " +
+            "rejected=${if (rejectedOk) { 1 } else { 0 }} cleared=${if (clearedOk) { 1 } else { 0 }} " +
+            "idle=${if (idleOk) { 1 } else { 0 }} owner=${ownerBefore}->${domain.version()} " +
+            "scene=${before.acceptedSceneVersion}->${far.acceptedSceneVersion}->${clearSample.acceptedSceneVersion} " +
+            "submissions=${before.nativeSubmissionCount}->${far.nativeSubmissionCount}->" +
+            "${clearSample.nativeSubmissionCount}->${settled.nativeSubmissionCount}->${idle.nativeSubmissionCount} " +
+            "idle_turns=${idleTurns} idle_ms=${(MonoTime.now() - idleStarted).toMilliseconds()} " +
+            "failed=${failed}")
+        getStdOut().flush()
+        host.close()
+        return if (failed != 0) { 1 } else { 0 }
+    }
     // A public client supplies the legal and rejected generated candidates.
     // Gate files only let this ordinary window sample each settled scene before
     // the next candidate; no private holder operation creates those candidates.
@@ -629,6 +1033,11 @@ main(args: Array<String>): Int64 {
             "read_us=${overlayReadMicros} on_read_24_us=${onReadBatchMicros} " +
             "live_bytes=${initial.effectLiveBytes}->${overlay.effectLiveBytes} " +
             "cached_bytes=${initial.effectCachedBytes}->${overlay.effectCachedBytes}")
+        // F-C: the public client's next candidate is the real control change.
+        // Publish the bounded workload scalars so its accepted attempt can be
+        // attributed from the same public snapshot the client already drives.
+        let workloadEnabled = window.setWorkloadDiagnostics(true)
+        let workloadBefore = window.diagnosticSnapshot(maximumNodes: 1)
         getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_READY scene=${overlay.acceptedSceneVersion} identity=${groupIdentity}")
         getStdOut().flush()
         let started = MonoTime.now()
@@ -663,6 +1072,34 @@ main(args: Array<String>): Int64 {
             "submitted=${accepted.submittedSceneVersion}/${accepted.submittedFrameIndex} " +
             "complete=${accepted.completedFrameIndex} native=${nativeState} output=${if (nativeOutput) { 1 } else { 0 }} " +
             "sample=${if (nativeSample) { 1 } else { 0 }} effect=${effect.effectSubmittedMode}")
+        let workloadAfter = window.diagnosticSnapshot(maximumNodes: 1)
+        let workloadReread = window.diagnosticSnapshot(maximumNodes: 1)
+        let workloadOk = workloadEnabled && workloadAfter.workloadEnabled &&
+            workloadAfter.workloadStatus == "enabled" &&
+            workloadAfter.lastAttemptWorkloadResult == "accepted" &&
+            workloadBefore.nodeWriteCount >= 0 &&
+            workloadAfter.nodeWriteCount - workloadBefore.nodeWriteCount >= workloadAfter.lastAttemptNodeWrites &&
+            workloadAfter.lastAttemptNodeWrites >= 1 &&
+            workloadAfter.lastAttemptNodeWrites <= workloadAfter.totalNodes &&
+            workloadAfter.lastAttemptNodeClones >= 1 &&
+            workloadAfter.lastAttemptNodeClones <= workloadAfter.totalNodes &&
+            workloadAfter.reusableResourceBytes >= 0 &&
+            workloadReread.nodeWriteCount == workloadAfter.nodeWriteCount &&
+            workloadReread.lastAttemptNodeWrites == workloadAfter.lastAttemptNodeWrites &&
+            workloadReread.nativeSubmissionCount == workloadAfter.nativeSubmissionCount
+        if (!workloadOk) { failed += 1 }
+        let workloadReadsIdle = workloadReread.nodeWriteCount == workloadAfter.nodeWriteCount &&
+            workloadReread.nativeSubmissionCount == workloadAfter.nativeSubmissionCount
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=workload_observed ok=${if (workloadOk) { 1 } else { 0 }} " +
+            "status=${workloadAfter.workloadStatus} result=${workloadAfter.lastAttemptWorkloadResult} " +
+            "attempt_writes=${workloadAfter.lastAttemptNodeWrites} attempt_clones=${workloadAfter.lastAttemptNodeClones} " +
+            "attempt_allocations=${workloadAfter.lastAttemptNodeAllocations} " +
+            "attempt_text_prepares=${workloadAfter.lastAttemptTextLayoutPreparations} " +
+            "attempt_decode_starts=${workloadAfter.lastAttemptImageDecodeStarts} " +
+            "cumulative=${workloadBefore.nodeWriteCount}->${workloadAfter.nodeWriteCount}/" +
+            "${workloadAfter.nodeCloneCount}/${workloadAfter.nodeAllocationCount} " +
+            "scene=${workloadAfter.workloadSceneVersion} reusable_bytes=${workloadAfter.reusableResourceBytes} " +
+            "reads_idle=${if (workloadReadsIdle) { 1 } else { 0 }}")
         getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_PHASE accepted")
         getStdOut().flush()
         let rejectStarted = MonoTime.now()
@@ -696,6 +1133,20 @@ main(args: Array<String>): Int64 {
             "draws=${disabledSnap.overlayDrawCount}->${settled.overlayDrawCount} " +
             "submissions=${disabledSnap.nativeSubmissionCount}->${settled.nativeSubmissionCount} " +
             "idle_turns=${preDisableIdleTurns} disabled_read_24_us=${disabledReadBatchMicros}")
+        let workloadStopped = window.setWorkloadDiagnostics(false)
+        let workloadDisabled = window.diagnosticSnapshot(maximumNodes: 1)
+        var workloadIdleTurns = 0
+        while (workloadIdleTurns < 2 && host.isOpen()) { let _ = host.pumpOneTurn(); workloadIdleTurns += 1 }
+        let workloadSettled = window.diagnosticSnapshot(maximumNodes: 1)
+        let workloadDisabledOk = workloadStopped && !workloadDisabled.workloadEnabled &&
+            workloadDisabled.workloadStatus == "disabled" && workloadDisabled.nodeWriteCount == -1 &&
+            workloadDisabled.nodeCloneCount == -1 && workloadDisabled.lastAttemptNodeWrites == -1 &&
+            workloadSettled.nativeSubmissionCount == workloadDisabled.nativeSubmissionCount
+        if (!workloadDisabledOk) { failed += 1 }
+        getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=workload_disabled ok=${if (workloadDisabledOk) { 1 } else { 0 }} " +
+            "status=${workloadDisabled.workloadStatus} writes=${workloadDisabled.nodeWriteCount} " +
+            "attempt_writes=${workloadDisabled.lastAttemptNodeWrites} " +
+            "submissions=${workloadDisabled.nativeSubmissionCount}->${workloadSettled.nativeSubmissionCount}")
         if (injectVerifyFailure) { failed += 1 }
         getStdOut().writeln("CJGUI_GENERATED_DIAGNOSTIC_DONE instance_token=${instanceToken} failed=${failed}")
         getStdOut().flush()
@@ -828,7 +1279,9 @@ main(args: Array<String>): Int64 {
             "ok=${if (themePaintOk) { 1 } else { 0 }} light=${lightRed} dark=${darkRed} " +
             "system=${systemRed} effective=${effectiveSystemRed} sameFact=${if (sameFactStable) { 1 } else { 0 }}")
         getStdOut().writeln("CJGUI_GENERATED_ANIMATION_ASSERT name=window_material_theme_accepted " +
-            "ok=${if (materialThemeOk) { 1 } else { 0 }} light=${lightMaterial.windowBackgroundColorScheme} " +
+            "ok=${if (materialThemeOk) { 1 } else { 0 }} requested=${lightMaterial.windowBackgroundRequested} " +
+            "expected=${CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA} " +
+            "light=${lightMaterial.windowBackgroundColorScheme} " +
             "dark=${darkMaterial.windowBackgroundColorScheme} system=${systemMaterial.windowBackgroundColorScheme} " +
             "frames=${lightMaterial.windowBackgroundFrameIndex}/${darkMaterial.windowBackgroundFrameIndex}/" +
             "${systemMaterial.windowBackgroundFrameIndex}")
@@ -1099,6 +1552,11 @@ main(args: Array<String>): Int64 {
         ]))
     let imageConnection = CjguiSharedOperationExternalConnection(
         CjguiSharedOperationImageOwnerDomain(controller.imageOwner(), imageOwnerSlot), imageAuthorization)
+    if (!host.adoptExternalConnectionForClose(imageConnection)) {
+        imageConnection.close()
+        host.close()
+        return 1
+    }
     if (!imageConnection.start()) { host.close(); return 1 }
     if (let Some(info) <- imageConnection.connectionInfo()) {
         getStdOut().writeln("CJGUI_PNG_EXTERNAL_READY consumer=generated-panel descriptor=${info.descriptorPath} " +
@@ -1115,7 +1573,6 @@ main(args: Array<String>): Int64 {
         }
         let _ = host.pumpOneTurn()
     }
-    imageConnection.close()
     host.close()
     return 0
 }

@@ -16,6 +16,21 @@ fi
 mkdir -p "$OUTPUT_DIR"
 FIXTURE="$OUTPUT_DIR/valid-3x2.png"
 FIXTURE_META="$(python3 "$RUNTIME_DIR/native/tests/png_fixture.py" valid "$FIXTURE")"
+ALTERNATE="$OUTPUT_DIR/valid-alt-3x2.png"
+python3 "$RUNTIME_DIR/native/tests/png_fixture.py" valid-alt "$ALTERNATE" >"$OUTPUT_DIR/valid-alt.json"
+RGB="$OUTPUT_DIR/valid-rgb-3x2.png"
+python3 "$RUNTIME_DIR/native/tests/png_fixture.py" valid-rgb "$RGB" >"$OUTPUT_DIR/valid-rgb.json"
+OVER_DIMENSION="$OUTPUT_DIR/over-dimension.png"
+python3 "$RUNTIME_DIR/native/tests/png_fixture.py" over-dimension "$OVER_DIMENSION" >"$OUTPUT_DIR/over-dimension.json"
+OVER_PIXEL="$OUTPUT_DIR/over-pixel.png"
+python3 "$RUNTIME_DIR/native/tests/png_fixture.py" over-pixel "$OVER_PIXEL" >"$OUTPUT_DIR/over-pixel.json"
+GRAY="$OUTPUT_DIR/grayscale.png"
+INDEXED="$OUTPUT_DIR/indexed.png"
+RGB16="$OUTPUT_DIR/rgb16.png"
+BAD_DEFLATE="$OUTPUT_DIR/bad-deflate.png"
+for kind in grayscale indexed rgb16 bad-deflate; do
+  python3 "$RUNTIME_DIR/native/tests/png_fixture.py" "$kind" "$OUTPUT_DIR/$kind.png" >"$OUTPUT_DIR/$kind.json"
+done
 BEACON="$RUNTIME_DIR/resources/composable-beacon.png"
 BEACON_CORAL="$RUNTIME_DIR/resources/composable-beacon-coral.png"
 [[ -f "$BEACON" && -f "$BEACON_CORAL" ]] || {
@@ -36,5 +51,6 @@ clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-st
   }
 
 "$OUTPUT_DIR/composable_png_resource_budget_test" "$FIXTURE" "$BEACON" "$BEACON_CORAL" \
+  "$OVER_DIMENSION" "$GRAY" "$INDEXED" "$RGB16" "$BAD_DEFLATE" "$ALTERNATE" "$OVER_PIXEL" "$RGB" \
   2>&1 | tee "$OUTPUT_DIR/result.log"
 print "png resource budget test: passed fixture=$(shasum -a 256 "$FIXTURE" | awk '{print $1}') metadata=$FIXTURE_META output=$OUTPUT_DIR"

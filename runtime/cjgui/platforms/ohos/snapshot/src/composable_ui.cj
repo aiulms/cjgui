@@ -2,6 +2,8 @@ package cjgui
 
 import cjgui_shared_operation_core.*
 import std.collection.*
+import std.math.*
+import std.time.*
 import std.convert.*
 import std.overflow.*
 import std.sync.*
@@ -1102,6 +1104,7 @@ public class CjguiComposableUiSplitState {
         let bounded = CjguiComposableUiSplitGeometry.firstSizeForTrack(requested, track, handleSize,
             firstMinimumValue, secondMinimumValue)
         firstSizeValue = bounded
+        advanceCaptureRevision()
         return bounded
     }
 
@@ -1140,6 +1143,27 @@ public class CjguiComposableUiSplitState {
     /// Applies the framework's ONE size rule to a requested size. Before any
     /// layout was accepted the track is unknown, so only the declared minimums
     /// bound the value instead of an invented sample track.
+    // A（复核修）：split 真修订 CAS（从主树移植）——外部 split 写推进修订，
+    // 拖动相位携带捕获时修订比较；无关业务版本不影响。
+    private var captureRevisionValue: Int64 = 0
+
+    public func captureRevision(): Int64 { return captureRevisionValue }
+
+    private func advanceCaptureRevision(): Unit {
+        if (captureRevisionValue == Int64.Max) {
+            captureRevisionValue = 1
+        } else {
+            captureRevisionValue += 1
+        }
+    }
+
+    public func applyCapturedFirstSize(expectedRevision: Int64, requested: Int64, track: Int64,
+        handleSize: Int64): ?Int64 {
+        if (expectedRevision != captureRevisionValue) { return None }
+        let _ = applyFirstSize(requested, track, handleSize)
+        return Some(captureRevisionValue)
+    }
+
     public func applyAcceptedFirstSize(requested: Int64): Int64 {
         if (acceptedTrackValue <= 0) {
             var bounded = if (requested < firstMinimumValue) {
@@ -1153,6 +1177,7 @@ public class CjguiComposableUiSplitState {
             firstSizeValue = bounded
             return bounded
         }
+        advanceCaptureRevision()
         return applyFirstSize(requested, acceptedTrackValue, acceptedHandleValue)
     }
 
@@ -1395,6 +1420,10 @@ public class CjguiComposableUiTabsState {
 /// Stability: experimental. This is the minimal public seam for shared view
 /// state while the generated scroll/split layout package evolves; the shape may
 /// change, and applications should keep owning their business values.
+// B/C（惯性包）：滚动物理策略全局开关——手写与生成 scrollArea 共同消费
+// 的框架能力声明。稳定性 experimental；默认关闭，由窗口/应用显式启用。
+public var cjguiComposableInertialScrollEnabled: Bool = false
+
 public class CjguiComposableUiScrollViewport {
     // The window INSTANCE that accepted a scene containing this viewport. A
     // viewport is per-window view state: sharing ONE mutable object between two
@@ -1511,6 +1540,136 @@ public class CjguiComposableUiScrollViewport {
 
     public func scrollBy(delta: Int64): Bool {
         return requestOffset(requestedOffsetValue.saturatingAdd(delta))
+    }
+
+    // B/C（惯性包）：松手减速滚动活动。固定容量速度窗 + 边界夹紧的解析
+    // 衰减模型；使用显式单调时间，不逐帧乘系数。活动属于本 viewport（窗口
+    // 实例 + 稳定身份），新触摸/程序化定位/换绑即退役旧活动。
+    // 实验性声明：稳定性等级 experimental，默认关闭；由手写与生成 scrollArea
+    // 共同消费（同一份策略，不在样例分别调 native 常量）。
+    private var inertialVelocityPxPerMs: Float64 = 0.0
+    private var inertialLastTick: MonoTime = MonoTime.now()
+    private var inertialGeneration: Int64 = 0
+
+    /// 滚动物理策略（experimental）：速度低于该值（px/ms）即停止。
+    public static let inertialStopVelocityPxPerMs: Float64 = 0.01
+    /// 指数衰减时间常数（ms）：每经过 τ，速度乘 1/e（解析衰减，帧率无关）。
+    public static let inertialDecayTauMs: Float64 = 325.0
+    /// 单次惯性总时长上界（ms），防止极端输入长跑。
+    public static let inertialMaxDurationMs: Int64 = 2500
+
+    /// 记录一次松手速度（由速度估计器在 END 后写入；正方向 = 内容向上滚动）。
+    /// 返回 true 表示启动了惯性活动。
+    public func beginInertialScroll(velocityPxPerMs: Float64, now: MonoTime): Bool {
+        if (!isWindowInertialScrollEnabled()) {
+            return false
+        }
+        // NaN/Inf 准入拒绝（复核反例：不制造速度）。
+        if (velocityPxPerMs != velocityPxPerMs || abs(velocityPxPerMs) > 1.0e300) {
+            return false
+        }
+        if (velocityPxPerMs < CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs &&
+            velocityPxPerMs > -CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs) {
+            return false
+        }
+        inertialVelocityPxPerMs = velocityPxPerMs
+        inertialLastTick = now
+        inertialSubPixelRemainder = 0.0
+        inertialElapsedNs = 0
+        inertialGeneration += 1
+        return true
+    }
+
+    // C（复核修）：亚像素累计余量——集中量化，避免 Int64 截断随帧率丢距离。
+    private var inertialSubPixelRemainder: Float64 = 0.0
+    // C（复核修）：活动累计时长（ns），用于 2500ms 工作上界。
+    private var inertialElapsedNs: Int64 = 0
+
+    /// 一次惯性推进（由窗口 pump 周期调用）：解析衰减积分 + 集中量化。
+    /// 帧率无关：位移由 (v0, τ, dt) 解析决定，Int64 量化只发生在亚像素
+    /// 余量累计后。停止条件（按序评估）：NaN/Inf 准入拒绝、总时长上界、
+    /// 速度耗尽（积分到明确定义的停止时刻）、边界夹紧。
+    public func stepInertialScroll(now: MonoTime): Bool {
+        if (inertialVelocityPxPerMs == 0.0) {
+            return false
+        }
+        // NaN/Inf 准入：不制造速度（复核反例）。
+        if (inertialVelocityPxPerMs != inertialVelocityPxPerMs || abs(inertialVelocityPxPerMs) > 1.0e300) {
+            inertialVelocityPxPerMs = 0.0
+            inertialSubPixelRemainder = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        let elapsedNs = (now - inertialLastTick).toNanoseconds()
+        if (elapsedNs < 0) {
+            // 时钟倒退：终结活动（不制造位移）。
+            inertialVelocityPxPerMs = 0.0
+            inertialSubPixelRemainder = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        if (elapsedNs == 0) {
+            return true  // 时钟重复：跳过本帧，不制造位移
+        }
+        // 工作上界：总时长超过 inertialMaxDurationMs 即终结。
+        inertialElapsedNs += elapsedNs
+        if (inertialElapsedNs > CjguiComposableUiScrollViewport.inertialMaxDurationMs * 1_000_000) {
+            inertialVelocityPxPerMs = 0.0
+            inertialSubPixelRemainder = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        let elapsedMs = Float64(elapsedNs) / 1_000_000.0
+        // 解析衰减 v(t) = v0 * exp(-t/τ)（帧率无关）。
+        let decay = exp(-elapsedMs / CjguiComposableUiScrollViewport.inertialDecayTauMs)
+        let newVelocity = inertialVelocityPxPerMs * decay
+        // 解析积分位移 = v0*τ*(1-e^(-t/τ))（本段积分，帧率无关）。
+        let displacement = inertialVelocityPxPerMs *
+            CjguiComposableUiScrollViewport.inertialDecayTauMs * (1.0 - decay)
+        inertialVelocityPxPerMs = newVelocity
+        inertialLastTick = now
+        // 集中量化：亚像素余量跨帧累计，整数部分一次交付。
+        inertialSubPixelRemainder += displacement
+        let wholeF = if (inertialSubPixelRemainder >= 0.0) {
+            floor(inertialSubPixelRemainder)
+        } else {
+            ceil(inertialSubPixelRemainder)
+        }
+        let whole = Int64(wholeF)
+        if (whole != 0) {
+            inertialSubPixelRemainder -= Float64(whole)
+            let moved = scrollBy(whole)
+            if (!moved) {
+                // 到达边界（夹紧后无变化）：活动结束。
+                stopInertialScroll()
+                return false
+            }
+        }
+        // 速度耗尽：积分已交付到停止时刻（余量保留但不继续推进）。
+        if (newVelocity < CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs &&
+            newVelocity > -CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs) {
+            inertialVelocityPxPerMs = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        return true
+    }
+
+    /// 新触摸/程序化定位立即停止惯性（外部不重复调用）。
+    public func stopInertialScroll(): Unit {
+        inertialVelocityPxPerMs = 0.0
+        inertialSubPixelRemainder = 0.0
+        inertialElapsedNs = 0
+        inertialGeneration += 1
+    }
+
+    public func isInertialScrollActive(): Bool {
+        return inertialVelocityPxPerMs != 0.0
+    }
+
+    private func isWindowInertialScrollEnabled(): Bool {
+        // 共同声明：默认关闭，由窗口的统一策略开关控制（手写/生成同源）。
+        return cjguiComposableInertialScrollEnabled
     }
     /// One wheel step: `next` moves toward the end of the content, `previous`
     /// toward the start. An unknown direction is not a scroll.
@@ -2644,6 +2803,9 @@ public class CjguiComposableUiNode {
     public var value: String
     public let actionName: String
     public let resourceId: Int64
+    /// Author-owned binding incarnation. Equal labels and keys may still name
+    /// a newly mounted action or editor after a generated replacement.
+    public var semanticIncarnation: Int64
     /// An application-declared domain field. It is absent for purely visual
     /// nodes and controls that invoke an action without editing a field.
     public let fieldId: String
@@ -2780,6 +2942,7 @@ public class CjguiComposableUiNode {
         pointerControlSecondMinimum!: Int64 = 0,
         interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
         ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
+        semanticIncarnation!: Int64 = 0,
         identity!: ?CjguiComposableUiIdentity = None) {
         this.nodeId = nodeId
         this.semanticId = semanticId
@@ -2788,6 +2951,7 @@ public class CjguiComposableUiNode {
         this.value = value
         this.actionName = actionName
         this.resourceId = resourceId
+        this.semanticIncarnation = semanticIncarnation
         this.fieldId = fieldId
         this.operationActionName = operationActionName
         this.operationResourceId = operationResourceId
@@ -3091,6 +3255,7 @@ public class CjguiComposableUiNode {
             pointerControlStep: pointerControlStep, pointerControlHandleThickness: pointerControlHandleThickness,
             pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
             interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
+            semanticIncarnation: semanticIncarnation,
             identity: scopedIdentityValue)
         var ownsVirtualChildren = false
         if (let Some(_) <- virtualListSourceValue) { ownsVirtualChildren = true }
@@ -4200,6 +4365,7 @@ public class CjguiComposableUiLayoutNode {
     public let value: String
     public let actionName: String
     public let resourceId: Int64
+    public let semanticIncarnation: Int64
     public let fieldId: String
     public let operationActionName: String
     public let operationResourceId: Int64
@@ -4274,6 +4440,7 @@ public class CjguiComposableUiLayoutNode {
         this.value = node.value
         this.actionName = node.actionName
         this.resourceId = node.resourceId
+        this.semanticIncarnation = node.semanticIncarnation
         this.fieldId = node.fieldId
         this.operationActionName = node.operationActionName
         this.operationResourceId = node.operationResourceId
@@ -4377,6 +4544,7 @@ public class CjguiComposableUiLayoutNode {
             pointerControlStep: pointerControlStep, pointerControlHandleThickness: pointerControlHandleThickness,
             pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
             interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
+            semanticIncarnation: semanticIncarnation,
             identity: scopedIdentityValue)
         return CjguiComposableUiLayoutNode(
             projectionNode, bounds, clip, inputScopeId: inputScopeId,
@@ -5180,6 +5348,7 @@ public class CjguiComposableUiLayoutReuseCache {
         appendString(builder, byteCount, cacheable, node.value)
         appendString(builder, byteCount, cacheable, node.actionName)
         appendInt(builder, byteCount, cacheable, node.resourceId)
+        appendInt(builder, byteCount, cacheable, node.semanticIncarnation)
         appendString(builder, byteCount, cacheable, node.fieldId)
         appendString(builder, byteCount, cacheable, node.operationActionName)
         appendInt(builder, byteCount, cacheable, node.operationResourceId)

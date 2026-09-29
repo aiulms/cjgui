@@ -12,6 +12,195 @@ package cjgui
 
 import std.collection.*
 
+// A horizontal parent's cross axis is controlled by alignment. `growY`
+// alone does not turn the scroll area's 120-point intrinsic height into the
+// parent's full height; nodeRect reports the actual accepted child bounds.
+@Test
+func scrollAreaCrossAxisStretchUsesTheParentViewport(): Unit {
+    let naturalRoot = cjguiComposableHorizontal(336, "home-main",
+        CjguiComposableUiStyle(growX: 1, growY: 1))
+    let natural = cjguiComposableScrollArea(343, "home-wheel", CjguiComposableUiScrollViewport(),
+        CjguiComposableUiStyle(fixedWidth: 340, growY: 1))
+    natural.add(cjguiComposableVertical(337, "home-list", CjguiComposableUiStyle()))
+    naturalRoot.add(natural)
+    let naturalScene = CjguiComposableUiLayoutEngine.layout(naturalRoot,
+        CjguiComposableUiRect(0, 0, 500, 731), 1)
+    @Assert(naturalScene.isValid(), true)
+    @Assert(naturalScene.nodeForId(336).bounds.height, 731)
+    @Assert(naturalScene.nodeForId(343).bounds.height, 120)
+
+    let stretchRoot = cjguiComposableHorizontal(336, "home-main",
+        CjguiComposableUiStyle(growX: 1, growY: 1))
+    let stretch = cjguiComposableScrollArea(343, "home-wheel", CjguiComposableUiScrollViewport(),
+        CjguiComposableUiStyle(fixedWidth: 340, growY: 1,
+            alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH))
+    stretch.add(cjguiComposableVertical(337, "home-list", CjguiComposableUiStyle()))
+    stretchRoot.add(stretch)
+    let stretchScene = CjguiComposableUiLayoutEngine.layout(stretchRoot,
+        CjguiComposableUiRect(0, 0, 500, 731), 2)
+    @Assert(stretchScene.isValid(), true)
+    @Assert(stretchScene.nodeForId(343).bounds.height, 731)
+}
+
+/// A declared node offset translates the whole subtree (own bounds, children
+/// and clip) without reflowing siblings: the offset applies after the parent
+/// assigns the rect and before children are laid out.
+@Test
+func declaredNodeOffsetTranslatesSubtreeWithoutReflow(): Unit {
+    let root = cjguiComposableVertical(700, "offset-root", CjguiComposableUiStyle(gap: 10))
+    let shifted = cjguiComposableVertical(701, "offset-shifted",
+        CjguiComposableUiStyle(offsetY: 25, offsetX: 4, clipsContent: true))
+    shifted.add(cjguiComposableVertical(702, "offset-child", CjguiComposableUiStyle(fixedHeight: 30)))
+    let plain = cjguiComposableVertical(703, "offset-plain",
+        CjguiComposableUiStyle(fixedHeight: 40))
+    root.add(shifted)
+    root.add(plain)
+    let scene = CjguiComposableUiLayoutEngine.layout(root, CjguiComposableUiRect(0, 0, 300, 300), 1)
+    @Assert(scene.isValid(), true)
+    let shiftedNode = scene.nodeForId(701)
+    @Assert(shiftedNode.bounds.y, 25)
+    @Assert(shiftedNode.bounds.x, 4)
+    let child = scene.nodeForId(702)
+    @Assert(child.bounds.y >= 25, true)
+    // The sibling below keeps the slot the parent assigned from measured
+    // sizes: translation is visual only, no reflow. The shifted node's own
+    // slot started at y=0, so the sibling sits at height+gap regardless of
+    // the +25/+4 translation applied to the subtree.
+    let plainNode = scene.nodeForId(703)
+    @Assert(plainNode.bounds.y, shiftedNode.bounds.height + 10)
+}
+
+/// A scroll area's content anchor resolves the spare viewport space only
+/// while the content fits; taller content keeps the scroll contract.
+@Test
+func scrollContentAnchorCentersShortContentInTheViewport(): Unit {
+    let centeredRoot = cjguiComposableVertical(710, "anchor-root", CjguiComposableUiStyle())
+    let centered = cjguiComposableScrollArea(711, "anchor-scroll", CjguiComposableUiScrollViewport(),
+        CjguiComposableUiStyle(fixedWidth: 200, fixedHeight: 300,
+            scrollContentAlignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+    centered.add(cjguiComposableVertical(712, "anchor-content", CjguiComposableUiStyle(fixedHeight: 100)))
+    centeredRoot.add(centered)
+    let centeredScene = CjguiComposableUiLayoutEngine.layout(centeredRoot,
+        CjguiComposableUiRect(0, 0, 200, 300), 1)
+    @Assert(centeredScene.isValid(), true)
+    @Assert(centeredScene.nodeForId(712).bounds.y, 100)
+
+    let endRoot = cjguiComposableVertical(720, "anchor-end-root", CjguiComposableUiStyle())
+    let end = cjguiComposableScrollArea(721, "anchor-end-scroll", CjguiComposableUiScrollViewport(),
+        CjguiComposableUiStyle(fixedWidth: 200, fixedHeight: 300,
+            scrollContentAlignY: CJGUI_COMPOSABLE_UI_ALIGN_END))
+    end.add(cjguiComposableVertical(722, "anchor-end-content", CjguiComposableUiStyle(fixedHeight: 100)))
+    endRoot.add(end)
+    let endScene = CjguiComposableUiLayoutEngine.layout(endRoot,
+        CjguiComposableUiRect(0, 0, 200, 300), 2)
+    @Assert(endScene.isValid(), true)
+    @Assert(endScene.nodeForId(722).bounds.y, 200)
+
+    // An invalid anchor value degrades to the legacy top anchoring instead of
+    // being invented into a new placement.
+    let start = cjguiComposableScrollArea(731, "anchor-start-scroll", CjguiComposableUiScrollViewport(),
+        CjguiComposableUiStyle(fixedWidth: 200, fixedHeight: 300, scrollContentAlignY: 999))
+    start.add(cjguiComposableVertical(732, "anchor-start-content", CjguiComposableUiStyle(fixedHeight: 100)))
+    let startRoot = cjguiComposableVertical(730, "anchor-start-root", CjguiComposableUiStyle())
+    startRoot.add(start)
+    let startScene = CjguiComposableUiLayoutEngine.layout(startRoot,
+        CjguiComposableUiRect(0, 0, 200, 300), 3)
+    @Assert(startScene.isValid(), true)
+    @Assert(startScene.nodeForId(732).bounds.y, 0)
+}
+
+// The reported home-screen collision was two VERTICAL children of the same
+// scroll content. It must be a named candidate rejection, regardless of kind.
+@Test
+func duplicateSameKindScrollChildrenHaveNamedRefusal(): Unit {
+    let root = cjguiComposableHorizontal(336, "home-main", CjguiComposableUiStyle())
+    let scroll = cjguiComposableScrollArea(343, "home-wheel", CjguiComposableUiScrollViewport(),
+        CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 731))
+    let content = cjguiComposableVertical(337, "home-list", CjguiComposableUiStyle())
+    content.add(cjguiComposableVertical(910, "home-wheel-top",
+        CjguiComposableUiStyle(fixedHeight: 24)))
+    content.add(cjguiComposableVertical(910, "home-slot-empty",
+        CjguiComposableUiStyle(fixedHeight: 54)))
+    scroll.add(content)
+    root.add(scroll)
+    let scene = CjguiComposableUiLayoutEngine.layout(root,
+        CjguiComposableUiRect(0, 0, 500, 731), 1)
+    @Assert(scene.isValid(), false)
+    @Assert(scene.layoutError(), "duplicate_node_id")
+}
+
+/// The 2026-09-27 home incident, through the full window path: a candidate
+/// whose scroll content carries two id-910 VERTICAL children must be refused
+/// with the NAMED duplicate_node_id fact (not a silently blank list), and the
+/// previously accepted scene must keep publishing while the defect lasts.
+private class HomeDuplicateController <: CjguiComposableUiController {
+    var duplicate = false
+    private var revision: Int64 = 1
+    public func uiSceneVersion(): Int64 {
+        return revision
+    }
+    public func markDuplicate(): Unit {
+        duplicate = true
+        revision += 1
+    }
+    public func buildUi(): CjguiComposableUiNode {
+        let body = cjguiComposableHorizontal(336, "home-main", CjguiComposableUiStyle(growX: 1, growY: 1))
+        let scroll = cjguiComposableScrollArea(343, "home-wheel", CjguiComposableUiScrollViewport(),
+            CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 731))
+        let content = cjguiComposableVertical(337, "home-list", CjguiComposableUiStyle())
+        content.add(cjguiComposableVertical(920, "home-wheel-top",
+            CjguiComposableUiStyle(fixedHeight: 24)))
+        content.add(cjguiComposableVertical(337_001, "home-row-a",
+            CjguiComposableUiStyle(fixedHeight: 54)))
+        if (duplicate) {
+            // The incident shape: elastic placeholder collides with the empty
+            // slot identity of the same numeric id.
+            content.add(cjguiComposableVertical(910, "home-wheel-top",
+                CjguiComposableUiStyle(fixedHeight: 24)))
+            content.add(cjguiComposableVertical(910, "home-slot-empty",
+                CjguiComposableUiStyle(fixedHeight: 54)))
+        }
+        scroll.add(content)
+        body.add(scroll)
+        return body
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@Test
+func duplicateScrollContentIsNamedRefusalThroughTheWindowPath(): Unit {
+    let controller = HomeDuplicateController()
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    @Assert(window.refresh(), true)
+    @Assert(window.windowProgress().lastNativeFailure, "none")
+    @Assert(window.acceptedSceneNodes().size > 0, true)
+
+    controller.markDuplicate()
+    let _ = window.refresh()
+    // Named refusal in the progress fact: the defect can be diagnosed from the
+    // window alone, without reading stdout or re-running the layout by hand.
+    @Assert(window.windowProgress().lastNativeFailure, "duplicate_node_id")
+    // The accepted scene is the last GOOD one: the list did not half-render.
+    var keptRow = false
+    for (node in window.acceptedSceneNodes()) {
+        if (node.semanticId == "home-row-a") {
+            keptRow = true
+        }
+        @Assert(node.nodeId != 910, true)
+    }
+    @Assert(keptRow, true)
+    window.close()
+}
+
 @Test
 func scrollViewportSeparatesRequestFromAcceptedState(): Unit {
     let viewport = CjguiComposableUiScrollViewport()

@@ -10,6 +10,7 @@ the application.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 import re
 import sys
@@ -78,6 +79,14 @@ def text(fields: dict[str, tuple[str, str]], name: str) -> str:
     return value
 
 
+def transfer_digest(payload: bytes) -> str:
+    first, second = 2166136261 & 0x3FFFFFFF, 0x185AC1D
+    for index, byte in enumerate(payload):
+        first = ((first ^ byte) * 16777619) & 0x3FFFFFFF
+        second = ((second ^ (byte + index)) * 65599) & 0x3FFFFFFF
+    return f"fnv30x2:{first}:{second}:{len(payload)}"
+
+
 def read_owner(operation: client.SharedOperationClient, owner_slot: int) -> tuple[int, dict[str, tuple[str, str]]]:
     response = operation.get_context((owner_slot,))
     require(response.kind == "SNAPSHOT", f"owner read failed: {response.raw}")
@@ -90,6 +99,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("application_log", type=Path, help="captured stdout containing DESCRIPTOR_PATH")
     parser.add_argument("--owner-slot", type=int, help="owner slot ID; discovered from GET_CONTEXT by default")
+    parser.add_argument("--expected-png", type=Path, help="source PNG fixture whose bytes must match an owned digest")
     args = parser.parse_args()
 
     descriptor_path = descriptor_from_log(args.application_log)
@@ -124,6 +134,11 @@ def main() -> int:
         available.append((identity, digest, width, height))
 
     current_identity = integer(state, "currentImageResourceId")
+    if args.expected_png is not None:
+        source_bytes = args.expected_png.read_bytes()
+        source_digest = transfer_digest(source_bytes)
+        require(any(item[1] == source_digest for item in available),
+                f"no owned image matches source bytes digest {source_digest}")
     selected = next((item for item in available if item[0] != current_identity), available[0])
     selected_identity, selected_digest, selected_width, selected_height = selected
     # Existing GET_CONTEXT publishes authorized action metadata alongside the
@@ -169,7 +184,8 @@ def main() -> int:
             integer(final_state, "currentImageHeight") == selected_height,
             "exact readback dimensions differ from the selected resource")
     print(f"png external owner passed slot={owner_slot} version={version}->{final_version} "
-          f"resourceId={selected_identity} digest={selected_digest} size={selected_width}x{selected_height}")
+          f"resourceId={selected_identity} digest={selected_digest} size={selected_width}x{selected_height}" +
+          (f" expected_sha256={hashlib.sha256(source_bytes).hexdigest()}" if args.expected_png is not None else ""))
     return 0
 
 

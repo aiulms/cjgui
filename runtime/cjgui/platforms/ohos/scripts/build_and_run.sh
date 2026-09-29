@@ -370,6 +370,26 @@ fi
 # ——旧 verify 镜像的接缝注册冒充本轮 normal 产物）。先停旧进程并给系统
 # 一小段完成镜像切换的时间，再启动本轮实例。
 BUNDLE_NAME="$(grep -oE '"bundleName"\s*:\s*"[^"]+"' "$LAB/AppScope/app.json5" | sed 's/.*"\([^"]*\)"$/\1/' | head -1)"
+ABILITY_NAME="$(grep -oE '"name"\s*:\s*"[^"]*Ability"' "$LAB/entry/src/main/module.json5" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+if [ -z "$BUNDLE_NAME" ] || [ -z "$ABILITY_NAME" ]; then
+  echo "PRODUCT-FAIL 无法从目标工程解析应用身份：bundle='$BUNDLE_NAME' ability='$ABILITY_NAME'（lab=$LAB）"
+  exit 1
+fi
+# D（触摸包指导接续）：构建、安装、启动、PID 与断言共用同一应用身份。
+# env 默认值来自设置示例；目标工程不符（如 thermo）时以目标工程为准。
+# 显式覆盖（CJGUI_APP_BUNDLE/CJGUI_APP_ABILITY）与目标工程不一致 → 具名失败，
+# 不允许「构建 thermo、启动设置、断言成功」。
+if [ "${CJGUI_APP_BUNDLE_SET:-0}" = "1" ] && [ "$CJGUI_APP_BUNDLE" != "$BUNDLE_NAME" ]; then
+  echo "PRODUCT-FAIL 显式 CJGUI_APP_BUNDLE=$CJGUI_APP_BUNDLE 与目标工程 bundle=$BUNDLE_NAME 不一致（lab=$LAB）"
+  exit 1
+fi
+if [ "${CJGUI_APP_ABILITY_SET:-0}" = "1" ] && [ "$CJGUI_APP_ABILITY" != "$ABILITY_NAME" ]; then
+  echo "PRODUCT-FAIL 显式 CJGUI_APP_ABILITY=$CJGUI_APP_ABILITY 与目标工程 ability=$ABILITY_NAME 不一致（lab=$LAB）"
+  exit 1
+fi
+CJGUI_APP_BUNDLE="$BUNDLE_NAME"
+CJGUI_APP_ABILITY="$ABILITY_NAME"
+echo "  应用身份: bundle=$CJGUI_APP_BUNDLE ability=$CJGUI_APP_ABILITY"
 "$HDC" shell "aa force-stop $BUNDLE_NAME" >/dev/null 2>&1 || true
 sleep 2
 

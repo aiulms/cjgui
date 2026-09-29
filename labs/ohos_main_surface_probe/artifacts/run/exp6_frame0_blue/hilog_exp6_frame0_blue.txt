@@ -1,0 +1,65 @@
+09-28 16:33:39.870  8659  8659 I A01234/MainSurfaceProbe: main surface probe module loaded pid=8659
+09-28 16:33:39.886  8659  8659 I A01234/MainSurfaceProbe: onCreate
+09-28 16:33:39.887  8659  8659 I A01234/MainSurfaceProbe: launch param probeLevel=3
+09-28 16:33:39.887  8659  8659 I A01234/MainSurfaceProbe: launch param frame=0
+09-28 16:33:39.887  8659  8659 I A01234/MainSurfaceProbe: launch param probeCandidate=2
+09-28 16:33:39.915  8659  8659 I A01234/MainSurfaceProbe: PUBLIC ArkTS main window id=93 displayId=0 rect=0,0 1320x2856
+09-28 16:33:39.916  8659  8659 E A01234/MainSurfaceProbe: setWindowBackgroundColor failed: {"code":1300002}
+09-28 16:33:39.916  8659  8659 I A01234/MainSurfaceProbe: NAPI setWindow windowId=93 size=1320x2856
+09-28 16:33:39.932  8659  8659 I A01234/MainSurfaceProbe: onForeground
+09-28 16:33:39.974  8659  8659 I A01234/MainSurfaceProbe: loadContent succeeded
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: setWindowBackgroundColor #00000000 (透明) ok
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: auto probe from launch param level=3 cand=2
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: === probeRun level=3 candidate=2 ===
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 identity pid=8659 uid=20020083 tid=8659
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC OH_WindowManager_GetWindowProperties(windowId=93) rc=0
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC props id=93 displayId=0 rect=0,0 1320x2856 drawable=0,0 1320x2856 fullscreen=0
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC WindowManager_WindowProperties sizeof=56 字段: windowRect/drawableRect/isFullScreen/isLayoutFullScreen/focusable/touchable/brightness/isKeepScreenOn/isPrivacyMode/isTransparent/id/displayId —— 无 surface/surfaceId
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindow_CreateNativeWindowFromSurfaceId(0) rc=40001000 win=0
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC 说明: SDK 公开头文件（@ohos.window.d.ts 与 window_manager/oh_window.h）中不存在任何返回主窗口 surface/surfaceId 的接口；surfaceId 的公开来源只有 XComponent
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_RegisterTouchEventFilter(windowId=93) rc=0(OK)
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_RegisterKeyEventFilter(windowId=93) rc=0(OK)
+09-28 16:33:40.002  8659  8659 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_GetTouchEventFilter 在本镜像不存在（@since 26.0.0，镜像 api=24）→ 版本边界
+09-28 16:33:40.007  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libwm.z.so -> /system/lib64/libwm.z.so
+09-28 16:33:40.008  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: librender_service_client.z.so -> /system/lib64/librender_service_client.z.so
+09-28 16:33:40.008  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libsurface ->
+09-28 16:33:40.008  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libnative_window ->
+09-28 16:33:40.009  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libace_compatible.z.so -> /system/lib64/platformsdk/libace_compatible.z.so
+09-28 16:33:40.009  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libark_jsruntime.so -> /system/lib64/platformsdk/libark_jsruntime.so
+09-28 16:33:40.009  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libohinput.so -> /system/lib64/ndk/libohinput.so
+09-28 16:33:40.010  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libmmi-client.z.so -> /system/lib64/platformsdk/libmmi-client.z.so
+09-28 16:33:40.010  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libipc_single.z.so -> /system/lib64/platformsdk/libipc_single.z.so
+09-28 16:33:40.010  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libimage_source ->
+09-28 16:33:40.011  8659  8659 I A01234/MainSurfaceProbe: L1 maps 已加载: libdrawing ->
+09-28 16:33:40.012  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("libwm.z.so") FAIL err=Error loading shared library libwm.z.so: No such file or directory (window manager innerkit)
+09-28 16:33:40.012  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("/system/lib64/libwm.z.so") OK handle=0x6233b26311f7126f
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("librender_service_client.z.so") FAIL err=Error loading shared library librender_service_client.z.so: No such file or directory (render service client)
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("/system/lib64/librender_service_client.z.so") OK handle=0xfa5e114ec731e62d
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK Window::GetWindowWithId -> 0x7fb7590fe4
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowImpl::GetWindowWithId -> 0x7fb75c6c94
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowSessionImpl::GetWindowWithId -> 0x7fb765d1a4
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowSceneSessionImpl::GetMainWindowWithId -> 0x7fb762f410
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowImpl::GetSurfaceNode() -> 0x7fb75c7654
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowSessionImpl::GetSurfaceNode() -> 0x7fb766d63c
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK RSSurfaceNode::GetSurface() -> 0x7fb7b8fa1c
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK RSSurfaceNode::SetContainerWindow(bool,RRectT<float>) -> 0x7fb7b8fe80
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK RSSurfaceNode::SetHardwareEnabled(bool,SelfDrawingNodeType,bool) -> 0x7fb7b90cf8
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L2 INFER [候选2] 调用 WindowSessionImpl::GetWindowWithId(93) …
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L2 INFER [候选2] 返回 Window* = 0x7fa39c3800 (sret slot2=0x7f93085b17)
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L2 PRIVATE vtable=0x7fb76c63f0
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L2 INFER vtable[0] == WindowSessionImpl::GetSurfaceNode
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L2 INFER GetSurfaceNode() -> RSSurfaceNode* = 0x7fa3b1a500 (sret slot2=0x7fa2259260)
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L3 INFER RSSurfaceNode::GetSurface() -> Surface* = 0x7fa30fab00 (sret slot2=0x7f93083851)
+09-28 16:33:40.013  8659  8659 I A01234/MainSurfaceProbe: L3 PUBLIC 传参修正: CreateNativeWindow(&sptr)（不是裸 Surface*），sptr 槽=0x7ff0457400
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_CreateNativeWindow(&sptr) -> 0x7fa229c880
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_GetSurfaceId rc=0 surfaceId=3289944948855
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_CreateNativeWindowFromSurfaceId(3289944948855) rc=0 win=0x7fa229c880
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: L3 PUBLIC buffer geometry = 1320x2856 (窗口 1320x2856)
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: === probeRun end level=3 ===
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: probe level=3 cand=2 report len=3534
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: auto frame from launch param frame=0
+09-28 16:33:40.014  8659  8659 I A01234/MainSurfaceProbe: SUBMIT surface usage=0x9
+09-28 16:33:40.025  8659  8659 I A01234/MainSurfaceProbe: SUBMIT handle 1320x2856 stride=5280 fmt=12 size=15079680 fd=40
+09-28 16:33:40.026  8659  8659 I A01234/MainSurfaceProbe: SUBMIT mmap OK addr=0x7f3a35e000 size=15079680
+09-28 16:33:40.037  8659  8659 I A01234/MainSurfaceProbe: SUBMIT FlushBuffer pattern=0 rgb=0x1e6bff rc=0 frames=1
+09-28 16:33:40.038  8659  8659 I A01234/MainSurfaceProbe: submitFrame frame=0 rc=0 status=windowId=93 window=0x7fa39c3800 node=0x7fa3b1a500 surface=0x7fa30fab00 nativeWindow=0x7fa229c880 surfaceId=3289944948855 reqRc=0 flushRc=0 frames=1 touchFilterRc=0 keyFilterRc=0 touchEvents=0 keyEvents=0

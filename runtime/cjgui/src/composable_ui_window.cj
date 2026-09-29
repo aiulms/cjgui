@@ -2,10 +2,38 @@ package cjgui
 
 import cjgui_shared_operation_core.*
 import std.collection.*
+import std.convert.*
 import std.env.*
 import std.random.*
 import std.sync.*
 import std.time.*
+
+private let CJGUI_SEMANTIC_FOCUS_MAX_ATTEMPTS: Int64 = 3
+
+func cjguiFocusVisibleIntersection(bounds: CjguiComposableUiRect,
+    constraints: ArrayList<CjguiComposableUiClipConstraint>): CjguiComposableUiRect {
+    var visible = bounds
+    for (constraint in constraints) {
+        visible = visible.intersect(constraint.rect)
+    }
+    return visible
+}
+
+func cjguiFocusRetryAllowed(attempts: Int64, didFocus: Bool): Bool {
+    return !didFocus && attempts < CJGUI_SEMANTIC_FOCUS_MAX_ATTEMPTS
+}
+
+func cjguiFocusNextAttemptCount(attempts: Int64, didFocus: Bool): Int64 {
+    return if (didFocus) { 0 } else { attempts + 1 }
+}
+
+func cjguiFocusBindingEpochMatches(prior: UInt64, current: UInt64): Bool {
+    return prior == current
+}
+
+func cjguiFocusNativeFailureIsRetryable(status: Int32): Bool {
+    return status == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD || status == CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED
+}
 
 /// Public normalized pointer phases. Coordinates are logical layout points,
 /// never native event objects. A controller receives them through its normal
@@ -138,12 +166,22 @@ public class CjguiComposableUiEvent {
     public let projectionVersion: Int64
     public let pointerX: Int64
     public let pointerY: Int64
+    /// Exact accepted window-content point for native pointer events. The
+    /// integer pair above remains the compatibility projection.
+    public let pointerVisualX: Float64
+    public let pointerVisualY: Float64
+    public let pointerTranslateX: Float64
+    public let pointerTranslateY: Float64
+    public let pointerGeometryAccepted: Bool
     /// Keyboard modifier flags of the pointer event (AppKit
     /// NSEventModifierFlag* bits): command = 1 << 20, shift = 1 << 17,
     /// option = 1 << 19, control = 1 << 18. Non-pointer intents carry 0.
     public let modifierFlags: Int64
     public init(node: CjguiComposableUiLayoutNode, eventKind: Int64, text: String, selectionStart: Int64,
         selectionEnd: Int64, projectionVersion: Int64, pointerX!: Int64 = 0, pointerY!: Int64 = 0,
+        pointerVisualX!: Float64 = 0.0, pointerVisualY!: Float64 = 0.0,
+        pointerTranslateX!: Float64 = 0.0, pointerTranslateY!: Float64 = 0.0,
+        pointerGeometryAccepted!: Bool = false,
         modifierFlags!: Int64 = 0) {
         this.node = node
         this.eventKind = eventKind
@@ -153,6 +191,11 @@ public class CjguiComposableUiEvent {
         this.projectionVersion = projectionVersion
         this.pointerX = pointerX
         this.pointerY = pointerY
+        this.pointerVisualX = pointerVisualX
+        this.pointerVisualY = pointerVisualY
+        this.pointerTranslateX = pointerTranslateX
+        this.pointerTranslateY = pointerTranslateY
+        this.pointerGeometryAccepted = pointerGeometryAccepted
         this.modifierFlags = modifierFlags
     }
 }
@@ -160,15 +203,22 @@ public class CjguiComposableUiEvent {
 public class CjguiComposableUiDispatchResult {
     public let didApply: Bool
     public let shouldClose: Bool
-    public init(didApply: Bool, shouldClose!: Bool = false) {
+    /// Exact result returned by the single owner CAS, when this dispatch is
+    /// a transfer. Legacy controllers may leave it unavailable.
+    public let transferResult: ?CjguiSharedOperationTransferResult
+    public init(didApply: Bool, shouldClose!: Bool = false,
+        transferResult!: ?CjguiSharedOperationTransferResult = None) {
         this.didApply = didApply
         this.shouldClose = shouldClose
+        this.transferResult = transferResult
     }
 }
 
 public let CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY: Int64 = 48
 public let CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_PASTE: Int64 = 49
 public let CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_DROP: Int64 = 50
+public let CJGUI_COMPOSABLE_UI_EVENT_FILE_TRANSFER_BEGIN: Int64 = 53
+public let CJGUI_COMPOSABLE_UI_EVENT_FILE_TRANSFER_REJECTED: Int64 = 54
 
 /// Experimental transfer declaration for one semantic composable node. The
 /// node remains a normal control; the declaration merely lets the host copy a
@@ -182,7 +232,16 @@ public let CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_DROP: Int64 = 50
 public class CjguiComposableUiPngTransferCapability {
     public let backend: String = "macos"
     public let systemFormat: String = "public.png"
+    public let localFileSystemFormat: String = "public.file-url"
+    public let localFileAllowedByDefault: Bool = false
+    public let optInSourceOrder: String = "local_file_url,pasteboard_png"
+    public let maximumLocalFilesPerOffer: Int64 = 1
+    public let localFileReadMode: String = "bounded_async"
     public let mimeFormat: String = "image/png"
+    public let imageClass: String = "static"
+    public let supportedBitDepths: String = "8"
+    public let supportedColorTypes: String = "rgb,rgba"
+    public let supportedInterlaceModes: String = "none"
     public let maximumEncodedItemBytes: Int64 = 512 * 1024
     public let maximumWidth: Int64 = 2048
     public let maximumHeight: Int64 = 2048
@@ -204,39 +263,48 @@ public class CjguiComposableUiDataTransferDeclaration {
     /// Owner-supplied receiver incarnation. Preserve across ordinary redraws;
     /// advance when the same semantic target is rebound to a new owner slot.
     public let receiverIncarnation: Int64
+    /// Opt in to one local regular PNG file URL. When both system
+    /// representations exist, file URL wins and failure never falls back.
+    public let localPngFileAllowed: Bool
 
     private init(
         semanticId: String,
         role: String,
         format: CjguiSharedOperationTransferFormat,
         offer: ?CjguiSharedOperationTransferOffer,
-        receiverIncarnation: Int64
+        receiverIncarnation: Int64,
+        localPngFileAllowed: Bool
     ) {
         this.semanticId = semanticId
         this.role = role
         this.format = format
         this.offer = offer
         this.receiverIncarnation = receiverIncarnation
+        this.localPngFileAllowed = localPngFileAllowed
     }
 
     public static func source(
         semanticId: String,
         offer: CjguiSharedOperationTransferOffer
     ): CjguiComposableUiDataTransferDeclaration {
-        return CjguiComposableUiDataTransferDeclaration(semanticId, "SOURCE", offer.format, Some(offer), 0)
+        return CjguiComposableUiDataTransferDeclaration(semanticId, "SOURCE", offer.format, Some(offer), 0,
+            false)
     }
 
     public static func target(
         semanticId: String,
         format: CjguiSharedOperationTransferFormat,
-        receiverIncarnation!: Int64 = 0
+        receiverIncarnation!: Int64 = 0,
+        localPngFileAllowed!: Bool = false
     ): CjguiComposableUiDataTransferDeclaration {
         return CjguiComposableUiDataTransferDeclaration(semanticId, "TARGET", format, None,
-            receiverIncarnation)
+            receiverIncarnation, localPngFileAllowed)
     }
 
     public func isValid(): Bool {
-        if (semanticId.size == 0 || !format.isValid() || receiverIncarnation < 0) {
+        if (semanticId.size == 0 || !format.isValid() || receiverIncarnation < 0 ||
+            (localPngFileAllowed && (role != "TARGET" || format.kind != "BINARY" ||
+                format.identifier != "image/png"))) {
             return false
         }
         if (role == "SOURCE") {
@@ -265,6 +333,7 @@ public class CjguiComposableUiDataTransferEvent {
     public let decodeMicros: Int64
     public let bindingEpoch: UInt64
     public let expectedOwnerVersion: Int64
+    public let nativeEventId: UInt64
 
     public init(
         node: CjguiComposableUiLayoutNode,
@@ -273,7 +342,8 @@ public class CjguiComposableUiDataTransferEvent {
         format: CjguiSharedOperationTransferFormat,
         projectionVersion: Int64,
         imageWidth!: Int64 = 0, imageHeight!: Int64 = 0, decodeMicros!: Int64 = 0,
-        bindingEpoch!: UInt64 = 0u64, expectedOwnerVersion!: Int64 = -1
+        bindingEpoch!: UInt64 = 0u64, expectedOwnerVersion!: Int64 = -1,
+        nativeEventId!: UInt64 = 0u64
     ) {
         this.node = node
         this.eventKind = eventKind
@@ -285,6 +355,7 @@ public class CjguiComposableUiDataTransferEvent {
         this.decodeMicros = decodeMicros
         this.bindingEpoch = bindingEpoch
         this.expectedOwnerVersion = expectedOwnerVersion
+        this.nativeEventId = nativeEventId
     }
 }
 
@@ -335,6 +406,45 @@ public class CjguiMappedCompositionRange {
 public interface CjguiComposableUiCompositionRangeProvider {
     func prepareCompositionSourceRange(node: CjguiComposableUiLayoutNode,
         start16: Int64, end16: Int64, sceneVersion: Int64): CjguiMappedCompositionRange
+}
+
+/// The installed state of one reanchor attempt: which platform mechanism the
+/// live marked run survived with, and where the marked run and its inner
+/// selection actually sit afterwards. `installed=false` means NOTHING was
+/// changed — the caller must cancel the composition, not treat it as continued.
+/// The readback fields describe the proxy, so a caller can bind a receipt to the
+/// exact draft revision instead of trusting its own request.
+public class CjguiCompositionReanchorReceipt {
+    public let installed: Bool
+    /// 1 = the marked run survived the storage update; 2 = it was re-installed
+    /// through the ordinary client entry; 0 when not installed.
+    public let mechanism: Int64
+    public let markedStart16: Int64
+    public let markedLength16: Int64
+    public let innerStart16: Int64
+    public let innerEnd16: Int64
+    public let status: Int32
+
+    public init(installed: Bool, mechanism: Int64, markedStart16: Int64, markedLength16: Int64,
+        innerStart16: Int64, innerEnd16: Int64, status: Int32) {
+        this.installed = installed
+        this.mechanism = mechanism
+        this.markedStart16 = markedStart16
+        this.markedLength16 = markedLength16
+        this.innerStart16 = innerStart16
+        this.innerEnd16 = innerEnd16
+        this.status = status
+    }
+
+    public static func refused(status: Int32): CjguiCompositionReanchorReceipt {
+        return CjguiCompositionReanchorReceipt(false, 0, 0, 0, 0, 0, status)
+    }
+
+    public func describe(): String {
+        return "installed=${this.installed} mechanism=${this.mechanism} " +
+            "marked=${this.markedStart16}:${this.markedLength16} " +
+            "inner=${this.innerStart16}:${this.innerEnd16} status=${this.status}"
+    }
 }
 
 /// Optional revision of accepted business owner truth, independent of
@@ -441,18 +551,92 @@ public interface CjguiComposableUiSceneRefreshParticipant {
     }
 }
 
-private class CjguiComposableUiDataTransferBinding {
+class CjguiComposableUiDataTransferBinding {
     let declaration: CjguiComposableUiDataTransferDeclaration
     let node: CjguiComposableUiLayoutNode
     let nativeFormat: String
     let bindingEpoch: UInt64
+    let expectedOwnerVersion: Int64
 
     init(declaration: CjguiComposableUiDataTransferDeclaration, node: CjguiComposableUiLayoutNode,
-        nativeFormat: String, bindingEpoch: UInt64) {
+        nativeFormat: String, bindingEpoch: UInt64, expectedOwnerVersion: Int64) {
         this.declaration = declaration
         this.node = node
         this.nativeFormat = nativeFormat
         this.bindingEpoch = bindingEpoch
+        this.expectedOwnerVersion = expectedOwnerVersion
+    }
+}
+
+/// Read-only projection of one input operation. A captured/queued receipt is
+/// not an owner success, and a submitted frame is not a physical display fact.
+public class CjguiComposableUiTransferReceipt {
+    public let windowSessionIdentity: String
+    public let eventId: UInt64
+    public let eventKind: Int64
+    public let semanticId: String
+    public let nodeId: Int64
+    public let bindingEpoch: UInt64
+    public let sourceKind: String
+    public let format: String
+    public let contentDigest: String
+    public let state: String
+    public let reason: String
+    public let expectedOwnerVersion: Int64
+    public let ownerAttempted: Bool
+    public let ownerVersionBefore: Int64
+    public let ownerVersionAfter: Int64
+    public let acceptedSceneVersion: Int64
+    public let submittedFrameIndex: Int64
+    public let revision: Int64
+
+    public init(windowSessionIdentity: String, eventId: UInt64, eventKind: Int64,
+        semanticId: String, nodeId: Int64, bindingEpoch: UInt64, sourceKind: String,
+        format: String, contentDigest: String, state: String, reason: String,
+        expectedOwnerVersion: Int64, ownerAttempted: Bool, ownerVersionBefore: Int64,
+        ownerVersionAfter: Int64, acceptedSceneVersion: Int64, submittedFrameIndex: Int64,
+        revision: Int64) {
+        this.windowSessionIdentity = windowSessionIdentity
+        this.eventId = eventId
+        this.eventKind = eventKind
+        this.semanticId = semanticId
+        this.nodeId = nodeId
+        this.bindingEpoch = bindingEpoch
+        this.sourceKind = sourceKind
+        this.format = format
+        this.contentDigest = contentDigest
+        this.state = state
+        this.reason = reason
+        this.expectedOwnerVersion = expectedOwnerVersion
+        this.ownerAttempted = ownerAttempted
+        this.ownerVersionBefore = ownerVersionBefore
+        this.ownerVersionAfter = ownerVersionAfter
+        this.acceptedSceneVersion = acceptedSceneVersion
+        this.submittedFrameIndex = submittedFrameIndex
+        this.revision = revision
+    }
+}
+
+public class CjguiComposableUiTransferReceiptLookup {
+    public let state: String
+    public let receipt: ?CjguiComposableUiTransferReceipt
+    public init(state: String, receipt: ?CjguiComposableUiTransferReceipt) {
+        this.state = state
+        this.receipt = receipt
+    }
+}
+
+public class CjguiComposableUiTransferReceiptChanges {
+    public let revision: Int64
+    public let retentionFloor: Int64
+    public let resyncRequired: Bool
+    public let receipts: ArrayList<CjguiComposableUiTransferReceipt>
+    public init(revision: Int64, retentionFloor: Int64, resyncRequired: Bool,
+        receipts: ArrayList<CjguiComposableUiTransferReceipt>) {
+        this.revision = revision
+        this.retentionFloor = retentionFloor
+        this.resyncRequired = resyncRequired
+        this.receipts = receipts
     }
 }
 
@@ -1126,7 +1310,9 @@ private class CjguiComposableUiNativeEffectProjection {
     }
 }
 
-public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProvider & CjguiSharedOperationWindowProgressProvider {
+public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProvider &
+    CjguiSharedOperationWindowProgressProvider & CjguiSharedOperationTransferReceiptProvider &
+    CjguiSharedOperationPositionMotionProvider {
     private let controller: CjguiComposableUiController
     /// The per-process identity of THIS window instance, used to detect a
     /// declaration that tries to share one mutable view object between windows.
@@ -1180,6 +1366,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 代次不符/身份不符而被框架消费掉的旧组字事件数（从未进入任何会话或 owner）。
     private var textSessionCompositionStaleRefusals: Int64 = 0
     private var lastTextSessionCompositionReason: String = ""
+    /// 已发给 native 的组合重锚基文：接受点装好且读回一致后，平台 preedit 就落在
+    /// 这段基文上。只有它仍等于会话镜像时，续接结算才允许采用新的组合基点。
+    private var pendingReanchorBase: String = ""
+    /// 组合重锚实验开关（0=关闭，-1=安装后重装 marked，-2=安装后保持未标记）。
+    private var reanchorExperimentMode: Int64 = 0
+    /// 生产路径（重锚关闭）上「场景刷新在活动仲裁 claim 之上推进了组合面正文」这一事实：
+    /// 由暂存记录、由随后的组字取消相位一次性消费，用来把普通取消与重锚不可用分开。
+    private var pendingExternalCompositionDisruption: Bool = false
+    /// 最近一次组字判决失败的底层原因（当前仅重锚不可用路径填充）。
+    private var lastTextSessionCompositionCause: String = ""
     private var lastNativeStatus: Int32
     // Standard AppKit Quit is admitted as one process-level native intent.
     // It never becomes a controller action: the enclosing
@@ -1192,6 +1388,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // containment changes. Native FIFO intents must instead resolve against
     // the last scene that native actually displayed.
     private var nativeInputScene: CjguiComposableUiScene
+    private var acceptedBindingKeys: ArrayList<String>
+    private var acceptedBindingEpochs: ArrayList<UInt64>
     private var acceptedWindowBackgroundToken: String = CjguiWindowBackgroundPolicy.OPAQUE
     // The native material appearance belongs to the accepted scene, rather
     // than the latest host offer while a present ticket is unresolved.
@@ -1238,6 +1436,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var deferredEventWork: Bool
     private var pendingRefreshReason: String
     private var lastNativeFailure: String
+    // A rejected candidate names its reason in the progress fact; this mirror
+    // exists so the SAME named reason is also visible in the process log
+    // without a consumer polling windowProgress. Deduped per reason and reset
+    // on every accepted scene, so a recovered window can report a fresh
+    // refusal instead of being silent forever (home duplicate-id incident).
+    private var lastReportedSceneRejection: String
     // The initial scene may fail before a progress snapshot exists. Keep the
     // first rejecting stage through teardown; a later destroy status must not
     // replace the cause that made start() return false.
@@ -1250,6 +1454,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 一起构成完整的拒绝证据。空串 = 无。
     private var lastRefusedEffectPathValue: String
     private var submittedFrameIndex: Int64
+    private var lastGeometry: CjguiSharedOperationWindowGeometry = CjguiSharedOperationWindowGeometry.unavailable()
     private var observedMetalCompletionFrameIndex: Int64
     private var observedMetalFailureFrameIndex: Int64
     private var observedMetalGpuDurationMicros: Int64
@@ -1271,6 +1476,26 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var testCloseReason: String
     private var testCloseEventKind: Int64
     private var testCloseNativeStatus: Int32
+    /// Opt-in, bounded write trace: one line per node the staging predicate
+    /// REPLACED, with the first field that disagreed. It exists so a probe can
+    /// tell a necessary write (the value that actually changed) from a repeated
+    /// rewrite of untouched nodes; disabled it costs one boolean test per node
+    /// and prints nothing.
+    private var sceneWriteTraceEnabled: Bool
+    /// F-C bounded workload observation. Native counts real work points in
+    /// normal builds; enabling this switch only publishes the scalars in
+    /// `diagnosticSnapshot`. Disabled, a refresh records no base and every
+    /// published value stays -1 with status "disabled".
+    private var workloadDiagnosticsEnabled: Bool
+    private var workloadDiagnosticsStatus: String
+    private var workloadAttemptBaseValid: Bool
+    private var workloadAttemptBase: CjguiInternalRendererDiagnosticWorkload
+    private var workloadLastResult: String
+    private var workloadLastNodeWrites: Int64
+    private var workloadLastNodeClones: Int64
+    private var workloadLastNodeAllocations: Int64
+    private var workloadLastTextLayoutPreparations: Int64
+    private var workloadLastImageDecodeStarts: Int64
     /// The most recent successful native submission, on the monotonic clock.
     private var lastNativeSubmissionSnapshotValue: ?CjguiComposableUiNativeSubmissionSnapshot
     /// Most-recent projection timings are diagnostics of the real normal
@@ -1280,6 +1505,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var lastNativeMeasurementElapsedMs: Int64
     private var lastNativeStageAndSubmitElapsedMs: Int64
     private var lastRefreshTiming: CjguiComposableUiRefreshTiming
+    private var timingAttemptActive: Bool
+    private var totalBuildNanoseconds: Int64
+    private var totalLayoutNanoseconds: Int64
+    private var totalNativeStageAndSubmitNanoseconds: Int64
     private var lastNativeMeasurementCallCount: Int64
     private var lastLayoutReuseHitCount: Int64
     private var lastLayoutReuseMissCount: Int64
@@ -1323,8 +1552,32 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // that old sequence continue through the underlying control.
     private var pointerCaptureModalLayerId: String
     private var pointerCaptureActive: Bool
+    private var pointerCaptureGestureEpoch: UInt64 = 0
+    private var pointerCaptureAppInstance: UInt64 = 0
+    private var pointerCaptureComponentInstance: UInt64 = 0
+    private var pointerCaptureSurfaceGeneration: UInt64 = 0
+    private var pointerCapturePointerId: Int64 = -1
+    private var pointerCaptureAcceptedBindingEpoch: UInt64 = 0
     private var pointerCaptureX: Int64
     private var pointerCaptureY: Int64
+    private var pointerCaptureVisualX: Float64 = 0.0
+    private var pointerCaptureVisualY: Float64 = 0.0
+    private var pointerCaptureTranslateX: Float64 = 0.0
+    private var pointerCaptureTranslateY: Float64 = 0.0
+    private var pointerCapturePrecise: Bool = false
+    private var pointerCaptureSplitGrabOffset: Float64 = 0.0
+    private var pointerCaptureSplitStateIdentity: Int64 = 0
+    private var pointerCaptureSplitTrack: Int64 = 0
+    private var pointerCaptureSplitHandle: Int64 = 0
+    private var pointerCaptureSplitFirstMinimum: Int64 = 0
+    private var pointerCaptureSplitSecondMinimum: Int64 = 0
+    private var pointerCaptureSplitOriginX: Float64 = 0.0
+    private var pointerCaptureSplitVisualY: Float64 = 0.0
+    private var pointerCaptureSplitTranslateX: Float64 = 0.0
+    private var pointerCaptureSplitTranslateY: Float64 = 0.0
+    private var pointerCaptureSplitStartVersion: Int64 = -1
+    private var pointerCaptureSplitContinuousVersion: Int64 = -1
+    private var pointerCaptureSplitClips = ArrayList<CjguiComposableUiVisualRect>()
     // The framework owns these ephemeral visual identities. They are always
     // checked against the accepted native input scene before use; an owner
     // never writes hover/pressed/focus directly.
@@ -1357,6 +1610,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // input/command bindings. They are replaceable values, never an owner
     // cache or a retained native pasteboard/drag object.
     private var dataTransferBindings: ArrayList<CjguiComposableUiDataTransferBinding>
+    private var transferBindingHistory: ArrayList<CjguiComposableUiDataTransferBinding>
+    private var transferReceipts: ArrayList<CjguiComposableUiTransferReceipt>
+    private var transferReceiptTombstones: ArrayList<CjguiComposableUiTransferReceipt>
+    private var transferReceiptDispatchClaims: HashMap<String, Bool>
+    private var transferReceiptRevision: Int64
+    private var transferReceiptRetentionFloor: Int64
+    private var transferReceiptLastDeliveryOrdinal: UInt64
+    private var lastTransferOfferDigest: String
+    private var lastTransferRejectionReason: String
     private var nextDataTransferBindingEpoch: UInt64 = 0u64
     // One renderer-bound measurer per open native session. Recreating this on
     // every refresh turns external read-only observation into repeated AppKit
@@ -1525,7 +1787,21 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         HashMap<String, CjguiComposableUiAnimationBinding>()
     private var stagedInteractionColorTargets: HashMap<String, CjguiComposableUiPaintColorSet> =
         HashMap<String, CjguiComposableUiPaintColorSet>()
-    private var nextAcceptedBindingEpoch: Int64 = 0
+    private var stagedPositionSamples: HashMap<String, CjguiComposableUiPositionSample> =
+        HashMap<String, CjguiComposableUiPositionSample>()
+    private var stagedPositionRevision: Int64 = 0
+    private var stagedPaintRevision: Int64 = 0
+    private var exposedPositionMotionKeys: ArrayList<String> = ArrayList<String>()
+    private var exposedPositionMotionBindings: HashMap<String, CjguiComposableUiAnimationBinding> =
+        HashMap<String, CjguiComposableUiAnimationBinding>()
+    private var positionRequestCounter: Int64 = 0
+    private var positionRequestRevisions: HashMap<String, Int64> = HashMap<String, Int64>()
+    private var positionRequestModes: HashMap<String, String> = HashMap<String, String>()
+    private var stagedPositionRequestRevisions: HashMap<String, Int64> = HashMap<String, Int64>()
+    private var acceptedPositionRequestRevisions: HashMap<String, Int64> = HashMap<String, Int64>()
+    private var positionLastFailure: HashMap<String, String> = HashMap<String, String>()
+    // Package-only test seam for the post-stage/pre-present rollback path.
+    private var testPositionPresentFailuresRemaining: Int64 = 0
     private var pendingPlatformColorScheme: ?CjguiComposableUiColorScheme = None
     private var deliveredPlatformColorSchemeToken: String = ""
     private let platformAccentTracker = CjguiComposableUiPlatformAccentTracker()
@@ -1547,6 +1823,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var pendingScopedFocusScope: ?CjguiComposableUiIdentityScope = None
     private var pendingScopedFocusKey: String = ""
     private var pendingSemanticFocusNode: ?CjguiComposableUiLayoutNode = None
+    private var pendingSemanticFocusAttempts: Int64 = 0
+    private var pendingSemanticFocusBindingEpoch: UInt64 = 0u64
+    // A bounded package-local seam lets production focus transitions observe
+    // controlled native outcomes in tests. Empty by default, so release paths
+    // always call the real renderer bridge.
+    private var focusNativeTestStatuses: ArrayList<Int32> = ArrayList<Int32>()
+    private var focusNativeTestIndex: Int64 = 0
+    private var focusNativeTestCalls: Int64 = 0
 
     public init(
         controller: CjguiComposableUiController,
@@ -1571,6 +1855,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             ArrayList<CjguiComposableUiLayoutNode>())
         this.nativeInputScene = CjguiComposableUiScene(0, CjguiComposableUiRect(0, 0, 0, 0),
             ArrayList<CjguiComposableUiLayoutNode>())
+        this.acceptedBindingKeys = ArrayList<String>()
+        this.acceptedBindingEpochs = ArrayList<UInt64>()
         this.nextProjectionVersion = 0
         this.lastControllerSceneVersion = -1
         this.lastAcceptedBusinessOwnerRevision = -1
@@ -1591,6 +1877,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         this.deferredEventWork = false
         this.pendingRefreshReason = "none"
         this.lastNativeFailure = "none"
+        this.lastReportedSceneRejection = ""
         this.startupPhase = "none"
         this.firstStartupFailure = "none"
         this.windowSessionIdentity = ""
@@ -1616,12 +1903,27 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         testCloseReason = ""
         testCloseEventKind = -1
         testCloseNativeStatus = 0
+        sceneWriteTraceEnabled = false
+        workloadDiagnosticsEnabled = false
+        workloadDiagnosticsStatus = "disabled"
+        workloadAttemptBaseValid = false
+        workloadAttemptBase = CjguiInternalRendererDiagnosticWorkload()
+        workloadLastResult = "none"
+        workloadLastNodeWrites = -1
+        workloadLastNodeClones = -1
+        workloadLastNodeAllocations = -1
+        workloadLastTextLayoutPreparations = -1
+        workloadLastImageDecodeStarts = -1
         lastNativeSubmissionSnapshotValue = None
         this.lastBuildElapsedMs = 0
         this.lastLayoutElapsedMs = 0
         this.lastNativeMeasurementElapsedMs = 0
         this.lastNativeStageAndSubmitElapsedMs = 0
         this.lastRefreshTiming = CjguiComposableUiRefreshTiming()
+        this.timingAttemptActive = false
+        this.totalBuildNanoseconds = 0
+        this.totalLayoutNanoseconds = 0
+        this.totalNativeStageAndSubmitNanoseconds = 0
         this.lastNativeMeasurementCallCount = 0
         this.lastLayoutReuseHitCount = 0
         this.lastLayoutReuseMissCount = 0
@@ -1661,6 +1963,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         this.activeLayerRestoreNodeIds = ArrayList<Int64>()
         this.commandBindings = ArrayList<CjguiComposableUiWindowCommandBinding>()
         this.dataTransferBindings = ArrayList<CjguiComposableUiDataTransferBinding>()
+        this.transferBindingHistory = ArrayList<CjguiComposableUiDataTransferBinding>()
+        this.transferReceipts = ArrayList<CjguiComposableUiTransferReceipt>()
+        this.transferReceiptTombstones = ArrayList<CjguiComposableUiTransferReceipt>()
+        this.transferReceiptDispatchClaims = HashMap<String, Bool>()
+        this.transferReceiptRevision = 0
+        this.transferReceiptRetentionFloor = 0
+        this.transferReceiptLastDeliveryOrdinal = 0u64
+        this.lastTransferOfferDigest = ""
+        this.lastTransferRejectionReason = ""
         this.textMeasurer = CjguiInternalRendererTextMeasurer(CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN)
         this.layoutReuseCache = CjguiComposableUiLayoutReuseCache()
         this.identityRegistry = CjguiComposableUiIdentityRegistry()
@@ -1734,6 +2045,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
         }
         windowSessionIdentity = CjguiComposableUiWindowSessionIdentityAllocator.allocate()
+        // Native delivery ordinals belong to one renderer session. The
+        // retained receipts/revision remain on this window object so an old
+        // (session, event) can be read independently after restart.
+        transferReceiptLastDeliveryOrdinal = 0u64
         // A reopened native session owns no prior scene snapshot. Retaining
         // the old Cangjie scene here could make `sameRenderedScene` suppress
         // the initial staging/submission into an empty new Metal view.
@@ -1742,7 +2057,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             ArrayList<CjguiComposableUiLayoutNode>())
         nativeInputScene = CjguiComposableUiScene(0, CjguiComposableUiRect(0, 0, 0, 0),
             ArrayList<CjguiComposableUiLayoutNode>())
+        acceptedBindingKeys.clear()
+        acceptedBindingEpochs.clear()
         lastNativeFailure = "none"
+        lastReportedSceneRejection = ""
         pendingRefreshReason = "none"
         deferredInteractionPaint = false
         deferredEventWork = false
@@ -1774,12 +2092,27 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         testCloseReason = ""
         testCloseEventKind = -1
         testCloseNativeStatus = 0
+        sceneWriteTraceEnabled = false
+        workloadDiagnosticsEnabled = false
+        workloadDiagnosticsStatus = "disabled"
+        workloadAttemptBaseValid = false
+        workloadAttemptBase = CjguiInternalRendererDiagnosticWorkload()
+        workloadLastResult = "none"
+        workloadLastNodeWrites = -1
+        workloadLastNodeClones = -1
+        workloadLastNodeAllocations = -1
+        workloadLastTextLayoutPreparations = -1
+        workloadLastImageDecodeStarts = -1
         lastNativeSubmissionSnapshotValue = None
         lastBuildElapsedMs = 0
         lastLayoutElapsedMs = 0
         lastNativeMeasurementElapsedMs = 0
         lastNativeStageAndSubmitElapsedMs = 0
         lastRefreshTiming = CjguiComposableUiRefreshTiming()
+        timingAttemptActive = false
+        totalBuildNanoseconds = 0
+        totalLayoutNanoseconds = 0
+        totalNativeStageAndSubmitNanoseconds = 0
         lastNativeMeasurementCallCount = 0
         lastLayoutReuseHitCount = 0
         lastLayoutReuseMissCount = 0
@@ -1932,6 +2265,23 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (settlePendingPresent()) {
             return false
         }
+        if (!isWindowOpen) {
+            return false
+        }
+        // A prior destroy rejection leaves the native session and all accepted
+        // resources with this window. Retry that exact close before any new
+        // viewport, candidate or animation work on a legal owner turn.
+        if (discardRetryReason.size > 0) {
+            discardSession(discardRetryReason)
+            return false
+        }
+        if (closeIntentPending) {
+            if (isWindowOpen) {
+                let _ = internalRendererRequestClose(sessionToken)
+            }
+            discardSession("close_after_settlement")
+            return false
+        }
         let _ = deliverPendingPlatformColorScheme()
         let _ = deliverPendingPlatformAccent()
         // A reduction request can hide the material immediately in AppKit.
@@ -1952,16 +2302,6 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     requestRefresh()
                 }
             }
-        }
-        // A1：close 意图消费点。事务已完全结算（含 ACK）后，一次 close 请求
-        // 在此自动收敛；不再恢复焦点或挂代理。
-        if (closeIntentPending) {
-            closeIntentPending = false
-            if (isWindowOpen) {
-                let _ = internalRendererRequestClose(sessionToken)
-            }
-            discardSession("close_after_settlement")
-            return false
         }
         startupPhase = "viewport"
         let viewport = internalRendererComposableViewport(sessionToken)
@@ -2109,6 +2449,256 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return false
     }
 
+    /// Animate an accepted node's local post-layout translation in logical
+    /// points. The value replaces that node's declared translateX/Y for the
+    /// current picture; its ancestor motion is accumulated once by the scene.
+    /// `acceptedToken` rejects an async request after rebinding. Experimental.
+    public func animateNodeTranslation(identityKey: String, targetX: Float64, targetY: Float64,
+        spec!: CjguiComposableUiAnimationSpec = CjguiComposableUiAnimationSpec.spring(), atTime!: MonoTime,
+        acceptedToken!: ?CjguiComposableUiAnimationBinding = None): Bool {
+        if (!isWindowOpen || identityKey.size == 0) { return false }
+        if (let Some(binding) <- acceptedBindingForAnimationIdentity(identityKey)) {
+            if (let Some(expected) <- acceptedToken) {
+                if (!expected.matches(binding)) { return false }
+            }
+            let node = nativeInputScene.nodeForId(binding.nodeId)
+            if (node.nodeId != binding.nodeId || node.identityKey != identityKey) { return false }
+            if (!positionTargetGeometryAllowed(identityKey, targetX, targetY)) { return false }
+            let started = animationDriver.animatePosition(identityKey, binding,
+                CjguiComposableUiPositionValue(node.style.translateX, node.style.translateY),
+                CjguiComposableUiPositionValue(targetX, targetY), spec, animationNowMs(atTime))
+            if (!started) { return false }
+            notePositionMotionRequest(identityKey, "set")
+            if (animationDriver.reduceMotion() || !animationDriver.isPositionActiveFor(identityKey)) {
+                let _ = presentAnimationValueOrKeepPending()
+            }
+            return true
+        }
+        return false
+    }
+
+    private func positionTargetGeometryAllowed(identityKey: String, targetX: Float64, targetY: Float64,
+        removing!: Bool = false): Bool {
+        if (!cjguiAnimationIsFiniteScalar(targetX) || !cjguiAnimationIsFiniteScalar(targetY) ||
+            targetX < -1024.0 || targetX > 1024.0 || targetY < -1024.0 || targetY > 1024.0) { return false }
+        let replacement: ?CjguiComposableUiPositionValue = if (removing) { None } else {
+            Some(CjguiComposableUiPositionValue(targetX, targetY))
+        }
+        if (!positionTargetGeometryAllowedInScene(nativeInputScene, acceptedAnimationBindingTable,
+            identityKey, replacement, removing)) { return false }
+        if (let Some(pending) <- pendingTransaction) {
+            if (!positionTargetGeometryAllowedInScene(pending.paintScene, stagedAnimationBindingTable,
+                identityKey, replacement, removing)) { return false }
+        }
+        return true
+    }
+
+    /// Evaluate the entire effective target picture, using declarations as the
+    /// base. The accepted picture's current intermediate samples are not target
+    /// values and cannot establish the validity of another request.
+    private func positionTargetGeometryAllowedInScene(scene: CjguiComposableUiScene,
+        bindings: HashMap<String, CjguiComposableUiAnimationBinding>, identityKey: String,
+        replacement: ?CjguiComposableUiPositionValue, removing: Bool): Bool {
+        let nodes = ArrayList<CjguiComposableUiLayoutNode>()
+        for (node in scene.nodes()) {
+            var target = CjguiComposableUiPositionValue(node.declaredStyle.translateX,
+                node.declaredStyle.translateY)
+            if (let Some(binding) <- bindings.get(node.identityKey)) {
+                if (node.identityKey == identityKey) {
+                    // A staged scene may reuse a key for a new semantic
+                    // incarnation. Keep this request on its accepted binding.
+                    if (!removing) {
+                        if (let Some(accepted) <- acceptedAnimationBindingTable.get(identityKey)) {
+                            if (accepted.matches(binding)) { target = replacement ?? target }
+                        }
+                    }
+                } else if (animationDriver.positionSampleFor(node.identityKey, binding).isSome()) {
+                    target = animationDriver.positionTargetFor(node.identityKey) ?? target
+                }
+            }
+            nodes.add(node.withResolvedPaintStyle(cjguiComposableUiStyleWithTranslation(node.declaredStyle,
+                target.x, target.y)))
+        }
+        return CjguiComposableUiScene(scene.version, scene.viewport, nodes).isValid()
+    }
+
+    public func animateNodeTranslation(reference: CjguiComposableUiNodeReference, targetX: Float64,
+        targetY: Float64, spec!: CjguiComposableUiAnimationSpec = CjguiComposableUiAnimationSpec.spring(),
+        atTime!: MonoTime): Bool {
+        if (!isWindowOpen || !reference.isValid()) { return false }
+        let nodeId = identityRegistry.acceptedNodeIdForReference(reference)
+        if (nodeId < 0) { return false }
+        let node = nativeInputScene.nodeForId(nodeId)
+        if (node.nodeId != nodeId) { return false }
+        return animateNodeTranslation(node.identityKey, targetX, targetY, spec: spec, atTime: atTime)
+    }
+
+    /// Stop at the last accepted location. Clearing instead restores the
+    /// accepted declaration's translation on the next picture.
+    public func stopNodeTranslationAnimation(identityKey: String, atTime!: MonoTime): Bool {
+        let accepted = match (animationDriver.positionAcceptedFor(identityKey)) {
+            case Some(value) => value
+            case None => return false
+        }
+        if (!positionTargetGeometryAllowed(identityKey, accepted.x, accepted.y)) { return false }
+        if (!isWindowOpen || !animationDriver.stopPositionAtAccepted(identityKey, animationNowMs(atTime))) {
+            return false
+        }
+        notePositionMotionRequest(identityKey, "stop")
+        let _ = presentAnimationValueOrKeepPending()
+        return true
+    }
+
+    public func cancelNodeTranslationAnimation(identityKey: String): Bool {
+        if (!positionTargetGeometryAllowed(identityKey, 0.0, 0.0, removing: true)) { return false }
+        if (!isWindowOpen || !animationDriver.cancelPosition(identityKey)) { return false }
+        notePositionMotionRequest(identityKey, "clear")
+        if (pendingTransaction.isNone()) { let _ = refreshInteractionPaintIfNeeded() }
+        return true
+    }
+
+    public func animatedNodeTranslation(identityKey: String): ?CjguiComposableUiPositionStatus {
+        if (let Some(binding) <- acceptedBindingForAnimationIdentity(identityKey)) {
+            if (let Some(target) <- animationDriver.positionTargetFor(identityKey)) {
+                if (let Some(presented) <- animationDriver.positionAcceptedFor(identityKey)) {
+                    return Some(CjguiComposableUiPositionStatus(target, presented, binding, windowSessionIdentity,
+                        nativeInputScene.version, submittedFrameIndex,
+                        animationDriver.isPositionActiveFor(identityKey)))
+                }
+            }
+        }
+        return None
+    }
+
+    private func notePositionMotionRequest(identityKey: String, mode: String): Unit {
+        positionRequestCounter += 1
+        positionRequestRevisions.add(identityKey, positionRequestCounter)
+        positionRequestModes.add(identityKey, mode)
+    }
+
+    /// An application opts in exact accepted identities before giving an
+    /// external client the position-motion capability. No arbitrary node in a
+    /// window becomes externally movable merely because it is discoverable.
+    public func exposeAcceptedPositionMotionTarget(identityKey: String): Bool {
+        if (!isWindowOpen || identityKey.size == 0 || identityKey.size > 128) { return false }
+        let binding = match (acceptedBindingForAnimationIdentity(identityKey)) {
+            case Some(value) => value
+            case None => return false
+        }
+        for (key in exposedPositionMotionKeys) {
+            if (key == identityKey) {
+                exposedPositionMotionBindings.add(identityKey, binding)
+                return true
+            }
+        }
+        if (exposedPositionMotionKeys.size >= 32) { return false }
+        exposedPositionMotionKeys.add(identityKey)
+        exposedPositionMotionBindings.add(identityKey, binding)
+        return true
+    }
+
+    private func positionMotionKeyIsExposed(identityKey: String): Bool {
+        if (let Some(exposed) <- exposedPositionMotionBindings.get(identityKey)) {
+            if (let Some(current) <- acceptedBindingForAnimationIdentity(identityKey)) {
+                return exposed.matches(current)
+            }
+        }
+        return false
+    }
+
+    public func positionMotionTargets(): ArrayList<Int64> {
+        let targets = ArrayList<Int64>()
+        if (!isWindowOpen) { return targets }
+        for (node in nativeInputScene.nodes()) {
+            if (positionMotionKeyIsExposed(node.identityKey)) { targets.add(node.nodeId) }
+        }
+        return targets
+    }
+
+    public func positionMotionRead(nodeId: Int64): ?CjguiSharedOperationPositionMotionFact {
+        if (!isWindowOpen || nodeId < 0) { return None }
+        let node = nativeInputScene.nodeForId(nodeId)
+        if (node.nodeId != nodeId || !positionMotionKeyIsExposed(node.identityKey)) { return None }
+        let binding = match (acceptedBindingForAnimationIdentity(node.identityKey)) {
+            case Some(value) => value
+            case None => return None
+        }
+        let revision = positionRequestRevisions.get(node.identityKey) ?? 0
+        let acceptedRevision = acceptedPositionRequestRevisions.get(node.identityKey) ?? 0
+        let mode = positionRequestModes.get(node.identityKey) ?? "declaration"
+        let target = animationDriver.positionTargetFor(node.identityKey) ??
+            CjguiComposableUiPositionValue(node.declaredStyle.translateX, node.declaredStyle.translateY)
+        let token = "${windowSessionIdentity}|${nativeInputScene.version}|" +
+            "${binding.acceptedBindingEpoch}|${revision}|${node.nodeId}"
+        return Some(CjguiSharedOperationPositionMotionFact(node.nodeId, node.resourceId, node.semanticId,
+            windowSessionIdentity, token, revision, acceptedRevision, mode, target.x, target.y,
+            node.style.translateX, node.style.translateY, node.declaredStyle.translateX,
+            node.declaredStyle.translateY, nativeInputScene.version, submittedFrameIndex,
+            animationDriver.isPositionActiveFor(node.identityKey),
+            revision > acceptedRevision || animationDriver.isPositionActiveFor(node.identityKey) ||
+                target.x != node.style.translateX || target.y != node.style.translateY,
+            positionLastFailure.get(node.identityKey) ?? "none"))
+    }
+
+    public func positionMotionSet(nodeId: Int64, casToken: String, x: Float64, y: Float64,
+        motionReference: String): CjguiSharedOperationPositionMotionDecision {
+        let current = positionMotionRead(nodeId)
+        let fact = match (current) {
+            case Some(value) => value
+            case None => return CjguiSharedOperationPositionMotionDecision(false,
+                if (isWindowOpen) { "target_unavailable" } else { "window_closed" }, None)
+        }
+        if (casToken != fact.casToken) {
+            return CjguiSharedOperationPositionMotionDecision(false, "version_conflict", current)
+        }
+        let spec = match (CjguiGeneratedMotionRegistry.specFor(motionReference)) {
+            case Some(value) => value
+            case None => return CjguiSharedOperationPositionMotionDecision(false, "unknown_motion_reference", current)
+        }
+        if (!cjguiAnimationIsFiniteScalar(x) || !cjguiAnimationIsFiniteScalar(y) ||
+            x < -1024.0 || x > 1024.0 || y < -1024.0 || y > 1024.0) {
+            return CjguiSharedOperationPositionMotionDecision(false, "invalid_target_geometry", current)
+        }
+        let acceptedToken = acceptedAnimationBindingToken(nativeInputScene.nodeForId(nodeId).identityKey)
+        if (!animateNodeTranslation(nativeInputScene.nodeForId(nodeId).identityKey, x, y,
+            spec: spec, atTime: MonoTime.now(), acceptedToken: acceptedToken)) {
+            return CjguiSharedOperationPositionMotionDecision(false, "invalid_target_geometry", current)
+        }
+        return CjguiSharedOperationPositionMotionDecision(true, "none", positionMotionRead(nodeId))
+    }
+
+    public func positionMotionClear(nodeId: Int64, casToken: String): CjguiSharedOperationPositionMotionDecision {
+        let current = positionMotionRead(nodeId)
+        let fact = match (current) {
+            case Some(value) => value
+            case None => return CjguiSharedOperationPositionMotionDecision(false,
+                if (isWindowOpen) { "target_unavailable" } else { "window_closed" }, None)
+        }
+        if (casToken != fact.casToken) {
+            return CjguiSharedOperationPositionMotionDecision(false, "version_conflict", current)
+        }
+        if (!cancelNodeTranslationAnimation(nativeInputScene.nodeForId(nodeId).identityKey)) {
+            let key = nativeInputScene.nodeForId(nodeId).identityKey
+            return CjguiSharedOperationPositionMotionDecision(false,
+                if (animationDriver.positionTargetFor(key).isSome()) { "invalid_target_geometry" } else { "motion_absent" }, current)
+        }
+        return CjguiSharedOperationPositionMotionDecision(true, "none", positionMotionRead(nodeId))
+    }
+
+    func testRejectNextPositionPresentation(): Unit {
+        testPositionPresentFailuresRemaining += 1
+    }
+
+    func testHoldNextComposablePresent(): Bool {
+        return isWindowOpen &&
+            internalRendererTestHoldNextComposablePresent(sessionToken) == CJGUI_INTERNAL_RENDERER_OK
+    }
+
+    func testResolvePendingComposablePresent(): Bool {
+        return pendingTransaction.isSome() &&
+            internalRendererTestResolvePendingComposablePresent(sessionToken) == CJGUI_INTERNAL_RENDERER_OK
+    }
+
     /// 取消一个身份上的动效，恢复该节点为它的 accepted 样式 paint。返回真表示
     /// 确有绑定被取消。
     public func cancelNodeOpacityAnimation(identityKey: String): Bool {
@@ -2175,8 +2765,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (!isWindowOpen || nativeInputScene.version <= 0) {
             return false
         }
+        // A mutation can be queued while the old native ticket is unresolved.
+        // Do not settle it as a side effect of the new request; the next pump
+        // settles the original picture, then presents the current intent.
+        if (pendingTransaction.isSome()) { return false }
         if (refreshInteractionPaintIfNeeded()) {
-            animationDriver.markPresentationCommitted()
             return true
         }
         return false
@@ -2441,23 +3034,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     }
 
     private func stageAnimationBindings(scene: CjguiComposableUiScene): Unit {
+        stagedPaintRevision = animationDriver.presentationRevision()
         let candidate = HashMap<String, CjguiComposableUiAnimationBinding>()
         let effectGroups = HashMap<String, CjguiComposableUiAnimationBinding>()
         for (node in scene.nodes()) {
-            let content = CjguiComposableUiWindow.animationBindingFor(node)
-            let previous = acceptedAnimationBindingTable.get(node.identityKey)
-            let epoch = match (previous) {
-                case Some(value) =>
-                    if (value.sameContent(content)) {
-                        value.acceptedBindingEpoch
-                    } else {
-                        nextAcceptedBindingEpoch += 1
-                        nextAcceptedBindingEpoch
-                    }
-                case None =>
-                    nextAcceptedBindingEpoch += 1
-                    nextAcceptedBindingEpoch
-            }
+            // The native AX binding and animation token use one semantic epoch.
+            // In particular, incarnation-only changes retire the old animation.
+            let epoch = Int64(candidateBindingEpoch(node, scene.version))
             let binding = CjguiComposableUiWindow.animationBindingFor(node,
                 windowInstanceToken: animationDriver.windowInstanceToken(), acceptedBindingEpoch: epoch)
             candidate.add(node.identityKey, binding)
@@ -2468,6 +3051,18 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         stagedAnimationBindingTable = candidate
         stagedEffectGroupBindingTable = effectGroups
         stagedInteractionColorTargets = HashMap<String, CjguiComposableUiPaintColorSet>()
+        stagedPositionSamples = HashMap<String, CjguiComposableUiPositionSample>()
+        stagedPositionRevision = animationDriver.positionRevision()
+        stagedPositionRequestRevisions = HashMap<String, Int64>()
+        for ((identityKey, revision) in positionRequestRevisions) {
+            if (let Some(nextBinding) <- candidate.get(identityKey)) {
+                if (let Some(previousBinding) <- acceptedAnimationBindingTable.get(identityKey)) {
+                    if (nextBinding.matches(previousBinding)) {
+                        stagedPositionRequestRevisions.add(identityKey, revision)
+                    }
+                }
+            }
+        }
     }
 
     /// Pixel equality alone cannot make a color-target change semantic-only:
@@ -2496,14 +3091,45 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return true
     }
 
-    private func commitStagedAnimationPaint(): Unit {
+    private func stagedPositionRequestAlreadyVisible(): Bool {
+        for ((identityKey, _) in stagedPositionRequestRevisions) {
+            var found = false
+            for (node in nativeInputScene.nodes()) {
+                if (node.identityKey == identityKey) {
+                    found = true
+                    let target = animationDriver.positionTargetFor(identityKey) ??
+                        CjguiComposableUiPositionValue(node.declaredStyle.translateX, node.declaredStyle.translateY)
+                    if (node.style.translateX != target.x || node.style.translateY != target.y ||
+                        animationDriver.isPositionActiveFor(identityKey)) { return false }
+                }
+            }
+            if (!found) { return false }
+        }
+        return true
+    }
+
+    private func commitStagedAnimationPaint(positionPresented!: Bool = true): Unit {
         // The accepted picture contains the current presented value. New
         // targets can schedule from their active channels after this commit.
+        let previousBindings = acceptedAnimationBindingTable
         acceptedAnimationBindingTable = stagedAnimationBindingTable
         acceptedEffectGroupBindingTable = stagedEffectGroupBindingTable
+        retireAcceptedPositionMotionMetadata(previousBindings)
         if (animationDriver.boundCount() > 0) {
             animationDriver.reconcileAccepted(acceptedAnimationBindingTable)
             animationDriver.reconcileEffectGroupAccepted(acceptedEffectGroupBindingTable)
+        }
+        animationDriver.markPositionSamplesAccepted(stagedPositionSamples, stagedPositionRevision)
+        animationDriver.markPresentationCommitted(revision: stagedPaintRevision)
+        if (positionPresented) {
+            for ((identityKey, revision) in stagedPositionRequestRevisions) {
+                if (let Some(current) <- positionRequestRevisions.get(identityKey)) {
+                    if (revision <= current) {
+                        acceptedPositionRequestRevisions.add(identityKey, revision)
+                        if (revision == current) { positionLastFailure.add(identityKey, "none") }
+                    }
+                }
+            }
         }
         for ((identityKey, target) in stagedInteractionColorTargets) {
             if (let Some(binding) <- acceptedAnimationBindingTable.get(identityKey)) {
@@ -2517,20 +3143,74 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         // A freshly settled baseline was already painted by this acceptance;
         // it must not request a redundant frame. Active retargets still tick.
-        animationDriver.markPresentationCommitted()
         stagedAnimationBindingTable = HashMap<String, CjguiComposableUiAnimationBinding>()
         stagedEffectGroupBindingTable = HashMap<String, CjguiComposableUiAnimationBinding>()
         stagedInteractionColorTargets = HashMap<String, CjguiComposableUiPaintColorSet>()
+        stagedPositionSamples = HashMap<String, CjguiComposableUiPositionSample>()
+        stagedPositionRevision = 0
+        stagedPaintRevision = 0
+        stagedPositionRequestRevisions = HashMap<String, Int64>()
+    }
+
+    /// Metadata follows the accepted semantic binding, not a reusable string
+    /// key. A rejected candidate never reaches this hook.
+    private func retireAcceptedPositionMotionMetadata(
+        previous: HashMap<String, CjguiComposableUiAnimationBinding>): Unit {
+        let keptExposures = ArrayList<String>()
+        let keptExposureBindings = HashMap<String, CjguiComposableUiAnimationBinding>()
+        for (key in exposedPositionMotionKeys) {
+            if (let Some(exposed) <- exposedPositionMotionBindings.get(key)) {
+                if (let Some(current) <- acceptedAnimationBindingTable.get(key)) {
+                    if (exposed.matches(current)) {
+                        keptExposures.add(key)
+                        keptExposureBindings.add(key, exposed)
+                    }
+                }
+            }
+        }
+        exposedPositionMotionKeys = keptExposures
+        exposedPositionMotionBindings = keptExposureBindings
+        let keptRequests = HashMap<String, Int64>()
+        let keptAccepted = HashMap<String, Int64>()
+        let keptModes = HashMap<String, String>()
+        let keptFailures = HashMap<String, String>()
+        for ((key, revision) in positionRequestRevisions) {
+            if (let Some(oldBinding) <- previous.get(key)) {
+                if (let Some(current) <- acceptedAnimationBindingTable.get(key)) {
+                    if (oldBinding.matches(current)) {
+                        keptRequests.add(key, revision)
+                        if (let Some(value) <- acceptedPositionRequestRevisions.get(key)) {
+                            keptAccepted.add(key, value)
+                        }
+                        if (let Some(value) <- positionRequestModes.get(key)) { keptModes.add(key, value) }
+                        if (let Some(value) <- positionLastFailure.get(key)) { keptFailures.add(key, value) }
+                    }
+                }
+            }
+        }
+        positionRequestRevisions = keptRequests
+        acceptedPositionRequestRevisions = keptAccepted
+        positionRequestModes = keptModes
+        positionLastFailure = keptFailures
     }
 
     private func discardStagedAnimationPaint(): Unit {
         stagedAnimationBindingTable = HashMap<String, CjguiComposableUiAnimationBinding>()
+        stagedEffectGroupBindingTable = HashMap<String, CjguiComposableUiAnimationBinding>()
         stagedInteractionColorTargets = HashMap<String, CjguiComposableUiPaintColorSet>()
+        stagedPositionSamples = HashMap<String, CjguiComposableUiPositionSample>()
+        stagedPositionRevision = 0
+        stagedPaintRevision = 0
+        stagedPositionRequestRevisions = HashMap<String, Int64>()
     }
 
     private func pumpWithRefreshPolicy(timeoutMs: UInt32, refreshNow: Bool): CjguiComposableUiWindowPumpResult {
         if (!isWindowOpen) {
             return result(false, false)
+        }
+        if (closeIntentPending || discardRetryReason.size > 0) {
+            let _ = refreshIfNeeded()
+            return result(isWindowOpen, false)
         }
         var didApply = false
         var requiresProjection = false
@@ -2554,14 +3234,21 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 testCloseEventKind = Int64(nativeEvent.eventKind)
                 testCloseNativeStatus = nativeEvent.status
                 discardSession("pump_session_closed")
-                return result(false, didApply)
+                return result(isWindowOpen, didApply)
             }
             if (nativeEvent.status != CJGUI_INTERNAL_RENDERER_OK) {
+                if (nativeEvent.status == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                    // AppKit rejected this call before reading the FIFO or touching
+                    // the session. The accepted projection and pending work remain
+                    // owned by this live window for a later legal owner turn.
+                    lastNativeFailure = "not_main_thread"
+                    return result(isWindowOpen, didApply)
+                }
                 if (!isRecoverableNativeStatus(nativeEvent.status)) {
                     testCloseEventKind = Int64(nativeEvent.eventKind)
                     testCloseNativeStatus = nativeEvent.status
                     discardSession("pump_native_status")
-                    return result(false, didApply)
+                    return result(isWindowOpen, didApply)
                 }
                 let _ = noteRefreshFailure(nativeEvent.status)
                 return result(true, didApply)
@@ -2583,7 +3270,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 didApply = didApply || rejection.didApply
                 if (rejection.shouldClose) {
                     close();
-                    return result(false, didApply)
+                    return result(isWindowOpen, didApply)
                 }
                 requiresProjection = true
             } else if (nativeEvent.eventKind == 24u32) {
@@ -2591,7 +3278,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 didApply = didApply || closeResult.didApply
                 if (closeResult.shouldClose) {
                     close();
-                    return result(false, didApply)
+                    return result(isWindowOpen, didApply)
                 }
                 requiresProjection = true
             } else if (nativeEvent.eventKind >= 37u32 && nativeEvent.eventKind <= 40u32) {
@@ -2599,7 +3286,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 didApply = didApply || dispatch.didApply
                 if (dispatch.shouldClose) {
                     close()
-                    return result(false, didApply)
+                    return result(isWindowOpen, didApply)
                 }
                 // A pointer phase may change only controller-local visual
                 // state.  Keep the ordinary coalesced projection path rather
@@ -2614,7 +3301,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     nativeEvent.nodeKind, nativeEvent.projectionVersion)) {
                     requiresInteractionPaint = true
                 }
-            } else if (nativeEvent.eventKind >= 48u32 && nativeEvent.eventKind <= 50u32) {
+            } else if ((nativeEvent.eventKind >= 48u32 && nativeEvent.eventKind <= 50u32) ||
+                nativeEvent.eventKind == 53u32 || nativeEvent.eventKind == 54u32) {
+                let eventSessionIdentity = windowSessionIdentity
+                let deliveryOrdinal = internalRendererDataTransferEventDeliveryOrdinal(sessionToken)
                 // Match the receiver's accepted incarnation rather than the
                 // global scene version: unrelated redraws do not revoke it,
                 // while disable/rebind/re-add invalidates an older FIFO item.
@@ -2632,20 +3322,91 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 }
                 if (resolved.nodeId == nodeId) {
                     let eventKind = Int64(nativeEvent.eventKind)
+                    let eventId = nativeEvent.dataTransferEventId
+                    let sourceKind = internalRendererDataTransferEventSourceKind(sessionToken)
+                    let capturedOwnerVersion = internalRendererDataTransferEventExpectedOwnerVersion(sessionToken)
+                    var receiptAdmission = "copy"
+                    if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
+                        let originKind = if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_FILE_TRANSFER_BEGIN ||
+                            eventKind == CJGUI_COMPOSABLE_UI_EVENT_FILE_TRANSFER_REJECTED) {
+                            Int64(nativeEvent.recordIndex)
+                        } else { eventKind }
+                        receiptAdmission = beginTransferReceipt(eventSessionIdentity, eventId,
+                            deliveryOrdinal, originKind, resolved, nativeEvent.bindingEpoch,
+                            sourceKind, capturedOwnerVersion,
+                            if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_FILE_TRANSFER_BEGIN) {
+                                "reading"
+                            } else { "queued" })
+                        if (receiptAdmission == "capacity_rejected") {
+                            if (let Some(provider) <- dataTransferProvider()) {
+                                let _ = provider.rejectDataTransfer(nodeId, eventKind,
+                                    "receipt_capacity_exceeded")
+                            }
+                            requiresProjection = true
+                            continue
+                        }
+                        if (receiptAdmission == "replayed" || receiptAdmission == "invalid_delivery" ||
+                            receiptAdmission == "capacity_unobservable") { continue }
+                    }
+                    if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_FILE_TRANSFER_BEGIN) {
+                        continue
+                    }
+                    if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_FILE_TRANSFER_REJECTED) {
+                        let prior = transferReceipt(eventSessionIdentity, eventId)
+                        if (let Some(value) <- prior.receipt) {
+                            if (transferReceiptIsFinal(value)) { continue }
+                        }
+                        let reason = internalRendererFormEventText(sessionToken)
+                        settleTransferReceipt(eventSessionIdentity, eventId, "rejected", reason, "", None)
+                        if (let Some(provider) <- dataTransferProvider()) {
+                            let _ = provider.rejectDataTransfer(nodeId, eventKind, reason)
+                        }
+                        requiresProjection = true
+                        continue
+                    }
+                    let existingReceipt = transferReceipt(eventSessionIdentity, eventId)
+                    if (let Some(prior) <- existingReceipt.receipt) {
+                        if (prior.state == "owner_accepted" || transferReceiptIsFinal(prior)) {
+                            continue
+                        }
+                    }
+                    let dispatchKey = "${eventSessionIdentity}:${eventId}"
+                    if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
+                        if (transferReceiptDispatchClaims.get(dispatchKey).isSome()) { continue }
+                        let _ = transferReceiptDispatchClaims.add(dispatchKey, true)
+                    }
                     let binaryBytes: ?Array<Byte> = if (nativeFormat == "image/png" && eventKind !=
                         CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
-                        internalRendererDataTransferEventBinary(sessionToken, nativeEvent.dataTransferEventId)
+                        internalRendererDataTransferEventBinary(sessionToken, eventId)
                     } else { None }
                     let dispatch = applyDataTransfer(resolved, eventKind, internalRendererFormEventText(sessionToken),
                         binaryBytes, nativeFormat,
-                        internalRendererDataTransferEventSourceKind(sessionToken),
+                        sourceKind,
                         internalRendererDataTransferEventSourceIdentity(sessionToken),
                         internalRendererDataTransferEventSourceId(sessionToken), Int64(nativeEvent.projectionVersion),
-                        nativeEvent.bindingEpoch)
+                        nativeEvent.bindingEpoch, capturedOwnerVersion, eventId)
+                    if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
+                        let _ = transferReceiptDispatchClaims.remove(dispatchKey)
+                        let digest = lastTransferOfferDigest
+                        if (let Some(result) <- dispatch.transferResult) {
+                            settleTransferReceipt(eventSessionIdentity, eventId,
+                                if (result.applied) { "owner_accepted" } else {
+                                "rejected"
+                            }, result.reason, digest, Some(result))
+                        } else {
+                            settleTransferReceipt(eventSessionIdentity, eventId, if (dispatch.didApply) {
+                                "owner_result_unavailable"
+                            } else { "rejected" }, if (dispatch.didApply) {
+                                "owner_result_unavailable"
+                            } else if (lastTransferRejectionReason.size > 0) {
+                                lastTransferRejectionReason
+                            } else { "provider_rejected" }, digest, None)
+                        }
+                    }
                     didApply = didApply || dispatch.didApply
                     if (dispatch.shouldClose) {
                         close()
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     // Copy acknowledgement and rejected paste/drop are visible
                     // consumer-local state.  A successful target consumes the
@@ -2653,11 +3414,43 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     // path as every normal human action.
                     requiresProjection = true
                 } else {
+                    if (nativeEvent.eventKind >= 49u32 && nativeEvent.eventKind <= 54u32) {
+                        let eventId = nativeEvent.dataTransferEventId
+                        var staleAdmission = "unbound"
+                        for (captured in transferBindingHistory) {
+                            if (captured.bindingEpoch == nativeEvent.bindingEpoch &&
+                                captured.node.nodeId == nodeId &&
+                                captured.node.resourceId == nativeEvent.resourceId &&
+                                captured.node.nodeKind == Int64(nativeEvent.nodeKind)) {
+                                let originKind = if (nativeEvent.eventKind == 53u32 ||
+                                    nativeEvent.eventKind == 54u32) {
+                                    Int64(nativeEvent.recordIndex)
+                                } else { Int64(nativeEvent.eventKind) }
+                                staleAdmission = beginTransferReceipt(eventSessionIdentity, eventId,
+                                    deliveryOrdinal, originKind, captured.node,
+                                    nativeEvent.bindingEpoch,
+                                    internalRendererDataTransferEventSourceKind(sessionToken),
+                                    internalRendererDataTransferEventExpectedOwnerVersion(sessionToken),
+                                    "queued")
+                                break
+                            }
+                        }
+                        if (staleAdmission == "replayed" || staleAdmission == "invalid_delivery" ||
+                            staleAdmission == "capacity_unobservable") { continue }
+                        if (staleAdmission == "existing") {
+                            let prior = transferReceipt(eventSessionIdentity, eventId)
+                            if (let Some(value) <- prior.receipt) {
+                                if (transferReceiptIsFinal(value)) { continue }
+                            }
+                        }
+                        settleTransferReceipt(eventSessionIdentity, eventId,
+                            "cancelled", "stale_target", "", None)
+                    }
                     let rejection = controller.rejectUiEvent(Int64(nativeEvent.eventKind), nodeId)
                     didApply = didApply || rejection.didApply
                     if (rejection.shouldClose) {
                         close()
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     requiresProjection = true
                 }
@@ -2716,7 +3509,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     didApply = didApply || selection.didApply
                     if (selection.shouldClose) {
                         close();
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     }
                 }
@@ -2731,7 +3524,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     didApply = didApply || dispatch.didApply
                     if (dispatch.shouldClose) {
                         close()
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     requiresProjection = true
                 }
@@ -2746,7 +3539,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     didApply = didApply || dispatch.didApply
                     if (dispatch.shouldClose) {
                         close();
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     requiresProjection = true
                 }
@@ -2809,7 +3602,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     didApply = didApply || caretDispatch.didApply
                     if (caretDispatch.shouldClose) {
                         close()
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     requiresProjection = true
                 } else if (titleOwnsKeyboard) {
@@ -2843,7 +3636,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     didApply = didApply || dispatch.didApply
                     if (dispatch.shouldClose) {
                         close();
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     requiresProjection = true
                 } else {
@@ -2851,7 +3644,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     didApply = didApply || rejection.didApply
                     if (rejection.shouldClose) {
                         close();
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     requiresProjection = true
                 }
@@ -2878,6 +3671,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     resolved = nativeInputScene.resolvePointerTarget(nodeId, nativeEvent.resourceId,
                         Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
                 }
+                if (resolved.nodeId != nodeId && nativeEvent.eventKind == 30u32 && nativeEvent.nodeId != 0u64) {
+                    // A wheel gesture resolves by DECLARATION, not by node kind:
+                    // native routing already admits a plain container that
+                    // declared wheelScrollable, and this is the other half of
+                    // that capability. Without it the intent dies here even
+                    // though the framework routed it (B, 2026-09-28). This
+                    // resolver is scroll-only: such a container is still not a
+                    // click/keyboard/focus input target.
+                    resolved = nativeInputScene.resolveWheelTarget(nodeId, nativeEvent.resourceId,
+                        Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
+                }
                 let continuation = if (resolved.nodeId == nodeId) {
                     resolved
                 } else {
@@ -2890,31 +3694,36 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         Int64(nativeEvent.projectionVersion)
                     )
                 }
+                let gestureBindingReady = nativeEvent.gestureEpoch == 0u64 ||
+                    (nativeEvent.gestureAppInstance != 0u64 && nativeEvent.gestureComponentInstance != 0u64 &&
+                    nativeEvent.gestureSurfaceGeneration != 0u64 && nativeEvent.gesturePointerId >= 0 &&
+                    nativeEvent.acceptedBindingEpoch != 0u64 &&
+                    currentAcceptedBindingEpoch(continuation) == nativeEvent.acceptedBindingEpoch)
                 // A viewport-bound scroll area is owned by the framework: the
                 // real wheel gesture changes the shared viewport request and the
                 // next commit presents the new offset. The business version,
                 // drafts and selection are untouched, and no field write is
                 // invented to drive the viewport.
-                let viewportScrollApplied = nativeEvent.eventKind == 30u32 && continuation.nodeId == nodeId &&
+                let viewportScrollApplied = gestureBindingReady && nativeEvent.eventKind == 30u32 && continuation.nodeId == nodeId &&
                     applyViewportScrollStep(continuation, eventText)
                 // Tab can land on a legal control that is currently clipped out of
                 // its viewport. Reveal it and let this commit present the new
                 // offset: the focused identity does not change, so the keyboard
                 // reaches an editor below the fold without a coordinate guess.
-                let viewportFocusRevealed = nativeEvent.eventKind == 31u32 && continuation.nodeId == nodeId &&
+                let viewportFocusRevealed = gestureBindingReady && nativeEvent.eventKind == 31u32 && continuation.nodeId == nodeId &&
                     revealAcceptedNodeIfNeeded(continuation.nodeId)
                 // A tab TITLE is a framework-owned view intent: pointer activation
                 // and the keyboard both switch the shared tab state, so a page
                 // switch is presented by the next commit without a business write.
-                let tabsIntentConsumed = nativeEvent.eventKind == 27u32 && continuation.nodeId == nodeId &&
+                let tabsIntentConsumed = gestureBindingReady && nativeEvent.eventKind == 27u32 && continuation.nodeId == nodeId &&
                     continuation.isTabTitle() && continuation.isEnabled && applyTabsActivationStep(continuation)
                 if (tabsIntentConsumed) {
                     didApply = true
                     requiresProjection = true
                 }
-                let rejectsReboundPressActivation = nativeEvent.eventKind == 27u32 && consumeSuppressedPressActivation(
+                let rejectsReboundPressActivation = gestureBindingReady && nativeEvent.eventKind == 27u32 && consumeSuppressedPressActivation(
                     continuation)
-                if (continuation.nodeId == nodeId && !rejectsReboundPressActivation && !tabsIntentConsumed) {
+                if (gestureBindingReady && continuation.nodeId == nodeId && !rejectsReboundPressActivation && !tabsIntentConsumed) {
                     let controllerVersionBefore = controller.uiSceneVersion()
                     rememberInteraction(continuation, Int64(nativeEvent.eventKind), Int64(nativeEvent.selectionStart),
                         Int64(nativeEvent.selectionEnd))
@@ -2937,6 +3746,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                                 // zero here and are unaffected.
                                 pointerX: Int64(nativeEvent.pointerX),
                                 pointerY: Int64(nativeEvent.pointerY),
+                                pointerVisualX: nativeEvent.pointerVisualX,
+                                pointerVisualY: nativeEvent.pointerVisualY,
+                                pointerTranslateX: nativeEvent.pointerTranslateX,
+                                pointerTranslateY: nativeEvent.pointerTranslateY,
+                                pointerGeometryAccepted: nativeEvent.pointerGeometryAccepted,
                                 // A queued pointer activation keeps the modifier
                                 // state observed when that pointer event happened;
                                 // keyboard/AX activations are enqueued with zero
@@ -2952,7 +3766,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     }
                     if (dispatch.shouldClose) {
                         close();
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     if ((nativeEvent.eventKind == 28u32 || nativeEvent.eventKind == 51u32) && !dispatch.didApply &&
                         isEditableTextNodeKind(continuation.nodeKind)) {
@@ -3006,7 +3820,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     didApply = didApply || rejection.didApply
                     if (rejection.shouldClose) {
                         close();
-                        return result(false, didApply)
+                        return result(isWindowOpen, didApply)
                     }
                     requiresProjection = true
                 }
@@ -3020,7 +3834,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 deferredEventWork = true
             }
             if (refreshNow && !refreshIfNeeded() && !isWindowOpen) {
-                return result(false, didApply)
+                return result(isWindowOpen, didApply)
             }
         } else if (requiresInteractionPaint) {
             if (refreshNow) {
@@ -3038,9 +3852,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     }
 
     public func close() {
+        if (!isWindowOpen) {
+            return
+        }
+        closeIntentPending = true
         // A1：关闭前先尝试结算原票据。仍未定时不得谎称已关闭——native 会拒绝
         // 销毁未结算的会话，核心同样把窗口留在“关闭未完成”，等 owner 继续结算。
         if (settlePendingPresent()) {
+            if (!isWindowOpen) {
+                return
+            }
             match (pendingTransaction) {
                 case Some(tx) =>
                     if (tx.ackCompleted && !tx.coreSettled) {
@@ -3053,13 +3874,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     // A1：持久记录关闭意图。票据结算（Accepted 按事实收尾 /
                     // Rejected 回滚）完成后由刷新门自动完成本次 close；
                     // 关闭态不再恢复焦点/挂代理。
-                    closeIntentPending = true
                     pendingRefreshReason = "close_pending_settlement"
                     lastNativeFailure = "close_pending_settlement"
                     startupPhase = "close_pending_settlement"
                     return
                 case None => ()
             }
+        }
+        if (!isWindowOpen) {
+            return
         }
         if (isWindowOpen) {
             let _ = internalRendererRequestClose(sessionToken)
@@ -3091,6 +3914,47 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             status = cjgui_internal_renderer_cancel_composition(this.sessionToken, inout hadMarked, inout returned)
         }
         return "status=${status} had_marked=${hadMarked} returned=${returned}"
+    }
+
+    /// Reanchor the live platform composition onto a new proxy base instead of
+    /// cancelling it. `newBaseText` is the new owner projection the platform
+    /// should hold once the preedit is removed; the preedit itself is installed
+    /// at `[replacementStart16, +replacementLength16)` of that base. The window
+    /// supplies the native identity from its accepted binding (the presentation
+    /// surface when one is adopted, else the owned text surface). Native
+    /// validates the exact node/resource/kind/scene and the live marked run and
+    /// reads back the installed text, marked range, attributes and selection
+    /// before signing; a refused receipt changed nothing.
+    public func reanchorActiveComposition(newBaseText: String, replacementStart16: Int64,
+        replacementLength16: Int64): CjguiCompositionReanchorReceipt {
+        if (!isWindowOpen) {
+            return CjguiCompositionReanchorReceipt.refused(CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED)
+        }
+        let nodeId = if (presentationTextSessionNodeId >= 0) {
+            presentationTextSessionNodeId
+        } else {
+            ownedTextSessionNodeId
+        }
+        let resourceId = if (presentationTextSessionNodeId >= 0) {
+            presentationTextSessionResourceId
+        } else {
+            ownedTextSessionResourceId
+        }
+        let nodeKind = if (presentationTextSessionNodeId >= 0) {
+            CJGUI_COMPOSABLE_UI_TEXT
+        } else {
+            ownedTextSessionNodeKind
+        }
+        if (nodeId < 0 || resourceId < 0 || nodeKind < 0) {
+            return CjguiCompositionReanchorReceipt.refused(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+        }
+        let reanchored = internalRendererReanchorComposition(sessionToken, nodeId, resourceId, nodeKind,
+            nativeInputScene.version, newBaseText, replacementStart16, replacementLength16)
+        if (reanchored[0] != CJGUI_INTERNAL_RENDERER_OK) {
+            return CjguiCompositionReanchorReceipt.refused(reanchored[0])
+        }
+        return CjguiCompositionReanchorReceipt(true, reanchored[1], reanchored[2], reanchored[3],
+            reanchored[4], reanchored[5], reanchored[0])
     }
 
     /// The native window number of this window, so a capture can name the window it wants.
@@ -3230,6 +4094,20 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         return None
     }
+    /// Exact logical-point presentation bounds of an accepted semantic node.
+    /// `acceptedNodeBounds` remains the integer layout rectangle.
+    public func acceptedNodeVisualBounds(semanticId: String): ?CjguiComposableUiVisualRect {
+        if (!isWindowOpen) { return None }
+        let nodes = renderedScene.nodes()
+        var index: Int64 = 0
+        while (index < nodes.size) {
+            if (nodes[index].semanticId == semanticId) {
+                return Some(renderedScene.visualGeometryAt(index).visualBounds(nodes[index].bounds))
+            }
+            index += 1
+        }
+        return None
+    }
 
     /// Number of nodes in the window's accepted scene (0 when nothing is
     /// accepted). Read-only: it reports what the window committed, so a caller
@@ -3304,6 +4182,96 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         diagnosticOverlayOptions = options
         diagnosticOverlayStatus = if (options.enabled) { "enabled" } else { "disabled" }
         return true
+    }
+
+    /// Explicitly enables publication of the bounded workload scalars in
+    /// `diagnosticSnapshot`. Native counts the work points in normal builds and
+    /// this call changes no scene, submission or refresh behavior: disabled
+    /// reads publish -1 with status "disabled", enabled reads report the last
+    /// completed refresh attempt and the session totals. Reads themselves never
+    /// trigger a refresh, a clone or a submission.
+    public func setWorkloadDiagnostics(enabled: Bool): Bool {
+        if (!isWindowOpen) {
+            workloadDiagnosticsStatus = "closed"
+            return false
+        }
+        workloadDiagnosticsEnabled = enabled
+        workloadDiagnosticsStatus = if (enabled) { "enabled" } else { "disabled" }
+        return true
+    }
+
+    /// Captures the session totals at the start of one refresh attempt so its
+    /// own cost can be attributed at the accept/reject terminal.
+    private func beginWorkloadAttempt(): Unit {
+        timingAttemptActive = true
+        if (!workloadDiagnosticsEnabled || !isWindowOpen ||
+            sessionToken == CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
+            workloadAttemptBaseValid = false
+            return
+        }
+        var workload = CjguiInternalRendererDiagnosticWorkload()
+        let status = unsafe { cjgui_internal_renderer_diagnostic_workload(sessionToken, inout workload) }
+        if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            workloadAttemptBaseValid = false
+            workloadDiagnosticsStatus = "native_unavailable"
+            return
+        }
+        workloadAttemptBase = workload
+        workloadAttemptBaseValid = true
+    }
+
+    /// Stores the attempt's deltas at its accept or reject terminal. It is a
+    /// no-op when observation is disabled or the attempt never captured a base.
+    private func finalizeWorkloadAttempt(result: String): Unit {
+        if (timingAttemptActive) {
+            timingAttemptActive = false
+            let build = lastRefreshTiming.buildNanoseconds
+            let layout = lastRefreshTiming.layoutNanoseconds
+            let native = lastRefreshTiming.nativeStageAndSubmitNanoseconds
+            if (build > 0) {
+                totalBuildNanoseconds = if (totalBuildNanoseconds > Int64.Max - build) {
+                    Int64.Max
+                } else { totalBuildNanoseconds + build }
+            }
+            if (layout > 0) {
+                totalLayoutNanoseconds = if (totalLayoutNanoseconds > Int64.Max - layout) {
+                    Int64.Max
+                } else { totalLayoutNanoseconds + layout }
+            }
+            if (native > 0) {
+                totalNativeStageAndSubmitNanoseconds = if (
+                    totalNativeStageAndSubmitNanoseconds > Int64.Max - native) {
+                    Int64.Max
+                } else { totalNativeStageAndSubmitNanoseconds + native }
+            }
+        }
+        if (!workloadAttemptBaseValid) { return }
+        workloadAttemptBaseValid = false
+        var workload = CjguiInternalRendererDiagnosticWorkload()
+        let status = unsafe { cjgui_internal_renderer_diagnostic_workload(sessionToken, inout workload) }
+        if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            workloadDiagnosticsStatus = "native_unavailable"
+            return
+        }
+        workloadLastResult = result
+        workloadLastNodeWrites = workloadDelta(workload.nodeWriteCount, workloadAttemptBase.nodeWriteCount)
+        workloadLastNodeClones = workloadDelta(workload.nodeCloneCount, workloadAttemptBase.nodeCloneCount)
+        workloadLastNodeAllocations = workloadDelta(workload.nodeAllocationCount,
+            workloadAttemptBase.nodeAllocationCount)
+        workloadLastTextLayoutPreparations = workloadDelta(workload.textLayoutPreparationCount,
+            workloadAttemptBase.textLayoutPreparationCount)
+        workloadLastImageDecodeStarts = workloadDelta(workload.imageDecodeStartCount,
+            workloadAttemptBase.imageDecodeStartCount)
+    }
+
+    private func workloadDelta(current: UInt64, base: UInt64): Int64 {
+        if (current <= base) { return 0 }
+        let delta = current - base
+        return if (delta > UInt64(Int64.Max)) { Int64.Max } else { Int64(delta) }
+    }
+
+    private func workloadScalar(value: UInt64): Int64 {
+        return if (value > UInt64(Int64.Max)) { Int64.Max } else { Int64(value) }
     }
 
     /// Bounded immutable values from the currently accepted scene. Pagination
@@ -3390,6 +4358,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let resourcesMatch = resourcesStatus == CJGUI_INTERNAL_RENDERER_OK &&
             submittedFrameIndex >= 0 && resources.sceneVersion == UInt64(acceptedVersion) &&
             resources.frameIndex == UInt64(submittedFrameIndex)
+        var workload = CjguiInternalRendererDiagnosticWorkload()
+        var workloadAvailable = false
+        if (active && workloadDiagnosticsEnabled) {
+            let workloadStatus = unsafe { cjgui_internal_renderer_diagnostic_workload(sessionToken, inout workload) }
+            workloadAvailable = workloadStatus == CJGUI_INTERNAL_RENDERER_OK
+            if (!workloadAvailable) {
+                workloadDiagnosticsStatus = "native_unavailable"
+            }
+        }
+        let workloadSceneVersion = if (workloadAvailable) { Int64(workload.sceneVersion) } else { -1 }
         return CjguiComposableUiDiagnosticSnapshot(state, session, acceptedVersion,
             if (active) { submittedSceneVersion } else { -1 },
             if (active) { submittedFrameIndex } else { -1 },
@@ -3406,13 +4384,70 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             if (resourcesMatch) { Int64(resources.cachedEffectBytes) } else { -1 },
             -1, -1, -1, -1, -1, diagnosticOverlayOptions.enabled, diagnosticOverlayStatus,
             Int64(diagnosticOverlayFlags(diagnosticOverlayOptions)),
-            if (resourcesMatch) { Int64(resources.overlayDrawCount) } else { -1 })
+            if (resourcesMatch) { Int64(resources.overlayDrawCount) } else { -1 },
+            workloadEnabled: workloadDiagnosticsEnabled,
+            workloadStatus: workloadDiagnosticsStatus,
+            workloadSceneVersion: workloadSceneVersion,
+            nodeWriteCount: if (workloadAvailable) { workloadScalar(workload.nodeWriteCount) } else { -1 },
+            nodeCloneCount: if (workloadAvailable) { workloadScalar(workload.nodeCloneCount) } else { -1 },
+            nodeAllocationCount: if (workloadAvailable) { workloadScalar(workload.nodeAllocationCount) } else { -1 },
+            textLayoutPreparationCount: if (workloadAvailable) {
+                workloadScalar(workload.textLayoutPreparationCount)
+            } else {
+                -1
+            },
+            imageDecodeStartCount: if (workloadAvailable) { workloadScalar(workload.imageDecodeStartCount) } else {
+                -1
+            },
+            reusableResourceBytes: if (workloadAvailable) { workloadScalar(workload.reusableResourceBytes) } else {
+                -1
+            },
+            lastAttemptWorkloadResult: if (workloadDiagnosticsEnabled) { workloadLastResult } else { "none" },
+            lastAttemptNodeWrites: if (workloadDiagnosticsEnabled) { workloadLastNodeWrites } else { -1 },
+            lastAttemptNodeClones: if (workloadDiagnosticsEnabled) { workloadLastNodeClones } else { -1 },
+            lastAttemptNodeAllocations: if (workloadDiagnosticsEnabled) { workloadLastNodeAllocations } else { -1 },
+            lastAttemptTextLayoutPreparations: if (workloadDiagnosticsEnabled) {
+                workloadLastTextLayoutPreparations
+            } else {
+                -1
+            },
+            lastAttemptImageDecodeStarts: if (workloadDiagnosticsEnabled) { workloadLastImageDecodeStarts } else {
+                -1
+            },
+            geometry: if (active) { lastGeometry } else { CjguiSharedOperationWindowGeometry.unavailable() },
+            totalBuildNanoseconds: if (active) { totalBuildNanoseconds } else { -1 },
+            totalLayoutNanoseconds: if (active) { totalLayoutNanoseconds } else { -1 },
+            totalNativeStageAndSubmitNanoseconds: if (active) {
+                totalNativeStageAndSubmitNanoseconds
+            } else { -1 },
+            textRasterCount: if (workloadAvailable) { workloadScalar(workload.textRasterCount) } else { -1 },
+            textRasterBytes: if (workloadAvailable) { workloadScalar(workload.textRasterBytes) } else { -1 },
+            textRasterMicros: if (workloadAvailable) { workloadScalar(workload.textRasterMicros) } else { -1 },
+            textUploadCount: if (workloadAvailable) { workloadScalar(workload.textUploadCount) } else { -1 },
+            textUploadBytes: if (workloadAvailable) { workloadScalar(workload.textUploadBytes) } else { -1 },
+            textUploadMicros: if (workloadAvailable) { workloadScalar(workload.textUploadMicros) } else { -1 },
+            textTextureLiveBytes: if (workloadAvailable) {
+                workloadScalar(workload.textTextureLiveBytes)
+            } else { -1 },
+            textCandidatePeakBytes: if (workloadAvailable) {
+                workloadScalar(workload.textCandidatePeakBytes)
+            } else { -1 })
+    }
+
+    /// Test-only: enable/disable the bounded per-write trace above.
+    public func testSetSceneWriteTrace(enabled: Bool): Unit {
+        this.sceneWriteTraceEnabled = enabled
     }
 
     /// Test-only: why this window first stopped being open ("" while it is open),
     /// with the native event kind/status that triggered it when there was one.
     public func testCloseTrace(): String {
         if (testCloseReason.size == 0) {
+            if (discardRetryReason.size > 0 || closeIntentPending) {
+                return "pending reason=${discardRetryReason} close_intent=${closeIntentPending} " +
+                    "refresh=${pendingRefreshReason} event_kind=${testCloseEventKind} " +
+                    "native_status=${testCloseNativeStatus} last_status=${lastNativeStatus}"
+            }
             return "open"
         }
         return "reason=${testCloseReason} event_kind=${testCloseEventKind} native_status=${testCloseNativeStatus}"
@@ -4038,6 +5073,25 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         } else {
             "unavailable"
         }
+        var nativeWorkload = CjguiInternalRendererDiagnosticWorkload()
+        let workloadReadable = workloadDiagnosticsEnabled &&
+            unsafe { cjgui_internal_renderer_diagnostic_workload(sessionToken, inout nativeWorkload) } ==
+                CJGUI_INTERNAL_RENDERER_OK
+        let windowWorkload = if (workloadReadable) {
+            CjguiSharedOperationWindowWorkload("enabled", workloadScalar(nativeWorkload.sceneVersion),
+                workloadScalar(nativeWorkload.nodeWriteCount), workloadScalar(nativeWorkload.nodeCloneCount),
+                workloadScalar(nativeWorkload.nodeAllocationCount),
+                workloadScalar(nativeWorkload.textLayoutPreparationCount),
+                workloadScalar(nativeWorkload.imageDecodeStartCount),
+                workloadScalar(nativeWorkload.reusableResourceBytes), workloadLastResult,
+                workloadLastNodeWrites, workloadLastNodeClones, workloadLastNodeAllocations,
+                workloadLastTextLayoutPreparations, workloadLastImageDecodeStarts)
+        } else if (workloadDiagnosticsEnabled) {
+            CjguiSharedOperationWindowWorkload("native_unavailable", -1, -1, -1, -1, -1, -1, -1,
+                "none", -1, -1, -1, -1, -1)
+        } else {
+            CjguiSharedOperationWindowWorkload.disabled()
+        }
         return CjguiSharedOperationWindowProgress(
             true,
             renderedScene.version,
@@ -4068,6 +5122,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             },
             activeLayerId,
             focusState: focusState,
+            geometry: lastGeometry,
+            workload: windowWorkload,
             viewportFacts: viewportFacts,
             effectIdentity: if (effectRequestedRadiusPoints > 0) { "root_backdrop" } else { "none" },
             effectRequestedRadiusPoints: effectRequestedRadiusPoints,
@@ -4137,6 +5193,21 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         effectModeCode = progress.effectMode
         effectFallbackReasonCode = progress.effectFallbackReason
         effectCompletionCode = progress.effectCompletion
+        let geometry = progress.geometry
+        let committed = progress.submittedFrameIndex > 0u64 && geometry.submittedBackingScale > 0.0
+        lastGeometry = CjguiSharedOperationWindowGeometry(
+            "available", geometry.currentPointWidth, geometry.currentPointHeight,
+            geometry.currentBackingScale, Int64(geometry.currentDrawableWidthPixels),
+            Int64(geometry.currentDrawableHeightPixels), Int64(geometry.currentGeometryRevision),
+            if (committed) { "committed" } else { "none" },
+            if (committed) { geometry.submittedPointWidth } else { 0.0 },
+            if (committed) { geometry.submittedPointHeight } else { 0.0 },
+            if (committed) { geometry.submittedBackingScale } else { 0.0 },
+            if (committed) { Int64(geometry.submittedDrawableWidthPixels) } else { 0 },
+            if (committed) { Int64(geometry.submittedDrawableHeightPixels) } else { 0 },
+            if (committed) { Int64(geometry.submittedGeometryRevision) } else { -1 },
+            if (committed) { Int64(geometry.submittedSceneVersion) } else { -1 },
+            if (committed) { Int64(progress.submittedFrameIndex) } else { -1 })
     }
 
     private func currentBusinessOwnerRevision(): Int64 {
@@ -4154,6 +5225,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // Reset at the exact real-refresh boundary. Unreached phases retain
         // -1 on a rejection rather than borrowing a prior successful pass.
         lastRefreshTiming = CjguiComposableUiRefreshTiming()
+        beginWorkloadAttempt()
         // A resize generation also advances for a same-point backing-scale
         // transition. AppKit text metrics may legitimately differ while the
         // logical bounds remain equal, so no per-session entry crosses it.
@@ -4321,6 +5393,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     })
             }
             let paintScene = sceneWithResolvedInteractionPaint(scene)
+            if (!positionTargetGeometryAllowedInScene(scene, stagedAnimationBindingTable,
+                "", None, false) || !paintScene.isValid()) {
+                return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
+                    reason: "invalid_target_geometry")
+            }
             // Do not let deterministic fallback geometry look like a successful
             // production AppKit projection. The previous committed scene remains
             // live because no native staging call has occurred yet.
@@ -4482,6 +5559,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 // boundary may promote derived layout candidates.
                 layoutReuseCache.commitPass()
                 reconcilePointerCaptureAfterProjection()
+                lastReportedSceneRejection = ""
+                finalizeWorkloadAttempt("accepted")
                 return true
             }
             nextProjectionVersion = candidateVersion
@@ -4542,6 +5621,44 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     index += 1
                     continue
                 }
+                if (sceneWriteTraceEnabled) {
+                    // Discriminating record: name the node and the FIRST field
+                    // that disagreed, so a repeated rewrite of untouched
+                    // structure is attributable instead of being an aggregate.
+                    var reason = "new_index"
+                    var previousRect = ""
+                    var previousClip = ""
+                    if (index < previousNativeNodes.size) {
+                        let previousNode = previousNativeNodes[index]
+                        previousRect = "${previousNode.bounds.x},${previousNode.bounds.y}," +
+                            "${previousNode.bounds.width},${previousNode.bounds.height}"
+                        previousClip = "${previousNode.clip.x},${previousNode.clip.y}," +
+                            "${previousNode.clip.width},${previousNode.clip.height}"
+                        if (!sameLayoutNode(previousNode, node)) {
+                            if (isVisuallyNeutralGroup(previousNode) && isVisuallyNeutralGroup(node)) {
+                                reason = "identity"
+                            } else if (!sameRect(previousNode.bounds, node.bounds)) {
+                                reason = "rect"
+                            } else if (!sameRect(previousNode.clip, node.clip)) {
+                                reason = "clip"
+                            } else if (!sameStyle(previousNode.style, node.style)) {
+                                reason = "style"
+                            } else {
+                                reason = "runs"
+                            }
+                        } else if (previousNativeInputScope != nativeInputScope) {
+                            reason = "scope"
+                        } else {
+                            reason = "focused_editor"
+                        }
+                    }
+                    println("CJGUI_SCENE_WRITE index=${index} nodeId=${node.nodeId} kind=${node.nodeKind} " +
+                        "layerKind=[${node.layerKind}] reason=${reason} " +
+                        "prev=[${previousRect}] cur=[${node.bounds.x},${node.bounds.y},${node.bounds.width}," +
+                        "${node.bounds.height}] prev_clip=[${previousClip}] cur_clip=[${node.clip.x}," +
+                        "${node.clip.y},${node.clip.width},${node.clip.height}] neutral=${isVisuallyNeutralGroup(node)} " +
+                        "scope=${previousNativeInputScope}->${nativeInputScope} reuse_candidate=${canReuseStagedNativeNode}")
+                }
                 let style = node.style
                 // A transformed/normalized owner result is an external value
                 // from the adapter's point of view. Only the exact event value
@@ -4557,6 +5674,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     previouslySubmittedScene.nodeForId(node.nodeId), node, focusedNodeId, focusedResourceId,
                     focusedNodeKind)
                 let preservesActiveLocalText = preservesRecentLocalText || preservesOwnerStableText
+                if (!preservesActiveLocalText) {
+                    this.noteOwnedCompositionExternalDisruption(node, nativeInputScene)
+                    this.armOwnedCompositionReanchor(node, nativeInputScene)
+                }
                 let clipConstraints = node.clipConstraints()
                 let clip0 = if (clipConstraints.size > 0) {
                     clipConstraints[0]
@@ -4599,7 +5720,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     }
                 }
                 let effectProjection = CjguiComposableUiNativeEffectProjection(style)
-                let nativeNode = CjguiInternalRendererComposableNode(
+                var nativeNode = CjguiInternalRendererComposableNode(
                     nodeId: UInt64(node.nodeId),
                     projectionVersion: UInt64(paintScene.version),
                     resourceId: node.resourceId,
@@ -4749,6 +5870,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     effectBackdropBlurRadiusPoints: effectProjection.effectBackdropBlurRadiusPoints,
                     effectBackdropBlurFallback: effectProjection.effectBackdropBlurFallback
                 )
+                nativeNode.wheelScrollable = if (style.wheelScrollable) {
+                    1u32
+                } else {
+                    0u32
+                }
+                nativeNode.acceptedBindingEpoch = candidateBindingEpoch(node, paintScene.version)
                 let semanticLabel = if (node.label.size > 0) {
                     node.label
                 } else {
@@ -4779,6 +5906,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     return rejectParticipantCandidate(participant, lastNativeStatus)
                 }
                 index += 1
+            }
+            startupPhase = "native_visual_geometry"
+            lastNativeStatus = stageNativeVisualGeometry(paintScene)
+            if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                lastRefreshTiming.nativeStageAndSubmitNanoseconds = elapsedNanoseconds(stageAndSubmitStarted)
+                return rejectParticipantCandidate(participant, lastNativeStatus,
+                    reason: "translation_native_stage_failed")
             }
             startupPhase = "native_data_transfer"
             lastNativeStatus = stageNativeDataTransfer(candidateDataTransferBindings, paintScene.version)
@@ -5012,37 +6146,88 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// A reveal can need one more accepted scene; the saved request is valid
     /// only while the same owner binding and incarnation survive that commit.
     public func focusAcceptedSemanticNode(semanticId: String): Bool {
-        if (!isWindowOpen || semanticId.size == 0) { return false }
+        pendingSemanticFocusNode = None
+        pendingSemanticFocusAttempts = 0
+        pendingSemanticFocusBindingEpoch = 0u64
+        if (!isWindowOpen || semanticId.size == 0) {
+            lastNativeFailure = "focus_request_invalid"
+            return false
+        }
         for (node in nativeInputScene.nodes()) {
             if (node.semanticId != semanticId || !node.canReceiveFocus()) { continue }
             pendingScopedFocusScope = None
             pendingScopedFocusKey = ""
             if (revealAcceptedNodeIfNeeded(node.nodeId)) {
                 pendingSemanticFocusNode = Some(node)
+                pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(node)
                 requestRefresh()
                 return true
             }
-            pendingSemanticFocusNode = None
-            return focusProjectedNode(node.nodeId)
+            if (focusProjectedNode(node.nodeId)) {
+                return true
+            }
+            if (lastNativeFailure == "focus_native_unavailable" &&
+                cjguiFocusRetryAllowed(pendingSemanticFocusAttempts, false)) {
+                pendingSemanticFocusNode = Some(node)
+                pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(node)
+                requestRefresh()
+            }
+            return false
         }
+        lastNativeFailure = "focus_semantic_target_missing"
         return false
     }
 
     private func flushPendingSemanticFocus(): Unit {
         if (let Some(prior) <- pendingSemanticFocusNode) {
-            pendingSemanticFocusNode = None
             let current = nativeInputScene.nodeForId(prior.nodeId)
             if (current.nodeId == prior.nodeId && current.semanticId == prior.semanticId &&
                 current.semanticIncarnation == prior.semanticIncarnation && current.actionName == prior.actionName &&
                 current.fieldId == prior.fieldId && current.resourceId == prior.resourceId &&
                 current.operationActionName == prior.operationActionName &&
-                current.operationResourceId == prior.operationResourceId && current.canReceiveFocus()) {
+                current.operationResourceId == prior.operationResourceId &&
+                cjguiFocusBindingEpochMatches(pendingSemanticFocusBindingEpoch,
+                    currentAcceptedBindingEpoch(current)) &&
+                current.canReceiveFocus()) {
                 if (revealAcceptedNodeIfNeeded(current.nodeId)) {
+                    pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                    if (cjguiFocusRetryAllowed(pendingSemanticFocusAttempts, false)) {
+                        pendingSemanticFocusNode = Some(current)
+                        pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(current)
+                        requestRefresh()
+                    } else {
+                        pendingSemanticFocusNode = None
+                        pendingSemanticFocusAttempts = 0
+                        lastNativeFailure = "focus_reveal_retry_exhausted"
+                    }
+                    return
+                }
+                if (focusProjectedNode(current.nodeId)) {
+                    pendingSemanticFocusNode = None
+                    pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, true)
+                    return
+                }
+                pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                if (lastNativeFailure == "focus_native_unavailable" &&
+                    cjguiFocusRetryAllowed(pendingSemanticFocusAttempts, false)) {
                     pendingSemanticFocusNode = Some(current)
+                    pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(current)
                     requestRefresh()
                 } else {
-                    let _ = focusProjectedNode(current.nodeId)
+                    pendingSemanticFocusNode = None
+                    pendingSemanticFocusAttempts = 0
+                    if (lastNativeFailure == "focus_target_fully_clipped") {
+                        lastNativeFailure = "focus_reveal_did_not_expose_target"
+                    } else if (lastNativeFailure == "focus_native_unavailable") {
+                        lastNativeFailure = "focus_native_retry_exhausted"
+                    }
                 }
+            } else {
+                pendingSemanticFocusNode = None
+                pendingSemanticFocusAttempts = 0
+                lastNativeFailure = "focus_binding_replaced"
             }
         }
     }
@@ -5109,11 +6294,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// mapped through the framework's ONE size rule onto the accepted track, so
     /// no sample width and no application split owner is involved. Returns true
     /// when the size moved.
-    private func applySplitStatePointerDrag(node: CjguiComposableUiLayoutNode, pointerX: Int64): Bool {
+    private func applySplitStatePointerDrag(node: CjguiComposableUiLayoutNode, windowX: Float64,
+        grabOffset: Float64, expectedRevision: Int64): ?Bool {
         if (let Some(state) <- splitStateForDivider(node)) {
             let track = state.acceptedTrack()
             if (track <= 0) {
-                return false
+                return None
             }
             let handleSize = if (state.acceptedHandleSize() > 0) {
                 state.acceptedHandleSize()
@@ -5129,14 +6315,20 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             } else {
                 state.firstSize()
             }
-            let trackOrigin = node.bounds.x - acceptedFirst
-            let requested = CjguiComposableUiSplitGeometry.firstSizeForPointer(pointerX, trackOrigin, track, handleSize,
+            let geometry = match (nativeInputScene.visualGeometryForId(node.nodeId)) {
+                case Some(value) => value
+                case None => return None
+            }
+            let trackPoint = geometry.windowToSplitTrackPointX(node.bounds, acceptedFirst, windowX, grabOffset)
+            let requested = CjguiComposableUiSplitGeometry.firstSizeForPointer(trackPoint, 0, track, handleSize,
                 state.firstMinimum(), state.secondMinimum())
             let before = state.firstSize()
-            let _ = state.applyFirstSize(requested, track, handleSize)
-            return state.firstSize() != before
+            if (let Some(revision) <- state.applyCapturedFirstSize(expectedRevision, requested, track, handleSize)) {
+                pointerCaptureOwnerVersion = revision
+                return Some(state.firstSize() != before)
+            }
         }
-        return false
+        return None
     }
 
     /// ONE tab view intent, shared by pointer activation and the keyboard: a
@@ -5198,10 +6390,49 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // cannot make an old AX object follow a different field or operation.
         return "${node.identityKey.size}:${node.identityKey}" +
             "${node.semanticId.size}:${node.semanticId}" +
+            "${node.semanticKey.size}:${node.semanticKey}" +
             "${node.actionName.size}:${node.actionName}" +
             "${node.fieldId.size}:${node.fieldId}" +
             "${node.operationActionName.size}:${node.operationActionName}" +
             "${node.resourceId}:${node.operationResourceId}:${node.nodeKind}:${node.semanticIncarnation}"
+    }
+
+    // Epochs are derived against the last accepted scene and published only
+    // after native acceptance. The accepted projection version is monotonic;
+    // using it for a changed binding distinguishes remove/recreate and ABA.
+    private func candidateBindingEpoch(node: CjguiComposableUiLayoutNode, version: Int64): UInt64 {
+        let key = nativeSemanticBindingKey(node)
+        let oldNodes = nativeInputScene.nodes()
+        var index: Int64 = 0
+        while (index < oldNodes.size && index < acceptedBindingKeys.size && index < acceptedBindingEpochs.size) {
+            if (oldNodes[index].nodeId == node.nodeId && acceptedBindingKeys[index] == key) {
+                return acceptedBindingEpochs[index]
+            }
+            index += 1
+        }
+        return UInt64(version)
+    }
+    private func publishAcceptedBindingEpochs(scene: CjguiComposableUiScene): Unit {
+        let keys = ArrayList<String>()
+        let epochs = ArrayList<UInt64>()
+        for (node in scene.nodes()) {
+            keys.add(nativeSemanticBindingKey(node))
+            epochs.add(candidateBindingEpoch(node, scene.version))
+        }
+        acceptedBindingKeys = keys
+        acceptedBindingEpochs = epochs
+    }
+    private func currentAcceptedBindingEpoch(node: CjguiComposableUiLayoutNode): UInt64 {
+        let nodes = nativeInputScene.nodes()
+        var index: Int64 = 0
+        while (index < nodes.size && index < acceptedBindingKeys.size && index < acceptedBindingEpochs.size) {
+            if (nodes[index].nodeId == node.nodeId &&
+                acceptedBindingKeys[index] == nativeSemanticBindingKey(node)) {
+                return acceptedBindingEpochs[index]
+            }
+            index += 1
+        }
+        return 0u64
     }
 
     private func stageNativeSemanticMetadata(index: Int64, node: CjguiComposableUiLayoutNode): Int32 {
@@ -5267,8 +6498,21 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return focusProjectedNode(titles[next].nodeId)
     }
 
+    /// One real wheel step, or one continuous touch-scroll displacement, against
+    /// a scroll area that shares a public viewport. "by:<delta>" carries a
+    /// logical-pixel displacement from the platform touch chain; anything else is
+    /// the classic next/previous half-viewport step. Both go through the SAME
+    /// viewport state: no second offset, no layout-coordinate writes.
     private func applyViewportScrollStep(node: CjguiComposableUiLayoutNode, direction: String): Bool {
         if (let Some(viewport) <- node.scrollViewport) {
+            if (direction.startsWith("by:")) {
+                // 解析失败或溢出都不是滚动：不把不可判读的意图当位移。
+                try {
+                    return viewport.scrollBy(Int64.parse(direction[3..]))
+                } catch (_: IllegalArgumentException) {
+                    return false
+                }
+            }
             let half = viewport.viewportExtent() / 2
             let step = if (half > 24) {
                 half
@@ -5288,43 +6532,62 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (target.nodeId != nodeId || target.bounds.height <= 0) {
             return false
         }
-        // The target must become visible through its WHOLE clip chain, not only
-        // through the innermost viewport: a field at the bottom of an inner scroll
-        // can still sit outside the outer scroll's visible band. Ancestors are
-        // handled innermost first, and each step is skipped when the target is
-        // already fully inside that viewport after the previous steps.
+        let geometry = match (nativeInputScene.visualGeometryForId(nodeId)) {
+            case Some(value) => value
+            case None => return false
+        }
+        // The target is deliberately UNCLIPPED: a fully hidden field still
+        // carries the information needed to reveal it. Each clip below is
+        // mapped with its creator's accepted translation, not the target's.
+        let visualTarget = geometry.visualBounds(target.bounds)
+        let constraints = target.clipConstraints()
+        if (geometry.clipCount() != constraints.size) { return false }
         let ancestors = viewportAncestorsForNode(target)
-        var revealed = false
-        var top = target.bounds.y
-        let height = target.bounds.height
+        let clipIndices = ArrayList<Int64>()
+        let acceptedOffsets = ArrayList<Int64>()
+        let requestedOffsets = ArrayList<Int64>()
+        let maximumOffsets = ArrayList<Int64>()
         for (container in ancestors) {
             if (let Some(viewport) <- container.scrollViewport) {
-                let padding = container.style.padding
-                let innerTop = container.bounds.y + padding
-                let innerHeight = container.bounds.height - padding * 2
-                if (innerHeight <= 0) {
-                    continue
+                var clipIndex: Int64 = 0
+                while (clipIndex < constraints.size &&
+                    constraints[clipIndex].ownerIdentity != container.identityKey) {
+                    clipIndex += 1
                 }
-                let acceptedOffset = viewport.acceptedOffset()
-                if (!(top >= innerTop && top + height <= innerTop + innerHeight)) {
-                    // The node's bounds are already offset by the accepted scroll,
-                    // so the content-relative top puts it back into content
-                    // coordinates.
-                    let contentTop = top - innerTop + acceptedOffset
-                    let contentBottom = contentTop + height
-                    let _ = viewport.reveal(contentTop, contentBottom)
-                }
-                // Layout applies `contentY - offset`. The next (outer)
-                // viewport therefore sees the accepted target moved by the
-                // whole accepted-to-pending delta, including a request that
-                // was already pending before this reveal call. Do not mix the
-                // previous requested coordinate with the accepted scene.
-                let pendingDelta = viewport.offset() - acceptedOffset
-                if (pendingDelta != 0) {
-                    revealed = true
-                    top -= pendingDelta
-                }
+                if (clipIndex >= constraints.size) { return false }
+                clipIndices.add(clipIndex)
+                acceptedOffsets.add(viewport.acceptedOffset())
+                requestedOffsets.add(viewport.offset())
+                maximumOffsets.add(viewport.maximumOffset())
             }
+        }
+        let clips = ArrayList<CjguiComposableUiRevealClip>()
+        var clipIndex: Int64 = 0
+        while (clipIndex < constraints.size) {
+            var movingScrolls: Int64 = 0
+            for (viewportClipIndex in clipIndices) {
+                if (viewportClipIndex >= clipIndex) { movingScrolls += 1 }
+            }
+            clips.add(CjguiComposableUiRevealClip(geometry.visualClipAt(constraints, clipIndex),
+                movingScrolls - 1))
+            clipIndex += 1
+        }
+        let plan = CjguiComposableUiRevealPlanner.plan(visualTarget, clips, acceptedOffsets,
+            maximumOffsets, preferredOffsets: Some(requestedOffsets))
+        if (!plan.isReachable()) { return false }
+        var revealed = false
+        var index: Int64 = 0
+        while (index < ancestors.size) {
+            let container = ancestors[index]
+            if (let Some(viewport) <- container.scrollViewport) {
+                // A feasible plan can return the accepted offset to cancel an
+                // incompatible request that has not committed yet.
+                if (plan.offsets[index] != viewport.offset()) {
+                    let _ = viewport.requestOffset(plan.offsets[index])
+                }
+                if (viewport.offset() != viewport.acceptedOffset()) { revealed = true }
+            }
+            index += 1
         }
         return revealed
     }
@@ -5375,15 +6638,61 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private func focusProjectedNode(nodeId: Int64, rememberBookmark!: Bool = true): Bool {
         let node = nativeInputScene.nodeForId(nodeId)
         if (node.nodeId != nodeId || !node.canReceiveFocus()) {
+            lastNativeFailure = "focus_target_unavailable"
             return false
         }
-        let status = internalRendererFocusComposableNode(sessionToken, nodeId)
+        // Focus must use the same accepted visual geometry as reveal, hit and
+        // AX. A child can move independently of the owner of each clip.
+        lastNativeFailure = "focus_target_geometry_unavailable"
+        let geometry = match (nativeInputScene.visualGeometryForId(nodeId)) {
+            case Some(value) => value
+            case None => return false
+        }
+        let constraints = node.clipConstraints()
+        if (constraints.size != geometry.clipCount()) {
+            lastNativeFailure = "focus_target_geometry_unavailable"
+            return false
+        }
+        let bounds = geometry.visualBounds(node.bounds)
+        var left = bounds.x
+        var top = bounds.y
+        var right = bounds.x + bounds.width
+        var bottom = bounds.y + bounds.height
+        var clipIndex: Int64 = 0
+        while (clipIndex < constraints.size) {
+            let clip = geometry.visualClipAt(constraints, clipIndex)
+            if (clip.x > left) { left = clip.x }
+            if (clip.y > top) { top = clip.y }
+            if (clip.x + clip.width < right) { right = clip.x + clip.width }
+            if (clip.y + clip.height < bottom) { bottom = clip.y + clip.height }
+            clipIndex += 1
+        }
+        if (right <= left || bottom <= top) {
+            lastNativeFailure = "focus_target_fully_clipped"
+            return false
+        }
+        let status = focusNativeStatus(nodeId)
         lastNativeStatus = status
         if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            lastNativeFailure = if (cjguiFocusNativeFailureIsRetryable(status)) {
+                "focus_native_unavailable"
+            } else {
+                "focus_native_terminal"
+            }
             return false
         }
+        lastNativeFailure = ""
         recordProjectedFocus(node, rememberBookmark: rememberBookmark)
         return true
+    }
+    private func focusNativeStatus(nodeId: Int64): Int32 {
+        focusNativeTestCalls += 1
+        if (focusNativeTestIndex < focusNativeTestStatuses.size) {
+            let status = focusNativeTestStatuses[focusNativeTestIndex]
+            focusNativeTestIndex += 1
+            return status
+        }
+        return internalRendererFocusComposableNode(sessionToken, nodeId)
     }
     private func recordProjectedFocus(node: CjguiComposableUiLayoutNode, rememberBookmark!: Bool = true): Unit {
         let changed = focusedNodeId != node.nodeId || focusedResourceId != node.resourceId || focusedNodeKind != node
@@ -5816,8 +7125,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             // The common control role guarantees a visible keyboard focus
             // even when an author supplied no focused paint. An explicit
             // focused border wins; geometry and owner identity stay intact.
+            // Only leaf controls get the automatic keyboard-focus border.
+            // Scroll/tree containers can own focus for navigation, but a ring
+            // around their full viewport paints as a giant partial blue frame
+            // once opaque content covers its upper portion.
+            let defaultFocusBorder = node.semanticRole == CJGUI_COMPOSABLE_UI_SEMANTIC_TAB ||
+                node.semanticRole == CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW ||
+                node.semanticRole == CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON ||
+                node.semanticRole == CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX
             if ((interactionState & CjguiComposableUiInteractionState.FOCUSED) != 0 &&
-                node.semanticRole >= CJGUI_COMPOSABLE_UI_SEMANTIC_TAB &&
+                defaultFocusBorder &&
                 node.interactionStyle.focused.border.isNone() &&
                 node.interactionStyle.focused.borderWidth.isNone()) {
                 let ring = match (cjguiComposableUiParseColorToken(deliveredPlatformAccentToken)) {
@@ -5844,7 +7161,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             // P2：把本窗的 paint alpha 乘子叠到已解析的交互样式上。乘子只来自
             // 动画通道；身份/代际不匹配时返回 1.0，因此旧绑定不会污染新节点，
             // 被拒候选也只会得到 1.0 而不启动或改写当前动画。
-            let style = if (alphaBound) {
+            let paintStyle = if (alphaBound) {
                 CjguiComposableUiWindow.applyPaintAlphaMultiplier(transitionedStyle,
                     animationDriver.alphaMultiplierFor(node.identityKey, node.nodeId, resourceId: node.resourceId,
                         nodeKind: node.nodeKind, actionName: node.actionName,
@@ -5857,6 +7174,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         fallback: if (let Some(group) <- transitionedStyle.effectGroup) { group.opacity } else { 1.0 }))
             } else {
                 transitionedStyle
+            }
+            let style = if (let Some(position) <- animationDriver.positionSampleFor(node.identityKey, binding)) {
+                stagedPositionSamples.add(node.identityKey, position)
+                cjguiComposableUiStyleWithTranslation(paintStyle, position.value.x, position.value.y)
+            } else {
+                paintStyle
             }
             if (sameStyle(node.style, style)) {
                 resolved.add(node)
@@ -5892,24 +7215,22 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         } else {
             None
         }
-        return CjguiComposableUiStyle(background: CjguiComposableUiWindow.scalePaintAlpha(style.background, factor),
-            border: CjguiComposableUiWindow.scalePaintAlpha(style.border, factor),
-            textColor: CjguiComposableUiWindow.scalePaintAlpha(style.textColor, factor), padding: style.padding,
-            gap: style.gap, fixedWidth: style.fixedWidth, fixedHeight: style.fixedHeight, growX: style.growX,
-            growY: style.growY, borderWidth: style.borderWidth, fontSize: style.fontSize, fontWeight: style.fontWeight,
-            fontFamily: style.fontFamily, minWidth: style.minWidth, maxWidth: style.maxWidth,
-            idealWidth: style.idealWidth, minHeight: style.minHeight, maxHeight: style.maxHeight,
-            idealHeight: style.idealHeight, alignX: style.alignX, alignY: style.alignY, cornerRadius: style.cornerRadius,
-            clipsContent: style.clipsContent, pointerInteractive: style.pointerInteractive,
-            shadow: if (let Some(value) <- style.shadow) {
+        // The ONE paint-preserving copy entry (B, 2026-09-28): the opacity
+        // multiplier scales paint only; displacement, wheel eligibility and
+        // content alignment survive a fade exactly as declared.
+        return cjguiComposableUiStyleWithPaint(style,
+            CjguiComposableUiWindow.scalePaintAlpha(style.background, factor),
+            CjguiComposableUiWindow.scalePaintAlpha(style.border, factor),
+            CjguiComposableUiWindow.scalePaintAlpha(style.textColor, factor), style.borderWidth,
+            if (let Some(value) <- style.shadow) {
                 Some(CjguiComposableUiWindow.scaleShadowAlpha(value, factor))
             } else {
                 None
-            }, gradient: if (let Some(value) <- style.gradient) {
+            }, if (let Some(value) <- style.gradient) {
                 Some(CjguiComposableUiWindow.scaleGradientAlpha(value, factor))
             } else {
                 None
-            }, effectGroup: groupEffect, effectRejection: style.effectRejection)
+            }, groupEffect)
     }
     private static func scalePaintAlpha(color: CjguiComposableUiColor, factor: Float64): CjguiComposableUiColor {
         return CjguiComposableUiColor(color.red, color.green, color.blue,
@@ -5967,18 +7288,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private static func paintStyleDeclaresColor(paint: CjguiComposableUiPaintStyle): Bool {
         return paint.background.isSome() || paint.border.isSome() || paint.textColor.isSome()
     }
-    /// 用过渡后的三条 paint 颜色覆盖已解析样式，其余几何/排版/效果字段原样保留。
+    /// 用过渡后的三条 paint 颜色覆盖已解析样式，其余几何/排版/效果字段原样保留
+    /// （同一 paint-preserving 入口，位移/滚轮资格/对齐不会在颜色过渡中丢失）。
     private static func withResolvedPaintColors(style: CjguiComposableUiStyle, colors: CjguiComposableUiPaintColorSet): CjguiComposableUiStyle {
-        return CjguiComposableUiStyle(background: colors.background, border: colors.border, textColor: colors.textColor,
-            padding: style.padding, gap: style.gap, fixedWidth: style.fixedWidth, fixedHeight: style.fixedHeight,
-            growX: style.growX, growY: style.growY, borderWidth: style.borderWidth, fontSize: style.fontSize,
-            fontWeight: style.fontWeight, fontFamily: style.fontFamily, minWidth: style.minWidth,
-            maxWidth: style.maxWidth, idealWidth: style.idealWidth, minHeight: style.minHeight,
-            maxHeight: style.maxHeight, idealHeight: style.idealHeight, alignX: style.alignX, alignY: style.alignY,
-            cornerRadius: style.cornerRadius, clipsContent: style.clipsContent,
-            pointerInteractive: style.pointerInteractive, shadow: style.shadow, gradient: style.gradient,
-            effectGroup: style.effectGroup,
-            effectRejection: style.effectRejection)
+        return cjguiComposableUiStyleWithPaint(style, colors.background, colors.border, colors.textColor,
+            style.borderWidth, style.shadow, style.gradient, style.effectGroup)
     }
     private func reconcileInteractionProjection(): Bool {
         let currentHover = nativeInputScene.nodeForId(hoveredInteractionNode.nodeId)
@@ -6017,6 +7331,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             cjguiSameFocusedTextBinding(
             nativeInputScene.nodeForId(node.nodeId), node, focusedNodeId, focusedResourceId, focusedNodeKind)
         let preservesActiveLocalText = preservesRecentLocalText || preservesOwnerStableText
+        if (!preservesActiveLocalText) {
+            this.noteOwnedCompositionExternalDisruption(node, nativeInputScene)
+            this.armOwnedCompositionReanchor(node, nativeInputScene)
+        }
         let clipConstraints = node.clipConstraints()
         let clip0 = if (clipConstraints.size > 0) {
             clipConstraints[0]
@@ -6055,7 +7373,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
         }
         let effectProjection = CjguiComposableUiNativeEffectProjection(style)
-        let nativeNode = CjguiInternalRendererComposableNode(
+        var nativeNode = CjguiInternalRendererComposableNode(
             nodeId: UInt64(node.nodeId),
             projectionVersion: UInt64(projectionVersion),
             resourceId: node.resourceId,
@@ -6202,6 +7520,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             effectBackdropBlurRadiusPoints: effectProjection.effectBackdropBlurRadiusPoints,
             effectBackdropBlurFallback: effectProjection.effectBackdropBlurFallback
         )
+        nativeNode.wheelScrollable = if (style.wheelScrollable) {
+            1u32
+        } else {
+            0u32
+        }
+        nativeNode.acceptedBindingEpoch = candidateBindingEpoch(node, projectionVersion)
         let semanticLabel = if (node.label.size > 0) {
             node.label
         } else {
@@ -6227,6 +7551,48 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return stageNativeSemanticMetadata(index, node)
     }
 
+    /// Stage every resolved node's exact visual geometry even when its integer
+    /// POD was COW-reused. The native candidate owns this snapshot until
+    /// presentation succeeds or the whole candidate is discarded.
+    private func stageNativeVisualGeometry(scene: CjguiComposableUiScene): Int32 {
+        let nodes = scene.nodes()
+        var index: Int64 = 0
+        while (index < nodes.size) {
+            let value = scene.visualGeometryAt(index)
+            let count = value.clipCount()
+            // An ordinary unclipped scene node has no clip owner. The native
+            // sidecar must match that POD count exactly; a one-clip minimum
+            // would reject whole normal windows before their first present.
+            if (count > 4) { return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR }
+            var geometry = CjguiInternalRendererComposableGeometry()
+            geometry.nodeId = UInt64(nodes[index].nodeId)
+            geometry.clipCount = UInt32(count)
+            geometry.translateX = value.translateX
+            geometry.translateY = value.translateY
+            if (count > 0) {
+                geometry.clip0X = value.clipTranslateX(0)
+                geometry.clip0Y = value.clipTranslateY(0)
+            }
+            if (count > 1) {
+                geometry.clip1X = value.clipTranslateX(1)
+                geometry.clip1Y = value.clipTranslateY(1)
+            }
+            if (count > 2) {
+                geometry.clip2X = value.clipTranslateX(2)
+                geometry.clip2Y = value.clipTranslateY(2)
+            }
+            if (count > 3) {
+                geometry.clip3X = value.clipTranslateX(3)
+                geometry.clip3Y = value.clipTranslateY(3)
+            }
+            let status = internalRendererSetComposableSceneGeometry(sessionToken, UInt64(scene.version),
+                UInt32(index), geometry)
+            if (status != CJGUI_INTERNAL_RENDERER_OK) { return status }
+            index += 1
+        }
+        return CJGUI_INTERNAL_RENDERER_OK
+    }
+
     /// Repaint interaction state from the accepted layout snapshot. This is
     /// intentionally independent of `refreshIfNeeded`: a hover/press/focus
     /// change cannot call buildUi, layout or text measurement and does not
@@ -6245,6 +7611,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // resolution, comparison and native stage/present without exposing
         // diagnostics to public consumers.
         lastRefreshTiming = CjguiComposableUiRefreshTiming()
+        beginWorkloadAttempt()
         let _ = reconcileInteractionProjection()
         let candidateVersion = if (nextProjectionVersion <= 0) {
             1
@@ -6254,6 +7621,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let resolutionStarted = MonoTime.now()
         let paintScene = sceneWithResolvedInteractionPaint(nativeInputScene, version: candidateVersion)
         lastRefreshTiming.interactionPaintResolutionNanoseconds = elapsedNanoseconds(resolutionStarted)
+        if (!paintScene.isValid()) {
+            // A legal spring target may have an illegal cumulative overshoot.
+            // Snap its two channels to that preflighted target and retry from
+            // the last accepted picture on the next bounded animation chance.
+            animationDriver.convergePositions()
+            return noteInteractionPaintFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+        }
         let previousNodes = nativeInputScene.nodes()
         let nextNodes = paintScene.nodes()
         let candidateBusinessOwnerRevision = currentBusinessOwnerRevision()
@@ -6276,7 +7650,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             // The first hover can have exactly the old pixels at t=0 while its
             // accepted target has changed. Publish that target and request the
             // next animation frame even without a native resubmission.
-            commitStagedAnimationPaint()
+            commitStagedAnimationPaint(positionPresented: stagedPositionRequestAlreadyVisible())
             return true
         }
         let stageStarted = MonoTime.now()
@@ -6324,6 +7698,34 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             // Paint-only native generations must also replace a stale COW hint.
             if (!sameLayoutNode(previousNodes[index], node) || previousNativeInputScope != nativeInputScope ||
                 (node.nodeId == focusedNodeId && isEditableTextNodeKind(node.nodeKind))) {
+                if (sceneWriteTraceEnabled) {
+                    var reason = "focused_editor"
+                    if (!sameLayoutNode(previousNodes[index], node)) {
+                        let previousNode = previousNodes[index]
+                        if (isVisuallyNeutralGroup(previousNode) && isVisuallyNeutralGroup(node)) {
+                            reason = "identity"
+                        } else if (!sameRect(previousNode.bounds, node.bounds)) {
+                            reason = "rect"
+                        } else if (!sameRect(previousNode.clip, node.clip)) {
+                            reason = "clip"
+                        } else if (!sameStyle(previousNode.style, node.style)) {
+                            reason = "style"
+                        } else {
+                            reason = "runs"
+                        }
+                    } else if (previousNativeInputScope != nativeInputScope) {
+                        reason = "scope"
+                    }
+                    let previousNode = previousNodes[index]
+                    println("CJGUI_SCENE_WRITE path=interaction index=${index} nodeId=${node.nodeId} " +
+                        "kind=${node.nodeKind} layerKind=[${node.layerKind}] reason=${reason} " +
+                        "prev=[${previousNode.bounds.x},${previousNode.bounds.y},${previousNode.bounds.width}," +
+                        "${previousNode.bounds.height}] cur=[${node.bounds.x},${node.bounds.y},${node.bounds.width}," +
+                        "${node.bounds.height}] prev_clip=[${previousNode.clip.x},${previousNode.clip.y}," +
+                        "${previousNode.clip.width},${previousNode.clip.height}] cur_clip=[${node.clip.x}," +
+                        "${node.clip.y},${node.clip.width},${node.clip.height}] neutral=${isVisuallyNeutralGroup(node)} " +
+                        "scope=${previousNativeInputScope}->${nativeInputScope}")
+                }
                 lastNativeStatus = stageComposableSceneNode(node, candidateVersion, index, nativeInputScope,
                     candidateBusinessOwnerRevision, preservesOwnerStableText)
                 if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
@@ -6332,6 +7734,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 }
             }
             index += 1
+        }
+        lastNativeStatus = stageNativeVisualGeometry(paintScene)
+        if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
+            lastRefreshTiming.nativeStageAndSubmitNanoseconds = elapsedNanoseconds(stageStarted)
+            return noteInteractionPaintFailure(lastNativeStatus)
         }
         lastNativeStatus = stageNativeDataTransfer(interactionDataTransferBindings, candidateVersion)
         if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
@@ -6348,6 +7755,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             lastRefreshTiming.nativeStageAndSubmitNanoseconds = elapsedNanoseconds(stageStarted)
             return noteInteractionPaintFailure(lastNativeStatus)
         }
+        if (testPositionPresentFailuresRemaining > 0 && stagedPositionSamples.size > 0) {
+            testPositionPresentFailuresRemaining -= 1
+            return noteInteractionPaintFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+        }
         let frame = internalRendererPresentComposableScene(sessionToken)
         let elapsed = MonoTime.now() - stageStarted
         lastNativeStageAndSubmitElapsedMs = elapsed.toMilliseconds()
@@ -6363,9 +7774,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK && lastNativeStatus != CJGUI_INTERNAL_RENDERER_READBACK_FAILED) {
             return noteInteractionPaintFailure(lastNativeStatus)
         }
+        finalizeWorkloadAttempt("accepted")
         nextProjectionVersion = candidateVersion
         renderedScene = paintScene
+        publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
+        // Interaction-only paints also advance the accepted input projection.
+        // A captured divider must certify this boundary, including diagnostic
+        // overlay redraws, before a later queued move can cross it.
+        reconcilePointerCaptureAfterProjection()
         reconcilePresentationTextSessionSurface()
         replaceDataTransferBindings(interactionDataTransferBindings)
         acceptedSceneVersion = paintScene.version
@@ -6423,11 +7840,37 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (!sameIdentity) {
             return false
         }
+        // A neutral group can skip paint updates, but the native POD still
+        // owns its clipping chain. A page switch can change that chain while
+        // leaving this group's visible fill and layout rectangle unchanged.
+        // Reusing the old POD would disagree with the candidate's exact
+        // geometry sidecar and, worse, retain the old accepted clip.
+        let leftClips = left.clipConstraints()
+        let rightClips = right.clipConstraints()
+        if (leftClips.size != rightClips.size) { return false }
+        var clipIndex: Int64 = 0
+        while (clipIndex < leftClips.size) {
+            let oldClip = leftClips[clipIndex]
+            let newClip = rightClips[clipIndex]
+            if (!sameRect(oldClip.rect, newClip.rect) || oldClip.cornerRadius != newClip.cornerRadius ||
+                oldClip.ownerIdentity != newClip.ownerIdentity) {
+                return false
+            }
+            clipIndex += 1
+        }
         // Layout groups with neither fill nor visible border have no native
-        // draw or input behavior. Their bounds may differ solely because a
-        // child was reparented; evaluate that relationship below, not as a
-        // fake visual scene change.
-        if (isVisuallyNeutralGroup(left) && isVisuallyNeutralGroup(right)) {
+        // DRAW, so their bounds may differ solely because a child was
+        // reparented; evaluate that relationship below, not as a fake visual
+        // scene change. The shortcut is only valid while the group carries NO
+        // input behavior and no displacement (B, 2026-09-28): a transparent
+        // group that declares wheel eligibility or pointer delivery IS part of
+        // the accepted input projection, and a displaced group's own bounds
+        // decide where its content responds. Both cases must reach
+        // sameRect/sameStyle so the staged native node (and the wheel region it
+        // routes) follows the declaration instead of keeping the old facts.
+        if (isVisuallyNeutralGroup(left) && isVisuallyNeutralGroup(right) &&
+            !cjguiComposableUiGroupCarriesInputOrDisplacement(left.style) &&
+            !cjguiComposableUiGroupCarriesInputOrDisplacement(right.style)) {
             return true
         }
         return sameRect(left.bounds, right.bounds) && sameRect(left.clip, right.clip) && sameStyle(left.style,
@@ -6501,7 +7944,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             left.fontWeight == right.fontWeight && left.fontFamily == right.fontFamily && left.minWidth == right
             .minWidth && left.maxWidth == right.maxWidth && left.idealWidth == right.idealWidth && left.minHeight == right
             .minHeight && left.maxHeight == right.maxHeight && left.idealHeight == right.idealHeight && left.alignX == right
-            .alignX && left.alignY == right.alignY && sameShadow(left.shadow, right.shadow) && sameGradient(
+            .alignX && left.alignY == right.alignY && left.offsetX == right.offsetX && left.offsetY == right.offsetY &&
+            left.translateX == right.translateX && left.translateY == right.translateY &&
+            left.wheelScrollable == right.wheelScrollable && left.scrollContentAlignY == right.scrollContentAlignY &&
+            left.pointerInteractive == right.pointerInteractive && sameShadow(left.shadow, right.shadow) && sameGradient(
             left.gradient, right.gradient) && sameEffectGroup(left.effectGroup, right.effectGroup)
     }
     /// Effects must compare field by field: changing ONLY a shadow/gradient
@@ -6797,7 +8243,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 }
                 let epoch = dataTransferEpochFor(declaration, matching, nativeFormat)
                 if (epoch == 0u64) { return None }
-                bindings.add(CjguiComposableUiDataTransferBinding(declaration, matching, nativeFormat, epoch))
+                let ownerVersion = if (declaration.role == "TARGET" && nativeFormat == "image/png") {
+                    provider.dataTransferOwnerVersion(matching)
+                } else { -1 }
+                if (declaration.localPngFileAllowed && ownerVersion < 0) { return None }
+                bindings.add(CjguiComposableUiDataTransferBinding(declaration, matching, nativeFormat, epoch,
+                    ownerVersion))
                 declarationIndex += 1
             }
             return Some(bindings)
@@ -6843,7 +8294,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
             if (epoch == 0u64) { return None }
             bindings.add(CjguiComposableUiDataTransferBinding(accepted.declaration, matching,
-                accepted.nativeFormat, epoch))
+                accepted.nativeFormat, epoch, accepted.expectedOwnerVersion))
         }
         return Some(bindings)
     }
@@ -6869,7 +8320,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 lhs.declaration.format.version != rhs.declaration.format.version ||
                 lhs.declaration.format.maximumBytes != rhs.declaration.format.maximumBytes ||
                 lhs.declaration.receiverIncarnation != rhs.declaration.receiverIncarnation ||
-                lhs.bindingEpoch != rhs.bindingEpoch) {
+                lhs.bindingEpoch != rhs.bindingEpoch ||
+                lhs.expectedOwnerVersion != rhs.expectedOwnerVersion ||
+                lhs.declaration.localPngFileAllowed != rhs.declaration.localPngFileAllowed) {
                 return false
             }
             let leftPayload = if (let Some(offer) <- lhs.declaration.offer) {
@@ -6893,6 +8346,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         dataTransferBindings.clear()
         for (binding in bindings) {
             dataTransferBindings.add(binding)
+            var recorded = false
+            for (prior in transferBindingHistory) {
+                if (prior.bindingEpoch == binding.bindingEpoch) { recorded = true; break }
+            }
+            if (!recorded) {
+                transferBindingHistory.add(binding)
+                if (transferBindingHistory.size > 256) {
+                    let _ = transferBindingHistory.remove(at: 0)
+                }
+            }
         }
     }
     private func stageNativeDataTransfer(
@@ -6945,7 +8408,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     role: role,
                     maximumPayloadBytes: UInt32(declaration.format.maximumBytes),
                     sourceId: sourceId,
-                    bindingEpoch: binding.bindingEpoch
+                    bindingEpoch: binding.bindingEpoch,
+                    expectedOwnerVersion: binding.expectedOwnerVersion,
+                    localPngFileAllowed: if (declaration.localPngFileAllowed) { 1u32 } else { 0u32 }
                 ),
                 binding.nativeFormat,
                 payload,
@@ -6988,6 +8453,212 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         return None
     }
+
+    public func transferReceipt(sessionIdentity: String, eventId: UInt64): CjguiComposableUiTransferReceiptLookup {
+        for (receipt in transferReceipts) {
+            if (receipt.windowSessionIdentity == sessionIdentity && receipt.eventId == eventId) {
+                return CjguiComposableUiTransferReceiptLookup("found", Some(receipt))
+            }
+        }
+        for (retired in transferReceiptTombstones) {
+            if (retired.windowSessionIdentity == sessionIdentity && retired.eventId == eventId) {
+                return CjguiComposableUiTransferReceiptLookup("expired", None)
+            }
+        }
+        return CjguiComposableUiTransferReceiptLookup("unknown", None)
+    }
+
+    public func transferReceiptChanges(sessionIdentity: String, afterRevision: Int64,
+        maximum: Int64): CjguiComposableUiTransferReceiptChanges {
+        let values = ArrayList<CjguiComposableUiTransferReceipt>()
+        let limit = if (maximum < 0) { 0 } else if (maximum > 64) { 64 } else { maximum }
+        var cursor = afterRevision
+        while (values.size < limit) {
+            var next: ?CjguiComposableUiTransferReceipt = None
+            for (receipt in transferReceipts) {
+                if (receipt.windowSessionIdentity != sessionIdentity || receipt.revision <= cursor) {
+                    continue
+                }
+                if (let Some(prior) <- next) {
+                    if (receipt.revision < prior.revision) { next = Some(receipt) }
+                } else {
+                    next = Some(receipt)
+                }
+            }
+            if (let Some(receipt) <- next) {
+                values.add(receipt)
+                cursor = receipt.revision
+            } else { break }
+        }
+        let pageRevision = if (values.size >= limit && limit > 0) { cursor } else { transferReceiptRevision }
+        return CjguiComposableUiTransferReceiptChanges(pageRevision,
+            transferReceiptRetentionFloor, afterRevision < transferReceiptRetentionFloor, values)
+    }
+
+    private func sharedTransferReceipt(value: CjguiComposableUiTransferReceipt):
+        CjguiSharedOperationTransferReceiptFact {
+        return CjguiSharedOperationTransferReceiptFact(value.windowSessionIdentity, value.eventId,
+            value.eventKind, value.semanticId, value.nodeId, value.bindingEpoch, value.sourceKind,
+            value.format, value.contentDigest, value.state, value.reason,
+            value.expectedOwnerVersion, value.ownerAttempted, value.ownerVersionBefore,
+            value.ownerVersionAfter, value.acceptedSceneVersion, value.submittedFrameIndex,
+            value.revision)
+    }
+
+    public func transferReceiptPage(sessionIdentity: String, eventId: UInt64):
+        CjguiSharedOperationTransferReceiptPage {
+        let lookup = transferReceipt(sessionIdentity, eventId)
+        let facts = ArrayList<CjguiSharedOperationTransferReceiptFact>()
+        if (let Some(value) <- lookup.receipt) { facts.add(sharedTransferReceipt(value)) }
+        return CjguiSharedOperationTransferReceiptPage(lookup.state, transferReceiptRevision,
+            transferReceiptRetentionFloor, false, facts)
+    }
+
+    public func transferReceiptChangesPage(sessionIdentity: String, afterRevision: Int64,
+        maximum: Int64): CjguiSharedOperationTransferReceiptPage {
+        let changes = transferReceiptChanges(sessionIdentity, afterRevision, maximum)
+        let facts = ArrayList<CjguiSharedOperationTransferReceiptFact>()
+        for (receipt in changes.receipts) { facts.add(sharedTransferReceipt(receipt)) }
+        return CjguiSharedOperationTransferReceiptPage("changes", changes.revision,
+            changes.retentionFloor, changes.resyncRequired, facts)
+    }
+
+    private func receiptIndex(sessionIdentity: String, eventId: UInt64): Int64 {
+        var index: Int64 = 0
+        while (index < transferReceipts.size) {
+            if (transferReceipts[index].windowSessionIdentity == sessionIdentity &&
+                transferReceipts[index].eventId == eventId) { return index }
+            index += 1
+        }
+        return -1
+    }
+
+    private func transferReceiptIsFinal(receipt: CjguiComposableUiTransferReceipt): Bool {
+        return receipt.state == "scene_accepted" || receipt.state == "rejected" ||
+            receipt.state == "cancelled" || receipt.state == "owner_result_unavailable" ||
+            (receipt.state == "owner_accepted" &&
+                (receipt.reason == "superseded_before_scene" ||
+                 receipt.reason == "target_retired_before_scene" ||
+                 receipt.reason == "window_closed_before_scene"))
+    }
+
+    private func retireOneFinalTransferReceipt(): Bool {
+        var oldestIndex: Int64 = -1
+        var oldestRevision: Int64 = 0
+        var index: Int64 = 0
+        while (index < transferReceipts.size) {
+            let value = transferReceipts[index]
+            if (transferReceiptIsFinal(value) &&
+                (oldestIndex < 0 || value.revision < oldestRevision)) {
+                oldestIndex = index
+                oldestRevision = value.revision
+            }
+            index += 1
+        }
+        if (oldestIndex < 0) { return false }
+        let retired = transferReceipts.remove(at: oldestIndex)
+        transferReceiptTombstones.add(retired)
+        if (transferReceiptTombstones.size > 64) { let _ = transferReceiptTombstones.remove(at: 0) }
+        if (retired.revision > transferReceiptRetentionFloor) {
+            transferReceiptRetentionFloor = retired.revision
+        }
+        return true
+    }
+
+    func beginTransferReceipt(sessionIdentity: String, eventId: UInt64,
+        deliveryOrdinal: UInt64, eventKind: Int64,
+        node: CjguiComposableUiLayoutNode, bindingEpoch: UInt64, sourceKind: String,
+        expectedOwnerVersion: Int64, state: String): String {
+        if (eventId == 0u64 || sessionIdentity != windowSessionIdentity || deliveryOrdinal == 0u64) {
+            return "invalid_delivery"
+        }
+        if (receiptIndex(sessionIdentity, eventId) >= 0) { return "existing" }
+        // The native ordinal is assigned at FIRST dequeue, not at capture:
+        // a low eventId can first arrive late from the terminal fallback FIFO.
+        if (deliveryOrdinal <= transferReceiptLastDeliveryOrdinal) { return "replayed" }
+        transferReceiptLastDeliveryOrdinal = deliveryOrdinal
+        var unfinished: Int64 = 0
+        for (receipt in transferReceipts) {
+            if (!transferReceiptIsFinal(receipt)) { unfinished += 1 }
+        }
+        let refused = unfinished >= 63
+        if (transferReceipts.size >= 64 && !retireOneFinalTransferReceipt()) {
+            return "capacity_unobservable"
+        }
+        transferReceiptRevision += 1
+        transferReceipts.add(CjguiComposableUiTransferReceipt(sessionIdentity, eventId, eventKind,
+            node.semanticId, node.nodeId, bindingEpoch, sourceKind, "image/png", "",
+            if (refused) { "rejected" } else { state },
+            if (refused) { "receipt_capacity_exceeded" } else { "" },
+            expectedOwnerVersion, false, -1, -1, -1, -1, transferReceiptRevision))
+        return if (refused) { "capacity_rejected" } else { "admitted" }
+    }
+
+    func settleTransferReceipt(sessionIdentity: String, eventId: UInt64,
+        state: String, reason: String,
+        digest: String, ownerResult: ?CjguiSharedOperationTransferResult): Unit {
+        let index = receiptIndex(sessionIdentity, eventId)
+        if (index < 0) { return }
+        let old = transferReceipts[index]
+        if (transferReceiptIsFinal(old) || old.state == "owner_accepted") { return }
+        let ownerBefore = if (let Some(value) <- ownerResult) { value.versionBefore } else { -1 }
+        let ownerAfter = if (let Some(value) <- ownerResult) { value.versionAfter } else { -1 }
+        let settledReason = if (state == "owner_accepted" &&
+            (sessionIdentity != windowSessionIdentity || !isWindowOpen)) {
+            "window_closed_before_scene"
+        } else { reason }
+        transferReceiptRevision += 1
+        transferReceipts[index] = CjguiComposableUiTransferReceipt(old.windowSessionIdentity,
+            old.eventId, old.eventKind, old.semanticId, old.nodeId, old.bindingEpoch, old.sourceKind,
+            old.format, digest, state, settledReason, old.expectedOwnerVersion, ownerResult.isSome(),
+            ownerBefore, ownerAfter, old.acceptedSceneVersion, old.submittedFrameIndex,
+            transferReceiptRevision)
+    }
+
+    func settleTransferSceneReceipts(bindings: ArrayList<CjguiComposableUiDataTransferBinding>,
+        sceneVersion: Int64, frameIndex: Int64): Unit {
+        var index: Int64 = 0
+        while (index < transferReceipts.size) {
+            let old = transferReceipts[index]
+            if (old.windowSessionIdentity == windowSessionIdentity && old.state == "owner_accepted" &&
+                !transferReceiptIsFinal(old)) {
+                var matched = false
+                for (binding in bindings) {
+                    if (binding.declaration.role != "TARGET" ||
+                        binding.declaration.semanticId != old.semanticId ||
+                        binding.bindingEpoch != old.bindingEpoch) { continue }
+                    matched = true
+                    if (binding.expectedOwnerVersion == old.ownerVersionAfter) {
+                        transferReceiptRevision += 1
+                        transferReceipts[index] = CjguiComposableUiTransferReceipt(old.windowSessionIdentity,
+                            old.eventId, old.eventKind, old.semanticId, old.nodeId, old.bindingEpoch,
+                            old.sourceKind, old.format, old.contentDigest, "scene_accepted", "",
+                            old.expectedOwnerVersion, true, old.ownerVersionBefore, old.ownerVersionAfter,
+                            sceneVersion, frameIndex, transferReceiptRevision)
+                    } else if (binding.expectedOwnerVersion > old.ownerVersionAfter) {
+                        transferReceiptRevision += 1
+                        transferReceipts[index] = CjguiComposableUiTransferReceipt(old.windowSessionIdentity,
+                            old.eventId, old.eventKind, old.semanticId, old.nodeId, old.bindingEpoch,
+                            old.sourceKind, old.format, old.contentDigest, "owner_accepted",
+                            "superseded_before_scene", old.expectedOwnerVersion, true,
+                            old.ownerVersionBefore, old.ownerVersionAfter, -1, -1,
+                            transferReceiptRevision)
+                    }
+                    break
+                }
+                if (!matched) {
+                    transferReceiptRevision += 1
+                    transferReceipts[index] = CjguiComposableUiTransferReceipt(old.windowSessionIdentity,
+                        old.eventId, old.eventKind, old.semanticId, old.nodeId, old.bindingEpoch,
+                        old.sourceKind, old.format, old.contentDigest, "owner_accepted",
+                        "target_retired_before_scene", old.expectedOwnerVersion, true,
+                        old.ownerVersionBefore, old.ownerVersionAfter, -1, -1,
+                        transferReceiptRevision)
+                }
+            }
+            index += 1
+        }
+    }
     private func applyDataTransfer(
         node: CjguiComposableUiLayoutNode,
         eventKind: Int64,
@@ -6998,8 +8669,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         sourceIdentity: String,
         sourceId: Int64,
         projectionVersion: Int64,
-        bindingEpoch: UInt64
+        bindingEpoch: UInt64,
+        capturedOwnerVersion: Int64,
+        eventId: UInt64
     ): CjguiComposableUiDispatchResult {
+        lastTransferOfferDigest = ""
+        lastTransferRejectionReason = ""
         if (let Some(provider) <- dataTransferProvider()) {
             if (let Some(binding) <- dataTransferBindingFor(node, eventKind, nativeFormat, bindingEpoch)) {
                 if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
@@ -7014,42 +8689,47 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                             if (sourceKind.size > 0) { sourceKind } else { "external_pasteboard" },
                             if (sourceIdentity.size > 0) { sourceIdentity } else { "macos" },
                             if (sourceId >= 0) { sourceId } else { 0 }, binding.declaration.format, bytes)) {
+                            lastTransferOfferDigest = value.contentDigest
                             if (binding.declaration.format.identifier != "image/png") {
-                                return provider.rejectDataTransfer(node.nodeId, eventKind, "binary_format_unsupported")
+                                return rejectTransfer(provider, node.nodeId, eventKind, "binary_format_unsupported")
                             }
-                            let expectedOwnerVersion = provider.dataTransferOwnerVersion(node)
+                            let expectedOwnerVersion = if (capturedOwnerVersion >= 0) {
+                                capturedOwnerVersion
+                            } else { provider.dataTransferOwnerVersion(node) }
                             if (expectedOwnerVersion < 0) {
-                                return provider.rejectDataTransfer(node.nodeId, eventKind,
+                                return rejectTransfer(provider, node.nodeId, eventKind,
                                     "owner_version_unavailable")
                             }
                             let prepared = internalRendererPreparePngTransfer(sessionToken, value)
                             if (prepared.status != CJGUI_INTERNAL_RENDERER_OK) {
                                 let reason = if (prepared.status == CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED) {
                                     "png_dimension_exceeded"
+                                } else if (prepared.status == CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED) {
+                                    "png_unsupported"
                                 } else if (prepared.status == CJGUI_INTERNAL_RENDERER_PNG_DECODE_FAILED) {
                                     "png_decode_failed"
                                 } else if (prepared.status == CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED) {
                                     "png_resource_budget_exceeded"
                                 } else { "png_invalid" }
-                                return provider.rejectDataTransfer(node.nodeId, eventKind, reason)
+                                return rejectTransfer(provider, node.nodeId, eventKind, reason)
                             }
                             if (!isWindowOpen || dataTransferBindingFor(node, eventKind, nativeFormat,
                                 bindingEpoch).isNone()) {
                                 let _ = internalRendererFinishPngTransfer(sessionToken, value, false)
-                                return provider.rejectDataTransfer(node.nodeId, eventKind, "stale_target")
+                                return rejectTransfer(provider, node.nodeId, eventKind, "stale_target")
                             }
                             let dispatched = provider.applyDataTransfer(CjguiComposableUiDataTransferEvent(
                                 node, eventKind, value, binding.declaration.format, projectionVersion,
                                 imageWidth: Int64(prepared.width), imageHeight: Int64(prepared.height),
                                 decodeMicros: Int64(prepared.decodeMicros), bindingEpoch: bindingEpoch,
-                                expectedOwnerVersion: expectedOwnerVersion))
+                                expectedOwnerVersion: expectedOwnerVersion, nativeEventId: eventId))
                             let finishStatus = internalRendererFinishPngTransfer(sessionToken, value,
                                 dispatched.didApply)
                             if (finishStatus != CJGUI_INTERNAL_RENDERER_OK) { lastNativeStatus = finishStatus }
                             return dispatched
                         }
                     }
-                    return provider.rejectDataTransfer(node.nodeId, eventKind, "binary_payload_unavailable")
+                    return rejectTransfer(provider, node.nodeId, eventKind, "binary_payload_unavailable")
                 } else if (let Some(value) <- CjguiSharedOperationTransferOffer.create("COPY",
                     if (sourceKind.size > 0) {
                         sourceKind
@@ -7071,6 +8751,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
         }
         return controller.rejectUiEvent(eventKind, node.nodeId)
+    }
+    private func rejectTransfer(provider: CjguiComposableUiDataTransferProvider, nodeId: Int64,
+        eventKind: Int64, reason: String): CjguiComposableUiDispatchResult {
+        lastTransferRejectionReason = reason
+        return provider.rejectDataTransfer(nodeId, eventKind, reason)
     }
     private func stageNativeCommandMenu(commands: ArrayList<CjguiComposableUiCommand>, projectionVersion: UInt64,
         inputScopes: CjguiComposableUiNativeInputScopeTable): Int32 {
@@ -7138,6 +8823,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return node.style.pointerInteractive
     }
     private func pointerCaptureVersionFor(node: CjguiComposableUiLayoutNode): Int64 {
+        if (let Some(state) <- splitStateForDivider(node)) { return state.captureRevision() }
         let provider = controller as CjguiComposableUiPointerCaptureVersionProvider
         if (let Some(value) <- provider) {
             return value.pointerCaptureVersion(node)
@@ -7151,8 +8837,83 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pointerCaptureActive = false
         pointerCaptureX = 0
         pointerCaptureY = 0
+        pointerCaptureVisualX = 0.0
+        pointerCaptureVisualY = 0.0
+        pointerCaptureTranslateX = 0.0
+        pointerCaptureTranslateY = 0.0
+        pointerCapturePrecise = false
+        pointerCaptureSplitGrabOffset = 0.0
+        pointerCaptureSplitStateIdentity = 0
+        pointerCaptureSplitTrack = 0
+        pointerCaptureSplitHandle = 0
+        pointerCaptureSplitFirstMinimum = 0
+        pointerCaptureSplitSecondMinimum = 0
+        pointerCaptureSplitOriginX = 0.0
+        pointerCaptureSplitVisualY = 0.0
+        pointerCaptureSplitTranslateX = 0.0
+        pointerCaptureSplitTranslateY = 0.0
+        pointerCaptureSplitStartVersion = -1
+        pointerCaptureSplitContinuousVersion = -1
+        pointerCaptureSplitClips = ArrayList<CjguiComposableUiVisualRect>()
+
+        pointerCaptureGestureEpoch = 0
+        pointerCaptureAppInstance = 0
+        pointerCaptureComponentInstance = 0
+        pointerCaptureSurfaceGeneration = 0
+        pointerCapturePointerId = -1
+        pointerCaptureAcceptedBindingEpoch = 0
     }
-    private func cancelPointerCapture(): CjguiComposableUiDispatchResult {
+    private func pointerEventBindingMatches(event: InternalRendererPumpResult,
+        node: CjguiComposableUiLayoutNode): Bool {
+        if (event.gestureEpoch != 0u64) {
+            return event.gestureAppInstance != 0u64 && event.gestureComponentInstance != 0u64 &&
+                event.gestureSurfaceGeneration != 0u64 && event.gesturePointerId >= 0 &&
+                event.acceptedBindingEpoch != 0u64 &&
+                currentAcceptedBindingEpoch(node) == event.acceptedBindingEpoch
+        }
+        // Older macOS producer: no GestureKey, so keep its strict scene gate.
+        return Int64(event.projectionVersion) == nativeInputScene.version
+    }
+    private func rememberPointerGesture(event: InternalRendererPumpResult): Unit {
+        pointerCaptureAppInstance = event.gestureAppInstance
+        pointerCaptureComponentInstance = event.gestureComponentInstance
+        pointerCaptureSurfaceGeneration = event.gestureSurfaceGeneration
+        pointerCapturePointerId = event.gesturePointerId
+        pointerCaptureGestureEpoch = if (event.gestureEpoch != 0u64) {
+            event.gestureEpoch
+        } else { event.bindingEpoch }
+        pointerCaptureAcceptedBindingEpoch = event.acceptedBindingEpoch
+    }
+    private func pointerGestureMatches(event: InternalRendererPumpResult): Bool {
+        if (pointerCaptureAppInstance != 0u64) {
+            return event.gestureAppInstance == pointerCaptureAppInstance &&
+                event.gestureComponentInstance == pointerCaptureComponentInstance &&
+                event.gestureSurfaceGeneration == pointerCaptureSurfaceGeneration &&
+                event.gesturePointerId == pointerCapturePointerId &&
+                event.gestureEpoch == pointerCaptureGestureEpoch &&
+                event.acceptedBindingEpoch == pointerCaptureAcceptedBindingEpoch
+        }
+        // A legacy macOS capture still has a per-gesture binding epoch. Scene
+        // admission is checked separately: only a state-bound split may carry
+        // its own queued update/end across a certified accepted redraw.
+        return event.gestureEpoch == 0u64 && event.bindingEpoch != 0u64 &&
+            event.bindingEpoch == pointerCaptureGestureEpoch
+    }
+    private func legacySplitCaptureAllowsVersion(event: InternalRendererPumpResult): Bool {
+        if (!pointerCaptureActive || event.gestureEpoch != 0u64 ||
+            splitStateForDivider(pointerCaptureNode).isNone()) { return false }
+        let version = Int64(event.projectionVersion)
+        return version >= pointerCaptureSplitStartVersion &&
+            version <= pointerCaptureSplitContinuousVersion
+    }
+    private func rememberPointerCaptureGeometry(event: InternalRendererPumpResult): Unit {
+        pointerCaptureVisualX = event.pointerVisualX
+        pointerCaptureVisualY = event.pointerVisualY
+        pointerCaptureTranslateX = event.pointerTranslateX
+        pointerCaptureTranslateY = event.pointerTranslateY
+        pointerCapturePrecise = event.pointerGeometryAccepted
+    }
+    private func cancelPointerCapture(notifyNative!: Bool = true): CjguiComposableUiDispatchResult {
         if (!pointerCaptureActive || pointerCaptureNode.nodeId < 0) {
             clearPointerCapture()
             return CjguiComposableUiDispatchResult(false)
@@ -7160,10 +8921,25 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let target = pointerCaptureNode
         let x = pointerCaptureX
         let y = pointerCaptureY
+        let visualX = pointerCaptureVisualX
+        let visualY = pointerCaptureVisualY
+        let translateX = pointerCaptureTranslateX
+        let translateY = pointerCaptureTranslateY
+        let precise = pointerCapturePrecise
         // Clear first: a controller callback may request a refresh, close the
         // window, or reject the phase. None of those paths may leave the old
         // target able to receive a later move/up.
-        let _ = internalRendererCancelComposablePointerCapture(sessionToken)
+        if (notifyNative) {
+            if (pointerCaptureAppInstance != 0u64) {
+                let _ = internalRendererCancelComposablePointerCaptureGestureKey(sessionToken,
+                    pointerCaptureAppInstance, pointerCaptureComponentInstance,
+                    pointerCaptureSurfaceGeneration, pointerCapturePointerId, pointerCaptureGestureEpoch)
+            } else if (pointerCaptureGestureEpoch != 0u64) {
+                let _ = internalRendererCancelComposablePointerCaptureEpoch(sessionToken, pointerCaptureGestureEpoch)
+            } else {
+                let _ = internalRendererCancelComposablePointerCapture(sessionToken)
+            }
+        }
         clearPointerCapture()
         return controller.applyUiEvent(
             CjguiComposableUiEvent(
@@ -7174,9 +8950,98 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 0,
                 nativeInputScene.version,
                 pointerX: x,
-                pointerY: y
+                pointerY: y,
+                pointerVisualX: visualX,
+                pointerVisualY: visualY,
+                pointerTranslateX: translateX,
+                pointerTranslateY: translateY,
+                pointerGeometryAccepted: precise
             )
         )
+    }
+    /// A framework-owned divider keeps one narrow capture capability across
+    /// its own accepted redraws. The moving divider x/first size are outputs;
+    /// the track origin, mapping, constraints and binding are the frozen inputs.
+    private func rememberSplitCaptureBinding(node: CjguiComposableUiLayoutNode): Bool {
+        let state = match (splitStateForDivider(node)) {
+            case Some(value) => value
+            case None => return false
+        }
+        if (state.ownerWindowToken() != instanceToken || state.acceptedTrack() <= 0) { return false }
+        let geometry = match (nativeInputScene.visualGeometryForId(node.nodeId)) {
+            case Some(value) => value
+            case None => return false
+        }
+        let clips = node.clipConstraints()
+        if (clips.size != geometry.clipCount()) { return false }
+        pointerCaptureSplitStateIdentity = state.viewStateIdentity()
+        pointerCaptureSplitTrack = state.acceptedTrack()
+        pointerCaptureSplitHandle = state.acceptedHandleSize()
+        pointerCaptureSplitFirstMinimum = state.firstMinimum()
+        pointerCaptureSplitSecondMinimum = state.secondMinimum()
+        pointerCaptureSplitTranslateX = geometry.translateX
+        pointerCaptureSplitTranslateY = geometry.translateY
+        pointerCaptureSplitOriginX = geometry.layoutToWindowX(Float64(node.bounds.x - state.acceptedFirstSize()))
+        pointerCaptureSplitVisualY = geometry.layoutToWindowY(Float64(node.bounds.y))
+        pointerCaptureSplitClips = ArrayList<CjguiComposableUiVisualRect>()
+        var index: Int64 = 0
+        while (index < clips.size) {
+            pointerCaptureSplitClips.add(geometry.visualClipAt(clips, index))
+            index += 1
+        }
+        pointerCaptureSplitStartVersion = nativeInputScene.version
+        pointerCaptureSplitContinuousVersion = nativeInputScene.version
+        return true
+    }
+    private func splitCaptureBindingMatches(node: CjguiComposableUiLayoutNode): Bool {
+        let original = pointerCaptureNode
+        let state = match (splitStateForDivider(node)) {
+            case Some(value) => value
+            case None => return false
+        }
+        if (pointerCaptureSplitStateIdentity == 0 || state.viewStateIdentity() != pointerCaptureSplitStateIdentity ||
+            state.ownerWindowToken() != instanceToken || !isPointerCapturable(node) ||
+            node.nodeId != original.nodeId || node.nodeKind != original.nodeKind ||
+            node.resourceId != original.resourceId || node.identityKey != original.identityKey ||
+            node.semanticIncarnation != original.semanticIncarnation || node.actionName != original.actionName ||
+            node.fieldId != original.fieldId || node.operationActionName != original.operationActionName ||
+            node.operationResourceId != original.operationResourceId || node.pointerControlRole != original.pointerControlRole ||
+            node.pointerControlAxis != original.pointerControlAxis || node.pointerControlMinimum != original.pointerControlMinimum ||
+            node.pointerControlSecondMinimum != original.pointerControlSecondMinimum ||
+            node.pointerControlHandleThickness != original.pointerControlHandleThickness ||
+            node.inputScopeId != original.inputScopeId || node.layerId != original.layerId ||
+            node.layerKind != original.layerKind || node.isEnabled != original.isEnabled ||
+            node.isReadOnly != original.isReadOnly || state.acceptedTrack() != pointerCaptureSplitTrack ||
+            state.acceptedHandleSize() != pointerCaptureSplitHandle ||
+            state.firstMinimum() != pointerCaptureSplitFirstMinimum ||
+            state.secondMinimum() != pointerCaptureSplitSecondMinimum ||
+            node.bounds.height != original.bounds.height) { return false }
+        let geometry = match (nativeInputScene.visualGeometryForId(node.nodeId)) {
+            case Some(value) => value
+            case None => return false
+        }
+        if (geometry.translateX != pointerCaptureSplitTranslateX ||
+            geometry.translateY != pointerCaptureSplitTranslateY ||
+            geometry.layoutToWindowX(Float64(node.bounds.x - state.acceptedFirstSize())) != pointerCaptureSplitOriginX ||
+            geometry.layoutToWindowY(Float64(node.bounds.y)) != pointerCaptureSplitVisualY) { return false }
+        let clips = node.clipConstraints()
+        let originalClips = original.clipConstraints()
+        if (clips.size != originalClips.size || clips.size != pointerCaptureSplitClips.size ||
+            clips.size != geometry.clipCount()) { return false }
+        var index: Int64 = 0
+        while (index < clips.size) {
+            let originalClip = originalClips[index]
+            let currentClip = clips[index]
+            let expected = pointerCaptureSplitClips[index]
+            let actual = geometry.visualClipAt(clips, index)
+            if (originalClip.ownerIdentity != currentClip.ownerIdentity ||
+                originalClip.cornerRadius != currentClip.cornerRadius || expected.x != actual.x ||
+                expected.y != actual.y || expected.width != actual.width || expected.height != actual.height) {
+                return false
+            }
+            index += 1
+        }
+        return true
     }
     private func dispatchPointerEvent(nativeEvent: InternalRendererPumpResult): CjguiComposableUiDispatchResult {
         let eventKind = Int64(nativeEvent.eventKind)
@@ -7184,9 +9049,6 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let x = nativeEvent.pointerX
         let y = nativeEvent.pointerY
         if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN) {
-            if (pointerCaptureActive) {
-                let _ = cancelPointerCapture()
-            }
             // B4(2026-09-26, Sol consult): POINTER_BEGIN must resolve through the POINTER
             // target contract, not `resolveInput`. A pointer-interactive TEXT node (the
             // visual body) can never receive editable input, so `resolveInput` resolved it
@@ -7201,20 +9063,45 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 nativeInputScene.resolvePointerTarget(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
                     Int64(nativeEvent.projectionVersion))
             }
-            if (!isPointerCapturable(resolved)) {
+            if (!isPointerCapturable(resolved) || !pointerEventBindingMatches(nativeEvent, resolved)) {
                 return controller.rejectUiEvent(eventKind, nodeId)
+            }
+            if (pointerCaptureActive) {
+                if (pointerGestureMatches(nativeEvent)) { return CjguiComposableUiDispatchResult(false) }
+                let _ = cancelPointerCapture()
             }
             // A state-bound divider is framework-owned: the drag is applied to the
             // shared split view state and the ordinary capture path keeps the
             // update/end phases flowing without an application split owner.
             if (splitStateForDivider(resolved).isSome()) {
-                let _ = applySplitStatePointerDrag(resolved, x)
                 pointerCaptureNode = resolved
+                let bindingReady = rememberSplitCaptureBinding(resolved)
+                if ((nativeEvent.gestureEpoch == 0u64 && nativeEvent.bindingEpoch == 0u64) || !bindingReady) {
+                    clearPointerCapture()
+                    return controller.rejectUiEvent(eventKind, nodeId)
+                }
+                let visualX = if (nativeEvent.pointerGeometryAccepted) {
+                    nativeEvent.pointerVisualX
+                } else { Float64(x) }
+                let geometry = match (nativeInputScene.visualGeometryForId(resolved.nodeId)) {
+                    case Some(value) => value
+                    case None => return controller.rejectUiEvent(eventKind, nodeId)
+                }
+                let handleLeft = geometry.layoutToWindowX(Float64(resolved.bounds.x))
+                let handleSize = if (resolved.pointerControlHandleThickness > 0) {
+                    Float64(resolved.pointerControlHandleThickness)
+                } else { 1.0 }
+                let rawGrab = visualX - handleLeft
+                pointerCaptureSplitGrabOffset = if (rawGrab < 0.0) { 0.0 } else if (rawGrab > handleSize) {
+                    handleSize
+                } else { rawGrab }
                 pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
                 pointerCaptureModalLayerId = activeModalLayerId
                 pointerCaptureActive = true
+                rememberPointerGesture(nativeEvent)
                 pointerCaptureX = x
                 pointerCaptureY = y
+                rememberPointerCaptureGeometry(nativeEvent)
                 return CjguiComposableUiDispatchResult(true)
             }
             let dispatch = controller.applyUiEvent(
@@ -7227,6 +9114,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     Int64(nativeEvent.projectionVersion),
                     pointerX: x,
                     pointerY: y,
+                    pointerVisualX: nativeEvent.pointerVisualX,
+                    pointerVisualY: nativeEvent.pointerVisualY,
+                    pointerTranslateX: nativeEvent.pointerTranslateX,
+                    pointerTranslateY: nativeEvent.pointerTranslateY,
+                    pointerGeometryAccepted: nativeEvent.pointerGeometryAccepted,
                     modifierFlags: Int64(nativeEvent.modifierFlags)
                 )
             )
@@ -7235,35 +9127,46 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
                 pointerCaptureModalLayerId = activeModalLayerId
                 pointerCaptureActive = true
+                rememberPointerGesture(nativeEvent)
                 pointerCaptureX = x
                 pointerCaptureY = y
+                rememberPointerCaptureGeometry(nativeEvent)
                 rememberInteraction(resolved, eventKind, 0, 0)
             }
             return dispatch
         }
         if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_CANCEL) {
-            return cancelPointerCapture()
+            // B（第三次复核，astra Q4）：平台通知取消只终结 **GestureKey 匹配**
+            // 的核心捕获。gestureEpoch 由 bridge BEGIN 分配贯穿全链，不同手势
+            // 必有不同 epoch。不匹配视为过期终结忽略，不反调 native。
+            if (pointerCaptureActive && pointerGestureMatches(nativeEvent) &&
+                (nativeEvent.gestureEpoch != 0u64 || Int64(nativeEvent.projectionVersion) == nativeInputScene.version ||
+                    legacySplitCaptureAllowsVersion(nativeEvent))) {
+                return cancelPointerCapture(notifyNative: false)
+            }
+            // 不匹配：过期终结，忽略；B 的捕获不变。
+            return CjguiComposableUiDispatchResult(false)
         }
         if (!pointerCaptureActive) {
             return controller.rejectUiEvent(eventKind, nodeId)
         }
-        // The framework owns a state-bound divider for the WHOLE drag: the pointer
-        // legitimately leaves the thin divider while the panes resize, and a
-        // framework-only size change must not cancel the gesture the way a stale
-        // business write does. No phase is handed to an application split owner.
-        if (splitStateForDivider(pointerCaptureNode).isSome() && (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE ||
-            eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END)) {
-            let splitDragChanged = applySplitStatePointerDrag(pointerCaptureNode, x)
-            pointerCaptureX = x
-            pointerCaptureY = y
-            if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) {
-                clearPointerCapture()
+        // A terminal/update queued by an older gesture must not cancel a newer
+        // capture, even when both reuse the same numeric node identity.
+        if (!pointerGestureMatches(nativeEvent)) {
+            return CjguiComposableUiDispatchResult(false)
+        }
+        if (nativeEvent.gestureEpoch == 0u64 && Int64(nativeEvent.projectionVersion) != nativeInputScene.version) {
+            // A split move can be queued under the prior ACCEPTED projection
+            // while this same drag's size is being redrawn. Reconciliation has
+            // certified every accepted scene in this bounded interval; native
+            // stamps the input snapshot, never a candidate under preparation.
+            if (!legacySplitCaptureAllowsVersion(nativeEvent)) {
+                return cancelPointerCapture()
             }
-            return CjguiComposableUiDispatchResult(splitDragChanged)
         }
         if (pointerCaptureNode.nodeId != nodeId || pointerCaptureNode.resourceId != nativeEvent.resourceId ||
             pointerCaptureNode.nodeKind != Int64(nativeEvent.nodeKind)) {
-            return controller.rejectUiEvent(eventKind, nodeId)
+            return cancelPointerCapture()
         }
         // A Cangjie callback records the target owner revision it just
         // accepted. Any independently accepted write that changes this
@@ -7274,9 +9177,34 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return cancelPointerCapture()
         }
         let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
+        if (!pointerEventBindingMatches(nativeEvent, current) &&
+            !legacySplitCaptureAllowsVersion(nativeEvent)) { return cancelPointerCapture() }
         if (!isPointerCapturable(current) || current.resourceId != pointerCaptureNode.resourceId || current.nodeKind != pointerCaptureNode
-            .nodeKind) {
+            .nodeKind || current.identityKey != pointerCaptureNode.identityKey) {
             return cancelPointerCapture()
+        }
+        if (splitStateForDivider(pointerCaptureNode).isSome() && !splitCaptureBindingMatches(current)) {
+            return cancelPointerCapture()
+        }
+        // The framework owns a state-bound divider for the whole gesture. The
+        // pointer may leave its thin hit region, but native capture still stamps
+        // its accepted identity. Read the CURRENT accepted track after every
+        // successful resize; never mix a BEGIN-era bounds with a later size.
+        if (splitStateForDivider(current).isSome() && (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE ||
+            eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END)) {
+            let visualX = if (nativeEvent.pointerGeometryAccepted) {
+                nativeEvent.pointerVisualX
+            } else { Float64(x) }
+            let splitDragChanged = match (applySplitStatePointerDrag(current, visualX,
+                pointerCaptureSplitGrabOffset, pointerCaptureOwnerVersion)) {
+                case Some(changed) => changed
+                case None => return cancelPointerCapture()
+            }
+            pointerCaptureX = x
+            pointerCaptureY = y
+            rememberPointerCaptureGeometry(nativeEvent)
+            if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) { clearPointerCapture() }
+            return CjguiComposableUiDispatchResult(splitDragChanged)
         }
         let dispatch = controller.applyUiEvent(
             CjguiComposableUiEvent(
@@ -7287,11 +9215,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 0,
                 Int64(nativeEvent.projectionVersion),
                 pointerX: x,
-                pointerY: y
+                pointerY: y,
+                pointerVisualX: nativeEvent.pointerVisualX,
+                pointerVisualY: nativeEvent.pointerVisualY,
+                pointerTranslateX: nativeEvent.pointerTranslateX,
+                pointerTranslateY: nativeEvent.pointerTranslateY,
+                pointerGeometryAccepted: nativeEvent.pointerGeometryAccepted
             )
         )
         pointerCaptureX = x
         pointerCaptureY = y
+        rememberPointerCaptureGeometry(nativeEvent)
         if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) {
             clearPointerCapture()
         } else if (dispatch.didApply) {
@@ -7300,6 +9234,34 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         return dispatch
     }
+    // Package-local production-path probe: tests feed a frozen native POD
+    // through the same capture/controller dispatch used by pumpEvent.
+    func dispatchPointerEventForTest(event: InternalRendererPumpResult): CjguiComposableUiDispatchResult {
+        return dispatchPointerEvent(event)
+    }
+    func acceptedBindingEpochForTest(nodeId: Int64): UInt64 {
+        return currentAcceptedBindingEpoch(nativeInputScene.nodeForId(nodeId))
+    }
+    func setFocusNativeStatusesForTest(statuses: ArrayList<Int32>): Unit {
+        focusNativeTestStatuses.clear()
+        for (status in statuses) {
+            focusNativeTestStatuses.add(status)
+        }
+        focusNativeTestIndex = 0
+        focusNativeTestCalls = 0
+    }
+    func focusNativeCallsForTest(): Int64 {
+        return focusNativeTestCalls
+    }
+    func hasPendingSemanticFocusForTest(): Bool {
+        return pendingSemanticFocusNode.isSome()
+    }
+    func focusedNodeIdForTest(): Int64 {
+        return focusedNodeId
+    }
+    func pointerCaptureActiveForTest(): Bool { return pointerCaptureActive }
+    func pointerCaptureSplitStartVersionForTest(): Int64 { return pointerCaptureSplitStartVersion }
+    func pointerCaptureSplitContinuousVersionForTest(): Int64 { return pointerCaptureSplitContinuousVersion }
     private func reconcilePointerCaptureAfterProjection(): Unit {
         if (!pointerCaptureActive) {
             return
@@ -7307,11 +9269,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
         if (pointerCaptureVersionFor(pointerCaptureNode) != pointerCaptureOwnerVersion || activeModalLayerId !=
             pointerCaptureModalLayerId || !isPointerCapturable(current) || current.resourceId != pointerCaptureNode
-            .resourceId || current.nodeKind != pointerCaptureNode.nodeKind) {
+            .resourceId || current.nodeKind != pointerCaptureNode.nodeKind ||
+            current.identityKey != pointerCaptureNode.identityKey ||
+            (pointerCaptureAppInstance != 0u64 &&
+            currentAcceptedBindingEpoch(current) != pointerCaptureAcceptedBindingEpoch) ||
+            (splitStateForDivider(pointerCaptureNode).isSome() && !splitCaptureBindingMatches(current))) {
             let cancellation = cancelPointerCapture()
             if (cancellation.didApply && isWindowOpen) {
                 requestRefresh()
             }
+        } else if (splitStateForDivider(pointerCaptureNode).isSome()) {
+            pointerCaptureSplitContinuousVersion = nativeInputScene.version
         }
     }
     private func isEditableTextNodeKind(nodeKind: Int64): Bool {
@@ -7383,7 +9351,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         // Freeze the owner-backed projection BEFORE native is touched. A later
         // owner write makes the final conditional confirmation fail; a scene
-        // that has not accepted this exact projection cannot reset the proxy.
+        // that has not accepted this projection cannot reset the proxy.
         var receiptEpoch: Int64 = -1
         var receiptMirror: Int64 = -1
         var restoredSession: ?CjguiTextSession = None
@@ -7410,6 +9378,30 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     return
                 }
             }
+            if (visualTarget && session.awaitingCalibration()) {
+                // A refused ARBITRATED presentation composition leaves the session's
+                // calibration lock held (the source mirror is stale after the owner
+                // advanced). Rebuild that mirror and take the receipt here too, so the
+                // lock is released only after THIS visual proxy restoration succeeds.
+                // The fragment's display text is not the mirror text, so no equality
+                // check applies; the receipt still binds epoch + mirror revision.
+                if (!session.recalibrate()) {
+                    noteOwnedTextSessionRestoreFailure()
+                    return
+                }
+                let receipt = session.restorationReceipt()
+                if (receipt[0] < 0) {
+                    noteOwnedTextSessionRestoreFailure()
+                    return
+                }
+                receiptEpoch = receipt[0]
+                receiptMirror = receipt[1]
+                restoredSession = Some(session)
+                requestRefresh()
+                if (!refreshIfNeeded()) {
+                    return
+                }
+            }
         }
         let target = if (visualTarget) {
             nativeInputScene.resolvePointerTarget(refusedRangeTextNodeId,
@@ -7426,19 +9418,65 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
             return
         }
-        if (restoredSession.isSome() && target.value != frozenText) {
+        if (restoredSession.isSome() && !visualTarget && target.value != frozenText) {
             // The accepted scene still describes an older owner projection.
             // It cannot be combined with a newly signed session receipt.
             textSessionRestoreFailures += 1
             requestRefresh()
             return
         }
+        // A speculative edit may have changed the hidden proxy's caret before
+        // the owner refused it. Recovery must restore the last accepted
+        // selection, including a nonempty range, rather than leave the proxy
+        // at the end of the accepted value. Coordinates belong to the value
+        // they are measured against: an owned INPUT restores the session's
+        // rebased selection (its coordinates ARE the accepted mirror value's),
+        // while a presentation TEXT node restores its last accepted
+        // interaction selection, which is measured against the accepted visual
+        // fragment -- the session mirror's selection is a different coordinate
+        // system and must never be applied to the fragment (E2-b, 2026-09-29).
+        var restoreStart = focusedSelectionStart
+        var restoreEnd = focusedSelectionEnd
+        if (!visualTarget) {
+            if (let Some(session) <- restoredSession) {
+                let selected = session.selection16()
+                restoreStart = selected[0]
+                restoreEnd = selected[1]
+            }
+        }
+        let acceptedUnits = cjguiUtf16Length(target.value)
+        if (restoreStart < 0 || restoreEnd < restoreStart || restoreEnd > acceptedUnits) {
+            textSessionRestoreFailures += 1
+            return
+        }
         let outcome = internalRendererRecoverActiveTextProxy(sessionToken, refusedRangeTextNodeId,
             refusedRangeTextResourceId, refusedRangeTextNodeKind, target.value)
+        var selectedStatus = outcome[0]
+        var selectedStart = outcome[1]
+        var selectedEnd = outcome[2]
         if (outcome[0] == CJGUI_INTERNAL_RENDERER_OK) {
+            let restored = internalRendererRestoreComposableSelection(sessionToken,
+                refusedRangeTextNodeId, refusedRangeTextResourceId, refusedRangeTextNodeKind,
+                nativeInputScene.version, target.value, restoreStart, restoreEnd)
+            selectedStatus = restored[0]
+            selectedStart = restored[1]
+            selectedEnd = restored[2]
+        }
+        getStdOut().writeln("CJGUI_VISUAL_RECOVERY target=${refusedRangeTextNodeId} " +
+            "visual=${visualTarget} scene=${nativeInputScene.version} " +
+            "before_selection=${focusedSelectionStart}:${focusedSelectionEnd} " +
+            "requested_selection=${restoreStart}:${restoreEnd} accepted_units=${acceptedUnits} " +
+            "recover_status=${outcome[0]} selection_status=${selectedStatus} " +
+            "after_selection=${selectedStart}:${selectedEnd}")
+        if (outcome[0] == CJGUI_INTERNAL_RENDERER_OK &&
+            selectedStatus == CJGUI_INTERNAL_RENDERER_OK) {
             if (let Some(session) <- restoredSession) {
+                // A visual proxy's restored selection is fragment-local UTF-16, not
+                // mirror coordinates; the session keeps its own rebased selection.
+                let confirmStart = if (visualTarget) { -1 } else { selectedStart }
+                let confirmEnd = if (visualTarget) { -1 } else { selectedEnd }
                 if (!session.confirmProxyRestored(receiptEpoch, receiptMirror,
-                    selectionStart16: outcome[1], selectionEnd16: outcome[2])) {
+                    selectionStart16: confirmStart, selectionEnd16: confirmEnd)) {
                     textSessionRestoreFailures += 1
                     requestRefresh()
                     return
@@ -7447,8 +9485,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
             refusedRangeTextPending = false
             refusedRangeTextRecoveries += 1
-            focusedSelectionStart = outcome[1]
-            focusedSelectionEnd = outcome[2]
+            focusedSelectionStart = selectedStart
+            focusedSelectionEnd = selectedEnd
             interactionVersion += 1
             return
         }
@@ -7485,14 +9523,24 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 的事件身份要与 native 场景里的活动节点同源）。返回会话仅供消费方查询选区
     /// 与组合状态。
     ///
+    /// `compositionArbitration=true` 时该绑定声明使用 owner 组合仲裁：sink 必须同时实现
+    /// `CjguiRangeTextCompositionSink`，会话在组合开始时登记 owner claim、终态出示凭据；
+    /// 声明了却没有该能力时组合在 begin 具名拒绝，绝不静默退回普通写入。默认 false 保持
+    /// 普通消费者的既有行为。
+    ///
     /// 换绑清理在这一处发生：上一个会话先 `invalidate()`，代次推进后它迟到的回执、
     /// 组合草稿与坐标全部具名拒绝，即使新绑定复用了同一个 nodeId。
     public func bindRangeTextSession(nodeId: Int64, semanticId: String, source: CjguiRangeTextSource,
         sink: CjguiRangeTextEditSink, resourceId: Int64, nodeKind: Int64,
-        materializeLimit!: Int64 = 65536): CjguiTextSession {
+        materializeLimit!: Int64 = 65536, compositionArbitration!: Bool = false): CjguiTextSession {
         releaseTextSession()
         let mirror = CjguiRangeTextWindow(nodeId, semanticId, source, sink, materializeLimit: materializeLimit)
-        let session = CjguiTextSession(mirror)
+        let compositionSink: ?CjguiRangeTextCompositionSink = match (sink as CjguiRangeTextCompositionSink) {
+            case Some(wired) => Some(wired)
+            case None => None
+        }
+        let session = CjguiTextSession(mirror, compositionSink: compositionSink,
+            compositionArbitration: compositionArbitration)
         session.bind()
         ownedTextSession = Some(session)
         ownedTextSessionNodeId = nodeId
@@ -7518,6 +9566,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return false
         }
         if (presentationCompositionId >= 0) {
+            // 换焦点面即按精确 token 结束呈现面组合的 owner claim;窗口侧状态随后清零。
+            if (let Some(session) <- ownedTextSession) {
+                session.cancelPresentationComposition()
+            }
             let _ = this.cancelOwnedComposition()
             presentationCompositionId = -1
             presentationCompositionRange = None
@@ -7527,6 +9579,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (restored[0] != CJGUI_INTERNAL_RENDERER_OK || restored[1] != start16 ||
             restored[2] != end16) {
             return false
+        }
+        // The native proxy and the window's accepted focus shadow must name
+        // the same selection. A pointer move can put the proxy at UTF-16 zero
+        // while recordProjectedFocus still remembers the focus-default end;
+        // refusal recovery uses this shadow and would otherwise jump there.
+        if (focusedNodeId == nodeId && focusedResourceId == resourceId &&
+            focusedNodeKind == CJGUI_COMPOSABLE_UI_TEXT) {
+            focusedSelectionStart = restored[1]
+            focusedSelectionEnd = restored[2]
+            refreshPageFocusBookmark(node)
+            interactionVersion += 1
         }
         if (presentationTextSessionNodeId != nodeId ||
             presentationTextSessionResourceId != resourceId) {
@@ -7548,6 +9611,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     public func releasePresentationTextSessionSurface(): Unit {
         if (presentationTextSessionNodeId < 0) {
             return
+        }
+        // 解绑呈现面:组合按精确 token 结束(claim 不跨表面存活),native 同步取消。
+        if (presentationCompositionId >= 0) {
+            if (let Some(session) <- ownedTextSession) {
+                session.cancelPresentationComposition()
+            }
+            presentationCompositionId = -1
+            presentationCompositionRange = None
         }
         let _ = this.cancelOwnedComposition()
         presentationCompositionId = -1
@@ -7651,6 +9722,89 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return status
     }
 
+    /// 组合重锚意图：owner 投影在本窗口**已声明仲裁**的组合期间前进时，在场景发布前
+    /// 给 native 记下一次请求——若这次变化本会取消活动组合，先在新区间上尝试保留
+    /// 同一转换会话。真正的安装、读回与"保留还是取消"的判定都在 native 的接受点完成；
+    /// 这里只判定资格并携带新代理基文，不改变任何代理或 owner 状态。
+    ///
+    /// **默认关闭。** 真实系统 IME(Apple 拼音, macOS)判别实验的结论是：存储改写一旦
+    /// 让客户端 marked 状态消失，输入源自身的转换会话同时结束——重锚装不出"续接"，
+    /// 只会把用户已打的词变成垃圾终态。因此正常路径继续走既有的取消 + 校准恢复；
+    /// 本入口只作显式实验开关（`setCompositionReanchorExperiment`），其证据见
+    /// `Pharos Mark/artifacts/e2-interleave-20260928/`。
+    /// 场景刷新是否在**活动仲裁 claim 之上**改变了组合面的正文：外部写与本窗口组字
+    /// 相交的唯一形态，也是「重锚实验」与「重锚不可用具名」两条路径的共同判据。
+    private func ownedCompositionSurfaceChanged(node: CjguiComposableUiLayoutNode,
+        accepted: CjguiComposableUiScene): Bool {
+        if (sessionToken == CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
+            return false
+        }
+        let session = match (ownedTextSession) {
+            case Some(owned) => owned
+            case None => return false
+        }
+        if (!session.hasComposition() || !session.compositionArbitrationDeclared() ||
+            session.compositionClaimTokenValue() < 0) {
+            return false
+        }
+        let sourceSurface = node.nodeId == ownedTextSessionNodeId &&
+            node.resourceId == ownedTextSessionResourceId && node.nodeKind == ownedTextSessionNodeKind
+        let presentationSurface = node.nodeId == presentationTextSessionNodeId &&
+            node.resourceId == presentationTextSessionResourceId && node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT
+        if (!sourceSurface && !presentationSurface) {
+            return false
+        }
+        if (!isEditableTextNodeKind(node.nodeKind) || node.isReadOnly || !node.isEnabled) {
+            return false
+        }
+        let previous = accepted.nodeForId(node.nodeId)
+        return previous.nodeId == node.nodeId && previous.value != node.value
+    }
+
+    private func armOwnedCompositionReanchor(node: CjguiComposableUiLayoutNode, accepted: CjguiComposableUiScene): Unit {
+        if (reanchorExperimentMode == 0) {
+            return
+        }
+        if (!this.ownedCompositionSurfaceChanged(node, accepted)) {
+            return
+        }
+        let previous = accepted.nodeForId(node.nodeId)
+        // 范围由 native 从存活代理推断（旧前后缀必须逐字保留）；产品映射器的显式
+        // 表达在通用协议里接上。模式决定安装后是否重新安装 marked 客户端状态：
+        // -1 = 重装（机制 2），-2 = 保持未标记（机制 1，只观察输入源是否还活着）。
+        let status = internalRendererArmCompositionReanchor(sessionToken, node.nodeId, node.resourceId,
+            node.nodeKind, node.value, reanchorExperimentMode, 0)
+        if (status == CJGUI_INTERNAL_RENDERER_OK) {
+            pendingReanchorBase = node.value
+        }
+        getStdOut().writeln("CJGUI_COMPOSITION_REANCHOR_ARM node=${node.nodeId} status=${status} " +
+            "mode=${reanchorExperimentMode} base_bytes=${node.value.toArray().size} " +
+            "previous_bytes=${previous.value.toArray().size}")
+    }
+
+    /// 生产路径下同一判据的记账：真实 IME 判别实验已证存储级改写会终止输入源自身的
+    /// 转换会话（两种安装机制都无法续接，见 artifacts/e2-interleave-20260928），
+    /// 所以这里不再尝试安装，只把事实留给组字取消相位具名为
+    /// `composition_reanchor_unavailable`（cause=native_context_lost），恢复仍是结束
+    /// 组字 + 校准，正文与历史零变化。
+    private func noteOwnedCompositionExternalDisruption(node: CjguiComposableUiLayoutNode,
+        accepted: CjguiComposableUiScene): Unit {
+        if (reanchorExperimentMode != 0) {
+            return
+        }
+        // 只在看到变化时置位：后续帧的重复暂存（值已相同）不得抹掉尚未被
+        // 取消相位消费的事实。
+        if (this.ownedCompositionSurfaceChanged(node, accepted)) {
+            pendingExternalCompositionDisruption = true
+        }
+    }
+
+    /// 组合重锚的**显式实验开关**（默认 0=关闭）。`-1` 安装后重装客户端 marked 状态，
+    /// `-2` 安装后保持未标记。仅用于复现真实 IME 判别实验；正常输入路径不得打开。
+    public func setCompositionReanchorExperiment(mode: Int64): Unit {
+        reanchorExperimentMode = mode
+    }
+
     public func textSession(): Option<CjguiTextSession> {
         return ownedTextSession
     }
@@ -7724,6 +9878,38 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return lastTextSessionCompositionReason
     }
 
+    /// 最近一次组字判决失败的底层原因（当前仅 `composition_reanchor_unavailable`
+    /// 路径填充 `native_context_lost`）；与 reason 一起构成消费方可判别的失败分类。
+    public func textSessionLastCompositionCause(): String {
+        return lastTextSessionCompositionCause
+    }
+
+    /// 当前会话持有的**独立恢复草稿**（外部扰乱取消后保留的 preedit 证据+可取回
+    /// 内容）。消费方据此在反馈区告知组字中断并保留可取回草稿;取回走会话的
+    /// `consumeRecoveryDraft(draftId)`(明确用户动作),放弃走 `discardRecoveryDraft(draftId)`。
+    public func textSessionRecoveryDraft(): ?CjguiTextSessionRecoveryDraft {
+        return match (ownedTextSession) {
+            case Some(session) => session.recoveryDraftValue()
+            case None => None
+        }
+    }
+
+    /// 全部未处理恢复草稿(新→旧)与防御性挤出计数:多份并存时消费方按身份显示、
+    /// 按身份取回/放弃,不把 A 的通知错配到 B 的动作上。
+    public func textSessionRecoveryDrafts(): Array<CjguiTextSessionRecoveryDraft> {
+        return match (ownedTextSession) {
+            case Some(session) => session.recoveryDraftsValue()
+            case None => Array<CjguiTextSessionRecoveryDraft>()
+        }
+    }
+
+    public func textSessionRecoveryDraftsDisplaced(): Int64 {
+        return match (ownedTextSession) {
+            case Some(session) => session.recoveryDraftsDisplacedCount()
+            case None => 0
+        }
+    }
+
     /// 该意图是否属于窗口拥有的会话；是则就地判决并返回结果，否则 None 交回 owner。
     private func routeOwnedTextSessionRangeEdit(nativeEvent: InternalRendererPumpResult,
         continuation: CjguiComposableUiLayoutNode, eventText: String): Option<CjguiComposableUiDispatchResult> {
@@ -7785,6 +9971,53 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// kind 52 组字相位（update/commit/cancel）的路由。只有**声明过的**节点会产生
     /// 这类事件；代次或身份不符的事件在这里具名消费，绝不落到 owner dispatcher。
     /// 返回 true 表示这一笔相位产生了正文写入（commit 被接受），供刷新门使用。
+    /// Package-local regression seam: a terminal from an already-ended A can
+    /// arrive after B owns this accepted binding. It enters the same route and
+    /// recovery scheduler as a pumped native phase; no owner write is faked.
+    func testRouteLateOwnedCompositionPhase(phase: UInt32, compositionId: Int64): Bool {
+        if (this.ownedTextSessionNodeId < 0 || this.ownedTextSessionNodeKind < 0 ||
+            compositionId < 0) { return false }
+        let event = InternalRendererPumpResult(CJGUI_INTERNAL_RENDERER_OK,
+            52u32, 0u32, 0u32, 0u32, UInt64(this.ownedTextSessionNodeId), 0u64,
+            this.ownedTextSessionResourceId, UInt32(this.ownedTextSessionNodeKind),
+            0, 0, 0.0, 0.0, 0.0, 0.0, false, 0,
+            phase, -1, 0, -1, 0, UInt64(compositionId), this.textSessionBindingEpoch,
+            0u64, 0u64, 0u64, 0u64, -1, 0u64, 0u64)
+        return this.routeOwnedTextCompositionPhase(event)
+    }
+
+    /// Package-local counterpart for the presentation TEXT route. The probe
+    /// supplies B's active visual identity while its real text session owns B's
+    /// marked draft; A's delayed phase must be rejected before scene lookup or
+    /// recovery can touch that draft. Restore the test-only visual shadow after
+    /// dispatch so the source surface remains the probe's normal consumer.
+    func testRouteLatePresentationCompositionPhase(phase: UInt32, compositionId: Int64,
+        activeCompositionId: Int64): Bool {
+        if (this.ownedTextSessionNodeId < 0 || compositionId < 0 || activeCompositionId < 0) {
+            return false
+        }
+        let savedNodeId = presentationTextSessionNodeId
+        let savedResourceId = presentationTextSessionResourceId
+        let savedSceneVersion = presentationTextSessionSceneVersion
+        let savedCompositionId = presentationCompositionId
+        presentationTextSessionNodeId = ownedTextSessionNodeId
+        presentationTextSessionResourceId = ownedTextSessionResourceId
+        presentationTextSessionSceneVersion = nativeInputScene.version
+        presentationCompositionId = activeCompositionId
+        let event = InternalRendererPumpResult(CJGUI_INTERNAL_RENDERER_OK,
+            52u32, 0u32, 0u32, 0u32, UInt64(presentationTextSessionNodeId), 0u64,
+            presentationTextSessionResourceId, UInt32(CJGUI_COMPOSABLE_UI_TEXT),
+            0, 0, 0.0, 0.0, 0.0, 0.0, false, 0,
+            phase, -1, 0, -1, 0, UInt64(compositionId), this.textSessionBindingEpoch,
+            0u64, 0u64, 0u64, 0u64, -1, 0u64, 0u64)
+        let routed = this.routeOwnedTextCompositionPhase(event)
+        presentationTextSessionNodeId = savedNodeId
+        presentationTextSessionResourceId = savedResourceId
+        presentationTextSessionSceneVersion = savedSceneVersion
+        presentationCompositionId = savedCompositionId
+        return routed
+    }
+
     private func routeOwnedTextCompositionPhase(nativeEvent: InternalRendererPumpResult): Bool {
         let session = match (ownedTextSession) {
             case Some(owned) => owned
@@ -7812,30 +10045,103 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         let compositionId = Int64(nativeEvent.compositionId)
         let eventText = internalRendererFormEventText(sessionToken)
+        // 身份判决先于一切副作用，与 visual 表面同一契约：已终结组合的迟到相位不得
+        // 在活组合持有绑定时代入 rebase、清 pending 标志、安排恢复，或把活组合自己的
+        // stale 终态(应保存草稿并恢复的那次)解释成旧事件的结果。只留下具名拒绝；
+        // 合法持有者的相位照常走下面的正常分支。
+        let sessionActiveCompositionId = session.compositionIdValue()
+        if ((sessionActiveCompositionId >= 0 && compositionId >= 0 &&
+                compositionId != sessionActiveCompositionId) ||
+            (sessionActiveCompositionId < 0 && nativeEvent.compositionPhase != 1u32 &&
+                compositionId == session.lastTerminalCompositionIdValue())) {
+            textSessionCompositionStaleRefusals += 1
+            lastTextSessionCompositionReason = if (compositionId == session.lastTerminalCompositionIdValue()) {
+                "composition_terminal_duplicate"
+            } else {
+                "composition_id_mismatch"
+            }
+            lastTextSessionCompositionCause = ""
+            getStdOut().writeln("CJGUI_COMPOSITION_STALE phase=${nativeEvent.compositionPhase} " +
+                "id=${compositionId} active_id=${sessionActiveCompositionId} " +
+                "reason=${lastTextSessionCompositionReason}")
+            return false
+        }
         textSessionCompositionDecisions += 1
+        if (session.hasComposition() && session.compositionArbitrationDeclared() &&
+            session.compositionClaimTokenValue() >= 0 && pendingReanchorBase.size > 0 &&
+            session.mirrorText() == pendingReanchorBase) {
+            // owner 版本在组合期间前进、且代理已被装到这段完全相同的基文上：
+            // 在同一 owner 临界点确认 claim 身份后采用新基点，让后续 marked 更新与
+            // 终态按同一 claim 继续；claim 已失效时具名拒绝，由既有恢复路径接管。
+            let rebased = session.rebaseCompositionBaseFromClaim()
+            getStdOut().writeln("CJGUI_COMPOSITION_REANCHOR_BASE rebased=${rebased} " +
+                "reason=${session.lastRejectReason()} version=${session.compositionBaseVersionValue()} " +
+                "mirror_revision=${session.mirrorRevisionValue()}")
+            if (rebased) {
+                pendingReanchorBase = ""
+            }
+        }
         if (nativeEvent.compositionPhase == 1u32) {
+            getStdOut().writeln("CJGUI_COMPOSITION_UPDATE id=${compositionId} " +
+                "preedit_bytes=${eventText.toArray().size} marked=${nativeEvent.markedStart16} " +
+                "replace=${nativeEvent.replacementStart16}:${nativeEvent.replacementLength16} " +
+                "inner=${nativeEvent.selectionStart}:${nativeEvent.selectionEnd} " +
+                "text=[${eventText}]")
             let decision = session.updateComposition(eventText, nativeEvent.replacementStart16,
                 nativeEvent.replacementLength16, nativeEvent.markedStart16, Int64(nativeEvent.selectionStart),
                 Int64(nativeEvent.selectionEnd), compositionId: compositionId)
             return this.settleOwnedCompositionDecision(session, decision, 1)
         }
         if (nativeEvent.compositionPhase == 2u32) {
+            getStdOut().writeln("CJGUI_COMPOSITION_COMMIT id=${compositionId} " +
+                "terminal_bytes=${eventText.toArray().size} text=[${eventText}]")
+            pendingExternalCompositionDisruption = false
             let decision = session.commitComposition(finalText: eventText, compositionId: compositionId)
             return this.settleOwnedCompositionDecision(session, decision, 2)
         }
         if (nativeEvent.compositionPhase == 3u32) {
+            getStdOut().writeln("CJGUI_COMPOSITION_CANCEL_PHASE id=${compositionId}")
+            if (pendingExternalCompositionDisruption || session.compositionBaseStale()) {
+                // 外部正文在 claim 之上推进，而本平台无法保留输入源自身的转换会话
+                // （真实 IME 判别实验：安装机制 1/2 都丢词或留僵尸）。按 Astra Q4 安全
+                // 恢复分支：先保存独立恢复草稿，再按精确 token 结束 claim，持校准锁
+                // 关闭输入门，交既有代理恢复链按 owner 现状重建投影并完整确认后放行。
+                // 判据不止"被组字片段自己变了"：外部写落在别的片段时表面值不变，
+                // 只看它就漏判成普通 cancel(preedit 零草稿丢失)；
+                // `compositionBaseStale()` 是 stale 分支同源的 owner 版本判据。
+                let disrupted = session.disruptComposition(compositionId,
+                    "composition_reanchor_unavailable", "native_context_lost")
+                if (disrupted.ticket >= 0) {
+                    let _ = session.acknowledge(disrupted.ticket, disrupted.contextEpoch)
+                }
+                lastTextSessionDecision = Some(disrupted)
+                lastTextSessionCompositionReason = "composition_reanchor_unavailable"
+                lastTextSessionCompositionCause = "native_context_lost"
+                textSessionCompositionRefusals += 1
+                this.scheduleCompositionProxyRecovery()
+                clearPendingLocalTextValue()
+                pendingExternalCompositionDisruption = false
+                return false
+            }
             session.cancelComposition(compositionId: compositionId)
             lastTextSessionCompositionReason = "composition_cancel"
+            lastTextSessionCompositionCause = ""
             // 取消零事务：正文与撤销栈都不变，只有草稿被丢弃。
             return false
         }
+        pendingExternalCompositionDisruption = false
         textSessionCompositionStaleRefusals += 1
         lastTextSessionCompositionReason = "composition_phase_unknown"
         return false
     }
 
     private func rejectPresentationComposition(reason: String, phase: UInt32): Bool {
+        getStdOut().writeln("CJGUI_VISUAL_COMPOSITION_REFUSED phase=${phase} reason=${reason} " +
+            "active_id=${presentationCompositionId} scene=${presentationTextSessionSceneVersion} " +
+            "selection=${focusedSelectionStart}:${focusedSelectionEnd}")
         lastTextSessionCompositionReason = reason
+        lastTextSessionCompositionCause = ""
+        pendingExternalCompositionDisruption = false
         textSessionCompositionRefusals += 1
         if (phase == 1u32) {
             let _ = this.cancelOwnedComposition()
@@ -7851,10 +10157,37 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// The first visual update freezes a product-mapped absolute source span.
     /// Preedit updates never write; the matching terminal consumes that same
     /// session credential once, or cancels it with zero owner transactions.
+    /// 仲裁绑定的组合把这份冻结跨度升级为**同一 owner claim**（E2 复核第 1 项）：
+    /// begin 登记、update 只改草稿、commit 经凭据落一笔事务、cancel/解绑按精确
+    /// token 结束 —— 每个阶段都由实际 owner 裁决，组合期间重叠外部写被
+    /// `composition_busy` 拒绝。未声明仲裁的绑定保持既有普通 prepared.replace 路径。
     private func routePresentationTextCompositionPhase(session: CjguiTextSession,
         nativeEvent: InternalRendererPumpResult): Bool {
         let phase = nativeEvent.compositionPhase
         let id = Int64(nativeEvent.compositionId)
+        // Identity must be checked before scene resolution: an A terminal can
+        // carry A's old scene while B is already marked in the same proxy.
+        // Recovering that stale scene would overwrite B's preedit/selection.
+        if ((presentationCompositionId >= 0 && id != presentationCompositionId) ||
+            (presentationCompositionId < 0 && phase != 1u32 && id == presentationLastTerminalId)) {
+            textSessionCompositionStaleRefusals += 1
+            lastTextSessionCompositionReason = if (id == presentationLastTerminalId) {
+                "composition_terminal_duplicate"
+            } else {
+                "composition_id_mismatch"
+            }
+            getStdOut().writeln("CJGUI_VISUAL_COMPOSITION_STALE phase=${phase} id=${id} " +
+                "active_id=${presentationCompositionId} reason=${lastTextSessionCompositionReason}")
+            return false
+        }
+        getStdOut().writeln("CJGUI_VISUAL_COMPOSITION_PHASE phase=${phase} id=${id} " +
+            "node=${nativeEvent.nodeId} resource=${nativeEvent.resourceId} " +
+            "event_scene=${nativeEvent.projectionVersion} accepted_scene=${nativeInputScene.version} " +
+            "surface_scene=${presentationTextSessionSceneVersion} active_id=${presentationCompositionId} " +
+            "replacement=${nativeEvent.replacementStart16}:${nativeEvent.replacementLength16} " +
+            "inner=${nativeEvent.selectionStart}:${nativeEvent.selectionEnd} " +
+            "focused_selection=${focusedSelectionStart}:${focusedSelectionEnd} " +
+            "binding_epoch=${textSessionBindingEpoch}")
         let node = nativeInputScene.resolvePointerTarget(Int64(nativeEvent.nodeId),
             nativeEvent.resourceId, CJGUI_COMPOSABLE_UI_TEXT, Int64(nativeEvent.projectionVersion))
         if (node.nodeId != Int64(nativeEvent.nodeId) ||
@@ -7864,10 +10197,46 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         let text = internalRendererFormEventText(sessionToken)
         textSessionCompositionDecisions += 1
+        let arbitrated = session.compositionArbitrationDeclared()
         if (phase == 1u32) {
             if (presentationCompositionId < 0) {
                 if (nativeEvent.replacementStart16 < 0 || nativeEvent.replacementLength16 < 0) {
                     return this.rejectPresentationComposition("visual_original_range_missing", phase)
+                }
+                if (arbitrated) {
+                    // 首个组字相位接同一 owner begin:映射器给出同版本源跨度,会话登记
+                    // claim;冻结凭据是 token,不再保留 prepared 的普通替换通道。
+                    let mapped = match (controller as CjguiComposableUiCompositionRangeProvider) {
+                        case Some(provider) => provider.prepareCompositionSourceRange(node,
+                            nativeEvent.replacementStart16,
+                            nativeEvent.replacementStart16 + nativeEvent.replacementLength16,
+                            Int64(nativeEvent.projectionVersion))
+                        case None => CjguiMappedCompositionRange(None, reason: "visual_mapper_missing")
+                    }
+                    match (mapped.prepared) {
+                        case Some(prepared) =>
+                            // 首个相位本身也是数据:begin 与 preedit/内部选区在同一
+                            // 相位入账,唯一一次 marked update 之后发生扰乱时,保存的
+                            // 草稿就是刚显示的文字。
+                            let began = session.beginPresentationComposition(prepared.contentVersion,
+                                prepared.startByte, prepared.endByte, prepared.contextEpoch,
+                                prepared.mirrorRevision, id, firstPreedit: text,
+                                firstInnerAnchor16: Int64(nativeEvent.selectionStart),
+                                firstInnerFocus16: Int64(nativeEvent.selectionEnd))
+                            if (began.accepted) {
+                                presentationCompositionId = id
+                                presentationCompositionRange = None
+                                lastTextSessionCompositionReason = "accepted"
+                                return false
+                            }
+                            if (began.ticket >= 0) {
+                                let _ = session.acknowledge(began.ticket, began.contextEpoch)
+                            }
+                            return this.rejectPresentationComposition(began.reason, phase)
+                        case None =>
+                            return this.rejectPresentationComposition(
+                                if (mapped.reason == "") { "visual_range_refused" } else { mapped.reason }, phase)
+                    }
                 }
                 let mapped = match (controller as CjguiComposableUiCompositionRangeProvider) {
                     case Some(provider) => provider.prepareCompositionSourceRange(node,
@@ -7888,7 +10257,22 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             if (id != presentationCompositionId) {
                 textSessionCompositionStaleRefusals += 1
                 lastTextSessionCompositionReason = "composition_id_mismatch"
+                getStdOut().writeln("CJGUI_VISUAL_COMPOSITION_STALE phase=${phase} id=${id} " +
+                    "active_id=${presentationCompositionId} reason=composition_id_mismatch")
                 return false
+            }
+            if (arbitrated) {
+                let updated = session.updatePresentationComposition(text,
+                    Int64(nativeEvent.selectionStart), Int64(nativeEvent.selectionEnd), id)
+                if (updated.accepted) {
+                    lastTextSessionCompositionReason = "accepted"
+                    return false
+                }
+                if (updated.ticket >= 0) {
+                    let _ = session.acknowledge(updated.ticket, updated.contextEpoch)
+                }
+                lastTextSessionDecision = Some(updated)
+                return this.rejectPresentationComposition(updated.reason, phase)
             }
             if (let Some(prepared) <- presentationCompositionRange) {
                 let snapshot = session.mirrorSnapshot()
@@ -7914,16 +10298,57 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             } else {
                 "composition_id_mismatch"
             }
+            getStdOut().writeln("CJGUI_VISUAL_COMPOSITION_STALE phase=${phase} id=${id} " +
+                "active_id=${presentationCompositionId} reason=${lastTextSessionCompositionReason}")
             return false
         }
         if (phase == 3u32) {
             presentationCompositionRange = None
             presentationCompositionId = -1
             presentationLastTerminalId = id
+            // "表面值变化"判据会漏判:组合落在标题片段、外部写落在正文片段时,被组字
+            // 片段自己的值不变(visual α 链实测),取消相位就落成普通 cancel,preedit
+            // 零草稿丢失。`compositionBaseStale()` 是 stale 分支同源的 owner 版本判据,
+            // 任一为真即按 Q4 中断处理。
+            if (pendingExternalCompositionDisruption || session.compositionBaseStale()) {
+                // 与正文表面同一 Q4 恢复分支:保存独立恢复草稿、精确结束 claim,由
+                // 可视代理恢复链重建投影;呈现表面的输入门由场景版本判定持有。
+                let disrupted = session.disruptComposition(id,
+                    "composition_reanchor_unavailable", "native_context_lost")
+                if (disrupted.ticket >= 0) {
+                    let _ = session.acknowledge(disrupted.ticket, disrupted.contextEpoch)
+                }
+                lastTextSessionDecision = Some(disrupted)
+                lastTextSessionCompositionReason = "composition_reanchor_unavailable"
+                lastTextSessionCompositionCause = "native_context_lost"
+                textSessionCompositionRefusals += 1
+                this.rejectPresentationComposition("composition_reanchor_unavailable", phase)
+                return false
+            }
+            if (arbitrated) {
+                session.cancelPresentationComposition(compositionId: id)
+            }
             lastTextSessionCompositionReason = "composition_cancel"
+            lastTextSessionCompositionCause = ""
             return false
         }
         if (phase == 2u32) {
+            if (arbitrated) {
+                // 终态只经 owner 凭据落一笔事务,不再走 prepared.replace 普通写入。
+                let decision = session.commitPresentationComposition(text, id)
+                if (decision.ticket >= 0) {
+                    let _ = session.acknowledge(decision.ticket, decision.contextEpoch)
+                }
+                lastTextSessionDecision = Some(decision)
+                presentationCompositionRange = None
+                presentationCompositionId = -1
+                presentationLastTerminalId = id
+                if (decision.accepted) {
+                    lastTextSessionCompositionReason = "accepted"
+                    return true
+                }
+                return this.rejectPresentationComposition(decision.reason, phase)
+            }
             let prepared = match (presentationCompositionRange) {
                 case Some(value) => value
                 case None => return this.rejectPresentationComposition("visual_range_missing", phase)
@@ -7972,6 +10397,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return true
         }
         textSessionCompositionRefusals += 1
+        if (!decision.proxyRecoveryRequired) {
+            // A late A terminal is identified by the session while B may own
+            // the same native proxy now. Restoring accepted A bytes here would
+            // erase B's live marked text and selection.
+            textSessionCompositionStaleRefusals += 1
+            return false
+        }
         // 拒绝时 owner 没有接受这笔正文，而平台代理已经本地应用了它：
         // 先结束进行中的组合（update 相位），再按既有有界回滚把代理恢复到
         // accepted 值，恢复成功后由同一入口把会话签发的回执交回会话解锁。
@@ -8103,9 +10535,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         readbackCompleted!: UInt8, windowBackgroundToken!: String,
         windowBackgroundColorScheme!: UInt32,
         consumedRequestEpoch!: Int64): Bool {
+        finalizeWorkloadAttempt("accepted")
         renderedRoot = root
         renderedScene = paintScene
+        publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
+        // Publish these three versions at the same accepted native boundary as
+        // the visual sidecar. Interaction-paint-only frames leave them alone;
+        // rejected candidates cannot advance any of them.
+        geometryContentVersion = declaredVersion
+        geometryLayoutVersion = paintScene.version
+        geometryTransformVersion = geometryTransformVersion + 1
         reconcilePresentationTextSessionSurface()
         reconcileAnimationBindingsAfterAcceptedChange()
         commitStagedSceneViewports()
@@ -8158,6 +10598,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             replaceCommandBindings(candidateCommands)
         }
         replaceDataTransferBindings(candidateDataTransferBindings)
+        settleTransferSceneReceipts(candidateDataTransferBindings, paintScene.version, frameIndex)
         // Native staging/present accepted this exact scene. Failed native
         // candidates return through `rejectParticipantCandidate`, which
         // discards the pending derived entries instead of caching failure.
@@ -8175,6 +10616,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return true
         }
         lastNativeFailure = "none"
+        lastReportedSceneRejection = ""
         pendingLocalTextNodeId = -1
         pendingLocalTextResourceId = -1
         pendingLocalTextNodeKind = -1
@@ -8188,11 +10630,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private func finishAcceptedInteractionPaint(paintScene!: CjguiComposableUiScene,
         dataTransferBindings!: ArrayList<CjguiComposableUiDataTransferBinding>, frameIndex!: Int64,
         readbackCompleted!: UInt8, consumedRequestEpoch!: Int64): Bool {
+        finalizeWorkloadAttempt("accepted")
         nextProjectionVersion = paintScene.version
         renderedScene = paintScene
+        publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
+        reconcilePointerCaptureAfterProjection()
         reconcilePresentationTextSessionSurface()
         replaceDataTransferBindings(dataTransferBindings)
+        settleTransferSceneReceipts(dataTransferBindings, paintScene.version, frameIndex)
         acceptedSceneVersion = paintScene.version
         submittedSceneVersion = paintScene.version
         // accepted 结构已成功切换：立即清理退役绑定，而不是等下一动画帧。
@@ -8493,6 +10939,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
 
     private func rejectParticipantCandidate(participant: ?CjguiComposableUiSceneRefreshParticipant, status: Int32,
         reason!: String = ""): Bool {
+        if (sessionToken != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN && isWindowOpen) {
+            let _ = internalRendererDiscardComposableSceneCandidate(sessionToken)
+        }
         discardStagedAnimationPaint()
         layoutReuseCache.discardPass()
         // Every early return and rejection path drops the candidate viewport
@@ -8507,11 +10956,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             value.rollbackSceneRefresh()
         }
         identityRegistry.rollbackCandidate()
+        finalizeWorkloadAttempt("rejected")
         if (reason.size > 0) {
             lastNativeStatus = status
             lastNativeFailure = reason
             pendingRefreshReason = "refresh_${reason}"
             recordStartupFailure(reason)
+            reportSceneRejection(reason)
             refreshRequested = false
             return false
         }
@@ -8732,6 +11183,18 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return lastRefusedEffectPathValue
     }
 
+    /// Records a named candidate/paint rejection both in the progress fact and
+    /// in the process log. Deduped per reason and reset on acceptance, so a
+    /// persistent defect is visible without a consumer polling windowProgress,
+    /// while a healthy steady state prints nothing.
+    private func reportSceneRejection(reason: String): Unit {
+        if (reason.size == 0 || reason == "none" || reason == lastReportedSceneRejection) {
+            return
+        }
+        lastReportedSceneRejection = reason
+        println("CJGUI_SCENE_REJECTED reason=${reason}")
+    }
+
     private func noteIdentityRefreshFailure(issue: String): Bool {
         discardStagedAnimationPaint()
         layoutReuseCache.discardPass()
@@ -8747,6 +11210,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         lastNativeFailure = resolvedIssue
         pendingRefreshReason = "refresh_${resolvedIssue}"
         recordStartupFailure(resolvedIssue)
+        reportSceneRejection(resolvedIssue)
         refreshRequested = false
         return false
     }
@@ -8755,22 +11219,45 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// explicit retry. Unlike a full projection candidate, it owns no pending
     /// layout-cache pass to discard.
     private func noteInteractionPaintFailure(status: Int32): Bool {
+        for ((identityKey, revision) in stagedPositionRequestRevisions) {
+            var attemptedNewPosition = false
+            if (let Some(sample) <- stagedPositionSamples.get(identityKey)) {
+                let acceptedNode = nativeInputScene.nodeForId(sample.binding.nodeId)
+                attemptedNewPosition = acceptedNode.nodeId == sample.binding.nodeId &&
+                    acceptedNode.identityKey == identityKey &&
+                    (acceptedNode.style.translateX != sample.value.x ||
+                        acceptedNode.style.translateY != sample.value.y)
+            }
+            if (revision > (acceptedPositionRequestRevisions.get(identityKey) ?? 0) || attemptedNewPosition) {
+                positionLastFailure.add(identityKey, nativeStatusReason(status))
+            }
+        }
+        if (sessionToken != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN && isWindowOpen) {
+            let _ = internalRendererDiscardComposableSceneCandidate(sessionToken)
+        }
         discardStagedAnimationPaint()
+        finalizeWorkloadAttempt("rejected")
         lastNativeStatus = status
         let reason = nativeStatusReason(status)
         lastNativeFailure = reason
         pendingRefreshReason = "interaction_paint_${reason}"
+        reportSceneRejection(reason)
         refreshRequested = false
         return false
     }
     private func noteRefreshFailure(status: Int32): Bool {
+        if (sessionToken != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN && isWindowOpen) {
+            let _ = internalRendererDiscardComposableSceneCandidate(sessionToken)
+        }
         discardStagedAnimationPaint()
         layoutReuseCache.discardPass()
+        finalizeWorkloadAttempt("rejected")
         lastNativeStatus = status
         let reason = nativeStatusReason(status)
         lastNativeFailure = reason
         pendingRefreshReason = "refresh_${reason}"
         recordStartupFailure(reason)
+        reportSceneRejection(reason)
         // Do not turn a temporarily unavailable drawable into a 60 Hz retry
         // loop. The retained scene stays live until an explicit retry, a new
         // external mutation, resize, or human event marks refresh again.
@@ -8838,23 +11325,25 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (status == CJGUI_INTERNAL_RENDERER_EFFECT_DECLARATION_REJECTED) {
             return "effect_declaration_rejected"
         }
+        if (status == CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED) { return "png_unsupported" }
+        if (status == CJGUI_INTERNAL_RENDERER_PNG_INVALID) { return "png_invalid" }
+        if (status == CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED) { return "png_dimension_exceeded" }
+        if (status == CJGUI_INTERNAL_RENDERER_PNG_DECODE_FAILED) { return "png_decode_failed" }
+        if (status == CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED) {
+            return "png_resource_budget_exceeded"
+        }
+        if (status == CJGUI_INTERNAL_RENDERER_PNG_PAYLOAD_TOO_LARGE) {
+            return "png_payload_too_large"
+        }
+        if (status == CJGUI_INTERNAL_RENDERER_PNG_QUEUE_BUDGET_EXCEEDED) {
+            return "png_queue_budget_exceeded"
+        }
         return "internal_error"
     }
     private func discardSession(reason: String) {
-        // The window's ONE dispose boundary. It runs for a normal close AND for a
-        // startup/native failure, so a participant's shared-catalog holds are
-        // released by the real lifecycle instead of by a caller remembering to
-        // call the release method.
-        discardStagedSceneViewports()
-        discardStagedSceneSplitTracks()
-        // The window's accepted structure ends here, so every shared view object
-        // it owned is given back: a later window may legally take the same
-        // declaration over instead of inheriting a dead window's claim.
-        releaseOwnedViewStateOwnership()
-        let disposeParticipant = controller as CjguiComposableUiSceneRefreshParticipant
-        if (let Some(value) <- disposeParticipant) {
-            value.disposeSceneRefreshResources()
-        }
+        // Destroy is the commit boundary for closing. A rejected destroy still
+        // owns its accepted scene, mutable views, participant resources and
+        // native session; no other window may claim them until it succeeds.
         if (sessionToken != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
             let status = internalRendererDestroy(sessionToken)
             if (status != CJGUI_INTERNAL_RENDERER_OK) {
@@ -8863,6 +11352,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 // 不能无视拒绝清 token——那会让 native 会话变成不可寻址的孤儿。
                 lastNativeStatus = status
                 discardRetryReason = reason
+                closeIntentPending = true
                 return
             }
         }
@@ -8873,15 +11363,63 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         sessionToken = CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN
         isWindowOpen = false
+        discardStagedSceneViewports()
+        discardStagedSceneSplitTracks()
+        // The native session is gone: accepted view and participant holds may
+        // now be released exactly once, including the no-token startup path.
+        releaseOwnedViewStateOwnership()
+        let disposeParticipant = controller as CjguiComposableUiSceneRefreshParticipant
+        if (let Some(value) <- disposeParticipant) {
+            try {
+                value.disposeSceneRefreshResources()
+            } catch (error: Exception) {
+                lastNativeFailure = "participant_dispose_exception"
+            }
+        }
+        for (receipt in transferReceipts) {
+            if (receipt.windowSessionIdentity != windowSessionIdentity) { continue }
+            let claim = "${receipt.windowSessionIdentity}:${receipt.eventId}"
+            if ((receipt.state == "reading" || receipt.state == "queued") &&
+                transferReceiptDispatchClaims.get(claim).isNone()) {
+                settleTransferReceipt(receipt.windowSessionIdentity, receipt.eventId,
+                    "cancelled", "window_closed", "", None)
+            } else if (receipt.state == "owner_accepted" && !transferReceiptIsFinal(receipt)) {
+                transferReceiptRevision += 1
+                let index = receiptIndex(receipt.windowSessionIdentity, receipt.eventId)
+                if (index >= 0) {
+                    transferReceipts[index] = CjguiComposableUiTransferReceipt(receipt.windowSessionIdentity,
+                        receipt.eventId, receipt.eventKind, receipt.semanticId, receipt.nodeId,
+                        receipt.bindingEpoch, receipt.sourceKind, receipt.format, receipt.contentDigest,
+                        "owner_accepted", "window_closed_before_scene", receipt.expectedOwnerVersion,
+                        true, receipt.ownerVersionBefore, receipt.ownerVersionAfter, -1, -1,
+                        transferReceiptRevision)
+                }
+            }
+        }
         // 窗口的 native 会话已经销毁：正文会话随窗口失效（保留引用的一方之后
         // 具名拒绝），声明与代次一并作废，不留任何对新会话有效的旧身份。
         releaseTextSession()
         // P2：窗口实例不再存在，所有动效绑定与帧请求在此终止；旧完成不会落
         // 到任何后续实例。
         animationDriver.cancelAll()
+        acceptedAnimationBindingTable.clear()
+        stagedAnimationBindingTable.clear()
+        acceptedEffectGroupBindingTable.clear()
+        stagedEffectGroupBindingTable.clear()
+        stagedInteractionColorTargets.clear()
+        stagedPositionSamples.clear()
+        exposedPositionMotionKeys.clear()
+        exposedPositionMotionBindings.clear()
+        positionRequestRevisions.clear()
+        positionRequestModes.clear()
+        stagedPositionRequestRevisions.clear()
+        acceptedPositionRequestRevisions.clear()
+        positionLastFailure.clear()
         windowSessionIdentity = ""
         nativeInputScene = CjguiComposableUiScene(0, CjguiComposableUiRect(0, 0, 0, 0),
             ArrayList<CjguiComposableUiLayoutNode>())
+        acceptedBindingKeys.clear()
+        acceptedBindingEpochs.clear()
         focusedNodeId = -1
         focusedResourceId = -1
         focusedNodeKind = -1

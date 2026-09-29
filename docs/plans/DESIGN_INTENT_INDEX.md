@@ -1,6 +1,6 @@
 # CJGUI 设计意图与资产导航
 
-更新：2026-09-19。回答为什么做、已有东西在哪里、接续时要辨别什么。当前阶段和运行证据仍只在 [ACTIVE_DIRECTION.md](../../runtime/cjgui/ACTIVE_DIRECTION.md) 维护。
+更新：2026-09-28（追加本地开源实现参考；其他资产抽查沿原记录）。回答为什么做、已有东西在哪里、接续时要辨别什么。当前阶段和运行证据仍只在 [ACTIVE_DIRECTION.md](../../runtime/cjgui/ACTIVE_DIRECTION.md) 维护。
 
 ## 怎样使用
 
@@ -16,7 +16,7 @@
 | 主线与原始目的 | 资产入口与抽查结果 | 接续时应回答什么 |
 | --- | --- | --- |
 | 仓颉核心、自绘、GPU 加速、轻量和可解释；服务不同桌面应用 | [原始方向](../archive/2026-09-11-direction-governance/docs--core--GUI_PROJECT_DIRECTION.before.md)、[当前方向](../core/GUI_PROJECT_DIRECTION.md)。GPUI/WGPUI 的骨架思想是参考；不是绑定路线 | 阶段是否增加通用框架能力？临时平台实现如何回到框架组织？当前没实现不等于放弃目标 |
-| 复用传统 GUI 框架的避坑经验，防止重建相同技术债 | [框架避坑原文](../research/gui-framework-pitfalls-intelligence.md)覆盖事件重入/关闭、盲目重绘、布局状态归属、复杂文字/IME/无障碍、平台抽象、API 固化及 AI 语义成本；[运行架构研究](../research/ai-native-gui-runtime-architecture-intake.md)补充内容变更与局部视觉更新分工。原文工程风险继续使用，历史禁止实施语句不恢复 | 相关风险是否已在当前源码/运行路径处理，还是只有设计或注释？每次重大接续按需带入最相关教训和验证，不把旧资料仅作存档或逐轮全篇必读 |
+| 借鉴传统 GUI 框架的实现思路与避坑经验，防止重建相同技术债 | [本地源码入口](#本地开源实现参考)仅供思路参考，不是依赖引入清单；[框架避坑原文](../research/gui-framework-pitfalls-intelligence.md)覆盖事件重入/关闭、盲目重绘、布局状态归属、复杂文字/IME/无障碍、平台抽象、API 固化及 AI 语义成本；[运行架构研究](../research/ai-native-gui-runtime-architecture-intake.md)补充内容变更与局部视觉更新分工。原文工程风险继续使用，历史禁止实施语句不恢复 | 相关风险是否已在当前源码/运行路径处理，还是只有设计或注释？每次重大接续按需带入最相关教训和验证，不把旧资料仅作存档或逐轮全篇必读 |
 | 从组件结构到布局、场景和绘制命令，最终驱动显示 | [可组合布局与场景](../../runtime/cjgui/src/composable_ui.cj)、[通用窗口提交](../../runtime/cjgui/src/composable_ui_window.cj) 是当前主链；[native renderer](../../runtime/cjgui/native/cjgui_internal_renderer.m) 负责 Metal 场景合成，包含形状、图片与文字资源，AppKit 提供窗口与系统文字服务。实际支持边界见[runtime 文档](../../runtime/cjgui/README.md)；[旧 Scene 输入](../../runtime/cjgui/src/runtime_scene_renderer_input.cj) 仍是内部值契约 | 测量、样式、裁剪、提交和显示进度是否真正对应？旧契约可供对照，不能把清屏或矩形样点当完整渲染器，也不能把早期摘要当当前能力上限 |
 | 开发者自由组合组件、布局和样式，复用状态与动作 | [可组合组件](../../runtime/cjgui/src/composable_ui.cj)、[规则集消费者](../../runtime/cjgui/examples/rule_set_window_app/src/main.cj)、[通知消费者](../../runtime/cjgui/examples/notification_threshold_window_app/src/main.cj) 是新消费入口；[表单绑定契约](../../runtime/cjgui/shared_operation_core/src/shared_editing_form_contract.cj) 可复用。旧集合/表单入口是前置适配；[旧布局状态](../../runtime/cjgui/src/demo_support/runtime_cjgui_experimental_demo_ui_state_core.cj) 仅存字符串，[旧组件文件](../../runtime/cjgui/src/runtime_cjgui_experimental_reusable_component_contract_api.cj) 已退役 | 换字段、布局和业务动作是否仍需改 native？空/动态内容与文本是否正常？组件身份、业务字段和外部语义是否只绑定一次？ |
 | 真实文字排版、可复用主题与资源，避免固定尺寸和逐控件重复配置 | [当前样式/布局](../../runtime/cjgui/src/composable_ui.cj)、[实际字体测量适配](../../runtime/cjgui/src/runtime_renderer_session.cj)已有 AppKit 测量、主题和图片初版；[native](../../runtime/cjgui/native/cjgui_internal_renderer.m)已有 Metal 纹理及路径缓存，动态失效/回收与排版一致性仍需辨别。[旧平台资源](../../runtime/cjgui/src/runtime_renderer_platform_resource.cj)、[旧资源桥接](../../runtime/cjgui/src/runtime_renderer_native_resource_bridge.cj)只表达 value-only 边界 | 字体测量与绘制是否一致？主题、图片是否实际被多个组件消费并有加载/替换/释放路径？缓存是否有界且可失效？原生句柄不外泄的意图保留，旧无资源 stop-line 不阻止当前真实实现 |
@@ -28,6 +28,30 @@
 | 运行时生成、修改界面，与手写界面共用组件和状态；应用可按需启用 | [生成契约](../core/AI_NATIVE_UI_SEMANTICS.md#运行时生成与修改界面)、[验收标准](../core/CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md#运行时生成式界面验收)、[生成与操作研究第8节](../research/ai-native-gui-runtime-architecture-intake.md)、[旧生成 demo](../../runtime/cjgui/demo/ai_generated_ui_app.cj)。动态组件注册表与候选场景可复用；demo 仍仅是程序化内存样例 | 受限结构是否真正进入自绘窗口？生成后人能否编辑，结构更新后草稿/焦点/绑定是否正确？读取能力、结构更新与业务执行是否同源？固定界面的外部操作不能替代此项；编码可替换，生成不自授权限 |
 | 正常包消费、可调试、可复现；应用需求检验复用 | [runtime 导航](../../runtime/cjgui/README.md)、[旧 demo 与 harness](../../runtime/cjgui/demo/)、[应用需求参考](../core/OPEN_NWE_PRODUCT_DEMAND_MAP.md)、[原完整性尺](../archive/2026-09-11-direction-governance/docs--core--CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.before.md) | 用不同数据、布局和动作验证复用；纯状态 harness、窗口样例、发布各自证明什么？资源、主题、文本和性能欠项是否仍有后续位置？ |
 | 工具链与上下游反馈保留原因、复现和解除条件 | [仓颉问题账本](../setup/CANGJIE_ISSUE_LEDGER.md)、[贡献候选](../setup/CANGJIE_UPSTREAM_CONTRIBUTION_RADAR.md)、[C FFI 实验](../../labs/cffi_smoke/README.md)、[native FFI 实验](../../labs/native_bridge_ffi_probe/README.md)、[语言与工具能力研究](../research/cangjie-1.1-owner-tooling-ffi-capability-intake.md) | 遇到相似问题先查记录；工具链升级时有针对性复查 workaround，不能只留下成功命令而丢失原因 |
+
+## 本地开源实现参考
+
+**仅借鉴实现思路，由 CJGUI 在现有架构内实现；不引用、链接或集成这些第三方框架。** 用途边界统一见 [AGENTS.md 的工程边界](../../AGENTS.md#工程边界)。下表是问题到源码的只读导航，不是依赖、后端选型或迁移清单。
+
+本机参考根目录为 `/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库`。入口曾于 2026-09-28 在以下 checkout 核对：Zed `1a28cff4b409`、Slint `e9debbd05c94`、Flutter `8db55268667c`、SDL `1ce4c5bc2916`、CangjieGUI `3a4cc3431816`。这些版本是来源记录，不锁定未来查阅版本，也不表示上游始终最新。实际使用时核实本地路径、符号和相关文件版本；不能把入口存在当作方案已适用或行为已验证。
+
+下表按长期机制分类，只列已定位的示例入口，不是完整目录或阶段必读清单。以后出现未列出的机制或问题，仍按 AGENTS 的触发规则主动选择参考；无需等待指导补表或在任务里点名。
+
+| 机制或问题类型 | 已定位的主参考入口 | 查阅重点与适用边界 |
+| --- | --- | --- |
+| Metal 提交及在途资源回收 | [GPUI metal_renderer.rs](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/gpui_apple/src/metal_renderer.rs>)：`MetalRenderer::draw`、`add_completed_handler`；窗口宿主在 [gpui_macos](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/gpui_macos/src/window.rs>) | 分清正常提交、同步等待与完成后回收的条件；按 CJGUI 自身线程与资源归属实现，不接入 GPUI renderer。 |
+| 坐标变换与绘制、命中、无障碍几何的一致性 | [Flutter proxy_box.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/rendering/proxy_box.dart>)：`RenderTransform`、`hitTestChildren`、`applyPaintTransform`；[坐标转换测试](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/test/rendering/transform_test.dart>)、[控件变换测试](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/test/widgets/transform_test.dart>) | 借鉴正逆变换与边界测试思路；接回 CJGUI 的 accepted 几何、裁剪、命中、AX 和文字定位，不搬入 Flutter 的组件树或渲染层。 |
+| 系统文字、选区与组合输入生命周期（macOS 示例） | [FlutterTextInputPlugin.mm](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/engine/src/flutter/shell/platform/darwin/macos/framework/Source/FlutterTextInputPlugin.mm>)：`setMarkedText`、`insertText`、`unmarkText`；[对应测试](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/engine/src/flutter/shell/platform/darwin/macos/framework/Source/FlutterTextInputPluginTest.mm>) | 对照系统回调、范围与组字生命周期；保留 CJGUI 文本会话及唯一正文 owner，不移植插件或重建输入法。 |
+| 失效传播、绘制范围与局部重绘 | [Slint partial_renderer.rs](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/slint/internal/core/partial_renderer.rs>)：`compute_dirty_regions`、文件内测试；必要时对照 [CUI retained_damage.cj](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/cangjiegui/CangjieGUI/src/core/retained_damage.cj>) 和[对应测试](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/cangjiegui/CangjieGUI/src/core/retained_damage_test.cj>) | 区分状态依赖、旧新输出范围、缓冲内容保留与全帧回退；参考结论不等于 CJGUI 已有局部重绘或必然获得收益。 |
+| 平台窗口与 Surface 生命周期（鸿蒙示例） | [SDL_openharmony.c](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/SDL/SDL/src/core/openharmony/SDL_openharmony.c>)：`SDL_XComponent_OnSurfaceCreatedCallback`、`SDL_XComponent_OnSurfaceDestroyedCallback`；[平台窗口](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/SDL/SDL/src/video/openharmony/SDL_openharmonywindow.c>) | 对照平台回调与宿主职责，不接入 SDL 后端。上述 SDL 快照的已查输入链主要注册 `insertText`/`deleteLeft`；这只是该版本的抽查边界，研究组字/取消或其他平台输入问题时须另核相应实现。 |
+
+查阅与维护按以下方式落地，适用于当前及后续阶段：
+
+- **先按机制选入口。** 指导可在阶段任务中指定相关符号和需要回答的问题；没有指定时，执行者仍按触发规则自行选择。未列主题先按平台、模块和行为关键词定位一个主参考中的实现与测试，不从仓库首页通读。与本项目专属业务有关的规则以自身契约为准，只借鉴其中通用的 GUI 机制。
+- **控制查阅范围。** 先读取少量关键符号与对应测试，依赖或适用性不清再追相关调用，必要时增加第二个参考。弄清状态归属、失效/回收、失败恢复及其测试依据后，回到 CJGUI 实现与验证；不要求全仓索引或每次运行参考项目。已有失败升级和咨询要求照常适用。
+- **遇失效入口局部修正。** 使用时先核路径、符号和相关文件版本；目录重组或符号迁移时，在对应子项目定向搜索并更新本行。导航缺项、索引未命中或旧路径不存在不等于没有参考。若平台/SDK 已变化、本地实现缺失相关能力或不能解释新反例，按需核对上游相关源码或修复记录；不逐轮同步全部仓库。
+- **按前提复用结论。** 来源版本、借鉴机制、适用前提、CJGUI 差异与验证结果简记现有阶段报告。同一机制且前提仍成立时复用；新反例、平台差异、所有权/线程模型变化或相关参考实现变更时重新核对。无关提交或时间经过本身不触发全量重读；不合适的旧结论应标明失效原因。
+- **只维护可复用入口。** 找到新的通用主题，或现有路径、机制与适用边界变化时，补充或修正本表，保留核对版本。没有找到合适参考时，在原任务中说明查阅范围与限制，继续依据 CJGUI 契约解决，不能伪称已借鉴，也不为填表扩大任务。不复制当前问题清单、阶段进度或逐轮结果，不另开台账。只读源码导航本身不下发新实施任务。
 
 ## 层级与多选组件（2026-09-19）
 

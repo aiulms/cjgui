@@ -26,10 +26,15 @@
 #include "cjgui_ohos_ingress.h"
 
 #include <dlfcn.h>
+#include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <map>
+#include <set>
 #include <string>
 #include <deque>
 #include <mutex>
@@ -352,8 +357,18 @@ int64_t surfaceAccountingForInstance(uint64_t instance, int32_t *outActiveSurfac
 // A3 停止接单（surface 侧）：把本实例所有 surface 立即退役并投递拆除。
 // 必须在渲染线程真实结束使用后，引用才会经 surfaceTornDown 回传归还。
 // 返回投递的拆除请求数。
+static void retireTouchSurfaceLocked(uint64_t appInstance, uint64_t componentInstance,
+                                     uint64_t generation, float cancelX, float cancelY);
+std::mutex g_touchMutex;
+
 int32_t retireAllSurfacesOfInstance() {
+    struct RetiredTouchSurface {
+        uint64_t appInstance;
+        uint64_t componentInstance;
+        uint64_t generation;
+    };
     std::vector<uint64_t> generations;
+    std::vector<RetiredTouchSurface> touchSurfaces;
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
         for (SurfaceRecord &rec : g_surfaces) {
@@ -367,6 +382,15 @@ int32_t retireAllSurfacesOfInstance() {
                 g_currentGeneration = 0;
             }
             generations.push_back(rec.generation);
+            touchSurfaces.push_back(RetiredTouchSurface{rec.appInstance, rec.componentInstance,
+                                                         rec.generation});
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_touchMutex);
+        for (const RetiredTouchSurface &surface : touchSurfaces) {
+            retireTouchSurfaceLocked(surface.appInstance, surface.componentInstance,
+                                     surface.generation, 0.0f, 0.0f);
         }
     }
     if (g_requestSurfaceTeardownFn != nullptr) {
@@ -388,11 +412,335 @@ struct TouchRecord {
     uint32_t action;
     float x;
     float y;
+    uint64_t appInstance;
+    uint64_t componentInstance;
+    uint64_t generation;
+    int64_t pointerId;
+    uint64_t epoch;
+    // B（惯性包）：采样时间。优先 SDK 的 touch.timeStamp（单调 ns）；取数
+    // 失败或字段无效时以入队前捕获的 steady_clock 兜底（来源标记于
+    // timeSource，0=平台原时间 1=桥接收时间）。禁止出队时统一补“现在”。
+    int64_t timestampNs = 0;
+    uint32_t timeSource = 0;
+};
+
+struct GestureKey {
+    uint64_t appInstance;
+    uint64_t componentInstance;
+    uint64_t generation;
+    int64_t pointerId;
+    uint64_t epoch;
+
+    bool operator<(const GestureKey &other) const {
+        if (appInstance != other.appInstance) return appInstance < other.appInstance;
+        if (componentInstance != other.componentInstance) return componentInstance < other.componentInstance;
+        if (generation != other.generation) return generation < other.generation;
+        if (pointerId != other.pointerId) return pointerId < other.pointerId;
+        return epoch < other.epoch;
+    }
+    bool operator==(const GestureKey &other) const {
+        return appInstance == other.appInstance && componentInstance == other.componentInstance &&
+               generation == other.generation && pointerId == other.pointerId && epoch == other.epoch;
+    }
+};
+
+static GestureKey touchKey(const TouchRecord &record) {
+    return GestureKey{record.appInstance, record.componentInstance, record.generation,
+                      record.pointerId, record.epoch};
+}
+
+std::deque<TouchRecord> g_touchQueue;
+constexpr size_t kTouchQueueCapacity = 256;
+// The queue and terminal reservations share one hard bound. BEGIN owns a
+// terminal reservation from admission until its END/CANCEL is queued.
+struct TouchGestureLedger {
+    bool beginDelivered;
+    bool terminalQueued;
+    TouchGestureLedger() : beginDelivered(false), terminalQueued(false) {}
+};
+static std::map<GestureKey, TouchGestureLedger> g_touchGestureLedger;
+static std::set<GestureKey> g_terminalReservations;
+static std::set<GestureKey> g_suppressedGestures;
+static GestureKey g_activeGesture{};
+static bool g_hasActiveGesture = false;
+static uint64_t g_nextGestureEpochValue = 1;
+static std::atomic<size_t> g_touchQueueHighWater{0};
+static std::atomic<uint64_t> g_touchOverloadCancels{0};
+
+static size_t touchQueueOccupancyLocked() {
+    return g_touchQueue.size() + g_terminalReservations.size();
+}
+
+static void updateTouchQueueHighWaterLocked() {
+    const size_t now = g_touchQueue.size();
+    size_t previous = g_touchQueueHighWater.load(std::memory_order_relaxed);
+    while (now > previous && !g_touchQueueHighWater.compare_exchange_weak(
+        previous, now, std::memory_order_relaxed)) {}
+}
+
+static bool gestureSuppressedLocked(const GestureKey &key) {
+    return g_suppressedGestures.find(key) != g_suppressedGestures.end();
+}
+
+static void suppressGestureLocked(const GestureKey &key) {
+    g_suppressedGestures.insert(key);
+}
+
+static void finishPhysicalGestureLocked(const GestureKey &key) {
+    g_suppressedGestures.erase(key);
+    if (g_hasActiveGesture && g_activeGesture == key) {
+        g_hasActiveGesture = false;
+    }
+    auto state = g_touchGestureLedger.find(key);
+    if (state != g_touchGestureLedger.end() && !state->second.beginDelivered &&
+        !state->second.terminalQueued) {
+        g_touchGestureLedger.erase(state);
+        g_terminalReservations.erase(key);
+    }
+}
+
+// Only a record returned successfully to the renderer changes delivery state.
+static void touchRecordDeliveredLocked(const TouchRecord &record) {
+    const GestureKey key = touchKey(record);
+    if (record.action == kTouchBegin) {
+        auto state = g_touchGestureLedger.find(key);
+        if (state != g_touchGestureLedger.end()) state->second.beginDelivered = true;
+    } else if (record.action == kTouchEnd || record.action == kTouchCancel) {
+        g_touchGestureLedger.erase(key);
+        g_terminalReservations.erase(key);
+    }
+}
+
+static bool touchTerminalMayFinishRetiredLocked(const TouchRecord &record, bool exactSurfaceIdentity) {
+    if (!exactSurfaceIdentity || (record.action != kTouchEnd && record.action != kTouchCancel)) return false;
+    const auto state = g_touchGestureLedger.find(touchKey(record));
+    return state != g_touchGestureLedger.end() && state->second.beginDelivered;
+}
+
+static bool touchGestureBeginDeliveredLocked(const TouchRecord &record) {
+    const auto state = g_touchGestureLedger.find(touchKey(record));
+    return state != g_touchGestureLedger.end() && state->second.beginDelivered;
+}
+
+static bool dequeueTouchRecordLocked(TouchRecord *outRecord) {
+    if (outRecord == nullptr || g_touchQueue.empty()) return false;
+    *outRecord = g_touchQueue.front();
+    g_touchQueue.pop_front();
+    return true;
+}
+
+static void discardRetiredTouchGestureLocked(const GestureKey &key) {
+    for (auto it = g_touchQueue.begin(); it != g_touchQueue.end();) {
+        if (touchKey(*it) == key) it = g_touchQueue.erase(it);
+        else ++it;
+    }
+    g_touchGestureLedger.erase(key);
+    g_terminalReservations.erase(key);
+    g_suppressedGestures.erase(key);
+    if (g_hasActiveGesture && g_activeGesture == key) g_hasActiveGesture = false;
+}
+
+static void retireTouchSurfaceLocked(uint64_t appInstance, uint64_t componentInstance,
+                                     uint64_t generation, float cancelX, float cancelY) {
+    std::set<GestureKey> keys;
+    for (const auto &entry : g_touchGestureLedger) {
+        const GestureKey &key = entry.first;
+        if (key.appInstance == appInstance && key.componentInstance == componentInstance &&
+            key.generation == generation) keys.insert(key);
+    }
+    for (const GestureKey &key : g_suppressedGestures) {
+        if (key.appInstance == appInstance && key.componentInstance == componentInstance &&
+            key.generation == generation) keys.insert(key);
+    }
+    if (g_hasActiveGesture) {
+        const GestureKey &key = g_activeGesture;
+        if (key.appInstance == appInstance && key.componentInstance == componentInstance &&
+            key.generation == generation) keys.insert(key);
+    }
+
+    for (const GestureKey &key : keys) {
+        auto state = g_touchGestureLedger.find(key);
+        const bool beginWasDelivered = state != g_touchGestureLedger.end() && state->second.beginDelivered;
+        const bool terminalAlreadyQueued = state != g_touchGestureLedger.end() && state->second.terminalQueued;
+        if (!beginWasDelivered) {
+            for (auto it = g_touchQueue.begin(); it != g_touchQueue.end();) {
+                if (touchKey(*it) == key) it = g_touchQueue.erase(it);
+                else ++it;
+            }
+            g_terminalReservations.erase(key);
+            g_touchGestureLedger.erase(key);
+        } else if (terminalAlreadyQueued) {
+            bool hasTerminal = false;
+            TouchRecord terminal{};
+            for (auto it = g_touchQueue.begin(); it != g_touchQueue.end();) {
+                if (touchKey(*it) == key) {
+                    if (it->action == kTouchEnd || it->action == kTouchCancel) {
+                        terminal = *it;
+                        hasTerminal = true;
+                    }
+                    it = g_touchQueue.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            if (hasTerminal) g_touchQueue.push_front(terminal);
+        } else {
+            for (auto it = g_touchQueue.begin(); it != g_touchQueue.end();) {
+                if (touchKey(*it) == key && it->action != kTouchEnd && it->action != kTouchCancel) {
+                    it = g_touchQueue.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            const auto reservation = g_terminalReservations.find(key);
+            if (reservation != g_terminalReservations.end()) {
+                g_terminalReservations.erase(reservation);
+                g_touchQueue.push_front(TouchRecord{kTouchCancel, cancelX, cancelY,
+                    key.appInstance, key.componentInstance, key.generation, key.pointerId, key.epoch, 0, 1});
+                state->second.terminalQueued = true;
+            }
+        }
+        // Surface retirement is the final physical boundary for this key.
+        g_suppressedGestures.erase(key);
+        if (g_hasActiveGesture && g_activeGesture == key) g_hasActiveGesture = false;
+    }
+}
+
+static bool makeTouchQueueRoomLocked(size_t additional, float cancelX, float cancelY) {
+    while (touchQueueOccupancyLocked() + additional > kTouchQueueCapacity) {
+        bool hasVictim = false;
+        GestureKey victim{};
+        for (const TouchRecord &record : g_touchQueue) {
+            if (record.action == kTouchEnd || record.action == kTouchCancel) continue;
+            const GestureKey key = touchKey(record); // freeze identity before erase
+            const auto state = g_touchGestureLedger.find(key);
+            if (state != g_touchGestureLedger.end() && state->second.terminalQueued) continue;
+            if (state != g_touchGestureLedger.end() && state->second.beginDelivered &&
+                g_terminalReservations.find(key) == g_terminalReservations.end()) continue;
+            victim = key;
+            hasVictim = true;
+            break;
+        }
+        if (!hasVictim) return false;
+
+        const GestureKey key = victim;
+        auto state = g_touchGestureLedger.find(key);
+        const bool beginWasDelivered = state != g_touchGestureLedger.end() && state->second.beginDelivered;
+        size_t removed = 0;
+        for (auto it = g_touchQueue.begin(); it != g_touchQueue.end();) {
+            if (touchKey(*it) == key && it->action != kTouchEnd && it->action != kTouchCancel) {
+                it = g_touchQueue.erase(it);
+                ++removed;
+            } else {
+                ++it;
+            }
+        }
+        if (removed == 0) return false;
+        suppressGestureLocked(key);
+        if (beginWasDelivered) {
+            // A delivered BEGIN always still owns this reserved terminal slot.
+            const auto reservation = g_terminalReservations.find(key);
+            if (reservation == g_terminalReservations.end()) return false;
+            g_terminalReservations.erase(reservation);
+            g_touchQueue.push_front(TouchRecord{kTouchCancel, cancelX, cancelY,
+                key.appInstance, key.componentInstance, key.generation, key.pointerId, key.epoch, 0, 1});
+            state->second.terminalQueued = true;
+            g_touchOverloadCancels.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            g_terminalReservations.erase(key);
+            if (state != g_touchGestureLedger.end()) state->second.terminalQueued = false;
+        }
+    }
+    return true;
+}
+
+void enqueueTouchRecordLocked(uint32_t action, float x, float y, uint64_t appInstance,
+                              uint64_t componentInstance, uint64_t generation, int64_t pointerId,
+                              int64_t timestampNs = 0, uint32_t timeSource = 0) {
+    GestureKey key{};
+    if (action == kTouchBegin) {
+        if (g_hasActiveGesture) {
+            const GestureKey &active = g_activeGesture;
+            if (active.appInstance == appInstance && active.componentInstance == componentInstance &&
+                active.generation == generation && active.pointerId == pointerId) {
+                return; // repeated DOWN cannot replace the key before its physical terminal
+            }
+        }
+        key = GestureKey{appInstance, componentInstance, generation, pointerId, g_nextGestureEpochValue++};
+        g_activeGesture = key;
+        g_hasActiveGesture = true;
+        g_touchGestureLedger[key] = TouchGestureLedger{};
+        g_terminalReservations.insert(key);
+        // BEGIN occupies a queue slot and reserves one future terminal slot.
+        if (!makeTouchQueueRoomLocked(1, x, y)) {
+            g_terminalReservations.erase(key);
+            g_touchGestureLedger.erase(key);
+            suppressGestureLocked(key);
+            return;
+        }
+        if (gestureSuppressedLocked(key)) return;
+        g_touchQueue.push_back(TouchRecord{action, x, y, appInstance, componentInstance,
+                                           generation, pointerId, key.epoch,
+                                           timestampNs, timeSource});
+    } else {
+        if (!g_hasActiveGesture) return;
+        key = g_activeGesture;
+        if (key.appInstance != appInstance || key.componentInstance != componentInstance ||
+            key.generation != generation || key.pointerId != pointerId) return;
+        if (gestureSuppressedLocked(key)) {
+            if (action == kTouchEnd || action == kTouchCancel) finishPhysicalGestureLocked(key);
+            return;
+        }
+        auto state = g_touchGestureLedger.find(key);
+        if (state == g_touchGestureLedger.end()) return;
+        if (action == kTouchEnd || action == kTouchCancel) {
+            if (g_terminalReservations.erase(key) == 0) {
+                finishPhysicalGestureLocked(key);
+                return;
+            }
+            state->second.terminalQueued = true;
+            g_touchQueue.push_back(TouchRecord{action, x, y, appInstance, componentInstance,
+                                               generation, pointerId, key.epoch,
+                                               timestampNs, timeSource});
+            finishPhysicalGestureLocked(key);
+        } else {
+            if (!makeTouchQueueRoomLocked(1, x, y)) {
+                // Even an all-terminal queue cannot consume this gesture's
+                // reserved CANCEL slot. Drop this UPDATE and close the capture.
+                const auto reservation = g_terminalReservations.find(key);
+                if (reservation != g_terminalReservations.end()) {
+                    g_terminalReservations.erase(reservation);
+                    g_touchQueue.push_back(TouchRecord{kTouchCancel, x, y, appInstance,
+                        componentInstance, generation, pointerId, key.epoch, 0, 1});
+                    state->second.terminalQueued = true;
+                    suppressGestureLocked(key);
+                }
+                return;
+            }
+            if (gestureSuppressedLocked(key)) return;
+            g_touchQueue.push_back(TouchRecord{action, x, y, appInstance, componentInstance,
+                                               generation, pointerId, key.epoch,
+                                               timestampNs, timeSource});
+        }
+    }
+    updateTouchQueueHighWaterLocked();
+}
+
+struct RetiredTouchOrigin {
+    uint64_t appInstance;
+    uint64_t componentInstance;
     uint64_t generation;
 };
 
-std::mutex g_touchMutex;
-std::deque<TouchRecord> g_touchQueue;
+static void retireReplacedTouchOrigins(const std::vector<RetiredTouchOrigin> &origins) {
+    if (origins.empty()) return;
+    // Keep the same touch -> lease lock order as ingressTouchDequeueEx: callers
+    // freeze origin identities while holding lease, then release it first.
+    std::lock_guard<std::mutex> lock(g_touchMutex);
+    for (const RetiredTouchOrigin &origin : origins) {
+        retireTouchSurfaceLocked(origin.appInstance, origin.componentInstance, origin.generation, 0.0f, 0.0f);
+    }
+}
 
 std::atomic<int> g_foreground{0};
 // A3（Sol 复核）：`g_appStarted` 被删除——它是与 phase 并存的第二份真相。
@@ -520,29 +868,63 @@ int ingressSurfaceActive(void **outWindow, uint64_t *outGeneration, int32_t *out
     return 1;
 }
 
-int ingressTouchDequeue(uint32_t *outAction, float *outX, float *outY, uint64_t *outGeneration) {
+int ingressTouchDequeueEx(uint32_t *outAction, float *outX, float *outY,
+                          uint64_t *outAppInstance, uint64_t *outComponentInstance,
+                          uint64_t *outGeneration, int64_t *outPointerId,
+                          uint64_t *outGestureEpoch, int64_t *outTimestampNs,
+                          uint32_t *outTimeSource) {
     std::lock_guard<std::mutex> lock(g_touchMutex);
-    if (g_touchQueue.empty()) {
-        return 0;
-    }
-    TouchRecord record = g_touchQueue.front();
-    g_touchQueue.pop_front();
+    TouchRecord record{};
+    if (!dequeueTouchRecordLocked(&record)) return 0;
     {
         std::lock_guard<std::mutex> leaseLock(g_leaseMutex);
         SurfaceRecord *rec = findSurfaceByGenerationLocked(g_currentGeneration);
-        bool stillCurrent = (rec != nullptr) && rec->active && rec->generation == record.generation;
+        bool stillCurrent = (rec != nullptr) && rec->active && rec->generation == record.generation &&
+            rec->appInstance == record.appInstance && rec->componentInstance == record.componentInstance;
         if (!stillCurrent) {
-            // Controlled drop of a stale-generation input; the caller sees a
-            // distinct result and the owner is never touched.
-            g_oldGenEventsRejected.fetch_add(1);
-            return -1;
+            SurfaceRecord *origin = findSurfaceByGenerationLocked(record.generation);
+            const bool exactOrigin = origin != nullptr && origin->generation == record.generation &&
+                origin->appInstance == record.appInstance &&
+                origin->componentInstance == record.componentInstance &&
+                origin->retired;
+            if (!touchTerminalMayFinishRetiredLocked(record, exactOrigin)) {
+                const bool deliveredCapture = exactOrigin && touchGestureBeginDeliveredLocked(record);
+                if (deliveredCapture) {
+                    // Close the destroy/dequeue race: retire every key for this
+                    // exact surface, reserving a CANCEL before dropping this
+                    // stale nonterminal sample.
+                    retireTouchSurfaceLocked(record.appInstance, record.componentInstance,
+                                             record.generation, record.x, record.y);
+                } else {
+                    discardRetiredTouchGestureLocked(touchKey(record));
+                }
+                g_oldGenEventsRejected.fetch_add(1);
+                return -1;
+            }
         }
     }
+    touchRecordDeliveredLocked(record);
     if (outAction) *outAction = record.action;
     if (outX) *outX = record.x;
     if (outY) *outY = record.y;
+    if (outAppInstance) *outAppInstance = record.appInstance;
+    if (outComponentInstance) *outComponentInstance = record.componentInstance;
     if (outGeneration) *outGeneration = record.generation;
+    if (outPointerId) *outPointerId = record.pointerId;
+    if (outGestureEpoch) *outGestureEpoch = record.epoch;
+    if (outTimestampNs) *outTimestampNs = record.timestampNs;
+    if (outTimeSource) *outTimeSource = record.timeSource;
     return 1;
+}
+
+int ingressTouchDequeue(uint32_t *outAction, float *outX, float *outY, uint64_t *outGeneration) {
+    uint64_t appInstance = 0;
+    uint64_t componentInstance = 0;
+    int64_t pointerId = 0;
+    uint64_t epoch = 0;
+    int rc = ingressTouchDequeueEx(outAction, outX, outY, &appInstance, &componentInstance,
+                                   outGeneration, &pointerId, &epoch, nullptr, nullptr);
+    return rc;
 }
 
 int ingressForegroundLevel() { return g_foreground.load() ? 1 : 0; }
@@ -831,11 +1213,15 @@ static void auditStubNegativeSelfCheck(void)
 // g_touchQueue，带当前代际）。仅供测试链路调用；普通产物无调用者。
 static int32_t bridgeInjectTouchImpl(uint32_t action, float x, float y)
 {
+    uint64_t appInstance = 0;
+    uint64_t componentInstance = 0;
     uint64_t generation = 0;
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
         for (SurfaceRecord &rec : g_surfaces) {
             if (rec.active && !rec.retired) {
+                appInstance = rec.appInstance;
+                componentInstance = rec.componentInstance;
                 generation = rec.generation;
                 break;
             }
@@ -844,11 +1230,13 @@ static int32_t bridgeInjectTouchImpl(uint32_t action, float x, float y)
     if (generation == 0) {
         return -2;
     }
+    // B（惯性包）：注入通道无 SDK 事件结构——steady_clock 兜底（来源 1）。
+    int64_t timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint32_t timeSource = 1;
     std::lock_guard<std::mutex> lock(g_touchMutex);
-    if (g_touchQueue.size() >= 256) {
-        g_touchQueue.pop_front();
-    }
-    g_touchQueue.push_back(TouchRecord{action, x, y, generation});
+    enqueueTouchRecordLocked(action, x, y, appInstance, componentInstance, generation, 0,
+                             timestampNs, timeSource);;
     return 0;
 }
 void onSurfaceDestroyedImpl(OH_NativeXComponent *component, void *window);
@@ -913,10 +1301,13 @@ static int32_t bridgeSimulateSurfaceCreatedImpl(void)
         }
     }
     g_surfaceCreatedCount.fetch_add(1);
+    std::vector<RetiredTouchOrigin> retiredTouchOrigins;
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
         for (SurfaceRecord &old : g_surfaces) {
             if (old.window == win && !old.retired && !old.tornDown) {
+                retiredTouchOrigins.push_back(RetiredTouchOrigin{
+                    old.appInstance, old.componentInstance, old.generation});
                 old.retired = true;
                 old.active = false;
                 old.retireRequestedAtMs = nowMs();
@@ -943,12 +1334,14 @@ static int32_t bridgeSimulateSurfaceCreatedImpl(void)
               static_cast<unsigned long long>(rec.generation), w, h,
               static_cast<long long>(g_nativeRefCount.load()));
     }
+    retireReplacedTouchOrigins(retiredTouchOrigins);
     return 0;
 }
 
 CjguiOhosIngress g_ingress = {
     ingressSurfaceActive,
     ingressTouchDequeue,
+    nullptr,   // touchDequeueEx（A：由 IngressSimulateRegistrar 填入）
     ingressForegroundLevel,
     ingressLeaseValid,
     ingressSurfacePermitAcquire,
@@ -960,6 +1353,9 @@ CjguiOhosIngress g_ingress = {
     ingressSurfacePermitRelease,
     ingressSurfaceTornDown,
     ingressAppReady,
+    nullptr,   // simulateSurfaceRetired（IngressSimulateRegistrar 填入）
+    nullptr,   // simulateSurfaceCreated
+    nullptr,   // injectTouch
 };
 
 
@@ -975,6 +1371,7 @@ static struct IngressSimulateRegistrar {
         g_ingress.simulateSurfaceRetired = &bridgeSimulateSurfaceRetiredImpl;
         g_ingress.simulateSurfaceCreated = &bridgeSimulateSurfaceCreatedImpl;
         g_ingress.injectTouch = &bridgeInjectTouchImpl;
+        g_ingress.touchDequeueEx = &ingressTouchDequeueEx;
         // 第九次复核 A3：替身会话表经 ingress 提供给渲染器（同进程跨 so
         // 函数指针，无跨库符号依赖）。
         g_ingress.stubSessionRegister = &cjgui_ohos_test_stub_session_register;
@@ -1034,12 +1431,15 @@ static void classifyAndPublishSurface(OH_NativeXComponent *component, void *wind
     uint64_t generation = 0;
     uint64_t componentInstance = 0;
     bool published = false;
+    std::vector<RetiredTouchOrigin> retiredTouchOrigins;
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
         // 同一指针地址可能被系统复用（组件重建）：先把仍在表中、未退役的旧记录
         // 退役，绝不让两代共用一条记录（同地址/同尺寸都不能合并代）。
         for (SurfaceRecord &old : g_surfaces) {
             if (old.window == window && !old.retired && !old.tornDown) {
+                retiredTouchOrigins.push_back(RetiredTouchOrigin{
+                    old.appInstance, old.componentInstance, old.generation});
                 old.retired = true;
                 old.active = false;
                 old.retireRequestedAtMs = nowMs();
@@ -1068,6 +1468,7 @@ static void classifyAndPublishSurface(OH_NativeXComponent *component, void *wind
         g_surfaces.push_back(rec);
         g_currentGeneration = rec.active ? rec.generation : 0;
     }
+    retireReplacedTouchOrigins(retiredTouchOrigins);
     // 第九次复核 B：登记当前挂载事实（UI 线程；无论是否获渲染准入）。
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
@@ -1124,8 +1525,9 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
     OH_NativeXComponent_GetXComponentSize(component, window, &width, &height);
     uint64_t generation = 0;
     uint64_t geometryRevision = 0;
+    std::vector<RetiredTouchOrigin> retiredTouchOrigins;
     {
-        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        std::unique_lock<std::mutex> lock(g_leaseMutex);
         SurfaceRecord *rec = findSurfaceLocked(window);
         if (rec == nullptr) {
             // D：resize 可能重建 native window（指针更换，实测 60% 宽度切换）。
@@ -1137,6 +1539,8 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
             id[sizeof(id) - 1] = '\0';
             for (SurfaceRecord &old : g_surfaces) {
                 if (old.componentId == std::string(id) && !old.retired) {
+                    retiredTouchOrigins.push_back(RetiredTouchOrigin{
+                        old.appInstance, old.componentInstance, old.generation});
                     old.retired = true;
                     old.active = false;
                     old.retireRequestedAtMs = nowMs();
@@ -1145,18 +1549,22 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
             if (window != nullptr && !g_entryPointsResolved.load()) {
                 // 链1：解析未完成时不做引用/分类；更新挂起事实的几何，
                 // 由解析完成后的补分类统一处理。
-                std::lock_guard<std::mutex> lk(g_deferredSurfaceMutex);
-                g_deferredSurface.valid = true;
-                g_deferredSurface.component = component;
-                g_deferredSurface.window = window;
-                memset(g_deferredSurface.id, 0, sizeof(g_deferredSurface.id));
-                memcpy(g_deferredSurface.id, id, sizeof(g_deferredSurface.id) - 1);
-                g_deferredSurface.width = width;
-                g_deferredSurface.height = height;
+                {
+                    std::lock_guard<std::mutex> lk(g_deferredSurfaceMutex);
+                    g_deferredSurface.valid = true;
+                    g_deferredSurface.component = component;
+                    g_deferredSurface.window = window;
+                    memset(g_deferredSurface.id, 0, sizeof(g_deferredSurface.id));
+                    memcpy(g_deferredSurface.id, id, sizeof(g_deferredSurface.id) - 1);
+                    g_deferredSurface.width = width;
+                    g_deferredSurface.height = height;
+                }
                 HLOGI("surface changed before resolution; deferred geometry updated "
                       "%{public}llux%{public}llu",
                       static_cast<unsigned long long>(width),
                       static_cast<unsigned long long>(height));
+                lock.unlock();
+                retireReplacedTouchOrigins(retiredTouchOrigins);
                 return;
             }
             int32_t refRc = -1;
@@ -1205,6 +1613,8 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
                   static_cast<unsigned long long>(generation),
                   static_cast<unsigned long long>(width),
                   static_cast<unsigned long long>(height));
+            lock.unlock();
+            retireReplacedTouchOrigins(retiredTouchOrigins);
             return;
         }
         rec->width = static_cast<int32_t>(width);
@@ -1310,6 +1720,8 @@ static int32_t stubSessionRetireImpl(int64_t generation)
 
 void onSurfaceDestroyedImpl(OH_NativeXComponent *component, void *window) {
     (void)component;
+    uint64_t appInstance = 0;
+    uint64_t componentInstance = 0;
     uint64_t generation = 0;
     bool needFence = false;
     // 第九次复核 B：destroyed **无条件**失效挂载事实——即使该记录从未获
@@ -1340,6 +1752,8 @@ void onSurfaceDestroyedImpl(OH_NativeXComponent *component, void *window) {
         // A2 第 ③ 步：**立即退役**——此后不再发放新许可，也不再接受该代触摸。
         rec->retired = true;
         rec->active = false;
+        appInstance = rec->appInstance;
+        componentInstance = rec->componentInstance;
         rec->retireRequestedAtMs = nowMs();
         if (g_currentGeneration == rec->generation) {
             g_currentGeneration = 0;
@@ -1350,6 +1764,10 @@ void onSurfaceDestroyedImpl(OH_NativeXComponent *component, void *window) {
         // 渲染线程拆除 ACK（确定性 fence，Sol Q2），否则系统可能在返回后销毁
         // 对象而 renderer 仍在使用。Verified 档保持异步归还（引用仍在手）。
         needFence = rec->nativeRefUnavailable;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_touchMutex);
+        retireTouchSurfaceLocked(appInstance, componentInstance, generation, 0.0f, 0.0f);
     }
     // A2 第 ④ 步：投递拆除请求。
     if (generation != 0 && g_requestSurfaceTeardownFn != nullptr) {
@@ -1389,7 +1807,16 @@ void onSurfaceDestroyedImpl(OH_NativeXComponent *component, void *window) {
     }
 }
 
+// A（触摸包指导接续）：活动手指身份（单指策略）。首根按下的手指持有手势；
+// 副指 BEGIN 受控忽略，副指 MOVE/UP 不得终结或移动主指手势；主指抬起即
+// 释放身份。surface 换代时活动手指作废（旧代事件在 dequeue 侧另有代次拒绝）。
+std::mutex g_activePointerMutex;
+int32_t g_activePointerId = -1;    // -1 = 无活动手指
+uint64_t g_activePointerGeneration = 0;
+
 void dispatchTouchImpl(OH_NativeXComponent *component, void *window) {
+    uint64_t appInstance = 0;
+    uint64_t componentInstance = 0;
     uint64_t generation = 0;
     {
         std::lock_guard<std::mutex> lock(g_leaseMutex);
@@ -1397,10 +1824,17 @@ void dispatchTouchImpl(OH_NativeXComponent *component, void *window) {
         if (rec == nullptr || !rec->active) {
             return;  // 未知/已退役 surface 的触摸受控丢弃，不触碰 owner
         }
+        appInstance = rec->appInstance;
+        componentInstance = rec->componentInstance;
         generation = rec->generation;
     }
     OH_NativeXComponent_TouchEvent touch{};
-    OH_NativeXComponent_GetTouchEvent(component, window, &touch);
+    // A：取数失败零输入——零结构 type==DOWN 只是枚举值 0，不是合法读取。
+    if (OH_NativeXComponent_GetTouchEvent(component, window, &touch) !=
+        OH_NATIVEXCOMPONENT_RESULT_SUCCESS) {
+        HLOGW("touch read failed: dropped (no synthetic input)");
+        return;
+    }
     uint32_t action = 0;
     switch (touch.type) {
         case OH_NATIVEXCOMPONENT_DOWN:
@@ -1418,11 +1852,47 @@ void dispatchTouchImpl(OH_NativeXComponent *component, void *window) {
         default:
             return;
     }
-    std::lock_guard<std::mutex> lock(g_touchMutex);
-    if (g_touchQueue.size() >= 256) {
-        g_touchQueue.pop_front();  // bounded queue: drop oldest
+    // A：数值必须有限；驱动层异常样本不成合法触摸。坐标保持平台原值
+    // （surface 像素域，与已接受场景节点同一坐标域），不做第二次转换。
+    if (!std::isfinite(touch.x) || !std::isfinite(touch.y)) {
+        HLOGW("touch with non-finite coordinates dropped id=%{public}d", touch.id);
+        return;
     }
-    g_touchQueue.push_back(TouchRecord{action, touch.x, touch.y, generation});
+    {
+        std::lock_guard<std::mutex> lock(g_activePointerMutex);
+        if (g_activePointerGeneration != generation) {
+            g_activePointerId = -1;
+            g_activePointerGeneration = generation;
+        }
+        if (action == kTouchBegin) {
+            if (g_activePointerId >= 0 && g_activePointerId != touch.id) {
+                HLOGW("secondary finger ignored id=%{public}d active=%{public}d",
+                      touch.id, g_activePointerId);
+                return;
+            }
+            g_activePointerId = touch.id;
+        } else {
+            if (g_activePointerId < 0 || touch.id != g_activePointerId) {
+                return;  // 副指的 MOVE/UP/CANCEL 不终结、不移动主指手势
+            }
+            if (action == kTouchEnd || action == kTouchCancel) {
+                g_activePointerId = -1;
+            }
+        }
+    }
+    // B（惯性包）：采样时间。优先 SDK touch.timeStamp（相对系统启动单调 ns）；
+    // 无效时以入队前 steady_clock 兜底并标记来源（1=桥接收时间）。
+    int64_t timestampNs = touch.timeStamp;
+    uint32_t timeSource = 0;
+    if (timestampNs <= 0) {
+        timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        timeSource = 1;
+    }
+    std::lock_guard<std::mutex> lock(g_touchMutex);
+    enqueueTouchRecordLocked(action, touch.x, touch.y, appInstance, componentInstance,
+                             generation, static_cast<int64_t>(touch.id),
+                             timestampNs, timeSource);
 }
 
 }  // namespace
@@ -1730,8 +2200,43 @@ static napi_value RepublishSurface(napi_env env, napi_callback_info info) {
 static void startStopMonitorOnce(uint64_t stopAppInstance);
 
 static napi_value StartHost(napi_env env, napi_callback_info info) {
-    (void)env;
-    (void)info;
+    // The actual private filesDir is supplied by the ArkTS ability that
+    // installed its rawfile assets. Some images use a HAP-specific directory
+    // (…/haps/entry/files), so a compiled-in sandbox alias is not reliable.
+    size_t argc = 1;
+    napi_value argv[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_error(env, nullptr, "startHost requires the current filesDir");
+        return nullptr;
+    }
+    size_t pathLength = 0;
+    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &pathLength) != napi_ok ||
+        pathLength < 28 || pathLength > 255) {
+        napi_throw_error(env, nullptr, "invalid image filesDir length");
+        return nullptr;
+    }
+    std::vector<char> pathBuffer(pathLength + 1, '\0');
+    size_t copied = 0;
+    if (napi_get_value_string_utf8(env, argv[0], pathBuffer.data(), pathBuffer.size(),
+                                   &copied) != napi_ok || copied != pathLength) {
+        napi_throw_error(env, nullptr, "invalid image filesDir value");
+        return nullptr;
+    }
+    std::string imageDir(pathBuffer.data(), copied);
+    constexpr const char *sandboxPrefix = "/data/storage/el2/base/";
+    if (imageDir.compare(0, std::strlen(sandboxPrefix), sandboxPrefix) != 0 ||
+        imageDir.compare(imageDir.size() - 6, 6, "/files") != 0 ||
+        imageDir.find("..") != std::string::npos) {
+        napi_throw_error(env, nullptr, "image filesDir is outside the application sandbox");
+        return nullptr;
+    }
+    for (char c : imageDir) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '/' || c == '_' || c == '-' || c == '.')) {
+            napi_throw_error(env, nullptr, "image filesDir contains an invalid character");
+            return nullptr;
+        }
+    }
     // A3：只有 idle/stopped/failed 才允许进入 starting。stopping（停止中）必须被
     // 拒绝，否则会出现「上一次停止还没收敛就重开」的窗口，旧票据/旧回调会落到
     // 新实例上。failed 允许重开（启动失败与 owner 异常退出都应可重试），但
@@ -1763,6 +2268,13 @@ static napi_value StartHost(napi_env env, napi_callback_info info) {
             HLOGW("startHost rejected: phase changed to %{public}s", hostPhaseName(phase));
             return nullptr;
         }
+        // No previous owner remains past this point. Publish this launch's
+        // actual asset directory before the new owner reads the declarations.
+        if (setenv("CJGUI_IMAGE_FIXTURE_DIR", imageDir.c_str(), 1) != 0) {
+            napi_throw_error(env, nullptr, "failed to publish image filesDir");
+            return nullptr;
+        }
+        HLOGI("image asset directory bound: %{public}s", imageDir.c_str());
         restartFromSettledStop = phase == kHostStopped;
         previousAppInstance = g_appInstance.load();
         // A3：本次启动分配一个**不复用**的 appInstance。surface 身份、停止判据

@@ -523,18 +523,23 @@ main(): Int64 {
         centerBlue <= 110u8 && centerAlpha >= 180u8 && hitStatus == CJGUI_INTERNAL_RENDERER_OK &&
         hitTurn.didApplyHumanAction && controller.selected() == 1 && missStatus == CJGUI_INTERNAL_RENDERER_OK &&
         missTurn.didApplyHumanAction && controller.selected() == 1 && controller.background() == 1 &&
-        smallRefresh && smallStats == CJGUI_INTERNAL_RENDERER_OK && smallNodes == 0u32 && smallBatches == 0u32 &&
-        smallVertexBytes == 0u64 && smallVectorStats == CJGUI_INTERNAL_RENDERER_OK && smallVectorDraws >= 5u32 &&
+        // The accepted hit focuses one action. Its visible focus border now
+        // contributes one stable generic paint, independent of vector path
+        // complexity. Vector geometry must still stay on resident buffers.
+        smallRefresh && smallStats == CJGUI_INTERNAL_RENDERER_OK && smallNodes <= 1u32 && smallBatches <= 1u32 &&
+        smallVertexBytes <= 2048u64 && smallVectorStats == CJGUI_INTERNAL_RENDERER_OK && smallVectorDraws >= 5u32 &&
         smallVectorUploads == 1u32 && smallVectorReuses + smallVectorUploads == smallVectorDraws && smallVectorUploadBytes > 0u64 &&
-        mediumRefresh && mediumStats == CJGUI_INTERNAL_RENDERER_OK && mediumNodes == 0u32 && mediumBatches == 0u32 &&
-        mediumVertexBytes == 0u64 && mediumVectorStats == CJGUI_INTERNAL_RENDERER_OK && mediumVectorDraws == smallVectorDraws &&
+        mediumRefresh && mediumStats == CJGUI_INTERNAL_RENDERER_OK && mediumNodes == smallNodes &&
+        mediumBatches == smallBatches && mediumVertexBytes == smallVertexBytes &&
+        mediumVectorStats == CJGUI_INTERNAL_RENDERER_OK && mediumVectorDraws == smallVectorDraws &&
         mediumVectorUploads == 1u32 && mediumVectorReuses + mediumVectorUploads == mediumVectorDraws &&
         mediumVectorUploadBytes > smallVectorUploadBytes && capacityRefresh && capacityStats == CJGUI_INTERNAL_RENDERER_OK &&
-        capacityNodes == 0u32 && capacityBatches == 0u32 && capacityVertexBytes == 0u64 &&
+        capacityNodes == smallNodes && capacityBatches == smallBatches && capacityVertexBytes == smallVertexBytes &&
         capacityVectorStats == CJGUI_INTERNAL_RENDERER_OK && capacityVectorDraws == smallVectorDraws &&
         capacityVectorUploads == 1u32 && capacityVectorReuses + capacityVectorUploads == capacityVectorDraws &&
         capacityVectorUploadBytes > mediumVectorUploadBytes && capacityVectorResidentBytes > mediumVectorResidentBytes &&
-        capacityBatchStats == CJGUI_INTERNAL_RENDERER_OK && capacityStride > 0u32 && capacityMaxBatchBytes == 0u64 &&
+        capacityBatchStats == CJGUI_INTERNAL_RENDERER_OK && capacityStride > 0u32 &&
+        capacityMaxBatchBytes == smallVertexBytes &&
         capacityCpuStats == CJGUI_INTERNAL_RENDERER_OK &&
         idleBeforeStats == CJGUI_INTERNAL_RENDERER_OK && idleRefresh && idleAfterStats == CJGUI_INTERNAL_RENDERER_OK &&
         idleCommittedBefore == idleCommittedAfter && idleUpdatesBefore == idleUpdatesAfter &&

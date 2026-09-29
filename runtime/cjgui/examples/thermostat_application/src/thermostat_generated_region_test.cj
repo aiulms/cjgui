@@ -25,6 +25,7 @@ func thermostatNoteLimitUsesPublishedUnicodeScalarUnit(): Unit {
 func thermostatGeneratedUiIsAuthorizedAndWindowTransactionOwned(): Unit {
     let authorization = thermostatAuthorization()
     @Assert(authorization.permitsAction("GET_GENERATED_UI"), true)
+    @Assert(authorization.permitsAction("GET_WINDOW_INTERACTION"), true)
     @Assert(authorization.permitsAction("SUBMIT_GENERATED_UI"), true)
     let controller = CjguiThermostatController(CjguiThermostatDomain())
     @Assert((controller as CjguiComposableUiSceneRefreshParticipant).isSome(), true)

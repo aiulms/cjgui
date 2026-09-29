@@ -138,11 +138,149 @@ public interface CjguiRangeTextEditSink {
         inserted: String): CjguiRangeTextEditOutcome
 }
 
+/// Result of a composition `begin`. `accepted=false` names the reason and no claim is live; on
+/// success `token` is the credential every later phase of THIS composition must present, and the
+/// echoed range is in the version the caller computed it in.
+public class CjguiRangeTextCompositionClaim {
+    public let accepted: Bool
+    public let reason: String
+    public let token: Int64
+    public let startByte: Int64
+    public let endByte: Int64
+    public let baseVersion: Int64
+
+    public init(accepted: Bool, reason: String, token: Int64, startByte: Int64, endByte: Int64,
+        baseVersion: Int64) {
+        this.accepted = accepted
+        this.reason = reason
+        this.token = token
+        this.startByte = startByte
+        this.endByte = endByte
+        this.baseVersion = baseVersion
+    }
+
+    public static func refused(reason: String, version: Int64): CjguiRangeTextCompositionClaim {
+        return CjguiRangeTextCompositionClaim(false, reason, -1, -1, -1, version)
+    }
+}
+
+/// In-lock inspection of one live claim by its credential. The range is the claim's CURRENT
+/// coordinates and `contentVersion` is the owner version they belong to: every accepted
+/// transaction migrates the claim, so a range can never be read without that version.
+public class CjguiRangeTextCompositionInspection {
+    public let ok: Bool
+    public let reason: String
+    public let startByte: Int64
+    public let endByte: Int64
+    public let contentVersion: Int64
+
+    public init(ok: Bool, reason: String, startByte: Int64, endByte: Int64, contentVersion: Int64) {
+        this.ok = ok
+        this.reason = reason
+        this.startByte = startByte
+        this.endByte = endByte
+        this.contentVersion = contentVersion
+    }
+
+    public static func refused(reason: String,
+        version: Int64): CjguiRangeTextCompositionInspection {
+        return CjguiRangeTextCompositionInspection(false, reason, -1, -1, version)
+    }
+}
+
+/// The answer to one composition terminal.
+///
+/// `consumed` is the credential fact: true means the presented token is terminated, whatever
+/// happened next. `published` is the body fact: true means THIS call advanced the owner version by
+/// exactly one transaction. `accepted` is true for a published commit and for the NO-CHANGE
+/// terminal (a zero-width claim committed with empty text: zero version, zero history); a no-change
+/// terminal must never be reported as an accepted composition WRITE, so a consumer that records
+/// writes reads `published`.
+public class CjguiRangeTextCompositionOutcome {
+    public let accepted: Bool
+    public let published: Bool
+    public let consumed: Bool
+    public let reason: String
+    public let startByte: Int64
+    public let endByte: Int64
+    public let versionBefore: Int64
+    public let versionAfter: Int64
+
+    public init(accepted: Bool, published: Bool, consumed: Bool, reason: String, startByte: Int64,
+        endByte: Int64, versionBefore: Int64, versionAfter: Int64) {
+        this.accepted = accepted
+        this.published = published
+        this.consumed = consumed
+        this.reason = reason
+        this.startByte = startByte
+        this.endByte = endByte
+        this.versionBefore = versionBefore
+        this.versionAfter = versionAfter
+    }
+
+    public static func refused(reason: String, consumed: Bool,
+        version: Int64): CjguiRangeTextCompositionOutcome {
+        return CjguiRangeTextCompositionOutcome(false, false, consumed, reason, -1, -1, version,
+            version)
+    }
+}
+
+/// The answer to a composition cancel. `released=false` means the presented token was not the live
+/// claim (already consumed, or never issued): the owner's legal claim, if any, was left alone.
+public class CjguiRangeTextCompositionRelease {
+    public let released: Bool
+    public let reason: String
+
+    public init(released: Bool, reason: String) {
+        this.released = released
+        this.reason = reason
+    }
+
+    public static func refused(reason: String): CjguiRangeTextCompositionRelease {
+        return CjguiRangeTextCompositionRelease(false, reason)
+    }
+}
+
+/// OPTIONAL composition-write capability, implemented by the same application object as
+/// `CjguiRangeTextEditSink` when the document owner can hold a live claim on a composing range.
+///
+/// When a window binding declares composition arbitration, the session registers the owner's claim
+/// at composition start and every terminal presents the returned credential -- the ordinary
+/// `applyRangeTextEdit` is never used for a composition. A binding that declares arbitration but
+/// does not implement this interface is refused by name (`composition_arbitration_unavailable`)
+/// instead of silently falling back to the ordinary writer.
+///
+/// `bindingIdentity` binds the credential to one window binding; the implementation must refuse a
+/// credential presented from a different binding. `expectedVersion` is the owner version the range
+/// coordinates were translated in: a stale frame must be refused by name, never re-interpreted.
+public interface CjguiRangeTextCompositionSink {
+    /// Register the owner's live claim on `[startByte, endByte)` of `expectedVersion`.
+    func beginRangeTextComposition(bindingIdentity: String, expectedVersion: Int64, startByte: Int64,
+        endByte: Int64): CjguiRangeTextCompositionClaim
+
+    /// Read the claim's current range and the version it belongs to, in one owner critical point.
+    func inspectRangeTextComposition(token: Int64): CjguiRangeTextCompositionInspection
+
+    /// Replace the claim's current range with `text` as exactly one transaction. `requestId` is the
+    /// terminal's fixed identity: a repeated delivery of the same terminal must not write twice.
+    func commitRangeTextComposition(token: Int64, expectedVersion: Int64, text: String,
+        requestId: String): CjguiRangeTextCompositionOutcome
+
+    /// Drop the claim without touching content (cancel / unbind / focus loss).
+    func cancelRangeTextComposition(token: Int64): CjguiRangeTextCompositionRelease
+}
+
 public let CJGUI_RANGE_TEXT_REASON_UNPREPARED: String = "source_unprepared"
 public let CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY: String = "not_utf8_boundary"
 public let CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW: String = "outside_materialized_window"
 public let CJGUI_RANGE_TEXT_REASON_VERSION: String = "version_conflict"
 public let CJGUI_RANGE_TEXT_REASON_BUDGET: String = "range_exceeds_materialize_budget"
+/// The binding declared composition arbitration but its sink implements no composition capability.
+/// The composition is refused by this name; it must never silently fall back to the ordinary sink.
+public let CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE: String = "composition_arbitration_unavailable"
+/// A composition terminal that settled with zero body change (zero-width claim, empty final text):
+/// no version, no history. Named so it is not counted as an accepted composition write.
+public let CJGUI_RANGE_TEXT_REASON_COMPOSITION_NO_CHANGE: String = "composition_no_change"
 
 /// UTF-8 byte length of a string.
 public func cjguiUtf8Length(value: String): Int64 {

@@ -2,10 +2,42 @@ package cjgui
 
 import cjgui_shared_operation_core.*
 import std.collection.*
+import std.convert.*
 import std.env.*
 import std.random.*
 import std.sync.*
 import std.time.*
+
+private let CJGUI_SEMANTIC_FOCUS_MAX_ATTEMPTS: Int64 = 3
+
+func cjguiFocusVisibleIntersection(bounds: CjguiComposableUiRect,
+    constraints: ArrayList<CjguiComposableUiClipConstraint>): CjguiComposableUiRect {
+    var visible = bounds
+    for (constraint in constraints) {
+        visible = visible.intersect(constraint.rect)
+    }
+    return visible
+}
+
+func cjguiFocusRetryAllowed(attempts: Int64, didFocus: Bool): Bool {
+    return !didFocus && attempts < CJGUI_SEMANTIC_FOCUS_MAX_ATTEMPTS
+}
+
+func cjguiFocusNextAttemptCount(attempts: Int64, didFocus: Bool): Int64 {
+    return if (didFocus) { 0 } else { attempts + 1 }
+}
+
+func cjguiFocusBindingEpochMatches(prior: UInt64, current: UInt64): Bool {
+    return prior == current
+}
+
+func cjguiFocusNativeFailureIsRetryable(status: Int32): Bool {
+    // The checked native entry may observe a newer accepted clip after the
+    // Cangjie visibility check. Retry only through the bounded pending-focus
+    // path after another accepted scene; never activate that clipped editor.
+    return status == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD || status == CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED ||
+        status == CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY
+}
 
 /// Public normalized pointer phases. Coordinates are logical layout points,
 /// never native event objects. A controller receives them through its normal
@@ -298,7 +330,8 @@ func cjguiSameFocusedTextBinding(previous: CjguiComposableUiLayoutNode,
         previous.operationResourceId == candidate.operationResourceId && previous.displayValueRole == candidate
         .displayValueRole && previous.inputScopeId == candidate.inputScopeId && previous.layerId == candidate.layerId &&
         previous.layerKind == candidate.layerKind && previous.isEnabled == candidate.isEnabled && previous.isReadOnly ==
-        candidate.isReadOnly && previous.tabInsertsText == candidate.tabInsertsText
+        candidate.isReadOnly && previous.tabInsertsText == candidate.tabInsertsText &&
+        previous.semanticIncarnation == candidate.semanticIncarnation
 }
 
 // A native present may be needed only because another node moved or repainted.
@@ -854,6 +887,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // containment changes. Native FIFO intents must instead resolve against
     // the last scene that native actually displayed.
     private var nativeInputScene: CjguiComposableUiScene
+    private var acceptedBindingKeys: ArrayList<String>
+    private var acceptedBindingEpochs: ArrayList<UInt64>
     private var nextProjectionVersion: Int64
     // `refreshIfNeeded` consults this Cangjie-owned UI revision plus the
     // native resize revision before it asks the controller to build/layout.
@@ -962,12 +997,19 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // remains the owner of pane size/slider value and decides each phase.
     private var pointerCaptureNode: CjguiComposableUiLayoutNode
     private var pointerCaptureOwnerVersion: Int64
+    private var pointerCaptureSplitRevision: Int64 = -1  // A（复核修）：split 真修订（CAS）
     // A modal-layer transition changes the valid input scope even when the
     // captured control remains in the next projection.  Preserve the modal
     // identity from pointer-down so a newly opened/closed dialog cannot let
     // that old sequence continue through the underlying control.
     private var pointerCaptureModalLayerId: String
     private var pointerCaptureActive: Bool
+    private var pointerCaptureGestureEpoch: UInt64 = 0
+    private var pointerCaptureAppInstance: UInt64 = 0
+    private var pointerCaptureComponentInstance: UInt64 = 0
+    private var pointerCaptureSurfaceGeneration: UInt64 = 0
+    private var pointerCapturePointerId: Int64 = -1
+    private var pointerCaptureAcceptedBindingEpoch: UInt64 = 0
     private var pointerCaptureX: Int64
     private var pointerCaptureY: Int64
     // The framework owns these ephemeral visual identities. They are always
@@ -1166,6 +1208,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // (an off-screen tree row that was just revealed). It is retried once right
     // after that commit instead of being silently dropped.
     private var pendingScopedFocusScope: ?CjguiComposableUiIdentityScope = None
+    private var pendingSemanticFocusNode: ?CjguiComposableUiLayoutNode = None
+    private var pendingSemanticFocusAttempts: Int64 = 0
+    private var pendingSemanticFocusBindingEpoch: UInt64 = 0u64
     private var pendingScopedFocusKey: String = ""
 
     public init(
@@ -1191,6 +1236,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             ArrayList<CjguiComposableUiLayoutNode>())
         this.nativeInputScene = CjguiComposableUiScene(0, CjguiComposableUiRect(0, 0, 0, 0),
             ArrayList<CjguiComposableUiLayoutNode>())
+        this.acceptedBindingKeys = ArrayList<String>()
+        this.acceptedBindingEpochs = ArrayList<UInt64>()
         this.nextProjectionVersion = 0
         this.lastControllerSceneVersion = -1
         this.lastAcceptedBusinessOwnerRevision = -1
@@ -1340,6 +1387,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             ArrayList<CjguiComposableUiLayoutNode>())
         nativeInputScene = CjguiComposableUiScene(0, CjguiComposableUiRect(0, 0, 0, 0),
             ArrayList<CjguiComposableUiLayoutNode>())
+        acceptedBindingKeys.clear()
+        acceptedBindingEpochs.clear()
         lastNativeFailure = "none"
         pendingRefreshReason = "none"
         deferredInteractionPaint = false
@@ -1750,7 +1799,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     nativeInputScene.resolveSelection(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
                         Int64(nativeEvent.projectionVersion))
                 }
-                if (resolved.nodeId == nodeId) {
+                // The native IME callback may be waiting in the event FIFO while
+                // the focused editor is rebound. Require the accepted binding
+                // epoch as well as the ordinary scene projection identity before
+                // recording selection for the current focus.
+                if (resolved.nodeId == nodeId && nativeEvent.acceptedBindingEpoch != 0u64 &&
+                    currentAcceptedBindingEpoch(resolved) == nativeEvent.acceptedBindingEpoch) {
                     rememberInteraction(resolved, 33, Int64(nativeEvent.selectionStart), Int64(nativeEvent.selectionEnd))
                     let selection = controller.applyUiEvent(
                         CjguiComposableUiEvent(
@@ -1933,32 +1987,39 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         Int64(nativeEvent.projectionVersion)
                     )
                 }
+                let gestureBindingReady = nativeEvent.gestureEpoch == 0u64 ||
+                    (nativeEvent.gestureAppInstance != 0u64 && nativeEvent.gestureComponentInstance != 0u64 &&
+                    nativeEvent.gestureSurfaceGeneration != 0u64 && nativeEvent.gesturePointerId >= 0 &&
+                    nativeEvent.acceptedBindingEpoch != 0u64 &&
+                    currentAcceptedBindingEpoch(continuation) == nativeEvent.acceptedBindingEpoch) ||
+                    (eventText.startsWith("fling:") && nativeEvent.gestureEpoch != 0u64 &&
+                    nativeEvent.gesturePointerId >= 0)
                 // A viewport-bound scroll area is owned by the framework: the
                 // real wheel gesture changes the shared viewport request and the
                 // next commit presents the new offset. The business version,
                 // drafts and selection are untouched, and no field write is
                 // invented to drive the viewport.
-                let viewportScrollApplied = nativeEvent.eventKind == 30u32 && continuation.nodeId == nodeId &&
+                let viewportScrollApplied = gestureBindingReady && nativeEvent.eventKind == 30u32 && continuation.nodeId == nodeId &&
                     applyViewportScrollStep(continuation, eventText)
                 // Tab can land on a legal control that is currently clipped out of
                 // its viewport. Reveal it and let this commit present the new
                 // offset: the focused identity does not change, so the keyboard
                 // reaches an editor below the fold without a coordinate guess.
-                let viewportFocusRevealed = nativeEvent.eventKind == 31u32 && continuation.nodeId == nodeId &&
+                let viewportFocusRevealed = gestureBindingReady && nativeEvent.eventKind == 31u32 && continuation.nodeId == nodeId &&
                     revealAcceptedNodeIfNeeded(continuation.nodeId)
                 // A tab TITLE is a framework-owned view intent: pointer activation
                 // and the keyboard both switch the shared tab state, so a page
                 // switch is presented by the next commit without a business write.
-                let tabsIntentConsumed = nativeEvent.eventKind == 27u32 && continuation.nodeId == nodeId &&
+                let tabsIntentConsumed = gestureBindingReady && nativeEvent.eventKind == 27u32 && continuation.nodeId == nodeId &&
                     continuation.isTabTitle() && continuation.isEnabled &&
                     applyTabsActivationStep(continuation)
                 if (tabsIntentConsumed) {
                     didApply = true
                     requiresProjection = true
                 }
-                let rejectsReboundPressActivation = nativeEvent.eventKind == 27u32 &&
+                let rejectsReboundPressActivation = gestureBindingReady && nativeEvent.eventKind == 27u32 &&
                     consumeSuppressedPressActivation(continuation)
-                if (continuation.nodeId == nodeId && !rejectsReboundPressActivation && !tabsIntentConsumed) {
+                if (gestureBindingReady && continuation.nodeId == nodeId && !rejectsReboundPressActivation && !tabsIntentConsumed) {
                     let controllerVersionBefore = controller.uiSceneVersion()
                     rememberInteraction(continuation, Int64(nativeEvent.eventKind), Int64(nativeEvent.selectionStart),
                         Int64(nativeEvent.selectionEnd))
@@ -3002,6 +3063,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 acceptedCandidate = true
                 identityRegistry.commitCandidate()
                 flushPendingScopedFocus()
+                flushPendingSemanticFocus()
                 if (!sameComponentTree(renderedRoot, root)) {
                     nextProjectionVersion = candidateVersion
                     renderedRoot = root
@@ -3151,7 +3213,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         lastNativeStatus = runStatus
                     }
                 }
-                let nativeNode = CjguiInternalRendererComposableNode(
+                var nativeNode = CjguiInternalRendererComposableNode(
                     nodeId: UInt64(node.nodeId),
                     projectionVersion: UInt64(paintScene.version),
                     resourceId: node.resourceId,
@@ -3237,6 +3299,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     tabGroupId: tabGroupId,
                     tabSelected: tabSelected
                 )
+                nativeNode.acceptedBindingEpoch = candidateBindingEpoch(node, paintScene.version)
                 let semanticLabel = if (node.label.size > 0) {
                     node.label
                 } else {
@@ -3438,6 +3501,101 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     ///
     /// Experimental: the identity vocabulary is the same one the component
     /// declaration uses; nothing native crosses this boundary.
+    /// Focus a node named by the accepted scene's semantic identity. Reveal
+    /// first when the target sits outside its scroll viewport's visible band;
+    /// the saved request is re-validated against the SAME identity after the
+    /// commit that makes it visible. (H snapshot: 必要契约同步，触摸包 C。)
+    public func focusAcceptedSemanticNode(semanticId: String): Bool {
+        pendingSemanticFocusNode = None
+        pendingSemanticFocusAttempts = 0
+        pendingSemanticFocusBindingEpoch = 0u64
+        if (semanticId.size == 0) {
+            lastNativeFailure = "focus_request_invalid"
+            return false
+        }
+        for (node in nativeInputScene.nodes()) {
+            if (node.semanticId != semanticId || !node.canReceiveFocus()) { continue }
+            pendingScopedFocusScope = None
+            pendingScopedFocusKey = ""
+            if (revealAcceptedNodeIfNeeded(node.nodeId)) {
+                pendingSemanticFocusNode = Some(node)
+                pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(node)
+                requestRefresh()
+                return true
+            }
+            if (focusProjectedNode(node.nodeId)) {
+                return true
+            }
+            if (lastNativeFailure == "focus_native_unavailable" &&
+                cjguiFocusRetryAllowed(pendingSemanticFocusAttempts, false)) {
+                pendingSemanticFocusNode = Some(node)
+                pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(node)
+                requestRefresh()
+            }
+            return false
+        }
+        lastNativeFailure = "focus_semantic_target_missing"
+        return false
+    }
+
+    /// Satisfies a focus request whose target moved during the reveal commit.
+    private func flushPendingSemanticFocus(): Unit {
+        if (let Some(prior) <- pendingSemanticFocusNode) {
+            let current = nativeInputScene.nodeForId(prior.nodeId)
+            // The accepted epoch detects same-slot A→B→A replacement even when
+            // the visible strings and semantic id return to their prior values.
+            if (current.nodeId == prior.nodeId && current.semanticId == prior.semanticId &&
+                current.semanticIncarnation == prior.semanticIncarnation &&
+                current.fieldId == prior.fieldId && current.actionName == prior.actionName &&
+                current.resourceId == prior.resourceId &&
+                current.operationActionName == prior.operationActionName &&
+                current.operationResourceId == prior.operationResourceId &&
+                cjguiFocusBindingEpochMatches(pendingSemanticFocusBindingEpoch,
+                    currentAcceptedBindingEpoch(current)) &&
+                current.canReceiveFocus()) {
+                if (revealAcceptedNodeIfNeeded(current.nodeId)) {
+                    pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                    if (cjguiFocusRetryAllowed(pendingSemanticFocusAttempts, false)) {
+                        pendingSemanticFocusNode = Some(current)
+                        pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(current)
+                        requestRefresh()
+                    } else {
+                        pendingSemanticFocusNode = None
+                        pendingSemanticFocusAttempts = 0
+                        lastNativeFailure = "focus_reveal_retry_exhausted"
+                    }
+                    return
+                }
+                if (focusProjectedNode(current.nodeId)) {
+                    pendingSemanticFocusNode = None
+                    pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, true)
+                    return
+                }
+                pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
+                if (lastNativeFailure == "focus_native_unavailable" &&
+                    cjguiFocusRetryAllowed(pendingSemanticFocusAttempts, false)) {
+                    pendingSemanticFocusNode = Some(current)
+                    pendingSemanticFocusBindingEpoch = currentAcceptedBindingEpoch(current)
+                    requestRefresh()
+                } else {
+                    pendingSemanticFocusNode = None
+                    pendingSemanticFocusAttempts = 0
+                    if (lastNativeFailure == "focus_target_fully_clipped") {
+                        lastNativeFailure = "focus_reveal_did_not_expose_target"
+                    } else if (lastNativeFailure == "focus_native_unavailable") {
+                        lastNativeFailure = "focus_native_retry_exhausted"
+                    }
+                }
+            } else {
+                pendingSemanticFocusNode = None
+                pendingSemanticFocusAttempts = 0
+                lastNativeFailure = "focus_binding_replaced"
+            }
+        }
+    }
+
     public func focusScopedNode(scope: CjguiComposableUiIdentityScope, localKey: String): Bool {
         let reference = CjguiComposableUiNodeReference.scoped(scope, localKey)
         let nodeId = identityRegistry.acceptedNodeIdForReference(reference)
@@ -3537,6 +3695,38 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// mapped through the framework's ONE size rule onto the accepted track, so
     /// no sample width and no application split owner is involved. Returns true
     /// when the size moved.
+    /// split 拖动的 CAS 版本：用 captureRevision 比较，匹配则应用并推进修订；
+    /// 不匹配（外部 split 写已推进）返回 false（旧相位零覆盖）。
+    private func applySplitStatePointerDragCAS(node: CjguiComposableUiLayoutNode, pointerX: Int64): Bool {
+        if (let Some(state) <- splitStateForDivider(node)) {
+            let track = state.acceptedTrack()
+            if (track <= 0) {
+                return false
+            }
+            let handleSize = if (state.acceptedHandleSize() > 0) {
+                state.acceptedHandleSize()
+            } else {
+                node.pointerControlHandleThickness
+            }
+            let acceptedFirst = if (state.acceptedTrack() > 0) {
+                state.acceptedFirstSize()
+            } else {
+                state.firstSize()
+            }
+            let trackOrigin = node.bounds.x - acceptedFirst
+            let requested = CjguiComposableUiSplitGeometry.firstSizeForPointer(pointerX, trackOrigin, track,
+                handleSize, state.firstMinimum(), state.secondMinimum())
+            let before = state.firstSize()
+            if (let Some(revision) <- state.applyCapturedFirstSize(pointerCaptureSplitRevision, requested,
+                track, handleSize)) {
+                pointerCaptureSplitRevision = revision
+                return state.firstSize() != before
+            }
+            return false  // 修订不匹配：外部 split 写已推进，旧相位零覆盖
+        }
+        return false
+    }
+
     private func applySplitStatePointerDrag(node: CjguiComposableUiLayoutNode, pointerX: Int64): Bool {
         if (let Some(state) <- splitStateForDivider(node)) {
             let track = state.acceptedTrack()
@@ -3600,6 +3790,48 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // Internal native focus metadata is a projection of the same tabs state
     // that owns page selection. The native side chooses one Tab stop per group
     // and falls back to its first enabled title if the selected key vanished.
+    private func nativeSemanticBindingKey(node: CjguiComposableUiLayoutNode): String {
+        return "${node.identityKey.size}:${node.identityKey}" +
+            "${node.semanticId.size}:${node.semanticId}" +
+            "${node.actionName.size}:${node.actionName}" +
+            "${node.fieldId.size}:${node.fieldId}" +
+            "${node.operationActionName.size}:${node.operationActionName}" +
+            "${node.resourceId}:${node.operationResourceId}:${node.nodeKind}:${node.semanticIncarnation}"
+    }
+    private func candidateBindingEpoch(node: CjguiComposableUiLayoutNode, version: Int64): UInt64 {
+        let key = nativeSemanticBindingKey(node)
+        let oldNodes = nativeInputScene.nodes()
+        var index: Int64 = 0
+        while (index < oldNodes.size && index < acceptedBindingKeys.size && index < acceptedBindingEpochs.size) {
+            if (oldNodes[index].nodeId == node.nodeId && acceptedBindingKeys[index] == key) {
+                return acceptedBindingEpochs[index]
+            }
+            index += 1
+        }
+        return UInt64(version)
+    }
+    private func publishAcceptedBindingEpochs(scene: CjguiComposableUiScene): Unit {
+        let keys = ArrayList<String>()
+        let epochs = ArrayList<UInt64>()
+        for (node in scene.nodes()) {
+            keys.add(nativeSemanticBindingKey(node))
+            epochs.add(candidateBindingEpoch(node, scene.version))
+        }
+        acceptedBindingKeys = keys
+        acceptedBindingEpochs = epochs
+    }
+    private func currentAcceptedBindingEpoch(node: CjguiComposableUiLayoutNode): UInt64 {
+        let nodes = nativeInputScene.nodes()
+        var index: Int64 = 0
+        while (index < nodes.size && index < acceptedBindingKeys.size && index < acceptedBindingEpochs.size) {
+            if (nodes[index].nodeId == node.nodeId &&
+                acceptedBindingKeys[index] == nativeSemanticBindingKey(node)) {
+                return acceptedBindingEpochs[index]
+            }
+            index += 1
+        }
+        return 0u64
+    }
     private func nativeTabStopMetadata(node: CjguiComposableUiLayoutNode): (UInt64, UInt32) {
         if (!node.isTabTitle()) {
             return (0u64, 0u32)
@@ -3663,8 +3895,34 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return focusProjectedNode(titles[next].nodeId)
     }
 
+    /// One real wheel step, or one continuous touch-scroll displacement, against
+    /// a scroll area that shares a public viewport. "by:<delta>" carries a
+    /// logical-pixel displacement from the platform touch chain; anything else is
+    /// the classic next/previous half-viewport step. Both go through the SAME
+    /// viewport state: no second offset, no layout-coordinate writes.
     private func applyViewportScrollStep(node: CjguiComposableUiLayoutNode, direction: String): Bool {
         if (let Some(viewport) <- node.scrollViewport) {
+            if (direction.startsWith("fling:")) {
+                // B/C（惯性包）：松手释放速度意图。fling 是框架派生意图——
+                // 来自刚结束的合法手势 END 且 renderer 已按视口身份重验；
+                // 绑定身份由 continuation 的当前 accepted epoch 保证（事件的
+                // acceptedBindingEpoch 通道在 ABI 布局同步完成前存在已知
+                // 错位，不作为 fling 判据）。解析失败不启动。
+                try {
+                    let velocity = Float64.parse(direction[6..])
+                    return viewport.beginInertialScroll(velocity, MonoTime.now())
+                } catch (_: IllegalArgumentException) {
+                    return false
+                }
+            }
+            if (direction.startsWith("by:")) {
+                // 解析失败或溢出都不是滚动：不把不可判读的意图当位移。
+                try {
+                    return viewport.scrollBy(Int64.parse(direction[3..]))
+                } catch (_: IllegalArgumentException) {
+                    return false
+                }
+            }
             let half = viewport.viewportExtent() / 2
             let step = if (half > 24) {
                 half
@@ -3684,43 +3942,51 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (target.nodeId != nodeId || target.bounds.height <= 0) {
             return false
         }
-        // The target must become visible through its WHOLE clip chain, not only
-        // through the innermost viewport: a field at the bottom of an inner scroll
-        // can still sit outside the outer scroll's visible band. Ancestors are
-        // handled innermost first, and each step is skipped when the target is
-        // already fully inside that viewport after the previous steps.
         let ancestors = viewportAncestorsForNode(target)
-        var revealed = false
-        var top = target.bounds.y
-        let height = target.bounds.height
+        let constraints = target.clipConstraints()
+        let clipIndices = ArrayList<Int64>()
+        let acceptedOffsets = ArrayList<Int64>()
+        let requestedOffsets = ArrayList<Int64>()
+        let maximumOffsets = ArrayList<Int64>()
         for (container in ancestors) {
             if (let Some(viewport) <- container.scrollViewport) {
-                let padding = container.style.padding
-                let innerTop = container.bounds.y + padding
-                let innerHeight = container.bounds.height - padding * 2
-                if (innerHeight <= 0) {
-                    continue
+                var clipIndex: Int64 = 0
+                while (clipIndex < constraints.size &&
+                    constraints[clipIndex].ownerIdentity != container.identityKey) {
+                    clipIndex += 1
                 }
-                let acceptedOffset = viewport.acceptedOffset()
-                if (!(top >= innerTop && top + height <= innerTop + innerHeight)) {
-                    // The node's bounds are already offset by the accepted scroll,
-                    // so the content-relative top puts it back into content
-                    // coordinates.
-                    let contentTop = top - innerTop + acceptedOffset
-                    let contentBottom = contentTop + height
-                    let _ = viewport.reveal(contentTop, contentBottom)
-                }
-                // Layout applies `contentY - offset`. The next (outer)
-                // viewport therefore sees the accepted target moved by the
-                // whole accepted-to-pending delta, including a request that
-                // was already pending before this reveal call. Do not mix the
-                // previous requested coordinate with the accepted scene.
-                let pendingDelta = viewport.offset() - acceptedOffset
-                if (pendingDelta != 0) {
-                    revealed = true
-                    top -= pendingDelta
-                }
+                if (clipIndex >= constraints.size) { return false }
+                clipIndices.add(clipIndex)
+                acceptedOffsets.add(viewport.acceptedOffset())
+                requestedOffsets.add(viewport.offset())
+                maximumOffsets.add(viewport.maximumOffset())
             }
+        }
+        let clips = ArrayList<CjguiComposableUiRevealClip>()
+        var clipIndex: Int64 = 0
+        while (clipIndex < constraints.size) {
+            var movingScrolls: Int64 = 0
+            for (viewportClipIndex in clipIndices) {
+                if (viewportClipIndex >= clipIndex) { movingScrolls += 1 }
+            }
+            clips.add(CjguiComposableUiRevealClip(constraints[clipIndex].rect, movingScrolls - 1))
+            clipIndex += 1
+        }
+        let plan = CjguiComposableUiRevealPlanner.plan(target.bounds, clips, acceptedOffsets,
+            maximumOffsets, preferredOffsets: Some(requestedOffsets))
+        if (!plan.isReachable()) { return false }
+        var revealed = false
+        var index: Int64 = 0
+        while (index < ancestors.size) {
+            let container = ancestors[index]
+            if (let Some(viewport) <- container.scrollViewport) {
+                // A feasible plan may cancel an incompatible pending request.
+                if (plan.offsets[index] != viewport.offset()) {
+                    let _ = viewport.requestOffset(plan.offsets[index])
+                }
+                if (viewport.offset() != viewport.acceptedOffset()) { revealed = true }
+            }
+            index += 1
         }
         return revealed
     }
@@ -3772,13 +4038,25 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private func focusProjectedNode(nodeId: Int64, rememberBookmark!: Bool = true): Bool {
         let node = nativeInputScene.nodeForId(nodeId)
         if (node.nodeId != nodeId || !node.canReceiveFocus()) {
+            lastNativeFailure = "focus_target_unavailable"
             return false
         }
-        let status = internalRendererFocusComposableNode(sessionToken, nodeId)
+        let visible = cjguiFocusVisibleIntersection(node.bounds, node.clipConstraints())
+        if (visible.width <= 0 || visible.height <= 0) {
+            lastNativeFailure = "focus_target_fully_clipped"
+            return false
+        }
+        let status = internalRendererFocusComposableNode(sessionToken, nodeId, currentAcceptedBindingEpoch(node))
         lastNativeStatus = status
         if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            lastNativeFailure = if (cjguiFocusNativeFailureIsRetryable(status)) {
+                "focus_native_unavailable"
+            } else {
+                "focus_native_terminal"
+            }
             return false
         }
+        lastNativeFailure = ""
         recordProjectedFocus(node, rememberBookmark: rememberBookmark)
         return true
     }
@@ -4241,7 +4519,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 lastNativeStatus = runStatus
             }
         }
-        let nativeNode = CjguiInternalRendererComposableNode(
+        var nativeNode = CjguiInternalRendererComposableNode(
             nodeId: UInt64(node.nodeId),
             projectionVersion: UInt64(projectionVersion),
             resourceId: node.resourceId,
@@ -4326,6 +4604,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             tabGroupId: tabGroupId,
             tabSelected: tabSelected
         )
+        nativeNode.acceptedBindingEpoch = candidateBindingEpoch(node, projectionVersion)
         let semanticLabel = if (node.label.size > 0) {
             node.label
         } else {
@@ -4473,6 +4752,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         nextProjectionVersion = candidateVersion
         renderedScene = paintScene
+        publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
         replaceDataTransferBindings(interactionDataTransferBindings)
         acceptedSceneVersion = paintScene.version
@@ -4520,7 +4800,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             .imageResourceId && left.imageResourceVersion == right.imageResourceVersion && left.imageContentMode == right
             .imageContentMode && left.isEnabled == right.isEnabled && left.isReadOnly == right.isReadOnly &&
             left.tabInsertsText == right.tabInsertsText && left.inputScopeId == right.inputScopeId && left.layerId == right
-            .layerId && left.layerKind == right.layerKind
+            .layerId && left.layerKind == right.layerKind && left.semanticIncarnation == right.semanticIncarnation
         if (!sameIdentity) {
             return false
         }
@@ -4547,7 +4827,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             .displayValueRole || left.imageResourcePath != right.imageResourcePath || left.imageResourceId != right
             .imageResourceId || left.imageResourceVersion != right.imageResourceVersion || left.imageContentMode != right
             .imageContentMode || left.isEnabled != right.isEnabled || left.isReadOnly != right.isReadOnly ||
-            left.tabInsertsText != right.tabInsertsText || left.scrollOffset != right.scrollOffset || left.layerId() !=
+            left.tabInsertsText != right.tabInsertsText || left.semanticIncarnation != right.semanticIncarnation ||
+            left.scrollOffset != right.scrollOffset || left.layerId() !=
             right.layerId() || left.layerKind() != right.layerKind() || left.layerOwnerSemanticId() !=
             right.layerOwnerSemanticId() || left.layerAnchorNodeId() != right.layerAnchorNodeId() ||
             left.layerIsModal() != right.layerIsModal() || left.layerInitialFocusNodeId() !=
@@ -4991,8 +5272,40 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pointerCaptureActive = false
         pointerCaptureX = 0
         pointerCaptureY = 0
+
+        pointerCaptureGestureEpoch = 0
+        pointerCaptureAppInstance = 0
+        pointerCaptureComponentInstance = 0
+        pointerCaptureSurfaceGeneration = 0
+        pointerCapturePointerId = -1
+        pointerCaptureAcceptedBindingEpoch = 0
+
+        pointerCaptureSplitRevision = -1}
+    private func pointerEventBindingMatches(event: InternalRendererPumpResult,
+        node: CjguiComposableUiLayoutNode): Bool {
+        return event.gestureAppInstance != 0u64 && event.gestureComponentInstance != 0u64 &&
+            event.gestureSurfaceGeneration != 0u64 && event.gesturePointerId >= 0 &&
+            event.gestureEpoch != 0u64 && event.acceptedBindingEpoch != 0u64 &&
+            currentAcceptedBindingEpoch(node) == event.acceptedBindingEpoch
     }
-    private func cancelPointerCapture(): CjguiComposableUiDispatchResult {
+    private func rememberPointerGesture(event: InternalRendererPumpResult): Unit {
+        pointerCaptureAppInstance = event.gestureAppInstance
+        pointerCaptureComponentInstance = event.gestureComponentInstance
+        pointerCaptureSurfaceGeneration = event.gestureSurfaceGeneration
+        pointerCapturePointerId = event.gesturePointerId
+        pointerCaptureGestureEpoch = event.gestureEpoch
+        pointerCaptureAcceptedBindingEpoch = event.acceptedBindingEpoch
+    }
+    private func pointerGestureMatches(event: InternalRendererPumpResult): Bool {
+        return pointerCaptureAppInstance != 0u64 &&
+            event.gestureAppInstance == pointerCaptureAppInstance &&
+            event.gestureComponentInstance == pointerCaptureComponentInstance &&
+            event.gestureSurfaceGeneration == pointerCaptureSurfaceGeneration &&
+            event.gesturePointerId == pointerCapturePointerId &&
+            event.gestureEpoch == pointerCaptureGestureEpoch &&
+            event.acceptedBindingEpoch == pointerCaptureAcceptedBindingEpoch
+    }
+    private func cancelPointerCapture(notifyNative!: Bool = true): CjguiComposableUiDispatchResult {
         if (!pointerCaptureActive || pointerCaptureNode.nodeId < 0) {
             clearPointerCapture()
             return CjguiComposableUiDispatchResult(false)
@@ -5003,7 +5316,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // Clear first: a controller callback may request a refresh, close the
         // window, or reject the phase. None of those paths may leave the old
         // target able to receive a later move/up.
-        let _ = internalRendererCancelComposablePointerCapture(sessionToken)
+        if (notifyNative && pointerCaptureAppInstance != 0u64) {
+            let _ = internalRendererCancelComposablePointerCaptureGestureKey(sessionToken,
+                pointerCaptureAppInstance, pointerCaptureComponentInstance,
+                pointerCaptureSurfaceGeneration, pointerCapturePointerId, pointerCaptureGestureEpoch)
+        }
         clearPointerCapture()
         return controller.applyUiEvent(
             CjguiComposableUiEvent(
@@ -5024,27 +5341,47 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let x = nativeEvent.pointerX
         let y = nativeEvent.pointerY
         if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN) {
-            if (pointerCaptureActive) {
-                let _ = cancelPointerCapture()
-            }
+            // A（惯性包）：普通 TEXT 指针控件走 POINTER 目标契约（与主核心
+            // B4 一致）——resolveInput 拒绝非输入节点，导致 pointerInteractive
+            // TEXT 的合法 BEGIN 到不了 controller。
             let resolved = if (nativeEvent.nodeId == 0u64) {
                 CjguiComposableUiLayoutNode.missing()
             } else {
-                nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
-                    Int64(nativeEvent.projectionVersion))
+                let input = nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId,
+                    Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
+                if (input.nodeId == nodeId) {
+                    input
+                } else {
+                    nativeInputScene.resolvePointerTarget(nodeId, nativeEvent.resourceId,
+                        Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
+                }
             }
-            if (!isPointerCapturable(resolved)) {
+            // C（惯性包）：新触摸立即停止相关视口的惯性活动（astra 活动替换）。
+            if (let Some(vp) <- resolved.scrollViewport) {
+                vp.stopInertialScroll()
+            }
+            if (!isPointerCapturable(resolved) || !pointerEventBindingMatches(nativeEvent, resolved)) {
                 return controller.rejectUiEvent(eventKind, nodeId)
+            }
+            if (pointerCaptureActive) {
+                if (pointerGestureMatches(nativeEvent)) { return CjguiComposableUiDispatchResult(false) }
+                let _ = cancelPointerCapture()
             }
             // A state-bound divider is framework-owned: the drag is applied to the
             // shared split view state and the ordinary capture path keeps the
             // update/end phases flowing without an application split owner.
             if (splitStateForDivider(resolved).isSome()) {
-                let _ = applySplitStatePointerDrag(resolved, x)
+                // A（复核修）：split 真修订 CAS——BEGIN 捕获 split state 的
+                // captureRevision；UPDATE/END 用 applyCapturedFirstSize 比较
+                // 修订（无关业务版本不影响；外部 split 写推进修订后旧相位零覆盖）。
                 pointerCaptureNode = resolved
-                pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
+                if (let Some(state) <- splitStateForDivider(resolved)) {
+                    pointerCaptureSplitRevision = state.captureRevision()
+                }
+                let _ = applySplitStatePointerDrag(resolved, x)
                 pointerCaptureModalLayerId = activeModalLayerId
                 pointerCaptureActive = true
+                rememberPointerGesture(nativeEvent)
                 pointerCaptureX = x
                 pointerCaptureY = y
                 return CjguiComposableUiDispatchResult(true)
@@ -5067,6 +5404,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
                 pointerCaptureModalLayerId = activeModalLayerId
                 pointerCaptureActive = true
+                rememberPointerGesture(nativeEvent)
                 pointerCaptureX = x
                 pointerCaptureY = y
                 rememberInteraction(resolved, eventKind, 0, 0)
@@ -5074,18 +5412,25 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return dispatch
         }
         if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_CANCEL) {
-            return cancelPointerCapture()
+            // B（第三次复核，astra Q4）：GestureKey 匹配才终结。
+            if (pointerCaptureActive && pointerGestureMatches(nativeEvent)) {
+                return cancelPointerCapture(notifyNative: false)
+            }
+            return CjguiComposableUiDispatchResult(false)
         }
         if (!pointerCaptureActive) {
             return controller.rejectUiEvent(eventKind, nodeId)
         }
+        if (!pointerGestureMatches(nativeEvent)) { return CjguiComposableUiDispatchResult(false) }
         // The framework owns a state-bound divider for the WHOLE drag: the pointer
         // legitimately leaves the thin divider while the panes resize, and a
         // framework-only size change must not cancel the gesture the way a stale
         // business write does. No phase is handed to an application split owner.
         if (splitStateForDivider(pointerCaptureNode).isSome() && (eventKind ==
             CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE || eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END)) {
-            let splitDragChanged = applySplitStatePointerDrag(pointerCaptureNode, x)
+            // A（复核修）：CAS——applyCapturedFirstSize 携带捕获时修订；不匹配
+            // （外部 split 写已推进）旧相位零覆盖，END 仍释放捕获。
+            let splitDragChanged = applySplitStatePointerDragCAS(pointerCaptureNode, x)
             pointerCaptureX = x
             pointerCaptureY = y
             if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) {
@@ -5106,6 +5451,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return cancelPointerCapture()
         }
         let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
+        if (!pointerEventBindingMatches(nativeEvent, current)) { return cancelPointerCapture() }
         if (!isPointerCapturable(current) || current.resourceId != pointerCaptureNode.resourceId || current.nodeKind != pointerCaptureNode
             .nodeKind) {
             return cancelPointerCapture()
@@ -5139,7 +5485,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
         if (pointerCaptureVersionFor(pointerCaptureNode) != pointerCaptureOwnerVersion || activeModalLayerId !=
             pointerCaptureModalLayerId || !isPointerCapturable(current) || current.resourceId != pointerCaptureNode
-            .resourceId || current.nodeKind != pointerCaptureNode.nodeKind) {
+            .resourceId || current.nodeKind != pointerCaptureNode.nodeKind ||
+            currentAcceptedBindingEpoch(current) != pointerCaptureAcceptedBindingEpoch) {
             let cancellation = cancelPointerCapture()
             if (cancellation.didApply && isWindowOpen) {
                 requestRefresh()
@@ -5302,6 +5649,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         frameIndex!: Int64, readbackCompleted!: UInt8, consumedRequestEpoch!: Int64): Bool {
         renderedRoot = root
         renderedScene = paintScene
+        publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
         commitStagedSceneViewports()
         commitStagedSceneSplitTracks()
@@ -5337,6 +5685,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         identityRegistry.commitCandidate()
         flushPendingScopedFocus()
+        flushPendingSemanticFocus()
         // A participant's commit is only the Cangjie-side candidate swap;
         // it runs after, never instead of, native acceptance. Implementors
         // must keep it total. If an application callback nevertheless throws
@@ -5377,6 +5726,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         readbackCompleted!: UInt8, consumedRequestEpoch!: Int64): Bool {
         nextProjectionVersion = paintScene.version
         renderedScene = paintScene
+        publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
         replaceDataTransferBindings(dataTransferBindings)
         acceptedSceneVersion = paintScene.version
@@ -5979,16 +6329,6 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // startup/native failure, so a participant's shared-catalog holds are
         // released by the real lifecycle instead of by a caller remembering to
         // call the release method.
-        discardStagedSceneViewports()
-        discardStagedSceneSplitTracks()
-        // The window's accepted structure ends here, so every shared view object
-        // it owned is given back: a later window may legally take the same
-        // declaration over instead of inheriting a dead window's claim.
-        releaseOwnedViewStateOwnership()
-        let disposeParticipant = controller as CjguiComposableUiSceneRefreshParticipant
-        if (let Some(value) <- disposeParticipant) {
-            value.disposeSceneRefreshResources()
-        }
         if (sessionToken != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
             let status = internalRendererDestroy(sessionToken)
             if (status != CJGUI_INTERNAL_RENDERER_OK) {
@@ -6000,6 +6340,19 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return
             }
         }
+        // Native destroy has succeeded (or no native session existed). A
+        // refused destroy keeps the session and its pending ticket addressable;
+        // releasing these owners before that point would make retry unsafe.
+        discardStagedSceneViewports()
+        discardStagedSceneSplitTracks()
+        // The window's accepted structure ends here, so every shared view object
+        // it owned is given back: a later window may legally take the same
+        // declaration over instead of inheriting a dead window's claim.
+        releaseOwnedViewStateOwnership()
+        let disposeParticipant = controller as CjguiComposableUiSceneRefreshParticipant
+        if (let Some(value) <- disposeParticipant) {
+            value.disposeSceneRefreshResources()
+        }
         discardRetryReason = ""
         closeIntentPending = false
         if (testCloseReason.size == 0) {
@@ -6010,6 +6363,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         windowSessionIdentity = ""
         nativeInputScene = CjguiComposableUiScene(0, CjguiComposableUiRect(0, 0, 0, 0),
             ArrayList<CjguiComposableUiLayoutNode>())
+        acceptedBindingKeys.clear()
+        acceptedBindingEpochs.clear()
         focusedNodeId = -1
         focusedResourceId = -1
         focusedNodeKind = -1

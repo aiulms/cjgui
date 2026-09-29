@@ -149,6 +149,7 @@ if [ -d "$TRANSPORT/src" ]; then
 
 [target.aarch64-linux-ohos]
   compile-option = "-B \\"\${DEVECO_CANGJIE_HOME}/build-tools/third_party/llvm/bin\\" -B \\"\${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\\" -L \\"\${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\\" -L \\"\${DEVECO_OH_NATIVE_HOME}/llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos\\" -L \\"\${DEVECO_OH_NATIVE_HOME}/llvm/lib/aarch64-linux-ohos\\" --sysroot \\"\${DEVECO_OH_NATIVE_HOME}/sysroot\\""
+  link-option = "-lhilog_ndk.z"
 [target.aarch64-linux-ohos.bin-dependencies]
   path-option = ["\${AARCH64_LIBS}", "\${AARCH64_MACRO_LIBS}", "\${AARCH64_KIT_LIBS}"]
   package-option = {}

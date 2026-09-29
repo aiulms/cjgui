@@ -165,7 +165,45 @@ ax_focused_description() {
     end try
   end tell" 2>/dev/null | tail -1 || true
 }
+# The window frame is read through the framework's own pid-addressed AX tool
+# (control_ax_driver, built lazily into WORK like the other verification tools)
+# and only falls back to System Events. Measured 2026-09-28 on a host where
+# synthetic CGEvent posting is granted: the System Events form failed with
+# "osascript is not allowed assistive access" (-1719) because AppleScript is
+# attributed to the osascript/system process, while the same pid-addressed
+# AXUIElement query is admitted. The value read is the same window frame; the
+# caller's assertions are unchanged.
+ax_control_tool() {
+  local tool="${AX_CONTROL_TOOL:-}"
+  if [[ -n "$tool" && -x "$tool" ]]; then
+    print -r -- "$tool"
+    return 0
+  fi
+  if [[ -z "${WORK:-}" || -z "${RUNTIME_DIR:-}" ]]; then
+    return 1
+  fi
+  command -v swiftc >/dev/null 2>&1 || return 1
+  local source="$RUNTIME_DIR/native/tests/control_ax_driver.swift"
+  [[ -f "$source" ]] || return 1
+  tool="$WORK/cjgui_control_ax_driver"
+  if [[ ! -x "$tool" ]]; then
+    swiftc -O "$source" -o "$tool" > "$WORK/control-ax-build.log" 2>&1 || return 1
+  fi
+  AX_CONTROL_TOOL="$tool"
+  print -r -- "$tool"
+  return 0
+}
+
 ax_window_frame() {
+  local tool frame
+  if tool="$(ax_control_tool)"; then
+    frame="$("$tool" "$AX_PID" dump 2>/dev/null | awk '/role=AXWindow/ {print; exit}' \
+      | sed -n 's/.*frame=\([-0-9]*\),\([-0-9]*\),\([-0-9]*\),\([-0-9]*\).*/\1 \2 \3 \4/p')"
+    if [[ -n "$frame" ]]; then
+      print -r -- "$frame"
+      return 0
+    fi
+  fi
   cjgui_ax 15 -e "tell application \"System Events\"
     set p to first process whose unix id is $AX_PID
     set pp to position of window 1 of p

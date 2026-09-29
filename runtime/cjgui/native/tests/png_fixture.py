@@ -16,12 +16,14 @@ def chunk(kind: bytes, payload: bytes) -> bytes:
     return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
 
 
-def valid_png() -> tuple[bytes, dict[str, object]]:
+def valid_png(alternate: bool = False) -> tuple[bytes, dict[str, object]]:
     width, height = 3, 2
     pixels = [
         [(255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255)],
         [(255, 255, 0, 255), (255, 0, 255, 128), (0, 255, 255, 255)],
     ]
+    if alternate:
+        pixels[0][0] = (0, 0, 255, 255)
     scanlines = b"".join(b"\x00" + b"".join(bytes(pixel) for pixel in row) for row in pixels)
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
     data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(scanlines)) + chunk(b"IEND", b"")
@@ -74,17 +76,79 @@ def near_limit_png() -> tuple[bytes, dict[str, object]]:
     return data, evidence
 
 
+def over_dimension_png() -> tuple[bytes, dict[str, object]]:
+    # It fits the public encoded-byte ceiling, yet a direct image declaration
+    # must reject it before creating a decoder job or retaining a resource.
+    width, height = 2049, 1
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    scanline = b"\x00" + b"\x00\x00\x00\xff" * width
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(scanline)) + chunk(b"IEND", b"")
+    assert len(data) < 512 * 1024
+    return data, {"width": width, "height": height, "dimension_exceeded": True}
+
+
+def over_pixel_png() -> tuple[bytes, dict[str, object]]:
+    width, height = 2048, 513
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    row = b"\x00" + b"\x00\x00\x00\xff" * width
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(row * height)) + chunk(b"IEND", b"")
+    assert len(data) < 512 * 1024
+    return data, {"width": width, "height": height, "pixel_count_exceeded": True}
+
+
+def valid_rgb_png() -> tuple[bytes, dict[str, object]]:
+    width, height = 3, 2
+    pixels = (((255, 0, 0), (0, 255, 0), (0, 0, 255)),
+              ((255, 255, 0), (255, 0, 255), (0, 255, 255)))
+    rows = b"".join(b"\x00" + b"".join(bytes(pixel) for pixel in row) for row in pixels)
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+    return data, {"width": width, "height": height, "color_type": "rgb"}
+
+
+def variant_png(kind: str) -> tuple[bytes, dict[str, object]]:
+    # Structurally complete streams keep unsupported separate from corrupt.
+    if kind == "grayscale":
+        bit_depth, color_type, raw = 8, 0, b"\x00\x7f"
+    elif kind == "indexed":
+        bit_depth, color_type, raw = 8, 3, b"\x00\x00"
+    elif kind == "rgb16":
+        bit_depth, color_type, raw = 16, 2, b"\x00\xff\xff\x00\x00\x00\x00"
+    elif kind == "bad-deflate":
+        bit_depth, color_type, raw = 8, 6, b""
+    else:
+        raise ValueError(kind)
+    ihdr = struct.pack(">IIBBBBB", 1, 1, bit_depth, color_type, 0, 0, 0)
+    chunks = [chunk(b"IHDR", ihdr)]
+    if kind == "indexed":
+        chunks.append(chunk(b"PLTE", b"\xff\x00\x00"))
+    chunks.append(chunk(b"IDAT", b"invalid-zlib" if kind == "bad-deflate" else zlib.compress(raw)))
+    chunks.append(chunk(b"IEND", b""))
+    return b"\x89PNG\r\n\x1a\n" + b"".join(chunks), {"variant": kind}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("kind", choices=("valid", "near-limit", "invalid", "oversized"))
+    parser.add_argument("kind", choices=("valid", "valid-alt", "valid-rgb", "near-limit", "over-dimension", "over-pixel",
+        "grayscale", "indexed", "rgb16", "bad-deflate", "invalid", "oversized"))
     parser.add_argument("output", type=Path)
     parser.add_argument("--bytes", type=int, default=512 * 1024 + 1)
     args = parser.parse_args()
 
     if args.kind == "valid":
         payload, evidence = valid_png()
+    elif args.kind == "valid-alt":
+        payload, evidence = valid_png(alternate=True)
+    elif args.kind == "valid-rgb":
+        payload, evidence = valid_rgb_png()
     elif args.kind == "near-limit":
         payload, evidence = near_limit_png()
+    elif args.kind == "over-dimension":
+        payload, evidence = over_dimension_png()
+    elif args.kind == "over-pixel":
+        payload, evidence = over_pixel_png()
+    elif args.kind in ("grayscale", "indexed", "rgb16", "bad-deflate"):
+        payload, evidence = variant_png(args.kind)
     elif args.kind == "invalid":
         payload = b"\x89PNG\r\n\x1a\n\x00\xff\xfe\x80truncated-IHDR\x00"
         evidence = {"valid_png": False, "contains_zero_byte": True, "contains_non_utf8_byte": True}

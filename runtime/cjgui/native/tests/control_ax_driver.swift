@@ -6,7 +6,7 @@ import Foundation
 // only traverses one flat level on some macOS releases and therefore misses
 // controls under a tab group or outline.
 guard CommandLine.arguments.count >= 3, let pid = pid_t(CommandLine.arguments[1]) else {
-    fputs("usage: control_ax_driver <pid> dump|find-id|find-label|press-id [value]\n", stderr)
+    fputs("usage: control_ax_driver <pid> dump|find-id|find-label|press-id|focus-id [value]\n", stderr)
     exit(2)
 }
 let operation = CommandLine.arguments[2]
@@ -52,8 +52,14 @@ if let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement] {
     queue.append(contentsOf: windows.map { ($0, "window") })
 }
 var count = 0
+// AppKit may expose an application/menu parent again through AXChildren. Keep
+// the graph walk finite without discarding a distinct node on a hash collision.
+var seen: [CFHashCode: [AXUIElement]] = [:]
 while !queue.isEmpty && count < 4096 {
     let (element, parent) = queue.removeFirst()
+    let key = CFHash(element)
+    if seen[key, default: []].contains(where: { CFEqual($0, element) }) { continue }
+    seen[key, default: []].append(element)
     count += 1
     let identifier = string(element, kAXIdentifierAttribute)
     let label = string(element, kAXDescriptionAttribute).isEmpty
@@ -68,7 +74,7 @@ while !queue.isEmpty && count < 4096 {
     let summary = "AX_NODE role=\(role) id=\(identifier.isEmpty ? "-" : identifier) " +
         "label_hex=\(label.isEmpty ? "-" : hex(label)) enabled=\(enabled) selected=\(selected) " +
         "expanded=\(expanded) parent=\(parent) frame=\(frame)"
-    let matched = (operation == "find-id" || operation == "press-id")
+    let matched = (operation == "find-id" || operation == "press-id" || operation == "focus-id")
         ? identifier == wanted : operation == "find-label" ? label == wanted : false
     if operation == "dump" || matched {
         print(summary)
@@ -77,6 +83,11 @@ while !queue.isEmpty && count < 4096 {
         if operation == "press-id" {
             let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
             print("AX_PRESS result=\(result.rawValue)")
+            exit(result == .success ? 0 : 1)
+        }
+        if operation == "focus-id" {
+            let result = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, true as CFBoolean)
+            print("AX_SET_FOCUS result=\(result.rawValue)")
             exit(result == .success ? 0 : 1)
         }
         exit(0)

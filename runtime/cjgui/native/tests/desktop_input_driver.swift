@@ -75,6 +75,43 @@ func postKey(virtualKey: CGKeyCode, flags: CGEventFlags = []) {
     usleep(40_000)
 }
 
+/// One VoiceOver command = a real Control+Option chord around `virtualKey`:
+/// press both modifiers as flagsChanged events, tap the key with the combined
+/// flags, then release the modifiers in reverse order. Posting the key with
+/// flags alone is unreliable because VoiceOver tracks its modifier through
+/// the real flagsChanged stream.
+func postVoiceOverCommand(virtualKey: CGKeyCode, shift: Bool, command: Bool = false,
+                          functionKey: Bool = false) {
+    let control: CGKeyCode = 59
+    let option: CGKeyCode = 58
+    let shiftKey: CGKeyCode = 56
+    let commandKey: CGKeyCode = 55
+    var active: CGEventFlags = [.maskControl, .maskAlternate]
+    flagsChanged(control, flags: active)
+    flagsChanged(option, flags: active)
+    if shift {
+        active.insert(.maskShift)
+        flagsChanged(shiftKey, flags: active)
+    }
+    if command {
+        active.insert(.maskCommand)
+        flagsChanged(commandKey, flags: active)
+    }
+    if functionKey { active.insert(.maskSecondaryFn) }
+    postKey(virtualKey: virtualKey, flags: active)
+    if functionKey { active.remove(.maskSecondaryFn) }
+    if command {
+        active.remove(.maskCommand)
+        flagsChanged(commandKey, flags: active)
+    }
+    if shift {
+        active.remove(.maskShift)
+        flagsChanged(shiftKey, flags: active)
+    }
+    flagsChanged(option, flags: [.maskControl])
+    flagsChanged(control, flags: [])
+}
+
 // A real modifier press is a flagsChanged event, not a key down/up: posting a
 // key event for command/shift/control/option does not change the system
 // modifier state, so a following click would still arrive unmodified.
@@ -214,7 +251,7 @@ func scroll(x: Double, y: Double, lines: Int32) {
 
 let args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else {
-    FileHandle.standardError.write("usage: driver (type <text> | tab | key <code> | key-down <code> | key-up <code> | click <x> <y> | hold-click <modifier> <x> <y> | cmd-click <x> <y> | shift-click <x> <y> | scroll <x> <y> <lines> | move <x> <y> | move-fast <x> <y> | press <x> <y> | release <x> <y> | preflight)\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: driver (type <text> | tab | key <code> | vo <code> | vo-shift <code> | shift-key <code> | cmd-key <code> | opt-key <code> | ctrl-key <code> | key-down <code> | key-up <code> | click <x> <y> | hold-click <modifier> <x> <y> | cmd-click <x> <y> | shift-click <x> <y> | scroll <x> <y> <lines> | move <x> <y> | move-fast <x> <y> | press <x> <y> | release <x> <y> | preflight)\n".data(using: .utf8)!)
     exit(2)
 }
 switch command {
@@ -235,6 +272,59 @@ case "tab":
     postKey(virtualKey: 48)
 case "key":
     postKey(virtualKey: CGKeyCode(UInt16(args[1]) ?? 0))
+case "vo":
+    // VoiceOver chord: keycodes right=124 left=123 down=125 up=126 space=49.
+    postVoiceOverCommand(virtualKey: CGKeyCode(UInt16(args[1]) ?? 0), shift: false)
+case "shift-key", "cmd-key", "opt-key", "ctrl-key":
+    // One modified key press through the real flagsChanged stream, e.g.
+    // shift-key 124 extends a text selection; cmd-key 0 selects all.
+    let mask: CGEventFlags
+    switch command {
+    case "shift-key": mask = [.maskShift]
+    case "cmd-key": mask = [.maskCommand]
+    case "opt-key": mask = [.maskAlternate]
+    default: mask = [.maskControl]
+    }
+    let keyCode = CGKeyCode(UInt16(args[1]) ?? 0)
+    if let source = CGEventSource(stateID: .hidSystemState) {
+        if let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
+            down.flags = mask
+            down.post(tap: .cghidEventTap)
+        }
+        usleep(40_000)
+        if let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) {
+            up.flags = mask
+            up.post(tap: .cghidEventTap)
+        }
+    }
+    usleep(40_000)
+case "vo-shift":
+    postVoiceOverCommand(virtualKey: CGKeyCode(UInt16(args[1]) ?? 0), shift: true)
+case "vo-cmd":
+    // ctrl+opt+cmd chord, e.g. keycode 96 (F5) = move the VoiceOver cursor to
+    // the mouse pointer position.
+    postVoiceOverCommand(virtualKey: CGKeyCode(UInt16(args[1]) ?? 0), shift: false, command: true)
+case "vo-cmd-fn":
+    // ctrl+opt+cmd + fn-flagged function key: without .maskSecondaryFn a raw
+    // F5 keycode is delivered as the media (brightness) key and VoiceOver
+    // never sees the chord as F5.
+    postVoiceOverCommand(virtualKey: CGKeyCode(UInt16(args[1]) ?? 0), shift: false, command: true,
+                         functionKey: true)
+case "vo-toggle":
+    // cmd+F5 with the fn flag: the real VoiceOver on/off toggle.
+    if let source = CGEventSource(stateID: .hidSystemState) {
+        var flags: CGEventFlags = [.maskCommand, .maskSecondaryFn]
+        if let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(UInt16(args[1]) ?? 96), keyDown: true) {
+            down.flags = flags
+            down.post(tap: .cghidEventTap)
+        }
+        usleep(50_000)
+        if let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(UInt16(args[1]) ?? 96), keyDown: false) {
+            up.flags = flags
+            up.post(tap: .cghidEventTap)
+        }
+    }
+    usleep(60_000)
 case "click":
     click(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0)
 case "drag":

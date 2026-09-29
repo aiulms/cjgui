@@ -1,0 +1,120 @@
+当前 [cancelPointerCapture](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5047) 把“收到取消”与“要求 native 取消”合成一条路径，正是反馈误伤 B 的原因。
+
+在“一次手势最多建立一个 pointer capture”的当前模型中，capture 身份可以直接复用 GestureKey：
+
+```text
+PointerEvent = {
+    GestureKey,
+    BindingRef,
+    eventSeq,
+    BEGIN / UPDATE / END / CANCEL,
+    ...
+}
+
+CancelCaptureRequest = {
+    expectedGestureKey,
+    reason
+}
+```
+
+若未来允许同一手势中释放再捕获，才增加独立 `captureEpoch`。
+
+核心拆成两个内部操作：
+
+- `finishCaptureFromPlatform(key, reason)`：消费 native 通知，仅终结匹配的核心 capture，**不反调 native**。
+- `requestCaptureCancellation(expectedKey, reason)`：核心因 owner 冲突、目标移除、模态变化或关闭主动取消，向 native 发送指定身份的请求。
+
+共同规则：
+
+1. UPDATE、END、CANCEL 首先比对 GestureKey，再进入节点、owner、split 等分支。不能让 split 快路径绕过身份检查。
+2. A 的 CANCEL 到来时，如果核心已捕获 B，A 作为过期终结忽略，B 不变。
+3. native 收到取消 A 的请求时，只终结 A；当前是 B 就返回 `already_finished/stale`，不能执行无参“取消当前手势”。
+4. BEGIN 先验证新事件是否合法，再考虑替换旧 capture；旧 BEGIN 不能先把新 capture 清掉。
+5. 清除本地状态在业务回调之前完成；重入回调再请求取消同一身份，只得到幂等结果。
+6. 每个 capture 只向业务交付一次终结。END、CANCEL、迟到回执均不得再次终结或复活它。
+
+native 主动取消请求可以返回明确状态，也可发带身份的终结通知；核心已经本地终结时，把重复通知视为幂等确认即可，不再发送请求。
+
+surface 退役需要单独保证：旧 surface 的普通输入可以拒绝，但旧 capture 的终结不能因此丢失。由 renderer 的退役路径生成带旧身份的终结通知，不应把它当普通旧代 raw 输入直接过滤掉。
+
+Flutter 可借鉴的是按 pointer 管理仲裁、接受后不退回 possible、终结后不再参与的机制；其系统 pointer 编号不能直接替代 CJGUI 跨队列、跨回调的生命周期票据。参考本地 [arena.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart>) 与 [monodrag.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart>)，无需引入其运行时。
+
+**Q5．END 尾差与反向夹紧：renderer 负责位移，核心 viewport 负责按序应用**
+
+MOVE 和 END 共用一个“处理位置样本”的入口，END 在正常终结前调用一次；CANCEL 不经过这个入口，不把取消坐标补算成运动。
+
+对已经进入 scroll 的手势：
+
+```text
+dy = sample.y - lastY
+lastY = sample.y
+
+remainder += dy
+whole = trunc(remainder)
+remainder -= whole
+
+若 whole != 0：
+    发出 offsetDelta = -whole
+```
+
+待定状态第一次跨阈值时，按现有选择从 BEGIN 累计首段位移；此后才使用相邻样本差分。END 也必须经过同一识别规则，这样 BEGIN 后没有 MOVE 的轻扫仍可进入滚动，并立即正常终结。
+
+因此：
+
+```text
+BEGIN 100 → MOVE 80 → END 50
+                 +20          +30
+```
+
+总滚动意图是 50。不能仅把旧 `scrollAccumY` 再截断一次，也不能 END 重复补发已经处理的最后 MOVE。
+
+夹紧只由核心共享 viewport 执行，沿用现有 [scrollBy → requestOffset](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/composable_ui.cj:2140)：
+
+```text
+requestedOffset = clamp(requestedOffset + delta, 0, maximumOffset)
+```
+
+每个有序方向段都执行一次，累加基准是当前 `requestedOffset`，不是上一帧 `acceptedOffset`：
+
+```text
+初值 0，最大值至少为 30：
+-30 → clamp(-30) = 0
++30 → clamp(30)  = 30
+```
+
+renderer 不知道核心真正的 pending offset、范围变化和外部写入顺序，不能私自夹紧或以总净位移替代这两步。
+
+`appendScrollIntentLocked` 的合并条件至少改成：
+
+- 相同 GestureKey、viewport BindingRef 和消费屏障；
+- 同方向；
+- 没有相隔的其他意图；
+- 不发生整数溢出；
+- 不需要观察中间回调。
+
+不满足就保留两个事件。尤其不能把 `-30,+30` 合成零。若无法识别范围或外部写入屏障，最小版本不做该合并。
+
+外部公开写入与滚动在核心 owner 的有序处理点串行执行：同绑定的 offset 调整可让后续滚动从新值继续；viewport 被替换则取消旧手势。普通 capture 对业务 owner 的版本保护仍保留，不能借本次绑定宽容一并放开。
+
+小数余量继续按当前整数 viewport 契约解释：手势结束时不足一个单位的余量清除，不继承给下一手势；核心夹紧丢弃的整数越界量也不能回填为后续“欠账”。这能保持当前逐样本量化语义；若要求严格的浮点边界响应，应另把浮点位置归入核心 viewport，不能由 native 影子状态冒充实现。
+
+**方案冲突与最小一致组合**
+
+| 单独采用的方案 | 仍然存在的冲突 |
+|---|---|
+| 只加 `crossedEver` | 能防误点击，不能恢复反向夹紧顺序 |
+| bridge 保留转折点，renderer 继续求净和 | 转折再次被抹掉 |
+| 只加 bindingEpoch | 无身份的 CANCEL 仍能取消 B |
+| 只取消 native 的反馈调用 | 核心主动取消仍可能无身份地误伤 B |
+| 核心事后核验绑定 | native 提前切换焦点、结算草稿仍可能发生 |
+| 为续写全局放宽 projectionVersion | 会同时放开依赖旧几何或旧业务状态的操作 |
+
+最小一致交付应包含：
+
+1. GestureKey 贯穿 raw、派生事件、capture 和主动取消入口。
+2. raw 队列停止无条件 MOVE 覆盖及删除唯一 MOVE；按手势淘汰，预留终结容量，并约束 renderer 队列。
+3. 单一 MOVE/END 位置处理入口；核心按序夹紧，相反方向不合并。
+4. 核心维护稳定 bindingEpoch，触摸使用专用绑定校验；提前副作用改走确认路径。
+5. snapshot pending focus 补齐现有完整绑定校验。
+
+验收仍以六个原反例为主，并补上三组配对断言：**同绑定换帧存活／真换绑拒绝，取消 A／B 完整结束，取消后旧 END 无动作／下一 BEGIN 可恢复**。这些配对同时通过，才能说明生命周期真正闭合。

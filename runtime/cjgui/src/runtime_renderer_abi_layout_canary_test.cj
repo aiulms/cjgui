@@ -34,9 +34,9 @@ func cjguiAbiFrameObservationTailCanaryHoldsOnInvalidSession(): Unit {
 
 @Test
 func cjguiAbiEventLayoutLocked(): Unit {
-    // 事件镜像大小锁：旧 128 字节布局 + 一次性二进制读取票据 dataTransferEventId = 136。
+    // 136-byte composition/transfer prefix plus six independent identity fields.
     let observed = unsafe { sizeOf<CjguiInternalRendererEvent>() }
-    @Assert(observed, 136)
+    @Assert(observed, 184)
 }
 
 @Test

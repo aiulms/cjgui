@@ -19,6 +19,9 @@ foreign {
         session: UInt64, outCloneCount: CPointer<UInt64>, outNodeAllocationCount: CPointer<UInt64>,
         outConfigureMicros: CPointer<UInt64>, outSetMicros: CPointer<UInt64>, outCommitMicros: CPointer<UInt64>
     ): Int32
+    func cjgui_internal_renderer_test_composable_scene_clone_labels(
+        session: UInt64, outBuffer: CPointer<UInt8>, capacity: UInt32, outWritten: CPointer<UInt32>
+    ): Int32
     func cjgui_internal_renderer_test_composable_vector_render_stats(
         session: UInt64, outSampleCount: CPointer<UInt8>, outMultisampleAttachmentBytes: CPointer<UInt64>,
         outPipelineBuildCount: CPointer<UInt64>, outGeometryPreparationCount: CPointer<UInt64>,
@@ -147,6 +150,10 @@ private func runScale(objectCount: Int64): Bool {
     var valid = beforeRender[0] == 0u64 && beforeRender[1] == 4u64 && beforeRender[2] > 0u64 &&
         beforeRender[4] >= UInt64(objectCount) && beforeRender[5] > 0u64 && beforeSubmission[0] == 0u64
     while (sample < 30) {
+        // The first two samples are traced: the trace names every replaced
+        // node and the first field that disagreed, which is the per-reason
+        // record this tier needs.
+        window.testSetSceneWriteTrace(sample < 2)
         controller.advanceLocalPaint()
         let refreshed = window.refresh()
         let timing = window.testRefreshTiming()
@@ -185,13 +192,37 @@ private func runScale(objectCount: Int64): Bool {
         afterVectorSubmission[2] == 0u64 && afterVectorSubmission[3] == UInt64(objectCount) &&
         afterVectorSubmission[4] == 0u64 && afterVectorSubmission[5] == beforeVectorSubmission[5] &&
         idleAfter.nativeSubmissionCount == idleBefore.nativeSubmissionCount
+    // Which nodes did those clones actually copy? A distinct-label count names
+    // them, so a per-refresh rewrite of untouched structure is visible instead
+    // of hiding behind one aggregate number.
+    let labelCapacity: UInt32 = 8192u32
+    let labelBuffer = Array<UInt8>(Int64(labelCapacity), repeat: 0u8)
+    var labelWritten: UInt32 = 0u32
+    var labelStatus: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let labelHandle = acquireArrayRawData(labelBuffer)
+        labelStatus = cjgui_internal_renderer_test_composable_scene_clone_labels(session,
+            labelHandle.pointer, labelCapacity, inout labelWritten)
+        releaseArrayRawData(labelHandle)
+    }
+    let cloneLabels = if (labelStatus == CJGUI_INTERNAL_RENDERER_OK && labelWritten > 0u32) {
+        String.fromUtf8(labelBuffer[..Int64(labelWritten)])
+    } else {
+        ""
+    }
+    println("CJGUI_VECTOR_SCALE_CLONES objects=${objectCount} status=${labelStatus} before=${beforeSubmission[1]} after=${afterSubmission[1]} labels=[${cloneLabels}]")
     println("CJGUI_VECTOR_SCALE_RESULT objects=${objectCount} samples=30 msaa=${afterRender[1]} attachment_bytes=${afterRender[2]} geometry_preparations=${beforeRender[4]}/${afterRender[4]} geometry_bytes=${beforeRender[5]}/${afterRender[5]} pipeline_builds=${beforeRender[3]}/${afterRender[3]} clones=${beforeSubmission[1]}/${afterSubmission[1]} allocations=${beforeSubmission[2]}/${afterSubmission[2]} generic_nodes=${shapeNodes} generic_batches=${shapeBatches} generic_vertex_bytes=${vertexBytes} vector_draws=${beforeVectorSubmission[1]}/${afterVectorSubmission[1]} vector_uploads=${beforeVectorSubmission[2]}/${afterVectorSubmission[2]} vector_reuses=${beforeVectorSubmission[3]}/${afterVectorSubmission[3]} vector_upload_bytes=${beforeVectorSubmission[4]}/${afterVectorSubmission[4]} vector_resident_bytes=${beforeVectorSubmission[5]}/${afterVectorSubmission[5]} encoder_cpu_us=${encodeMicros} idle_submission_delta=${idleAfter.nativeSubmissionCount - idleBefore.nativeSubmissionCount} passed=${valid}")
     window.close()
     return valid
 }
 
 main(): Int64 {
-    let passed = runScale(16) && runScale(128) && runScale(480)
-    println("CJGUI_VECTOR_SCALE_PROBE passed=${passed}")
+    // Every tier runs to completion. The earlier probe short-circuited after a
+    // first-tier failure, so 128 and 480 were never actually measured.
+    let tier16 = runScale(16)
+    let tier128 = runScale(128)
+    let tier480 = runScale(480)
+    let passed = tier16 && tier128 && tier480
+    println("CJGUI_VECTOR_SCALE_PROBE passed=${passed} tiers=16:${tier16},128:${tier128},480:${tier480}")
     return if (passed) { 0 } else { 1 }
 }

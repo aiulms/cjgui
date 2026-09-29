@@ -10,8 +10,8 @@
 package cjgui_app
 
 import std.sync.*
+import std.time.*
 import std.collection.ArrayList
-import kit.PerformanceAnalysisKit.Hilog
 import ohos.ark_interop.JSModule
 import ohos.ark_interop.JSContext
 import ohos.ark_interop.JSCallInfo
@@ -137,7 +137,7 @@ public func cjgui_ohos_app_main_cangjie(ingress: CPointer<Unit>): Int32 {
     if (ingress.isNull()) {
         return -1
     }
-    Hilog.info(0, TAG, "app_main_cangjie: ingress registered, running owner loop synchronously")
+    cjguiOhosInfo("CjguiApp", "app_main_cangjie: ingress registered, running owner loop synchronously")
     // A3（Sol 复核第 3 点）：不再 `spawn` 后立即返回。入口返回即代表
     // owner 已真实退出（停止接单 → 传输收敛 → 窗口会话关闭 → 渲染线程
     // teardown 并 join），使「已停止」有一个**可 join 的 owner 线程**判据，
@@ -165,7 +165,7 @@ func ohosCleanupTail(reason: String): Unit {
         shutdownStatus = unsafe { ohos_renderer_shutdown_render_thread() }
         shutdownDone = unsafe { cjgui_ohos_renderer_shutdown_done() }
     }
-    Hilog.info(0, TAG,
+    cjguiOhosInfo("CjguiApp",
         "cleanup tail [${reason}]: renderer_started=${rendererStarted} " +
         "shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} " +
         "transport_closed=${transportClosed} queued=${queued} conns=${conns} " +
@@ -323,7 +323,7 @@ func executeGateCommand(gateName: String): String {
         let rd = unsafe { cjgui_ohos_test_gate_set_hold_draw(0, 0) }
         let re = unsafe { cjgui_ohos_test_gate_set_hold_admission(0, 0) }
         if (r1 == 0 && ra == 0 && rb == 0 && rc2 == 0 && rd == 0 && re == 0) {
-            Hilog.info(0, TAG, "verify gate clear: a2 holds released")
+            cjguiOhosInfo("CjguiApp", "verify gate clear: a2 holds released")
         }
         let committed = unsafe { cjgui_ohos_test_settlement_committed() }
         let aborted = unsafe { cjgui_ohos_test_settlement_aborted() }
@@ -341,7 +341,7 @@ func serveOnce(connection: CjguiSharedOperationExternalConnection): Bool {
         served = true
         let result = executeGateCommand(gateName)
         VerificationSeam.reportGateResult(gateId, result)
-        Hilog.info(0, TAG, "verify gate ${gateName} -> ${result}")
+        cjguiOhosInfo("CjguiApp", "verify gate ${gateName} -> ${result}")
     }
     var n: Int64 = 0
     while (n < 8) {
@@ -385,7 +385,7 @@ func ohosApplicationLoop(): Unit {
     // domain TCP owner already serves, before waiting for a native Surface.
     let generatedReady = connection.enableGeneratedUiProvider(controller.generatedUiRegion())
     if (!generatedReady) {
-        Hilog.error(0, TAG, "generated provider registration failed")
+        cjguiOhosError("CjguiApp", "generated provider registration failed")
         let _ = ohosCleanupTail("generated provider registration failed")
         unsafe { cjgui_ohos_notify_owner_exit(1) }
         return
@@ -405,14 +405,14 @@ func ohosApplicationLoop(): Unit {
         // 可关，close 意图即应用停止：置停止请求，下一轮循环边界退出，
         // 走同一收敛路径（不因 surface 未发布而不可停，实测修复 C6）。
         if (VerificationSeam.consumeWindowCloseRequest()) {
-            Hilog.info(0, TAG, "stand-in close: no host yet; close intent = application stop")
+            cjguiOhosInfo("CjguiApp", "stand-in close: no host yet; close intent = application stop")
             let _ = unsafe { cjgui_ohos_request_application_stop() }
         }
         let _ = serveOnce(connection)
         surfaceReady = (unsafe { cjgui_ohos_surface_ready() } == 1)
         if (!surfaceReady) {
             if (!standinAnnounced) {
-                Hilog.info(0, TAG, "stand-in serving: surface not published (KnownShimNoRef)")
+                cjguiOhosInfo("CjguiApp", "stand-in serving: surface not published (KnownShimNoRef)")
                 standinAnnounced = true
             }
             sleep(Duration.millisecond * 50)
@@ -428,7 +428,7 @@ func ohosApplicationLoop(): Unit {
         ohosCleanupTail("stand-in stopped")
         return
     }
-    Hilog.info(0, TAG, "surface ready; starting settings-counter host")
+    cjguiOhosInfo("CjguiApp", "surface ready; starting settings-counter host")
     // A1 首帧反例：首帧 PENDING 由启动参数重放的 flush 闸门制造（票据已发、
     // 提交在 Committing 内被按住 → 提交等待超时返回 PENDING，StartingPending
     // 可观察）。此处不再按 dequeue 闸门——那会让首帧在票据分配前被扣住，
@@ -440,22 +440,26 @@ func ohosApplicationLoop(): Unit {
     controller.generatedUiRegion().attachWindow(window)
     let progressReady = connection.enableWindowProgressReads(window)
     if (!progressReady) {
-        Hilog.warn(0, TAG, "window progress reads unavailable")
+        cjguiOhosWarn("CjguiApp", "window progress reads unavailable")
     }
     // 注意：不调用 connection.start()——其私有 unix 传输硬编码 /tmp，
     // OHOS 沙箱不可写。外部通道走 ohos_transport.cj 的 TCP→dispatchPayload 桥。
     if (!host.start()) {
+        let progress = window.windowProgress()
+        cjguiOhosError("CjguiApp", "host start detail: pending=${progress.pendingRefreshReason} " +
+            "native=${progress.lastNativeFailure} presentation=${progress.presentationState} " +
+            "accepted=${progress.acceptedSceneVersion}")
         // 第九次复核 C：启动失败同样汇入统一清理尾部（明确 failed 可重试），
         // 不再绕过传输/renderer 收尾。
-        Hilog.error(0, TAG, "host start failed")
+        cjguiOhosError("CjguiApp", "host start failed")
         unsafe { cjgui_ohos_notify_owner_exit(1) }   // 启动失败
         controller.generatedUiRegion().rejectPendingOnClose()
         host.close()
         ohosCleanupTail("host start failed")
         return
     }
-    Hilog.info(0, TAG, "host started; pumping turns")
-    Hilog.info(0, TAG, "generated_work phase=host_started ${controller.generatedUiRegion().testWorkCounts()}")
+    cjguiOhosInfo("CjguiApp", "host started; pumping turns")
+    cjguiOhosInfo("CjguiApp", "generated_work phase=host_started ${controller.generatedUiRegion().testWorkCounts()}")
 
     // 停止协议（Sol 归属）：surface 卸载只退役租约并保留 owner；
     // Ability 真正关闭由宿主置停止请求，owner 在轮间安全边界退出循环，
@@ -464,7 +468,7 @@ func ohosApplicationLoop(): Unit {
     // A3：进入泵轮前先向宿主声明「已启动」。宿主据此把启动状态从 starting
     // 推进到 running；就绪必须由 owner 自己声明，宿主不按时间或入口返回推断。
     let _ = unsafe { cjgui_ohos_notify_app_ready() }
-    Hilog.info(0, TAG, "owner declared app ready; entering pump loop")
+    cjguiOhosInfo("CjguiApp", "owner declared app ready; entering pump loop")
     var stopRequested = false
     var faultAnnounced = false
     while (host.isOpen()) {
@@ -472,7 +476,7 @@ func ohosApplicationLoop(): Unit {
         if (!faultAnnounced) {
             let fault = host.windowSettlementFault()
             if (fault != "") {
-                Hilog.info(0, TAG, "settlement fault: ${fault}")
+                cjguiOhosInfo("CjguiApp", "settlement fault: ${fault}")
                 faultAnnounced = true
             }
         }
@@ -483,7 +487,7 @@ func ohosApplicationLoop(): Unit {
         // A1：一次 close 请求走生产 close 路径（close 意图→结算后自动收敛），
         // 不直接清状态。未注册接缝的产物恒 false。
         if (VerificationSeam.consumeWindowCloseRequest()) {
-            Hilog.info(0, TAG, "verify close: host.close() via production path")
+            cjguiOhosInfo("CjguiApp", "verify close: host.close() via production path")
             host.close()
         }
         // A1 矩阵：闸门命令 + 外部票据单轮服务（executeGateCommand 独立成
@@ -500,10 +504,10 @@ func ohosApplicationLoop(): Unit {
                 // 的确定性反例使用。到期自动放行，票据按真实终态结算。
                 let holdMs = VerificationSeam.executionHoldRemainingMs()
                 if (holdMs > 0) {
-                    Hilog.info(0, TAG, "verify execution hold: dispatch withheld ${holdMs}ms")
+                    cjguiOhosInfo("CjguiApp", "verify execution hold: dispatch withheld ${holdMs}ms")
                     sleep(Duration.millisecond * holdMs)
                 }
-                Hilog.info(0, TAG, "external payload dispatched (${l.payload.size} bytes)")
+                cjguiOhosInfo("CjguiApp", "external payload dispatched (${l.payload.size} bytes)")
                 let response = connection.dispatchPayload(l.payload)
                 let _ = OhosTransportBridge.complete(l, response)
                 served += 1
@@ -517,10 +521,24 @@ func ohosApplicationLoop(): Unit {
             window.requestRefresh()
         }
         let _ = host.pumpOneTurn()
+        // C（惯性包）：推进活跃惯性滚动。
+        if (cjguiComposableInertialScrollEnabled) {
+            if (controller.stepActiveInertialScrolls(MonoTime.now())) {
+                window.requestRefresh()
+            }
+        }
+        // C（触摸包指导接续）：屏外 reveal 的显式目标导航——应用控制器在
+        // ACTIVATE 中挂起的语义焦点请求，在 pump 后经窗口公共
+        // focusAcceptedSemanticNode 提交（内部 reveal→新 accepted→commit 后
+        // flush→focusProjectedNode→平台编辑上下文）。
+        if (let Some(semantic) <- controller.takePendingFocusRequest()) {
+            let focused = window.focusAcceptedSemanticNode(semantic)
+            cjguiOhosInfo("CjguiApp", "nav focus ${semantic} -> focused=${focused}")
+        }
         ticks += 1
         APP_LOOP_TICKS.store(ticks)
         if (ticks % 200 == 0) {
-            Hilog.info(0, TAG, "generated_work tick=${ticks} ${controller.generatedUiRegion().testWorkCounts()}")
+            cjguiOhosInfo("CjguiApp", "generated_work tick=${ticks} ${controller.generatedUiRegion().testWorkCounts()}")
         }
     }
     // 关闭链（Sol 归属，每步唯一完成者）：
@@ -534,13 +552,13 @@ func ohosApplicationLoop(): Unit {
     OhosTransportBridge.requestStop()
     let transportClosed = OhosTransportBridge.awaitClosed(2000)
     let (queued, _qbytes, conns, inflight, lifecycle) = OhosTransportBridge.snapshotCounters()
-    Hilog.info(0, TAG,
+    cjguiOhosInfo("CjguiApp",
         "transport closing: closed=${transportClosed} queued=${queued} conns=${conns} inflight=${inflight} lifecycle=${lifecycle}")
     controller.generatedUiRegion().rejectPendingOnClose()
     host.close()
     let shutdownStatus = unsafe { ohos_renderer_shutdown_render_thread() }
     let shutdownDone = unsafe { cjgui_ohos_renderer_shutdown_done() }
     ohosCleanupTail("phase-b closed")
-    Hilog.info(0, TAG,
+    cjguiOhosInfo("CjguiApp",
         "host closed; stop_requested=${stopRequested} render_shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} ticks=${ticks}")
 }

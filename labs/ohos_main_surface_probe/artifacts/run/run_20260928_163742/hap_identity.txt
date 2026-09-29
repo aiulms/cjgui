@@ -1,0 +1,1 @@
+hap=/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_main_surface_probe/entry/build/default/outputs/default/entry-default-unsigned.hap sha256=bbd0c38920f4e35582f09f94b5a2f420e8d6e0781fa94af8dbd24fb307a95d12 bytes=1504529

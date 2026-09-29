@@ -39,6 +39,16 @@ cjc --sysroot "$SDKROOT_PATH" \
   -o "$OUTPUT_DIR/two_window_workload_probe"
 
 export DYLD_LIBRARY_PATH="$CANGJIE_HOME/runtime/lib/darwin_aarch64_cjnative:${DYLD_LIBRARY_PATH:-}"
-"$OUTPUT_DIR/two_window_workload_probe" | tee "$OUTPUT_DIR/probe.log"
+( cd "$RUNTIME_DIR/resources" && "$OUTPUT_DIR/two_window_workload_probe" ) | tee "$OUTPUT_DIR/probe.log"
+for mode in recolor image geometry; do
+  grep -q "^CJGUI_TWO_WINDOW_LOCAL mode=${mode} .*in_flight_samples=20 .*passed=true$" "$OUTPUT_DIR/probe.log"
+done
+# F-D:显示缩放切换与 B 的识别编辑真实重叠 —— 20 个样本都要有真实的 scale/drawable 变化,
+# 且缩放专用重建(rebuilt)证明稀疏复用守卫没有跳过"合法失效必须重建"。
+samples=$(grep -c '^CJGUI_TWO_WINDOW_SCALE_SAMPLE ' "$OUTPUT_DIR/probe.log")
+[ "$samples" -eq 20 ]
+grep -q '^CJGUI_TWO_WINDOW_SCALE samples=20 .*rebuilt_all=true .*scale_rebuild=true .*all_applied=true .*passed=true$' \
+  "$OUTPUT_DIR/probe.log"
+grep -q '^CJGUI_TWO_WINDOW_SCALE_REBUILD .*rebuilt=true$' "$OUTPUT_DIR/probe.log"
 grep -q '^CJGUI_TWO_WINDOW_WORKLOAD_PROBE passed=true$' "$OUTPUT_DIR/probe.log"
 echo "PASSED two window workload output=$OUTPUT_DIR"

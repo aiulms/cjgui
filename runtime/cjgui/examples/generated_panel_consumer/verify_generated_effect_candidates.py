@@ -25,7 +25,7 @@ sys.path.insert(0, str(CORE_DIR))
 
 from cjgui_generated_client import GeneratedNode, GeneratedUiSession  # noqa: E402
 
-LEGAL_INITIAL = "50,normal,0,0,100,0,0:0|100:100"
+LEGAL_INITIAL = "90,normal,none"
 LEGAL_MULTIPLY = "70,multiply,0,0,0,100,0:0|100:100"
 LEGAL_RECOVERY = "65,normal,0,0,100,0,0:0|100:100"
 LEGAL_BLUR_ON = "65,normal,0,0,100,0,0:0|100:100;blur=8,unblurred"

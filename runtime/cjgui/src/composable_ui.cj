@@ -3,6 +3,8 @@ package cjgui
 import cjgui_shared_operation_core.*
 import std.collection.*
 import std.convert.*
+import std.math.*
+import std.time.*
 import std.overflow.*
 import std.sync.*
 
@@ -878,6 +880,31 @@ public class CjguiComposableUiStyle {
     public let idealHeight: Int64
     public let alignX: Int64
     public let alignY: Int64
+    /// Post-layout translation of this node's whole subtree, in logical
+    /// points. Applied after the parent assigns the rect and before children
+    /// are laid out, so descendants, hit testing and clipping follow the same
+    /// displacement while sibling flow is unchanged (pure translation, no
+    /// reflow). Granularity is the framework's integer geometry: fractional
+    /// intent rounds at the same boundary as every other laid-out rect.
+    public let offsetX: Int64
+    public let offsetY: Int64
+    /// Post-layout subtree translation in logical points. Unlike offsetX/Y,
+    /// these values never enter integer layout or sibling flow.
+    public let translateX: Float64
+    public let translateY: Float64
+    /// Declare that wheel gestures over this node (or any of its content) are
+    /// routed to it even though it is not a SCROLL_AREA. A plain container
+    /// with this flag receives the same SCROLL intent as a scroll area; when
+    /// a scroll viewport is bound the framework applies the step itself, and
+    /// the intent always reaches the controller either way.
+    public let wheelScrollable: Bool
+    /// Vertical placement of a scroll area's content when that content is
+    /// SHORTER than the viewport: START keeps the legacy top anchoring,
+    /// CENTER/END place the natural content block in the middle or at the
+    /// bottom of the viewport. Taller-than-viewport content keeps the scroll
+    /// contract (top anchoring minus offset); the anchor only resolves the
+    /// "fits with room to spare" case.
+    public let scrollContentAlignY: Int64
     /// Optional outer drop shadow. `None` and an invisible shadow both mean
     /// "draw nothing"; the constructor normalizes an invisible declaration to
     /// `None` so no accepted style carries a shadow that cannot be seen.
@@ -920,6 +947,12 @@ public class CjguiComposableUiStyle {
         idealHeight!: Int64 = 0,
         alignX!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_STRETCH,
         alignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
+        offsetX!: Int64 = 0,
+        offsetY!: Int64 = 0,
+        translateX!: Float64 = 0.0,
+        translateY!: Float64 = 0.0,
+        wheelScrollable!: Bool = false,
+        scrollContentAlignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
         cornerRadius!: Int64 = 0,
         clipsContent!: Bool = false,
         pointerInteractive!: Bool = false,
@@ -1055,6 +1088,17 @@ public class CjguiComposableUiStyle {
         } else {
             CJGUI_COMPOSABLE_UI_ALIGN_START
         }
+        this.offsetX = offsetX
+        this.offsetY = offsetY
+        this.translateX = translateX
+        this.translateY = translateY
+        this.wheelScrollable = wheelScrollable
+        this.scrollContentAlignY = if (scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER ||
+            scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END) {
+            scrollContentAlignY
+        } else {
+            CJGUI_COMPOSABLE_UI_ALIGN_START
+        }
         // A shadow is admitted only when every scalar passes the shared effect
         // contract AND it could actually be seen; an invisible or illegal
         // declaration is normalized to None so "declared but unusable" and "not
@@ -1124,6 +1168,16 @@ public class CjguiComposableUiStyle {
     }
 }
 
+/// True when a style declares behavior that a "visually neutral" transparent
+/// layout group may NOT skip: wheel eligibility, pointer delivery or a
+/// post-layout displacement. Such a group paints nothing but still owns region
+/// and routing facts, so its bounds/clip/declaration changes must reach the
+/// staged native node and the accepted input projection (B, 2026-09-28).
+func cjguiComposableUiGroupCarriesInputOrDisplacement(style: CjguiComposableUiStyle): Bool {
+    return style.wheelScrollable || style.pointerInteractive || style.offsetX != 0 || style.offsetY != 0 ||
+        style.translateX != 0.0 || style.translateY != 0.0
+}
+
 /// A paint-only override for one interaction state.  The optional fields are
 /// intentionally limited to the properties that can change without a layout
 /// pass; geometry, typography and content metrics remain owned by the base
@@ -1134,12 +1188,50 @@ public class CjguiComposableUiStyle {
 /// therefore be a pure paint role whose switching never moves layout, re-measures
 /// text or rebuilds identity.
 public func cjguiComposableUiPaintOverlay(base: CjguiComposableUiStyle, paint: CjguiComposableUiStyle): CjguiComposableUiStyle {
-    return CjguiComposableUiStyle(background: paint.background, border: paint.border, textColor: paint.textColor,
+    return cjguiComposableUiStyleWithPaint(base, paint.background, paint.border, paint.textColor,
+        paint.borderWidth, base.shadow, base.gradient, base.effectGroup)
+}
+
+/// The ONE copy entry for any paint-only rebuild (named-style overlay,
+/// interaction-state resolution, window opacity multiplier, resolved colour
+/// transition). It replaces the paint values it is given and preserves EVERY
+/// other declaration: geometry, typography, displacement (offsetX/Y), wheel
+/// eligibility, content alignment and pointer delivery included. Rebuilding a
+/// style field by field dropped the newer non-paint declarations, so a window
+/// opacity/colour transition silently removed the home page's displacement and
+/// wheel routing (B, 2026-09-28). Do not add a second field table here.
+public func cjguiComposableUiStyleWithPaint(base: CjguiComposableUiStyle, background: CjguiComposableUiColor,
+    border: CjguiComposableUiColor, textColor: CjguiComposableUiColor, borderWidth: Int64,
+    shadow: ?CjguiComposableUiShadowStyle, gradient: ?CjguiComposableUiLinearGradient,
+    effectGroup: ?CjguiComposableUiEffectGroup): CjguiComposableUiStyle {
+    return CjguiComposableUiStyle(background: background, border: border, textColor: textColor,
         padding: base.padding, gap: base.gap, fixedWidth: base.fixedWidth, fixedHeight: base.fixedHeight,
-        growX: base.growX, growY: base.growY, borderWidth: paint.borderWidth, fontSize: base.fontSize,
-        fontWeight: base.fontWeight, fontFamily: base.fontFamily, minWidth: base.minWidth, maxWidth: base.maxWidth,
-        idealWidth: base.idealWidth, minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
-        alignX: base.alignX, alignY: base.alignY, cornerRadius: base.cornerRadius, clipsContent: base.clipsContent,
+        growX: base.growX, growY: base.growY, borderWidth: borderWidth,
+        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily, minWidth: base.minWidth,
+        maxWidth: base.maxWidth, idealWidth: base.idealWidth, minHeight: base.minHeight, maxHeight: base.maxHeight,
+        idealHeight: base.idealHeight, alignX: base.alignX, alignY: base.alignY, offsetX: base.offsetX,
+        offsetY: base.offsetY, translateX: base.translateX, translateY: base.translateY,
+        wheelScrollable: base.wheelScrollable,
+        scrollContentAlignY: base.scrollContentAlignY, cornerRadius: base.cornerRadius,
+        clipsContent: base.clipsContent, pointerInteractive: base.pointerInteractive,
+        shadow: shadow, gradient: gradient, effectGroup: effectGroup,
+        effectRejection: base.effectRejection)
+}
+
+/// Replace only the post-layout translation in an accepted presentation
+/// style. Integer layout and all paint declarations remain owned by `base`.
+public func cjguiComposableUiStyleWithTranslation(base: CjguiComposableUiStyle,
+    translateX: Float64, translateY: Float64): CjguiComposableUiStyle {
+    return CjguiComposableUiStyle(background: base.background, border: base.border, textColor: base.textColor,
+        padding: base.padding, gap: base.gap, fixedWidth: base.fixedWidth, fixedHeight: base.fixedHeight,
+        growX: base.growX, growY: base.growY, borderWidth: base.borderWidth,
+        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily,
+        minWidth: base.minWidth, maxWidth: base.maxWidth, idealWidth: base.idealWidth,
+        minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
+        alignX: base.alignX, alignY: base.alignY, offsetX: base.offsetX, offsetY: base.offsetY,
+        translateX: translateX, translateY: translateY, wheelScrollable: base.wheelScrollable,
+        scrollContentAlignY: base.scrollContentAlignY, cornerRadius: base.cornerRadius,
+        clipsContent: base.clipsContent, pointerInteractive: base.pointerInteractive,
         shadow: base.shadow, gradient: base.gradient, effectGroup: base.effectGroup,
         effectRejection: base.effectRejection)
 }
@@ -1234,35 +1326,8 @@ public class CjguiComposableUiInteractionStyle {
         } else {
             base.borderWidth
         }
-        return CjguiComposableUiStyle(
-            background: background,
-            border: border,
-            textColor: textColor,
-            padding: base.padding,
-            gap: base.gap,
-            fixedWidth: base.fixedWidth,
-            fixedHeight: base.fixedHeight,
-            growX: base.growX,
-            growY: base.growY,
-            borderWidth: borderWidth,
-            fontSize: base.fontSize,
-            fontWeight: base.fontWeight,
-            fontFamily: base.fontFamily,
-            minWidth: base.minWidth,
-            maxWidth: base.maxWidth,
-            idealWidth: base.idealWidth,
-            minHeight: base.minHeight,
-            maxHeight: base.maxHeight,
-            idealHeight: base.idealHeight,
-            alignX: base.alignX,
-            alignY: base.alignY,
-            cornerRadius: base.cornerRadius,
-            clipsContent: base.clipsContent,
-            shadow: base.shadow,
-            gradient: base.gradient,
-            effectGroup: base.effectGroup,
-            effectRejection: base.effectRejection
-        )
+        return cjguiComposableUiStyleWithPaint(base, background, border, textColor, borderWidth, base.shadow,
+            base.gradient, base.effectGroup)
     }
 
     public func resolve(base: CjguiComposableUiStyle, state: Int64): CjguiComposableUiStyle {
@@ -1566,6 +1631,10 @@ public class CjguiComposableUiSplitState {
     private var acceptedTrackValue: Int64 = 0
     private var acceptedHandleValue: Int64 = 1
     private var acceptedFirstSizeValue: Int64 = 0
+    // A drag is a sequence of writes to this view-state owner. Its own accepted
+    // redraw must preserve capture, while another size/bounds writer must not
+    // be overwritten by a stale pointer update (including a same-value write).
+    private var captureRevisionValue: Int64 = 0
 
     public init(firstSize: Int64, firstMinimum: Int64, secondMinimum: Int64) {
         this.firstSizeValue = if (firstSize > 0) {
@@ -1622,16 +1691,21 @@ public class CjguiComposableUiSplitState {
     /// default instead of silently keeping an older value, and a read-only size
     /// query can never rewrite the constraints.
     public func declareBounds(firstMinimum: Int64, secondMinimum: Int64): Unit {
-        firstMinimumValue = if (firstMinimum > 0) {
+        let nextFirst = if (firstMinimum > 0) {
             firstMinimum
         } else {
             0
         }
-        secondMinimumValue = if (secondMinimum > 0) {
+        let nextSecond = if (secondMinimum > 0) {
             secondMinimum
         } else {
             0
         }
+        if (nextFirst != firstMinimumValue || nextSecond != secondMinimumValue) {
+            advanceCaptureRevision()
+        }
+        firstMinimumValue = nextFirst
+        secondMinimumValue = nextSecond
     }
 
     /// Candidate counterpart of `declareBounds`: applies the new declaration for
@@ -1646,11 +1720,20 @@ public class CjguiComposableUiSplitState {
             boundsRollbackSecondMinimumValue = secondMinimumValue
             boundsRollbackFirstSizeValue = firstSizeValue
         }
-        declareBounds(firstMinimum, secondMinimum)
+        // This is only a candidate. Revision advances at acceptance, never at
+        // staging, so rejection restores the old capture capability exactly.
+        firstMinimumValue = if (firstMinimum > 0) { firstMinimum } else { 0 }
+        secondMinimumValue = if (secondMinimum > 0) { secondMinimum } else { 0 }
     }
 
     /// Publishes the staged declaration together with the accepted scene.
     public func commitStagedBoundsDeclaration(): Unit {
+        if (boundsRollbackArmedValue &&
+            (firstMinimumValue != boundsRollbackFirstMinimumValue ||
+             secondMinimumValue != boundsRollbackSecondMinimumValue ||
+             firstSizeValue != boundsRollbackFirstSizeValue)) {
+            advanceCaptureRevision()
+        }
         boundsRollbackArmedValue = false
     }
 
@@ -1688,6 +1771,15 @@ public class CjguiComposableUiSplitState {
         return viewStateIdentityValue
     }
 
+    public func captureRevision(): Int64 { return captureRevisionValue }
+
+    private func advanceCaptureRevision(): Unit {
+        if (captureRevisionValue == Int64.Max) {
+            throw IllegalStateException("split capture revision exhausted")
+        }
+        captureRevisionValue += 1
+    }
+
     /// Framework bookkeeping for one accepted-structure walk.
     func markLive(stamp: Int64): Unit {
         liveStampValue = stamp
@@ -1708,7 +1800,17 @@ public class CjguiComposableUiSplitState {
         let bounded = CjguiComposableUiSplitGeometry.firstSizeForTrack(requested, track, handleSize, firstMinimumValue,
             secondMinimumValue)
         firstSizeValue = bounded
+        advanceCaptureRevision()
         return bounded
+    }
+
+    /// The window's captured gesture may advance only its own revision. A
+    /// separately accepted write is a conflict even if it chose the same size.
+    public func applyCapturedFirstSize(expectedRevision: Int64, requested: Int64, track: Int64,
+        handleSize: Int64): ?Int64 {
+        if (expectedRevision != captureRevisionValue || ownerWindowTokenValue == 0) { return None }
+        let _ = applyFirstSize(requested, track, handleSize)
+        return Some(captureRevisionValue)
     }
 
     /// The track and handle thickness of the ACCEPTED scene. Candidate solves
@@ -1769,6 +1871,7 @@ public class CjguiComposableUiSplitState {
         } else {
             0
         }
+        advanceCaptureRevision()
     }
 }
 
@@ -2001,6 +2104,10 @@ public class CjguiComposableUiTabsState {
 /// Stability: experimental. This is the minimal public seam for shared view
 /// state while the generated scroll/split layout package evolves; the shape may
 /// change, and applications should keep owning their business values.
+// B/C（惯性包）：滚动物理策略全局开关——手写与生成 scrollArea 共同消费
+// 的框架能力声明。稳定性 experimental；默认关闭，由窗口/应用显式启用。
+public var cjguiComposableInertialScrollEnabled: Bool = false
+
 public class CjguiComposableUiScrollViewport {
     // The window INSTANCE that accepted a scene containing this viewport. A
     // viewport is per-window view state: sharing ONE mutable object between two
@@ -2118,6 +2225,137 @@ public class CjguiComposableUiScrollViewport {
     public func scrollBy(delta: Int64): Bool {
         return requestOffset(requestedOffsetValue.saturatingAdd(delta))
     }
+
+    // B/C（惯性包）：松手减速滚动活动。固定容量速度窗 + 边界夹紧的解析
+    // 衰减模型；使用显式单调时间，不逐帧乘系数。活动属于本 viewport（窗口
+    // 实例 + 稳定身份），新触摸/程序化定位/换绑即退役旧活动。
+    // 实验性声明：稳定性等级 experimental，默认关闭；由手写与生成 scrollArea
+    // 共同消费（同一份策略，不在样例分别调 native 常量）。
+    private var inertialVelocityPxPerMs: Float64 = 0.0
+    private var inertialLastTick: MonoTime = MonoTime.now()
+    private var inertialGeneration: Int64 = 0
+
+    /// 滚动物理策略（experimental）：速度低于该值（px/ms）即停止。
+    public static let inertialStopVelocityPxPerMs: Float64 = 0.01
+    /// 指数衰减时间常数（ms）：每经过 τ，速度乘 1/e（解析衰减，帧率无关）。
+    public static let inertialDecayTauMs: Float64 = 325.0
+    /// 单次惯性总时长上界（ms），防止极端输入长跑。
+    public static let inertialMaxDurationMs: Int64 = 2500
+
+    /// 记录一次松手速度（由速度估计器在 END 后写入；正方向 = 内容向上滚动）。
+    /// 返回 true 表示启动了惯性活动。
+    public func beginInertialScroll(velocityPxPerMs: Float64, now: MonoTime): Bool {
+        if (!isWindowInertialScrollEnabled()) {
+            return false
+        }
+        // NaN/Inf 准入拒绝（复核反例：不制造速度）。
+        if (velocityPxPerMs != velocityPxPerMs || abs(velocityPxPerMs) > 1.0e300) {
+            return false
+        }
+        if (velocityPxPerMs < CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs &&
+            velocityPxPerMs > -CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs) {
+            return false
+        }
+        inertialVelocityPxPerMs = velocityPxPerMs
+        inertialLastTick = now
+        inertialSubPixelRemainder = 0.0
+        inertialElapsedNs = 0
+        inertialGeneration += 1
+        return true
+    }
+
+    // C（复核修）：亚像素累计余量——集中量化，避免 Int64 截断随帧率丢距离。
+    private var inertialSubPixelRemainder: Float64 = 0.0
+    // C（复核修）：活动累计时长（ns），用于 2500ms 工作上界。
+    private var inertialElapsedNs: Int64 = 0
+
+    /// 一次惯性推进（由窗口 pump 周期调用）：解析衰减积分 + 集中量化。
+    /// 帧率无关：位移由 (v0, τ, dt) 解析决定，Int64 量化只发生在亚像素
+    /// 余量累计后。停止条件（按序评估）：NaN/Inf 准入拒绝、总时长上界、
+    /// 速度耗尽（积分到明确定义的停止时刻）、边界夹紧。
+    public func stepInertialScroll(now: MonoTime): Bool {
+        if (inertialVelocityPxPerMs == 0.0) {
+            return false
+        }
+        // NaN/Inf 准入：不制造速度（复核反例）。
+        if (inertialVelocityPxPerMs != inertialVelocityPxPerMs || abs(inertialVelocityPxPerMs) > 1.0e300) {
+            inertialVelocityPxPerMs = 0.0
+            inertialSubPixelRemainder = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        let elapsedNs = (now - inertialLastTick).toNanoseconds()
+        if (elapsedNs < 0) {
+            // 时钟倒退：终结活动（不制造位移）。
+            inertialVelocityPxPerMs = 0.0
+            inertialSubPixelRemainder = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        if (elapsedNs == 0) {
+            return true  // 时钟重复：跳过本帧，不制造位移
+        }
+        // 工作上界：总时长超过 inertialMaxDurationMs 即终结。
+        inertialElapsedNs += elapsedNs
+        if (inertialElapsedNs > CjguiComposableUiScrollViewport.inertialMaxDurationMs * 1_000_000) {
+            inertialVelocityPxPerMs = 0.0
+            inertialSubPixelRemainder = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        let elapsedMs = Float64(elapsedNs) / 1_000_000.0
+        // 解析衰减 v(t) = v0 * exp(-t/τ)（帧率无关）。
+        let decay = exp(-elapsedMs / CjguiComposableUiScrollViewport.inertialDecayTauMs)
+        let newVelocity = inertialVelocityPxPerMs * decay
+        // 解析积分位移 = v0*τ*(1-e^(-t/τ))（本段积分，帧率无关）。
+        let displacement = inertialVelocityPxPerMs *
+            CjguiComposableUiScrollViewport.inertialDecayTauMs * (1.0 - decay)
+        inertialVelocityPxPerMs = newVelocity
+        inertialLastTick = now
+        // 集中量化：亚像素余量跨帧累计，整数部分一次交付。
+        inertialSubPixelRemainder += displacement
+        let wholeF = if (inertialSubPixelRemainder >= 0.0) {
+            floor(inertialSubPixelRemainder)
+        } else {
+            ceil(inertialSubPixelRemainder)
+        }
+        let whole = Int64(wholeF)
+        if (whole != 0) {
+            inertialSubPixelRemainder -= Float64(whole)
+            let moved = scrollBy(whole)
+            if (!moved) {
+                // 到达边界（夹紧后无变化）：活动结束。
+                stopInertialScroll()
+                return false
+            }
+        }
+        // 速度耗尽：积分已交付到停止时刻（余量保留但不继续推进）。
+        if (newVelocity < CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs &&
+            newVelocity > -CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs) {
+            inertialVelocityPxPerMs = 0.0
+            inertialElapsedNs = 0
+            return false
+        }
+        return true
+    }
+
+    /// 新触摸/程序化定位立即停止惯性（外部不重复调用）。
+    public func stopInertialScroll(): Unit {
+        inertialVelocityPxPerMs = 0.0
+        inertialSubPixelRemainder = 0.0
+        inertialElapsedNs = 0
+        inertialGeneration += 1
+    }
+
+    public func isInertialScrollActive(): Bool {
+        return inertialVelocityPxPerMs != 0.0
+    }
+
+    private func isWindowInertialScrollEnabled(): Bool {
+        // 共同声明：默认关闭，由窗口的统一策略开关控制（手写/生成同源）。
+        return cjguiComposableInertialScrollEnabled
+    }
+
     /// One wheel step: `next` moves toward the end of the content, `previous`
     /// toward the start. An unknown direction is not a scroll.
     public func step(direction: String, step: Int64): Bool {
@@ -4338,7 +4576,8 @@ public func cjguiComposableTabs(scope: CjguiComposableUiIdentityScope, semanticI
 public func cjguiComposableScopedSplitView(scope: CjguiComposableUiIdentityScope, semanticId: String,
     first: CjguiComposableUiNode, second: CjguiComposableUiNode, axis: Int64, firstSize: Int64, minFirst: Int64,
     minSecond: Int64, style: CjguiComposableUiStyle, operationActionName!: String = "SET_SPLIT_SIZE",
-    operationResourceId!: Int64 = -1, handleThickness!: Int64 = 8, splitState!: ?CjguiComposableUiSplitState = None): CjguiComposableUiNode {
+    operationResourceId!: Int64 = -1, handleThickness!: Int64 = 8, splitState!: ?CjguiComposableUiSplitState = None,
+    containerNodeId!: Int64 = -1): CjguiComposableUiNode {
     let safeAxis = if (axis == CjguiComposableUiSplitAxis.VERTICAL) {
         CjguiComposableUiSplitAxis.VERTICAL
     } else {
@@ -4365,11 +4604,13 @@ public func cjguiComposableScopedSplitView(scope: CjguiComposableUiIdentityScope
     } else {
         CJGUI_COMPOSABLE_UI_HORIZONTAL
     }
-    let container = CjguiComposableUiNode(-1, semanticId, containerKind, "", "", "", -1, style,
+    let container = CjguiComposableUiNode(containerNodeId, semanticId, containerKind, "", "", "", -1, style,
         operationActionName: operationActionName, operationResourceId: operationResourceId,
         pointerControlRole: "split_view", pointerControlAxis: safeAxis, pointerControlMinimum: minFirst,
         pointerControlFirstSize: firstSize, pointerControlHandleThickness: safeThickness,
-        pointerControlSecondMinimum: minSecond, identity: scope.local("container"), splitState: splitState)
+        pointerControlSecondMinimum: minSecond,
+        identity: if (containerNodeId >= 0) { None } else { Some(scope.local("container")) },
+        splitState: splitState)
     container.add(first)
     container.add(handle)
     container.add(second)
@@ -4716,7 +4957,10 @@ public func cjguiComposableImage(nodeId: Int64, semanticId: String, localRasterP
 
 /// Normal image component backed by a bounded, immutable PNG transfer value.
 /// The offer remains application-owned; no temporary file or native handle is
-/// part of the public resource identity.
+/// part of the public resource identity. Construction checks the declaration
+/// shape and encoded length; every accepted scene, including a rebuild after
+/// cache eviction, uses the native PNG dimensions, variant, decode and resource
+/// budget admission before replacing the previous scene.
 func cjguiComposableTransferImageResourceIdentity(offer: CjguiSharedOperationTransferOffer): String {
     return "cjgui-transfer:${offer.offerIdentity}"
 }
@@ -5168,10 +5412,249 @@ public func cjguiComposableHitMayTakeOver(bestX: Int64, bestY: Int64, bestWidth:
         candidateY + candidateHeight <= bestY + bestHeight
 }
 
+private func cjguiComposableVisualHitMayTakeOver(best: CjguiComposableUiVisualRect,
+    candidate: CjguiComposableUiVisualRect): Bool {
+    return candidate.x >= best.x && candidate.y >= best.y &&
+        candidate.x + candidate.width <= best.x + best.width &&
+        candidate.y + candidate.height <= best.y + best.height
+}
+
+/// Exact accepted presentation rectangle. Integer layout remains the public
+/// `bounds` contract; this value includes only the post-layout translation.
+public class CjguiComposableUiVisualRect {
+    public let x: Float64
+    public let y: Float64
+    public let width: Float64
+    public let height: Float64
+    public init(x: Float64, y: Float64, width: Float64, height: Float64) {
+        this.x = x
+        this.y = y
+        this.width = width
+        this.height = height
+    }
+    public func contains(x: Float64, y: Float64): Bool {
+        return x >= this.x && y >= this.y && x < this.x + width && y < this.y + height
+    }
+}
+
+/// One node's immutable resolved translation and the translation of each
+/// original clip owner. The latter must not follow a translated child when
+/// its clipping ancestor stayed still.
+public class CjguiComposableUiVisualGeometry {
+    public let translateX: Float64
+    public let translateY: Float64
+    private let clipOwnerXs: ArrayList<Float64>
+    private let clipOwnerYs: ArrayList<Float64>
+    public init(translateX: Float64, translateY: Float64, clipOwnerXs: ArrayList<Float64>,
+        clipOwnerYs: ArrayList<Float64>) {
+        this.translateX = translateX
+        this.translateY = translateY
+        this.clipOwnerXs = ArrayList<Float64>(clipOwnerXs)
+        this.clipOwnerYs = ArrayList<Float64>(clipOwnerYs)
+    }
+    public func clipCount(): Int64 { return clipOwnerXs.size }
+    public func clipTranslateX(index: Int64): Float64 { return clipOwnerXs[index] }
+    public func clipTranslateY(index: Int64): Float64 { return clipOwnerYs[index] }
+    public func visualBounds(bounds: CjguiComposableUiRect): CjguiComposableUiVisualRect {
+        return CjguiComposableUiVisualRect(Float64(bounds.x) + translateX,
+            Float64(bounds.y) + translateY, Float64(bounds.width), Float64(bounds.height))
+    }
+    /// Undo this accepted node's cumulative translation before applying a
+    /// layout-space control rule. The caller keeps the exact point until its
+    /// existing integer rule makes one final quantization.
+    public func windowToLayoutX(windowX: Float64): Float64 { return windowX - translateX }
+    public func windowToLayoutY(windowY: Float64): Float64 { return windowY - translateY }
+    public func layoutToWindowX(layoutX: Float64): Float64 { return layoutX + translateX }
+    public func layoutToWindowY(layoutY: Float64): Float64 { return layoutY + translateY }
+    /// The divider's accepted bounds begin at the accepted first pane's end.
+    /// A drag uses track-local distance, with the original grab point removed.
+    /// Native's compatibility integer point uses half-away rounding; perform
+    /// that rounding ONCE after inverse mapping rather than before it.
+    public func windowToSplitTrackPointX(divider: CjguiComposableUiRect, acceptedFirst: Int64,
+        windowX: Float64, grabOffset: Float64): Int64 {
+        let local = windowToLayoutX(windowX) - Float64(divider.x) + Float64(acceptedFirst) - grabOffset
+        if (local <= -1000000000.0) { return -1000000000 }
+        if (local >= 1000000000.0) { return 1000000000 }
+        return Int64(if (local >= 0.0) { floor(local + 0.5) } else { ceil(local - 0.5) })
+    }
+    /// Each clip retains the translation of its creator, independently of a
+    /// descendant node's own translation.
+    public func visualClipAt(constraints: ArrayList<CjguiComposableUiClipConstraint>,
+        index: Int64): CjguiComposableUiVisualRect {
+        let rect = constraints[index].rect
+        return CjguiComposableUiVisualRect(Float64(rect.x) + clipOwnerXs[index],
+            Float64(rect.y) + clipOwnerYs[index], Float64(rect.width), Float64(rect.height))
+    }
+    public func containsClips(constraints: ArrayList<CjguiComposableUiClipConstraint>,
+        x: Float64, y: Float64): Bool {
+        if (constraints.size != clipOwnerXs.size) { return false }
+        var index: Int64 = 0
+        while (index < constraints.size) {
+            let clip = constraints[index]
+            let rect = clip.rect
+            let left = Float64(rect.x) + clipOwnerXs[index]
+            let top = Float64(rect.y) + clipOwnerYs[index]
+            let width = Float64(rect.width)
+            let height = Float64(rect.height)
+            if (x < left || y < top || x >= left + width || y >= top + height) { return false }
+            let radius = Float64(clip.cornerRadius)
+            if (radius > 0.0) {
+                let centreX = if (x < left + radius) { left + radius } else if (x > left + width - radius) {
+                    left + width - radius
+                } else { x }
+                let centreY = if (y < top + radius) { top + radius } else if (y > top + height - radius) {
+                    top + height - radius
+                } else { y }
+                let dx = x - centreX
+                let dy = y - centreY
+                if (dx * dx + dy * dy > radius * radius) { return false }
+            }
+            index += 1
+        }
+        return true
+    }
+}
+
+/// One accepted visual clip and the innermost-to-outermost scroll prefix that
+/// can move the target relative to its owner. -1 means target and clip move
+/// together, so scrolling cannot repair a missing intersection.
+class CjguiComposableUiRevealClip {
+    let rect: CjguiComposableUiVisualRect
+    let scrollPrefix: Int64
+    init(rect: CjguiComposableUiVisualRect, scrollPrefix: Int64) {
+        this.rect = rect
+        this.scrollPrefix = scrollPrefix
+    }
+}
+
+class CjguiComposableUiRevealPlan {
+    let reason: String
+    let offsets: ArrayList<Int64>
+    init(reason: String, offsets: ArrayList<Int64>) {
+        this.reason = reason
+        this.offsets = offsets
+    }
+    func isReachable(): Bool { return reason != "reveal_unreachable" && reason != "reveal_geometry_invalid" }
+}
+
+/// Solve a chain of integer scroll offsets against the *visual* target and
+/// every real clip owner. Prefix sums capture that an inner scroll moves the
+/// target under an outer clip while the outer clip itself stays put. Resolve
+/// the entire chain before changing any viewport request: an unreachable outer
+/// clip cannot leave a stray pending inner request or an endless refresh.
+class CjguiComposableUiRevealPlanner {
+    private static func bounded(value: Int64, lower: Int64, upper: Int64): Int64 {
+        if (value < lower) { return lower }
+        if (value > upper) { return upper }
+        return value
+    }
+    static func plan(target: CjguiComposableUiVisualRect, clips: ArrayList<CjguiComposableUiRevealClip>,
+        acceptedOffsets: ArrayList<Int64>, maximumOffsets: ArrayList<Int64>,
+        preferredOffsets!: ?ArrayList<Int64> = None): CjguiComposableUiRevealPlan {
+        let count = acceptedOffsets.size
+        let empty = ArrayList<Int64>()
+        if (count != maximumOffsets.size || target.height <= 0.0) {
+            return CjguiComposableUiRevealPlan("reveal_geometry_invalid", empty)
+        }
+        let preferences = match (preferredOffsets) {
+            case Some(value) => value
+            case None => ArrayList<Int64>(acceptedOffsets)
+        }
+        if (preferences.size != count) {
+            return CjguiComposableUiRevealPlan("reveal_geometry_invalid", empty)
+        }
+        let allowedLow = ArrayList<Int64>()
+        let allowedHigh = ArrayList<Int64>()
+        var index: Int64 = 0
+        while (index < count) {
+            allowedLow.add(-2000000000)
+            allowedHigh.add(2000000000)
+            index += 1
+        }
+        for (clip in clips) {
+            if (clip.rect.height <= 0.0 || clip.scrollPrefix < -1 || clip.scrollPrefix >= count) {
+                return CjguiComposableUiRevealPlan("reveal_geometry_invalid", empty)
+            }
+            let lower = Int64(ceil(target.y + target.height - clip.rect.y - clip.rect.height))
+            let upper = Int64(floor(target.y - clip.rect.y))
+            if (clip.scrollPrefix < 0) {
+                if (lower > 0 || upper < 0) { return CjguiComposableUiRevealPlan("reveal_unreachable", empty) }
+            } else {
+                let slot = clip.scrollPrefix
+                if (lower > allowedLow[slot]) { allowedLow[slot] = lower }
+                if (upper < allowedHigh[slot]) { allowedHigh[slot] = upper }
+            }
+        }
+        let reachLow = ArrayList<Int64>()
+        let reachHigh = ArrayList<Int64>()
+        var previousLow: Int64 = 0
+        var previousHigh: Int64 = 0
+        index = 0
+        while (index < count) {
+            let accepted = acceptedOffsets[index]
+            let maximum = maximumOffsets[index]
+            let preferred = preferences[index]
+            if (accepted < 0 || maximum < accepted || preferred < 0 || preferred > maximum) {
+                return CjguiComposableUiRevealPlan("reveal_geometry_invalid", empty)
+            }
+            let deltaMin = -accepted
+            let deltaMax = maximum - accepted
+            let fromLower = previousLow.saturatingAdd(deltaMin)
+            let fromUpper = previousHigh.saturatingAdd(deltaMax)
+            let lower = if (allowedLow[index] > fromLower) { allowedLow[index] } else { fromLower }
+            let upper = if (allowedHigh[index] < fromUpper) { allowedHigh[index] } else { fromUpper }
+            if (lower > upper) { return CjguiComposableUiRevealPlan("reveal_unreachable", empty) }
+            reachLow.add(lower)
+            reachHigh.add(upper)
+            previousLow = lower
+            previousHigh = upper
+            index += 1
+        }
+        let desired = ArrayList<Int64>()
+        index = 0
+        while (index < count) { desired.add(preferences[index]); index += 1 }
+        if (count > 0) {
+            var preferredTotalDelta: Int64 = 0
+            index = 0
+            while (index < count) {
+                preferredTotalDelta = preferredTotalDelta.saturatingAdd(
+                    preferences[index] - acceptedOffsets[index])
+                index += 1
+            }
+            var sum = bounded(preferredTotalDelta, reachLow[count - 1], reachHigh[count - 1])
+            index = count - 1
+            while (index >= 0) {
+                let priorLow = if (index > 0) { reachLow[index - 1] } else { 0 }
+                let priorHigh = if (index > 0) { reachHigh[index - 1] } else { 0 }
+                let deltaMin = -acceptedOffsets[index]
+                let deltaMax = maximumOffsets[index] - acceptedOffsets[index]
+                let feasibleLow = if (priorLow > sum - deltaMax) { priorLow } else { sum - deltaMax }
+                let feasibleHigh = if (priorHigh < sum - deltaMin) { priorHigh } else { sum - deltaMin }
+                if (feasibleLow > feasibleHigh) {
+                    return CjguiComposableUiRevealPlan("reveal_unreachable", empty)
+                }
+                let preferredPrior = sum - (preferences[index] - acceptedOffsets[index])
+                let prior = bounded(preferredPrior, feasibleLow, feasibleHigh)
+                desired[index] = acceptedOffsets[index] + sum - prior
+                sum = prior
+                index -= 1
+            }
+        }
+        var changed = false
+        index = 0
+        while (index < count) {
+            if (desired[index] != acceptedOffsets[index]) { changed = true }
+            index += 1
+        }
+        return CjguiComposableUiRevealPlan(if (changed) { "reveal_requested" } else { "reveal_visible" }, desired)
+    }
+}
+
 public class CjguiComposableUiScene {
     public let version: Int64
     public let viewport: CjguiComposableUiRect
     private let resolvedNodes: ArrayList<CjguiComposableUiLayoutNode>
+    private let resolvedVisualGeometry: ArrayList<CjguiComposableUiVisualGeometry>
     private let validValue: Bool
     private let layoutErrorValue: String
     public init(version: Int64, viewport: CjguiComposableUiRect, nodes: ArrayList<CjguiComposableUiLayoutNode>,
@@ -5179,8 +5662,67 @@ public class CjguiComposableUiScene {
         this.version = version
         this.viewport = viewport
         this.resolvedNodes = ArrayList<CjguiComposableUiLayoutNode>(nodes)
-        this.validValue = valid
-        this.layoutErrorValue = layoutError
+        let geometries = ArrayList<CjguiComposableUiVisualGeometry>()
+        let ancestry = ArrayList<Int64>()
+        var depth: Int64 = 0
+        var geometryError = ""
+        var index: Int64 = 0
+        while (index < nodes.size) {
+            let node = nodes[index]
+            while (depth > 0 && ancestry[depth - 1] + nodes[ancestry[depth - 1]].subtreeNodeCount <= index) {
+                depth -= 1
+            }
+            // A paint-only presentation may replace the local translation
+            // without changing the integer layout or declared target.
+            let localX = node.style.translateX
+            let localY = node.style.translateY
+            let parentX = if (depth > 0) { geometries[ancestry[depth - 1]].translateX } else { 0.0 }
+            let parentY = if (depth > 0) { geometries[ancestry[depth - 1]].translateY } else { 0.0 }
+            let x = parentX + localX
+            let y = parentY + localY
+            if (node.subtreeNodeCount < 1 || index + node.subtreeNodeCount > nodes.size) {
+                geometryError = "translation_subtree_span_invalid"
+            } else if (localX.isNaN() || localX.isInf() || localY.isNaN() || localY.isInf() ||
+                localX < -1024.0 || localX > 1024.0 || localY < -1024.0 || localY > 1024.0) {
+                geometryError = "translation_value_invalid"
+            } else if (x.isNaN() || x.isInf() || y.isNaN() || y.isInf() ||
+                x < -4096.0 || x > 4096.0 || y < -4096.0 || y > 4096.0 ||
+                Float64(node.bounds.x) + x < -1000000000.0 ||
+                Float64(node.bounds.x) + Float64(node.bounds.width) + x > 1000000000.0 ||
+                Float64(node.bounds.y) + y < -1000000000.0 ||
+                Float64(node.bounds.y) + Float64(node.bounds.height) + y > 1000000000.0) {
+                geometryError = "translation_cumulative_invalid"
+            }
+            let clipXs = ArrayList<Float64>()
+            let clipYs = ArrayList<Float64>()
+            for (clip in node.clipConstraints()) {
+                var ownerX = 0.0
+                var ownerY = 0.0
+                if (clip.ownerIdentity.size > 0) {
+                    var found = false
+                    var ancestor: Int64 = 0
+                    while (ancestor < depth) {
+                        let ancestorIndex = ancestry[ancestor]
+                        if (nodes[ancestorIndex].identityKey == clip.ownerIdentity) {
+                            ownerX = geometries[ancestorIndex].translateX
+                            ownerY = geometries[ancestorIndex].translateY
+                            found = true
+                        }
+                        ancestor += 1
+                    }
+                    if (!found) { geometryError = "translation_clip_owner_invalid" }
+                }
+                clipXs.add(ownerX)
+                clipYs.add(ownerY)
+            }
+            geometries.add(CjguiComposableUiVisualGeometry(x, y, clipXs, clipYs))
+            if (depth < ancestry.size) { ancestry[depth] = index } else { ancestry.add(index) }
+            depth += 1
+            index += 1
+        }
+        this.resolvedVisualGeometry = geometries
+        this.validValue = valid && geometryError.size == 0
+        this.layoutErrorValue = if (layoutError.size > 0) { layoutError } else { geometryError }
     }
     public func nodes(): ArrayList<CjguiComposableUiLayoutNode> {
         return ArrayList<CjguiComposableUiLayoutNode>(resolvedNodes)
@@ -5190,6 +5732,27 @@ public class CjguiComposableUiScene {
     }
     public func layoutError(): String {
         return layoutErrorValue
+    }
+    public func visualGeometryAt(index: Int64): CjguiComposableUiVisualGeometry {
+        return resolvedVisualGeometry[index]
+    }
+    public func visualGeometryForId(nodeId: Int64): ?CjguiComposableUiVisualGeometry {
+        var index: Int64 = 0
+        while (index < resolvedNodes.size) {
+            if (resolvedNodes[index].nodeId == nodeId) { return Some(resolvedVisualGeometry[index]) }
+            index += 1
+        }
+        return None
+    }
+    public func visualBoundsForId(nodeId: Int64): ?CjguiComposableUiVisualRect {
+        var index: Int64 = 0
+        while (index < resolvedNodes.size) {
+            if (resolvedNodes[index].nodeId == nodeId) {
+                return Some(resolvedVisualGeometry[index].visualBounds(resolvedNodes[index].bounds))
+            }
+            index += 1
+        }
+        return None
     }
     public func nodeForId(nodeId: Int64): CjguiComposableUiLayoutNode {
         for (node in resolvedNodes) {
@@ -5227,6 +5790,27 @@ public class CjguiComposableUiScene {
         }
         return node
     }
+    /// Resolve a SCROLL intent for a node that declared wheel eligibility
+    /// instead of being a scroll-area/input kind. Native hit routing already
+    /// admits such a container (`scrollNodeContainingPoint` matches
+    /// `wheelScrollable`), so the accepted projection must admit the same node
+    /// for the same intent or the two halves disagree and the gesture is
+    /// dropped. Identity and version checks mirror `resolvePointerTarget`;
+    /// this resolver is deliberately scroll-only (a wheel-eligible container is
+    /// not a click/keyboard/focus target).
+    public func resolveWheelTarget(nodeId: Int64, resourceId: Int64, nodeKind: Int64, projectionVersion: Int64): CjguiComposableUiLayoutNode {
+        if (!validValue || projectionVersion != version) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        let node = nodeForId(nodeId)
+        if (node.resourceId != resourceId || node.nodeKind != nodeKind) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        if (!node.isEnabled || (!node.style.wheelScrollable && node.nodeKind != CJGUI_COMPOSABLE_UI_SCROLL_AREA)) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        return node
+    }
     /// Platform-owned selection is not an edit. Allow it for an enabled
     /// read-only text field while retaining the same full identity/version
     /// check used for editable input.
@@ -5243,6 +5827,11 @@ public class CjguiComposableUiScene {
         return node
     }
     public func hitTest(x: Int64, y: Int64): CjguiComposableUiLayoutNode {
+        return hitTestVisual(Float64(x), Float64(y))
+    }
+    /// Exact point hit test against this accepted scene. The native pointer
+    /// ingress uses the same Float64 visual and clip rectangles.
+    public func hitTestVisual(x: Float64, y: Float64): CjguiComposableUiLayoutNode {
         if (!validValue) {
             return CjguiComposableUiLayoutNode.missing()
         }
@@ -5252,21 +5841,23 @@ public class CjguiComposableUiScene {
         // a body fragment delivered the event to the scroll node 311 and the caret never moved). The
         // smallest containing area is the innermost target; ties keep the previous topmost preference.
         var best = CjguiComposableUiLayoutNode.missing()
-        var bestArea: Int64 = 0
+        var bestRect = CjguiComposableUiVisualRect(0.0, 0.0, 0.0, 0.0)
         var found = false
         var index = resolvedNodes.size - 1
         while (index >= 0) {
             let node = resolvedNodes[index]
-            if (node.canReceiveInput() && node.bounds.contains(x, y) && node.containsResolvedClip(x, y)) {
+            let geometry = resolvedVisualGeometry[index]
+            let visual = geometry.visualBounds(node.bounds)
+            if (node.canReceiveInput() && visual.contains(x, y) &&
+                geometry.containsClips(node.clipConstraints(), x, y)) {
                 // Topmost wins; a later (lower, usually deeper) node may take over ONLY when it lies strictly
                 // inside the current best. Comparing AREA alone let a small sibling in a LOWER layer beat a
                 // large upper layer that also contained the point (regression introduced 2026-09-25), while
                 // containment still keeps the original fix: the body fragment inside the scroll node wins.
-                let insideBest = cjguiComposableHitMayTakeOver(best.bounds.x, best.bounds.y, best.bounds.width,
-                    best.bounds.height, node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height)
+                let insideBest = cjguiComposableVisualHitMayTakeOver(bestRect, visual)
                 if (!found || insideBest) {
                     best = node
-                    bestArea = node.bounds.width * node.bounds.height
+                    bestRect = visual
                     found = true
                 }
             }
@@ -5745,6 +6336,11 @@ public class CjguiComposableUiLayoutReuseCache {
             appendInt(builder, byteCount, cacheable, node.nodeKind)
             appendString(builder, byteCount, cacheable, node.semanticId)
             appendString(builder, byteCount, cacheable, explicitReuseKey)
+            // The caller's key covers the CONTENT of the region; the region
+            // root's own declaration is engine-owned and must invalidate the
+            // replay on its own. Using the ONE declaration encoding keeps this
+            // list from drifting again (B, 2026-09-28).
+            appendStyle(builder, byteCount, cacheable, node.style)
         } else {
             if (!permitsStructuralSignatures) {
                 // An explicit key may still have required a descendant scan
@@ -5984,6 +6580,18 @@ public class CjguiComposableUiLayoutReuseCache {
         appendInt(builder, byteCount, cacheable, style.idealHeight)
         appendInt(builder, byteCount, cacheable, style.alignX)
         appendInt(builder, byteCount, cacheable, style.alignY)
+        // Declaration completeness (B, 2026-09-28): a displacement, wheel
+        // eligibility, short-content alignment or pointer-delivery change is a
+        // real declaration change. Leaving them out made a cached region replay
+        // the previous offset/alignment and kept a staged native node from
+        // updating its accepted input projection.
+        appendInt(builder, byteCount, cacheable, style.offsetX)
+        appendInt(builder, byteCount, cacheable, style.offsetY)
+        appendFloat(builder, byteCount, cacheable, style.translateX)
+        appendFloat(builder, byteCount, cacheable, style.translateY)
+        appendBool(builder, byteCount, cacheable, style.wheelScrollable)
+        appendInt(builder, byteCount, cacheable, style.scrollContentAlignY)
+        appendBool(builder, byteCount, cacheable, style.pointerInteractive)
         // Effects are part of the style's identity: changing ONLY a shadow
         // parameter or one gradient stop must produce a different signature, or
         // a cached region would keep the previous picture. The optional value is
@@ -6373,7 +6981,31 @@ public class CjguiComposableUiLayoutEngine {
             viewports: work.stagedViewports, splitTracks: work.stagedSplitTracks)
     }
 
+    /// Entry point for one subtree solve. A declared offset translates the
+    /// rect the parent assigned before anything else happens, so the emitted
+    /// bounds, the children flowing from `inner`, hit testing and clipping all
+    /// observe one displacement, while siblings (positioned by the parent from
+    /// measured sizes) are not reflowed.
     private static func layoutNode(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect,
+        parentClipConstraints: ArrayList<CjguiComposableUiClipConstraint>,
+        output: ArrayList<CjguiComposableUiLayoutNode>, measurer: CjguiComposableUiTextMeasurer,
+        inheritedInputScope: String, work: CjguiComposableUiLayoutWorkCounter,
+        reuseCache!: ?CjguiComposableUiLayoutReuseCache = None, reuseDepth!: Int64 = 0,
+        identityRegistry!: ?CjguiComposableUiIdentityRegistry = None): Unit {
+        let style = node.style
+        if (style.offsetX != 0 || style.offsetY != 0) {
+            layoutNodeResolved(node,
+                CjguiComposableUiRect(bounds.x + style.offsetX, bounds.y + style.offsetY, bounds.width,
+                    bounds.height),
+                parentClipConstraints, output, measurer, inheritedInputScope, work, reuseCache: reuseCache,
+                reuseDepth: reuseDepth, identityRegistry: identityRegistry)
+            return
+        }
+        layoutNodeResolved(node, bounds, parentClipConstraints, output, measurer, inheritedInputScope, work,
+            reuseCache: reuseCache, reuseDepth: reuseDepth, identityRegistry: identityRegistry)
+    }
+
+    private static func layoutNodeResolved(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect,
         parentClipConstraints: ArrayList<CjguiComposableUiClipConstraint>,
         output: ArrayList<CjguiComposableUiLayoutNode>, measurer: CjguiComposableUiTextMeasurer,
         inheritedInputScope: String, work: CjguiComposableUiLayoutWorkCounter,
@@ -6488,7 +7120,23 @@ public class CjguiComposableUiLayoutEngine {
                 viewport.stageExtents(natural, inner.height, offset)
                 CjguiComposableUiLayoutEngine.recordStagedViewport(work, viewport)
             }
-            let contentBounds = CjguiComposableUiRect(inner.x, inner.y - offset, inner.width, natural)
+            // Content placement: the scroll contract pins top-anchored content
+            // minus the offset. Only when the whole content fits with room to
+            // spare does the declared anchor resolve the spare space (a short
+            // list centered in a tall viewport is the home-screen case).
+            let anchorShift = if (natural <= inner.height) {
+                let spare = inner.height - natural
+                if (node.style.scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER) {
+                    spare / 2
+                } else if (node.style.scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END) {
+                    spare
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+            let contentBounds = CjguiComposableUiRect(inner.x, inner.y - offset + anchorShift, inner.width, natural)
             // The virtual content was just materialized from mutable source
             // state. It remains on the canonical path for this solve rather
             // than entering the stable-region cache.
@@ -6545,7 +7193,19 @@ public class CjguiComposableUiLayoutEngine {
                 } else {
                     ""
                 }
-                let signature = cache.signatureFor(node, bounds, parentClipConstraints, inheritedInputScope,
+                // The signature must describe the geometry the region WOULD
+                // emit, so the declared displacement is applied BEFORE the
+                // lookup: replaying a region that was solved with another
+                // offset (or a shorter-content alignment) would otherwise hand
+                // back the previous picture under a new declaration
+                // (B, 2026-09-28).
+                let signatureBounds = if (node.style.offsetX != 0 || node.style.offsetY != 0) {
+                    CjguiComposableUiRect(bounds.x + node.style.offsetX, bounds.y + node.style.offsetY,
+                        bounds.width, bounds.height)
+                } else {
+                    bounds
+                }
+                let signature = cache.signatureFor(node, signatureBounds, parentClipConstraints, inheritedInputScope,
                     measurementEnvironmentKey)
                 if (let Some(replayed) <- cache.replay(signature)) {
                     output.add(all: replayed)
@@ -7630,23 +8290,24 @@ public class CjguiComposableUiLayoutEngine {
         return false
     }
     private static func firstDuplicateNodeId(nodes: ArrayList<CjguiComposableUiLayoutNode>): String {
-        var outer: Int64 = 0
-        while (outer < nodes.size) {
-            var inner = outer + 1
-            while (inner < nodes.size) {
-                if (nodes[outer].nodeId == nodes[inner].nodeId) {
-                    // Keep the contract string unchanged (tests assert on it) but name
-                    // the offending id for diagnosis.
-                    println(
-                        "PHAROS_DUPLICATE_NODE_ID id=${nodes[outer].nodeId} " +
-                            "outer=${outer} inner=${inner} count=${nodes.size} " +
-                            "a=${nodes[outer].semanticId} b=${nodes[inner].semanticId} " +
-                            "ak=${nodes[outer].nodeKind} bk=${nodes[inner].nodeKind}")
-                    return "duplicate_node_id"
-                }
-                inner += 1
+        // Linear-time identity scan: dense scenes (thousands of materialized
+        // nodes) run this check on every layout pass, so the previous pairwise
+        // comparison quadratic in the node count is not acceptable there.
+        let seen = HashSet<Int64>()
+        var index: Int64 = 0
+        while (index < nodes.size) {
+            let nodeId = nodes[index].nodeId
+            if (seen.contains(nodeId)) {
+                // Keep the contract string unchanged (tests assert on it) but name
+                // the offending id for diagnosis.
+                println(
+                    "PHAROS_DUPLICATE_NODE_ID id=${nodeId} " +
+                        "index=${index} count=${nodes.size} " +
+                        "b=${nodes[index].semanticId} bk=${nodes[index].nodeKind}")
+                return "duplicate_node_id"
             }
-            outer += 1
+            seen.add(nodeId)
+            index += 1
         }
         return ""
     }

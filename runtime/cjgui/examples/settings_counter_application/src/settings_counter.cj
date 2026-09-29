@@ -14,6 +14,8 @@ import cjgui.*
 import cjgui_shared_operation_core.*
 import std.collection.*
 import std.random.*
+import std.sync.*
+import std.time.*
 import std.unicode.*
 
 /// 已应用的真实业务状态（无草稿层：设置类动作直接生效）。
@@ -23,11 +25,13 @@ public class CjguiSettingsCounterSnapshot {
     public let enabled: Bool
     public let name: String
     public let alias: String
+    public let scrollNote: String
     public let imageVersion: Int64
     public init(version: Int64, count: Int64, enabled: Bool, name: String, alias: String,
-        imageVersion: Int64) {
+        scrollNote: String, imageVersion: Int64) {
         this.version = version; this.count = count; this.enabled = enabled; this.name = name
         this.alias = alias
+        this.scrollNote = scrollNote
         this.imageVersion = imageVersion
     }
 }
@@ -36,16 +40,20 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
     public static let resourceId: Int64 = 9700
     public static let counterMin: Int64 = 0
     public static let counterMax: Int64 = 99
-    // 双字段表单：同一后端，两条不同的业务规则。
-    // name：1–32 个 Unicode scalar；alias：1–8 个 Unicode scalar。
+    // 双字段表单：同一后端，多条不同的业务规则。
+    // name：1–32 个 Unicode scalar；alias：1–8 个 Unicode scalar；
+    // scrollNote：1–32 个 Unicode scalar（手写滚动区内编辑器，验证滚动后
+    // 编辑与 owner 读回）。
     public static let nameMaxUnits: Int64 = 32
     public static let aliasMaxUnits: Int64 = 8
+    public static let scrollNoteMaxUnits: Int64 = 32
 
     private var versionValue: Int64
     private var countValue: Int64
     private var enabledValue: Bool
     private var nameValue: String
     private var aliasValue: String
+    private var scrollNoteValue: String
     private var imageVersionValue: Int64
     private var imageCatalog: ?CjguiGeneratedUiCapabilityCatalog
     private let streamIdentity: String
@@ -57,6 +65,7 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
         this.enabledValue = true
         this.nameValue = "我的设备"
         this.aliasValue = "前台"
+        this.scrollNoteValue = "滚动备注"
         this.imageVersionValue = 1
         this.imageCatalog = None
         // 每次启动的 capability 均为新发；把它编入流标识，防止重启后
@@ -69,7 +78,7 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
 
     public func counterSnapshot(): CjguiSettingsCounterSnapshot {
         return CjguiSettingsCounterSnapshot(versionValue, countValue, enabledValue, nameValue, aliasValue,
-            imageVersionValue)
+            scrollNoteValue, imageVersionValue)
     }
 
     public func imageResourceSpec(): CjguiGeneratedUiImageResourceSpec {
@@ -90,6 +99,7 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
                         CjguiSharedOperationField("counterRange", CjguiSharedOperationValue.string("0-99")),
                         CjguiSharedOperationField("name", CjguiSharedOperationValue.string(nameValue)),
                         CjguiSharedOperationField("alias", CjguiSharedOperationValue.string(aliasValue)),
+                        CjguiSharedOperationField("scrollNote", CjguiSharedOperationValue.string(scrollNoteValue)),
                         CjguiSharedOperationField("imageVersion", CjguiSharedOperationValue.integer(imageVersionValue))
                     ]))
             ]))
@@ -112,6 +122,10 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
                     CjguiSharedOperationParameterDescriptor("text", "STRING", true)
                 ]), 1, 1),
             CjguiSharedOperationActionDescriptor("EDIT_ALIAS", "编辑设备别名",
+                ArrayList<CjguiSharedOperationParameterDescriptor>([
+                    CjguiSharedOperationParameterDescriptor("text", "STRING", true)
+                ]), 1, 1),
+            CjguiSharedOperationActionDescriptor("EDIT_SCROLL_NOTE", "编辑滚动备注",
                 ArrayList<CjguiSharedOperationParameterDescriptor>([
                     CjguiSharedOperationParameterDescriptor("text", "STRING", true)
                 ]), 1, 1)
@@ -206,6 +220,24 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
             }
             return rejected(before, false, "invalid_parameters")
         }
+        if (invocation.actionName == "EDIT_SCROLL_NOTE") {
+            for (argument in invocation.arguments) {
+                if (argument.name == "text" && argument.value.valueType == "STRING") {
+                    let next = argument.value.stringValue
+                    // 滚动备注规则：非空且不超过 32 个 Unicode scalar；人与
+                    // 外部走同一入口（滚动区内编辑器与公开客户端共用）。
+                    if (unicodeScalarCount(next) == 0 ||
+                        unicodeScalarCount(next) > CjguiSettingsCounterDomain.scrollNoteMaxUnits) {
+                        return rejected(before, false, "scroll_note_out_of_range")
+                    }
+                    scrollNoteValue = next
+                    versionValue += 1
+                    recordChange("scroll_note_changed")
+                    return accepted(before, "scroll_note_changed")
+                }
+            }
+            return rejected(before, false, "invalid_parameters")
+        }
         if (invocation.actionName == "SET_ENABLED") {
             for (argument in invocation.arguments) {
                 if (argument.name == "value" && argument.value.valueType == "BOOLEAN") {
@@ -263,6 +295,7 @@ public func settingsCounterAuthorization(): CjguiSharedOperationExternalAuthoriz
         ArrayList<CjguiSharedOperationExternalActionScope>([
             CjguiSharedOperationExternalActionScope("GET_CONTEXT", all, true),
             CjguiSharedOperationExternalActionScope("GET_CHANGES", all, true),
+            CjguiSharedOperationExternalActionScope("GET_WINDOW_INTERACTION", all, true),
             CjguiSharedOperationExternalActionScope("GET_GENERATED_UI", all, true),
             CjguiSharedOperationExternalActionScope("SUBMIT_GENERATED_UI", all, true),
             CjguiSharedOperationExternalActionScope("INCREMENT", all, true),
@@ -270,7 +303,8 @@ public func settingsCounterAuthorization(): CjguiSharedOperationExternalAuthoriz
             CjguiSharedOperationExternalActionScope("SWITCH_IMAGE", all, true),
             CjguiSharedOperationExternalActionScope("SET_ENABLED", all, true),
             CjguiSharedOperationExternalActionScope("EDIT_NAME", all, true),
-            CjguiSharedOperationExternalActionScope("EDIT_ALIAS", all, true)
+            CjguiSharedOperationExternalActionScope("EDIT_ALIAS", all, true),
+            CjguiSharedOperationExternalActionScope("EDIT_SCROLL_NOTE", all, true)
         ]))
 }
 
@@ -285,6 +319,34 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
     public static let nodeIdAlias: Int64 = 25
     public static let nodeIdImage: Int64 = 31
     public static let nodeIdImageSwitch: Int64 = 32
+    // H 触摸滚动区（手写视口）：滚动区容器/内容与区内控件。
+    public static let nodeIdHandScroll: Int64 = 900
+    public static let nodeIdHandScrollImage: Int64 = 940
+    public static let nodeIdHandScrollIncrement: Int64 = 941
+    public static let nodeIdHandScrollNote: Int64 = 942
+    public static let nodeIdHandScrollDecrement: Int64 = 943
+    // 手写滚动视口：与生成 scrollArea 共用核心同一 viewport 机制。
+    public let handScrollViewport: CjguiComposableUiScrollViewport = CjguiComposableUiScrollViewport()
+    // C（触摸包指导接续）：屏外 reveal 的显式目标导航——应用内导航按钮经
+    // 公共 focusAcceptedSemanticNode 请求滚动区内编辑器（reveal→新 accepted
+    // 几何→正确系统上下文→输入→owner）。宿主循环在 pump 后消费挂起请求。
+    public static let nodeIdFocusNoteNav: Int64 = 944
+    private var pendingFocusSemantic: ?String = None
+
+    public func requestFocusSemantic(semanticId: String): Unit {
+        pendingFocusSemantic = Some(semanticId)
+    }
+
+    public func takePendingFocusRequest(): ?String {
+        let pending = pendingFocusSemantic
+        pendingFocusSemantic = None
+        return pending
+    }
+
+    // C（惯性包）：推进手写视口的活跃惯性（由宿主循环每轮调用）。
+    public func stepActiveInertialScrolls(now: MonoTime): Bool {
+        return handScrollViewport.stepInertialScroll(now)
+    }
 
     private let domain: CjguiSettingsCounterDomain
     private let generatedRegion: CjguiGeneratedUiWindowRegion
@@ -292,6 +354,8 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
     private var statusText: String
 
     public init(domain: CjguiSettingsCounterDomain) {
+        // C（惯性包）：启用实验性惯性滚动（手写/生成共同策略声明）。
+        cjguiComposableInertialScrollEnabled = true
         this.domain = domain
         this.generatedRegion = CjguiGeneratedUiWindowRegion(settingsGeneratedCatalog(domain),
             CjguiSettingsCounterGeneratedBinding(domain), "settings-generated")
@@ -441,6 +505,65 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
                 background: CjguiComposableUiColor(0.44, 0.34, 0.12, 1.0),
                 textColor: CjguiComposableUiColor(0.95, 0.92, 0.85, 1.0))))
         cardBox.add(noclipBtnBox)
+        // H 触摸滚动：手写视口（>3 屏有界内容，混排文字/图片/按钮/编辑器）。
+        // 滚动经共享 viewport 的 scroll 意图通道，不改 owner；区内按钮与
+        // 编辑器照常推进 owner，与生成 scrollArea 共同调用同一机制。
+        let handImageSpec = domain.imageResourceSpec()
+        let handScroll = cjguiComposableScrollArea(CjguiSettingsCounterController.nodeIdHandScroll,
+            "settings-hand-scroll", handScrollViewport,
+            CjguiComposableUiStyle(fixedHeight: 420, growX: 1, cornerRadius: 12, clipsContent: true,
+                background: CjguiComposableUiColor(0.09, 0.12, 0.20, 1.0),
+                border: CjguiComposableUiColor(0.26, 0.34, 0.50, 1.0), borderWidth: 1))
+        let handContent = cjguiComposableVertical(901, "settings-hand-scroll-content",
+            CjguiComposableUiStyle(padding: 20, gap: 12, growX: 1))
+        handContent.add(cjguiComposableText(902, "hand-scroll-head", "手写滚动区（上下拖动查看）",
+            CjguiComposableUiStyle(fixedHeight: 46, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
+                fontSize: 26.0, fontWeight: 600)))
+        handContent.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdFocusNoteNav,
+            "settings-focus-note-nav", "定位滚动备注", "FOCUS_SCROLL_NOTE",
+            CjguiSettingsCounterDomain.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 220, fixedHeight: 56,
+                background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
+        var rowNodeId: Int64 = 910
+        for (i in 1..=8) {
+            handContent.add(cjguiComposableText(rowNodeId, "hand-scroll-row${i}",
+                "滚动行 ${i}：内容超过三屏，行号用于滚动后画面与命中对照",
+                CjguiComposableUiStyle(fixedHeight: 44, growX: 1,
+                    textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0), fontSize: 22.0)))
+            rowNodeId += 1
+            if (i == 4) {
+                // 屏2：图片与切换按钮（复用既有图片资源与 owner 动作）。
+                let handImageRow = cjguiComposableHorizontal(930, "hand-scroll-image-row",
+                    CjguiComposableUiStyle(fixedHeight: 72, gap: 16))
+                handImageRow.add(cjguiComposableImage(CjguiSettingsCounterController.nodeIdHandScrollImage,
+                    "hand-scroll-beacon", handImageSpec.rasterPath,
+                    CjguiComposableUiStyle(fixedWidth: 160, fixedHeight: 72),
+                    contentMode: 1, imageResourceId: handImageSpec.key,
+                    imageResourceVersion: handImageSpec.version))
+                handImageRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdHandScrollIncrement,
+                    "hand-scroll-increment", "滚动区增加", "INCREMENT",
+                    CjguiSettingsCounterDomain.resourceId, action, enabled: snapshot.enabled))
+                handContent.add(handImageRow)
+            }
+            if (i == 8) {
+                // 屏3：滚动备注编辑器（owner 字段 scrollNote）。
+                handContent.add(cjguiComposableTextInput(CjguiSettingsCounterController.nodeIdHandScrollNote,
+                    "hand-scroll-note", "滚动备注", snapshot.scrollNote,
+                    CjguiSettingsCounterDomain.resourceId,
+                    CjguiComposableUiStyle(fixedHeight: 64, growX: 1, fontSize: 24.0,
+                        background: CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
+                        border: CjguiComposableUiColor(0.32, 0.40, 0.54, 1.0), borderWidth: 1,
+                        cornerRadius: 10, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0)),
+                    fieldId: "scrollNote", operationActionName: "EDIT_SCROLL_NOTE",
+                    displayValueRole: "applied"))
+            }
+        }
+        handContent.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdHandScrollDecrement,
+            "hand-scroll-decrement", "滚动区减少", "DECREMENT",
+            CjguiSettingsCounterDomain.resourceId, action, enabled: snapshot.enabled))
+        handScroll.add(handContent)
+        root.add(handScroll)
         root.add(cardBox)
         root.add(generatedRegion.buildNode())
         return root
@@ -453,15 +576,25 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
             return generated
         }
         let snapshot = domain.counterSnapshot()
+        if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdFocusNoteNav) {
+            // 显式目标导航：请求聚焦滚动区内编辑器（屏外 reveal→系统输入）。
+            requestFocusSemantic("hand-scroll-note")
+            statusText = "已请求定位滚动备注"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdImageSwitch) {
             return applyImage(domain.executeFromHuman(invoke("SWITCH_IMAGE", snapshot.version)))
         }
         if (event.eventKind == 27 && (event.node.nodeId == CjguiSettingsCounterController.nodeIdIncrement
-            || event.node.nodeId == 45 || event.node.nodeId == 47)) {
-            // 45/47：D2 裁剪命中夹具按钮，走同一条 INCREMENT owner 入口。
+            || event.node.nodeId == 45 || event.node.nodeId == 47
+            || event.node.nodeId == CjguiSettingsCounterController.nodeIdHandScrollIncrement)) {
+            // 45/47：D2 裁剪命中夹具按钮；941：手写滚动区按钮——同一条
+            // INCREMENT owner 入口。
             return applyCounter(domain.executeFromHuman(invoke("INCREMENT", snapshot.version)))
         }
-        if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdDecrement) {
+        if (event.eventKind == 27 && (event.node.nodeId == CjguiSettingsCounterController.nodeIdDecrement
+            || event.node.nodeId == CjguiSettingsCounterController.nodeIdHandScrollDecrement)) {
             return applyCounter(domain.executeFromHuman(invoke("DECREMENT", snapshot.version)))
         }
         if (event.eventKind == 29 && event.node.nodeId == CjguiSettingsCounterController.nodeIdEnabled) {
@@ -473,6 +606,9 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         }
         if (event.eventKind == 28 && event.node.nodeId == CjguiSettingsCounterController.nodeIdAlias) {
             return applyAlias(domain.executeFromHuman(invokeAlias(event.text, snapshot.version)))
+        }
+        if (event.eventKind == 28 && event.node.nodeId == CjguiSettingsCounterController.nodeIdHandScrollNote) {
+            return applyScrollNote(domain.executeFromHuman(invokeScrollNote(event.text, snapshot.version)))
         }
         return CjguiComposableUiDispatchResult(false)
     }
@@ -508,6 +644,29 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
             ArrayList<CjguiSharedOperationActionArgument>([
                 CjguiSharedOperationActionArgument("text", CjguiSharedOperationValue.string(text))
             ]))
+    }
+
+    private func invokeScrollNote(text: String, expectedVersion: Int64): CjguiSharedOperationActionInvocation {
+        return CjguiSharedOperationActionInvocation("EDIT_SCROLL_NOTE", expectedVersion,
+            ArrayList<Int64>([CjguiSettingsCounterDomain.resourceId]),
+            ArrayList<CjguiSharedOperationActionArgument>([
+                CjguiSharedOperationActionArgument("text", CjguiSharedOperationValue.string(text))
+            ]))
+    }
+
+    private func applyScrollNote(result: CjguiSharedOperationActionResult): CjguiComposableUiDispatchResult {
+        let snapshot = domain.counterSnapshot()
+        statusText = if (result.applied) {
+            "滚动备注已应用 v${result.versionAfter} · ${snapshot.scrollNote}"
+        } else if (result.reason == "scroll_note_out_of_range") {
+            "滚动备注未应用：1-32 字符（当前 ${snapshot.scrollNote}）"
+        } else if (result.reason == "version_conflict") {
+            "滚动备注未应用：内容已被外部更新，请基于新值重试"
+        } else {
+            "滚动备注未应用：${result.reason}"
+        }
+        localRevision += 1
+        return CjguiComposableUiDispatchResult(result.applied)
     }
 
     private func applyAlias(result: CjguiSharedOperationActionResult): CjguiComposableUiDispatchResult {

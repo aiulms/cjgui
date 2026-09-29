@@ -1,0 +1,5 @@
+product.software.version=emulator 6.1.0.117(SP37DEVC00E115R4P11)
+ohos.apiversion=24
+product.model=emulator
+cpu.abilist=arm64-v8a
+device.type=default

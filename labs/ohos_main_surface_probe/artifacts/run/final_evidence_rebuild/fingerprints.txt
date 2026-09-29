@@ -1,0 +1,12 @@
+=== 源码指纹（sha256）===
+6d354ab1bda2fa8642c00a59971d59d94c65c9433afd43271c9dc8903031ead2  entry/src/main/cpp/main_surface_probe.cpp
+afc7fece2f72247e04f17688bc89a2d6e61a08a1851c9b4ff1652000488b9381  entry/src/main/cpp/CMakeLists.txt
+a4b5d8c914bfa1dc64117cb11923a09c9a2b51b29c5d49de664b6b094acd5d39  entry/src/main/ets/pages/Index.ets
+2e0bd9cc61d1ea0ae3cd82b9ecb86b0af2d8239cc6953f6e2c2c5b5feb1e6ed9  entry/src/main/ets/entryability/EntryAbility.ets
+6d2b73bb3c5841029c97f25c0d33519a0e71357113f7d32aebedc3db9061dd62  entry/src/main/module.json5
+1af53a4184e6519ad021a47fb081c563248b5f99b3483eaeaeff934e5b2a9880  scripts/probe.sh
+=== 产物指纹 ===
+48f129150fb08eaa92796ab75218660b9d40661d7e3b7e5387c6f3f1c28cc4f8  entry/build/default/intermediates/stripped_native_libs/default/arm64-v8a/libentry.so
+hap_sha256=a300eb3eb9d86f10413b65fa07d51e9bf46c728849ec8cbdeaaf344891b853bc
+hap_bytes=1506536
+pid=22144

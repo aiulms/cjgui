@@ -66,6 +66,25 @@ def main() -> None:
         raise AssertionError("accepted public readback differs from candidate ticket")
     Path(gate + ".accepted").touch()
     app_accepted = wait_log(app_log, "CJGUI_GENERATED_DIAGNOSTIC_PHASE accepted")
+    workload = wait_log(app_log, "CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=workload_observed ")
+    if "ok=1" not in workload or "result=accepted" not in workload:
+        raise AssertionError(f"generated workload observation failed: {workload}")
+    expected_writes = int(workload.split("attempt_writes=")[1].split()[0])
+    expected_scene = int(workload.split("scene=")[1].split()[0])
+    public_progress = session.client.get_window_progress()
+    public_reread = session.client.get_window_progress()
+    if (public_progress.kind != "WINDOW_PROGRESS" or
+            public_progress.value("WINDOW_WORKLOAD_STATUS") != ("enabled",) or
+            public_progress.value("WINDOW_WORKLOAD_LAST_ATTEMPT_RESULT") != ("accepted",) or
+            public_progress.integer("WINDOW_WORKLOAD_LAST_ATTEMPT_NODE_WRITES") != expected_writes or
+            public_progress.integer("WINDOW_WORKLOAD_SCENE_VERSION") != expected_scene or
+            public_progress.integer("WINDOW_ACCEPTED_SCENE_VERSION") != expected_scene or
+            public_progress.integer("WINDOW_WORKLOAD_NODE_WRITES") < expected_writes or
+            public_reread.integer("WINDOW_WORKLOAD_NODE_WRITES") !=
+                public_progress.integer("WINDOW_WORKLOAD_NODE_WRITES") or
+            public_reread.integer("WINDOW_WORKLOAD_NODE_CLONES") !=
+                public_progress.integer("WINDOW_WORKLOAD_NODE_CLONES")):
+        raise AssertionError(f"public workload disagrees with normal app: {public_progress.raw}")
     invalid_result = session.submit(replace_group(accepted.nodes, INVALID), accepted.version)
     invalid = session.wait_for_candidate_result(invalid_result.ticket(), timeout_ms=8000, poll_ms=40)
     if invalid.outcome != "terminal" or invalid.last_state is None or invalid.last_state.terminal_state != "REJECTED":
@@ -78,10 +97,16 @@ def main() -> None:
     done = wait_log(app_log, "CJGUI_GENERATED_DIAGNOSTIC_DONE ")
     if "failed=0" not in done:
         raise AssertionError(f"normal app diagnostic assertion failed: {done}")
+    if expected_writes < 1:
+        raise AssertionError(f"accepted public candidate wrote no nodes: {workload}")
+    disabled = wait_log(app_log, "CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=workload_disabled ")
+    if "ok=1" not in disabled:
+        raise AssertionError(f"generated workload disabled state failed: {disabled}")
     print("CJGUI_GENERATED_DIAGNOSTIC_CLIENT PASS "
           f"ready=[{ready}] accepted=[{app_accepted}] "
           f"ticket={legal.last_state.terminal_state}/{invalid.last_state.terminal_state} "
-          f"structure={baseline.version}->{accepted.version} done=[{done}]")
+          f"structure={baseline.version}->{accepted.version} "
+          f"public_workload_writes={expected_writes} scene={expected_scene} done=[{done}]")
 
 
 if __name__ == "__main__":

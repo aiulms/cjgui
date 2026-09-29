@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import math
 import os
 import re
 import socket
@@ -24,6 +25,16 @@ PROTOCOL = "CJGUI_SHARED_OPERATION/2"
 # Matches transport `isSafeIdentifier`: semantic IDs and change streams may
 # contain a hyphen after their first ASCII letter/underscore.
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+# Matches transport `isSafeOpaqueIdentity` for endpoint instances and resource
+# instance ids.  Opaque identities are bounded ASCII compared only for
+# equality; framework instance nonces are hexadecimal, so their first character
+# may be a digit and IDENTIFIER would reject the value the endpoint published.
+OPAQUE_IDENTITY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Lease tokens use the same framing invariant with the transport's 256-byte
+# bound, so a token is longer than an IDENTIFIER and may begin with a digit.
+LEASE_TOKEN = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+POSITION_CAS = re.compile(r"^[!-~]{1,256}$")
+POSITION_MOTION_REFERENCE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 EXIT_CLIENT_ERROR = 2
 EXIT_REMOTE_ERROR = 3
@@ -356,6 +367,252 @@ class WindowProgressWait:
 
 
 @dataclass(frozen=True)
+class TransferReceipt:
+    session_identity: str
+    event_id: int
+    event_kind: int
+    node_id: int
+    binding_epoch: int
+    expected_owner_version: int
+    owner_attempted: bool
+    owner_version_before: int
+    owner_version_after: int
+    accepted_scene_version: int
+    submitted_frame_index: int
+    revision: int
+    semantic_id: str
+    source_kind: str
+    format: str
+    content_digest: str
+    state: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class TransferReceiptPage:
+    lookup: str
+    revision: int
+    retention_floor: int
+    resync_required: bool
+    receipts: tuple[TransferReceipt, ...]
+
+
+def parse_transfer_receipt_page(response: SharedOperationResponse) -> TransferReceiptPage:
+    if response.kind not in ("TRANSFER_RECEIPT", "TRANSFER_RECEIPT_CHANGES"):
+        fail("response is not a transfer receipt page")
+    lookup = response.value("LOOKUP")
+    if len(lookup) != 1 or lookup[0] not in ("found", "expired", "unknown", "changes"):
+        fail("transfer receipt lookup is invalid")
+    receipts: list[TransferReceipt] = []
+
+    def decode(value: str) -> str:
+        if value == "-":
+            return ""
+        try:
+            return bytes.fromhex(value).decode("utf-8")
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError("transfer receipt has invalid UTF-8 hex") from exc
+
+    for fields in response.values("RECEIPT"):
+        if len(fields) != 18:
+            fail("transfer receipt field count is invalid")
+        try:
+            receipt = TransferReceipt(
+                fields[0], int(fields[1]), int(fields[2]), int(fields[3]),
+                int(fields[4]), int(fields[5]), fields[6] == "true",
+                int(fields[7]), int(fields[8]), int(fields[9]), int(fields[10]),
+                int(fields[11]), decode(fields[12]), decode(fields[13]),
+                decode(fields[14]), decode(fields[15]), decode(fields[16]),
+                decode(fields[17]),
+            )
+        except ValueError as exc:
+            raise ValueError("transfer receipt has invalid numeric or text fields") from exc
+        if fields[6] not in ("true", "false") or receipt.event_id <= 0 or receipt.revision < 0:
+            fail("transfer receipt identity is invalid")
+        receipts.append(receipt)
+    if len(receipts) != response.integer("COUNT") or len(receipts) > 64:
+        fail("transfer receipt count is invalid")
+    return TransferReceiptPage(lookup[0], response.integer("REVISION"),
+                               response.integer("RETENTION_FLOOR"), response.boolean("RESYNC"),
+                               tuple(receipts))
+
+
+@dataclass(frozen=True)
+class SnapshotLease:
+    """One granted fixed-snapshot lease, decoded from `SNAPSHOT_ACQUIRE`."""
+
+    token: str
+    endpoint_instance: str
+    bind_generation: int
+    resource_id: int
+    resource_instance_id: str
+    version: int
+    byte_length: int
+    granted_ttl_ms: int
+    remaining_ttl_ms: int
+    max_read_bytes: int
+
+
+@dataclass(frozen=True)
+class SnapshotReleaseReceipt:
+    """One lease's first terminal reason, decoded from `SNAPSHOT_RELEASE`."""
+
+    token: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class SnapshotRangeRead:
+    """One typed `SNAPSHOT_READ` result of the shared `RANGE` envelope.
+
+    A terminated lease (released, expired, revoked, resource closed) is a
+    normal outcome: ``available`` is false, ``reason`` names it and ``content``
+    is None.  ``reason`` is present on an available read too.
+    """
+
+    available: bool
+    reason: str
+    content: str | None
+
+
+def require_opaque_identity(value: object, label: str) -> str:
+    """Accept one bounded ASCII identity exactly as the endpoint does."""
+
+    if not isinstance(value, str) or not OPAQUE_IDENTITY.fullmatch(value):
+        fail(f"{label} is not a bounded opaque identity")
+    return value
+
+
+def require_lease_token(value: object) -> str:
+    """Accept one opaque lease token, which may begin with a digit."""
+
+    if not isinstance(value, str) or not LEASE_TOKEN.fullmatch(value):
+        fail("lease token is not a bounded opaque identity")
+    return value
+
+
+def _snapshot_endpoint_identity(
+    descriptor: Mapping[str, object], endpoint_instance: str | None, bind_generation: int | None,
+) -> tuple[str, int]:
+    """Resolve the acquire identity, defaulting to this descriptor's own."""
+
+    endpoint = require_opaque_identity(
+        descriptor.get("endpoint_instance") if endpoint_instance is None else endpoint_instance,
+        "snapshot endpoint instance")
+    generation = descriptor.get("endpoint_bind_generation") if bind_generation is None else bind_generation
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+        fail("snapshot bind generation is unavailable or invalid")
+    return endpoint, generation
+
+
+def snapshot_acquire_command(
+    descriptor: Mapping[str, object],
+    resource_id: int,
+    *,
+    request_id: str | None = None,
+    resource_instance_id: str | None = None,
+    expected_version: int | None = None,
+    ttl_ms: int = 0,
+    endpoint_instance: str | None = None,
+    bind_generation: int | None = None,
+) -> str:
+    """Build the ONE `SNAPSHOT_ACQUIRE` command line used by method and CLI."""
+
+    if not isinstance(resource_id, int) or isinstance(resource_id, bool) or resource_id < 0:
+        fail("snapshot resource id must be a non-negative integer")
+    if request_id is not None:
+        require_opaque_identity(request_id, "snapshot request id")
+    if resource_instance_id is not None:
+        require_opaque_identity(resource_instance_id, "snapshot resource instance")
+    if expected_version is not None and (
+        not isinstance(expected_version, int)
+        or isinstance(expected_version, bool)
+        or expected_version < 0
+    ):
+        fail("snapshot expected version must be a non-negative integer")
+    if not isinstance(ttl_ms, int) or isinstance(ttl_ms, bool) or ttl_ms < 0:
+        fail("snapshot ttl must be a non-negative integer")
+    endpoint, generation = _snapshot_endpoint_identity(descriptor, endpoint_instance, bind_generation)
+    request_token = "-" if request_id is None else request_id
+    instance_token = "-" if resource_instance_id is None else resource_instance_id
+    version_token = "ANY" if expected_version is None else str(expected_version)
+    return (f"SNAPSHOT_ACQUIRE {endpoint} {generation} {request_token} {resource_id} "
+            f"{instance_token} {version_token} {ttl_ms}")
+
+
+def snapshot_read_command(token: str, start: int, end: int) -> str:
+    """Build the ONE `SNAPSHOT_READ` command line used by method and CLI."""
+
+    require_lease_token(token)
+    if (not isinstance(start, int) or isinstance(start, bool) or not isinstance(end, int)
+            or isinstance(end, bool) or start < 0 or end < start):
+        fail("snapshot range offsets must be non-negative integers with end >= start")
+    if end - start > 64 * 1024:
+        fail("snapshot range exceeds the 64 KiB protocol bound")
+    return f"SNAPSHOT_READ {token} {start} {end}"
+
+
+def snapshot_release_command(token: str) -> str:
+    """Build the ONE `SNAPSHOT_RELEASE` command line used by method and CLI."""
+
+    return f"SNAPSHOT_RELEASE {require_lease_token(token)}"
+
+
+def parse_snapshot_lease(response: SharedOperationResponse) -> SnapshotLease:
+    """Decode one granted lease; a refusal is an `ERROR` response instead."""
+
+    if response.kind != "SNAPSHOT_LEASE":
+        fail("response is not a snapshot lease")
+    token = require_lease_token(response.value("TOKEN")[0])
+    endpoint_instance = require_opaque_identity(response.value("ENDPOINT_INSTANCE")[0],
+                                                "snapshot lease endpoint instance")
+    resource_instance_id = require_opaque_identity(response.value("RESOURCE_INSTANCE")[0],
+                                                   "snapshot lease resource instance")
+    bind_generation = response.integer("ENDPOINT_BIND_GENERATION")
+    resource_id = response.integer("RESOURCE")
+    version = response.integer("VERSION")
+    byte_length = response.integer("BYTE_LENGTH")
+    granted_ttl_ms = response.integer("TTL_MS")
+    remaining_ttl_ms = response.integer("REMAINING_MS")
+    max_read_bytes = response.integer("MAX_READ_BYTES")
+    if bind_generation < 0 or resource_id < 0 or version < 0 or byte_length < 0 or max_read_bytes < 0:
+        fail("snapshot lease identity is invalid")
+    if granted_ttl_ms < 0 or remaining_ttl_ms < 0 or remaining_ttl_ms > granted_ttl_ms:
+        fail("snapshot lease ttl is invalid")
+    return SnapshotLease(token, endpoint_instance, bind_generation, resource_id,
+                         resource_instance_id, version, byte_length, granted_ttl_ms,
+                         remaining_ttl_ms, max_read_bytes)
+
+
+def parse_snapshot_release(response: SharedOperationResponse) -> SnapshotReleaseReceipt:
+    """Decode one release receipt; releasing twice repeats the first reason."""
+
+    if response.kind != "SNAPSHOT_RELEASE":
+        fail("response is not a snapshot release receipt")
+    token = require_lease_token(response.value("TOKEN")[0])
+    reason = response.value("REASON")
+    if len(reason) != 1 or not IDENTIFIER.fullmatch(reason[0]):
+        fail("snapshot release reason is invalid")
+    return SnapshotReleaseReceipt(token, reason[0])
+
+
+def parse_snapshot_range(response: SharedOperationResponse) -> SnapshotRangeRead:
+    """Decode one `SNAPSHOT_READ` reply without hand-parsing its hex content."""
+
+    if response.kind != "RANGE":
+        fail("response is not a range read")
+    available = response.boolean("AVAILABLE")
+    reason = response.value("REASON")
+    if len(reason) != 1 or not IDENTIFIER.fullmatch(reason[0]):
+        fail("range reason is invalid")
+    if not available:
+        if response.values("CONTENT_UTF8_HEX"):
+            fail("an unavailable range must not carry content")
+        return SnapshotRangeRead(False, reason[0], None)
+    return SnapshotRangeRead(True, reason[0], response.text("CONTENT_UTF8_HEX"))
+
+
+@dataclass(frozen=True)
 class SharedOperationObservation:
     """One explicit result of an incremental public observation turn."""
 
@@ -448,6 +705,63 @@ class SharedOperationClient:
             timeout_seconds=timeout_seconds,
             deadline_monotonic=deadline_monotonic,
         )
+
+    def list_node_translations(self, *, timeout_seconds: float | None = None) -> SharedOperationResponse:
+        """Discover the application's exact accepted motion targets."""
+        return self.request("\n".join((f"PROTOCOL {PROTOCOL}",
+            f"AUTH {self.descriptor['capability']}", "GET_NODE_TRANSLATION LIST")),
+            timeout_seconds=timeout_seconds)
+
+    def read_node_translation(self, node_id: int,
+                              *, timeout_seconds: float | None = None) -> SharedOperationResponse:
+        _validate_resource_ids((node_id,))
+        return self.request("\n".join((f"PROTOCOL {PROTOCOL}",
+            f"AUTH {self.descriptor['capability']}", f"GET_NODE_TRANSLATION READ {node_id}")),
+            timeout_seconds=timeout_seconds)
+
+    def set_node_translation(self, node_id: int, cas_token: str, x: float, y: float,
+                             motion_reference: str = "generated.position",
+                             *, timeout_seconds: float | None = None) -> SharedOperationResponse:
+        _validate_resource_ids((node_id,))
+        if (not POSITION_CAS.fullmatch(cas_token) or
+                not POSITION_MOTION_REFERENCE.fullmatch(motion_reference) or
+                not math.isfinite(x) or not math.isfinite(y) or
+                abs(x) > 1024 or abs(y) > 1024):
+            fail("invalid node translation request")
+        return self.request("\n".join((f"PROTOCOL {PROTOCOL}",
+            f"AUTH {self.descriptor['capability']}",
+            f"SET_NODE_TRANSLATION {node_id} {cas_token} {x} {y} {motion_reference}")),
+            timeout_seconds=timeout_seconds)
+
+    def clear_node_translation(self, node_id: int, cas_token: str,
+                               *, timeout_seconds: float | None = None) -> SharedOperationResponse:
+        _validate_resource_ids((node_id,))
+        if not POSITION_CAS.fullmatch(cas_token):
+            fail("invalid node translation CAS token")
+        return self.request("\n".join((f"PROTOCOL {PROTOCOL}",
+            f"AUTH {self.descriptor['capability']}",
+            f"CLEAR_NODE_TRANSLATION {node_id} {cas_token}")),
+            timeout_seconds=timeout_seconds)
+
+    def get_transfer_receipt(self, session_identity: str, event_id: int,
+                             *, timeout_seconds: float | None = None) -> TransferReceiptPage:
+        if not IDENTIFIER.fullmatch(session_identity) or event_id <= 0:
+            fail("transfer receipt identity is invalid")
+        response = self.request("\n".join((f"PROTOCOL {PROTOCOL}",
+            f"AUTH {self.descriptor['capability']}",
+            f"GET_TRANSFER_RECEIPT {session_identity} {event_id}")), timeout_seconds=timeout_seconds)
+        return parse_transfer_receipt_page(response)
+
+    def get_transfer_receipt_changes(self, session_identity: str, after_revision: int,
+                                     maximum: int = 64, *, timeout_seconds: float | None = None) -> TransferReceiptPage:
+        if (not IDENTIFIER.fullmatch(session_identity) or after_revision < 0 or
+                maximum < 1 or maximum > 64):
+            fail("transfer receipt cursor is invalid")
+        response = self.request("\n".join((f"PROTOCOL {PROTOCOL}",
+            f"AUTH {self.descriptor['capability']}",
+            f"GET_TRANSFER_RECEIPT_CHANGES {session_identity} {after_revision} {maximum}")),
+            timeout_seconds=timeout_seconds)
+        return parse_transfer_receipt_page(response)
 
     def get_window_targets(
         self, *, timeout_seconds: float | None = None,
@@ -546,6 +860,101 @@ class SharedOperationClient:
                     f"PROTOCOL {PROTOCOL}",
                     f"AUTH {self.descriptor['capability']}",
                     f"READ_RANGE {resource_id} {start} {end} {expected_version}",
+                ]
+            ),
+            timeout_seconds=timeout_seconds,
+            deadline_monotonic=deadline_monotonic,
+        )
+
+    def snapshot_acquire(
+        self,
+        resource_id: int,
+        *,
+        request_id: str | None = None,
+        resource_instance_id: str | None = None,
+        expected_version: int | None = None,
+        ttl_ms: int = 0,
+        endpoint_instance: str | None = None,
+        bind_generation: int | None = None,
+        timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> SharedOperationResponse:
+        """Acquire ONE fixed-snapshot lease of an authorized resource.
+
+        The endpoint instance and bind generation default to this descriptor's
+        own published values; overriding them only proves that a stale caller
+        is refused `snapshot_endpoint_changed`.  `request_id` is the
+        caller-chosen idempotent-replay identity: re-sending the same id with
+        the same arguments returns the ORIGINAL lease, a different argument set
+        is refused `snapshot_request_conflict`; `-` (the default) requests no
+        replay identity.  `expected_version` None means `ANY`.  `ttl_ms` 0
+        selects the endpoint default and a larger value is clamped, so the
+        reply's `TTL_MS` is what was actually granted.
+
+        A refusal is an ordinary `ERROR <reason>` response - including
+        `unauthorized_caller` when the endpoint installed no snapshot provider
+        - so the capability stays optional for the caller; decode a granted
+        lease with :func:`parse_snapshot_lease`.
+        """
+        return self.request(
+            "\n".join(
+                [
+                    f"PROTOCOL {PROTOCOL}",
+                    f"AUTH {self.descriptor['capability']}",
+                    snapshot_acquire_command(
+                        self.descriptor, resource_id, request_id=request_id,
+                        resource_instance_id=resource_instance_id,
+                        expected_version=expected_version, ttl_ms=ttl_ms,
+                        endpoint_instance=endpoint_instance,
+                        bind_generation=bind_generation,
+                    ),
+                ]
+            ),
+            timeout_seconds=timeout_seconds,
+            deadline_monotonic=deadline_monotonic,
+        )
+
+    def snapshot_read(
+        self, token: str, start: int, end: int, *, timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> SharedOperationResponse:
+        """Read one bounded byte range of a lease, without naming endpoint or version.
+
+        The token binds identity, version and resource, and the reply is the
+        SAME `RANGE` envelope as :meth:`read_range`.  A terminated lease answers
+        `AVAILABLE false` with a named reason - a normal lease outcome, not a
+        transport failure; :func:`parse_snapshot_range` exposes both cases as
+        (available, reason, content).
+        """
+        return self.request(
+            "\n".join(
+                [
+                    f"PROTOCOL {PROTOCOL}",
+                    f"AUTH {self.descriptor['capability']}",
+                    snapshot_read_command(token, start, end),
+                ]
+            ),
+            timeout_seconds=timeout_seconds,
+            deadline_monotonic=deadline_monotonic,
+        )
+
+    def snapshot_release(
+        self, token: str, *, timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> SharedOperationResponse:
+        """Release a lease explicitly; releasing twice repeats the first reason.
+
+        `ERROR snapshot_unknown` names a token this endpoint never issued, and
+        `ERROR snapshot_endpoint_changed` names a request that reached a
+        different endpoint instance than the one the lease was taken on; decode
+        the receipt with :func:`parse_snapshot_release`.
+        """
+        return self.request(
+            "\n".join(
+                [
+                    f"PROTOCOL {PROTOCOL}",
+                    f"AUTH {self.descriptor['capability']}",
+                    snapshot_release_command(token),
                 ]
             ),
             timeout_seconds=timeout_seconds,
@@ -1096,6 +1505,23 @@ def request_payload(args: argparse.Namespace, descriptor: dict[str, object]) -> 
             f"READ_RANGE {args.resource_id} {args.start} {args.end} {args.expected_version}"
         )
         return "\n".join(header)
+    if args.command == "snapshot-acquire":
+        header.append(
+            snapshot_acquire_command(
+                descriptor, args.resource_id, request_id=args.request_id,
+                resource_instance_id=args.resource_instance,
+                expected_version=args.expected_version, ttl_ms=args.ttl_ms,
+                endpoint_instance=args.endpoint_instance,
+                bind_generation=args.bind_generation,
+            )
+        )
+        return "\n".join(header)
+    if args.command == "snapshot-read":
+        header.append(snapshot_read_command(args.token, args.start, args.end))
+        return "\n".join(header)
+    if args.command == "snapshot-release":
+        header.append(snapshot_release_command(args.token))
+        return "\n".join(header)
     if args.command == "invoke":
         if not IDENTIFIER.fullmatch(args.action):
             fail("action name is not an identifier")
@@ -1138,6 +1564,23 @@ def parser() -> argparse.ArgumentParser:
     read_range.add_argument("start", type=int)
     read_range.add_argument("end", type=int)
     read_range.add_argument("expected_version", type=int)
+    snapshot_acquire = commands.add_parser(
+        "snapshot-acquire",
+        help="acquire one fixed-snapshot lease at an exact frozen version",
+    )
+    snapshot_acquire.add_argument("resource_id", type=int)
+    snapshot_acquire.add_argument("--request-id", help="replay identity; the same id and arguments return the SAME lease")
+    snapshot_acquire.add_argument("--resource-instance", help="pin the instance id returned by an earlier acquire")
+    snapshot_acquire.add_argument("--expected-version", type=int, help="expected version; omit for ANY")
+    snapshot_acquire.add_argument("--ttl-ms", type=int, default=0, help="lease ttl in ms; 0 selects the endpoint default")
+    snapshot_acquire.add_argument("--endpoint-instance", help="override the descriptor endpoint instance (stale-caller probe)")
+    snapshot_acquire.add_argument("--bind-generation", type=int, help="override the descriptor bind generation (stale-caller probe)")
+    snapshot_read = commands.add_parser("snapshot-read", help="read one bounded byte range of a fixed-snapshot lease")
+    snapshot_read.add_argument("token")
+    snapshot_read.add_argument("start", type=int)
+    snapshot_read.add_argument("end", type=int)
+    snapshot_release = commands.add_parser("snapshot-release", help="release one lease explicitly; releasing twice is idempotent")
+    snapshot_release.add_argument("token")
     commands.add_parser("generated-capabilities",
                         help="query the application's runtime-generated-UI capability catalog")
     commands.add_parser("generated-structure",

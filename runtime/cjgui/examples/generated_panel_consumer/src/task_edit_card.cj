@@ -74,11 +74,13 @@ public class CjguiTaskEditCardComposite <: CjguiCompositeComponentFactory {
                                  icon!: ?CjguiGeneratedUiImageResourceSpec = None,
                                  iconSize!: Int64 = 40,
                                  style!: CjguiComposableUiStyle = CjguiComposableUiStyle(),
+                                 rootTranslateX!: Float64 = 0.0, rootTranslateY!: Float64 = 0.0,
                                  interaction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
                                  titleEnabled!: Bool = true, notesEnabled!: Bool = true): CjguiComposableUiNode {
         // The card's gap is the caller's declared layout property, applied to the
         // one builder both the generated and a handwritten region call.
-        let card = cjguiComposableVertical(nodeId, semanticId, CjguiComposableUiStyle(gap: cardGap))
+        let card = cjguiComposableVertical(nodeId, semanticId,
+            CjguiComposableUiStyle(gap: cardGap, translateX: rootTranslateX, translateY: rootTranslateY))
         if (let Some(resource) <- icon) {
             if (iconNodeId > 0) {
                 // The icon is mounted from the application declaration, not from a
@@ -91,7 +93,7 @@ public class CjguiTaskEditCardComposite <: CjguiCompositeComponentFactory {
             }
         }
         card.add(cjguiComposableText(captionNodeId, "${semanticId}-caption", caption,
-            CjguiComposableUiStyle(fontSize: 13.0)))
+            CjguiComposableUiStyle(fontSize: 13.0, textColor: style.textColor)))
         // The owner's CURRENT availability is consumed, not inferred from "a
         // target exists": a frozen title is shown disabled with the owner's own
         // reason, while notes stay editable. Target and identity are untouched.
@@ -149,6 +151,7 @@ public class CjguiTaskEditCardComposite <: CjguiCompositeComponentFactory {
             title.ownerTargetResourceId, notes.label, notes.draftText, notes.writerOperation,
             notes.bindingResourceId, notes.ownerTargetResourceId, cardGap: cardGap,
             iconNodeId: iconElement.nodeId, icon: Some(icon), iconSize: iconSize, style: editorStyle,
+            rootTranslateX: declared.translateX, rootTranslateY: declared.translateY,
             interaction: context.resolvedInteraction,
             titleEnabled: title.ownerAvailable, notesEnabled: notes.ownerAvailable)
     }

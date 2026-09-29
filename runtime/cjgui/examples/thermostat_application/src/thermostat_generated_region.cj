@@ -161,6 +161,12 @@ public class CjguiThermostatGeneratedBinding <: CjguiGeneratedUiRegionBinding {
             imageProperties.add(property)
         }
         let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("image", imageProperties, false))
+        let scrollProperties = CjguiGeneratedUiPresentation.scrollContentProperties()
+        for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+            scrollProperties.add(property)
+        }
+        let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("scrollArea", scrollProperties, true,
+            childLimit: 1))
         let _ = catalog.registerImageResource(domain.imageResourceSpec())
         domain.bindImageCatalog(catalog)
         for (field in fields()) { let _ = catalog.registerField(field) }

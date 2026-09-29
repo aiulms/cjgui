@@ -15,6 +15,8 @@ package cjgui_thermostat_application
 import cjgui.*
 import cjgui_shared_operation_core.*
 import std.collection.*
+import std.sync.*
+import std.time.*
 import std.random.*
 
 /// 已应用的真实业务状态（无草稿层：设置类动作直接生效）。
@@ -224,6 +226,7 @@ public func thermostatAuthorization(): CjguiSharedOperationExternalAuthorization
         ArrayList<CjguiSharedOperationExternalActionScope>([
             CjguiSharedOperationExternalActionScope("GET_CONTEXT", all, true),
             CjguiSharedOperationExternalActionScope("GET_CHANGES", all, true),
+            CjguiSharedOperationExternalActionScope("GET_WINDOW_INTERACTION", all, true),
             CjguiSharedOperationExternalActionScope("GET_GENERATED_UI", all, true),
             CjguiSharedOperationExternalActionScope("SUBMIT_GENERATED_UI", all, true),
             CjguiSharedOperationExternalActionScope("TEMP_UP", all, true),
@@ -243,6 +246,33 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     public static let nodeIdNote: Int64 = 24
     public static let nodeIdImage: Int64 = 31
     public static let nodeIdImageSwitch: Int64 = 32
+    // H 触摸滚动区（手写视口）：滚动区容器/内容与区内控件。
+    public static let nodeIdHandScroll: Int64 = 900
+    public static let nodeIdHandScrollImage: Int64 = 940
+    public static let nodeIdHandScrollTempUp: Int64 = 941
+    public static let nodeIdHandScrollNote: Int64 = 942
+    public static let nodeIdHandScrollTempDown: Int64 = 943
+    // 手写滚动视口：与生成 scrollArea 共用核心同一 viewport 机制。
+    public let handScrollViewport: CjguiComposableUiScrollViewport = CjguiComposableUiScrollViewport()
+    // C（触摸包指导接续）：屏外 reveal 的显式目标导航——应用内导航按钮经
+    // 公共 focusAcceptedSemanticNode 请求滚动区内编辑器。宿主循环在 pump 后
+    // 消费挂起请求。
+    public static let nodeIdFocusNoteNav: Int64 = 944
+    private var pendingFocusSemantic: ?String = None
+
+    public func requestFocusSemantic(semanticId: String): Unit {
+        pendingFocusSemantic = Some(semanticId)
+    }
+
+    public func stepActiveInertialScrolls(now: MonoTime): Bool {
+        return handScrollViewport.stepInertialScroll(now)
+    }
+
+    public func takePendingFocusRequest(): ?String {
+        let pending = pendingFocusSemantic
+        pendingFocusSemantic = None
+        return pending
+    }
 
     private let domain: CjguiThermostatDomain
     private let generatedRegion: CjguiGeneratedUiWindowRegion
@@ -250,6 +280,8 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     private var statusText: String
 
     public init(domain: CjguiThermostatDomain) {
+        // C（惯性包）：启用实验性惯性滚动（与设置同一份策略声明）。
+        cjguiComposableInertialScrollEnabled = true
         this.domain = domain
         this.generatedRegion = CjguiGeneratedUiWindowRegion(
             CjguiThermostatGeneratedBinding.catalog(domain), CjguiThermostatGeneratedBinding(domain),
@@ -336,6 +368,58 @@ public class CjguiThermostatController <: CjguiComposableUiController &
             resourceId: CjguiThermostatDomain.resourceId, fieldId: "eco",
             displayValueRole: "applied"))
         root.add(cardBox)
+        // H 触摸滚动：手写视口（>3 屏有界内容，混排文字/图片/按钮/编辑器）。
+        // 滚动经共享 viewport 的 scroll 意图通道，不改 owner；区内按钮与
+        // 编辑器照常推进 owner，与生成 scrollArea 共同调用同一机制。
+        // 区内备注编辑器与顶部编辑器绑定同一 owner 字段（同值双入口）。
+        let handScroll = cjguiComposableScrollArea(CjguiThermostatController.nodeIdHandScroll,
+            "thermo-hand-scroll", handScrollViewport,
+            CjguiComposableUiStyle(fixedHeight: 420, growX: 1, cornerRadius: 12, clipsContent: true,
+                background: CjguiComposableUiColor(0.14, 0.10, 0.07, 1.0),
+                border: CjguiComposableUiColor(0.44, 0.32, 0.20, 1.0), borderWidth: 1))
+        let handContent = cjguiComposableVertical(901, "thermo-hand-scroll-content",
+            CjguiComposableUiStyle(padding: 20, gap: 12, growX: 1))
+        handContent.add(cjguiComposableText(902, "hand-scroll-head", "手写滚动区（上下拖动查看）",
+            CjguiComposableUiStyle(fixedHeight: 46, textColor: CjguiComposableUiColor(0.95, 0.93, 0.88, 1.0),
+                fontSize: 26.0, fontWeight: 600)))
+        handContent.add(cjguiComposableButton(CjguiThermostatController.nodeIdFocusNoteNav,
+            "thermo-focus-note-nav", "定位滚动备注", "FOCUS_NOTE",
+            CjguiThermostatDomain.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 220, fixedHeight: 56,
+                background: CjguiComposableUiColor(0.30, 0.20, 0.10, 1.0),
+                textColor: CjguiComposableUiColor(0.98, 0.94, 0.90, 1.0))))
+        var rowNodeId: Int64 = 910
+        for (i in 1..=8) {
+            handContent.add(cjguiComposableText(rowNodeId, "hand-scroll-row${i}",
+                "滚动行 ${i}：内容超过三屏，行号用于滚动后画面与命中对照",
+                CjguiComposableUiStyle(fixedHeight: 44, growX: 1,
+                    textColor: CjguiComposableUiColor(0.90, 0.86, 0.80, 1.0), fontSize: 22.0)))
+            rowNodeId += 1
+            if (i == 4) {
+                let handImageRow = cjguiComposableHorizontal(930, "hand-scroll-image-row",
+                    CjguiComposableUiStyle(fixedHeight: 72, gap: 16))
+                handImageRow.add(cjguiComposableImage(CjguiThermostatController.nodeIdHandScrollImage,
+                    "hand-scroll-heat-map", image.rasterPath,
+                    CjguiComposableUiStyle(fixedWidth: 160, fixedHeight: 72),
+                    contentMode: 1, imageResourceId: image.key, imageResourceVersion: image.version))
+                handImageRow.add(cjguiComposableButton(CjguiThermostatController.nodeIdHandScrollTempUp,
+                    "hand-scroll-up", "滚动区升温", "TEMP_UP", CjguiThermostatDomain.resourceId, action))
+                handContent.add(handImageRow)
+            }
+            if (i == 8) {
+                handContent.add(cjguiComposableTextInput(CjguiThermostatController.nodeIdHandScrollNote,
+                    "hand-scroll-note", "滚动备注", snapshot.note, CjguiThermostatDomain.resourceId,
+                    CjguiComposableUiStyle(fixedHeight: 64, growX: 1, fontSize: 24.0,
+                        background: CjguiComposableUiColor(0.13, 0.10, 0.07, 1.0),
+                        border: CjguiComposableUiColor(0.44, 0.36, 0.26, 1.0), borderWidth: 1,
+                        cornerRadius: 10, textColor: CjguiComposableUiColor(0.95, 0.93, 0.88, 1.0)),
+                    fieldId: "note", operationActionName: "SET_NOTE", displayValueRole: "applied"))
+            }
+        }
+        handContent.add(cjguiComposableButton(CjguiThermostatController.nodeIdHandScrollTempDown,
+            "hand-scroll-down", "滚动区降温", "TEMP_DOWN", CjguiThermostatDomain.resourceId, action))
+        handScroll.add(handContent)
+        root.add(handScroll)
         // Every accepted generated node enters the same layout, scene and
         // XComponent input path as the handwritten controls above.
         let generatedBox = cjguiComposableVertical(800, "thermo-generated-region",
@@ -358,20 +442,30 @@ public class CjguiThermostatController <: CjguiComposableUiController &
             return generatedResult
         }
         let snapshot = domain.thermostatSnapshot()
+        if (event.eventKind == 27 && event.node.nodeId == CjguiThermostatController.nodeIdFocusNoteNav) {
+            // 显式目标导航：请求聚焦滚动区内编辑器（屏外 reveal→系统输入）。
+            requestFocusSemantic("hand-scroll-note")
+            statusText = "已请求定位滚动备注"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.eventKind == 27 && event.node.nodeId == CjguiThermostatController.nodeIdImageSwitch) {
             return applyImage(domain.executeFromHuman(invoke("SWITCH_IMAGE", snapshot.version)))
         }
-        if (event.eventKind == 27 && event.node.nodeId == CjguiThermostatController.nodeIdTempUp) {
+        if (event.eventKind == 27 && (event.node.nodeId == CjguiThermostatController.nodeIdTempUp
+            || event.node.nodeId == CjguiThermostatController.nodeIdHandScrollTempUp)) {
             return applyTemp(domain.executeFromHuman(invoke("TEMP_UP", snapshot.version)))
         }
-        if (event.eventKind == 27 && event.node.nodeId == CjguiThermostatController.nodeIdTempDown) {
+        if (event.eventKind == 27 && (event.node.nodeId == CjguiThermostatController.nodeIdTempDown
+            || event.node.nodeId == CjguiThermostatController.nodeIdHandScrollTempDown)) {
             return applyTemp(domain.executeFromHuman(invoke("TEMP_DOWN", snapshot.version)))
         }
         if (event.eventKind == 29 && event.node.nodeId == CjguiThermostatController.nodeIdEco) {
             let next = event.text == "true"
             return applyEco(domain.executeFromHuman(invokeBoolean(next, snapshot.version)))
         }
-        if (event.eventKind == 28 && event.node.nodeId == CjguiThermostatController.nodeIdNote) {
+        if (event.eventKind == 28 && (event.node.nodeId == CjguiThermostatController.nodeIdNote
+            || event.node.nodeId == CjguiThermostatController.nodeIdHandScrollNote)) {
             return applyNote(domain.executeFromHuman(invokeNote(event.text, snapshot.version)))
         }
         return CjguiComposableUiDispatchResult(false)

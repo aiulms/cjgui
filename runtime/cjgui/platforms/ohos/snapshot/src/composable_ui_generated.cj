@@ -1699,6 +1699,16 @@ func parseGeneratedInteger(value: String): ?Int64 {
     return Some(if (negative) { -result } else { result })
 }
 
+// The generated action's owner target survives a reorder but changes when the
+// action name is rebound under the same instance key.
+private func generatedSemanticActionIncarnation(actionName: String): Int64 {
+    var result: Int64 = 7
+    for (byte in actionName.toArray()) {
+        result = (result * 31 + Int64(byte)) % 2147483647
+    }
+    return result
+}
+
 /// Application-owned bindings for generated fields and actions. Implementors
 /// read live business state; the generated description never stores values.
 public interface CjguiGeneratedUiBindingProvider {
@@ -2986,10 +2996,12 @@ public class CjguiGeneratedUiStructureHolder {
             } else {
                 spec.actionName
             }
-            return cjguiComposableButton(nodeId, semanticId, label, "GENERATED_ACTION", nodeId, style,
+            let action = cjguiComposableButton(nodeId, semanticId, label, "GENERATED_ACTION", nodeId, style,
                 enabled: actionEnabledFor(provider, spec.actionName),
                 operationActionName: spec.actionName,
                 interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+            action.semanticIncarnation = generatedSemanticActionIncarnation(spec.actionName)
+            return action
         }
         let fieldOption = catalog.fieldFor(spec.fieldId)
         if (let None <- fieldOption) {
@@ -4809,14 +4821,15 @@ private func fingerprintText(text: String): Int64 {
 /// when the structure version does not.
 public func cjguiGeneratedUiGeometryRevision(
     instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): Int64 {
-    var hash = CJGUI_GENERATED_UI_FNV_OFFSET
+    var hash = CJGUI_GENERATED_UI_FNV_OFFSET & CJGUI_GENERATED_UI_FNV_MASK
     for (instance in instances) {
-        hash = hash ^ fingerprintMix(instance.nodeId)
-        hash = hash ^ fingerprintMix(instance.bounds.x)
-        hash = hash ^ fingerprintMix(instance.bounds.y)
-        hash = hash ^ fingerprintMix(instance.bounds.width)
-        hash = hash ^ fingerprintMix(instance.bounds.height)
-        hash = hash ^ fingerprintMix(if (instance.visible) { 1 } else { 0 })
+        hash = fingerprintAccumulate(hash, fingerprintText(instance.key))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.nodeId))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.x))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.y))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.width))
+        hash = fingerprintAccumulate(hash, fingerprintMix(instance.bounds.height))
+        hash = fingerprintAccumulate(hash, fingerprintMix(if (instance.visible) { 1 } else { 0 }))
     }
     return hash
 }

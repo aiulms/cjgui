@@ -14,13 +14,17 @@ import std.collection.*
 
 private func runSettingsCounterWindow(): Int32 {
     let domain = CjguiSettingsCounterDomain()
+    let controller = CjguiSettingsCounterController(domain)
     let host = CjguiMacosApplicationHost(
-        CjguiSettingsCounterController(domain),
+        controller,
         configuration: CjguiMacosApplicationWindowConfiguration("设置与计数", 760u32, 560u32)
     )
     let window = host.window()
+    controller.generatedUiRegion().attachWindow(window)
     let connection = CjguiSharedOperationExternalConnection(domain, settingsCounterAuthorization(), domain, window)
-    if (!connection.enableWindowProgressReads(window) || !host.attachExternalConnection(connection) || !host.start()) {
+    if (!connection.enableWindowProgressReads(window) ||
+        !connection.enableGeneratedUiProvider(controller.generatedUiRegion()) ||
+        !host.attachExternalConnection(connection) || !host.start()) {
         host.close()
         return 1
     }
@@ -32,6 +36,15 @@ private func runSettingsCounterWindow(): Int32 {
     }
     while (host.isOpen()) {
         let _ = host.pumpOneTurn()
+        // C（第二次触摸复核）：与 OHOS 宿主循环同一接法——控制器挂起的语义
+        // 焦点请求（「定位滚动备注」导航按钮）经窗口公共
+        // focusAcceptedSemanticNode 提交（reveal→新 accepted→平台聚焦）。
+        if (let Some(semantic) <- controller.takePendingFocusRequest()) {
+            let focused = window.focusAcceptedSemanticNode(semantic)
+            let output = getStdOut()
+            output.writeln("CJGUI_NAV_FOCUS ${semantic} ${focused}")
+            output.flush()
+        }
     }
     host.close()
     return 0

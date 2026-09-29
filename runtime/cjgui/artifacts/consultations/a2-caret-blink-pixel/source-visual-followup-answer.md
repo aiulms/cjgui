@@ -1,0 +1,16 @@
+**这次已经证明普通产品窗口没有出现可见光标；不能再用上次内部探针的 `read=99` 解释它。** [点击运行日志](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/a2-caret-blink-pixel/source-visual-click-20260929/run.log:759>)显示，声明发生后直到 turn 220，scene 和 frame index 仍为 2；[42 次窗口截图采样](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/a2-caret-blink-pixel/source-visual-click-20260929/frames/samples.json>)及[文字裁图](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/a2-caret-blink-pixel/source-visual-click-20260929/text-crop.png>)也没有可见条或相位变化。这是实际窗口输出失败；截图仍不能单独判断节点从未获得矩形、矩形被隐藏，还是坐标落错。
+
+源码给出了两个比“blink 隐藏了声明条”更早、且必须先量出的边界：
+
+1. 产品把 `declareTextInteraction` 返回的 **scene 坐标** `(252.684825,87,1,21)` 直接传给 `declareInputCaretBar`；[原生 accepted geometry](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m:18551)已加节点视觉原点，而[声明条安装](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m:11734)又按 node-local 坐标加一次。该节点日志中的原点是 `(210,85)`。若安装成功，条也不会落在所采样的 accepted 位置；active 安装路径还可能因可见文本矩形裁剪而拒绝它。
+2. [声明入口](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m:18713)只保存声明、重置或调度相位，没有立即把矩形安装到已接受节点并提交一帧。产品首次声明晚于 frame 2；后续没有新 present。[active 文本刷新](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m:12170)又把 presentation `TEXT` 排除在入口外。现有声明条正控之所以能画出红像素，是其[取样函数](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/probe/text_caret_geometry_probe.cj:346)额外推进 scene revision 并调用 `window.refresh()`；它没有覆盖产品这种接受场景后安静声明的顺序。
+
+[applyCaretBlinkPaintState](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m:8726)确实会隐藏所有非 target 的声明条，但**目前不能判定它是这次的首因**：若 node 1000 的 `textCaretRect` 为空，该函数会直接跳过它。也不宜无条件豁免 declared bar，否则失焦后可能保留可见旧条。
+
+**一个有界 RED 测试：**保留现有“强制 refresh 后红条出现”的正控，另加一个 presentation `TEXT` 子例，使用非零节点原点，并照产品顺序操作：先接受场景，取 `declareTextInteraction` 几何，原样声明，真实点击并对齐 presentation selection，随后只 pump、推进测试时钟，不请求新 scene。复用当前 TESTING 的 [blink 快照](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m:8630)，补记 `hasDeclaredInputCaret`、原始声明矩形、node 1000 在 overlay/view 的 `textCaretRect`、`textCaretIsDeclared`、`textCaretHidden`、target 身份及 frame index。要求 accepted 矩形中心的真实 drawable 像素呈节点文字色→背景色→同一文字色，邻近控制点不变；几何与六个正文计数固定。
+
+这组状态可直接分流：矩形为空是声明安装问题；矩形约在二次平移处是坐标契约问题；矩形正确但 hidden 且 target 为空才查焦点资格；target 正确但 frame 不前进则查提交调度。最小修复应先让声明坐标契约与 accepted geometry 一致，并使**声明变更只更新对应 accepted 装饰及安排 present**，不重做正文。当前 native 注释规定 node-local 坐标；若保留该公共契约，产品调用处须做准确转换。若决定让现有 API 接收 scene 坐标，则需同步修正原生两条安装路径并核对其他消费者，不能只改一处。只有快照证明矩形已正确安装、真实聚焦后 target 仍缺失，才收窄修改 target 选择。
+
+点击证据也比单独的输入查询更强一些：[ `aligned=true` ](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/a2-caret-blink-pixel/source-visual-click-20260929/run.log:311>)所走的[原生 selection 恢复](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m:17142)，按这份源码在返回成功时核对了 `firstResponder == inputProxy` 和 active 节点身份。这只证明**该调用瞬间**的焦点，不证明五秒内始终合格，更不证明 bar 已安装。[ `PHAROS_INPUT_STATE_CALL status=1` ](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/a2-caret-blink-pixel/source-visual-click-20260929/run.log:503>)本身则不证明 first responder：查询实现会在当前 responder 不合适时扫描窗口子视图寻找输入客户端。
+
+最终仍须用修复后的同版本普通 Pharos 窗口重验可见→隐藏→可见、失焦停帧、accepted 几何恒定和六项正文增量为零；标准 TextInput 测试通过不能代替这个 declared-owner 验收。本次仅作只读检查，未修改文件、构建或操作桌面。

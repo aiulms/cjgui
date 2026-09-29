@@ -57,7 +57,8 @@ public class CjguiComposableUiNamedStyle {
         gap!: ?Int64 = None, fixedWidth!: ?Int64 = None, fixedHeight!: ?Int64 = None, growX!: ?Int64 = None,
         growY!: ?Int64 = None, minWidth!: ?Int64 = None, maxWidth!: ?Int64 = None, minHeight!: ?Int64 = None,
         maxHeight!: ?Int64 = None, alignX!: ?Int64 = None, alignY!: ?Int64 = None, cornerRadius!: ?Int64 = None,
-        fontFamily!: ?String = None): CjguiComposableUiStyle {
+        fontFamily!: ?String = None, translateX!: ?Float64 = None,
+        translateY!: ?Float64 = None): CjguiComposableUiStyle {
         return CjguiComposableUiStyle(background: base.background, border: base.border, textColor: base.textColor,
             padding: match (padding) {
                 case Some(value) => value
@@ -104,7 +105,12 @@ public class CjguiComposableUiNamedStyle {
             }, cornerRadius: match (cornerRadius) {
                 case Some(value) => value
                 case None => base.cornerRadius
-            }, clipsContent: base.clipsContent, shadow: base.shadow, gradient: base.gradient,
+            }, offsetX: base.offsetX, offsetY: base.offsetY,
+            translateX: match (translateX) { case Some(value) => value case None => base.translateX },
+            translateY: match (translateY) { case Some(value) => value case None => base.translateY },
+            wheelScrollable: base.wheelScrollable, scrollContentAlignY: base.scrollContentAlignY,
+            pointerInteractive: base.pointerInteractive,
+            clipsContent: base.clipsContent, shadow: base.shadow, gradient: base.gradient,
             effectGroup: base.effectGroup,
             effectRejection: base.effectRejection, fontFamily: match (fontFamily) {
                 case Some(value) => value
@@ -121,12 +127,13 @@ public class CjguiComposableUiNamedStyle {
         gap!: ?Int64 = None, fixedWidth!: ?Int64 = None, fixedHeight!: ?Int64 = None, growX!: ?Int64 = None,
         growY!: ?Int64 = None, minWidth!: ?Int64 = None, maxWidth!: ?Int64 = None, minHeight!: ?Int64 = None,
         maxHeight!: ?Int64 = None, alignX!: ?Int64 = None, alignY!: ?Int64 = None, cornerRadius!: ?Int64 = None,
-        fontFamily!: ?String = None): CjguiComposableUiBoundStyle {
+        fontFamily!: ?String = None, translateX!: ?Float64 = None,
+        translateY!: ?Float64 = None): CjguiComposableUiBoundStyle {
         return CjguiComposableUiBoundStyle(
             localStyle(fontSize: fontSize, fontWeight: fontWeight, padding: padding, gap: gap, fixedWidth: fixedWidth,
                 fixedHeight: fixedHeight, growX: growX, growY: growY, minWidth: minWidth, maxWidth: maxWidth,
                 minHeight: minHeight, maxHeight: maxHeight, alignX: alignX, alignY: alignY, cornerRadius: cornerRadius,
-                fontFamily: fontFamily), interaction)
+                fontFamily: fontFamily, translateX: translateX, translateY: translateY), interaction)
     }
 }
 
@@ -285,6 +292,47 @@ private func cjguiComposableUiParseEffectInt(token: String): ?Int64 {
     } else {
         result
     })
+}
+
+/// Strict generated translation scalar: signed decimal logical points with at
+/// most three fractional digits. Handwritten Style accepts any bounded finite
+/// Float64; this token format makes public generated requests deterministic.
+public func cjguiComposableUiParseTranslationScalar(token: String): ?Float64 {
+    if (token.size == 0 || token.size > 12) { return None }
+    var negative = false
+    var sawDot = false
+    var wholeDigits: Int64 = 0
+    var fractionalDigits: Int64 = 0
+    var whole: Int64 = 0
+    var fraction: Int64 = 0
+    var index: Int64 = 0
+    for (byte in token.toArray()) {
+        if (index == 0 && byte == 45) {
+            negative = true
+        } else if (byte == 46 && !sawDot && wholeDigits > 0) {
+            sawDot = true
+        } else if (byte >= 48 && byte <= 57) {
+            if (sawDot) {
+                fractionalDigits += 1
+                if (fractionalDigits > 3) { return None }
+                fraction = fraction * 10 + Int64(byte - 48)
+            } else {
+                wholeDigits += 1
+                if (wholeDigits > 4) { return None }
+                whole = whole * 10 + Int64(byte - 48)
+            }
+        } else {
+            return None
+        }
+        index += 1
+    }
+    if (wholeDigits == 0 || (sawDot && fractionalDigits == 0)) { return None }
+    let divisor = if (fractionalDigits == 1) { 10.0 } else if (fractionalDigits == 2) { 100.0 } else {
+        1000.0
+    }
+    let magnitude = Float64(whole) + if (sawDot) { Float64(fraction) / divisor } else { 0.0 }
+    if (magnitude > 1024.0) { return None }
+    return Some(if (negative) { -magnitude } else { magnitude })
 }
 
 /// Parses an outer-shadow declaration on the shared protocol line:
@@ -734,6 +782,9 @@ public class CjguiComposableUiNamedStyleCatalog {
                     hash = (hash * 131 + value) % 2147483647
                 }
                 hash = (hash * 131 + Int64(base.fontSize * 100.0)) % 2147483647
+                for (byte in "translate=${base.translateX},${base.translateY}".toArray()) {
+                    hash = (hash * 131 + Int64(byte)) % 2147483647
+                }
                 hash = (hash * 131 + if (base.clipsContent) {
                     1
                 } else {

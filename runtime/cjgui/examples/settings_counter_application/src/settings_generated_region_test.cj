@@ -28,6 +28,7 @@ func settingsNameLimitUsesPublishedUnicodeScalarUnit(): Unit {
 func settingsGeneratedUiIsAuthorizedAndWindowTransactionOwned(): Unit {
     let authorization = settingsCounterAuthorization()
     @Assert(authorization.permitsAction("GET_GENERATED_UI"), true)
+    @Assert(authorization.permitsAction("GET_WINDOW_INTERACTION"), true)
     @Assert(authorization.permitsAction("SUBMIT_GENERATED_UI"), true)
     let controller = CjguiSettingsCounterController(CjguiSettingsCounterDomain())
     @Assert((controller as CjguiComposableUiSceneRefreshParticipant).isSome(), true)

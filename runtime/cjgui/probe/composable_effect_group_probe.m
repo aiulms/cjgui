@@ -207,6 +207,10 @@ static CjguiInternalRendererStatus stage_status(uint64_t session, uint64_t versi
             status=cjgui_internal_renderer_set_composable_scene_node(session,i,&nodes[i],label,"","","",0);
             if (status!=CJGUI_INTERNAL_RENDERER_OK) return status;
         }
+        // A scene candidate now includes the same-version window background.
+        // Dark is the clear used by the backdrop oracle below.
+        status=cjgui_internal_renderer_stage_window_background(session,version,0,2);
+        if (status!=CJGUI_INTERNAL_RENDERER_OK) return status;
         return cjgui_internal_renderer_present_composable_scene(session,&frame);
     }
 }
@@ -409,6 +413,8 @@ static int verify_clip_resize_and_rejection(uint64_t session) {
         if (!require(cjgui_internal_renderer_set_composable_scene_node(session,i,&n[i],label,"","","",0)==CJGUI_INTERNAL_RENDERER_OK,
                      "set_rejected_b_node")) return 0;
     }
+    if (!require(cjgui_internal_renderer_stage_window_background(session,42,0,2)==CJGUI_INTERNAL_RENDERER_OK,
+                 "stage_rejected_b_background")) return 0;
     CjguiInternalRendererFrameObservation frame={0};
     if (!require(cjgui_internal_renderer_present_composable_scene(session,&frame)!=CJGUI_INTERNAL_RENDERER_OK,
                  "candidate_b_is_rejected")) return 0;
@@ -561,6 +567,9 @@ static int verify_target_budget_rejection(uint64_t session) {
     n[1]=group(60,601,0,0,2049,2049,2,1,0);
     set_mask(&n[1],1,1,0,1);
     n[2]=rect(60,602,0,0,2049,2049,1,0,0,1);
+    // rect() uses the 420x180 ordinary fixture clip. This budget candidate
+    // must actually expose its 2049x2049 target to the controlled drawable.
+    for (uint32_t i=0;i<3;i++) { n[i].clip0Width=2049; n[i].clip0Height=2049; }
     if (!require(cjgui_internal_renderer_configure_composable_scene(session,60,3)==CJGUI_INTERNAL_RENDERER_OK,
                  "configure_over_budget_candidate")) return 0;
     for (uint32_t i=0;i<3;i++) {
@@ -568,6 +577,8 @@ static int verify_target_budget_rejection(uint64_t session) {
         if (!require(cjgui_internal_renderer_set_composable_scene_node(session,i,&n[i],label,"","","",0)==CJGUI_INTERNAL_RENDERER_OK,
                      "set_over_budget_node")) return 0;
     }
+    if (!require(cjgui_internal_renderer_stage_window_background(session,60,0,2)==CJGUI_INTERNAL_RENDERER_OK,
+                 "stage_over_budget_background")) return 0;
     CjguiInternalRendererFrameObservation frame={0};
     CjguiInternalRendererStatus rejected=cjgui_internal_renderer_present_composable_scene(session,&frame);
     if (!require(rejected==CJGUI_INTERNAL_RENDERER_EFFECT_RESOURCE_BUDGET_EXCEEDED,

@@ -540,6 +540,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), 0, 0u32, 0, None)
         }
         if (!isOpen()) {
+            reapClosedEntries()
             closeIfEmpty()
             return CjguiMacosApplicationTurnResult(false, 0, 0, 0u32, 0, None)
         }
@@ -591,9 +592,17 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 }
                 if (let Some(composableWindow) <- window(identifier)) {
                     let _ = composableWindow.refreshIfNeeded()
+                    if (composableWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                        return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                            0u32, elapsedMs(started), None)
+                    }
                     if (let Some(liveWindow) <- window(identifier)) {
                         observer.postRefreshBeforePump(liveWindow)
                         let result = liveWindow.pump(0u32)
+                        if (liveWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                            return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                                0u32, elapsedMs(started), None)
+                        }
                         if (!result.isOpen) {
                             retire(identifier)
                         }
@@ -612,6 +621,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 }
                 if (let Some(composableWindow) <- window(identifier)) {
                     let result = composableWindow.pumpEventsWithoutRefresh(0u32)
+                    if (composableWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                        return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                            0u32, elapsedMs(started), None)
+                    }
                     if (!result.isOpen) {
                         retire(identifier)
                     } else if (result.didApplyHumanAction) {
@@ -627,6 +640,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 }
                 if (let Some(composableWindow) <- window(identifier)) {
                     let _ = composableWindow.refreshAfterDeferredPump()
+                    if (composableWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                        return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                            0u32, elapsedMs(started), None)
+                    }
                 }
             }
             // A turn with newly handled input returns before starting an
@@ -649,6 +666,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                         }
                         if (let Some(composableWindow) <- window(identifier)) {
                             let _ = composableWindow.refreshAfterDeferredPump()
+                            if (composableWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                                return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                                    0u32, elapsedMs(started), None)
+                            }
                         }
                         offset += 1
                     }
@@ -660,6 +681,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         }
         consumeNativeApplicationExitIntent()
         applyDeferredMutations()
+        reapClosedEntries()
         if (!isOpen()) {
             return CjguiMacosApplicationTurnResult(false, 0, externalActionCount, 0u32, elapsedMs(started), None)
         }
@@ -694,6 +716,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             } else {
                 waitedWindow.pumpEventsWithoutRefresh(waitBudget)
             }
+            if (waitedWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                    0u32, elapsedMs(started), None)
+            }
             if (!waited.isOpen) {
                 retire(waitedIdentifier)
             } else if (waited.didApplyHumanAction) {
@@ -702,6 +728,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         }
         consumeNativeApplicationExitIntent()
         applyDeferredMutations()
+        reapClosedEntries()
         let result = CjguiMacosApplicationTurnResult(
             isOpen(),
             liveWindowCount(),
@@ -747,7 +774,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// close prompts: it is used only after an explicit application-level
     /// decision or a startup failure. It is idempotent and owns connection
     /// cleanup plus the single AppKit stop.
-    public func close() {
+    public func close(): Unit {
         if (closed) {
             return
         }
@@ -758,15 +785,24 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         closeImmediately()
     }
 
-    private func closeImmediately() {
+    private func closeImmediately(): Unit {
         if (closed) {
             return
         }
-        closed = true
+        deferredAuthorizedClose = true
         for (entry in windows) {
             entry.composableWindow.close()
         }
-        windows = ArrayList<CjguiMacosApplicationWindowEntry>()
+        reapClosedEntries()
+        if (windows.size > 0) {
+            // An unacknowledged present or rejected owner-thread destroy leaves
+            // live sessions here. Keep the transport and process-loop owner
+            // until a later legal turn completes the same shutdown request.
+            deferredAuthorizedClose = true
+            return
+        }
+        deferredAuthorizedClose = false
+        closed = true
         if (let Some(connection) <- externalConnection) {
             connection.close()
         }
@@ -796,29 +832,41 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         return None
     }
 
-    private func retire(identifier: CjguiMacosApplicationWindowIdentifier) {
-        if (testRetirementTraceValue.size == 0) {
-            let trace = if (let Some(retiring) <- window(identifier)) {
-                retiring.testCloseTrace()
-            } else {
-                "missing"
-            }
-            testRetirementTraceValue = "window=${identifier.value} gen=${identifier.generation} ${trace} live_windows_before=${liveWindowCount()}"
-        }
+    private func retire(identifier: CjguiMacosApplicationWindowIdentifier): Unit {
         let remaining = ArrayList<CjguiMacosApplicationWindowEntry>()
+        var retired = false
         for (entry in windows) {
             if (entry.identifier.applicationIdentifier == identifier.applicationIdentifier && entry.identifier.value == identifier
-                .value && entry.identifier.generation == identifier.generation) {
-                entry.composableWindow.close()
+                .value && entry.identifier.generation == identifier.generation && !entry.composableWindow.isOpen()) {
+                if (testRetirementTraceValue.size == 0) {
+                    testRetirementTraceValue = "window=${identifier.value} gen=${identifier.generation} " +
+                        "${entry.composableWindow.testCloseTrace()} live_windows_before=${liveWindowCount()}"
+                }
+                retired = true
             } else {
                 remaining.add(entry)
             }
         }
+        if (!retired) { return }
         windows = remaining
         if (nextWaitIndex >= windows.size) {
             nextWaitIndex = 0
         }
-        closeIfEmpty()
+        if (!deferredAuthorizedClose) {
+            closeIfEmpty()
+        }
+    }
+
+    private func reapClosedEntries(): Unit {
+        let identifiers = ArrayList<CjguiMacosApplicationWindowIdentifier>()
+        for (entry in windows) {
+            if (!entry.composableWindow.isOpen()) {
+                identifiers.add(entry.identifier)
+            }
+        }
+        for (identifier in identifiers) {
+            retire(identifier)
+        }
     }
 
     private func requestCloseImmediately(identifier: CjguiMacosApplicationWindowIdentifier): Bool {
@@ -846,7 +894,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         }
     }
 
-    private func closeIfEmpty() {
+    private func closeIfEmpty(): Unit {
         if (!closed && windows.size == 0) {
             close()
         }
@@ -931,6 +979,9 @@ public class CjguiMacosApplicationHost {
     private let configuration: CjguiMacosApplicationWindowConfiguration
     private let composableWindow: CjguiComposableUiWindow
     private var externalConnection: ?CjguiSharedOperationExternalConnection
+    // Additional endpoints keep their own pump and authorization. The Host
+    // owns their final close before the AppKit loop is stopped.
+    private let adoptedExternalConnections: ArrayList<CjguiSharedOperationExternalConnection>
     private var started: Bool
     private var closed: Bool
     /// C：本窗最小平台状态追踪器与主题策略。只有事实变化时才重发动效策略。
@@ -943,6 +994,7 @@ public class CjguiMacosApplicationHost {
         this.configuration = configuration
         this.composableWindow = CjguiComposableUiWindow(controller, configuration: configuration)
         this.externalConnection = None
+        this.adoptedExternalConnections = ArrayList<CjguiSharedOperationExternalConnection>()
         this.started = false
         this.closed = false
         this.platformStateTracker = CjguiComposableUiPlatformStateTracker()
@@ -992,12 +1044,36 @@ public class CjguiMacosApplicationHost {
         if (let Some(_) <- externalConnection) {
             return false
         }
+        for (adopted in adoptedExternalConnections) {
+            if (refEq(adopted, connection)) { return false }
+        }
         externalConnection = Some(connection)
         return true
     }
 
+    /// Adopt shutdown ownership for an independently pumped external endpoint.
+    /// The caller still owns its authorization, start and request pump. Up to
+    /// four may be adopted before or after Host.start; rejection leaves the
+    /// connection untouched and caller-owned.
+    public func adoptExternalConnectionForClose(connection: CjguiSharedOperationExternalConnection): Bool {
+        if (closed || adoptedExternalConnections.size >= 4 ||
+            (started && !composableWindow.isOpen())) { return false }
+        if (let Some(primary) <- externalConnection) {
+            if (refEq(primary, connection)) { return false }
+        }
+        for (adopted in adoptedExternalConnections) {
+            if (refEq(adopted, connection)) { return false }
+        }
+        adoptedExternalConnections.add(connection)
+        return true
+    }
+
     public func start(): Bool {
-        if (closed || !configuration.isValid()) {
+        if (closed) {
+            return false
+        }
+        if (!configuration.isValid()) {
+            close()
             return false
         }
         if (started) {
@@ -1111,11 +1187,27 @@ public class CjguiMacosApplicationHost {
         if (closed) {
             return
         }
-        closed = true
         composableWindow.close()
+        if (composableWindow.isOpen()) {
+            // The native session still owns its scene and may be waiting for
+            // an original present ticket or a legal owner thread. Keep both
+            // external endpoints and the loop reference until closure commits.
+            return
+        }
+        closed = true
+        // A native close can stop NSApplication.run as soon as the window is
+        // retired. Close independently pumped endpoints first, while their
+        // transport owner and the process loop are still live.
+        var index = adoptedExternalConnections.size - 1
+        while (index >= 0) {
+            adoptedExternalConnections[index].close()
+            index -= 1
+        }
+        adoptedExternalConnections.clear()
         if (let Some(connection) <- externalConnection) {
             connection.close()
         }
+        externalConnection = None
         started = false
         CjguiMacosApplicationHost.stopApplicationLoop()
     }

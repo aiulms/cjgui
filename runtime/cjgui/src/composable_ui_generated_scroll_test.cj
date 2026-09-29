@@ -337,6 +337,9 @@ func generatedSplitBuildsTheScopedSplitViewFromTwoChildren(): Unit {
     }
     // The scoped split adds its own handle node, so two panes yield >= 3 nodes.
     @Assert(split.isSplitView(), true)
+    // The public generated key must address the actual accepted container;
+    // a scoped-only synthetic id made geometry discovery report a ghost node.
+    @Assert(split.nodeId, holder.nodeIdForKey("split"))
     @Assert(split.children().size >= 2, true)
     // The instance's shared view state is reachable from the divider itself,
     // which is how a real drag reaches the next solve. The container and the

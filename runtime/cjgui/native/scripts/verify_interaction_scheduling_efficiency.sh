@@ -7,7 +7,7 @@ source "$(cd "$(dirname "$0")" && pwd)/lib_cjgui_source_set.sh"
 typeset -a CJGUI_FRAMEWORK_SOURCE_PATHS
 CJGUI_FRAMEWORK_SOURCE_PATHS=("${(@f)$(cjgui_framework_source_paths "$RUNTIME_DIR" false)}")
 RUN_MODE="${CJGUI_INTERACTION_SCHEDULING_RUN_MODE:-full}"
-if [[ "$RUN_MODE" == "latency" ]]; then
+if [[ "$RUN_MODE" == "latency" || "$RUN_MODE" == "latency-motion" || "$RUN_MODE" == "submit-gate" ]]; then
   OUTPUT_DIR="${CJGUI_INTERACTION_SCHEDULING_TMPDIR:-/private/tmp/cjgui-dual-window-latency/$(date +%Y%m%d-%H%M%S)-$$}"
 else
   OUTPUT_DIR="${CJGUI_INTERACTION_SCHEDULING_TMPDIR:-/private/tmp/cjgui-interaction-scheduling-efficiency}"
@@ -43,8 +43,11 @@ require_source_line "CJGUI_INTERACTION_SCHEDULING_OVERLAP_READY"
 require_source_line "ArrayList<Int64>([8, 128, 960])"
 require_source_line "CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT"
 require_source_line "--latency-only"
+require_source_line "--latency-motion"
 
-if [[ "$RUN_MODE" != "full" && "$RUN_MODE" != "overlap" && "$RUN_MODE" != "latency" ]]; then
+if [[ "$RUN_MODE" != "full" && "$RUN_MODE" != "overlap" && "$RUN_MODE" != "latency" &&
+      "$RUN_MODE" != "latency-motion" &&
+      "$RUN_MODE" != "submit-gate" ]]; then
   print -u2 -- "interaction scheduling verifier: unsupported run mode: $RUN_MODE"
   exit 2
 fi
@@ -55,6 +58,8 @@ CALL_LOG="$OUTPUT_DIR/public-calls.log"
 LATENCY_CLIENT_LOG="$OUTPUT_DIR/latency-public-client.log"
 rm -f "$LOG" "$CALL_LOG" "$LATENCY_CLIENT_LOG" "$OUTPUT_DIR"/acks/ack-*(N) "$OUTPUT_DIR"/acks/overlap-ack-*(N)
 rm -f "$OUTPUT_DIR"/latency-*(N)
+rm -f "$OUTPUT_DIR/latency-baseline-ready"
+rm -f "$OUTPUT_DIR/native-submit-gate-open"
 
 (
   cd "$RUNTIME_DIR/shared_operation_core"
@@ -89,10 +94,22 @@ cjc --sysroot "$SDKROOT_PATH" --import-path "$SHARED_CORE" \
   --link-options "-framework AppKit -framework Metal -framework MetalKit -framework QuartzCore -lobjc" \
   -o "$OUTPUT_DIR/interaction_scheduling_efficiency_probe"
 
+if [[ "${CJGUI_INTERACTION_SCHEDULING_BUILD_ONLY:-0}" == "1" ]]; then
+  print -r -- "interaction scheduling verifier: BUILD_ONLY output=$OUTPUT_DIR"
+  exit 0
+fi
+
 export DYLD_LIBRARY_PATH="$CANGJIE_HOME/runtime/lib/darwin_aarch64_cjnative:${DYLD_LIBRARY_PATH:-}"
-if [[ "$RUN_MODE" == "latency" ]]; then
+if [[ "$RUN_MODE" == "latency" || "$RUN_MODE" == "latency-motion" || "$RUN_MODE" == "submit-gate" ]]; then
   PROBE_ARGS=(--ack-dir "$LATENCY_DIR")
-  PROBE_ARGS+=(--latency-only)
+  if [[ "$RUN_MODE" == "submit-gate" ]]; then
+    PROBE_ARGS+=(--submit-gate-only)
+    export CJGUI_TEST_PUBLIC_GATE_MARKER="$LATENCY_DIR/native-submit-gate-open"
+  elif [[ "$RUN_MODE" == "latency-motion" ]]; then
+    PROBE_ARGS+=(--latency-motion)
+  else
+    PROBE_ARGS+=(--latency-only)
+  fi
 else
   PROBE_ARGS=(--ack-dir "$OUTPUT_DIR/acks")
   if [[ "$RUN_MODE" == "overlap" ]]; then
@@ -233,13 +250,21 @@ if [[ -z "$DESCRIPTOR_PATH" ]]; then
   exit 1
 fi
 
-if [[ "$RUN_MODE" == "latency" ]]; then
+if [[ "$RUN_MODE" == "latency" || "$RUN_MODE" == "latency-motion" || "$RUN_MODE" == "submit-gate" ]]; then
   # One long-lived public driver, one request in flight at a time. The driver
   # waits for `latency-armed`; the probe waits for it too, so the driver's
   # single pre-measurement GET_CONTEXT cannot race the ready observer's
   # per-sample accounting.
-  python3 "$LATENCY_CLIENT_SRC" "$DESCRIPTOR_PATH" --ack-dir "$LATENCY_DIR" --values 129-148 \
-    >"$LATENCY_CLIENT_LOG" 2>&1 &
+  if [[ "$RUN_MODE" == "submit-gate" ]]; then
+    python3 "$LATENCY_CLIENT_SRC" "$DESCRIPTOR_PATH" --ack-dir "$LATENCY_DIR" \
+      --values 129 --gate-marker "$CJGUI_TEST_PUBLIC_GATE_MARKER" >"$LATENCY_CLIENT_LOG" 2>&1 &
+  elif [[ "$RUN_MODE" == "latency-motion" ]]; then
+    python3 "$LATENCY_CLIENT_SRC" "$DESCRIPTOR_PATH" --ack-dir "$LATENCY_DIR" --values 129-148 \
+      --motion-ready "$LATENCY_DIR/latency-motion-ready" >"$LATENCY_CLIENT_LOG" 2>&1 &
+  else
+    python3 "$LATENCY_CLIENT_SRC" "$DESCRIPTOR_PATH" --ack-dir "$LATENCY_DIR" --values 129-148 \
+      >"$LATENCY_CLIENT_LOG" 2>&1 &
+  fi
   CLIENT_PID=$!
   touch "$LATENCY_DIR/latency-armed"
 
@@ -248,6 +273,19 @@ if [[ "$RUN_MODE" == "latency" ]]; then
   wait "$CLIENT_PID" || client_status=$?
   wait "$PROBE_PID" || probe_status=$?
   write_latency_fingerprints
+
+  if [[ "$RUN_MODE" == "submit-gate" ]]; then
+    rg '^CJGUI_PUBLIC_SUBMIT_GATE ' "$LOG" || true
+    rg '^CJGUI_INTERACTION_SCHEDULING_LATENCY_CLIENT' "$LATENCY_CLIENT_LOG" || true
+    if [[ "$probe_status" != "0" || "$client_status" != "0" ]] ||
+       ! rg -q '^CJGUI_PUBLIC_SUBMIT_GATE .*ready_in_gate=true .*exactly_once=true valid=true' "$LOG" ||
+       ! rg -q '^CJGUI_INTERACTION_SCHEDULING_LATENCY_CLIENT samples=1 valid=true ' "$LATENCY_CLIENT_LOG"; then
+      print -u2 -- "interaction scheduling verifier: public submit gate failed probe=$probe_status client=$client_status"
+      exit 1
+    fi
+    print -r -- "interaction scheduling efficiency verification: PASS mode=submit-gate real_uds=1 ready_in_native_gate=1 owner_once=1 accepted=1"
+    exit 0
+  fi
 
   if [[ "$probe_status" != "0" ]]; then
     print -u2 -- "interaction scheduling verifier: latency probe exited status=$probe_status"
@@ -273,6 +311,11 @@ if [[ "$RUN_MODE" == "latency" ]]; then
     print -u2 -- "interaction scheduling verifier: probe latency result was not valid"
     exit 1
   fi
+  if [[ "$RUN_MODE" == "latency-motion" ]] &&
+     ! rg -q '^CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT .*motion_activity=true motion_samples_valid=true ' "$LOG"; then
+    print -u2 -- "interaction scheduling verifier: A motion was not active during every public sample"
+    exit 1
+  fi
   if ! rg -q '^CJGUI_INTERACTION_SCHEDULING_LATENCY_CLIENT samples=20 valid=true ' "$LATENCY_CLIENT_LOG"; then
     print -u2 -- "interaction scheduling verifier: public latency client did not report success"
     exit 1
@@ -281,7 +324,7 @@ if [[ "$RUN_MODE" == "latency" ]]; then
     exit 1
   fi
   rg '^CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT ' "$LOG"
-  print -r -- "interaction scheduling efficiency verification: PASS mode=latency samples=20 real_uds=1 one_request_in_flight=1 controlled_a_input=1 idle_clean=1 fingerprints=$OUTPUT_DIR/fingerprints.txt"
+  print -r -- "interaction scheduling efficiency verification: PASS mode=$RUN_MODE samples=20 real_uds=1 one_request_in_flight=1 controlled_a_input=1 idle_clean=1 fingerprints=$OUTPUT_DIR/fingerprints.txt"
   exit 0
 fi
 

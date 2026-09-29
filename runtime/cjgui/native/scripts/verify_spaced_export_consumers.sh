@@ -37,9 +37,10 @@ GEN_CONSUMER="$DEST/consumers/generated_panel_consumer"
 # back from the same owner. Keep the source guard before build/run so an older
 # --verify-hit implementation cannot pass by emitting only the P2/P3 verdict.
 for assertion in effect_group_opacity_control effect_group_mask_control \
-    effect_group_blend_control effect_group_blur_control effect_group_owner_readback; do
+    effect_group_blend_control effect_group_blur_control effect_group_owner_readback \
+    workload_observed workload_disabled; do
   if ! rg -q "name=${assertion} " "$UI_CONSUMER/src/main.cj"; then
-    echo "RED: exported UI-only --verify-hit has no ${assertion} assertion" >&2
+    echo "RED: exported UI-only consumer has no ${assertion} assertion" >&2
     exit 1
   fi
 done
@@ -123,6 +124,14 @@ for assertion in effect_group_opacity_control effect_group_mask_control \
 done
 run_self_verify gen-pass "$GEN_CONSUMER" "$GEN_BIN" "$GEN_DONE_TOKEN" --verify-animation || exit 1
 GEN_RUN_LOG="$LAST_RUN_LOG"
+run_self_verify ui-translation "$UI_CONSUMER" "$UI_BIN" "CJGUI_ADAPTIVE_TRANSLATION_DONE" --verify-translation || exit 1
+UI_TRANSLATION_LOG="$LAST_RUN_LOG"
+run_self_verify gen-translation "$GEN_CONSUMER" "$GEN_BIN" "CJGUI_GENERATED_TRANSLATION_DONE" --verify-translation || exit 1
+GEN_TRANSLATION_LOG="$LAST_RUN_LOG"
+run_self_verify ui-position "$UI_CONSUMER" "$UI_BIN" "CJGUI_ADAPTIVE_POSITION_DONE" --verify-position-motion || exit 1
+UI_POSITION_LOG="$LAST_RUN_LOG"
+run_self_verify gen-position "$GEN_CONSUMER" "$GEN_BIN" "CJGUI_GENERATED_POSITION_DONE" --verify-position-motion || exit 1
+GEN_POSITION_LOG="$LAST_RUN_LOG"
 inject_must_fail ui-inject "$UI_CONSUMER" "$UI_BIN" --verify-hit || exit 1
 inject_must_fail gen-inject "$GEN_CONSUMER" "$GEN_BIN" --verify-animation || exit 1
 
@@ -160,6 +169,63 @@ run_external_generated() (
   print -r -- "spaced export verify: generated external client PASS log=$GEN_EXTERNAL_LOG"
 )
 run_external_generated
+
+# F11: the exported public generated client discovers the logical-point
+# contract, drives accepted and refused candidates, then reads the owner and
+# accepted description from the same exported normal application.
+GEN_TRANSLATION_APP_LOG="$OUTPUT_DIR/gen-translation-app-$STAMP.log"
+GEN_TRANSLATION_CLIENT_LOG="$OUTPUT_DIR/gen-translation-client-$STAMP.log"
+run_external_translation() (
+  set -euo pipefail
+  ( cd "$GEN_CONSUMER" && "$GEN_BIN" --instance-token "spaced-translation-$STAMP" ) \
+    >"$GEN_TRANSLATION_APP_LOG" 2>&1 &
+  local app_pid=$!
+  trap 'kill -TERM "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
+  local descriptor=""
+  local attempt
+  for (( attempt = 0; attempt < 100; attempt++ )); do
+    descriptor="$(sed -n 's/^CJGUI_COLLABORATION_READY DESCRIPTOR_PATH //p' "$GEN_TRANSLATION_APP_LOG" | tail -1)"
+    if [[ -n "$descriptor" && -f "$descriptor" ]]; then break; fi
+    if ! kill -0 "$app_pid" 2>/dev/null; then
+      echo "spaced export verify: translation app exited before descriptor" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  [[ -n "$descriptor" && -f "$descriptor" ]] || return 1
+  python3 "$GEN_CONSUMER/verify_generated_translation.py" "$descriptor" \
+    >"$GEN_TRANSLATION_CLIENT_LOG" 2>&1
+  grep -q '^CJGUI_EXTERNAL_TRANSLATION_PASS ' "$GEN_TRANSLATION_CLIENT_LOG" || return 1
+  print -r -- "spaced export verify: public translation PASS log=$GEN_TRANSLATION_CLIENT_LOG"
+)
+run_external_translation
+
+# The exact exported binaries expose one accepted position target apiece.
+# A public client reads its CAS, moves twice, rejects stale/unknown requests,
+# clears, and checks that neither operation changed the business owner.
+run_external_position() ( # <label> <app-dir> <binary> <ready-prefix>
+  set -euo pipefail
+  local label="$1" app_dir="$2" binary="$3" ready_prefix="$4"
+  local app_log="$OUTPUT_DIR/${label}-position-app-$STAMP.log"
+  local client_log="$OUTPUT_DIR/${label}-position-client-$STAMP.log"
+  ( cd "$app_dir" && "$binary" --instance-token "spaced-${label}-position-$STAMP" ) >"$app_log" 2>&1 &
+  local app_pid=$!
+  trap 'kill -TERM "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
+  local descriptor=""
+  local attempt
+  for (( attempt = 0; attempt < 100; attempt++ )); do
+    descriptor="$(sed -n "s/^${ready_prefix} DESCRIPTOR_PATH //p" "$app_log" | tail -1)"
+    if [[ -n "$descriptor" && -f "$descriptor" ]]; then break; fi
+    if ! kill -0 "$app_pid" 2>/dev/null; then return 1; fi
+    sleep 0.1
+  done
+  [[ -n "$descriptor" && -f "$descriptor" ]] || return 1
+  python3 "$GEN_CONSUMER/verify_public_position_motion.py" "$descriptor" >"$client_log" 2>&1
+  grep -q '^CJGUI_PUBLIC_POSITION_MOTION_PASS ' "$client_log" || return 1
+  print -r -- "spaced export verify: $label public position PASS log=$client_log"
+)
+run_external_position ui "$UI_CONSUMER" "$UI_BIN" ADAPTIVE_LAYOUT_READY
+run_external_position gen "$GEN_CONSUMER" "$GEN_BIN" CJGUI_COLLABORATION_READY
 
 # The same exported binary and client must distinguish an accepted blur request
 # from the committed unblurred fallback, then observe the restored blurred frame.
@@ -269,11 +335,14 @@ hash_file() { shasum -a 256 "$1" | awk '{print $1}'; }
 # (the whole src/ tree of each consumer, not just one entry file), so a source
 # change that the built bundle consumes cannot go unhashed.
 FRAMEWORK_SRC_SHA="$(hash_tree "$DEST/framework/cjgui/src")"
+SHARED_CORE_SRC_SHA="$(hash_tree "$DEST/framework/cjgui/shared_operation_core/src")"
 FRAMEWORK_NATIVE_SHA="$(hash_tree "$DEST/framework/cjgui/native")"
 FRAMEWORK_RESOURCE_SHA="$(hash_tree "$DEST/framework/cjgui/resources")"
 CLIENT_SHA="$(hash_file "$DEST/framework/cjgui/shared_operation_core/client.py")"
 GENERATED_CLIENT_SHA="$(hash_file "$DEST/framework/cjgui/shared_operation_core/cjgui_generated_client.py")"
 GEN_VERIFIER_SHA="$(hash_file "$GEN_CONSUMER/verify_generated_effect_candidates.py")"
+GEN_TRANSLATION_VERIFIER_SHA="$(hash_file "$GEN_CONSUMER/verify_generated_translation.py")"
+GEN_POSITION_VERIFIER_SHA="$(hash_file "$GEN_CONSUMER/verify_public_position_motion.py")"
 GEN_EFFECT_VERIFIER_SHA="$(hash_file "$GEN_CONSUMER/verify_public_effect_observation.py")"
 GEN_MATERIAL_VERIFIER_SHA="$(hash_file "$GEN_CONSUMER/verify_public_window_material.py")"
 GEN_DIAGNOSTIC_VERIFIER_SHA="$(hash_file "$GEN_CONSUMER/verify_generated_diagnostics.py")"
@@ -304,11 +373,18 @@ grep -q '^CJGUI_PUBLIC_EFFECT_OBSERVATION ' "$GEN_EFFECT_CLIENT_LOG" || { echo "
 grep -q '^CJGUI_ADAPTIVE_WINDOW_MATERIAL_VERDICT .*failed=0 ' "$UI_MATERIAL_LOG" || { echo "spaced export verify: UI-only material chain failed" >&2; exit 1; }
 grep -q '^CJGUI_PUBLIC_WINDOW_MATERIAL ' "$GEN_MATERIAL_CLIENT_LOG" || { echo "spaced export verify: generated material chain has no evidence" >&2; exit 1; }
 grep -q '^CJGUI_ADAPTIVE_DIAGNOSTIC_ASSERT name=overlay_isolated ok=1 ' "$UI_DIAGNOSTIC_LOG" || { echo "spaced export verify: UI diagnostic toggle did not remain isolated" >&2; exit 1; }
+grep -q '^CJGUI_ADAPTIVE_DIAGNOSTIC_ASSERT name=workload_observed ok=1 .*result=accepted ' "$UI_DIAGNOSTIC_LOG" || { echo "spaced export verify: UI-only workload observation failed (log=$UI_DIAGNOSTIC_LOG)" >&2; exit 1; }
+grep -q '^CJGUI_ADAPTIVE_DIAGNOSTIC_ASSERT name=workload_disabled ok=1 .*status=disabled ' "$UI_DIAGNOSTIC_LOG" || { echo "spaced export verify: UI-only workload disabled state failed (log=$UI_DIAGNOSTIC_LOG)" >&2; exit 1; }
+grep -q '^CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=workload_observed ok=1 .*result=accepted ' "$GEN_DIAGNOSTIC_APP_LOG" || { echo "spaced export verify: generated workload observation failed (log=$GEN_DIAGNOSTIC_APP_LOG)" >&2; exit 1; }
+grep -q '^CJGUI_GENERATED_DIAGNOSTIC_CLIENT PASS .*public_workload_writes=[1-9]' "$GEN_DIAGNOSTIC_CLIENT_LOG" || { echo "spaced export verify: public generated client did not read actual workload (log=$GEN_DIAGNOSTIC_CLIENT_LOG)" >&2; exit 1; }
+grep -q '^CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=workload_disabled ok=1 .*status=disabled ' "$GEN_DIAGNOSTIC_APP_LOG" || { echo "spaced export verify: generated workload disabled state failed (log=$GEN_DIAGNOSTIC_APP_LOG)" >&2; exit 1; }
 grep -q '^CJGUI_GENERATED_DIAGNOSTIC_ASSERT name=rejected_keeps_accepted ok=1 ' "$GEN_DIAGNOSTIC_APP_LOG" || { echo "spaced export verify: generated diagnostic did not preserve accepted on rejection" >&2; exit 1; }
+grep -q '^CJGUI_ADAPTIVE_POSITION_DONE .*failed=0' "$UI_POSITION_LOG" || { echo "spaced export verify: UI position motion failed" >&2; exit 1; }
+grep -q '^CJGUI_GENERATED_POSITION_DONE .*failed=0' "$GEN_POSITION_LOG" || { echo "spaced export verify: generated position motion failed" >&2; exit 1; }
 
 FINGERPRINT="$DEST/CONSUMER_FINGERPRINTS.txt"
 {
-  print -r -- "spaced_export_consumers=v9"
+  print -r -- "spaced_export_consumers=v13"
   print -r -- "destination=$DEST"
   print -r -- "ui_only_consumer=adaptive_layout_public_consumer"
   print -r -- "generated_consumer=generated_panel_consumer"
@@ -324,12 +400,22 @@ FINGERPRINT="$DEST/CONSUMER_FINGERPRINTS.txt"
   print -r -- "generated_public_window_material=PASS"
   print -r -- "ui_only_diagnostic=PASS"
   print -r -- "generated_public_diagnostic=PASS"
+  print -r -- "ui_only_translation=PASS"
+  print -r -- "generated_translation=PASS"
+  print -r -- "generated_public_translation=PASS"
+  print -r -- "ui_only_position_motion=PASS"
+  print -r -- "generated_position_motion=PASS"
+  print -r -- "ui_only_public_position_motion=PASS"
+  print -r -- "generated_public_position_motion=PASS"
   print -r -- "framework_src_sha256=$FRAMEWORK_SRC_SHA"
+  print -r -- "shared_core_src_sha256=$SHARED_CORE_SRC_SHA"
   print -r -- "framework_native_sha256=$FRAMEWORK_NATIVE_SHA"
   print -r -- "framework_resource_sha256=$FRAMEWORK_RESOURCE_SHA"
   print -r -- "client_sha256=$CLIENT_SHA"
   print -r -- "generated_client_sha256=$GENERATED_CLIENT_SHA"
   print -r -- "generated_effect_verifier_sha256=$GEN_VERIFIER_SHA"
+  print -r -- "generated_translation_verifier_sha256=$GEN_TRANSLATION_VERIFIER_SHA"
+  print -r -- "generated_position_verifier_sha256=$GEN_POSITION_VERIFIER_SHA"
   print -r -- "generated_public_effect_verifier_sha256=$GEN_EFFECT_VERIFIER_SHA"
   print -r -- "generated_public_window_material_verifier_sha256=$GEN_MATERIAL_VERIFIER_SHA"
   print -r -- "generated_diagnostic_verifier_sha256=$GEN_DIAGNOSTIC_VERIFIER_SHA"
@@ -343,6 +429,16 @@ FINGERPRINT="$DEST/CONSUMER_FINGERPRINTS.txt"
   print -r -- "exporter_sha256=$EXPORTER_SHA"
   print -r -- "ui_run_log=$UI_RUN_LOG"
   print -r -- "generated_run_log=$GEN_RUN_LOG"
+  print -r -- "ui_translation_run_log=$UI_TRANSLATION_LOG"
+  print -r -- "generated_translation_run_log=$GEN_TRANSLATION_LOG"
+  print -r -- "generated_translation_app_log=$GEN_TRANSLATION_APP_LOG"
+  print -r -- "generated_translation_client_log=$GEN_TRANSLATION_CLIENT_LOG"
+  print -r -- "ui_position_run_log=$UI_POSITION_LOG"
+  print -r -- "generated_position_run_log=$GEN_POSITION_LOG"
+  print -r -- "ui_position_app_log=$OUTPUT_DIR/ui-position-app-$STAMP.log"
+  print -r -- "ui_position_client_log=$OUTPUT_DIR/ui-position-client-$STAMP.log"
+  print -r -- "generated_position_app_log=$OUTPUT_DIR/gen-position-app-$STAMP.log"
+  print -r -- "generated_position_client_log=$OUTPUT_DIR/gen-position-client-$STAMP.log"
   print -r -- "generated_external_app_log=$GEN_EXTERNAL_APP_LOG"
   print -r -- "generated_external_client_log=$GEN_EXTERNAL_LOG"
   print -r -- "generated_public_effect_app_log=$GEN_EFFECT_APP_LOG"

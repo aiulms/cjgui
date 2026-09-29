@@ -87,6 +87,8 @@ def parser() -> argparse.ArgumentParser:
         help="sample values as START-END (inclusive) or a comma-separated list",
     )
     result.add_argument("--target", type=int, default=DOCUMENT_B, help="target document resource id")
+    result.add_argument("--gate-marker", help="send the first request after native submit gate opens")
+    result.add_argument("--motion-ready", help="send the first request after window A starts motion")
     result.add_argument("--armed-timeout", type=float, default=60.0)
     result.add_argument("--accepted-timeout", type=float, default=15.0)
     return result
@@ -111,8 +113,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as error:
         return fail(f"invalid_values:{error}")
 
-    if len(values) != 20:
-        return fail(f"expected_20_samples_got_{len(values)}")
+    if len(values) != (1 if args.gate_marker else 20):
+        return fail(f"unexpected_sample_count_{len(values)}")
 
     if not wait_for(ack_directory / "latency-armed", args.armed_timeout):
         return fail("armed_timeout")
@@ -122,11 +124,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         context = operation_client.get_context([args.target])
         version = context.integer("VERSION")
     except Exception as error:
-        return fail(f"get_context_error:{type(error).__name__}")
+        raw = context.raw if "context" in locals() else "<no response>"
+        return fail(f"get_context_error:{type(error).__name__}:{error}:raw={raw!r}")
     print(f"{SUCCESS_PREFIX}_BASELINE target={args.target} version={version}", flush=True)
+    (ack_directory / "latency-baseline-ready").write_text(
+        f"version={version}\n", encoding="utf-8"
+    )
+    if args.motion_ready and not wait_for(pathlib.Path(args.motion_ready), args.armed_timeout):
+        return fail("motion_ready_timeout")
 
     completed = 0
     for index, value in enumerate(values, start=1):
+        if index == 1 and args.gate_marker and not wait_for(pathlib.Path(args.gate_marker), args.armed_timeout):
+            return fail("submit_gate_timeout")
         request_path = ack_directory / f"latency-request-{index}"
         response_path = ack_directory / f"latency-response-{index}.txt"
         accepted_path = ack_directory / f"latency-accepted-{index}"

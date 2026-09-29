@@ -25,9 +25,26 @@ import std.net.*
 import std.sync.*
 import std.time.*
 import std.collection.ArrayList
-import kit.PerformanceAnalysisKit.Hilog
 
 let TAG_TRANSPORT = "CjguiTransport"
+
+// Fixed diagnostic vocabulary only. Never place AUTH, field values or a
+// generated candidate payload in hilog while timing the owner queue.
+func ownerClaimOperation(payload: String): String {
+    // Diagnostics never need to scan a large generated candidate. Keep the
+    // owner-claim path's allocation bounded before splitting protocol lines.
+    if (payload.size > 512) { return "OTHER" }
+    let lines = payload.split("\n")
+    if (lines.size >= 3) {
+        if (lines[2] == "GET_CONTEXT 0") {
+            return "GET_CONTEXT_0"
+        }
+        if (lines[2] == "GET_GENERATED_UI_INSTANCES") {
+            return "GET_GENERATED_UI_INSTANCES"
+        }
+    }
+    return "OTHER"
+}
 
 // 桥接错误原因码（扩展官方错误帧语法；消费方不得把 unknown 映射为"未应用"）
 public let REASON_TIMEOUT_NOT_EXECUTED = "transport_timeout_not_executed"
@@ -210,8 +227,9 @@ public class OhosTransportBridge {
             BRIDGE_LOCK.unlock()
             return (1, None)
         }
+        let enqueuedAt = MonoTime.now()
         let t = TransportTicket(context.nextRequestId, payload,
-            MonoTime.now() + Duration.millisecond * TICKET_DEADLINE_MS, context)
+            enqueuedAt + Duration.millisecond * TICKET_DEADLINE_MS, enqueuedAt, context)
         context.nextRequestId += 1
         context.queue.add(t)
         context.queuedBytes += Int64(payload.size)
@@ -250,7 +268,8 @@ public class OhosTransportBridge {
                     let _ = c.queue.remove(at: i)
                     continue
                 }
-                if (MonoTime.now() >= t.deadline) {
+                let claimedAt = MonoTime.now()
+                if (claimedAt >= t.deadline) {
                     settleCancelledLocked(c, t, REASON_TIMEOUT_NOT_EXECUTED)
                     continue
                 }
@@ -266,6 +285,18 @@ public class OhosTransportBridge {
                 }
                 let _ = c.queue.remove(at: i)
                 BRIDGE_LOCK.unlock()
+                // Queue time is complete-frame enqueue -> owner claim, sampled
+                // before dispatch. Emit outside BRIDGE_LOCK and before returning
+                // the lease, so the row precedes the corresponding response.
+                try {
+                    let queueUs = (claimedAt - t.enqueuedAt).toNanoseconds() / 1000
+                    cjguiOhosInfo(TAG_TRANSPORT,
+                        "transport-cost stage=owner-claim instance=${t.context.identity} " +
+                        "requestId=${t.requestId} op=${ownerClaimOperation(t.payload)} queueUs=${queueUs}")
+                } catch (_) {
+                    // Diagnostics cannot leave a claimed business ticket stuck
+                    // in Executing if string formatting or logging fails.
+                }
                 return Some(ExecutionLease(t))
             }
         }
@@ -377,7 +408,7 @@ public class OhosTransportBridge {
                 let s = TcpServerSocket(bindAt: port)
                 s.bind()
                 server = Some(s)
-                Hilog.info(0, TAG_TRANSPORT,
+                cjguiOhosInfo("CjguiTransport",
                     "listening on 127.0.0.1:${port} identity=${context.identity} maxConn=${context.maxConnections}")
                 while (true) {
                     BRIDGE_LOCK.lock()
@@ -397,7 +428,7 @@ public class OhosTransportBridge {
                     if (!shouldServe) {
                         client.close()
                         if (context.lifecycle == 0) {
-                            Hilog.warn(0, TAG_TRANSPORT,
+                            cjguiOhosWarn("CjguiTransport",
                                 "connection refused: quota reached (${context.activeConnections})")
                         }
                         continue
@@ -414,7 +445,7 @@ public class OhosTransportBridge {
                     }
                 }
             } catch (e: Exception) {
-                Hilog.info(0, TAG_TRANSPORT, "listener exit: ${e.message}")
+                cjguiOhosInfo("CjguiTransport", "listener exit: ${e.message}")
             } finally {
                 match (server) {
                     case Some(s) =>
@@ -429,7 +460,7 @@ public class OhosTransportBridge {
                 BRIDGE_LOCK.unlock()
             }
         }
-        Hilog.info(0, TAG_TRANSPORT, "listener exited")
+        cjguiOhosInfo("CjguiTransport", "listener exited")
     }
 
     // 单次交换：读一帧→serveFrame→回写→关闭。
@@ -443,7 +474,7 @@ public class OhosTransportBridge {
         try {
             while (!served) {
                 if (MonoTime.now() >= frameDeadline) {
-                    Hilog.warn(0, TAG_TRANSPORT, "frame read deadline exceeded")
+                    cjguiOhosWarn("CjguiTransport", "frame read deadline exceeded")
                     break
                 }
                 BRIDGE_LOCK.lock()
@@ -504,7 +535,7 @@ public class OhosTransportBridge {
                 }
             }
         } catch (e: Exception) {
-            Hilog.info(0, TAG_TRANSPORT, "client closed: ${e.message}")
+            cjguiOhosInfo("CjguiTransport", "client closed: ${e.message}")
         }
         client.close()
     }
@@ -612,6 +643,7 @@ class TransportTicket {
     let requestId: Int64
     let payload: String
     let deadline: MonoTime
+    let enqueuedAt: MonoTime
     let context: BridgeContext          // 归属上下文（旧实例票据不得进新实例）
     var phase: TicketPhase = TicketPhase.TpPending
     var result: String = ""
@@ -620,10 +652,12 @@ class TransportTicket {
     var accounted = true          // queuedBytes 是否仍计入（结算一次即置否）
     var settled = false           // 终态是否已唯一结算
 
-    init(requestId: Int64, payload: String, deadline: MonoTime, context: BridgeContext) {
+    init(requestId: Int64, payload: String, deadline: MonoTime, enqueuedAt: MonoTime,
+         context: BridgeContext) {
         this.requestId = requestId
         this.payload = payload
         this.deadline = deadline
+        this.enqueuedAt = enqueuedAt
         this.context = context
     }
 }

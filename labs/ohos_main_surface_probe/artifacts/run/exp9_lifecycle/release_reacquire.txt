@@ -1,0 +1,16 @@
+09-28 16:34:40.823  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#3 action=1 finger=10000 xy=538,534 windowId=93 time=18362490685
+09-28 16:34:40.925  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#4 action=3 finger=10000 xy=538,534 windowId=93 time=18362593700
+09-28 16:34:40.946  9261  9261 I A01234/MainSurfaceProbe: submitFrame frame=1 rc=0 status=windowId=93 window=0x7fa399e000 node=0x7fa3b1a500 surface=0x7fa30f9f00 nativeWindow=0x7fa23d3640 surfaceId=3289944948857 reqRc=0 flushRc=0 frames=2 touchFilterRc=0 keyFilterRc=0 touchEvents=4 keyEvents=0
+09-28 16:34:51.639  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#5 action=1 finger=10000 xy=1053,534 windowId=93 time=18373305315
+09-28 16:34:51.740  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#6 action=3 finger=10000 xy=1053,534 windowId=93 time=18373409511
+09-28 16:34:51.740  9261  9261 I A01234/MainSurfaceProbe: NAPI destroyNativeWindow rc=0
+09-28 16:34:53.814  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#7 action=1 finger=10000 xy=751,296 windowId=93 time=18375481740
+09-28 16:34:53.915  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#8 action=3 finger=10000 xy=751,296 windowId=93 time=18375585551
+09-28 16:34:53.916  9261  9261 I A01234/MainSurfaceProbe: === probeRun level=2 candidate=2 ===
+09-28 16:34:53.916  9261  9261 I A01234/MainSurfaceProbe: L2 INFER vtable[0] == WindowSessionImpl::GetSurfaceNode
+09-28 16:34:53.916  9261  9261 I A01234/MainSurfaceProbe: L2 INFER GetSurfaceNode() -> RSSurfaceNode* = 0x7fa3b1a500 (sret slot2=0x7fa22fe100)
+09-28 16:34:53.916  9261  9261 I A01234/MainSurfaceProbe: L3 INFER RSSurfaceNode::GetSurface() -> Surface* = 0x7fa30f9f00 (sret slot2=0x7f00000000)
+09-28 16:34:53.916  9261  9261 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_GetSurfaceId rc=0 surfaceId=3289944948857
+09-28 16:34:56.994  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#9 action=1 finger=10000 xy=813,534 windowId=93 time=18378661999
+09-28 16:34:57.095  9261  9261 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#10 action=3 finger=10000 xy=813,534 windowId=93 time=18378764448
+09-28 16:34:57.110  9261  9261 I A01234/MainSurfaceProbe: submitFrame frame=2 rc=0 status=windowId=93 window=0x7fa399e000 node=0x7fa3b1a500 surface=0x7fa30f9f00 nativeWindow=0x7f9de3a900 surfaceId=3289944948857 reqRc=0 flushRc=0 frames=3 touchFilterRc=0 keyFilterRc=0 touchEvents=10 keyEvents=0

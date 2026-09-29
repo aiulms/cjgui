@@ -1,0 +1,4 @@
+09-28 16:36:21.241 12399 12399 I A01234/MainSurfaceProbe: onCreate
+09-28 16:36:21.262 12399 12399 I A01234/MainSurfaceProbe: onForeground
+09-28 16:36:49.582 12399 12399 I A01234/MainSurfaceProbe: onBackground
+09-28 16:36:53.798 12399 12399 I A01234/MainSurfaceProbe: [a92ab12725b5fd2, 344fa41, 62fcf3] onForeground

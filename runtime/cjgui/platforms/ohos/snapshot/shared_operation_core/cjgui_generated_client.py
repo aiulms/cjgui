@@ -707,6 +707,9 @@ class GeneratedInstance:
     # plus the exact accepted version. The path stays inside the application.
     resource: str = ""
     resource_version: int = 0
+    # Renderer preparation state of this exact accepted image binding. Empty
+    # for a non-image instance; the public frame never includes a raster path.
+    resource_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -763,7 +766,8 @@ def parse_generated_instances(response: SharedOperationResponse) -> GeneratedIns
                 tuple(_token_int(part, "instance bound") for part in bounds_parts),
                 _hex_text(values.get("label_hex", "-"), "instance label"),
                 values.get("resource", "-") if values.get("resource", "-") != "-" else "",
-                _token_int(values.get("resource_version", "0"), "instance resource version")))
+                _token_int(values.get("resource_version", "0"), "instance resource version"),
+                values.get("resource_state", "-") if values.get("resource_state", "-") != "-" else ""))
     return GeneratedInstances(version, candidate, scene, tuple(instances))
 
 
@@ -1713,4 +1717,3 @@ def parse_domain_version(response: SharedOperationResponse) -> int:
         if label == "VERSION" and tokens:
             return _token_int(tokens[0], "domain VERSION")
     return -1
-

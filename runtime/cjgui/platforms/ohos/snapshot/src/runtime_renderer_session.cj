@@ -51,6 +51,7 @@ let CJGUI_INTERNAL_RENDERER_READBACK_FAILED: Int32 = 13
 let CJGUI_INTERNAL_RENDERER_PRESENT_PENDING: Int32 = 20
 let CJGUI_INTERNAL_RENDERER_INVALID_UTF8: Int32 = 14
 let CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED: Int32 = 16
+let CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY: Int32 = 18
 let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
 
 // Invalid session token sentinel.
@@ -165,6 +166,13 @@ struct CjguiInternalRendererEvent {
     var markedLength16: Int64 = 0
     var compositionId: UInt64 = 0
     var bindingEpoch: UInt64 = 0
+    var dataTransferEventId: UInt64 = 0
+    var gestureAppInstance: UInt64 = 0
+    var gestureComponentInstance: UInt64 = 0
+    var gestureSurfaceGeneration: UInt64 = 0
+    var gesturePointerId: Int64 = -1
+    var gestureEpoch: UInt64 = 0
+    var acceptedBindingEpoch: UInt64 = 0
 }
 
 @C
@@ -249,6 +257,7 @@ struct CjguiInternalRendererComposableNode {
     var inputScope: UInt64 = 0
     var tabGroupId: UInt64 = 0
     var tabSelected: UInt32 = 0
+    var acceptedBindingEpoch: UInt64 = 0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, x!: Int64, y!: Int64, width!: Int64,
         height!: Int64, clipX!: Int64, clipY!: Int64, clipWidth!: Int64, clipHeight!: Int64, nodeKind!: UInt32,
         isInteractive!: UInt32, isReadOnly!: UInt32, tabInsertsText!: UInt32, preservesActiveLocalText!: UInt32 = 0u32,
@@ -483,11 +492,21 @@ struct InternalRendererPumpResult {
     let markedLength16: Int64
     let compositionId: UInt64
     let bindingEpoch: UInt64
+    let dataTransferEventId: UInt64
+    let gestureAppInstance: UInt64
+    let gestureComponentInstance: UInt64
+    let gestureSurfaceGeneration: UInt64
+    let gesturePointerId: Int64
+    let gestureEpoch: UInt64
+    let acceptedBindingEpoch: UInt64
     init(status: Int32, eventKind: UInt32, recordIndex: UInt32, selectionStart: UInt32, selectionEnd: UInt32,
         nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64, nodeKind: UInt32, pointerX: Int64,
         pointerY: Int64, modifierFlags: Int64, compositionPhase: UInt32, replacementStart16: Int64,
         replacementLength16: Int64, markedStart16: Int64, markedLength16: Int64, compositionId: UInt64,
-        bindingEpoch: UInt64) {
+        bindingEpoch: UInt64, dataTransferEventId: UInt64,
+        gestureAppInstance: UInt64, gestureComponentInstance: UInt64,
+        gestureSurfaceGeneration: UInt64, gesturePointerId: Int64,
+        gestureEpoch: UInt64, acceptedBindingEpoch: UInt64) {
         this.status = status
         this.eventKind = eventKind
         this.recordIndex = recordIndex
@@ -507,6 +526,13 @@ struct InternalRendererPumpResult {
         this.markedLength16 = markedLength16
         this.compositionId = compositionId
         this.bindingEpoch = bindingEpoch
+        this.dataTransferEventId = dataTransferEventId
+        this.gestureAppInstance = gestureAppInstance
+        this.gestureComponentInstance = gestureComponentInstance
+        this.gestureSurfaceGeneration = gestureSurfaceGeneration
+        this.gesturePointerId = gesturePointerId
+        this.gestureEpoch = gestureEpoch
+        this.acceptedBindingEpoch = acceptedBindingEpoch
     }
 }
 
@@ -734,6 +760,8 @@ foreign {
     ): Int32
 
     func cjgui_internal_renderer_focus_composable_node(session: UInt64, nodeId: UInt64): Int32
+    func cjgui_internal_renderer_focus_composable_node_checked(
+        session: UInt64, nodeId: UInt64, expectedBindingEpoch: UInt64): Int32
 
     func cjgui_internal_renderer_restore_composable_selection(
         session: UInt64, nodeId: UInt64, resourceId: Int64, nodeKind: UInt32,
@@ -742,6 +770,9 @@ foreign {
     ): Int32
 
     func cjgui_internal_renderer_cancel_composable_pointer_capture(session: UInt64): Int32
+    func cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(session: UInt64,
+        appInstance: UInt64, componentInstance: UInt64, surfaceGeneration: UInt64,
+        pointerId: Int64, gestureEpoch: UInt64): Int32
 
     func cjgui_internal_renderer_node_rect(
         session: UInt64,
@@ -957,7 +988,11 @@ func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32): InternalRend
     return InternalRendererPumpResult(status, event.kind, event.recordIndex, event.selectionStart, event.selectionEnd,
         event.nodeId, event.projectionVersion, event.resourceId, event.nodeKind, event.pointerX, event.pointerY,
         event.modifierFlags, event.compositionPhase, event.replacementStart16, event.replacementLength16,
-        event.markedStart16, event.markedLength16, event.compositionId, event.bindingEpoch)
+        event.markedStart16, event.markedLength16, event.compositionId, event.bindingEpoch,
+        event.dataTransferEventId,
+        event.gestureAppInstance, event.gestureComponentInstance,
+        event.gestureSurfaceGeneration, event.gesturePointerId, event.gestureEpoch,
+        event.acceptedBindingEpoch)
 }
 
 func internalRendererConfigureComposableScene(session: UInt64, projectionVersion: UInt64, nodeCount: UInt32): Int32 {
@@ -1235,12 +1270,14 @@ func internalRendererComposableDisplayProgress(session: UInt64): InternalRendere
     )
 }
 
-func internalRendererFocusComposableNode(session: UInt64, nodeId: Int64): Int32 {
+func internalRendererFocusComposableNode(session: UInt64, nodeId: Int64, expectedBindingEpoch: UInt64): Int32 {
     if (nodeId < 0) {
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     }
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
-    unsafe { status = cjgui_internal_renderer_focus_composable_node(session, UInt64(nodeId)) }
+    unsafe {
+        status = cjgui_internal_renderer_focus_composable_node_checked(session, UInt64(nodeId), expectedBindingEpoch)
+    }
     return status
 }
 
@@ -1292,6 +1329,15 @@ func internalRendererRecoverActiveTextProxy(session: UInt64, nodeId: Int64, reso
 func internalRendererCancelComposablePointerCapture(session: UInt64): Int32 {
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     unsafe { status = cjgui_internal_renderer_cancel_composable_pointer_capture(session) }
+    return status
+}
+
+func internalRendererCancelComposablePointerCaptureGestureKey(session: UInt64,
+    appInstance: UInt64, componentInstance: UInt64, surfaceGeneration: UInt64,
+    pointerId: Int64, gestureEpoch: UInt64): Int32 {
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe { status = cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(
+        session, appInstance, componentInstance, surfaceGeneration, pointerId, gestureEpoch) }
     return status
 }
 

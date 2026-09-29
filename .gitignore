@@ -93,6 +93,15 @@ sources/
 /labs/ohos_thermo_app/entry/src/main/ets/proxy/
 /labs/ohos_thermo_app/entry/cjgui_sync_*.manifest
 
+# Standalone HarmonyOS main-surface probe: keep source and evidence, but not
+# local DevEco/Hvigor/CMake products.
+/labs/ohos_main_surface_probe/.hvigor/
+/labs/ohos_main_surface_probe/entry/.cxx/
+/labs/ohos_main_surface_probe/entry/build/
+
+# Ad-hoc public-client projection dump generated during local interaction.
+/adaptive-focus-interaction.txt
+
 # Keep concise verification evidence; local build, run, and consultation
 # archives remain available in the workspace without entering Git history.
 /labs/ohos_cangjie_smoke/artifacts/cjgui-backend/snapshot/

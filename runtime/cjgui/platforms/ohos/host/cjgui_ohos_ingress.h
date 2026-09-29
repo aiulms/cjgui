@@ -26,6 +26,13 @@ struct CjguiOhosIngress {
                          uint64_t *outGeometryRevision);
     // 出队一个原始触摸；返回 1 有事件 / 0 空 / -1 旧代事件已受控丢弃。
     int (*touchDequeue)(uint32_t *outAction, float *outX, float *outY, uint64_t *outGeneration);
+    // Frozen identity of this individual raw sample. None of these values may
+    // be reconstructed from the currently active Surface or latest BEGIN.
+    int (*touchDequeueEx)(uint32_t *outAction, float *outX, float *outY,
+                          uint64_t *outAppInstance, uint64_t *outComponentInstance,
+                          uint64_t *outGeneration, int64_t *outPointerId,
+                          uint64_t *outGestureEpoch, int64_t *outTimestampNs,
+                          uint32_t *outTimeSource);
     // 前后台观察：1 前台 / 0 后台。
     int (*foregroundLevel)();
     // 租约代际复核（退役屏障的判据）：返回 1 = 该代仍是宿主当前有效 lease，

@@ -1,0 +1,56 @@
+09-28 16:41:37.545 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#1 action=1 finger=10000 xy=139,534 windowId=99 time=18779211724
+09-28 16:41:37.648 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#2 action=3 finger=10000 xy=139,534 windowId=99 time=18779317265
+09-28 16:41:37.649 18775 18775 I A01234/MainSurfaceProbe: SUBMIT surface usage=0x9
+09-28 16:41:37.661 18775 18775 I A01234/MainSurfaceProbe: SUBMIT handle 1320x2856 stride=5280 fmt=12 size=15079680 fd=40
+09-28 16:41:37.661 18775 18775 I A01234/MainSurfaceProbe: SUBMIT mmap OK addr=0x7f3a3de000 size=15079680
+09-28 16:41:37.672 18775 18775 I A01234/MainSurfaceProbe: SUBMIT FlushBuffer pattern=0 rgb=0x1e6bff rc=0 frames=1
+09-28 16:41:37.672 18775 18775 I A01234/MainSurfaceProbe: submitFrame frame=0 rc=0 status=windowId=99 window=0x7fa3991800 node=0x7fa3b1c800 surface=0x7fa30fa500 nativeWindow=0x7fa22819a0 surfaceId=3289944948867 reqRc=0 flushRc=0 frames=1 touchFilterRc=0 keyFilterRc=0 touchEvents=2 keyEvents=0
+09-28 16:41:40.871 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#3 action=1 finger=10000 xy=394,534 windowId=99 time=18782537808
+09-28 16:41:40.972 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#4 action=3 finger=10000 xy=394,534 windowId=99 time=18782641805
+09-28 16:41:40.973 18775 18775 I A01234/MainSurfaceProbe: SUBMIT surface usage=0x9
+09-28 16:41:40.985 18775 18775 I A01234/MainSurfaceProbe: SUBMIT handle 1320x2856 stride=5280 fmt=12 size=15079680 fd=42
+09-28 16:41:40.985 18775 18775 I A01234/MainSurfaceProbe: SUBMIT mmap OK addr=0x7f3a2db000 size=15079680
+09-28 16:41:40.996 18775 18775 I A01234/MainSurfaceProbe: SUBMIT FlushBuffer pattern=1 rgb=0xff8a00 rc=0 frames=2
+09-28 16:41:40.996 18775 18775 I A01234/MainSurfaceProbe: submitFrame frame=1 rc=0 status=windowId=99 window=0x7fa3991800 node=0x7fa3b1c800 surface=0x7fa30fa500 nativeWindow=0x7fa22819a0 surfaceId=3289944948867 reqRc=0 flushRc=0 frames=2 touchFilterRc=0 keyFilterRc=0 touchEvents=4 keyEvents=0
+09-28 16:41:44.195 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#5 action=1 finger=10000 xy=669,534 windowId=99 time=18785862284
+09-28 16:41:44.295 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#6 action=3 finger=10000 xy=669,534 windowId=99 time=18785965104
+09-28 16:41:44.296 18775 18775 I A01234/MainSurfaceProbe: SUBMIT surface usage=0x9
+09-28 16:41:44.296 18775 18775 I A01234/MainSurfaceProbe: SUBMIT handle 1320x2856 stride=5280 fmt=12 size=15079680 fd=40
+09-28 16:41:44.296 18775 18775 I A01234/MainSurfaceProbe: SUBMIT mmap OK addr=0x7f3a2db000 size=15079680
+09-28 16:41:44.309 18775 18775 I A01234/MainSurfaceProbe: SUBMIT FlushBuffer pattern=2 rgb=0x10e0c0 rc=0 frames=3
+09-28 16:41:44.309 18775 18775 I A01234/MainSurfaceProbe: submitFrame frame=2 rc=0 status=windowId=99 window=0x7fa3991800 node=0x7fa3b1c800 surface=0x7fa30fa500 nativeWindow=0x7fa22819a0 surfaceId=3289944948867 reqRc=0 flushRc=0 frames=3 touchFilterRc=0 keyFilterRc=0 touchEvents=6 keyEvents=0
+09-28 16:41:47.643 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#7 action=1 finger=20000 xy=1309,534 windowId=99 time=18789187265
+09-28 16:41:47.667 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#8 action=3 finger=20000 xy=1309,534 windowId=99 time=18789291805
+09-28 16:41:47.667 18775 18775 I A01234/MainSurfaceProbe: NAPI destroyNativeWindow rc=0
+09-28 16:41:50.712 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#9 action=1 finger=10000 xy=751,296 windowId=99 time=18792379171
+09-28 16:41:50.812 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#10 action=3 finger=10000 xy=751,296 windowId=99 time=18792481853
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: === probeRun level=2 candidate=2 ===
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 identity pid=18775 uid=20020083 tid=18775
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC OH_WindowManager_GetWindowProperties(windowId=99) rc=0
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC props id=99 displayId=0 rect=0,0 1320x2856 drawable=0,0 1320x2856 fullscreen=0
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC WindowManager_WindowProperties sizeof=56 字段: windowRect/drawableRect/isFullScreen/isLayoutFullScreen/focusable/touchable/brightness/isKeepScreenOn/isPrivacyMode/isTransparent/id/displayId —— 无 surface/surfaceId
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindow_CreateNativeWindowFromSurfaceId(0) rc=40001000 win=0
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC 说明: SDK 公开头文件（@ohos.window.d.ts 与 window_manager/oh_window.h）中不存在任何返回主窗口 surface/surfaceId 的接口；surfaceId 的公开来源只有 XComponent
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_RegisterTouchEventFilter(windowId=99) rc=0(OK)
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_RegisterKeyEventFilter(windowId=99) rc=0(OK)
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_GetTouchEventFilter 在本镜像不存在（@since 26.0.0，镜像 api=24）→ 版本边界
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L2 INFER [候选2] 调用 WindowSessionImpl::GetWindowWithId(99) …
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L2 INFER [候选2] 返回 Window* = 0x7fa3991800 (sret slot2=0x7d)
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L2 PRIVATE vtable=0x7fb76c63f0
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L2 INFER vtable[0] == WindowSessionImpl::GetSurfaceNode
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L2 INFER GetSurfaceNode() -> RSSurfaceNode* = 0x7fa3b1c800 (sret slot2=0x7fa223cd80)
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L3 INFER RSSurfaceNode::GetSurface() -> Surface* = 0x7fa30fa500 (sret slot2=0x7f00000000)
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L3 PUBLIC 传参修正: CreateNativeWindow(&sptr)（不是裸 Surface*），sptr 槽=0x7ff04532a0
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_CreateNativeWindow(&sptr) -> 0x7f9de3b800
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_GetSurfaceId rc=0 surfaceId=3289944948867
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L3 PUBLIC OH_NativeWindow_CreateNativeWindowFromSurfaceId(3289944948867) rc=0 win=0x7f9de3b800
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: L3 PUBLIC buffer geometry = 1320x2856 (窗口 1320x2856)
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: === probeRun end level=2 ===
+09-28 16:41:50.813 18775 18775 I A01234/MainSurfaceProbe: probe level=2 cand=2 report len=6670
+09-28 16:41:53.889 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#11 action=1 finger=10000 xy=139,534 windowId=99 time=18795556595
+09-28 16:41:53.990 18775 18775 I A01234/MainSurfaceProbe: TOUCH PUBLIC filter#12 action=3 finger=10000 xy=139,534 windowId=99 time=18795659435
+09-28 16:41:53.991 18775 18775 I A01234/MainSurfaceProbe: SUBMIT surface usage=0x9
+09-28 16:41:53.991 18775 18775 I A01234/MainSurfaceProbe: SUBMIT handle 1320x2856 stride=5280 fmt=12 size=15079680 fd=42
+09-28 16:41:53.991 18775 18775 I A01234/MainSurfaceProbe: SUBMIT mmap OK addr=0x7f3a2db000 size=15079680
+09-28 16:41:54.002 18775 18775 I A01234/MainSurfaceProbe: SUBMIT FlushBuffer pattern=0 rgb=0x1e6bff rc=0 frames=4
+09-28 16:41:54.002 18775 18775 I A01234/MainSurfaceProbe: submitFrame frame=0 rc=0 status=windowId=99 window=0x7fa3991800 node=0x7fa3b1c800 surface=0x7fa30fa500 nativeWindow=0x7f9de3b800 surfaceId=3289944948867 reqRc=0 flushRc=0 frames=4 touchFilterRc=0 keyFilterRc=0 touchEvents=12 keyEvents=0

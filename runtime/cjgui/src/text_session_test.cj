@@ -371,21 +371,20 @@ func testAgentWriteDuringCompositionIsNamedRejection(): Unit {
     @Assert(!commit.accepted)
     @Assert(session.lastRejectReason(), "composition_base_stale")
     @Assert(owner.text(), "ab!")
-    @Assert(session.hasComposition())
+    @Assert(!session.hasComposition())
+    @Assert(session.recoveryDraftsValue().size, 1)
 
-    // owner 已推进 ⇒ **重发 marked 更新也不得重取基版本**:旧替换范围不能因为重新问了一次
-    // owner 就被标成新基版本(Sol 复核前提二)。会话只能具名拒绝,由平台显式取消后重新组字。
+    // 终态已自行结束组合；恢复回执前新 marked 更新不能另开组合。
     let redraw = session.updateComposition("nihao", 0, 2, 0, 5, 5)
     @Assert(!redraw.accepted)
-    @Assert(session.lastRejectReason(), "composition_base_stale")
-    @Assert(session.compositionBaseVersionValue(), 1)     // 基版本仍是组合开始时冻结的那个
+    @Assert(session.lastRejectReason(), "recalibration_required")
     @Assert(owner.text(), "ab!")
 
-    // 按新镜像重备 + 恢复回执到位,再**显式取消旧草稿**并重新组字,同一草稿才落到新正文。
+    // 按新镜像重备 + 恢复回执到位即可重新组字，无额外 cancel。
+    @Assert(session.acknowledge(commit.ticket, commit.contextEpoch))
     @Assert(session.recalibrate())
     @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
-    session.cancelComposition()
-    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5, compositionId: 9)
     @Assert(session.compositionBaseVersionValue() > 1)
     @Assert(session.commitComposition(finalText: "你").accepted)
     @Assert(owner.text(), "你!")
@@ -975,7 +974,10 @@ func testLateCancelCannotClearNewComposition(): Unit {
     let lateCommit = session.commitComposition(finalText: "旧", compositionId: 11)
     @Assert(!lateCommit.accepted)
     @Assert(lateCommit.ticket, -1)
+    @Assert(!lateCommit.proxyRecoveryRequired)
     @Assert(owner.writeCalls, 0)
+    @Assert(session.hasComposition())
+    @Assert(session.compositionText(), "new")
     session.cancelComposition(compositionId: 11)
     @Assert(session.hasComposition())
     @Assert(session.compositionText(), "new")
@@ -984,4 +986,963 @@ func testLateCancelCannotClearNewComposition(): Unit {
     @Assert(committed.accepted)
     @Assert(owner.text(), "新abc")
     @Assert(owner.writeCalls, 1)
+}
+
+// ---- E2(2026-09-28): owner 组合仲裁的可选能力反例 ----
+//
+// 桩 owner 在最小字节/版本语义上增加"每文档一个活动 claim + 凭据终态"的 owner 行为。它只
+// 证明**会话如何调度组合凭据**(begin/提交前守卫/消费分类/精确取消),不替代真实 owner 的
+// 判决,也不等于真实 IME 链。
+class FakeClaimOwner <: CjguiRangeTextSource & CjguiRangeTextEditSink & CjguiRangeTextCompositionSink {
+    var data: Array<Byte>
+    var ver: Int64 = 1
+    var writeCalls: Int64 = 0
+    var beginCalls: Int64 = 0
+    var commitCalls: Int64 = 0
+    var cancelCalls: Int64 = 0
+    var lastBeginIdentity: String = ""
+    var lastBeginVersion: Int64 = -1
+    var lastBeginStart: Int64 = -1
+    var lastBeginEnd: Int64 = -1
+    var committedToken: Int64 = -1
+    var committedText: String = ""
+    var committedRequestId: String = ""
+    var committedStart: Int64 = -1
+    var committedEnd: Int64 = -1
+    var claimToken: Int64 = -1
+    var claimStart: Int64 = -1
+    var claimEnd: Int64 = -1
+    var claimBaseVersion: Int64 = -1
+    var tokenSeq: Int64 = 0
+    /// 非空 ⇒ 提交在**消费前**被拒绝(claim 保持活动)。
+    var refuseCommitWithoutConsuming: String = ""
+    /// 非空 ⇒ 提交消费凭据后拒绝(正文未写)。
+    var refuseCommitAfterConsuming: String = ""
+
+    init(text: String) {
+        this.data = text.toArray()
+    }
+
+    // ---- Source ----
+    public func rangeTextVersion(): Int64 {
+        return this.ver
+    }
+
+    public func confirmRangeTextVersion(expectedVersion: Int64, action: () -> Bool): Bool {
+        if (this.ver != expectedVersion) {
+            return false
+        }
+        return action()
+    }
+
+    public func rebaseRangeTextSelection(fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64) {
+        if (fromVersion < 1 || fromVersion > this.ver || startByte < 0 || endByte < startByte ||
+            fromVersion != this.ver) {
+            return None
+        }
+        return Some((this.ver, startByte, endByte))
+    }
+
+    public func rangeTextByteLength(): Int64 {
+        return this.data.size
+    }
+
+    public func readRangeText(startByte: Int64, maxBytes: Int64): CjguiRangeTextSlice {
+        let start = if (startByte < 0) { 0 } else { startByte }
+        let cap = if (start > this.data.size) { 0 } else { this.data.size - start }
+        let take = if (maxBytes < cap) { maxBytes } else { cap }
+        let body = this.data.slice(start, take)
+        return CjguiRangeTextSlice(start, start, String.fromUtf8(body), this.ver, this.data.size,
+            true, "")
+    }
+
+    // ---- 普通 Sink ----
+    public func applyRangeTextEdit(baseVersion: Int64, startByte: Int64, endByte: Int64,
+        inserted: String): CjguiRangeTextEditOutcome {
+        this.writeCalls += 1
+        if (baseVersion != this.ver) {
+            return CjguiRangeTextEditOutcome.conflict(this.ver, "version_conflict")
+        }
+        this.splice(startByte, endByte, inserted)
+        return CjguiRangeTextEditOutcome.accepted(baseVersion, this.ver)
+    }
+
+    // ---- 组合 Sink ----
+    public func beginRangeTextComposition(bindingIdentity: String, expectedVersion: Int64,
+        startByte: Int64, endByte: Int64): CjguiRangeTextCompositionClaim {
+        this.beginCalls += 1
+        this.lastBeginIdentity = bindingIdentity
+        this.lastBeginVersion = expectedVersion
+        this.lastBeginStart = startByte
+        this.lastBeginEnd = endByte
+        if (expectedVersion != this.ver) {
+            return CjguiRangeTextCompositionClaim.refused("version_conflict", this.ver)
+        }
+        if (this.claimToken >= 0) {
+            return CjguiRangeTextCompositionClaim.refused("composition_busy", this.ver)
+        }
+        if (startByte < 0 || endByte < startByte || endByte > this.data.size) {
+            return CjguiRangeTextCompositionClaim.refused("invalid_range", this.ver)
+        }
+        this.tokenSeq += 1
+        this.claimToken = this.tokenSeq
+        this.claimStart = startByte
+        this.claimEnd = endByte
+        this.claimBaseVersion = expectedVersion
+        return CjguiRangeTextCompositionClaim(true, "", this.claimToken, startByte, endByte,
+            expectedVersion)
+    }
+
+    public func inspectRangeTextComposition(token: Int64): CjguiRangeTextCompositionInspection {
+        if (this.claimToken < 0 || token != this.claimToken) {
+            return CjguiRangeTextCompositionInspection.refused("composition_stale", this.ver)
+        }
+        return CjguiRangeTextCompositionInspection(true, "", this.claimStart, this.claimEnd, this.ver)
+    }
+
+    public func commitRangeTextComposition(token: Int64, expectedVersion: Int64, text: String,
+        requestId: String): CjguiRangeTextCompositionOutcome {
+        this.commitCalls += 1
+        this.committedToken = token
+        this.committedText = text
+        this.committedRequestId = requestId
+        if (this.refuseCommitWithoutConsuming != "") {
+            return CjguiRangeTextCompositionOutcome.refused(this.refuseCommitWithoutConsuming, false,
+                this.ver)
+        }
+        if (this.claimToken < 0 || token != this.claimToken) {
+            return CjguiRangeTextCompositionOutcome.refused("composition_stale", false, this.ver)
+        }
+        if (expectedVersion >= 0 && expectedVersion != this.ver) {
+            return CjguiRangeTextCompositionOutcome.refused("version_conflict", false, this.ver)
+        }
+        let start = this.claimStart
+        let end = this.claimEnd
+        this.claimToken = -1
+        this.committedStart = start
+        this.committedEnd = end
+        if (this.refuseCommitAfterConsuming != "") {
+            return CjguiRangeTextCompositionOutcome(false, false, true, this.refuseCommitAfterConsuming,
+                start, end, this.ver, this.ver)
+        }
+        if (start == end && text.size == 0) {
+            return CjguiRangeTextCompositionOutcome(true, false, true, "", start, end, this.ver,
+                this.ver)
+        }
+        let before = this.ver
+        this.splice(start, end, text)
+        return CjguiRangeTextCompositionOutcome(true, true, true, "", start, end, before, this.ver)
+    }
+
+    public func cancelRangeTextComposition(token: Int64): CjguiRangeTextCompositionRelease {
+        this.cancelCalls += 1
+        if (this.claimToken < 0 || token != this.claimToken) {
+            return CjguiRangeTextCompositionRelease.refused("composition_stale")
+        }
+        this.claimToken = -1
+        return CjguiRangeTextCompositionRelease(true, "")
+    }
+
+    public func text(): String {
+        return String.fromUtf8(this.data)
+    }
+
+    /// 不经 Sink 的 owner 侧写入:模拟 Agent/另一窗口在组合期间推进版本。
+    public func externalWrite(startByte: Int64, endByte: Int64, inserted: String): Unit {
+        this.splice(startByte, endByte, inserted)
+    }
+
+    private func splice(startByte: Int64, endByte: Int64, inserted: String): Unit {
+        let head = this.data.slice(0, startByte)
+        let tail = this.data.slice(endByte, this.data.size - endByte)
+        let merged = ArrayList<Byte>()
+        merged.add(all: head.toArray())
+        merged.add(all: inserted.toArray())
+        merged.add(all: tail.toArray())
+        this.data = merged.toArray()
+        this.ver += 1
+    }
+}
+
+func makeClaimSession(owner: FakeClaimOwner, nodeId!: Int64 = 1001): CjguiTextSession {
+    let window = CjguiRangeTextWindow(nodeId, "plain-text", owner, owner)
+    let sink: ?CjguiRangeTextCompositionSink = match (owner as CjguiRangeTextCompositionSink) {
+        case Some(wired) => Some(wired)
+        case None => None
+    }
+    let session = CjguiTextSession(window, compositionSink: sink, compositionArbitration: true)
+    session.bind()
+    return session
+}
+
+@Test
+func testArbitratedCompositionRegistersTheClaimAndCommitsThroughTheCredential(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    @Assert(session.compositionArbitrationDeclared())
+    session.setSelection16(0, 2)
+    let began = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    @Assert(began.accepted)
+    // owner 侧真的登记了 claim:换算后的绝对源范围与镜像版本一起交给它。
+    @Assert(owner.beginCalls, 1)
+    @Assert(owner.claimToken, 1)
+    @Assert(owner.claimStart, 0)
+    @Assert(owner.claimEnd, 2)
+    @Assert(owner.claimBaseVersion, 1)
+    @Assert(session.compositionClaimTokenValue(), 1)
+    @Assert(owner.text(), "abc")                    // 预编辑零正文写入
+    @Assert(owner.writeCalls, 0)
+    let commit = session.commitComposition(finalText: "你", compositionId: 9)
+    @Assert(commit.accepted)
+    // 终态只经组合凭据:普通 sink 一次都没被调用,owner 消费了 token 1。
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.committedToken, 1)
+    @Assert(owner.committedText, "你")
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.committedStart, 0)
+    @Assert(owner.committedEnd, 2)
+    @Assert(owner.committedRequestId, "composition-terminal:1:1")
+    @Assert(owner.text(), "你c")
+    @Assert(!session.hasComposition())
+    @Assert(session.compositionClaimTokenValue(), -1)
+    let (s, e) = session.selection16()
+    @Assert(s, 1)
+    @Assert(e, 1)
+    @Assert(session.acknowledge(commit.ticket, commit.contextEpoch))
+}
+
+@Test
+func testDeclaredArbitrationWithoutCapabilityIsRefusedByName(): Unit {
+    let owner = FakeTextOwner("abc")
+    let window = CjguiRangeTextWindow(1001, "plain-text", owner, owner)
+    // 声明仲裁,sink 却没有组合能力:组合必须具名拒绝,不能静默退回普通写入。
+    let session = CjguiTextSession(window, compositionArbitration: true)
+    session.bind()
+    session.setSelection16(0, 2)
+    let began = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    @Assert(!began.accepted)
+    @Assert(began.reason, CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE)
+    @Assert(!session.hasComposition())
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testOwnedClaimBeginRefusesAStaleMirrorVersion(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    // owner 在组合开始前已推进(镜像仍是 v1):登记必须失败 version_conflict、零 claim。
+    owner.externalWrite(2, 3, "!")
+    @Assert(owner.text(), "ab!")
+    session.setSelection16(0, 2)
+    let began = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    @Assert(!began.accepted)
+    @Assert(began.reason, "version_conflict")
+    @Assert(owner.beginCalls, 1)
+    @Assert(owner.claimToken, -1)
+    @Assert(!session.hasComposition())
+    @Assert(owner.text(), "ab!")
+}
+
+@Test
+func testArbitratedCommitRefusalEndsTheClaimByName(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5, compositionId: 9)
+    // owner 在消费前拒绝(例如它自己的版本守卫):会话具名结束 claim、保留草稿,不再重试。
+    owner.refuseCommitWithoutConsuming = "stale_handle"
+    let commit = session.commitComposition(finalText: "你", compositionId: 9)
+    @Assert(!commit.accepted)
+    @Assert(commit.reason, "stale_handle")
+    @Assert(!session.hasComposition())
+    @Assert(session.recoveryDraftsValue().size, 1)
+    @Assert(session.compositionClaimTokenValue(), -1)
+    @Assert(session.lastRejectReason(), "stale_handle")
+    @Assert(owner.claimToken, -1)                   // 绑定身份发起的精确取消
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.text(), "abc")
+    @Assert(owner.ver, 1)
+    @Assert(owner.writeCalls, 0)
+    // 后续终态不会再次触达 owner:失效原因先行拒绝。
+    let again = session.commitComposition(finalText: "你", compositionId: 9)
+    @Assert(!again.accepted)
+    @Assert(again.reason, "composition_terminal_duplicate")
+    @Assert(owner.commitCalls, 1)
+}
+
+@Test
+func testConsumedTerminalWithoutWriteKeepsDraftAndHoldsCalibration(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    owner.refuseCommitAfterConsuming = "apply_rejected"
+    let commit = session.commitComposition(finalText: "你")
+    @Assert(!commit.accepted)
+    @Assert(commit.reason, "apply_rejected")
+    // 凭据已消费且正文未写:组合不能再当活动组合重试,终态草稿只作恢复证据。
+    @Assert(session.compositionClaimTokenValue(), -1)
+    @Assert(!session.hasComposition())
+    @Assert(session.recoveryDraftsValue().size, 1)
+    @Assert(session.lastRejectReason(), "apply_rejected")
+    @Assert(session.lastTerminalCompositionDraft(), "你")
+    @Assert(session.awaitingCalibration())
+    @Assert(owner.text(), "abc")
+    @Assert(owner.ver, 1)
+    // 走既有恢复回执解锁；终态已经自行结束活动槽。
+    @Assert(session.acknowledge(commit.ticket, commit.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    @Assert(!session.hasComposition())
+    owner.refuseCommitAfterConsuming = ""
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    @Assert(session.compositionClaimTokenValue(), 2)
+    let settled = session.commitComposition(finalText: "你")
+    @Assert(settled.accepted)
+    @Assert(owner.text(), "你c")
+}
+
+@Test
+func testArbitratedCancelAndInvalidateUseTheExactToken(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    @Assert(owner.claimToken, 1)
+    session.cancelComposition()
+    @Assert(!session.hasComposition())
+    @Assert(session.compositionClaimTokenValue(), -1)
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.claimToken, -1)                   // 精确 token 取消,不是通配
+    @Assert(owner.text(), "abc")
+    @Assert(owner.ver, 1)
+    @Assert(owner.writeCalls, 0)
+    // 换绑/销毁同样由生命周期发起精确取消,不让保护跨绑定存活。
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    @Assert(owner.claimToken, 2)
+    session.invalidate()
+    @Assert(owner.cancelCalls, 2)
+    @Assert(owner.claimToken, -1)
+    @Assert(session.compositionClaimTokenValue(), -1)
+}
+
+@Test
+func testNoChangeTerminalSettlesWithoutVersionOrHistory(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(1, 1)
+    let began = session.updateComposition("", 1, 0, 1, 0, 0)
+    @Assert(began.accepted)
+    @Assert(owner.claimStart, 1)
+    @Assert(owner.claimEnd, 1)
+    let commit = session.commitComposition(finalText: "")
+    // 零宽 claim + 空终态:已结算但零版本、零历史,不算一次已接受的组合写入。
+    @Assert(commit.accepted)
+    @Assert(commit.reason, CJGUI_RANGE_TEXT_REASON_COMPOSITION_NO_CHANGE)
+    @Assert(commit.versionAfter, 1)
+    @Assert(!session.hasComposition())
+    @Assert(session.compositionClaimTokenValue(), -1)
+    @Assert(!session.awaitingCalibration())
+    @Assert(owner.text(), "abc")
+    @Assert(owner.ver, 1)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testNonArbitratedBindingKeepsTheOrdinaryCompositionPath(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let window = CjguiRangeTextWindow(1001, "plain-text", owner, owner)
+    let session = CjguiTextSession(window)
+    session.bind()
+    session.setSelection16(0, 2)
+    let began = session.updateComposition("nihao", 0, 2, 0, 5, 5)
+    @Assert(began.accepted)
+    // 未声明仲裁:会话一个 claim 都不登记,提交仍走普通 sink(旧路径完全不变)。
+    @Assert(owner.beginCalls, 0)
+    @Assert(session.compositionClaimTokenValue(), -1)
+    let commit = session.commitComposition(finalText: "你")
+    @Assert(commit.accepted)
+    @Assert(owner.writeCalls, 1)
+    @Assert(owner.commitCalls, 0)
+    @Assert(owner.text(), "你c")
+}
+
+// ---- E2 复核第 1 项（2026-09-28,Astra 重锚裁决 Q4 安全恢复分支） ----
+
+/// α 终局:外部正文在 claim 之上推进 → 扰乱取消保存独立恢复草稿 → 输入门关闭 →
+/// 恢复确认放行 → 新组合恰好一次提交;已接受 Agent 事务保留、失败恢复零正文写入。
+@Test
+func testDisruptedCompositionSavesRecoveryDraftAndRecoversInput(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5, compositionId: 1)
+    @Assert(owner.claimToken, 1)
+    // Agent 末尾追加:owner 版本前进,外部事务已被接受并保留。
+    owner.externalWrite(3, 3, "X")
+    @Assert(owner.text(), "abcX")
+    @Assert(owner.ver, 2)
+    let disrupted = session.disruptComposition(1, "composition_reanchor_unavailable",
+        "native_context_lost")
+    @Assert(!disrupted.accepted)
+    @Assert(disrupted.reason, "composition_reanchor_unavailable")
+    // claim 已按精确 token 结束;失败恢复自身零正文写入、零新撤销记录。
+    @Assert(owner.claimToken, -1)
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.ver, 2)
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.commitCalls, 0)
+    // 独立恢复草稿:内容、冻结范围(旧版本坐标)、来源版本与组合身份俱全。
+    let draft = session.recoveryDraftValue()
+    @Assert(draft.isSome())
+    if (let Some(value) <- draft) {
+        @Assert(value.content, "nihao")
+        @Assert(value.sourceStartByte, 0)
+        @Assert(value.sourceEndByte, 2)
+        @Assert(value.sourceVersion, 1)
+        @Assert(value.compositionId, 1)
+        @Assert(value.token, 1)
+        @Assert(value.reason, "composition_reanchor_unavailable")
+        @Assert(value.cause, "native_context_lost")
+    }
+    // 组合状态已结束;迟到/重复取消不得删掉恢复草稿。
+    @Assert(!session.hasComposition())
+    session.cancelComposition(compositionId: 1)
+    @Assert(session.recoveryDraftValue().isSome())
+    // 输入门关闭:旧坐标的普通输入在恢复确认前被具名拒绝。
+    @Assert(session.awaitingCalibration())
+    let refused = session.replaceRange16(3, 3, "z")
+    @Assert(!refused.accepted)
+    @Assert(refused.reason, "recalibration_required")
+    @Assert(owner.ver, 2)
+    // 恢复链:结算扰乱票据 → 按 owner 现状重建镜像 → 完整回执确认 → 放行。
+    @Assert(session.acknowledge(disrupted.ticket, disrupted.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    @Assert(!session.awaitingCalibration())
+    // 重组字恰好一次:新 claim 新 token,一笔事务落盘。
+    let _ = session.updateComposition("hao", 1, 1, 1, 3, 3, compositionId: 2)
+    @Assert(owner.claimToken, 2)
+    let settled = session.commitComposition(finalText: "好", compositionId: 2)
+    @Assert(settled.accepted)
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.text(), "a好cX")
+    @Assert(owner.ver, 3)
+    // 草稿仍在:新组合的成功不吞掉它;按身份显式取回一次性交出。
+    let draftId = match (session.recoveryDraftValue()) {
+        case Some(value) => value.draftId
+        case None => -1
+    }
+    @Assert(draftId > 0)
+    @Assert(session.canConsumeRecoveryDraft(draftId))
+    let retrieved = session.consumeRecoveryDraft(draftId)
+    @Assert(retrieved.isSome())
+    @Assert(session.recoveryDraftValue().isNone())
+    let again = session.consumeRecoveryDraft(draftId)
+    @Assert(again.isNone())
+    @Assert(session.lastRejectReason(), "recovery_draft_absent")
+}
+
+/// 草稿绑定身份:换绑(新文档/新绑定)后取回被具名拒绝,禁止恢复到新目标。
+@Test
+func testRecoveryDraftCannotBeConsumedAfterRebind(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5, compositionId: 1)
+    owner.externalWrite(3, 3, "X")
+    let disrupted = session.disruptComposition(1, "composition_reanchor_unavailable",
+        "native_context_lost")
+    let _ = session.acknowledge(disrupted.ticket, disrupted.contextEpoch)
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    // 换绑推进代次:旧草稿不能再取回到新绑定上,但保留为可辨认证据。
+    session.bind()
+    @Assert(session.recoveryDraftsValue().size, 1)
+    let staleId = session.recoveryDraftsValue()[0].draftId
+    @Assert(!session.canConsumeRecoveryDraft(staleId))
+    @Assert(session.lastRejectReason(), "recovery_draft_binding_lost")
+    @Assert(session.consumeRecoveryDraft(staleId).isNone())
+    @Assert(session.recoveryDraftsValue().size, 1)
+    // 显式放弃(按身份)后队列清空。
+    @Assert(session.discardRecoveryDraft(staleId))
+    @Assert(session.recoveryDraftValue().isNone())
+    @Assert(!session.discardRecoveryDraft(staleId))
+}
+
+/// 呈现面组合(E2 复核:presentation TEXT 接同一 owner claim)。映射器给出的源字节
+/// 跨度在 begin 登记;update 零写入;commit 只经凭据落一笔事务。
+@Test
+func testPresentationCompositionRegistersClaimAndCommitsThroughCredential(): Unit {
+    let owner = FakeClaimOwner("# 标题\n\n正文。\n")
+    let session = makeClaimSession(owner)
+    let mirror = session.mirrorSnapshot()
+    // 映射器解析出的同版本源跨度:替换「正文。」
+    let began = session.beginPresentationComposition(mirror.sourceVersion, 10, 16,
+        mirror.contextEpoch, mirror.mirrorRevision, 7)
+    @Assert(began.accepted)
+    @Assert(owner.beginCalls, 1)
+    @Assert(owner.claimStart, 10)
+    @Assert(owner.claimEnd, 16)
+    @Assert(session.compositionClaimTokenValue(), 1)
+    // 冻结范围以源字节报告(UTF-16 端点不适用)。
+    if (let Some(frozen) <- session.compositionFrozenRange()) {
+        @Assert(frozen[0], 7)
+        @Assert(frozen[4], 10)
+        @Assert(frozen[5], 16)
+    } else {
+        @Assert(false)
+    }
+    let updated = session.updatePresentationComposition("nihao", 5, 5, 7)
+    @Assert(updated.accepted)
+    @Assert(session.compositionText(), "nihao")
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.ver, 1)
+    let settled = session.commitPresentationComposition("你好", 7)
+    @Assert(settled.accepted)
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.committedToken, 1)
+    @Assert(owner.committedText, "你好")
+    @Assert(owner.committedStart, 10)
+    @Assert(owner.committedEnd, 16)
+    @Assert(owner.writeCalls, 0)                     // 终态绝不经普通 sink
+    @Assert(owner.text(), "# 标题\n\n你好。\n")
+    @Assert(!session.hasComposition())
+    @Assert(session.acknowledge(settled.ticket, settled.contextEpoch))
+}
+
+/// 呈现面组合期间 owner 版本前进:update 具名拒绝 base_stale、claim 精确结束、
+/// 草稿保留给平台取消;随后的取消清理状态,零事务。
+@Test
+func testPresentationCompositionBaseStaleEndsClaimByName(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    let mirror = session.mirrorSnapshot()
+    let _ = session.beginPresentationComposition(mirror.sourceVersion, 0, 2,
+        mirror.contextEpoch, mirror.mirrorRevision, 4)
+    owner.externalWrite(3, 3, "!")
+    let updated = session.updatePresentationComposition("x", 1, 1, 4)
+    @Assert(!updated.accepted)
+    @Assert(updated.reason, "composition_base_stale")
+    @Assert(owner.claimToken, -1)
+    @Assert(owner.cancelCalls, 1)
+    // begin 之后没有已接受的 preedit:无可恢复内容,不产生空草稿(恢复门仍关闭)。
+    @Assert(session.compositionText(), "")
+    @Assert(session.recoveryDraftsValue().size, 0)
+    @Assert(session.awaitingCalibration())
+    // 平台随后的取消相位清理组合状态;正文零变化。
+    session.cancelPresentationComposition(compositionId: 4)
+    @Assert(!session.hasComposition())
+    @Assert(owner.ver, 2)
+    @Assert(owner.writeCalls, 0)
+    // 恢复确认后输入门放行。
+    @Assert(session.acknowledge(updated.ticket, updated.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    @Assert(!session.awaitingCalibration())
+}
+
+/// α visual 真实反例的框架侧固化:呈现面的终局相位(phase 2 提交)遇到 owner 版本
+/// 前进时,已接受的 preedit 必须落成恢复草稿(旧坐标只作证据),不得静默丢弃;
+/// 完整恢复确认后可重新组字并提交,草稿仍按身份一次性取回。
+@Test
+func testPresentationCommitOnStaleBaseRetainsPreeditDraft(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    let mirror = session.mirrorSnapshot()
+    let _ = session.beginPresentationComposition(mirror.sourceVersion, 0, 2,
+        mirror.contextEpoch, mirror.mirrorRevision, 5)
+    let updated = session.updatePresentationComposition("nihao", 3, 3, 5)
+    @Assert(updated.accepted)
+    @Assert(session.compositionText(), "nihao")
+    owner.externalWrite(3, 3, "!")
+    let settled = session.commitPresentationComposition("你", 5)
+    @Assert(!settled.accepted)
+    @Assert(settled.reason, "composition_base_stale")
+    @Assert(owner.claimToken, -1)
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.commitCalls, 0)
+    // 草稿 = 最后被接受的 preedit,带呈现面身份(1)与旧版本冻结坐标。
+    let draft = session.recoveryDraftValue()
+    @Assert(draft.isSome())
+    if (let Some(value) <- draft) {
+        @Assert(value.content, "nihao")
+        @Assert(value.surface, 1)
+        @Assert(value.sourceStartByte, 0)
+        @Assert(value.sourceEndByte, 2)
+        @Assert(value.sourceVersion, 1)
+        @Assert(value.token, 1)
+        @Assert(value.reason, "composition_base_stale")
+        @Assert(value.cause, "owner_version_advanced")
+    }
+    // 平台迟到的取消相位收尾同一次组合:不产生第二份草稿。
+    session.cancelPresentationComposition(compositionId: 5)
+    @Assert(session.recoveryDraftsValue().size, 1)
+    @Assert(!session.hasComposition())
+    @Assert(session.awaitingCalibration())
+    // 恢复链:结算 → 重建投影 → 完整回执确认,之后同一会话重新组字并落一笔事务。
+    @Assert(session.acknowledge(settled.ticket, settled.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    @Assert(!session.awaitingCalibration())
+    let mirror2 = session.mirrorSnapshot()
+    let began = session.beginPresentationComposition(mirror2.sourceVersion, 0, 2,
+        mirror2.contextEpoch, mirror2.mirrorRevision, 6)
+    @Assert(began.accepted)
+    let _ = session.updatePresentationComposition("hao", 3, 3, 6)
+    let final = session.commitPresentationComposition("好", 6)
+    @Assert(final.accepted)
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.text(), "好c!")
+    // 被中断的 preedit 仍可按身份取回一次(与新组合的成功提交互不吞噬)。
+    let draftId = match (session.recoveryDraftValue()) {
+        case Some(value) => value.draftId
+        case None => -1
+    }
+    @Assert(draftId > 0)
+    @Assert(session.consumeRecoveryDraft(draftId).isSome())
+}
+
+/// A terminal refusal must release the active slot itself. There is no promise that
+/// AppKit sends a second cancel after the rejected commit.
+@Test
+func testSourceStaleTerminalRecoversWithoutSyntheticCancel(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    let began = session.updateComposition("nihao", 0, 2, 0, 5, 5, compositionId: 71)
+    @Assert(began.accepted)
+    owner.externalWrite(3, 3, "!")
+    let refused = session.commitComposition(finalText: "你好", compositionId: 71)
+    @Assert(!refused.accepted)
+    @Assert(refused.reason, "composition_base_stale")
+    @Assert(!session.hasComposition())
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.commitCalls, 0)
+    @Assert(session.recoveryDraftsValue().size, 1)
+    @Assert(session.awaitingCalibration())
+    @Assert(session.acknowledge(refused.ticket, refused.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    let next = session.updateComposition("hao", 0, 2, 0, 3, 3, compositionId: 72)
+    @Assert(next.accepted)
+    let committed = session.commitComposition(finalText: "好", compositionId: 72)
+    @Assert(committed.accepted)
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.text(), "好c!")
+    @Assert(session.recoveryDraftsValue().size, 1)
+}
+
+@Test
+func testSourceUpdateStaleThenTerminalRecoversWithoutSyntheticCancel(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    @Assert(session.updateComposition("nihao", 0, 2, 0, 5, 5, compositionId: 73).accepted)
+    owner.externalWrite(3, 3, "!")
+    let stale = session.updateComposition("niha", 0, 2, 0, 4, 4, compositionId: 73)
+    @Assert(!stale.accepted)
+    @Assert(stale.reason, "composition_base_stale")
+    let terminal = session.commitComposition(finalText: "你好", compositionId: 73)
+    @Assert(!terminal.accepted)
+    @Assert(terminal.reason, "composition_base_stale")
+    @Assert(!session.hasComposition())
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.commitCalls, 0)
+    @Assert(session.recoveryDraftsValue().size, 1)
+    @Assert(session.acknowledge(stale.ticket, stale.contextEpoch))
+    @Assert(session.acknowledge(terminal.ticket, terminal.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    @Assert(session.updateComposition("hao", 0, 2, 0, 3, 3, compositionId: 74).accepted)
+    @Assert(session.commitComposition(finalText: "好", compositionId: 74).accepted)
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.text(), "好c!")
+}
+
+@Test
+func testVisualDirectStaleTerminalRecoversWithoutSyntheticCancel(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    let mirror = session.mirrorSnapshot()
+    @Assert(session.beginPresentationComposition(mirror.sourceVersion, 0, 2,
+        mirror.contextEpoch, mirror.mirrorRevision, 83, firstPreedit: "nihao").accepted)
+    owner.externalWrite(3, 3, "!")
+    let refused = session.commitPresentationComposition("你好", 83)
+    @Assert(!refused.accepted)
+    @Assert(refused.reason, "composition_base_stale")
+    @Assert(!session.hasComposition())
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.commitCalls, 0)
+    @Assert(session.recoveryDraftsValue().size, 1)
+    @Assert(session.acknowledge(refused.ticket, refused.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    let nextMirror = session.mirrorSnapshot()
+    @Assert(session.beginPresentationComposition(nextMirror.sourceVersion, 0, 2,
+        nextMirror.contextEpoch, nextMirror.mirrorRevision, 84).accepted)
+    @Assert(session.commitPresentationComposition("好", 84).accepted)
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.text(), "好c!")
+}
+
+@Test
+func testVisualUpdateStaleThenTerminalRecoversWithoutSyntheticCancel(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    let mirror = session.mirrorSnapshot()
+    let began = session.beginPresentationComposition(mirror.sourceVersion, 0, 2,
+        mirror.contextEpoch, mirror.mirrorRevision, 81)
+    @Assert(began.accepted)
+    let preedit = session.updatePresentationComposition("nihao", 5, 5, 81)
+    @Assert(preedit.accepted)
+    owner.externalWrite(3, 3, "!")
+    let stale = session.updatePresentationComposition("niha", 4, 4, 81)
+    @Assert(!stale.accepted)
+    @Assert(stale.reason, "composition_base_stale")
+    let terminal = session.commitPresentationComposition("你好", 81)
+    @Assert(!terminal.accepted)
+    @Assert(terminal.reason, "composition_base_stale")
+    @Assert(!session.hasComposition())
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.commitCalls, 0)
+    @Assert(session.recoveryDraftsValue().size, 1)
+    @Assert(session.acknowledge(stale.ticket, stale.contextEpoch))
+    @Assert(session.acknowledge(terminal.ticket, terminal.contextEpoch))
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    let nextMirror = session.mirrorSnapshot()
+    let next = session.beginPresentationComposition(nextMirror.sourceVersion, 0, 2,
+        nextMirror.contextEpoch, nextMirror.mirrorRevision, 82)
+    @Assert(next.accepted)
+    let committed = session.commitPresentationComposition("好", 82)
+    @Assert(committed.accepted)
+    @Assert(owner.commitCalls, 1)
+    @Assert(owner.text(), "好c!")
+    @Assert(session.recoveryDraftsValue().size, 1)
+}
+
+/// 呈现面组合取消:零事务、按精确 token 结束、重复终态幂等。
+@Test
+func testPresentationCompositionCancelUsesExactToken(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    let mirror = session.mirrorSnapshot()
+    let _ = session.beginPresentationComposition(mirror.sourceVersion, 0, 2,
+        mirror.contextEpoch, mirror.mirrorRevision, 9)
+    @Assert(owner.claimToken, 1)
+    session.cancelPresentationComposition(compositionId: 9)
+    @Assert(owner.cancelCalls, 1)
+    @Assert(owner.claimToken, -1)
+    @Assert(!session.hasComposition())
+    @Assert(owner.ver, 1)
+    @Assert(owner.writeCalls, 0)
+    // 正文表面入口不能解释呈现面组合的任何相位。
+    let mirror2 = session.mirrorSnapshot()
+    let _ = session.beginPresentationComposition(mirror2.sourceVersion, 0, 2,
+        mirror2.contextEpoch, mirror2.mirrorRevision, 10)
+    let sourcePhase = session.updateComposition("ab", 0, 0, 0, 2, 2, compositionId: 10)
+    @Assert(!sourcePhase.accepted)
+    @Assert(sourcePhase.reason, "composition_busy")
+    session.cancelPresentationComposition(compositionId: 10)
+    @Assert(owner.claimToken, -1)
+}
+
+/// 取消相位的打断判据:owner 版本越过组合基点就是中断,即使被组字片段自己的渲染值
+/// 没变(外部写落在别的片段)——只按表面值变化判会漏判成普通 cancel,preedit 丢失。
+@Test
+func testCompositionBaseStaleIsTheOwnerVersionPredicate(): Unit {
+    let owner = FakeClaimOwner("# 标题\n\n正文。\n")
+    let session = makeClaimSession(owner)
+    // 没有活动组合:判据为假(cancel 相位不得凭空造中断)。
+    @Assert(!session.compositionBaseStale())
+    let mirror = session.mirrorSnapshot()
+    let _ = session.beginPresentationComposition(mirror.sourceVersion, 10, 16,
+        mirror.contextEpoch, mirror.mirrorRevision, 7)
+    @Assert(!session.compositionBaseStale())
+    // 外部写落在**别的片段**(组合范围之外,组合自己的源跨度仍逐字未变)。
+    owner.externalWrite(0, 0, "X")
+    @Assert(session.compositionBaseStale())
+    // 结束这次组合后判据随组合消失:普通 cancel 不继承上一次的 stale。
+    session.cancelPresentationComposition(compositionId: 7)
+    @Assert(!session.compositionBaseStale())
+    // 新组合以新版本为基点,再次为假。
+    let mirror2 = session.mirrorSnapshot()
+    let _ = session.beginPresentationComposition(mirror2.sourceVersion, 11, 17,
+        mirror2.contextEpoch, mirror2.mirrorRevision, 8)
+    @Assert(!session.compositionBaseStale())
+    session.cancelPresentationComposition(compositionId: 8)
+}
+
+/// 未声明仲裁的绑定不得使用呈现面 claim 入口(具名拒绝,不静默退回普通写入)。
+@Test
+func testPresentationCompositionRequiresArbitrationDeclaration(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let window = CjguiRangeTextWindow(1001, "plain-text", owner, owner)
+    let session = CjguiTextSession(window)
+    session.bind()
+    let mirror = session.mirrorSnapshot()
+    let began = session.beginPresentationComposition(mirror.sourceVersion, 0, 2,
+        mirror.contextEpoch, mirror.mirrorRevision, 3)
+    @Assert(!began.accepted)
+    @Assert(began.reason, CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE)
+    @Assert(owner.beginCalls, 0)
+    @Assert(owner.writeCalls, 0)
+}
+
+// ---- E2 复核第 1 项（2026-09-28 第二轮）：统一恢复确认门 + 有身份恢复草稿 ----
+
+/// 交错 1：首个相位本身也是数据。begin 与 preedit 在同一相位入账后立即扰乱——
+/// 保存的草稿就是刚显示的文字（唯一一次 marked update 之后的真实形状）。
+@Test
+func testFirstPresentationPhaseIsItselfTheDraft(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    let mirror = session.mirrorSnapshot()
+    let began = session.beginPresentationComposition(mirror.sourceVersion, 0, 2,
+        mirror.contextEpoch, mirror.mirrorRevision, 21, firstPreedit: "ni",
+        firstInnerAnchor16: 2, firstInnerFocus16: 2)
+    @Assert(began.accepted)
+    @Assert(session.compositionText(), "ni")
+    @Assert(owner.text(), "abc")
+    // 唯一一次 marked update 之后外部扰乱:草稿内容与显示一致。
+    owner.externalWrite(3, 3, "!")
+    let disrupted = session.disruptComposition(21, "composition_reanchor_unavailable",
+        "native_context_lost")
+    @Assert(!disrupted.accepted)
+    let draft = match (session.recoveryDraftValue()) {
+        case Some(value) => value
+        case None => @Assert(session.recoveryDraftValue().isSome()); return
+    }
+    @Assert(draft.content, "ni")
+    @Assert(draft.compositionId, 21)
+    @Assert(draft.draftId > 0)
+}
+
+/// 交错 2：恢复确认未完成（ACK 延迟/失败）期间,新组字、普通编辑、prepared 写入
+/// 全部具名拒绝;零新增 claim/事务/历史,确认后才放行。
+@Test
+func testRecoveryGateBlocksAllInputsUntilFullConfirmation(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 2)
+    let _ = session.updateComposition("nihao", 0, 2, 0, 5, 5, compositionId: 1)
+    owner.externalWrite(3, 3, "!")
+    let disrupted = session.disruptComposition(1, "composition_reanchor_unavailable",
+        "native_context_lost")
+    @Assert(session.awaitingCalibration())
+    let versionAfterDisrupt = owner.ver
+    // 新组字(两表面)、普通编辑、prepared 写入都关在门外。
+    let newMarked = session.updateComposition("x", 0, 0, 0, 1, 1, compositionId: 2)
+    @Assert(!newMarked.accepted)
+    @Assert(newMarked.reason, "recalibration_required")
+    let mirror2 = session.mirrorSnapshot()
+    let presentationBegin = session.beginPresentationComposition(mirror2.sourceVersion,
+        0, 0, mirror2.contextEpoch, mirror2.mirrorRevision, 3)
+    @Assert(!presentationBegin.accepted)
+    @Assert(presentationBegin.reason, "recalibration_required")
+    let plainEdit = session.replaceRange16(0, 0, "z")
+    @Assert(!plainEdit.accepted)
+    @Assert(plainEdit.reason, "recalibration_required")
+    let prepared = session.prepareSourceRange(owner.ver, 0, 0)
+    @Assert(prepared.isNone())
+    @Assert(session.lastRejectReason(), "recalibration_required")
+    // 零新增 claim/事务/历史。
+    @Assert(owner.beginCalls, 1)
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.commitCalls, 0)
+    @Assert(owner.ver, versionAfterDisrupt)
+    // recalibrate 之后、完整回执确认之前,门仍然关着。
+    @Assert(session.acknowledge(disrupted.ticket, disrupted.contextEpoch))
+    @Assert(session.recalibrate())
+    let stillGated = session.replaceRange16(0, 0, "z")
+    @Assert(!stillGated.accepted)
+    @Assert(stillGated.reason, "recalibration_required")
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    let released = session.replaceRange16(0, 0, "z")
+    @Assert(released.accepted)
+    @Assert(owner.text(), "zabc!")
+}
+
+/// 交错 3：A 草稿未处理时 B 再中断——追加而非覆盖,两份身份可辨;容量占满后
+/// 新组字在 begin 处具名拒绝,放弃 A 后才放行。
+@Test
+func testRecoveryDraftsAppendWithIdentityUntilCapacity(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    // A:第一段组合被扰乱。
+    session.setSelection16(0, 0)
+    let _ = session.updateComposition("A-preedit", 0, 0, 0, 9, 9, compositionId: 1)
+    owner.externalWrite(3, 3, "!")
+    let disruptedA = session.disruptComposition(1, "composition_reanchor_unavailable",
+        "native_context_lost")
+    let _ = session.acknowledge(disruptedA.ticket, disruptedA.contextEpoch)
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    let draftsA = session.recoveryDraftsValue()
+    @Assert(draftsA.size, 1)
+    @Assert(draftsA[0].content, "A-preedit")
+    let idA = draftsA[0].draftId
+    // B:恢复确认后的第二段组合再被扰乱——追加,不覆盖 A。
+    session.setSelection16(0, 0)
+    let _ = session.updateComposition("B-preedit", 0, 0, 0, 9, 9, compositionId: 2)
+    owner.externalWrite(4, 4, "?")
+    let disruptedB = session.disruptComposition(2, "composition_reanchor_unavailable",
+        "native_context_lost")
+    let _ = session.acknowledge(disruptedB.ticket, disruptedB.contextEpoch)
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    let draftsB = session.recoveryDraftsValue()
+    @Assert(draftsB.size, 2)
+    @Assert(draftsB[0].content, "B-preedit")         // 新→旧
+    @Assert(draftsB[1].content, "A-preedit")
+    let idB = draftsB[0].draftId
+    @Assert(idB != idA)
+    @Assert(session.recoveryDraftsDisplacedCount(), 0)
+    // 容量占满:新组字在 begin 处具名拒绝(A/B 都未被处理)。
+    session.setSelection16(0, 0)
+    let refused = session.updateComposition("C", 0, 0, 0, 1, 1, compositionId: 3)
+    @Assert(!refused.accepted)
+    @Assert(refused.reason, "recovery_draft_capacity")
+    @Assert(owner.beginCalls, 2)
+    // 按身份放弃 A 后,容量恢复,新组字可登记。
+    @Assert(session.discardRecoveryDraft(idA))
+    @Assert(session.recoveryDraftsValue().size, 1)
+    session.setSelection16(0, 0)
+    let beganC = session.updateComposition("C", 0, 0, 0, 1, 1, compositionId: 3)
+    @Assert(beganC.accepted)
+    @Assert(owner.beginCalls, 3)
+    session.cancelComposition(compositionId: 3)
+    // 按身份取回 B;错身份/已消费身份都具名拒绝。
+    @Assert(session.canConsumeRecoveryDraft(idB))
+    let retrieved = session.consumeRecoveryDraft(idB)
+    @Assert(retrieved.isSome())
+    @Assert(session.consumeRecoveryDraft(idB).isNone())
+    @Assert(session.lastRejectReason(), "recovery_draft_absent")
+    @Assert(session.recoveryDraftValue().isNone())
+}
+
+/// 交错 4：旧草稿取回的身份校验在**写前**发生——身份不符零正文写入,草稿可辨认。
+@Test
+func testRecoveryDraftIdentityCheckedBeforeAnyWrite(): Unit {
+    let owner = FakeClaimOwner("abc")
+    let session = makeClaimSession(owner)
+    session.setSelection16(0, 0)
+    let _ = session.updateComposition("旧词", 0, 0, 0, 2, 2, compositionId: 1)
+    owner.externalWrite(3, 3, "!")
+    let disrupted = session.disruptComposition(1, "composition_reanchor_unavailable",
+        "native_context_lost")
+    let _ = session.acknowledge(disrupted.ticket, disrupted.contextEpoch)
+    @Assert(session.recalibrate())
+    @Assert(session.confirmProxyRestored(session.contextEpochValue(), session.mirrorRevisionValue()))
+    let draftId = session.recoveryDraftsValue()[0].draftId
+    // 不存在的身份:写前校验失败,零正文变化,草稿保留。
+    @Assert(!session.canConsumeRecoveryDraft(draftId + 100))
+    @Assert(session.lastRejectReason(), "recovery_draft_absent")
+    @Assert(session.consumeRecoveryDraft(draftId + 100).isNone())
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.ver, 2)
+    @Assert(session.recoveryDraftsValue().size, 1)
 }

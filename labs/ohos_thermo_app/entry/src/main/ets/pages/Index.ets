@@ -99,9 +99,6 @@ struct Index {
   // private filesDir before the Cangjie owner/renderer is allowed to start.
   private async installImages(): Promise<void> {
     const context = getContext(this);
-    if (context.filesDir !== '/data/storage/el2/base/files') {
-      throw new Error(`image_asset_sandbox_alias_mismatch:${context.filesDir}`);
-    }
     for (const name of ['cjgui_image_v1.png', 'cjgui_image_v2.png']) {
       let declaredSize: number = 0;
       try {
@@ -160,7 +157,7 @@ struct Index {
       if (this.imageInstall === null) { this.imageInstall = this.installImages(); }
       await this.imageInstall;
       if (!this.surfaceMounted) { return; }
-      entryNapi.startHost();
+      entryNapi.startHost(getContext(this).filesDir);
     } catch (e) {
       this.imageInstall = null;
       this.status = `image install failed: ${String(e)}`;

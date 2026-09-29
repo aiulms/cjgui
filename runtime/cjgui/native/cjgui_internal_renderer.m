@@ -24,6 +24,11 @@
 #include <limits.h>
 #include <math.h>
 #include <sys/resource.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 
 // ---- helpers reused by both runtime probe and smoke shim ----
 
@@ -47,17 +52,23 @@ static BOOL CjguiDataTransferTraceEnabled(void) {
     return enabled != 0;
 }
 
-#ifdef CJGUI_INTERNAL_TESTING
-static uint64_t CjguiMonotonicMicros(void) {
+// The caretaker clock is required by the normal renderer. Keep it separate
+// from the TESTING-only interval probes below, whose production call sites
+// deliberately compile to zero to avoid reads in hot drawing paths.
+static uint64_t CjguiCaretBlinkClockMicros(void) {
     static mach_timebase_info_data_t timebase;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ mach_timebase_info(&timebase); });
     uint64_t ticks = mach_continuous_time();
-    return (ticks / 1000) * timebase.numer / MAX((uint32_t)1, timebase.denom);
+    // Convert before dividing to microseconds. Dividing ticks by 1000 first
+    // quantized the clock in timebase.numer/denom-sized steps (41 us here),
+    // hiding the actual bracket width of cross-clock test observations.
+    return (uint64_t)(((__uint128_t)ticks * timebase.numer) /
+                      ((__uint128_t)MAX((uint32_t)1, timebase.denom) * 1000u));
 }
-
-static uint64_t CjguiSaturatingAddU64(uint64_t value, uint64_t delta) {
-    return delta > UINT64_MAX - value ? UINT64_MAX : value + delta;
+#ifdef CJGUI_INTERNAL_TESTING
+static uint64_t CjguiMonotonicMicros(void) {
+    return CjguiCaretBlinkClockMicros();
 }
 #else
 // Interval probes are TESTING-only. Keep their call sites compile-time inert
@@ -65,7 +76,25 @@ static uint64_t CjguiSaturatingAddU64(uint64_t value, uint64_t delta) {
 #define CjguiMonotonicMicros() 0ULL
 #endif
 
+// Pure arithmetic, no clock: the production workload counters (raster/upload
+// counts and bytes) accumulate through this in every build, so it must NOT
+// live behind CJGUI_INTERNAL_TESTING like the interval probes do.
+static uint64_t CjguiSaturatingAddU64(uint64_t value, uint64_t delta) {
+    return delta > UINT64_MAX - value ? UINT64_MAX : value + delta;
+}
+
 @class CJGuiInternalComposableSceneNode;
+
+// A Metal completion may arrive while a synchronous owner turn is still
+// building later scenes. The callback releases its exact captured resources
+// off-thread, then publishes this one-way flag; the owner prunes its own
+// dictionary before charging the next candidate. No mutable session table is
+// touched from the Metal callback.
+@interface CjguiTextSubmissionCompletion : NSObject
+@property(atomic, assign) BOOL resourcesReleased;
+@end
+@implementation CjguiTextSubmissionCompletion
+@end
 
 enum { CJGUI_INTERNAL_COMPOSABLE_CLIP_CONSTRAINT_CAPACITY = 4 };
 // Apple documents a 4 KiB upper bound for setVertexBytes. This renderer uses
@@ -233,6 +262,7 @@ static BOOL CjguiColorByteMatches(uint8_t actual, uint8_t expected) {
 @property(nonatomic, assign) uint64_t frameIndex;
 @property(nonatomic, assign) CGSize lastSubmittedDrawableSize;
 @property(nonatomic, assign) NSSize lastSubmittedPointSize;
+@property(nonatomic, assign) CGFloat lastSubmittedContentsScale;
 @property(nonatomic, strong) id<MTLRenderPipelineState> composablePipeline;
 @property(nonatomic, strong) id<MTLRenderPipelineState> composableImagePipeline;
 @property(nonatomic, strong) id<MTLRenderPipelineState> composableVectorPipeline;
@@ -257,6 +287,14 @@ static BOOL CjguiColorByteMatches(uint8_t actual, uint8_t expected) {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, id<MTLRenderPipelineState>> *effectPipelines;
 @property(nonatomic, strong) id<MTLComputePipelineState> backdropHorizontalPipeline;
 @property(nonatomic, strong) id<MTLComputePipelineState> backdropVerticalPipeline;
+// Always-on scalar work totals for normal app diagnostics. They count actual
+// successful text tile raster/upload points, independently of test tracing.
+@property(nonatomic, assign) uint64_t textRasterCount;
+@property(nonatomic, assign) uint64_t textRasterBytes;
+@property(nonatomic, assign) uint64_t textRasterMicros;
+@property(nonatomic, assign) uint64_t textUploadCount;
+@property(nonatomic, assign) uint64_t textUploadBytes;
+@property(nonatomic, assign) uint64_t textUploadMicros;
 #ifdef CJGUI_INTERNAL_TESTING
 // A probe may select a controlled backing scale only to exercise the normal
 // backing-properties notification route on a single-display machine. The
@@ -468,8 +506,10 @@ __attribute__((unused)) static void CjguiDropTextCpuScratch(CJGuiInternalMetalVi
     CGSize pointSize = self.bounds.size;
     self.metalLayer.frame = self.bounds;
     self.metalLayer.contentsScale = scale;
-    self.metalLayer.drawableSize = CGSizeMake(pointSize.width * scale,
-                                              pointSize.height * scale);
+    // Request integral texels covering the full logical content. Child
+    // layout and text coordinates remain subpoint-precise.
+    self.metalLayer.drawableSize = CGSizeMake(ceil(pointSize.width * scale),
+                                              ceil(pointSize.height * scale));
 }
 
 - (void)invalidateBridgeResources {
@@ -562,6 +602,11 @@ static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *sessi
                                                      uint32_t kind,
                                                      CJGuiInternalComposableSceneNode *node,
                                                      NSPoint point);
+static BOOL CjguiEnqueueComposableCapturedPointerInteraction(CJGuiInternalSession *session,
+                                                             uint32_t kind,
+                                                             CJGuiInternalComposableSceneNode *node,
+                                                             NSPoint point,
+                                                             uint64_t gestureEpoch);
 // One kind-52 composition phase against the node the session declaration
 // names. Returns NO (and raises the queue-full notice) when the intent cannot
 // enter the FIFO, so a terminal can never be reported as delivered when it was
@@ -583,6 +628,12 @@ static int64_t CjguiComposableNodeResourceIdAtIndex(CJGuiInternalSession *sessio
 static uint32_t CjguiComposableNodeKindAtIndex(CJGuiInternalSession *session, uint32_t nodeIndex);
 static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteger end);
 
+@interface CJGuiInternalTransferDeliveryIdentity : NSObject
+@property(nonatomic, assign) uint64_t firstDeliveryOrdinal;
+@end
+@implementation CJGuiInternalTransferDeliveryIdentity
+@end
+
 @interface CJGuiInternalQueuedInteraction : NSObject
 @property(nonatomic, assign) uint32_t kind;
 @property(nonatomic, assign) uint32_t recordIndex;
@@ -594,6 +645,11 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 @property(nonatomic, assign) uint32_t nodeKind;
 @property(nonatomic, assign) int64_t pointerX;
 @property(nonatomic, assign) int64_t pointerY;
+@property(nonatomic, assign) BOOL hasPrecisePointer;
+@property(nonatomic, assign) double precisePointerX;
+@property(nonatomic, assign) double precisePointerY;
+@property(nonatomic, assign) double pointerTranslateX;
+@property(nonatomic, assign) double pointerTranslateY;
 @property(nonatomic, assign) int64_t modifierFlags;
 @property(nonatomic, copy) NSString *formText;
 @property(nonatomic, copy) NSData *dataTransferBytes;
@@ -602,6 +658,8 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
 @property(nonatomic, copy) NSString *dataTransferSourceIdentity;
 @property(nonatomic, assign) int64_t dataTransferSourceId;
 @property(nonatomic, assign) uint64_t dataTransferEventId;
+@property(nonatomic, strong) CJGuiInternalTransferDeliveryIdentity *transferDeliveryIdentity;
+@property(nonatomic, assign) int64_t expectedOwnerVersion;
 // Kind-52 composition record. Zero/-1 for every other kind so a consumer that
 // does not know this kind still reads a valid interaction.
 @property(nonatomic, assign) uint32_t compositionPhase;
@@ -649,9 +707,28 @@ static NSRange CjguiComposedSelection(NSString *text, NSUInteger start, NSUInteg
     self.markedLength16 = 0;
     self.compositionId = 0;
     self.bindingEpoch = 0;
+    self.expectedOwnerVersion = -1;
     return self;
 }
 
+@end
+
+@interface CJGuiInternalFileTransferOperation : NSObject
+@property(nonatomic, strong) NSURL *url;
+@property(nonatomic, assign) uint64_t sessionToken;
+@property(nonatomic, assign) uint64_t sessionGeneration;
+@property(nonatomic, assign) uint64_t eventId;
+@property(nonatomic, strong) CJGuiInternalTransferDeliveryIdentity *deliveryIdentity;
+@property(nonatomic, assign) uint32_t eventKind;
+@property(nonatomic, assign) CjguiInternalRendererComposableDataTransferItem target;
+@property(atomic, assign) BOOL cancelled;
+#ifdef CJGUI_INTERNAL_TESTING
+@property(nonatomic, strong) dispatch_semaphore_t testReadGate;
+@property(nonatomic, strong) dispatch_semaphore_t testReadEntered;
+@property(nonatomic, assign) BOOL testPauseAfterFirstRead;
+#endif
+@end
+@implementation CJGuiInternalFileTransferOperation
 @end
 
 // A retained item is a native coordination record, never application state:
@@ -1025,8 +1102,13 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 // present_composable_scene promotes this staging array, so AX, hit testing and
 // Metal never observe a partly-filled replacement.
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableSceneNode *> *composableNodes;
+// Exact text texture generations read by each submitted command buffer. A
+// focused input may replace textures on its node in place before GPU completion.
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSArray<id<MTLTexture>> *> *submittedTextTextures;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, CjguiTextSubmissionCompletion *> *submittedTextCompletionFlags;
 @property(nonatomic, assign) uint64_t composableSceneVersion;
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableSceneNode *> *stagedComposableNodes;
+@property(nonatomic, strong) NSMutableIndexSet *stagedComposableGeometryIndices;
 // The data-transfer table is staged and promoted with the immutable scene.
 // It retains only declared bounded UTF-8 values, never an owner callback,
 // Cangjie pointer or AppKit pasteboard/drag object.
@@ -1047,21 +1129,34 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 @property(nonatomic, strong) CJGuiInternalComposableImageResourceDomain *composableImageDomain;
 @property(nonatomic, assign) uint64_t composableImageResourceCompletionVersion;
 @property(nonatomic, assign) uint32_t composableImageDecodeCount;
+// Real decode starts for this window: a synchronous transfer admission and an
+// asynchronous loader launch each count exactly once. This is the scalar that
+// distinguishes "one legal preparation decodes once" from a re-prepare or a
+// cache-evicted fallback that decodes the same bytes again.
+@property(nonatomic, assign) uint64_t composableImageDecodeStartCount;
 #ifdef CJGUI_INTERNAL_TESTING
 // Holds launch only; it never replaces the asynchronous loader.  The probe
 // uses it to prove an accepted loading scene still services real FIFO input.
 @property(nonatomic, assign) BOOL testComposableImageLaunchGateHeld;
 #endif
-// Counts actual Cangjie-to-native node writes, not scene frames. It is test
-// observability for the staged-node reuse regression and never crosses the
-// production/public ABI.
+// Counts actual Cangjie-to-native node writes, not scene frames. Counted in
+// normal builds and published through the bounded diagnostics snapshot; it
+// never crosses the production/public ABI as anything but a scalar.
 @property(nonatomic, assign) uint64_t composableSceneNodeUpdateCount;
+// Real node-object work for this session, counted in normal builds so the
+// bounded diagnostics snapshot can attribute a local refresh. Scalars only:
+// no label, text, image or per-node record is retained by these counters.
+@property(nonatomic, assign) uint64_t composableSceneCloneCount;
+@property(nonatomic, assign) uint64_t composableSceneNodeAllocationCount;
+@property(nonatomic, assign) uint64_t composableTextLayoutPreparationCount;
+// High water of all retained text generations plus candidate allocations.
+@property(nonatomic, assign) uint64_t composableTextCandidatePeakBytes;
 #ifdef CJGUI_INTERNAL_TESTING
 // Scalar submission accounting for scale probes.  These counters describe
 // native object work only: the Cangjie build/layout timers and Metal submit
 // progress remain separate so no nested timing sum is presented as E2E cost.
-@property(nonatomic, assign) uint64_t testComposableSceneCloneCount;
-@property(nonatomic, assign) uint64_t testComposableSceneNodeAllocationCount;
+@property(nonatomic, strong) NSMutableArray<NSString *> *testCloneLabels;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *testCloneLabelCounts;
 @property(nonatomic, assign) uint64_t testComposableSceneConfigureMicros;
 @property(nonatomic, assign) uint64_t testComposableSceneSetMicros;
 @property(nonatomic, assign) uint64_t testComposableSceneCommitMicros;
@@ -1083,6 +1178,17 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 // a native scene/object through the public framework boundary.
 @property(nonatomic, assign) uint32_t forcedComposableSceneNodeFailures;
 @property(nonatomic, assign) uint32_t forcedComposablePresentFailures;
+// A controlled pending ticket defers the actual staged commit, then lets the
+// ordinary present function decide it exactly once from query_present.
+@property(nonatomic, assign) uint32_t testHoldNextComposablePresent;
+@property(nonatomic, assign) uint64_t testPendingComposableTicket;
+@property(nonatomic, assign) uint64_t testNextComposableTicket;
+@property(nonatomic, assign) CjguiInternalRendererPresentReceipt testPendingComposableReceipt;
+@property(nonatomic, assign) BOOL testResolvingComposableTicket;
+@property(nonatomic, assign) uint64_t testComposableTicketQueryCount;
+@property(nonatomic, assign) uint64_t testComposableTicketAckCount;
+@property(nonatomic, assign) uint64_t testComposableTicketAcceptedCount;
+@property(nonatomic, assign) uint64_t testComposableTicketRejectedCount;
 @property(nonatomic, assign) uint32_t forcedComposableTextPreparationFailures;
 // One-shot probe seam after at least one effect target was encoded but before
 // the main scene encoder or command-buffer submission exists.
@@ -1092,6 +1198,12 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 @property(nonatomic, assign) uint64_t composableLocalAcknowledgementCount;
 @property(nonatomic, assign) uint64_t stagedComposableSceneVersion;
 @property(nonatomic, assign) uint64_t resizeVersion;
+@property(nonatomic, assign) BOOL hasObservedGeometry;
+@property(nonatomic, assign) NSSize observedPointSize;
+@property(nonatomic, assign) CGSize observedDrawableSize;
+@property(nonatomic, assign) CGFloat observedBackingScale;
+@property(nonatomic, assign) uint64_t lastSubmittedResizeVersion;
+@property(nonatomic, assign) uint64_t lastSubmittedSceneVersion;
 // These are copied only by the main-thread completion observer after a real
 // Metal command buffer finishes.  They never mean that an AppKit overlay drew
 // or a person saw pixels.
@@ -1140,6 +1252,7 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 @property(nonatomic, assign) BOOL closeRequested;
 @property(nonatomic, assign) BOOL destroyed;
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalQueuedInteraction *> *pendingInteractions;
+@property(nonatomic, assign) CjguiInternalRendererPointerEventGeometry pumpedPointerGeometry;
 @property(nonatomic, copy) NSString *pumpedFormText;
 @property(nonatomic, copy) NSData *pumpedFormTextUtf8;
 @property(nonatomic, copy) NSString *pumpedDataTransferFormat;
@@ -1148,6 +1261,13 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 @property(nonatomic, assign) uint64_t pumpedDataTransferNodeId;
 @property(nonatomic, assign) uint64_t pumpedDataTransferEventId;
 @property(nonatomic, assign) uint64_t nextDataTransferEventId;
+@property(nonatomic, assign) uint64_t nextPointerGestureEpoch;
+@property(nonatomic, assign) uint64_t nextTransferDeliveryOrdinal;
+@property(nonatomic, assign) uint64_t pumpedTransferDeliveryOrdinal;
+@property(nonatomic, strong) NSMutableArray<CJGuiInternalFileTransferOperation *> *pendingFileTransfers;
+@property(nonatomic, strong) NSMutableArray<CJGuiInternalQueuedInteraction *> *pendingTransferTerminalFacts;
+@property(nonatomic, assign) NSUInteger pendingFileTransferReservedBytes;
+@property(nonatomic, assign) int64_t pumpedDataTransferExpectedOwnerVersion;
 @property(nonatomic, copy) NSData *pumpedDataTransferFormatUtf8;
 @property(nonatomic, copy) NSString *pumpedDataTransferSourceKind;
 @property(nonatomic, copy) NSData *pumpedDataTransferSourceKindUtf8;
@@ -1158,8 +1278,8 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 #ifdef CJGUI_INTERNAL_TESTING
 @property(nonatomic, assign) BOOL testDrawablePixelPending;
 @property(nonatomic, assign) BOOL testDrawablePixelCompleted;
-@property(nonatomic, assign) uint32_t testDrawablePixelX;
-@property(nonatomic, assign) uint32_t testDrawablePixelY;
+@property(nonatomic, assign) double testDrawablePixelX;
+@property(nonatomic, assign) double testDrawablePixelY;
 @property(nonatomic, assign) uint8_t testDrawablePixelBlue;
 @property(nonatomic, assign) uint8_t testDrawablePixelGreen;
 @property(nonatomic, assign) uint8_t testDrawablePixelRed;
@@ -1193,6 +1313,15 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 @property(nonatomic, assign) uint64_t testMidworkProducerPostMicros;
 @property(nonatomic, assign) uint64_t testMidworkNativeEnqueueMicros;
 @property(nonatomic, assign) int32_t testMidworkEnqueueStatus;
+@property(nonatomic, assign) BOOL testSubmitGateArmed;
+@property(nonatomic, assign) uint32_t testSubmitGateHoldMicros;
+@property(nonatomic, assign) BOOL testHoldNextFileRead;
+@property(nonatomic, assign) BOOL testHoldNextFileAfterFirstRead;
+@property(nonatomic, strong) dispatch_semaphore_t testNextFileReadGate;
+@property(nonatomic, strong) dispatch_semaphore_t testNextFileReadEntered;
+// Last eight exact Metal submissions. Test-only scalar facts are retained
+// separately from mutable view nodes and cannot extend a GPU resource lease.
+@property(nonatomic, strong) NSMutableArray<NSValue *> *testSubmissionTimelines;
 // Data-transfer test observability counts only values that the ordinary
 // destination/copy callbacks copied. It never points into a Cangjie owner or
 // retains an AppKit dragging object.
@@ -1240,6 +1369,8 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
     self = [super init];
     if (!self) return nil;
     self.pendingInteractions = [NSMutableArray array];
+    self.pendingFileTransfers = [NSMutableArray array];
+    self.pendingTransferTerminalFacts = [NSMutableArray array];
     self.rangeTextEditDeltaDeliveryEnabled = NO;
     self.ownedTextSessionEnabled = NO;
     self.ownedTextSessionNodeId = 0;
@@ -1249,6 +1380,7 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
     self.nextCompositionId = 0;
     self.composableNodes = [NSMutableArray array];
     self.stagedComposableNodes = [NSMutableArray array];
+    self.stagedComposableGeometryIndices = [NSMutableIndexSet indexSet];
     self.composableDataTransferItems = [NSMutableArray array];
     self.stagedComposableDataTransferItems = [NSMutableArray array];
     self.composableCommandMenuItems = [NSMutableArray array];
@@ -1277,6 +1409,10 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 
 - (void)windowWillClose:(NSNotification *)notification {
     (void)notification;
+    id overlay = self.composableSceneOverlay;
+    if (overlay && [overlay respondsToSelector:@selector(stopCaretBlink)]) {
+        [overlay performSelector:@selector(stopCaretBlink)];
+    }
     if (!self.closeRequested) {
         self.closeRequested = YES;
         NSLog(@"cjgui: close requested: window");
@@ -1291,6 +1427,10 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
     self.windowBackgroundEnvironmentRevision += 1;
     self.windowBackgroundObservationRevision += 1;
     CjguiRebuildComposableCommandMenuForKeyWindow();
+    id overlay = self.composableSceneOverlay;
+    if (overlay && [overlay respondsToSelector:@selector(resetCaretBlink)]) {
+        [overlay performSelector:@selector(resetCaretBlink)];
+    }
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification {
@@ -1299,6 +1439,9 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
     self.windowBackgroundEnvironmentRevision += 1;
     self.windowBackgroundObservationRevision += 1;
     id overlay = self.composableSceneOverlay;
+    if (overlay && [overlay respondsToSelector:@selector(stopCaretBlink)]) {
+        [overlay performSelector:@selector(stopCaretBlink)];
+    }
     if (overlay && [overlay respondsToSelector:@selector(cancelPointerCaptureForPlatformLoss)]) {
         [overlay performSelector:@selector(cancelPointerCaptureForPlatformLoss)];
     }
@@ -1335,8 +1478,17 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 }
 
 - (void)windowGeometryDidChange {
-    self.resizeVersion += 1;
     [self.view updateDrawableSize];
+    NSSize points = self.view.bounds.size;
+    CGSize pixels = self.view.metalLayer.drawableSize;
+    CGFloat scale = [self.view currentBackingScale];
+    if (self.hasObservedGeometry && NSEqualSizes(self.observedPointSize, points) &&
+        CGSizeEqualToSize(self.observedDrawableSize, pixels) && self.observedBackingScale == scale) return;
+    self.hasObservedGeometry = YES;
+    self.observedPointSize = points;
+    self.observedDrawableSize = pixels;
+    self.observedBackingScale = scale;
+    self.resizeVersion += 1;
     if (self.composableSceneOverlay) {
         (void)CjguiEnqueueComposableInteraction(self, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_RESIZED,
                                                 0, @"", NSMakeRange(0, 0));
@@ -1350,9 +1502,17 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 // live sessions; no process-global application-data dictionary is created.
 static CJGuiInternalSession *gCjguiSessions[4];
 static BOOL gCjguiSessionOccupied[4];
+// AppKit owns the event queue from beginDraggingSession through the source's
+// ended callback. A CJGUI window pump in the same process must not dequeue
+// the mouse-up (including when it belongs to a different CJGUI window).
+// All mutations and the pump below run on the process main thread.
+static NSUInteger gCjguiActiveDataTransferDragSessions = 0;
 static uint64_t gCjguiNextSessionGeneration = 1;
 static char CJGuiSessionWindowAssociationKey;
 static BOOL gCjguiMainThreadDispatchEnabled;
+#ifdef CJGUI_INTERNAL_TESTING
+static BOOL gCjguiMainThreadDispatchEverEnabled;
+#endif
 // Standard Quit may reach AppKit several times before the Cangjie application
 // worker gets its next bounded turn. Retain only one process-level intent;
 // completion is acknowledged by that owner after it accepts or rejects.
@@ -1381,14 +1541,17 @@ static void CjguiStampPointerModifiersOnQueuedInteraction(CJGuiInternalSession *
 // A mouse-down on a pointer-reporting, non-input node must carry WHERE it
 // happened: the controller resolves the display offset from that point through
 // the framework's hit test, so an ACTIVATE without coordinates is useless.
+static void CjguiCapturePrecisePointer(CJGuiInternalQueuedInteraction *interaction,
+                                       CJGuiInternalComposableSceneNode *node, NSPoint point);
+
 static void CjguiStampPointerPositionOnQueuedInteraction(CJGuiInternalSession *session,
                                                          uint32_t kind, uint32_t nodeIndex,
                                                          NSPoint point) {
     if (!session || session.destroyed) return;
     CJGuiInternalQueuedInteraction *last = session.pendingInteractions.lastObject;
     if (!last || last.kind != kind || last.recordIndex != nodeIndex) return;
-    last.pointerX = (int64_t)llround(point.x);
-    last.pointerY = (int64_t)llround(point.y);
+    if (nodeIndex >= session.composableNodes.count) return;
+    CjguiCapturePrecisePointer(last, session.composableNodes[nodeIndex], point);
 }
 
 static void CjguiStampKeyboardModifiersOnQueuedInteraction(CJGuiInternalSession *session,
@@ -1705,6 +1868,7 @@ typedef NS_ENUM(uint32_t, CjguiComposableImageResourceState) {
 // texture key, otherwise a run-only change reuses the previous texture.
 @property(nonatomic, copy) NSString *styleRunsSignature;
 @property(nonatomic, assign) CjguiInternalRendererComposableNode node;
+@property(nonatomic, assign) CjguiInternalRendererComposableGeometry geometry;
 @property(nonatomic, copy) NSString *label;
 @property(nonatomic, copy) NSString *value;
 // The accepted public semantic identity of this node. It is the exact address a
@@ -1739,6 +1903,22 @@ typedef NS_ENUM(uint32_t, CjguiComposableImageResourceState) {
 // Logical scene rectangle represented by textTexture. It may be a clipped
 // tile of the node rather than the whole node bounds.
 @property(nonatomic, assign) NSRect textTextureRect;
+// The rects above are scene coordinates. This accepted origin lets a COW
+// candidate match immutable tiles after its integer layout position changes.
+@property(nonatomic, assign) NSPoint textTileLayoutOrigin;
+// Only the intrinsic typographic extent is memoized. Clip/translation never
+// enters this key and remains an accepted-scene calculation on every frame.
+@property(nonatomic, copy) NSString *textMeasuredSource;
+@property(nonatomic, assign) CGFloat textMeasuredWidth;
+@property(nonatomic, assign) double textMeasuredFontSize;
+@property(nonatomic, assign) uint32_t textMeasuredFontWeight;
+@property(nonatomic, assign) uint32_t textMeasuredFontFamily;
+@property(nonatomic, assign) uint32_t textMeasuredNodeKind;
+@property(nonatomic, assign) NSSize textMeasuredExtent;
+@property(nonatomic, assign) BOOL textMeasureValid;
+#ifdef CJGUI_INTERNAL_TESTING
+@property(nonatomic, assign) uint64_t testTextExtentMeasurementCount;
+#endif
 // Selection, marked-range and caret pixels are presentation-only geometry.
 // They stay in the scene node's existing clip chain and sandwich the immutable
 // body texture in painter order, so a caret move never allocates/reuploads the
@@ -1750,6 +1930,8 @@ typedef NS_ENUM(uint32_t, CjguiComposableImageResourceState) {
 // node's own text colour) from the one the hidden proxy derived for itself (accent
 // colour). Both live in `textCaretRect`; only their presentation differs.
 @property(nonatomic, assign) BOOL textCaretIsDeclared;
+// Blink only gates paint. Keep the accepted rect for hit/IME geometry.
+@property(nonatomic, assign) BOOL textCaretHidden;
 @property(nonatomic, assign) NSRect textScrollbarRect;
 @property(nonatomic, assign) uint32_t index;
 @property(nonatomic, strong) CJGuiInternalComposableEffectTarget *effectTarget;
@@ -1781,6 +1963,53 @@ typedef NS_ENUM(uint32_t, CjguiComposableImageResourceState) {
 
 @implementation CJGuiInternalComposableSceneNode
 @end
+
+static void CjguiCapturePrecisePointer(CJGuiInternalQueuedInteraction *interaction,
+                                       CJGuiInternalComposableSceneNode *node, NSPoint point) {
+    if (!interaction || !node || !isfinite(point.x) || !isfinite(point.y)) return;
+    interaction.pointerX = (int64_t)llround(point.x);
+    interaction.pointerY = (int64_t)llround(point.y);
+    interaction.precisePointerX = (double)point.x;
+    interaction.precisePointerY = (double)point.y;
+    interaction.pointerTranslateX = node.geometry.translateX;
+    interaction.pointerTranslateY = node.geometry.translateY;
+    interaction.hasPrecisePointer = YES;
+}
+
+static NSRect CjguiComposableVisualNodeRect(CJGuiInternalComposableSceneNode *node) {
+    CjguiInternalRendererComposableNode value = node.node;
+    CjguiInternalRendererComposableGeometry geometry = node.geometry;
+    return NSMakeRect((CGFloat)value.x + (CGFloat)geometry.translateX,
+                      (CGFloat)value.y + (CGFloat)geometry.translateY,
+                      MAX(0.0, (CGFloat)value.width), MAX(0.0, (CGFloat)value.height));
+}
+
+static void CjguiComposableVisualClipConstraintAt(CJGuiInternalComposableSceneNode *node,
+    uint32_t index, CGFloat *x, CGFloat *y, CGFloat *width, CGFloat *height, CGFloat *radius) {
+    CjguiComposableClipConstraintAt(node.node, index, x, y, width, height, radius);
+    CjguiInternalRendererComposableGeometry g = node.geometry;
+    if (index >= g.clipCount) return;
+    switch (index) {
+        case 0: *x += (CGFloat)g.clip0X; *y += (CGFloat)g.clip0Y; break;
+        case 1: *x += (CGFloat)g.clip1X; *y += (CGFloat)g.clip1Y; break;
+        case 2: *x += (CGFloat)g.clip2X; *y += (CGFloat)g.clip2Y; break;
+        default: *x += (CGFloat)g.clip3X; *y += (CGFloat)g.clip3Y; break;
+    }
+}
+
+static NSRect CjguiComposableVisualClipBounds(CJGuiInternalComposableSceneNode *node) {
+    if (!node) return NSZeroRect;
+    uint32_t count = CjguiComposableClipConstraintCount(node.node);
+    NSRect result = NSZeroRect;
+    for (uint32_t index = 0; index < count; index++) {
+        CGFloat x = 0, y = 0, width = 0, height = 0, radius = 0;
+        CjguiComposableVisualClipConstraintAt(node, index, &x, &y, &width, &height, &radius);
+        NSRect clip = NSMakeRect(x, y, MAX(0.0, width), MAX(0.0, height));
+        result = index == 0 ? clip : NSIntersectionRect(result, clip);
+        if (NSIsEmptyRect(result)) break;
+    }
+    return result;
+}
 
 static const double CjguiComposableVectorEpsilon = 1.0e-9;
 static const double CjguiComposableVectorMiterLimit = 4.0;
@@ -1988,24 +2217,29 @@ static BOOL CjguiParseComposableVectorGeometry(NSString *payload,
     return YES;
 }
 
-static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *session,
-                                                     uint32_t kind,
-                                                     CJGuiInternalComposableSceneNode *node,
-                                                     NSPoint point) {
+static BOOL CjguiEnqueueComposableCapturedPointerInteraction(CJGuiInternalSession *session,
+                                                             uint32_t kind,
+                                                             CJGuiInternalComposableSceneNode *node,
+                                                             NSPoint point,
+                                                             uint64_t gestureEpoch) {
     if (!session || session.destroyed || !node || !isfinite(point.x) || !isfinite(point.y)) return NO;
     uint32_t nodeIndex = node.index;
     uint64_t nodeId = node.node.nodeId;
     int64_t resourceId = node.node.resourceId;
     uint32_t nodeKind = node.node.nodeKind;
+    // Sparse COW nodes retain the projection version of their first accepted
+    // payload. The input FIFO belongs to the currently committed scene,
+    // including when it reuses that payload; never stamp the stale node POD.
+    uint64_t acceptedVersion = session.composableSceneVersion;
     if (nodeId == 0 || nodeIndex >= session.composableNodes.count) return NO;
     CJGuiInternalQueuedInteraction *last = session.pendingInteractions.lastObject;
     // Only adjacent updates for exactly one captured identity can merge. A
     // terminal end/cancel is deliberately never coalesced behind a move.
     if (kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE && last &&
         last.kind == kind && last.nodeId == nodeId && last.resourceId == resourceId &&
-        last.nodeKind == nodeKind && last.projectionVersion == session.composableSceneVersion) {
-        last.pointerX = (int64_t)llround(point.x);
-        last.pointerY = (int64_t)llround(point.y);
+        last.nodeKind == nodeKind && last.projectionVersion == acceptedVersion &&
+        last.bindingEpoch == gestureEpoch) {
+        CjguiCapturePrecisePointer(last, node, point);
         last.modifierFlags = session.pointerModifierFlags;
         return YES;
     }
@@ -2016,24 +2250,31 @@ static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *sessi
     CJGuiInternalQueuedInteraction *interaction =
         [[CJGuiInternalQueuedInteraction alloc] initWithKind:kind recordIndex:nodeIndex
                                                selectionStart:0 selectionEnd:0 formText:@""
-                                                       nodeId:nodeId projectionVersion:session.composableSceneVersion
+                                               nodeId:nodeId projectionVersion:acceptedVersion
                                                    resourceId:resourceId nodeKind:nodeKind];
     if (!interaction) {
         session.pendingInputQueueFullNotice = YES;
         return NO;
     }
-    interaction.pointerX = (int64_t)llround(point.x);
-    interaction.pointerY = (int64_t)llround(point.y);
+    CjguiCapturePrecisePointer(interaction, node, point);
     interaction.modifierFlags = session.pointerModifierFlags;
+    interaction.bindingEpoch = gestureEpoch;
     [session.pendingInteractions addObject:interaction];
 #ifdef CJGUI_INTERNAL_TESTING
     session.testComposableLastEnqueuedKind = kind;
     session.testComposableLastEnqueuedNodeId = nodeId;
-    session.testComposableLastEnqueuedProjectionVersion = session.composableSceneVersion;
+    session.testComposableLastEnqueuedProjectionVersion = acceptedVersion;
     session.testComposableMaxPendingInteractionCount = (uint32_t)MIN(
         UINT32_MAX, MAX((NSUInteger)session.testComposableMaxPendingInteractionCount, session.pendingInteractions.count));
 #endif
     return YES;
+}
+
+static BOOL CjguiEnqueueComposablePointerInteraction(CJGuiInternalSession *session,
+                                                     uint32_t kind,
+                                                     CJGuiInternalComposableSceneNode *node,
+                                                     NSPoint point) {
+    return CjguiEnqueueComposableCapturedPointerInteraction(session, kind, node, point, 0);
 }
 
 static void CjguiClearComposableTextDecorations(CJGuiInternalComposableSceneNode *node) {
@@ -2050,6 +2291,7 @@ static void CjguiClearComposableTextDecorations(CJGuiInternalComposableSceneNode
 @property(nonatomic, copy) NSString *resolvedPath;
 @property(nonatomic, copy) NSData *encodedData;
 @property(nonatomic, assign) NSUInteger transferPreparationCount;
+@property(nonatomic, strong) NSMutableArray *transferHolds;
 @property(nonatomic, assign) uint32_t state;
 @property(nonatomic, assign) uint64_t lastAccess;
 @property(nonatomic, strong) id<MTLTexture> texture;
@@ -2064,6 +2306,9 @@ static void CjguiClearComposableTextDecorations(CJGuiInternalComposableSceneNode
 @property(nonatomic, assign) uint64_t loadGeneration;
 @property(nonatomic, assign) uint64_t loadSessionToken;
 @property(nonatomic, assign) uint64_t loadSessionGeneration;
+// Aggregate accounting for the exact per-session holds below. Kept as scalar
+// diagnostics for the bounded native resource probe.
+@property(nonatomic, assign) uint32_t candidateLeaseCount;
 #ifdef CJGUI_INTERNAL_TESTING
 @property(nonatomic, assign) uint64_t launchMicros;
 #endif
@@ -2075,8 +2320,20 @@ static void CjguiClearComposableTextDecorations(CJGuiInternalComposableSceneNode
     if (!self) return nil;
     self.subscribers = [NSMutableArray array];
     self.requesters = [NSMutableArray array];
+    self.transferHolds = [NSMutableArray array];
     return self;
 }
+@end
+
+@interface CJGuiInternalComposableImageTransferHold : NSObject
+@property(nonatomic, assign) uint64_t sessionToken;
+@property(nonatomic, assign) uint64_t sessionGeneration;
+@property(nonatomic, assign) NSUInteger preparationCount;
+@property(nonatomic, assign) BOOL candidateLease;
+@property(nonatomic, assign) uint64_t candidateVersion;
+@end
+
+@implementation CJGuiInternalComposableImageTransferHold
 @end
 
 @interface CJGuiInternalComposableImageSubscription : NSObject
@@ -2107,6 +2364,10 @@ static void CjguiClearComposableTextDecorations(CJGuiInternalComposableSceneNode
 @property(nonatomic, assign) uint64_t accessClock;
 @property(nonatomic, assign) NSUInteger sessionCount;
 @property(nonatomic, assign) BOOL destroyed;
+// Domain-wide decode starts (sync transfer admission + async loader launch).
+// Read by the bounded workload diagnostic; it counts real decodes, never
+// cache hits, reuse or a scene refresh that reuses an existing texture.
+@property(nonatomic, assign) uint64_t imageDecodeStartCount;
 #ifdef CJGUI_INTERNAL_TESTING
 @property(nonatomic, assign) uint64_t testPathResolveMicros;
 @property(nonatomic, assign) uint64_t testCacheHitCount;
@@ -2255,6 +2516,105 @@ static BOOL CjguiComposableImageKeyIsReferenced(CJGuiInternalSession *session, N
     return NO;
 }
 
+// Does ANY live session on this domain already hold the decoded texture on a
+// committed or staged node? Such a node is its own strong owner, so a
+// candidate lease has nothing left to protect.
+static CJGuiInternalComposableImageTransferHold *CjguiComposableTransferHold(
+    CJGuiInternalComposableImageResource *resource, CJGuiInternalSession *session, BOOL create) {
+    if (!resource || !session || session.rendererSessionToken == 0) return nil;
+    for (CJGuiInternalComposableImageTransferHold *hold in resource.transferHolds) {
+        if (hold.sessionToken == session.rendererSessionToken &&
+            hold.sessionGeneration == session.sessionGeneration) return hold;
+    }
+    if (!create || resource.transferHolds.count >= kCjguiSessionCapacity) return nil;
+    CJGuiInternalComposableImageTransferHold *hold = [[CJGuiInternalComposableImageTransferHold alloc] init];
+    if (!hold) return nil;
+    hold.sessionToken = session.rendererSessionToken;
+    hold.sessionGeneration = session.sessionGeneration;
+    [resource.transferHolds addObject:hold];
+    return hold;
+}
+
+static void CjguiUpdateComposableTransferHoldCounts(CJGuiInternalComposableImageResource *resource) {
+    if (!resource) return;
+    NSUInteger preparations = 0;
+    uint32_t leases = 0;
+    for (CJGuiInternalComposableImageTransferHold *hold in [resource.transferHolds copy]) {
+        if (hold.preparationCount == 0 && !hold.candidateLease) {
+            [resource.transferHolds removeObject:hold];
+            continue;
+        }
+        preparations = hold.preparationCount > NSUIntegerMax - preparations
+            ? NSUIntegerMax : preparations + hold.preparationCount;
+        if (hold.candidateLease && leases < UINT32_MAX) leases += 1;
+    }
+    resource.transferPreparationCount = preparations;
+    resource.candidateLeaseCount = leases;
+}
+
+#ifdef CJGUI_INTERNAL_TESTING
+// The pressure counterexample must be able to show BOTH branches of the
+// handoff in one binary: with the lease suppressed the ninth image is evicted
+// and re-decoded; with it the same scene reuses the prepared texture.
+static BOOL gCjguiPngCandidateLeaseEnabled = YES;
+void cjgui_internal_renderer_test_set_png_candidate_lease_enabled(uint8_t enabled) {
+    gCjguiPngCandidateLeaseEnabled = enabled != 0;
+}
+#endif
+
+// Hand the last preparation reference to a candidate lease. The accepted
+// transfer's node does not exist yet, so dropping the reference here would let
+// the next prune evict the only decoded copy and turn the scene that follows
+// into a second, unadmitted decode.
+static void CjguiGrantComposableImageCandidateLease(CJGuiInternalSession *session,
+                                                    CJGuiInternalComposableImageResource *resource) {
+    CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(resource, session, NO);
+    if (!hold) return;
+    hold.candidateLease = YES;
+    hold.candidateVersion = 0; // the next configured candidate owns this offer
+    CjguiUpdateComposableTransferHoldCounts(resource);
+}
+
+// Only the exact candidate's own staged node may take its lease. A second
+// window's node, cancellation or close never settles this session's hold.
+static void CjguiTakeComposableImageCandidateLease(
+    CJGuiInternalComposableImageResourceDomain *domain, CJGuiInternalSession *session,
+    NSString *key, id<MTLTexture> texture) {
+    if (!domain || !session || !texture || key.length == 0) return;
+    CJGuiInternalComposableImageResource *resource = domain.resources[key];
+    CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(resource, session, NO);
+    if (!hold || !hold.candidateLease || !resource.texture || resource.texture != texture) return;
+    if (hold.candidateVersion != 0 && hold.candidateVersion != session.stagedComposableSceneVersion) return;
+    hold.candidateLease = NO;
+    CjguiUpdateComposableTransferHoldCounts(resource);
+}
+
+static void CjguiAdvanceComposableImageCandidateLeases(
+    CJGuiInternalComposableImageResourceDomain *domain, CJGuiInternalSession *session,
+    uint64_t candidateVersion) {
+    if (!domain || !session) return;
+    for (CJGuiInternalComposableImageResource *resource in domain.resources.allValues) {
+        CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(resource, session, NO);
+        if (!hold || !hold.candidateLease) continue;
+        if (hold.candidateVersion != 0) hold.candidateLease = NO;
+        else hold.candidateVersion = candidateVersion;
+        CjguiUpdateComposableTransferHoldCounts(resource);
+    }
+}
+
+static void CjguiSettleComposableImageCandidateLeases(
+    CJGuiInternalComposableImageResourceDomain *domain, CJGuiInternalSession *session,
+    BOOL closing) {
+    if (!domain || !session) return;
+    for (CJGuiInternalComposableImageResource *resource in domain.resources.allValues) {
+        CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(resource, session, NO);
+        if (!hold) continue;
+        hold.candidateLease = NO;
+        if (closing) hold.preparationCount = 0;
+        CjguiUpdateComposableTransferHoldCounts(resource);
+    }
+}
+
 static NSMutableSet<NSString *> *CjguiComposableImageProtectedKeys(
     CJGuiInternalComposableImageResourceDomain *domain, BOOL preserveSceneReferences) {
     NSMutableSet<NSString *> *keys = [NSMutableSet set];
@@ -2274,7 +2634,9 @@ static NSMutableSet<NSString *> *CjguiComposableImageProtectedKeys(
     [keys addObjectsFromArray:domain.loaders.allKeys];
     [keys addObjectsFromArray:domain.pendingKeys];
     for (CJGuiInternalComposableImageResource *resource in domain.resources.allValues) {
-        if (resource.transferPreparationCount > 0) [keys addObject:resource.cacheKey];
+        if (resource.transferPreparationCount > 0 || resource.candidateLeaseCount > 0) {
+            [keys addObject:resource.cacheKey];
+        }
     }
     return keys;
 }
@@ -2515,6 +2877,18 @@ static void CjguiCompleteComposableImageLoad(CJGuiInternalComposableImageResourc
     if (!domain || domain.destroyed || !resource || resource.loadGeneration != loadGeneration ||
         domain.resources[resource.cacheKey] != resource) return;
     [domain.loaders removeObjectForKey:resource.cacheKey];
+    if (!CjguiComposableImageHasLiveRequester(domain, resource) &&
+        !CjguiComposableImageDomainBoundTexture(domain, resource.cacheKey)) {
+        // The owning candidate was cancelled after the loader started. Its
+        // callback settles the attempt, but cannot publish an orphan texture
+        // or advance any accepted window's completion epoch.
+        resource.texture = nil;
+        resource.encodedData = nil;
+        [domain.textureCache removeObjectForKey:resource.cacheKey];
+        [domain.resources removeObjectForKey:resource.cacheKey];
+        CjguiStartNextComposableImageLoads(domain);
+        return;
+    }
     if (resource.state != CjguiComposableImageResourceLoading) {
         CjguiStartNextComposableImageLoads(domain);
         return;
@@ -2596,6 +2970,10 @@ static void CjguiStartNextComposableImageLoads(CJGuiInternalComposableImageResou
         resource.loadSessionToken = launchSession.rendererSessionToken;
         resource.loadSessionGeneration = launchSession.sessionGeneration;
         domain.loaders[resource.cacheKey] = loader;
+        if (domain.imageDecodeStartCount < UINT64_MAX) domain.imageDecodeStartCount += 1;
+        if (launchSession.composableImageDecodeStartCount < UINT64_MAX) {
+            launchSession.composableImageDecodeStartCount += 1;
+        }
 #ifdef CJGUI_INTERNAL_TESTING
         resource.launchMicros = CjguiMonotonicMicros();
         if (launchSession.testComposableImageAsyncLaunchCount < UINT64_MAX) {
@@ -2649,7 +3027,7 @@ static uint32_t CjguiPrepareComposableImageResourceOnMain(CJGuiInternalSession *
     if (!cacheKey) return CjguiComposableImageResourceFailed;
     if (outCacheKey) *outCacheKey = cacheKey;
     CJGuiInternalComposableImageResource *resource = domain.resources[cacheKey];
-    id<MTLTexture> cached = domain.textureCache[cacheKey];
+    id<MTLTexture> cached = domain.textureCache[cacheKey] ?: resource.texture;
     if (!resource) {
         resource = [[CJGuiInternalComposableImageResource alloc] init];
         resource.cacheKey = cacheKey;
@@ -2666,6 +3044,7 @@ static uint32_t CjguiPrepareComposableImageResourceOnMain(CJGuiInternalSession *
     }
     CjguiRequestComposableImageResource(session, resource, explicitPreload);
     if (cached) {
+        domain.textureCache[cacheKey] = cached;
         resource.texture = cached;
         resource.state = CjguiComposableImageResourceReady;
         resource.lastAccess = CjguiComposableImageNextAccess(domain);
@@ -2680,6 +3059,12 @@ static uint32_t CjguiPrepareComposableImageResourceOnMain(CJGuiInternalSession *
         resource.texture = nil;
         resource.state = CjguiComposableImageResourceReady;
         resource.lastAccess = CjguiComposableImageNextAccess(domain);
+        return resource.state;
+    }
+    // A transfer-origin image is only decoded by the synchronous bounded
+    // admission path. The generic asynchronous loader has no PNG budget gate.
+    if ([resourcePath hasPrefix:@"cjgui-transfer:"]) {
+        resource.state = CjguiComposableImageResourceFailed;
         return resource.state;
     }
     resource.lastAccess = CjguiComposableImageNextAccess(domain);
@@ -2705,7 +3090,8 @@ static id<MTLTexture> CjguiComposableImageTexture(CJGuiInternalSession *session,
     if (outCacheKey) *outCacheKey = cacheKey;
     if (!cacheKey || state != CjguiComposableImageResourceReady) return nil;
     CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(session);
-    return domain.textureCache[cacheKey] ?: CjguiComposableImageDomainBoundTexture(domain, cacheKey);
+    return domain.textureCache[cacheKey] ?: domain.resources[cacheKey].texture ?:
+        CjguiComposableImageDomainBoundTexture(domain, cacheKey);
 }
 
 static uint32_t CjguiPngBigEndian32(const uint8_t *bytes) {
@@ -2724,7 +3110,7 @@ static uint32_t CjguiPngCrc32(const uint8_t *bytes, NSUInteger length) {
     return ~crc;
 }
 
-// This first PNG exchange supports static 8-bit RGB/RGBA images. A complete
+// This first PNG exchange supports static noninterlaced 8-bit RGB/RGBA images. A complete
 // chunk/CRC walk runs before ImageKit's actual decode so a header-only or
 // truncated source never reaches the owner. Dimensions use divide-before-
 // multiply checks; the sync Metal decode below validates compressed pixels.
@@ -2734,8 +3120,10 @@ static CjguiInternalRendererStatus CjguiValidateComposableTransferPng(
     if (!bytes || length < 8 + 25 + 12 || length > 512u * 1024u ||
         memcmp(bytes, signature, sizeof(signature)) != 0) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
     NSUInteger offset = 8;
-    BOOL sawIHDR = NO, sawIDAT = NO, sawIEND = NO;
+    BOOL sawIHDR = NO, sawIDAT = NO, sawIEND = NO, sawPLTE = NO, idatEnded = NO;
+    BOOL unsupportedVariant = NO;
     uint32_t width = 0, height = 0;
+    uint8_t colorType = 0;
     while (offset < length) {
         if (length - offset < 12) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
         uint32_t chunkLength = CjguiPngBigEndian32(bytes + offset);
@@ -2750,25 +3138,46 @@ static CjguiInternalRendererStatus CjguiValidateComposableTransferPng(
             height = CjguiPngBigEndian32(payload + 4);
             if (width == 0 || height == 0 || width > 2048 || height > 2048 ||
                 height > 1048576u / width) return CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED;
-            if (payload[8] != 8 || (payload[9] != 2 && payload[9] != 6) ||
-                payload[10] != 0 || payload[11] != 0 || payload[12] > 1) {
+            uint8_t depth = payload[8], color = payload[9];
+            colorType = color;
+            BOOL legalDepthColor = (color == 0 && (depth == 1 || depth == 2 || depth == 4 ||
+                depth == 8 || depth == 16)) || (color == 2 && (depth == 8 || depth == 16)) ||
+                (color == 3 && (depth == 1 || depth == 2 || depth == 4 || depth == 8)) ||
+                (color == 4 && (depth == 8 || depth == 16)) ||
+                (color == 6 && (depth == 8 || depth == 16));
+            if (!legalDepthColor || payload[10] != 0 || payload[11] != 0 || payload[12] > 1) {
                 return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
             }
+            unsupportedVariant = depth != 8 || (color != 2 && color != 6) || payload[12] != 0;
             sawIHDR = YES;
-        } else if (memcmp(type, "IHDR", 4) == 0 || memcmp(type, "acTL", 4) == 0) {
+        } else if (memcmp(type, "IHDR", 4) == 0) {
             return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+        } else if (memcmp(type, "acTL", 4) == 0) {
+            unsupportedVariant = YES;
+            if (sawIDAT || chunkLength != 8) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+        } else if (memcmp(type, "PLTE", 4) == 0) {
+            if (sawPLTE || sawIDAT || chunkLength == 0 || chunkLength > 768 || chunkLength % 3 != 0 ||
+                colorType == 0 || colorType == 4) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+            sawPLTE = YES;
         } else if (memcmp(type, "IDAT", 4) == 0) {
+            if (idatEnded || (colorType == 3 && !sawPLTE)) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
             sawIDAT = sawIDAT || chunkLength > 0;
         } else if (memcmp(type, "IEND", 4) == 0) {
             if (chunkLength != 0 || !sawIDAT || offset + 12 != length) {
                 return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
             }
             sawIEND = YES;
+        } else if ((type[0] & 0x20u) == 0) {
+            // Unknown critical chunks change pixel interpretation; the first
+            // transfer subset cannot safely hand them to a permissive decoder.
+            return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
         }
+        if (sawIDAT && memcmp(type, "IDAT", 4) != 0 && memcmp(type, "IEND", 4) != 0) idatEnded = YES;
         offset += (NSUInteger)chunkLength + 12;
         if (sawIEND) break;
     }
     if (!sawIHDR || !sawIDAT || !sawIEND || offset != length) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    if (unsupportedVariant) return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
     if (outWidth) *outWidth = width;
     if (outHeight) *outHeight = height;
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -2857,24 +3266,40 @@ static CjguiInternalRendererStatus CjguiPrepareComposablePngTransferOnMain(
     NSString *resolved = nil;
     NSString *key = CjguiComposableImageCacheKey(identity, identity, 0, &resolved);
     if (!key) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
-    NSData *data = [NSData dataWithBytes:bytes length:length];
-    if (!data) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CJGuiInternalComposableImageResource *existing = domain.resources[key];
-    if (existing && existing.encodedData && ![existing.encodedData isEqualToData:data]) {
+    if (existing && existing.encodedData &&
+        (existing.encodedData.length != length ||
+         memcmp(existing.encodedData.bytes, bytes, length) != 0)) {
         return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
     }
-    id<MTLTexture> texture = domain.textureCache[key] ?: CjguiComposableImageDomainBoundTexture(domain, key);
+    id<MTLTexture> texture = domain.textureCache[key] ?: existing.texture ?:
+        CjguiComposableImageDomainBoundTexture(domain, key);
     BOOL cacheHit = texture && texture.width == width && texture.height == height;
     CjguiPruneComposableImageTextureCache(domain, YES);
+    // Prune may have retired an evictable cache-hit record while this call
+    // still holds its texture locally. Do not increment a detached record:
+    // finish must find the exact newly admitted resource in this domain.
+    if (existing && domain.resources[key] != existing) existing = nil;
     if (CjguiDataTransferTraceEnabled()) {
         NSLog(@"cjgui: PNG admission identity=%@ records=%lu textures=%lu encoded=%lu pixels=%ux%u",
               identity, (unsigned long)domain.resources.count,
-              (unsigned long)domain.textureCache.count, (unsigned long)data.length, width, height);
+              (unsigned long)domain.textureCache.count, (unsigned long)length, width, height);
     }
     NSUInteger budgetedTextureBytes = cacheHit ? 0 : (NSUInteger)width * (NSUInteger)height * 4u;
-    if (!CjguiReclaimComposablePngHeadroom(domain, key, data.length, budgetedTextureBytes)) {
+    if (!CjguiReclaimComposablePngHeadroom(domain, key, length, budgetedTextureBytes)) {
         return CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED;
     }
+    if (existing) {
+        CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(existing, session, NO);
+        if ((hold && hold.preparationCount >= 128) ||
+            (!hold && existing.transferHolds.count >= kCjguiSessionCapacity)) {
+            return CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED;
+        }
+    }
+    // The queue owns the first bounded copy. Do not create the retained image
+    // record's second copy until both its encoded and decoded budgets fit.
+    NSData *data = [NSData dataWithBytes:bytes length:length];
+    if (!data) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     if (cacheHit) {
         if (!existing) {
             existing = [[CJGuiInternalComposableImageResource alloc] init];
@@ -2887,13 +3312,19 @@ static CjguiInternalRendererStatus CjguiPrepareComposablePngTransferOnMain(
         existing.texture = texture;
         existing.state = CjguiComposableImageResourceReady;
         existing.lastAccess = CjguiComposableImageNextAccess(domain);
-        existing.transferPreparationCount += 1;
+        CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(existing, session, YES);
+        if (!hold) return CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED;
+        hold.preparationCount += 1;
+        CjguiUpdateComposableTransferHoldCounts(existing);
+        domain.textureCache[key] = texture;
         [domain.textureLedger addObject:texture];
         *outWidth = width; *outHeight = height;
         return CJGUI_INTERNAL_RENDERER_OK;
     }
     MTKTextureLoader *loader = [[MTKTextureLoader alloc] initWithDevice:domain.device];
     if (!loader) return CJGUI_INTERNAL_RENDERER_PNG_DECODE_FAILED;
+    if (domain.imageDecodeStartCount < UINT64_MAX) domain.imageDecodeStartCount += 1;
+    if (session.composableImageDecodeStartCount < UINT64_MAX) session.composableImageDecodeStartCount += 1;
     NSError *error = nil;
     uint64_t started = (uint64_t)(CACurrentMediaTime() * 1000000.0);
     texture = [loader newTextureWithData:data options:@{ MTKTextureLoaderOptionSRGB: @NO,
@@ -2918,7 +3349,10 @@ static CjguiInternalRendererStatus CjguiPrepareComposablePngTransferOnMain(
     resource.texture = texture;
     resource.state = CjguiComposableImageResourceReady;
     resource.lastAccess = CjguiComposableImageNextAccess(domain);
-    resource.transferPreparationCount += 1;
+    CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(resource, session, YES);
+    if (!hold) return CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED;
+    hold.preparationCount += 1;
+    CjguiUpdateComposableTransferHoldCounts(resource);
     domain.textureCache[key] = texture;
     *outWidth = width; *outHeight = height;
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -2956,9 +3390,21 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_composable_png_transf
     NSString *identity = resourceIdentity ? [NSString stringWithUTF8String:resourceIdentity] : nil;
     NSString *key = CjguiComposableImageCacheKey(identity, identity, 0, NULL);
     CJGuiInternalComposableImageResource *resource = domain.resources[key];
-    if (!resource || resource.transferPreparationCount == 0) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
-    resource.transferPreparationCount -= 1;
-    if (!accepted && resource.transferPreparationCount == 0 &&
+    CJGuiInternalComposableImageTransferHold *hold = CjguiComposableTransferHold(resource, session, NO);
+    if (!hold || hold.preparationCount == 0) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    hold.preparationCount -= 1;
+    if (accepted) {
+        // The accepted candidate's node is staged by the application's NEXT
+        // scene, which does not exist yet. Keep the decoded texture alive
+        // through that handoff instead of returning it to a cache that can
+        // evict it immediately (the 9th image under a full 8-entry cache).
+#ifdef CJGUI_INTERNAL_TESTING
+        if (gCjguiPngCandidateLeaseEnabled)
+#endif
+        CjguiGrantComposableImageCandidateLease(session, resource);
+    }
+    CjguiUpdateComposableTransferHoldCounts(resource);
+    if (!accepted && resource.transferPreparationCount == 0 && resource.candidateLeaseCount == 0 &&
         !CjguiComposableImageDomainBoundTexture(domain, key)) {
         [domain.textureCache removeObjectForKey:key];
         [domain.resources removeObjectForKey:key];
@@ -3026,11 +3472,11 @@ static BOOL CjguiComposablePointInRoundedComponents(CGFloat pointX, CGFloat poin
 }
 
 static BOOL CjguiComposablePointInClipChain(CGFloat pointX, CGFloat pointY,
-                                             CjguiInternalRendererComposableNode value) {
-    uint32_t count = CjguiComposableClipConstraintCount(value);
+                                             CJGuiInternalComposableSceneNode *node) {
+    uint32_t count = CjguiComposableClipConstraintCount(node.node);
     for (uint32_t i = 0; i < count; i++) {
         CGFloat x = 0, y = 0, width = 0, height = 0, radius = 0;
-        CjguiComposableClipConstraintAt(value, i, &x, &y, &width, &height, &radius);
+        CjguiComposableVisualClipConstraintAt(node, i, &x, &y, &width, &height, &radius);
         if (!CjguiComposablePointInRoundedComponents(pointX, pointY, x, y, width, height, radius)) return NO;
     }
     return YES;
@@ -3039,10 +3485,9 @@ static BOOL CjguiComposablePointInClipChain(CGFloat pointX, CGFloat pointY,
 static BOOL CjguiComposableNodeContainsVisiblePoint(CJGuiInternalComposableSceneNode *node,
                                                      CGFloat pointX, CGFloat pointY, NSSize viewSize) {
     if (!node || viewSize.width <= 0.0 || viewSize.height <= 0.0) return NO;
-    CjguiInternalRendererComposableNode value = node.node;
-    return CjguiComposablePointInInterval(pointX, value.x, value.width) &&
-        CjguiComposablePointInInterval(pointY, value.y, value.height) &&
-        CjguiComposablePointInClipChain(pointX, pointY, value) &&
+    NSRect visual = CjguiComposableVisualNodeRect(node);
+    return NSPointInRect(NSMakePoint(pointX, pointY), visual) &&
+        CjguiComposablePointInClipChain(pointX, pointY, node) &&
         pointX >= 0 && pointY >= 0 &&
         pointX < viewSize.width && pointY < viewSize.height;
 }
@@ -3063,7 +3508,8 @@ static BOOL CjguiComposableTextPresentationMayAffectVisiblePoint(CJGuiInternalCo
                                                                  NSSize viewSize) {
     if (!CjguiComposableNodeContainsVisiblePoint(node, pointX, pointY, viewSize)) return NO;
     if ((node.textTexture || node.textTileTextures.count > 0) &&
-        CjguiComposableRectContainsPoint(node.textTextureRect, pointX, pointY)) return YES;
+        CjguiComposableRectContainsPoint(NSOffsetRect(node.textTextureRect,
+            node.geometry.translateX, node.geometry.translateY), pointX, pointY)) return YES;
     for (NSValue *valueRect in node.textSelectionRects) {
         if (CjguiComposableRectContainsPoint(valueRect.rectValue, pointX, pointY)) return YES;
     }
@@ -3073,12 +3519,14 @@ static BOOL CjguiComposableTextPresentationMayAffectVisiblePoint(CJGuiInternalCo
     return CjguiComposableRectContainsPoint(node.textCaretRect, pointX, pointY);
 }
 
-static BOOL CjguiComposableBorderMayAffectVisiblePoint(CjguiInternalRendererComposableNode value,
+static BOOL CjguiComposableBorderMayAffectVisiblePoint(CJGuiInternalComposableSceneNode *node,
                                                         CGFloat pointX, CGFloat pointY) {
+    CjguiInternalRendererComposableNode value = node.node;
     if (value.borderWidth == 0 || value.borderAlpha <= 0.0) return NO;
     int64_t border = MIN((int64_t)value.borderWidth, MIN(value.width / 2, value.height / 2));
-    return pointX < (CGFloat)value.x + border || pointX >= (CGFloat)value.x + value.width - border ||
-        pointY < (CGFloat)value.y + border || pointY >= (CGFloat)value.y + value.height - border;
+    NSRect rect = CjguiComposableVisualNodeRect(node);
+    return pointX < NSMinX(rect) + border || pointX >= NSMaxX(rect) - border ||
+        pointY < NSMinY(rect) + border || pointY >= NSMaxY(rect) - border;
 }
 
 static BOOL CjguiComposableNodeMayAffectVisiblePoint(CJGuiInternalComposableSceneNode *node,
@@ -3088,13 +3536,15 @@ static BOOL CjguiComposableNodeMayAffectVisiblePoint(CJGuiInternalComposableScen
     if (value.fillAlpha > 0.0 ||
         (value.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE && node.imageTexture)) return YES;
     if (CjguiComposableTextPresentationMayAffectVisiblePoint(node, pointX, pointY, viewSize)) return YES;
-    return CjguiComposableBorderMayAffectVisiblePoint(value, pointX, pointY);
+    return CjguiComposableBorderMayAffectVisiblePoint(node, pointX, pointY);
 }
 
 static BOOL CjguiComposableSceneHasPotentialMetalDraw(NSArray<CJGuiInternalComposableSceneNode *> *nodes) {
     for (CJGuiInternalComposableSceneNode *node in nodes) {
         CjguiInternalRendererComposableNode value = node.node;
-        if (value.width <= 0 || value.height <= 0 || value.clipWidth <= 0 || value.clipHeight <= 0) continue;
+        if (value.width <= 0 || value.height <= 0 ||
+            NSIsEmptyRect(NSIntersectionRect(CjguiComposableVisualNodeRect(node),
+                                              CjguiComposableVisualClipBounds(node)))) continue;
         if (value.fillAlpha > 0.0 || (value.borderWidth > 0 && value.borderAlpha > 0.0) ||
             (value.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE && node.imageTexture) ||
             ((node.textTexture || node.textTileTextures.count > 0) && !NSIsEmptyRect(node.textTextureRect)) ||
@@ -3104,7 +3554,7 @@ static BOOL CjguiComposableSceneHasPotentialMetalDraw(NSArray<CJGuiInternalCompo
     return NO;
 }
 
-static BOOL CjguiComposableReadbackProbePointForNode(CjguiInternalRendererComposableNode value,
+static BOOL CjguiComposableReadbackProbePointForNode(CJGuiInternalComposableSceneNode *node,
                                                       NSSize viewSize, CGSize drawableSize,
                                                       CjguiComposableReadbackProbePoint *outPoint) {
     if (!outPoint || viewSize.width <= 0.0 || viewSize.height <= 0.0 ||
@@ -3112,8 +3562,9 @@ static BOOL CjguiComposableReadbackProbePointForNode(CjguiInternalRendererCompos
     CGFloat scaleX = drawableSize.width / viewSize.width;
     CGFloat scaleY = drawableSize.height / viewSize.height;
     if (!isfinite(scaleX) || !isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0) return NO;
-    CGFloat centreX = (CGFloat)value.x + (CGFloat)value.width / 2.0;
-    CGFloat centreY = (CGFloat)value.y + (CGFloat)value.height / 2.0;
+    NSRect visual = CjguiComposableVisualNodeRect(node);
+    CGFloat centreX = NSMidX(visual);
+    CGFloat centreY = NSMidY(visual);
     NSInteger pixelX = (NSInteger)floor(centreX * scaleX);
     NSInteger pixelY = (NSInteger)floor(centreY * scaleY);
     if (pixelX < 0 || pixelY < 0 || pixelX >= (NSInteger)drawableSize.width || pixelY >= (NSInteger)drawableSize.height) return NO;
@@ -3139,10 +3590,10 @@ static CJGuiInternalComposableSceneNode *CjguiComposableSafeOpaqueProbeNode(
         if (value.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE ||
             value.fillAlpha < 1.0 || value.width <= 0 || value.height <= 0) continue;
         CjguiComposableReadbackProbePoint point = {0};
-        if (!CjguiComposableReadbackProbePointForNode(value, viewSize, drawableSize, &point) ||
+        if (!CjguiComposableReadbackProbePointForNode(candidate, viewSize, drawableSize, &point) ||
             !CjguiComposableNodeContainsVisiblePoint(candidate, point.logicalX, point.logicalY, viewSize) ||
             CjguiComposableTextPresentationMayAffectVisiblePoint(candidate, point.logicalX, point.logicalY, viewSize) ||
-            CjguiComposableBorderMayAffectVisiblePoint(value, point.logicalX, point.logicalY)) continue;
+            CjguiComposableBorderMayAffectVisiblePoint(candidate, point.logicalX, point.logicalY)) continue;
         BOOL covered = NO;
         for (NSUInteger upperIndex = (NSUInteger)candidateIndex + 1; upperIndex < nodes.count; upperIndex++) {
             if (CjguiComposableNodeMayAffectVisiblePoint(nodes[upperIndex], point.logicalX, point.logicalY, viewSize)) {
@@ -3163,6 +3614,32 @@ static CJGuiInternalComposableSceneNode *CjguiComposableSafeOpaqueProbeNode(
 // that index, at which point this copies native-owned scalar/string/texture
 // references into one staged node. The texture remains a normal strong
 // Objective-C reference and no native handle crosses the ABI.
+#ifdef CJGUI_INTERNAL_TESTING
+// Bounded distinct-label record of clones: "index:nodeId:kind" plus a count.
+// A per-refresh rewrite of untouched nodes shows up as one label whose count
+// grows with the sample count, which is the discriminating fact a plain total
+// (570 clones) cannot show.
+static void CjguiRecordComposableSceneCloneLabel(CJGuiInternalSession *session,
+                                                 CJGuiInternalComposableSceneNode *source, uint32_t index) {
+    if (!session || !source) return;
+    if (!session.testCloneLabels) {
+        session.testCloneLabels = [NSMutableArray array];
+        session.testCloneLabelCounts = [NSMutableArray array];
+    }
+    NSString *label = [NSString stringWithFormat:@"%u:%llu:%u", index,
+        (unsigned long long)source.node.nodeId, source.node.nodeKind];
+    NSUInteger position = [session.testCloneLabels indexOfObject:label];
+    if (position == NSNotFound) {
+        if (session.testCloneLabels.count >= 64) return;
+        [session.testCloneLabels addObject:label];
+        [session.testCloneLabelCounts addObject:@1];
+        return;
+    }
+    NSNumber *count = session.testCloneLabelCounts[position];
+    session.testCloneLabelCounts[position] = @(count.unsignedLongLongValue + 1);
+}
+#endif
+
 static CJGuiInternalComposableSceneNode *CjguiCloneComposableSceneNode(
     CJGuiInternalSession *session, CJGuiInternalComposableSceneNode *source, uint32_t index, uint64_t projectionVersion) {
     if (!source) return nil;
@@ -3171,6 +3648,7 @@ static CJGuiInternalComposableSceneNode *CjguiCloneComposableSceneNode(
     CjguiInternalRendererComposableNode copiedValue = source.node;
     copiedValue.projectionVersion = projectionVersion;
     copy.node = copiedValue;
+    copy.geometry = source.geometry;
     copy.index = index;
     copy.label = [source.label copy] ?: @"";
     copy.value = [source.value copy] ?: @"";
@@ -3193,6 +3671,23 @@ static CJGuiInternalComposableSceneNode *CjguiCloneComposableSceneNode(
     copy.textTileRects = source.textTileRects;
     copy.textTextureByteCount = source.textTextureByteCount;
     copy.textTextureRect = source.textTextureRect;
+    copy.textTileLayoutOrigin = source.textTileLayoutOrigin;
+    copy.textMeasuredSource = source.textMeasuredSource;
+    copy.textMeasuredWidth = source.textMeasuredWidth;
+    copy.textMeasuredFontSize = source.textMeasuredFontSize;
+    copy.textMeasuredFontWeight = source.textMeasuredFontWeight;
+    copy.textMeasuredFontFamily = source.textMeasuredFontFamily;
+    copy.textMeasuredNodeKind = source.textMeasuredNodeKind;
+    copy.textMeasuredExtent = source.textMeasuredExtent;
+    copy.textMeasureValid = source.textMeasureValid;
+#ifdef CJGUI_INTERNAL_TESTING
+    copy.testTextExtentMeasurementCount = source.testTextExtentMeasurementCount;
+#endif
+    // Geometry-only COW can run after text preparation. The accepted layout
+    // belongs to this immutable node generation too; dropping it makes a
+    // pure translation turn a previously available caret/IME query into
+    // GEOMETRY_EMPTY even though the raster texture was reused.
+    copy.preparedTextLayout = source.preparedTextLayout;
     copy.hasVectorGeometry = source.hasVectorGeometry;
     copy.vectorGeometry = source.vectorGeometry;
     copy.vectorPreparedTriangles = source.vectorPreparedTriangles;
@@ -3205,13 +3700,17 @@ static CJGuiInternalComposableSceneNode *CjguiCloneComposableSceneNode(
     copy.textMarkedRects = [source.textMarkedRects copy] ?: @[];
     copy.textCaretRect = source.textCaretRect;
     copy.textCaretIsDeclared = source.textCaretIsDeclared;
+    copy.textCaretHidden = source.textCaretHidden;
     copy.textScrollbarRect = source.textScrollbarRect;
     copy.effectTarget = source.effectTarget;
     copy.backdropTarget = source.backdropTarget;
+    if (session) {
+        if (session.composableSceneCloneCount < UINT64_MAX) session.composableSceneCloneCount += 1;
+        if (session.composableSceneNodeAllocationCount < UINT64_MAX) session.composableSceneNodeAllocationCount += 1;
+    }
 #ifdef CJGUI_INTERNAL_TESTING
     if (session) {
-        if (session.testComposableSceneCloneCount < UINT64_MAX) session.testComposableSceneCloneCount += 1;
-        if (session.testComposableSceneNodeAllocationCount < UINT64_MAX) session.testComposableSceneNodeAllocationCount += 1;
+        CjguiRecordComposableSceneCloneLabel(session, source, index);
     }
 #endif
     return copy;
@@ -3313,9 +3812,15 @@ static BOOL CjguiTransferQueueCanRetain(NSUInteger incoming) {
     for (NSUInteger index = 0; index < kCjguiSessionCapacity; index++) {
         CJGuiInternalSession *live = gCjguiSessions[index];
         if (!live || live.destroyed) continue;
-        retained += live.pumpedDataTransferBytes.length;
+        NSUInteger pumpedBytes = live.pumpedDataTransferBytes.length;
+        if (pumpedBytes > budget - retained) return NO;
+        retained += pumpedBytes;
+        if (live.pendingFileTransferReservedBytes > budget - retained) return NO;
+        retained += live.pendingFileTransferReservedBytes;
         for (CJGuiInternalQueuedInteraction *queued in live.pendingInteractions) {
-            retained += queued.dataTransferBytes.length;
+            NSUInteger queuedBytes = queued.dataTransferBytes.length;
+            if (queuedBytes > budget - retained) return NO;
+            retained += queuedBytes;
         }
         if (retained > budget - incoming) return NO;
     }
@@ -3329,6 +3834,9 @@ static BOOL CjguiEnqueueComposableDataTransferInteraction(
     if (!session || !item || !payload) return NO;
     if (binaryData && !CjguiTransferQueueCanRetain(binaryData.length)) return NO;
     if (session.nextDataTransferEventId == UINT64_MAX) return NO;
+    CJGuiInternalTransferDeliveryIdentity *deliveryIdentity =
+        [[CJGuiInternalTransferDeliveryIdentity alloc] init];
+    if (!deliveryIdentity) return NO;
     for (CJGuiInternalComposableSceneNode *node in session.composableNodes) {
         if (node.node.nodeId != item.item.nodeId || node.node.resourceId != item.item.resourceId ||
             node.node.nodeKind != item.item.nodeKind) continue;
@@ -3340,6 +3848,8 @@ static BOOL CjguiEnqueueComposableDataTransferInteraction(
         queued.dataTransferBytes = [binaryData copy];
         queued.bindingEpoch = item.item.bindingEpoch;
         queued.dataTransferEventId = ++session.nextDataTransferEventId;
+        queued.transferDeliveryIdentity = deliveryIdentity;
+        queued.expectedOwnerVersion = item.item.expectedOwnerVersion;
         queued.dataTransferSourceKind = [sourceKind copy] ?: @"external_pasteboard";
         queued.dataTransferSourceIdentity = [sourceIdentity copy] ?: @"macos";
         queued.dataTransferSourceId = sourceId >= 0 ? sourceId : 0;
@@ -3351,6 +3861,11 @@ static BOOL CjguiEnqueueComposableDataTransferInteraction(
     return NO;
 }
 
+static BOOL CjguiEnqueueFrozenFileTransferFact(CJGuiInternalSession *session,
+    CjguiInternalRendererComposableDataTransferItem target, uint64_t eventId,
+    uint32_t kind, uint32_t originKind, NSString *reason, NSData *bytes,
+    CJGuiInternalTransferDeliveryIdentity *identity);
+
 static CjguiInternalRendererStatus CjguiCopyComposableDataTransferItem(
     CJGuiInternalSession *session, CJGuiInternalComposableDataTransferItem *item) {
     if (!session || !item || item.item.role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE) {
@@ -3359,7 +3874,8 @@ static CjguiInternalRendererStatus CjguiCopyComposableDataTransferItem(
     BOOL png = [item.format isEqualToString:@"image/png"];
     NSData *payload = png ? item.binaryPayload : [item.payload dataUsingEncoding:NSUTF8StringEncoding];
     if (!payload || payload.length > item.item.maximumPayloadBytes) {
-        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+        return png && payload ? CJGUI_INTERNAL_RENDERER_PNG_PAYLOAD_TOO_LARGE :
+            CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
     }
 #ifdef CJGUI_INTERNAL_TESTING
     session.testDataTransferSourceWriteCount += 1;
@@ -3385,6 +3901,219 @@ static CjguiInternalRendererStatus CjguiCopyComposableDataTransferItem(
         ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
 }
 
+#ifdef CJGUI_INTERNAL_TESTING
+static int32_t gCjguiOpenFileReadDescriptors = 0;
+static int32_t gCjguiAcquiredFileReadScopes = 0;
+#endif
+static void CjguiReadLocalPngFileAsync(CJGuiInternalFileTransferOperation *operation) {
+    static dispatch_queue_t fileQueue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ fileQueue = dispatch_queue_create("cjgui.local-png-read", DISPATCH_QUEUE_SERIAL); });
+    dispatch_async(fileQueue, ^{
+        @autoreleasepool {
+#ifdef CJGUI_INTERNAL_TESTING
+            if (operation.testReadGate && !operation.testPauseAfterFirstRead) {
+                dispatch_semaphore_signal(operation.testReadEntered);
+                dispatch_semaphore_wait(operation.testReadGate, DISPATCH_TIME_FOREVER);
+            }
+#endif
+            const uint64_t readStartedMicros = (uint64_t)(CACurrentMediaTime() * 1000000.0);
+            uint64_t copyMicros = 0;
+            NSURL *url = operation.url;
+            NSString *failure = nil;
+            NSData *result = nil;
+            BOOL scoped = !operation.cancelled && [url startAccessingSecurityScopedResource];
+#ifdef CJGUI_INTERNAL_TESTING
+            if (scoped) __sync_add_and_fetch(&gCjguiAcquiredFileReadScopes, 1);
+#endif
+            const char *path = url.fileSystemRepresentation;
+            struct stat pathBefore = {0}, before = {0}, after = {0}, pathState = {0};
+            // A FIFO without a writer blocks O_RDONLY before fstat can reject
+            // it, occupying the process-wide reader queue. Preflight avoids
+            // opening known special files; O_NONBLOCK closes the replacement
+            // race between lstat and open. The fd is checked again below.
+            int preflight = !operation.cancelled && path ? lstat(path, &pathBefore) : -1;
+            int fd = preflight == 0 && S_ISREG(pathBefore.st_mode) ?
+                open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK) : -1;
+#ifdef CJGUI_INTERNAL_TESTING
+            if (fd >= 0) __sync_add_and_fetch(&gCjguiOpenFileReadDescriptors, 1);
+#endif
+            struct statfs volume = {0};
+            const NSUInteger limit = MIN((NSUInteger)operation.target.maximumPayloadBytes, 512u * 1024u);
+            if (operation.cancelled) failure = @"file_cancelled";
+            else if (preflight == 0 && !S_ISREG(pathBefore.st_mode)) failure = @"file_not_regular";
+            else if (fd < 0) failure = @"file_open_failed";
+            else if (fstat(fd, &before) != 0 || !S_ISREG(before.st_mode)) failure = @"file_not_regular";
+            else if (before.st_dev != pathBefore.st_dev || before.st_ino != pathBefore.st_ino)
+                failure = @"file_changed_during_read";
+            else if (fstatfs(fd, &volume) != 0 || !(volume.f_flags & MNT_LOCAL)) failure = @"file_not_local";
+            else if (before.st_size <= 0) failure = @"file_empty";
+            else if ((uint64_t)before.st_size > limit) failure = @"file_payload_too_large";
+            else if (operation.cancelled) failure = @"file_cancelled";
+            else {
+                const NSUInteger wanted = (NSUInteger)before.st_size;
+                NSMutableData *buffer = [NSMutableData dataWithLength:wanted];
+                if (!buffer) failure = @"file_read_allocation_failed";
+                else {
+                    NSUInteger offset = 0;
+                    while (offset < wanted && !operation.cancelled) {
+                        ssize_t count = read(fd, (uint8_t *)buffer.mutableBytes + offset,
+                                             MIN((NSUInteger)16384, wanted - offset));
+                        if (count < 0 && errno == EINTR) continue;
+                        if (count <= 0) { failure = count == 0 ? @"file_short_read" : @"file_read_failed"; break; }
+                        offset += (NSUInteger)count;
+#ifdef CJGUI_INTERNAL_TESTING
+                        if (operation.testPauseAfterFirstRead && operation.testReadGate) {
+                            operation.testPauseAfterFirstRead = NO;
+                            dispatch_semaphore_signal(operation.testReadEntered);
+                            dispatch_semaphore_wait(operation.testReadGate, DISPATCH_TIME_FOREVER);
+                        }
+#endif
+                    }
+                    if (operation.cancelled) failure = @"file_cancelled";
+                    if (!failure && (offset != wanted || fstat(fd, &after) != 0 ||
+                        after.st_dev != before.st_dev || after.st_ino != before.st_ino ||
+                        after.st_size != before.st_size ||
+                        after.st_ctimespec.tv_sec != before.st_ctimespec.tv_sec ||
+                        after.st_ctimespec.tv_nsec != before.st_ctimespec.tv_nsec ||
+                        after.st_mtimespec.tv_sec != before.st_mtimespec.tv_sec ||
+                        after.st_mtimespec.tv_nsec != before.st_mtimespec.tv_nsec ||
+                        lstat(path, &pathState) != 0 || pathState.st_dev != before.st_dev ||
+                        pathState.st_ino != before.st_ino || pathState.st_size != before.st_size ||
+                        pathState.st_ctimespec.tv_sec != before.st_ctimespec.tv_sec ||
+                        pathState.st_ctimespec.tv_nsec != before.st_ctimespec.tv_nsec))
+                        failure = @"file_changed_during_read";
+                    if (!failure) {
+                        const uint64_t copyStartedMicros = (uint64_t)(CACurrentMediaTime() * 1000000.0);
+                        result = [buffer copy];
+                        copyMicros = (uint64_t)(CACurrentMediaTime() * 1000000.0) - copyStartedMicros;
+                    }
+                }
+            }
+            if (fd >= 0) {
+                close(fd);
+#ifdef CJGUI_INTERNAL_TESTING
+                __sync_sub_and_fetch(&gCjguiOpenFileReadDescriptors, 1);
+#endif
+            }
+            if (scoped) {
+                [url stopAccessingSecurityScopedResource];
+#ifdef CJGUI_INTERNAL_TESTING
+                __sync_sub_and_fetch(&gCjguiAcquiredFileReadScopes, 1);
+#endif
+            }
+            const uint64_t readMicros = (uint64_t)(CACurrentMediaTime() * 1000000.0) - readStartedMicros;
+            NSData *bytes = result;
+            NSString *reason = failure;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                CJGuiInternalSession *live = CjguiLookupSession(operation.sessionToken);
+                if (!live || live.destroyed || live.sessionGeneration != operation.sessionGeneration) return;
+                NSUInteger index = [live.pendingFileTransfers indexOfObjectIdenticalTo:operation];
+                if (index == NSNotFound) return;
+                [live.pendingFileTransfers removeObjectAtIndex:index];
+                NSUInteger reserved = MIN((NSUInteger)operation.target.maximumPayloadBytes, 512u * 1024u);
+                live.pendingFileTransferReservedBytes -= MIN(reserved, live.pendingFileTransferReservedBytes);
+                NSString *terminalReason = operation.cancelled ? @"file_cancelled" : reason;
+                if (CjguiDataTransferTraceEnabled()) {
+                    NSLog(@"cjgui: local png file event=%llu target=%llu epoch=%llu expected_owner=%lld bytes=%lu read_us=%llu copy_us=%llu result=%@",
+                        (unsigned long long)operation.eventId,
+                        (unsigned long long)operation.target.nodeId,
+                        (unsigned long long)operation.target.bindingEpoch,
+                        (long long)operation.target.expectedOwnerVersion,
+                        (unsigned long)bytes.length,
+                        (unsigned long long)readMicros,
+                        (unsigned long long)copyMicros,
+                        terminalReason ?: @"queued");
+                }
+                if (!terminalReason && !CjguiTransferQueueCanRetain(bytes.length)) {
+                    terminalReason = @"png_queue_budget_exceeded";
+                }
+                if (terminalReason) {
+                    (void)CjguiEnqueueFrozenFileTransferFact(live, operation.target, operation.eventId,
+                        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_REJECTED,
+                        operation.eventKind, terminalReason, nil, operation.deliveryIdentity);
+                } else if (!CjguiEnqueueFrozenFileTransferFact(live, operation.target,
+                    operation.eventId, operation.eventKind, operation.eventKind, @"", bytes,
+                    operation.deliveryIdentity)) {
+                    (void)CjguiEnqueueFrozenFileTransferFact(live, operation.target, operation.eventId,
+                        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_REJECTED,
+                        operation.eventKind, @"file_completion_queue_full", nil,
+                        operation.deliveryIdentity);
+                }
+            });
+        }
+    });
+}
+
+static CjguiInternalRendererStatus CjguiBeginLocalPngFileTransfer(
+    CJGuiInternalSession *session, CJGuiInternalComposableDataTransferItem *item,
+    NSPasteboard *pasteboard, uint32_t kind) {
+    if (!session || !item || session.nextDataTransferEventId == UINT64_MAX) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    const uint64_t eventId = ++session.nextDataTransferEventId;
+    CJGuiInternalTransferDeliveryIdentity *identity = [[CJGuiInternalTransferDeliveryIdentity alloc] init];
+    if (!identity) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiInternalRendererComposableDataTransferItem target = item.item;
+    NSString *reason = nil;
+    NSURL *url = nil;
+    if (pasteboard.pasteboardItems.count != 1) reason = @"file_multiple_items_unsupported";
+    else {
+        NSArray<NSURL *> *urls = [pasteboard readObjectsForClasses:@[[NSURL class]]
+            options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+        if (urls.count != 1 || ![urls[0] isKindOfClass:[NSURL class]] || !urls[0].isFileURL) {
+            reason = @"file_url_unsupported";
+        } else url = urls[0];
+    }
+    if (!reason && (session.pendingFileTransfers.count >= 4 ||
+        session.pendingTransferTerminalFacts.count + session.pendingFileTransfers.count >= 64 ||
+        !CjguiTransferQueueCanRetain(MIN((NSUInteger)target.maximumPayloadBytes, 512u * 1024u)))) {
+        reason = @"file_read_budget_exceeded";
+    }
+    if (reason) {
+        return CjguiEnqueueFrozenFileTransferFact(session, target, eventId,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_REJECTED, kind, reason, nil, identity)
+            ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    if (!CjguiEnqueueFrozenFileTransferFact(session, target, eventId,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_BEGIN, kind, @"", nil, identity)) {
+        return CjguiEnqueueFrozenFileTransferFact(session, target, eventId,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_REJECTED,
+            kind, @"file_begin_queue_full", nil, identity) ? CJGUI_INTERNAL_RENDERER_OK :
+            CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    CJGuiInternalFileTransferOperation *operation = [[CJGuiInternalFileTransferOperation alloc] init];
+    if (!operation) {
+        (void)CjguiEnqueueFrozenFileTransferFact(session, target, eventId,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_REJECTED,
+            kind, @"file_read_allocation_failed", nil, identity);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    operation.url = url;
+    operation.sessionToken = session.rendererSessionToken;
+    operation.sessionGeneration = session.sessionGeneration;
+    operation.eventId = eventId;
+    operation.deliveryIdentity = identity;
+    operation.eventKind = kind;
+    operation.target = target;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (session.testHoldNextFileRead) {
+        session.testHoldNextFileRead = NO;
+        operation.testReadGate = session.testNextFileReadGate;
+        operation.testReadEntered = session.testNextFileReadEntered;
+        operation.testPauseAfterFirstRead = session.testHoldNextFileAfterFirstRead;
+        session.testHoldNextFileAfterFirstRead = NO;
+        session.testNextFileReadGate = nil;
+        session.testNextFileReadEntered = nil;
+    }
+#endif
+    NSUInteger reserved = MIN((NSUInteger)target.maximumPayloadBytes, 512u * 1024u);
+    session.pendingFileTransferReservedBytes += reserved;
+    [session.pendingFileTransfers addObject:operation];
+    CjguiReadLocalPngFileAsync(operation);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 static CjguiInternalRendererStatus CjguiReadComposableDataTransferItem(
     CJGuiInternalSession *session, CJGuiInternalComposableDataTransferItem *item,
     NSPasteboard *pasteboard, uint32_t kind) {
@@ -3393,12 +4122,25 @@ static CjguiInternalRendererStatus CjguiReadComposableDataTransferItem(
     }
     NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
     BOOL png = [item.format isEqualToString:@"image/png"];
-    if (png && !CjguiTransferQueueCanRetain(item.item.maximumPayloadBytes)) {
-        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    if (png && item.item.localPngFileAllowed &&
+        [pasteboard availableTypeFromArray:@[NSPasteboardTypeFileURL]]) {
+        return CjguiBeginLocalPngFileTransfer(session, item, pasteboard, kind);
     }
+    if (png && !CjguiTransferQueueCanRetain(item.item.maximumPayloadBytes)) {
+        if (CjguiDataTransferTraceEnabled()) NSLog(@"cjgui: transfer read rejected reason=png_queue_budget_exceeded");
+        return CJGUI_INTERNAL_RENDERER_PNG_QUEUE_BUDGET_EXCEEDED;
+    }
+    uint64_t fetchStarted = (uint64_t)(CACurrentMediaTime() * 1000000.0);
     NSData *data = [pasteboard dataForType:type];
+    uint64_t fetchEnded = (uint64_t)(CACurrentMediaTime() * 1000000.0);
     if (!data || data.length > item.item.maximumPayloadBytes) {
-        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+        if (png && CjguiDataTransferTraceEnabled()) {
+            NSLog(@"cjgui: transfer read rejected reason=%@ materialized_bytes=%lu fetch_us=%llu",
+                  data ? @"png_payload_too_large" : @"png_unavailable", (unsigned long)data.length,
+                  (unsigned long long)(fetchEnded >= fetchStarted ? fetchEnded - fetchStarted : 0));
+        }
+        return png && data ? CJGUI_INTERNAL_RENDERER_PNG_PAYLOAD_TOO_LARGE :
+            CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
     }
 #ifdef CJGUI_INTERNAL_TESTING
     session.testDataTransferReadCount += 1;
@@ -3416,10 +4158,18 @@ static CjguiInternalRendererStatus CjguiReadComposableDataTransferItem(
     NSString *sourceIdentity = nil;
     int64_t sourceId = 0;
     CjguiReadDataTransferSourceMetadata(pasteboard, item.format, &sourceKind, &sourceIdentity, &sourceId);
-    return CjguiEnqueueComposableDataTransferInteraction(session, kind, item, payload,
-                                                         png ? data : nil,
-                                                         sourceKind, sourceIdentity, sourceId)
-        ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    BOOL queued = CjguiEnqueueComposableDataTransferInteraction(session, kind, item, payload,
+                                                                 png ? data : nil,
+                                                                 sourceKind, sourceIdentity, sourceId);
+    if (png && CjguiDataTransferTraceEnabled()) {
+        uint64_t copiedAt = (uint64_t)(CACurrentMediaTime() * 1000000.0);
+        NSLog(@"cjgui: transfer read bytes=%lu fetch_us=%llu queue_copy_us=%llu queued=%@",
+              (unsigned long)data.length,
+              (unsigned long long)(fetchEnded >= fetchStarted ? fetchEnded - fetchStarted : 0),
+              (unsigned long long)(copiedAt >= fetchEnded ? copiedAt - fetchEnded : 0),
+              queued ? @"true" : @"false");
+    }
+    return queued ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
 }
 
 static NSFont *CjguiComposableFont(CJGuiInternalComposableSceneNode *node);
@@ -3460,9 +4210,26 @@ static void CjguiPopulateMetalClipChain(vector_float4 clips[CJGUI_INTERNAL_COMPO
     }
 }
 
+static void CjguiPopulateMetalVisualClipChain(vector_float4 clips[CJGUI_INTERNAL_COMPOSABLE_CLIP_CONSTRAINT_CAPACITY],
+                                              vector_float4 *radii, vector_float4 *count,
+                                              CJGuiInternalComposableSceneNode *node) {
+    uint32_t clipCount = CjguiComposableClipConstraintCount(node.node);
+    *radii = (vector_float4){ 0, 0, 0, 0 };
+    *count = (vector_float4){ (float)clipCount, 0, 0, 0 };
+    for (uint32_t i = 0; i < CJGUI_INTERNAL_COMPOSABLE_CLIP_CONSTRAINT_CAPACITY; i++) {
+        CGFloat x = 0, y = 0, width = 0, height = 0, radius = 0;
+        if (i < clipCount) CjguiComposableVisualClipConstraintAt(node, i, &x, &y, &width, &height, &radius);
+        clips[i] = (vector_float4){ (float)x, (float)y, (float)MAX(0.0, width), (float)MAX(0.0, height) };
+        if (i < clipCount) (*radii)[i] = (float)MIN(MAX(0.0, radius), MIN(MAX(0.0, width), MAX(0.0, height)) / 2.0);
+    }
+}
+
 static void CjguiAppendMetalShape(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
-                                  CjguiInternalRendererComposableNode value, vector_float4 fill, vector_float4 border) {
-    CGFloat x = value.x, y = value.y, width = value.width, height = value.height;
+                                  CJGuiInternalComposableSceneNode *node,
+                                  CjguiInternalRendererComposableNode value, NSRect visualRect,
+                                  vector_float4 fill, vector_float4 border) {
+    CGFloat x = NSMinX(visualRect), y = NSMinY(visualRect);
+    CGFloat width = NSWidth(visualRect), height = NSHeight(visualRect);
     // A linear gradient replaces the fill even when the flat fill color is
     // fully transparent, so it participates in the emptiness test. With
     // gradientPresent == 0 this reduces exactly to the legacy condition.
@@ -3498,7 +4265,7 @@ static void CjguiAppendMetalShape(NSMutableData *batch, CGFloat pointWidth, CGFl
     for (uint32_t i = 0; i < 6; i++) {
         vertices[i].position = positions[i]; vertices[i].scenePoint = scenePoints[i]; vertices[i].localPoint = localPoints[i];
         vertices[i].size = (vector_float2){ (float)width, (float)height };
-        CjguiPopulateMetalClipChain(vertices[i].clips, &vertices[i].clipRadii, &vertices[i].clipCount, value);
+        CjguiPopulateMetalVisualClipChain(vertices[i].clips, &vertices[i].clipRadii, &vertices[i].clipCount, node);
         vertices[i].cornerRadius = radius; vertices[i].borderWidth = stroke; vertices[i].fill = fill; vertices[i].border = border;
         vertices[i].passKind = 0.0f;
         vertices[i].gradientPresent = gradientPresent;
@@ -3523,6 +4290,7 @@ static void CjguiAppendMetalShape(NSMutableData *batch, CGFloat pointWidth, CGFl
 // space (`localPoint` relative to the expanded shape origin, `size` its
 // extent), which keeps the fragment free of an extra origin uniform.
 static void CjguiAppendMetalShadow(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
+                                   CJGuiInternalComposableSceneNode *node,
                                    CjguiInternalRendererComposableNode value) {
     if (!batch || value.shadowPresent == 0 || !(value.shadowAlpha > 0.0)) return;
     CGFloat width = value.width, height = value.height;
@@ -3530,18 +4298,19 @@ static void CjguiAppendMetalShadow(NSMutableData *batch, CGFloat pointWidth, CGF
     CGFloat blur = MIN(MAX(0.0, (CGFloat)value.shadowBlurRadius), 256.0);
     CGFloat spread = MIN(MAX(0.0, (CGFloat)value.shadowSpread), 128.0);
     // Shadow shape = node bounds translated by the offset, expanded by spread.
-    CGFloat shapeX = (CGFloat)value.x + (CGFloat)value.shadowOffsetX - spread;
-    CGFloat shapeY = (CGFloat)value.y + (CGFloat)value.shadowOffsetY - spread;
+    NSRect visualRect = CjguiComposableVisualNodeRect(node);
+    CGFloat shapeX = NSMinX(visualRect) + (CGFloat)value.shadowOffsetX - spread;
+    CGFloat shapeY = NSMinY(visualRect) + (CGFloat)value.shadowOffsetY - spread;
     CGFloat shapeW = width + 2.0 * spread;
     CGFloat shapeH = height + 2.0 * spread;
     // Output range = shadow shape expanded by 3*blur, unioned with the node
     // bounds so the node's own pixels are always covered by the shadow quad
     // and the following fill can overwrite the shadow center.
     CGFloat expand = 3.0 * blur;
-    CGFloat outX = MIN((CGFloat)value.x, shapeX - expand);
-    CGFloat outY = MIN((CGFloat)value.y, shapeY - expand);
-    CGFloat outRight = MAX((CGFloat)value.x + width, shapeX + shapeW + expand);
-    CGFloat outBottom = MAX((CGFloat)value.y + height, shapeY + shapeH + expand);
+    CGFloat outX = MIN(NSMinX(visualRect), shapeX - expand);
+    CGFloat outY = MIN(NSMinY(visualRect), shapeY - expand);
+    CGFloat outRight = MAX(NSMaxX(visualRect), shapeX + shapeW + expand);
+    CGFloat outBottom = MAX(NSMaxY(visualRect), shapeY + shapeH + expand);
     CGFloat outW = outRight - outX;
     CGFloat outH = outBottom - outY;
     if (outW <= 0.0 || outH <= 0.0) return;
@@ -3562,7 +4331,7 @@ static void CjguiAppendMetalShadow(NSMutableData *batch, CGFloat pointWidth, CGF
         // expanded shape, so the fragment SDF has no separate origin field.
         vertices[i].localPoint = (vector_float2){ scenePoints[i].x - (float)shapeX, scenePoints[i].y - (float)shapeY };
         vertices[i].size = (vector_float2){ (float)shapeW, (float)shapeH };
-        CjguiPopulateMetalClipChain(vertices[i].clips, &vertices[i].clipRadii, &vertices[i].clipCount, value);
+        CjguiPopulateMetalVisualClipChain(vertices[i].clips, &vertices[i].clipRadii, &vertices[i].clipCount, node);
         vertices[i].cornerRadius = radius;
         vertices[i].borderWidth = 0.0f;
         vertices[i].passKind = 1.0f;
@@ -3578,19 +4347,21 @@ static void CjguiAppendMetalShadow(NSMutableData *batch, CGFloat pointWidth, CGF
 // CjguiAppendMetalShadow so the paint gate below can never disagree with the
 // geometry actually submitted. A shadow may extend past the node's own bounds;
 // only the inherited ancestor clip chain limits it.
-static NSRect CjguiComposableShadowOutputRect(CjguiInternalRendererComposableNode value) {
+static NSRect CjguiComposableShadowOutputRect(CJGuiInternalComposableSceneNode *node) {
+    CjguiInternalRendererComposableNode value = node.node;
+    NSRect visualRect = CjguiComposableVisualNodeRect(node);
     CGFloat width = value.width, height = value.height;
     CGFloat blur = MIN(MAX(0.0, (CGFloat)value.shadowBlurRadius), 256.0);
     CGFloat spread = MIN(MAX(0.0, (CGFloat)value.shadowSpread), 128.0);
-    CGFloat shapeX = (CGFloat)value.x + (CGFloat)value.shadowOffsetX - spread;
-    CGFloat shapeY = (CGFloat)value.y + (CGFloat)value.shadowOffsetY - spread;
+    CGFloat shapeX = NSMinX(visualRect) + (CGFloat)value.shadowOffsetX - spread;
+    CGFloat shapeY = NSMinY(visualRect) + (CGFloat)value.shadowOffsetY - spread;
     CGFloat shapeW = width + 2.0 * spread;
     CGFloat shapeH = height + 2.0 * spread;
     CGFloat expand = 3.0 * blur;
-    CGFloat outX = MIN((CGFloat)value.x, shapeX - expand);
-    CGFloat outY = MIN((CGFloat)value.y, shapeY - expand);
-    CGFloat outRight = MAX((CGFloat)value.x + width, shapeX + shapeW + expand);
-    CGFloat outBottom = MAX((CGFloat)value.y + height, shapeY + shapeH + expand);
+    CGFloat outX = MIN(NSMinX(visualRect), shapeX - expand);
+    CGFloat outY = MIN(NSMinY(visualRect), shapeY - expand);
+    CGFloat outRight = MAX(NSMaxX(visualRect), shapeX + shapeW + expand);
+    CGFloat outBottom = MAX(NSMaxY(visualRect), shapeY + shapeH + expand);
     return NSMakeRect(outX, outY, MAX(0.0, outRight - outX), MAX(0.0, outBottom - outY));
 }
 
@@ -3605,16 +4376,16 @@ static NSRect CjguiComposableShadowOutputRect(CjguiInternalRendererComposableNod
 // merely adds a quad the fragment SDF discards, while a false negative would
 // drop a genuinely visible shadow. The node's own bounds are never consulted,
 // which is what lets a fully clipped-out body still paint its shadow.
-static BOOL CjguiComposableShadowOutputIntersectsAncestorClip(CjguiInternalRendererComposableNode value,
+static BOOL CjguiComposableShadowOutputIntersectsAncestorClip(CJGuiInternalComposableSceneNode *node,
                                                               NSRect shadowOutput) {
     if (NSIsEmptyRect(shadowOutput)) return NO;
-    uint32_t clipCount = CjguiComposableClipConstraintCount(value);
+    uint32_t clipCount = CjguiComposableClipConstraintCount(node.node);
     if (clipCount == 0) return NO;
     NSRect visibleRegion = NSMakeRect(0.0, 0.0, 0.0, 0.0);
     BOOL haveRegion = NO;
     for (uint32_t index = 0; index < clipCount; index++) {
         CGFloat x = 0, y = 0, width = 0, height = 0, radius = 0;
-        CjguiComposableClipConstraintAt(value, index, &x, &y, &width, &height, &radius);
+        CjguiComposableVisualClipConstraintAt(node, index, &x, &y, &width, &height, &radius);
         NSRect clipRect = NSMakeRect(x, y, MAX(0.0, width), MAX(0.0, height));
         if (NSIsEmptyRect(clipRect)) return NO;
         visibleRegion = haveRegion ? NSIntersectionRect(visibleRegion, clipRect) : clipRect;
@@ -3670,6 +4441,45 @@ static BOOL CjguiComposableVectorUnitDirection(CjguiInternalComposableVectorPoin
     if (!isfinite(length) || length <= CjguiComposableVectorEpsilon) return NO;
     *outDirection = CjguiComposableVectorScale(delta, 1.0 / length);
     return YES;
+}
+
+// The asynchronous reader never holds a scene node. Its immutable completion
+// uses the identity captured at the AppKit callback, even if the accepted
+// scene has since removed the target; Cangjie settles that stale receipt.
+static BOOL CjguiEnqueueFrozenFileTransferFact(CJGuiInternalSession *session,
+    CjguiInternalRendererComposableDataTransferItem target, uint64_t eventId,
+    uint32_t kind, uint32_t originKind, NSString *reason, NSData *bytes,
+    CJGuiInternalTransferDeliveryIdentity *identity) {
+    if (!session || session.destroyed || eventId == 0) return NO;
+    if (bytes && !CjguiTransferQueueCanRetain(bytes.length)) return NO;
+    CJGuiInternalQueuedInteraction *queued = [[CJGuiInternalQueuedInteraction alloc]
+        initWithKind:kind recordIndex:originKind selectionStart:0 selectionEnd:0
+        formText:reason ?: @"" nodeId:target.nodeId projectionVersion:target.projectionVersion
+        resourceId:target.resourceId nodeKind:target.nodeKind];
+    if (!queued) return NO;
+    queued.bindingEpoch = target.bindingEpoch;
+    queued.expectedOwnerVersion = target.expectedOwnerVersion;
+    queued.dataTransferEventId = eventId;
+    queued.transferDeliveryIdentity = identity;
+    queued.dataTransferFormat = @"image/png";
+    queued.dataTransferBytes = bytes;
+    queued.dataTransferSourceKind = @"local_file_url";
+    queued.dataTransferSourceIdentity = @"macos";
+    queued.dataTransferSourceId = 0;
+    if (session.pendingInteractions.count < kCjguiPendingInteractionCapacity) {
+        [session.pendingInteractions addObject:queued];
+        return YES;
+    }
+    // Keep a fallback terminal slot for every admitted asynchronous read.
+    // Immediate rejections may only consume the remaining slots, otherwise
+    // a full interaction FIFO could strand a public reading receipt.
+    NSUInteger reserved = MIN((NSUInteger)64, session.pendingFileTransfers.count);
+    if (kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_REJECTED &&
+        session.pendingTransferTerminalFacts.count < 64 - reserved) {
+        [session.pendingTransferTerminalFacts addObject:queued];
+        return YES;
+    }
+    return NO;
 }
 
 static void CjguiAppendMetalVectorTriangle(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
@@ -4159,9 +4969,10 @@ static id<MTLBuffer> CjguiComposableVectorVertexBufferForNode(CJGuiInternalMetal
 // clip chain. They deliberately do not become public nodes or textures:
 // their sole owner is the active native input projection.
 static void CjguiAppendMetalTextDecoration(NSMutableData *batch, CGFloat pointWidth, CGFloat pointHeight,
-                                           CjguiInternalRendererComposableNode owner, NSRect rect,
+                                           CJGuiInternalComposableSceneNode *node, NSRect rect,
                                            vector_float4 fill) {
     if (NSIsEmptyRect(rect) || fill.w <= 0.0) return;
+    CjguiInternalRendererComposableNode owner = node.node;
     CjguiInternalRendererComposableNode decoration = owner;
     decoration.x = (int64_t)floor(NSMinX(rect));
     decoration.y = (int64_t)floor(NSMinY(rect));
@@ -4175,7 +4986,8 @@ static void CjguiAppendMetalTextDecoration(NSMutableData *batch, CGFloat pointWi
     decoration.gradientPresent = 0;
     decoration.fillAlpha = fill.w;
     decoration.borderAlpha = 0.0;
-    CjguiAppendMetalShape(batch, pointWidth, pointHeight, decoration, fill, (vector_float4){ 0, 0, 0, 0 });
+    CjguiAppendMetalShape(batch, pointWidth, pointHeight, node, decoration, rect,
+                          fill, (vector_float4){ 0, 0, 0, 0 });
 }
 
 static vector_float4 CjguiMetalColorFromNSColor(NSColor *color) {
@@ -4272,10 +5084,12 @@ static BOOL CjguiEncodeMetalVectorShape(id<MTLRenderCommandEncoder> encoder,
     if (!buffer || node.vectorPreparedVertexCount == 0) return NO;
     CjguiInternalRendererComposableNode value = node.node;
     CJGuiInternalMetalVectorUniform uniform = {0};
-    uniform.nodeRect = (vector_float4){ (float)value.x, (float)value.y, (float)value.width, (float)value.height };
+    NSRect visualRect = CjguiComposableVisualNodeRect(node);
+    uniform.nodeRect = (vector_float4){ (float)NSMinX(visualRect), (float)NSMinY(visualRect),
+                                        (float)value.width, (float)value.height };
     uniform.viewBoxAndPointExtent = (vector_float4){ (float)geometry.viewBoxWidth, (float)geometry.viewBoxHeight,
                                                       (float)pointWidth, (float)pointHeight };
-    CjguiPopulateMetalClipChain(uniform.clips, &uniform.clipRadii, &uniform.clipCount, value);
+    CjguiPopulateMetalVisualClipChain(uniform.clips, &uniform.clipRadii, &uniform.clipCount, node);
     uniform.fill = (vector_float4){ (float)geometry.fillRed, (float)geometry.fillGreen,
                                     (float)geometry.fillBlue, (float)geometry.fillAlpha };
     uniform.stroke = (vector_float4){ (float)geometry.strokeRed, (float)geometry.strokeGreen,
@@ -4297,9 +5111,12 @@ static BOOL CjguiEncodeMetalVectorShape(id<MTLRenderCommandEncoder> encoder,
 
 static void CjguiEncodeMetalTexture(id<MTLRenderCommandEncoder> encoder, CGFloat pointWidth, CGFloat pointHeight,
                                     CGFloat x, CGFloat y, CGFloat width, CGFloat height, id<MTLTexture> texture,
-                                    CjguiInternalRendererComposableNode value, BOOL appKitBitmapRows,
+                                    CJGuiInternalComposableSceneNode *node, BOOL appKitBitmapRows,
                                     float paintAlpha) {
     if (!texture || width <= 0.0 || height <= 0.0) return;
+    CjguiInternalRendererComposableNode value = node.node;
+    x += (CGFloat)node.geometry.translateX;
+    y += (CGFloat)node.geometry.translateY;
     float left = -1.0f + (float)(2.0 * x / pointWidth);
     float right = -1.0f + (float)(2.0 * (x + width) / pointWidth);
     float top = 1.0f - (float)(2.0 * y / pointHeight);
@@ -4319,8 +5136,10 @@ static void CjguiEncodeMetalTexture(id<MTLRenderCommandEncoder> encoder, CGFloat
     vector_float2 scenePoints[6] = { { (float)x, (float)y }, { (float)(x + width), (float)y }, { (float)x, (float)(y + height) }, { (float)(x + width), (float)y }, { (float)(x + width), (float)(y + height) }, { (float)x, (float)(y + height) } };
     for (uint32_t i = 0; i < 6; i++) {
         vertices[i].position = positions[i]; vertices[i].texCoord = texCoords[i]; vertices[i].scenePoint = scenePoints[i];
-        CjguiPopulateMetalClipChain(vertices[i].clips, &vertices[i].clipRadii, &vertices[i].clipCount, value);
-        vertices[i].nodeRect = (vector_float4){ (float)value.x, (float)value.y, (float)value.width, (float)value.height };
+        CjguiPopulateMetalVisualClipChain(vertices[i].clips, &vertices[i].clipRadii, &vertices[i].clipCount, node);
+        NSRect visual = CjguiComposableVisualNodeRect(node);
+        vertices[i].nodeRect = (vector_float4){ (float)NSMinX(visual), (float)NSMinY(visual),
+                                                (float)value.width, (float)value.height };
         vertices[i].nodeCornerRadius = (float)MIN(MAX(0.0, value.cornerRadius), MIN((CGFloat)value.width, (CGFloat)value.height) / 2.0);
         vertices[i].paintAlpha = paintAlpha;
     }
@@ -4383,6 +5202,19 @@ static BOOL CjguiComposableNodeUsesLabelTextInset(uint32_t kind) {
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE;
 }
 
+// The rect the empty-text layout preparation would use. An empty result is the
+// named "no preparable geometry" state for a text node (zero-sized or thinner
+// than the text inset): it is NOT a change, so the caller must not clone and
+// retry next refresh.
+static BOOL CjguiComposableEmptyTextLayoutRect(CJGuiInternalComposableSceneNode *node, NSRect *outRect) {
+    if (!node) return NO;
+    NSRect bounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
+    CGFloat verticalInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
+    NSRect textRect = NSInsetRect(bounds, 7.0, verticalInset);
+    if (outRect) *outRect = textRect;
+    return !NSIsEmptyRect(textRect) && textRect.size.width > 0 && textRect.size.height > 0;
+}
+
 // A text texture is only a projection of the pixels that can reach the
 // drawable in this scene.  Keep its logical rectangle in scene coordinates:
 // the encoder can then place the tile without changing TextKit/NSString
@@ -4401,28 +5233,65 @@ static NSRect CjguiComposableTextTextureRectForNodeWithText(CJGuiInternalComposa
         if (text.length == 0) return NSZeroRect;
         CGFloat insetY = CjguiComposableNodeUsesLabelTextInset(value.nodeKind) ? 2.0 : 6.0;
         NSRect drawRect = NSInsetRect(nodeRect, 7.0, insetY);
-        NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
-        paragraph.lineBreakStrategy = NSLineBreakStrategyPushOut;
-        // Composable prose wraps by word on every path that produces pixels or
-        // estimates their extent: character wrapping split English words across
-        // lines ("tre" / "e"). Ideographs still break per character.
-        paragraph.lineBreakMode = value.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT
-            ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail;
-        NSDictionary *attributes = @{NSFontAttributeName: CjguiComposableFont(node),
-                                     NSParagraphStyleAttributeName: paragraph};
-        NSRect measured = [text boundingRectWithSize:NSMakeSize(NSWidth(drawRect), CGFLOAT_MAX / 4.0)
-                                             options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
-                                          attributes:attributes];
+        BOOL sameMeasure = node.textMeasureValid &&
+            node.textMeasuredWidth == NSWidth(drawRect) &&
+            node.textMeasuredFontSize == value.fontSize &&
+            node.textMeasuredFontWeight == value.fontWeight &&
+            node.textMeasuredFontFamily == value.fontFamily &&
+            node.textMeasuredNodeKind == value.nodeKind &&
+            [node.textMeasuredSource isEqualToString:text];
+        NSSize measuredExtent = node.textMeasuredExtent;
+        if (!sameMeasure) {
+            NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
+            paragraph.lineBreakStrategy = NSLineBreakStrategyPushOut;
+            // Prose wraps by word on both pixel and extent paths. Ideographs
+            // still break per character; translation never changes this rule.
+            paragraph.lineBreakMode = value.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT
+                ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail;
+            NSDictionary *attributes = @{NSFontAttributeName: CjguiComposableFont(node),
+                                         NSParagraphStyleAttributeName: paragraph};
+            NSRect measured = [text boundingRectWithSize:NSMakeSize(NSWidth(drawRect), CGFLOAT_MAX / 4.0)
+                                                 options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                                              attributes:attributes];
+#ifdef CJGUI_INTERNAL_TESTING
+            node.testTextExtentMeasurementCount += 1;
+#endif
+            measuredExtent = measured.size;
+            // This memo is derived, never a text owner or GPU resource. A
+            // failed candidate may leave it on a shared accepted node without
+            // changing pixels, geometry, focus, or any accepted version.
+            node.textMeasuredSource = text;
+            node.textMeasuredWidth = NSWidth(drawRect);
+            node.textMeasuredFontSize = value.fontSize;
+            node.textMeasuredFontWeight = value.fontWeight;
+            node.textMeasuredFontFamily = value.fontFamily;
+            node.textMeasuredNodeKind = value.nodeKind;
+            node.textMeasuredExtent = measuredExtent;
+            node.textMeasureValid = YES;
+        }
         // Glyph antialiasing and fallback font overhang need a small guard band.
         // The measurement uses precisely the same font, paragraph rule and
         // original draw width as the raster path; it never changes wrapping.
-        CGFloat drawnWidth = MIN(NSWidth(drawRect), MAX(1.0, ceil(NSWidth(measured)) + 2.0));
-        CGFloat drawnHeight = MIN(NSHeight(drawRect), MAX(1.0, ceil(NSHeight(measured)) + 2.0));
+        CGFloat drawnWidth = MIN(NSWidth(drawRect), MAX(1.0, ceil(measuredExtent.width) + 2.0));
+        CGFloat drawnHeight = MIN(NSHeight(drawRect), MAX(1.0, ceil(measuredExtent.height) + 2.0));
         nodeRect = NSIntersectionRect(nodeRect,
             NSMakeRect(NSMinX(drawRect) - 1.0, NSMinY(drawRect) - 1.0,
                        drawnWidth + 2.0, drawnHeight + 2.0));
     }
-    return NSIntersectionRect(nodeRect, clipRect);
+    // Coverage is a projection of the accepted visual clip into the node's
+    // unchanged layout space. A moving clip owner and a moving node are
+    // separate transforms; subtract only the node's cumulative translation.
+    NSRect visualClip = CjguiComposableVisualClipBounds(node);
+    if (node.geometry.clipCount == 0) visualClip = clipRect;
+    NSRect visualBody = NSOffsetRect(nodeRect, (CGFloat)node.geometry.translateX,
+                                    (CGFloat)node.geometry.translateY);
+    NSRect visible = NSIntersectionRect(visualBody, visualClip);
+    if (NSIsEmptyRect(visible)) return NSZeroRect;
+    NSRect layoutVisible = NSOffsetRect(visible, -(CGFloat)node.geometry.translateX,
+                                       -(CGFloat)node.geometry.translateY);
+    // Finite glyph/AA guard around the visible region. Tile selection snaps
+    // this range to a stable node-local grid; the Metal clip stays exact.
+    return NSIntersectionRect(nodeRect, NSInsetRect(layoutVisible, -2.0, -2.0));
 }
 
 static NSRect CjguiComposableTextTextureRectForNode(CJGuiInternalComposableSceneNode *node) {
@@ -4434,23 +5303,10 @@ static NSRect CjguiComposableTextTextureRectForNode(CJGuiInternalComposableScene
 // canonical copy of that chain in each text-resource key so a radius-only
 // projection update cannot reuse stale pixels from the same rectangle.
 static NSString *CjguiComposableTextClipSignature(CJGuiInternalComposableSceneNode *node) {
-    if (!node) return @"";
-    CjguiInternalRendererComposableNode value = node.node;
-    uint32_t count = CjguiComposableClipConstraintCount(value);
-    NSMutableString *signature = [NSMutableString stringWithString:@"clip"];
-    NSRect nodeRect = NSMakeRect((CGFloat)value.x, (CGFloat)value.y,
-                                 MAX(0.0, (CGFloat)value.width), MAX(0.0, (CGFloat)value.height));
-    for (uint32_t index = 0; index < count; index++) {
-        CGFloat x = 0, y = 0, width = 0, height = 0, radius = 0;
-        CjguiComposableClipConstraintAt(value, index, &x, &y, &width, &height, &radius);
-        NSRect constraint = NSMakeRect(x, y, MAX(0.0, width), MAX(0.0, height));
-        // An ordinary ancestor rectangle containing the whole node cannot
-        // change its raster pixels when the node moves inside that ancestor.
-        if (radius == 0.0 && NSContainsRect(constraint, nodeRect)) continue;
-        [signature appendFormat:@":%.3f:%.3f:%.3f:%.3f:%.3f",
-            x - (CGFloat)value.x, y - (CGFloat)value.y, width, height, radius];
-    }
-    return signature;
+    (void)node;
+    // Ancestor clips, including rounded corners, are applied by the visual
+    // shader. No moving ancestor clip is baked into a body tile.
+    return @"visual_shader_clip_tile_v2";
 }
 
 // The key must cover EVERYTHING that changes the rasterized pixels. Style runs
@@ -4460,18 +5316,16 @@ static NSString *CjguiComposableTextClipSignature(CJGuiInternalComposableSceneNo
 static NSString *CjguiComposableTextTextureKey(CJGuiInternalComposableSceneNode *node, CGFloat scaleX, CGFloat scaleY,
                                                NSString *displayText, NSRect textureRect) {
     if (!node) return @"";
+    (void)textureRect;
     CjguiInternalRendererComposableNode value = node.node;
     // The node's dynamic text alpha is deliberately NOT part of the key: it is
     // applied as a per-draw multiplier on the cached glyph texture, so an
     // opacity animation never re-prepares TextKit or re-rasterizes. The static
     // colour channels DO participate, so a real colour change still invalidates.
-    NSString *key = [NSString stringWithFormat:@"%u:%lld:%lld:%0.3f:%0.3f:%0.3f:%u:%u:%0.4f:%0.4f:%0.4f:%0.3f:%0.3f:%0.3f:%0.3f:%0.3f:%0.3f:%@:%@:%@",
+    NSString *key = [NSString stringWithFormat:@"tile_v2:%u:%lld:%lld:%0.3f:%0.3f:%0.3f:%u:%u:%0.4f:%0.4f:%0.4f:%@:%@:%@",
             value.nodeKind, value.width, value.height,
             scaleX, scaleY, value.fontSize, value.fontWeight, value.fontFamily,
             value.textRed, value.textGreen, value.textBlue,
-            NSMinX(textureRect) - (CGFloat)value.x, NSMinY(textureRect) - (CGFloat)value.y,
-            NSWidth(textureRect), NSHeight(textureRect),
-            NSMinX(textureRect) - (CGFloat)value.x, NSMinY(textureRect) - (CGFloat)value.y,
             displayText ?: @"", CjguiComposableTextClipSignature(node), node.styleRunsSignature ?: @""];
     return key;
 }
@@ -4500,38 +5354,107 @@ static BOOL CjguiCheckedComposableTextTextureBytes(CGFloat logicalWidth, CGFloat
 // both supported display scales. The last tile may be smaller. Each returned
 // rect is independently admitted by the old 8 MiB allocation check; the sum
 // is charged to the 24 MiB accepted scene before any texture is created.
-static NSArray<NSValue *> *CjguiPlanComposableTextTiles(NSRect visibleRect, CGFloat scale,
-                                                        uint64_t *outBytes) {
+static NSRect CjguiComposableTextNodeLayoutRect(CJGuiInternalComposableSceneNode *node) {
+    CjguiInternalRendererComposableNode value = node.node;
+    return NSMakeRect((CGFloat)value.x, (CGFloat)value.y,
+                      MAX(0.0, (CGFloat)value.width), MAX(0.0, (CGFloat)value.height));
+}
+
+static NSArray<NSValue *> *CjguiPlanComposableTextTiles(NSRect visibleRect, NSRect nodeRect,
+                                                        CGFloat scale, uint64_t *outBytes) {
     if (outBytes) *outBytes = 0;
-    if (NSIsEmptyRect(visibleRect) || !isfinite(scale) || scale <= 0.0) return nil;
-    CGFloat maximumLogicalWidth = floor(CjguiComposableTextTextureDimensionCapacity / scale);
-    if (maximumLogicalWidth < 1.0) return nil;
+    if (NSIsEmptyRect(visibleRect) || NSIsEmptyRect(nodeRect) ||
+        !isfinite(scale) || scale <= 0.0) return nil;
+    NSRect coverage = NSIntersectionRect(visibleRect, nodeRect);
+    if (NSIsEmptyRect(coverage)) return nil;
+    // Fixed grid in node-local logical points. A changed clip or a fractional
+    // translation changes which cells are requested, never a retained cell's
+    // raster coordinates. Each cell is under the old 8 MiB allocation cap.
+    CGFloat tileWidth = MIN(512.0, floor(CjguiComposableTextTextureDimensionCapacity / scale));
+    CGFloat tileHeight = MIN(256.0, floor(CjguiComposableTextTexturePerNodeByteCapacity /
+                                               (tileWidth * scale * scale * 4.0)));
+    if (tileWidth < 1.0 || tileHeight < 1.0) return nil;
+    NSInteger firstColumn = (NSInteger)floor((NSMinX(coverage) - NSMinX(nodeRect)) / tileWidth);
+    NSInteger lastColumn = (NSInteger)ceil((NSMaxX(coverage) - NSMinX(nodeRect)) / tileWidth);
+    NSInteger firstRow = (NSInteger)floor((NSMinY(coverage) - NSMinY(nodeRect)) / tileHeight);
+    NSInteger lastRow = (NSInteger)ceil((NSMaxY(coverage) - NSMinY(nodeRect)) / tileHeight);
+    if (lastColumn <= firstColumn || lastRow <= firstRow ||
+        lastColumn - firstColumn > 64 || lastRow - firstRow > 64 ||
+        (lastColumn - firstColumn) * (lastRow - firstRow) > 64) return nil;
     NSMutableArray<NSValue *> *tiles = [NSMutableArray array];
     uint64_t total = 0;
-    CGFloat right = NSMaxX(visibleRect), bottom = NSMaxY(visibleRect);
-    for (CGFloat x = NSMinX(visibleRect); x < right;) {
-        CGFloat width = MIN(right - x, maximumLogicalWidth);
-        NSUInteger pixelWidth = (NSUInteger)ceil(width * scale);
-        if (pixelWidth == 0 || pixelWidth > NSUIntegerMax / 4u) return nil;
-        NSUInteger maximumPixelRows = MIN((NSUInteger)CjguiComposableTextTextureDimensionCapacity,
-            (NSUInteger)(CjguiComposableTextTexturePerNodeByteCapacity / (pixelWidth * 4u)));
-        CGFloat maximumLogicalHeight = floor((CGFloat)maximumPixelRows / scale);
-        if (maximumLogicalHeight < 1.0) return nil;
-        for (CGFloat y = NSMinY(visibleRect); y < bottom;) {
-            CGFloat height = MIN(bottom - y, maximumLogicalHeight);
+    for (NSInteger column = firstColumn; column < lastColumn; column++) {
+        for (NSInteger row = firstRow; row < lastRow; row++) {
+            NSRect tile = NSIntersectionRect(nodeRect, NSMakeRect(
+                NSMinX(nodeRect) + column * tileWidth,
+                NSMinY(nodeRect) + row * tileHeight, tileWidth, tileHeight));
             NSUInteger checkedWidth = 0, checkedHeight = 0, rowBytes = 0;
             uint64_t bytes = 0;
-            if (!CjguiCheckedComposableTextTextureBytes(width, height, scale, scale,
+            if (NSIsEmptyRect(tile) || !CjguiCheckedComposableTextTextureBytes(
+                                                        NSWidth(tile), NSHeight(tile), scale, scale,
                                                         &checkedWidth, &checkedHeight, &rowBytes, &bytes) ||
                 bytes > CjguiComposableTextTextureByteCapacity - total || tiles.count >= 64) return nil;
-            [tiles addObject:[NSValue valueWithRect:NSMakeRect(x, y, width, height)]];
+            [tiles addObject:[NSValue valueWithRect:tile]];
             total += bytes;
-            y += height;
         }
-        x += width;
     }
     if (outBytes) *outBytes = total;
     return tiles;
+}
+
+static NSRect CjguiComposableTextTileUnion(NSArray<NSValue *> *tiles) {
+    NSRect result = NSZeroRect;
+    for (NSValue *tile in tiles)
+        result = NSIsEmptyRect(result) ? tile.rectValue : NSUnionRect(result, tile.rectValue);
+    return result;
+}
+
+static id<MTLTexture> CjguiComposableFindTextTileByLocalRect(CJGuiInternalComposableSceneNode *node,
+    NSRect requested, CGFloat scale) {
+    if (!node) return nil;
+    NSRect localRequested = NSOffsetRect(requested, -(CGFloat)node.node.x, -(CGFloat)node.node.y);
+    NSUInteger count = node.textTileTextures.count > 0 ? node.textTileTextures.count : (node.textTexture ? 1 : 0);
+    for (NSUInteger index = 0; index < count; index++) {
+        NSRect oldRect = node.textTileRects.count > 0 ? node.textTileRects[index].rectValue : node.textTextureRect;
+        if (!NSEqualRects(localRequested, NSOffsetRect(oldRect,
+                -node.textTileLayoutOrigin.x, -node.textTileLayoutOrigin.y))) continue;
+        id<MTLTexture> retained = node.textTileTextures.count > 0 ? node.textTileTextures[index] : node.textTexture;
+        NSUInteger width = 0, height = 0, rowBytes = 0;
+        uint64_t bytes = 0;
+        if (retained && CjguiCheckedComposableTextTextureBytes(NSWidth(requested), NSHeight(requested),
+                scale, scale, &width, &height, &rowBytes, &bytes) &&
+            retained.width == width && retained.height == height) return retained;
+    }
+    return nil;
+}
+
+static id<MTLTexture> CjguiComposableRetainedTextTile(CJGuiInternalComposableSceneNode *node,
+    NSString *key, NSRect requested, CGFloat scale) {
+    return [node.textTextureCacheKey isEqualToString:key]
+        ? CjguiComposableFindTextTileByLocalRect(node, requested, scale) : nil;
+}
+
+static BOOL CjguiComposableTextTilesAlreadyCovered(CJGuiInternalComposableSceneNode *node,
+    NSString *key, NSArray<NSValue *> *tiles, CGFloat scale) {
+    NSUInteger oldCount = node.textTileTextures.count > 0 ? node.textTileTextures.count : (node.textTexture ? 1 : 0);
+    if (oldCount != tiles.count || oldCount == 0) return NO;
+    for (NSValue *tile in tiles)
+        if (!CjguiComposableRetainedTextTile(node, key, tile.rectValue, scale)) return NO;
+    return YES;
+}
+
+static uint64_t CjguiComposableFreshTextTileBytes(CJGuiInternalComposableSceneNode *node,
+    NSString *key, NSArray<NSValue *> *tiles, CGFloat scale) {
+    uint64_t missing = 0;
+    for (NSValue *tile in tiles) {
+        if (CjguiComposableRetainedTextTile(node, key, tile.rectValue, scale)) continue;
+        NSUInteger width = 0, height = 0, row = 0;
+        uint64_t bytes = 0;
+        if (!CjguiCheckedComposableTextTextureBytes(NSWidth(tile.rectValue), NSHeight(tile.rectValue),
+            scale, scale, &width, &height, &row, &bytes) || UINT64_MAX - missing < bytes) return UINT64_MAX;
+        missing += bytes;
+    }
+    return missing;
 }
 
 // One candidate-scoped AppKit TextKit stack for a text node. Prepared once
@@ -4995,8 +5918,13 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
         CjguiDropTextCpuScratch(metalView, byteCount);
         return nil;
     }
+    uint64_t workloadUploadStarted = CjguiMonotonicMicros();
+    metalView.textRasterCount = CjguiSaturatingAddU64(metalView.textRasterCount, 1);
+    metalView.textRasterBytes = CjguiSaturatingAddU64(metalView.textRasterBytes, byteCount);
+    metalView.textRasterMicros = CjguiSaturatingAddU64(metalView.textRasterMicros,
+                                                        workloadUploadStarted - rasterStarted);
 #ifdef CJGUI_INTERNAL_TESTING
-    uint64_t uploadStarted = CjguiMonotonicMicros();
+    uint64_t uploadStarted = workloadUploadStarted;
     CjguiRecordTextWork(metalView, node.node.projectionVersion,
                         [displayText lengthOfBytesUsingEncoding:NSUTF8StringEncoding], reason);
     metalView.testComposableTextRasterCount = CjguiSaturatingAddU64(metalView.testComposableTextRasterCount, 1);
@@ -5005,8 +5933,13 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
                                                                        uploadStarted - rasterStarted);
 #endif
     [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0 withBytes:bgra.bytes bytesPerRow:bytesPerRow];
+    uint64_t workloadUploadEnded = CjguiMonotonicMicros();
+    metalView.textUploadCount = CjguiSaturatingAddU64(metalView.textUploadCount, 1);
+    metalView.textUploadBytes = CjguiSaturatingAddU64(metalView.textUploadBytes, byteCount);
+    metalView.textUploadMicros = CjguiSaturatingAddU64(metalView.textUploadMicros,
+                                                        workloadUploadEnded - workloadUploadStarted);
 #ifdef CJGUI_INTERNAL_TESTING
-    uint64_t uploadEnded = CjguiMonotonicMicros();
+    uint64_t uploadEnded = workloadUploadEnded;
     metalView.testComposableTextUploadCount = CjguiSaturatingAddU64(metalView.testComposableTextUploadCount, 1);
     metalView.testComposableTextUploadBytes = CjguiSaturatingAddU64(metalView.testComposableTextUploadBytes, byteCount);
     metalView.testComposableTextUploadMicros = CjguiSaturatingAddU64(metalView.testComposableTextUploadMicros,
@@ -5025,27 +5958,20 @@ static id<MTLTexture> CjguiComposableTextTexture(CJGuiInternalMetalView *metalVi
                                                   , CjguiInternalTextWorkReason reason
 #endif
                                                   ) {
-    NSRect textureRect = CjguiComposableTextTextureRectForNode(node);
+    NSRect textureRect = CjguiComposableTextTextureRectForNodeWithText(node, displayText);
     if (NSIsEmptyRect(textureRect)) return nil;
     NSString *key = CjguiComposableTextTextureKey(node, scaleX, scaleY, displayText, textureRect);
     if (key.length == 0) return nil;
-    if ((node.textTexture || node.textTileTextures.count > 0) &&
-        [node.textTextureCacheKey isEqualToString:key]) {
-        if (!NSEqualRects(node.textTextureRect, textureRect)) {
-            if (node.textTileTextures.count > 0) {
-                uint64_t plannedBytes = 0;
-                NSArray<NSValue *> *rects = CjguiPlanComposableTextTiles(textureRect, scaleX, &plannedBytes);
-                if (rects.count != node.textTileTextures.count || plannedBytes != node.textTextureByteCount)
-                    return nil;
-                node.textTileRects = rects;
-            }
-            node.textTextureRect = textureRect;
-        }
+    uint64_t plannedBytes = 0;
+    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(textureRect,
+        CjguiComposableTextNodeLayoutRect(node), scaleX, &plannedBytes);
+    if (tiles.count == 0 || plannedBytes == 0) return nil;
+    if (CjguiComposableTextTilesAlreadyCovered(node, key, tiles, scaleX)) {
+        node.textTileRects = tiles.count > 1 ? tiles : nil;
+        node.textTextureRect = tiles.count == 1 ? tiles.firstObject.rectValue : CjguiComposableTextTileUnion(tiles);
+        node.textTileLayoutOrigin = NSMakePoint((CGFloat)node.node.x, (CGFloat)node.node.y);
         return node.textTexture ?: node.textTileTextures.firstObject;
     }
-    uint64_t plannedBytes = 0;
-    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(textureRect, scaleX, &plannedBytes);
-    if (tiles.count == 0 || plannedBytes == 0) return nil;
     NSMutableArray<id<MTLTexture>> *prepared = [NSMutableArray arrayWithCapacity:tiles.count];
     uint64_t actualBytes = 0;
     // Multiline text uses one candidate-scoped TextKit layout regardless of
@@ -5056,11 +5982,12 @@ static id<MTLTexture> CjguiComposableTextTexture(CJGuiInternalMetalView *metalVi
     // "取自绘制实际使用的 accepted 排版、且查询不重排",故每个文本节点都必须有可查索引;
     // 原先只覆盖多行 / 多 tile,导致单 tile 文本走 drawWithRect、查询恒得 GEOMETRY_EMPTY(实测 2 MiB 夹具)。
     BOOL needsSharedLayout = YES;
-    CjguiPreparedTextNodeLayout *sharedLayout = needsSharedLayout ?
+    CjguiPreparedTextNodeLayout *sharedLayout = [node.textTextureCacheKey isEqualToString:key]
+        ? node.preparedTextLayout : nil;
+    if (!sharedLayout) sharedLayout = needsSharedLayout ?
         CjguiPrepareTextNodeLayout(node, displayText, scaleX,
             CjguiComposableDecodeStyleRuns(
                 [CjguiLookupSession(metalView.sessionToken) composableTextStyleRunsRaw][@(node.node.nodeId)])) : nil;
-    node.preparedTextLayout = sharedLayout;   // B2:随本次准备持留(下次准备自然覆盖)
 #ifdef CJGUI_INTERNAL_TESTING
     if (needsSharedLayout && metalView.testForceSharedTextLayoutNilOnce) {
         metalView.testForceSharedTextLayoutNilOnce = NO;
@@ -5079,6 +6006,13 @@ static id<MTLTexture> CjguiComposableTextTexture(CJGuiInternalMetalView *metalVi
     }
     for (NSValue *rectValue in tiles) {
         @autoreleasepool {
+            id<MTLTexture> retained = CjguiComposableRetainedTextTile(node, key, rectValue.rectValue, scaleX);
+            if (retained) {
+                uint64_t retainedBytes = (uint64_t)retained.width * (uint64_t)retained.height * 4u;
+                [prepared addObject:retained];
+                actualBytes += retainedBytes;
+                continue;
+            }
             uint64_t tileBytes = 0;
             id<MTLTexture> texture = CjguiRasterComposableTextTexture(metalView, node, scaleX, scaleY, displayText,
                                                                rectValue.rectValue, &tileBytes,
@@ -5097,7 +6031,9 @@ static id<MTLTexture> CjguiComposableTextTexture(CJGuiInternalMetalView *metalVi
     node.textTileTextures = prepared.count > 1 ? [prepared copy] : nil;
     node.textTileRects = prepared.count > 1 ? tiles : nil;
     node.textTextureByteCount = actualBytes; node.textTextureCacheKey = key;
-    node.textTextureRect = textureRect;
+    node.textTextureRect = prepared.count == 1 ? tiles.firstObject.rectValue : CjguiComposableTextTileUnion(tiles);
+    node.textTileLayoutOrigin = NSMakePoint((CGFloat)node.node.x, (CGFloat)node.node.y);
+    node.preparedTextLayout = sharedLayout;
     return prepared.firstObject;
 }
 
@@ -5163,21 +6099,105 @@ static void CjguiReleaseFailedCandidateTextResources(CJGuiInternalSession *ctx) 
 // properties); declared here because the prepare pass runs earlier in file.
 static BOOL CjguiStagedNodeIsFocusedInput(CJGuiInternalSession *ctx,
     CJGuiInternalComposableSceneNode *node);
+static BOOL CjguiStagedFocusedMultilineTilesNeedPreparation(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale);
+static CjguiInternalRendererStatus CjguiPrepareStagedFocusedMultilineTiles(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale, uint64_t retainedAcceptedBytes,
+    uint64_t alreadyFreshBytes, uint64_t *outFreshBytes);
+static BOOL CjguiStagedFocusedSingleLineTilesNeedPreparation(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale);
+static CjguiInternalRendererStatus CjguiPrepareStagedFocusedSingleLineTiles(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale, uint64_t retainedAcceptedBytes,
+    uint64_t alreadyFreshBytes, uint64_t *outFreshBytes);
 
 // Defined later in the file but needed by the prepare pass, which converts a
 // node-local declared caret into the view-space rect decorations are stored in.
 static NSRect CjguiComposableRect(CJGuiInternalComposableSceneNode *node, NSView *view);
+
+static NSArray<id<MTLTexture>> *CjguiComposableTextTexturesInNodes(
+    NSArray<CJGuiInternalComposableSceneNode *> *nodes) {
+    NSMutableArray<id<MTLTexture>> *textures = [NSMutableArray array];
+    for (CJGuiInternalComposableSceneNode *node in nodes) {
+        if (node.textTexture) [textures addObject:node.textTexture];
+        for (id<MTLTexture> texture in node.textTileTextures)
+            if (texture) [textures addObject:texture];
+    }
+    return [textures copy];
+}
+
+// Count physical texture generations exactly once across the accepted scene
+// and all GPU submissions. An old generation can outlive its scene node; a
+// shared tile or cache hit must not be charged twice. Candidate fresh bytes
+// are added by the caller before any allocation.
+static uint64_t CjguiComposableRetainedTextTextureBytes(CJGuiInternalSession *ctx) {
+    // Main-thread admission can run many consecutive frames without servicing
+    // the main dispatch queue. Count only GPU-in-flight generations: the
+    // completion handler drops its captures before setting this atomic flag.
+    for (NSNumber *frame in [ctx.submittedTextCompletionFlags allKeys]) {
+        if (ctx.submittedTextCompletionFlags[frame].resourcesReleased) {
+            [ctx.submittedTextTextures removeObjectForKey:frame];
+            [ctx.submittedTextCompletionFlags removeObjectForKey:frame];
+        }
+    }
+    NSHashTable<id<MTLTexture>> *unique = [NSHashTable hashTableWithOptions:
+        NSPointerFunctionsObjectPointerPersonality | NSPointerFunctionsStrongMemory];
+    for (id<MTLTexture> texture in CjguiComposableTextTexturesInNodes(ctx.composableNodes))
+        [unique addObject:texture];
+    for (NSArray<id<MTLTexture>> *submission in ctx.submittedTextTextures.allValues)
+        for (id<MTLTexture> texture in submission) [unique addObject:texture];
+    uint64_t bytes = 0;
+    for (id<MTLTexture> texture in unique) {
+        uint64_t value = (uint64_t)texture.width * (uint64_t)texture.height * 4u;
+        if (value > CjguiComposableTextTextureByteCapacity - bytes)
+            return CjguiComposableTextTextureByteCapacity + 1u;
+        bytes += value;
+    }
+    return bytes;
+}
 
 static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInternalSession *ctx) {
     if (!ctx || !ctx.view) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CJGuiInternalMetalView *metalView = ctx.view;
     CGFloat scale = [metalView currentBackingScale];
     scale = MAX(1.0, scale);
-    uint64_t sceneBytes = 0;
+    uint64_t sceneBytes = 0, candidateFreshBytes = 0;
+    uint64_t retainedAcceptedBytes = CjguiComposableRetainedTextTextureBytes(ctx);
+    if (retainedAcceptedBytes > CjguiComposableTextTextureByteCapacity)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
     for (NSUInteger index = 0; index < ctx.stagedComposableNodes.count; index++) {
         CJGuiInternalComposableSceneNode *node = ctx.stagedComposableNodes[index];
         CJGuiInternalComposableSceneNode *live = index < ctx.composableNodes.count ? ctx.composableNodes[index] : nil;
         if (CjguiComposableTextResourceAcknowledgesActiveLocalInput(node, live)) {
+            // The empty value acknowledges the native draft, not the old
+            // texture coverage. Admit any newly visible multiline cells from
+            // that same draft before accepting the candidate geometry.
+            BOOL focusedMultiline = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
+            BOOL focusedSingleLine = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
+                node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT;
+            if ((focusedMultiline || focusedSingleLine) && CjguiStagedNodeIsFocusedInput(ctx, node) &&
+                (focusedMultiline ? CjguiStagedFocusedMultilineTilesNeedPreparation(ctx, node, scale)
+                                  : CjguiStagedFocusedSingleLineTilesNeedPreparation(ctx, node, scale))) {
+                if (node == live) {
+                    node = CjguiCloneComposableSceneNode(ctx, live, (uint32_t)index,
+                                                          ctx.stagedComposableSceneVersion);
+                    if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                    ctx.stagedComposableNodes[index] = node;
+                }
+                uint64_t freshBytes = 0;
+                CjguiInternalRendererStatus focusedStatus = focusedMultiline
+                    ? CjguiPrepareStagedFocusedMultilineTiles(ctx, node, scale, retainedAcceptedBytes,
+                        candidateFreshBytes, &freshBytes)
+                    : CjguiPrepareStagedFocusedSingleLineTiles(ctx, node, scale, retainedAcceptedBytes,
+                        candidateFreshBytes, &freshBytes);
+                if (focusedStatus != CJGUI_INTERNAL_RENDERER_OK) return focusedStatus;
+                if (node.textTextureByteCount > CjguiComposableTextTextureByteCapacity - sceneBytes)
+                    return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+                sceneBytes += node.textTextureByteCount;
+                candidateFreshBytes += freshBytes;
+                ctx.composableTextCandidatePeakBytes = MAX(ctx.composableTextCandidatePeakBytes,
+                    retainedAcceptedBytes + candidateFreshBytes);
+                continue;
+            }
             // The staged COW node already retains the last active resource.
             // Count it like every other scene-owned texture so this reuse
             // cannot evade the accepted-scene resource cap.
@@ -5232,6 +6252,32 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
                                             MAX(NSWidth(declared), 1.5), NSHeight(declared));
             node.textCaretIsDeclared = YES;
         }
+        // Focused single-line and integer bodies use the same preaccept tile
+        // admission as multiline. Their native draft can differ from the
+        // staged owner value, including the empty preserve acknowledgement.
+        if ((node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
+             node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT) &&
+            CjguiStagedNodeIsFocusedInput(ctx, node)) {
+            if (CjguiStagedFocusedSingleLineTilesNeedPreparation(ctx, node, scale)) {
+                if (node == live) {
+                    node = CjguiCloneComposableSceneNode(ctx, live, (uint32_t)index,
+                                                          ctx.stagedComposableSceneVersion);
+                    if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                    ctx.stagedComposableNodes[index] = node;
+                }
+                uint64_t freshBytes = 0;
+                CjguiInternalRendererStatus focusedStatus = CjguiPrepareStagedFocusedSingleLineTiles(
+                    ctx, node, scale, retainedAcceptedBytes, candidateFreshBytes, &freshBytes);
+                if (focusedStatus != CJGUI_INTERNAL_RENDERER_OK) return focusedStatus;
+                candidateFreshBytes += freshBytes;
+            }
+            if (node.textTextureByteCount > CjguiComposableTextTextureByteCapacity - sceneBytes)
+                return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+            sceneBytes += node.textTextureByteCount;
+            ctx.composableTextCandidatePeakBytes = MAX(ctx.composableTextCandidatePeakBytes,
+                retainedAcceptedBytes + candidateFreshBytes);
+            continue;
+        }
         BOOL shouldClear = NO;
         if (!CjguiComposableNodeHasGpuText(node.node.nodeKind)) {
             shouldClear = YES;
@@ -5261,6 +6307,32 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
             // click. Retain the same prepared layout the raster path would have used —
             // zero glyphs, so no texture bytes and no raster work.
             if (text.length > 0) continue;
+            // Only a node that can own a caret/paragraph belongs in this path. A
+            // structure, layer, vector or image node has no text at all; entering it
+            // anyway clones the node, and when the rect is thinner than the text
+            // inset the preparation returns nil, so the guard below never holds and
+            // EVERY refresh clones it again (measured: 18 such nodes x 30 refreshes
+            // produced 540 of 570 reported clones).
+            if (!CjguiComposableNodeHasGpuText(node.node.nodeKind)) {
+                // A same-slot kind replacement may inherit accepted text
+                // layout state through COW. Retire it once on the candidate;
+                // ordinary non-text nodes stay shared verbatim.
+                if (node.preparedTextLayout || node.styleRunsSignature.length > 0) {
+                    if (node == live) {
+                        node = CjguiCloneComposableSceneNode(ctx, live, (uint32_t)index,
+                                                              ctx.stagedComposableSceneVersion);
+                        if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                        ctx.stagedComposableNodes[index] = node;
+                    }
+                    node.preparedTextLayout = nil;
+                    node.styleRunsSignature = @"";
+                }
+                continue;
+            }
+            // A text node whose rect cannot hold the inset has a named "no
+            // preparable geometry" state: assigning nil is not a change, so do not
+            // pay a COW clone for it on every refresh either.
+            if (!CjguiComposableEmptyTextLayoutRect(node, NULL)) continue;
             if (node.preparedTextLayout && node.preparedTextLayout.storage.length == 0) continue;
             if (node == live) {
                 node = CjguiCloneComposableSceneNode(ctx, live, (uint32_t)index, ctx.stagedComposableSceneVersion);
@@ -5268,6 +6340,9 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
                 ctx.stagedComposableNodes[index] = node;
             }
             node.preparedTextLayout = CjguiPrepareTextNodeLayout(node, @"", scale, nil);
+            if (ctx.composableTextLayoutPreparationCount < UINT64_MAX) {
+                ctx.composableTextLayoutPreparationCount += 1;
+            }
             continue;
         }
         NSRect textureRect = CjguiComposableTextTextureRectForNode(node);
@@ -5279,8 +6354,12 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
         // move and leave must not invalidate body pixels. It is drawn as a decoration after
         // the texture (see the shape batch), so only the caret's own rect changes.
         NSString *key = CjguiComposableTextTextureKey(node, scale, scale, text, textureRect);
-        BOOL needsPreparation = !(node.textTexture || node.textTileTextures.count > 0) ||
-            ![node.textTextureCacheKey isEqualToString:key];
+        uint64_t nodeBytes = 0;
+        NSArray<NSValue *> *plannedTiles = CjguiPlanComposableTextTiles(textureRect,
+            CjguiComposableTextNodeLayoutRect(node), scale, &nodeBytes);
+        if (plannedTiles.count == 0 || nodeBytes == 0)
+            return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+        BOOL needsPreparation = !CjguiComposableTextTilesAlreadyCovered(node, key, plannedTiles, scale);
         if (getenv("PHAROS_TRACE_RUNS") && node.node.nodeId == 200) {
             fprintf(stderr, "PHAROS_TEXTURE node=200 prep=%d sig=%s cached=%s keyLen=%lu\n",
                     (int)needsPreparation,
@@ -5296,17 +6375,31 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
         // same body twice per geometry or content turn. The active refresh
         // re-admits its own body against the scene budget afterwards.
         if (needsPreparation && CjguiStagedNodeIsFocusedInput(ctx, node)) {
+            if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) {
+                if (node == live) {
+                    node = CjguiCloneComposableSceneNode(ctx, live, (uint32_t)index,
+                                                          ctx.stagedComposableSceneVersion);
+                    if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                    ctx.stagedComposableNodes[index] = node;
+                }
+                uint64_t focusedFreshBytes = 0;
+                CjguiInternalRendererStatus focusedStatus = CjguiPrepareStagedFocusedMultilineTiles(
+                    ctx, node, scale, retainedAcceptedBytes, candidateFreshBytes, &focusedFreshBytes);
+                if (focusedStatus != CJGUI_INTERNAL_RENDERER_OK) return focusedStatus;
+                if (node.textTextureByteCount > CjguiComposableTextTextureByteCapacity - sceneBytes)
+                    return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+                sceneBytes += node.textTextureByteCount;
+                candidateFreshBytes += focusedFreshBytes;
+                ctx.composableTextCandidatePeakBytes = MAX(ctx.composableTextCandidatePeakBytes,
+                    retainedAcceptedBytes + candidateFreshBytes);
+                continue;
+            }
             uint64_t retainedBytes = node.textTextureByteCount;
             if (retainedBytes > CjguiComposableTextTextureByteCapacity ||
                 sceneBytes > CjguiComposableTextTextureByteCapacity - retainedBytes)
                 return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
             sceneBytes += retainedBytes;
             continue;
-        }
-        uint64_t nodeBytes = node.textTextureByteCount;
-        if (needsPreparation) {
-            if (CjguiPlanComposableTextTiles(textureRect, scale, &nodeBytes).count == 0)
-                return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
         }
         if (nodeBytes == 0 || sceneBytes > CjguiComposableTextTextureByteCapacity - nodeBytes) {
             fprintf(stderr, "PHAROS_BUDGET_REJECT node=%llu nodeBytes=%lu sceneBytes=%lu capacity=%lu "
@@ -5319,23 +6412,20 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
         }
         sceneBytes += nodeBytes;
         if (!needsPreparation) {
-            if (!NSEqualRects(node.textTextureRect, textureRect)) {
+            NSRect tileUnion = plannedTiles.count == 1 ? plannedTiles.firstObject.rectValue :
+                CjguiComposableTextTileUnion(plannedTiles);
+            if (!NSEqualRects(node.textTextureRect, tileUnion) ||
+                !NSEqualPoints(node.textTileLayoutOrigin,
+                    NSMakePoint((CGFloat)node.node.x, (CGFloat)node.node.y))) {
                 if (node == live) {
                     node = CjguiCloneComposableSceneNode(ctx, live, (uint32_t)index,
                                                           ctx.stagedComposableSceneVersion);
                     if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
                     ctx.stagedComposableNodes[index] = node;
                 }
-                // The texture is node-local pixel content. Moving the node
-                // changes only the Metal destination rectangles, not bytes.
-                if (node.textTileTextures.count > 0) {
-                    uint64_t plannedBytes = 0;
-                    NSArray<NSValue *> *rects = CjguiPlanComposableTextTiles(textureRect, scale, &plannedBytes);
-                    if (rects.count != node.textTileTextures.count || plannedBytes != nodeBytes)
-                        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-                    node.textTileRects = rects;
-                }
-                node.textTextureRect = textureRect;
+                node.textTileRects = plannedTiles.count > 1 ? plannedTiles : nil;
+                node.textTextureRect = tileUnion;
+                node.textTileLayoutOrigin = NSMakePoint((CGFloat)node.node.x, (CGFloat)node.node.y);
             }
             continue;
         }
@@ -5344,6 +6434,10 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
             if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
             ctx.stagedComposableNodes[index] = node;
         }
+        uint64_t freshBytes = CjguiComposableFreshTextTileBytes(node, key, plannedTiles, scale);
+        if (freshBytes > CjguiComposableTextTextureByteCapacity - retainedAcceptedBytes - candidateFreshBytes)
+            return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+        candidateFreshBytes += freshBytes;
 #ifdef CJGUI_INTERNAL_TESTING
         if (ctx.forcedComposableTextPreparationFailures > 0) {
             ctx.forcedComposableTextPreparationFailures -= 1;
@@ -5355,6 +6449,11 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
                                         , CjguiInternalTextWorkReasonStaticCandidate
 #endif
                                         )) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        ctx.composableTextCandidatePeakBytes = MAX(ctx.composableTextCandidatePeakBytes,
+            retainedAcceptedBytes + candidateFreshBytes);
+        if (ctx.composableTextLayoutPreparationCount < UINT64_MAX) {
+            ctx.composableTextLayoutPreparationCount += 1;
+        }
     }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -5362,18 +6461,24 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
 // Active TextKit updates bypass a Cangjie scene transaction, but they still
 // replace a scene-owned derived texture. Apply the same accepted-scene budget
 // before swapping it so a focused field cannot evade the admission limit.
-static BOOL CjguiComposableTextTextureFitsSceneBudget(NSArray<CJGuiInternalComposableSceneNode *> *nodes,
+static BOOL CjguiComposableTextTextureFitsSceneBudget(CJGuiInternalSession *ctx,
+                                                       NSArray<CJGuiInternalComposableSceneNode *> *nodes,
                                                        CJGuiInternalComposableSceneNode *replacing,
-                                                       uint64_t candidateBytes) {
+                                                       uint64_t candidateBytes,
+                                                       uint64_t reusableBytes) {
     if (candidateBytes == 0 || candidateBytes > CjguiComposableTextTextureByteCapacity) return NO;
-    uint64_t total = candidateBytes;
+    if (reusableBytes > candidateBytes) return NO;
+    uint64_t retained = CjguiComposableRetainedTextTextureBytes(ctx), finalTotal = candidateBytes;
+    if (retained > CjguiComposableTextTextureByteCapacity) return NO;
     for (CJGuiInternalComposableSceneNode *node in nodes) {
-        if (node == replacing || !CjguiComposableNodeHasGpuText(node.node.nodeKind)) continue;
+        if (!CjguiComposableNodeHasGpuText(node.node.nodeKind)) continue;
         uint64_t bytes = node.textTextureByteCount;
-        if (bytes > CjguiComposableTextTextureByteCapacity - total) return NO;
-        total += bytes;
+        if (node == replacing) continue;
+        if (bytes > CjguiComposableTextTextureByteCapacity - finalTotal) return NO;
+        finalTotal += bytes;
     }
-    return total <= CjguiComposableTextTextureByteCapacity;
+    return finalTotal <= CjguiComposableTextTextureByteCapacity &&
+        candidateBytes - reusableBytes <= CjguiComposableTextTextureByteCapacity - retained;
 }
 
 static const uint32_t CjguiEffectGroupCapacity = 16;
@@ -5440,16 +6545,16 @@ static CjguiInternalRendererStatus CjguiValidateEffectGroupTopology(
 static NSRect CjguiEffectNodeOutputBounds(CJGuiInternalComposableSceneNode *node) {
     CjguiInternalRendererComposableNode value = node.node;
     NSRect output = NSZeroRect;
-    if (value.width > 0 && value.height > 0 && value.clipWidth > 0 && value.clipHeight > 0) {
-        output = NSIntersectionRect(NSMakeRect(value.x, value.y, value.width, value.height),
-                                    NSMakeRect(value.clipX, value.clipY, value.clipWidth, value.clipHeight));
+    NSRect visualClip = CjguiComposableVisualClipBounds(node);
+    if (value.width > 0 && value.height > 0) {
+        output = NSIntersectionRect(CjguiComposableVisualNodeRect(node), visualClip);
     }
     if (value.shadowPresent && value.shadowAlpha > 0.0) {
-        NSRect shadow = CjguiComposableShadowOutputRect(value);
+        NSRect shadow = CjguiComposableShadowOutputRect(node);
         uint32_t count = CjguiComposableClipConstraintCount(value);
         for (uint32_t clip = 0; clip < count && !NSIsEmptyRect(shadow); clip++) {
             CGFloat x, y, width, height, radius;
-            CjguiComposableClipConstraintAt(value, clip, &x, &y, &width, &height, &radius);
+            CjguiComposableVisualClipConstraintAt(node, clip, &x, &y, &width, &height, &radius);
             shadow = NSIntersectionRect(shadow, NSMakeRect(x, y, width, height));
         }
         if (!NSIsEmptyRect(shadow)) output = NSIsEmptyRect(output) ? shadow : NSUnionRect(output, shadow);
@@ -5459,15 +6564,12 @@ static NSRect CjguiEffectNodeOutputBounds(CJGuiInternalComposableSceneNode *node
     NSArray<NSValue *> *decorationRects = [(node.textSelectionRects ?: @[])
                                              arrayByAddingObjectsFromArray:(node.textMarkedRects ?: @[])];
     for (NSValue *rectValue in decorationRects) {
-        NSRect rect = NSIntersectionRect(rectValue.rectValue,
-            NSMakeRect(value.clipX, value.clipY, value.clipWidth, value.clipHeight));
+        NSRect rect = NSIntersectionRect(rectValue.rectValue, visualClip);
         if (!NSIsEmptyRect(rect)) output = NSIsEmptyRect(output) ? rect : NSUnionRect(output, rect);
     }
-    NSRect caret = NSIntersectionRect(node.textCaretRect,
-        NSMakeRect(value.clipX, value.clipY, value.clipWidth, value.clipHeight));
+    NSRect caret = NSIntersectionRect(node.textCaretRect, visualClip);
     if (!NSIsEmptyRect(caret)) output = NSIsEmptyRect(output) ? caret : NSUnionRect(output, caret);
-    NSRect scrollbar = NSIntersectionRect(node.textScrollbarRect,
-        NSMakeRect(value.clipX, value.clipY, value.clipWidth, value.clipHeight));
+    NSRect scrollbar = NSIntersectionRect(node.textScrollbarRect, visualClip);
     if (!NSIsEmptyRect(scrollbar)) output = NSIsEmptyRect(output) ? scrollbar : NSUnionRect(output, scrollbar);
     return output;
 }
@@ -5528,6 +6630,16 @@ static uint64_t CjguiEffectHashPaintNode(uint64_t hash,
                                         CjguiInternalRendererComposableNode value) {
     value.projectionVersion = 0;
     hash = CjguiEffectHashBytes(hash, &value, sizeof(value));
+    // The accepted visual transform lives beside the legacy integer POD.
+    // Both a group's rendered content and a backdrop's earlier paint prefix
+    // depend on it even when the quantized target/sample ROI is unchanged.
+    // Hash values explicitly, avoiding padding in the FFI sidecar.
+    double visual[10] = {node.geometry.translateX, node.geometry.translateY,
+                         node.geometry.clip0X, node.geometry.clip0Y,
+                         node.geometry.clip1X, node.geometry.clip1Y,
+                         node.geometry.clip2X, node.geometry.clip2Y,
+                         node.geometry.clip3X, node.geometry.clip3Y};
+    hash = CjguiEffectHashBytes(hash, visual, sizeof(visual));
     hash = CjguiEffectHashString(hash, node.semanticId);
     hash = CjguiEffectHashString(hash, node.label);
     hash = CjguiEffectHashString(hash, node.value);
@@ -5551,6 +6663,8 @@ static uint64_t CjguiEffectHashPaintNode(uint64_t hash,
     hash = CjguiEffectHashBytes(hash, decorationRects, sizeof(decorationRects));
     BOOL caretIsDeclared = node.textCaretIsDeclared;
     hash = CjguiEffectHashBytes(hash, &caretIsDeclared, sizeof(caretIsDeclared));
+    BOOL caretHidden = node.textCaretHidden;
+    hash = CjguiEffectHashBytes(hash, &caretHidden, sizeof(caretHidden));
     BOOL hasVector = node.hasVectorGeometry;
     hash = CjguiEffectHashBytes(hash, &hasVector, sizeof(hasVector));
     // The immutable copied vector value determines the lazily uploaded GPU
@@ -5859,18 +6973,22 @@ static BOOL CjguiEncodeComposableNodesRange(id view, id<MTLRenderCommandEncoder>
         // range against the ancestor clip chain and the drawable, then submit
         // only the shadow pass; no body pixel can survive the ancestor clip,
         // so fill/border/vector/text/image passes are skipped below.
-        if (value.clipWidth <= 0 || value.clipHeight <= 0) {
+        NSRect visualClip = CjguiComposableVisualClipBounds(node);
+        NSRect visualBody = NSIntersectionRect(CjguiComposableVisualNodeRect(node), visualClip);
+        if (NSIsEmptyRect(visualBody)) {
             if (value.shadowPresent == 0 || !(value.shadowAlpha > 0.0)) continue;
-            NSRect shadowOutput = CjguiComposableShadowOutputRect(value);
-            if (!CjguiComposableShadowOutputIntersectsAncestorClip(value, shadowOutput)) continue;
+            NSRect shadowOutput = CjguiComposableShadowOutputRect(node);
+            if (!CjguiComposableShadowOutputIntersectsAncestorClip(node, shadowOutput)) continue;
             if (!CjguiComposableShadowOutputIntersectsDrawable(shadowOutput, scaleX, scaleY, drawableSize)) continue;
-            CjguiAppendMetalShadow(shapeBatch, pointWidth, pointHeight, value);
+            CjguiAppendMetalShadow(shapeBatch, pointWidth, pointHeight, node, value);
             continue;
         }
-        uint64_t sx = (uint64_t)MAX(0, (int64_t)((CGFloat)value.clipX * scaleX));
-        uint64_t sy = (uint64_t)MAX(0, (int64_t)((CGFloat)value.clipY * scaleY));
-        uint64_t sw = (uint64_t)MAX(0, (int64_t)((CGFloat)value.clipWidth * scaleX));
-        uint64_t sh = (uint64_t)MAX(0, (int64_t)((CGFloat)value.clipHeight * scaleY));
+        uint64_t sx = (uint64_t)MAX(0.0, floor(NSMinX(visualClip) * scaleX));
+        uint64_t sy = (uint64_t)MAX(0.0, floor(NSMinY(visualClip) * scaleY));
+        uint64_t ex = (uint64_t)MAX(0.0, ceil(NSMaxX(visualClip) * scaleX));
+        uint64_t ey = (uint64_t)MAX(0.0, ceil(NSMaxY(visualClip) * scaleY));
+        uint64_t sw = ex > sx ? ex - sx : 0;
+        uint64_t sh = ey > sy ? ey - sy : 0;
         if (sx >= drawableSize.width || sy >= drawableSize.height) continue;
         if (sx + sw > drawableSize.width) sw = drawableSize.width - sx;
         if (sy + sh > drawableSize.height) sh = drawableSize.height - sy;
@@ -5881,8 +6999,9 @@ static BOOL CjguiEncodeComposableNodesRange(id view, id<MTLRenderCommandEncoder>
         // Outer shadow paints before the node's own fill so the node covers the
         // shadow center, preserving painter order within the node. The shadow
         // quad only obeys the inherited ancestor clip chain.
-        CjguiAppendMetalShadow(shapeBatch, pointWidth, pointHeight, value);
-        CjguiAppendMetalShape(shapeBatch, pointWidth, pointHeight, value, fill, border);
+        CjguiAppendMetalShadow(shapeBatch, pointWidth, pointHeight, node, value);
+        CjguiAppendMetalShape(shapeBatch, pointWidth, pointHeight, node, value,
+                              CjguiComposableVisualNodeRect(node), fill, border);
         // A vector's immutable local topology lives in its own retained Metal
         // buffer. Flush preceding generic shapes at this exact painter-order
         // boundary, then bind only the compact topology plus one small node
@@ -5913,7 +7032,7 @@ static BOOL CjguiEncodeComposableNodesRange(id view, id<MTLRenderCommandEncoder>
             NSUInteger decorationsBefore = shapeBatch.length;
             vector_float4 selectionFill = CjguiMetalColorFromNSColor(NSColor.selectedTextBackgroundColor);
             for (NSValue *valueRect in node.textSelectionRects) {
-                CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, value, valueRect.rectValue, selectionFill);
+                CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, node, valueRect.rectValue, selectionFill);
             }
             BOOL hasTextTexture = node.textTexture || node.textTileTextures.count > 0;
             if (hasTextTexture && !flushShapeBatch()) return NO;
@@ -5928,7 +7047,7 @@ static BOOL CjguiEncodeComposableNodesRange(id view, id<MTLRenderCommandEncoder>
             if (node.textTexture && !NSIsEmptyRect(textureRect)) {
                 CjguiEncodeMetalTexture(encoder, pointWidth, pointHeight,
                                         NSMinX(textureRect), NSMinY(textureRect),
-                                        NSWidth(textureRect), NSHeight(textureRect), node.textTexture, value, YES,
+                                        NSWidth(textureRect), NSHeight(textureRect), node.textTexture, node, YES,
                                         (float)value.textAlpha);
             }
             for (NSUInteger tileIndex = 0; tileIndex < node.textTileTextures.count; tileIndex++) {
@@ -5936,7 +7055,7 @@ static BOOL CjguiEncodeComposableNodesRange(id view, id<MTLRenderCommandEncoder>
                 CjguiEncodeMetalTexture(encoder, pointWidth, pointHeight,
                                         NSMinX(tileRect), NSMinY(tileRect),
                                         NSWidth(tileRect), NSHeight(tileRect),
-                                        node.textTileTextures[tileIndex], value, YES, (float)value.textAlpha);
+                                        node.textTileTextures[tileIndex], node, YES, (float)value.textAlpha);
             }
             if (hasTextTexture) [encoder setRenderPipelineState:scenePipeline];
             vector_float4 foregroundFill = CjguiMetalColorFromNSColor(NSColor.keyboardFocusIndicatorColor);
@@ -5946,12 +7065,14 @@ static BOOL CjguiEncodeComposableNodesRange(id view, id<MTLRenderCommandEncoder>
             // underlines and for the caret the hidden proxy derives for itself.
             vector_float4 caretFill = { (float)value.textRed, (float)value.textGreen, (float)value.textBlue, 1.0f };
             for (NSValue *valueRect in node.textMarkedRects) {
-                CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, value, valueRect.rectValue, foregroundFill);
+                CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, node, valueRect.rectValue, foregroundFill);
             }
-            CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, value, node.textCaretRect,
-                                           node.textCaretIsDeclared ? caretFill : foregroundFill);
+            if (!node.textCaretHidden) {
+                CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, node, node.textCaretRect,
+                                               node.textCaretIsDeclared ? caretFill : foregroundFill);
+            }
             vector_float4 scrollbarFill = {0.75f, 0.75f, 0.75f, 0.48f};
-            CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, value, node.textScrollbarRect, scrollbarFill);
+            CjguiAppendMetalTextDecoration(shapeBatch, pointWidth, pointHeight, node, node.textScrollbarRect, scrollbarFill);
             if (shapeBatch.length > decorationsBefore && !flushShapeBatch()) return NO;
             [encoder setRenderPipelineState:scenePipeline];
         }
@@ -5976,7 +7097,7 @@ static BOOL CjguiEncodeComposableNodesRange(id view, id<MTLRenderCommandEncoder>
             CjguiEncodeMetalTexture(encoder, pointWidth, pointHeight,
                                     value.x + ((CGFloat)value.width - drawWidth) / 2.0,
                                     value.y + ((CGFloat)value.height - drawHeight) / 2.0,
-                                    drawWidth, drawHeight, node.imageTexture, value, NO, 1.0f);
+                                    drawWidth, drawHeight, node.imageTexture, node, NO, 1.0f);
             [encoder setRenderPipelineState:scenePipeline];
         }
     }
@@ -6098,7 +7219,9 @@ static BOOL CjguiEncodeEffectGroupComposite(CJGuiInternalMetalView *view, id<MTL
          {left / scaleX, bottom / scaleY}, {0, 1}},
     };
     CjguiEffectCompositeUniform uniform = {
-        .maskRect = {(float)value.x, (float)value.y, (float)value.width, (float)value.height},
+        .maskRect = {(float)((double)value.x + node.geometry.translateX),
+                     (float)((double)value.y + node.geometry.translateY),
+                     (float)value.width, (float)value.height},
         .endpoints = {(float)value.effectMaskStartX, (float)value.effectMaskStartY,
                       (float)value.effectMaskEndX, (float)value.effectMaskEndY},
         .positions = {(float)value.effectMaskStop0Position, (float)value.effectMaskStop1Position,
@@ -6112,7 +7235,7 @@ static BOOL CjguiEncodeEffectGroupComposite(CJGuiInternalMetalView *view, id<MTL
         .backdropPixels = hasBackdrop ? (vector_float4){backdrop.pixelX, backdrop.pixelY, backdrop.pixelWidth, backdrop.pixelHeight} : (vector_float4){0, 0, 0, 0},
         .scaleAndBackdrop = {(float)scaleX, (float)scaleY, hasBackdrop ? 1.0f : 0.0f, 0.0f},
     };
-    CjguiPopulateMetalClipChain(uniform.clips, &uniform.clipRadii, &uniform.clipCount, value);
+    CjguiPopulateMetalVisualClipChain(uniform.clips, &uniform.clipRadii, &uniform.clipCount, node);
     [encoder setVertexBytes:vertices length:sizeof(vertices) atIndex:0];
     [encoder setFragmentBytes:&uniform length:sizeof(uniform) atIndex:1];
     [encoder setFragmentTexture:hasForeground ? target.resolvedTexture : backdrop.resolvedTexture atIndex:0];
@@ -6293,8 +7416,8 @@ static BOOL CjguiEncodeBackdrop(CJGuiInternalMetalView *view, id<MTLCommandBuffe
 #endif
         return YES;
     }
-    NSRect bounds = NSIntersectionRect(NSMakeRect(value.x, value.y, value.width, value.height),
-                                      NSMakeRect(value.clipX, value.clipY, value.clipWidth, value.clipHeight));
+    NSRect bounds = NSIntersectionRect(CjguiComposableVisualNodeRect(node),
+                                      CjguiComposableVisualClipBounds(node));
     uint32_t qx, qy, qw, qh;
     if (!CjguiEffectPixelBounds(bounds, view.bounds.size, drawableSize, &qx, &qy, &qw, &qh) || !qw || !qh) {
         outcome->mode = CJGUI_INTERNAL_BACKDROP_NONE;
@@ -6484,17 +7607,16 @@ static void CjguiReleaseFailedCandidateEffectTargets(CJGuiInternalSession *ctx) 
 }
 
 static NSRect CjguiComposableRect(CJGuiInternalComposableSceneNode *node, NSView *view) {
-    CjguiInternalRendererComposableNode value = node.node;
+    (void)view;
     // The composable overlay is flipped, as is the Cangjie layout space: both
     // start at the window's top-left.  Do not invert here; doing so made text,
     // hit testing and AX frames disagree with the Metal scene.
-    return NSMakeRect((CGFloat)value.x, (CGFloat)value.y,
-                      MAX(0.0, (CGFloat)value.width), MAX(0.0, (CGFloat)value.height));
+    return CjguiComposableVisualNodeRect(node);
 }
 
 static NSRect CjguiComposableClipConstraintRect(CJGuiInternalComposableSceneNode *node, uint32_t index) {
     CGFloat x = 0, y = 0, width = 0, height = 0, radius = 0;
-    CjguiComposableClipConstraintAt(node.node, index, &x, &y, &width, &height, &radius);
+    CjguiComposableVisualClipConstraintAt(node, index, &x, &y, &width, &height, &radius);
     return NSMakeRect(x, y, MAX(0.0, width), MAX(0.0, height));
 }
 
@@ -6502,9 +7624,7 @@ static NSRect CjguiComposableClipConstraintRect(CJGuiInternalComposableSceneNode
 // culling and AX bounds.  It is never used as the final rounded clip: every
 // draw and hit test below evaluates the complete ancestor chain.
 static NSRect CjguiComposableClipBounds(CJGuiInternalComposableSceneNode *node) {
-    CjguiInternalRendererComposableNode value = node.node;
-    return NSMakeRect((CGFloat)value.clipX, (CGFloat)value.clipY,
-                      MAX(0.0, (CGFloat)value.clipWidth), MAX(0.0, (CGFloat)value.clipHeight));
+    return CjguiComposableVisualClipBounds(node);
 }
 
 // Scene geometry is expressed in the overlay's flipped coordinate space.  A
@@ -6528,7 +7648,7 @@ static BOOL CjguiPointInRoundedRect(NSPoint point, NSRect rect, CGFloat requeste
 
 static BOOL CjguiPointInComposableNodeClip(NSPoint point, CJGuiInternalComposableSceneNode *node, NSView *view) {
     (void)view;
-    return node && CjguiComposablePointInClipChain(point.x, point.y, node.node);
+    return node && CjguiComposablePointInClipChain(point.x, point.y, node);
 }
 
 static BOOL CjguiComposableVectorPointInSimplePolygon(CjguiInternalComposableVectorPoint point,
@@ -6581,8 +7701,8 @@ static BOOL CjguiComposableVectorContainsPoint(CJGuiInternalComposableSceneNode 
     CjguiInternalComposableVectorGeometry geometry = node.vectorGeometry;
     if (value.width <= 0 || value.height <= 0 || geometry.viewBoxWidth <= 0.0 || geometry.viewBoxHeight <= 0.0) return NO;
     CjguiInternalComposableVectorPoint local = CjguiComposableVectorPoint(
-        ((double)point.x - (double)value.x) * geometry.viewBoxWidth / (double)value.width,
-        ((double)point.y - (double)value.y) * geometry.viewBoxHeight / (double)value.height);
+        ((double)point.x - ((double)value.x + node.geometry.translateX)) * geometry.viewBoxWidth / (double)value.width,
+        ((double)point.y - ((double)value.y + node.geometry.translateY)) * geometry.viewBoxHeight / (double)value.height);
     BOOL fillVisible = geometry.fillAlpha > 0.0;
     BOOL strokeVisible = geometry.strokeAlpha > 0.0 && geometry.strokeWidth > 0.0;
     if (geometry.kind == CJGUI_INTERNAL_VECTOR_ELLIPSE) {
@@ -6630,7 +7750,7 @@ static void CjguiClipComposableNode(CJGuiInternalComposableSceneNode *node, NSVi
     for (uint32_t i = 0; i < count; i++) {
         NSRect rect = CjguiComposableClipConstraintRect(node, i);
         CGFloat x = 0, y = 0, width = 0, height = 0, radius = 0;
-        CjguiComposableClipConstraintAt(node.node, i, &x, &y, &width, &height, &radius);
+        CjguiComposableVisualClipConstraintAt(node, i, &x, &y, &width, &height, &radius);
         radius = MIN(MAX(0.0, radius), MIN(NSWidth(rect), NSHeight(rect)) / 2.0);
         if (radius <= 0.0) {
             NSRectClip(rect);
@@ -6953,6 +8073,16 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 @property(nonatomic) int64_t declaredInputCaretNodeId;
 @property(nonatomic) NSRect declaredInputCaretRect;
 @property(nonatomic) BOOL hasDeclaredInputCaret;
+@property(nonatomic, assign) BOOL caretBlinkVisible;
+@property(nonatomic, assign) BOOL caretBlinkScheduled;
+@property(nonatomic, assign) uint64_t caretBlinkGeneration;
+@property(nonatomic, assign) NSRange caretBlinkSelection;
+@property(nonatomic, assign) uint64_t caretBlinkDeadlineMicros;
+@property(nonatomic, assign) uint64_t caretBlinkBindingEpoch;
+#ifdef CJGUI_INTERNAL_TESTING
+@property(nonatomic, assign) BOOL testCaretBlinkClockActive;
+@property(nonatomic, assign) uint64_t testCaretBlinkNowMicros;
+#endif
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableAccessibilityAction *> *accessibilityActions;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, CJGuiInternalComposableAccessibilityAction *> *accessibilityActionsByIdentity;
 @property(nonatomic, strong) NSArray<CJGuiInternalComposableAccessibilityAction *> *accessibilityRoots;
@@ -6979,6 +8109,19 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 // `set_composable_owned_text_session`, so its composition belongs to the
 // window-owned session.
 - (BOOL)activeNodeOwnsCompositionSession;
+// REANCHOR: one pending request armed by the window for the NEXT accepted scene.
+// The accept path consults it only when this exact node's new owner value would
+// otherwise cancel a live marked run; on success the composition continues on
+// the new base instead of being cancelled. `armedReanchorStart16` is
+// UINT32_MAX when the install must infer the replacement range from the
+// preserved head/tail of the proxy ("change landed outside the marked run").
+@property(nonatomic, assign) uint64_t armedReanchorNodeId;
+@property(nonatomic, assign) int64_t armedReanchorResourceId;
+@property(nonatomic, assign) uint32_t armedReanchorNodeKind;
+@property(nonatomic, assign) uint32_t armedReanchorStart16;
+@property(nonatomic, assign) uint32_t armedReanchorLength16;
+@property(nonatomic, copy) NSString *armedReanchorBase;
+@property(nonatomic, assign) BOOL armedReanchorActive;
 #ifdef CJGUI_INTERNAL_TESTING
 // Test-only receipt counter. It establishes whether an NSEvent dispatched by
 // NSApplication reached this production responder; it is never projected or
@@ -7111,6 +8254,7 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 @property(nonatomic, assign) uint64_t pointerCaptureNodeId;
 @property(nonatomic, assign) int64_t pointerCaptureResourceId;
 @property(nonatomic, assign) uint32_t pointerCaptureNodeKind;
+@property(nonatomic, assign) uint64_t pointerCaptureGestureEpoch;
 @property(nonatomic, assign) CGFloat pointerCaptureX;
 @property(nonatomic, assign) CGFloat pointerCaptureY;
 // Press/hover identities are native routing facts only. They decide which
@@ -7131,12 +8275,17 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 @property(nonatomic, assign) uint64_t dataTransferHoverNodeId;
 @property(nonatomic, assign) int64_t dataTransferHoverResourceId;
 @property(nonatomic, assign) uint32_t dataTransferHoverNodeKind;
+@property(nonatomic, assign) BOOL dataTransferDragSessionActive;
+// AppKit requires the initiating mouse-down event when starting a dragging
+// session. The moved event only decides when our 3-point threshold is met.
+@property(nonatomic, strong) NSEvent *dataTransferSourceMouseDownEvent;
 // Draw progress is recorded by the self-drawn AppKit overlay itself. It does
 // not imply Metal completion or that a human has visually perceived a frame.
 @property(nonatomic, assign) uint64_t lastDrawnProjectionVersion;
 - (instancetype)initWithFrame:(NSRect)frame session:(CJGuiInternalSession *)session;
 - (void)setNodesFromProjection:(NSArray<CJGuiInternalComposableSceneNode *> *)nodes;
 - (void)refreshGpuTextForActiveInput;
+- (NSString *)activeMultilineTileKeyForNode:(CJGuiInternalComposableSceneNode *)node scale:(CGFloat)scale;
 - (void)prepareInactiveTextResourceForFocusChange:(CJGuiInternalComposableSceneNode *)node;
 - (void)prepareActiveMultilineFallbackRunsForNode:(CJGuiInternalComposableSceneNode *)node;
 - (void)updateActiveSingleLineTextDecorationsForNode:(CJGuiInternalComposableSceneNode *)node
@@ -7150,6 +8299,14 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 // believes the caret is at. Applied last, after the decoration pass that would
 // otherwise replace it.
 - (void)applyDeclaredInputCaretToNode:(CJGuiInternalComposableSceneNode *)node;
+- (void)withdrawDeclaredInputCaret;
+- (void)resetCaretBlink;
+- (void)stopCaretBlink;
+- (void)scheduleCaretBlink;
+- (void)applyCaretBlinkPaintState;
+- (void)advanceCaretBlinkAtMicros:(uint64_t)now;
+- (CJGuiInternalComposableSceneNode *)caretBlinkTarget;
+- (uint64_t)caretBlinkNowMicros;
 - (void)applySystemFallbackRunsToActiveInput;
 - (void)markActiveTextFallbackRunsDirtyForRange:(NSRange)range;
 - (void)markActiveTextFallbackRunsDirtyForWholeValue;
@@ -7469,6 +8626,201 @@ static BOOL CjguiAccessibilitySameText(NSString *left, NSString *right) {
 }
 
 @implementation CJGuiInternalComposableSceneOverlay
+
+- (uint64_t)caretBlinkNowMicros {
+#ifdef CJGUI_INTERNAL_TESTING
+    if (self.testCaretBlinkClockActive) return self.testCaretBlinkNowMicros;
+#endif
+    return CjguiCaretBlinkClockMicros();
+}
+
+#ifdef CJGUI_INTERNAL_TESTING
+- (void)testLogCaretBlinkSnapshot:(NSString *)tag focusResult:(int32_t)focusResult {
+    const char *enabled = getenv("CJGUI_TEST_CARET_BLINK_DIAGNOSTICS");
+    if (!enabled || strcmp(enabled, "1") != 0) return;
+    CJGuiInternalSession *session = self.session;
+    CJGuiInternalMetalView *view = session.view;
+    CJGuiInternalComposableSceneNode *overlayNode = nil;
+    CJGuiInternalComposableSceneNode *viewNode = nil;
+    for (CJGuiInternalComposableSceneNode *node in self.nodes) {
+        if (node.node.nodeId == self.activeNodeId) { overlayNode = node; break; }
+    }
+    for (CJGuiInternalComposableSceneNode *node in view.composableNodes) {
+        if (node.node.nodeId == self.activeNodeId) { viewNode = node; break; }
+    }
+    NSRange selected = self.inputProxy.selectedRange;
+    CJGuiInternalComposableSceneNode *target = [self caretBlinkTarget];
+    BOOL overlayMatches = overlayNode && overlayNode.index == self.activeNodeIndex &&
+        overlayNode.node.resourceId == self.activeNodeResourceId &&
+        overlayNode.node.nodeKind == self.activeNodeKind &&
+        overlayNode.node.projectionVersion == self.activeProjectionVersion;
+    BOOL viewMatches = viewNode && overlayNode == viewNode;
+    NSLog(@"cjgui: caret blink snapshot tag=%@ focus_result=%d key=%d visible=%d mini=%d app_active=%d responder=%d editable=%d marked=%d selection=%lu:%lu active=%llu:%lu:%lld:%u:%llu overlay=%p overlay_id=%llu:%lu:%lld:%u:%llu overlay_interactive=%u overlay_readonly=%u overlay_rect=%.6f,%.6f,%.6f,%.6f overlay_hidden=%d overlay_declared=%d overlay_matches=%d view=%p view_id=%llu:%lu:%lld:%u:%llu view_rect=%.6f,%.6f,%.6f,%.6f view_hidden=%d view_matches=%d target=%p target_is_overlay=%d scene=%llu frame=%llu",
+          tag, focusResult, self.window.isKeyWindow, self.window.isVisible, self.window.isMiniaturized,
+          NSApp.isActive, self.window.firstResponder == self.inputProxy, self.inputProxy.editable,
+          self.inputProxy.hasMarkedText, (unsigned long)selected.location, (unsigned long)selected.length,
+          (unsigned long long)self.activeNodeId, (unsigned long)self.activeNodeIndex,
+          (long long)self.activeNodeResourceId, self.activeNodeKind,
+          (unsigned long long)self.activeProjectionVersion, overlayNode,
+          (unsigned long long)(overlayNode ? overlayNode.node.nodeId : 0),
+          (unsigned long)(overlayNode ? overlayNode.index : NSNotFound),
+          (long long)(overlayNode ? overlayNode.node.resourceId : -1),
+          overlayNode ? overlayNode.node.nodeKind : 0,
+          (unsigned long long)(overlayNode ? overlayNode.node.projectionVersion : 0),
+          overlayNode ? overlayNode.node.isInteractive : 0, overlayNode ? overlayNode.node.isReadOnly : 0,
+          overlayNode ? overlayNode.textCaretRect.origin.x : 0.0,
+          overlayNode ? overlayNode.textCaretRect.origin.y : 0.0,
+          overlayNode ? overlayNode.textCaretRect.size.width : 0.0,
+          overlayNode ? overlayNode.textCaretRect.size.height : 0.0,
+          overlayNode ? overlayNode.textCaretHidden : 0, overlayNode ? overlayNode.textCaretIsDeclared : 0,
+          overlayMatches, viewNode,
+          (unsigned long long)(viewNode ? viewNode.node.nodeId : 0),
+          (unsigned long)(viewNode ? viewNode.index : NSNotFound),
+          (long long)(viewNode ? viewNode.node.resourceId : -1),
+          viewNode ? viewNode.node.nodeKind : 0,
+          (unsigned long long)(viewNode ? viewNode.node.projectionVersion : 0),
+          viewNode ? viewNode.textCaretRect.origin.x : 0.0,
+          viewNode ? viewNode.textCaretRect.origin.y : 0.0,
+          viewNode ? viewNode.textCaretRect.size.width : 0.0,
+          viewNode ? viewNode.textCaretRect.size.height : 0.0,
+          viewNode ? viewNode.textCaretHidden : 0, viewMatches, target, target == overlayNode,
+          (unsigned long long)session.composableSceneVersion,
+          (unsigned long long)(view ? view.frameIndex : 0));
+}
+#endif
+
+// AppKit uses the global insertion-point period when one is configured. Zero
+// explicitly requests a steady caret; an absent or malformed value uses a
+// bounded default. The injected period is only available in native test builds.
+static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
+#ifdef CJGUI_INTERNAL_TESTING
+    const char *injected = getenv("CJGUI_TEST_CARET_BLINK_HALF_PERIOD_MS");
+    if (injected && *injected) {
+        char *end = NULL;
+        double milliseconds = strtod(injected, &end);
+        if (end != injected && *end == '\0' && milliseconds >= 0.0 && milliseconds <= 10000.0)
+            return milliseconds == 0.0 ? 0 : (uint64_t)(milliseconds * 1000.0);
+    }
+#endif
+    id preference = [[NSUserDefaults standardUserDefaults] objectForKey:@"NSTextInsertionPointBlinkPeriod"];
+    if ([preference respondsToSelector:@selector(doubleValue)]) {
+        double milliseconds = [preference doubleValue];
+        if (milliseconds == 0.0) return 0;
+        if (milliseconds >= 200.0 && milliseconds <= 2000.0)
+            return (uint64_t)(milliseconds * 1000.0);
+    }
+    return 530000;
+}
+
+- (CJGuiInternalComposableSceneNode *)caretBlinkTarget {
+    CJGuiInternalSession *session = self.session;
+    if (!session || session.destroyed || session.closeRequested || !self.window ||
+        !self.window.isKeyWindow || !self.window.isVisible || self.window.isMiniaturized ||
+        !NSApp.isActive || self.window.firstResponder != self.inputProxy ||
+        !self.inputProxy.editable || self.activeNodeId == 0 ||
+        self.activeNodeIndex == NSNotFound || self.inputProxy.selectedRange.length != 0) return nil;
+    for (CJGuiInternalComposableSceneNode *node in self.nodes) {
+        if (node.node.nodeId == self.activeNodeId && node.index == self.activeNodeIndex &&
+            node.node.resourceId == self.activeNodeResourceId && node.node.nodeKind == self.activeNodeKind &&
+            node.node.projectionVersion == self.activeProjectionVersion &&
+            node.node.isInteractive != 0 && node.node.isReadOnly == 0 &&
+            CjguiComposableNodeHasGpuText(node.node.nodeKind) &&
+            !NSIsEmptyRect(node.textCaretRect)) return node;
+    }
+    return nil;
+}
+
+- (void)applyCaretBlinkPaintState {
+    CJGuiInternalComposableSceneNode *target = [self caretBlinkTarget];
+    BOOL changed = NO;
+    for (CJGuiInternalComposableSceneNode *node in self.nodes) {
+        if (NSIsEmptyRect(node.textCaretRect)) continue;
+        BOOL hidden = node != target || !self.caretBlinkVisible;
+        if (node.textCaretHidden == hidden) continue;
+        node.textCaretHidden = hidden;
+        changed = YES;
+    }
+    if (changed) {
+        [self setNeedsDisplay:YES];
+        [self scheduleAcceptedScenePresent];
+    }
+}
+
+- (void)stopCaretBlink {
+    self.caretBlinkGeneration += 1;
+    self.caretBlinkScheduled = NO;
+    self.caretBlinkDeadlineMicros = 0;
+    self.caretBlinkVisible = NO;
+    [self applyCaretBlinkPaintState];
+}
+
+- (void)resetCaretBlink {
+    self.caretBlinkGeneration += 1;
+    self.caretBlinkScheduled = NO;
+    self.caretBlinkVisible = YES;
+    self.caretBlinkSelection = self.inputProxy.selectedRange;
+    self.caretBlinkBindingEpoch = self.session.ownedTextSessionBindingEpoch;
+    uint64_t period = CjguiCaretBlinkHalfPeriodMicros();
+    self.caretBlinkDeadlineMicros = period == 0 ? 0 : [self caretBlinkNowMicros] + period;
+    [self applyCaretBlinkPaintState];
+    [self scheduleCaretBlink];
+}
+
+- (void)scheduleCaretBlink {
+    if (![self caretBlinkTarget]) return;
+    if (self.caretBlinkBindingEpoch != self.session.ownedTextSessionBindingEpoch ||
+        !NSEqualRanges(self.caretBlinkSelection, self.inputProxy.selectedRange)) {
+        [self resetCaretBlink];
+        return;
+    }
+    if (self.caretBlinkScheduled) return;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (self.testCaretBlinkClockActive) return;
+#endif
+    if (self.caretBlinkDeadlineMicros == 0) return;
+    uint64_t now = [self caretBlinkNowMicros];
+    uint64_t remaining = self.caretBlinkDeadlineMicros > now ? self.caretBlinkDeadlineMicros - now : 0;
+    self.caretBlinkScheduled = YES;
+    uint64_t blinkGeneration = self.caretBlinkGeneration;
+    uint64_t token = self.session.rendererSessionToken;
+    uint64_t sessionGeneration = self.session.sessionGeneration;
+    uint64_t nodeId = self.activeNodeId;
+    int64_t resourceId = self.activeNodeResourceId;
+    uint32_t kind = self.activeNodeKind;
+    uint64_t bindingEpoch = self.caretBlinkBindingEpoch;
+    __weak CJGuiInternalComposableSceneOverlay *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(remaining * 1000)), dispatch_get_main_queue(), ^{
+        CJGuiInternalComposableSceneOverlay *overlay = weakSelf;
+        CJGuiInternalSession *live = CjguiLookupSession(token);
+        if (!overlay || !live || live.destroyed || live.sessionGeneration != sessionGeneration ||
+            live.composableSceneOverlay != overlay || overlay.caretBlinkGeneration != blinkGeneration ||
+            overlay.activeNodeId != nodeId || overlay.activeNodeResourceId != resourceId ||
+            overlay.activeNodeKind != kind || live.ownedTextSessionBindingEpoch != bindingEpoch) return;
+        overlay.caretBlinkScheduled = NO;
+        [overlay advanceCaretBlinkAtMicros:[overlay caretBlinkNowMicros]];
+    });
+}
+
+- (void)advanceCaretBlinkAtMicros:(uint64_t)now {
+    if (![self caretBlinkTarget]) { [self stopCaretBlink]; return; }
+    if (self.caretBlinkDeadlineMicros == 0 || now < self.caretBlinkDeadlineMicros) {
+        [self scheduleCaretBlink];
+        return;
+    }
+    uint64_t period = CjguiCaretBlinkHalfPeriodMicros();
+    self.caretBlinkVisible = period == 0 ? YES : !self.caretBlinkVisible;
+    self.caretBlinkDeadlineMicros = period == 0 ? 0 : now + period;
+    [self applyCaretBlinkPaintState];
+    [self scheduleCaretBlink];
+}
+
+- (void)dealloc {
+    self.caretBlinkGeneration += 1;
+    if (self.dataTransferDragSessionActive) {
+        self.dataTransferDragSessionActive = NO;
+        if (gCjguiActiveDataTransferDragSessions > 0) gCjguiActiveDataTransferDragSessions -= 1;
+    }
+}
 - (instancetype)initWithFrame:(NSRect)frame session:(CJGuiInternalSession *)session {
     self = [super initWithFrame:frame]; if (!self) return nil;
     self.session = session; self.nodes = @[]; self.accessibilityActions = [NSMutableArray array];
@@ -7476,6 +8828,8 @@ static BOOL CjguiAccessibilitySameText(NSString *left, NSString *right) {
     self.accessibilityRoots = @[];
     self.activeNodeIndex = NSNotFound; self.activeNodeId = 0; self.activeProjectionVersion = 0;
     self.activeNodeResourceId = -1; self.activeNodeKind = 0; self.wantsLayer = NO;
+    self.caretBlinkVisible = YES;
+    self.caretBlinkSelection = NSMakeRange(NSNotFound, 0);
     self.multilineScrollOffset = 0.0;
     self.multilineScrollOffsets = [NSMutableDictionary dictionary];
     self.multilineLayoutCache = [NSMutableDictionary dictionary];
@@ -7972,6 +9326,14 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     if ([value characterAtIndex:NSMaxRange(range) - 1] == '\n') content.length -= 1;
     return CjguiPlainAsciiEditSpan(value, content);
 }
+// Defined with the reanchor entry points below; the projection accept path is
+// the only other caller (it installs an armed request under the same readback).
+static CjguiInternalRendererStatus
+CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
+                                CJGuiInternalComposableInputProxy *proxy, NSString *base,
+                                uint32_t replacementStart16, uint32_t replacementLength16,
+                                uint32_t *outMechanism, NSRange *outMarked, NSRange *outInner);
+
 - (void)setNodesFromProjection:(NSArray<CJGuiInternalComposableSceneNode *> *)nodes {
     self.activeTextDirtyVisibleRectValid = NO;
     BOOL permitsLocalReplacement = YES;
@@ -8004,6 +9366,8 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
         if (item.item.role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET) continue;
         NSPasteboardType type = CjguiPasteboardTypeForDataTransferFormat(item.format);
         if (type && ![dragTypes containsObject:type]) [dragTypes addObject:type];
+        if (item.item.localPngFileAllowed && [item.format isEqualToString:@"image/png"] &&
+            ![dragTypes containsObject:NSPasteboardTypeFileURL]) [dragTypes addObject:NSPasteboardTypeFileURL];
     }
     if (dragTypes.count == 0) [dragTypes addObject:NSPasteboardTypeString];
     [self registerForDraggedTypes:dragTypes];
@@ -8161,6 +9525,64 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
 #endif
             BOOL compositionMustCancel = self.inputProxy.hasMarkedText &&
                 (externalValueChanged || replacement.node.isReadOnly != 0 || replacement.node.isInteractive == 0);
+            BOOL reanchorInstalled = NO;
+            if (compositionMustCancel) {
+                fprintf(stderr, "CJGUI_REANCHOR_GATE external=%d armed=%d node=%llu/%lld/%u armedNode=%llu/%lld/%u "
+                        "baseMatch=%d responder=%d owned=%d readOnly=%u interactive=%u\n",
+                    (int)externalValueChanged, (int)self.armedReanchorActive,
+                    (unsigned long long)replacement.node.nodeId, (long long)replacement.node.resourceId,
+                    replacement.node.nodeKind,
+                    (unsigned long long)self.armedReanchorNodeId, (long long)self.armedReanchorResourceId,
+                    self.armedReanchorNodeKind,
+                    (int)[self.armedReanchorBase isEqualToString:replacementValue],
+                    (int)(self.window.firstResponder == self.inputProxy),
+                    (int)[self activeNodeOwnsCompositionSession],
+                    replacement.node.isReadOnly, replacement.node.isInteractive);
+            }
+            if (compositionMustCancel && externalValueChanged && replacement.node.isReadOnly == 0 &&
+                replacement.node.isInteractive != 0 && self.armedReanchorActive &&
+                self.armedReanchorNodeId == replacement.node.nodeId &&
+                self.armedReanchorResourceId == replacement.node.resourceId &&
+                self.armedReanchorNodeKind == replacement.node.nodeKind &&
+                [self.armedReanchorBase isEqualToString:replacementValue] &&
+                self.window.firstResponder == self.inputProxy &&
+                self.activeNodeOwnsCompositionSession) {
+                // REANCHOR: the owner projection advanced while this window's
+                // arbitrated composition is live. Try to keep the platform
+                // conversion on the new base instead of cancelling it; the
+                // install reads back before it may claim success.
+                uint32_t reanchorMechanism = 0;
+                NSRange reanchorMarked = NSMakeRange(0, 0);
+                NSRange reanchorInner = NSMakeRange(0, 0);
+                CjguiInternalRendererStatus reanchorStatus = CjguiInstallCompositionReanchor(self,
+                    (CJGuiInternalComposableInputProxy *)self.inputProxy, replacementValue,
+                    self.armedReanchorStart16, self.armedReanchorLength16, &reanchorMechanism,
+                    &reanchorMarked, &reanchorInner);
+                self.armedReanchorBase = nil;
+                self.armedReanchorActive = NO;
+                self.armedReanchorNodeId = 0;
+                self.armedReanchorResourceId = -1;
+                self.armedReanchorNodeKind = 0;
+                if (reanchorStatus == CJGUI_INTERNAL_RENDERER_OK) {
+                    compositionMustCancel = NO;
+                    reanchorInstalled = YES;
+                    // The accepted baseline is the owner's new base; the proxy keeps the
+                    // live preedit on top of it.
+                    replacement.value = replacementValue;
+                    self.activeTextLayoutSignature = nil;
+                    self.activeTextBodyGeneration += 1;
+                    self.activeTextVisibleParagraphEnd = 0;
+                    if (replacement.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) {
+                        self.activeTextFallbackHasPendingEdit = NO;
+                        [self markActiveTextFallbackRunsDirtyForWholeValue];
+                    }
+                    self.activeTextLayoutNeedsVisibleGlyphs = YES;
+                    self.activeTextHasExactContentHeight = NO;
+                    self.activeTextKnownContentHeight = 0.0;
+                    [self postAccessibilityValueChangedForNode:replacement];
+                    [self postAccessibilitySelectionChangedForNode:replacement];
+                }
+            }
             if (compositionMustCancel) {
                 // Marked text belongs to the platform composition, not the
                 // Cangjie domain. A newer value for this same identity is an
@@ -8192,7 +9614,8 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
             // version and will be rejected by Cangjie; retaining it here
             // would leave the platform adapter detached from authoritative
             // text until another edit happens.
-            } else if ((externalValueChanged || !hasLocalText) && !self.inputProxy.hasMarkedText) {
+            } else if (!reanchorInstalled && (externalValueChanged || !hasLocalText) &&
+                       !self.inputProxy.hasMarkedText) {
 #ifdef CJGUI_INTERNAL_TESTING
                 if (CjguiTestVerboseGlyphDiagnosticsEnabled()) {
                     NSLog(@"cjgui: projection external branch prev=%d extChanged=%d hasLocal=%d marked=%d",
@@ -8437,6 +9860,8 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
         self.testActiveTextWorkReason = CjguiInternalTextWorkReasonUnknown;
     }
 #endif
+    [self applyCaretBlinkPaintState];
+    [self scheduleCaretBlink];
     [self setNeedsDisplay:YES];
 }
 // The surviving list/scroll scope that contained a node of the previous
@@ -8499,8 +9924,11 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     // A list row is normally painted above its scroll container.  Mouse
     // target lookup may therefore find the row, while scroll ownership still
     // belongs to the containing scroll region from the same scene snapshot.
+    // Since 2026-09-28 a plain container may declare wheelScrollable and
+    // receives the same routing without being a scroll area.
     for (CJGuiInternalComposableSceneNode *node in [self.nodes reverseObjectEnumerator]) {
-        if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA &&
+        if ((node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA ||
+             node.node.wheelScrollable != 0) &&
             NSPointInRect(point, CjguiComposableRect(node, self)) &&
             CjguiPointInComposableNodeClip(point, node, self)) return node;
     }
@@ -8550,7 +9978,8 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
         return;
     }
     uint64_t plannedBytes = 0;
-    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(textureRect, scale, &plannedBytes);
+    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(textureRect,
+        CjguiComposableTextNodeLayoutRect(node), scale, &plannedBytes);
     if (tiles.count == 0 || plannedBytes == 0) {
         CjguiReleaseComposableTextResource(node);
         return;
@@ -8563,7 +9992,7 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
         // The active resource already matches the exact static form.
         return;
     }
-    if (!CjguiComposableTextTextureFitsSceneBudget(self.nodes, node, plannedBytes)) {
+    if (!CjguiComposableTextTextureFitsSceneBudget(self.session, self.nodes, node, plannedBytes, 0)) {
         // Over the accepted-scene cap: keep the previous resource and its
         // bytes. Refusing the conversion is the same bounded recovery the
         // focused paths use; it never installs a half state silently.
@@ -8618,6 +10047,7 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
         CjguiRebuildComposableCommandMenuForKeyWindow();
     }
     if (!isTextInput) {
+        [self stopCaretBlink];
         if (self.inputProxy.hasMarkedText) {
             self.applyingProjection = YES;
             [(CJGuiInternalComposableInputProxy *)self.inputProxy cancelMarkedText];
@@ -8676,7 +10106,7 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     }
     self.multilineScrollOffset = [self multilineScrollOffsetForNode:node];
     [self positionInputProxyForNode:node];
-    [self.window makeFirstResponder:self.inputProxy]; self.applyingProjection = NO;
+    BOOL madeFirstResponder = [self.window makeFirstResponder:self.inputProxy]; self.applyingProjection = NO;
     if (enqueue) (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS, node.index, self.inputProxy.string, self.inputProxy.selectedRange);
     [self postAccessibilityFocusChangedForNode:node];
 #ifdef CJGUI_INTERNAL_TESTING
@@ -8685,7 +10115,12 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     self.testActiveTextWorkReason = CjguiInternalTextWorkReasonSelectionCaret;
 #endif
     [self refreshGpuTextForActiveInput];
+    if (!isSameNode) [self resetCaretBlink];
+    else [self scheduleCaretBlink];
     [self setNeedsDisplay:YES];
+#ifdef CJGUI_INTERNAL_TESTING
+    [self testLogCaretBlinkSnapshot:@"focus_exit" focusResult:madeFirstResponder ? 1 : 0];
+#endif
 }
 - (NSString *)multilineViewportKeyForNode:(CJGuiInternalComposableSceneNode *)node {
     return [NSString stringWithFormat:@"%llu:%lld", node.node.nodeId, node.node.resourceId];
@@ -9013,6 +10448,7 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     self.pointerCaptureNodeId = 0;
     self.pointerCaptureResourceId = -1;
     self.pointerCaptureNodeKind = 0;
+    self.pointerCaptureGestureEpoch = 0;
     self.pointerCaptureX = 0.0;
     self.pointerCaptureY = 0.0;
 }
@@ -9060,6 +10496,7 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
 - (void)clearPressRouting {
     self.pressedNodeId = 0; self.pressedResourceId = -1; self.pressedNodeKind = 0;
     self.pressedCancelled = NO; self.pressedX = 0.0; self.pressedY = 0.0;
+    self.dataTransferSourceMouseDownEvent = nil;
 }
 - (void)clearHoverAtPoint:(NSPoint)point {
     CJGuiInternalComposableSceneNode *previous = [self hoveredPressableNode];
@@ -9119,11 +10556,15 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index, next, NSMakeRange(0, 0));
         CjguiStampPointerModifiersOnQueuedInteraction(self.session,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index);
+        CjguiStampPointerPositionOnQueuedInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index, point);
     } else {
         (void)CjguiEnqueueComposableInteraction(self.session,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index, @"", NSMakeRange(0, 0));
         CjguiStampPointerModifiersOnQueuedInteraction(self.session,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index);
+        CjguiStampPointerPositionOnQueuedInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index, point);
     }
 }
 - (void)cancelPressForPlatformLoss {
@@ -9142,7 +10583,10 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     CJGuiInternalComposableDataTransferItem *item = [self dataTransferItemForNode:node
         role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET];
     if (!item || !pasteboard) return nil;
-    return [pasteboard availableTypeFromArray:@[CjguiPasteboardTypeForDataTransferFormat(item.format)]] ? node : nil;
+    NSPasteboardType directType = CjguiPasteboardTypeForDataTransferFormat(item.format);
+    if (item.item.localPngFileAllowed && [item.format isEqualToString:@"image/png"] &&
+        [pasteboard availableTypeFromArray:@[NSPasteboardTypeFileURL]]) return node;
+    return directType && [pasteboard availableTypeFromArray:@[directType]] ? node : nil;
 }
 - (void)clearDataTransferHoverAtPoint:(NSPoint)point {
     if (self.dataTransferHoverNodeId == 0) return;
@@ -9174,6 +10618,9 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
 #ifdef CJGUI_INTERNAL_TESTING
     self.testDataTransferDragSessionBegan = NO;
 #endif
+    if (self.dataTransferDragSessionActive) return NO;
+    NSEvent *mouseDownEvent = self.dataTransferSourceMouseDownEvent;
+    if (!mouseDownEvent || mouseDownEvent.type != NSEventTypeLeftMouseDown) return NO;
     CJGuiInternalComposableDataTransferItem *item = [self dataTransferItemForNode:node
         role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE];
     if (!item || !event) return NO;
@@ -9204,7 +10651,13 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     [draggingItem setDraggingFrame:frame contents:preview];
     [self cancelPressAtPoint:NSMakePoint(self.pressedX, self.pressedY)];
     [self clearPressRouting];
-    BOOL began = [self beginDraggingSessionWithItems:@[draggingItem] event:event source:self] != nil;
+    self.dataTransferDragSessionActive = YES;
+    gCjguiActiveDataTransferDragSessions += 1;
+    BOOL began = [self beginDraggingSessionWithItems:@[draggingItem] event:mouseDownEvent source:self] != nil;
+    if (!began) {
+        self.dataTransferDragSessionActive = NO;
+        gCjguiActiveDataTransferDragSessions -= 1;
+    }
     if (CjguiDataTransferTraceEnabled()) {
         NSLog(@"cjgui: transfer source session window=%ld began=%@", (long)(self.window ? self.window.windowNumber : 0),
               began ? @"true" : @"false");
@@ -9221,6 +10674,10 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
 }
 - (void)draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint
                operation:(NSDragOperation)operation {
+    if (self.dataTransferDragSessionActive) {
+        self.dataTransferDragSessionActive = NO;
+        if (gCjguiActiveDataTransferDragSessions > 0) gCjguiActiveDataTransferDragSessions -= 1;
+    }
     if (CjguiDataTransferTraceEnabled()) {
         NSLog(@"cjgui: transfer source ended window=%ld screen=%.1f,%.1f operation=%lu session=%@",
               (long)(self.window ? self.window.windowNumber : 0), screenPoint.x, screenPoint.y,
@@ -9292,15 +10749,17 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     // the exact captured node so the following Arrow key follows the same
     // Cangjie-owned control route as a physical drag.
     [self focusNode:node enqueue:YES];
+    if (self.session.nextPointerGestureEpoch == UINT64_MAX) return NO;
     self.pointerCaptureActive = YES;
+    self.pointerCaptureGestureEpoch = ++self.session.nextPointerGestureEpoch;
     self.pointerCaptureNodeId = node.node.nodeId;
     self.pointerCaptureResourceId = node.node.resourceId;
     self.pointerCaptureNodeKind = node.node.nodeKind;
     self.pointerCaptureX = point.x;
     self.pointerCaptureY = point.y;
-    if (!CjguiEnqueueComposablePointerInteraction(self.session,
-                                                   CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN,
-                                                   node, point)) {
+    if (!CjguiEnqueueComposableCapturedPointerInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN,
+            node, point, self.pointerCaptureGestureEpoch)) {
         [self cancelPointerCapture];
         return NO;
     }
@@ -9314,9 +10773,9 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     }
     self.pointerCaptureX = point.x;
     self.pointerCaptureY = point.y;
-    return CjguiEnqueueComposablePointerInteraction(self.session,
-                                                     CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE,
-                                                     node, point);
+    return CjguiEnqueueComposableCapturedPointerInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE,
+            node, point, self.pointerCaptureGestureEpoch);
 }
 - (void)endPointerCaptureAtPoint:(NSPoint)point cancelled:(BOOL)cancelled {
     CJGuiInternalComposableSceneNode *node = [self capturedPointerNode];
@@ -9326,12 +10785,13 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     }
     self.pointerCaptureX = point.x;
     self.pointerCaptureY = point.y;
-    (void)CjguiEnqueueComposablePointerInteraction(
+    (void)CjguiEnqueueComposableCapturedPointerInteraction(
         self.session,
         cancelled ? CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL :
                     CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END,
         node,
-        point
+        point,
+        self.pointerCaptureGestureEpoch
     );
     [self cancelPointerCapture];
 }
@@ -9378,6 +10838,8 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
         (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, node.index, next, NSMakeRange(0, 0));
         CjguiStampPointerModifiersOnQueuedInteraction(self.session,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, node.index);
+        CjguiStampPointerPositionOnQueuedInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, node.index, self.lastPointerDownPoint);
         return;
     }
     (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, node.index, @"", NSMakeRange(0, 0));
@@ -9409,8 +10871,15 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     [self updateHoverAtPoint:point];
     CJGuiInternalComposableSceneNode *node = [self nodeAtPoint:point];
-    if (node) [self mouseDownForNode:node atPoint:point];
-    else [self clearDraggingSelection];
+    if (node) {
+        [self mouseDownForNode:node atPoint:point];
+        if (self.pressedNodeId == node.node.nodeId &&
+            [self dataTransferItemForNode:node role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE]) {
+            self.dataTransferSourceMouseDownEvent = event;
+        }
+    } else {
+        [self clearDraggingSelection];
+    }
 }
 - (void)mouseDragged:(NSEvent *)event {
     self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
@@ -9558,6 +11027,7 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     self.testInputCallbackTrace.textCallbackCount += 1;
 #endif
     (void)notification;
+    if (!self.applyingProjection) [self resetCaretBlink];
     // Do not request glyphs from NSTextView in its synchronous edit callback.
     // On a long paragraph that query can expand layout all the way to the
     // changed character and turn one keystroke into a document-wide stall.
@@ -9667,6 +11137,8 @@ static BOOL CjguiPlainAsciiParagraph(NSString *value, NSRange range) {
     if (self.activeTextFallbackHasPendingEdit) self.testInputCallbackTrace.pendingEditSelectionCount += 1;
 #endif
     (void)notification;
+    if (!self.applyingProjection &&
+        !NSEqualRanges(self.caretBlinkSelection, self.inputProxy.selectedRange)) [self resetCaretBlink];
     // Selection is owned by the platform text service. Keep it separate from
     // a text edit: Cangjie records it only as window query state, never as a
     // domain write or a reason to rebuild the scene.
@@ -10287,6 +11759,38 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     node.textCaretIsDeclared = YES;
 }
 
+- (void)withdrawDeclaredInputCaret {
+    int64_t withdrawnNodeId = self.declaredInputCaretNodeId;
+    BOOL changed = self.hasDeclaredInputCaret;
+    self.hasDeclaredInputCaret = NO;
+    for (CJGuiInternalComposableSceneNode *node in self.nodes) {
+        if ((int64_t)node.node.nodeId != withdrawnNodeId || !node.textCaretIsDeclared) continue;
+        CjguiClearComposableTextDecorations(node);
+        changed = YES;
+        BOOL isActive = node.node.nodeId == self.activeNodeId && node.index == self.activeNodeIndex &&
+            node.node.resourceId == self.activeNodeResourceId && node.node.nodeKind == self.activeNodeKind &&
+            node.node.projectionVersion == self.activeProjectionVersion;
+        if (!isActive) continue;
+        if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) {
+            [self updateActiveMultilineTextDecorationsForNode:node];
+        } else {
+            NSString *value = self.inputProxy.string ?: @"";
+            [self updateActiveSingleLineTextDecorationsForNode:node displayText:value
+                selection:self.inputProxy.selectedRange markedRange:self.inputProxy.markedRange drawsCaret:YES];
+        }
+    }
+    if ([self caretBlinkTarget]) {
+        [self applyCaretBlinkPaintState];
+        [self scheduleCaretBlink];
+    } else {
+        [self stopCaretBlink];
+    }
+    if (changed) {
+        [self setNeedsDisplay:YES];
+        [self scheduleAcceptedScenePresent];
+    }
+}
+
 - (void)updateActiveMultilineTextDecorationsForNode:(CJGuiInternalComposableSceneNode *)node {
     CjguiClearComposableTextDecorations(node);
     if (!node || node.node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) return;
@@ -10572,6 +12076,14 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
         localValue.clip2X -= node.node.x; localValue.clip2Y -= node.node.y;
         localValue.clip3X -= node.node.x; localValue.clip3Y -= node.node.y;
     }
+    // Ancestor clips always apply in accepted visual space at encode. Never
+    // bake their old integer positions into a tile reused after translation.
+    localValue.clipX = 0; localValue.clipY = 0;
+    localValue.clipWidth = localValue.width; localValue.clipHeight = localValue.height;
+    localValue.clipConstraintCount = 1;
+    localValue.clip0X = 0; localValue.clip0Y = 0;
+    localValue.clip0Width = localValue.width; localValue.clip0Height = localValue.height;
+    localValue.clip0CornerRadius = 0.0;
     localNode.node = localValue; localNode.label = node.label; localNode.value = node.value;
     // This calls the same active TextKit graph/cache used for input, scroll,
     // selection and candidate geometry.  No second editable body or layout
@@ -10633,8 +12145,13 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     id<MTLTexture> texture = [metalView.device newTextureWithDescriptor:descriptor];
     if (!texture) { CjguiDropTextCpuScratch(metalView, byteCount); return nil; }
     uint64_t textureCreateMicros = CjguiMonotonicMicros() - textureCreateStarted;
+    uint64_t workloadUploadStarted = CjguiMonotonicMicros();
+    metalView.textRasterCount = CjguiSaturatingAddU64(metalView.textRasterCount, 1);
+    metalView.textRasterBytes = CjguiSaturatingAddU64(metalView.textRasterBytes, byteCount);
+    metalView.textRasterMicros = CjguiSaturatingAddU64(metalView.textRasterMicros,
+                                                        workloadUploadStarted - rasterStarted);
  #ifdef CJGUI_INTERNAL_TESTING
-    uint64_t uploadStarted = CjguiMonotonicMicros();
+    uint64_t uploadStarted = workloadUploadStarted;
     uint64_t recordStarted = uploadStarted;
     NSString *recordedText = active ? self.inputProxy.string : node.value;
     CjguiRecordTextWork(metalView, node.node.projectionVersion,
@@ -10646,8 +12163,13 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                                                                        uploadStarted - rasterStarted);
 #endif
     [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0 withBytes:bgra.bytes bytesPerRow:bytesPerRow];
+    uint64_t workloadUploadEnded = CjguiMonotonicMicros();
+    metalView.textUploadCount = CjguiSaturatingAddU64(metalView.textUploadCount, 1);
+    metalView.textUploadBytes = CjguiSaturatingAddU64(metalView.textUploadBytes, byteCount);
+    metalView.textUploadMicros = CjguiSaturatingAddU64(metalView.textUploadMicros,
+                                                        workloadUploadEnded - workloadUploadStarted);
 #ifdef CJGUI_INTERNAL_TESTING
-    uint64_t uploadEnded = CjguiMonotonicMicros();
+    uint64_t uploadEnded = workloadUploadEnded;
     if (active && CjguiTestTileCostDiagnosticsEnabled()) {
         NSLog(@"CJGUI_ACTIVE_TILE_COST node=%llu rect=%@ pixels=%llu glyphs=%lu allocation_us=%llu context_prepare_us=%llu draw_method_us=%llu layout_us=%llu save_us=%llu clip_us=%llu draw_us=%llu restore_us=%llu context_restore_us=%llu normalize_us=%llu alpha_scan_us=%llu bitmap_release_us=%llu texture_create_us=%llu record_us=%llu upload_us=%llu total_us=%llu",
               (unsigned long long)node.node.nodeId, NSStringFromRect(textureRect),
@@ -10673,6 +12195,18 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     CjguiDropTextCpuScratch(metalView, byteCount);
     return texture;
 }
+- (NSString *)activeMultilineTileKeyForNode:(CJGuiInternalComposableSceneNode *)node scale:(CGFloat)scale {
+    NSString *runsSignature = [self activeTextRunsSignatureForNode:node];
+    return [NSString stringWithFormat:@"multiline_tile_v2:%llu:%llu:%llu:%lld:%@:%@:%0.3f:%0.3f:%lld:%lld:%@",
+        (unsigned long long)self.activeTextBodyGeneration,
+        (unsigned long long)self.activeTextAttributedGeneration,
+        (unsigned long long)node.node.nodeId, (long long)node.node.resourceId,
+        self.activeTextLayoutSignature ?: @"", runsSignature ?: @"",
+        [self multilineScrollOffsetForNode:node], scale,
+        (long long)node.node.width, (long long)node.node.height,
+        CjguiComposableTextClipSignature(node)];
+}
+
 - (void)refreshGpuTextForActiveInput {
 #ifdef CJGUI_INTERNAL_TESTING
     uint64_t refreshStarted = CjguiMonotonicMicros();
@@ -10745,16 +12279,7 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
         // runs, scroll/scale/viewport and clip. The DYNAMIC text alpha is
         // deliberately absent — it is applied once at encode and must never
         // invalidate this cached texture.
-        NSString *runsSignature = [self activeTextRunsSignatureForNode:active];
-        NSString *key = [NSString stringWithFormat:@"multiline:%llu:%llu:%@:%@:%0.3f:%0.3f:%0.3f:%0.3f:%0.3f:%0.3f:%0.3f:%0.3f:%@",
-            (unsigned long long)self.activeTextBodyGeneration,
-            (unsigned long long)self.activeTextAttributedGeneration,
-            self.activeTextLayoutSignature ?: @"",
-            runsSignature ?: @"",
-            [self multilineScrollOffsetForNode:active], scale,
-            NSMinX(textureRect), NSMinY(textureRect), NSWidth(textureRect), NSHeight(textureRect),
-            NSMinX(textureRect) - (CGFloat)active.node.x, NSMinY(textureRect) - (CGFloat)active.node.y,
-            CjguiComposableTextClipSignature(active)];
+        NSString *key = [self activeMultilineTileKeyForNode:active scale:scale];
 #ifdef CJGUI_INTERNAL_TESTING
         self.testInputCallbackTrace.keyConstructionMicros += CjguiMonotonicMicros() - keyStarted;
 #endif
@@ -10762,8 +12287,11 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
 #ifdef CJGUI_INTERNAL_TESTING
         forceFullBodyPreparation = self.testForceFullBodyPreparationOnSelection;
 #endif
-        if (!(active.textTexture || active.textTileTextures.count > 0) || forceFullBodyPreparation ||
-            ![active.textTextureCacheKey isEqualToString:key]) {
+        uint64_t plannedBytes = 0;
+        NSArray<NSValue *> *tileRects = CjguiPlanComposableTextTiles(textureRect,
+            CjguiComposableTextNodeLayoutRect(active), scale, &plannedBytes);
+        if (!CjguiComposableTextTilesAlreadyCovered(active, key, tileRects, scale) ||
+            forceFullBodyPreparation || self.activeTextDirtyVisibleRectValid) {
 #ifdef CJGUI_INTERNAL_TESTING
             CjguiInternalTextWorkReason reason = self.testActiveTextWorkReason;
             self.testForceFullBodyPreparationOnSelection = NO;
@@ -10776,8 +12304,7 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                 self.activeTextTextureRetryCount = 0;
                 self.activeTextTexturePreparationFailed = NO;
             }
-            uint64_t plannedBytes = 0, actualBytes = 0;
-            NSArray<NSValue *> *tileRects = CjguiPlanComposableTextTiles(textureRect, scale, &plannedBytes);
+            uint64_t actualBytes = 0;
             NSMutableArray<id<MTLTexture>> *prepared = [NSMutableArray arrayWithCapacity:tileRects.count];
             NSString *oldKey = active.textTextureCacheKey ?: @"";
             NSRange oldPrefix = [oldKey rangeOfString:@":"];
@@ -10788,15 +12315,24 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
             NSRange newSeparator = newPrefix.location == NSNotFound ? NSMakeRange(NSNotFound, 0) :
                 [key rangeOfString:@":" options:0 range:NSMakeRange(NSMaxRange(newPrefix),
                                                            key.length - NSMaxRange(newPrefix))];
-            BOOL mayReuseOtherTiles = self.activeTextDirtyVisibleRectValid &&
-                !self.activeTextTexturePreparationFailed && !forceFullBodyPreparation &&
-                oldSeparator.location != NSNotFound && newSeparator.location != NSNotFound &&
-                [[oldKey substringFromIndex:NSMaxRange(oldSeparator)]
-                    isEqualToString:[key substringFromIndex:NSMaxRange(newSeparator)]] &&
-                active.textTileTextures.count == tileRects.count &&
-                active.textTileRects.count == tileRects.count;
+            BOOL mayReuseOtherTiles = !self.activeTextTexturePreparationFailed && !forceFullBodyPreparation &&
+                ([oldKey isEqualToString:key] ||
+                 (self.activeTextDirtyVisibleRectValid &&
+                  oldSeparator.location != NSNotFound && newSeparator.location != NSNotFound &&
+                  [[oldKey substringFromIndex:NSMaxRange(oldSeparator)]
+                      isEqualToString:[key substringFromIndex:NSMaxRange(newSeparator)]]));
+            uint64_t reusableBytes = 0;
+            if (mayReuseOtherTiles) {
+                for (NSValue *tile in tileRects) {
+                    if (self.activeTextDirtyVisibleRectValid &&
+                        NSIntersectsRect(self.activeTextDirtyVisibleRect, tile.rectValue)) continue;
+                    id<MTLTexture> retained = CjguiComposableFindTextTileByLocalRect(
+                        active, tile.rectValue, scale);
+                    if (retained) reusableBytes += (uint64_t)retained.width * (uint64_t)retained.height * 4u;
+                }
+            }
             BOOL admitted = tileRects.count > 0 &&
-                CjguiComposableTextTextureFitsSceneBudget(self.nodes, active, plannedBytes);
+                CjguiComposableTextTextureFitsSceneBudget(self.session, self.nodes, active, plannedBytes, reusableBytes);
 #ifdef CJGUI_INTERNAL_TESTING
             if (self.session.forcedComposableTextPreparationFailures > 0) {
                 self.session.forcedComposableTextPreparationFailures -= 1;
@@ -10807,17 +12343,13 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                 for (NSUInteger tileIndex = 0; tileIndex < tileRects.count; tileIndex++) {
                     NSValue *rectValue = tileRects[tileIndex];
                     if (mayReuseOtherTiles &&
-                        NSEqualRects(active.textTileRects[tileIndex].rectValue, rectValue.rectValue) &&
-                        !NSIntersectsRect(self.activeTextDirtyVisibleRect, rectValue.rectValue)) {
-                        id<MTLTexture> retained = active.textTileTextures[tileIndex];
-                        NSUInteger expectedWidth = 0, expectedHeight = 0, expectedRow = 0;
-                        uint64_t expectedBytes = 0;
-                        if (retained && CjguiCheckedComposableTextTextureBytes(
-                                NSWidth(rectValue.rectValue), NSHeight(rectValue.rectValue), scale, scale,
-                                &expectedWidth, &expectedHeight, &expectedRow, &expectedBytes) &&
-                            retained.width == expectedWidth && retained.height == expectedHeight) {
+                        (!self.activeTextDirtyVisibleRectValid ||
+                         !NSIntersectsRect(self.activeTextDirtyVisibleRect, rectValue.rectValue))) {
+                        id<MTLTexture> retained = CjguiComposableFindTextTileByLocalRect(
+                            active, rectValue.rectValue, scale);
+                        if (retained) {
                             [prepared addObject:retained];
-                            actualBytes += expectedBytes;
+                            actualBytes += (uint64_t)retained.width * (uint64_t)retained.height * 4u;
                             continue;
                         }
                     }
@@ -10837,11 +12369,18 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                 }
             }
             if (admitted && prepared.count == tileRects.count && actualBytes == plannedBytes) {
+                uint64_t occupied = plannedBytes - reusableBytes;
+                for (CJGuiInternalComposableSceneNode *held in self.nodes)
+                    occupied += held.textTextureByteCount;
+                self.session.composableTextCandidatePeakBytes = MAX(
+                    self.session.composableTextCandidatePeakBytes, occupied);
                 active.textTexture = prepared.count == 1 ? prepared.firstObject : nil;
                 active.textTileTextures = prepared.count > 1 ? [prepared copy] : nil;
                 active.textTileRects = prepared.count > 1 ? tileRects : nil;
                 active.textTextureByteCount = actualBytes; active.textTextureCacheKey = key;
-                active.textTextureRect = textureRect;
+                active.textTextureRect = prepared.count == 1 ? tileRects.firstObject.rectValue :
+                    CjguiComposableTextTileUnion(tileRects);
+                active.textTileLayoutOrigin = NSMakePoint((CGFloat)active.node.x, (CGFloat)active.node.y);
                 self.activeTextDirtyVisibleRectValid = NO;
                 self.activeTextTextureRetryKey = nil;
                 self.activeTextTextureRetryCount = 0;
@@ -10867,6 +12406,13 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                     [self scheduleActiveTextResourcePreparation];
                 }
             }
+        } else if (tileRects.count > 0) {
+            // A pure layout move changes draw destinations, not the retained
+            // node-local body pixels. Keep their exact accepted grid cells.
+            active.textTileRects = tileRects.count > 1 ? tileRects : nil;
+            active.textTextureRect = tileRects.count == 1 ? tileRects.firstObject.rectValue :
+                CjguiComposableTextTileUnion(tileRects);
+            active.textTileLayoutOrigin = NSMakePoint((CGFloat)active.node.x, (CGFloat)active.node.y);
         }
         [metalView setNeedsDisplay:YES];
 #ifdef CJGUI_INTERNAL_TESTING
@@ -10904,10 +12450,13 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
 #endif
     NSRect textureRect = CjguiComposableTextTextureRectForNodeWithText(active, displayText);
     NSString *key = CjguiComposableTextTextureKey(active, scale, scale, displayText, textureRect);
+    uint64_t plannedBytes = 0;
+    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(textureRect,
+        CjguiComposableTextNodeLayoutRect(active), scale, &plannedBytes);
 #ifdef CJGUI_INTERNAL_TESTING
     self.testInputCallbackTrace.keyConstructionMicros += CjguiMonotonicMicros() - keyStarted;
 #endif
-    if (!active.textTexture || ![active.textTextureCacheKey isEqualToString:key]) {
+    if (!CjguiComposableTextTilesAlreadyCovered(active, key, tiles, scale)) {
 #ifdef CJGUI_INTERNAL_TESTING
         CjguiInternalTextWorkReason reason = self.testActiveTextWorkReason;
         if ([self.activeTextTextureRetryKey isEqualToString:key] && self.activeTextTextureRetryCount > 0) {
@@ -10919,24 +12468,26 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
             self.activeTextTextureRetryCount = 0;
             self.activeTextTexturePreparationFailed = NO;
         }
-        uint64_t byteCount = 0;
         id<MTLTexture> texture = nil;
+        uint64_t freshBytes = tiles.count > 0
+            ? CjguiComposableFreshTextTileBytes(active, key, tiles, scale) : UINT64_MAX;
+        BOOL admitted = tiles.count > 0 && plannedBytes > 0 && freshBytes <= plannedBytes &&
+            CjguiComposableTextTextureFitsSceneBudget(self.session, self.nodes, active,
+                plannedBytes, plannedBytes - freshBytes);
 #ifdef CJGUI_INTERNAL_TESTING
-        if (self.session.forcedComposableTextPreparationFailures > 0) {
+        if (admitted && self.session.forcedComposableTextPreparationFailures > 0) {
             self.session.forcedComposableTextPreparationFailures -= 1;
+            admitted = NO;
         } else
 #endif
-        {
-            texture = CjguiRasterComposableTextTexture(metalView, active, scale, scale, displayText,
-                                                        textureRect, &byteCount, nil
+        if (admitted) {
+            texture = CjguiComposableTextTexture(metalView, active, scale, scale, displayText
 #ifdef CJGUI_INTERNAL_TESTING
                                                         , reason
 #endif
-                                                        , NULL, 0);
+                                                        );
         }
-        if (texture && CjguiComposableTextTextureFitsSceneBudget(self.nodes, active, byteCount)) {
-            active.textTexture = texture; active.textTextureByteCount = byteCount; active.textTextureCacheKey = key;
-            active.textTextureRect = textureRect;
+        if (texture && CjguiComposableTextTilesAlreadyCovered(active, key, tiles, scale)) {
             self.activeTextTextureRetryKey = nil;
             self.activeTextTextureRetryCount = 0;
             self.activeTextTexturePreparationFailed = NO;
@@ -11488,6 +13039,148 @@ static void CjguiApplyActiveRunAttribute(NSTextStorage *storage, NSString *key,
 }
 @end
 
+// A focused multiline node can expose new cells at the very scene acceptance
+// that moves its geometry. Prepare those cells from the current native input
+// body before commit; accepting first and then failing the active refresh
+// would leave a newly visible strip unpainted. The candidate owns only new
+// textures and shares matching immutable cells with the accepted scene.
+static BOOL CjguiStagedFocusedMultilineTilesNeedPreparation(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale) {
+    if (!ctx || !node || !CjguiStagedNodeIsFocusedInput(ctx, node)) return NO;
+    NSRect coverage = CjguiComposableTextTextureRectForNode(node);
+    if (NSIsEmptyRect(coverage)) return node.textTextureByteCount > 0;
+    uint64_t plannedBytes = 0;
+    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(coverage,
+        CjguiComposableTextNodeLayoutRect(node), scale, &plannedBytes);
+    if (tiles.count == 0 || plannedBytes == 0) return YES; // prepare reports the budget failure
+    NSString *key = [ctx.composableSceneOverlay activeMultilineTileKeyForNode:node scale:scale];
+    NSPoint origin = NSMakePoint((CGFloat)node.node.x, (CGFloat)node.node.y);
+    return !CjguiComposableTextTilesAlreadyCovered(node, key, tiles, scale) ||
+        !NSEqualPoints(node.textTileLayoutOrigin, origin);
+}
+
+static CjguiInternalRendererStatus CjguiPrepareStagedFocusedMultilineTiles(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale, uint64_t retainedAcceptedBytes,
+    uint64_t alreadyFreshBytes, uint64_t *outFreshBytes) {
+    if (outFreshBytes) *outFreshBytes = 0;
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    if (!overlay || !node || !CjguiStagedNodeIsFocusedInput(ctx, node))
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSRect coverage = CjguiComposableTextTextureRectForNode(node);
+    if (NSIsEmptyRect(coverage)) {
+        CjguiReleaseComposableTextResource(node);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    uint64_t plannedBytes = 0;
+    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(coverage,
+        CjguiComposableTextNodeLayoutRect(node), scale, &plannedBytes);
+    if (tiles.count == 0 || plannedBytes == 0)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+    NSString *key = [overlay activeMultilineTileKeyForNode:node scale:scale];
+    uint64_t freshBytes = CjguiComposableFreshTextTileBytes(node, key, tiles, scale);
+    if (freshBytes > CjguiComposableTextTextureByteCapacity - retainedAcceptedBytes - alreadyFreshBytes ||
+        !CjguiComposableTextTextureFitsSceneBudget(ctx, ctx.composableNodes,
+            ctx.composableNodes.count > node.index ? ctx.composableNodes[node.index] : nil,
+            plannedBytes, plannedBytes - freshBytes))
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (ctx.forcedComposableTextPreparationFailures > 0) {
+        ctx.forcedComposableTextPreparationFailures -= 1;
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+#endif
+    NSMutableArray<id<MTLTexture>> *prepared = [NSMutableArray arrayWithCapacity:tiles.count];
+    uint64_t actualBytes = 0;
+    for (NSValue *tile in tiles) {
+        id<MTLTexture> retained = CjguiComposableRetainedTextTile(node, key, tile.rectValue, scale);
+        uint64_t tileBytes = 0;
+        id<MTLTexture> texture = retained ?: [overlay rasterizeMultilineNode:node active:YES scale:scale
+            tileRect:tile.rectValue outByteCount:&tileBytes outTextureRect:NULL
+#ifdef CJGUI_INTERNAL_TESTING
+            reason:CjguiInternalTextWorkReasonProjectionGeometry
+#endif
+            ];
+        if (!texture) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        [prepared addObject:texture];
+        actualBytes += retained ? (uint64_t)retained.width * (uint64_t)retained.height * 4u : tileBytes;
+    }
+    if (actualBytes != plannedBytes) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    node.textTexture = prepared.count == 1 ? prepared.firstObject : nil;
+    node.textTileTextures = prepared.count > 1 ? [prepared copy] : nil;
+    node.textTileRects = prepared.count > 1 ? tiles : nil;
+    node.textTextureRect = prepared.count == 1 ? tiles.firstObject.rectValue : CjguiComposableTextTileUnion(tiles);
+    node.textTileLayoutOrigin = NSMakePoint((CGFloat)node.node.x, (CGFloat)node.node.y);
+    node.textTextureByteCount = actualBytes;
+    node.textTextureCacheKey = key;
+    if (outFreshBytes) *outFreshBytes = freshBytes;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+static BOOL CjguiStagedFocusedSingleLineTilesNeedPreparation(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale) {
+    if (!ctx || !node || !CjguiStagedNodeIsFocusedInput(ctx, node)) return NO;
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    NSString *activeValue = [overlay.inputProxy.string copy] ?: @"";
+    NSString *displayText = CjguiComposableGpuTextValueWithActiveValue(node, activeValue);
+    NSString *runs = ctx.composableTextStyleRunsRaw[@(node.node.nodeId)] ?: @"";
+    if (![node.styleRunsSignature isEqualToString:runs]) return YES;
+    NSRect coverage = CjguiComposableTextTextureRectForNodeWithText(node, displayText);
+    if (NSIsEmptyRect(coverage)) return node.textTextureByteCount > 0;
+    uint64_t bytes = 0;
+    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(coverage,
+        CjguiComposableTextNodeLayoutRect(node), scale, &bytes);
+    if (tiles.count == 0 || bytes == 0) return YES;
+    NSString *key = CjguiComposableTextTextureKey(node, scale, scale, displayText, coverage);
+    return !CjguiComposableTextTilesAlreadyCovered(node, key, tiles, scale);
+}
+
+static CjguiInternalRendererStatus CjguiPrepareStagedFocusedSingleLineTiles(CJGuiInternalSession *ctx,
+    CJGuiInternalComposableSceneNode *node, CGFloat scale, uint64_t retainedAcceptedBytes,
+    uint64_t alreadyFreshBytes, uint64_t *outFreshBytes) {
+    if (outFreshBytes) *outFreshBytes = 0;
+    if (!ctx || !node || !CjguiStagedNodeIsFocusedInput(ctx, node))
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    NSString *activeValue = [overlay.inputProxy.string copy] ?: @"";
+    NSString *displayText = CjguiComposableGpuTextValueWithActiveValue(node, activeValue);
+    node.styleRunsSignature = ctx.composableTextStyleRunsRaw[@(node.node.nodeId)] ?: @"";
+    NSRect coverage = CjguiComposableTextTextureRectForNodeWithText(node, displayText);
+    if (NSIsEmptyRect(coverage)) {
+        CjguiReleaseComposableTextResource(node);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    uint64_t plannedBytes = 0;
+    NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(coverage,
+        CjguiComposableTextNodeLayoutRect(node), scale, &plannedBytes);
+    if (tiles.count == 0 || plannedBytes == 0)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+    NSString *key = CjguiComposableTextTextureKey(node, scale, scale, displayText, coverage);
+    uint64_t freshBytes = CjguiComposableFreshTextTileBytes(node, key, tiles, scale);
+    if (retainedAcceptedBytes > CjguiComposableTextTextureByteCapacity ||
+        alreadyFreshBytes > CjguiComposableTextTextureByteCapacity - retainedAcceptedBytes ||
+        freshBytes > CjguiComposableTextTextureByteCapacity - retainedAcceptedBytes - alreadyFreshBytes ||
+        !CjguiComposableTextTextureFitsSceneBudget(ctx, ctx.composableNodes,
+            ctx.composableNodes.count > node.index ? ctx.composableNodes[node.index] : nil,
+            plannedBytes, plannedBytes - freshBytes))
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (ctx.forcedComposableTextPreparationFailures > 0) {
+        ctx.forcedComposableTextPreparationFailures -= 1;
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+#endif
+    if (!CjguiComposableTextTexture(ctx.view, node, scale, scale, displayText
+#ifdef CJGUI_INTERNAL_TESTING
+            , CjguiInternalTextWorkReasonProjectionGeometry
+#endif
+            )) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (node.textTextureByteCount != plannedBytes) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (outFreshBytes) *outFreshBytes = freshBytes;
+    if (ctx.composableTextLayoutPreparationCount < UINT64_MAX)
+        ctx.composableTextLayoutPreparationCount += 1;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 // Developer-only paint sits above both the Metal surface and AppKit's
 // multiline text. It is absent from scene nodes, hit/AX routing, effect
 // replay and backdrop sampling. It stores no application/controller object.
@@ -11527,7 +13220,7 @@ static void CjguiApplyActiveRunAttribute(NSTextStorage *storage, NSString *key,
     for (NSUInteger index = 0; index < nodes.count && drawn < 256; index++) {
         CJGuiInternalComposableSceneNode *node = nodes[index];
         CjguiInternalRendererComposableNode value = node.node;
-        NSRect layout = NSMakeRect(value.x, value.y, value.width, value.height);
+        NSRect layout = CjguiComposableVisualNodeRect(node);
         NSRect output = value.effectGroupPresent
             ? CjguiEffectGroupOutputBounds(nodes, index,
                 MIN(nodes.count, index + value.effectGroupSubtreeCount))
@@ -11545,7 +13238,7 @@ static void CjguiApplyActiveRunAttribute(NSTextStorage *storage, NSString *key,
             uint32_t count = CjguiComposableClipConstraintCount(value);
             for (uint32_t clip = 0; clip < count; clip++) {
                 CGFloat x, y, width, height, radius;
-                CjguiComposableClipConstraintAt(value, clip, &x, &y, &width, &height, &radius);
+                CjguiComposableVisualClipConstraintAt(node, clip, &x, &y, &width, &height, &radius);
                 if (width <= 0 || height <= 0) continue;
                 NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, y, width, height)
                                                               xRadius:radius yRadius:radius];
@@ -12933,8 +14626,27 @@ static void CjguiTestHookOnMainThread(dispatch_block_t block) {
 void cjgui_internal_renderer_enable_main_thread_dispatch(void) {
     if (CjguiIsMainThread()) {
         gCjguiMainThreadDispatchEnabled = YES;
+#ifdef CJGUI_INTERNAL_TESTING
+        gCjguiMainThreadDispatchEverEnabled = YES;
+#endif
     }
 }
+
+#ifdef CJGUI_INTERNAL_TESTING
+CjguiInternalRendererStatus cjgui_internal_renderer_test_set_main_thread_dispatch_enabled(int enabled) {
+    // Only a launcher-owned, already-running AppKit loop may be gated. A bare
+    // cjc process has no main-queue consumer and must not dispatch_sync here.
+    if (!gCjguiMainThreadDispatchEverEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+    if (CjguiIsMainThread()) {
+        gCjguiMainThreadDispatchEnabled = enabled != 0;
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            gCjguiMainThreadDispatchEnabled = enabled != 0;
+        });
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+#endif
 
 void cjgui_internal_renderer_request_application_stop(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -13811,6 +15523,11 @@ cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint
     }
     CJGuiInternalSession *resolved = CjguiLookupSession(session);
     if (!resolved) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    BOOL bindingChanged = resolved.ownedTextSessionBindingEpoch != bindingEpoch ||
+        resolved.ownedTextSessionEnabled != (enabled != 0) ||
+        (enabled && (resolved.ownedTextSessionNodeId != nodeId ||
+                     resolved.ownedTextSessionResourceId != resourceId ||
+                     resolved.ownedTextSessionNodeKind != nodeKind));
     if (enabled) {
         if (nodeId == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         resolved.ownedTextSessionEnabled = YES;
@@ -13825,6 +15542,7 @@ cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint
         resolved.ownedTextSessionNodeKind = 0;
         resolved.ownedTextSessionBindingEpoch = bindingEpoch;
     }
+    if (bindingChanged) [resolved.composableSceneOverlay resetCaretBlink];
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 // ---- ABI: presentClear ----
@@ -13860,16 +15578,32 @@ static BOOL CjguiComposableSceneNeedsMultisampling(NSArray<CJGuiInternalComposab
     return NO;
 }
 
-// A1 票据协议：macOS 侧是同步提交，从不产生未确认票据（present 返回即已接受
-// 或已明确失败）。因此查询只会得到 NONE，确认是幂等的空操作，计数恒为 0。
-// 这两个入口存在是为了让共享内部 ABI 在两端同形，核心不必按平台分叉；它们
-// 不代表 macOS 也支持延迟提交。
+// Ordinary macOS presents settle synchronously. A testing-only hold defers
+// one real staged commit until explicit resolution, exercising the shared
+// pending protocol. Receipt reads and ACKs obey the same AppKit owner thread
+// as the session table and staged resource graph.
 CjguiInternalRendererStatus
 cjgui_internal_renderer_query_present(uint64_t session, uint64_t ticketId,
                                       CjguiInternalRendererPresentReceipt *outReceipt) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_query_present(session, ticketId, outReceipt);
+        });
+        return status;
+    }
     if (outReceipt) memset(outReceipt, 0, sizeof(CjguiInternalRendererPresentReceipt));
     if (ticketId == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    if (!CjguiLookupSession(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (ctx.testPendingComposableTicket == ticketId) {
+        ctx.testComposableTicketQueryCount += 1;
+        if (outReceipt) *outReceipt = ctx.testPendingComposableReceipt;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+#endif
     if (outReceipt) {
         outReceipt->ticketId = ticketId;
         outReceipt->decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_NONE;
@@ -13879,21 +15613,115 @@ cjgui_internal_renderer_query_present(uint64_t session, uint64_t ticketId,
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_acknowledge_present(uint64_t session, uint64_t ticketId) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_acknowledge_present(session, ticketId);
+        });
+        return status;
+    }
     if (ticketId == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    if (!CjguiLookupSession(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+#ifdef CJGUI_INTERNAL_TESTING
+    if (ctx.testPendingComposableTicket == ticketId && ctx.testPendingComposableReceipt.settled) {
+        ctx.testPendingComposableTicket = 0;
+        CjguiInternalRendererPresentReceipt empty = {0};
+        ctx.testPendingComposableReceipt = empty;
+        ctx.testComposableTicketAckCount += 1;
+    }
+#endif
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_present_ticket_stats(uint64_t session,
                                              CjguiInternalRendererPresentTicketStats *out) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_present_ticket_stats(session, out);
+        });
+        return status;
+    }
     if (!out) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     memset(out, 0, sizeof(*out));
-    if (!CjguiLookupSession(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     // macOS 同步提交没有票据，计数恒为 0，但 available=1：这些 0 是真实读数，
     // 不是“平台未实现”。
     out->available = 1;
+#ifdef CJGUI_INTERNAL_TESTING
+    out->nextTicketId = (int64_t)(ctx.testNextComposableTicket + 1);
+    out->unackedTicketId = (int64_t)ctx.testPendingComposableTicket;
+    out->queryCount = (int64_t)ctx.testComposableTicketQueryCount;
+    out->ackCount = (int64_t)ctx.testComposableTicketAckCount;
+    out->acceptedCount = (int64_t)ctx.testComposableTicketAcceptedCount;
+    out->rejectedCount = (int64_t)ctx.testComposableTicketRejectedCount;
+#endif
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_hold_next_composable_present(uint64_t session) {
+#ifdef CJGUI_INTERNAL_TESTING
+    __block CjguiInternalRendererStatus result = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *ctx = CjguiLookupSession(session);
+        if (!ctx || ctx.destroyed) {
+            result = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        } else if (ctx.testPendingComposableTicket != 0) {
+            result = CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+        } else {
+            ctx.testHoldNextComposablePresent = 1;
+            result = CJGUI_INTERNAL_RENDERER_OK;
+        }
+    });
+    return result;
+#else
+    (void)session;
+    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+#endif
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_resolve_pending_composable_present(uint64_t session) {
+#ifdef CJGUI_INTERNAL_TESTING
+    __block CjguiInternalRendererStatus result = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *ctx = CjguiLookupSession(session);
+        if (!ctx || ctx.destroyed) {
+            result = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+            return;
+        }
+        if (ctx.testPendingComposableTicket == 0) return;
+        CjguiInternalRendererPresentReceipt receipt = ctx.testPendingComposableReceipt;
+        if (receipt.settled) { result = receipt.terminalStatus; return; }
+        CjguiInternalRendererFrameObservation observed = {0};
+        ctx.testResolvingComposableTicket = YES;
+        CjguiInternalRendererStatus status = cjgui_internal_renderer_present_composable_scene(session, &observed);
+        ctx.testResolvingComposableTicket = NO;
+        receipt.terminalStatus = status;
+        receipt.decision = status == CJGUI_INTERNAL_RENDERER_OK ||
+            status == CJGUI_INTERNAL_RENDERER_READBACK_FAILED
+                ? CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_ACCEPTED
+                : CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_REJECTED;
+        receipt.resyncRequired = receipt.decision == CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_REJECTED ? 1 : 0;
+        receipt.observation = observed;
+        receipt.settled = 1;
+        ctx.testPendingComposableReceipt = receipt;
+        if (receipt.decision == CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_ACCEPTED)
+            ctx.testComposableTicketAcceptedCount += 1;
+        else ctx.testComposableTicketRejectedCount += 1;
+        result = status;
+    });
+    return result;
+#else
+    (void)session;
+    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+#endif
 }
 
 CjguiInternalRendererStatus
@@ -13944,6 +15772,7 @@ cjgui_internal_renderer_present_clear(uint64_t session,
         view.encodedImageTextures = [NSMutableArray array];
         @try {
 #ifdef CJGUI_INTERNAL_TESTING
+        const uint64_t testStageBeginMicros = CjguiMonotonicMicros();
         view.testComposableNextDrawableMicros = 0;
         view.testComposableCommandBufferMicros = 0;
         view.testComposablePresentMicros = 0;
@@ -14196,6 +16025,9 @@ cjgui_internal_renderer_present_clear(uint64_t session,
         // the bounded effect budget after repeated replacements.
         __block NSArray<CJGuiInternalComposableSceneNode *> *submittedComposableResources = [view.composableNodes copy];
         __block NSArray<id<MTLTexture>> *submittedImageTextures = [view.encodedImageTextures copy];
+        __block NSArray<id<MTLTexture>> *submittedTextTextures =
+            CjguiComposableTextTexturesInNodes(view.composableNodes);
+        CjguiTextSubmissionCompletion *textCompletion = [[CjguiTextSubmissionCompletion alloc] init];
         // The node array above is shallow. A later accepted redraw can replace
         // effectTarget on the very same node object, so retain the exact target
         // generations this submission read or wrote, including cache hits.
@@ -14227,9 +16059,33 @@ cjgui_internal_renderer_present_clear(uint64_t session,
         const uint64_t submittedBackgroundEnvironmentRevision = ctx.windowBackgroundEnvironmentRevision;
         const uint64_t submittedBackgroundSceneVersion = ctx.composableSceneVersion;
         const uint64_t submissionGeneration = ctx.sessionGeneration;
+#ifdef CJGUI_INTERNAL_TESTING
+        const uint64_t testEncodeEndMicros = CjguiMonotonicMicros();
+        [commandBuffer addScheduledHandler:^(id<MTLCommandBuffer> scheduledBuffer) {
+            (void)scheduledBuffer;
+            const uint64_t when = CjguiMonotonicMicros();
+            dispatch_async(dispatch_get_main_queue(), ^{
+                CJGuiInternalSession *live = CjguiLookupSession(session);
+                if (!live || live.sessionGeneration != submissionGeneration) return;
+                NSMutableArray<NSValue *> *history = live.testSubmissionTimelines;
+                for (NSUInteger index = 0; index < history.count; index++) {
+                    CjguiInternalRendererSubmissionTimeline value = {0};
+                    [history[index] getValue:&value];
+                    if (value.frameIndex != submittedFrameIndex || value.sessionGeneration != submissionGeneration) continue;
+                    value.scheduledMicros = when;
+                    history[index] = [NSValue valueWithBytes:&value objCType:@encode(CjguiInternalRendererSubmissionTimeline)];
+                    break;
+                }
+            });
+        }];
+#endif
         [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> completedBuffer) {
+#ifdef CJGUI_INTERNAL_TESTING
+            const uint64_t testCompletedMicros = CjguiMonotonicMicros();
+#endif
             (void)submittedComposableResources;
             (void)submittedImageTextures;
+            (void)submittedTextTextures;
             (void)submittedEffectTargets;
             const MTLCommandBufferStatus completionStatus = completedBuffer.status;
             if (completionStatus == MTLCommandBufferStatusCompleted) {
@@ -14240,9 +16096,11 @@ cjgui_internal_renderer_present_clear(uint64_t session,
                 completionStatus == MTLCommandBufferStatusCompleted ? nil : submittedRedrawnEffects;
             submittedComposableResources = nil;
             submittedImageTextures = nil;
+            submittedTextTextures = nil;
             submittedEffectTargets = nil;
             submittedRedrawnEffects = nil;
             submittedRedrawnBackdrops = nil;
+            textCompletion.resourcesReleased = YES;
             int64_t gpuDurationMicros = -1;
             if (completionStatus == MTLCommandBufferStatusCompleted) {
                 if (@available(macOS 10.15, *)) {
@@ -14258,6 +16116,20 @@ cjgui_internal_renderer_present_clear(uint64_t session,
             dispatch_async(dispatch_get_main_queue(), ^{
                 CJGuiInternalSession *live = CjguiLookupSession(session);
                 if (!live || live.destroyed || live.sessionGeneration != submissionGeneration) return;
+                [live.submittedTextTextures removeObjectForKey:@(submittedFrameIndex)];
+                [live.submittedTextCompletionFlags removeObjectForKey:@(submittedFrameIndex)];
+#ifdef CJGUI_INTERNAL_TESTING
+                NSMutableArray<NSValue *> *history = live.testSubmissionTimelines;
+                for (NSUInteger index = 0; index < history.count; index++) {
+                    CjguiInternalRendererSubmissionTimeline value = {0};
+                    [history[index] getValue:&value];
+                    if (value.frameIndex != submittedFrameIndex || value.sessionGeneration != submissionGeneration) continue;
+                    value.completedMicros = testCompletedMicros;
+                    value.completionStatus = (int32_t)completionStatus;
+                    history[index] = [NSValue valueWithBytes:&value objCType:@encode(CjguiInternalRendererSubmissionTimeline)];
+                    break;
+                }
+#endif
                 if (completionStatus != MTLCommandBufferStatusCompleted) {
                     for (CJGuiInternalComposableEffectTarget *target in failedRedrawnEffects)
                         target.invalidatedByGpuFailure = YES;
@@ -14300,11 +16172,50 @@ cjgui_internal_renderer_present_clear(uint64_t session,
         [commandBuffer presentDrawable:drawable];
  #ifdef CJGUI_INTERNAL_TESTING
         view.testComposablePresentMicros = CjguiMonotonicMicros() - presentStarted;
+        if (ctx.testSubmitGateArmed) {
+            ctx.testSubmitGateArmed = NO;
+            ctx.testMidworkAStartMicros = CjguiMonotonicMicros();
+            if (ctx.testMidworkArmed) {
+                (void)cjgui_internal_renderer_test_release_midwork_composable_event(
+                    ctx.rendererSessionToken);
+            } else {
+                // Test-only handoff: the public UDS client sends exactly one
+                // request once the actual native submit gate has opened.
+                const char *marker = getenv("CJGUI_TEST_PUBLIC_GATE_MARKER");
+                if (marker && marker[0]) {
+                    int markerFd = open(marker, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+                    if (markerFd >= 0) { (void)write(markerFd, "gate\n", 5); close(markerFd); }
+                }
+            }
+            usleep(ctx.testSubmitGateHoldMicros);
+            ctx.testMidworkAEndMicros = CjguiMonotonicMicros();
+        }
  #endif
  #ifdef CJGUI_INTERNAL_TESTING
         uint64_t commitStarted = CjguiMonotonicMicros();
  #endif
+        if (!ctx.submittedTextTextures) ctx.submittedTextTextures = [NSMutableDictionary dictionary];
+        if (!ctx.submittedTextCompletionFlags)
+            ctx.submittedTextCompletionFlags = [NSMutableDictionary dictionary];
+        ctx.submittedTextTextures[@(submittedFrameIndex)] = submittedTextTextures;
+        ctx.submittedTextCompletionFlags[@(submittedFrameIndex)] = textCompletion;
         [commandBuffer commit];
+#ifdef CJGUI_INTERNAL_TESTING
+        const uint64_t testCommittedMicros = CjguiMonotonicMicros();
+        CjguiInternalRendererSubmissionTimeline testTimeline = {0};
+        testTimeline.sessionGeneration = submissionGeneration;
+        testTimeline.sceneVersion = submittedEffectSceneVersion;
+        testTimeline.frameIndex = submittedFrameIndex;
+        testTimeline.stageBeginMicros = testStageBeginMicros;
+        testTimeline.encodeEndMicros = testEncodeEndMicros;
+        testTimeline.presentCallMicros = presentStarted;
+        testTimeline.commitCallBeginMicros = commitStarted;
+        testTimeline.commitCallMicros = testCommittedMicros;
+        if (!ctx.testSubmissionTimelines) ctx.testSubmissionTimelines = [NSMutableArray array];
+        [ctx.testSubmissionTimelines addObject:[NSValue valueWithBytes:&testTimeline
+            objCType:@encode(CjguiInternalRendererSubmissionTimeline)]];
+        if (ctx.testSubmissionTimelines.count > 8) [ctx.testSubmissionTimelines removeObjectAtIndex:0];
+#endif
         ctx.effectSubmittedSceneVersion = submittedEffectSceneVersion;
         ctx.effectSubmittedFrameIndex = submittedFrameIndex;
         ctx.effectRequestedRadiusPoints = backdropOutcome.requestedRadiusPoints;
@@ -14322,6 +16233,9 @@ cjgui_internal_renderer_present_clear(uint64_t session,
         view.frameIndex = submittedFrameIndex;
         view.lastSubmittedDrawableSize = drawableSize;
         view.lastSubmittedPointSize = view.bounds.size;
+        view.lastSubmittedContentsScale = view.metalLayer.contentsScale;
+        ctx.lastSubmittedResizeVersion = ctx.resizeVersion;
+        ctx.lastSubmittedSceneVersion = ctx.composableSceneVersion;
         ctx.windowBackgroundSubmittedFrameIndex = submittedFrameIndex;
         ctx.windowBackgroundSubmittedRequestRevision = submittedBackgroundRequestRevision;
         CjguiPublishAcceptedEffectCache(view);
@@ -14645,7 +16559,6 @@ static CjguiInternalRendererStatus CjguiConfigureComposableSceneOnMain(uint64_t 
         [ctx.view addSubview:overlay];
         ctx.composableSceneOverlay = overlay;
     }
-    ctx.stagedComposableSceneVersion = projectionVersion;
     // Copy only the container. The immutable current node objects are shared
     // with staging until `set_composable_scene_node` writes a changed index.
     // This preserves the all-or-nothing live snapshot while removing the
@@ -14658,11 +16571,9 @@ static CjguiInternalRendererStatus CjguiConfigureComposableSceneOnMain(uint64_t 
         if (!node) {
             node = [[CJGuiInternalComposableSceneNode alloc] init];
             if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-#ifdef CJGUI_INTERNAL_TESTING
-            if (ctx.testComposableSceneNodeAllocationCount < UINT64_MAX) {
-                ctx.testComposableSceneNodeAllocationCount += 1;
+            if (ctx.composableSceneNodeAllocationCount < UINT64_MAX) {
+                ctx.composableSceneNodeAllocationCount += 1;
             }
-#endif
             node.index = index; node.label = @""; node.value = @""; node.imageResourcePath = @"";
             node.imageResourceId = @""; node.imageResourceVersion = 0; node.imageTextureCacheKey = @"";
             node.imageTextureContentKey = @""; node.textTextureCacheKey = @"";
@@ -14670,7 +16581,10 @@ static CjguiInternalRendererStatus CjguiConfigureComposableSceneOnMain(uint64_t 
         }
         [nextStaging addObject:node];
     }
+    CjguiAdvanceComposableImageCandidateLeases(CjguiComposableImageDomainForSession(ctx), ctx, projectionVersion);
+    ctx.stagedComposableSceneVersion = projectionVersion;
     ctx.stagedComposableNodes = nextStaging;
+    ctx.stagedComposableGeometryIndices = [NSMutableIndexSet indexSet];
     // Every scene candidate starts with an explicit empty transfer table. A
     // caller that declares transfers replaces it below; legacy consumers
     // therefore cannot accidentally retain a prior scene's paste/drop target.
@@ -14691,6 +16605,103 @@ cjgui_internal_renderer_configure_composable_scene(uint64_t session, uint64_t pr
         return status;
     }
     return CjguiConfigureComposableSceneOnMain(session, projectionVersion, nodeCount);
+}
+
+static BOOL CjguiComposableGeometryScalarValid(double value) {
+    return isfinite(value) && value >= -4096.0 && value <= 4096.0;
+}
+
+static CjguiInternalRendererStatus CjguiSetComposableSceneGeometryOnMain(
+    uint64_t session, uint64_t projectionVersion, uint32_t nodeIndex,
+    const CjguiInternalRendererComposableGeometry *geometry) {
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!geometry || projectionVersion == 0 || projectionVersion != ctx.stagedComposableSceneVersion ||
+        nodeIndex >= ctx.stagedComposableNodes.count ||
+        [ctx.stagedComposableGeometryIndices containsIndex:nodeIndex]) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CJGuiInternalComposableSceneNode *staged = ctx.stagedComposableNodes[nodeIndex];
+    if (!staged || staged.node.nodeId != geometry->nodeId ||
+        geometry->clipCount != staged.node.clipConstraintCount ||
+        geometry->clipCount > CJGUI_INTERNAL_COMPOSABLE_CLIP_CONSTRAINT_CAPACITY ||
+        geometry->reserved != 0 ||
+        !CjguiComposableGeometryScalarValid(geometry->translateX) ||
+        !CjguiComposableGeometryScalarValid(geometry->translateY) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip0X) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip0Y) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip1X) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip1Y) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip2X) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip2Y) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip3X) ||
+        !CjguiComposableGeometryScalarValid(geometry->clip3Y) ||
+        fabs((double)staged.node.x + geometry->translateX) > 1000000000.0 ||
+        fabs((double)staged.node.y + geometry->translateY) > 1000000000.0) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    CjguiInternalRendererComposableGeometry stagedGeometry = staged.geometry;
+    if (memcmp(&stagedGeometry, geometry, sizeof(*geometry)) != 0) {
+        CJGuiInternalComposableSceneNode *live = nodeIndex < ctx.composableNodes.count
+            ? ctx.composableNodes[nodeIndex] : nil;
+        if (staged == live) {
+            staged = CjguiCloneComposableSceneNode(ctx, live, nodeIndex, projectionVersion);
+            if (!staged) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            ctx.stagedComposableNodes[nodeIndex] = staged;
+        }
+        staged.geometry = *geometry;
+    }
+    [ctx.stagedComposableGeometryIndices addIndex:nodeIndex];
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_geometry(
+    uint64_t session, uint64_t projectionVersion, uint32_t nodeIndex,
+    const CjguiInternalRendererComposableGeometry *geometry) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = CjguiSetComposableSceneGeometryOnMain(session, projectionVersion, nodeIndex, geometry);
+        });
+        return status;
+    }
+    return CjguiSetComposableSceneGeometryOnMain(session, projectionVersion, nodeIndex, geometry);
+}
+
+static void CjguiPruneUnreferencedComposableTransferResources(
+    CJGuiInternalComposableImageResourceDomain *domain) {
+    if (!domain || domain.destroyed) return;
+    NSMutableSet<NSString *> *protected = CjguiComposableImageProtectedKeys(domain, YES);
+    for (NSString *key in [domain.resources.allKeys copy]) {
+        if (![key hasPrefix:@"cjgui-transfer:"] || [protected containsObject:key]) continue;
+        CJGuiInternalComposableImageResource *resource = domain.resources[key];
+        resource.texture = nil;
+        resource.encodedData = nil;
+        [domain.textureCache removeObjectForKey:key];
+        [domain.resources removeObjectForKey:key];
+    }
+    CjguiPruneComposableImageTextureCache(domain, YES);
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_discard_composable_scene_candidate(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus result = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            result = cjgui_internal_renderer_discard_composable_scene_candidate(session);
+        });
+        return result;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    [ctx.stagedComposableNodes removeAllObjects];
+    [ctx.stagedComposableGeometryIndices removeAllIndexes];
+    ctx.stagedComposableSceneVersion = 0;
+    CjguiRestoreAcceptedComposableImageDemand(ctx);
+    // An accepted transfer whose candidate was discarded goes back to ordinary
+    // reusable-cache ownership; the lease must not outlive the candidate.
+    CjguiSettleComposableImageCandidateLeases(CjguiComposableImageDomainForSession(ctx), ctx, NO);
+    CjguiPruneUnreferencedComposableTransferResources(CjguiComposableImageDomainForSession(ctx));
+    return CJGUI_INTERNAL_RENDERER_OK;
 }
 
 static const NSUInteger kCjguiComposableDataTransferItemCapacity = 128;
@@ -14787,6 +16798,11 @@ static CjguiInternalRendererStatus CjguiSetComposableDataTransferItemOnMain(
     NSString *sourceIdentity = sourceIdentityBytes ? [NSString stringWithUTF8String:sourceIdentityBytes] : nil;
     if (!CjguiComposableDataTransferFormatIsValid(format) || !payload || !sourceKind || !sourceIdentity) {
         return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    }
+    if (item->localPngFileAllowed > 1 ||
+        (item->localPngFileAllowed && (item->role != CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET ||
+         ![format isEqualToString:@"image/png"] || item->expectedOwnerVersion < 0))) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
     }
     NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
     if (!payloadData || payloadData.length > item->maximumPayloadBytes ||
@@ -14888,6 +16904,32 @@ static CjguiInternalRendererStatus CjguiSetComposableSceneNodeOnMain(
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
 #endif
+    // A transfer image can be declared directly by a normal application,
+    // without a paste/drop prepare. Admit and decode it through the SAME
+    // bounded domain path before COW staging, cache lookup, or the previous-
+    // texture shortcut. A file-looking path must never turn transfer bytes
+    // into an unbounded ordinary asset load.
+    if (imageEncodedData) {
+        NSString *transferPath = imageResourcePath ? [NSString stringWithUTF8String:imageResourcePath] : nil;
+        NSString *transferId = imageResourceId ? [NSString stringWithUTF8String:imageResourceId] : nil;
+        if (node->nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE ||
+            ![transferPath hasPrefix:@"cjgui-transfer:"] || ![transferId isEqualToString:transferPath] ||
+            imageResourceVersion != 0 || imageEncodedData.length == 0 ||
+            imageEncodedData.length > 512u * 1024u) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+        uint32_t width = 0, height = 0;
+        uint64_t decodeMicros = 0;
+        CjguiInternalRendererStatus admitted = CjguiPrepareComposablePngTransferOnMain(
+            session, imageResourcePath, imageEncodedData.bytes, (uint32_t)imageEncodedData.length,
+            &width, &height, &decodeMicros);
+        if (admitted != CJGUI_INTERNAL_RENDERER_OK) return admitted;
+        // The scene itself, not the clipboard owner CAS, owns this texture.
+        // Consume exactly the temporary preparation reference while keeping
+        // the ready cache entry available for the candidate scene node.
+        admitted = cjgui_internal_renderer_finish_composable_png_transfer(session, imageResourcePath, 1);
+        if (admitted != CJGUI_INTERNAL_RENDERER_OK) return admitted;
+    } else if (imageResourcePath && strncmp(imageResourcePath, "cjgui-transfer:", 15) == 0) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
     CJGuiInternalComposableSceneNode *copy = ctx.stagedComposableNodes[nodeIndex];
     // A setter is the COW boundary. It runs only for Cangjie nodes whose
     // rendered/input state changed, so untouched staged entries still point
@@ -14970,6 +17012,13 @@ static CjguiInternalRendererStatus CjguiSetComposableSceneNodeOnMain(
                 copy.imageTexture = nil;
                 copy.imageTextureContentKey = @"";
             }
+        }
+        // Only an exact staged texture can take this session's lease. A
+        // missing/failed image must leave the candidate's old projection
+        // intact until commit or discard settles this session's hold.
+        if ([copy.imageTextureContentKey isEqualToString:declaredCacheKey]) {
+            CjguiTakeComposableImageCandidateLease(CjguiComposableImageDomainForSession(ctx), ctx,
+                                                   declaredCacheKey, copy.imageTexture);
         }
     } else {
         copy.imageTexture = nil; copy.imageTextureCacheKey = @""; copy.imageTextureContentKey = @"";
@@ -15181,6 +17230,311 @@ cjgui_internal_renderer_restore_composable_selection(uint64_t session, uint64_t 
     return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
 }
 
+// REANCHOR: see the header. Two mechanisms are attempted in order: (1) keep the
+// live marked run and rewrite only the surrounding storage (the input source
+// never sees its conversion interrupted), (2) if the storage edits dropped the
+// marked state, re-install the same preedit through the ordinary client entry.
+// The readback at the end decides: anything that does not match the assembled
+// target leaves the caller to cancel instead of continuing on a broken proxy.
+//
+// `replacementStart16 == UINT32_MAX` infers the range from the proxy itself: the
+// marked run keeps its absolute offset, so the text before it (the old head)
+// must survive verbatim at the front of `base`; the preedit is then installed at
+// that same offset and everything after it is whatever the new base carries
+// there. A change inside the head (or a shortened head) is refused, never
+// guessed.
+static CjguiInternalRendererStatus
+CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
+                                CJGuiInternalComposableInputProxy *proxy, NSString *base,
+                                uint32_t replacementStart16, uint32_t replacementLength16,
+                                uint32_t *outMechanism, NSRange *outMarked, NSRange *outInner) {
+    if (!outMechanism || !outMarked || !outInner || !base) {
+        fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=bad_arguments\n");
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outMechanism = 0;
+    *outMarked = NSMakeRange(0, 0);
+    *outInner = NSMakeRange(0, 0);
+    if (!proxy || !proxy.hasMarkedText || !proxy.compositionSessionOwned) {
+        fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=no_live_composition proxy=%d marked=%d owned=%d\n",
+            (int)(proxy != nil), proxy ? (int)proxy.hasMarkedText : 0,
+            proxy ? (int)proxy.compositionSessionOwned : 0);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSString *old = proxy.string ?: @"";
+    NSRange marked = proxy.markedRange;
+    if (marked.location == NSNotFound || NSMaxRange(marked) > old.length) {
+        fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=marked_range_invalid loc=%ld len=%lu oldLen=%lu\n",
+            (long)marked.location, (unsigned long)marked.length, (unsigned long)old.length);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSString *preedit = [old substringWithRange:marked];
+    NSRange inner = proxy.selectedRange;
+    if (inner.location < marked.location || NSMaxRange(inner) > NSMaxRange(marked)) {
+        fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=inner_outside_marked inner=%lu+%lu marked=%lu+%lu\n",
+            (unsigned long)inner.location, (unsigned long)inner.length,
+            (unsigned long)marked.location, (unsigned long)marked.length);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSUInteger innerAnchor = inner.location - marked.location;
+    NSUInteger innerFocus = NSMaxRange(inner) - marked.location;
+    // UINT32_MAX-1: infer the range AND leave the client unmarked (no re-install).
+    // The experiment this serves: does the input source itself survive the storage
+    // update, or is the conversion buffer already gone?
+    BOOL allowReinstall = YES;
+    if (replacementStart16 == UINT32_MAX - 1) {
+        allowReinstall = NO;
+        replacementStart16 = UINT32_MAX;
+    }
+    if (replacementStart16 == UINT32_MAX) {
+        NSString *head = [old substringToIndex:marked.location];
+        // `hasPrefix:@""` answers NO on this Foundation, and an empty head is the
+        // ordinary "composition at offset 0" case, so test the length explicitly.
+        if (head.length > 0 && ![base hasPrefix:head]) {
+            fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=head_changed marked=%lu+%lu baseLen=%lu oldLen=%lu "
+                    "base=[%s] old=[%s]\n",
+                (unsigned long)marked.location, (unsigned long)marked.length,
+                (unsigned long)base.length, (unsigned long)old.length,
+                [[base substringToIndex:MIN(base.length, (NSUInteger)48)] UTF8String],
+                [[old substringToIndex:MIN(old.length, (NSUInteger)48)] UTF8String]);
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+        replacementStart16 = (uint32_t)head.length;
+        replacementLength16 = 0;
+    }
+    if ((NSUInteger)replacementStart16 > base.length ||
+        (NSUInteger)replacementLength16 > base.length - (NSUInteger)replacementStart16) {
+        fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=range_outside_base start=%u len=%u baseLen=%lu\n",
+            replacementStart16, replacementLength16, (unsigned long)base.length);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSString *newPrefix = [base substringToIndex:(NSUInteger)replacementStart16];
+    NSString *newSuffix = [base substringFromIndex:(NSUInteger)replacementStart16 + (NSUInteger)replacementLength16];
+    NSString *target = [NSString stringWithFormat:@"%@%@%@", newPrefix, preedit, newSuffix];
+    NSUInteger expectedMarkedStart = newPrefix.length;
+    uint32_t mechanism = 1;
+    BOOL targetAlreadyInstalled = [old isEqualToString:target] && marked.location == expectedMarkedStart &&
+        marked.length == preedit.length;
+    if (!targetAlreadyInstalled) {
+        // Mechanism 1: edit only the storage outside the marked run. Tail first, then
+        // head; with the marked run untouched the platform composition keeps its
+        // segment and attributes. The edits go through shouldChangeTextInRange:/
+        // didChangeText so the text view adjusts its own ranges (including the
+        // marked run) instead of seeing a raw storage mutation and dropping it.
+        overlay.applyingProjection = YES;
+        overlay.compositionTerminalInFlight = YES;
+        NSTextStorage *storage = proxy.textStorage;
+        NSRange tailRange = NSMakeRange(NSMaxRange(marked), old.length - NSMaxRange(marked));
+        if ([proxy shouldChangeTextInRange:tailRange replacementString:newSuffix]) {
+            [storage replaceCharactersInRange:tailRange withString:newSuffix];
+            [proxy didChangeText];
+        }
+        NSRange headRange = NSMakeRange(0, marked.location);
+        if ([proxy shouldChangeTextInRange:headRange replacementString:newPrefix]) {
+            [storage replaceCharactersInRange:headRange withString:newPrefix];
+            [proxy didChangeText];
+        }
+        overlay.compositionTerminalInFlight = NO;
+        overlay.applyingProjection = NO;
+        if (!allowReinstall) {
+            mechanism = 3;
+        } else if (!proxy.hasMarkedText) {
+            // Mechanism 2: the storage edits ended the marked state. Re-install the
+            // same preedit through the ordinary client entry, on the same node. The
+            // replacement range must describe where the preedit lives NOW: the
+            // storage edit already put it in place, so it replaces the run the old
+            // preedit occupied instead of inserting a second copy.
+            NSString *current = proxy.string ?: @"";
+            NSUInteger replaceLength = 0;
+            if ([current isEqualToString:target]) {
+                replaceLength = preedit.length;
+            } else if (![current isEqualToString:base]) {
+                return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            }
+            mechanism = 2;
+            overlay.applyingProjection = YES;
+            overlay.compositionTerminalInFlight = YES;
+            [(NSTextView *)proxy setMarkedText:preedit
+                                 selectedRange:NSMakeRange(innerAnchor, innerFocus - innerAnchor)
+                              replacementRange:NSMakeRange(expectedMarkedStart, replaceLength)];
+            overlay.compositionTerminalInFlight = NO;
+            overlay.applyingProjection = NO;
+        }
+    }
+    // Read back what the proxy actually holds before reporting success.
+    NSString *readBack = proxy.string ?: @"";
+    NSRange readMarked = proxy.markedRange;
+    if (mechanism == 3) {
+        // The client is intentionally left unmarked: only the text has to be right.
+        if (![readBack isEqualToString:target]) {
+            fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=readback_mismatch_unmarked readLen=%lu targetLen=%lu\n",
+                (unsigned long)readBack.length, (unsigned long)target.length);
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+        proxy.compositionBaseString = base;
+        proxy.compositionBaseSelection = NSMakeRange((NSUInteger)replacementStart16, 0);
+        if ([proxy respondsToSelector:@selector(inputContext)]) {
+            [(NSTextInputContext *)[proxy inputContext] invalidateCharacterCoordinates];
+        }
+        // The unmarked route has no marked run to read back; the preedit sits in the
+        // storage as ordinary text. Print it so the discriminant record shows which
+        // mechanism actually ran.
+        fprintf(stderr, "CJGUI_REANCHOR_INSTALL mechanism=%u marked=0+0 inner=0+0 baseLen=%lu "
+                "unmarked_preedit=%lu\n",
+            mechanism, (unsigned long)base.length, (unsigned long)preedit.length);
+        *outMechanism = mechanism;
+        *outMarked = NSMakeRange(expectedMarkedStart, preedit.length);
+        *outInner = NSMakeRange(expectedMarkedStart + innerAnchor, innerFocus - innerAnchor);
+        overlay.activeTextAttributedGeneration += 1;
+#ifdef CJGUI_INTERNAL_TESTING
+        overlay.testActiveTextWorkReason = CjguiInternalTextWorkReasonActiveContent;
+#endif
+        [overlay refreshGpuTextForActiveInput];
+        [overlay setNeedsDisplay:YES];
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if (![readBack isEqualToString:target] || !proxy.hasMarkedText ||
+        readMarked.location == NSNotFound || readMarked.location != expectedMarkedStart ||
+        readMarked.length != preedit.length) {
+        fprintf(stderr, "CJGUI_REANCHOR_REFUSED reason=readback_mismatch mechanism=%u marked=%ld+%lu "
+                "expected=%lu+%lu readLen=%lu targetLen=%lu\n",
+            mechanism, (long)readMarked.location, (unsigned long)readMarked.length,
+            (unsigned long)expectedMarkedStart, (unsigned long)preedit.length,
+            (unsigned long)readBack.length, (unsigned long)target.length);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    // The cancel base must roll back to the NEW projection, not the pre-write one.
+    proxy.compositionBaseString = base;
+    proxy.compositionBaseSelection = NSMakeRange((NSUInteger)replacementStart16, 0);
+    NSRange applied = NSMakeRange(readMarked.location + innerAnchor, innerFocus - innerAnchor);
+    overlay.applyingProjection = YES;
+    proxy.selectedRange = applied;
+    overlay.applyingProjection = NO;
+    NSRange readSel = proxy.selectedRange;
+    if (readSel.location < readMarked.location || NSMaxRange(readSel) > NSMaxRange(readMarked)) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if ([proxy respondsToSelector:@selector(inputContext)]) {
+        [(NSTextInputContext *)[proxy inputContext] invalidateCharacterCoordinates];
+    }
+    *outMechanism = mechanism;
+    *outMarked = readMarked;
+    *outInner = readSel;
+    fprintf(stderr, "CJGUI_REANCHOR_INSTALL mechanism=%u marked=%lu+%lu inner=%lu+%lu baseLen=%lu\n",
+        mechanism, (unsigned long)readMarked.location, (unsigned long)readMarked.length,
+        (unsigned long)readSel.location, (unsigned long)(NSMaxRange(readSel) - readSel.location),
+        (unsigned long)base.length);
+    overlay.activeTextAttributedGeneration += 1;
+#ifdef CJGUI_INTERNAL_TESTING
+    overlay.testActiveTextWorkReason = CjguiInternalTextWorkReasonActiveContent;
+#endif
+    [overlay refreshGpuTextForActiveInput];
+    [overlay setNeedsDisplay:YES];
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_reanchor_composition(uint64_t session, uint64_t nodeId,
+                                             int64_t resourceId, uint32_t nodeKind,
+                                             uint64_t sceneVersion, const char *newBaseText,
+                                             uint32_t replacementStart16, uint32_t replacementLength16,
+                                             uint32_t *outMechanism,
+                                             uint32_t *outMarkedStart16, uint32_t *outMarkedLength16,
+                                             uint32_t *outInnerStart16, uint32_t *outInnerEnd16) {
+    if (!outMechanism || !outMarkedStart16 || !outMarkedLength16 || !outInnerStart16 ||
+        !outInnerEnd16 || !newBaseText) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outMechanism = 0;
+    *outMarkedStart16 = 0; *outMarkedLength16 = 0; *outInnerStart16 = 0; *outInnerEnd16 = 0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_reanchor_composition(session, nodeId, resourceId, nodeKind,
+                sceneVersion, newBaseText, replacementStart16, replacementLength16, outMechanism,
+                outMarkedStart16, outMarkedLength16, outInnerStart16, outInnerEnd16);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay || !ctx.window) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (ctx.composableSceneVersion != sceneVersion) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    CJGuiInternalComposableInputProxy *proxy = (CJGuiInternalComposableInputProxy *)overlay.inputProxy;
+    if (!proxy || !proxy.hasMarkedText || !proxy.compositionSessionOwned ||
+        ctx.window.firstResponder != proxy) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (proxy.compositionSessionNodeId != nodeId || proxy.compositionSessionResourceId != resourceId ||
+        proxy.compositionSessionNodeKind != nodeKind) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSString *base = [NSString stringWithUTF8String:newBaseText];
+    if (!base) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    uint32_t mechanism = 0;
+    NSRange readMarked = NSMakeRange(0, 0);
+    NSRange readSel = NSMakeRange(0, 0);
+    CjguiInternalRendererStatus installed = CjguiInstallCompositionReanchor(overlay, proxy, base,
+        replacementStart16, replacementLength16, &mechanism, &readMarked, &readSel);
+    if (installed != CJGUI_INTERNAL_RENDERER_OK) {
+        return installed;
+    }
+    *outMechanism = mechanism;
+    *outMarkedStart16 = (uint32_t)readMarked.location;
+    *outMarkedLength16 = (uint32_t)readMarked.length;
+    *outInnerStart16 = (uint32_t)readSel.location;
+    *outInnerEnd16 = (uint32_t)NSMaxRange(readSel);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// REANCHOR: arm one request for the NEXT accepted scene of this exact node. The
+// window calls this before publishing a candidate whose owner value advanced
+// during an arbitrated composition; the accept path then preserves the live
+// marked run instead of cancelling it. `baseText == NULL` clears the request.
+// Arming changes no proxy state and no owner state.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_arm_composition_reanchor(uint64_t session, uint64_t nodeId,
+                                                 int64_t resourceId, uint32_t nodeKind,
+                                                 const char *baseText,
+                                                 uint32_t replacementStart16,
+                                                 uint32_t replacementLength16) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_arm_composition_reanchor(session, nodeId, resourceId,
+                nodeKind, baseText, replacementStart16, replacementLength16);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    if (!baseText) {
+        overlay.armedReanchorBase = nil;
+        overlay.armedReanchorActive = NO;
+        overlay.armedReanchorNodeId = 0;
+        overlay.armedReanchorResourceId = -1;
+        overlay.armedReanchorNodeKind = 0;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    NSString *base = [NSString stringWithUTF8String:baseText];
+    if (!base) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    overlay.armedReanchorNodeId = nodeId;
+    overlay.armedReanchorResourceId = resourceId;
+    overlay.armedReanchorNodeKind = nodeKind;
+    overlay.armedReanchorStart16 = replacementStart16;
+    overlay.armedReanchorLength16 = replacementLength16;
+    overlay.armedReanchorBase = base;
+    overlay.armedReanchorActive = YES;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_read_composable_selection(uint64_t session, uint64_t nodeId,
                                                   int64_t resourceId, uint32_t nodeKind,
@@ -15338,6 +17692,36 @@ cjgui_internal_renderer_cancel_composable_pointer_capture(uint64_t session) {
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+CjguiInternalRendererStatus
+cjgui_internal_renderer_cancel_composable_pointer_capture_epoch(uint64_t session,
+                                                                 uint64_t gestureEpoch) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_cancel_composable_pointer_capture_epoch(session, gestureEpoch);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay) {
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    if (gestureEpoch != 0 && overlay.pointerCaptureActive &&
+        overlay.pointerCaptureGestureEpoch == gestureEpoch) [overlay cancelPointerCapture];
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(
+    uint64_t session, uint64_t appInstance, uint64_t componentInstance,
+    uint64_t surfaceGeneration, int64_t pointerId, uint64_t gestureEpoch) {
+    (void)session; (void)appInstance; (void)componentInstance;
+    (void)surfaceGeneration; (void)pointerId; (void)gestureEpoch;
+    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
 static CjguiInternalRendererStatus CjguiCommitComposableSceneOnMain(uint64_t session) {
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
     if (!ctx || !ctx.view || !ctx.composableSceneOverlay || ctx.stagedComposableNodes.count == 0) {
@@ -15346,6 +17730,26 @@ static CjguiInternalRendererStatus CjguiCommitComposableSceneOnMain(uint64_t ses
 #ifdef CJGUI_INTERNAL_TESTING
     uint64_t started = CjguiMonotonicMicros();
 #endif
+    NSUInteger geometryCount = ctx.stagedComposableGeometryIndices.count;
+    if (geometryCount > 0 && geometryCount != ctx.stagedComposableNodes.count)
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    // Old native clients that do not stage geometry explicitly get the identity
+    // transform. A previous translated scene may not leak into their candidate.
+    if (geometryCount == 0) {
+        for (NSUInteger index = 0; index < ctx.stagedComposableNodes.count; index++) {
+            CJGuiInternalComposableSceneNode *node = ctx.stagedComposableNodes[index];
+            CjguiInternalRendererComposableGeometry identity = {0};
+            CjguiInternalRendererComposableGeometry oldGeometry = node.geometry;
+            if (memcmp(&oldGeometry, &identity, sizeof(identity)) == 0) continue;
+            CJGuiInternalComposableSceneNode *live = index < ctx.composableNodes.count ? ctx.composableNodes[index] : nil;
+            if (node == live) {
+                node = CjguiCloneComposableSceneNode(ctx, live, (uint32_t)index, ctx.stagedComposableSceneVersion);
+                if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                ctx.stagedComposableNodes[index] = node;
+            }
+            node.geometry = identity;
+        }
+    }
     for (CJGuiInternalComposableSceneNode *node in ctx.stagedComposableNodes) {
         // Reused COW entries intentionally keep their original capture
         // version. Only a never-initialized slot is invalid; native FIFO
@@ -15407,6 +17811,10 @@ static CjguiInternalRendererStatus CjguiCommitComposableSceneOnMain(uint64_t ses
     // subscriptions intact, while the newly accepted scene replaces them
     // atomically before a later completion can wake this window.
     CjguiReconcileCommittedComposableImageSubscribers(ctx);
+    // The candidate cycle ended: a transfer lease that the just-committed
+    // scene did not take has no further use holding a texture.
+    CjguiSettleComposableImageCandidateLeases(CjguiComposableImageDomainForSession(ctx), ctx, NO);
+    CjguiPruneUnreferencedComposableTransferResources(CjguiComposableImageDomainForSession(ctx));
     CjguiPruneComposableImageTextureCache(CjguiComposableImageDomainForSession(ctx), NO);
     ctx.view.composableNodes = [ctx.composableNodes copy];
     if (imageContentChanged) {
@@ -15512,6 +17920,26 @@ cjgui_internal_renderer_present_composable_scene(uint64_t session, CjguiInternal
     }
 #ifdef CJGUI_INTERNAL_TESTING
     CJGuiInternalSession *candidate = CjguiLookupSession(session);
+    if (candidate && candidate.testPendingComposableTicket != 0 &&
+        !candidate.testResolvingComposableTicket) {
+        if (outObservation) outObservation->ticketId = candidate.testPendingComposableTicket;
+        return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+    }
+    if (candidate && candidate.testHoldNextComposablePresent > 0) {
+        if (!candidate.hasStagedWindowBackground ||
+            candidate.stagedWindowBackgroundVersion != candidate.stagedComposableSceneVersion)
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        candidate.testHoldNextComposablePresent = 0;
+        candidate.testNextComposableTicket += 1;
+        candidate.testPendingComposableTicket = candidate.testNextComposableTicket;
+        CjguiInternalRendererPresentReceipt receipt = {0};
+        receipt.ticketId = candidate.testPendingComposableTicket;
+        receipt.projectionVersion = candidate.stagedComposableSceneVersion;
+        receipt.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING;
+        candidate.testPendingComposableReceipt = receipt;
+        if (outObservation) outObservation->ticketId = receipt.ticketId;
+        return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+    }
     if (candidate && candidate.forcedComposablePresentFailures > 0) {
         candidate.forcedComposablePresentFailures -= 1;
         // The Cangjie caller will keep its accepted scene on this error.  The
@@ -15767,6 +18195,21 @@ cjgui_internal_renderer_composable_display_progress(
     outProgress->effectMode = ctx.effectMode;
     outProgress->effectFallbackReason = ctx.effectFallbackReason;
     outProgress->effectCompletion = ctx.effectCompletion;
+    outProgress->currentPointWidth = ctx.view.bounds.size.width;
+    outProgress->currentPointHeight = ctx.view.bounds.size.height;
+    outProgress->currentBackingScale = [ctx.view currentBackingScale];
+    outProgress->currentDrawableWidthPixels = (uint32_t)MAX(0.0, ctx.view.metalLayer.drawableSize.width);
+    outProgress->currentDrawableHeightPixels = (uint32_t)MAX(0.0, ctx.view.metalLayer.drawableSize.height);
+    outProgress->currentGeometryRevision = ctx.resizeVersion;
+    if (ctx.view.frameIndex > 0) {
+        outProgress->submittedPointWidth = ctx.view.lastSubmittedPointSize.width;
+        outProgress->submittedPointHeight = ctx.view.lastSubmittedPointSize.height;
+        outProgress->submittedBackingScale = ctx.view.lastSubmittedContentsScale;
+        outProgress->submittedDrawableWidthPixels = (uint32_t)ctx.view.lastSubmittedDrawableSize.width;
+        outProgress->submittedDrawableHeightPixels = (uint32_t)ctx.view.lastSubmittedDrawableSize.height;
+        outProgress->submittedGeometryRevision = ctx.lastSubmittedResizeVersion;
+        outProgress->submittedSceneVersion = ctx.lastSubmittedSceneVersion;
+    }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -15844,6 +18287,63 @@ cjgui_internal_renderer_diagnostic_resources(
     for (CJGuiInternalComposableEffectTarget *target in cached)
         outResources->cachedEffectBytes += target.byteCount;
     outResources->overlayDrawCount = ctx.diagnosticOverlay ? ctx.diagnosticOverlay.drawCount : 0;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_diagnostic_workload(
+    uint64_t session, CjguiInternalRendererDiagnosticWorkload *outWorkload) {
+    if (!outWorkload) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    memset(outWorkload, 0, sizeof(*outWorkload));
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_diagnostic_workload(session, outWorkload);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed || !ctx.view)
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    outWorkload->sceneVersion = ctx.composableSceneVersion;
+    outWorkload->frameIndex = ctx.view.frameIndex;
+    outWorkload->nodeWriteCount = ctx.composableSceneNodeUpdateCount;
+    outWorkload->nodeCloneCount = ctx.composableSceneCloneCount;
+    outWorkload->nodeAllocationCount = ctx.composableSceneNodeAllocationCount;
+    outWorkload->textLayoutPreparationCount = ctx.composableTextLayoutPreparationCount;
+    outWorkload->imageDecodeStartCount = ctx.composableImageDecodeStartCount;
+    outWorkload->textRasterCount = ctx.view.textRasterCount;
+    outWorkload->textRasterBytes = ctx.view.textRasterBytes;
+    outWorkload->textRasterMicros = ctx.view.textRasterMicros;
+    outWorkload->textUploadCount = ctx.view.textUploadCount;
+    outWorkload->textUploadBytes = ctx.view.textUploadBytes;
+    outWorkload->textUploadMicros = ctx.view.textUploadMicros;
+    outWorkload->textCandidatePeakBytes = ctx.composableTextCandidatePeakBytes;
+    // Current-holding bytes that a later refresh can reuse: the accepted
+    // scene's text textures and resident vector vertex buffers plus the shared
+    // image texture cache. This is a read-only sum over the accepted node
+    // array, not a new retained copy.
+    uint64_t reusableBytes = 0;
+    uint64_t textLiveBytes = 0;
+    for (CJGuiInternalComposableSceneNode *node in ctx.view.composableNodes) {
+        uint64_t bytes = node.textTextureByteCount;
+        textLiveBytes = bytes > UINT64_MAX - textLiveBytes ? UINT64_MAX : textLiveBytes + bytes;
+        if (node.vectorPreparedVertexBuffer && node.vectorPreparedVertexBytes > 0) {
+            bytes = node.vectorPreparedVertexBytes > UINT64_MAX - bytes
+                ? UINT64_MAX : bytes + node.vectorPreparedVertexBytes;
+        }
+        reusableBytes = bytes > UINT64_MAX - reusableBytes ? UINT64_MAX : reusableBytes + bytes;
+    }
+    outWorkload->textTextureLiveBytes = textLiveBytes;
+    CJGuiInternalComposableImageResourceDomain *domain = ctx.composableImageDomain;
+    if (domain && !domain.destroyed) {
+        for (id<MTLTexture> texture in domain.textureCache.allValues) {
+            uint64_t bytes = (uint64_t)CjguiComposableImageTextureBytes(texture);
+            reusableBytes = bytes > UINT64_MAX - reusableBytes ? UINT64_MAX : reusableBytes + bytes;
+        }
+    }
+    outWorkload->reusableResourceBytes = reusableBytes;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -15993,8 +18493,8 @@ cjgui_internal_renderer_hit_test_composable_text(uint64_t session, uint64_t node
     [layoutManager addTextContainer:container];
     [layoutManager ensureLayoutForTextContainer:container];
     // The point arrives in scene coordinates; the layout is node-local.
-    CGFloat localX = (CGFloat)x - (CGFloat)node.node.x - NSMinX(textRect);
-    CGFloat localY = (CGFloat)y - (CGFloat)node.node.y - NSMinY(textRect);
+    CGFloat localX = (CGFloat)x - ((CGFloat)node.node.x + (CGFloat)node.geometry.translateX) - NSMinX(textRect);
+    CGFloat localY = (CGFloat)y - ((CGFloat)node.node.y + (CGFloat)node.geometry.translateY) - NSMinY(textRect);
     CGFloat fraction = 0.0;
     NSUInteger charIndex = [layoutManager characterIndexForPoint:NSMakePoint(localX, localY)
                                                  inTextContainer:container
@@ -16030,6 +18530,45 @@ cjgui_internal_renderer_node_rect(uint64_t session, uint64_t nodeId,
         }
     }
     return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+}
+
+// Test-only wheel-region query. It runs the SAME production routing rule as
+// `routeScrollAtPoint` (topmost scroll area or wheelScrollable container whose
+// rect and clip contain the point) and reports the owner instead of enqueuing an
+// event, so a probe can assert ownership before/after a displacement without a
+// platform gesture. "No owner" is an OK result with node id 0; a missing staged
+// scene is named, never reported as "nothing owns the wheel".
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_scroll_owner_at_point(uint64_t session, double x, double y,
+                                                              uint64_t *outNodeId, uint32_t *outIsScrollArea,
+                                                              uint32_t *outWheelScrollable) {
+    if (!outNodeId || !outIsScrollArea || !outWheelScrollable) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outNodeId = 0;
+    *outIsScrollArea = 0;
+    *outWheelScrollable = 0;
+    __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *ctx = CjguiLookupSession(session);
+        if (!ctx || ctx.destroyed) {
+            status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+            return;
+        }
+        CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+        if (!overlay) {
+            status = CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
+            return;
+        }
+        CJGuiInternalComposableSceneNode *owner =
+            [overlay scrollNodeContainingPoint:NSMakePoint((CGFloat)x, (CGFloat)y)];
+        if (owner) {
+            *outNodeId = owner.node.nodeId;
+            *outIsScrollArea =
+                owner.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA ? 1u : 0u;
+            *outWheelScrollable = owner.node.wheelScrollable != 0 ? 1u : 0u;
+        }
+        status = CJGUI_INTERNAL_RENDERER_OK;
+    });
+    return status;
 }
 // 2026-09-26(B2):accepted 文本几何出口 —— **完全照 :12573 `cjgui_internal_renderer_node_rect` 同族同形**
 // (session → CjguiLookupSession → ctx.destroyed/ctx.view 检查 → ctx.composableSceneOverlay.nodes
@@ -16070,8 +18609,9 @@ static int32_t CjguiTextLineRectsCore(uint64_t session, uint64_t nodeId, int64_t
                 ? [lm locationForGlyphAtIndex:lastInLine].x : (line.origin.x + line.size.width);
             if (right < left) right = left + 1.0;
             if (outRects) {
-                outRects[count * 4 + 0] = prepared.textRect.origin.x + left;
-                outRects[count * 4 + 1] = prepared.textRect.origin.y + line.origin.y;
+                NSRect visual = CjguiComposableVisualNodeRect(node);
+                outRects[count * 4 + 0] = NSMinX(visual) + prepared.textRect.origin.x + left;
+                outRects[count * 4 + 1] = NSMinY(visual) + prepared.textRect.origin.y + line.origin.y;
                 outRects[count * 4 + 2] = right - left;
                 outRects[count * 4 + 3] = line.size.height;
             }
@@ -16130,8 +18670,9 @@ int32_t cjgui_internal_renderer_text_geometry_caret(uint64_t session, uint64_t n
                                                   &rect)) {
             return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
         }
-        *outX = rect.origin.x;
-        *outY = rect.origin.y;
+        NSRect visual = CjguiComposableVisualNodeRect(node);
+        *outX = NSMinX(visual) + rect.origin.x;
+        *outY = NSMinY(visual) + rect.origin.y;
         *outWidth = rect.size.width;
         *outHeight = rect.size.height;
         return CJGUI_INTERNAL_RENDERER_OK;
@@ -16214,6 +18755,40 @@ cjgui_internal_renderer_probe_image_texture(uint64_t session, uint64_t nodeId,
     return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
 }
 
+static CjguiInternalRendererStatus
+CjguiDeclareInputCaretOnOverlay(CJGuiInternalComposableSceneOverlay *overlay, int64_t nodeId,
+                                double x, double y, double width, double height) {
+    if (!overlay) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (nodeId < 0) {
+        [overlay withdrawDeclaredInputCaret];
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    NSRect rect = NSMakeRect(x, y, width, height);
+    BOOL changed = !overlay.hasDeclaredInputCaret || overlay.declaredInputCaretNodeId != nodeId ||
+        !NSEqualRects(overlay.declaredInputCaretRect, rect);
+    overlay.declaredInputCaretNodeId = nodeId;
+    overlay.declaredInputCaretRect = rect;
+    overlay.hasDeclaredInputCaret = YES;
+    BOOL attached = NO;
+    for (CJGuiInternalComposableSceneNode *node in overlay.nodes) {
+        if (node.node.nodeId != (uint64_t)nodeId) continue;
+        NSRect previousRect = node.textCaretRect;
+        BOOL previousDeclared = node.textCaretIsDeclared;
+        [overlay applyDeclaredInputCaretToNode:node];
+        attached = node.textCaretIsDeclared &&
+            (!previousDeclared || !NSEqualRects(previousRect, node.textCaretRect));
+        break;
+    }
+    if (changed) [overlay resetCaretBlink];
+    else [overlay scheduleCaretBlink];
+    if (attached) {
+        [overlay applyCaretBlinkPaintState];
+        [overlay setNeedsDisplay:YES];
+        [overlay scheduleAcceptedScenePresent];
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_declare_input_caret(uint64_t session, int64_t nodeId,
                                             double x, double y, double width, double height) {
@@ -16222,12 +18797,7 @@ cjgui_internal_renderer_declare_input_caret(uint64_t session, int64_t nodeId,
         return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     }
     if (getenv("PHAROS_TRACE_RUNS")) fprintf(stderr, "PHAROS_CARET_DECLARE node=%lld x=%.1f y=%.1f w=%.1f h=%.1f\n", (long long)nodeId, x, y, width, height);
-    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
-    if (nodeId < 0) { overlay.hasDeclaredInputCaret = NO; return CJGUI_INTERNAL_RENDERER_OK; }
-overlay.declaredInputCaretNodeId = nodeId;
-    overlay.declaredInputCaretRect = NSMakeRect(x, y, width, height);
-    overlay.hasDeclaredInputCaret = YES;
-    return CJGUI_INTERNAL_RENDERER_OK;
+    return CjguiDeclareInputCaretOnOverlay(ctx.composableSceneOverlay, nodeId, x, y, width, height);
 }
 
 static CjguiInternalRendererStatus
@@ -16429,6 +18999,20 @@ cjgui_internal_renderer_measure_composable_multiline_natural_height(
 // Test-only seams. They intentionally drive the same production overlay and
 // NSTextView delegate used by an ordinary window, but are not part of the
 // shipped renderer ABI.
+uint64_t cjgui_internal_renderer_test_sole_live_session_token(void) {
+    __block uint64_t token = 0;
+    __block NSUInteger liveCount = 0;
+    CjguiTestHookOnMainThread(^{
+        for (NSUInteger index = 0; index < kCjguiSessionCapacity; index++) {
+            CJGuiInternalSession *session = gCjguiSessions[index];
+            if (!session || session.destroyed) continue;
+            liveCount += 1;
+            token = session.rendererSessionToken;
+        }
+    });
+    return liveCount == 1 ? token : 0;
+}
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_set_composable_image_launch_gate(uint64_t session, uint8_t held) {
     if (!CjguiIsMainThread()) {
@@ -16496,6 +19080,20 @@ cjgui_internal_renderer_test_composable_image_stats(uint64_t session, uint32_t *
     *outLoadedTextureCount = loaded;
     *outCacheEntryCount = (uint32_t)MIN(UINT32_MAX, domain.textureCache.count);
     *outDecodeCount = ctx.composableImageDecodeCount;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_composable_image_decode_start_count(
+    uint64_t session, uint64_t *outSessionStarts, uint64_t *outDomainStarts) {
+    if (!outSessionStarts || !outDomainStarts) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outSessionStarts = 0; *outDomainStarts = 0;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalComposableImageResourceDomain *domain = CjguiComposableImageDomainForSession(ctx);
+    if (!domain) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+    *outSessionStarts = ctx.composableImageDecodeStartCount;
+    *outDomainStarts = domain.imageDecodeStartCount;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -16586,17 +19184,40 @@ cjgui_internal_renderer_test_composable_scene_submission_stats(
     *outSetMicros = 0; *outCommitMicros = 0;
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
     if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    *outCloneCount = ctx.testComposableSceneCloneCount;
-    *outNodeAllocationCount = ctx.testComposableSceneNodeAllocationCount;
+    *outCloneCount = ctx.composableSceneCloneCount;
+    *outNodeAllocationCount = ctx.composableSceneNodeAllocationCount;
     *outConfigureMicros = ctx.testComposableSceneConfigureMicros;
     *outSetMicros = ctx.testComposableSceneSetMicros;
     *outCommitMicros = ctx.testComposableSceneCommitMicros;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+// Writes the bounded distinct clone labels as "label=count\n" lines into the
+// caller's buffer. Text never crosses the public ABI: this is a test seam used
+// by the probes to name the nodes a refresh rewrote.
+CjguiInternalRendererStatus cjgui_internal_renderer_test_composable_scene_clone_labels(
+    uint64_t session, char *outBuffer, uint32_t capacity, uint32_t *outWritten) {
+    if (!outBuffer || capacity == 0 || !outWritten) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outWritten = 0;
+    outBuffer[0] = '\0';
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    NSMutableString *text = [NSMutableString string];
+    NSUInteger count = MIN(ctx.testCloneLabels.count, ctx.testCloneLabelCounts.count);
+    for (NSUInteger index = 0; index < count; index++) {
+        [text appendFormat:@"%@=%@\n", ctx.testCloneLabels[index], ctx.testCloneLabelCounts[index]];
+    }
+    const char *utf8 = text.UTF8String ?: "";
+    NSUInteger length = strlen(utf8);
+    if (length >= capacity) length = capacity - 1;
+    memcpy(outBuffer, utf8, length);
+    outBuffer[length] = '\0';
+    *outWritten = (uint32_t)length;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 CjguiInternalRendererStatus
-cjgui_internal_renderer_test_composable_interaction_stats(uint64_t session,
-                                                           uint32_t *outPendingInteractionCount,
+cjgui_internal_renderer_test_composable_interaction_stats(uint64_t session,                                                           uint32_t *outPendingInteractionCount,
                                                            uint32_t *outMaxPendingInteractionCount,
                                                            uint64_t *outAccessibilityNotificationCount) {
     if (!outPendingInteractionCount || !outMaxPendingInteractionCount || !outAccessibilityNotificationCount) {
@@ -17253,9 +19874,17 @@ cjgui_internal_renderer_test_invalidate_composable_drawable(uint64_t session) {
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_request_composable_drawable_pixel(uint64_t session, uint32_t pointX, uint32_t pointY) {
+    return cjgui_internal_renderer_test_request_composable_drawable_pixel_precise(session,
+        (double)pointX, (double)pointY);
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_request_composable_drawable_pixel_precise(uint64_t session,
+    double pointX, double pointY) {
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
-    if (!ctx || !ctx.view || ctx.destroyed || pointX >= (uint32_t)MAX(0.0, ctx.view.bounds.size.width) ||
-        pointY >= (uint32_t)MAX(0.0, ctx.view.bounds.size.height)) {
+    if (!ctx || !ctx.view || ctx.destroyed || !isfinite(pointX) || !isfinite(pointY) ||
+        pointX < 0.0 || pointY < 0.0 || pointX >= MAX(0.0, ctx.view.bounds.size.width) ||
+        pointY >= MAX(0.0, ctx.view.bounds.size.height)) {
         return ctx ? CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     }
     ctx.testDrawablePixelX = pointX;
@@ -17406,6 +20035,28 @@ cjgui_internal_renderer_test_composable_encoder_cpu_stats(uint64_t session,
     if (!ctx || !ctx.view || ctx.destroyed) return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     *outEncodeMicros = ctx.view.testComposableEncoderCpuMicros;
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_submission_timeline(
+    uint64_t session, uint64_t frameIndex, CjguiInternalRendererSubmissionTimeline *outTimeline) {
+    if (!outTimeline || frameIndex == 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    memset(outTimeline, 0, sizeof(*outTimeline));
+    __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *ctx = CjguiLookupSession(session);
+        if (!ctx || ctx.destroyed) return;
+        status = CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+        for (NSValue *entry in ctx.testSubmissionTimelines) {
+            CjguiInternalRendererSubmissionTimeline value = {0};
+            [entry getValue:&value];
+            if (value.frameIndex != frameIndex || value.sessionGeneration != ctx.sessionGeneration) continue;
+            *outTimeline = value;
+            status = CJGUI_INTERNAL_RENDERER_OK;
+            return;
+        }
+    });
+    return status;
 }
 
 CjguiInternalRendererStatus
@@ -17882,6 +20533,53 @@ cjgui_internal_renderer_test_arm_midwork_composable_event(uint64_t sourceSession
         source.testMidworkProducerPostMicros = 0;
         source.testMidworkNativeEnqueueMicros = 0;
         source.testMidworkEnqueueStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        status = CJGUI_INTERNAL_RENDERER_OK;
+    });
+    return status;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_release_midwork_composable_event(uint64_t sourceSession) {
+    __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *source = CjguiLookupSession(sourceSession);
+        if (!source || !source.testMidworkArmed) return;
+        source.testMidworkArmed = NO;
+        uint64_t epoch = source.testMidworkEpoch;
+        uint64_t targetToken = source.testMidworkTargetSession;
+        uint32_t targetIndex = source.testMidworkTargetIndex;
+        uint32_t eventKind = source.testMidworkEventKind;
+        NSString *payload = [source.testMidworkText copy] ?: @"";
+        uint32_t delayMicros = source.testMidworkDelayMicros;
+        source.testMidworkProducerReadyMicros = CjguiMonotonicMicros();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delayMicros * NSEC_PER_USEC),
+                       dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            uint64_t posted = CjguiMonotonicMicros();
+            dispatch_async(dispatch_get_main_queue(), ^{
+                CJGuiInternalSession *liveSource = CjguiLookupSession(sourceSession);
+                if (!liveSource || liveSource.testMidworkEpoch != epoch) return;
+                liveSource.testMidworkProducerPostMicros = posted;
+                CJGuiInternalSession *target = CjguiLookupSession(targetToken);
+                liveSource.testMidworkEnqueueStatus = target &&
+                    CjguiEnqueueComposableInteraction(target, eventKind, targetIndex,
+                                                      payload, NSMakeRange(0, 0))
+                    ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                liveSource.testMidworkNativeEnqueueMicros = CjguiMonotonicMicros();
+            });
+        });
+        status = CJGUI_INTERNAL_RENDERER_OK;
+    });
+    return status;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_test_arm_submit_gate(
+    uint64_t sourceSession, uint32_t holdMicros) {
+    __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *source = CjguiLookupSession(sourceSession);
+        if (!source || holdMicros < 1000 || holdMicros > 50000) return;
+        source.testSubmitGateArmed = YES;
+        source.testSubmitGateHoldMicros = holdMicros;
         status = CJGUI_INTERNAL_RENDERER_OK;
     });
     return status;
@@ -18733,6 +21431,52 @@ CjguiInternalRendererStatus cjgui_internal_renderer_test_set_composable_caret_co
     }
     return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
 }
+
+CjguiInternalRendererStatus cjgui_internal_renderer_test_caret_blink_clock(
+    uint64_t session, uint32_t action, uint64_t nowMicros,
+    int32_t *outVisible, int32_t *outHasCaretRect, uint64_t *outDeadlineMicros) {
+    if (!outVisible || !outHasCaretRect || !outDeadlineMicros || action > 3)
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_test_caret_blink_clock(
+                session, action, nowMicros, outVisible, outHasCaretRect, outDeadlineMicros);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || !ctx.composableSceneOverlay || ctx.destroyed)
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+#ifdef CJGUI_INTERNAL_TESTING
+    [overlay testLogCaretBlinkSnapshot:[NSString stringWithFormat:@"clock_%u_before", action] focusResult:-1];
+#endif
+    if (action == 0) {
+        overlay.testCaretBlinkClockActive = YES;
+        overlay.testCaretBlinkNowMicros = nowMicros;
+        [overlay resetCaretBlink];
+    } else if (action == 1) {
+        if (!overlay.testCaretBlinkClockActive || nowMicros < overlay.testCaretBlinkNowMicros)
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        overlay.testCaretBlinkNowMicros = nowMicros;
+        [overlay advanceCaretBlinkAtMicros:nowMicros];
+    } else if (action == 2) {
+        overlay.testCaretBlinkClockActive = NO;
+        [overlay resetCaretBlink];
+    } else {
+        [overlay stopCaretBlink];
+    }
+    CJGuiInternalComposableSceneNode *target = [overlay caretBlinkTarget];
+    *outVisible = target && !target.textCaretHidden ? 1 : 0;
+    *outHasCaretRect = target && !NSIsEmptyRect(target.textCaretRect) ? 1 : 0;
+    *outDeadlineMicros = overlay.caretBlinkDeadlineMicros;
+#ifdef CJGUI_INTERNAL_TESTING
+    [overlay testLogCaretBlinkSnapshot:[NSString stringWithFormat:@"clock_%u_after", action] focusResult:-1];
+#endif
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
 #endif
 
 CjguiInternalRendererStatus
@@ -19211,6 +21955,32 @@ int64_t cjgui_internal_renderer_data_transfer_event_source_id(uint64_t session) 
     }
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
     return ctx ? ctx.pumpedDataTransferSourceId : -1;
+}
+
+int64_t cjgui_internal_renderer_data_transfer_event_expected_owner_version(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return -1;
+        __block int64_t version = -1;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            version = cjgui_internal_renderer_data_transfer_event_expected_owner_version(session);
+        });
+        return version;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    return ctx ? ctx.pumpedDataTransferExpectedOwnerVersion : -1;
+}
+
+uint64_t cjgui_internal_renderer_data_transfer_event_delivery_ordinal(uint64_t session) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return 0;
+        __block uint64_t ordinal = 0;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            ordinal = cjgui_internal_renderer_data_transfer_event_delivery_ordinal(session);
+        });
+        return ordinal;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    return ctx ? ctx.pumpedTransferDeliveryOrdinal : 0;
 }
 
 uint32_t cjgui_internal_renderer_data_transfer_event_binary_size(uint64_t session, uint64_t eventId) {
@@ -19798,6 +22568,110 @@ static CJGuiInternalComposableDataTransferItem *CjguiTestDataTransferItem(
     return nil;
 }
 
+CjguiInternalRendererStatus cjgui_internal_renderer_test_hold_next_file_read(uint64_t session) {
+    if (!CjguiIsMainThread()) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.testHoldNextFileRead || ctx.pendingFileTransfers.count > 0) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    ctx.testNextFileReadGate = dispatch_semaphore_create(0);
+    ctx.testNextFileReadEntered = dispatch_semaphore_create(0);
+    ctx.testHoldNextFileRead = YES;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_test_hold_next_file_after_first_read(uint64_t session) {
+    CjguiInternalRendererStatus status = cjgui_internal_renderer_test_hold_next_file_read(session);
+    if (status == CJGUI_INTERNAL_RENDERER_OK) {
+        CJGuiInternalSession *ctx = CjguiLookupSession(session);
+        ctx.testHoldNextFileAfterFirstRead = YES;
+    }
+    return status;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_test_file_read_resources(
+    uint32_t *outOpenDescriptors, uint32_t *outAcquiredScopes) {
+    if (!outOpenDescriptors || !outAcquiredScopes) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outOpenDescriptors = (uint32_t)__sync_add_and_fetch(&gCjguiOpenFileReadDescriptors, 0);
+    *outAcquiredScopes = (uint32_t)__sync_add_and_fetch(&gCjguiAcquiredFileReadScopes, 0);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_test_wait_file_read_entered(uint64_t session) {
+    if (!CjguiIsMainThread()) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.pendingFileTransfers.count != 1) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalFileTransferOperation *operation = ctx.pendingFileTransfers[0];
+    if (!operation.testReadEntered) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    return dispatch_semaphore_wait(operation.testReadEntered,
+        dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0 ?
+        CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_test_release_file_read(uint64_t session) {
+    if (!CjguiIsMainThread()) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.pendingFileTransfers.count != 1) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CJGuiInternalFileTransferOperation *operation = ctx.pendingFileTransfers[0];
+    if (!operation.testReadGate) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    dispatch_semaphore_signal(operation.testReadGate);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_test_composable_file_transfer(
+    uint64_t session, uint64_t targetNodeId, const char *path, uint8_t asDrop) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus result = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            result = cjgui_internal_renderer_test_composable_file_transfer(session, targetNodeId, path, asDrop);
+        });
+        return result;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    CJGuiInternalComposableDataTransferItem *target = CjguiTestDataTransferItem(
+        ctx, targetNodeId, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET);
+    NSString *nativePath = path ? [NSString stringWithUTF8String:path] : nil;
+    if (!ctx || !target || !target.item.localPngFileAllowed || !nativePath) {
+        return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    }
+    NSURL *url = [NSURL fileURLWithPath:nativePath];
+    NSPasteboard *board = [NSPasteboard pasteboardWithUniqueName];
+    NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+    if (!url || !board || !item || ![item setString:url.absoluteString forType:NSPasteboardTypeFileURL] ||
+        ![board clearContents]) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (asDrop == 3) {
+        // A single Finder-like item can advertise both representations.
+        // The declared local-file source must win exactly once.
+        NSData *alternate = [@"not-a-png" dataUsingEncoding:NSUTF8StringEncoding];
+        if (![item setData:alternate forType:NSPasteboardTypePNG])
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSArray<NSPasteboardItem *> *items = @[item];
+    if (asDrop == 2) {
+        NSPasteboardItem *second = [[NSPasteboardItem alloc] init];
+        [second setString:url.absoluteString forType:NSPasteboardTypeFileURL];
+        items = @[item, second];
+    }
+    if (![board writeObjects:items]) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (asDrop != 1) return CjguiReadComposableDataTransferItem(ctx, target, board,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_PASTE);
+    CJGuiInternalComposableSceneNode *node = nil;
+    for (CJGuiInternalComposableSceneNode *candidate in ctx.composableNodes) {
+        if (candidate.node.nodeId == targetNodeId && candidate.node.resourceId == target.item.resourceId &&
+            candidate.node.nodeKind == target.item.nodeKind) { node = candidate; break; }
+    }
+    if (!node || !ctx.composableSceneOverlay) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    CjguiInternalTestDraggingInfo *info = [[CjguiInternalTestDraggingInfo alloc] init];
+    NSRect rect = CjguiComposableRect(node, ctx.composableSceneOverlay);
+    info.location = [ctx.composableSceneOverlay convertPoint:NSMakePoint(NSMidX(rect), NSMidY(rect)) toView:nil];
+    info.pasteboard = board;
+    if ([ctx.composableSceneOverlay draggingEntered:info] != NSDragOperationCopy ||
+        ![ctx.composableSceneOverlay prepareForDragOperation:info] ||
+        ![ctx.composableSceneOverlay performDragOperation:info]) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_composable_data_transfer_copy(uint64_t session, uint64_t sourceNodeId) {
     if (!CjguiIsMainThread()) {
@@ -20074,6 +22948,7 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     }
 
+    ctx.pumpedPointerGeometry = (CjguiInternalRendererPointerEventGeometry){0};
     NSTimeInterval timeoutSeconds = (NSTimeInterval)timeoutMs / 1000.0;
     if (timeoutSeconds > kCjguiPumpTimeoutMaxSeconds) {
         timeoutSeconds = kCjguiPumpTimeoutMaxSeconds;
@@ -20088,9 +22963,26 @@ cjgui_internal_renderer_pump_event(uint64_t session,
     // bridge has already accepted.  Keep the FIFO itself below so this does
     // not alter target identity or close semantics.  With no owner-visible
     // event, this remains the single bounded AppKit acquisition point.
+    if (ctx.pendingInteractions.count == 0 && ctx.pendingTransferTerminalFacts.count > 0) {
+        [ctx.pendingInteractions addObject:ctx.pendingTransferTerminalFacts.firstObject];
+        [ctx.pendingTransferTerminalFacts removeObjectAtIndex:0];
+    }
     BOOL hasImmediateOwnerEvent = outEvent &&
-        (ctx.pendingInteractions.count > 0 || ctx.pendingInputQueueFullNotice || ctx.closeRequested);
-    if (CjguiIsMainThread() && !hasImmediateOwnerEvent) {
+        (ctx.pendingInteractions.count > 0 || ctx.pendingTransferTerminalFacts.count > 0 ||
+         ctx.pendingInputQueueFullNotice || ctx.closeRequested);
+    // Bounded, opt-in trace for a posted IME terminal that never reaches the
+    // in-process NSEvent monitor. A successful CGEventPost is not a delivery
+    // receipt; distinguish AppKit acquisition starvation from routing/IMK.
+    static uint64_t imeTracePumps = 0, imeTraceOwnerSkips = 0, imeTraceDragSkips = 0;
+    static uint64_t imeTraceAcquired = 0, imeTraceKeys = 0;
+    BOOL traceImePump = getenv("CJGUI_TRACE_IME_PUMP") != NULL;
+    if (traceImePump) {
+        imeTracePumps += 1;
+        if (hasImmediateOwnerEvent) imeTraceOwnerSkips += 1;
+        if (gCjguiActiveDataTransferDragSessions != 0) imeTraceDragSkips += 1;
+    }
+    if (CjguiIsMainThread() && !hasImmediateOwnerEvent &&
+        gCjguiActiveDataTransferDragSessions == 0) {
         NSDate *untilDate = [NSDate dateWithTimeIntervalSinceNow:timeoutSeconds];
         // Do not use an unbounded AppKit loop here: the Cangjie owner must
         // regain control after at most the requested pump interval to apply
@@ -20100,8 +22992,25 @@ cjgui_internal_renderer_pump_event(uint64_t session,
                                                  inMode:NSDefaultRunLoopMode
                                                 dequeue:YES];
         if (event) {
+            if (traceImePump) {
+                imeTraceAcquired += 1;
+                if (event.type == NSEventTypeKeyDown) {
+                    imeTraceKeys += 1;
+                    fprintf(stderr, "CJGUI_IME_PUMP_KEY keycode=%d session=%llu pending=%lu\n",
+                            (int)event.keyCode, (unsigned long long)ctx.rendererSessionToken,
+                            (unsigned long)ctx.pendingInteractions.count);
+                }
+            }
             [ctx.app sendEvent:event];
         }
+    }
+    if (traceImePump && imeTracePumps % 100 == 0) {
+        fprintf(stderr, "CJGUI_IME_PUMP_SUMMARY pumps=%llu owner_skips=%llu drag_skips=%llu "
+                "acquired=%llu keys=%llu pending=%lu transfer=%lu\n",
+                (unsigned long long)imeTracePumps, (unsigned long long)imeTraceOwnerSkips,
+                (unsigned long long)imeTraceDragSkips, (unsigned long long)imeTraceAcquired,
+                (unsigned long long)imeTraceKeys, (unsigned long)ctx.pendingInteractions.count,
+                (unsigned long)ctx.pendingTransferTerminalFacts.count);
     }
 
     // Refresh window content if size changed during the pump.
@@ -20122,6 +23031,16 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         outEvent->nodeKind = interaction.nodeKind;
         outEvent->pointerX = interaction.pointerX;
         outEvent->pointerY = interaction.pointerY;
+        if (interaction.hasPrecisePointer) {
+            ctx.pumpedPointerGeometry = (CjguiInternalRendererPointerEventGeometry){
+                .present = 1, .kind = interaction.kind, .nodeId = interaction.nodeId,
+                .projectionVersion = interaction.projectionVersion,
+                .resourceId = interaction.resourceId, .nodeKind = interaction.nodeKind,
+                .x = interaction.precisePointerX, .y = interaction.precisePointerY,
+                .translateX = interaction.pointerTranslateX,
+                .translateY = interaction.pointerTranslateY,
+            };
+        }
         outEvent->modifierFlags = interaction.modifierFlags;
         outEvent->compositionPhase = interaction.compositionPhase;
         outEvent->replacementStart16 = interaction.replacementStart16;
@@ -20131,6 +23050,12 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         outEvent->compositionId = interaction.compositionId;
         outEvent->bindingEpoch = interaction.bindingEpoch;
         outEvent->dataTransferEventId = interaction.dataTransferEventId;
+        CJGuiInternalTransferDeliveryIdentity *delivery = interaction.transferDeliveryIdentity;
+        if (interaction.dataTransferEventId > 0 && delivery && delivery.firstDeliveryOrdinal == 0 &&
+            ctx.nextTransferDeliveryOrdinal < UINT64_MAX) {
+            delivery.firstDeliveryOrdinal = ++ctx.nextTransferDeliveryOrdinal;
+        }
+        ctx.pumpedTransferDeliveryOrdinal = delivery.firstDeliveryOrdinal;
 #ifdef CJGUI_INTERNAL_TESTING
         ctx.testComposableLastPumpedKind = interaction.kind;
         ctx.testComposableLastPumpedNodeId = interaction.nodeId;
@@ -20149,7 +23074,9 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         ctx.pumpedDataTransferSourceIdentity = interaction.dataTransferSourceIdentity ?: @"";
         ctx.pumpedDataTransferSourceIdentityUtf8 = CjguiStableUtf8CString(ctx.pumpedDataTransferSourceIdentity);
         ctx.pumpedDataTransferSourceId = interaction.dataTransferSourceId;
+        ctx.pumpedDataTransferExpectedOwnerVersion = interaction.expectedOwnerVersion;
     } else if (outEvent && ctx.pendingInputQueueFullNotice) {
+        ctx.pumpedTransferDeliveryOrdinal = 0;
         ctx.pumpedDataTransferBytes = nil;
         ctx.pumpedDataTransferEventId = 0;
         ctx.pendingInputQueueFullNotice = NO;
@@ -20190,6 +23117,25 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         ctx.pumpedDataTransferSourceId = -1;
     }
 
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_pumped_pointer_geometry(uint64_t session,
+    CjguiInternalRendererPointerEventGeometry *outGeometry) {
+    if (!outGeometry) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outGeometry = (CjguiInternalRendererPointerEventGeometry){0};
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_pumped_pointer_geometry(session, outGeometry);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    *outGeometry = ctx.pumpedPointerGeometry;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -20257,6 +23203,14 @@ cjgui_internal_renderer_destroy(uint64_t session) {
     // shared load, but it must make this window invisible to late completion.
     CjguiRemoveComposableImageSubscriptions(ctx);
     ctx.destroyed = YES;
+    for (CJGuiInternalFileTransferOperation *operation in ctx.pendingFileTransfers) operation.cancelled = YES;
+#ifdef CJGUI_INTERNAL_TESTING
+    for (CJGuiInternalFileTransferOperation *operation in ctx.pendingFileTransfers)
+        if (operation.testReadGate) dispatch_semaphore_signal(operation.testReadGate);
+#endif
+    [ctx.pendingFileTransfers removeAllObjects];
+    ctx.pendingFileTransferReservedBytes = 0;
+    [ctx.pendingTransferTerminalFacts removeAllObjects];
 #ifdef CJGUI_INTERNAL_TESTING
     // The retained-item seam is process-test-only. Clearing it as any native
     // session retires guarantees a later probe cannot call an item from a
@@ -20313,6 +23267,11 @@ cjgui_internal_renderer_destroy(uint64_t session) {
     [ctx.composableDataTransferItems removeAllObjects];
     [ctx.stagedComposableDataTransferItems removeAllObjects];
     ctx.stagedComposableDataTransferVersion = 0;
+    // Other windows keep the shared domain, but no candidate or accepted
+    // image in this retired session can own its transfer bytes or texture.
+    // Leases held by this session end with it, before the orphan prune decides.
+    CjguiSettleComposableImageCandidateLeases(ctx.composableImageDomain, ctx, YES);
+    CjguiPruneUnreferencedComposableTransferResources(ctx.composableImageDomain);
     CjguiReleaseComposableImageDomain(ctx);
     ctx.composableImageDomain = nil;
     ctx.window = nil;

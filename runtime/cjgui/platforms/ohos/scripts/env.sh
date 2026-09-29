@@ -24,5 +24,9 @@ export EMULATOR_NAME="${EMULATOR_NAME:-Pura 90}"
 export EMULATOR_INSTANCE_PATH="${EMULATOR_INSTANCE_PATH:-$HOME/.Huawei/Emulator/deployed}"
 export EMULATOR_IMAGE_ROOT="${EMULATOR_IMAGE_ROOT:-$HOME/Library/Huawei/Sdk}"
 
+# D：显式覆盖检测——构建脚本用 SET 标志区分「env 默认」与「显式指定」，
+# 显式指定与目标工程身份不一致时具名失败。
+if [ -n "${CJGUI_APP_BUNDLE+x}" ]; then export CJGUI_APP_BUNDLE_SET=1; fi
+if [ -n "${CJGUI_APP_ABILITY+x}" ]; then export CJGUI_APP_ABILITY_SET=1; fi
 export CJGUI_APP_BUNDLE="${CJGUI_APP_BUNDLE:-com.example.cjguiapp}"
 export CJGUI_APP_ABILITY="${CJGUI_APP_ABILITY:-EntryAbility}"

@@ -14,6 +14,7 @@ CJGUI_FRAMEWORK_SOURCE_NAMES=(
   composable_ui_window.cj
   composable_ui_diagnostics.cj
   composable_ui_animation.cj
+  composable_ui_position_motion.cj
   composable_ui_tree.cj
   composable_ui_named_style.cj
   composable_ui_platform_state.cj

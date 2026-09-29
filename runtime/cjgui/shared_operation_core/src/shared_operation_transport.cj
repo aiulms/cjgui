@@ -20,6 +20,28 @@ private const CJGUI_SHARED_OPERATION_MAX_TARGETS: Int64 = 1024
 private const CJGUI_SHARED_OPERATION_MAX_STRING_BYTES: Int64 = 64 * 1024
 private const CJGUI_SHARED_OPERATION_IO_WORKER_COUNT: Int64 = 4
 
+// E1 bounded revocation history: how many revoked credentials one connection
+// keeps refusing to re-grant. Beyond this the oldest fingerprint is evicted
+// and counted (`revoked_credential_evictions`) rather than silently forgotten.
+private const CJGUI_SHARED_OPERATION_REVOKED_CREDENTIAL_CAPACITY: Int64 = 8
+
+// FNV-1a (32-bit, masked so UInt64 arithmetic cannot overflow) over the
+// capability's UTF-8 bytes plus its length. This identifies a revoked
+// credential WITHOUT keeping the secret text alive in a second place (the live
+// authorization still holds the current one). The fingerprint is not a secret
+// and makes no cryptographic claim: a collision can only refuse an unrelated
+// credential -- fail-closed -- never admit a revoked one.
+private func sharedOperationCredentialFingerprint(capability: String): String {
+    let bytes = capability.toArray()
+    var hash: UInt64 = 0x811c9dc5
+    for (byte in bytes) {
+        hash = hash ^ UInt64(byte)
+        hash = (hash * 0x01000193) & 0xFFFFFFFF
+    }
+    hash = hash ^ UInt64(bytes.size)
+    return sharedOperationHex16(hash)
+}
+
 // Endpoint INSTANCE identity: one random nonce per connection object plus a
 // process-local sequence. Two transports in one process cannot collide, and a
 // restarted process cannot reuse an old instance by starting its counter at the
@@ -743,7 +765,40 @@ public class CjguiSharedOperationExternalConnection {
     private var treeSelectionProvider: ?CjguiSharedOperationTreeSelectionProvider
     private var windowProgressProvider: ?CjguiSharedOperationWindowProgressProvider
     private var windowProgressTargetProvider: ?CjguiSharedOperationWindowProgressTargetProvider
-    private let authorization: CjguiSharedOperationExternalAuthorization
+    private var transferReceiptProvider: ?CjguiSharedOperationTransferReceiptProvider
+    private var positionMotionProvider: ?CjguiSharedOperationPositionMotionProvider
+    // Fixed-snapshot leases (E1). The table is owned here and touched ONLY on
+    // the owner thread; the provider is the application's immutable-version
+    // port. `authorizationEpoch` is the framework-owned grant generation:
+    // revoking bumps it, and every lease bound to an older epoch is terminal.
+    private var snapshotProvider: ?CjguiSharedOperationSnapshotProvider
+    private var snapshotLeases: ?CjguiSharedOperationSnapshotLeaseTable
+    private var snapshotLimits: CjguiSharedOperationSnapshotLeaseLimits
+    private var snapshotClock: ?CjguiSharedOperationSnapshotClock
+    private var authorizationEpoch: Int64
+    private var authorization: CjguiSharedOperationExternalAuthorization
+    /// E1: an explicitly revoked authorization stays DEAD until the owner
+    /// grants a new one. While true, no payload from the old capability is
+    /// dispatched at all (no read/acquire/write, no provider call); only
+    /// `grantAuthorization` clears it together with a new epoch.
+    private var authorizationRevoked: Bool
+    /// Named refusal of the most recent grantAuthorization attempt (""=ok).
+    private var lastGrantRefusal: String = ""
+    /// E1 multi-round isolation: fingerprints of the credentials this
+    /// connection lifetime has revoked, newest first. Re-granting ANY of them
+    /// is refused by name (`authorization_credential_recycled`) -- remembering
+    /// only the most recent revoke let A->revoke->grantB->revokeB->grantA
+    /// install A back. BOUNDED by design (see `retainRevokedCredential`): the
+    /// policy is "the last N revoked credentials stay dead, and evictions are
+    /// counted and reported", not "permanent isolation we cannot back".
+    /// Fingerprints, never the secret text: a collision can only refuse a
+    /// credential, never admit a revoked one.
+    private var revokedCredentialFingerprints: ArrayList<String>
+    /// How many revoked fingerprints were dropped at capacity. Non-zero means
+    /// the endpoint must NOT claim unbounded isolation; diagnostics say so.
+    private var revokedCredentialEvictions: Int64
+    /// Named refusal of the most recent `enableSnapshotReads` attempt (""=ok).
+    private var lastSnapshotEnableRefusal: String = ""
     private let transportLock: Mutex
     /// Test-only ready-queue observation (see CjguiSharedOperationReadyRequestObserver).
     private var testReadyRequestObserver: ?CjguiSharedOperationReadyRequestObserver
@@ -776,12 +831,22 @@ public class CjguiSharedOperationExternalConnection {
         this.changeDomain = None
         this.targetedContextDomain = None
         this.rangeReadDomain = None
+        this.snapshotProvider = None
+        this.snapshotLeases = None
+        this.snapshotLimits = CjguiSharedOperationSnapshotLeaseLimits()
+        this.snapshotClock = None
+        this.authorizationEpoch = 1
+        this.authorizationRevoked = false
+        this.revokedCredentialFingerprints = ArrayList<String>()
+        this.revokedCredentialEvictions = 0
         this.windowProjectionProvider = None
         this.windowProjectionTargetProvider = None
         this.generatedUiProvider = None
         this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
+        this.transferReceiptProvider = None
+        this.positionMotionProvider = None
         this.authorization = authorization
         this.transportLock = Mutex()
         this.server = None
@@ -809,12 +874,22 @@ public class CjguiSharedOperationExternalConnection {
         this.changeDomain = Some(changeDomain)
         this.targetedContextDomain = None
         this.rangeReadDomain = None
+        this.snapshotProvider = None
+        this.snapshotLeases = None
+        this.snapshotLimits = CjguiSharedOperationSnapshotLeaseLimits()
+        this.snapshotClock = None
+        this.authorizationEpoch = 1
+        this.authorizationRevoked = false
+        this.revokedCredentialFingerprints = ArrayList<String>()
+        this.revokedCredentialEvictions = 0
         this.windowProjectionProvider = None
         this.windowProjectionTargetProvider = None
         this.generatedUiProvider = None
         this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
+        this.transferReceiptProvider = None
+        this.positionMotionProvider = None
         this.authorization = authorization
         this.transportLock = Mutex()
         this.server = None
@@ -843,12 +918,22 @@ public class CjguiSharedOperationExternalConnection {
         this.changeDomain = None
         this.targetedContextDomain = None
         this.rangeReadDomain = None
+        this.snapshotProvider = None
+        this.snapshotLeases = None
+        this.snapshotLimits = CjguiSharedOperationSnapshotLeaseLimits()
+        this.snapshotClock = None
+        this.authorizationEpoch = 1
+        this.authorizationRevoked = false
+        this.revokedCredentialFingerprints = ArrayList<String>()
+        this.revokedCredentialEvictions = 0
         this.windowProjectionProvider = Some(windowProjectionProvider)
         this.windowProjectionTargetProvider = None
         this.generatedUiProvider = None
         this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
+        this.transferReceiptProvider = None
+        this.positionMotionProvider = None
         this.authorization = authorization
         this.transportLock = Mutex()
         this.server = None
@@ -878,12 +963,22 @@ public class CjguiSharedOperationExternalConnection {
         this.changeDomain = Some(changeDomain)
         this.targetedContextDomain = None
         this.rangeReadDomain = None
+        this.snapshotProvider = None
+        this.snapshotLeases = None
+        this.snapshotLimits = CjguiSharedOperationSnapshotLeaseLimits()
+        this.snapshotClock = None
+        this.authorizationEpoch = 1
+        this.authorizationRevoked = false
+        this.revokedCredentialFingerprints = ArrayList<String>()
+        this.revokedCredentialEvictions = 0
         this.windowProjectionProvider = Some(windowProjectionProvider)
         this.windowProjectionTargetProvider = None
         this.generatedUiProvider = None
         this.treeSelectionProvider = None
         this.windowProgressProvider = None
         this.windowProgressTargetProvider = None
+        this.transferReceiptProvider = None
+        this.positionMotionProvider = None
         this.authorization = authorization
         this.transportLock = Mutex()
         this.server = None
@@ -918,6 +1013,208 @@ public class CjguiSharedOperationExternalConnection {
         }
     }
 
+    /// Enables fixed-snapshot leases before the descriptor is created. Without
+    /// this call the endpoint does not declare SNAPSHOT_* at all, so a client
+    /// that asks for it gets the unchanged `invalid_request` surface instead of
+    /// a half-working lease. The provider supplies immutable handles; the
+    /// framework owns tokens, TTL, limits and accounting.
+    public func enableSnapshotReads(
+        provider: CjguiSharedOperationSnapshotProvider,
+        limits!: CjguiSharedOperationSnapshotLeaseLimits = CjguiSharedOperationSnapshotLeaseLimits(),
+        clock!: CjguiSharedOperationSnapshotClock = CjguiSharedOperationSnapshotSystemClock()
+    ): Bool {
+        return synchronized(transportLock) {
+            if (let Some(_) <- server) {
+                return false
+            }
+            // E1: installing a fresh table REPLACES the old one, so anything
+            // the old table still holds would lose its owner silently: a
+            // `cleanup_pending` handle whose release kept failing is a real
+            // resource, and a lease that is still active means the old table
+            // is still the authority for live tokens. Refuse by name and keep
+            // the old table; the owner retries cleanup (or converges its
+            // leases) and reinstalls afterwards.
+            if (let Some(oldTable) <- snapshotLeases) {
+                if (oldTable.cleanupPendingCount() > 0 || oldTable.activeCount() > 0) {
+                    lastSnapshotEnableRefusal = "snapshot_reinstall_pending_cleanup"
+                    return false
+                }
+            }
+            snapshotProvider = Some(provider)
+            snapshotLimits = limits
+            snapshotClock = Some(clock)
+            snapshotLeases = Some(CjguiSharedOperationSnapshotLeaseTable(limits, clock))
+            lastSnapshotEnableRefusal = ""
+            return true
+        }
+    }
+
+    /// Provider-driven invalidation: the resource instance closed, was
+    /// replaced, or its workspace ended. Called by the application on the
+    /// owner thread; every matching lease becomes terminal with a named reason
+    /// and its handle is released.
+    public func invalidateSnapshotResource(resourceId: Int64, resourceInstanceId: String,
+        reason: String): Int64 {
+        return synchronized(transportLock) {
+            let effective = if (isSafeLeaseReason(reason)) { reason } else { "snapshot_resource_closed" }
+            return match (snapshotLeases) {
+                case Some(table) => table.invalidateResource(resourceId, resourceInstanceId, effective)
+                case None => 0
+            }
+        }
+    }
+
+    /// Framework-owned authorization lifecycle. Revocation is REAL: the flag
+    /// set below stays until an explicit `grantAuthorization`, so the revoked
+    /// caller's AUTH cannot read/acquire/write anything and the provider is
+    /// never called on its behalf -- bumping the epoch alone would let the old
+    /// AUTH acquire a fresh grant immediately, which is exactly the hole this
+    /// closes. Existing leases of older epochs are terminal and their tokens
+    /// never revive. The revoked capability itself is retained (bounded, see
+    /// `retainRevokedCredential`) so no LATER grant round can install it back.
+    public func revokeAuthorization(): Int64 {
+        return synchronized(transportLock) {
+            authorizationRevoked = true
+            retainRevokedCredential(authorization.capabilityForGrantedCaller())
+            authorizationEpoch += 1
+            return match (snapshotLeases) {
+                case Some(table) => table.invalidateEpochsBefore(authorizationEpoch, "authorization_revoked")
+                case None => 0
+            }
+        }
+    }
+
+    /// Explicit re-authorization after a revoke: installs a NEW capability and
+    /// a NEW grant epoch; the revoked flag clears only here, and old tokens
+    /// stay terminal forever. The replacement must be a credential this
+    /// connection never revoked: re-granting one is refused by name
+    /// (`authorization_credential_recycled`) because installing it back would
+    /// hand the revoked caller its access again -- no matter how many grant
+    /// rounds happened in between. A replacement without a usable capability
+    /// is likewise refused rather than silently leaving the endpoint
+    /// half-authorized.
+    public func grantAuthorization(
+        replacement: CjguiSharedOperationExternalAuthorization): Bool {
+        return synchronized(transportLock) {
+            if (let Some(_) <- server) {
+                return false
+            }
+            if (isRevokedCredential(replacement.capabilityForGrantedCaller())) {
+                lastGrantRefusal = "authorization_credential_recycled"
+                return false
+            }
+            let saved = this.authorization
+            this.authorization = replacement
+            if (!hasSafeAuthorization()) {
+                this.authorization = saved
+                lastGrantRefusal = "authorization_invalid"
+                return false
+            }
+            authorizationRevoked = false
+            lastGrantRefusal = ""
+            authorizationEpoch += 1
+            if (let Some(table) <- snapshotLeases) {
+                let _ = table.invalidateEpochsBefore(authorizationEpoch, "authorization_revoked")
+            }
+            return true
+        }
+    }
+
+    /// Remember one revoked credential's fingerprint. Capacity policy: the last
+    /// `CJGUI_SHARED_OPERATION_REVOKED_CREDENTIAL_CAPACITY` revoked credentials
+    /// stay dead; past that the oldest is evicted and COUNTED
+    /// (`revokedCredentialEvictionCount`), because a bounded structure cannot
+    /// promise permanent isolation and claiming it would be a lie. A repeated
+    /// revoke of the same credential moves it to the front instead of adding a
+    /// duplicate, so a small capacity covers long alternating histories.
+    private func retainRevokedCredential(capability: String): Unit {
+        if (capability == "") {
+            return
+        }
+        let fingerprint = sharedOperationCredentialFingerprint(capability)
+        var index: Int64 = 0
+        while (index < Int64(revokedCredentialFingerprints.size)) {
+            if (revokedCredentialFingerprints[index] == fingerprint) {
+                revokedCredentialFingerprints.remove(at: index)
+                revokedCredentialFingerprints.add(fingerprint, at: 0)
+                return
+            }
+            index += 1
+        }
+        if (Int64(revokedCredentialFingerprints.size) >=
+            CJGUI_SHARED_OPERATION_REVOKED_CREDENTIAL_CAPACITY) {
+            revokedCredentialFingerprints.remove(at: Int64(revokedCredentialFingerprints.size) - 1)
+            revokedCredentialEvictions += 1
+        }
+        revokedCredentialFingerprints.add(fingerprint, at: 0)
+    }
+
+    private func isRevokedCredential(capability: String): Bool {
+        if (capability == "") {
+            return false
+        }
+        let fingerprint = sharedOperationCredentialFingerprint(capability)
+        for (retainedFingerprint in revokedCredentialFingerprints) {
+            if (retainedFingerprint == fingerprint) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Bounded-history observation for owners/tests: how many revoked
+    /// credentials this endpoint still remembers, and how many it dropped at
+    /// capacity. A non-zero eviction count is the endpoint saying out loud
+    /// that its isolation is bounded, not permanent.
+    public func revokedCredentialRetentionCount(): Int64 {
+        return synchronized(transportLock) { Int64(revokedCredentialFingerprints.size) }
+    }
+
+    public func revokedCredentialEvictionCount(): Int64 {
+        return synchronized(transportLock) { revokedCredentialEvictions }
+    }
+
+    public func revokedCredentialRetentionCapacity(): Int64 {
+        return CJGUI_SHARED_OPERATION_REVOKED_CREDENTIAL_CAPACITY
+    }
+
+    /// Named reason the last `grantAuthorization` refused ("" on success).
+    /// Owners and tests read this instead of guessing from a bare false.
+    public func lastGrantRefusalReason(): String {
+        return synchronized(transportLock) { lastGrantRefusal }
+    }
+
+    /// Named reason the last `enableSnapshotReads` refused ("" on success).
+    public func lastSnapshotEnableRefusalReason(): String {
+        return synchronized(transportLock) { lastSnapshotEnableRefusal }
+    }
+
+    /// Workspace lifecycle end: every lease of this endpoint becomes terminal.
+    public func invalidateSnapshotWorkspace(reason!: String = "snapshot_workspace_changed"): Int64 {
+        return synchronized(transportLock) {
+            return match (snapshotLeases) {
+                case Some(table) => table.invalidateAll(reason)
+                case None => 0
+            }
+        }
+    }
+
+    /// Diagnostics for tests and owners: active leases, retained records and
+    /// deferred cleanups. No lease content is disclosed.
+    public func snapshotLeaseDiagnostics(): String {
+        return synchronized(transportLock) {
+            let revokedSummary = "revoked_credential_retained=${revokedCredentialFingerprints.size} " +
+                "revoked_credential_evictions=${revokedCredentialEvictions}"
+            return match (snapshotLeases) {
+                case Some(table) => "active=${table.activeCount()} records=${table.retainedRecordCount()} " +
+                    "cleanup_pending=${table.cleanupPendingCount()} epoch=${authorizationEpoch} " +
+                    "authorization_revoked=${authorizationRevoked} ${revokedSummary}"
+                case None => "active=0 records=0 cleanup_pending=0 epoch=${authorizationEpoch} " +
+                    "authorization_revoked=${authorizationRevoked} provider=absent ${revokedSummary}"
+            }
+        }
+    }
+
     /// Opts a domain into a genuine owner-selected context projection for an
     /// explicit target list.  Full GET_CONTEXT continues to call the stable
     /// domain snapshot and never gains a hidden partial-result behavior.
@@ -940,6 +1237,26 @@ public class CjguiSharedOperationExternalConnection {
                 return false
             }
             windowProgressProvider = Some(provider)
+            return true
+        }
+    }
+
+    /// One bounded receipt projection on the existing authorized window read
+    /// channel. Enabling it never gives the transport an owner mutation path.
+    public func enableTransferReceiptReads(provider: CjguiSharedOperationTransferReceiptProvider): Bool {
+        return synchronized(transportLock) {
+            if (let Some(_) <- server) { return false }
+            transferReceiptProvider = Some(provider)
+            return true
+        }
+    }
+
+    /// Opt-in position motion uses its own read, set and clear grants. The
+    /// provider resolves only host-exposed accepted targets on the owner turn.
+    public func enablePositionMotion(provider: CjguiSharedOperationPositionMotionProvider): Bool {
+        return synchronized(transportLock) {
+            if (let Some(_) <- server) { return false }
+            positionMotionProvider = Some(provider)
             return true
         }
     }
@@ -1027,6 +1344,16 @@ public class CjguiSharedOperationExternalConnection {
         }
     }
 
+    /// The raw instance nonce exactly as published in the descriptor's
+    /// ENDPOINT_INSTANCE field. Lease requests echo this value together with
+    /// endpointEpoch(); endpointIdentity() is the composite form and does not
+    /// satisfy the acquire field.
+    public func endpointInstance(): String {
+        return synchronized(transportLock) {
+            endpointInstanceValue
+        }
+    }
+
     public func connectionInfo(): ?CjguiSharedOperationConnectionInfo {
         return synchronized(transportLock) {
             if (let Some(_) <- server) {
@@ -1064,6 +1391,15 @@ public class CjguiSharedOperationExternalConnection {
     /// I/O workers. Domain and window work remain on the caller's established
     /// thread; a slow socket cannot occupy that thread.
     public func pump(timeoutMs: UInt32): Bool {
+        // Owner-thread maintenance beat (E1): hard-deadline expiry, deferred
+        // cleanup retries and terminal-window recycling run every turn even
+        // when no client sends anything, so an idle endpoint still reclaims
+        // its leases. The table is owner-only by contract; this is that owner.
+        synchronized(transportLock) {
+            if (let Some(table) <- snapshotLeases) {
+                let _ = table.purgeExpired()
+            }
+        }
         let activeState = synchronized(transportLock) {
             ioState
         }
@@ -1135,12 +1471,34 @@ public class CjguiSharedOperationExternalConnection {
                 activeIoState.waitForPublishedResponses(CJGUI_SHARED_OPERATION_CLOSE_RESPONSE_GRACE_MS)
             }
             cleanupOwnedTransport()
+            // E1: after the transport is down there is no owner pump any more,
+            // so THIS is the last owner-safe point. Bounded drain of deferred
+            // releases: a fixed number of sweeps with tiny spacing. A handle
+            // that still fails stays counted and answerable through
+            // `snapshotLeaseDiagnostics` -- never silently zeroed, never an
+            // unbounded wait.
+            if (let Some(table) <- snapshotLeases) {
+                if (table.deferredCleanupCount() > 0) {
+                    var sweep = 0
+                    while (sweep < 3 && table.retryDeferredCleanupOnce() > 0) {
+                        sweep += 1
+                        if (sweep < 3) {
+                            sleep(Duration.millisecond * 25)
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Exposes the same authorization and declaration checks as the socket for
     /// another local transport implementation; it is not a privileged bypass.
     public func dispatchPayload(payload: String): String {
+        if (synchronized(transportLock) { authorizationRevoked }) {
+            // A revoked authorization is dead, not paused: nothing from the
+            // old capability is dispatched and no provider is touched.
+            return errorPayload("authorization_revoked")
+        }
         if (!hasSafeAuthorization()) {
             return errorPayload("unauthorized_caller")
         }
@@ -1170,6 +1528,21 @@ public class CjguiSharedOperationExternalConnection {
         if (lines[2] == "GET_WINDOW_PROGRESS") {
             return dispatchWindowProgressRead(lines)
         }
+        if (lines[2].startsWith("GET_NODE_TRANSLATION ")) {
+            return dispatchPositionMotionRead(lines)
+        }
+        if (lines[2].startsWith("SET_NODE_TRANSLATION ")) {
+            return dispatchPositionMotionSet(lines)
+        }
+        if (lines[2].startsWith("CLEAR_NODE_TRANSLATION ")) {
+            return dispatchPositionMotionClear(lines)
+        }
+        if (lines[2].startsWith("GET_TRANSFER_RECEIPT_CHANGES ")) {
+            return dispatchTransferReceiptChangesRead(lines)
+        }
+        if (lines[2].startsWith("GET_TRANSFER_RECEIPT ")) {
+            return dispatchTransferReceiptRead(lines)
+        }
         if (lines[2] == "GET_WINDOW_TARGETS") {
             return dispatchWindowProjectionTargetsRead(lines)
         }
@@ -1184,6 +1557,15 @@ public class CjguiSharedOperationExternalConnection {
         }
         if (lines[2].startsWith("READ_RANGE ")) {
             return dispatchRangeRead(lines)
+        }
+        if (lines[2].startsWith("SNAPSHOT_ACQUIRE ")) {
+            return dispatchSnapshotAcquire(lines)
+        }
+        if (lines[2].startsWith("SNAPSHOT_READ ")) {
+            return dispatchSnapshotRead(lines)
+        }
+        if (lines[2].startsWith("SNAPSHOT_RELEASE ")) {
+            return dispatchSnapshotRelease(lines)
         }
         if (lines[2] == "GET_GENERATED_UI_CAPABILITIES") {
             return dispatchGeneratedUiCapabilities(lines)
@@ -1290,6 +1672,18 @@ public class CjguiSharedOperationExternalConnection {
             }
         }
         server = None
+        // Endpoint shutdown converges every fixed-snapshot lease: the framework owns the
+        // tokens, so it must not leave an application handle alive after the socket is gone.
+        // A handle that fails to release lands in `cleanup_pending` and is retried by the next
+        // owner maintenance, never silently dropped.
+        if (let Some(table) <- snapshotLeases) {
+            let _ = table.invalidateAll("snapshot_endpoint_closed")
+            // Close is itself a maintenance point: a release that failed during
+            // convergence is retried here once, and anything still pending keeps
+            // its `cleanup_pending` accounting for the next owner beat -- it is
+            // never silently dropped or reported as zero.
+            let _ = table.purgeExpired()
+        }
         if (ownsDescriptorPath && descriptorPath != "") {
             try {
                 let _ = removeIfExists(Path(descriptorPath), recursive: false)
@@ -1391,6 +1785,20 @@ public class CjguiSharedOperationExternalConnection {
                     }
                     if (let Some(payload) <- response) {
                         let _ = writeFrameWithDeadline(client, CjguiSharedOperationFrame.encode(payload), state)
+                    } else {
+                        // The owner did not claim the request within the bounded
+                        // ready wait (or the endpoint stopped): name the outcome
+                        // instead of leaving the peer with a bare connection
+                        // close. A busy owner is a RETRYABLE condition, and a
+                        // named owner_busy frame lets a client tell it apart from
+                        // a crashed endpoint.
+                        if (state.isRunning()) {
+                            let _ = writeFrameWithDeadline(
+                                client,
+                                CjguiSharedOperationFrame.encode(errorPayload("owner_busy")),
+                                state
+                            )
+                        }
                     }
                     state.finishPendingRequest(requestLeaseId)
                 } else {
@@ -1625,6 +2033,181 @@ public class CjguiSharedOperationExternalConnection {
         return errorPayload("invalid_request")
     }
 
+    // -----------------------------------------------------------------------
+    // Fixed-snapshot leases (E1). Owner-only: every handler runs on the owner
+    // thread, so the lease table is never touched by an I/O worker.
+    // -----------------------------------------------------------------------
+
+    /// `SNAPSHOT_ACQUIRE <endpointInstance> <bindGeneration> <requestId>
+    ///  <resourceId> <resourceInstanceId|-> <expectedVersion|ANY> <ttlMs>`
+    ///
+    /// The endpoint instance and bind generation are echoed by the client so a
+    /// restarted endpoint cannot hand an old client a lease on a different
+    /// object that happens to reuse the resource id.
+    private func dispatchSnapshotAcquire(lines: Array<String>): String {
+        if (!authorization.permitsAction("SNAPSHOT_ACQUIRE")) {
+            return errorPayload("unauthorized_action")
+        }
+        let command = lines[2].split(" ")
+        if (command.size != 8 || command[0] != "SNAPSHOT_ACQUIRE" || lines.size != 3) {
+            return errorPayload("invalid_request")
+        }
+        let expectedEndpoint = command[1]
+        // `-` is the "absent" sentinel for BOTH optional fields. Forwarding a literal "-"
+        // as the request id made every un-identified acquire share one idempotency key, so a
+        // second acquire silently replayed the first lease instead of taking a new snapshot.
+        let requestId = if (command[3] == "-") { "" } else { command[3] }
+        let resourceInstanceId = if (command[5] == "-") { "" } else { command[5] }
+        if (!isSafeOpaqueIdentity(expectedEndpoint, 64) ||
+            (requestId != "" && !isSafeOpaqueIdentity(requestId, 64)) ||
+            (resourceInstanceId != "" && !isSafeOpaqueIdentity(resourceInstanceId, 64))) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(bindGeneration) <- Int64.tryParse(command[2])) {
+            if (let Some(resourceId) <- Int64.tryParse(command[4])) {
+                let expectedVersion = if (command[6] == "ANY") {
+                    -1
+                } else {
+                    match (Int64.tryParse(command[6])) {
+                        case Some(parsed) => parsed
+                        case None => return errorPayload("invalid_request")
+                    }
+                }
+                if (let Some(ttlMs) <- Int64.tryParse(command[7])) {
+                    if (bindGeneration < 0 || resourceId < 0 || expectedVersion < -1 || ttlMs < 0) {
+                        return errorPayload("invalid_request")
+                    }
+                    if (!authorization.permitsResource("SNAPSHOT_ACQUIRE", resourceId)) {
+                        return errorPayload("unauthorized_resource")
+                    }
+                    // Endpoint identity: a lease request addressed to another
+                    // endpoint instance is refused before any provider call.
+                    if (expectedEndpoint != this.endpointInstanceValue) {
+                        return errorPayload("snapshot_endpoint_changed")
+                    }
+                    if (let Some(table) <- snapshotLeases) {
+                        // Owner maintenance: an idle endpoint still expires leases.
+                        let _ = table.purgeExpired()
+                        if (let Some(provider) <- snapshotProvider) {
+                            let outcome = table.acquire(provider, this.endpointInstanceValue,
+                                bindGeneration, "grant-${this.authorizationEpoch}",
+                                this.authorizationEpoch, "SNAPSHOT_READ", requestId, resourceId,
+                                resourceInstanceId, expectedVersion, ttlMs)
+                            if (let Some(description) <- outcome.description) {
+                                return snapshotLeasePayload(description)
+                            }
+                            return errorPayload(outcome.refusal)
+                        }
+                    }
+                    return errorPayload("snapshot_unavailable")
+                }
+            }
+        }
+        return errorPayload("invalid_request")
+    }
+
+    /// `SNAPSHOT_READ <token> <start> <end>`
+    private func dispatchSnapshotRead(lines: Array<String>): String {
+        if (!authorization.permitsAction("SNAPSHOT_READ")) {
+            return errorPayload("unauthorized_action")
+        }
+        let command = lines[2].split(" ")
+        if (command.size != 4 || command[0] != "SNAPSHOT_READ" || lines.size != 3) {
+            return errorPayload("invalid_request")
+        }
+        if (!isSafeOpaqueIdentity(command[1], 256)) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(start) <- Int64.tryParse(command[2])) {
+            if (let Some(end) <- Int64.tryParse(command[3])) {
+                if (start < 0 || end < start || end - start > CJGUI_SHARED_OPERATION_MAX_STRING_BYTES) {
+                    return errorPayload("invalid_request")
+                }
+                if (let Some(table) <- snapshotLeases) {
+                    // The resource-level authorization for a snapshot read is
+                    // checked AFTER the token is resolved, because a snapshot
+                    // read names no resource. The lease itself binds the
+                    // resource scope that was authorized at acquire time.
+                    let read = table.read(command[1], start, end, this.endpointInstanceValue,
+                        this.endpointBindGenerationForLeases(), this.authorizationEpoch)
+                    if (read.isAvailable) {
+                        if (!authorization.permitsResource("SNAPSHOT_READ", read.resourceId)) {
+                            return errorPayload("unauthorized_resource")
+                        }
+                    }
+                    return rangeReadPayload(read, read.resourceId, start, end)
+                }
+                return errorPayload("snapshot_unavailable")
+            }
+        }
+        return errorPayload("invalid_request")
+    }
+
+    /// `SNAPSHOT_RELEASE <token>`
+    private func dispatchSnapshotRelease(lines: Array<String>): String {
+        if (!authorization.permitsAction("SNAPSHOT_RELEASE")) {
+            return errorPayload("unauthorized_action")
+        }
+        let command = lines[2].split(" ")
+        if (command.size != 2 || command[0] != "SNAPSHOT_RELEASE" || lines.size != 3) {
+            return errorPayload("invalid_request")
+        }
+        if (!isSafeOpaqueIdentity(command[1], 256)) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(table) <- snapshotLeases) {
+            let reason = table.release(command[1], this.endpointInstanceValue,
+                this.endpointBindGenerationForLeases(), this.authorizationEpoch)
+            if (reason == "snapshot_unknown" || reason == "snapshot_endpoint_changed") {
+                return errorPayload(reason)
+            }
+            return snapshotReleasePayload(command[1], reason)
+        }
+        return errorPayload("snapshot_unavailable")
+    }
+
+    /// Bind generation as the lease table must compare it. The connection's
+    /// generation is bumped on every successful bind; leases record the value
+    /// of the bind they were taken under.
+    private func endpointBindGenerationForLeases(): Int64 {
+        return this.endpointGeneration
+    }
+
+    private func snapshotLeasePayload(
+        description: CjguiSharedOperationSnapshotLeaseDescription): String {
+        if (!isBoundedPayload("") || description.token.size > 256 ||
+            !isSafeLeaseReason(description.resourceInstanceId)) {
+            return errorPayload("invalid_range")
+        }
+        let builder = CjguiSharedOperationBoundedTextBuilder()
+        builder.append("PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\n")
+        builder.append("KIND SNAPSHOT_LEASE\n")
+        builder.append("TOKEN ${description.token}\n")
+        builder.append("ENDPOINT_INSTANCE ${description.endpointInstance}\n")
+        builder.append("ENDPOINT_BIND_GENERATION ${description.bindGeneration}\n")
+        builder.append("RESOURCE ${description.resourceId}\n")
+        builder.append("RESOURCE_INSTANCE ${description.resourceInstanceId}\n")
+        builder.append("VERSION ${description.version}\n")
+        builder.append("BYTE_LENGTH ${description.byteLength}\n")
+        builder.append("TTL_MS ${description.grantedTtlMs}\n")
+        builder.append("REMAINING_MS ${description.remainingTtlMs}\n")
+        builder.append("MAX_READ_BYTES ${description.maxReadBytes}\n")
+        builder.append("RESERVED_RESIDENT_BYTES ${description.reservedResidentBytes}\n")
+        builder.append("RESERVED_BACKING_BYTES ${description.reservedBackingBytes}\n")
+        builder.append("END")
+        return builder.toString()
+    }
+
+    private func snapshotReleasePayload(token: String, reason: String): String {
+        let builder = CjguiSharedOperationBoundedTextBuilder()
+        builder.append("PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\n")
+        builder.append("KIND SNAPSHOT_RELEASE\n")
+        builder.append("TOKEN ${token}\n")
+        builder.append("REASON ${reason}\n")
+        builder.append("END")
+        return builder.toString()
+    }
+
     private func dispatchWindowProgressRead(lines: Array<String>): String {
         if (!authorization.permitsAction("GET_WINDOW_PROGRESS")) {
             return errorPayload("unauthorized_action")
@@ -1636,6 +2219,136 @@ public class CjguiSharedOperationExternalConnection {
             return windowProgressPayload(provider.windowProgress())
         }
         return errorPayload("window_progress_unavailable")
+    }
+
+    private func positionMotionFactPayload(fact: CjguiSharedOperationPositionMotionFact): String {
+        if (fact.nodeId < 0 || !isSafeOpaqueIdentity(fact.sessionIdentity, 64) ||
+            !sharedOperationSafeOpaqueToken(fact.casToken) ||
+            !isSafeIdentifier(fact.requestedMode) || !isSafeWindowDiagnostic(fact.lastFailure) ||
+            fact.acceptedSceneVersion <= 0 ||
+            !sharedOperationPositionFinite(fact.requestedX) || !sharedOperationPositionFinite(fact.requestedY) ||
+            !sharedOperationPositionFinite(fact.presentedX) || !sharedOperationPositionFinite(fact.presentedY) ||
+            !sharedOperationPositionFinite(fact.declaredX) || !sharedOperationPositionFinite(fact.declaredY)) {
+            return errorPayload("position_motion_fact_invalid")
+        }
+        return "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND NODE_TRANSLATION\n" +
+            "NODE_ID ${fact.nodeId}\nRESOURCE_ID ${fact.resourceId}\nSESSION ${fact.sessionIdentity}\n" +
+            "CAS ${fact.casToken}\nREQUEST_REVISION ${fact.requestRevision}\n" +
+            "ACCEPTED_REQUEST_REVISION ${fact.acceptedRequestRevision}\n" +
+            "REQUESTED_MODE ${fact.requestedMode}\nREQUESTED ${fact.requestedX} ${fact.requestedY}\n" +
+            "PRESENTED ${fact.presentedX} ${fact.presentedY}\n" +
+            "DECLARED ${fact.declaredX} ${fact.declaredY}\n" +
+            "SCENE ${fact.acceptedSceneVersion}\nFRAME ${fact.submittedFrameIndex}\n" +
+            "ACTIVE ${if (fact.active) { 1 } else { 0 }}\n" +
+            "PENDING ${if (fact.pending) { 1 } else { 0 }}\n" +
+            "FAILURE ${fact.lastFailure}\nEND"
+    }
+
+    private func positionMotionDecisionPayload(result: CjguiSharedOperationPositionMotionDecision): String {
+        if (!isSafeWindowDiagnostic(result.reason)) { return errorPayload("position_motion_decision_invalid") }
+        let factLines = match (result.fact) {
+            case Some(fact) =>
+                "NODE_ID ${fact.nodeId}\nREQUEST_REVISION ${fact.requestRevision}\n" +
+                "ACCEPTED_REQUEST_REVISION ${fact.acceptedRequestRevision}\n" +
+                "SCENE ${fact.acceptedSceneVersion}\nFRAME ${fact.submittedFrameIndex}\n" +
+                "CAS ${fact.casToken}\nPENDING ${if (fact.pending) { 1 } else { 0 }}\n"
+            case None => ""
+        }
+        return "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND NODE_TRANSLATION_DECISION\n" +
+            "ADMITTED ${if (result.admitted) { 1 } else { 0 }}\nREASON ${result.reason}\n${factLines}END"
+    }
+
+    private func dispatchPositionMotionRead(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_NODE_TRANSLATION")) { return errorPayload("unauthorized_action") }
+        if (lines.size != 3) { return errorPayload("invalid_request") }
+        let command = lines[2].split(" ")
+        if (let Some(provider) <- positionMotionProvider) {
+            if (command.size == 2 && command[1] == "LIST") {
+                let targets = provider.positionMotionTargets()
+                if (targets.size > 32) { return errorPayload("position_motion_capacity") }
+                let builder = CjguiSharedOperationBoundedTextBuilder()
+                if (!builder.append("PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND NODE_TRANSLATION_TARGETS\n")) {
+                    return errorPayload("response_too_large")
+                }
+                var visible = 0
+                for (nodeId in targets) {
+                    if (let Some(fact) <- provider.positionMotionRead(nodeId)) {
+                        if (fact.resourceId < 0 || authorization.permitsResource("GET_NODE_TRANSLATION", fact.resourceId)) {
+                            if (!builder.append("TARGET ${fact.nodeId} ${fact.resourceId}\n")) {
+                                return errorPayload("response_too_large")
+                            }
+                            visible += 1
+                        }
+                    }
+                }
+                if (!builder.append("COUNT ${visible}\nEND")) { return errorPayload("response_too_large") }
+                return builder.toString()
+            }
+            if (command.size == 3 && command[1] == "READ" && isSafeInteger(command[2])) {
+                if (let Some(nodeId) <- Int64.tryParse(command[2])) {
+                    if (let Some(fact) <- provider.positionMotionRead(nodeId)) {
+                        if (fact.resourceId >= 0 &&
+                            !authorization.permitsResource("GET_NODE_TRANSLATION", fact.resourceId)) {
+                            return errorPayload("unauthorized_resource")
+                        }
+                        return positionMotionFactPayload(fact)
+                    }
+                    return errorPayload("position_target_unavailable")
+                }
+            }
+            return errorPayload("invalid_request")
+        }
+        return errorPayload("position_motion_unavailable")
+    }
+
+    private func dispatchPositionMotionSet(lines: Array<String>): String {
+        if (!authorization.permitsAction("SET_NODE_TRANSLATION")) { return errorPayload("unauthorized_action") }
+        if (lines.size != 3) { return errorPayload("invalid_request") }
+        let command = lines[2].split(" ")
+        if (command.size != 6 || !isSafeInteger(command[1]) ||
+            !sharedOperationSafeOpaqueToken(command[2]) || !sharedOperationSafeMotionReference(command[5])) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- positionMotionProvider) {
+            if (let Some(nodeId) <- Int64.tryParse(command[1])) {
+                if (let Some(x) <- Float64.tryParse(command[3])) {
+                    if (let Some(y) <- Float64.tryParse(command[4])) {
+                        if (let Some(fact) <- provider.positionMotionRead(nodeId)) {
+                            if (fact.resourceId >= 0 &&
+                                !authorization.permitsResource("SET_NODE_TRANSLATION", fact.resourceId)) {
+                                return errorPayload("unauthorized_resource")
+                            }
+                            return positionMotionDecisionPayload(provider.positionMotionSet(nodeId,
+                                command[2], x, y, command[5]))
+                        }
+                        return errorPayload("position_target_unavailable")
+                    }
+                }
+            }
+        } else { return errorPayload("position_motion_unavailable") }
+        return errorPayload("invalid_request")
+    }
+
+    private func dispatchPositionMotionClear(lines: Array<String>): String {
+        if (!authorization.permitsAction("CLEAR_NODE_TRANSLATION")) { return errorPayload("unauthorized_action") }
+        if (lines.size != 3) { return errorPayload("invalid_request") }
+        let command = lines[2].split(" ")
+        if (command.size != 3 || !isSafeInteger(command[1]) || !sharedOperationSafeOpaqueToken(command[2])) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(provider) <- positionMotionProvider) {
+            if (let Some(nodeId) <- Int64.tryParse(command[1])) {
+                if (let Some(fact) <- provider.positionMotionRead(nodeId)) {
+                    if (fact.resourceId >= 0 &&
+                        !authorization.permitsResource("CLEAR_NODE_TRANSLATION", fact.resourceId)) {
+                        return errorPayload("unauthorized_resource")
+                    }
+                    return positionMotionDecisionPayload(provider.positionMotionClear(nodeId, command[2]))
+                }
+                return errorPayload("position_target_unavailable")
+            }
+        } else { return errorPayload("position_motion_unavailable") }
+        return errorPayload("invalid_request")
     }
 
     private func dispatchWindowProgressTargetRead(lines: Array<String>): String {
@@ -1653,6 +2366,71 @@ public class CjguiSharedOperationExternalConnection {
             return errorPayload("unknown_window_target")
         }
         return errorPayload("window_progress_target_unavailable")
+    }
+
+    private func dispatchTransferReceiptRead(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_WINDOW_PROGRESS")) { return errorPayload("unauthorized_action") }
+        let fields = lines[2].split(" ")
+        if (lines.size != 3 || fields.size != 3 || !isSafeIdentifier(fields[1])) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(eventId) <- UInt64.tryParse(fields[2])) {
+            if (eventId == 0u64) { return errorPayload("invalid_request") }
+            if (let Some(provider) <- transferReceiptProvider) {
+                return transferReceiptPayload(provider.transferReceiptPage(fields[1], eventId), false)
+            }
+            return errorPayload("transfer_receipt_unavailable")
+        }
+        return errorPayload("invalid_request")
+    }
+
+    private func dispatchTransferReceiptChangesRead(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_WINDOW_PROGRESS")) { return errorPayload("unauthorized_action") }
+        let fields = lines[2].split(" ")
+        if (lines.size != 3 || fields.size != 4 || !isSafeIdentifier(fields[1])) {
+            return errorPayload("invalid_request")
+        }
+        if (let Some(cursor) <- Int64.tryParse(fields[2])) {
+            if (let Some(limit) <- Int64.tryParse(fields[3])) {
+                if (cursor < 0 || limit < 1 || limit > 64) { return errorPayload("invalid_request") }
+                if (let Some(provider) <- transferReceiptProvider) {
+                    return transferReceiptPayload(provider.transferReceiptChangesPage(fields[1], cursor, limit), true)
+                }
+                return errorPayload("transfer_receipt_unavailable")
+            }
+        }
+        return errorPayload("invalid_request")
+    }
+
+    private func transferReceiptPayload(page: CjguiSharedOperationTransferReceiptPage,
+        changes: Bool): String {
+        if (page.revision < 0 || page.retentionFloor < 0 || page.receipts.size > 64 ||
+            (page.lookupState != "found" && page.lookupState != "expired" &&
+             page.lookupState != "unknown" && page.lookupState != "changes")) {
+            return errorPayload("invalid_transfer_receipt")
+        }
+        let kind = if (changes) { "TRANSFER_RECEIPT_CHANGES" } else { "TRANSFER_RECEIPT" }
+        var payload = "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND ${kind}\n" +
+            "LOOKUP ${page.lookupState}\nREVISION ${page.revision}\n" +
+            "RETENTION_FLOOR ${page.retentionFloor}\nRESYNC ${page.resyncRequired}\n" +
+            "COUNT ${page.receipts.size}\n"
+        for (receipt in page.receipts) {
+            if (receipt.eventId == 0u64 || receipt.revision < 0 || receipt.semanticId.size > 256 ||
+                receipt.sourceKind.size > 128 || receipt.reason.size > 128 ||
+                receipt.contentDigest.size > 128 || !isSafeIdentifier(receipt.sessionIdentity)) {
+                return errorPayload("invalid_transfer_receipt")
+            }
+            payload = "${payload}RECEIPT ${receipt.sessionIdentity} ${receipt.eventId} " +
+                "${receipt.eventKind} ${receipt.nodeId} ${receipt.bindingEpoch} " +
+                "${receipt.expectedOwnerVersion} ${receipt.ownerAttempted} " +
+                "${receipt.ownerVersionBefore} ${receipt.ownerVersionAfter} " +
+                "${receipt.acceptedSceneVersion} ${receipt.submittedFrameIndex} ${receipt.revision} " +
+                "${encodeUtf8HexValue(receipt.semanticId)} ${encodeUtf8HexValue(receipt.sourceKind)} " +
+                "${encodeUtf8HexValue(receipt.format)} ${encodeUtf8HexValue(receipt.contentDigest)} " +
+                "${encodeUtf8HexValue(receipt.state)} ${encodeUtf8HexValue(receipt.reason)}\n"
+        }
+        payload = "${payload}END"
+        return if (isBoundedPayload(payload)) { payload } else { errorPayload("response_too_large") }
     }
 
     private func dispatchTreeSelectionRead(lines: Array<String>): String {
@@ -2269,6 +3047,17 @@ public class CjguiSharedOperationExternalConnection {
             progress.submittedSceneVersion < -1 || progress.submittedFrameIndex < -1 ||
             progress.observedMetalCompletionFrameIndex < -1 || progress.observedMetalFailureFrameIndex < -1 ||
             progress.observedMetalGpuDurationMicros < -1 || progress.overlayDrawnSceneVersion < -1 ||
+            (progress.geometry.state != "available" && progress.geometry.state != "unavailable") ||
+            progress.geometry.pointUnit != "window_point" ||
+            progress.geometry.currentWidthPoints < 0.0 || progress.geometry.currentHeightPoints < 0.0 ||
+            (progress.geometry.state == "available" && progress.geometry.currentBackingScale <= 0.0) ||
+            progress.geometry.currentDrawableWidthPixels < 0 ||
+            progress.geometry.currentDrawableHeightPixels < 0 ||
+            (progress.geometry.state == "available" && progress.geometry.currentRevision < 0) ||
+            (progress.geometry.submittedState != "none" && progress.geometry.submittedState != "committed") ||
+            (progress.geometry.submittedState == "committed" &&
+                (progress.geometry.submittedBackingScale <= 0.0 ||
+                 progress.geometry.submittedSceneVersion < 0 || progress.geometry.submittedFrameIndex < 0)) ||
             !isSafeIdentifier(progress.presentationState) || !isSafeIdentifier(progress.sessionIdentity) ||
             !isSafeWindowDiagnostic(progress.pendingRefreshReason) ||
             !isSafeWindowDiagnostic(progress.lastNativeFailure) ||
@@ -2287,12 +3076,26 @@ public class CjguiSharedOperationExternalConnection {
             progress.windowBackgroundObservationRevision < 0 ||
             !isSafeIdentifier(progress.windowBackgroundCompletion) ||
             progress.windowBackgroundVisualResult != "unobserved" ||
+            (progress.workload.status != "disabled" && progress.workload.status != "enabled" &&
+                progress.workload.status != "native_unavailable") ||
+            (progress.workload.lastAttemptResult != "none" &&
+                progress.workload.lastAttemptResult != "accepted" &&
+                progress.workload.lastAttemptResult != "rejected") ||
+            progress.workload.sceneVersion < -1 || progress.workload.nodeWrites < -1 ||
+            progress.workload.nodeClones < -1 || progress.workload.nodeAllocations < -1 ||
+            progress.workload.textLayoutPreparations < -1 || progress.workload.imageDecodeStarts < -1 ||
+            progress.workload.reusableResourceBytes < -1 || progress.workload.lastAttemptNodeWrites < -1 ||
+            progress.workload.lastAttemptNodeClones < -1 || progress.workload.lastAttemptNodeAllocations < -1 ||
+            progress.workload.lastAttemptTextLayoutPreparations < -1 ||
+            progress.workload.lastAttemptImageDecodeStarts < -1 ||
             (progress.windowBackgroundColorScheme != "light" &&
                 progress.windowBackgroundColorScheme != "dark" &&
                 progress.windowBackgroundColorScheme != "unavailable")) {
             return errorPayload("invalid_window_progress")
         }
         var payload = "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND WINDOW_PROGRESS\n${targetLine}WINDOW_PROJECTION ACTIVE\nWINDOW_SCENE_VERSION ${progress.sceneVersion}\nWINDOW_NATIVE_SUBMISSION_VERSION ${progress.nativeSubmissionVersion}\nWINDOW_PRESENTATION_STATE ${progress.presentationState}\nWINDOW_SESSION ${progress.sessionIdentity}\nWINDOW_ACCEPTED_SCENE_VERSION ${progress.acceptedSceneVersion}\nWINDOW_SUBMITTED_SCENE_VERSION ${progress.submittedSceneVersion}\nWINDOW_SUBMITTED_FRAME_INDEX ${progress.submittedFrameIndex}\nWINDOW_METAL_COMPLETED_FRAME_INDEX ${progress.observedMetalCompletionFrameIndex}\nWINDOW_METAL_FAILED_FRAME_INDEX ${progress.observedMetalFailureFrameIndex}\nWINDOW_METAL_GPU_DURATION_MICROS ${progress.observedMetalGpuDurationMicros}\nWINDOW_OVERLAY_DRAWN_SCENE_VERSION ${progress.overlayDrawnSceneVersion}\nWINDOW_REFRESH_PENDING ${progress.pendingRefreshReason}\nWINDOW_LAST_NATIVE_FAILURE ${progress.lastNativeFailure}\n"
+        payload = "${payload}${progress.geometryFactsPayload()}\n"
+        payload = "${payload}${progress.workload.factsPayload()}\n"
         payload = "${payload}WINDOW_EFFECT_ID ${progress.effectIdentity}\n" +
             "WINDOW_EFFECT_REQUESTED_RADIUS_POINTS ${progress.effectRequestedRadiusPoints}\n" +
             "WINDOW_EFFECT_SUBMITTED_SCENE_VERSION ${progress.effectSubmittedSceneVersion}\n" +
@@ -2876,6 +3679,59 @@ public class CjguiSharedOperationExternalConnection {
                 )
             }
         }
+        if (authorization.permitsAction("SNAPSHOT_ACQUIRE")) {
+            if (let Some(_) <- snapshotProvider) {
+                actions.add(
+                    CjguiSharedOperationActionDescriptor(
+                        "SNAPSHOT_ACQUIRE",
+                        "取得固定快照租约",
+                        ArrayList<CjguiSharedOperationParameterDescriptor>(
+                            [
+                                CjguiSharedOperationParameterDescriptor("resourceId", "INTEGER", true),
+                                CjguiSharedOperationParameterDescriptor("ttlMs", "INTEGER", false)
+                            ]
+                        ),
+                        1,
+                        1
+                    )
+                )
+            }
+        }
+        if (authorization.permitsAction("SNAPSHOT_READ")) {
+            if (let Some(_) <- snapshotProvider) {
+                actions.add(
+                    CjguiSharedOperationActionDescriptor(
+                        "SNAPSHOT_READ",
+                        "读取固定快照片段",
+                        ArrayList<CjguiSharedOperationParameterDescriptor>(
+                            [
+                                CjguiSharedOperationParameterDescriptor("start", "INTEGER", true),
+                                CjguiSharedOperationParameterDescriptor("end", "INTEGER", true)
+                            ]
+                        ),
+                        1,
+                        1
+                    )
+                )
+            }
+        }
+        if (authorization.permitsAction("SNAPSHOT_RELEASE")) {
+            if (let Some(_) <- snapshotProvider) {
+                actions.add(
+                    CjguiSharedOperationActionDescriptor(
+                        "SNAPSHOT_RELEASE",
+                        "释放固定快照租约",
+                        ArrayList<CjguiSharedOperationParameterDescriptor>(
+                            [
+                                CjguiSharedOperationParameterDescriptor("token", "STRING", true)
+                            ]
+                        ),
+                        1,
+                        1
+                    )
+                )
+            }
+        }
         if (authorization.permitsAction("READ_RANGE")) {
             if (let Some(_) <- rangeReadDomain) {
                 actions.add(
@@ -2906,6 +3762,38 @@ public class CjguiSharedOperationExternalConnection {
                         0
                     )
                 )
+            }
+            if (let Some(_) <- transferReceiptProvider) {
+                actions.add(CjguiSharedOperationActionDescriptor("GET_TRANSFER_RECEIPT",
+                    "按窗口与事件身份读取图片接收回执",
+                    ArrayList<CjguiSharedOperationParameterDescriptor>([
+                        CjguiSharedOperationParameterDescriptor("sessionIdentity", "STRING", true),
+                        CjguiSharedOperationParameterDescriptor("eventId", "INTEGER", true)
+                    ]), 1, 1))
+                actions.add(CjguiSharedOperationActionDescriptor("GET_TRANSFER_RECEIPT_CHANGES",
+                    "有界增量读取图片接收回执",
+                    ArrayList<CjguiSharedOperationParameterDescriptor>([
+                        CjguiSharedOperationParameterDescriptor("sessionIdentity", "STRING", true),
+                        CjguiSharedOperationParameterDescriptor("afterRevision", "INTEGER", true),
+                        CjguiSharedOperationParameterDescriptor("maximum", "INTEGER", true)
+                    ]), 1, 1))
+            }
+        }
+        if (let Some(_) <- positionMotionProvider) {
+            if (authorization.permitsAction("GET_NODE_TRANSLATION")) {
+                actions.add(CjguiSharedOperationActionDescriptor("GET_NODE_TRANSLATION",
+                    "读取已接受节点的平移目标与呈现值",
+                    ArrayList<CjguiSharedOperationParameterDescriptor>(), 0, 32))
+            }
+            if (authorization.permitsAction("SET_NODE_TRANSLATION")) {
+                actions.add(CjguiSharedOperationActionDescriptor("SET_NODE_TRANSLATION",
+                    "按接受身份设置节点平移目标",
+                    ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1))
+            }
+            if (authorization.permitsAction("CLEAR_NODE_TRANSLATION")) {
+                actions.add(CjguiSharedOperationActionDescriptor("CLEAR_NODE_TRANSLATION",
+                    "按接受身份清除节点位置动效",
+                    ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1))
             }
         }
         if (authorization.permitsAction("GET_WINDOW_TARGETS")) {
@@ -3271,6 +4159,48 @@ private func parseInt64OrZero(value: String): Int64 {
         index += 1
     }
     return if (negative) { -result } else { result }
+}
+
+/// Opaque wire identities (endpoint instances, lease tokens, resource instance
+/// ids) are only compared for equality and echoed back: the framing invariant
+/// is "bounded ASCII with no whitespace or control bytes", nothing more.
+/// Framework-generated endpoint instances are hex, so their first character
+/// may be a digit -- isSafeIdentifier rejects those, and the endpoint then
+/// refuses its own published identity as an invalid request.
+private func isSafeOpaqueIdentity(value: String, maxLength: Int64): Bool {
+    if (value.size == 0 || value.size > maxLength || !value.isAscii()) {
+        return false
+    }
+    for (byte in value) {
+        let isLetter = (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z')
+        let isDigit = byte >= b'0' && byte <= b'9'
+        if (!isLetter && !isDigit && byte != b'_' && byte != b'-') {
+            return false
+        }
+    }
+    return true
+}
+
+private func sharedOperationPositionFinite(value: Float64): Bool {
+    return value - value == 0.0
+}
+
+private func sharedOperationSafeOpaqueToken(value: String): Bool {
+    if (value.size == 0 || value.size > 256 || !value.isAscii()) { return false }
+    for (byte in value) {
+        if (byte <= 32 || byte >= 127) { return false }
+    }
+    return true
+}
+
+private func sharedOperationSafeMotionReference(value: String): Bool {
+    if (value.size == 0 || value.size > 64 || !value.isAscii()) { return false }
+    for (byte in value) {
+        let isLetter = (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z')
+        let isDigit = byte >= b'0' && byte <= b'9'
+        if (!isLetter && !isDigit && byte != b'_' && byte != b'-' && byte != b'.') { return false }
+    }
+    return true
 }
 
 private func isSafeIdentifier(value: String): Bool {

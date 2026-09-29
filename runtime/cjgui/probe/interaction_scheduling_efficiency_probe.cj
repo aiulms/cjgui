@@ -60,6 +60,12 @@ foreign {
     func cjgui_internal_renderer_test_set_composable_present_failures(
         session: UInt64, failureCount: UInt32
     ): Int32
+    func cjgui_internal_renderer_test_arm_submit_gate(session: UInt64, holdMicros: UInt32): Int32
+    func cjgui_internal_renderer_test_midwork_composable_event_timing(session: UInt64,
+        outAStartMicros: CPointer<UInt64>, outAEndMicros: CPointer<UInt64>,
+        outProducerReadyMicros: CPointer<UInt64>, outProducerPostMicros: CPointer<UInt64>,
+        outNativeEnqueueMicros: CPointer<UInt64>, outEnqueueStatus: CPointer<Int32>): Int32
+    func cjgui_internal_renderer_test_monotonic_micros(outMicros: CPointer<UInt64>): Int32
 }
 
 /// A is a real pressable action. Its action name is derived from A's owner
@@ -70,16 +76,18 @@ private class SchedulingAController <: CjguiComposableUiController {
     private let scale: Int64
     private var actionCountValue: Int64
     private var genericCountValue: Int64
+    private var localRevision: Int64
 
     init(workspace: CjguiTextDocumentWorkspace, scale: Int64) {
         this.workspace = workspace
         this.scale = scale
         this.actionCountValue = 0
         this.genericCountValue = 0
+        this.localRevision = 0
     }
 
     public func uiSceneVersion(): Int64 {
-        return workspace.previewLimitVersionForDocument(DOCUMENT_A)
+        return workspace.previewLimitVersionForDocument(DOCUMENT_A) + localRevision
     }
 
     private func actionName(): String {
@@ -90,7 +98,8 @@ private class SchedulingAController <: CjguiComposableUiController {
         let root = cjguiComposableVertical(1, "scheduling-a-root",
             CjguiComposableUiStyle(fixedWidth: 280, fixedHeight: 1200, gap: 0,
                 background: CjguiComposableUiColor(0.08, 0.10, 0.15, 1.0)))
-        root.add(cjguiComposableButton(2, "scheduling-a-action", "A", actionName(), DOCUMENT_A,
+        root.add(cjguiComposableButton(2, "scheduling-a-action",
+            if (localRevision == 0) { "A" } else { "A ${localRevision}" }, actionName(), DOCUMENT_A,
             CjguiComposableUiStyle(fixedWidth: 280, fixedHeight: 28,
                 background: CjguiComposableUiColor(0.12, 0.20, 0.34, 1.0),
                 textColor: CjguiComposableUiColor(0.92, 0.96, 1.0, 1.0)),
@@ -148,6 +157,7 @@ private class SchedulingAController <: CjguiComposableUiController {
     public func genericCount(): Int64 { return genericCountValue }
     public func ownerValue(): Int64 { return workspace.previewLimitForDocument(DOCUMENT_A) }
     public func ownerVersion(): Int64 { return workspace.previewLimitVersionForDocument(DOCUMENT_A) }
+    public func advanceLocalForSubmitGate(): Unit { localRevision += 1 }
 }
 
 /// B receives one ordinary generic action per sample and a real public owner
@@ -314,10 +324,15 @@ private class SchedulingOptions {
     let ackDirectory: String
     let overlapOnly: Bool
     let latencyOnly: Bool
-    init(ackDirectory: String, overlapOnly!: Bool = false, latencyOnly!: Bool = false) {
+    let latencyMotion: Bool
+    let submitGateOnly: Bool
+    init(ackDirectory: String, overlapOnly!: Bool = false, latencyOnly!: Bool = false,
+        latencyMotion!: Bool = false, submitGateOnly!: Bool = false) {
         this.ackDirectory = ackDirectory
         this.overlapOnly = overlapOnly
         this.latencyOnly = latencyOnly
+        this.latencyMotion = latencyMotion
+        this.submitGateOnly = submitGateOnly
     }
 }
 
@@ -330,6 +345,12 @@ private func optionsFromArgs(args: Array<String>): ?SchedulingOptions {
     }
     if (args.size == 3 && args[0] == "--ack-dir" && args[2] == "--latency-only") {
         return Some(SchedulingOptions(args[1], latencyOnly: true))
+    }
+    if (args.size == 3 && args[0] == "--ack-dir" && args[2] == "--latency-motion") {
+        return Some(SchedulingOptions(args[1], latencyMotion: true))
+    }
+    if (args.size == 3 && args[0] == "--ack-dir" && args[2] == "--submit-gate-only") {
+        return Some(SchedulingOptions(args[1], submitGateOnly: true))
     }
     return None
 }
@@ -1041,18 +1062,113 @@ private func runLatencyMode(options: SchedulingOptions, workspace: CjguiTextDocu
         getStdOut().flush()
     }
     let sessionA = windowA.testSessionToken()
+    if (options.submitGateOnly) {
+        let valid = runPublicSubmitGate(options.ackDirectory, application, windowA, windowB,
+            controllerA, timingDomain, observer, sessionA)
+        application.close()
+        return if (valid) { 0 } else { 1 }
+    }
     let emptyText = unsafe { LibC.mallocCString("") }
     let valid = runLatencySamples(application, windowA, windowB, controllerA, timingDomain, connection,
-        observer, sessionA, options.ackDirectory, emptyText)
+        observer, sessionA, options.ackDirectory, emptyText, options.latencyMotion)
     unsafe { LibC.free(emptyText) }
     application.close()
     return if (valid) { 0 } else { 1 }
 }
 
+/// One real UDS INVOKE is admitted by the transport worker while A's Metal
+/// commit path is held. The owner remains on the host thread; no test hook
+/// invokes it or manufactures an accepted scene.
+private func runPublicSubmitGate(ackDirectory: String, application: CjguiMacosApplication,
+    windowA: CjguiComposableUiWindow, windowB: CjguiComposableUiWindow,
+    controllerA: SchedulingAController, timing: LatencyTimingDomain,
+    observer: LatencyReadyObserver, sessionA: UInt64): Bool {
+    let armedStarted = MonoTime.now()
+    while ((!exists("${ackDirectory}/latency-baseline-ready") || observer.count() < 1) &&
+        (MonoTime.now() - armedStarted).toMilliseconds() < LATENCY_ARMED_WAIT_MS) {
+        let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+    }
+    if (!exists("${ackDirectory}/latency-baseline-ready") || observer.count() != 1) {
+        println("CJGUI_PUBLIC_SUBMIT_GATE failed=baseline_ready count=${observer.count()} " +
+            "elapsed_ms=${(MonoTime.now() - armedStarted).toMilliseconds()}")
+        return false
+    }
+    let beforeApplied = timing.appliedCount()
+    let beforeScene = windowB.windowProjection().acceptedSceneVersion
+    controllerA.advanceLocalForSubmitGate()
+    let arm = unsafe { cjgui_internal_renderer_test_arm_submit_gate(sessionA, 50000u32) }
+    // Bound the cross-clock mapping instead of treating two sequential reads
+    // as simultaneous. The queue observer's MonoTime value lies in the same
+    // domain as monoBase; nativeBefore/After enclose that one sample.
+    var nativeBefore: UInt64 = 0u64
+    var nativeAfter: UInt64 = 0u64
+    let clockBefore = unsafe { cjgui_internal_renderer_test_monotonic_micros(inout nativeBefore) }
+    let monoBase = MonoTime.now()
+    let clockAfter = unsafe { cjgui_internal_renderer_test_monotonic_micros(inout nativeAfter) }
+    let refreshed = windowA.refresh()
+    var gateStart: UInt64 = 0u64; var gateEnd: UInt64 = 0u64
+    var producerReady: UInt64 = 0u64; var producerPost: UInt64 = 0u64
+    var nativeEnqueue: UInt64 = 0u64; var enqueueStatus: Int32 = 0
+    let timingStatus = unsafe { cjgui_internal_renderer_test_midwork_composable_event_timing(
+        sessionA, inout gateStart, inout gateEnd, inout producerReady,
+        inout producerPost, inout nativeEnqueue, inout enqueueStatus) }
+    let readyWait = MonoTime.now()
+    while (observer.count() < 2 && (MonoTime.now() - readyWait).toMilliseconds() < 2000) {
+        sleep(Duration.millisecond)
+    }
+    var readyOffsetMicros: Int64 = -1
+    if (let Some(queuedAt) <- observer.timeFor(2)) {
+        readyOffsetMicros = (queuedAt - monoBase).toMicroseconds()
+    }
+    // Both native clock reads and Duration.toMicroseconds export integer
+    // microseconds. Widen the bracket by their conversion granularity rather
+    // than asserting that equal printed endpoints mean zero uncertainty.
+    let readyEarliest = if (readyOffsetMicros >= 0 && clockBefore == CJGUI_INTERNAL_RENDERER_OK) {
+        Int64(nativeBefore) + readyOffsetMicros - 2
+    } else { -1 }
+    let readyLatest = if (readyOffsetMicros >= 0 && clockAfter == CJGUI_INTERNAL_RENDERER_OK) {
+        Int64(nativeAfter) + readyOffsetMicros + 2
+    } else { -1 }
+    // Both possible native timestamps for the observed ready boundary must
+    // lie strictly inside the held commit interval. No guessed tolerance.
+    let queuedInGate = readyEarliest >= Int64(gateStart) && readyLatest < Int64(gateEnd) &&
+        readyLatest >= readyEarliest && gateEnd > gateStart
+    var rounds: Int64 = 0
+    while (rounds < 60 &&
+        (timing.appliedCount() < beforeApplied + 1 ||
+         acceptedOwnerText(windowB) != "B owner=129")) {
+        let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+        rounds += 1
+    }
+    let ownerOnce = timing.appliedCount() == beforeApplied + 1 &&
+        timing.lastApplyDocument() == DOCUMENT_B && timing.lastApplyValue() == 129
+    let accepted = acceptedOwnerText(windowB) == "B owner=129" &&
+        windowB.windowProjection().acceptedSceneVersion > beforeScene
+    var idle: Int64 = 0
+    while (idle < 3) { let _ = application.pumpOneTurn(turnBudgetMs: 0u32); idle += 1 }
+    let stillOnce = timing.appliedCount() == beforeApplied + 1
+    let valid = arm == CJGUI_INTERNAL_RENDERER_OK && clockBefore == CJGUI_INTERNAL_RENDERER_OK &&
+        clockAfter == CJGUI_INTERNAL_RENDERER_OK &&
+        timingStatus == CJGUI_INTERNAL_RENDERER_OK && refreshed && queuedInGate &&
+        ownerOnce && accepted && stillOnce && observer.count() == 2
+    println("CJGUI_PUBLIC_SUBMIT_GATE request=SET_PREVIEW_LIMIT target=${DOCUMENT_B} value=129 " +
+        "ready_sequence=${observer.count()} gate_start_us=${gateStart} gate_end_us=${gateEnd} " +
+        "native_before_us=${nativeBefore} native_after_us=${nativeAfter} " +
+        "ready_mono_offset_us=${readyOffsetMicros} quantization_bound_us=2 " +
+        "ready_native_interval_us=${readyEarliest}..${readyLatest} " +
+        "ready_in_gate=${queuedInGate} owner_delta=${timing.appliedCount() - beforeApplied} " +
+        "owner_version_after=${timing.lastApplyVersionAfter()} accepted_scene=${beforeScene}->" +
+        "${windowB.windowProjection().acceptedSceneVersion} accepted_text=${acceptedOwnerText(windowB)} " +
+        "pump_rounds=${rounds} exactly_once=${ownerOnce && stillOnce} valid=${valid}")
+    getStdOut().flush()
+    if (valid) { writeMarkerFile("${ackDirectory}/latency-accepted-1", "accepted\n") }
+    return valid
+}
+
 private func runLatencySamples(application: CjguiMacosApplication, windowA: CjguiComposableUiWindow,
     windowB: CjguiComposableUiWindow, controllerA: SchedulingAController, timing: LatencyTimingDomain,
     connection: CjguiSharedOperationExternalConnection, observer: LatencyReadyObserver, sessionA: UInt64,
-    ackDirectory: String, emptyText: CString): Bool {
+    ackDirectory: String, emptyText: CString, motionActivity: Bool): Bool {
     let _ = emptyText
     let origin = MonoTime.now()
     // The external driver publishes `latency-armed` before it starts measuring.
@@ -1074,8 +1190,23 @@ private func runLatencySamples(application: CjguiMacosApplication, windowA: Cjgu
         return false
     }
 
+    let motionKey = "semantic:scheduling-a-action"
+    let motionSpec = CjguiComposableUiAnimationSpec.tween(durationMs: 1000)
+    if (motionActivity) {
+        let baselineWait = MonoTime.now()
+        while (!exists("${ackDirectory}/latency-baseline-ready") &&
+            (MonoTime.now() - baselineWait).toMilliseconds() < LATENCY_ARMED_WAIT_MS) {
+            let turn = application.pumpOneTurn(turnBudgetMs: 16u32)
+            if (!turn.isOpen) { return false }
+        }
+        if (!exists("${ackDirectory}/latency-baseline-ready") ||
+            !windowA.animateNodeTranslation(motionKey, 4.0, 0.0, spec: motionSpec,
+                atTime: MonoTime.now())) { return false }
+        writeMarkerFile("${ackDirectory}/latency-motion-ready", "active\n")
+    }
     var samplesValid = true
     var aProgressEverySample = true
+    var motionSamplesValid = true
     let readyToOwner = ArrayList<Int64>()
     let ownerToScene = ArrayList<Int64>()
     let readyToScene = ArrayList<Int64>()
@@ -1112,6 +1243,9 @@ private func runLatencySamples(application: CjguiMacosApplication, windowA: Cjgu
             getStdOut().flush()
             return false
         }
+        let motionBefore = if (motionActivity) {
+            if (let Some(status) <- windowA.animatedNodeTranslation(motionKey)) { status.active } else { false }
+        } else { true }
 
         let beforeApplied = timing.appliedCount()
         let beforeProjectionA = windowA.windowProjection()
@@ -1172,6 +1306,10 @@ private func runLatencySamples(application: CjguiMacosApplication, windowA: Cjgu
             ordered = t0 <= ownerTime && ownerTime <= sceneTime
         }
         let afterProjectionA = windowA.windowProjection()
+        let motionAfter = if (motionActivity) {
+            if (let Some(status) <- windowA.animatedNodeTranslation(motionKey)) { status.active } else { false }
+        } else { true }
+        motionSamplesValid = motionSamplesValid && motionBefore && motionAfter
         let actionDelta = controllerA.actionCount() - beforeAction
         let genericDelta = controllerA.genericCount() - beforeGeneric
         let submissionDelta = afterProjectionA.nativeSubmissionCount - beforeProjectionA.nativeSubmissionCount
@@ -1205,14 +1343,40 @@ private func runLatencySamples(application: CjguiMacosApplication, windowA: Cjgu
         if (readySceneNs >= 0) { readyToScene.add(readySceneNs) }
 
         let sampleValid = applySeen && sceneSeen && ownerSeen && ordered && applyMatched && aProgressed &&
+            motionBefore && motionAfter &&
             downStatus == CJGUI_INTERNAL_RENDERER_OK && upStatus == CJGUI_INTERNAL_RENDERER_OK &&
             downTurn.isOpen && hostOpen
         samplesValid = samplesValid && sampleValid
-        println("CJGUI_INTERACTION_SCHEDULING_LATENCY_SAMPLE index=${index} value=${value} t0_ns=${(t0 - origin).toNanoseconds()} t1_ns=${(ownerTime - origin).toNanoseconds()} t2_ns=${(sceneTime - origin).toNanoseconds()} owner_to_scene_ns=${ownerSceneNs} ready_to_owner_ns=${readyOwnerNs} ready_to_scene_ns=${readySceneNs} a_progress=${aProgress} valid=${sampleValid} t0_abs_ns=${(t0 - origin).toNanoseconds()} t1_abs_ns=${(ownerTime - origin).toNanoseconds()} t2_abs_ns=${(sceneTime - origin).toNanoseconds()} ready_sequence=${expectedSequence} observer_count=${observer.count()} apply_version_after=${timing.lastApplyVersionAfter()} accepted_text=${acceptedOwnerText(windowB)} pump_rounds=${pumpRounds} down_status=${downStatus} up_status=${upStatus} down_turn_open=${downTurn.isOpen}")
+        println("CJGUI_INTERACTION_SCHEDULING_LATENCY_SAMPLE index=${index} value=${value} t0_ns=${(t0 - origin).toNanoseconds()} t1_ns=${(ownerTime - origin).toNanoseconds()} t2_ns=${(sceneTime - origin).toNanoseconds()} owner_to_scene_ns=${ownerSceneNs} ready_to_owner_ns=${readyOwnerNs} ready_to_scene_ns=${readySceneNs} a_progress=${aProgress} motion_before=${motionBefore} motion_after=${motionAfter} valid=${sampleValid} t0_abs_ns=${(t0 - origin).toNanoseconds()} t1_abs_ns=${(ownerTime - origin).toNanoseconds()} t2_abs_ns=${(sceneTime - origin).toNanoseconds()} ready_sequence=${expectedSequence} observer_count=${observer.count()} apply_version_after=${timing.lastApplyVersionAfter()} accepted_text=${acceptedOwnerText(windowB)} pump_rounds=${pumpRounds} down_status=${downStatus} up_status=${upStatus} down_turn_open=${downTurn.isOpen}")
         getStdOut().flush()
+        if (motionActivity && index < LATENCY_SAMPLE_COUNT &&
+            !windowA.animateNodeTranslation(motionKey, if (index % 2 == 0) { 4.0 } else { 0.0 },
+                0.0, spec: motionSpec, atTime: MonoTime.now())) { return false }
         writeMarkerFile(acceptedPath, "index=${index} value=${value}\n")
         index += 1
     }
+    if (motionActivity && !windowA.stopNodeTranslationAnimation(motionKey, atTime: MonoTime.now())) {
+        return false
+    }
+    // The final pointer-up can still own its hover paint transition after the
+    // position channel stops. Give that finite existing channel its normal
+    // turns before taking the idle baseline; failure to settle stays visible.
+    var motionSettleTurns: Int64 = 0
+    var stableTurns: Int64 = 0
+    var lastSubmission = windowA.windowProjection().nativeSubmissionCount
+    while (motionActivity && motionSettleTurns < 100 && stableTurns < 3) {
+        let turn = application.pumpOneTurn(turnBudgetMs: 16u32)
+        if (!turn.isOpen) { return false }
+        let nowSubmission = windowA.windowProjection().nativeSubmissionCount
+        if (!windowA.needsAnimationTick() && nowSubmission == lastSubmission) {
+            stableTurns += 1
+        } else {
+            stableTurns = 0
+        }
+        lastSubmission = nowSubmission
+        motionSettleTurns += 1
+    }
+    if (motionActivity && stableTurns < 3) { return false }
 
     // Idle check after the last sample: the same host, with all external work
     // drained, must stop building, laying out and submitting on its own.
@@ -1268,8 +1432,9 @@ private func runLatencySamples(application: CjguiMacosApplication, windowA: Cjgu
     let expectedRequests = LATENCY_PRE_MEASUREMENT_READY_COUNT + LATENCY_SAMPLE_COUNT
     let recordsComplete = recordCount == LATENCY_SAMPLE_COUNT
     let requestAccountingExact = observedRequests == expectedRequests
-    let valid = samplesValid && aProgressEverySample && idleClean && recordsComplete && requestAccountingExact
-    println("CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT samples=${LATENCY_SAMPLE_COUNT} valid=${valid} p50_ready_to_owner_ns=${p50ReadyOwner} p95_ready_to_owner_ns=${p95ReadyOwner} p50_ready_to_scene_ns=${p50ReadyScene} p95_ready_to_scene_ns=${p95ReadyScene} max_ready_to_scene_ns=${maxReadyScene} max_ready_to_owner_ns=${maxReadyOwner} max_owner_to_scene_ns=${maxOwnerScene} records=${recordCount} observer_requests=${observedRequests} expected_observer_requests=${expectedRequests} samples_valid=${samplesValid} a_progress_every_sample=${aProgressEverySample} idle_clean=${idleClean} idle_external_actions=${idleExternalActions} idle_turns=${idleTurnsSeen} idle_a_build_delta=${aBuildDelta} idle_a_layout_delta=${aLayoutDelta} idle_a_submission_delta=${aSubmissionDelta} idle_a_accepted_delta=${aAcceptedDelta} idle_b_build_delta=${bBuildDelta} idle_b_layout_delta=${bLayoutDelta} idle_b_submission_delta=${bSubmissionDelta} idle_b_accepted_delta=${bAcceptedDelta} ready_queue_before=${readyQueueBefore} ready_queue_after=${readyQueueAfter}")
+    let valid = samplesValid && motionSamplesValid && aProgressEverySample && idleClean &&
+        recordsComplete && requestAccountingExact
+    println("CJGUI_INTERACTION_SCHEDULING_LATENCY_RESULT samples=${LATENCY_SAMPLE_COUNT} valid=${valid} motion_activity=${motionActivity} motion_samples_valid=${motionSamplesValid} motion_settle_turns=${motionSettleTurns} p50_ready_to_owner_ns=${p50ReadyOwner} p95_ready_to_owner_ns=${p95ReadyOwner} p50_ready_to_scene_ns=${p50ReadyScene} p95_ready_to_scene_ns=${p95ReadyScene} max_ready_to_scene_ns=${maxReadyScene} max_ready_to_owner_ns=${maxReadyOwner} max_owner_to_scene_ns=${maxOwnerScene} records=${recordCount} observer_requests=${observedRequests} expected_observer_requests=${expectedRequests} samples_valid=${samplesValid} a_progress_every_sample=${aProgressEverySample} idle_clean=${idleClean} idle_external_actions=${idleExternalActions} idle_turns=${idleTurnsSeen} idle_a_build_delta=${aBuildDelta} idle_a_layout_delta=${aLayoutDelta} idle_a_submission_delta=${aSubmissionDelta} idle_a_accepted_delta=${aAcceptedDelta} idle_b_build_delta=${bBuildDelta} idle_b_layout_delta=${bLayoutDelta} idle_b_submission_delta=${bSubmissionDelta} idle_b_accepted_delta=${bAcceptedDelta} ready_queue_before=${readyQueueBefore} ready_queue_after=${readyQueueAfter}")
     getStdOut().flush()
     if (!valid) {
         println("FAIL_LATENCY_SAMPLES records=${recordCount} samples_valid=${samplesValid} a_progress_every_sample=${aProgressEverySample} idle_clean=${idleClean} observer_requests=${observedRequests} expected_observer_requests=${expectedRequests}")
@@ -1293,7 +1458,7 @@ private func run(options: SchedulingOptions): Int64 {
     getStdOut().flush()
     let configuration = CjguiMacosApplicationWindowConfiguration("CJGUI Interaction Scheduling", 480u32, 260u32)
     let controllerB = SchedulingBController(workspace)
-    if (options.latencyOnly) {
+    if (options.latencyOnly || options.latencyMotion || options.submitGateOnly) {
         return runLatencyMode(options, workspace, application, configuration, controllerB)
     }
     let openedB = application.openWindow(controllerB, configuration: configuration)

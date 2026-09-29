@@ -1,0 +1,51 @@
+09-28 16:37:49.179 14274 14274 I A01234/MainSurfaceProbe: main surface probe module loaded pid=14274
+09-28 16:37:49.196 14274 14274 I A01234/MainSurfaceProbe: onCreate
+09-28 16:37:49.197 14274 14274 I A01234/MainSurfaceProbe: launch param probeLevel=17
+09-28 16:37:49.197 14274 14274 I A01234/MainSurfaceProbe: launch param probeCandidate=2
+09-28 16:37:49.216 14274 14274 I A01234/MainSurfaceProbe: PUBLIC ArkTS main window id=96 displayId=0 rect=0,0 1320x2856
+09-28 16:37:49.216 14274 14274 E A01234/MainSurfaceProbe: setWindowBackgroundColor failed: {"code":1300002}
+09-28 16:37:49.216 14274 14274 I A01234/MainSurfaceProbe: NAPI setWindow windowId=96 size=1320x2856
+09-28 16:37:49.227 14274 14274 I A01234/MainSurfaceProbe: onForeground
+09-28 16:37:49.260 14274 14274 I A01234/MainSurfaceProbe: loadContent succeeded
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: setWindowBackgroundColor #00000000 (透明) ok
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: auto probe from launch param level=17 cand=2
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: === probeRun level=17 candidate=2 ===
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 identity pid=14274 uid=20020083 tid=14274
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC OH_WindowManager_GetWindowProperties(windowId=96) rc=0
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC props id=96 displayId=0 rect=0,0 1320x2856 drawable=0,0 1320x2856 fullscreen=0
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC WindowManager_WindowProperties sizeof=56 字段: windowRect/drawableRect/isFullScreen/isLayoutFullScreen/focusable/touchable/brightness/isKeepScreenOn/isPrivacyMode/isTransparent/id/displayId —— 无 surface/surfaceId
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindow_CreateNativeWindowFromSurfaceId(0) rc=40001000 win=0
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC 说明: SDK 公开头文件（@ohos.window.d.ts 与 window_manager/oh_window.h）中不存在任何返回主窗口 surface/surfaceId 的接口；surfaceId 的公开来源只有 XComponent
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_RegisterTouchEventFilter(windowId=96) rc=0(OK)
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_RegisterKeyEventFilter(windowId=96) rc=0(OK)
+09-28 16:37:49.281 14274 14274 I A01234/MainSurfaceProbe: L0 PUBLIC OH_NativeWindowManager_GetTouchEventFilter 在本镜像不存在（@since 26.0.0，镜像 api=24）→ 版本边界
+09-28 16:37:49.285 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libwm.z.so -> /system/lib64/libwm.z.so
+09-28 16:37:49.285 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: librender_service_client.z.so -> /system/lib64/librender_service_client.z.so
+09-28 16:37:49.286 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libsurface ->
+09-28 16:37:49.286 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libnative_window ->
+09-28 16:37:49.287 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libace_compatible.z.so -> /system/lib64/platformsdk/libace_compatible.z.so
+09-28 16:37:49.287 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libark_jsruntime.so -> /system/lib64/platformsdk/libark_jsruntime.so
+09-28 16:37:49.287 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libohinput.so -> /system/lib64/ndk/libohinput.so
+09-28 16:37:49.288 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libmmi-client.z.so -> /system/lib64/platformsdk/libmmi-client.z.so
+09-28 16:37:49.288 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libipc_single.z.so -> /system/lib64/platformsdk/libipc_single.z.so
+09-28 16:37:49.289 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libimage_source ->
+09-28 16:37:49.289 14274 14274 I A01234/MainSurfaceProbe: L1 maps 已加载: libdrawing ->
+09-28 16:37:49.289 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("libwm.z.so") FAIL err=Error loading shared library libwm.z.so: No such file or directory (window manager innerkit)
+09-28 16:37:49.289 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("/system/lib64/libwm.z.so") OK handle=0x4ee6888d9ab148f8
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("librender_service_client.z.so") FAIL err=Error loading shared library librender_service_client.z.so: No such file or directory (render service client)
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlopen("/system/lib64/librender_service_client.z.so") OK handle=0x3c0a297701a64d01
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK Window::GetWindowWithId -> 0x7fb7590fe4
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowImpl::GetWindowWithId -> 0x7fb75c6c94
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowSessionImpl::GetWindowWithId -> 0x7fb765d1a4
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowSceneSessionImpl::GetMainWindowWithId -> 0x7fb762f410
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowImpl::GetSurfaceNode() -> 0x7fb75c7654
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK WindowSessionImpl::GetSurfaceNode() -> 0x7fb766d63c
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK RSSurfaceNode::GetSurface() -> 0x7fb7b8fa1c
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK RSSurfaceNode::SetContainerWindow(bool,RRectT<float>) -> 0x7fb7b8fe80
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: L1 PRIVATE dlsym OK RSSurfaceNode::SetHardwareEnabled(bool,SelfDrawingNodeType,bool) -> 0x7fb7b90cf8
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: ENUM 有界扫描 WindowSessionImpl::GetWindowWithId(id)（已知 ArkTS 给出的 id=96）
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: ENUM 命中 id=96 Window*=0x7fa3992c00  <= 与 ArkTS 给出的相同
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: ENUM 该窗口 GetSurfaceNode() -> 0x7fa3b1a500（与 L2 结果比对）
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: ENUM 扫描结束: 命中 1 个窗口
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: === probeRun end level=17 ===
+09-28 16:37:49.290 14274 14274 I A01234/MainSurfaceProbe: probe level=17 cand=2 report len=2985

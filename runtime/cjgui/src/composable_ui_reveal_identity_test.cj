@@ -228,13 +228,11 @@ func revealCoordinatesUseAcceptedToPendingDeltaForEveryAncestor(): Unit {
     window.close()
 }
 
-/// An already pending inner request still changes the target's next accepted
-/// coordinate even when the target is visible in the CURRENT accepted inner
-/// clip. The outer decision must consume that pending shift before testing its
-/// own clip, otherwise it reveals an outer viewport that the next scene does
-/// not need to move.
+/// A pending inner request can make the target visible in the OUTER clip while
+/// hiding it above the inner viewport's own clip. The complete plan must
+/// replace that incompatible request, then make the target visible in BOTH.
 @Test
-func revealPropagatesAnExistingPendingInnerDeltaBeforeOuterVisibilityCheck(): Unit {
+func revealReplacesInfeasiblePendingInnerWithoutLosingEitherClip(): Unit {
     let outer = CjguiComposableUiScrollViewport()
     let inner = CjguiComposableUiScrollViewport()
     let controller = CoordinatedRevealController(outer, inner)
@@ -242,18 +240,48 @@ func revealPropagatesAnExistingPendingInnerDeltaBeforeOuterVisibilityCheck(): Un
     @Assert(window.start(), true)
     @Assert(inner.requestOffset(100), true)
     @Assert(window.focusScopedNode(controller.pendingScope, "visible"), false)
-    @Assert(inner.offset(), 100)
+    @Assert(inner.offset(), 0)
     @Assert(inner.acceptedOffset(), 0)
-    // The accepted row is below outer's 120-point clip, but the pending inner
-    // shift moves it up to y=92 in the next scene, so outer must stay at rest.
-    @Assert(outer.offset(), 0)
-    @Assert(outer.hasPendingRequest(), false)
+    @Assert(outer.offset(), 100)
+    @Assert(outer.hasPendingRequest(), true)
     controller.bump()
     @Assert(window.refresh(), true)
     let target = revealNodeBySemanticId(window, "coordinated-pending-visible-row")
     let outerNode = revealNodeBySemanticId(window, "coordinated-outer-scroll")
+    let innerNode = revealNodeBySemanticId(window, "coordinated-inner-scroll")
+    @Assert(outer.acceptedOffset(), 100)
+    @Assert(inner.acceptedOffset(), 0)
+    @Assert(target.bounds.y >= outerNode.bounds.y, true)
+    @Assert(target.bounds.y + target.bounds.height <= outerNode.bounds.y + outerNode.bounds.height, true)
+    @Assert(target.bounds.y >= innerNode.bounds.y, true)
+    @Assert(target.bounds.y + target.bounds.height <= innerNode.bounds.y + innerNode.bounds.height, true)
+    window.close()
+}
+
+/// When the pending request already satisfies every accepted clip constraint,
+/// prefer that exact request without adding an outer scroll or losing focus.
+@Test
+func revealPreservesFeasiblePendingInnerAndLeavesOuterAtRest(): Unit {
+    let outer = CjguiComposableUiScrollViewport()
+    let inner = CjguiComposableUiScrollViewport()
+    let controller = CoordinatedRevealController(outer, inner, outerSpacerCount: 1, pendingRowIndex: 7)
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    @Assert(inner.requestOffset(100), true)
+    @Assert(window.focusScopedNode(controller.pendingScope, "visible"), false)
+    @Assert(inner.offset(), 100)
+    @Assert(outer.offset(), 0)
+    @Assert(inner.acceptedOffset(), 0)
     @Assert(outer.acceptedOffset(), 0)
+    controller.bump()
+    @Assert(window.refresh(), true)
+    let target = revealNodeBySemanticId(window, "coordinated-pending-visible-row")
+    let innerNode = revealNodeBySemanticId(window, "coordinated-inner-scroll")
+    let outerNode = revealNodeBySemanticId(window, "coordinated-outer-scroll")
     @Assert(inner.acceptedOffset(), 100)
+    @Assert(outer.acceptedOffset(), 0)
+    @Assert(target.bounds.y >= innerNode.bounds.y, true)
+    @Assert(target.bounds.y + target.bounds.height <= innerNode.bounds.y + innerNode.bounds.height, true)
     @Assert(target.bounds.y >= outerNode.bounds.y, true)
     @Assert(target.bounds.y + target.bounds.height <= outerNode.bounds.y + outerNode.bounds.height, true)
     window.close()
@@ -328,14 +356,19 @@ private class NestedRevealController <: CjguiComposableUiController {
 private class CoordinatedRevealController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant {
     let outer: CjguiComposableUiScrollViewport
     let inner: CjguiComposableUiScrollViewport
+    let outerSpacerCount: Int64
+    let pendingRowIndex: Int64
     let targetScope = CjguiComposableUiIdentityScope("coordinated-target")
     let pendingScope = CjguiComposableUiIdentityScope("coordinated-pending")
     private var revision: Int64 = 1
     private var rejectNextValue: Bool = false
 
-    init(outer: CjguiComposableUiScrollViewport, inner: CjguiComposableUiScrollViewport) {
+    init(outer: CjguiComposableUiScrollViewport, inner: CjguiComposableUiScrollViewport,
+        outerSpacerCount!: Int64 = 8, pendingRowIndex!: Int64 = 0) {
         this.outer = outer
         this.inner = inner
+        this.outerSpacerCount = outerSpacerCount
+        this.pendingRowIndex = pendingRowIndex
     }
     public func bump(): Unit {
         revision += 1
@@ -367,7 +400,7 @@ private class CoordinatedRevealController <: CjguiComposableUiController & Cjgui
         let outerContent = cjguiComposableVertical(400, "coordinated-outer-content",
             CjguiComposableUiStyle(gap: 0))
         var spacer: Int64 = 0
-        while (spacer < 8) {
+        while (spacer < outerSpacerCount) {
             outerContent.add(cjguiComposableText(410 + spacer, "coordinated-spacer-${spacer}",
                 "上${spacer}", CjguiComposableUiStyle(fixedHeight: 24)))
             spacer += 1
@@ -380,7 +413,7 @@ private class CoordinatedRevealController <: CjguiComposableUiController & Cjgui
                 innerContent.add(CjguiComposableUiNode(600 + row, "coordinated-target-row",
                     CJGUI_COMPOSABLE_UI_TEXT_INPUT, "协调目标", "", "", -1,
                     CjguiComposableUiStyle(fixedHeight: 24), identity: targetScope.local("row")))
-            } else if (row == 0) {
+            } else if (row == pendingRowIndex) {
                 innerContent.add(CjguiComposableUiNode(600 + row, "coordinated-pending-visible-row",
                     CJGUI_COMPOSABLE_UI_TEXT_INPUT, "待呈现目标", "", "", -1,
                     CjguiComposableUiStyle(fixedHeight: 24), identity: pendingScope.local("visible")))

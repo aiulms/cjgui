@@ -27,18 +27,34 @@ import re
 import socket
 import time
 
+# The fixed-snapshot lease helpers (SnapshotLease / SnapshotRangeRead /
+# SnapshotReleaseReceipt and their parsers) are the SAME typed objects as
+# `client.py` publishes, re-exported here so a consumer of this typed layer
+# reaches them without a second import. They are deliberately not
+# re-implemented: one implementation is what keeps the wire line and its
+# parsers identical for both consumers.
 from client import (
     ConnectionClosedError,
     IDENTIFIER,
+    LEASE_TOKEN,
+    OPAQUE_IDENTITY,
     PROTOCOL,
     SharedOperationArgument,
     SharedOperationClient,
     SharedOperationResponse,
+    SnapshotLease,
+    SnapshotRangeRead,
+    SnapshotReleaseReceipt,
     _remaining_budget,
     _send_all,
     frame,
     parse_response,
+    parse_snapshot_lease,
+    parse_snapshot_range,
+    parse_snapshot_release,
     read_frame,
+    require_lease_token,
+    require_opaque_identity,
 )
 
 
@@ -863,6 +879,9 @@ class GeneratedInstance:
     # plus the exact accepted version. The path stays inside the application.
     resource: str = ""
     resource_version: int = 0
+    # Renderer preparation state of this exact accepted image binding. Empty
+    # for a non-image instance; the public frame never includes a raster path.
+    resource_state: str = ""
     control_role: str = "none"
     control_selected: bool = False
     control_expandable: bool = False
@@ -928,6 +947,7 @@ def parse_generated_instances(response: SharedOperationResponse) -> GeneratedIns
                 _hex_text(values.get("label_hex", "-"), "instance label"),
                 values.get("resource", "-") if values.get("resource", "-") != "-" else "",
                 _token_int(values.get("resource_version", "0"), "instance resource version"),
+                values.get("resource_state", "-") if values.get("resource_state", "-") != "-" else "",
                 values.get("control_role", "none"),
                 _token_bool(values.get("selected", "0"), "instance selected"),
                 _token_bool(values.get("expandable", "0"), "instance expandable"),

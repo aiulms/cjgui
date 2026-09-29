@@ -15,6 +15,12 @@ NATIVE = Path(os.environ.get(
     "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native",
 ))
 LIB_DIR = NATIVE / "sysroot/usr/lib/aarch64-linux-ohos"
+CANGJIE_SDK = Path(os.environ.get(
+    "DEVECO_CANGJIE_HOME",
+    str(Path.home() / "cangjie-toolchains/harmonyos-cangjie-26.0.0.105/cangjie"),
+))
+OHOS_API_LIB_DIR = CANGJIE_SDK / "api/lib/linux_ohos_aarch64_cjnative/ohos"
+CANGJIE_RUNTIME_LIB_DIR = CANGJIE_SDK / "build-tools/runtime/lib/linux_ohos_aarch64_cjnative"
 LINK_LIBS = ("libimage_source.so", "libpixelmap.so", "libnative_drawing.so")
 OWN_LIBS = (
     "libentry.so",
@@ -43,6 +49,21 @@ class ImageLinkPackagingTest(unittest.TestCase):
                 str(source), "-limage_source", "-lpixelmap", "-lnative_drawing",
             ], check=True, capture_output=True, text=True)
             cls.elfs[lib] = output
+        kit_stub = cls.root / "libkit.PerformanceAnalysisKit.so"
+        subprocess.run([
+            str(NATIVE / "llvm/bin/clang"), "--target=aarch64-linux-ohos",
+            "-shared", "-fPIC", "-nostdlib",
+            "-Wl,-soname,libkit.PerformanceAnalysisKit.so",
+            "-o", str(kit_stub), str(source),
+        ], check=True, capture_output=True, text=True)
+        cls.kit_app = cls.root / "kit-required-app.so"
+        subprocess.run([
+            str(NATIVE / "llvm/bin/clang"), "--target=aarch64-linux-ohos",
+            "-shared", "-fPIC", "-nostdlib", "-Wl,--no-as-needed",
+            "-Wl,-soname,libcjgui_app.so", "-L", str(cls.root),
+            "-o", str(cls.kit_app), str(source),
+            "-l:libkit.PerformanceAnalysisKit.so",
+        ], check=True, capture_output=True, text=True)
         needed = subprocess.run([
             str(NATIVE / "llvm/bin/llvm-readobj"), "--needed-libs", str(cls.elfs["libentry.so"]),
         ], check=True, capture_output=True, text=True).stdout
@@ -54,13 +75,18 @@ class ImageLinkPackagingTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def hap(self, name: str, private_link_lib: str | None = None) -> Path:
+    def hap(self, name: str, private_link_lib: str | None = None,
+            require_kit: bool = False, packaged_ohos_mock: str | None = None) -> Path:
         hap = self.root / name
         with zipfile.ZipFile(hap, "w", zipfile.ZIP_DEFLATED) as archive:
             for lib in OWN_LIBS:
-                archive.write(self.elfs[lib], f"libs/arm64-v8a/{lib}")
+                elf = self.kit_app if require_kit and lib == "libcjgui_app.so" else self.elfs[lib]
+                archive.write(elf, f"libs/arm64-v8a/{lib}")
             if private_link_lib:
                 archive.write(LIB_DIR / private_link_lib, f"libs/arm64-v8a/{private_link_lib}")
+            if packaged_ohos_mock:
+                archive.write(OHOS_API_LIB_DIR / packaged_ohos_mock,
+                              f"libs/arm64-v8a/{packaged_ohos_mock}")
         return hap
 
     def verify(self, hap: Path) -> subprocess.CompletedProcess[str]:
@@ -74,6 +100,26 @@ class ImageLinkPackagingTest(unittest.TestCase):
         result = self.verify(self.hap("system-only.hap"))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("RESULT: PASS", result.stdout)
+
+    def test_missing_kit_mock_is_not_treated_as_system_runtime(self):
+        result = self.verify(self.hap("kit-required.hap", require_kit=True))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("UNSAT libcjgui_app.so -> libkit.PerformanceAnalysisKit.so", result.stdout)
+
+    def test_packaged_ohos_sdk_mock_is_rejected(self):
+        mock = "libohos.app.so"
+        self.assertTrue((OHOS_API_LIB_DIR / mock).is_file())
+        hap = self.hap("private-ohos-mock.hap", packaged_ohos_mock=mock)
+        # Keep the injected SDK mock's own dependencies satisfied. The failure
+        # must come from the product stub rule, not an unrelated missing .so.
+        with zipfile.ZipFile(hap, "a", zipfile.ZIP_DEFLATED) as archive:
+            for lib in ("libboundscheck.so", "libcangjie-runtime.so", "libcangjie-std-core.so"):
+                archive.write(CANGJIE_RUNTIME_LIB_DIR / lib, f"libs/arm64-v8a/{lib}")
+            archive.write(NATIVE / "llvm/lib/aarch64-linux-ohos/libc++_shared.so",
+                          "libs/arm64-v8a/libc++.so")
+        result = self.verify(hap)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"PRODUCT-FAIL HAP 携带 {mock}", result.stdout)
 
     def test_private_sdk_link_libraries_are_rejected(self):
         for lib in LINK_LIBS:

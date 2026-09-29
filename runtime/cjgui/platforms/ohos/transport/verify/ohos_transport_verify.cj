@@ -28,7 +28,6 @@ import std.convert.*
 
 // 第九次复核 C/D：替身状态/放行/退役的**宿主直连通道**——不依赖 owner
 // serveOnce 转发（owner 阻塞于 host.start 首帧或退出时仍可达）。
-import kit.PerformanceAnalysisKit.Hilog
 
 // 第九次复核 C/D：替身状态/放行/退役的**宿主直连通道**——不依赖 owner
 // serveOnce 转发（owner 阻塞于 host.start 首帧或退出时仍可达）。
@@ -211,11 +210,11 @@ func runSettleWithBoot(frameOp: String, holdBootMs: Int64): String {
             newIdR = VerificationSeam.requestProductionBoot(g_nextBootGeneration(), 7856)
             bootedR = newIdR != "" && newIdR != oldIdR
             if (!bootedR) {
-                Hilog.warn(0, TAG_VERIFY, "close+boot: booted=false oldId=" + oldIdR +
+                cjguiOhosWarn("CjguiTransportVerify", "close+boot: booted=false oldId=" + oldIdR +
                     " newId=" + newIdR)
             }
         } else {
-            Hilog.warn(0, TAG_VERIFY, "close+boot: awaitClosed=false (conns/queue not drained)")
+            cjguiOhosWarn("CjguiTransportVerify", "close+boot: awaitClosed=false (conns/queue not drained)")
         }
         BOOT_RESULT_LOCK.lock()
         BOOT_CLOSED = closedR
@@ -223,7 +222,7 @@ func runSettleWithBoot(frameOp: String, holdBootMs: Int64): String {
         BOOT_NEW_ID = newIdR
         BOOT_PENDING = false
         BOOT_RESULT_LOCK.unlock()
-        Hilog.info(0, TAG_VERIFY, "close+boot done: closed=" + closedR.toString() +
+        cjguiOhosInfo("CjguiTransportVerify", "close+boot done: closed=" + closedR.toString() +
             " booted=" + bootedR.toString() + " identity=" + newIdR)
     }
     let identity = VerificationSeam.identity()
@@ -255,7 +254,7 @@ func handleVerifyControl(payload: String): ?String {
     }
     if (token != VERIFY_TOKEN) {
         // 凭据不符：这就是「错误凭据」反例。不切换任何状态，也不落到业务路径。
-        Hilog.warn(0, TAG_VERIFY, "verify control rejected: token mismatch")
+        cjguiOhosWarn("CjguiTransportVerify", "verify control rejected: token mismatch")
         return verifyErrorFrame("verify_token_mismatch")
     }
     let op = verifyStripPrefix(lines[2], "OP ")
@@ -269,22 +268,28 @@ func handleVerifyControl(payload: String): ?String {
     }
     // 链2：替身命令带空格参数（如 "STUB_ARM 91 0 91 8000"）——按首词路由，
     // 完整 op 原样发布给 owner 派发（gateName 携带参数，executeGateCommand 解析）。
-    let opKey = if (op.startsWith("STUB_")) { op.split(" ")[0] } else { op }
+    let imageOp = op.startsWith("GATE_IMAGE_HOLD ") ||
+        op.startsWith("GATE_IMAGE_RELEASE ") || op.startsWith("GATE_IMAGE_FORGET ")
+    let opKey = if (op.startsWith("STUB_")) {
+        op.split(" ")[0]
+    } else if (imageOp) {
+        op.split(" ")[0]
+    } else { op }
     match (opKey) {
         case "PAUSE_CLAIM" =>
             let ok = VerificationSeam.setClaimPaused(true)
-            Hilog.info(0, TAG_VERIFY, "verify gate: claim paused ok=" + ok.toString())
+            cjguiOhosInfo("CjguiTransportVerify", "verify gate: claim paused ok=" + ok.toString())
             return verifyOkFrame(op, "PAUSED true")
         case "RESUME_CLAIM" =>
             let ok = VerificationSeam.setClaimPaused(false)
-            Hilog.info(0, TAG_VERIFY, "verify gate: claim resumed ok=" + ok.toString())
+            cjguiOhosInfo("CjguiTransportVerify", "verify gate: claim resumed ok=" + ok.toString())
             return verifyOkFrame(op, "PAUSED false")
         case "DISARM" =>
             // 退出/收尾复位：闸门与注册一起回收，避免把暂停态留给下一个用例。
             let _ = VerificationSeam.setClaimPaused(false)
             VERIFY_CONTROL = None
             VERIFY_TOKEN = ""
-            Hilog.info(0, TAG_VERIFY, "verify gate: disarmed and claim resumed")
+            cjguiOhosInfo("CjguiTransportVerify", "verify gate: disarmed and claim resumed")
             return verifyOkFrame(op, "DISARMED true")
         case "STATE" =>
             let paused = VerificationSeam.claimPaused()
@@ -298,7 +303,7 @@ func handleVerifyControl(payload: String): ?String {
         case "STOP" =>
             // 直接调用生产停止入口（与 owner 退出后同一条路径）。
             VerificationSeam.requestProductionStop()
-            Hilog.info(0, TAG_VERIFY, "verify gate: production stop requested")
+            cjguiOhosInfo("CjguiTransportVerify", "verify gate: production stop requested")
             return verifyOkFrame(op, "STOP_REQUESTED true")
         case "SETTLE" =>
             return runSettleWithBoot(op, 0)
@@ -318,7 +323,9 @@ func handleVerifyControl(payload: String): ?String {
             return verifyOkFrame(op, "PENDING " + pendingR.toString() +
                 "\nCLOSED " + closedR.toString() + "\nBOOTED " + bootedR.toString() +
                 "\nNEW_IDENTITY " + newIdR)
-        case "GATE_REJECT_NEXT" | "GATE_FAIL_ACK_1" | "GATE_DEQUEUE_HOLD_30000" | "GATE_CLEAR"
+        case "GATE_IMAGE_HOLD" | "GATE_IMAGE_RELEASE" | "GATE_IMAGE_FORGET"
+           | "GATE_IMAGE_STATS" | "GATE_IMAGE_STATS_EXT"
+           | "GATE_REJECT_NEXT" | "GATE_FAIL_ACK_1" | "GATE_DEQUEUE_HOLD_30000" | "GATE_CLEAR"
            | "GATE_HOLD_PERMIT_8000" | "GATE_HOLD_CREATE_8000" | "GATE_HOLD_CREATE_RET_8000"
            | "GATE_HOLD_DRAW_8000" | "GATE_HOLD_ADMIT_8000" | "GATE_SIM_RETIRED"
            | "GATE_SIM_CREATED" | "GATE_A2_STATS" | "GATE_FLUSH_HOLD_30000"
@@ -403,7 +410,7 @@ public func cjgui_ohos_transport_verify_install(): Int32 {
     VERIFY_TOKEN = newVerifyToken()
     VERIFY_CONTROL = Some(handleVerifyControl)
     // 凭据写入 hilog：验证脚本从这里读回本轮 token，其它连接无从得知。
-    Hilog.info(0, TAG_VERIFY, "verify seam armed token=" + VERIFY_TOKEN)
+    cjguiOhosInfo("CjguiTransportVerify", "verify seam armed token=" + VERIFY_TOKEN)
     return 1
 }
 
@@ -414,6 +421,6 @@ public func cjgui_ohos_transport_verify_uninstall(): Int32 {
     let _ = VerificationSeam.setClaimPaused(false)
     VERIFY_CONTROL = None
     VERIFY_TOKEN = ""
-    Hilog.info(0, TAG_VERIFY, "verify seam disarmed")
+    cjguiOhosInfo("CjguiTransportVerify", "verify seam disarmed")
     return 1
 }

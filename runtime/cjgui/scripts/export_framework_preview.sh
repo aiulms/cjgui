@@ -65,21 +65,13 @@ cp "$RUNTIME_DIR/shared_operation_core/example_generated_observation.py" \
   "$FRAMEWORK_DIR/shared_operation_core/example_generated_observation.py"
 cp "$RUNTIME_DIR/shared_operation_core/example_generated_candidate_race.py" \
   "$FRAMEWORK_DIR/shared_operation_core/example_generated_candidate_race.py"
-typeset -a PREVIEW_CORE_SOURCES
-PREVIEW_CORE_SOURCES=(
-  shared_editing_form_contract.cj
-  shared_field_write_rule.cj
-  shared_operation_contract.cj
-  shared_operation_list.cj
-  shared_operation_transport.cj
-  shared_operation_transfer.cj
-  shared_operation_image_owner.cj
-  shared_text_document.cj
-  shared_text_document_workspace.cj
-  shared_text_document_file.cj
-)
-for source_name in "${PREVIEW_CORE_SOURCES[@]}"; do
-  cp "$RUNTIME_DIR/shared_operation_core/src/$source_name" "$FRAMEWORK_DIR/shared_operation_core/src/$source_name"
+# The package compiler sees every production .cj source in this directory.
+# Derive the preview from that same set so newly added owner/lease modules
+# cannot be omitted while their callers are exported.
+for source_path in "$RUNTIME_DIR/shared_operation_core/src/"*.cj(N); do
+  source_name="${source_path:t}"
+  [[ "$source_name" == *_test.cj ]] && continue
+  cp "$source_path" "$FRAMEWORK_DIR/shared_operation_core/src/$source_name"
 done
 for source in cjgui_internal_renderer.m cjgui_internal_renderer.h cjgui_native_bridge.m cjgui_native_bridge.h cjgui_macos_application_launcher.m; do
   cp "$RUNTIME_DIR/native/$source" "$FRAMEWORK_DIR/native/$source"
@@ -122,6 +114,8 @@ for consumer_spec in "${PREVIEW_CONSUMERS[@]}"; do
   cp -R "$consumer_source/src" "$consumer_target/src"
   if [[ "$consumer_name" == "generated_panel_consumer" ]]; then
     cp "$consumer_source/verify_generated_effect_candidates.py" "$consumer_target/"
+    cp "$consumer_source/verify_generated_translation.py" "$consumer_target/"
+    cp "$consumer_source/verify_public_position_motion.py" "$consumer_target/"
     cp "$consumer_source/verify_public_effect_observation.py" "$consumer_target/"
     cp "$consumer_source/verify_public_window_material.py" "$consumer_target/"
     cp "$consumer_source/verify_generated_diagnostics.py" "$consumer_target/"

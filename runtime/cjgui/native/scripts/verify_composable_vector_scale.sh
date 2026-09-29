@@ -44,7 +44,7 @@ for objects in 16 128 480; do
   }
   rg -q "^CJGUI_VECTOR_SCALE_RESULT objects=${objects} .*geometry_preparations=.+/.+ .*generic_vertex_bytes=0 .*vector_draws=${objects}/${objects} .*vector_uploads=${objects}/0 .*vector_reuses=0/${objects} .*passed=true$" "$OUTPUT_DIR/result"
 done
-rg -q '^CJGUI_VECTOR_SCALE_PROBE passed=true$' "$OUTPUT_DIR/result"
+rg -q '^CJGUI_VECTOR_SCALE_PROBE passed=true tiers=16:true,128:true,480:true$' "$OUTPUT_DIR/result"
 {
   print -r -- 'format=1'
   print -r -- "probe=$PROBE"

@@ -1,0 +1,2030 @@
+Reading additional input from stdin...
+OpenAI Codex v0.155.1
+--------
+workdir: /Users/jiangxuanyang/Desktop/cangjie
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0e6d8-9160-7c90-9bdd-d8b77295851b
+--------
+user
+你是聚焦只读顾问。读 consultations/touch-lifecycle-astra/questions.md（背景/六个确定反例/现有接缝/五问）。可只读查阅 runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp、host/cjgui_host_bridge.cpp、runtime/cjgui/src/composable_ui_window.cj、snapshot/src/composable_ui_window.cj 相关函数与 flutter gestures/arena.dart、monodrag.dart。不要修改任何文件。只输出 Q1（压缩等价条件与最小充分保留集）、Q2（满载按手势代次的受害者选择与 CANCEL 注入位置）、Q3（绑定身份两条路：核心二次校验 vs pod 新增 bindingEpoch，评估契约代价并给一个推荐）三节的裁决，中文，紧凑。
+codex
+我先读咨询材料，再核对相关事件队列和绑定接缝；全程只读，最终只给 Q1–Q3 的裁决。
+exec
+/bin/zsh -lc 'cat consultations/touch-lifecycle-astra/questions.md' in /Users/jiangxuanyang/Desktop/cangjie
+ exited 1 in 0ms:
+cat: consultations/touch-lifecycle-astra/questions.md: No such file or directory
+
+exec
+/bin/zsh -lc "rg -n 'touch|Touch|bindingEpoch|CANCEL' /Users/jiangxuanyang/.codex/memories/MEMORY.md" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 0ms:
+523:applies_to: cwd=/Users/jiangxuanyang/Desktop/open-nwe; reuse_rule=timings are machine, cache, profile, and change-specific; reproduce with the same controlled source-touch protocol before using them for an optimization decision.
+543:- With only `backend/src/main.rs` touched, Cargo timings showed one dirty `new-lobster` unit and hundreds of fresh dependency units: `cargo check` 47.2s, debug build 105.4s, release 135.2s, and `cargo test --no-run` 162.8s; unchanged repeated debug/test runs were 0.64s/0.46s. The immediate bottleneck is main-crate rustc compilation/linking, not Axum/Tokio recompilation. [Task 1]
+544:- `frontend/desktop/scripts/dev.mjs` starts with debug `cargo build`; desktop preparation/packaging runs release `cargo build`. Use `cargo check` for faster daily feedback; for material improvement, benchmark stable-boundary crate extraction and crate-local codegen/link changes against the same source touch. [Task 1]
+879:- Do not rebuild the Spotlight index as the fix: the duplicates were real bundles. Do not use `rm -rf`, empty Trash, touch the desktop symlink/current target, or assume the final count persists after later packaging creates new artifacts. [Task 1][Task 2]
+920:- when the setting felt “像一个看上去很美、其实没有长处的瓷器”, the user wanted fewer abstract setting touch-ups and more target, resistance, failure, cost, irreplaceable action, and battle-driven conflict. [Task 2]
+1124:- when the worktree has mixed results, the user required “不新建 worktree、不切分支” -> keep a narrow write set; do not reset, bulk-format, or touch unrelated legacy owners, and report source, test, installed, integrated, and released states separately. [Task 1]
+1887:- Do not terminate a `new_lobster`/`rustc` chain by name alone: preserve active supervised tests/compiles. A distinct `backend/target/release/new-lobster --help` chain older than 15 hours was safely terminated by its own two PIDs without touching its ZCode parent. [Task 1]
+
+exec
+/bin/zsh -lc "pwd; rg --files -g 'questions.md' -g 'ohos_renderer.cpp' -g 'cjgui_host_bridge.cpp' -g 'composable_ui_window.cj' -g 'ACTIVE_DIRECTION.md' -g 'arena.dart' -g 'monodrag.dart'" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 5ms:
+runtime/cjgui/platforms/ohos/consultations/touch-lifecycle-astra/questions.md
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp
+runtime/cjgui/src/composable_ui_window.cj
+runtime/cjgui/ACTIVE_DIRECTION.md
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj
+
+exec
+/bin/zsh -lc 'cat runtime/cjgui/platforms/ohos/consultations/touch-lifecycle-astra/questions.md' in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 0ms:
+# H 触摸机制第二次接续：聚焦只读裁决请求
+
+## 背景
+OHOS 自绘 GUI：ArkTS XComponent → C++ bridge（有界触摸队列）→ renderer（手势状态机：
+pending→viewport-scroll / pointer-drag / editor-hold）→ 仓颉核心窗口（scroll 意图进共享
+viewport，指针相位进 capture，ACTIVATE/FOCUS 进控制器）。单指；活动手指由 bridge 过滤。
+
+## 确定反例（宿主对生产函数实测）
+1. 压缩丢跨阈值事实：BEGIN(60,120)→MOVE(60,150)→MOVE(60,120)→END(60,120)。
+   未压缩真值 activate=0/scroll=1（到过 150 距起点 30>12 阈值后回到起点）；
+   现压缩（只保留最新 MOVE 60,120）后 activate=1/scroll=0。
+2. 满载删唯一 MOVE：同手势仅 1 条 MOVE 时再加边界事件造成 256 压力（现策略满载丢
+   最旧 MOVE），结果 overloadCancels=0/activate=1——滑动退化成点击。
+3. END 尾段丢失：scroll 手势 BEGIN y100→MOVE y80→END y50，END 只量化旧余量，
+   actual=20 expected=50（END.y−lastY 未入累计）。
+4. 场景版本当绑定身份：激活事件冻结"按下时刻 projectionVersion=100"，下一帧
+   同绑定（节点/资源/动作/几何全同）场景版本=101，核心 resolveInput 严格比版本
+   → 同绑定换帧后点击被拒。现 R3 只断言发出旧版本，未同时证"换绑拒绝"与
+   "同绑定存活"。
+5. 旧 CANCEL 反馈取消新手势：A 的 BEGIN/MOVE/CANCEL 与 B 的 BEGIN/MOVE 交错；
+   核心消费 A CANCEL 后调用 native cancelPointerCapture()（该调用无身份参数），
+   把当前 B 的捕获也取消了。宿主实测 new_gesture_active_before=1 after=0。
+6. snapshot 窗口 flushPendingSemanticFocus 只核 node/semantic/resourceId，缺主核心
+   已有的 semanticIncarnation/fieldId/actionName/operationActionName 校验：旧 A 请求
+   在同槽新字段 B 上也能聚焦。
+
+## 现有接缝（摘要）
+- bridge 队列：TouchRecord{action,x,y,generation(surface 代次)}；同身份 MOVE 压缩
+  （无条件，替换最新坐标）；满载丢最旧 MOVE；相位边界满载→队首代次整组移除+队首
+  注入 CANCEL。无 pointerId 字段（bridge 已过滤副指，但队列记录不含 id）。
+- renderer 手势：TouchGesture{targetNodeId/targetResourceId/targetNodeKind/
+  targetProjectionVersion(冻结), scrollAccumY(浮点余量), pointerStreamOpen/Ended,
+  hasViewport(viewportNodeId/ResourceId)}。激活事件目前携带冻结版本。
+- 核心窗口：resolveInput(nodeId, resourceId, nodeKind, projectionVersion) 严格等于
+  当前场景版本才接受；另有 resolveLocalTextContinuation 对 kind=28 文本续写宽容。
+  指针捕获：pointerCaptureActive/Node/OwnerVersion/ModalLayerId，kind=40 无条件清捕获。
+  语义焦点 pending 携带完整 LayoutNode（含 incarnation/field/action/operation），
+  flush 全字段校验（macOS 主核心已如此）。
+- 核心布局节点有 semanticIncarnation（同一 owner 绑定的代次）、fieldId、actionName、
+  operationActionName；renderer 的 pod 无这些字段（只有 nodeId/resourceId/kind/
+  projectionVersion/label/value/semanticId）。
+
+## 请裁决的问题（按优先级）
+Q1 压缩等价条件：有界队列保留什么才能使"阈值跨越、方向转换、viewport 逐次夹紧"
+   与未压缩序列可判定等价？给出最小充分集（例如：跨阈值不可逆闰 + 方向转折样本 +
+   最新坐标 + END），以及在 renderer 差分累计语义下的具体队列形态。
+Q2 满载协议：当压缩后仍满，应取消谁、保留谁？给出按手势代次（而非 surface 代次）
+   的受害者选择与注入 CANCEL 的位置，使唯一 MOVE 不被删、新手势可恢复。
+Q3 绑定身份：renderer pod 无 incarnation/field/action。激活冻结用什么才能既拒绝
+   真换绑又不误杀同绑定换帧？（可否由核心在 flush 后按"节点存在+绑定字段哈希"
+   二次校验激活事件？或 pod 需要新增 bindingEpoch 字段？评估两条路的契约代价。）
+Q4 取消方向：native→核心的"平台通知取消"与核心→native 的"主动取消"如何携带/校验
+   capture 代次，使 A 的终结不触碰 B？给出最小字段与两侧规则。
+Q5 END 尾差与反向夹紧：MOVE/END 共用累计入口时，viewport 夹紧（offset 上下限）
+   应在哪一层逐次应用才能使 -30,+30 @offset=0 的结果为 30 而非 0？
+
+exec
+/bin/zsh -lc 'cat runtime/cjgui/ACTIVE_DIRECTION.md' in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 0ms:
+# CJGUI 当前方向与实施状态
+
+更新：2026-09-28。目标：仓颉核心、macOS 首平台、高性能自绘/GPU GUI 框架；人和外部系统操作同一份内容，支持手写、生成及混合界面，共同信息单一定义。
+
+**三线缺口校准（2026-09-28）：**[框架/产品/待验归属](../../docs/plans/2026-09-26-framework-capability-roadmap.md#joint-operation-gap-review-20260928)保留。E 暂停后已合并为[换模型接续 A–G](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-resume-package-20260928>)：先修文档实例/原子版本守卫及首页框架失效，再接统一解析、有界密度判定、公共租约、组合生命周期与共同生成消费。已有 Luna 真实生成与共同定义原证复用。F 文件 PNG 按已验证范围收口，下一包为 [F11 accepted 亚点平移](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-subpoint-translation-next)，H 原包沿原任务；不新开执行线。指导只更新要求，未运行构建/桌面或启动执行任务。
+
+## 当前阶段与执行状态
+
+[长文本增量更新与完整样式绑定](../../docs/plans/2026-09-23-incremental-text-style-binding-milestone.md) **已通过指导验收，以页末「指导验收结论（2026-09-24，本阶段收口）」的适用域和保留边界为准**。原始任务、裁决与逐轮记录是历史证据，不再是待执行清单。[交接说明](../../docs/plans/2026-09-19-external-executor-handoff-prompt.md) 已同步。
+
+执行任务 **「CJGUI 文字性能与阶段收口」**（`01a0d1c8-6610-7cd2-8946-773000f9b226`）由 GPT-6 Sol / xhigh 主执行、GPT-6 Luna / high 配合，该包实施与验收已完成，该任务没有新的实施指派。指导任务 `01a08f0f-e1ce-71c1-9a6e-4eee08308d61`。旧执行任务及30分钟自动化保持暂停。
+
+**H 线运行时生成式界面包已按模拟器范围交付。** [原交接节](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-generated-consumption-next)记录共享 region/候选事务/旧事件防护及设置、thermo 两款 normal HAP 的外部提交→真实画面→系统输入/动作→owner 精确读回；设置还通过同 key 重排草稿接续、非法候选保留旧面板、外部校准和移除生成控件后的手写接续。真实 Sol 模型生成/看图修订与脚本候选分别留证；最终两包平台指纹同为 `213fbd65…`，性能原数、HAP/SDK/镜像身份和针对性回归见原运行目录。marked/cancel 在当前版本仍待验，物理设备性能与发布审核另列。路线保持仓颉核心 + ArkTS 薄壳 + XComponent + 原生绘制；E/F 并行改动及旧任务/30分钟自动化状态不变，未 stage/commit/push。
+
+**H 线共享图片实际消费包已按模拟器范围交付。** [原交接节](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-image-resource-next)记录有界异步 PNG/fit/fill/裁剪/缓存与退役、设置及 thermo 两款 normal HAP 的手写/生成图片→系统编辑→owner 精确读回，以及最终 renderer `16ed72ce…`、transport `24cb035a…` 的真实产物和逐笔 owner 排队原数。四组图片交错、加载中编辑、STOP 全零与同 PID 重开由设置测试 HAP 留证；旧真实模型候选在同 renderer 正常产物上重放接受。正常解码太快而未见 `loading` 瞬态，纯读取不触发 scene，内部 build/scene 耗时仍无同口径计数；当前 marked/cancel 回调、物理设备性能与发布审核按原边界保留。F 的 PNG 交换、E 的文档语义及并行改动保持各自责任，未 stage/commit/push。
+
+**H 触摸包第二次指导复核（2026-09-28）：**[已保留成果、反例与接续要求](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-touch-lifecycle-second-review)。部署身份修复成立，两 normal HAP 各启动正确应用且 renderer 指纹一致；保留图片观察回收、平台取数/单指过滤接线、浮点余量、无 MOVE 快扫和设置 reveal/键盘画面。A–E 未整体收口：宿主反例证明往返 MOVE 压缩及满载丢唯一 MOVE 会变点击、滚动 END 漏尾差（20/50）、旧 CANCEL 反调 native 会取消新手势；整 scene 版本误作绑定代次，H pending focus 漏现有完整绑定校验。共享 settings 新导航按钮尚未接 macOS 宿主。最终 owner/系统输入原文及活草稿重排/resize、拒绝恢复、滚动中公开写入仍需按本轮正常链补齐。指导未构建 HAP、未操作设备，临时宿主反例与源码证据范围已标明。
+
+**H 当前执行要求：**[第二次触摸机制接续 A–E](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-touch-lifecycle-second-review)。以真实 bridge→renderer→核心反例确定手势/capture 身份、压缩等价和双向取消职责，先用 Astra 聚焦裁决，再连续修复并补焦点/共享宿主/双 normal HAP 消费；普通接线和原文归档独立推进。参考成熟实现的状态转换与测试，批量分类用 laya-ask 辅助；编译/咨询等待时做独立工作，复用未受影响原证。惯性/回弹、marked/cancel 当前版本边界和物理性能后续，E/F 写集及用户实例保持原样，未 stage/commit/push。
+
+**执行状态（2026-09-27）：**第九次 A–E 与 TCP 转发归属返工保留；华为模拟器已进入[真实后端接续](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#华为模拟器真实后端接续2026-09-27)。旧 HAP 私有 SDK `libnative_window.so` 占位库遮蔽系统实现是 `KnownShimNoRef` 根因，现排除该库，正常 HAP 从系统 `libsurface.z.so` 取得原生引用并提交真实首帧。原 `rev9h-verify`/`rev9j-exact-mutation` 75 项、64 PASS/11 BLOCKED/0 FAIL 属旧产物范围；新证据按本轮 HAP/PID 单列，报告 7 的历史记录保留。
+
+**接续入口：**指定 target 的独立本机端口→设备 7856、双探针端点与 PID/token 接线保留；本轮只有明确创建成功回执才拥有转发清理权。抢占反例修后他方映射存活且零 `rm`；离线入口测试共 20 项通过。模拟器测试使用 `127.0.0.1:5555` 的当轮实例与原票日志。
+
+**模拟器验收：**①真实 XComponent 挂载/卸载与 Create/Flush 在途保活、引用归还；②同票 queued/committing 停止、终态/ACK、全零收敛及重开；③实际像素、裁剪、命中与 owner 更新，均已有当轮或可复用的严格实证。④系统 IME 的焦点、可见草稿、拼音/英文提交、系统选区及替换已实测；marked range 与取消回调在框架应用及独立 ArkTS 最小对照中均未观测到，保留为精确待验/上游反馈项。物理设备性能与发布审核另列。
+
+**H 线上包交付：**[系统输入能力与正常消费接续](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-input-consumption-next)已按模拟器当前能力交付：设置与 thermo 正常 HAP 各完成同实例系统输入→公开 owner 读回→外部换版/校准→继续编辑，并以真实系统非空选区、提交前可见草稿和精确替换补证；同 PID `12810` 的 STOP 全零→新实例真实引用/首帧→授权写读通过。框架已修全文草稿/UTF-16 范围、旧回调、同代几何重绘和仍挂载重开。当前 SDK/镜像/小艺组合及独立 ArkTS 对照未收到应用 marked/cancel 回调，保留版本化复现与上游反馈；这不推出模拟器整体不支持。详细身份、反例与截图见原交接节；E/F 并行改动保留，未 stage/commit/push。
+
+Pharos Mark 在 `/Users/jiangxuanyang/Desktop/Pharos Mark` 以产品检验框架；当前事实见 [STATUS](</Users/jiangxuanyang/Desktop/Pharos Mark/STATUS.md>)，原执行已暂停，用户将换模型按[接续 A–G](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-resume-package-20260928>)推进。单次 RANGE、既有 IME/D/E2/E3 与 G9 开窗改善按原证保留；指导源码复核发现文档资源首次登记/重开身份、公开 undo/redo 版本守卫、工作区入口接线仍需返工，新解析会话也有事件背压/Yield/输出边界缺口且未接生产。首页新增 style 字段在复制、cache/scene 判等与透明滚轮输入快路径未贯穿，由 E 修公共框架并带第二消费者；G9 每版全量 AST 密度判定仍占 owner 0.3–0.6 秒，由产品改有界准入。已完成 Astra 固定快照裁决按框架 provider/生命周期 + 产品持有预算接线，组合生命周期另接现有 owner；与 F 协调 style/window/transport 符号写集，H 独立。新模型无需等待旧子代理或重跑未受影响全套；本次指导未构建或操作桌面，保留两仓既有暂存与并行改动，未 stage/commit/push。
+
+**macOS 文本会话文件误写与恢复（2026-09-27 15:19，Pharos 线写集）：** `runtime/cjgui/src/text_session.cj`（未跟踪）在 15:11:34 被未知写入替换为早期有界窗口实现（9,234 B，`bindWindow` API，缺 ticket/代次/校准/镜像成员），令 `composable_ui_window.cj` 的 G4 会话接缝与 `text_session_test.cj` 共 10 处编译失败，框架树与 P4 线 15:12–15:16 的构建检查同时受阻。已按权威内容恢复（25,640 B，sha `155762c2…`，与 12:43–14:12 四份 Spaced 导出快照逐字节一致），`cjpm build --skip-script` 与 `cjpm test` 333/333 均通过；被替换内容隔离于 `Pharos Mark/artifacts/session-incident-20260927/`。窗口/测试/产品三处消费者均按镜像版 API，如要改用有界窗口实现需先迁移三者。
+
+**Pharos 线 1b 第二消费者真实输入链通过（2026-09-27 17:20，框架主责）：** `examples/range_text_window_app` 普通窗口的真实合成键盘链全绿：启动即 `bindRangeTextSession` 绑定（绑定身份必须与正文节点 `(nodeId, resourceId)` 完全一致，错一个字段即静默退回 owner 路径并被 `leaked_range_events` 记账）；真实点击后平台适配器持真焦点，Hello→Shift+Left×5→Hi 非空范围替换→Backspace→CJK/emoji 共 10 笔意图全部由窗口拥有的会话判决并写入 owner（`decisions=10 accepted=10 applied=10 rejected=0 leaked_range_events=0`，owner 188→196 B）；同笔整值伴随事件照常到达 owner（`full_text_events=10`）但不被消费。证据 `Pharos Mark/artifacts/cjgui-range-text-consumer-real-input.log`，脚本 `native/scripts/verify_range_text_window_app_real_input.sh`。同轮修 `native/tests/desktop_input_driver.swift` 非 BMP 投递（emoji 原把标量截成单个 `UniChar` 触发 Swift trap，exit 133；改为同一事件携带完整代理对）；新增 `native/tests/ax_focus_probe.swift`——System Events 对隐藏代理的 `AXFocusedUIElement` 读为 missing value，焦点证据改经 AX API（适配器 `AXTextArea focus=1` + 节点选中范围回读绑定）。组合式节点自身 `AXFocused` 经 AX API 读为 false（AppKit 按真实 firstResponder 链回答该属性），如实记录、留给人工 VoiceOver。
+
+**第三条通用框架线：第三次指导复核的 macOS P2/P3 主消费链已通过（2026-09-27），并行新布局后的桌面复验待验。** 当前结果与证据范围见[动效正常消费、主题接线与 P3 可用性](../../docs/plans/2026-09-26-framework-capability-roadmap.md#p3-consumption-review-package)。保留先前 298/298、注入 29 FAILED、alpha 0.502/0.251 和纯 alpha 工作量原证；本轮修复聚焦多行 run 清除/背景、首次交互和主题动效目标、accepted 绑定代次，接通共同动效注册→公开客户端候选 accepted→真实控件及系统主题→accepted 画面。控件验收判据、可控 scale/reveal、多窗同负载 AX 动作和统一构建源集均已消费验证；Cangjie 源码 `cjpm build` 成功、`cjpm test` 320/320，两类消费者从含空格本地导出构建运行并有源/产物指纹及注入失败拒绝。并行文本线追加空文本 native 布局后已重新编译和导出，控件真实键鼠复跑因另一应用保持前台而未完成；先前完整桌面 PASS 仅适用当时源码。导出后同一 native 文件又有正在进行的文本 range-edit 改动，该轮工作区不同于当时 P3 导出指纹，不将其称为最终整仓快照。公共动效仍标 experimental；GPU 完成、人工 VoiceOver、物理跨屏、OHOS snapshot 和既有低频停机 signal 11 未获本轮通过证据；系统强调色已由下述 P3 接续包交付。E 主责 IME/正文输入，F 与 E 协调共同渲染；工作区未 stage/commit/push。
+
+**第三线 P4 接续包已通过指导限域验收（2026-09-27）。** [原任务节与判别证据](../../docs/plans/2026-09-26-framework-capability-roadmap.md#p4-blur-review)：组 opacity 0.4→1 终值、背景缓存 scale/Gaussian/光标颜色依赖、透明组 native restage 和公开效果提交/回退/EFFECTS 增量已修；正常生成应用与公开客户端实测 accepted blur8、帧 5 `unblurred/non_opaque_clear`、帧 7 `blurred`。CJGUI 335/335、shared core 60/60、Python 51 与 native/双消费者结果已核原日志；15:42:59 含空格导出 94 项指纹经指导独立复算一致。本次未重跑构建或桌面；工作树文本会话/窗口已追加输入线修改，本结论只覆盖该已验证快照，不覆盖新增输入改动。三项旧修复不再重开；系统窗口材质、OHOS 绘制快照、透明根实际模糊、人工 VoiceOver/物理跨屏按原范围接续。E/H 改动保留，未 stage/commit/push。
+
+**F 线 P4 系统窗口内容背景材质首包已交付（2026-09-27）。** [原节结果与边界](../../docs/plans/2026-09-26-framework-capability-roadmap.md#p4-window-material-current)：窗口级平台无关请求、macOS 宿主适配、主题同事务、减少透明度回退、公开状态/增量和手写/生成正常消费已接通。native 判别探针、CJGUI 342/342、shared core 61/61、Python 53/53 与含空格同源双消费者导出通过；当前机器减少透明度为真，正常应用实际读到 `opaque_fallback/reduce_transparency`，恢复系统材质由受控 native 环境证明。最终导出应用的真实按钮与备注粘贴后手写/生成字段同值已验；本机减少透明度开启，前台系统材质视觉、逐键物理输入与 VoiceOver 未验；OHOS 后端仍归 H 线。E/H 并行改动保留，未 stage/commit/push。
+
+**F 线 P3 普通控件语义、焦点与系统强调色已交付代码及双消费者汇合（2026-09-27）。** [原节结果与限制](../../docs/plans/2026-09-26-framework-capability-roadmap.md#p3-controls-semantics-accent)：accepted 控件语义/AX、生成准入与树键盘 reveal、macOS sRGB8 强调色跟随/固定及公开增量已接通；UI-only 15/15、生成 13/13，CJGUI 356/356、shared 61/61、Python 56/56、native AX 和含空格同源导出通过。两窗正常 owner/AX 响应链及最新完整前台键鼠回归 PASS（14 个不同 Tab 焦点、reveal、同 owner AXPress/指针、禁用、resize）；旧大正文两窗探针仍有短排版时序及滚动失败，真实 VoiceOver 被首次 Quickstart 阻断，不能记作通过。正文/IME 归 E，鸿蒙后端归 H；并行改动保留，未 stage/commit/push。
+
+**F 线开发者诊断首个消费包已交付（2026-09-27）。** [原任务节结果与证据](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-diagnostics-and-regression)：旧两窗 FAIL 保留；修正探针的 1 ms 早期投递 20/20 在途、owner/accepted p95 7/24 ms，头→中→尾 158 步及独立触底腿通过，未放宽预算；三相位全覆盖和旧滚动精确首因未由新证据证明；公共有界诊断快照及默认隐藏的非交互边界叠加已由 UI-only、生成应用和真实公开客户端消费。CJGUI 359/359、native 检查与含空格同源双消费者导出 `v9` 通过，开关不增加 Metal 提交或效果字节，关闭后空闲收敛。系统 VoiceOver 已启动尝试但导航/激活动作无可归因证据，未记通过并恢复原关闭状态；不可测细分 GPU 计数保持 unavailable。E 正文/IME 与 H 后端并行改动保留，未 stage/commit/push。
+
+**F 线 PNG 尺寸准入与缩放主消费链保留（2026-09-28）。** [原 A–D 结果及指导限域复核](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-scale-consumption-next)：PNG 子集/尺寸反例、同版当前/提交几何、两正常消费者输入及测试构建 2×→1×→2×、同源导出已有证据。本次只读原证与源码：满 8 项缓存时，第 9 图的 preparation 在候选持有前归还，存在修剪后再走普通解码的路径，待压力反例闭合；向量 570 次 clone 可由 18 个非文字节点误入空文字布局加 1 个正常改色节点解释，原 30 判据保留，128/480 组尚未运行。物理跨屏及转换期间的并窗响应仍未由上包数据覆盖。
+
+**F 线 PNG 持有交接与局部刷新包已完成两消费者限域消费（2026-09-28）。** [原任务节和原数](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-local-refresh-next)：满缓存第 9 图单次解码、完全释放后冷重显、非文字空布局消除、16/128/480 各 30 次 clone 判据、正常有界 workload 及公开客户端、两窗实际布局在途响应均通过；手写和最终导出生成窗口均有实体系统 PNG 粘贴→画面→公开 owner 精确读回，含空格同源双消费者导出 v11 通过。按截图修两消费者 PNG 按钮与生成暗底独立文字的对比。Codex 自动 `⌘V` 未触发应用事件是工具边界；并窗新三组只覆盖 A 布局在途而非 native stage 重叠。快速整串输入、人工 VoiceOver 和物理跨屏旧边界保留；E/H 并行写集保留，未 stage/commit/push。
+
+**F 文件 PNG/提交观测接续经限域复核收口（2026-09-28）：**[本轮结果与复核](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-file-png-receipt-review)。特殊文件、读中变化/关闭、session+event、在途容量与 superseded 终态修复成立；两款最终导出应用的 Finder 真拖入、owner 和图片原证保留。执行者 CJGUI `382/382`、native、两窗和导出证据已查，指导未重跑。公共 ready 闸内因果链成立，跨钟映射值不称原始同钟精确值；自然 CPU 提交交叠仍为 `0/60`。生成 event 4 精确公开回包需从已有输出补存索引，不再要求用户拖入。下一包 [F11 要求](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-subpoint-translation-next)已写：两个观测/归档小收尾＋有界浮点平移、accepted 绘制/裁剪/命中/AX/文字几何一致、缓存和双消费者交付；尚未实施。E/H 写集保留，未 stage/commit/push。
+
+## 已接受的交付
+
+- **样式与输入**：聚焦优化限定真实输入，候选资源/scratch 与失焦预算拒绝保持旧资源；命名样式整组绑定、生成页签标题、真实标题切换/STYLES/局部像素和两模板消费均有对应证据。
+- **增量文字与绘制**：局部属性、字体、选区/锚点和可见资源复用；离屏修改后滚动见新内容并可继续编辑。多行单片/多片共用 TextKit 准备；同几何 ASCII/Unicode 分片的 scene 平面逐字节相等，一字节变造被检出。准备失败与合法空 inset 的 native 边界、普通窗口自然高度测量失败保留 accepted 并恢复均通过。
+- **正常同进程双窗**：27 热样本 A 同步段 p95=22.014ms，B owner/accepted 观察上界 p95=25.269/42.433ms；全行改写另有单次对照。实际 auto-height 消费者为 3700 行、102490 UTF-16 / 161690 UTF-8，不用固定/填满高度绕开测量：27 热样本 A p95=68.947ms，B owner/accepted 观察上界 p95=72.008/88.995ms，满足本负载 100/150ms 预算；冷预热 243.822ms 另列。
+- **连续性与回归**：关闭 A 后，同实例 B 的逐字工具输入进入真实 owner 并精确读回；独立聚焦/失焦/再聚焦链通过。最后的 scope-remap exit109 已定位为探针漏传命令 focusScope：空 scope 拒绝、正确 scope 接受、旧场景排队前与新场景均有焦点、旧事件拒绝、新 Cmd-K 应用、Tab 到正确兄弟均通过。重开图片复用应用缓存，新 session 解码 0、提交/完成帧 1，旧代不得推进计数。最终完整 controller 探针 exit0，日志 `/private/tmp/cjgui-sol-scope-remap-focused-both.log`；本次只改探针/构建脚本，未改产品代码。
+- **同源交付**：`/private/tmp/cjgui-sol-autoheight-final-export-20260924`，83 项（75 identical/8 rewritten），指纹 `fe0544e304b2101240d424500f589c38f280148052a9b26dd9b0158b27c2274d`。指导读取源码/原始日志并重新逐文件比对；性能分位数已重算，未重跑产品测试。最终探针修改后产品导出仍一致。工作区尚未 stage/commit/push，此为本地预览交付。
+
+## 保留边界与下一步
+
+- 新能力只解决已解析内容宽度的 multiline 自然高度。无约束 preferredWidth、普通 TEXT 的旧测量路径仍可能昂贵；旧四指标测量 API 保持原语义。编辑器的大文档应按范围取数、视口布局及增量索引设计，不能把 GB 文件交给一个要求立即精确全文高度的普通字段。
+- 一次 tail 局部刷新曾出现额外 raster，随后多次通过但首因未定位；保留原始失败和分段观测。重遇或新生产变化触及该路径时继续定位，不把连续绿色当作已修复。
+- 证据分别标记 native 受控探针、正常应用、公开客户端和 CGEvent/AX 工具输入。人工物理输入、系统 IME/VoiceOver、显示器实际呈现、整体峰值内存、GB/真机性能和发布不由本阶段结果覆盖。
+
+具体历史、源码版本及日志索引只见阶段页。阶段接续结合编辑器的实际需求及[设计导航](../../docs/plans/DESIGN_INTENT_INDEX.md)，审视组件布局、自绘/GPU、文字输入、资源调度、语义动作与普通开发者接入六条主线。
+
+exec
+/bin/zsh -lc "rg -n 'TouchRecord|enqueue|touchQueue|TouchGesture|scrollAccumY|targetProjectionVersion|resolveInput|resolveLocalTextContinuation|flushPendingSemanticFocus|pointerCapture|processTouch|TOUCH_' runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp runtime/cjgui/src/composable_ui_window.cj runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 0ms:
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:390:struct TouchRecord {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:398:std::deque<TouchRecord> g_touchQueue;
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:413:std::atomic<size_t> g_touchQueueHighWater{0};
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:417:void enqueueTouchRecordLocked(uint32_t action, float x, float y, uint64_t generation) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:422:        for (auto it = g_touchQueue.rbegin(); it != g_touchQueue.rend(); ++it) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:432:    if (g_touchQueue.size() >= kTouchQueueCapacity) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:434:        auto oldestMove = std::find_if(g_touchQueue.begin(), g_touchQueue.end(),
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:435:            [](const TouchRecord &r) { return r.action == kTouchUpdate; });
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:436:        if (oldestMove != g_touchQueue.end()) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:437:            g_touchQueue.erase(oldestMove);
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:439:        if (g_touchQueue.size() >= kTouchQueueCapacity) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:446:            while (g_touchQueue.size() >= kTouchQueueCapacity) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:447:                const uint64_t victimGeneration = g_touchQueue.front().generation;
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:449:                for (auto it = g_touchQueue.begin(); it != g_touchQueue.end();) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:451:                        it = g_touchQueue.erase(it);
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:458:                    g_touchQueue.emplace_front(TouchRecord{kTouchCancel, x, y, victimGeneration});
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:466:    g_touchQueue.push_back(TouchRecord{action, x, y, generation});
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:467:    size_t now = g_touchQueue.size();
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:468:    size_t prev = g_touchQueueHighWater.load(std::memory_order_relaxed);
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:469:    while (now > prev && !g_touchQueueHighWater.compare_exchange_weak(prev, now,
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:602:    if (g_touchQueue.empty()) {
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:605:    TouchRecord record = g_touchQueue.front();
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:606:    g_touchQueue.pop_front();
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:908:// g_touchQueue，带当前代际）。仅供测试链路调用；普通产物无调用者。
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:925:    enqueueTouchRecordLocked(action, x, y, generation);
+runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp:1536:    enqueueTouchRecordLocked(action, touch.x, touch.y, generation);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:993:    struct TouchGesture {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:1016:        uint64_t targetProjectionVersion = 0; // 按下时的场景版本（激活冻结；
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:1018:        float scrollAccumY = 0.0f;            // 浮点位移余量（整数交付后保留小数）
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:1022:    TouchGesture gesture;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3528:void cancelTouchGestureLocked(Session &s)
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3539:        ev.projectionVersion = s.gesture.targetProjectionVersion;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3547:    s.gesture = Session::TouchGesture{};
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3551:void enqueueEndEditingForTapLocked(Session &s)
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3667:        enqueueEndEditingForTapLocked(s);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3683:        enqueueEndEditingForTapLocked(s);  // 点击布尔：结束其他编辑（键盘收起）
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3689:        ev.projectionVersion = s.gesture.targetProjectionVersion;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3697:        enqueueEndEditingForTapLocked(s);  // 点击按钮：结束其他编辑（键盘收起）
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3703:        ev.projectionVersion = s.gesture.targetProjectionVersion;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3723:        focus.projectionVersion = s.gesture.targetProjectionVersion;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3740:    enqueueEndEditingForTapLocked(s);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3745:    begin.projectionVersion = s.gesture.targetProjectionVersion;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3768:    if (action == CJGUI_OHOS_TOUCH_BEGIN) {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3774:        s.gesture = Session::TouchGesture{};
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3799:        // （含同槽换绑动作/字段）都会使核心 resolveInput 拒绝旧按下激活，
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3801:        s.gesture.targetProjectionVersion = node.pod.projectionVersion;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3806:            s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3814:    if (action == CJGUI_OHOS_TOUCH_UPDATE) {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3818:            cancelTouchGestureLocked(s);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3826:        if (s.gesture.phase == Session::TouchGesture::kGesturePending) {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3833:                s.gesture.phase = Session::TouchGesture::kGestureScroll;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3839:                s.gesture.phase = Session::TouchGesture::kGesturePointerDrag;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3856:                    cancelTouchGestureLocked(s);  // 目标退役：无流可续
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3866:        if (s.gesture.phase == Session::TouchGesture::kGestureScroll) {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3875:                cancelTouchGestureLocked(s);  // 视口移除/换绑：手势取消
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3878:            s.gesture.scrollAccumY += dySample;
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3879:            int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);  // 截断保余量
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3881:            s.gesture.scrollAccumY -= static_cast<float>(whole);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3886:        if (s.gesture.phase == Session::TouchGesture::kGesturePointerDrag) {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3890:                cancelTouchGestureLocked(s);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3916:    if (action == CJGUI_OHOS_TOUCH_END || action == CJGUI_OHOS_TOUCH_CANCEL) {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3920:            cancelTouchGestureLocked(s);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3923:        if (action == CJGUI_OHOS_TOUCH_CANCEL) {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3924:            cancelTouchGestureLocked(s);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3929:            case Session::TouchGesture::kGesturePending:
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3948:            case Session::TouchGesture::kGestureScroll: {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3953:                    const int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3955:                        s.gesture.scrollAccumY -= static_cast<float>(whole);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3962:            case Session::TouchGesture::kGesturePointerDrag: {
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3981:            case Session::TouchGesture::kGestureEditorHold:
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:3993:        cancelTouchGestureLocked(s);
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:4039:    // 身份取聚焦时的已接受场景节点（核心 resolveInput 校验）
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:4403:        s.gesture = Session::TouchGesture{};  // B：新实例不得继承旧手势状态
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:4977:    s->gesture = Session::TouchGesture{};  // B：销毁即取消，旧相位不得延续
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:5921:    // 焦点由核心发起（对齐 macOS focusCommittedNodeId 的 enqueue:NO），避免
+runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp:5981:    cancelTouchGestureLocked(*s);
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:343:    func pointerCaptureVersion(node: CjguiComposableUiLayoutNode): Int64
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:964:    private var pointerCaptureNode: CjguiComposableUiLayoutNode
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:965:    private var pointerCaptureOwnerVersion: Int64
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:970:    private var pointerCaptureModalLayerId: String
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:971:    private var pointerCaptureActive: Bool
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:972:    private var pointerCaptureX: Int64
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:973:    private var pointerCaptureY: Int64
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1259:        this.pointerCaptureNode = CjguiComposableUiLayoutNode.missing()
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1260:        this.pointerCaptureOwnerVersion = -1
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1261:        this.pointerCaptureModalLayerId = ""
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1262:        this.pointerCaptureActive = false
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1263:        this.pointerCaptureX = 0
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1264:        this.pointerCaptureY = 0
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1383:        pointerCaptureNode = CjguiComposableUiLayoutNode.missing()
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1384:        pointerCaptureOwnerVersion = -1
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1385:        pointerCaptureModalLayerId = ""
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1386:        pointerCaptureActive = false
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1387:        pointerCaptureX = 0
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1388:        pointerCaptureY = 0
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1714:                    nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1812:                    nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1889:                            // enqueued with zero and never inherits a mouse
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1916:                    nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1929:                    resolveLocalTextContinuation(
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:1984:                            // keyboard/AX activations are enqueued with zero
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:2491:    // probe can enqueue the same native FIFO events that production input
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:3007:                flushPendingSemanticFocus()
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:3465:    private func flushPendingSemanticFocus(): Unit {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5032:    private func pointerCaptureVersionFor(node: CjguiComposableUiLayoutNode): Int64 {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5035:            return value.pointerCaptureVersion(node)
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5040:        pointerCaptureNode = CjguiComposableUiLayoutNode.missing()
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5041:        pointerCaptureOwnerVersion = -1
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5042:        pointerCaptureModalLayerId = ""
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5043:        pointerCaptureActive = false
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5044:        pointerCaptureX = 0
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5045:        pointerCaptureY = 0
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5048:        if (!pointerCaptureActive || pointerCaptureNode.nodeId < 0) {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5052:        let target = pointerCaptureNode
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5053:        let x = pointerCaptureX
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5054:        let y = pointerCaptureY
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5079:            if (pointerCaptureActive) {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5085:                nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5096:                pointerCaptureNode = resolved
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5097:                pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5098:                pointerCaptureModalLayerId = activeModalLayerId
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5099:                pointerCaptureActive = true
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5100:                pointerCaptureX = x
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5101:                pointerCaptureY = y
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5118:                pointerCaptureNode = resolved
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5119:                pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5120:                pointerCaptureModalLayerId = activeModalLayerId
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5121:                pointerCaptureActive = true
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5122:                pointerCaptureX = x
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5123:                pointerCaptureY = y
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5131:        if (!pointerCaptureActive) {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5138:        if (splitStateForDivider(pointerCaptureNode).isSome() && (eventKind ==
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5140:            let splitDragChanged = applySplitStatePointerDrag(pointerCaptureNode, x)
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5141:            pointerCaptureX = x
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5142:            pointerCaptureY = y
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5148:        if (pointerCaptureNode.nodeId != nodeId || pointerCaptureNode.resourceId != nativeEvent.resourceId ||
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5149:            pointerCaptureNode.nodeKind != Int64(nativeEvent.nodeKind)) {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5156:        if (pointerCaptureVersionFor(pointerCaptureNode) != pointerCaptureOwnerVersion || activeModalLayerId !=
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5157:            pointerCaptureModalLayerId) {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5160:        let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5161:        if (!isPointerCapturable(current) || current.resourceId != pointerCaptureNode.resourceId || current.nodeKind != pointerCaptureNode
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5177:        pointerCaptureX = x
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5178:        pointerCaptureY = y
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5182:            pointerCaptureOwnerVersion = pointerCaptureVersionFor(current)
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5188:        if (!pointerCaptureActive) {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5191:        let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5192:        if (pointerCaptureVersionFor(pointerCaptureNode) != pointerCaptureOwnerVersion || activeModalLayerId !=
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5193:            pointerCaptureModalLayerId || !isPointerCapturable(current) || current.resourceId != pointerCaptureNode
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5194:            .resourceId || current.nodeKind != pointerCaptureNode.nodeKind) {
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5210:    private func resolveLocalTextContinuation(eventKind: Int64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5251:        let target = nativeInputScene.resolveInput(refusedRangeTextNodeId, refusedRangeTextResourceId,
+runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj:5392:        flushPendingSemanticFocus()
+runtime/cjgui/src/composable_ui_window.cj:465:    func pointerCaptureVersion(node: CjguiComposableUiLayoutNode): Int64
+runtime/cjgui/src/composable_ui_window.cj:1464:    private var pointerCaptureNode: CjguiComposableUiLayoutNode
+runtime/cjgui/src/composable_ui_window.cj:1465:    private var pointerCaptureOwnerVersion: Int64
+runtime/cjgui/src/composable_ui_window.cj:1470:    private var pointerCaptureModalLayerId: String
+runtime/cjgui/src/composable_ui_window.cj:1471:    private var pointerCaptureActive: Bool
+runtime/cjgui/src/composable_ui_window.cj:1472:    private var pointerCaptureX: Int64
+runtime/cjgui/src/composable_ui_window.cj:1473:    private var pointerCaptureY: Int64
+runtime/cjgui/src/composable_ui_window.cj:1474:    private var pointerCaptureVisualX: Float64 = 0.0
+runtime/cjgui/src/composable_ui_window.cj:1475:    private var pointerCaptureVisualY: Float64 = 0.0
+runtime/cjgui/src/composable_ui_window.cj:1476:    private var pointerCaptureTranslateX: Float64 = 0.0
+runtime/cjgui/src/composable_ui_window.cj:1477:    private var pointerCaptureTranslateY: Float64 = 0.0
+runtime/cjgui/src/composable_ui_window.cj:1478:    private var pointerCapturePrecise: Bool = false
+runtime/cjgui/src/composable_ui_window.cj:1818:        this.pointerCaptureNode = CjguiComposableUiLayoutNode.missing()
+runtime/cjgui/src/composable_ui_window.cj:1819:        this.pointerCaptureOwnerVersion = -1
+runtime/cjgui/src/composable_ui_window.cj:1820:        this.pointerCaptureModalLayerId = ""
+runtime/cjgui/src/composable_ui_window.cj:1821:        this.pointerCaptureActive = false
+runtime/cjgui/src/composable_ui_window.cj:1822:        this.pointerCaptureX = 0
+runtime/cjgui/src/composable_ui_window.cj:1823:        this.pointerCaptureY = 0
+runtime/cjgui/src/composable_ui_window.cj:1993:        pointerCaptureNode = CjguiComposableUiLayoutNode.missing()
+runtime/cjgui/src/composable_ui_window.cj:1994:        pointerCaptureOwnerVersion = -1
+runtime/cjgui/src/composable_ui_window.cj:1995:        pointerCaptureModalLayerId = ""
+runtime/cjgui/src/composable_ui_window.cj:1996:        pointerCaptureActive = false
+runtime/cjgui/src/composable_ui_window.cj:1997:        pointerCaptureX = 0
+runtime/cjgui/src/composable_ui_window.cj:1998:        pointerCaptureY = 0
+runtime/cjgui/src/composable_ui_window.cj:3065:                    nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+runtime/cjgui/src/composable_ui_window.cj:3141:                            // enqueued with zero and never inherits a mouse
+runtime/cjgui/src/composable_ui_window.cj:3174:                    nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+runtime/cjgui/src/composable_ui_window.cj:3198:                    resolveLocalTextContinuation(
+runtime/cjgui/src/composable_ui_window.cj:3261:                                // keyboard/AX activations are enqueued with zero
+runtime/cjgui/src/composable_ui_window.cj:4110:    // probe can enqueue the same native FIFO events that production input
+runtime/cjgui/src/composable_ui_window.cj:4923:                flushPendingSemanticFocus()
+runtime/cjgui/src/composable_ui_window.cj:5565:    private func flushPendingSemanticFocus(): Unit {
+runtime/cjgui/src/composable_ui_window.cj:8018:    private func pointerCaptureVersionFor(node: CjguiComposableUiLayoutNode): Int64 {
+runtime/cjgui/src/composable_ui_window.cj:8021:            return value.pointerCaptureVersion(node)
+runtime/cjgui/src/composable_ui_window.cj:8026:        pointerCaptureNode = CjguiComposableUiLayoutNode.missing()
+runtime/cjgui/src/composable_ui_window.cj:8027:        pointerCaptureOwnerVersion = -1
+runtime/cjgui/src/composable_ui_window.cj:8028:        pointerCaptureModalLayerId = ""
+runtime/cjgui/src/composable_ui_window.cj:8029:        pointerCaptureActive = false
+runtime/cjgui/src/composable_ui_window.cj:8030:        pointerCaptureX = 0
+runtime/cjgui/src/composable_ui_window.cj:8031:        pointerCaptureY = 0
+runtime/cjgui/src/composable_ui_window.cj:8032:        pointerCaptureVisualX = 0.0
+runtime/cjgui/src/composable_ui_window.cj:8033:        pointerCaptureVisualY = 0.0
+runtime/cjgui/src/composable_ui_window.cj:8034:        pointerCaptureTranslateX = 0.0
+runtime/cjgui/src/composable_ui_window.cj:8035:        pointerCaptureTranslateY = 0.0
+runtime/cjgui/src/composable_ui_window.cj:8036:        pointerCapturePrecise = false
+runtime/cjgui/src/composable_ui_window.cj:8039:        pointerCaptureVisualX = event.pointerVisualX
+runtime/cjgui/src/composable_ui_window.cj:8040:        pointerCaptureVisualY = event.pointerVisualY
+runtime/cjgui/src/composable_ui_window.cj:8041:        pointerCaptureTranslateX = event.pointerTranslateX
+runtime/cjgui/src/composable_ui_window.cj:8042:        pointerCaptureTranslateY = event.pointerTranslateY
+runtime/cjgui/src/composable_ui_window.cj:8043:        pointerCapturePrecise = event.pointerGeometryAccepted
+runtime/cjgui/src/composable_ui_window.cj:8046:        if (!pointerCaptureActive || pointerCaptureNode.nodeId < 0) {
+runtime/cjgui/src/composable_ui_window.cj:8050:        let target = pointerCaptureNode
+runtime/cjgui/src/composable_ui_window.cj:8051:        let x = pointerCaptureX
+runtime/cjgui/src/composable_ui_window.cj:8052:        let y = pointerCaptureY
+runtime/cjgui/src/composable_ui_window.cj:8053:        let visualX = pointerCaptureVisualX
+runtime/cjgui/src/composable_ui_window.cj:8054:        let visualY = pointerCaptureVisualY
+runtime/cjgui/src/composable_ui_window.cj:8055:        let translateX = pointerCaptureTranslateX
+runtime/cjgui/src/composable_ui_window.cj:8056:        let translateY = pointerCaptureTranslateY
+runtime/cjgui/src/composable_ui_window.cj:8057:        let precise = pointerCapturePrecise
+runtime/cjgui/src/composable_ui_window.cj:8087:            if (pointerCaptureActive) {
+runtime/cjgui/src/composable_ui_window.cj:8091:            // target contract, not `resolveInput`. A pointer-interactive TEXT node (the
+runtime/cjgui/src/composable_ui_window.cj:8092:            // visual body) can never receive editable input, so `resolveInput` resolved it
+runtime/cjgui/src/composable_ui_window.cj:8112:                pointerCaptureNode = resolved
+runtime/cjgui/src/composable_ui_window.cj:8113:                pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
+runtime/cjgui/src/composable_ui_window.cj:8114:                pointerCaptureModalLayerId = activeModalLayerId
+runtime/cjgui/src/composable_ui_window.cj:8115:                pointerCaptureActive = true
+runtime/cjgui/src/composable_ui_window.cj:8116:                pointerCaptureX = x
+runtime/cjgui/src/composable_ui_window.cj:8117:                pointerCaptureY = y
+runtime/cjgui/src/composable_ui_window.cj:8140:                pointerCaptureNode = resolved
+runtime/cjgui/src/composable_ui_window.cj:8141:                pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
+runtime/cjgui/src/composable_ui_window.cj:8142:                pointerCaptureModalLayerId = activeModalLayerId
+runtime/cjgui/src/composable_ui_window.cj:8143:                pointerCaptureActive = true
+runtime/cjgui/src/composable_ui_window.cj:8144:                pointerCaptureX = x
+runtime/cjgui/src/composable_ui_window.cj:8145:                pointerCaptureY = y
+runtime/cjgui/src/composable_ui_window.cj:8154:        if (!pointerCaptureActive) {
+runtime/cjgui/src/composable_ui_window.cj:8164:        if (splitStateForDivider(pointerCaptureNode).isSome() && (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE ||
+runtime/cjgui/src/composable_ui_window.cj:8166:            let splitDragChanged = applySplitStatePointerDrag(pointerCaptureNode, x)
+runtime/cjgui/src/composable_ui_window.cj:8167:            pointerCaptureX = x
+runtime/cjgui/src/composable_ui_window.cj:8168:            pointerCaptureY = y
+runtime/cjgui/src/composable_ui_window.cj:8175:        if (pointerCaptureNode.nodeId != nodeId || pointerCaptureNode.resourceId != nativeEvent.resourceId ||
+runtime/cjgui/src/composable_ui_window.cj:8176:            pointerCaptureNode.nodeKind != Int64(nativeEvent.nodeKind)) {
+runtime/cjgui/src/composable_ui_window.cj:8183:        if (pointerCaptureVersionFor(pointerCaptureNode) != pointerCaptureOwnerVersion || activeModalLayerId !=
+runtime/cjgui/src/composable_ui_window.cj:8184:            pointerCaptureModalLayerId) {
+runtime/cjgui/src/composable_ui_window.cj:8187:        let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
+runtime/cjgui/src/composable_ui_window.cj:8188:        if (!isPointerCapturable(current) || current.resourceId != pointerCaptureNode.resourceId || current.nodeKind != pointerCaptureNode
+runtime/cjgui/src/composable_ui_window.cj:8209:        pointerCaptureX = x
+runtime/cjgui/src/composable_ui_window.cj:8210:        pointerCaptureY = y
+runtime/cjgui/src/composable_ui_window.cj:8215:            pointerCaptureOwnerVersion = pointerCaptureVersionFor(current)
+runtime/cjgui/src/composable_ui_window.cj:8221:        if (!pointerCaptureActive) {
+runtime/cjgui/src/composable_ui_window.cj:8224:        let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
+runtime/cjgui/src/composable_ui_window.cj:8225:        if (pointerCaptureVersionFor(pointerCaptureNode) != pointerCaptureOwnerVersion || activeModalLayerId !=
+runtime/cjgui/src/composable_ui_window.cj:8226:            pointerCaptureModalLayerId || !isPointerCapturable(current) || current.resourceId != pointerCaptureNode
+runtime/cjgui/src/composable_ui_window.cj:8227:            .resourceId || current.nodeKind != pointerCaptureNode.nodeKind) {
+runtime/cjgui/src/composable_ui_window.cj:8243:    private func resolveLocalTextContinuation(eventKind: Int64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
+runtime/cjgui/src/composable_ui_window.cj:8335:            nativeInputScene.resolveInput(refusedRangeTextNodeId,
+runtime/cjgui/src/composable_ui_window.cj:9136:        flushPendingSemanticFocus()
+
+exec
+/bin/zsh -lc "rg --files '/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库' -g 'arena.dart' -g 'monodrag.dart'" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 53ms:
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/engine/src/flutter/lib/web_ui/lib/src/engine/arena.dart
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart
+
+exec
+/bin/zsh -lc "sed -n '390,475p' runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp; sed -n '590,620p' runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp; sed -n '1470,1545p' runtime/cjgui/platforms/ohos/host/cjgui_host_bridge.cpp" in /Users/jiangxuanyang/Desktop/cangjie
+exec
+/bin/zsh -lc "sed -n '990,1026p' runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp; sed -n '3510,3552p' runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp; sed -n '3620,4000p' runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp" in /Users/jiangxuanyang/Desktop/cangjie
+exec
+/bin/zsh -lc "sed -n '5560,5615p' runtime/cjgui/src/composable_ui_window.cj; sed -n '3460,3510p' runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj; sed -n '1900,2020p' runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj; sed -n '5200,5252p' runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj" in /Users/jiangxuanyang/Desktop/cangjie
+exec
+/bin/zsh -lc "rg -n 'threshold|hasSufficient|_globalDistanceMoved|_pendingDragOffset|accepted|acceptGesture|_checkDrag|handleEvent|sweep|resolve|close|hold|release' '/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart' '/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart'" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 102ms:
+struct TouchRecord {
+    uint32_t action;
+    float x;
+    float y;
+    uint64_t generation;
+};
+
+std::mutex g_touchMutex;
+std::deque<TouchRecord> g_touchQueue;
+
+// B：有界触摸队列保留必要相位。满载时先丢最旧 MOVE：滚动位移由渲染器按
+// 存活样本差分累计，丢中间样本不丢累计总量；指针拖动只取最新位置。
+// BEGIN/END/CANCEL 的相位配对永不被队首丢弃打断；仅在队列里没有任何
+// MOVE（容量压力已超出正常负载的极端序列）才回退丢弃最旧。
+constexpr size_t kTouchQueueCapacity = 256;
+// A（触摸包指导接续）：有界队列的同身份压缩与过载取消协议。
+//  - 同手势 MOVE 压缩：坐标是绝对样本，压缩 = 保留最新位置；渲染器按交付
+//    样本差分累计位移，压缩后总量不丢，也不会把滑动退化成点击（每手势至
+//    少保留一条 MOVE 直到被更新样本替换）。
+//  - 相位边界（BEGIN/END/CANCEL）永不因满载丢弃；无法容纳新相位时注入当前
+//    手势的显式 CANCEL 并清其排队 MOVE——旧 END 随后被渲染器忽略（手势已
+//    被取消重置），新 BEGIN 仍能恢复。
+//  - 高水位/压缩/过载取消计数只作最小观测（hilog + 统计读数），不另做诊断平台。
+std::atomic<size_t> g_touchQueueHighWater{0};
+std::atomic<uint64_t> g_touchCoalescedMoves{0};
+std::atomic<uint64_t> g_touchOverloadCancels{0};
+
+void enqueueTouchRecordLocked(uint32_t action, float x, float y, uint64_t generation) {
+    // 1) 同身份压缩（无条件先行，不限满载）：手势在途时其 MOVE 恒压缩为
+    //    单条最新样本——坐标是绝对值，压缩保留最新坐标与跨阈值事实；渲染器
+    //    按交付样本差分累计，总量不丢，滑动不退化成点击。
+    if (action == kTouchUpdate) {
+        for (auto it = g_touchQueue.rbegin(); it != g_touchQueue.rend(); ++it) {
+            if (it->generation == generation && it->action == kTouchUpdate) {
+                it->x = x;
+                it->y = y;
+                g_touchCoalescedMoves.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            if (it->generation == generation) break;  // 同代相位边界之后无在途 MOVE
+        }
+    }
+    if (g_touchQueue.size() >= kTouchQueueCapacity) {
+        // 2) 满载：丢最旧 MOVE 腾一位（每个手势至少保留一条最新 MOVE）。
+        auto oldestMove = std::find_if(g_touchQueue.begin(), g_touchQueue.end(),
+            [](const TouchRecord &r) { return r.action == kTouchUpdate; });
+        if (oldestMove != g_touchQueue.end()) {
+            g_touchQueue.erase(oldestMove);
+        }
+        if (g_touchQueue.size() >= kTouchQueueCapacity) {
+            // 3) 相位边界满载：过载取消——取消队首手势所在代次（最旧者最可
+            //    能已被 newer 输入取代）。受害代次的全部排队记录整组移除，队
+            //    首注入显式 CANCEL：注入的 CANCEL 先于一切排队记录被交付，渲
+            //    染器据此重置该手势（含已在途的 BEGIN），旧 END 不会激活，新
+            //    BEGIN 照常恢复。单记录代次整组移除即为等效取消（手势从未到
+            //    达渲染器）；仍满则继续取消下一个队首代次，保证腾位进度。
+            while (g_touchQueue.size() >= kTouchQueueCapacity) {
+                const uint64_t victimGeneration = g_touchQueue.front().generation;
+                size_t removed = 0;
+                for (auto it = g_touchQueue.begin(); it != g_touchQueue.end();) {
+                    if (it->generation == victimGeneration) {
+                        it = g_touchQueue.erase(it);
+                        ++removed;
+                    } else {
+                        ++it;
+                    }
+                }
+                if (removed > 1) {
+                    g_touchQueue.emplace_front(TouchRecord{kTouchCancel, x, y, victimGeneration});
+                    g_touchOverloadCancels.fetch_add(1, std::memory_order_relaxed);
+                    HLOGW("touch queue overload: cancel gen=%{public}llu removed=%{public}zu",
+                          static_cast<unsigned long long>(victimGeneration), removed);
+                }
+            }
+        }
+    }
+    g_touchQueue.push_back(TouchRecord{action, x, y, generation});
+    size_t now = g_touchQueue.size();
+    size_t prev = g_touchQueueHighWater.load(std::memory_order_relaxed);
+    while (now > prev && !g_touchQueueHighWater.compare_exchange_weak(prev, now,
+        std::memory_order_relaxed)) {
+    }
+}
+
+std::atomic<int> g_foreground{0};
+// A3（Sol 复核）：`g_appStarted` 被删除——它是与 phase 并存的第二份真相。
+    }
+    if (outWindow) *outWindow = rec->window;
+    if (outGeneration) *outGeneration = rec->generation;
+    if (outWidth) *outWidth = rec->width;
+    if (outHeight) *outHeight = rec->height;
+    if (outDensity) *outDensity = rec->density;
+    if (outGeometryRevision) *outGeometryRevision = rec->geometryRevision;
+    return 1;
+}
+
+int ingressTouchDequeue(uint32_t *outAction, float *outX, float *outY, uint64_t *outGeneration) {
+    std::lock_guard<std::mutex> lock(g_touchMutex);
+    if (g_touchQueue.empty()) {
+        return 0;
+    }
+    TouchRecord record = g_touchQueue.front();
+    g_touchQueue.pop_front();
+    {
+        std::lock_guard<std::mutex> leaseLock(g_leaseMutex);
+        SurfaceRecord *rec = findSurfaceByGenerationLocked(g_currentGeneration);
+        bool stillCurrent = (rec != nullptr) && rec->active && rec->generation == record.generation;
+        if (!stillCurrent) {
+            // Controlled drop of a stale-generation input; the caller sees a
+            // distinct result and the owner is never touched.
+            g_oldGenEventsRejected.fetch_add(1);
+            return -1;
+        }
+    }
+    if (outAction) *outAction = record.action;
+    if (outX) *outX = record.x;
+    if (outY) *outY = record.y;
+int32_t g_activePointerId = -1;    // -1 = 无活动手指
+uint64_t g_activePointerGeneration = 0;
+
+void dispatchTouchImpl(OH_NativeXComponent *component, void *window) {
+    uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_leaseMutex);
+        SurfaceRecord *rec = findSurfaceLocked(window);
+        if (rec == nullptr || !rec->active) {
+            return;  // 未知/已退役 surface 的触摸受控丢弃，不触碰 owner
+        }
+        generation = rec->generation;
+    }
+    OH_NativeXComponent_TouchEvent touch{};
+    // A：取数失败零输入——零结构 type==DOWN 只是枚举值 0，不是合法读取。
+    if (OH_NativeXComponent_GetTouchEvent(component, window, &touch) !=
+        OH_NATIVEXCOMPONENT_RESULT_SUCCESS) {
+        HLOGW("touch read failed: dropped (no synthetic input)");
+        return;
+    }
+    uint32_t action = 0;
+    switch (touch.type) {
+        case OH_NATIVEXCOMPONENT_DOWN:
+            action = kTouchBegin;
+            break;
+        case OH_NATIVEXCOMPONENT_MOVE:
+            action = kTouchUpdate;
+            break;
+        case OH_NATIVEXCOMPONENT_UP:
+            action = kTouchEnd;
+            break;
+        case OH_NATIVEXCOMPONENT_CANCEL:
+            action = kTouchCancel;
+            break;
+        default:
+            return;
+    }
+    // A：数值必须有限；驱动层异常样本不成合法触摸。坐标保持平台原值
+    // （surface 像素域，与已接受场景节点同一坐标域），不做第二次转换。
+    if (!std::isfinite(touch.x) || !std::isfinite(touch.y)) {
+        HLOGW("touch with non-finite coordinates dropped id=%{public}d", touch.id);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_activePointerMutex);
+        if (g_activePointerGeneration != generation) {
+            g_activePointerId = -1;
+            g_activePointerGeneration = generation;
+        }
+        if (action == kTouchBegin) {
+            if (g_activePointerId >= 0 && g_activePointerId != touch.id) {
+                HLOGW("secondary finger ignored id=%{public}d active=%{public}d",
+                      touch.id, g_activePointerId);
+                return;
+            }
+            g_activePointerId = touch.id;
+        } else {
+            if (g_activePointerId < 0 || touch.id != g_activePointerId) {
+                return;  // 副指的 MOVE/UP/CANCEL 不终结、不移动主指手势
+            }
+            if (action == kTouchEnd || action == kTouchCancel) {
+                g_activePointerId = -1;
+            }
+        }
+    }
+    std::lock_guard<std::mutex> lock(g_touchMutex);
+    enqueueTouchRecordLocked(action, touch.x, touch.y, generation);
+}
+
+}  // namespace
+
+// --- napi exports ------------------------------------------------------------
+
+static napi_value ProbeCangjie(napi_env env, napi_callback_info info) {
+    (void)info;
+    if (g_cangjieLib == nullptr) {
+
+ succeeded in 111ms:
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:38:enum _DragState { ready, possible, accepted }
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:90:    this.onlyAcceptDragOnThreshold = false,
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:131:  /// will only track the latest active (accepted by this recognizer) pointer, which
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:248:  /// Whether the drag threshold should be met before dispatching any drag callbacks.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:250:  /// The drag threshold is met when the global distance traveled by a pointer has
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:251:  /// exceeded the defined threshold on the relevant axis, i.e. y-axis for the
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:253:  /// and the entire plane for [PanGestureRecognizer]. The threshold for both
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:259:  /// won the arena and the drag threshold has been met.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:265:  bool onlyAcceptDragOnThreshold;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:293:  late OffsetPair _pendingDragOffset;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:330:  double get globalDistanceMoved => _globalDistanceMoved;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:331:  late double _globalDistanceMoved;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:374:  bool hasSufficientGlobalDistanceToAccept(
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:378:  bool _hasDragThresholdBeenMet = false;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:419:        _pendingDragOffset = OffsetPair.zero;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:420:        _globalDistanceMoved = 0.0;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:426:      case _DragState.accepted:
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:427:        resolve(GestureDisposition.accepted);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:471:    if (_state != _DragState.accepted || localDelta == Offset.zero) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:543:  Offset _resolveLocalDeltaForMultitouch(int pointer, Offset localDelta) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:565:    if (_state != _DragState.accepted ||
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:573:      dx = _resolveDelta(pointer: pointer, axis: _DragDirection.horizontal, localDelta: localDelta);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:578:      dy = _resolveDelta(pointer: pointer, axis: _DragDirection.vertical, localDelta: localDelta);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:581:      final double averageX = _resolveDeltaForPanGesture(
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:585:      final double averageY = _resolveDeltaForPanGesture(
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:598:  double _resolveDelta({
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:637:  double _resolveDeltaForPanGesture({required _DragDirection axis, required Offset localDelta}) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:639:    final int pointerCount = _acceptedActivePointers.length;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:654:  void handleEvent(PointerEvent event) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:687:      final Offset resolvedDelta = _resolveLocalDeltaForMultitouch(event.pointer, localDelta);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:690:          _pendingDragOffset += OffsetPair(local: localDelta, global: delta);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:697:          _globalDistanceMoved +=
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:704:          if (hasSufficientGlobalDistanceToAccept(event.kind, gestureSettings?.touchSlop)) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:705:            _hasDragThresholdBeenMet = true;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:706:            if (_acceptedActivePointers.contains(event.pointer)) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:707:              _checkDrag(event.pointer);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:709:              resolve(GestureDisposition.accepted);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:712:        case _DragState.accepted:
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:715:            delta: _getDeltaForDetails(resolvedDelta),
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:716:            primaryDelta: _getPrimaryValueFromOffset(resolvedDelta),
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:729:  final List<int> _acceptedActivePointers = <int>[];
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:731:  // it keeps track of the last accepted pointer. If this active pointer
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:732:  // leave up, it will be set to the first accepted pointer.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:738:  void acceptGesture(int pointer) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:739:    assert(!_acceptedActivePointers.contains(pointer));
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:740:    _acceptedActivePointers.add(pointer);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:742:    if (!onlyAcceptDragOnThreshold || _hasDragThresholdBeenMet) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:743:      _checkDrag(pointer);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:760:        resolve(GestureDisposition.rejected);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:763:      case _DragState.accepted:
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:766:    _hasDragThresholdBeenMet = false;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:774:    // If we never accepted the pointer, we reject it since we are no longer
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:776:    if (!_acceptedActivePointers.remove(pointer)) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:777:      resolvePointer(pointer, GestureDisposition.rejected);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:782:      _activePointer = _acceptedActivePointers.isNotEmpty ? _acceptedActivePointers.first : null;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:796:  void _checkDrag(int pointer) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:797:    if (_state == _DragState.accepted) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:800:    _state = _DragState.accepted;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:801:    final OffsetPair delta = _pendingDragOffset;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:812:    _pendingDragOffset = OffsetPair.zero;
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:836:    // This acceptGesture might have been called only for one pointer, instead
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:837:    // of all pointers. Resolve all pointers to `accepted`. This won't cause
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:838:    // infinite recursion because an accepted pointer won't be accepted again.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:839:    resolve(GestureDisposition.accepted);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:965:  bool hasSufficientGlobalDistanceToAccept(
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:1029:  bool hasSufficientGlobalDistanceToAccept(
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart:1086:  bool hasSufficientGlobalDistanceToAccept(
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:14:/// Whether the gesture was accepted or rejected.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:16:  /// This gesture was accepted as the interpretation of the user's input.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:17:  accepted,
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:26:/// or loses a gesture negotiation. Exactly one of [acceptGesture] or
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:28:/// regardless of what caused the arena to be resolved. For example, if a
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:29:/// member resolves the arena itself, that member still receives an
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:30:/// [acceptGesture] callback.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:33:  void acceptGesture(int pointer);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:50:  /// Call this member to claim victory (with accepted) or admit defeat (with rejected).
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:52:  /// It's fine to attempt to resolve a gesture recognizer for an arena that is
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:53:  /// already resolved.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:54:  void resolve(GestureDisposition disposition) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:55:    _arena._resolve(_pointer, _member, disposition);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:67:  /// participants, and if there is one, we resolve the arena in its favor at
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:134:  void close(int pointer) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:137:      return; // This arena either never existed or has been resolved.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:151:  /// should call [hold] to delay sweep until [release] is called.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:155:  ///  * [hold]
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:156:  ///  * [release]
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:157:  void sweep(int pointer) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:160:      return; // This arena either never existed or has been resolved.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:165:      assert(_debugLogDiagnostic(pointer, 'Delaying sweep', state));
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:173:      state.members.first.acceptGesture(pointer);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:184:  /// [PointerUpEvent] processing by [sweep]. If a recognizer wishes to delay
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:185:  /// resolving an arena past [PointerUpEvent], the recognizer can [hold] the
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:186:  /// arena open using this function. To release such a hold and let the arena
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:187:  /// resolve, call [release].
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:191:  ///  * [sweep]
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:192:  ///  * [release]
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:193:  void hold(int pointer) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:196:      return; // This arena either never existed or has been resolved.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:202:  /// Releases a hold, allowing the arena to be swept.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:204:  /// If a sweep was attempted on a held arena, the sweep will be done
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:205:  /// on release.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:209:  ///  * [sweep]
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:210:  ///  * [hold]
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:211:  void release(int pointer) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:214:      return; // This arena either never existed or has been resolved.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:219:      sweep(pointer);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:225:  /// This is called by calling [GestureArenaEntry.resolve] on the object returned from [add].
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:226:  void _resolve(int pointer, GestureArenaMember member, GestureDisposition disposition) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:229:      return; // This arena has already resolved.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:233:      case GestureDisposition.accepted:
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:239:          _resolveInFavorOf(pointer, state, member);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:258:      scheduleMicrotask(() => _resolveByDefault(pointer, state));
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:264:      _resolveInFavorOf(pointer, state, state.eagerWinner!);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:268:  void _resolveByDefault(int pointer, _GestureArena state) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:270:      return; // This arena has already resolved.
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:278:    state.members.first.acceptGesture(pointer);
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:281:  void _resolveInFavorOf(int pointer, _GestureArena state, GestureArenaMember member) {
+/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart:291:    member.acceptGesture(pointer);
+
+ succeeded in 122ms:
+    // 起始绑定 accepted 目标身份、包含视口身份与 surface 代次；阈值前待定，
+    // 超阈值由视口接管并取消子控件点击；有效抬起才执行一次点击，移出、
+    // 取消、退役或换代都不激活。纯滚动不修改业务 owner、不结算焦点。
+    struct TouchGesture {
+        // 0=pending 1=scroll 2=pointer-drag 3=editor-hold（已激活编辑器优先）
+        enum Phase : uint32_t {
+            kGesturePending = 0,
+            kGestureScroll = 1,
+            kGesturePointerDrag = 2,
+            kGestureEditorHold = 3,
+        };
+        bool active = false;
+        uint32_t phase = kGesturePending;
+        float startX = 0.0f, startY = 0.0f;
+        float lastX = 0.0f, lastY = 0.0f;
+        bool hasTarget = false;          // BEGIN 命中的子控件（滚动接管后取消）
+        bool targetEditableText = false; // 单行/整数编辑器（与既有激活语义同集）
+        uint64_t targetNodeId = 0;
+        int64_t targetResourceId = -1;
+        uint32_t targetNodeKind = 0;
+        bool hasViewport = false;        // 包含视口（SCROLL_AREA 身份，与命中分开）
+        uint64_t viewportNodeId = 0;
+        int64_t viewportResourceId = -1;
+        uint64_t surfaceGeneration = 0;  // 手势起始的 surface 代次
+        int64_t pressBeginMs = 0;        // 可编辑文本长按计时
+        // B：起始绑定冻结与位移/捕获簿记。
+        uint64_t targetProjectionVersion = 0; // 按下时的场景版本（激活冻结；
+                                              // 场景中途变更即拒绝旧按下激活）
+        float scrollAccumY = 0.0f;            // 浮点位移余量（整数交付后保留小数）
+        bool pointerStreamOpen = false;       // 指针相位流已开（37 已入队）
+        bool pointerStreamEnded = false;      // 终结恰好一次（END/CANCEL 任一）
+    };
+    TouchGesture gesture;
+    // C：字段切换时旧编辑上下文的收场身份（pump 的 end 通知按此取值，
+    // 不得读新上下文字段）。
+    int64_t detachContextId = 0;
+    std::string detachFieldName;
+}
+
+// B：按身份（nodeId+resourceId+kind）在当前 accepted 里重验节点。返回当前
+// 下标；场景更新后同一节点以新版本继续手势，节点移除/换绑则找不到。
+bool sceneIndexByIdentityLocked(Session &s, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
+                                size_t *outIndex)
+{
+    for (size_t i = s.accepted.size(); i-- > 0;) {
+        const CjguiInternalRendererComposableNode &n = s.accepted[i].pod;
+        if (n.nodeId == nodeId && n.resourceId == resourceId && n.nodeKind == nodeKind) {
+            *outIndex = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool settleComposedBufferOnBlurLocked(Session &s);  // C：跨字段切换同步结算（定义在编辑缓冲区）
+void cancelTouchGestureLocked(Session &s)
+{
+    // 捕获恰好一次终结：指针相位流已被核心消费（37 已入队）而尚未终结时，
+    // 系统取消/退役/移除必须沿旧捕获身份送达恰好一条指针取消（核心对 40
+    // 无条件清理捕获）；此后迟到的 END 不再补发（旧 END 不激活）。
+    if (s.gesture.active && s.gesture.pointerStreamOpen && !s.gesture.pointerStreamEnded) {
+        QueuedEvent ev;
+        ev.kind = kEvPointerCancel;
+        ev.nodeId = s.gesture.targetNodeId;
+        ev.resourceId = s.gesture.targetResourceId;
+        ev.nodeKind = s.gesture.targetNodeKind;
+        ev.projectionVersion = s.gesture.targetProjectionVersion;
+        ev.pointerX = static_cast<int64_t>(s.gesture.lastX);
+        ev.pointerY = static_cast<int64_t>(s.gesture.lastY);
+        s.events.push_back(ev);
+        s.gesture.pointerStreamEnded = true;
+    }
+    // 有效取消：终结手势，不激活、不结算、不改 owner。长按计时一并清除
+    // （系统夺走事件流后不再补发全选）。
+    s.gesture = Session::TouchGesture{};
+    s.textPressBeginMs = 0;
+}
+
+void enqueueEndEditingForTapLocked(Session &s)
+{
+                  static_cast<long long>(node.pod.nodeId));
+        } else {
+            s.editingText = ownerValue;
+        }
+        s.caretUtf16 = static_cast<uint32_t>(s.editingText.size());
+        s.selStartUtf16 = s.caretUtf16;
+        s.selEndUtf16 = s.caretUtf16;
+        s.previewActive = false;
+        s.previewText.clear();
+        s.focusNotifyPending = true;   // ArkTS TextInput 代理路径
+    }
+}
+
+// B：滚动意图进入共同 scroll 事件通道。位移按存活样本差分累计，同手势
+// 且同场景版本的连续位移并入队尾事件（保留累计位移、约束队列长度）。
+// 版本随当前 accepted 重验刷新：offset 更新产生新 accepted 场景后，
+// 同一手势以新版本继续；视口移除/换绑由调用方取消手势。
+void appendScrollIntentLocked(Session &s, uint64_t nodeId, int64_t resourceId, uint64_t version,
+                              int64_t delta)
+{
+    if (!s.events.empty()) {
+        QueuedEvent &tail = s.events.back();
+        if (tail.kind == kEvScroll && tail.nodeId == nodeId && tail.resourceId == resourceId &&
+            tail.projectionVersion == version) {
+            tail.scrollDelta += delta;
+            tail.text = "by:" + std::to_string(tail.scrollDelta);
+            return;
+        }
+    }
+    QueuedEvent ev;
+    ev.kind = kEvScroll;
+    ev.nodeId = nodeId;
+    ev.resourceId = resourceId;
+    ev.nodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA;
+    ev.projectionVersion = version;
+    ev.scrollDelta = delta;
+    ev.text = "by:" + std::to_string(delta);
+    s.events.push_back(ev);
+}
+
+// B：待定手势在有效抬起时执行一次点击。移出目标、目标退役/换绑、
+// surface 换代都不激活；命中目标以当前 accepted 场景重验身份。
+void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
+{
+    if (!s.gesture.hasTarget) {
+        // 空白点击：语义与「点到其他控件」一致，结束当前编辑（否则系统
+        // 键盘不会收起）。未命中不产生指针事件：没有可上报的目标节点。
+        enqueueEndEditingForTapLocked(s);
+        return;
+    }
+    size_t liftIndex = 0;
+    if (!hitTestAccepted(s, x, y, &liftIndex) ||
+        s.accepted[liftIndex].pod.nodeId != s.gesture.targetNodeId ||
+        s.accepted[liftIndex].pod.resourceId != s.gesture.targetResourceId ||
+        s.accepted[liftIndex].pod.nodeKind != s.gesture.targetNodeKind) {
+        // 移出目标：不激活（不改 owner、不结算焦点）。
+        return;
+    }
+    const SceneNode &node = s.accepted[liftIndex];
+    const uint32_t kind = node.pod.nodeKind;
+    const bool longPress = s.gesture.pressBeginMs > 0 &&
+        (nowMs - s.gesture.pressBeginMs) >= 400;
+    if (kind == kKindBooleanInput) {
+        enqueueEndEditingForTapLocked(s);  // 点击布尔：结束其他编辑（键盘收起）
+        QueuedEvent ev;
+        ev.kind = kEvBooleanChanged;
+        ev.recordIndex = static_cast<uint32_t>(liftIndex);
+        ev.nodeId = node.pod.nodeId;
+        // B：激活冻结——版本取按下时刻（起始绑定），场景中途变更由核心拒绝。
+        ev.projectionVersion = s.gesture.targetProjectionVersion;
+        ev.resourceId = node.pod.resourceId;
+        ev.nodeKind = kind;
+        ev.text = (node.value == "true") ? "false" : "true";
+        s.events.push_back(ev);
+        return;
+    }
+    if (kind == kKindButton) {
+        enqueueEndEditingForTapLocked(s);  // 点击按钮：结束其他编辑（键盘收起）
+        QueuedEvent ev;
+        ev.kind = kEvActivate;
+        ev.recordIndex = static_cast<uint32_t>(liftIndex);
+        ev.nodeId = node.pod.nodeId;
+        // B：激活冻结——版本取按下时刻（起始绑定），场景中途变更由核心拒绝。
+        ev.projectionVersion = s.gesture.targetProjectionVersion;
+        ev.resourceId = node.pod.resourceId;
+        ev.nodeKind = kind;
+        ev.pointerX = static_cast<int64_t>(x);
+        ev.pointerY = static_cast<int64_t>(y);
+        s.events.push_back(ev);
+        return;
+    }
+    if (s.gesture.targetEditableText) {
+        // 点击编辑器：直接激活本节点的平台编辑上下文并回发 FOCUS。不在此
+        // 结束旧编辑上下文——pump 的 detach/end 通知按当前编辑状态取上下文，
+        // 先 end 后 begin 会把旧字段的收场报成新字段（编辑器间切换维持
+        // 既有语义：旧缓冲随新焦点初始化被替换，不经失焦结算）。
+        beginEditingOnNodeLocked(s, node);
+        s.editingTapX = x - static_cast<double>(node.pod.x);   // 节点内相对坐标
+        s.editingTapPending = true;
+        QueuedEvent focus;
+        focus.kind = kEvFocus;
+        focus.recordIndex = static_cast<uint32_t>(liftIndex);
+        focus.nodeId = node.pod.nodeId;
+        focus.projectionVersion = s.gesture.targetProjectionVersion;
+        focus.resourceId = node.pod.resourceId;
+        focus.nodeKind = kind;
+        s.events.push_back(focus);
+        if (longPress) {
+            // 长按 ≥400ms → 全选（移动端长按选择的最小实现），与既有
+            // 语义一致：caret 点击先入队，全选在其后落账并触发重绘。
+            s.selStartUtf16 = 0;
+            s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
+            RLOGI("long-press selection: select-all len=%{public}u",
+                  static_cast<unsigned>(s.selEndUtf16));
+            g_render.post(std::make_shared<RedrawJob>());
+        }
+        return;
+    }
+    // 其他交互节点（展示文本/背景层等）：点击 = 完整指针相位对，
+    // 身份取当前 accepted 场景的该节点。指针相位同样结束其他编辑。
+    enqueueEndEditingForTapLocked(s);
+    QueuedEvent begin;
+    begin.kind = kEvPointerBegin;
+    begin.recordIndex = static_cast<uint32_t>(liftIndex);
+    begin.nodeId = node.pod.nodeId;
+    begin.projectionVersion = s.gesture.targetProjectionVersion;
+    begin.resourceId = node.pod.resourceId;
+    begin.nodeKind = kind;
+    begin.pointerX = static_cast<int64_t>(x);
+    begin.pointerY = static_cast<int64_t>(y);
+    s.events.push_back(begin);
+    QueuedEvent end = begin;
+    end.kind = kEvPointerEnd;
+    end.pointerX = static_cast<int64_t>(x);
+    end.pointerY = static_cast<int64_t>(y);
+    s.events.push_back(end);
+}
+
+void synthesizeEventsFromRawTouch(Session &s, uint32_t action, float x, float y)
+{
+    // B 合成策略：单指手势，阈值前待定、超阈值由包含视口接管为连续滚动；
+    // 有效抬起才执行一次点击。已激活编辑器保持长按/系统代理优先级，位移
+    // 不强制当滚动。平台回调读取失败（queue 空/旧代拒绝）不会到达这里，
+    // 也不合成合法触摸；坐标域与已接受场景节点一致。
+    const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    constexpr float kTouchScrollThresholdPx = 12.0f;
+
+    if (action == CJGUI_OHOS_TOUCH_BEGIN) {
+        // 单指身份：手势存续期间忽略新手指，不换绑、不重置累计位移。
+        if (s.gesture.active) {
+            RLOGI("touch begin ignored: gesture already active");
+            return;
+        }
+        s.gesture = Session::TouchGesture{};
+        s.gesture.active = true;
+        s.gesture.startX = s.gesture.lastX = x;
+        s.gesture.startY = s.gesture.lastY = y;
+        s.gesture.surfaceGeneration = s.surfaceGeneration;
+        size_t viewportIndex = 0;
+        s.gesture.hasViewport = scrollAreaIndexContainingPoint(s, x, y, &viewportIndex);
+        if (s.gesture.hasViewport) {
+            s.gesture.viewportNodeId = s.accepted[viewportIndex].pod.nodeId;
+            s.gesture.viewportResourceId = s.accepted[viewportIndex].pod.resourceId;
+        }
+        size_t index = 0;
+        if (!hitTestAccepted(s, x, y, &index)) {
+            return;  // 空白/非交互内容：无点击目标；滚动仍由包含视口接管。
+        }
+        const SceneNode &node = s.accepted[index];
+        if (node.pod.isReadOnly != 0) return;  // 只读内容可滚动，不可激活
+        const uint32_t kind = node.pod.nodeKind;
+        const bool isEditableText = kind == kKindTextInput || kind == kKindIntegerInput;
+        s.gesture.hasTarget = true;
+        s.gesture.targetEditableText = isEditableText;
+        s.gesture.targetNodeId = node.pod.nodeId;
+        s.gesture.targetResourceId = node.pod.resourceId;
+        s.gesture.targetNodeKind = kind;
+        // B：起始绑定冻结——激活事件的场景版本取按下时刻；中途任何提交
+        // （含同槽换绑动作/字段）都会使核心 resolveInput 拒绝旧按下激活，
+        // 旧按下不能借新 sceneVersion 激活另一动作。
+        s.gesture.targetProjectionVersion = node.pod.projectionVersion;
+        if (isEditableText && s.editing && !s.editorRetired &&
+            s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId) {
+            // 已激活编辑器优先：caret 点击立即落账，长按计时开始；位移不
+            // 接管为滚动（选区拖动/系统代理按明确优先级保留）。
+            s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
+            s.gesture.pressBeginMs = nowMs;
+            s.textPressBeginMs = nowMs;
+            s.editingTapX = x - static_cast<double>(node.pod.x);
+            s.editingTapPending = true;
+        }
+        return;
+    }
+    if (action == CJGUI_OHOS_TOUCH_UPDATE) {
+        if (!s.gesture.active) return;  // 无手势的孤立位移不成合法触摸
+        if (s.gesture.surfaceGeneration != s.surfaceGeneration) {
+            // Surface 换代/退役：旧代手势不得延续到新挂载。
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        const float dx = x - s.gesture.startX;
+        const float dy = y - s.gesture.startY;
+        // 差分样本必须在 last 更新前计算。待定期间样本不推进 last；
+        // 视口接管后的首个差分即从起始点累计的全部位移，总量不丢。
+        const float dySample = y - s.gesture.lastY;
+        if (s.gesture.phase == Session::TouchGesture::kGesturePending) {
+            if (std::fabs(dx) < kTouchScrollThresholdPx && std::fabs(dy) < kTouchScrollThresholdPx) {
+                return;
+            }
+            if (s.gesture.hasViewport) {
+                // 视口接管：取消子控件点击。纯滚动不结束编辑、不触发焦点
+                // 切换结算，业务 owner 与草稿保持不动。
+                s.gesture.phase = Session::TouchGesture::kGestureScroll;
+                RLOGI("gesture scroll takeover viewport=%{public}llu target=%{public}llu",
+                      static_cast<unsigned long long>(s.gesture.viewportNodeId),
+                      static_cast<unsigned long long>(s.gesture.targetNodeId));
+            } else if (s.gesture.hasTarget && !s.gesture.targetEditableText) {
+                // 无包含视口：维持指针相位流（BEGIN 立即补发，保持序列）。
+                s.gesture.phase = Session::TouchGesture::kGesturePointerDrag;
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                               s.gesture.targetNodeKind, &index)) {
+                    const SceneNode &node = s.accepted[index];
+                    QueuedEvent ev;
+                    ev.kind = kEvPointerBegin;
+                    ev.recordIndex = static_cast<uint32_t>(index);
+                    ev.nodeId = node.pod.nodeId;
+                    ev.projectionVersion = node.pod.projectionVersion;
+                    ev.resourceId = node.pod.resourceId;
+                    ev.nodeKind = node.pod.nodeKind;
+                    ev.pointerX = static_cast<int64_t>(x);
+                    ev.pointerY = static_cast<int64_t>(y);
+                    s.events.push_back(ev);
+                    s.gesture.pointerStreamOpen = true;
+                } else {
+                    cancelTouchGestureLocked(s);  // 目标退役：无流可续
+                    return;
+                }
+            } else {
+                // 可编辑文本上起手且无包含视口：不滚动不拖动，待定到抬起。
+                return;
+            }
+        }
+        s.gesture.lastX = x;
+        s.gesture.lastY = y;
+        if (s.gesture.phase == Session::TouchGesture::kGestureScroll) {
+            // 连续逻辑位移：共同 scroll 意图，不做半页跳转、不写布局坐标。
+            // 手指下拖（dySample>0）露出上方内容 → offset 减小（delta 取负）。
+            // 位移以浮点累计余量，只有整数部分交付共享整数 viewport：
+            // 逐样本 float→Int64 截断会丢失小数位移，"by:0" 也不是滚动。
+            if (dySample == 0.0f) return;
+            size_t index = 0;
+            if (!sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                            CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+                cancelTouchGestureLocked(s);  // 视口移除/换绑：手势取消
+                return;
+            }
+            s.gesture.scrollAccumY += dySample;
+            int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);  // 截断保余量
+            if (whole == 0) return;
+            s.gesture.scrollAccumY -= static_cast<float>(whole);
+            appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                     s.accepted[index].pod.projectionVersion, -whole);
+            return;
+        }
+        if (s.gesture.phase == Session::TouchGesture::kGesturePointerDrag) {
+            size_t index = 0;
+            if (!sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                            s.gesture.targetNodeKind, &index)) {
+                cancelTouchGestureLocked(s);
+                return;
+            }
+            const SceneNode &node = s.accepted[index];
+            QueuedEvent ev;
+            ev.kind = kEvPointerUpdate;
+            ev.recordIndex = static_cast<uint32_t>(index);
+            ev.nodeId = node.pod.nodeId;
+            ev.projectionVersion = node.pod.projectionVersion;
+            ev.resourceId = node.pod.resourceId;
+            ev.nodeKind = node.pod.nodeKind;
+            ev.pointerX = static_cast<int64_t>(x);
+            ev.pointerY = static_cast<int64_t>(y);
+            if (!s.events.empty()) {
+                QueuedEvent &tail = s.events.back();
+                if (tail.kind == kEvPointerUpdate && tail.nodeId == ev.nodeId) {
+                    tail.pointerX = ev.pointerX;
+                    tail.pointerY = ev.pointerY;
+                    return;
+                }
+            }
+            s.events.push_back(ev);
+            return;
+        }
+        return;
+    }
+    if (action == CJGUI_OHOS_TOUCH_END || action == CJGUI_OHOS_TOUCH_CANCEL) {
+        if (!s.gesture.active) return;
+        // Surface 换代：旧代相位不得影响新挂载，等价取消。
+        if (s.gesture.surfaceGeneration != s.surfaceGeneration) {
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        if (action == CJGUI_OHOS_TOUCH_CANCEL) {
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        const uint32_t phase = s.gesture.phase;
+        switch (phase) {
+            case Session::TouchGesture::kGesturePending:
+                // B：END 重判阈值——快速轻扫（BEGIN 后无 UPDATE）的全部位移在
+                // 抬起结算为一次滚动，不得当作点击激活；仅有界视口接管。
+                if (s.gesture.hasViewport &&
+                    (std::fabs(x - s.gesture.startX) >= kTouchScrollThresholdPx ||
+                     std::fabs(y - s.gesture.startY) >= kTouchScrollThresholdPx)) {
+                    size_t index = 0;
+                    if (sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                                   CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+                        const int64_t whole = static_cast<int64_t>(y - s.gesture.startY);
+                        if (whole != 0) {
+                            appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                                     s.accepted[index].pod.projectionVersion, -whole);
+                        }
+                    }
+                    break;
+                }
+                executePendingTapLocked(s, x, y, nowMs);
+                break;
+            case Session::TouchGesture::kGestureScroll: {
+                // B：END 消费尾差——交付浮点累计余量的整数部分。
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                               CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+                    const int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);
+                    if (whole != 0) {
+                        s.gesture.scrollAccumY -= static_cast<float>(whole);
+                        appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                                 s.accepted[index].pod.projectionVersion, -whole);
+                    }
+                }
+                break;
+            }
+            case Session::TouchGesture::kGesturePointerDrag: {
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                               s.gesture.targetNodeKind, &index)) {
+                    const SceneNode &node = s.accepted[index];
+                    QueuedEvent ev;
+                    ev.kind = kEvPointerEnd;
+                    ev.recordIndex = static_cast<uint32_t>(index);
+                    ev.nodeId = node.pod.nodeId;
+                    ev.projectionVersion = node.pod.projectionVersion;
+                    ev.resourceId = node.pod.resourceId;
+                    ev.nodeKind = node.pod.nodeKind;
+                    ev.pointerX = static_cast<int64_t>(x);
+                    ev.pointerY = static_cast<int64_t>(y);
+                    s.events.push_back(ev);
+                    if (s.gesture.pointerStreamOpen) s.gesture.pointerStreamEnded = true;
+                }
+                break;
+            }
+            case Session::TouchGesture::kGestureEditorHold:
+                // 已激活编辑器长按 ≥400ms → 全选（既有语义保持）。
+                if (s.editing && !s.editorRetired && s.textPressBeginMs > 0 &&
+                    nowMs - s.textPressBeginMs >= 400) {
+                    s.selStartUtf16 = 0;
+                    s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
+                    RLOGI("long-press selection: select-all len=%{public}u",
+                          static_cast<unsigned>(s.selEndUtf16));
+                    g_render.post(std::make_shared<RedrawJob>());
+                }
+                break;
+        }
+        cancelTouchGestureLocked(s);
+        return;
+    }
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+
+ succeeded in 122ms:
+            return focusProjectedNode(node.nodeId)
+        }
+        return false
+    }
+
+    private func flushPendingSemanticFocus(): Unit {
+        if (let Some(prior) <- pendingSemanticFocusNode) {
+            pendingSemanticFocusNode = None
+            let current = nativeInputScene.nodeForId(prior.nodeId)
+            if (current.nodeId == prior.nodeId && current.semanticId == prior.semanticId &&
+                current.semanticIncarnation == prior.semanticIncarnation && current.actionName == prior.actionName &&
+                current.fieldId == prior.fieldId && current.resourceId == prior.resourceId &&
+                current.operationActionName == prior.operationActionName &&
+                current.operationResourceId == prior.operationResourceId && current.canReceiveFocus()) {
+                if (revealAcceptedNodeIfNeeded(current.nodeId)) {
+                    pendingSemanticFocusNode = Some(current)
+                    requestRefresh()
+                } else {
+                    let _ = focusProjectedNode(current.nodeId)
+                }
+            }
+        }
+    }
+
+    /// One real wheel step against a scroll area that shares a public viewport.
+    /// Returns true when the request moved, so the caller schedules a projection.
+    /// The shared split view state of a state-bound divider, or None when this
+    /// node is not a generated split handle. The framework only claims a divider
+    /// whose author bound shared view state; a handwritten split keeps its own
+    /// application owner.
+    private func splitStateForDivider(node: CjguiComposableUiLayoutNode): ?CjguiComposableUiSplitState {
+        if (node.nodeKind != CJGUI_COMPOSABLE_UI_SPLIT_HANDLE) {
+            return None
+        }
+        return node.splitState
+    }
+
+    private func isSplitSizeNavigation(text: String): Bool {
+        return text == "left" || text == "right" || text == "up" || text == "down"
+    }
+
+    /// The keyboard size rule for a state-bound divider: the same ±8 nudge the
+    /// handwritten split uses, bounded by the framework's ONE rule against the
+    /// track the ACCEPTED scene really solved. Returns true when the size moved.
+    private func applySplitStateKeyboardStep(node: CjguiComposableUiLayoutNode, text: String): Bool {
+        if (let Some(state) <- splitStateForDivider(node)) {
+            let direction = if (text == "left" || text == "up") {
+                -1
+            } else if (text == "right" || text == "down") {
+                1
+            } else {
+                0
+            }
+            if (direction == 0) {
+                return false
+            }
+        }
+        return false
+    }
+
+    /// Satisfies a focus request whose target moved during the reveal commit.
+    private func flushPendingSemanticFocus(): Unit {
+        if (let Some(prior) <- pendingSemanticFocusNode) {
+            pendingSemanticFocusNode = None
+            let current = nativeInputScene.nodeForId(prior.nodeId)
+            if (current.nodeId == prior.nodeId && current.semanticId == prior.semanticId &&
+                current.resourceId == prior.resourceId && current.canReceiveFocus()) {
+                // Reveal 已在新 accepted 中推进几何：无论目标是否完整可见都按
+                // 当前几何聚焦。H 的长内容可超出视口夹紧上限——按可见部分聚焦
+                // 是可消费行为（系统代理几何由既有上下文快照/同步机制按
+                // accepted 校准）；无限重试 reveal 会让焦点永不落地。
+                let _ = focusProjectedNode(current.nodeId)
+            }
+        }
+    }
+
+    public func focusScopedNode(scope: CjguiComposableUiIdentityScope, localKey: String): Bool {
+        let reference = CjguiComposableUiNodeReference.scoped(scope, localKey)
+        let nodeId = identityRegistry.acceptedNodeIdForReference(reference)
+        if (nodeId >= 0 && revealAcceptedNodeIfNeeded(nodeId)) {
+            // The target exists but is outside the visible part of its scroll
+            // viewport. Reveal it, remember the SAME request, and let the commit
+            // that makes it visible satisfy the focus: keyboard navigation must
+            // reach an editor below the fold instead of silently doing nothing.
+            pendingScopedFocusScope = Some(scope)
+            pendingScopedFocusKey = localKey
+            requestRefresh()
+            return false
+        }
+        if (nodeId < 0) {
+            // The row may only exist once the scene that materializes it has
+            // been accepted (an off-screen tree target that was just revealed).
+            // Remember the request and retry right after the next commit
+            // instead of dropping it and leaving the keyboard without a target.
+            pendingScopedFocusScope = Some(scope)
+            pendingScopedFocusKey = localKey
+            return false
+        }
+        pendingScopedFocusScope = None
+        pendingScopedFocusKey = ""
+        return focusProjectedNode(nodeId)
+    }
+
+    /// Satisfies a focus request whose row was not in the accepted scene yet.
+    private func flushPendingScopedFocus(): Unit {
+        if (let Some(scope) <- pendingScopedFocusScope) {
+            let key = pendingScopedFocusKey
+                } else {
+                    let rejection = controller.rejectUiEvent(35, nodeId)
+                    didApply = didApply || rejection.didApply
+                    if (rejection.shouldClose) {
+                        close();
+                        return result(false, didApply)
+                    }
+                    requiresProjection = true
+                }
+            } else if ((nativeEvent.eventKind >= 27u32 && nativeEvent.eventKind <= 31u32) || nativeEvent.eventKind ==
+                36u32 || nativeEvent.eventKind == 51u32) {
+                let nodeId = Int64(nativeEvent.nodeId)
+                let eventText = internalRendererFormEventText(sessionToken)
+                var resolved = if (nativeEvent.nodeId == 0u64) {
+                    CjguiComposableUiLayoutNode.missing()
+                } else {
+                    nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+                        Int64(nativeEvent.projectionVersion))
+                }
+                if (resolved.nodeId != nodeId && nativeEvent.nodeId != 0u64) {
+                    // A pointer-reporting, non-input node (a read-only
+                    // presentation fragment) resolves through the pointer-target
+                    // path with the same identity checks.
+                    resolved = nativeInputScene.resolvePointerTarget(nodeId, nativeEvent.resourceId,
+                        Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
+                }
+                let continuation = if (resolved.nodeId == nodeId) {
+                    resolved
+                } else {
+                    resolveLocalTextContinuation(
+                        Int64(nativeEvent.eventKind),
+                        nodeId,
+                        nativeEvent.resourceId,
+                        Int64(nativeEvent.nodeKind),
+                        eventText,
+                        Int64(nativeEvent.projectionVersion)
+                    )
+                }
+                // A viewport-bound scroll area is owned by the framework: the
+                // real wheel gesture changes the shared viewport request and the
+                // next commit presents the new offset. The business version,
+                // drafts and selection are untouched, and no field write is
+                // invented to drive the viewport.
+                let viewportScrollApplied = nativeEvent.eventKind == 30u32 && continuation.nodeId == nodeId &&
+                    applyViewportScrollStep(continuation, eventText)
+                // Tab can land on a legal control that is currently clipped out of
+                // its viewport. Reveal it and let this commit present the new
+                // offset: the focused identity does not change, so the keyboard
+                // reaches an editor below the fold without a coordinate guess.
+                let viewportFocusRevealed = nativeEvent.eventKind == 31u32 && continuation.nodeId == nodeId &&
+                    revealAcceptedNodeIfNeeded(continuation.nodeId)
+                // A tab TITLE is a framework-owned view intent: pointer activation
+                // and the keyboard both switch the shared tab state, so a page
+                // switch is presented by the next commit without a business write.
+                let tabsIntentConsumed = nativeEvent.eventKind == 27u32 && continuation.nodeId == nodeId &&
+                    continuation.isTabTitle() && continuation.isEnabled &&
+                    applyTabsActivationStep(continuation)
+                if (tabsIntentConsumed) {
+                    didApply = true
+                    requiresProjection = true
+                }
+                let rejectsReboundPressActivation = nativeEvent.eventKind == 27u32 &&
+                    consumeSuppressedPressActivation(continuation)
+                if (continuation.nodeId == nodeId && !rejectsReboundPressActivation && !tabsIntentConsumed) {
+                    let controllerVersionBefore = controller.uiSceneVersion()
+                    rememberInteraction(continuation, Int64(nativeEvent.eventKind), Int64(nativeEvent.selectionStart),
+                        Int64(nativeEvent.selectionEnd))
+                    let dispatch = controller.applyUiEvent(
+                        CjguiComposableUiEvent(
+                            continuation,
+                            Int64(nativeEvent.eventKind),
+                            eventText,
+                            Int64(nativeEvent.selectionStart),
+                            Int64(nativeEvent.selectionEnd),
+                            Int64(nativeEvent.projectionVersion),
+                            // A pointer activation must carry WHERE it happened:
+                            // a pointer-reporting, non-input node resolves the
+                            // clicked display offset from this point through the
+                            // framework hit test. Keyboard/AX activations keep
+                            // zero here and are unaffected.
+                            pointerX: Int64(nativeEvent.pointerX),
+                            pointerY: Int64(nativeEvent.pointerY),
+                            // A queued pointer activation keeps the modifier
+                            // state observed when that pointer event happened;
+                            // keyboard/AX activations are enqueued with zero
+                            // in the native bridge and therefore never inherit
+                            // a previous mouse gesture's Command/Shift.
+                            modifierFlags: Int64(nativeEvent.modifierFlags)
+                        )
+                    )
+                    didApply = didApply || dispatch.didApply || viewportScrollApplied
+                    if (viewportScrollApplied || viewportFocusRevealed) {
+                        requiresProjection = true
+                    }
+                    if (dispatch.shouldClose) {
+                        close();
+                        return result(false, didApply)
+                    }
+                    if ((nativeEvent.eventKind == 28u32 || nativeEvent.eventKind == 51u32) && !dispatch.didApply &&
+                        isEditableTextNodeKind(continuation.nodeKind)) {
+                        // The owner refused this edit. Native already applied it
+                        // locally, so the accepted value must be written back on
+                        // the next projection instead of being skipped as "same".
+                        clearPendingLocalTextValue()
+                    }
+                    if (nativeEvent.eventKind == 51u32 && textRangeEditDeltaDeliveryEnabled && !dispatch.didApply &&
+                        isEditableTextNodeKind(continuation.nodeKind)) {
+                        // A refused RANGE edit leaves a proxy that the ordinary
+                        // projection path cannot repair: the Cangjie scene is
+                        // unchanged, so staging would skip the node, and native
+                        // reads "candidate == previous value" as a local edit to
+                        // preserve. Record an explicit rollback intent instead.
+                        refusedRangeTextPending = true
+                        refusedRangeTextNodeId = continuation.nodeId
+                        refusedRangeTextResourceId = continuation.resourceId
+                        refusedRangeTextNodeKind = continuation.nodeKind
+                        refusedRangeTextAttempts = 0
+                    }
+                    if (nativeEvent.eventKind == 28u32 && dispatch.didApply && isEditableTextNodeKind(
+                        continuation.nodeKind)) {
+                        pendingLocalTextNodeId = continuation.nodeId
+    }
+    private func isEditableTextNodeKind(nodeKind: Int64): Bool {
+        return nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT ||
+            nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+    }
+    /// Admit only the single-generation continuation that was produced by
+    /// the live focused text adapter while its accepted successor scene was
+    /// being assembled.  The current owner value must still be exactly the
+    /// preceding local value; an external write, disable, delete or resource
+    /// replacement fails one of these checks and remains rejectable.
+    private func resolveLocalTextContinuation(eventKind: Int64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
+        eventText: String, projectionVersion: Int64): CjguiComposableUiLayoutNode {
+        if (eventKind != 28 || !isEditableTextNodeKind(nodeKind) || projectionVersion + 1 != nativeInputScene.version ||
+            nodeId != localTextContinuationNodeId || resourceId != localTextContinuationResourceId || nodeKind !=
+            localTextContinuationNodeKind || nodeId != focusedNodeId || resourceId != focusedResourceId || nodeKind !=
+            focusedNodeKind || eventText == localTextContinuationValue) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        // `nativeInputScene` is a rendered input snapshot, not the real-time
+        // domain owner.  In particular, an external same-object replacement
+        // can leave its value unchanged while advancing the controller's
+        // declared revision.  Admit this one callback only while the durable
+        // owner still reports exactly the revision that accepted its first
+        // local character.
+        if (controller.uiSceneVersion() != localTextContinuationOwnerVersion) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        let current = nativeInputScene.nodeForId(nodeId)
+        if (!current.canReceiveInput() || current.resourceId != resourceId || current.nodeKind != nodeKind ||
+            current.value != localTextContinuationValue) {
+            return CjguiComposableUiLayoutNode.missing()
+        }
+        return current
+    }
+    /// Roll a hidden text proxy back to the value the owner actually accepted
+    /// after a refused range edit. It never invents content: it restores the
+    /// committed node value under projection suppression and adopts the
+    /// grapheme-safe caret native reports. The intent is dropped as soon as the
+    /// target is no longer the active node, because the ordinary projection path
+    /// then owns the value again.
+    private func recoverRefusedRangeTextProxy(): Unit {
+        if (!refusedRangeTextPending || !isWindowOpen) {
+            return
+        }
+        if (refusedRangeTextAttempts >= 3) {
+            // Bounded retries: report the failure instead of looping forever.
+            refusedRangeTextPending = false
+            refusedRangeTextFailures += 1
+            return
+        }
+        refusedRangeTextAttempts += 1
+        let target = nativeInputScene.resolveInput(refusedRangeTextNodeId, refusedRangeTextResourceId,
+            refusedRangeTextNodeKind, nativeInputScene.version)
+
+exec
+/bin/zsh -lc "sed -n '3750,3998p' runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 0ms:
+    s.events.push_back(begin);
+    QueuedEvent end = begin;
+    end.kind = kEvPointerEnd;
+    end.pointerX = static_cast<int64_t>(x);
+    end.pointerY = static_cast<int64_t>(y);
+    s.events.push_back(end);
+}
+
+void synthesizeEventsFromRawTouch(Session &s, uint32_t action, float x, float y)
+{
+    // B 合成策略：单指手势，阈值前待定、超阈值由包含视口接管为连续滚动；
+    // 有效抬起才执行一次点击。已激活编辑器保持长按/系统代理优先级，位移
+    // 不强制当滚动。平台回调读取失败（queue 空/旧代拒绝）不会到达这里，
+    // 也不合成合法触摸；坐标域与已接受场景节点一致。
+    const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    constexpr float kTouchScrollThresholdPx = 12.0f;
+
+    if (action == CJGUI_OHOS_TOUCH_BEGIN) {
+        // 单指身份：手势存续期间忽略新手指，不换绑、不重置累计位移。
+        if (s.gesture.active) {
+            RLOGI("touch begin ignored: gesture already active");
+            return;
+        }
+        s.gesture = Session::TouchGesture{};
+        s.gesture.active = true;
+        s.gesture.startX = s.gesture.lastX = x;
+        s.gesture.startY = s.gesture.lastY = y;
+        s.gesture.surfaceGeneration = s.surfaceGeneration;
+        size_t viewportIndex = 0;
+        s.gesture.hasViewport = scrollAreaIndexContainingPoint(s, x, y, &viewportIndex);
+        if (s.gesture.hasViewport) {
+            s.gesture.viewportNodeId = s.accepted[viewportIndex].pod.nodeId;
+            s.gesture.viewportResourceId = s.accepted[viewportIndex].pod.resourceId;
+        }
+        size_t index = 0;
+        if (!hitTestAccepted(s, x, y, &index)) {
+            return;  // 空白/非交互内容：无点击目标；滚动仍由包含视口接管。
+        }
+        const SceneNode &node = s.accepted[index];
+        if (node.pod.isReadOnly != 0) return;  // 只读内容可滚动，不可激活
+        const uint32_t kind = node.pod.nodeKind;
+        const bool isEditableText = kind == kKindTextInput || kind == kKindIntegerInput;
+        s.gesture.hasTarget = true;
+        s.gesture.targetEditableText = isEditableText;
+        s.gesture.targetNodeId = node.pod.nodeId;
+        s.gesture.targetResourceId = node.pod.resourceId;
+        s.gesture.targetNodeKind = kind;
+        // B：起始绑定冻结——激活事件的场景版本取按下时刻；中途任何提交
+        // （含同槽换绑动作/字段）都会使核心 resolveInput 拒绝旧按下激活，
+        // 旧按下不能借新 sceneVersion 激活另一动作。
+        s.gesture.targetProjectionVersion = node.pod.projectionVersion;
+        if (isEditableText && s.editing && !s.editorRetired &&
+            s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId) {
+            // 已激活编辑器优先：caret 点击立即落账，长按计时开始；位移不
+            // 接管为滚动（选区拖动/系统代理按明确优先级保留）。
+            s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
+            s.gesture.pressBeginMs = nowMs;
+            s.textPressBeginMs = nowMs;
+            s.editingTapX = x - static_cast<double>(node.pod.x);
+            s.editingTapPending = true;
+        }
+        return;
+    }
+    if (action == CJGUI_OHOS_TOUCH_UPDATE) {
+        if (!s.gesture.active) return;  // 无手势的孤立位移不成合法触摸
+        if (s.gesture.surfaceGeneration != s.surfaceGeneration) {
+            // Surface 换代/退役：旧代手势不得延续到新挂载。
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        const float dx = x - s.gesture.startX;
+        const float dy = y - s.gesture.startY;
+        // 差分样本必须在 last 更新前计算。待定期间样本不推进 last；
+        // 视口接管后的首个差分即从起始点累计的全部位移，总量不丢。
+        const float dySample = y - s.gesture.lastY;
+        if (s.gesture.phase == Session::TouchGesture::kGesturePending) {
+            if (std::fabs(dx) < kTouchScrollThresholdPx && std::fabs(dy) < kTouchScrollThresholdPx) {
+                return;
+            }
+            if (s.gesture.hasViewport) {
+                // 视口接管：取消子控件点击。纯滚动不结束编辑、不触发焦点
+                // 切换结算，业务 owner 与草稿保持不动。
+                s.gesture.phase = Session::TouchGesture::kGestureScroll;
+                RLOGI("gesture scroll takeover viewport=%{public}llu target=%{public}llu",
+                      static_cast<unsigned long long>(s.gesture.viewportNodeId),
+                      static_cast<unsigned long long>(s.gesture.targetNodeId));
+            } else if (s.gesture.hasTarget && !s.gesture.targetEditableText) {
+                // 无包含视口：维持指针相位流（BEGIN 立即补发，保持序列）。
+                s.gesture.phase = Session::TouchGesture::kGesturePointerDrag;
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                               s.gesture.targetNodeKind, &index)) {
+                    const SceneNode &node = s.accepted[index];
+                    QueuedEvent ev;
+                    ev.kind = kEvPointerBegin;
+                    ev.recordIndex = static_cast<uint32_t>(index);
+                    ev.nodeId = node.pod.nodeId;
+                    ev.projectionVersion = node.pod.projectionVersion;
+                    ev.resourceId = node.pod.resourceId;
+                    ev.nodeKind = node.pod.nodeKind;
+                    ev.pointerX = static_cast<int64_t>(x);
+                    ev.pointerY = static_cast<int64_t>(y);
+                    s.events.push_back(ev);
+                    s.gesture.pointerStreamOpen = true;
+                } else {
+                    cancelTouchGestureLocked(s);  // 目标退役：无流可续
+                    return;
+                }
+            } else {
+                // 可编辑文本上起手且无包含视口：不滚动不拖动，待定到抬起。
+                return;
+            }
+        }
+        s.gesture.lastX = x;
+        s.gesture.lastY = y;
+        if (s.gesture.phase == Session::TouchGesture::kGestureScroll) {
+            // 连续逻辑位移：共同 scroll 意图，不做半页跳转、不写布局坐标。
+            // 手指下拖（dySample>0）露出上方内容 → offset 减小（delta 取负）。
+            // 位移以浮点累计余量，只有整数部分交付共享整数 viewport：
+            // 逐样本 float→Int64 截断会丢失小数位移，"by:0" 也不是滚动。
+            if (dySample == 0.0f) return;
+            size_t index = 0;
+            if (!sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                            CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+                cancelTouchGestureLocked(s);  // 视口移除/换绑：手势取消
+                return;
+            }
+            s.gesture.scrollAccumY += dySample;
+            int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);  // 截断保余量
+            if (whole == 0) return;
+            s.gesture.scrollAccumY -= static_cast<float>(whole);
+            appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                     s.accepted[index].pod.projectionVersion, -whole);
+            return;
+        }
+        if (s.gesture.phase == Session::TouchGesture::kGesturePointerDrag) {
+            size_t index = 0;
+            if (!sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                            s.gesture.targetNodeKind, &index)) {
+                cancelTouchGestureLocked(s);
+                return;
+            }
+            const SceneNode &node = s.accepted[index];
+            QueuedEvent ev;
+            ev.kind = kEvPointerUpdate;
+            ev.recordIndex = static_cast<uint32_t>(index);
+            ev.nodeId = node.pod.nodeId;
+            ev.projectionVersion = node.pod.projectionVersion;
+            ev.resourceId = node.pod.resourceId;
+            ev.nodeKind = node.pod.nodeKind;
+            ev.pointerX = static_cast<int64_t>(x);
+            ev.pointerY = static_cast<int64_t>(y);
+            if (!s.events.empty()) {
+                QueuedEvent &tail = s.events.back();
+                if (tail.kind == kEvPointerUpdate && tail.nodeId == ev.nodeId) {
+                    tail.pointerX = ev.pointerX;
+                    tail.pointerY = ev.pointerY;
+                    return;
+                }
+            }
+            s.events.push_back(ev);
+            return;
+        }
+        return;
+    }
+    if (action == CJGUI_OHOS_TOUCH_END || action == CJGUI_OHOS_TOUCH_CANCEL) {
+        if (!s.gesture.active) return;
+        // Surface 换代：旧代相位不得影响新挂载，等价取消。
+        if (s.gesture.surfaceGeneration != s.surfaceGeneration) {
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        if (action == CJGUI_OHOS_TOUCH_CANCEL) {
+            cancelTouchGestureLocked(s);
+            return;
+        }
+        const uint32_t phase = s.gesture.phase;
+        switch (phase) {
+            case Session::TouchGesture::kGesturePending:
+                // B：END 重判阈值——快速轻扫（BEGIN 后无 UPDATE）的全部位移在
+                // 抬起结算为一次滚动，不得当作点击激活；仅有界视口接管。
+                if (s.gesture.hasViewport &&
+                    (std::fabs(x - s.gesture.startX) >= kTouchScrollThresholdPx ||
+                     std::fabs(y - s.gesture.startY) >= kTouchScrollThresholdPx)) {
+                    size_t index = 0;
+                    if (sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                                   CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+                        const int64_t whole = static_cast<int64_t>(y - s.gesture.startY);
+                        if (whole != 0) {
+                            appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                                     s.accepted[index].pod.projectionVersion, -whole);
+                        }
+                    }
+                    break;
+                }
+                executePendingTapLocked(s, x, y, nowMs);
+                break;
+            case Session::TouchGesture::kGestureScroll: {
+                // B：END 消费尾差——交付浮点累计余量的整数部分。
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                               CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+                    const int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);
+                    if (whole != 0) {
+                        s.gesture.scrollAccumY -= static_cast<float>(whole);
+                        appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                                 s.accepted[index].pod.projectionVersion, -whole);
+                    }
+                }
+                break;
+            }
+            case Session::TouchGesture::kGesturePointerDrag: {
+                size_t index = 0;
+                if (sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                               s.gesture.targetNodeKind, &index)) {
+                    const SceneNode &node = s.accepted[index];
+                    QueuedEvent ev;
+                    ev.kind = kEvPointerEnd;
+                    ev.recordIndex = static_cast<uint32_t>(index);
+                    ev.nodeId = node.pod.nodeId;
+                    ev.projectionVersion = node.pod.projectionVersion;
+                    ev.resourceId = node.pod.resourceId;
+                    ev.nodeKind = node.pod.nodeKind;
+                    ev.pointerX = static_cast<int64_t>(x);
+                    ev.pointerY = static_cast<int64_t>(y);
+                    s.events.push_back(ev);
+                    if (s.gesture.pointerStreamOpen) s.gesture.pointerStreamEnded = true;
+                }
+                break;
+            }
+            case Session::TouchGesture::kGestureEditorHold:
+                // 已激活编辑器长按 ≥400ms → 全选（既有语义保持）。
+                if (s.editing && !s.editorRetired && s.textPressBeginMs > 0 &&
+                    nowMs - s.textPressBeginMs >= 400) {
+                    s.selStartUtf16 = 0;
+                    s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
+                    RLOGI("long-press selection: select-all len=%{public}u",
+                          static_cast<unsigned>(s.selEndUtf16));
+                    g_render.post(std::make_shared<RedrawJob>());
+                }
+                break;
+        }
+        cancelTouchGestureLocked(s);
+        return;
+    }
+}
+
+}  // namespace
+
+codex
+已确认两处都会丢失路径信息：bridge 替换 MOVE，renderer 又把反向滚动意图相加。裁决会区分“最终偏移等价”和“逐次回调等价”；绑定身份则需要保留按下时的证据，仅在 flush 后查看当前节点不足以识别换绑。
+exec
+/bin/zsh -lc "sed -n '5565,5606p' runtime/cjgui/src/composable_ui_window.cj; sed -n '3465,3500p' runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj; sed -n '1908,1943p' runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj; sed -n '5080,5148p' runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 9ms:
+    private func flushPendingSemanticFocus(): Unit {
+        if (let Some(prior) <- pendingSemanticFocusNode) {
+            pendingSemanticFocusNode = None
+            let current = nativeInputScene.nodeForId(prior.nodeId)
+            if (current.nodeId == prior.nodeId && current.semanticId == prior.semanticId &&
+                current.semanticIncarnation == prior.semanticIncarnation && current.actionName == prior.actionName &&
+                current.fieldId == prior.fieldId && current.resourceId == prior.resourceId &&
+                current.operationActionName == prior.operationActionName &&
+                current.operationResourceId == prior.operationResourceId && current.canReceiveFocus()) {
+                if (revealAcceptedNodeIfNeeded(current.nodeId)) {
+                    pendingSemanticFocusNode = Some(current)
+                    requestRefresh()
+                } else {
+                    let _ = focusProjectedNode(current.nodeId)
+                }
+            }
+        }
+    }
+
+    /// One real wheel step against a scroll area that shares a public viewport.
+    /// Returns true when the request moved, so the caller schedules a projection.
+    /// The shared split view state of a state-bound divider, or None when this
+    /// node is not a generated split handle. The framework only claims a divider
+    /// whose author bound shared view state; a handwritten split keeps its own
+    /// application owner.
+    private func splitStateForDivider(node: CjguiComposableUiLayoutNode): ?CjguiComposableUiSplitState {
+        if (node.nodeKind != CJGUI_COMPOSABLE_UI_SPLIT_HANDLE) {
+            return None
+        }
+        return node.splitState
+    }
+
+    private func isSplitSizeNavigation(text: String): Bool {
+        return text == "left" || text == "right" || text == "up" || text == "down"
+    }
+
+    /// The keyboard size rule for a state-bound divider: the same ±8 nudge the
+    /// handwritten split uses, bounded by the framework's ONE rule against the
+    /// track the ACCEPTED scene really solved. Returns true when the size moved.
+    private func applySplitStateKeyboardStep(node: CjguiComposableUiLayoutNode, text: String): Bool {
+        if (let Some(state) <- splitStateForDivider(node)) {
+            let direction = if (text == "left" || text == "up") {
+    private func flushPendingSemanticFocus(): Unit {
+        if (let Some(prior) <- pendingSemanticFocusNode) {
+            pendingSemanticFocusNode = None
+            let current = nativeInputScene.nodeForId(prior.nodeId)
+            if (current.nodeId == prior.nodeId && current.semanticId == prior.semanticId &&
+                current.resourceId == prior.resourceId && current.canReceiveFocus()) {
+                // Reveal 已在新 accepted 中推进几何：无论目标是否完整可见都按
+                // 当前几何聚焦。H 的长内容可超出视口夹紧上限——按可见部分聚焦
+                // 是可消费行为（系统代理几何由既有上下文快照/同步机制按
+                // accepted 校准）；无限重试 reveal 会让焦点永不落地。
+                let _ = focusProjectedNode(current.nodeId)
+            }
+        }
+    }
+
+    public func focusScopedNode(scope: CjguiComposableUiIdentityScope, localKey: String): Bool {
+        let reference = CjguiComposableUiNodeReference.scoped(scope, localKey)
+        let nodeId = identityRegistry.acceptedNodeIdForReference(reference)
+        if (nodeId >= 0 && revealAcceptedNodeIfNeeded(nodeId)) {
+            // The target exists but is outside the visible part of its scroll
+            // viewport. Reveal it, remember the SAME request, and let the commit
+            // that makes it visible satisfy the focus: keyboard navigation must
+            // reach an editor below the fold instead of silently doing nothing.
+            pendingScopedFocusScope = Some(scope)
+            pendingScopedFocusKey = localKey
+            requestRefresh()
+            return false
+        }
+        if (nodeId < 0) {
+            // The row may only exist once the scene that materializes it has
+            // been accepted (an off-screen tree target that was just revealed).
+            // Remember the request and retry right after the next commit
+            // instead of dropping it and leaving the keyboard without a target.
+            pendingScopedFocusScope = Some(scope)
+            pendingScopedFocusKey = localKey
+            return false
+                }
+            } else if ((nativeEvent.eventKind >= 27u32 && nativeEvent.eventKind <= 31u32) || nativeEvent.eventKind ==
+                36u32 || nativeEvent.eventKind == 51u32) {
+                let nodeId = Int64(nativeEvent.nodeId)
+                let eventText = internalRendererFormEventText(sessionToken)
+                var resolved = if (nativeEvent.nodeId == 0u64) {
+                    CjguiComposableUiLayoutNode.missing()
+                } else {
+                    nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+                        Int64(nativeEvent.projectionVersion))
+                }
+                if (resolved.nodeId != nodeId && nativeEvent.nodeId != 0u64) {
+                    // A pointer-reporting, non-input node (a read-only
+                    // presentation fragment) resolves through the pointer-target
+                    // path with the same identity checks.
+                    resolved = nativeInputScene.resolvePointerTarget(nodeId, nativeEvent.resourceId,
+                        Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
+                }
+                let continuation = if (resolved.nodeId == nodeId) {
+                    resolved
+                } else {
+                    resolveLocalTextContinuation(
+                        Int64(nativeEvent.eventKind),
+                        nodeId,
+                        nativeEvent.resourceId,
+                        Int64(nativeEvent.nodeKind),
+                        eventText,
+                        Int64(nativeEvent.projectionVersion)
+                    )
+                }
+                // A viewport-bound scroll area is owned by the framework: the
+                // real wheel gesture changes the shared viewport request and the
+                // next commit presents the new offset. The business version,
+                // drafts and selection are untouched, and no field write is
+                // invented to drive the viewport.
+                let viewportScrollApplied = nativeEvent.eventKind == 30u32 && continuation.nodeId == nodeId &&
+                let _ = cancelPointerCapture()
+            }
+            let resolved = if (nativeEvent.nodeId == 0u64) {
+                CjguiComposableUiLayoutNode.missing()
+            } else {
+                nativeInputScene.resolveInput(nodeId, nativeEvent.resourceId, Int64(nativeEvent.nodeKind),
+                    Int64(nativeEvent.projectionVersion))
+            }
+            if (!isPointerCapturable(resolved)) {
+                return controller.rejectUiEvent(eventKind, nodeId)
+            }
+            // A state-bound divider is framework-owned: the drag is applied to the
+            // shared split view state and the ordinary capture path keeps the
+            // update/end phases flowing without an application split owner.
+            if (splitStateForDivider(resolved).isSome()) {
+                let _ = applySplitStatePointerDrag(resolved, x)
+                pointerCaptureNode = resolved
+                pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
+                pointerCaptureModalLayerId = activeModalLayerId
+                pointerCaptureActive = true
+                pointerCaptureX = x
+                pointerCaptureY = y
+                return CjguiComposableUiDispatchResult(true)
+            }
+            let dispatch = controller.applyUiEvent(
+                CjguiComposableUiEvent(
+                    resolved,
+                    eventKind,
+                    "",
+                    0,
+                    0,
+                    Int64(nativeEvent.projectionVersion),
+                    pointerX: x,
+                    pointerY: y,
+                    modifierFlags: Int64(nativeEvent.modifierFlags)
+                )
+            )
+            if (dispatch.didApply) {
+                pointerCaptureNode = resolved
+                pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
+                pointerCaptureModalLayerId = activeModalLayerId
+                pointerCaptureActive = true
+                pointerCaptureX = x
+                pointerCaptureY = y
+                rememberInteraction(resolved, eventKind, 0, 0)
+            }
+            return dispatch
+        }
+        if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_CANCEL) {
+            return cancelPointerCapture()
+        }
+        if (!pointerCaptureActive) {
+            return controller.rejectUiEvent(eventKind, nodeId)
+        }
+        // The framework owns a state-bound divider for the WHOLE drag: the pointer
+        // legitimately leaves the thin divider while the panes resize, and a
+        // framework-only size change must not cancel the gesture the way a stale
+        // business write does. No phase is handed to an application split owner.
+        if (splitStateForDivider(pointerCaptureNode).isSome() && (eventKind ==
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE || eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END)) {
+            let splitDragChanged = applySplitStatePointerDrag(pointerCaptureNode, x)
+            pointerCaptureX = x
+            pointerCaptureY = y
+            if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) {
+                clearPointerCapture()
+            }
+            return CjguiComposableUiDispatchResult(splitDragChanged)
+        }
+        if (pointerCaptureNode.nodeId != nodeId || pointerCaptureNode.resourceId != nativeEvent.resourceId ||
+
+exec
+/bin/zsh -lc "sed -n '680,723p' '/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart'; sed -n '735,749p' '/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/monodrag.dart'; sed -n '226,245p' '/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart'; sed -n '281,293p' '/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/gestures/arena.dart'" in /Users/jiangxuanyang/Desktop/cangjie
+ succeeded in 1ms:
+  void _resolveInFavorOf(int pointer, _GestureArena state, GestureArenaMember member) {
+    assert(state == _arenas[pointer]);
+    assert(state.eagerWinner == null || state.eagerWinner == member);
+    assert(!state.isOpen);
+    _arenas.remove(pointer);
+    for (final GestureArenaMember rejectedMember in state.members) {
+      if (rejectedMember != member) {
+        rejectedMember.rejectGesture(pointer);
+      }
+    }
+    member.acceptGesture(pointer);
+  }
+
+
+codex
+**Q1｜压缩等价条件与最小充分保留集**
+
+裁决：**“最新 MOVE＋曾越阈值”不足以保证等价；压缩必须保留不可逆的手势判决，以及夹紧运算的顺序。**
+
+- 等价范围先限定为：同一手势、同一绑定与坐标域、viewport 上下界不变、途中没有外部滚动写入或其他可观察副作用。此时可保证手势分类、终态偏移与余量等价；不能据此宣称逐次回调、画面或时间行为等价。
+- 当前差分语义下，最小充分的**有序样本骨架**为：`BEGIN → 首次跨阈值样本 → 后续每个 Y 方向转折点 → 最新样本 → END/CANCEL`。首次跨阈值须按现有 `abs(dx)>=12 || abs(dy)>=12` 判定，保留完整坐标；不能只存最大距离或布尔位。首次跨越之前的 MOVE，在当前 pending 不更新 last 的语义下可省略。END 坐标必须作为最后一次差分消费，然后终结；CANCEL 不补位移。
+- 首次跨越与每个转折点均不可覆盖；仅同一单调段内部样本可折叠为末点。跨越事实一经成立，回到起点也不得恢复点击资格。转折数量没有固定上界，故该骨架仍可能满载，必须进入 Q2，不能继续删“冗余 MOVE”。
+- **第二层队列也必须守同一规则。** 当前 `appendScrollIntentLocked` 无条件累加同版本 delta，会再次抹掉转折。只允许合并连续同号的整数滚动量，反号分段按序交给共享 viewport 夹紧；例如 offset=0 的 `-30,+30` 必须得到 30。
+- 任意 pointer-drag 消费者可能依赖轨迹；不能套用 Y 转折压缩。bridge 尚不知道目标和阶段时，默认保留原始样本，除非已有可验证的分类信息。浮点重分组也不保证逐位相等；若要求严格整数输出等价，应保留原顺序量化结果，再合并同号整数段。
+
+Flutter 的阈值锁存与 arena 一次性裁决支持“接受后不可回退”的状态设计，**不构成丢弃中间轨迹的等价证明**。
+
+**Q2｜满载受害者与 CANCEL 位置**
+
+裁决：**按 `(surfaceGeneration, gestureEpoch)` 整手势淘汰；禁止单独删除唯一 MOVE，禁止按 surface 整组清空。**
+
+1. 每次有效 BEGIN 分配新的 `gestureEpoch`，贯穿 MOVE、END、CANCEL；手指 ID 重用不重用代次。记录 BEGIN 是否已经出队，包括已交给 renderer、尚未处理完的情况。
+2. 压缩后仍满，选择**仍占队列空间的最老手势**作为受害者，尽量保住较新的完整手势。删除受害者全部未消费记录；若新到记录也属于受害者，一并丢弃，并抑制该代后续 MOVE/END，直到物理终结。不能留下 END 使其退化为点击。
+3. BEGIN 尚未出队：整段删除即可，消费者没有状态需要取消。BEGIN 已出队或在途：必须投递恰好一次带受害者身份的 CANCEL，**逻辑位置在已出队前缀之后、被删除后缀的起点，且先于后继手势 BEGIN**。不能无条件插全局队首，也不能放到新手势之后。
+4. 预留取消控制容量，并将它计入总容量；取消标记不得再被当成受害数据淘汰。空间仍不足，继续淘汰其他尚未开始的整手势；不要反复删除、重插同一个 CANCEL。
+5. 出队、淘汰与取消交付必须形成确定顺序；renderer/core 只终结身份匹配的手势。**未解决旧 CANCEL 对新捕获的无身份反馈之前，任何队列淘汰方案都不能算闭合。**
+
+过载取消是明确的降级终态，不是无损压缩，也不能撤回已经发生的滚动。
+
+**Q3｜绑定身份两条路与推荐**
+
+裁决：**推荐新增核心签发的 `bindingEpoch`，贯穿 node POD 和事件 POD；`projectionVersion` 继续只表示场景版本。**
+
+- **核心二次校验路线可以成立，但必须有历史证据。** 利用事件冻结的旧 `projectionVersion` 找到按下时的绑定快照，再与 flush 后当前绑定比较。只查“当前节点存在＋当前绑定哈希”无法知道按下时绑定了谁。快照须覆盖 `node/resource/kind、semanticId/incarnation、fieldId、actionName、operationActionName、operationResourceId` 等身份；还须识别移除重建、A→B→A，不能仅比较最终字段值。哈希只能辅助，不能代替完整身份判等。此路节省 POD 布局变更，却增加历史保留、在途租约及回收契约；固定保存最近几帧会再次误杀长按或排队事件。
+- **`bindingEpoch` 路线更直接。** 核心在真实换绑、退役重建时递增；同绑定重绘、换帧、值或几何更新不因此递增。已有 `semanticIncarnation` 只有在确认覆盖全部绑定变更后才可复用。renderer 在 BEGIN 冻结 epoch，后续重验及事件回传使用该值；核心执行前再次比较，并检查当前可输入性、模态和适用的命中条件。目标与 viewport 分别保存自身绑定身份。
+- 代价是 C/Cangjie 布局、snapshot、复制与事件传输路径、ABI 校验必须同步；**只给 node POD 加字段而不让事件携带，无法闭环。** 未携带 epoch 的旧事件应保留原严格版本规则，不能把零值当通配符。
+- 推荐此路还有一个现实理由：`executePendingTapLocked` 会在核心收到事件前结束编辑或启动新编辑上下文。仅靠核心事后拒绝，无法阻止这些错误副作用；renderer 持有 epoch 后可在副作用发生前拒绝换绑。
+
+snapshot 的 pending focus 应同时补齐主核心现有的完整绑定比较，包含 `operationResourceId`；新增 epoch 不应成为漏校验的理由。
+hook: Stop
+hook: Stop Completed
+tokens used
+53,567
+**Q1｜压缩等价条件与最小充分保留集**
+
+裁决：**“最新 MOVE＋曾越阈值”不足以保证等价；压缩必须保留不可逆的手势判决，以及夹紧运算的顺序。**
+
+- 等价范围先限定为：同一手势、同一绑定与坐标域、viewport 上下界不变、途中没有外部滚动写入或其他可观察副作用。此时可保证手势分类、终态偏移与余量等价；不能据此宣称逐次回调、画面或时间行为等价。
+- 当前差分语义下，最小充分的**有序样本骨架**为：`BEGIN → 首次跨阈值样本 → 后续每个 Y 方向转折点 → 最新样本 → END/CANCEL`。首次跨阈值须按现有 `abs(dx)>=12 || abs(dy)>=12` 判定，保留完整坐标；不能只存最大距离或布尔位。首次跨越之前的 MOVE，在当前 pending 不更新 last 的语义下可省略。END 坐标必须作为最后一次差分消费，然后终结；CANCEL 不补位移。
+- 首次跨越与每个转折点均不可覆盖；仅同一单调段内部样本可折叠为末点。跨越事实一经成立，回到起点也不得恢复点击资格。转折数量没有固定上界，故该骨架仍可能满载，必须进入 Q2，不能继续删“冗余 MOVE”。
+- **第二层队列也必须守同一规则。** 当前 `appendScrollIntentLocked` 无条件累加同版本 delta，会再次抹掉转折。只允许合并连续同号的整数滚动量，反号分段按序交给共享 viewport 夹紧；例如 offset=0 的 `-30,+30` 必须得到 30。
+- 任意 pointer-drag 消费者可能依赖轨迹；不能套用 Y 转折压缩。bridge 尚不知道目标和阶段时，默认保留原始样本，除非已有可验证的分类信息。浮点重分组也不保证逐位相等；若要求严格整数输出等价，应保留原顺序量化结果，再合并同号整数段。
+
+Flutter 的阈值锁存与 arena 一次性裁决支持“接受后不可回退”的状态设计，**不构成丢弃中间轨迹的等价证明**。
+
+**Q2｜满载受害者与 CANCEL 位置**
+
+裁决：**按 `(surfaceGeneration, gestureEpoch)` 整手势淘汰；禁止单独删除唯一 MOVE，禁止按 surface 整组清空。**
+
+1. 每次有效 BEGIN 分配新的 `gestureEpoch`，贯穿 MOVE、END、CANCEL；手指 ID 重用不重用代次。记录 BEGIN 是否已经出队，包括已交给 renderer、尚未处理完的情况。
+2. 压缩后仍满，选择**仍占队列空间的最老手势**作为受害者，尽量保住较新的完整手势。删除受害者全部未消费记录；若新到记录也属于受害者，一并丢弃，并抑制该代后续 MOVE/END，直到物理终结。不能留下 END 使其退化为点击。
+3. BEGIN 尚未出队：整段删除即可，消费者没有状态需要取消。BEGIN 已出队或在途：必须投递恰好一次带受害者身份的 CANCEL，**逻辑位置在已出队前缀之后、被删除后缀的起点，且先于后继手势 BEGIN**。不能无条件插全局队首，也不能放到新手势之后。
+4. 预留取消控制容量，并将它计入总容量；取消标记不得再被当成受害数据淘汰。空间仍不足，继续淘汰其他尚未开始的整手势；不要反复删除、重插同一个 CANCEL。
+5. 出队、淘汰与取消交付必须形成确定顺序；renderer/core 只终结身份匹配的手势。**未解决旧 CANCEL 对新捕获的无身份反馈之前，任何队列淘汰方案都不能算闭合。**
+
+过载取消是明确的降级终态，不是无损压缩，也不能撤回已经发生的滚动。
+
+**Q3｜绑定身份两条路与推荐**
+
+裁决：**推荐新增核心签发的 `bindingEpoch`，贯穿 node POD 和事件 POD；`projectionVersion` 继续只表示场景版本。**
+
+- **核心二次校验路线可以成立，但必须有历史证据。** 利用事件冻结的旧 `projectionVersion` 找到按下时的绑定快照，再与 flush 后当前绑定比较。只查“当前节点存在＋当前绑定哈希”无法知道按下时绑定了谁。快照须覆盖 `node/resource/kind、semanticId/incarnation、fieldId、actionName、operationActionName、operationResourceId` 等身份；还须识别移除重建、A→B→A，不能仅比较最终字段值。哈希只能辅助，不能代替完整身份判等。此路节省 POD 布局变更，却增加历史保留、在途租约及回收契约；固定保存最近几帧会再次误杀长按或排队事件。
+- **`bindingEpoch` 路线更直接。** 核心在真实换绑、退役重建时递增；同绑定重绘、换帧、值或几何更新不因此递增。已有 `semanticIncarnation` 只有在确认覆盖全部绑定变更后才可复用。renderer 在 BEGIN 冻结 epoch，后续重验及事件回传使用该值；核心执行前再次比较，并检查当前可输入性、模态和适用的命中条件。目标与 viewport 分别保存自身绑定身份。
+- 代价是 C/Cangjie 布局、snapshot、复制与事件传输路径、ABI 校验必须同步；**只给 node POD 加字段而不让事件携带，无法闭环。** 未携带 epoch 的旧事件应保留原严格版本规则，不能把零值当通配符。
+- 推荐此路还有一个现实理由：`executePendingTapLocked` 会在核心收到事件前结束编辑或启动新编辑上下文。仅靠核心事后拒绝，无法阻止这些错误副作用；renderer 持有 epoch 后可在副作用发生前拒绝换绑。
+
+snapshot 的 pending focus 应同时补齐主核心现有的完整绑定比较，包含 `operationResourceId`；新增 epoch 不应成为漏校验的理由。

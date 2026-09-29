@@ -195,6 +195,12 @@ public func settingsGeneratedCatalog(domain: CjguiSettingsCounterDomain): CjguiG
         ])), false))
     let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("image",
         settingsGeneratedLeafProperties(CjguiGeneratedUiPresentation.imageContentProperties()), false))
+    let scrollProperties = CjguiGeneratedUiPresentation.scrollContentProperties()
+    for (property in CjguiGeneratedUiPresentation.leafStyleProperties()) {
+        scrollProperties.add(property)
+    }
+    let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("scrollArea", scrollProperties, true,
+        childLimit: 1))
     let _ = catalog.registerImageResource(domain.imageResourceSpec())
     domain.bindImageCatalog(catalog)
     for (field in CjguiSettingsCounterFields.definitions()) {

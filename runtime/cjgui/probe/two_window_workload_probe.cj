@@ -12,7 +12,24 @@ package cjgui
 import std.collection.*
 import std.time.*
 
+@C
+struct CjguiProbeSubmissionTimeline {
+    var sessionGeneration: UInt64 = 0u64
+    var sceneVersion: UInt64 = 0u64
+    var frameIndex: UInt64 = 0u64
+    var stageBeginMicros: UInt64 = 0u64
+    var encodeEndMicros: UInt64 = 0u64
+    var presentCallMicros: UInt64 = 0u64
+    var commitCallBeginMicros: UInt64 = 0u64
+    var commitCallMicros: UInt64 = 0u64
+    var scheduledMicros: UInt64 = 0u64
+    var completedMicros: UInt64 = 0u64
+    var completionStatus: Int32 = 0
+}
+
 foreign {
+    func cjgui_internal_renderer_test_submission_timeline(session: UInt64, frameIndex: UInt64,
+        outTimeline: CPointer<CjguiProbeSubmissionTimeline>): Int32
     func cjgui_internal_renderer_test_composable_text_resource_stats(
         session: UInt64, nodeIndex: UInt32, outByteCount: CPointer<UInt64>,
         outX: CPointer<Float32>, outY: CPointer<Float32>,
@@ -36,6 +53,11 @@ foreign {
     ): Int32
     func cjgui_internal_renderer_test_resize_composable_window(
         session: UInt64, outResizeVersion: CPointer<UInt64>
+    ): Int32
+    func cjgui_internal_renderer_test_toggle_composable_backing_scale(
+        session: UInt64, outResizeVersion: CPointer<UInt64>, outBeforeScale: CPointer<Float64>,
+        outAfterScale: CPointer<Float64>, outDrawableWidth: CPointer<UInt32>,
+        outDrawableHeight: CPointer<UInt32>
     ): Int32
     func cjgui_internal_renderer_test_composable_text_work_stats(
         session: UInt64, outRasterCount: CPointer<UInt64>, outRasterBytes: CPointer<UInt64>,
@@ -70,6 +92,9 @@ foreign {
         sourceSession: UInt64, targetSession: UInt64, targetNodeIndex: UInt32,
         eventKind: UInt32, text: CString, delayMicros: UInt32
     ): Int32
+    func cjgui_internal_renderer_test_release_midwork_composable_event(sourceSession: UInt64): Int32
+    func cjgui_internal_renderer_test_arm_submit_gate(sourceSession: UInt64,
+        holdMicros: UInt32): Int32
     func cjgui_internal_renderer_test_midwork_composable_event_timing(
         sourceSession: UInt64, outAStartMicros: CPointer<UInt64>, outAEndMicros: CPointer<UInt64>,
         outProducerReadyMicros: CPointer<UInt64>, outProducerPostMicros: CPointer<UInt64>,
@@ -146,8 +171,53 @@ private func readMarkedViewport(window: CjguiComposableUiWindow, marker: String)
 private class HeavyMarkedController <: CjguiComposableUiController {
     var text: String = markedLongText(3000)
     var revision: Int64 = 1
+    var localMode: Bool = false
+    var localTint: Float64 = 0.20
+    var localRadius: Float64 = 7.0
+    var localImageAlternate: Bool = false
     public func uiSceneVersion(): Int64 { return revision }
     public func buildUi(): CjguiComposableUiNode {
+        if (localMode) {
+            let root = cjguiComposableVertical(880000, "local-refresh-root",
+                CjguiComposableUiStyle(fixedWidth: 240, fixedHeight: 160))
+            var groupIndex: Int64 = 0
+            var index: Int64 = 0
+            while (index < 480) {
+                let groupId = 900000 + groupIndex
+                let groupKey = "local-refresh-group-${groupIndex}"
+                let group = cjguiComposableLayerHost(groupId, groupKey,
+                    CjguiComposableUiStyle(fixedWidth: 240, fixedHeight: 2))
+                var inGroup: Int64 = 0
+                while (inGroup < 8 && index < 480) {
+                    let tint = if (index == 0) { localTint } else { 0.20 + Float64(index % 5) * 0.01 }
+                    let paint = CjguiComposableUiVectorPaint(
+                        Some(CjguiComposableUiVectorColor(tint, 0.45, 0.84, 0.62)),
+                        Some(CjguiComposableUiVectorColor(0.08, 0.20, 0.42, 0.90)), 1.5,
+                        CJGUI_COMPOSABLE_UI_VECTOR_CAP_ROUND, CJGUI_COMPOSABLE_UI_VECTOR_JOIN_ROUND)
+                    let center = CjguiComposableUiVectorPoint(18.0 + Float64((index * 17) % 204),
+                        18.0 + Float64((index * 11) % 124))
+                    let radius = if (index == 0) { localRadius } else { 7.0 }
+                    let geometry = if (let Some(value) <- CjguiComposableUiVectorGeometry.ellipse(
+                        240.0, 160.0, center, radius, 5.0, paint)) { value } else { return root }
+                    let layer = cjguiComposableAnchoredLayer(880001 + index * 2,
+                        "local-refresh-layer-${index}", "local-refresh-layer-${index}", "popup",
+                        groupKey, groupId, CjguiComposableUiStyle(fixedWidth: 240, fixedHeight: 160))
+                    layer.add(cjguiComposableVectorGraphic(880002 + index * 2,
+                        "local-refresh-vector-${index}", geometry,
+                        CjguiComposableUiStyle(fixedWidth: 240, fixedHeight: 160)))
+                    group.add(layer)
+                    index += 1
+                    inGroup += 1
+                }
+                root.add(group)
+                groupIndex += 1
+            }
+            root.add(cjguiComposableImage(999999, "local-refresh-image",
+                if (localImageAlternate) { "composable-beacon-coral.png" } else { "composable-beacon.png" },
+                CjguiComposableUiStyle(fixedWidth: 32, fixedHeight: 32),
+                imageResourceId: "local-refresh-image", imageResourceVersion: if (localImageAlternate) { 2 } else { 1 }))
+            return root
+        }
         return cjguiComposableMultilineTextInput(61, "heavy-marked", "", text, 61,
             CjguiComposableUiStyle(growX: 1, growY: 1,
                 textColor: CjguiComposableUiColor(0.92, 0.95, 1.0, 1.0)))
@@ -170,6 +240,13 @@ private class HeavyMarkedController <: CjguiComposableUiController {
     }
     public func updateText(): Unit {
         text = markedLongText(3000) + "变体${revision}"
+        revision += 1
+    }
+    public func beginLocalMode(): Unit { localMode = true; revision += 1 }
+    public func advanceLocal(mode: String): Unit {
+        if (mode == "recolor") { localTint = if (localTint > 0.21) { 0.20 } else { 0.24 } }
+        if (mode == "image") { localImageAlternate = !localImageAlternate }
+        if (mode == "geometry") { localRadius = if (localRadius > 7.5) { 7.0 } else { 9.0 } }
         revision += 1
     }
 }
@@ -618,6 +695,315 @@ private func runMidworkArrival(windowA: CjguiComposableUiWindow, windowB: CjguiC
     return passed
 }
 
+// A display backing-scale transition is a legitimate invalidation: the
+// scale-keyed derived text resources MUST rebuild while B's identified edit is
+// in flight. This mode toggles A's real backing scale (1x<->2x, through the
+// production AppKit notification path) before each heavy turn, then charges
+// the same owner/scene budgets to B and reports A's real CPU, workload and
+// reusable bytes for the transition attempt from the public diagnostic
+// snapshot.
+private func runScaleTransitionWorkload(windowA: CjguiComposableUiWindow, windowB: CjguiComposableUiWindow,
+    heavy: HeavyMarkedController, responsive: ResponsiveMarkedController,
+    application: CjguiMacosApplication): Bool {
+    let owners = ArrayList<Int64>()
+    let accepted = ArrayList<Int64>()
+    var allApplied = true
+    var rebuiltAll = true
+    var sample: Int64 = 0
+    let workloadEnabled = windowA.setWorkloadDiagnostics(true)
+    while (sample < 20) {
+        let unique = "B-scale-${sample} 😀"
+        responsive.resetOwnerHook()
+        let ready = MonoTime.now()
+        let enqueueStatus = editB(windowB, unique)
+        var resizeVersion: UInt64 = 0u64
+        var scaleBefore: Float64 = 0.0
+        var scaleAfter: Float64 = 0.0
+        var drawableWidth: UInt32 = 0u32
+        var drawableHeight: UInt32 = 0u32
+        let scaleStatus = unsafe { cjgui_internal_renderer_test_toggle_composable_backing_scale(
+            windowA.testSessionToken(), inout resizeVersion, inout scaleBefore, inout scaleAfter,
+            inout drawableWidth, inout drawableHeight) }
+        let rasterBefore = activeRasterCount(windowA)
+        heavy.updateText()
+        windowA.requestRefresh()
+        let hostStart = MonoTime.now()
+        let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+        let hostEnd = MonoTime.now()
+        var turn: Int64 = 1
+        while (turn < 8 && (!responsive.ownerHooked || windowB.acceptedSceneNodes().size == 0 ||
+            windowB.acceptedSceneNodes()[0].value != unique)) {
+            let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+            turn += 1
+        }
+        let ownerOk = responsive.ownerHooked && responsive.lastOwnerText == unique
+        let acceptedOk = windowB.acceptedSceneNodes().size > 0 && windowB.acceptedSceneNodes()[0].value == unique
+        let ownerMs = if (ownerOk) { (responsive.lastOwnerRawMono - ready).toMilliseconds() } else { -1 }
+        let acceptedMs = (MonoTime.now() - ready).toMilliseconds()
+        let rasterDelta = activeRasterCount(windowA) - rasterBefore
+        let workload = windowA.diagnosticSnapshot(maximumNodes: 1)
+        let workloadReread = windowA.diagnosticSnapshot(maximumNodes: 1)
+        let stageTiming = windowA.testRefreshTiming()
+        // The transition must be real: scale and drawable changed. The
+        // "legal invalidation is not skipped" rebuild proof is a separate
+        // scale-only check after the latency loop.
+        let rebuilt = scaleStatus == CJGUI_INTERNAL_RENDERER_OK && resizeVersion > 0u64 &&
+            scaleBefore != scaleAfter && drawableWidth > 0u32 && drawableHeight > 0u32
+        if (!rebuilt) { rebuiltAll = false }
+        let workloadOk = workload.lastAttemptWorkloadResult == "accepted" &&
+            workload.lastAttemptNodeWrites >= 1 &&
+            workload.lastAttemptNodeWrites <= workload.totalNodes &&
+            workload.lastAttemptNodeClones >= 1 &&
+            workload.nodeWriteCount - workloadReread.nodeWriteCount == 0 &&
+            workload.nativeSubmissionCount == workloadReread.nativeSubmissionCount
+        println("CJGUI_TWO_WINDOW_SCALE_SAMPLE sample=${sample} scale=${scaleBefore}->${scaleAfter} " +
+            "resize=${resizeVersion} drawable=${drawableWidth}x${drawableHeight} " +
+            "enqueue_ms=${(MonoTime.now() - ready).toMilliseconds()} " +
+            "first_host_ms=${(hostEnd - hostStart).toMilliseconds()} owner_ms=${ownerMs} " +
+            "accepted_upper_ms=${acceptedMs} turns=${turn} raster_delta=${rasterDelta} " +
+            "build_ms=${stageTiming.buildNanoseconds / 1000000} layout_ms=${stageTiming.layoutNanoseconds / 1000000} " +
+            "native_stage_ms=${stageTiming.nativeStageAndSubmitNanoseconds / 1000000} " +
+            "attempt_writes=${workload.lastAttemptNodeWrites} attempt_clones=${workload.lastAttemptNodeClones} " +
+            "attempt_allocations=${workload.lastAttemptNodeAllocations} " +
+            "attempt_text_prepares=${workload.lastAttemptTextLayoutPreparations} " +
+            "attempt_decode_starts=${workload.lastAttemptImageDecodeStarts} " +
+            "reusable_bytes=${workload.reusableResourceBytes} workload_ok=${workloadOk} " +
+            "owner_ok=${ownerOk} accepted_ok=${acceptedOk} enqueue_status=${enqueueStatus} " +
+            "scale_status=${scaleStatus} rebuilt=${rebuilt}")
+        if (enqueueStatus != CJGUI_INTERNAL_RENDERER_OK || !ownerOk || !acceptedOk || !workloadOk) {
+            allApplied = false
+        }
+        owners.add(ownerMs)
+        accepted.add(acceptedMs)
+        sample += 1
+    }
+    let ownerSorted = sortedCopy(owners)
+    let acceptedSorted = sortedCopy(accepted)
+    let ownerP95 = percentile(ownerSorted, 19)
+    let acceptedP95 = percentile(acceptedSorted, 19)
+    // Scale-only change: no content edit, so any rebuild is caused by the
+    // transition itself. The already-staged heavy text must re-rasterize at
+    // the new scale, proving the sparse-reuse guards do not skip a legal
+    // invalidation.
+    let rasterScaleBefore = activeRasterCount(windowA)
+    var scaleOnlyResize: UInt64 = 0u64
+    var scaleOnlyBefore: Float64 = 0.0
+    var scaleOnlyAfter: Float64 = 0.0
+    var scaleOnlyWidth: UInt32 = 0u32
+    var scaleOnlyHeight: UInt32 = 0u32
+    let scaleOnlyStatus = unsafe { cjgui_internal_renderer_test_toggle_composable_backing_scale(
+        windowA.testSessionToken(), inout scaleOnlyResize, inout scaleOnlyBefore, inout scaleOnlyAfter,
+        inout scaleOnlyWidth, inout scaleOnlyHeight) }
+    windowA.requestRefresh()
+    var scaleOnlyTurns: Int64 = 0
+    while (scaleOnlyTurns < 8) {
+        let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+        scaleOnlyTurns += 1
+    }
+    let rasterScaleAfter = activeRasterCount(windowA)
+    let scaleOnlyWorkload = windowA.diagnosticSnapshot(maximumNodes: 1)
+    let scaleRebuildOk = scaleOnlyStatus == CJGUI_INTERNAL_RENDERER_OK &&
+        scaleOnlyResize > 0u64 && scaleOnlyBefore != scaleOnlyAfter &&
+        rasterScaleAfter - rasterScaleBefore >= 1u64 &&
+        scaleOnlyWorkload.lastAttemptWorkloadResult == "accepted"
+    println("CJGUI_TWO_WINDOW_SCALE_REBUILD scale=${scaleOnlyBefore}->${scaleOnlyAfter} " +
+        "drawable=${scaleOnlyWidth}x${scaleOnlyHeight} raster_delta=${rasterScaleAfter - rasterScaleBefore} " +
+        "attempt_writes=${scaleOnlyWorkload.lastAttemptNodeWrites} " +
+        "attempt_text_prepares=${scaleOnlyWorkload.lastAttemptTextLayoutPreparations} " +
+        "turns=${scaleOnlyTurns} rebuilt=${scaleRebuildOk}")
+    let passed = allApplied && rebuiltAll && workloadEnabled && scaleRebuildOk && ownerP95 >= 0 && ownerP95 <= 100 &&
+        acceptedP95 >= 0 && acceptedP95 <= 150
+    println("CJGUI_TWO_WINDOW_SCALE samples=20 owner_p95_ms=${ownerP95} " +
+        "accepted_upper_p95_ms=${acceptedP95} rebuilt_all=${rebuiltAll} scale_rebuild=${scaleRebuildOk} " +
+        "all_applied=${allApplied} workload_enabled=${workloadEnabled} passed=${passed}")
+    return passed
+}
+
+// B's identified edit is posted by the native producer while A's normal
+// 480-vector/image scene is executing one real local change. No artificial
+// stage hold is applied; only samples whose post timestamp falls inside the
+// measured host turn count toward the owner/scene latency distribution.
+private func runLocalRefreshOverlap(windowA: CjguiComposableUiWindow, windowB: CjguiComposableUiWindow,
+    heavy: HeavyMarkedController, responsive: ResponsiveMarkedController,
+    application: CjguiMacosApplication, mode: String): Bool {
+    let owners = ArrayList<Int64>()
+    let accepted = ArrayList<Int64>()
+    var attempt: Int64 = 0
+    var qualifying: Int64 = 0
+    var allApplied = true
+    while (attempt < 60 && qualifying < 20) {
+        let unique = "B-local-${mode}-${attempt} 😀"
+        responsive.resetOwnerHook()
+        let sceneBefore = windowA.windowProjection().acceptedSceneVersion
+        heavy.advanceLocal(mode)
+        windowA.requestRefresh()
+        let nativeText = unsafe { LibC.mallocCString(unique) }
+        var arm = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+        try (textResource = nativeText.asResource()) {
+            arm = unsafe { cjgui_internal_renderer_test_arm_midwork_composable_event(
+                windowA.testSessionToken(), windowB.testSessionToken(), 0u32, 28u32,
+                textResource.value, 1000u32) }
+        }
+        let release = unsafe { cjgui_internal_renderer_test_release_midwork_composable_event(
+            windowA.testSessionToken()) }
+        var hostStart: UInt64 = 0u64
+        var hostEnd: UInt64 = 0u64
+        let _ = unsafe { cjgui_internal_renderer_test_monotonic_micros(inout hostStart) }
+        let _ = application.pumpOneTurn(turnBudgetMs: 0u32)
+        let _ = unsafe { cjgui_internal_renderer_test_monotonic_micros(inout hostEnd) }
+        let workload = windowA.diagnosticSnapshot(maximumNodes: 1)
+        let timing = windowA.testRefreshTiming()
+        var aStart: UInt64 = 0u64; var aEnd: UInt64 = 0u64; var producerReady: UInt64 = 0u64
+        var producerPost: UInt64 = 0u64; var nativeEnqueue: UInt64 = 0u64
+        var enqueueStatus: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+        var turn: Int64 = 1
+        while (turn < 10) {
+            let _ = unsafe { cjgui_internal_renderer_test_midwork_composable_event_timing(
+                windowA.testSessionToken(), inout aStart, inout aEnd, inout producerReady,
+                inout producerPost, inout nativeEnqueue, inout enqueueStatus) }
+            if (nativeEnqueue > 0u64 && responsive.ownerHooked &&
+                windowB.acceptedSceneNodes().size > 0 && windowB.acceptedSceneNodes()[0].value == unique) { break }
+            let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+            turn += 1
+        }
+        var acceptedAt: UInt64 = 0u64
+        let _ = unsafe { cjgui_internal_renderer_test_monotonic_micros(inout acceptedAt) }
+        let aAdvanced = windowA.windowProjection().acceptedSceneVersion > sceneBefore
+        let aProjection = windowA.windowProjection()
+        var submission = CjguiProbeSubmissionTimeline()
+        let timelineStatus = if (aProjection.submittedFrameIndex > 0) {
+            unsafe { cjgui_internal_renderer_test_submission_timeline(windowA.testSessionToken(),
+                UInt64(aProjection.submittedFrameIndex), inout submission) }
+        } else { CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR }
+        let submissionOk = timelineStatus == CJGUI_INTERNAL_RENDERER_OK &&
+            submission.sceneVersion == UInt64(aProjection.submittedSceneVersion) &&
+            submission.frameIndex == UInt64(aProjection.submittedFrameIndex) &&
+            submission.stageBeginMicros > 0u64 &&
+            submission.stageBeginMicros <= submission.encodeEndMicros &&
+            submission.encodeEndMicros <= submission.presentCallMicros &&
+            submission.presentCallMicros <= submission.commitCallBeginMicros &&
+            submission.commitCallBeginMicros <= submission.commitCallMicros
+        let ownerOk = responsive.ownerHooked && responsive.lastOwnerText == unique &&
+            producerPost > 0u64 && responsive.lastOwnerNativeMicros >= producerPost
+        let acceptedOk = windowB.acceptedSceneNodes().size > 0 &&
+            windowB.acceptedSceneNodes()[0].value == unique && acceptedAt >= producerPost && producerPost > 0u64
+        let inFlight = producerPost >= hostStart && producerPost < hostEnd
+        let textPrepareOverlap = producerPost >= aStart && producerPost < aEnd && aEnd > aStart
+        let cpuSubmitOverlap = submissionOk && producerPost >= submission.stageBeginMicros &&
+            producerPost < submission.commitCallMicros
+        let ownerMs = if (ownerOk) { Int64((responsive.lastOwnerNativeMicros - producerPost) / 1000u64) } else { -1 }
+        let acceptedMs = if (acceptedOk) { Int64((acceptedAt - producerPost) / 1000u64) } else { -1 }
+        let workOk = workload.lastAttemptWorkloadResult == "accepted" &&
+            workload.lastAttemptNodeWrites >= 1 && workload.lastAttemptNodeClones >= 1 &&
+            workload.reusableResourceBytes >= 0
+        let deliveryOk = arm == CJGUI_INTERNAL_RENDERER_OK && release == CJGUI_INTERNAL_RENDERER_OK &&
+            enqueueStatus == CJGUI_INTERNAL_RENDERER_OK && aAdvanced && ownerOk && acceptedOk && workOk &&
+            submissionOk
+        println("CJGUI_TWO_WINDOW_LOCAL_SAMPLE mode=${mode} attempt=${attempt} " +
+            "in_flight=${inFlight} text_prepare_overlap=${textPrepareOverlap} " +
+            "cpu_submit_overlap=${cpuSubmitOverlap} " +
+            "a_session=${windowA.testSessionToken()} native_scene=${submission.sceneVersion} " +
+            "a_frame=${submission.frameIndex} stage_begin_us=${submission.stageBeginMicros} " +
+            "encode_end_us=${submission.encodeEndMicros} present_call_us=${submission.presentCallMicros} " +
+            "commit_begin_us=${submission.commitCallBeginMicros} " +
+            "commit_return_us=${submission.commitCallMicros} gpu_scheduled_callback_us=${submission.scheduledMicros} " +
+            "gpu_completed_callback_us=${submission.completedMicros} gpu_status=${submission.completionStatus} " +
+            "host_us=${hostEnd - hostStart} owner_ms=${ownerMs} accepted_upper_ms=${acceptedMs} " +
+            "build_ms=${timing.buildNanoseconds / 1000000} layout_ms=${timing.layoutNanoseconds / 1000000} " +
+            "native_stage_ms=${timing.nativeStageAndSubmitNanoseconds / 1000000} " +
+            "writes=${workload.lastAttemptNodeWrites} clones=${workload.lastAttemptNodeClones} " +
+            "allocations=${workload.lastAttemptNodeAllocations} " +
+            "text_prepares=${workload.lastAttemptTextLayoutPreparations} " +
+            "decode_starts=${workload.lastAttemptImageDecodeStarts} " +
+            "reusable_bytes=${workload.reusableResourceBytes} a_scene=${sceneBefore}->" +
+            "${windowA.windowProjection().acceptedSceneVersion} b_owner=${responsive.ownerValue()} " +
+            "b_scene=${windowB.windowProjection().acceptedSceneVersion} delivery_ok=${deliveryOk}")
+        if (!deliveryOk) { allApplied = false }
+        if (inFlight) {
+            qualifying += 1
+            owners.add(ownerMs)
+            accepted.add(acceptedMs)
+        }
+        attempt += 1
+    }
+    let ownerP95 = if (qualifying == 20) { percentile(sortedCopy(owners), 19) } else { -1 }
+    let acceptedP95 = if (qualifying == 20) { percentile(sortedCopy(accepted), 19) } else { -1 }
+    let passed = qualifying == 20 && allApplied && ownerP95 >= 0 && ownerP95 <= 100 &&
+        acceptedP95 >= 0 && acceptedP95 <= 150
+    println("CJGUI_TWO_WINDOW_LOCAL mode=${mode} attempts=${attempt} in_flight_samples=${qualifying} " +
+        "owner_p95_ms=${ownerP95} accepted_upper_p95_ms=${acceptedP95} " +
+        "all_applied=${allApplied} passed=${passed}")
+    return passed
+}
+
+// The 40 ms TESTING gate holds only presentDrawable -> command-buffer commit.
+// It proves a B post in the exact CPU submit interval; natural p95 excludes it.
+private func runSubmitGateOverlap(windowA: CjguiComposableUiWindow, windowB: CjguiComposableUiWindow,
+    heavy: HeavyMarkedController, responsive: ResponsiveMarkedController,
+    application: CjguiMacosApplication): Bool {
+    let unique = "B-submit-gate-${heavy.revision} 😀"
+    responsive.resetOwnerHook()
+    let priorScene = windowA.windowProjection().acceptedSceneVersion
+    heavy.advanceLocal("recolor")
+    windowA.requestRefresh()
+    let nativeText = unsafe { LibC.mallocCString(unique) }
+    var arm = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (textResource = nativeText.asResource()) {
+        arm = unsafe { cjgui_internal_renderer_test_arm_midwork_composable_event(
+            windowA.testSessionToken(), windowB.testSessionToken(), 0u32, 28u32,
+            textResource.value, 1000u32) }
+    }
+    let gate = unsafe { cjgui_internal_renderer_test_arm_submit_gate(windowA.testSessionToken(), 40000u32) }
+    let _ = application.pumpOneTurn(turnBudgetMs: 0u32)
+    var gateStart: UInt64 = 0u64; var gateEnd: UInt64 = 0u64; var producerReady: UInt64 = 0u64
+    var producerPost: UInt64 = 0u64; var nativeEnqueue: UInt64 = 0u64
+    var enqueueStatus: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    var turn: Int64 = 0
+    while (turn < 12) {
+        let _ = unsafe { cjgui_internal_renderer_test_midwork_composable_event_timing(
+            windowA.testSessionToken(), inout gateStart, inout gateEnd, inout producerReady,
+            inout producerPost, inout nativeEnqueue, inout enqueueStatus) }
+        if (nativeEnqueue > 0u64 && responsive.ownerHooked &&
+            windowB.acceptedSceneNodes().size > 0 && windowB.acceptedSceneNodes()[0].value == unique) { break }
+        let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+        turn += 1
+    }
+    var acceptedAt: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_test_monotonic_micros(inout acceptedAt) }
+    let projection = windowA.windowProjection()
+    var submission = CjguiProbeSubmissionTimeline()
+    let timeline = if (projection.submittedFrameIndex > 0) {
+        unsafe { cjgui_internal_renderer_test_submission_timeline(windowA.testSessionToken(),
+            UInt64(projection.submittedFrameIndex), inout submission) }
+    } else { CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR }
+    let phase = timeline == CJGUI_INTERNAL_RENDERER_OK &&
+        submission.sceneVersion == UInt64(projection.submittedSceneVersion) &&
+        submission.frameIndex == UInt64(projection.submittedFrameIndex) &&
+        submission.presentCallMicros <= gateStart && gateStart <= producerPost &&
+        producerPost < gateEnd && gateEnd <= submission.commitCallMicros
+    let delivered = arm == CJGUI_INTERNAL_RENDERER_OK && gate == CJGUI_INTERNAL_RENDERER_OK &&
+        phase && projection.acceptedSceneVersion > priorScene &&
+        enqueueStatus == CJGUI_INTERNAL_RENDERER_OK && nativeEnqueue >= gateEnd &&
+        responsive.ownerHooked && responsive.lastOwnerText == unique &&
+        windowB.acceptedSceneNodes().size > 0 && windowB.acceptedSceneNodes()[0].value == unique
+    let ownerMs = if (responsive.ownerHooked && producerPost > 0u64) {
+        Int64((responsive.lastOwnerNativeMicros - producerPost) / 1000u64)
+    } else { -1 }
+    let acceptedUpperMs = if (acceptedAt >= producerPost && producerPost > 0u64) {
+        Int64((acceptedAt - producerPost) / 1000u64)
+    } else { -1 }
+    println("CJGUI_TWO_WINDOW_SUBMIT_GATE a_session=${windowA.testSessionToken()} " +
+        "a_scene=${submission.sceneVersion} a_frame=${submission.frameIndex} " +
+        "present_call_us=${submission.presentCallMicros} gate_start_us=${gateStart} " +
+        "producer_ready_us=${producerReady} producer_post_us=${producerPost} " +
+        "gate_end_us=${gateEnd} commit_begin_us=${submission.commitCallBeginMicros} " +
+        "commit_return_us=${submission.commitCallMicros} " +
+        "native_enqueue_us=${nativeEnqueue} owner_ms=${ownerMs} " +
+        "accepted_upper_ms=${acceptedUpperMs} held_us=${gateEnd - gateStart} " +
+        "delivered=${delivered}")
+    return delivered
+}
+
 /// Timing negative control: B's edit completes on the FIRST pump, and A's
 /// subsequent heavy workload must not move B's completion time. The recorded
 /// first-completion evidence is captured before the heavy work and compared
@@ -803,10 +1189,27 @@ main(): Int64 {
     ok = runHostWorkload(windowA, windowB, heavy, responsive, application, false) && ok
     ok = runHostWorkload(windowA, windowB, heavy, responsive, application, true) && ok
     ok = runMidworkArrival(windowA, windowB, heavy, responsive, application) && ok
+    // Display-scale transition overlap: B's identified edit is in flight while
+    // A converts its real backing scale; the transition must still rebuild the
+    // scale-keyed derived resources.
+    ok = runScaleTransitionWorkload(windowA, windowB, heavy, responsive, application) && ok
     // Timing negative control: B completes on the first pump and its
     // completion time must not move while A keeps working.
     ok = runNegativeControl(windowA, windowB, heavy, responsive, application) && ok
     let contentOk = runMarkedContent(windowA)
+    heavy.beginLocalMode()
+    windowA.requestRefresh()
+    var localWarmupTurns: Int64 = 0
+    while (localWarmupTurns < 8) {
+        let _ = application.pumpOneTurn(turnBudgetMs: 16u32)
+        localWarmupTurns += 1
+    }
+    let localDiagnostics = windowA.setWorkloadDiagnostics(true)
+    let localRecolor = runLocalRefreshOverlap(windowA, windowB, heavy, responsive, application, "recolor")
+    let localImage = runLocalRefreshOverlap(windowA, windowB, heavy, responsive, application, "image")
+    let localGeometry = runLocalRefreshOverlap(windowA, windowB, heavy, responsive, application, "geometry")
+    let submitGate = runSubmitGateOverlap(windowA, windowB, heavy, responsive, application)
+    ok = localDiagnostics && localRecolor && localImage && localGeometry && submitGate && ok
     // After the workload stops, an idle turn must not raster anything.
     var rasterBefore: UInt64 = 0u64
     var rasterBytesBefore: UInt64 = 0u64

@@ -52,7 +52,6 @@ is_system_lib() {
     libhitrace.so|libhitrace_ndk.z.so) return 0 ;;
     libace_napi.z.so|libace_ndk.z.so) return 0 ;;
     libnative_drawing.so|libnative_window.so|libimage_source.so|libpixelmap.so) return 0 ;;
-    libkit.*.so) return 0 ;;
     # libohos.*.so 由系统 ArkTS 运行时提供（SDK 内是编译桩，入包会遮蔽真身）。
     libohos.*.so) return 0 ;;
   esac
@@ -186,6 +185,16 @@ for system_link_lib in libnative_window.so libnative_drawing.so libimage_source.
     emit "  OK   HAP 不携带 ${system_link_lib}（运行时仍需核对系统符号来源）"
   fi
 done
+
+# Cangjie SDK's libohos.*.so files are link-time mocks. They may satisfy every
+# NEEDED entry in a HAP and still shadow the device's real ArkTS implementation.
+while IFS= read -r packaged_lib; do
+  case "$packaged_lib" in
+    libohos.*.so)
+      emit "  PRODUCT-FAIL HAP 携带 ${packaged_lib}，遮蔽系统运行库"
+      FAIL=1 ;;
+  esac
+done < "$PRESENT_FILE"
 
 emit ""
 if [ "$FAIL" = "0" ]; then

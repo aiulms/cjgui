@@ -72,6 +72,24 @@ private func definiteMultilineLongValue(): String {
 }
 
 @Test
+func oversizedUnbrokenMultilineIsRejectedBeforeIntrinsicOrDefiniteLayout(): Unit {
+    let value = StringBuilder()
+    var index: Int64 = 0
+    while (index < 13108) {
+        value.append("0123456789")
+        index += 1
+    }
+    let root = cjguiComposableVertical(100, "root", CjguiComposableUiStyle())
+    root.add(cjguiComposableMultilineTextInput(101, "oversized", "Oversized", value.toString(), 101,
+        CjguiComposableUiStyle(fixedWidth: 540, growY: 1)))
+    let measurer = DefiniteMultilineTestMeasurer()
+    let result = definiteMultilineLayout(root, 900, 600, measurer)
+    @Assert(result.scene.isValid(), false)
+    @Assert(result.scene.layoutError(), "text_layout_budget_exceeded")
+    @Assert(measurer.callCount, 0)
+}
+
+@Test
 func definiteUniqueGrowYMultilineSkipsFullValueMeasurement(): Unit {
     let root = cjguiComposableVertical(1, "root", CjguiComposableUiStyle())
     root.add(cjguiComposableMultilineTextInput(2, "document", "Document",

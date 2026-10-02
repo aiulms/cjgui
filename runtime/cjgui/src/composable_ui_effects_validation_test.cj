@@ -728,3 +728,54 @@ func layoutSubtreeSpansIncludeSelfAndRemainRelativeWhenCached(): Unit {
     @Assert(resolvedNode.subtreeNodeCount, 1)
     @Assert(resolvedNode.style.effectGroup.isSome(), true)
 }
+
+private class EffectSubtreeMutationController <: CjguiComposableUiController {
+    var count: Int64 = 3
+    var revision: Int64 = 1
+
+    public func uiSceneVersion(): Int64 { return revision }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(2201, "effect-mutation-root",
+            CjguiComposableUiStyle(fixedWidth: 320, fixedHeight: 240))
+        // Retained owner identity, paint and rectangle; only its subtree span changes.
+        let group = cjguiComposableVertical(2202, "effect-mutation-group",
+            CjguiComposableUiStyle(fixedWidth: 120, fixedHeight: 60,
+                effectGroup: Some(effectsLegalGroup())))
+        var index: Int64 = 0
+        while (index < count) {
+            group.add(cjguiComposableText(2210 + index, "effect-mutation-leaf-${index}", "leaf",
+                CjguiComposableUiStyle(fixedWidth: 100, fixedHeight: 5)))
+            index += 1
+        }
+        root.add(group)
+        return root
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@Test
+func effectRetainedOwnerRestagesShrinkingAndGrowingSubtreeSpan(): Unit {
+    let controller = EffectSubtreeMutationController()
+    let window = CjguiComposableUiWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        for (count in [0, 1, 10, 11, 0, 3]) {
+            controller.count = count
+            controller.revision += 1
+            @Assert(window.refresh(), true)
+            let nodes = window.acceptedSceneNodes()
+            @Assert(nodes.size, count + 2)
+            @Assert(nodes[1].subtreeNodeCount, count + 1)
+            @Assert(nodes[1].style.effectGroup.isSome(), true)
+        }
+    } finally { window.close() }
+}

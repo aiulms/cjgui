@@ -81,9 +81,18 @@ mkdir -p "$RUN_DIR"
 LOG="$RUN_DIR/build_$RUN_ID.log"
 echo "RUN_ID=$RUN_ID"
 
-echo "== 0/7 平台指纹 + 同步框架平台源码 =="
+echo "== 0/7 平台指纹 + 同步消费方源码 =="
 bash "$HERE/fingerprint.sh"
-bash "$HERE/sync_platform.sh" "$LAB"
+# 消费方同步钩子（CJGUI_CONSUMER_SYNC）：独立产品需要的同步不止框架平台一份
+# （还要搬共享包、生成产品依赖清单），由消费方提供一个脚本一次做完。钩子存在
+# 时用它替代框架的 sync_platform 调用，避免「入口再同步一次把产品清单覆盖回
+# 默认值」——这正是 2026-09-29 复核记录的必要返工第一条。
+if [ -n "${CJGUI_CONSUMER_SYNC:-}" ]; then
+  echo "  消费方同步钩子: $CJGUI_CONSUMER_SYNC"
+  bash "$CJGUI_CONSUMER_SYNC"
+else
+  bash "$HERE/sync_platform.sh" "$LAB"
+fi
 if [ "$TEST_GATES" = "1" ]; then
   export CJGUI_TEST_GATES=1
   # 第九次复核 B：host 侧闸门/夹具 define 必须进入 hvigor CMake（renderer.a
@@ -190,7 +199,11 @@ if [ -n "${CJGUI_NEGATIVE_MISSING_LIB:-}" ]; then
 fi
 # E.3：应用自身库名随 CJGUI_APP_DIR_NAME 参数化（库名 = libcjgui_<目录名>；
 # 独立消费者不再被写死为设置计数示例的库名，默认值保持原状）。
-if ! CJGUI_APP_PKG_LIB="libcjgui_${CJGUI_APP_DIR_NAME:-settings_counter_application}.so" \
+# 2026-09-29 返工：显式 CJGUI_APP_PKG_LIB 优先——产品模块的包名与目录名不必
+# 同名（例如目录 pharos_mark_application / 包 libpharos_mark_ohos_application.so），
+# 由目录名推导出的名字会把正确的产品库判成 MISS。
+APP_PKG_LIB_FOR_CLOSURE="${CJGUI_APP_PKG_LIB:-libcjgui_${CJGUI_APP_DIR_NAME:-settings_counter_application}.so}"
+if ! CJGUI_APP_PKG_LIB="$APP_PKG_LIB_FOR_CLOSURE" \
     bash "$HERE/verify_hap_closure.sh" "$HAP" "$RUN_DIR/closure_$RUN_ID.txt"; then
   if [ -n "${CJGUI_NEGATIVE_MISSING_LIB:-}" ]; then
     echo "NEGATIVE-CONTROL OK：缺库时闭包校验按预期失败"

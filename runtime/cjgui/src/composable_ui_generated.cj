@@ -1958,6 +1958,51 @@ public interface CjguiGeneratedUiBindingProvider {
     func actionAvailability(actionName: String): CjguiSharedAvailability {
         return CjguiSharedAvailability.unknown()
     }
+
+    /// R3（h-source-preview-followup 2026-10-02）：生成 TEXT 字段的 owned 范围
+    /// 文本会话能力探测。返回 true 的字段在编辑聚焦时由框架绑定通用范围桥
+    /// （CjguiGeneratedFieldRangeSession），系统输入经会话以精确范围增量到达
+    /// owner；默认 false——未实现 owner 事务文本写的 provider 不绑定，行为
+    /// 与之前完全一致（无会话则整值提交被 native 降级为视觉预览）。
+    func rangeTextEditSupported(fieldId: String): Bool {
+        let _ = fieldId
+        return false
+    }
+    /// 该字段文本所属的 owner 版本（applyTextEdit 校验的同一版本序列）。
+    /// 默认 -1 表示不可用（配合默认不支持，不参与绑定）。
+    func fieldTextVersion(fieldId: String): Int64 {
+        let _ = fieldId
+        return -1
+    }
+    /// owner 事务内的文本写：`newText` 是框架桥按 `expectedVersion` 版本的
+    /// 现值精确重组出的**完整新值**（范围语义由桥保证）；owner 必须在事务内
+    /// 校验版本后整体应用或按冲突拒绝，绝不部分写入。默认拒绝。
+    func applyTextEdit(fieldId: String, expectedVersion: Int64, newText: String): CjguiRangeTextEditOutcome {
+        let _ = fieldId
+        let _ = expectedVersion
+        let _ = newText
+        return CjguiRangeTextEditOutcome.rejected(-1, "text_edit_unsupported")
+    }
+    /// 与写串行的版本确认（会话恢复的原子采纳用）：版本仍为 expectedVersion
+    /// 时执行 action 并返回其结果，否则 false。默认 false（恢复按具名失败
+    /// 走有界重试，不影响普通输入链）。
+    func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64, action: () -> Bool): Bool {
+        let _ = fieldId
+        let _ = expectedVersion
+        let _ = action
+        return false
+    }
+    /// 把该字段源字节选区从 fromVersion 映射到当前版本；返回
+    /// (当前版本, 新start, 新end)，无法无歧义映射时 None。默认 None
+    /// （外部改版后的旧选区按不可映射具名处理，不猜偏移）。
+    func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64) {
+        let _ = fieldId
+        let _ = fromVersion
+        let _ = startByte
+        let _ = endByte
+        return None
+    }
 }
 
 public class CjguiGeneratedUiActionResult {

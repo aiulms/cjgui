@@ -93,6 +93,29 @@ struct CjguiInternalRendererClearColor {
 }
 
 @C
+struct CjguiInternalRendererProxyRestoreTicket {
+    var requestId: UInt64 = 0
+    var contextId: Int64 = 0
+    var contextGeneration: UInt64 = 0
+    var acceptedBindingEpoch: UInt64 = 0
+    var acceptedProjectionVersion: UInt64 = 0
+    var deadlineMonoMs: Int64 = 0
+    var canonicalStart: UInt32 = 0
+    var canonicalEnd: UInt32 = 0
+    var state: Int32 = 0
+}
+
+// 票据相位（镜像 CjguiInternalRendererProxyRestoreState）。
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_NONE: Int32 = 0
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_QUEUED: Int32 = 1
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_SENT: Int32 = 2
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_INSTALLED: Int32 = 3
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ADOPTED: Int32 = 4
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_NOT_INSTALLED: Int32 = 5
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_UNCONFIRMED: Int32 = 6
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT: Int64 = 4294967295
+
+@C
 struct CjguiInternalRendererFrameObservation {
     var frameIndex: UInt64 = 0
     var drawableWidthPixels: UInt32 = 0
@@ -257,6 +280,66 @@ struct CjguiInternalRendererComposableNode {
     var inputScope: UInt64 = 0
     var tabGroupId: UInt64 = 0
     var tabSelected: UInt32 = 0
+    var semanticRole: UInt32 = 0
+    var semanticState: UInt32 = 0
+    var semanticLevel: Int64 = 0
+    var semanticIncarnation: Int64 = 0
+    var shadowPresent: UInt32 = 0
+    var shadowOffsetX: Float64 = 0.0
+    var shadowOffsetY: Float64 = 0.0
+    var shadowBlurRadius: Float64 = 0.0
+    var shadowSpread: Float64 = 0.0
+    var shadowRed: Float64 = 0.0
+    var shadowGreen: Float64 = 0.0
+    var shadowBlue: Float64 = 0.0
+    var shadowAlpha: Float64 = 0.0
+    var gradientPresent: UInt32 = 0
+    var gradientStopCount: UInt32 = 0
+    var gradientStartX: Float64 = 0.0
+    var gradientStartY: Float64 = 0.0
+    var gradientEndX: Float64 = 0.0
+    var gradientEndY: Float64 = 0.0
+    var gradientStop0Position: Float64 = 0.0
+    var gradientStop0Red: Float64 = 0.0
+    var gradientStop0Green: Float64 = 0.0
+    var gradientStop0Blue: Float64 = 0.0
+    var gradientStop0Alpha: Float64 = 0.0
+    var gradientStop1Position: Float64 = 0.0
+    var gradientStop1Red: Float64 = 0.0
+    var gradientStop1Green: Float64 = 0.0
+    var gradientStop1Blue: Float64 = 0.0
+    var gradientStop1Alpha: Float64 = 0.0
+    var gradientStop2Position: Float64 = 0.0
+    var gradientStop2Red: Float64 = 0.0
+    var gradientStop2Green: Float64 = 0.0
+    var gradientStop2Blue: Float64 = 0.0
+    var gradientStop2Alpha: Float64 = 0.0
+    var gradientStop3Position: Float64 = 0.0
+    var gradientStop3Red: Float64 = 0.0
+    var gradientStop3Green: Float64 = 0.0
+    var gradientStop3Blue: Float64 = 0.0
+    var gradientStop3Alpha: Float64 = 0.0
+    var effectGroupPresent: UInt32 = 0
+    var effectGroupSubtreeCount: UInt32 = 0
+    var effectGroupOpacity: Float64 = 1.0
+    var effectGroupBlendMode: UInt32 = 0
+    var effectMaskPresent: UInt32 = 0
+    var effectMaskStopCount: UInt32 = 0
+    var effectMaskStartX: Float64 = 0.0
+    var effectMaskStartY: Float64 = 0.0
+    var effectMaskEndX: Float64 = 0.0
+    var effectMaskEndY: Float64 = 0.0
+    var effectMaskStop0Position: Float64 = 0.0
+    var effectMaskStop0Alpha: Float64 = 0.0
+    var effectMaskStop1Position: Float64 = 0.0
+    var effectMaskStop1Alpha: Float64 = 0.0
+    var effectMaskStop2Position: Float64 = 0.0
+    var effectMaskStop2Alpha: Float64 = 0.0
+    var effectMaskStop3Position: Float64 = 0.0
+    var effectMaskStop3Alpha: Float64 = 0.0
+    var effectBackdropBlurRadiusPoints: UInt32 = 0
+    var effectBackdropBlurFallback: UInt32 = 0
+    var wheelScrollable: UInt32 = 0
     var acceptedBindingEpoch: UInt64 = 0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, x!: Int64, y!: Int64, width!: Int64,
         height!: Int64, clipX!: Int64, clipY!: Int64, clipWidth!: Int64, clipHeight!: Int64, nodeKind!: UInt32,
@@ -270,8 +353,31 @@ struct CjguiInternalRendererComposableNode {
         clip3CornerRadius!: Float64 = 0.0, fontSize!: Float64, fontWeight!: UInt32, fontFamily!: UInt32,
         imageContentMode!: UInt32, fillRed!: Float64, fillGreen!: Float64, fillBlue!: Float64, fillAlpha!: Float64,
         borderRed!: Float64, borderGreen!: Float64, borderBlue!: Float64, borderAlpha!: Float64, textRed!: Float64,
-        textGreen!: Float64, textBlue!: Float64, textAlpha!: Float64, inputScope!: UInt64 = 0,
-        tabGroupId!: UInt64 = 0, tabSelected!: UInt32 = 0) {
+        textGreen!: Float64, textBlue!: Float64, textAlpha!: Float64, inputScope!: UInt64 = 0, tabGroupId!: UInt64 = 0,
+        tabSelected!: UInt32 = 0, semanticRole!: UInt32 = 0u32, semanticState!: UInt32 = 0u32,
+        semanticLevel!: Int64 = 0, semanticIncarnation!: Int64 = 0,
+        shadowPresent!: UInt32 = 0u32, shadowOffsetX!: Float64 = 0.0,
+        shadowOffsetY!: Float64 = 0.0, shadowBlurRadius!: Float64 = 0.0, shadowSpread!: Float64 = 0.0,
+        shadowRed!: Float64 = 0.0, shadowGreen!: Float64 = 0.0, shadowBlue!: Float64 = 0.0, shadowAlpha!: Float64 = 0.0,
+        gradientPresent!: UInt32 = 0u32, gradientStopCount!: UInt32 = 0u32, gradientStartX!: Float64 = 0.0,
+        gradientStartY!: Float64 = 0.0, gradientEndX!: Float64 = 0.0, gradientEndY!: Float64 = 0.0,
+        gradientStop0Position!: Float64 = 0.0, gradientStop0Red!: Float64 = 0.0, gradientStop0Green!: Float64 = 0.0,
+        gradientStop0Blue!: Float64 = 0.0, gradientStop0Alpha!: Float64 = 0.0, gradientStop1Position!: Float64 = 0.0,
+        gradientStop1Red!: Float64 = 0.0, gradientStop1Green!: Float64 = 0.0, gradientStop1Blue!: Float64 = 0.0,
+        gradientStop1Alpha!: Float64 = 0.0, gradientStop2Position!: Float64 = 0.0, gradientStop2Red!: Float64 = 0.0,
+        gradientStop2Green!: Float64 = 0.0, gradientStop2Blue!: Float64 = 0.0, gradientStop2Alpha!: Float64 = 0.0,
+        gradientStop3Position!: Float64 = 0.0, gradientStop3Red!: Float64 = 0.0, gradientStop3Green!: Float64 = 0.0,
+        gradientStop3Blue!: Float64 = 0.0, gradientStop3Alpha!: Float64 = 0.0,
+        effectGroupPresent!: UInt32 = 0u32, effectGroupSubtreeCount!: UInt32 = 0u32,
+        effectGroupOpacity!: Float64 = 1.0, effectGroupBlendMode!: UInt32 = 0u32,
+        effectMaskPresent!: UInt32 = 0u32, effectMaskStopCount!: UInt32 = 0u32,
+        effectMaskStartX!: Float64 = 0.0, effectMaskStartY!: Float64 = 0.0,
+        effectMaskEndX!: Float64 = 0.0, effectMaskEndY!: Float64 = 0.0,
+        effectMaskStop0Position!: Float64 = 0.0, effectMaskStop0Alpha!: Float64 = 0.0,
+        effectMaskStop1Position!: Float64 = 0.0, effectMaskStop1Alpha!: Float64 = 0.0,
+        effectMaskStop2Position!: Float64 = 0.0, effectMaskStop2Alpha!: Float64 = 0.0,
+        effectMaskStop3Position!: Float64 = 0.0, effectMaskStop3Alpha!: Float64 = 0.0,
+        effectBackdropBlurRadiusPoints!: UInt32 = 0u32, effectBackdropBlurFallback!: UInt32 = 0u32) {
         this.nodeId = nodeId
         this.projectionVersion = projectionVersion
         this.resourceId = resourceId
@@ -331,6 +437,65 @@ struct CjguiInternalRendererComposableNode {
         this.inputScope = inputScope
         this.tabGroupId = tabGroupId
         this.tabSelected = tabSelected
+        this.semanticRole = semanticRole
+        this.semanticState = semanticState
+        this.semanticLevel = semanticLevel
+        this.semanticIncarnation = semanticIncarnation
+        this.shadowPresent = shadowPresent
+        this.shadowOffsetX = shadowOffsetX
+        this.shadowOffsetY = shadowOffsetY
+        this.shadowBlurRadius = shadowBlurRadius
+        this.shadowSpread = shadowSpread
+        this.shadowRed = shadowRed
+        this.shadowGreen = shadowGreen
+        this.shadowBlue = shadowBlue
+        this.shadowAlpha = shadowAlpha
+        this.gradientPresent = gradientPresent
+        this.gradientStopCount = gradientStopCount
+        this.gradientStartX = gradientStartX
+        this.gradientStartY = gradientStartY
+        this.gradientEndX = gradientEndX
+        this.gradientEndY = gradientEndY
+        this.gradientStop0Position = gradientStop0Position
+        this.gradientStop0Red = gradientStop0Red
+        this.gradientStop0Green = gradientStop0Green
+        this.gradientStop0Blue = gradientStop0Blue
+        this.gradientStop0Alpha = gradientStop0Alpha
+        this.gradientStop1Position = gradientStop1Position
+        this.gradientStop1Red = gradientStop1Red
+        this.gradientStop1Green = gradientStop1Green
+        this.gradientStop1Blue = gradientStop1Blue
+        this.gradientStop1Alpha = gradientStop1Alpha
+        this.gradientStop2Position = gradientStop2Position
+        this.gradientStop2Red = gradientStop2Red
+        this.gradientStop2Green = gradientStop2Green
+        this.gradientStop2Blue = gradientStop2Blue
+        this.gradientStop2Alpha = gradientStop2Alpha
+        this.gradientStop3Position = gradientStop3Position
+        this.gradientStop3Red = gradientStop3Red
+        this.gradientStop3Green = gradientStop3Green
+        this.gradientStop3Blue = gradientStop3Blue
+        this.gradientStop3Alpha = gradientStop3Alpha
+        this.effectGroupPresent = effectGroupPresent
+        this.effectGroupSubtreeCount = effectGroupSubtreeCount
+        this.effectGroupOpacity = effectGroupOpacity
+        this.effectGroupBlendMode = effectGroupBlendMode
+        this.effectMaskPresent = effectMaskPresent
+        this.effectMaskStopCount = effectMaskStopCount
+        this.effectMaskStartX = effectMaskStartX
+        this.effectMaskStartY = effectMaskStartY
+        this.effectMaskEndX = effectMaskEndX
+        this.effectMaskEndY = effectMaskEndY
+        this.effectMaskStop0Position = effectMaskStop0Position
+        this.effectMaskStop0Alpha = effectMaskStop0Alpha
+        this.effectMaskStop1Position = effectMaskStop1Position
+        this.effectMaskStop1Alpha = effectMaskStop1Alpha
+        this.effectMaskStop2Position = effectMaskStop2Position
+        this.effectMaskStop2Alpha = effectMaskStop2Alpha
+        this.effectMaskStop3Position = effectMaskStop3Position
+        this.effectMaskStop3Alpha = effectMaskStop3Alpha
+        this.effectBackdropBlurRadiusPoints = effectBackdropBlurRadiusPoints
+        this.effectBackdropBlurFallback = effectBackdropBlurFallback
     }
 }
 
@@ -620,6 +785,32 @@ foreign {
         outSelectionEnd: CPointer<UInt32>
     ): Int32
 
+    func cjgui_internal_renderer_recover_text_proxy_ticket(
+        session: UInt64,
+        nodeId: UInt64,
+        resourceId: Int64,
+        nodeKind: UInt32,
+        sceneVersion: UInt64,
+        acceptedValue: CString,
+        selectionStart: UInt32,
+        selectionEnd: UInt32,
+        outTicket: CPointer<CjguiInternalRendererProxyRestoreTicket>
+    ): Int32
+
+    func cjgui_internal_renderer_query_proxy_restore_ticket(
+        session: UInt64,
+        requestId: UInt64,
+        outTicket: CPointer<CjguiInternalRendererProxyRestoreTicket>
+    ): Int32
+
+    func cjgui_internal_renderer_consume_proxy_restore_ticket(
+        session: UInt64,
+        requestId: UInt64,
+        adoptedStart: UInt32,
+        adoptedEnd: UInt32,
+        outConsumed: CPointer<Int32>
+    ): Int32
+
     func cjgui_internal_renderer_present_clear(
         session: UInt64,
         color: CPointer<CjguiInternalRendererClearColor>,
@@ -769,8 +960,19 @@ foreign {
         outSelectionStart: CPointer<UInt32>, outSelectionEnd: CPointer<UInt32>
     ): Int32
 
-    func cjgui_internal_renderer_cancel_composable_pointer_capture(session: UInt64): Int32
-    func cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(session: UInt64,
+    // H1-R.a：一次性取走"人在 native 表面上亲手放置的落点"。1=身份与值全部命中并已消费，
+    // 0=无匹配（零改动），-1=参数/会话无效。平台回声取不走锚。
+    func cjgui_internal_renderer_take_human_selection_anchor(
+        session: UInt64, nodeId: UInt64, resourceId: Int64, nodeKind: UInt32,
+        projectionVersion: UInt64, acceptedBindingEpoch: UInt64,
+        selectionStart: UInt32, selectionEnd: UInt32, outAnchorSeq: CPointer<UInt64>
+    ): Int32
+
+    // 通用窗口诊断出口：Cangjie 侧 println 在 OHOS 不进 hilog，窗口内部判定在
+    // 设备上不可见。这个出口只把字符串记进渲染器日志，不读写会话状态。
+    func ohos_renderer_window_log(message: CString): Int32
+
+    func cjgui_internal_renderer_cancel_composable_pointer_capture(session: UInt64): Int32    func cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(session: UInt64,
         appInstance: UInt64, componentInstance: UInt64, surfaceGeneration: UInt64,
         pointerId: Int64, gestureEpoch: UInt64): Int32
 
@@ -1303,6 +1505,40 @@ func internalRendererRestoreComposableSelection(session: UInt64, nodeId: Int64, 
     return (status, Int64(appliedStart), Int64(appliedEnd))
 }
 
+/// 窗口诊断：把一行文本记进渲染器日志（hilog 可见）。失败静默——诊断绝不能
+/// 改变任何生产判定，也绝不能因为日志不可用而让调用方走另一条分支。
+/// （停摆追因期的编号文件痕迹已按计划撤除，只保留 hilog 通道。）
+func internalRendererWindowLog(message: String): Unit {
+    let cMessage = unsafe { LibC.mallocCString(message) }
+    try (resource = cMessage.asResource()) {
+        unsafe {
+            let _ = ohos_renderer_window_log(resource.value)
+        }
+    }
+}
+
+/// 取走"人在 native 表面上亲手放置的落点"（H1-R.a），返回 (taken, anchorSeq)。
+/// taken=1 表示 native 有一枚**未消费**的锚，其冻结的节点身份与本次选区事件的身份、
+/// UTF-16 值全部相同；此刻它已被置为已消费，同一锚不会被二次采纳。0 = 无匹配（零改动）。
+/// 这条通道把"人的导航"与"平台安装回声"分开：给代理赋值会把 caret 甩到正文末尾，
+/// 那个瞬时回声的值与锚不同，因此取不走锚，也就不能解除会话的输入门禁。
+func internalRendererTakeHumanSelectionAnchor(session: UInt64, nodeId: Int64, resourceId: Int64,
+    nodeKind: Int64, projectionVersion: Int64, acceptedBindingEpoch: Int64,
+    start16: Int64, end16: Int64): (Int32, Int64) {
+    if (nodeId < 0 || nodeKind < 0 || projectionVersion < 0 || acceptedBindingEpoch <= 0 ||
+        start16 < 0 || end16 < start16 || start16 > 4294967295 || end16 > 4294967295) {
+        return (0, 0)
+    }
+    var anchorSeq: UInt64 = 0
+    var taken: Int32 = 0
+    unsafe {
+        taken = cjgui_internal_renderer_take_human_selection_anchor(session, UInt64(nodeId), resourceId,
+            UInt32(nodeKind), UInt64(projectionVersion), UInt64(acceptedBindingEpoch),
+            UInt32(start16), UInt32(end16), inout anchorSeq)
+    }
+    return (taken, Int64(anchorSeq))
+}
+
 /// Roll back the hidden text proxy after the application refused a human range
 /// edit: restore the value the owner already accepted, under projection
 /// suppression, and report the installed grapheme-safe selection. It never
@@ -1324,6 +1560,94 @@ func internalRendererRecoverActiveTextProxy(session: UInt64, nodeId: Int64, reso
         }
     }
     return (status, Int64(appliedStart), Int64(appliedEnd))
+}
+
+/// H1-R：一次逻辑恢复的唯一签发入口。native 在同一临界区内验证 accepted 正文、
+/// 场景版本与规范落点，只登记一张票据并返回它冻结的 native 身份 + 单调截止。
+/// 调用方此后只信票据里的值：不得再读"当前"镜像/上下文补进这张请求（旧实现正是
+/// 这样把新代次贴到旧请求上的）。`requestId == 0` 表示签发失败。
+/// 票据的普通仓颉镜像（tuple 成员不得是 @C struct，沿用 present 回执的同款形状）。
+struct InternalRendererProxyRestoreTicket {
+    let status: Int32
+    let requestId: UInt64
+    let contextId: Int64
+    let contextGeneration: UInt64
+    let acceptedBindingEpoch: UInt64
+    let acceptedProjectionVersion: UInt64
+    let deadlineMonoMs: Int64
+    let canonicalStart: Int64
+    let canonicalEnd: Int64
+    let state: Int32
+    init(status: Int32, ticket: CjguiInternalRendererProxyRestoreTicket) {
+        this.status = status
+        this.requestId = ticket.requestId
+        this.contextId = ticket.contextId
+        this.contextGeneration = ticket.contextGeneration
+        this.acceptedBindingEpoch = ticket.acceptedBindingEpoch
+        this.acceptedProjectionVersion = ticket.acceptedProjectionVersion
+        this.deadlineMonoMs = ticket.deadlineMonoMs
+        this.canonicalStart = Int64(ticket.canonicalStart)
+        this.canonicalEnd = Int64(ticket.canonicalEnd)
+        this.state = ticket.state
+    }
+}
+
+func internalRendererRecoverTextProxyTicket(session: UInt64, nodeId: Int64, resourceId: Int64,
+    nodeKind: Int64, sceneVersion: Int64, acceptedValue: String, start: Int64,
+    end: Int64): (Int32, InternalRendererProxyRestoreTicket) {
+    var ticket = CjguiInternalRendererProxyRestoreTicket()
+    if (nodeId < 0 || nodeKind < 0 || sceneVersion < 0 || resourceId < 0 ||
+        (start < 0 && start != CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT) ||
+        (end < 0 && end != CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT) ||
+        end > CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT ||
+        start > CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT) {
+        return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, InternalRendererProxyRestoreTicket(
+            CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, ticket))
+    }
+    let cValue = unsafe { LibC.mallocCString(acceptedValue) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (valueResource = cValue.asResource()) {
+        unsafe {
+            status = cjgui_internal_renderer_recover_text_proxy_ticket(session, UInt64(nodeId), resourceId,
+                UInt32(nodeKind), UInt64(sceneVersion), valueResource.value, UInt32(start), UInt32(end),
+                inout ticket)
+        }
+    }
+    return (status, InternalRendererProxyRestoreTicket(status, ticket))
+}
+
+/// 按请求号查询票据。窗口自己的截止检查用它：事件丢失时仍能按票据终结待办，
+/// 而不是宣称"平台没装"或直接解锁。
+func internalRendererQueryProxyRestoreTicket(session: UInt64,
+    requestId: UInt64): (Int32, InternalRendererProxyRestoreTicket) {
+    var ticket = CjguiInternalRendererProxyRestoreTicket()
+    if (requestId == 0u64) {
+        return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, InternalRendererProxyRestoreTicket(
+            CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, ticket))
+    }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        status = cjgui_internal_renderer_query_proxy_restore_ticket(session, requestId, inout ticket)
+    }
+    return (status, InternalRendererProxyRestoreTicket(status, ticket))
+}
+
+/// 窗口采纳成功后的唯一消费点（与 native 的截止/取消竞争同一张票据，只有一个胜者）。
+/// 返回 false 表示这张票据已不属于当前恢复（被终结/被取代/落点不符），调用方必须
+/// 保留恢复意图并按有界重试重新签发，不得计成功。
+func internalRendererConsumeProxyRestoreTicket(session: UInt64, requestId: UInt64,
+    adoptedStart: Int64, adoptedEnd: Int64): Bool {
+    if (requestId == 0u64 || adoptedStart < 0 || adoptedEnd < adoptedStart ||
+        adoptedEnd > CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT) {
+        return false
+    }
+    var consumed: Int32 = 0
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        status = cjgui_internal_renderer_consume_proxy_restore_ticket(session, requestId,
+            UInt32(adoptedStart), UInt32(adoptedEnd), inout consumed)
+    }
+    return status == CJGUI_INTERNAL_RENDERER_OK && consumed == 1
 }
 
 func internalRendererCancelComposablePointerCapture(session: UInt64): Int32 {

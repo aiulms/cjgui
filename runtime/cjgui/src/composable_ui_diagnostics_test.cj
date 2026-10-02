@@ -74,3 +74,52 @@ func diagnosticsAcceptedPaginationRemovalAndReopen(): Unit {
     @Assert(reopened.overlayEnabled, false)
     window.close()
 }
+
+@Test
+func diagnosticsTimingIsOptInBoundedAndDoesNotRefresh(): Unit {
+    let owner = DiagnosticAcceptedController()
+    let window = CjguiComposableUiWindow(owner)
+    @Assert(window.start(), true)
+
+    let disabled = window.diagnosticSnapshot(maximumNodes: 1)
+    @Assert(disabled.timingEnabled, false)
+    @Assert(disabled.timingStatus, "disabled")
+    @Assert(disabled.timingClockSource, "unavailable")
+    @Assert(disabled.positionPrepareCount, -1)
+    @Assert(disabled.positionQueryCount, -1)
+    @Assert(disabled.positionLineBuildCount, -1)
+    @Assert(disabled.positionCacheHitCount, -1)
+
+    let accepted = disabled.acceptedSceneVersion
+    let submitted = disabled.submittedSceneVersion
+    let submissions = disabled.nativeSubmissionCount
+    @Assert(window.setTimingDiagnostics(true), true)
+    let enabled = window.diagnosticSnapshot(maximumNodes: 1)
+    @Assert(enabled.timingStatus, "enabled")
+    @Assert(enabled.timingClockSource, "mach_continuous_time")
+    @Assert(enabled.timingSessionIdentity, enabled.sessionIdentity)
+    @Assert(enabled.timingAcceptedSceneVersion, accepted)
+    @Assert(enabled.acceptedSceneVersion, accepted)
+    @Assert(enabled.submittedSceneVersion, submitted)
+    @Assert(enabled.nativeSubmissionCount, submissions)
+    @Assert(enabled.timingReadCount > 0, true)
+
+    owner.showSelected = false
+    owner.revision += 1
+    @Assert(window.refresh(), true)
+    let measured = window.diagnosticSnapshot(maximumNodes: 1)
+    @Assert(measured.timingStatus, "enabled")
+    @Assert(measured.timingAcceptedSceneVersion, measured.acceptedSceneVersion)
+    @Assert(measured.buildNanoseconds >= 0, true)
+    @Assert(measured.layoutNanoseconds >= 0, true)
+    @Assert(measured.nativeStageAndSubmitNanoseconds >= 0, true)
+
+    @Assert(window.setTimingDiagnostics(false), true)
+    let disabledAgain = window.diagnosticSnapshot(maximumNodes: 1)
+    @Assert(disabledAgain.timingStatus, "disabled")
+    @Assert(disabledAgain.buildNanoseconds, -1)
+    @Assert(disabledAgain.layoutNanoseconds, -1)
+    @Assert(disabledAgain.nativeStageAndSubmitNanoseconds, -1)
+    @Assert(disabledAgain.positionPrepareCount, -1)
+    window.close()
+}

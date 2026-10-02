@@ -44,6 +44,57 @@ public class CjguiThermostatGeneratedBinding <: CjguiGeneratedUiRegionBinding {
 
     public func appliedText(fieldId: String): String { return draftText(fieldId) }
 
+    // R3（h-source-preview-followup 2026-10-02）：备注字段接入生成范围会话的
+    // owner 事务文本写。系统输入经框架通用桥（CjguiGeneratedFieldRangeSession）
+    // 以精确范围到达这里的 applyTextEdit；规则（可空、≤64 标量）与公开
+    // SET_NOTE 完全同一条 owner 事务，不建第二写路径。
+    public func rangeTextEditSupported(fieldId: String): Bool {
+        return fieldId == "note"
+    }
+
+    public func fieldTextVersion(fieldId: String): Int64 {
+        return if (fieldId == "note") { ownerRevision() } else { -1 }
+    }
+
+    public func applyTextEdit(fieldId: String, expectedVersion: Int64,
+        newText: String): CjguiRangeTextEditOutcome {
+        if (fieldId != "note") {
+            return CjguiRangeTextEditOutcome.rejected(-1, "text_edit_unsupported")
+        }
+        // 与 applyFieldIntent 同一入口/同一规则/同一版本校验（execute 内
+        // expectedVersion != versionValue → version_conflict）。
+        let result = domain.executeFromHuman(CjguiSharedOperationActionInvocation("SET_NOTE",
+            expectedVersion, ArrayList<Int64>([CjguiThermostatDomain.resourceId]),
+            ArrayList<CjguiSharedOperationActionArgument>([
+                CjguiSharedOperationActionArgument("text", CjguiSharedOperationValue.string(newText))
+            ])))
+        if (result.applied) {
+            return CjguiRangeTextEditOutcome.accepted(result.versionBefore, result.versionAfter)
+        }
+        if (result.isVersionConflict) {
+            return CjguiRangeTextEditOutcome.conflict(result.versionBefore, result.reason)
+        }
+        return CjguiRangeTextEditOutcome.rejected(result.versionBefore, result.reason)
+    }
+
+    public func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64,
+        action: () -> Bool): Bool {
+        if (fieldId != "note" || ownerRevision() != expectedVersion) {
+            return false
+        }
+        // owner 循环单线程串行：版本核对与 action 之间无并发写（外部请求经
+        // 同一 serveOnce 分发，人与系统输入同队列）。
+        return action()
+    }
+
+    public func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64,
+        startByte: Int64, endByte: Int64): ?(Int64, Int64, Int64) {
+        if (fieldId != "note") {
+            return None
+        }
+        return domain.rebaseNoteSelection(fromVersion, startByte, endByte)
+    }
+
     public func draftBoolean(fieldId: String): ?Bool {
         return if (fieldId == "eco") { Some(domain.thermostatSnapshot().eco) } else { None }
     }

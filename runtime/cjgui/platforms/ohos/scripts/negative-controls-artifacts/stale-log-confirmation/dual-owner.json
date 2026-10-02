@@ -1,0 +1,25 @@
+{
+  "steps": [],
+  "identity": {
+    "pid": 11,
+    "bundle": "controlled"
+  },
+  "log_cursor0": 3,
+  "fixture_reset": true,
+  "note_resource_id": 1001,
+  "a_freeze": {
+    "main_version": 1,
+    "main_hex": "616263",
+    "note_hex": "616263646566"
+  },
+  "toggle_evidence": {
+    "mode": "preview"
+  },
+  "b_freeze": {
+    "note_version": 2,
+    "note_bytes": 6,
+    "main_version": 1
+  },
+  "status": "b_install_unconfirmed",
+  "b_install_selection": null
+}

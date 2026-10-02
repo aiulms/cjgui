@@ -86,6 +86,27 @@ typedef enum CjguiInternalRendererStatus {
     // 只能阻止槽位误认领，不能证明原事务结算完成；旧实例身份也不得在资源仍
     // 存活时被复用。
     CJGUI_INTERNAL_RENDERER_PENDING_SETTLEMENT_UNRESOLVED = 21,
+    // The requested byte offset does not name a grapheme cluster boundary
+    // candidate (it splits a UTF-8 scalar, or sits past the buffer end), so no
+    // cluster range can be proven for it. Distinct from INVALID_UTF8: the
+    // buffer itself decoded fine.
+    CJGUI_INTERNAL_RENDERER_GRAPHEME_BOUNDARY_INVALID = 24,
+    // The platform text service cannot answer grapheme-cluster queries on this backend, so NO
+    // cluster can be named. A named refusal, never a scalar fallback: the caller keeps the
+    // original text and reports this state (OHOS text-service bridging is not wired yet).
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED = 32,
+    // The caller's expected accepted-scene version no longer matches the
+    // staged scene: the query's position identity is stale, the caller must
+    // re-resolve against the current scene instead of using mixed facts.
+    CJGUI_INTERNAL_RENDERER_SCENE_STALE = 33,
+    // A display-range query named a byte that is not a strict UTF-8 boundary
+    // (mid-scalar) or lies past the staged text: the caller keeps the text and
+    // the original selection, never a clamped stand-in (M1 contract).
+    CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID = 34,
+    // The visual-navigation query could not enumerate the caret line's
+    // insertion points within the bounded budget: no neighbor is named, the
+    // caller keeps caret and selection (M2 contract; never a half-line scan).
+    CJGUI_INTERNAL_RENDERER_VISUAL_NAV_UNSUPPORTED = 35,
     CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR = 99
 } CjguiInternalRendererStatus;
 
@@ -189,6 +210,9 @@ typedef enum CjguiInternalRendererEventKind {
     // existing TEXT_CHANGED event; a range-text consumer uses this one and never
     // has to diff the full text.
     CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED = 51,
+    // A secondary pointer press is a context-menu request against the exact
+    // accepted scene target. It never changes focus, selection or activation.
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST = 56,
     // One platform composition phase (IME marked text) routed to the single
     // window-owned Cangjie text session bound to this node. `formText` carries
     // the preedit on update (phase 1) or the final text on commit (phase 2);
@@ -409,6 +433,28 @@ typedef struct CjguiInternalRendererDiagnosticWorkload {
     uint64_t textTextureLiveBytes;
     uint64_t textCandidatePeakBytes;
 } CjguiInternalRendererDiagnosticWorkload;
+
+// Fixed-size opt-in per-session timing totals. Durations are nanoseconds from
+// mach_continuous_time; counts retain one window's position work only.
+typedef struct CjguiInternalRendererDiagnosticTiming {
+    uint64_t sceneVersion;
+    uint64_t frameIndex;
+    uint32_t enabled;
+    uint32_t clockAvailable;
+    uint64_t positionPrepareCount;
+    uint64_t positionQueryCount;
+    uint64_t positionLineBuildCount;
+    uint64_t positionCacheHitCount;
+    uint64_t positionPrepareNanoseconds;
+    uint64_t positionQueryNanoseconds;
+    uint64_t positionLineBuildNanoseconds;
+    uint64_t encodeNanoseconds;
+    uint64_t submitNanoseconds;
+    uint64_t rasterNanoseconds;
+    uint64_t uploadNanoseconds;
+    uint64_t readCount;
+    uint64_t readNanoseconds;
+} CjguiInternalRendererDiagnosticTiming;
 
 // P4 system window background projection. This is an internal POD mirror;
 // AppKit host installation is not a claim that physical pixels were observed.
@@ -803,6 +849,14 @@ cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint
                                                           int64_t resourceId, uint32_t nodeKind,
                                                           uint64_t bindingEpoch, uint32_t enabled);
 
+// Install or withdraw one accepted Cangjie context-menu outside-click guard.
+// The guard is session-scoped and identifies the layer through its accepted
+// focus scope and root target; it does not extend the scene/event POD layout.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_context_menu_guard(uint64_t session, uint64_t sceneVersion,
+    uint64_t layerScope, uint64_t requestId, uint64_t layerNodeId, int64_t resourceId,
+    uint32_t nodeKind, int64_t x, int64_t y, int64_t width, int64_t height, uint32_t enabled);
+
 // Roll back the hidden text proxy after the application refused a human range
 // edit. Only restores text the owner already accepted; fails (and changes
 // nothing) when the target is not the active node, the accepted value no longer
@@ -1011,6 +1065,11 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_diagnostic_workload(
     uint64_t session, CjguiInternalRendererDiagnosticWorkload *outWorkload);
 CjguiInternalRendererStatus
+cjgui_internal_renderer_set_diagnostic_timing(uint64_t session, uint32_t enabled);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_diagnostic_timing(
+    uint64_t session, CjguiInternalRendererDiagnosticTiming *outTiming);
+CjguiInternalRendererStatus
 cjgui_internal_renderer_set_diagnostic_overlay(
     uint64_t session, uint32_t flags, uint64_t selectedNodeId, uint8_t hasSelection);
 
@@ -1037,7 +1096,43 @@ cjgui_internal_renderer_window_frame(uint64_t session, int64_t *outX, int64_t *o
 CjguiInternalRendererStatus
 cjgui_internal_renderer_hit_test_composable_text(uint64_t session, uint64_t nodeId,
                                                  double x, double y,
+                                                 uint64_t expectedSceneVersion,
                                                  uint32_t *outByteOffset, uint32_t *outAffinity);
+
+// ---- 版本化停靠点查询（Astra 正式裁决；旧 byte+affinity 查询为兼容投影） ----
+// 把 (displayByte, branchIn[0=Upstream,1=Downstream,2=AUTO→primary 优先]) 解析为
+// accepted 排版内的停靠点；输出停靠点字节/分支/所在行首字符与行长/显示 x。
+// 软折行边界的 Upstream 分支按上一折出行解析；请求分支不可得具名拒绝。
+CjguiInternalRendererStatus
+cjgui_internal_renderer_text_position_v1(uint64_t session, uint64_t nodeId,
+    uint64_t expectedSceneVersion, uint32_t op, int64_t displayByte, uint32_t renderSide,
+    uint64_t layoutLease, uint64_t stopId, uint32_t direction,
+    double x, double y, uint64_t *meta, double *rect);
+// v1 operations: 0 resolve, 1 hit, 2 horizontal, 3 vertical; direction=0 left/up.
+// meta[8]: lease, stop, byte, renderSide, platformBranch, lineGlyphStart,
+// UTF-16 boundary, provedBoundary. rect[4]: scene x,y,width,height.
+// These integers are identities, never native pointers. Layout ownership stays
+// with the accepted node; a relayout invalidates its lease and stop table.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_text_position_stats_v1(uint64_t session, uint64_t *counts);
+// counts[4]: process-local prepares, queries, line builds, cache hits. Normal
+// builds expose counts; durations are explicitly unavailable.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_text_stop_resolve(uint64_t session, uint64_t nodeId,
+                                           int64_t displayByte, uint32_t branchIn,
+                                           uint64_t expectedSceneVersion,
+                                           uint32_t *outByte, uint32_t *outBranch,
+                                           uint32_t *outLineFirstChar,
+                                           uint32_t *outLineLength, double *outX);
+
+// 停靠点视觉邻位：从当前停靠点出发，同行按 primary+alternate 合并显示序取相邻
+// 条目（alternate 独有条目是一次合法停靠），行端按硬/软换行规则跨行；已证实
+// 排版边缘透传 (原字节, 原分支)。
+CjguiInternalRendererStatus
+cjgui_internal_renderer_text_stop_neighbor(uint64_t session, uint64_t nodeId,
+                                            int64_t displayByte, uint32_t branchIn,
+                                            uint32_t left, uint64_t expectedSceneVersion,
+                                            uint32_t *outByte, uint32_t *outBranch);
 
 // Install the style runs of one scene node. `encoded` is
 // "start:end:fontSize:weight:family:r:g:b:a;..." in display byte offsets.

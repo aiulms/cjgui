@@ -13,27 +13,44 @@ import unittest
 
 
 RENDERER = Path(__file__).resolve().parents[1] / "host" / "ohos_renderer.cpp"
-FUNCTION_START = "static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)"
+FUNCTION_START = "static void pushPendingEndLocked("
+FUNCTION_SECOND = "static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)"
 FUNCTION_END = "// 一次性裁决一张未 ACK 的票据"
+
+
+def extract_braced(source: str, signature: str) -> str:
+    start = source.index(signature)
+    opening = source.index("{", start)
+    depth = 0
+    for index in range(opening, len(source)):
+        depth += (source[index] == "{") - (source[index] == "}")
+        if depth == 0:
+            return source[start:index + 1]
+    raise ValueError("unterminated method")
 
 
 def production_function() -> str:
     source = RENDERER.read_text(encoding="utf-8")
-    start = source.index(FUNCTION_START)
+    push = extract_braced(source, FUNCTION_START)
+    clamp = extract_braced(source,
+        "uint32_t clampToCodePointBoundary(const std::u16string &text, uint32_t offset)")
+    start = source.index(FUNCTION_SECOND)
     end = source.index(FUNCTION_END, start)
-    return source[start:end]
+    return clamp + "\n\n" + push + "\n\n" + source[start:end]
 
 
 HARNESS_PREFIX = r"""
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
 #include <iostream>
 
 #define RLOGI(...) ((void)0)
+#define RLOGW(...) ((void)0)
 
 struct NodePod {
     uint64_t nodeId = 51;
@@ -43,6 +60,7 @@ struct NodePod {
     uint32_t isInteractive = 1;
     uint32_t preservesActiveLocalText = 0;
     uint64_t projectionVersion = 11;
+    uint64_t acceptedBindingEpoch = 1;
 };
 struct SceneNode {
     NodePod pod;
@@ -50,14 +68,29 @@ struct SceneNode {
     std::string value = "owner";
 };
 struct Session {
+  uint32_t textMenuIntent=0;
+  bool caretBlinkResetPending=false;
+  int32_t caretAffinity=0;
+  bool humanCaretNotificationPending=false;
     bool editing = true;
+    bool ownsTextSession = false;
     std::vector<SceneNode> accepted{SceneNode{}};
     uint64_t editingNodeId = 51;
     int64_t editingResourceId = 9700;
     uint32_t editingNodeKind = 5;
     std::string editingFieldName = "generated-name";
-    bool pendingImeDetach = false;
-    bool pendingSettleOnDetach = false;
+    // R1（2026-10-02）：与生产对齐——完整绑定身份 + 出生票据 lineage + 待发
+    // end 队列（旧 pendingImeDetach/pendingSettleOnDetach 单槽已退役）。
+    uint64_t editingAcceptedBindingEpoch = 1;
+    uint64_t editingBornTicketId = 0;
+    uint64_t acceptedPaintTicketId = 0;
+    uint64_t acceptedProjectionVersion = 0;
+    struct PendingEnd {
+        int64_t contextId = 0;
+        std::string fieldName;
+        bool settleOnDelivery = false;
+    };
+    std::deque<PendingEnd> pendingEnds;
     bool editorRetired = false;
     bool editingContextLive = true;
     bool previewActive = true;
@@ -75,6 +108,8 @@ struct Session {
     bool focusNotifyPending = false;
 };
 
+static bool editorOwnsTextSession(const Session &s) { return s.ownsTextSession; }
+
 static std::u16string utf8ToUtf16(const std::string &value) {
     return std::u16string(value.begin(), value.end());
 }
@@ -85,6 +120,15 @@ struct RenderQueue {
 };
 static RenderQueue g_render;
 static std::atomic<int64_t> g_nextEditingContextId{100};
+
+// N1 之后，被测 reconcile 在换绑 / 外部换版 / 节点消失三条路径上都要取消在飞的
+// 恢复票据。票据机制本身由 test_text_proxy_recovery_native.py 覆盖，这里用记录型
+// 桩：取消理由进入输出，失败时可回看，不做静默 no-op。
+static std::vector<std::string> g_cancelledRestoreReasons;
+static void cancelProxyRestoreRequest(Session &s, const char *reason) {
+    (void)s;
+    g_cancelledRestoreReasons.push_back(reason == nullptr ? "" : reason);
+}
 """
 
 
@@ -97,12 +141,24 @@ int main(int argc, char **argv) {
         s.accepted[0].semanticId = "another-field";
     } else if (scenario == "authorized_reorder") {
         s.accepted[0].pod.preservesActiveLocalText = 1;
+    } else if (scenario == "owned_same_value_external") {
+        s.ownsTextSession = true;
+        s.previewActive = false;
+        s.editingText = u"owner";
+    } else if (scenario == "unowned_same_value") {
+        s.previewActive = false;
+        s.editingText = u"owner";
     } else if (scenario != "reorder" && scenario != "same_value_external") {
         return 3;
     }
     syncEditingBufferAfterAcceptedSceneLocked(&s);
     std::string draft(s.editingText.begin(), s.editingText.end());
     std::string preview(s.previewText.begin(), s.previewText.end());
+    std::string cancelLog;
+    for (const std::string &reason : g_cancelledRestoreReasons) {
+        if (!cancelLog.empty()) cancelLog += "|";
+        cancelLog += reason;
+    }
     std::cout << "context=" << s.editingContextId
               << " base=" << s.editingContextBaseVersion
               << " projection=" << s.editingProjectionVersion
@@ -111,7 +167,8 @@ int main(int argc, char **argv) {
               << " preview=" << (s.previewActive ? preview : "none")
               << " old_context=" << s.reconcileOldContextId
               << " reconcile=" << s.reconcileNotifyPending
-              << " detach=" << s.pendingImeDetach << "\n";
+              << " detach=" << (s.pendingEnds.empty() ? 0 : 1)
+              << " cancel=" << (cancelLog.empty() ? "none" : cancelLog) << "\n";
 }
 """
 
@@ -153,7 +210,9 @@ class GeneratedReorderEditingContextTest(unittest.TestCase):
         self.assertEqual(state["base"], "11")
         self.assertEqual(state["projection"], "11")
         self.assertEqual(state["draft"], "owner")
-        self.assertEqual(state["selection"], "5,5")
+        # R3（2026-10-01 已并入生产）：上下文重建按新正文长度收敛并**保持**
+        # 非空选区（原"重置为末尾 caret"正是中段选区双切换后折叠的根源）。
+        self.assertEqual(state["selection"], "2,5")
         self.assertEqual(state["preview"], "none")
         self.assertEqual(state["reconcile"], "1")
 
@@ -161,7 +220,7 @@ class GeneratedReorderEditingContextTest(unittest.TestCase):
         state = self.state("same_value_external")
         self.assertNotEqual(state["context"], "7")
         self.assertEqual(state["draft"], "owner")
-        self.assertEqual(state["selection"], "5,5")
+        self.assertEqual(state["selection"], "2,5")  # 同上：重建保持非空选区
         self.assertEqual(state["preview"], "none")
         self.assertEqual(state["old_context"], "7")
         self.assertEqual(state["reconcile"], "1")
@@ -173,6 +232,17 @@ class GeneratedReorderEditingContextTest(unittest.TestCase):
         self.assertEqual(state["draft"], "owner-draft")
         self.assertEqual(state["selection"], "2,5")
         self.assertEqual(state["preview"], "preview")
+
+    def test_owned_same_value_external_requires_explicit_local_admission(self) -> None:
+        state = self.state("owned_same_value_external")
+        self.assertNotEqual(state["context"], "7")
+        self.assertEqual(state["reconcile"], "1")
+        self.assertEqual(state["cancel"], "external_version")
+
+    def test_unowned_same_value_legacy_continuation_is_preserved(self) -> None:
+        state = self.state("unowned_same_value")
+        self.assertEqual(state["context"], "7")
+        self.assertEqual(state["reconcile"], "0")
 
     def test_same_key_changed_binding_retires_old_context(self) -> None:
         state = self.state("rebind")

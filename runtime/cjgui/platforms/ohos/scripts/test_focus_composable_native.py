@@ -32,6 +32,8 @@ def extract_function(source: str, signature: str) -> str:
 def harness() -> str:
     source = SOURCE.read_text(encoding="utf-8")
     functions = []
+    # 生产聚焦入口用这个谓词判定"可编辑文本 kind"（含多行正文），必须先于调用者摘出。
+    functions.append(extract_function(source, "bool isEditableTextKind(uint32_t kind)"))
     helper = "static CjguiInternalRendererStatus focusComposableNodeLocked("
     if helper in source:
         functions.append(extract_function(source, helper))
@@ -41,7 +43,7 @@ def harness() -> str:
     if checked in source:
         functions.append(extract_function(source, checked))
     body = "\n\n".join(functions)
-    names = ["kKindTextInput", "kKindIntegerInput"]
+    names = ["kKindTextInput", "kKindIntegerInput", "kKindMultiline"]
     if "kEvFocus" in body:
         names.append("kEvFocus")
     constants = "\n".join(re.search(rf"^constexpr uint32_t {name} = \d+;", source, re.M).group()

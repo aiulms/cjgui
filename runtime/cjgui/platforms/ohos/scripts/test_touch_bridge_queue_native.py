@@ -51,7 +51,10 @@ int main() {
             path = pathlib.Path(directory) / "touch_queue.cpp"
             binary = pathlib.Path(directory) / "touch_queue"
             path.write_text(harness)
-            subprocess.run(["clang++", "-std=c++11", "-Wall", "-Wextra", "-Werror",
+            # 生产 TouchRecord 已带 NSDMI 默认成员（timestampNs/timeSource），
+            # C++11 下不再是聚合体，位置初始化会编译失败。宿主桥按 OHOS clang
+            # 默认标准（≥C++14）构建，harness 对齐 C++17 与生产同一语义。
+            subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
                             "-Wno-unused-const-variable", "-Wno-unused-function",
                             str(path), "-o", str(binary)], check=True)
             return subprocess.run([str(binary)], text=True, capture_output=True)

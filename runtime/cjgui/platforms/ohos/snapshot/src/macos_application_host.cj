@@ -896,6 +896,13 @@ public class CjguiMacosApplicationHost {
             close()
             return false
         }
+        // H2（astra 共同宿主推进）：滚动活动由共同宿主在每个回合推进一次——
+        // `changed` 请求本回合刷新（末帧交付），`active` 经调度器把等待预算
+        // 缩到 0 形成有界唤醒；样例不再各自 step（labs 已退役本地推进）。
+        let activity = composableWindow.stepWindowActivities(MonoTime.now())
+        if (activity.changed) {
+            composableWindow.requestRefresh()
+        }
         if (let Some(connection) <- externalConnection) {
             let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternal(composableWindow, connection)
         } else {

@@ -5,18 +5,23 @@ import inputMethod from '@ohos.inputMethod';
 import entryNapi from 'libentry.so';
 // 官方互操作导入：经 ark_interop_loader 加载仓颉模块并完成运行时初始化。
 import { probeRuntime, probeMagic } from 'libcjgui_app.so';
-import { CjguiTextProxyRegistry, CjguiTextProxyMount, CjguiTextProxyBridge } from '../proxy/cjgui-text-proxy';
+import { CjguiTextProxyRegistry, CjguiTextProxyMount, CjguiTextProxyBridge, CjguiProxyInstallTask as ProxyRestoreTask } from '../proxy/cjgui-text-proxy';
+import { CjguiTextSelectionMenu, CjguiMenuSnapshot } from '../proxy/cjgui-text-menu';
 
 const TAG: string = 'CjguiApp';
 const DOMAIN: number = 0x0000;
 
 // 渲染器焦点请求负载：只带不透明上下文编号、字段名与动作类型，平台不解释几何。
 // action 缺省视为 "focus"（向后兼容无 action 的旧负载）。
+// action="caret"：native 移动了落点（命中/长按全选/编辑命令），载荷带该 UTF-16
+// 选区，由壳装回当前代理并经组件观测收口。
 interface ImeFocusPayload {
   action?: string;
   context: number;
   field: string;
   oldContext?: number;
+  selStart?: number;
+  selEnd?: number;
 }
 
 interface ImeReconcilePending {
@@ -62,6 +67,10 @@ interface ImeInputCapabilities {
 
 // C：桥接适配器（ArkTS 严格模式要求类实现，不接受对象字面量）。
 class EntryNapiTextProxyBridge implements CjguiTextProxyBridge {
+  grapheme(contextId: number, text: string, offset16: number): string {
+    return entryNapi.imeGraphemeRange(text, offset16, contextId) as string;
+  }
+
   preview(contextId: number, text: string): string {
     return entryNapi.imePreviewText(text, contextId) as string;
   }
@@ -218,6 +227,21 @@ struct Index {
   private proxyFocused: boolean = false;
   // 旧 TextInput 必须真正卸载后才从外部换版的新 context 重新挂载。
   private pendingReconcile: ImeReconcilePending | null = null;
+  // native 落点安装槽（native→平台）。两个来源：挂载时按上下文快照装初值；native
+  // 推 action=caret（命中、长按全选、编辑命令移动了落点）时装新值。平台把新聚焦
+  // TextInput 的光标重置到末尾（华为 FAQ），不装回代理就会覆盖 native 刚落账的
+  // caret/选区，人的下一次键入落在代理的旧偏移上。安装结果一律由组件自己的
+  // onTextSelectionChange 观测收口，回声经 imeSetSelection 把「平台已安装」这一
+  // 事实带回渲染器；没有观测到目标区间就不算安装成功（有界重投后具名失败）。
+  private imeTextController: TextInputController = new TextInputController();
+  private imeSelStart: number = -1;
+  private imeSelEnd: number = -1;
+  private proxyRestoreTask: ProxyRestoreTask | null = null;
+  private proxySelMount: CjguiTextProxyMount | null = null;
+  private proxySelStart: number = -1;
+  private proxySelEnd: number = -1;
+  // seq 让上一次安装的重投在新目标到来后立刻失效。
+  private proxySelSeq: number = 0;
 
   // C：框架公共文字代理注册表（ProxyKey 五元冻结身份 + 单槽 current 校验）。
   // 桥接能力在此适配 entryNapi；模板不直接依赖具体桥。
@@ -368,6 +392,7 @@ struct Index {
       // 复核第 3 项），迟到/退役实例的回调绝不借 currentMount() 改名。
       if (this.imeCtx !== 0) {
         this.proxyTextInput(this.imeMount)
+        CjguiTextSelectionMenu({ context: this.imeCtx, onInstall: (ctx: number) => this.onMenuInstalled(ctx) })
       }
     }
     .width('100%')
@@ -386,10 +411,11 @@ struct Index {
   @Builder
   proxyTextInput(m: CjguiTextProxyMount | null) {
     if (m !== null) {
-      TextInput({ text: this.imeText })
+      TextInput({ text: this.imeText, controller: this.imeTextController })
         .id(m.controlId)
         .enablePreviewText(true)
-        .opacity(0.01)
+        .opacity(0)
+        .selectionMenuHidden(true)
         .position({ x: this.imeX, y: this.imeY })
         .width(this.imeW)
         .height(this.imeH)
@@ -407,45 +433,28 @@ struct Index {
           this.status = `editing ${m.fieldId}: 已聚焦，请直接打字（回车提交）`;
           hilog.info(DOMAIN, TAG, 'ime proxy FOCUSED field=%{public}s mount=%{public}s',
             m.fieldId, m.key.describe());
-        })
-        .onChange((value: string, previewText?: PreviewText) => {
-          const composing: boolean = previewText !== undefined && previewText !== null
-            && previewText.value !== undefined && previewText.value.length > 0;
-          if (composing) {
-            hilog.info(DOMAIN, TAG, 'ime proxy composition len=%{public}d offset=%{public}d',
-              previewText!.value.length, previewText!.offset ?? 0);
+          if (this.proxySelMount === m) {
+            // 聚焦达成的这一帧平台把光标推到末尾：按上下文立刻重装一次。
+            this.installProxySelection(m, this.proxySelStart, this.proxySelEnd, 0,
+              this.proxySelSeq, 'focus');
           }
-          const verdict: string = this.proxyRegistry.onChange(m, value, previewText);
-          hilog.info(DOMAIN, TAG, 'ime proxy onChange len=%{public}d verdict=%{public}s mount=%{public}s',
-            value.length, verdict, m.key.describe());
-          if (verdict === 'ok') {
-            this.imeText = m.draft;
-          } else if (verdict === 'rejected') {
-            this.imeLastClosedCtx = m.key.contextId;
-            if (this.imeCtx === m.key.contextId) {
-              this.imeMount = null;
-              this.imeCtx = 0;
-              this.mountedBaseVersion = 0;
-              this.mountedNodeId = 0;
-            }
-            this.status = `editing closed: preview rejected`;
-          }
-          // 'stale'：迟到/退役实例，仅日志，当前挂载与显示不受影响。
         })
+        .onWillInsert((): boolean => this.proxyRegistry.onWillInsert(m))
+        .onWillChange((value: EditableTextChangeValue): boolean => this.proxyRegistry.onWillChange(m, value))
+        .onWillDelete((value: DeleteValue): boolean => {
+          const actual = this.imeTextController.getSelection();
+          return this.proxyRegistry.onWillDelete(m, value, actual.start ?? -1, actual.end ?? -1,
+            this.proxyRestoreTask === null && this.proxySelMount === null,
+            (start: number, end: number) => this.imeTextController.deleteText({ start: start, end: end }));
+        })
+        .onChange((value: string, previewText?: PreviewText) => this.onProxyTextChange(m, value, previewText))
         .onSubmit(() => {
           const verdict: string = this.proxyRegistry.submitAndFinish(m, 'submit');
           hilog.info(DOMAIN, TAG, 'ime proxy submit verdict=%{public}s mount=%{public}s',
             verdict, m.key.describe());
           this.recordProxyFinish(m, verdict, 'submit');
         })
-        .onTextSelectionChange((selectStart: number, selectEnd: number) => {
-          // C selection：真实选区变化 → 渲染器；身份用创建时的 m，不用当前 imeCtx。
-          if (this.proxyRegistry.isCurrent(m)) {
-            const rc: string = entryNapi.imeSetSelection(selectStart, selectEnd, m.key.contextId) as string;
-            hilog.info(DOMAIN, TAG, 'ime select [%{public}d,%{public}d) rc=%{public}s mount=%{public}s',
-              selectStart, selectEnd, rc, m.key.describe());
-          }
-        })
+        .onTextSelectionChange((selectStart: number, selectEnd: number) => this.onProxySelectionChange(m, selectStart, selectEnd))
         .onBlur(() => {
           if (!this.proxyRegistry.isCurrent(m)) {
             hilog.info(DOMAIN, TAG, 'ime stale blur ignored mount=%{public}s', m.key.describe());
@@ -522,8 +531,9 @@ struct Index {
     let ctx: number = 0;
     let oldContext: number = 0;
     let action: string = 'focus';
+    let parsed: ImeFocusPayload | null = null;
     try {
-      const parsed: ImeFocusPayload = JSON.parse(payload) as ImeFocusPayload;
+      parsed = JSON.parse(payload) as ImeFocusPayload;
       ctx = parsed.context;
       oldContext = parsed.oldContext ?? 0;
       if (parsed.action !== undefined && parsed.action.length > 0) {
@@ -536,6 +546,15 @@ struct Index {
 
     if (action === 'reconcile') {
       this.onReconcileRequest(oldContext, ctx);
+      return;
+    }
+
+    // native 落点推送：命中、长按全选与编辑命令都会移动 caret/选区，装回当前代理，
+    // 人不需要重新点焦就能在命中处继续打字，平台也才真正持有这段选区。
+    if (action === 'caret') {
+      if (parsed !== null) {
+        this.onProxyCaret(parsed);
+      }
       return;
     }
 
@@ -749,6 +768,10 @@ struct Index {
   }
 
   private mountEditingSnapshot(snap: ImeSnapshot): void {
+    const staleTask = this.proxyRestoreTask;
+    if (staleTask !== null) staleTask.terminal = true;
+    this.proxyRestoreTask = null;
+
     const appInstance: number = this.readHostAppInstance();
     if (appInstance <= 0 || !Number.isSafeInteger(snap.sessionToken) || snap.sessionToken <= 0) {
       hilog.warn(DOMAIN, TAG, 'ime mount rejected: app/session identity unavailable');
@@ -788,6 +811,7 @@ struct Index {
     this.imeCtx = snap.context;
     this.proxyFocused = false;
     this.requestProxyFocus(mount, 0);
+    this.armProxySelection(mount, snap.selStart, snap.selEnd, 'mount');
   }
 
   // requestFocus 只设置 ArkUI 焦点，不会附加系统输入法会话：模拟器/真机的
@@ -822,6 +846,351 @@ struct Index {
     setTimeout(() => {
       this.requestProxyFocus(mount, attempt + 1);
     }, 100 * (attempt + 1));
+  }
+
+  private armProxySelection(mount: CjguiTextProxyMount, start: number, end: number,
+    reason: string): void {
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+      hilog.info(DOMAIN, TAG, 'ime proxy selection not installable reason=%{public}s start=%{public}s end=%{public}s',
+        reason, String(start), String(end));
+      return;
+    }
+    this.proxySelMount = mount;
+    this.proxySelStart = start;
+    this.proxySelEnd = end;
+    this.proxySelSeq += 1;
+    this.installProxySelection(mount, start, end, 0, this.proxySelSeq, reason);
+  }
+
+  // 有界重投：焦点达成的那一帧平台会把光标推到末尾，早装会被随后的重置覆盖，
+  // 因此按挂载身份重投至多 3 次；观测到目标值即由 onTextSelectionChange 终结。
+  private installProxySelection(mount: CjguiTextProxyMount, start: number, end: number,
+    attempt: number, seq: number, reason: string): void {
+    if (seq !== this.proxySelSeq || this.proxySelMount !== mount ||
+      !this.proxyRegistry.isCurrent(mount)) {
+      return; // 已被新目标/新挂载/收尾取代的过期定时器
+    }
+    if (this.proxyRestoreTask !== null) {
+      this.proxySelMount = null;
+      return;
+    }
+    try {
+      this.imeTextController.setTextSelection(start, end, { menuPolicy: MenuPolicy.HIDE });
+      hilog.info(DOMAIN, TAG,
+        'ime proxy selection set [%{public}d,%{public}d) reason=%{public}s attempt=%{public}d focused=%{public}s',
+        start, end, reason, attempt, this.proxyFocused ? 'true' : 'false');
+    } catch (err) {
+      this.proxySelMount = null;
+      hilog.warn(DOMAIN, TAG, 'ime proxy selection threw reason=%{public}s err=%{public}s',
+        reason, String(err));
+      return;
+    }
+    // 同值 setter 可不产生 onTextSelectionChange。聚焦且仍属本挂载时读组件
+    // 实际落点；只把精确命中的观测交给冻结 context，绝不以请求值充当回声。
+    if (this.proxyFocused && this.proxySelMount === mount && this.proxyRegistry.isCurrent(mount)) {
+      try {
+        const actual = this.imeTextController.getSelection();
+        if (actual !== undefined && actual !== null && actual.start === start && actual.end === end) {
+          const rc: string = entryNapi.imeSetSelection(actual.start ?? -1, actual.end ?? -1,
+            mount.key.contextId) as string;
+          if (rc === '0') {
+            this.imeSelStart = actual.start ?? -1;
+            this.imeSelEnd = actual.end ?? -1;
+            this.proxyRegistry.observeSelection(mount, this.imeSelStart, this.imeSelEnd);
+            this.proxySelMount = null;
+            hilog.info(DOMAIN, TAG,
+              'ime selection getter observed [%{public}d,%{public}d) rc=%{public}s reason=%{public}s',
+              this.imeSelStart, this.imeSelEnd, rc, reason);
+            return;
+          }
+        }
+      } catch (err) {
+        hilog.warn(DOMAIN, TAG, 'ime selection getter unavailable reason=%{public}s err=%{public}s',
+          reason, String(err));
+      }
+    }
+    if (attempt >= 3) {
+      this.proxySelMount = null;
+      hilog.warn(DOMAIN, TAG,
+        'ime proxy selection never observed reason=%{public}s target=[%{public}d,%{public}d) '
+        + 'observed=[%{public}d,%{public}d)',
+        reason, start, end, this.imeSelStart, this.imeSelEnd);
+      return;
+    }
+    setTimeout(() => {
+      this.installProxySelection(mount, start, end, attempt + 1, seq, reason);
+    }, 120 * (attempt + 1));
+  }
+
+  // native 落点推送（action=caret）：命中、长按全选与外部换版都会移动 caret，而代理
+  // 只按自己的事件更新落点。不装回代理，人的下一次键入就落在代理的旧偏移上，
+  // 平台也从未真正持有 native 选中的那段区间。
+  private onProxyTextChange(m: CjguiTextProxyMount, value: string, previewText?: PreviewText): void {
+    if (!this.proxyRegistry.isCurrent(m)) return;
+    // 程序回声判定：必须是**本次挂载**的回声且携带**本次请求的目标文本**。
+    // 旧挂载的回声先被拒；文本不同的（人真的打了字）照常走真实输入路径，
+    // 绝不能被一个全局门禁吞掉。
+    const task: ProxyRestoreTask | null = this.proxyRestoreTask;
+    if (task !== null && !task.terminal && task.mount === m && task.needsText &&
+      value === task.targetText) {
+      // 正文证据成立：只推进阶段，不发成功 ACK（选区还没装）。同一截止继续
+      // 覆盖后面的选择阶段，不重新计时。
+      task.textObserved = true;
+      m.draft = value;
+      this.proxyRestoreTask = task;
+      hilog.info(DOMAIN, TAG,
+        'ime proxy onChange is program echo req=%{public}d len=%{public}d kind=%{public}s', task.request, value.length, task.kind);
+      // 赋值把光标重置到末尾是平台的既有行为（华为 FAQ）：等这一帧的重置落定
+      // 再装选区，否则 setTextSelection 会被随后的重置覆盖。
+      setTimeout(() => {
+        this.beginSelectionPhase(task);
+      }, 30);
+      return;
+    }
+    if (task !== null && !task.terminal && task.mount === m && value !== task.targetText) {
+      // 真人输入先于程序回声到达：安装已被人的输入取代，如实回报失败，
+      // 让窗口按有界重试重新签发，而不是把这次变化当回声丢掉。
+      // 菜单已由 native 的同 owner FIFO 接受；首笔真人变更以该目标为基线。
+      if (task.kind === 'menu') m.draft = task.targetText;
+      task.terminal = true;
+      this.proxyRestoreTask = null;
+      hilog.info(DOMAIN, TAG,
+        'ime %{public}s superseded by human input req=%{public}d len=%{public}d',
+        task.kind, task.request, value.length);
+      this.ackProxyRestore(m.key.contextId, task.request, 0, 0, false, 'superseded_by_input');
+    }
+    const composing: boolean = previewText !== undefined && previewText !== null
+      && previewText.value !== undefined && previewText.value.length > 0;
+    if (composing) {
+      hilog.info(DOMAIN, TAG, 'ime proxy composition len=%{public}d offset=%{public}d',
+        previewText!.value.length, previewText!.offset ?? 0);
+    }
+    if (this.proxySelMount === m && value !== m.draft) {
+      // 真人改文优先于落点安装：不再把光标拉回 native 推来的旧位置。
+      this.proxySelMount = null;
+    }
+    const verdict: string = this.proxyRegistry.onChange(m, value, previewText);
+    hilog.info(DOMAIN, TAG, 'ime proxy onChange len=%{public}d verdict=%{public}s mount=%{public}s',
+      value.length, verdict, m.key.describe());
+    if (verdict === 'ok') {
+      this.imeText = m.draft;
+    } else if (verdict === 'rejected') {
+      this.imeLastClosedCtx = m.key.contextId;
+      if (this.imeCtx === m.key.contextId) {
+        this.imeMount = null;
+        this.imeCtx = 0;
+        this.mountedBaseVersion = 0;
+        this.mountedNodeId = 0;
+      }
+      this.status = `editing closed: preview rejected`;
+    }
+    // 'stale'：迟到/退役实例，仅日志，当前挂载与显示不受影响。
+  }
+
+  private onProxySelectionChange(m: CjguiTextProxyMount, selectStart: number, selectEnd: number): void {
+    // 先验挂载身份再记账：旧组件退役后的迟到选择事件不得写当前观测账本，
+    // 否则新挂载的待办会被上一代事件满足（H1-R 复核 e2 反例）。
+    if (!this.proxyRegistry.isCurrent(m)) {
+      hilog.info(DOMAIN, TAG, 'ime stale selection ignored [%{public}d,%{public}d) mount=%{public}s',
+        selectStart, selectEnd, m.key.describe());
+      return;
+    }
+    const task: ProxyRestoreTask | null = this.proxyRestoreTask;
+    if (task !== null && !task.terminal && task.mount === m) {
+      if (!task.textObserved) {
+        hilog.info(DOMAIN, TAG, 'ime %{public}s selection deferred before text echo req=%{public}d', task.kind, task.request);
+        return;
+      }
+      this.proxyRegistry.observeSelection(m, selectStart, selectEnd);
+      // 恢复进行中的选择事件属于安装观测流：用它触发按票据的复核，
+      // 不上报成人的导航，也不改写会话/书签。
+      hilog.info(DOMAIN, TAG, 'ime %{public}s selection observed [%{public}d,%{public}d) req=%{public}d',
+        task.kind, selectStart, selectEnd, task.request);
+      this.observeSelection(task);
+      return;
+    }
+    this.proxyRegistry.observeSelection(m, selectStart, selectEnd);
+    this.imeSelStart = selectStart;
+    this.imeSelEnd = selectEnd;
+    if (this.proxySelMount === m && selectStart === this.proxySelStart &&
+      selectEnd === this.proxySelEnd) {
+      // 代理已观测到目标落点：安装收口，不再重投（重投只会和人后续的
+      // 导航抢光标）。这次回声把 native 的值带回渲染器。
+      this.proxySelMount = null;
+    }
+    const rc: string = entryNapi.imeSetSelection(selectStart, selectEnd, m.key.contextId) as string;
+    hilog.info(DOMAIN, TAG, 'ime select [%{public}d,%{public}d) rc=%{public}s mount=%{public}s',
+      selectStart, selectEnd, rc, m.key.describe());
+  }
+
+  private armRestoreDeadline(task: ProxyRestoreTask, ms: number): void {
+    setTimeout(() => {
+      const live: ProxyRestoreTask | null = this.proxyRestoreTask;
+      if (live !== task || task.terminal) {
+        return;
+      }
+      task.terminal = true;
+      this.proxyRestoreTask = null;
+      const reason: string = task.textObserved ? 'selection_observation_timeout' : 'text_observation_timeout';
+      hilog.warn(DOMAIN, TAG, 'ime %{public}s timeout req=%{public}d ctx=%{public}d reason=%{public}s',
+        task.kind, task.request, task.mount.key.contextId, reason);
+      this.ackProxyRestore(task.mount.key.contextId, task.request,
+        this.imeSelStart, this.imeSelEnd, false, reason);
+    }, ms);
+  }
+
+  private beginSelectionPhase(task: ProxyRestoreTask): void {
+    if (task.terminal || this.proxyRestoreTask !== task || !task.textObserved ||
+      !this.proxyRegistry.isCurrent(task.mount)) {
+      return;
+    }
+    // 调用前只记"已发出选择命令"：抛错就不更新观测、如实失败，不谎报成功。
+    try {
+      if (task.targetStart === task.targetEnd) {
+        this.imeTextController.caretPosition(task.targetStart);
+      } else {
+        this.imeTextController.setTextSelection(task.targetStart, task.targetEnd, { menuPolicy: MenuPolicy.HIDE });
+      }
+    } catch (err) {
+      task.terminal = true;
+      this.proxyRestoreTask = null;
+      hilog.warn(DOMAIN, TAG, 'ime %{public}s selection threw: %{public}s', task.kind, String(err));
+      this.ackProxyRestore(task.mount.key.contextId, task.request, 0, 0, false, 'selection_threw');
+      return;
+    }
+    this.observeSelection(task);
+  }
+
+  private observeSelection(task: ProxyRestoreTask): void {
+    if (task.terminal || this.proxyRestoreTask !== task || !task.textObserved ||
+      !this.proxyRegistry.isCurrent(task.mount)) {
+      return;
+    }
+    let observedStart: number = -1;
+    let observedEnd: number = -1;
+    try {
+      const range: TextRange = this.imeTextController.getSelection();
+      if (range === undefined || range === null) {
+        // 控制器未绑定组件/组件已释放：没有观测可用，不得当作"落点已确认"。
+        hilog.warn(DOMAIN, TAG, 'ime restore selection query has no bound component');
+      } else {
+        // TextRange.start/end 在本机声明里是可选 number：缺位就是"没有观测"，
+        // 不得当成 0（0 是一个合法落点）。
+        observedStart = range.start !== undefined ? range.start : -1;
+        observedEnd = range.end !== undefined ? range.end : -1;
+      }
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'ime restore selection query threw: %{public}s', String(err));
+    }
+    if (observedStart >= 0 && observedEnd >= observedStart) {
+      // 观测账本只由组件报告的值推进。
+      this.imeSelStart = observedStart;
+      this.imeSelEnd = observedEnd;
+    }
+    if (observedStart === task.targetStart && observedEnd === task.targetEnd) {
+      if (task.request === 0) {
+        // 匿名菜单安装没有 kind-55 ACK；实际选区仍须经既有选择 FIFO 交窗口采纳。
+        // 空正文的 reset 已是 [0,0)，控制器同值 setter 可不再发组件回调。
+        let rc: string = '1';
+        try {
+          rc = entryNapi.imeSetSelection(observedStart, observedEnd, task.mount.key.contextId) as string;
+        } catch (err) {
+          hilog.warn(DOMAIN, TAG, 'ime menu selection forwarding threw: %{public}s', String(err));
+        }
+        if (rc !== '0') {
+          task.terminal = true;
+          this.proxyRestoreTask = null;
+          hilog.warn(DOMAIN, TAG, 'ime menu observed selection rejected rc=%{public}s', rc);
+          return;
+        }
+      }
+      task.terminal = true;
+      this.proxyRestoreTask = null;
+      task.mount.draft = task.targetText;
+      this.proxyRegistry.observeSelection(task.mount, observedStart, observedEnd);
+      hilog.info(DOMAIN, TAG, 'ime %{public}s observed installed req=%{public}d sel=%{public}d,%{public}d',
+        task.kind, task.request, observedStart, observedEnd);
+      this.ackProxyRestore(task.mount.key.contextId, task.request, observedStart, observedEnd, true,
+        'observed_installed');
+      this.status = `proxy restored ctx=${task.mount.key.contextId} units=${task.targetText.length}`;
+      return;
+    }
+    if (!task.selectionRetried) {
+      // 正文写入引起的迟到重置把落点挪走了：同一请求内重跑选择阶段，不重写正文、
+      // 不延长截止、不提前解锁。
+      task.selectionRetried = true;
+      setTimeout(() => {
+        this.beginSelectionPhase(task);
+      }, 30);
+      return;
+    }
+    task.terminal = true;
+    this.proxyRestoreTask = null;
+    hilog.warn(DOMAIN, TAG,
+      'ime %{public}s landing mismatch req=%{public}d target=%{public}d,%{public}d observed=%{public}d,%{public}d',
+      task.kind, task.request, task.targetStart, task.targetEnd, observedStart, observedEnd);
+    this.ackProxyRestore(task.mount.key.contextId, task.request, observedStart, observedEnd, false,
+      'installed_range_mismatch');
+  }
+
+  private ackProxyRestore(ctx: number, request: number, start: number, end: number,
+    ok: boolean, reason: string): void {
+    if (request <= 0) {
+      return;
+    }
+    let rc: string = '1';
+    try {
+      rc = entryNapi.imeRestoreAck(ctx, request, start, end, ok ? 1 : 0) as string;
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, 'ime restore ack threw: %{public}s', String(err));
+      return;
+    }
+    hilog.info(DOMAIN, TAG,
+      'ime restore ack ctx=%{public}d req=%{public}d ok=%{public}s sel=%{public}d,%{public}d rc=%{public}s reason=%{public}s',
+      ctx, request, ok ? 'true' : 'false', start, end, rc, reason);
+  }
+
+  private onMenuInstalled(context: number): void {
+    const mount = this.imeMount;
+    if (mount === null || context !== this.imeCtx || !this.proxyRegistry.isCurrent(mount)) return;
+    const raw = entryNapi.imeEditingContext() as string;
+    if (raw.length === 0) return;
+    const snap = JSON.parse(raw) as CjguiMenuSnapshot;
+    if (snap.context !== context || snap.generation !== mount.key.editGeneration) return;
+    const text = snap.previewText !== undefined
+      ? snap.text.slice(0, snap.previewStart ?? 0) + snap.previewText
+        + snap.text.slice(snap.previewEnd ?? snap.text.length) : snap.text;
+    const previous: ProxyRestoreTask | null = this.proxyRestoreTask;
+    if (previous !== null && !previous.terminal) {
+      previous.terminal = true;
+      this.ackProxyRestore(previous.mount.key.contextId, previous.request,
+        this.imeSelStart, this.imeSelEnd, false, 'superseded_by_menu');
+    }
+    // 匿名安装复用恢复事务槽，阻止 focus/caret 入口在新正文回声前抢装旧值。
+    // request=0 不签发 native 恢复票，也不产生恢复 ACK；业务编辑已由 native 接受。
+    const needsText: boolean = text !== this.imeText;
+    const task = new ProxyRestoreTask(mount, 0, text, snap.selStart, snap.selEnd, needsText, 'menu');
+    this.proxyRestoreTask = task;
+    this.proxySelMount = null;
+    hilog.info(DOMAIN, TAG, 'ime menu install waiting text=%{public}s target=%{public}d,%{public}d mount=%{public}s',
+      needsText ? 'true' : 'false', snap.selStart, snap.selEnd, mount.key.describe());
+    if (needsText) {
+      this.imeText = text;
+      this.armRestoreDeadline(task, 1500);
+      return;
+    }
+    this.beginSelectionPhase(task);
+  }
+
+  private onProxyCaret(payload: ImeFocusPayload): void {
+    const ctx: number = payload.context;
+    const mount: CjguiTextProxyMount | null = this.imeMount;
+    if (mount === null || ctx !== this.imeCtx || !this.proxyRegistry.isCurrent(mount)) {
+      hilog.info(DOMAIN, TAG, 'ime caret ignored ctx=%{public}d active=%{public}d', ctx, this.imeCtx);
+      return;
+    }
+    if (this.proxyRestoreTask !== null) return;
+    this.armProxySelection(mount, payload.selStart ?? -1, payload.selEnd ?? -1, 'caret');
   }
 
   private inspectEditingContext(reason: string): void {

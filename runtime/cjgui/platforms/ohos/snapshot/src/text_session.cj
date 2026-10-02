@@ -1,0 +1,2147 @@
+// B4/1b(2026-09-27, Astra 方案 R): 框架内部文本会话。
+//
+// 在既有 CjguiRangeTextSource/CjguiRangeTextEditSink/CjguiRangeTextWindow 接缝之上,
+// 为"呈现 TEXT 节点 + 可编辑语义"提供一条唯一的平台输入写入路径:会话身份与上下文
+// 代次、有界驻留镜像、明确的 UTF-16 范围单位、编辑序号与串行 ACK/拒绝校准、组合
+// (marked)状态。
+//
+// 契约边界(架构 §6.2):会话不认识产品私有类型;owner 写入只经 Sink;拒绝回执按
+// 会话上下文归还,不校准别的会话;纯选区变化不推进内容版本;范围换算只发生在已准备
+// 的有界镜像上,不整篇读取。
+package cjgui
+
+import std.collection.ArrayList
+
+/// 一次会话编辑的判决结果。`contextEpoch` + `ticket` 一起构成回执身份:代次不同的
+/// 回执不得校准任何当前状态(重绑后 nodeId 可能被复用,身份由代次区分)。
+public class CjguiTextSessionEdit {
+    /// 已接受事务的序号;被拒的提交不推进它。
+    public let seq: Int64
+    /// 本次提交在串行队列上的票据号:每笔提交(含被拒的)都有唯一票据,回执据此
+    /// 指认被结算的是哪一笔。-1 表示该判决没有提交正文。
+    public let ticket: Int64
+    public let accepted: Bool
+    public let versionAfter: Int64
+    /// 本次判决完成后的镜像修订:接受会重读镜像所以推进,拒绝不动。
+    public let mirrorRevision: Int64
+    public let contextEpoch: Int64
+    public let reason: String
+    /// False only for a stale composition identity whose native event cannot
+    /// describe the current proxy. The window must leave that proxy untouched.
+    public let proxyRecoveryRequired: Bool
+
+    init(seq: Int64, ticket: Int64, accepted: Bool, versionAfter: Int64, mirrorRevision: Int64,
+        contextEpoch: Int64, reason: String, proxyRecoveryRequired!: Bool = true) {
+        this.seq = seq
+        this.ticket = ticket
+        this.accepted = accepted
+        this.versionAfter = versionAfter
+        this.mirrorRevision = mirrorRevision
+        this.contextEpoch = contextEpoch
+        this.reason = reason
+        this.proxyRecoveryRequired = proxyRecoveryRequired
+    }
+}
+
+/// A single-use source-byte intent prepared against one bounded session mirror.
+/// The submission closure is owned by the issuing session, so a consumer cannot
+/// pass this credential to a different window or invent a second Sink.
+public class CjguiPreparedSourceRange {
+    public let contentVersion: Int64
+    public let startByte: Int64
+    public let endByte: Int64
+    public let contextEpoch: Int64
+    public let mirrorRevision: Int64
+    private let submitter: (String, Bool) -> CjguiTextSessionEdit
+    private var consumed: Bool = false
+
+    init(contentVersion: Int64, startByte: Int64, endByte: Int64, contextEpoch: Int64,
+        mirrorRevision: Int64, submitter: (String, Bool) -> CjguiTextSessionEdit) {
+        this.contentVersion = contentVersion
+        this.startByte = startByte
+        this.endByte = endByte
+        this.contextEpoch = contextEpoch
+        this.mirrorRevision = mirrorRevision
+        this.submitter = submitter
+    }
+
+    /// `sourceProxyChanged` describes this session's SOURCE native proxy. A
+    /// visual fragment is a separate native target recovered by the window;
+    /// its edit does not mutate the source proxy before the Sink responds.
+    public func replace(text: String, sourceProxyChanged!: Bool = false): CjguiTextSessionEdit {
+        if (this.consumed) {
+            return CjguiTextSessionEdit(-1, -1, false, this.contentVersion,
+                this.mirrorRevision, this.contextEpoch, "prepared_range_consumed")
+        }
+        this.consumed = true
+        return this.submitter(text, sourceProxyChanged)
+    }
+}
+
+/// 已提交、尚未结算的编辑。串行 pending:后一笔的范围建立在前一笔的镜像之上,
+/// 因此需要记录它依据的镜像修订,拒绝时才能判定从哪一处起需要重新校准。
+class CjguiTextSessionPending {
+    let ticket: Int64
+    let baseMirrorRevision: Int64
+    let edit: CjguiTextSessionEdit
+    let sourceProxyChanged: Bool
+
+    init(ticket: Int64, baseMirrorRevision: Int64, edit: CjguiTextSessionEdit,
+        sourceProxyChanged!: Bool = true) {
+        this.ticket = ticket
+        this.baseMirrorRevision = baseMirrorRevision
+        this.edit = edit
+        this.sourceProxyChanged = sourceProxyChanged
+    }
+}
+
+/// A single-read view of the text session's bounded mirror and its owner metadata.
+/// Consumers should use this instead of keeping a second range-window projection
+/// whose text and version could be observed at different times.
+public class CjguiTextSessionMirrorSnapshot {
+    public let contextEpoch: Int64
+    public let mirrorRevision: Int64
+    public let contentVersion: Int64
+    public let sourceVersion: Int64
+    public let startByte: Int64
+    public let sourceByteLength: Int64
+    public let text: String
+    public let prepared: Bool
+    public let complete: Bool
+    public let pendingReason: String
+
+    init(contextEpoch: Int64, mirrorRevision: Int64, contentVersion: Int64, sourceVersion: Int64,
+        startByte: Int64, sourceByteLength: Int64,
+        text: String, prepared: Bool, complete: Bool, pendingReason: String) {
+        this.contextEpoch = contextEpoch
+        this.mirrorRevision = mirrorRevision
+        this.contentVersion = contentVersion
+        this.sourceVersion = sourceVersion
+        this.startByte = startByte
+        this.sourceByteLength = sourceByteLength
+        this.text = text
+        this.prepared = prepared
+        this.complete = complete
+        this.pendingReason = pendingReason
+    }
+}
+
+/// 一份**独立于活动组合**的恢复草稿(Astra 重锚裁决 Q4:先保存草稿、再取消)。
+/// 外部正文在 owner claim 之上推进而平台无法保留输入源自身的转换会话时,组字被
+/// 迫结束;用户已输入的 preedit 不能随之蒸发。草稿是纯证据+可取回内容:取回(作为
+/// 一笔显式的新编辑落回正文)或放弃由**消费方的明确用户动作**决定,会话绝不静默
+/// 自动提交它。迟到 cancel、重复终态与后续新组合都不能删掉这份草稿。
+public class CjguiTextSessionRecoveryDraft {
+    /// 会话内单调的草稿身份。通知、取回与放弃都绑定它:多份未处理草稿并存时,
+    /// 界面显示的那一份就是取回动作消费的那一份。
+    public let draftId: Int64
+    /// 被中断的 preedit 文本(用户看到并可取回的内容)。
+    public let content: String
+    /// 组合开始时冻结的 owner 字节范围(旧版本坐标,仅作证据;取回时不得直接套用)。
+    public let sourceStartByte: Int64
+    public let sourceEndByte: Int64
+    /// 草稿所属的 owner 内容版本。
+    public let sourceVersion: Int64
+    /// 草稿产生时的会话上下文代次与平台组合编号。
+    public let contextEpoch: Int64
+    public let compositionId: Int64
+    /// 被中断组合的 owner claim 凭据(该 claim 已终结;此值只标识来源,不可再消费)。
+    public let token: Int64
+    /// 产生草稿的绑定身份:换绑后取回必须按名字拒绝,禁止恢复到新目标。
+    public let bindingIdentity: String
+    /// 0 = 正文(mirror)表面,1 = 呈现(presentation TEXT)表面。
+    public let surface: Int64
+    public let reason: String
+    public let cause: String
+
+    init(draftId: Int64, content: String, sourceStartByte: Int64, sourceEndByte: Int64,
+        sourceVersion: Int64, contextEpoch: Int64, compositionId: Int64, token: Int64,
+        bindingIdentity: String, surface: Int64, reason: String, cause: String) {
+        this.draftId = draftId
+        this.content = content
+        this.sourceStartByte = sourceStartByte
+        this.sourceEndByte = sourceEndByte
+        this.sourceVersion = sourceVersion
+        this.contextEpoch = contextEpoch
+        this.compositionId = compositionId
+        this.token = token
+        this.bindingIdentity = bindingIdentity
+        this.surface = surface
+        this.reason = reason
+        this.cause = cause
+    }
+}
+
+/// 恢复草稿队列容量:未处理草稿并存的上界。容量在组合 begin 处生效——
+/// 已满时新的组字被具名拒绝(`recovery_draft_capacity`),中断后绝不静默覆盖。
+public let CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS: Int64 = 2
+
+/// 普通文字意图（Astra Q5 共同处理器词汇）：一次按键表达的**用户级**动作。
+/// 单位是用户感知字素（平台 oracle），不是 UTF-8/UTF-16 标量。
+public enum CjguiTextPlainIntent {
+    | DeleteBackward
+    | DeleteForward
+    | MoveLeft
+    | MoveRight
+    | ExtendLeft
+    | ExtendRight
+}
+
+/// 一次普通文字意图的判决结果。`handled=false` 是具名拒绝（零写入、零选区
+/// 变化），调用方不得再让平台默认行为执行一遍；`wroteOwner=true` 表示恰好一
+/// 笔 owner 事务（移动/扩选恒为 false）。
+public class CjguiPlainIntentOutcome {
+    public let handled: Bool
+    public let reason: String
+    public let wroteOwner: Bool
+    public let selectionStart16: Int64
+    public let selectionEnd16: Int64
+
+    init(handled!: Bool, reason!: String, wroteOwner!: Bool, start16!: Int64, end16!: Int64) {
+        this.handled = handled
+        this.reason = reason
+        this.wroteOwner = wroteOwner
+        this.selectionStart16 = start16
+        this.selectionEnd16 = end16
+    }
+}
+
+/// 单个逻辑编辑表面的输入会话。同一正文的多个 fragment 共用一个会话;
+/// 换绑(文档切换/节点销毁)即失效,旧绑定上的后续编辑与旧回执都具名拒绝。
+public class CjguiTextSession {
+    private let window: CjguiRangeTextWindow
+
+    private var contextEpoch: Int64 = 0
+    private var editSeq: Int64 = 0
+    /// 提交票据:与会话对象的生存期一样单调,不随重绑归零,旧回执不可能撞号。
+    private var ticketSeq: Int64 = 0
+    /// 镜像修订:每次重新准备有界上下文都推进,编辑范围据此判定是否仍然适用。
+    private var mirrorRevision: Int64 = 0
+    private var mirrorUtf16Length: Int64 = 0
+
+    private var selStart16: Int64 = 0
+    private var selEnd16: Int64 = 0
+    /// Absolute source-byte selection is the durable view anchor. UTF-16
+    /// coordinates above are only its projection into the current mirror.
+    private var selectionVersion: Int64 = -1
+    private var selectionStartByte: Int64 = -1
+    private var selectionEndByte: Int64 = -1
+    private var selectionNeedsNativeRestore: Bool = false
+    /// 已采纳的最高人类锚序号（native 冻结、一次性取走）。0 = 从未采纳。
+    private var adoptedHumanAnchorSeq: Int64 = 0
+
+    // ---- 组合(IME marked)状态 ----
+    // 草稿只存会话,不写持久正文:每次组字更新写正文会污染撤销与协同状态(§6.2 契约 5)。
+    private var compositionActive: Bool = false
+    private var compositionDraft: String = ""
+    /// 组合开始时的 owner 版本与镜像修订:期间 Agent/另一窗口改过正文即为基版本失效。
+    private var compositionBaseVersion: Int64 = -1
+    private var compositionBaseMirror: Int64 = -1
+    /// 平台给出的原替换范围(setMarkedText 的 replacementRange);终点必须保留到提交,
+    /// 不能塌回起点。markedText 在镜像中的位置与之分离记录。
+    private var replacementStart16: Int64 = 0
+    private var replacementLength16: Int64 = 0
+    /// marked 文本在镜像中的范围,以及平台报告的、相对于传入 preedit 的内部选区。
+    private var markedStart16: Int64 = 0
+    private var markedLength16: Int64 = 0
+    private var markedInnerAnchor16: Int64 = 0
+    private var markedInnerFocus16: Int64 = 0
+    /// 本次组合的平台身份(native 会话内单调)。终态用它去重:同一组合的重复提交
+    /// 不是一笔新意图,也不能因为"没有活跃组合"就被当成异常而持锁。
+    private var activeCompositionId: Int64 = -1
+    /// 最近一次真正结束的组合身份(提交接受或取消)。仅用于终态去重。
+    private var lastTerminalCompositionId: Int64 = -1
+    /// 活动组合所属表面:0 = 正文(mirror,坐标为镜像 UTF-16),1 = 呈现 TEXT(坐标由
+    /// 消费方映射器解析为 owner 源字节)。两种表面共用同一 owner claim 生命周期。
+    private var compositionSurface: Int64 = 0
+    /// 呈现面组合冻结的 owner 源字节范围(正文表面的对应物是 replacementStart16/…)。
+    private var compositionSourceStartByte: Int64 = -1
+    private var compositionSourceEndByte: Int64 = -1
+    /// 独立恢复草稿(见 `CjguiTextSessionRecoveryDraft`);生命周期与活动组合解耦。
+    /// 有界队列:每份草稿有稳定身份,A 未处理时 B 的中断**追加**而不是覆盖;
+    /// 容量在**接纳下一组合之前**检查(begin 具名拒绝),中断发生后绝不静默丢弃。
+    private var recoveryDrafts: ArrayList<CjguiTextSessionRecoveryDraft> =
+        ArrayList<CjguiTextSessionRecoveryDraft>()
+    private var recoveryDraftSeq: Int64 = 0
+    /// 防御性计账:begin 闸门使溢出不可达;若仍发生,最旧草稿被挤出的次数在此
+    /// 如实计数(公开可读),绝不静默。
+    private var recoveryDraftsDisplaced: Int64 = 0
+    /// 本次**活动组合**是否已经保留过打断草稿。同一次中断可能先命中 stale 拒绝
+    /// (提交/更新)再由平台的取消相位到达;没有这个标志时同一份 preedit 会被保留两遍
+    /// (真实反例:commit→stale 保留 + 随后 redraw→stale 再保留 ⇒ drafts=2,容量闸门
+    /// 反而把下一次合法组字拒成 `recovery_draft_capacity`)。按 id 判重不行——平台可以
+    /// 不提供 compositionId(-1)。标志随 `clearComposition()` 归零,即"下一次组合"重新计。
+    private var compositionDraftRetained: Bool = false
+
+    /// 可选的 owner 组合接线(见 `CjguiRangeTextCompositionSink`)与绑定声明。声明仲裁但没有
+    /// 该能力时,组合在 begin 就具名拒绝,绝不静默退回普通 sink。
+    private let compositionSink: ?CjguiRangeTextCompositionSink
+    private let compositionArbitration: Bool
+    /// 活动 owner claim 的凭据;-1 表示没有登记(未声明仲裁、尚未 begin,或凭据已被消费终结)。
+    private var compositionToken: Int64 = -1
+    /// 该组合已无法继续对抗它的 owner claim(基版本/范围变化,本会话尚不能重锚):claim 已释放、
+    /// 草稿保留,后续相位一律按此名字拒绝,直到平台取消并重新组字。
+    private var compositionInvalidReason: String = ""
+    /// 已被消费但未写成正文的终态草稿:只作恢复证据保留,本会话绝不重投。
+    private var terminalCompositionDraft: String = ""
+    /// owner 版本在组合期间前进后,同一 claim 上成功续接基点的次数(重锚证据)。
+    private var compositionReanchors: Int64 = 0
+
+    private var pending: ArrayList<CjguiTextSessionPending> = ArrayList<CjguiTextSessionPending>()
+    /// 会话是否绑定着一个可编辑表面。`invalidate` 之后窗口归消费方所有,旧回调
+    /// 只能被具名拒绝,不能继续写正文。
+    private var bound: Bool = false
+    /// 有一笔编辑被 owner 拒绝(无论已结算还是仍在队列中)。平台代理已经落字,而
+    /// accepted 正文没有:重新按 owner 现状准备镜像之前,不得继续把旧坐标交给正文。
+    private var needsCalibration: Bool = false
+    /// 本次上锁后是否已按 owner 现状重建过镜像。只有重建过,`restorationReceipt()` 才签发
+    /// 身份;否则平台拿到的镜像修订描述的还是拒绝发生前的状态。
+    private var calibrationRecalibrated: Bool = false
+
+    /// 最近一次拒绝的具名原因(消费方读取用于 UI/日志;不阻塞后续编辑)。
+    private var lastReason: String = ""
+
+    /// 会话只拥有一个已准备的有界投影窗口;窗口是唯一的 owner 写入通道。
+    /// `compositionSink`/`compositionArbitration` 是可选组合仲裁接线:只有声明仲裁的绑定才会在
+    /// 组合开始时登记 owner claim;普通消费者的行为完全不变。
+    public init(window: CjguiRangeTextWindow, compositionSink!: ?CjguiRangeTextCompositionSink = None,
+        compositionArbitration!: Bool = false) {
+        this.window = window
+        this.compositionSink = compositionSink
+        this.compositionArbitration = compositionArbitration
+        this.mirrorUtf16Length = cjguiUtf16Length(window.text())
+    }
+
+    // ---- 会话身份与换绑 ----
+
+    public func boundNode(): Int64 {
+        return this.window.nodeId()
+    }
+
+    /// 当前上下文代次。重绑/解绑都推进。
+    public func contextEpochValue(): Int64 {
+        return this.contextEpoch
+    }
+
+    /// 会话是否仍绑定着一个可编辑表面。
+    public func isBound(): Bool {
+        return this.bound
+    }
+
+    public func currentEditSeq(): Int64 {
+        return this.editSeq
+    }
+
+    public func mirrorRevisionValue(): Int64 {
+        return this.mirrorRevision
+    }
+
+    public func lastRejectReason(): String {
+        return this.lastReason
+    }
+
+    /// 绑定到一个已准备的窗口。`bind` 总是开启新的上下文代次:绘制节点号可以被
+    /// 复用,旧上下文里的回执与组合回调不能跨代次校准新会话。绑定即准备自己的
+    /// 有界上下文(不是整篇读取),之后镜像常驻。
+    public func bind(): Unit {
+        this.bound = true
+        this.contextEpoch += 1
+        this.editSeq = 0
+        this.mirrorRevision += 1
+        this.selStart16 = 0
+        this.selEnd16 = 0
+        this.lastReason = ""
+        this.pending.clear()
+        this.needsCalibration = false
+        this.calibrationRecalibrated = false
+        // 组合身份随上下文重建:新代次里的第一个同号组合不得被旧终态去重掉。
+        this.lastTerminalCompositionId = -1
+        // 生命周期解绑先按精确 token 结束 owner claim,不能让保护跨绑定存活。
+        this.endOwnerClaim()
+        this.clearComposition()
+        this.window.refresh()
+        this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+        this.selectionVersion = this.window.contentVersion()
+        this.selectionStartByte = this.window.windowStartByte()
+        this.selectionEndByte = this.selectionStartByte
+        this.selectionNeedsNativeRestore = false
+    }
+
+    /// 解绑语义由 `bind` 推进代次 + 窗口归属变化实现:旧 nodeId 上的后续编辑与
+    /// 旧回执都因代次不符而具名拒绝,组合草稿随上下文一起丢弃。
+    public func invalidate(): Unit {
+        this.bound = false
+        this.contextEpoch += 1
+        this.selStart16 = 0
+        this.selEnd16 = 0
+        this.selectionVersion = -1
+        this.selectionStartByte = -1
+        this.selectionEndByte = -1
+        this.selectionNeedsNativeRestore = false
+        this.lastReason = ""
+        this.pending.clear()
+        this.needsCalibration = false
+        this.calibrationRecalibrated = false
+        // 解绑/销毁是框架生命周期发起的精确取消:旧 claim 随旧代次一起结束。
+        this.endOwnerClaim()
+        this.clearComposition()
+    }
+
+    // ---- 有界镜像 ----
+
+    /// 已准备的有界镜像正文。消费方(或拥有会话的窗口)在声明场景时原样发布它,
+    /// 投影与判决才同源:平台代理不会再拿到会话没见过的长度。
+    public func mirrorText(): String {
+        return this.window.text()
+    }
+
+    /// Atomically capture the session-owned bounded mirror and the metadata used
+    /// to interpret its text. This is a projection snapshot, not document truth.
+    public func mirrorSnapshot(): CjguiTextSessionMirrorSnapshot {
+        return CjguiTextSessionMirrorSnapshot(
+            this.contextEpoch,
+            this.mirrorRevision,
+            this.window.contentVersion(),
+            this.window.sourceVersion(),
+            this.window.windowStartByte(),
+            this.window.sourceByteLength(),
+            this.window.text(),
+            this.window.isPrepared(),
+            this.window.isComplete(),
+            this.window.unpreparedReason())
+    }
+
+    /// 镜像覆盖的绝对文档字节范围;平台需要判断请求是否越出已准备上下文。
+    public func coverageBytes(): (Int64, Int64) {
+        let start = this.window.windowStartByte()
+        return (start, start + Int64(this.window.text().toArray().size))
+    }
+
+    public func contentVersion(): Int64 {
+        return this.window.contentVersion()
+    }
+
+    /// 重新准备有界上下文。返回镜像身份是否变化;变化即推进镜像修订,
+    /// 使所有以旧修订表达的范围不再适用。
+    /// 注意:本方法**不解除校准锁**。owner 报"已准备完整"只说明会话这一侧可读,
+    /// 而锁要防的是平台代理与 accepted 正文分叉 —— 那只会在 native 按新镜像重新
+    /// 绑定/投影之后消失。解除必须走 `confirmProxyRestored`。
+    public func refreshMirror(): Bool {
+        let wasVersion = this.window.contentVersion()
+        var rebased: ?(Int64, Int64, Int64) = None
+        let externalChange = this.window.sourceVersion() != wasVersion
+        if (externalChange && this.selectionVersion == wasVersion &&
+            this.selectionStartByte >= 0 && !this.compositionActive) {
+            rebased = this.window.rebaseSelection(wasVersion, this.selectionStartByte,
+                this.selectionEndByte)
+        }
+        let changed = this.window.refresh()
+        if (changed) {
+            this.mirrorRevision += 1
+            this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+        }
+        if (externalChange) {
+            if (let Some(mapped) <- rebased) {
+                if (mapped[0] == this.window.contentVersion() &&
+                    this.projectSourceSelection(mapped[1], mapped[2])) {
+                    this.selectionVersion = mapped[0]
+                    this.selectionStartByte = mapped[1]
+                    this.selectionEndByte = mapped[2]
+                    this.selectionNeedsNativeRestore = true
+                } else {
+                    this.invalidateSourceSelection("selection_projection_unavailable")
+                }
+            } else {
+                this.invalidateSourceSelection("selection_rebase_unavailable")
+            }
+        }
+        return changed
+    }
+
+    private func invalidateSourceSelection(reason: String): Unit {
+        this.selectionVersion = -1
+        this.selectionStartByte = -1
+        this.selectionEndByte = -1
+        this.selectionNeedsNativeRestore = false
+        this.lastReason = reason
+    }
+
+    private func projectSourceSelection(startByte: Int64, endByte: Int64): Bool {
+        var start = this.window.windowStartByte()
+        var coverEnd = start + cjguiUtf8Length(this.window.text())
+        if (startByte < start || endByte > coverEnd) {
+            let moved = this.window.revealByte(startByte)
+            if (moved) {
+                this.mirrorRevision += 1
+                this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+            }
+            start = this.window.windowStartByte()
+            coverEnd = start + cjguiUtf8Length(this.window.text())
+        }
+        if (!this.window.isPrepared() || startByte < start || endByte > coverEnd) {
+            return false
+        }
+        let localStart = cjguiUtf8OffsetToUtf16(this.window.text(), startByte - start)
+        let localEnd = cjguiUtf8OffsetToUtf16(this.window.text(), endByte - start)
+        if (let Some(a) <- localStart) {
+            if (let Some(b) <- localEnd) {
+                this.selStart16 = a
+                this.selEnd16 = b
+                return true
+            }
+        }
+        return false
+    }
+
+    public func needsNativeSelectionRestore(): Bool {
+        return this.selectionNeedsNativeRestore
+    }
+
+    public func confirmNativeSelectionRestored(version: Int64, start16: Int64, end16: Int64): Bool {
+        if (!this.selectionNeedsNativeRestore || version != this.selectionVersion ||
+            version != this.window.contentVersion() || start16 != this.selStart16 ||
+            end16 != this.selEnd16) {
+            return false
+        }
+        if (!this.window.confirmContentVersion({ =>
+            this.selectionNeedsNativeRestore = false
+            this.lastReason = ""
+            return true
+        })) {
+            this.lastReason = "selection_restore_source_stale"
+            return false
+        }
+        return true
+    }
+
+    /// 平台**实际安装**的选区回执（非校准锁路径）：按平台真实落点重新对齐选区，
+    /// 而不是要求它与本地投影逐位相等。
+    ///
+    /// `confirmNativeSelectionRestored` 的等式语义适合"纯会话消费者自己算出区间"的
+    /// 场景；但平台隐藏输入代理会按自己的正文钳制落点，装进去的区间未必等于本地
+    /// 投影。此时若仍要求相等，回执永远不成立，`selectionNeedsNativeRestore` 会
+    /// 一直为真、`selectionVersion` 一直停在外部换版前 —— 输入被永久拒绝（实测）。
+    /// 平台回执已经过 native 按**冻结 accepted 正文**的边界核验，因此这里采纳实际
+    /// 安装值：写回选区、把 `selectionVersion` 对齐到该正文版本、清除待恢复位。
+    public func adoptNativeSelectionRestored(version: Int64, start16: Int64, end16: Int64): Bool {
+        if (version != this.window.contentVersion()) {
+            // 安装区间属于更旧的一份正文：不采纳，留给下一次接受后的重试。
+            this.lastReason = "selection_restore_version_stale"
+            return false
+        }
+        if (!this.window.confirmContentVersion({ =>
+            this.setSelection16(start16, end16)
+            this.selectionNeedsNativeRestore = false
+            this.lastReason = ""
+            return true
+        })) {
+            this.lastReason = "selection_restore_source_stale"
+            return false
+        }
+        return true
+    }
+
+    /// 人类锚（H1-R.a）：采纳 native 在**人亲手落点**时冻结的一次性锚，把它写成会话
+    /// 选区并解除外部换版留下的 `selectionNeedsNativeRestore`。
+    ///
+    /// 不能复用 `adoptNativeSelectionRestored`：那条路径把"平台回执"当权威，而隐藏
+    /// 输入代理挂载/换焦自己会产生一次落在正文末尾的选区回声（实测 hilog：`ime
+    /// proxy mounted` 之后紧跟 `ime select [44,44) rc=0`，随后窗口把它记成 stale）。
+    /// 回声若能解锁，人第一次点击之后的键入仍被 `selection_native_alignment_required`
+    /// 静默拒掉；反过来，一个没人放过的落点还会被当成人的导航。锚只由 native 在命中
+    /// 测试/原生全选的同一临界区冻结身份与序号（并就地终结在途恢复票据），只能取走
+    /// 一次；这里再按 owner 版本与镜像修订双重核验后才提交。
+    public func anchorHumanSelection16(anchorSeq: Int64, start16: Int64, end16: Int64): Bool {
+        if (anchorSeq <= 0) {
+            this.lastReason = "human_anchor_invalid"
+            return false
+        }
+        if (anchorSeq <= this.adoptedHumanAnchorSeq) {
+            // native 已把该锚标记为 consumed；这里再挡一层重放，旧锚不得二次解锁。
+            this.lastReason = "human_anchor_replayed"
+            return false
+        }
+        let bytes = match (this.humanAnchorRange16(start16, end16)) {
+            case Some(range) => range
+            case None => return false
+        }
+        let frozenMirror = this.mirrorRevision
+        this.lastReason = "human_anchor_source_stale"
+        if (!this.window.confirmContentVersion({ =>
+            // owner 版本没动、但有界镜像被移动过（reveal/refresh）时，上面那份
+            // UTF-16→字节映射已不再描述当前镜像，照它提交会把选区钉到别处。
+            if (this.mirrorRevision != frozenMirror || !this.window.isPrepared()) {
+                this.lastReason = "human_anchor_mirror_stale"
+                return false
+            }
+            this.adoptedHumanAnchorSeq = anchorSeq
+            this.selStart16 = start16
+            this.selEnd16 = end16
+            this.selectionVersion = this.window.contentVersion()
+            this.selectionStartByte = bytes[0]
+            this.selectionEndByte = bytes[1]
+            this.selectionNeedsNativeRestore = false
+            this.lastReason = ""
+            return true
+        })) {
+            return false
+        }
+        return true
+    }
+
+    /// 人类锚采纳的**只读**预检（除序号外的全部失败条件）。窗口必须在取走 native 锚
+    /// 之前调它：锚一经取走即 consumed、不可回收，先判后取才不会出现"native 认为已
+    /// 交出、会话仍锁着输入"的无责任人状态（与 `canAdoptNativeRestore` 同一纪律）。
+    public func canAnchorHumanSelection16(start16: Int64, end16: Int64): Bool {
+        if (let Some(_) <- this.humanAnchorRange16(start16, end16)) {
+            return true
+        }
+        return false
+    }
+
+    /// 可采纳时返回该 UTF-16 落点对应的绝对文档字节范围，否则具名拒绝并返回 None。
+    private func humanAnchorRange16(start16: Int64, end16: Int64): ?(Int64, Int64) {
+        if (start16 < 0 || end16 < start16 || end16 > this.mirrorUtf16Length) {
+            // 超出已准备镜像：具名拒绝，不钳成别的有效落点。
+            this.lastReason = "human_anchor_range"
+            return None
+        }
+        if (!this.window.isPrepared()) {
+            this.lastReason = this.window.unpreparedReason()
+            return None
+        }
+        return match (this.window.documentRangeForUtf16(start16, end16 - start16)) {
+            case Some(range) => Some(range)
+            case None =>
+                this.lastReason = "human_anchor_not_utf8_boundary"
+                return None
+        }
+    }
+
+    /// 已采纳的最高人类锚序号（0 = 从未采纳）。反例与诊断读它判定一次性语义。
+    public func adoptedHumanAnchorSeqValue(): Int64 {
+        return this.adoptedHumanAnchorSeq
+    }
+
+    /// 采纳预检（只读）：把 `confirmProxyRestored` 与 `adoptNativeSelectionRestored`
+    /// 的全部失败条件在改动任何状态**之前**判完。
+    ///
+    /// 为什么需要它：native 票据一旦消费就不可回收。先判后 consume，才能保证
+    /// "要么完整采纳并解锁，要么一个字都不改、票据留给 native 按截止终结"。
+    /// 没有这一步时，源区间映射或镜像换代可能在票据已结清之后才失败，留下
+    /// "native 认为已采纳、会话仍拒绝输入"的无责任人状态。
+    public func canAdoptNativeRestore(contextEpoch: Int64, mirrorRevision: Int64, version: Int64,
+        start16: Int64, end16: Int64, refusalRecovery: Bool): Bool {
+        if (start16 < 0 || end16 < start16 || end16 > this.mirrorUtf16Length) {
+            this.lastReason = "adopt_precheck_range"
+            return false
+        }
+        if (version != this.window.contentVersion()) {
+            this.lastReason = "adopt_precheck_version_stale"
+            return false
+        }
+        if (refusalRecovery && this.needsCalibration) {
+            if (contextEpoch != this.contextEpoch || mirrorRevision != this.mirrorRevision) {
+                this.lastReason = "restore_receipt_mismatch"
+                return false
+            }
+        }
+        if (!this.window.isPrepared()) {
+            this.lastReason = this.window.unpreparedReason()
+            return false
+        }
+        // 与真正提交时同一个 owner 边界守卫，只是不做任何写入。
+        if (!this.window.confirmContentVersion({ => return true })) {
+            this.lastReason = "adopt_precheck_source_stale"
+            return false
+        }
+        return true
+    }
+
+    /// 选区对齐的只读事实（诊断与确定性反例用）：(selectionVersion,
+    /// window.contentVersion, selStart16, selEnd16, needsNativeSelectionRestore)。
+    public func selectionAlignmentFacts(): (Int64, Int64, Int64, Int64, Bool) {
+        return (this.selectionVersion, this.window.contentVersion(), this.selStart16, this.selEnd16,
+            this.selectionNeedsNativeRestore)
+    }
+
+    /// 是否仍在等待一次带完整身份的 native 恢复回执。为 true 时任何正文写入都被具名拒绝。
+    public func awaitingCalibration(): Bool {
+        return this.needsCalibration
+    }
+
+    /// 平台侧开始恢复输入代理时取走的**回执身份**,恢复完成后必须原样交回
+    /// `confirmProxyRestored`。未上锁、或上锁后还没 `recalibrate()` 时返回 (-1, -1)。
+    ///
+    /// 与"消费方读当前 epoch/mirror 再自己确认"的差别在于时间:这张回执要跨越平台
+    /// 实际做恢复的那些回合。期间 owner 又写了正文(镜像换代)或会话换绑(代次推进),
+    /// 旧回执就解不开新锁 —— 那正是"代理已落字、accepted 正文没变"的分叉形状。
+    ///
+    /// 校准前不签发:此刻镜像描述的还是拒绝发生时的旧状态,平台照着它"确认恢复"
+    /// 等于自签自认,锁会在没人核对 owner 现状的情况下被解开。
+    public func restorationReceipt(): (Int64, Int64) {
+        if (!this.needsCalibration || !this.calibrationRecalibrated) {
+            return (-1, -1)
+        }
+        return (this.contextEpoch, this.mirrorRevision)
+    }
+
+    /// 解除校准锁的**唯一**入口:平台在取到新镜像、重新投影并恢复输入代理(含选区)之后,
+    /// 带它实际恢复到的上下文代次与镜像修订回来。身份不符即维持锁并具名报告 ——
+    /// 用旧世代的恢复回执解开新世代的锁,正是原来"落字但正文没变"的那个形状。
+    public func confirmProxyRestored(contextEpoch: Int64, mirrorRevision: Int64,
+        selectionStart16!: Int64 = -1, selectionEnd16!: Int64 = -1): Bool {
+        if (!this.needsCalibration) {
+            return true
+        }
+        if (contextEpoch != this.contextEpoch || mirrorRevision != this.mirrorRevision) {
+            this.lastReason = "restore_receipt_mismatch"
+            return false
+        }
+        if (!this.window.isPrepared()) {
+            this.lastReason = this.window.unpreparedReason()
+            return false
+        }
+        if (!this.window.confirmContentVersion({ =>
+            // Source runs this tiny state change in the same boundary as its
+            // owner-version check. Native work and mirror reads are outside it.
+            this.needsCalibration = false
+            this.calibrationRecalibrated = false
+            // The platform has installed this exact mirror and its actual
+            // selection. The native result, when available, is authoritative;
+            // direct pure-session consumers keep their explicit local range.
+            if (selectionStart16 >= 0 && selectionEnd16 >= selectionStart16) {
+                this.setSelection16(selectionStart16, selectionEnd16)
+            } else {
+                this.setSelection16(this.selStart16, this.selEnd16)
+            }
+            this.selectionNeedsNativeRestore = false
+            this.lastReason = ""
+            return true
+        })) {
+            this.lastReason = "restore_source_stale"
+            return false
+        }
+        return true
+    }
+
+    /// owner 尚未准备好的范围不得当作空文本编辑。
+    public func mirrorIsReady(): Bool {
+        return this.window.isPrepared()
+    }
+
+    /// 把有界上下文移动到覆盖某个绝对文档字节位置。缺页由消费方(平台 adapter)按
+    /// 准备契约显式发起,会话不在编辑路径里偷偷整篇读取。
+    public func revealByte(anchorByte: Int64): Bool {
+        let moved = this.window.revealByte(anchorByte)
+        if (moved) {
+            this.mirrorRevision += 1
+            this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+        }
+        return moved
+    }
+
+    public func unpreparedReason(): String {
+        return this.window.unpreparedReason()
+    }
+
+    // ---- 选区 ----
+
+    /// 纯选区变化(平台选区导航/鼠标):只推进视图状态,不产生事务、不推进内容版本。
+    public func setSelection16(start16: Int64, end16: Int64): Unit {
+        let lo = if (start16 <= end16) { start16 } else { end16 }
+        let hi = if (start16 <= end16) { end16 } else { start16 }
+        this.selStart16 = this.clamp16(lo)
+        this.selEnd16 = if (hi < 0) { 0 } else { if (hi > this.mirrorUtf16Length) { this.mirrorUtf16Length } else { hi } }
+        let sourceRange = this.window.documentRangeForUtf16(this.selStart16,
+            this.selEnd16 - this.selStart16)
+        if (let Some(bytes) <- sourceRange) {
+            this.selectionVersion = this.window.contentVersion()
+            this.selectionStartByte = bytes[0]
+            this.selectionEndByte = bytes[1]
+        } else {
+            this.invalidateSourceSelection("selection_not_utf8_boundary")
+        }
+    }
+
+    /// The accepted source span represented by the current UTF-16 selection.
+    /// It is read-only evidence for a caller about to use `replaceRange16`;
+    /// the replacement still performs its own same-version owner arbitration.
+    public func selectedSourceRange(): ?(Int64, Int64, Int64) {
+        if (!this.bound || this.selectionVersion < 0 ||
+            this.selectionStartByte < 0 || this.selectionEndByte < this.selectionStartByte ||
+            this.selectionNeedsNativeRestore || this.selectionVersion != this.window.contentVersion()) {
+            return None
+        }
+        return Some((this.selectionVersion, this.selectionStartByte, this.selectionEndByte))
+    }
+
+    /// 提交门禁的具名判据（"" = 放行）。三条子句必须分开报：合成一个
+    /// `selection_native_alignment_required` 时，日志区分不出"选区停在旧版本"、
+    /// "选区从未投影成字节"和"恢复锁仍在"，而事后读到的对齐事实又会被同一轮里
+    /// 更晚的平台回声覆盖（实测 09-30 03:49:30：Agent 换版后首字被拒，日志里
+    /// 却是 selection_version==content_version、needs_restore=false）。
+    private func selectionAlignmentBlock(): String {
+        if (this.selectionNeedsNativeRestore) {
+            return "selection_native_alignment_required"
+        }
+        if (this.selectionVersion != this.window.contentVersion()) {
+            return "selection_version_stale"
+        }
+        if (this.selectionStartByte < 0) {
+            return "selection_unprojected"
+        }
+        return ""
+    }
+
+    private func clamp16(value: Int64): Int64 {
+        var out = value
+        if (out < 0) {
+            out = 0
+        }
+        if (out > this.mirrorUtf16Length) {
+            out = this.mirrorUtf16Length
+        }
+        return out
+    }
+
+    public func selection16(): (Int64, Int64) {
+        return (this.selStart16, this.selEnd16)
+    }
+
+    // ---- 普通文字意图共同处理器（Astra Q5；E/macOS B 切片） ----
+
+    /// 判决一次普通文字意图。删除=用户感知字素整簇（内部 caret 零写入、缺簇
+    /// 具名拒绝，不退回标量）；移动/扩选只改选区（零正文事务），选区改动标记
+    /// 原生恢复，由窗口推回代理。组字期间一律具名拒绝——组合会话拥有选区与
+    /// 终态；非空选区的删除只提交一笔精确事务。
+    public func handlePlainIntent(intent: CjguiTextPlainIntent): CjguiPlainIntentOutcome {
+        let (failA, failB) = this.selection16()
+        if (!this.bound) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "session_unbound",
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        if (this.compositionActive) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "composition_busy",
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        if (this.needsCalibration) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "recalibration_required",
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        if (!this.window.isPrepared()) {
+            return CjguiPlainIntentOutcome(handled: false, reason: this.window.unpreparedReason(),
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        let alignmentBlock = this.selectionAlignmentBlock()
+        if (alignmentBlock != "") {
+            return CjguiPlainIntentOutcome(handled: false, reason: alignmentBlock,
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        let text = this.window.text()
+        let total16 = this.mirrorUtf16Length
+        let (lo, hi) = this.selection16()
+        if (match (intent) { case DeleteBackward | DeleteForward => true case _ => false }) {
+            if (hi > lo) {
+                return this.submitPlainDelete(lo, hi)
+            }
+            let caretByte = match (cjguiUtf16OffsetToUtf8(text, lo)) {
+                case Some(byte) => byte
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            let bytes = text.toArray()
+            if (match (intent) { case DeleteBackward => true case _ => false }) {
+                if (lo == 0 || caretByte == 0) {
+                    return CjguiPlainIntentOutcome(handled: false, reason: "at_document_start",
+                        wroteOwner: false, start16: lo, end16: hi)
+                }
+                match (cjguiGraphemeClusterRangeUtf8(text, caretByte - 1)) {
+                    case Some((clusterStart, clusterEnd)) =>
+                        let clusterStart16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterStart]))
+                        let clusterEnd16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterEnd]))
+                        if (clusterEnd16 != lo) {
+                            // caret 落在簇内部：删除半个用户字符没有合法名字，保持原文。
+                            return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_interior",
+                                wroteOwner: false, start16: lo, end16: hi)
+                        }
+                        return this.submitPlainDelete(clusterStart16, clusterEnd16)
+                    case None =>
+                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                            wroteOwner: false, start16: lo, end16: hi)
+                }
+            }
+            if (lo >= total16 || caretByte >= Int64(bytes.size)) {
+                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_end",
+                    wroteOwner: false, start16: lo, end16: hi)
+            }
+            match (cjguiGraphemeClusterRangeUtf8(text, caretByte)) {
+                case Some((clusterStart, clusterEnd)) =>
+                    if (clusterStart != caretByte) {
+                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_interior",
+                            wroteOwner: false, start16: lo, end16: hi)
+                    }
+                    let clusterEnd16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterEnd]))
+                    return this.submitPlainDelete(lo, clusterEnd16)
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+        }
+        let bytes = text.toArray()
+        if (match (intent) { case MoveLeft | ExtendLeft => true case _ => false }) {
+            if (lo == 0) {
+                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_start",
+                    wroteOwner: false, start16: lo, end16: hi)
+            }
+            let edgeByte = match (cjguiUtf16OffsetToUtf8(text, lo)) {
+                case Some(byte) => byte
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            let clusterStart16 = match (cjguiGraphemeClusterRangeUtf8(text, edgeByte - 1)) {
+                case Some((cs, _)) => cjguiUtf16Length(String.fromUtf8(bytes[0..cs]))
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            if (match (intent) { case MoveLeft => true case _ => false }) {
+                // 非空选区先折叠到左端（零事务），与平台惯例一致。
+                let target = if (hi > lo) { lo } else { clusterStart16 }
+                return this.applyPlainSelection(target, target)
+            }
+            return this.applyPlainSelection(clusterStart16, hi)
+        }
+        if (match (intent) { case MoveRight | ExtendRight => true case _ => false }) {
+            if (hi >= total16) {
+                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_end",
+                    wroteOwner: false, start16: lo, end16: hi)
+            }
+            let edgeByte = match (cjguiUtf16OffsetToUtf8(text, hi)) {
+                case Some(byte) => byte
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            let clusterEnd16 = match (cjguiGraphemeClusterRangeUtf8(text, edgeByte)) {
+                case Some((_, ce)) => cjguiUtf16Length(String.fromUtf8(bytes[0..ce]))
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            if (match (intent) { case MoveRight => true case _ => false }) {
+                // 非空选区先折叠到右端（零事务）。
+                let target = if (hi > lo) { hi } else { clusterEnd16 }
+                return this.applyPlainSelection(target, target)
+            }
+            return this.applyPlainSelection(lo, clusterEnd16)
+        }
+        return CjguiPlainIntentOutcome(handled: false, reason: "intent_unknown",
+            wroteOwner: false, start16: lo, end16: hi)
+    }
+
+    private func applyPlainSelection(start16: Int64, end16: Int64): CjguiPlainIntentOutcome {
+        this.setSelection16(start16, end16)
+        this.selectionNeedsNativeRestore = true
+        let (a, b) = this.selection16()
+        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false,
+            start16: a, end16: b)
+    }
+
+    private func submitPlainDelete(start16: Int64, end16: Int64): CjguiPlainIntentOutcome {
+        let decision = this.replaceRange16(start16, end16, "")
+        let (a, b) = this.selection16()
+        if (decision.accepted) {
+            return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: true,
+                start16: a, end16: b)
+        }
+        return CjguiPlainIntentOutcome(handled: false, reason: decision.reason, wroteOwner: false,
+            start16: a, end16: b)
+    }
+
+    // ---- 组合(IME marked) ----
+
+    public func hasComposition(): Bool {
+        return this.compositionActive
+    }
+
+    public func compositionText(): String {
+        return this.compositionDraft
+    }
+
+    /// 组合基版本(开始组字时的 owner 内容版本);无组合时为 -1。
+    public func compositionBaseVersionValue(): Int64 {
+        return if (this.compositionActive) { this.compositionBaseVersion } else { -1 }
+    }
+
+    public func markedRange16(): (Int64, Int64) {
+        return if (this.compositionActive) {
+            (this.markedStart16, this.markedLength16)
+        } else {
+            (-1, 0)
+        }
+    }
+
+    /// The original replacement span frozen when marked input began. The byte endpoints
+    /// use the same prepared mirror conversion as submitRange16, including its absolute
+    /// window start. They are observation only; a consumer must still submit through
+    /// the session so version, context and owner acceptance are checked.
+    public func compositionFrozenRange(): ?(Int64, Int64, Int64, Int64, Int64, Int64) {
+        if (!this.compositionActive) {
+            return None
+        }
+        if (this.compositionSurface == 1) {
+            // 呈现面:冻结范围本就是 owner 源字节,无镜像换算;UTF-16 端点不适用(-1)。
+            return Some((this.activeCompositionId, this.compositionBaseVersion, -1, -1,
+                this.compositionSourceStartByte, this.compositionSourceEndByte))
+        }
+        if (!this.window.isPrepared()) {
+            return None
+        }
+        if (let Some(bytes) <- this.window.documentRangeForUtf16(
+            this.replacementStart16, this.replacementLength16)) {
+            return Some((this.activeCompositionId, this.compositionBaseVersion,
+                this.replacementStart16, this.replacementStart16 + this.replacementLength16,
+                bytes[0], bytes[1]))
+        }
+        return None
+    }
+
+    /// 平台 marked 范围查询协议里的"无效范围"哨兵。
+    public static let NS_NOT_FOUND: Int64 = -1
+
+    /// 开始/更新组字。`replacementStart16`/`replacementLength16` 是平台显式给出的
+    /// 替换范围(`CjguiTextSession.NS_NOT_FOUND` 表示协议定义的默认语义:替换当前
+    /// 选区);`markedStart16` 是 preedit 在镜像中的落点;`innerAnchor16`/`innerFocus16`
+    /// 相对传入的 preedit;`compositionId` 是平台为本次组字分配的编号(缺省 -1 表示
+    /// 平台未提供,不做身份校验)。
+    ///
+    /// **首次**解析出的 owner 替换范围在组合开始时冻结,后续 marked 更新只更新
+    /// preedit 与内部选区:真实平台的后续更新可能报"当前 marked 范围"(其起点与冻结
+    /// 起点一致)或 NS_NOT_FOUND,但显式给出**不同起点**的范围表达的是另一个替换段,
+    /// 映射不到 owner 的原始文本上,只能具名拒绝并由平台按新镜像重建组合。
+    public func updateComposition(text: String, replacementStart16: Int64, replacementLength16: Int64,
+        markedStart16: Int64, innerAnchor16: Int64, innerFocus16: Int64,
+        compositionId!: Int64 = -1): CjguiTextSessionEdit {
+        if (!this.bound) {
+            this.lastReason = "session_unbound"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        if (replacementLength16 < 0 || markedStart16 < 0 || markedStart16 > this.mirrorUtf16Length) {
+            return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW, true)
+        }
+        let startingComposition = !this.compositionActive
+        let resolvedStart = if (replacementStart16 == CjguiTextSession.NS_NOT_FOUND) {
+            this.selStart16
+        } else {
+            replacementStart16
+        }
+        let resolvedLength = if (replacementStart16 == CjguiTextSession.NS_NOT_FOUND) {
+            this.selEnd16 - this.selStart16
+        } else {
+            replacementLength16
+        }
+        if (this.compositionActive && this.compositionInvalidReason != "") {
+            // claim 已经没了:后续相位不得再把这份草稿解释到它上面。
+            return this.refuseCompositionIntent(this.compositionInvalidReason, true)
+        }
+        if (this.compositionActive && this.compositionSurface == 1) {
+            // 呈现面组合持有唯一的组合槽位:正文表面的相位不得解释它的草稿与范围。
+            return this.refuseCompositionIntent("composition_busy", true)
+        }
+        // 后续更新(重绘/候选变化)**不得重取基版本**:否则 Agent 在两次 marked 更新之间
+        // 写入正文时,旧替换范围会被重新标成新基版本,提交时看似合法而它表达的是过时正文。
+        // 基版本只在组合开始时冻结一次;期间 owner 推进就是具名拒绝,由平台重新组字。
+        if (this.compositionActive && (this.window.sourceVersion() != this.compositionBaseVersion ||
+                this.mirrorRevision != this.compositionBaseMirror)) {
+            // 同一 Q4 恢复契约:被外部写打断的组合要保留可取回的 preedit,否则用户
+            // 刚打出的字随组合一起消失(各表面四个 stale 分支共用同一份保留实现)。
+            // 先保留(它按精确 token 结束 claim 并把 token 记进草稿),再按名字锁死
+            // 这次组合——顺序反过来草稿只能记下 -1,丢失 claim 身份。
+            this.retainInterruptedCompositionDraft(this.compositionSurface,
+                "composition_base_stale", "owner_version_advanced", this.activeCompositionId,
+                clear: false)
+            this.invalidateCompositionClaim("composition_base_stale")
+            return this.refuseCompositionIntent("composition_base_stale", true)
+        }
+        if (this.compositionActive && compositionId >= 0 && compositionId != this.activeCompositionId) {
+            // 更新自称属于另一个组合:两个组字不能共用一份草稿与冻结范围。
+            return this.refuseCompositionIntent("composition_id_mismatch", true)
+        }
+        // 统一恢复确认门(E2 复核第 1 项,在既有具名判定之后):恢复未完整确认
+        // (镜像/代理仍停在扰乱前坐标)期间,新旧组字一律具名拒绝;旧相位只按
+        // 身份终结,不开新组合。
+        if (this.needsCalibration) {
+            this.lastReason = "recalibration_required"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        // 恢复草稿容量闸门:未处理草稿占满时,先让用户取回/放弃再组新字——
+        // 中断发生后绝不静默丢草稿,所以准入放在组合开始之前。
+        if (startingComposition &&
+            Int64(this.recoveryDrafts.size) >= CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS) {
+            return this.refuseCompositionIntent("recovery_draft_capacity", false)
+        }
+        if (startingComposition) {
+            if (resolvedStart < 0 || resolvedLength < 0 ||
+                resolvedStart + resolvedLength > this.mirrorUtf16Length) {
+                return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW, true)
+            }
+            if (this.compositionArbitration) {
+                // 声明仲裁 ⇒ 组合必须有 owner claim 才允许开始;owner 的版本守卫拒绝即
+                // `version_conflict`,这里不猜新坐标、也不登记。
+                let claim = this.beginOwnerClaim(resolvedStart, resolvedLength)
+                if (!claim.accepted) {
+                    return this.refuseCompositionIntent(claim.reason, true)
+                }
+                this.compositionToken = claim.token
+            }
+        } else if (resolvedStart != this.replacementStart16) {
+            // 后续更新报告的是平台代理里的当前 marked 范围:起点与冻结起点一致(实测
+            // shouldChangeText 报 0+2、0+3),长度是**旧 preedit 长度**,其终点可以超过
+            // 镜像长度 —— preedit 只存在于代理显示,不在镜像里,因此不按镜像校验它。
+            // 起点改变才表达另一个替换段,映射不到 owner 原始文本,只能具名拒绝。
+            this.invalidateCompositionClaim("composition_range_changed")
+            return this.refuseCompositionIntent("composition_range_changed", true)
+        }
+        let textLen16 = cjguiUtf16Length(text)
+        if (innerAnchor16 < 0 || innerFocus16 < 0 || innerAnchor16 > textLen16 || innerFocus16 > textLen16) {
+            // 内部选区相对**本次传入的 preedit**:越界说明平台报的锚点不对应这段
+            // 文本,静默钳位会把用户光标搬到别处,因此具名拒绝并由平台重建组合。
+            this.invalidateCompositionClaim("composition_inner_range_invalid")
+            return this.refuseCompositionIntent("composition_inner_range_invalid", true)
+        }
+        this.compositionActive = true
+        this.compositionDraft = text
+        if (startingComposition) {
+            // 基版本取 owner 的当前真值版本,不是镜像缓存版本:组合期间 Agent/另一窗口
+            // 通过 Sink 写过正文,镜像版本号不变但 owner 已推进,只比镜像就漏判。
+            this.compositionBaseVersion = this.window.sourceVersion()
+            this.compositionBaseMirror = this.mirrorRevision
+            this.replacementStart16 = resolvedStart
+            this.replacementLength16 = resolvedLength
+            this.activeCompositionId = compositionId
+        }
+        this.markedStart16 = markedStart16
+        this.markedLength16 = cjguiUtf16Length(text)
+        this.markedInnerAnchor16 = innerAnchor16
+        this.markedInnerFocus16 = innerFocus16
+        this.lastReason = ""
+        return this.edit(this.editSeq, true, -1, "")
+    }
+
+    /// 提交组字:草稿一次性经唯一写入路径落为**单个**事务,替换的是组合开始时冻结的
+    /// 原范围而非起点补插。只有 owner 接受后才清草稿 —— 拒绝时用户看到的 preedit
+    /// 不能被吞掉。
+    /// 不带参数是"未提供最终文本,提交当前草稿";`commitComposition(finalText: "")`
+    /// 是"平台显式提交为空"(真实平台在提交路径上删除整段替换文本的合法终态)。
+    /// 每个提交意图一票据一判决:预检拒绝(未绑定/无活跃组合/基版本失效)也从意图票据
+    /// 序列取号并进入 pending,窗口按同一 `acknowledge` 结算;这些拒绝意味着平台代理
+    /// 可能已落字而 owner 没有,因此除解绑外一律持校准锁,等待既有恢复回执。
+    public func commitComposition(compositionId!: Int64 = -1): CjguiTextSessionEdit {
+        return this.commitCompositionText(None, compositionId)
+    }
+
+    public func commitComposition(finalText!: String, compositionId!: Int64 = -1): CjguiTextSessionEdit {
+        return this.commitCompositionText(Some(finalText), compositionId)
+    }
+
+    private func commitCompositionText(finalText: ?String, compositionId: Int64): CjguiTextSessionEdit {
+        if (!this.bound) {
+            // 会话已解绑:旧平台回调不写正文,也不持锁(代次已推进,锁本身无意义)。
+            return this.refuseCompositionIntent("session_unbound", false)
+        }
+        if (!this.compositionActive) {
+            if (compositionId >= 0 && compositionId == this.lastTerminalCompositionId) {
+                // 同一组合的重复终态:代理与 owner 没有新分叉,不持锁、不记账。
+                this.lastReason = "composition_terminal_duplicate"
+                return this.ignoredCompositionEvent(this.lastReason)
+            }
+            return this.refuseCompositionIntent("composition_not_active", true)
+        }
+        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
+            compositionId != this.activeCompositionId) {
+            // A delayed terminal from A must never consume B's frozen range.
+            // It cannot describe B's proxy state, so leave B and its ticket
+            // untouched for its own terminal phase.
+            this.lastReason = if (compositionId == this.lastTerminalCompositionId) {
+                "composition_terminal_duplicate"
+            } else {
+                "composition_id_mismatch"
+            }
+            return this.ignoredCompositionEvent(this.lastReason)
+        }
+        if (this.compositionActive && this.compositionSurface == 1) {
+            // 呈现面组合的终态只经 `commitPresentationComposition`:正文提交入口
+            // 不能把呈现面冻结的源字节范围解释成镜像 UTF-16 坐标。
+            return this.refuseCompositionIntent("composition_busy", true)
+        }
+        if (this.compositionInvalidReason != "") {
+            // 该组合的 claim 已经结束:终态不得再落到任何写入路径。
+            let reason = this.compositionInvalidReason
+            this.retainInterruptedCompositionDraft(this.compositionSurface, reason,
+                "terminal_after_invalid_update", this.activeCompositionId)
+            return this.refuseCompositionIntent(reason, true)
+        }
+        if (this.window.sourceVersion() != this.compositionBaseVersion ||
+            this.mirrorRevision != this.compositionBaseMirror) {
+            // Agent/另一窗口在组合期间改过基版本:旧回调不猜新坐标,具名拒绝并要
+            // 求平台按新镜像重新组字。草稿保留,由用户决定重打还是放弃。
+            this.retainInterruptedCompositionDraft(this.compositionSurface,
+                "composition_base_stale", "owner_version_advanced", this.activeCompositionId)
+            return this.refuseCompositionIntent("composition_base_stale", true)
+        }
+        // 统一恢复确认门(在既有具名判定之后):恢复未确认期间,任何仍活动的组合
+        // 终态不得落写入路径——镜像/代理还停在分叉前的旧坐标。
+        if (this.needsCalibration) {
+            this.lastReason = "recalibration_required"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        let committed = match (finalText) {
+            case Some(value) => value
+            case None => this.compositionDraft
+        }
+        if (this.compositionToken >= 0) {
+            // 声明仲裁的组合只走 owner 凭据终态:普通 sink 路径会被 owner 的保护拒绝
+            // (自锁),也绕开"恰好一次"的 token 记账。
+            return this.commitOwnerClaim(committed, compositionId)
+        }
+        let result = this.submitRange16(this.replacementStart16,
+            this.replacementStart16 + this.replacementLength16, committed)
+        if (result.accepted) {
+            this.lastTerminalCompositionId = compositionId
+            this.clearComposition()
+            return result
+        }
+        if (result.ticket < 0) {
+            // 提交前的具名拒绝(镜像未准备/越界/换算失败):owner 完全没被触碰,
+            // 而平台侧提交已经发生,同样持锁等待恢复;原因沿用 submitRange16 写下的那个。
+            return this.refuseCompositionIntent(result.reason, true)
+        }
+        return result
+    }
+
+    /// 取消组字:丢弃草稿,不产生任何事务(撤销 ≠ 取消;正文零变化)。
+    /// `compositionId` 命中最近一次真正结束的组合时按重复终态处理(幂等)。
+    public func cancelComposition(compositionId!: Int64 = -1): Unit {
+        if (this.compositionActive) {
+            if (compositionId >= 0 && this.activeCompositionId >= 0 &&
+                compositionId != this.activeCompositionId) {
+                this.lastReason = if (compositionId == this.lastTerminalCompositionId) {
+                    "composition_terminal_duplicate"
+                } else {
+                    "composition_id_mismatch"
+                }
+                return
+            }
+            this.endOwnerClaim()
+            this.lastTerminalCompositionId = compositionId
+            this.clearComposition()
+            return
+        }
+        if (compositionId >= 0 && compositionId == this.lastTerminalCompositionId) {
+            this.lastReason = "composition_terminal_duplicate"
+        }
+    }
+
+    /// 外部扰乱导致组合被迫结束(Astra 重锚裁决 Q4 安全恢复分支,由窗口在取消相位调用):
+    /// 保存**独立**恢复草稿 → 按精确 token 结束 owner claim → 结束组合状态 →
+    /// 持校准锁关闭输入门(正文表面),等待消费方按 owner 现状重建投影、native 代理
+    /// 恢复并带完整回执 `confirmProxyRestored` 之后才放行新输入。
+    /// 已接受的 Agent 事务原样保留;本路径自身零正文写入、零新撤销记录,也不会把
+    /// 草稿静默提交 —— 取回/放弃由消费方的明确用户动作决定(`consumeRecoveryDraft`)。
+    /// 返回值是本次扰乱判决(意图票据),供窗口按同一 acknowledge 结算留痕。
+    public func disruptComposition(compositionId: Int64, reason: String,
+        cause: String): CjguiTextSessionEdit {
+        let surface = this.compositionSurface
+        if (!this.compositionActive) {
+            // 没有活动组合:重复/迟到的扰乱取消按重复终态处理,不产生新草稿。
+            return this.refuseCompositionIntent("composition_terminal_duplicate", false)
+        }
+        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
+            compositionId != this.activeCompositionId) {
+            return this.refuseCompositionIntent("composition_id_mismatch", false)
+        }
+        this.retainInterruptedCompositionDraft(surface, reason, cause, compositionId)
+        // 两种表面共用同一恢复确认门(needsCalibration):镜像/投影仍停在扰乱前的
+        // 旧坐标,完整恢复回执确认之前放行任何新输入就是把旧坐标写进新正文。
+        // visual 表面的解锁由可视代理恢复链(recalibrate→恢复→confirmProxyRestored)
+        // 完成,与正文表面同一入口。
+        return this.refuseCompositionIntent(reason, true)
+    }
+
+    /// Q4 的“保存独立恢复草稿”步骤,单独成函数:凡是**活动组合被外部写打断**的
+    /// 具名拒绝都必须走它,否则用户的 preedit 会随组合一起消失。首个真实输入反例是
+    /// visual 表面的 base-stale 分支——外部写之后到达的 marked 更新此前只拒绝、零草稿,
+    /// 产品因此既无通知也无「取回草稿」可点(α visual 链停在 PENDING 之前)。
+    /// 本函数自身零正文写入、零新撤销记录;草稿按精确 token 结束 claim 后进入队列,
+    /// 取回/放弃仍由消费方的明确用户动作决定。
+    /// `clear` 区分两种调用者:`disruptComposition` 是终局(组合就此结束),
+    /// 各 stale 拒绝分支只是把这次组合判成**不可继续**(组合保留、`compositionInvalidReason`
+    /// 锁住后续同名字拒绝,等平台自己的取消相位收尾),因此不能替它清组合状态。
+    /// `compositionId` 同时充当"这次组合已保留过"的判据:同一次中断的迟到相位
+    /// (先 stale 拒绝、后取消相位)不得产生第二份草稿。空 preedit(用户尚未输入
+    /// 任何内容)不产生草稿,只有 claim 收尾与恢复门关闭。
+    private func retainInterruptedCompositionDraft(surface: Int64, reason: String,
+        cause: String, compositionId: Int64, clear!: Bool = true): Unit {
+        if (this.compositionDraftRetained) {
+            // 这次组合的 preedit 已经保留过:迟到相位只收尾,不产生第二份。
+            if (clear) {
+                this.clearComposition()
+            }
+            return
+        }
+        if (this.compositionDraft == "") {
+            // 没有任何已接受的 preedit 就没有可恢复内容:不生成空草稿(否则产品会
+            // 为一个空串弹「取回草稿」),但 claim 仍按精确 token 结束、组合按调用者
+            // 语义收尾,恢复确认门照常关闭。
+            this.compositionDraftRetained = true
+            this.endOwnerClaim()
+            this.lastTerminalCompositionId = compositionId
+            if (clear) {
+                this.clearComposition()
+            }
+            return
+        }
+        var startByte: Int64 = -1
+        var endByte: Int64 = -1
+        if (surface == 1) {
+            startByte = this.compositionSourceStartByte
+            endByte = this.compositionSourceEndByte
+        } else if (let Some(bytes) <- this.window.documentRangeForUtf16(
+            this.replacementStart16, this.replacementLength16)) {
+            startByte = bytes[0]
+            endByte = bytes[1]
+        }
+        this.recoveryDraftSeq += 1
+        let draft = CjguiTextSessionRecoveryDraft(
+            this.recoveryDraftSeq, this.compositionDraft, startByte, endByte,
+            this.compositionBaseVersion, this.contextEpoch, this.activeCompositionId,
+            this.compositionToken, this.compositionBindingIdentity(), surface, reason, cause)
+        // 追加而非覆盖;容量闸门在组合 begin 处,这里防御性地保界并如实计数。
+        if (Int64(this.recoveryDrafts.size) >= CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS) {
+            this.recoveryDrafts.remove(at: 0)
+            this.recoveryDraftsDisplaced += 1
+        }
+        this.recoveryDrafts.add(draft)
+        this.compositionDraftRetained = true
+        this.endOwnerClaim()
+        this.lastTerminalCompositionId = compositionId
+        if (clear) {
+            this.clearComposition()
+        }
+    }
+
+    /// 未处理恢复草稿(新→旧);有界,每份带稳定身份。
+    public func recoveryDraftsValue(): Array<CjguiTextSessionRecoveryDraft> {
+        let out = ArrayList<CjguiTextSessionRecoveryDraft>()
+        var index = Int64(this.recoveryDrafts.size) - 1
+        while (index >= 0) {
+            out.add(this.recoveryDrafts[index])
+            index -= 1
+        }
+        return out.toArray()
+    }
+
+    /// 最新恢复草稿(只读观察;消费方据此在反馈区告知并保留可取回内容)。
+    public func recoveryDraftValue(): ?CjguiTextSessionRecoveryDraft {
+        if (Int64(this.recoveryDrafts.size) == 0) {
+            return None
+        }
+        return Some(this.recoveryDrafts[this.recoveryDrafts.size - 1])
+    }
+
+    /// 防御性挤出的草稿数(begin 闸门使其正常为 0);公开可读的诚实计账。
+    public func recoveryDraftsDisplacedCount(): Int64 {
+        return this.recoveryDraftsDisplaced
+    }
+
+    /// **写前校验**:某份草稿此刻能否被取回(身份匹配、绑定未换、恢复门未锁)。
+    /// 消费方在提交任何正文之前调用;失败具名,草稿原样保留。
+    public func canConsumeRecoveryDraft(draftId: Int64): Bool {
+        for (draft in this.recoveryDrafts) {
+            if (draft.draftId == draftId) {
+                if (this.needsCalibration) {
+                    this.lastReason = "recalibration_required"
+                    return false
+                }
+                if (draft.contextEpoch != this.contextEpoch ||
+                    draft.bindingIdentity != this.compositionBindingIdentity()) {
+                    this.lastReason = "recovery_draft_binding_lost"
+                    return false
+                }
+                return true
+            }
+        }
+        this.lastReason = "recovery_draft_absent"
+        return false
+    }
+
+    /// **显式取回**:一次性交出指定身份的草稿并移出队列。取回后的落字是消费方
+    /// 自己的一笔显式新编辑,不经旧 claim、不自动提交;身份/绑定/恢复门不符按名字
+    /// 拒绝,草稿保留。消费方必须先以 `canConsumeRecoveryDraft` 做写前校验——本
+    /// 方法自身也再核一次,但它不应是唯一的保护点。
+    public func consumeRecoveryDraft(draftId: Int64): ?CjguiTextSessionRecoveryDraft {
+        var index: Int64 = 0
+        while (index < Int64(this.recoveryDrafts.size)) {
+            let draft = this.recoveryDrafts[index]
+            if (draft.draftId == draftId) {
+                if (!this.canConsumeRecoveryDraft(draftId)) {
+                    return None
+                }
+                this.recoveryDrafts.remove(at: index)
+                this.lastReason = ""
+                return Some(draft)
+            }
+            index += 1
+        }
+        this.lastReason = "recovery_draft_absent"
+        return None
+    }
+
+    /// **显式放弃**指定身份的草稿(用户决定不要这份 preedit)。身份不符返回 false。
+    public func discardRecoveryDraft(draftId: Int64): Bool {
+        var index: Int64 = 0
+        while (index < Int64(this.recoveryDrafts.size)) {
+            if (this.recoveryDrafts[index].draftId == draftId) {
+                this.recoveryDrafts.remove(at: index)
+                return true
+            }
+            index += 1
+        }
+        return false
+    }
+
+    // ---- 呈现(presentation TEXT)组合:同一 owner claim 的第二表面 ----
+
+    /// 呈现面组合开始:消费方映射器已把首个替换范围解析为同版本 owner 源字节跨度
+    /// (`CjguiPreparedSourceRange` 的身份字段)。仲裁绑定的组合在这里登记 owner
+    /// claim;未声明仲裁的绑定不得使用本入口(继续走既有普通替换路径)。
+    /// 冻结范围是**源字节**:呈现坐标属于消费方投影,不经镜像换算。
+    public func beginPresentationComposition(contentVersion: Int64, startByte: Int64,
+        endByte: Int64, contextEpoch: Int64, mirrorRevision: Int64, compositionId: Int64,
+        firstPreedit!: String = "", firstInnerAnchor16!: Int64 = 0,
+        firstInnerFocus16!: Int64 = 0): CjguiTextSessionEdit {
+        if (!this.bound) {
+            return this.refuseCompositionIntent("session_unbound", false)
+        }
+        if (this.needsCalibration) {
+            return this.refuseCompositionIntent("recalibration_required", false)
+        }
+        if (this.compositionActive) {
+            return this.refuseCompositionIntent("composition_busy", false)
+        }
+        // 恢复草稿容量闸门:与正文表面同一策略,组合开始之前检查。
+        if (Int64(this.recoveryDrafts.size) >= CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS) {
+            return this.refuseCompositionIntent("recovery_draft_capacity", false)
+        }
+        // 首个相位本身也是数据(E2 复核第 1 项):begin 与合法 preedit 更新在同一
+        // 相位完成。外部扰乱恰在唯一一次 marked update 之后到来时,保存的草稿必须
+        // 与刚显示的文字一致——begin 后草稿为空的旧形状做不到这一点。
+        let preeditUnits = cjguiUtf16Length(firstPreedit)
+        if (firstInnerAnchor16 < 0 || firstInnerFocus16 < 0 ||
+            firstInnerAnchor16 > preeditUnits || firstInnerFocus16 > preeditUnits) {
+            return this.refuseCompositionIntent("composition_inner_range_invalid", false)
+        }
+        if (contextEpoch != this.contextEpoch || mirrorRevision != this.mirrorRevision) {
+            return this.refuseCompositionIntent("prepared_range_stale", false)
+        }
+        if (this.window.sourceVersion() != contentVersion) {
+            return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_VERSION, false)
+        }
+        if (this.compositionArbitration) {
+            let sink = match (this.compositionSink) {
+                case Some(wired) => wired
+                case None => return this.refuseCompositionIntent(
+                    CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, false)
+            }
+            let claim = sink.beginRangeTextComposition(this.compositionBindingIdentity(),
+                contentVersion, startByte, endByte)
+            if (!claim.accepted) {
+                return this.refuseCompositionIntent(claim.reason, false)
+            }
+            this.compositionToken = claim.token
+        } else {
+            return this.refuseCompositionIntent(
+                CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, false)
+        }
+        this.compositionActive = true
+        this.compositionSurface = 1
+        this.compositionDraft = firstPreedit
+        this.compositionBaseVersion = contentVersion
+        this.compositionBaseMirror = this.mirrorRevision
+        this.compositionSourceStartByte = startByte
+        this.compositionSourceEndByte = endByte
+        this.activeCompositionId = compositionId
+        this.markedStart16 = 0
+        this.markedLength16 = preeditUnits
+        this.markedInnerAnchor16 = firstInnerAnchor16
+        this.markedInnerFocus16 = firstInnerFocus16
+        this.lastReason = ""
+        return this.edit(this.editSeq, true, -1, "")
+    }
+
+    /// 呈现面组合更新:只更新 preedit 与内部选区(相对传入 preedit)。期间 owner 版本
+    /// 前进 ⇒ claim 具名失效并保留草稿,由平台按新投影重建组合;不再有镜像坐标判定。
+    public func updatePresentationComposition(text: String, innerAnchor16: Int64,
+        innerFocus16: Int64, compositionId: Int64): CjguiTextSessionEdit {
+        if (!this.bound) {
+            return this.refuseCompositionIntent("session_unbound", false)
+        }
+        if (!this.compositionActive || this.compositionSurface != 1) {
+            return this.refuseCompositionIntent("composition_not_active", false)
+        }
+        if (this.compositionInvalidReason != "") {
+            return this.refuseCompositionIntent(this.compositionInvalidReason, false)
+        }
+        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
+            compositionId != this.activeCompositionId) {
+            return this.refuseCompositionIntent("composition_id_mismatch", false)
+        }
+        if (this.window.sourceVersion() != this.compositionBaseVersion) {
+            // Q4 同一恢复契约:外部写让镜像/投影停在旧坐标时,已接受的 preedit 必须
+            // 保留可取回。此前这条分支只拒绝(真实输入反例:α visual 链在 base-stale
+            // 之后没有任何恢复草稿,产品无通知、无「取回草稿」)。草稿保留后组合仍由
+            // 平台自己的取消相位收尾,迟到的相位不会产生第二份。
+            this.retainInterruptedCompositionDraft(this.compositionSurface,
+                "composition_base_stale", "owner_version_advanced", this.activeCompositionId,
+                clear: false)
+            this.invalidateCompositionClaim("composition_base_stale")
+            return this.refuseCompositionIntent("composition_base_stale", true)
+        }
+        // 统一恢复确认门(在既有具名判定之后),与正文表面同一把锁。
+        if (this.needsCalibration) {
+            this.lastReason = "recalibration_required"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        let textLen16 = cjguiUtf16Length(text)
+        if (innerAnchor16 < 0 || innerFocus16 < 0 || innerAnchor16 > textLen16 ||
+            innerFocus16 > textLen16) {
+            this.invalidateCompositionClaim("composition_inner_range_invalid")
+            return this.refuseCompositionIntent("composition_inner_range_invalid", true)
+        }
+        this.compositionDraft = text
+        this.markedLength16 = textLen16
+        this.markedInnerAnchor16 = innerAnchor16
+        this.markedInnerFocus16 = innerFocus16
+        this.lastReason = ""
+        return this.edit(this.editSeq, true, -1, "")
+    }
+
+    /// 呈现面组合终态:与正文表面共用 `commitOwnerClaim` —— 一笔 Human 事务、凭据
+    /// 恰好消费一次、提交后镜像按 owner 实际消费范围刷新。
+    public func commitPresentationComposition(finalText: String,
+        compositionId: Int64): CjguiTextSessionEdit {
+        if (!this.bound) {
+            return this.refuseCompositionIntent("session_unbound", false)
+        }
+        if (!this.compositionActive || this.compositionSurface != 1) {
+            if (compositionId >= 0 && compositionId == this.lastTerminalCompositionId) {
+                this.lastReason = "composition_terminal_duplicate"
+                return this.ignoredCompositionEvent(this.lastReason)
+            }
+            return this.refuseCompositionIntent("composition_not_active", false)
+        }
+        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
+            compositionId != this.activeCompositionId) {
+            this.lastReason = if (compositionId == this.lastTerminalCompositionId) {
+                "composition_terminal_duplicate"
+            } else {
+                "composition_id_mismatch"
+            }
+            return this.ignoredCompositionEvent(this.lastReason)
+        }
+        if (this.compositionInvalidReason != "") {
+            let reason = this.compositionInvalidReason
+            this.retainInterruptedCompositionDraft(this.compositionSurface, reason,
+                "terminal_after_invalid_update", this.activeCompositionId)
+            return this.refuseCompositionIntent(reason, true)
+        }
+        if (this.window.sourceVersion() != this.compositionBaseVersion) {
+            // 真实输入反例(α visual 链):这条分支就是终局——native 在外部写之后
+            // 到达的是一次**提交**(phase 2),此前只拒绝 ⇒ 用户刚提交的首候选直接
+            // 消失,产品既无通知也无「取回草稿」。按同一 Q4 契约保留草稿。
+            this.retainInterruptedCompositionDraft(this.compositionSurface,
+                "composition_base_stale", "owner_version_advanced", this.activeCompositionId)
+            return this.refuseCompositionIntent("composition_base_stale", true)
+        }
+        // 统一恢复确认门(在既有具名判定之后),与正文表面同一把锁。
+        if (this.needsCalibration) {
+            this.lastReason = "recalibration_required"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        if (this.compositionToken >= 0) {
+            return this.commitOwnerClaim(finalText, compositionId)
+        }
+        return this.refuseCompositionIntent(
+            CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, true)
+    }
+
+    /// 呈现面组合取消:零事务,按精确 token 结束 claim(含重复终态幂等)。
+    public func cancelPresentationComposition(compositionId!: Int64 = -1): Unit {
+        if (this.compositionActive && this.compositionSurface == 1) {
+            if (compositionId >= 0 && this.activeCompositionId >= 0 &&
+                compositionId != this.activeCompositionId) {
+                this.lastReason = if (compositionId == this.lastTerminalCompositionId) {
+                    "composition_terminal_duplicate"
+                } else {
+                    "composition_id_mismatch"
+                }
+                return
+            }
+            this.endOwnerClaim()
+            this.lastTerminalCompositionId = compositionId
+            this.clearComposition()
+            return
+        }
+        if (compositionId >= 0 && compositionId == this.lastTerminalCompositionId) {
+            this.lastReason = "composition_terminal_duplicate"
+        }
+    }
+
+    /// 组字路径上的具名拒绝:分配**意图票据**(与已提交事务同一序列,不从别处借号)、
+    /// 进入 pending 等待 `acknowledge` 结算,并(除解绑外)持有校准锁 —— 平台代理
+    /// 已落字而 owner 没有,继续按旧坐标写入就是静默改写。
+    private func refuseCompositionIntent(reason: String, holdCalibration: Bool): CjguiTextSessionEdit {
+        this.ticketSeq += 1
+        let ticket = this.ticketSeq
+        this.lastReason = reason
+        let refusal = this.edit(this.editSeq, false, -1, reason, ticket)
+        this.pending.add(CjguiTextSessionPending(ticket, this.mirrorRevision, refusal))
+        if (holdCalibration) {
+            this.needsCalibration = true
+            this.calibrationRecalibrated = false
+        }
+        return refusal
+    }
+
+    private func clearComposition(): Unit {
+        this.compositionActive = false
+        this.compositionDraftRetained = false
+        this.compositionDraft = ""
+        this.compositionBaseVersion = -1
+        this.compositionBaseMirror = -1
+        this.replacementStart16 = 0
+        this.replacementLength16 = 0
+        this.markedStart16 = 0
+        this.markedLength16 = 0
+        this.markedInnerAnchor16 = 0
+        this.markedInnerFocus16 = 0
+        this.activeCompositionId = -1
+        this.compositionSurface = 0
+        this.compositionSourceStartByte = -1
+        this.compositionSourceEndByte = -1
+        // 凭据与失效原因随组合一起清:释放动作由结束路径(endOwnerClaim/cancel)负责,
+        // 这里只把状态归零,绝不在清除时偷偷调用 owner。
+        this.compositionToken = -1
+        this.compositionInvalidReason = ""
+    }
+
+    /// 镜像坐标下的当前选区(UTF-16;折叠时两端相等)。只读观测:消费探针据此
+    /// 核对 source 表面的停靠/删除落点,不参与任何判决。
+    public func selectionUtf16Value(): (Int64, Int64) {
+        return (this.selStart16, this.selEnd16)
+    }
+
+    /// 组字期间平台报告的 marked 内部选区(相对传入 preedit),供选区查询原答。
+    public func markedInnerSelection16(): (Int64, Int64) {
+        return if (this.compositionActive) {
+            (this.markedInnerAnchor16, this.markedInnerFocus16)
+        } else {
+            (0, 0)
+        }
+    }
+
+    // ---- owner 组合凭据(可选仲裁) ----
+
+    /// 凭据绑定的窗口身份:上下文代次 + 节点号,不是可复用的窗口名。重绑推进代次,
+    /// 旧凭据永远指认不了新绑定。
+    private func compositionBindingIdentity(): String {
+        return "cjgui-session:${this.contextEpoch}:node:${this.window.nodeId()}"
+    }
+
+    /// 活动 claim 凭据;-1 表示没有登记。消费方/证据读取用。
+    public func compositionClaimTokenValue(): Int64 {
+        return this.compositionToken
+    }
+
+    /// 活动组合的平台编号；无活动组合或平台未提供时为 -1。窗口据此在副作用之前
+    /// 判决迟到终态的身份，与 visual 表面的 `presentationCompositionId` 同契约。
+    public func compositionIdValue(): Int64 {
+        return if (this.compositionActive) { this.activeCompositionId } else { -1 }
+    }
+
+    /// 最近一次真正结束(提交/取消/扰乱/保留草稿)的组合编号；-1 表示尚无终态。
+    /// 迟到的重复终态据此按 `composition_terminal_duplicate` 幂等拒绝。
+    public func lastTerminalCompositionIdValue(): Int64 {
+        return this.lastTerminalCompositionId
+    }
+
+    /// 本绑定是否声明了组合仲裁。声明而没有能力时,组合在 begin 即具名拒绝。
+    public func compositionArbitrationDeclared(): Bool {
+        return this.compositionArbitration
+    }
+
+    /// 非终态组合已无法到达 owner claim 的具名原因;健康(或未声明仲裁)时为空。
+    public func compositionInvalidationReason(): String {
+        return this.compositionInvalidReason
+    }
+
+    /// 活动组合的基点是否已被 owner 版本推进越过:与各 stale 拒绝分支**同一判据**
+    /// (`window.sourceVersion() != compositionBaseVersion`),供窗口在 native 结束组合
+    /// (取消相位)时判定"这次结束是外部写打断"。
+    ///
+    /// 为什么不能只看被组字片段自己的渲染值变化:呈现面的组合可能落在标题片段上,而
+    /// 外部写落在正文片段——片段值不变,旧的表面变化判据漏判,取消相位就落成普通
+    /// cancel,用户的 preedit 零草稿丢失(visual α 链 2026-09-29 实测)。owner 版本
+    /// 越过组合基点时,旧冻结坐标一律不可再落字,这条判据与 stale 分支同源。
+    public func compositionBaseStale(): Bool {
+        return this.compositionActive && this.window.sourceVersion() != this.compositionBaseVersion
+    }
+
+    /// 组合期间 owner 版本前进后的**续接结算**:在同一 owner 临界点确认活动 claim 仍是
+    /// 本会话那个 token(身份、活动性、owner 实例都在 `inspect` 里核对),并采用它当前
+    /// 所属的版本作为新的组合基点——镜像随之按 owner 刷新,镜像修订推进,使以旧修订
+    /// 表达的冻结坐标不再被当成当前。
+    ///
+    /// 它只改会话的基点状态,绝不代写正文、绝不新建 claim;claim 已失效时具名拒绝并
+    /// 保留草稿。调用方必须已在 native 侧装好同一基文的代理(重锚读回成功),否则
+    /// 平台 preedit 与这份新基点不描述同一段正文。
+    public func rebaseCompositionBaseFromClaim(): Bool {
+        if (!this.compositionActive || this.compositionToken < 0) {
+            return false
+        }
+        if (this.mirrorRevision == this.compositionBaseMirror &&
+            this.window.sourceVersion() == this.compositionBaseVersion) {
+            return true
+        }
+        let sink = match (this.compositionSink) {
+            case Some(wired) => wired
+            case None =>
+                this.lastReason = CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE
+                return false
+        }
+        let live = sink.inspectRangeTextComposition(this.compositionToken)
+        if (!live.ok) {
+            this.lastReason = if (live.reason == "") { "composition_stale" } else { live.reason }
+            return false
+        }
+        let _ = this.refreshMirror()
+        this.compositionBaseVersion = live.contentVersion
+        this.compositionBaseMirror = this.mirrorRevision
+        this.compositionReanchors += 1
+        this.lastReason = ""
+        return true
+    }
+
+    /// 组合基点被 owner 推进后成功续接的次数(重锚证据)。
+    public func compositionReanchorCount(): Int64 {
+        return this.compositionReanchors
+    }
+
+    /// 已被消费但未写成正文的终态草稿(只作恢复证据,不会重投)。
+    public func lastTerminalCompositionDraft(): String {
+        return this.terminalCompositionDraft
+    }
+
+    /// 为组合开始登记 owner 的活动 claim,范围 `[resolvedStart16, +resolvedLength16)`。范围经
+    /// **同一个**有界镜像换算,并由 owner 判定换算版本:陈旧镜像必然得到 `version_conflict`,
+    /// 零 claim、零正文变化,而不是把旧坐标登记到新文本上。
+    private func beginOwnerClaim(resolvedStart16: Int64,
+        resolvedLength16: Int64): CjguiRangeTextCompositionClaim {
+        let sink = match (this.compositionSink) {
+            case Some(wired) => wired
+            case None => return CjguiRangeTextCompositionClaim.refused(
+                CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, this.window.contentVersion())
+        }
+        let mapped = match (this.window.documentRangeForUtf16(resolvedStart16, resolvedLength16)) {
+            case Some(range) => range
+            case None => return CjguiRangeTextCompositionClaim.refused(
+                CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY, this.window.contentVersion())
+        }
+        return sink.beginRangeTextComposition(this.compositionBindingIdentity(),
+            this.window.contentVersion(), mapped[0], mapped[1])
+    }
+
+    /// 用精确 token 释放活动 claim(绝不用按名字的通配释放)。best effort:owner 可能已经
+    /// 消费或释放过它。
+    private func endOwnerClaim(): Unit {
+        if (this.compositionToken < 0) {
+            return
+        }
+        let token = this.compositionToken
+        this.compositionToken = -1
+        if (let Some(sink) <- this.compositionSink) {
+            let _ = sink.cancelRangeTextComposition(token)
+        }
+    }
+
+    /// 该组合不能再对抗它的 claim:按名字释放保护、保留草稿。被拒绝的组合不得留下永久
+    /// 活动的保护。
+    private func invalidateCompositionClaim(reason: String): Unit {
+        if (!this.compositionArbitration) {
+            return
+        }
+        this.endOwnerClaim()
+        this.compositionInvalidReason = reason
+    }
+
+    /// owner 凭据的终态路径。最终文本只经组合 Sink 与活动 token 落成**一笔** Human 事务,
+    /// 绝不走普通范围替换;凭据只被一个终态消费:消费后但未写成正文的终态不在此重试
+    /// (仅保留终态草稿作恢复证据),而没到达 owner 的拒绝会具名结束 claim,不让保护
+    /// 挂在已死的组合后面。
+    private func commitOwnerClaim(committed: String, compositionId: Int64): CjguiTextSessionEdit {
+        let sink = match (this.compositionSink) {
+            case Some(wired) => wired
+            case None => return this.refuseCompositionIntent(
+                CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, true)
+        }
+        let token = this.compositionToken
+        let expectedVersion = this.compositionBaseVersion
+        let baseMirror = this.mirrorRevision
+        this.ticketSeq += 1
+        let ticket = this.ticketSeq
+        let outcome = sink.commitRangeTextComposition(token, expectedVersion, committed,
+            "composition-terminal:${this.contextEpoch}:${token}")
+        if (outcome.consumed) {
+            this.compositionToken = -1
+        }
+        if (outcome.accepted) {
+            this.lastTerminalCompositionId = compositionId
+            if (!outcome.published) {
+                // 零宽 claim + 空终态:owner 结算了"无变更终态"(零版本、零历史)。没有正文
+                // 需要刷新,也不持校准锁;具名报告,不冒充一次已接受的组合写入。
+                this.clearComposition()
+                this.lastReason = CJGUI_RANGE_TEXT_REASON_COMPOSITION_NO_CHANGE
+                let settled = this.edit(this.editSeq, true, outcome.versionAfter,
+                    CJGUI_RANGE_TEXT_REASON_COMPOSITION_NO_CHANGE, ticket)
+                this.pending.add(CjguiTextSessionPending(ticket, baseMirror, settled))
+                return settled
+            }
+            // 一笔事务已落:caret 由 owner 回执的实际消费范围投影(消费起点 + 插入字节),
+            // 不跨过"刚被自己替换"的范围去猜。
+            let caretByte = outcome.startByte + cjguiUtf8Length(committed)
+            let _ = this.window.revealByte(caretByte)
+            let changed = this.window.refresh()
+            if (changed) {
+                this.mirrorRevision += 1
+                this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+            }
+            this.editSeq += 1
+            let localCaret = caretByte - this.window.windowStartByte()
+            let caret: ?Int64 = if (this.window.isPrepared() &&
+                this.window.contentVersion() == outcome.versionAfter) {
+                cjguiUtf8OffsetToUtf16(this.window.text(), localCaret)
+            } else {
+                None
+            }
+            this.clearComposition()
+            if (let Some(caret16) <- caret) {
+                this.setSelection16(caret16, caret16)
+                this.lastReason = ""
+            } else {
+                this.needsCalibration = true
+                this.calibrationRecalibrated = false
+                this.lastReason = "accepted_caret_unprepared"
+            }
+            let result = this.edit(this.editSeq, true, outcome.versionAfter, this.lastReason, ticket)
+            this.pending.add(CjguiTextSessionPending(ticket, baseMirror, result))
+            return result
+        }
+        // 凭据已被消费但正文未写,或 owner 在消费前拒绝:两种情况本会话都不再重试这笔终态。
+        // 具名结束 claim、保留草稿(消费态另存终态草稿)、持校准锁等平台取消/重建组合。
+        this.endOwnerClaim()
+        if (outcome.consumed) {
+            this.terminalCompositionDraft = committed
+        }
+        this.compositionInvalidReason = if (outcome.reason == "") {
+            "composition_not_written"
+        } else {
+            outcome.reason
+        }
+        this.needsCalibration = true
+        this.calibrationRecalibrated = false
+        this.lastReason = this.compositionInvalidReason
+        this.retainInterruptedCompositionDraft(this.compositionSurface, this.lastReason,
+            "owner_terminal_refused", this.activeCompositionId)
+        let refused = this.edit(this.editSeq, false, outcome.versionAfter, this.lastReason, ticket)
+        this.pending.add(CjguiTextSessionPending(ticket, baseMirror, refused))
+        return refused
+    }
+
+    // ---- 唯一的范围替换路径 ----
+
+    /// 显式范围替换(镜像内 UTF-16 单位)。平台直接输入走这里,因此组字期间必须
+    /// 让位给 marked 提交路径,不能同时存在第二个正文写入者。
+    public func replaceRange16(start16: Int64, end16: Int64, text: String): CjguiTextSessionEdit {
+        if (this.compositionActive) {
+            this.lastReason = "composition_busy"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        return this.submitRange16(start16, end16, text)
+    }
+
+    /// Prepare an already-mapped absolute source span. Mapping display syntax
+    /// remains with the application; the session proves one bounded mirror
+    /// covers both UTF-8 endpoints at the requested owner version.
+    public func prepareSourceRange(expectedVersion: Int64, startByte: Int64,
+        endByte: Int64): ?CjguiPreparedSourceRange {
+        if (!this.bound) {
+            this.lastReason = "session_unbound"
+            return None
+        }
+        if (this.needsCalibration || this.compositionActive) {
+            this.lastReason = if (this.needsCalibration) { "recalibration_required" } else { "composition_busy" }
+            return None
+        }
+        if (this.window.sourceVersion() != expectedVersion) {
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_VERSION
+            return None
+        }
+        if (this.window.contentVersion() != expectedVersion) {
+            let _ = this.refreshMirror()
+        }
+        if (this.window.contentVersion() != expectedVersion) {
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_VERSION
+            return None
+        }
+        let priorStart = this.window.windowStartByte()
+        let priorText = this.window.text()
+        let reason = this.window.prepareByteRange(startByte, endByte)
+        if (priorStart != this.window.windowStartByte() || priorText != this.window.text()) {
+            this.mirrorRevision += 1
+            this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+        }
+        if (reason != "") {
+            this.lastReason = reason
+            return None
+        }
+        if (this.window.contentVersion() != expectedVersion ||
+            this.window.sourceVersion() != expectedVersion) {
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_VERSION
+            return None
+        }
+        let epoch = this.contextEpoch
+        let mirror = this.mirrorRevision
+        this.lastReason = ""
+        return Some(CjguiPreparedSourceRange(expectedVersion, startByte, endByte, epoch, mirror,
+            { text, sourceProxyChanged =>
+                return this.submitPreparedSourceRange(epoch, mirror, expectedVersion,
+                    startByte, endByte, text, sourceProxyChanged)
+            }))
+    }
+
+    private func submitPreparedSourceRange(epoch: Int64, mirror: Int64, expectedVersion: Int64,
+        startByte: Int64, endByte: Int64, text: String,
+        sourceProxyChanged: Bool): CjguiTextSessionEdit {
+        if (!this.bound || epoch != this.contextEpoch || mirror != this.mirrorRevision ||
+            this.needsCalibration || this.compositionActive || !this.window.isPrepared()) {
+            this.lastReason = "prepared_range_stale"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        if (this.window.contentVersion() != expectedVersion ||
+            this.window.sourceVersion() != expectedVersion) {
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_VERSION
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        this.ticketSeq += 1
+        let ticket = this.ticketSeq
+        let outcome = this.window.applyByteEdit(startByte, endByte, text)
+        if (outcome.applied) {
+            this.editSeq += 1
+            this.mirrorRevision += 1
+            this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+            if (this.selectionVersion >= 0 && this.selectionStartByte >= 0) {
+                if (let Some(mapped) <- this.window.rebaseSelection(this.selectionVersion,
+                    this.selectionStartByte, this.selectionEndByte)) {
+                    if (mapped[0] == outcome.versionAfter &&
+                        this.projectSourceSelection(mapped[1], mapped[2])) {
+                        this.selectionVersion = mapped[0]
+                        this.selectionStartByte = mapped[1]
+                        this.selectionEndByte = mapped[2]
+                        this.selectionNeedsNativeRestore = true
+                    } else {
+                        this.invalidateSourceSelection("selection_projection_unavailable")
+                    }
+                } else {
+                    this.invalidateSourceSelection("selection_rebase_unavailable")
+                }
+            }
+            this.lastReason = ""
+            let accepted = this.edit(this.editSeq, true, outcome.versionAfter, "", ticket)
+            this.pending.add(CjguiTextSessionPending(ticket, mirror, accepted,
+                sourceProxyChanged: sourceProxyChanged))
+            return accepted
+        }
+        this.lastReason = outcome.reason
+        let rejected = this.edit(this.editSeq, false, outcome.versionAfter, outcome.reason, ticket)
+        this.pending.add(CjguiTextSessionPending(ticket, mirror, rejected,
+            sourceProxyChanged: sourceProxyChanged))
+        if (sourceProxyChanged) {
+            this.needsCalibration = true
+            this.calibrationRecalibrated = false
+        }
+        return rejected
+    }
+
+    /// 会话内部的唯一写入路径:换算只发生在已准备的有界镜像上,得到绝对文档字节
+    /// 范围后经窗口提交,owner 版本不符即冲突拒绝。
+    /// 接受 ⇒ edit 序号推进、选区折叠到插入末尾;拒绝 ⇒ 序号/选区不动、具名原因,
+    /// 并且要求先按 owner 现状重新校准才能继续输入。
+    private func submitRange16(start16: Int64, end16: Int64, text: String): CjguiTextSessionEdit {
+        if (!this.bound) {
+            // 换绑/销毁后迟到的平台回调:坐标属于已经消失的表面,具名拒绝。
+            this.lastReason = "session_unbound"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        if (this.needsCalibration) {
+            // 上一笔被拒而镜像仍停在旧坐标:继续提交会把编辑写进一个已经不存在的位置。
+            this.lastReason = "recalibration_required"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        let alignmentBlock = this.selectionAlignmentBlock()
+        if (alignmentBlock != "") {
+            // Native may still hold coordinates from the previous accepted
+            // scene. Do not reinterpret those numbers against the new mirror.
+            this.lastReason = alignmentBlock
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        if (!this.window.isPrepared()) {
+            this.lastReason = this.window.unpreparedReason()
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        let lo = if (start16 <= end16) { start16 } else { end16 }
+        let hi = if (start16 <= end16) { end16 } else { start16 }
+        if (lo < 0) {
+            this.lastReason = "negative_range"
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        if (hi > this.mirrorUtf16Length) {
+            // 超出已准备上下文:具名拒绝并请求按新镜像重新准备,不钳成其他有效位置。
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        let baseMirror = this.mirrorRevision
+        // 先在镜像里换算:换算失败是**提交前**的具名拒绝(owner 完全没被触碰),与
+        // "owner 收到但拒绝"是两类事件 —— 只有后者让平台代理与 accepted 正文分叉。
+        let (startByte, endByte) = match (this.window.documentRangeForUtf16(lo, hi - lo)) {
+            case Some(r) => r
+            case None => (-1, -1)
+        }
+        if (startByte < 0) {
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY
+            return this.edit(this.editSeq, false, -1, this.lastReason)
+        }
+        this.ticketSeq += 1
+        let ticket = this.ticketSeq
+        let outcome = this.window.applyByteEdit(startByte, endByte, text)
+        if (outcome.applied) {
+            this.editSeq += 1
+            // Accepted text may extend beyond the old bounded slice. Resolve the
+            // new caret in owner byte coordinates, then project it through the
+            // newly materialised slice before exposing another input range.
+            let caretByte = startByte + Int64(text.toArray().size)
+            this.window.revealByte(caretByte)
+            this.mirrorRevision += 1
+            this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+            let localCaretByte = caretByte - this.window.windowStartByte()
+            let mappedCaret: ?Int64 = if (this.window.isPrepared() &&
+                this.window.contentVersion() == outcome.versionAfter) {
+                cjguiUtf8OffsetToUtf16(this.window.text(), localCaretByte)
+            } else { None }
+            if (let Some(caret16) <- mappedCaret) {
+                this.setSelection16(caret16, caret16)
+                this.lastReason = ""
+            } else {
+                // The owner transaction is already accepted. Keep its receipt,
+                // but stop further input until the native proxy is recalibrated.
+                this.needsCalibration = true
+                this.calibrationRecalibrated = false
+                this.lastReason = "accepted_caret_unprepared"
+            }
+            let result = this.edit(this.editSeq, true, outcome.versionAfter, this.lastReason, ticket)
+            this.pending.add(CjguiTextSessionPending(ticket, baseMirror, result))
+            return result
+        }
+        this.lastReason = outcome.reason
+        let rejected = this.edit(this.editSeq, false, outcome.versionAfter, outcome.reason, ticket)
+        this.pending.add(CjguiTextSessionPending(ticket, baseMirror, rejected))
+        // 平台代理已经落了字,owner 没有:两侧从这一刻起分叉。
+        this.needsCalibration = true
+        this.calibrationRecalibrated = false
+        return rejected
+    }
+
+    private func edit(seq: Int64, accepted: Bool, versionAfter: Int64, reason: String): CjguiTextSessionEdit {
+        return this.edit(seq, accepted, versionAfter, reason, -1)
+    }
+
+    private func edit(seq: Int64, accepted: Bool, versionAfter: Int64, reason: String,
+        ticket: Int64): CjguiTextSessionEdit {
+        return CjguiTextSessionEdit(seq, ticket, accepted, versionAfter, this.mirrorRevision,
+            this.contextEpoch, reason)
+    }
+
+    private func ignoredCompositionEvent(reason: String): CjguiTextSessionEdit {
+        return CjguiTextSessionEdit(this.editSeq, -1, false, -1, this.mirrorRevision,
+            this.contextEpoch, reason, proxyRecoveryRequired: false)
+    }
+
+    // ---- 串行 pending / ACK / 拒绝校准 ----
+
+    public func pendingCount(): Int64 {
+        return this.pending.size
+    }
+
+    public func oldestPendingTicket(): Int64 {
+        return if (this.pending.size > 0) { this.pending[0].ticket } else { -1 }
+    }
+
+    /// 按位置结算:参数依次为 `ticket`(结算到该票据为止,含)与 `contextEpoch`。
+    /// 回执身份必须匹配当前上下文代次,否则这次 ACK 说明
+    /// 不了当前镜像的任何事 —— 例如 nodeId 被复用后旧上下文迟到的回执。
+    /// 结算批次里只要有一笔被 owner 拒绝,平台代理与 accepted 正文就已经分叉:置
+    /// 校准位,阻止后续输入继续以旧坐标写入当前正文。
+    /// 返回 true 表示这次结算被采纳。
+    public func acknowledge(ticket: Int64, contextEpoch: Int64): Bool {
+        if (contextEpoch != this.contextEpoch) {
+            this.lastReason = "stale_context_receipt"
+            return false
+        }
+        var settled: Int64 = 0
+        var i: Int64 = 0
+        while (i < this.pending.size) {
+            let item = this.pending[i]
+            if (item.ticket > ticket) {
+                break
+            }
+            if (!item.edit.accepted && item.sourceProxyChanged) {
+                this.needsCalibration = true
+                this.calibrationRecalibrated = false
+            }
+            settled += 1
+            i += 1
+        }
+        if (settled == 0) {
+            this.lastReason = "unknown_pending_ticket"
+            return false
+        }
+        var k: Int64 = 0
+        while (k < settled) {
+            this.pending.remove(at: 0)
+            k += 1
+        }
+        return true
+    }
+
+    /// 拒绝后的**第一步**:按 owner 现状重建镜像并推进镜像修订,返回镜像此刻是否可用于
+    /// 重新表达范围。此刻校准锁**仍然持有** —— 锁的解除属于平台侧事件(代理已按新镜像
+    /// 重新绑定/投影),必须由 `confirmProxyRestored` 带完整身份回执完成:平台在这一步
+    /// 之后取 `restorationReceipt()`,恢复完成再交回。
+    public func recalibrate(): Bool {
+        this.refreshMirror()
+        this.calibrationRecalibrated = this.window.isPrepared()
+        return this.calibrationRecalibrated
+    }
+}

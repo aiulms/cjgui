@@ -562,21 +562,35 @@ public class CjguiRangeTextWindow {
         let previousPrepared = this.prepared
         let previousComplete = this.complete
         let previousReason = this.pendingReason
+        // Validate the source candidate before publishing any of its text.
+        // A buggy range source can return more than requested; marking the
+        // mirror unprepared while retaining that oversized value would still
+        // hand it to layout and native text services on the next frame.
+        let contentBytes = Int64(slice.content.toArray().size)
+        let withinBudget = contentBytes <= this.materializeLimit
+        let endByte = if (withinBudget && slice.actualStart >= 0 &&
+            slice.actualStart <= 9223372036854775807 - contentBytes) {
+            slice.actualStart + contentBytes
+        } else {
+            -1
+        }
+        let validSpan = slice.actualStart >= 0 && slice.actualStart >= slice.requestedStart &&
+            withinBudget && endByte >= slice.actualStart &&
+            (slice.byteLength < 0 || endByte <= slice.byteLength)
         this.startByte = slice.actualStart
-        this.value = slice.content
+        this.value = if (validSpan) { slice.content } else { "" }
         this.version = slice.contentVersion
         this.totalBytes = slice.byteLength
-        let contentBytes = Int64(slice.content.toArray().size)
-        let endByte = slice.actualStart + contentBytes
-        let validSpan = slice.actualStart >= 0 && slice.actualStart >= slice.requestedStart &&
-            contentBytes <= this.materializeLimit &&
-            (slice.byteLength < 0 || endByte <= slice.byteLength)
         this.prepared = slice.complete && validSpan &&
             (slice.byteLength < 0 || slice.actualStart == slice.byteLength ||
                 contentBytes > 0)
         this.complete = this.prepared && slice.byteLength >= 0 &&
             slice.actualStart == 0 && endByte == slice.byteLength
-        this.pendingReason = if (this.prepared) { "" } else if (slice.pendingReason != "") {
+        this.pendingReason = if (!withinBudget) {
+            CJGUI_RANGE_TEXT_REASON_BUDGET
+        } else if (!validSpan) {
+            "invalid_local_slice"
+        } else if (this.prepared) { "" } else if (slice.pendingReason != "") {
             slice.pendingReason
         } else { "invalid_local_slice" }
         this.refreshCount += 1

@@ -159,6 +159,26 @@ public class CjguiComposableUiDiagnosticSnapshot {
     public let lastAttemptNodeAllocations: Int64
     public let lastAttemptTextLayoutPreparations: Int64
     public let lastAttemptImageDecodeStarts: Int64
+    /// Opt-in, session-scoped timing. All duration fields use nanoseconds;
+    /// -1 means disabled or unavailable, while zero is a measured zero.
+    public let timingEnabled: Bool
+    public let timingStatus: String
+    public let timingClockSource: String
+    public let timingSessionIdentity: String
+    public let timingAcceptedSceneVersion: Int64
+    public let positionPrepareCount: Int64
+    public let positionQueryCount: Int64
+    public let positionLineBuildCount: Int64
+    public let positionCacheHitCount: Int64
+    public let positionPrepareNanoseconds: Int64
+    public let positionQueryNanoseconds: Int64
+    public let positionLineBuildNanoseconds: Int64
+    public let encodeNanoseconds: Int64
+    public let submitNanoseconds: Int64
+    public let textRasterNanoseconds: Int64
+    public let textUploadNanoseconds: Int64
+    public let timingReadCount: Int64
+    public let timingReadNanoseconds: Int64
 
     public init(status: String, sessionIdentity: String, acceptedSceneVersion: Int64,
         submittedSceneVersion: Int64, submittedFrameIndex: Int64, completedFrameIndex: Int64,
@@ -182,7 +202,16 @@ public class CjguiComposableUiDiagnosticSnapshot {
         textRasterCount!: Int64 = -1, textRasterBytes!: Int64 = -1,
         textRasterMicros!: Int64 = -1, textUploadCount!: Int64 = -1,
         textUploadBytes!: Int64 = -1, textUploadMicros!: Int64 = -1,
-        textTextureLiveBytes!: Int64 = -1, textCandidatePeakBytes!: Int64 = -1) {
+        textTextureLiveBytes!: Int64 = -1, textCandidatePeakBytes!: Int64 = -1,
+        timingEnabled!: Bool = false, timingStatus!: String = "disabled",
+        timingClockSource!: String = "unavailable", timingSessionIdentity!: String = "unavailable",
+        timingAcceptedSceneVersion!: Int64 = -1, positionPrepareCount!: Int64 = -1,
+        positionQueryCount!: Int64 = -1, positionLineBuildCount!: Int64 = -1,
+        positionCacheHitCount!: Int64 = -1, positionPrepareNanoseconds!: Int64 = -1,
+        positionQueryNanoseconds!: Int64 = -1, positionLineBuildNanoseconds!: Int64 = -1,
+        encodeNanoseconds!: Int64 = -1, submitNanoseconds!: Int64 = -1,
+        textRasterNanoseconds!: Int64 = -1, textUploadNanoseconds!: Int64 = -1,
+        timingReadCount!: Int64 = -1, timingReadNanoseconds!: Int64 = -1) {
         this.status = status; this.sessionIdentity = sessionIdentity
         this.geometry = geometry
         this.acceptedSceneVersion = acceptedSceneVersion
@@ -230,6 +259,24 @@ public class CjguiComposableUiDiagnosticSnapshot {
         this.lastAttemptNodeAllocations = lastAttemptNodeAllocations
         this.lastAttemptTextLayoutPreparations = lastAttemptTextLayoutPreparations
         this.lastAttemptImageDecodeStarts = lastAttemptImageDecodeStarts
+        this.timingEnabled = timingEnabled
+        this.timingStatus = timingStatus
+        this.timingClockSource = timingClockSource
+        this.timingSessionIdentity = timingSessionIdentity
+        this.timingAcceptedSceneVersion = timingAcceptedSceneVersion
+        this.positionPrepareCount = positionPrepareCount
+        this.positionQueryCount = positionQueryCount
+        this.positionLineBuildCount = positionLineBuildCount
+        this.positionCacheHitCount = positionCacheHitCount
+        this.positionPrepareNanoseconds = positionPrepareNanoseconds
+        this.positionQueryNanoseconds = positionQueryNanoseconds
+        this.positionLineBuildNanoseconds = positionLineBuildNanoseconds
+        this.encodeNanoseconds = encodeNanoseconds
+        this.submitNanoseconds = submitNanoseconds
+        this.textRasterNanoseconds = textRasterNanoseconds
+        this.textUploadNanoseconds = textUploadNanoseconds
+        this.timingReadCount = timingReadCount
+        this.timingReadNanoseconds = timingReadNanoseconds
     }
 }
 

@@ -287,6 +287,20 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
         }
     }
 
+    /// Bounded liveness probe for external snapshot readers: open, closed, or
+    /// unknown, without copying content. `documentSnapshot` answers None for
+    /// both an absent and a closed document, and a lease must name the two
+    /// differently: "never existed" is not "closed while you held it".
+    public func documentLiveness(documentId: Int64): String {
+        return synchronized(lock) {
+            if (let Some(entry) <- entryForIdUnlocked(documentId)) {
+                if (entry.isOpen) { return "open" }
+                return "document_closed"
+            }
+            return "unknown_document"
+        }
+    }
+
     public func setSelectionFromHuman(documentId: Int64, range: CjguiTextDocumentRange): CjguiTextDocumentSelection {
         return synchronized(lock) { setSelectionUtf8Unlocked(documentId, range) }
     }

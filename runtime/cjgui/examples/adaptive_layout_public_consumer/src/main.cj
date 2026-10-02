@@ -152,6 +152,8 @@ private let NODE_EFFECT_GROUP_BLUR: Int64 = 87
 private let NODE_SUBPOINT_TRANSLATION_TOGGLE: Int64 = 95
 private let NODE_POSITION_MOTION: Int64 = 96
 private let NODE_POSITION_MOTION_CLEAR: Int64 = 97
+private let NODE_POSITION_ORIGIN_REBASE: Int64 = 98
+private let NODE_POSITION_ORIGIN_SPACER: Int64 = 9709
 private let NODE_TRANSLATED_TITLE_INPUT: Int64 = 9708
 private let NODE_PNG_TARGET: Int64 = 210
 private let NODE_PNG_SOURCE: Int64 = 211
@@ -210,6 +212,23 @@ private class AdaptiveControlTreeSource <: CjguiComposableUiTreeDataSource {
     }
 }
 
+/// Readback frozen when an origin rebase joins a real window candidate. The
+/// accepted geometry and motion sample may advance between the user action and
+/// this callback, so assertions use the candidate-local base.
+private class AdaptivePositionOriginSnapshot {
+    let identityKey: String
+    let bounds: CjguiComposableUiRect
+    let visual: CjguiComposableUiVisualRect
+    let status: CjguiComposableUiPositionStatus
+    init(identityKey: String, bounds: CjguiComposableUiRect, visual: CjguiComposableUiVisualRect,
+        status: CjguiComposableUiPositionStatus) {
+        this.identityKey = identityKey
+        this.bounds = bounds
+        this.visual = visual
+        this.status = status
+    }
+}
+
 class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant &
     CjguiComposableUiWindowBackgroundProvider & CjguiComposableUiPlatformAccentConsumer &
     CjguiComposableUiDataTransferProvider {
@@ -254,6 +273,30 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
     // contains a named-style card, image, text and composite action.
     private var translationVariant: Int64 = 0
     private var positionMotionHigh: Bool = false
+    /// A real layout spacer immediately before the translated split. Rebase
+    /// changes its accepted height 58→0, moving the split's layout origin up by
+    /// one slot while the window shifts the bound animation channel by +58.
+    private var positionOriginSpacerHeight: Int64 = 58
+    private var candidatePositionOriginSpacerHeight: Int64 = 58
+    private var candidatePositionOriginActive: Bool = false
+    private var pendingPositionOriginRebase: Bool = false
+    private var candidatePositionOriginTicket: ?CjguiComposableUiPositionOriginTicket = None
+    private var acceptedPositionOriginTicket: ?CjguiComposableUiPositionOriginTicket = None
+    private var probeAcceptedPositionOriginTicket: ?CjguiComposableUiPositionOriginTicket = None
+    private var candidatePositionOriginSnapshot: ?AdaptivePositionOriginSnapshot = None
+    private var rejectedPositionOriginSnapshot: ?AdaptivePositionOriginSnapshot = None
+    private var committedPositionOriginSnapshot: ?AdaptivePositionOriginSnapshot = None
+    private var rejectedPositionOriginPreservedAtRollback: Bool = false
+    private var originRebaseCompensationY: Float64 = 58.0
+    private var positionOriginTranslationOffsetY: Float64 = 0.0
+    private var originCandidateStaged: Bool = false
+    private var originCandidateStageStatus: String = "none"
+    private var originDuplicateStageStatus: String = "none"
+    private var originConflictStageStatus: String = "none"
+    private var originOldTicketStageStatus: String = "none"
+    private var rejectNextOriginCandidate: Bool = false
+    private var originRollbackCount: Int64 = 0
+    private var originCommitCount: Int64 = 0
     private var lastEffectGroupAcceptedLine: String = ""
     private var systemContentAreaRequested: Bool = false
     private var platformAccentColor: ?CjguiComposableUiColor = None
@@ -940,6 +983,20 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
                 background: CjguiComposableUiColor(0.20, 0.37, 0.64, 1.0),
                 textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)),
             interactionStyle: theme.primaryActionInteraction))
+        root.add(
+            cjguiComposableButton(NODE_POSITION_ORIGIN_REBASE, "adaptive-position-origin-rebase",
+                "连续平移中重基布局原点", "POSITION_ORIGIN_REBASE", 0,
+                CjguiComposableUiStyle(fixedHeight: 32, growX: 1, background: CjguiComposableUiColor(0.20, 0.37, 0.64,
+                    1.0), textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)),
+                interactionStyle: theme.primaryActionInteraction))
+        let originSpacerHeight = if (candidatePositionOriginActive) {
+            candidatePositionOriginSpacerHeight
+        } else {
+            positionOriginSpacerHeight
+        }
+        root.add(
+            cjguiComposableVertical(NODE_POSITION_ORIGIN_SPACER, "adaptive-position-origin-spacer",
+                CjguiComposableUiStyle(fixedHeight: originSpacerHeight)))
         root.add(buildTranslationContainers())
         // P1 effect consumption surface (shadow / gradient).
         root.add(buildEffectRegion())
@@ -1243,6 +1300,9 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             effectOutcome = "亚点平移变体 ${translationVariant}（accepted 几何与点击同源）"
             return true
         }
+        if (actionName == "POSITION_ORIGIN_REBASE") {
+            return requestPositionOriginRebase()
+        }
         if (actionName == "POSITION_MOTION_TOGGLE") {
             let window = match (hitWindow) {
                 case Some(value) => value
@@ -1255,7 +1315,7 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
                 if (node.semanticId == "adaptive-translated-split") {
                     identity = node.identityKey
                     baseX = node.declaredStyle.translateX
-                    baseY = node.declaredStyle.translateY
+                    baseY = node.declaredStyle.translateY + positionOriginTranslationOffsetY
                 }
             }
             if (identity.size == 0) { return false }
@@ -1346,6 +1406,164 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             return true
         }
         return false
+    }
+
+    public func nextPositionMotionTargetIsHighForVerification(): Bool { return !positionMotionHigh }
+
+    private func requestPositionOriginRebase(): Bool {
+        if (pendingPositionOriginRebase || positionOriginSpacerHeight != 58) {
+            return false
+        }
+        let window = match (hitWindow) {
+            case Some(value) => value
+            case None => return false
+        }
+        var identity = ""
+        for (node in window.acceptedSceneNodes()) {
+            if (node.semanticId == "adaptive-translated-split") {
+                identity = node.identityKey
+            }
+        }
+        if (identity.size == 0) {
+            return false
+        }
+        let status = match (window.animatedNodeTranslation(identity)) {
+            case Some(value) => value
+            case None => return false
+        }
+        if (!status.active) {
+            return false
+        }
+        if (status.originTicket.isNone()) { return false }
+        pendingPositionOriginRebase = true
+        originRebaseCompensationY = 58.0
+        effectOutcome = "原点重基候选已请求，等待同一完整 scene 接受"
+        getStdOut().writeln(
+            "CJGUI_ADAPTIVE_ORIGIN_REQUEST identity=${identity} " +
+                "session=${status.sessionIdentity} scene=${status.acceptedSceneVersion} " +
+                "presented=${status.presented.x},${status.presented.y} target=${status.target.x},${status.target.y}")
+        getStdOut().flush()
+        return true
+    }
+
+    public func rejectNextOriginCandidateForVerification(): Unit {
+        rejectNextOriginCandidate = true
+    }
+
+    public func probeOldOriginTicketForVerification(): Bool {
+        if (acceptedPositionOriginTicket.isNone()) {
+            return false
+        }
+        probeAcceptedPositionOriginTicket = acceptedPositionOriginTicket
+        return true
+    }
+
+    public func originRebaseRollbackCount(): Int64 {
+        return originRollbackCount
+    }
+
+    public func originRebaseCommitCount(): Int64 {
+        return originCommitCount
+    }
+
+    public func originRebaseStagesObservation(): String {
+        return "first=${originCandidateStageStatus} duplicate=${originDuplicateStageStatus} " +
+            "conflict=${originConflictStageStatus} old=${originOldTicketStageStatus}"
+    }
+
+    private func capturePositionOriginSnapshot(window: CjguiComposableUiWindow,
+        identityKey: String): ?AdaptivePositionOriginSnapshot {
+        let status = match (window.animatedNodeTranslation(identityKey)) {
+            case Some(value) => value
+            case None => return None
+        }
+        if (status.originTicket.isNone()) { return None }
+        let bounds = match (window.acceptedNodeBounds("adaptive-translated-split")) {
+            case Some(value) => value
+            case None => return None
+        }
+        let visual = match (window.acceptedNodeVisualBounds("adaptive-translated-split")) {
+            case Some(value) => value
+            case None => return None
+        }
+        return Some(AdaptivePositionOriginSnapshot(identityKey, bounds, visual, status))
+    }
+
+    private func positionOriginSnapshotPreserved(window: CjguiComposableUiWindow,
+        frozen: AdaptivePositionOriginSnapshot): Bool {
+        let current = match (capturePositionOriginSnapshot(window, frozen.identityKey)) {
+            case Some(value) => value
+            case None => return false
+        }
+        let sameAcceptedSample = current.status.acceptedSceneVersion == frozen.status.acceptedSceneVersion
+        let stableSampleMatches = !sameAcceptedSample ||
+            (current.status.presented.x == frozen.status.presented.x &&
+            current.status.presented.y == frozen.status.presented.y && current.visual.x == frozen.visual.x &&
+            current.visual.y == frozen.visual.y)
+        return current.status.acceptedSceneVersion >= frozen.status.acceptedSceneVersion && stableSampleMatches &&
+            current.bounds.x == frozen.bounds.x && current.bounds.y == frozen.bounds.y &&
+            current.visual.width == frozen.visual.width && current.visual.height == frozen.visual.height &&
+            current.status.target.x == frozen.status.target.x && current.status.target.y == frozen.status.target.y &&
+            cjguiAdaptiveApprox(current.visual.x, Float64(current.bounds.x) + current.status.presented.x, 0.001) &&
+            cjguiAdaptiveApprox(current.visual.y, Float64(current.bounds.y) + current.status.presented.y, 0.001) &&
+            frozen.status.binding.matches(current.status.binding)
+    }
+
+    public func rejectedOriginCandidatePreserved(): Bool {
+        return rejectedPositionOriginPreservedAtRollback
+    }
+
+    public func committedOriginCandidateContinuous(window: CjguiComposableUiWindow): Bool {
+        let frozen = match (committedPositionOriginSnapshot) {
+            case Some(value) => value
+            case None => return false
+        }
+        let current = match (capturePositionOriginSnapshot(window, frozen.identityKey)) {
+            case Some(value) => value
+            case None => return false
+        }
+        return current.bounds.x == frozen.bounds.x && current.bounds.y == frozen.bounds.y - 58 &&
+            cjguiAdaptiveApprox(current.visual.x, frozen.visual.x, 1.0) &&
+            cjguiAdaptiveApprox(current.visual.y, frozen.visual.y, 1.0) &&
+            cjguiAdaptiveApprox(current.visual.width, frozen.visual.width, 0.001) &&
+            cjguiAdaptiveApprox(current.visual.height, frozen.visual.height, 0.001) &&
+            current.status.target.x == frozen.status.target.x &&
+            current.status.target.y == frozen.status.target.y + 58.0 &&
+            cjguiAdaptiveApprox(current.status.presented.x, frozen.status.presented.x, 1.0) &&
+            cjguiAdaptiveApprox(current.status.presented.y, frozen.status.presented.y + 58.0, 1.0) &&
+            current.status.acceptedSceneVersion > frozen.status.acceptedSceneVersion &&
+            frozen.status.binding.matches(current.status.binding)
+    }
+
+    public func rejectedOriginCandidateObservation(): String {
+        return positionOriginSnapshotObservation(rejectedPositionOriginSnapshot)
+    }
+
+    public func committedOriginCandidateObservation(): String {
+        return positionOriginSnapshotObservation(committedPositionOriginSnapshot)
+    }
+
+    public func currentOriginReadbackObservation(window: CjguiComposableUiWindow): String {
+        let identityKey = match (committedPositionOriginSnapshot) {
+            case Some(value) => value.identityKey
+            case None => match (rejectedPositionOriginSnapshot) {
+                case Some(value) => value.identityKey
+                case None => ""
+            }
+        }
+        if (identityKey.size == 0) { return "none" }
+        return positionOriginSnapshotObservation(capturePositionOriginSnapshot(window, identityKey))
+    }
+
+    private func positionOriginSnapshotObservation(snapshot: ?AdaptivePositionOriginSnapshot): String {
+        if (let Some(value) <- snapshot) {
+            return "identity=${value.identityKey} scene=${value.status.acceptedSceneVersion} " +
+                "B=${value.bounds.x},${value.bounds.y},${value.bounds.width},${value.bounds.height} " +
+                "visual=${value.visual.x},${value.visual.y},${value.visual.width},${value.visual.height} " +
+                "presented=${value.status.presented.x},${value.status.presented.y} " +
+                "target=${value.status.target.x},${value.status.target.y}"
+        }
+        return "none"
     }
 
     /// Drive the framework paint-alpha animation on the interactive card through
@@ -1558,6 +1776,16 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
             return CjguiComposableUiDispatchResult(true)
         }
 
+        if (event.eventKind == 27 && (event.node.actionName == "POSITION_ORIGIN_REBASE" ||
+            event.node.actionName == "POSITION_MOTION_TOGGLE" ||
+            event.node.actionName == "POSITION_MOTION_CLEAR")) {
+            let didApply = applyEffectAction(event.node.actionName)
+            if (!didApply) { return CjguiComposableUiDispatchResult(false, shouldClose: false) }
+            emitEffectState()
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true, shouldClose: false)
+        }
+
         if (event.eventKind == 27 && event.node.actionName == "TOGGLE_RESOURCE") {
             let current = domain.snapshot().recordAt(0).isMarked
             let result = domain.setMarkedFromHuman(7101, !current)
@@ -1706,19 +1934,123 @@ class AdaptiveController <: CjguiComposableUiController & CjguiComposableUiScene
         return commands
     }
     public func beginSceneRefresh(): Bool {
-        return componentRegistry.beginTransaction()
+        if (!componentRegistry.beginTransaction()) {
+            return false
+        }
+        candidatePositionOriginActive = true
+        candidatePositionOriginSpacerHeight = positionOriginSpacerHeight
+        candidatePositionOriginTicket = None
+        candidatePositionOriginSnapshot = None
+        originCandidateStaged = false
+        originCandidateStageStatus = "none"
+        originDuplicateStageStatus = "none"
+        originConflictStageStatus = "none"
+        if (pendingPositionOriginRebase) {
+            let window = match (hitWindow) {
+                case Some(value) => value
+                case None => return false
+            }
+            var identity = ""
+            for (node in window.acceptedSceneNodes()) {
+                if (node.semanticId == "adaptive-translated-split") { identity = node.identityKey }
+            }
+            if (identity.size == 0) {
+                originCandidateStageStatus = "identity_missing"
+                return false
+            }
+            let baseline = match (capturePositionOriginSnapshot(window, identity)) {
+                case Some(value) => value
+                case None =>
+                    originCandidateStageStatus = "accepted_channel_unavailable"
+                    return false
+            }
+            let ticket = match (baseline.status.originTicket) {
+                case Some(value) => value
+                case None =>
+                    originCandidateStageStatus = "accepted_ticket_unavailable"
+                    return false
+            }
+            candidatePositionOriginSnapshot = Some(baseline)
+            originCandidateStageStatus = window.stageNodeTranslationOriginRebase(ticket, 0.0, originRebaseCompensationY)
+            if (originCandidateStageStatus != "staged") {
+                return false
+            }
+            candidatePositionOriginSpacerHeight = positionOriginSpacerHeight - 58
+            candidatePositionOriginTicket = Some(ticket)
+            originCandidateStaged = true
+        }
+        if (let Some(ticket) <- probeAcceptedPositionOriginTicket) {
+            if (let Some(window) <- hitWindow) {
+                originOldTicketStageStatus = window.stageNodeTranslationOriginRebase(ticket, 0.0,
+                    originRebaseCompensationY)
+            }
+            probeAcceptedPositionOriginTicket = None
+        }
+        return true
     }
     public func prepareSceneRefresh(): Bool {
-        return componentRegistry.prepareTransaction()
+        if (!componentRegistry.prepareTransaction()) {
+            return false
+        }
+        if (originCandidateStaged) {
+            let ticket = match (candidatePositionOriginTicket) {
+                case Some(value) => value
+                case None => return false
+            }
+            let window = match (hitWindow) {
+                case Some(value) => value
+                case None => return false
+            }
+            originDuplicateStageStatus = window.stageNodeTranslationOriginRebase(ticket, 0.0, originRebaseCompensationY)
+            originConflictStageStatus = window.stageNodeTranslationOriginRebase(ticket, 0.0,
+                originRebaseCompensationY - 1.0)
+            if (originDuplicateStageStatus != "staged" || originConflictStageStatus != "candidate_conflict") {
+                return false
+            }
+            if (rejectNextOriginCandidate) {
+                rejectNextOriginCandidate = false
+                return false
+            }
+        }
+        return true
     }
     public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
         return componentCommands()
     }
     public func commitSceneRefresh(): Unit {
         componentRegistry.commitTransaction()
+        if (originCandidateStaged) {
+            positionOriginSpacerHeight = candidatePositionOriginSpacerHeight
+            positionOriginTranslationOffsetY += originRebaseCompensationY
+            acceptedPositionOriginTicket = candidatePositionOriginTicket
+            committedPositionOriginSnapshot = candidatePositionOriginSnapshot
+            candidatePositionOriginSnapshot = None
+            pendingPositionOriginRebase = false
+            originCommitCount += 1
+        }
+        candidatePositionOriginActive = false
+        originCandidateStaged = false
+        candidatePositionOriginTicket = None
     }
     public func rollbackSceneRefresh(): Unit {
         componentRegistry.rollbackTransaction()
+        if (originCandidateStaged) {
+            rejectedPositionOriginSnapshot = candidatePositionOriginSnapshot
+            if (let Some(snapshot) <- candidatePositionOriginSnapshot) {
+                rejectedPositionOriginPreservedAtRollback = match (hitWindow) {
+                    case Some(window) => positionOriginSnapshotPreserved(window, snapshot)
+                    case None => false
+                }
+            } else {
+                rejectedPositionOriginPreservedAtRollback = false
+            }
+            originRollbackCount += 1
+        }
+        candidatePositionOriginSpacerHeight = positionOriginSpacerHeight
+        candidatePositionOriginActive = false
+        originCandidateStaged = false
+        candidatePositionOriginTicket = None
+        candidatePositionOriginSnapshot = None
     }
 
     public func translationContainerObservation(): String {
@@ -1898,6 +2230,7 @@ main(args: Array<String>): Int64 {
     var verifiesDiagnostics = false
     var verifiesTranslation = false
     var verifiesPositionMotion = false
+    var verifiesPositionOrigin = false
     var observesDiagnostics = false
     var observesInteraction = false
     var instanceToken = ""
@@ -1914,6 +2247,8 @@ main(args: Array<String>): Int64 {
             verifiesTranslation = true
         } else if (args[argIndex] == "--verify-position-motion") {
             verifiesPositionMotion = true
+        } else if (args[argIndex] == "--verify-origin-rebase") {
+            verifiesPositionOrigin = true
         } else if (args[argIndex] == "--observe-diagnostics") {
             observesDiagnostics = true
         } else if (args[argIndex] == "--observe-interaction") {
@@ -1929,9 +2264,9 @@ main(args: Array<String>): Int64 {
         argIndex += 1
     }
     if ((verifiesHit && verifiesWindowMaterial) ||
-        (verifiesDiagnostics && (verifiesHit || verifiesWindowMaterial || verifiesTranslation || verifiesPositionMotion)) ||
-        (verifiesTranslation && (verifiesHit || verifiesWindowMaterial || verifiesPositionMotion)) ||
-        (verifiesPositionMotion && (verifiesHit || verifiesWindowMaterial))) {
+        (verifiesDiagnostics && (verifiesHit || verifiesWindowMaterial || verifiesTranslation || verifiesPositionMotion || verifiesPositionOrigin)) ||
+        (verifiesTranslation && (verifiesHit || verifiesWindowMaterial || verifiesPositionMotion || verifiesPositionOrigin)) || (verifiesPositionMotion && (verifiesHit ||
+        verifiesWindowMaterial || verifiesPositionOrigin)) || (verifiesPositionOrigin && (verifiesHit || verifiesWindowMaterial))) {
         return 2
     }
     let targetId: Int64 = 7101
@@ -1956,7 +2291,7 @@ main(args: Array<String>): Int64 {
     // The F11 normal scroll/split section adds 180 points before this older
     // shadow-hit fixture. Keep the card and its separated shadow band inside
     // the accepted window clip when --verify-hit tests real hit ownership.
-    let windowHeight = if (verifiesHit) { 900u32 } else { 700u32 }
+    let windowHeight = if (verifiesHit || verifiesPositionOrigin) { 900u32 } else { 700u32 }
     let host = CjguiMacosApplicationHost(
         controller,
         configuration: CjguiMacosApplicationWindowConfiguration(
@@ -2198,6 +2533,274 @@ main(args: Array<String>): Int64 {
     if (initialEffectGroupLine.size > 0) {
         getStdOut().writeln(initialEffectGroupLine)
         getStdOut().flush()
+    }
+    if (verifiesPositionOrigin) {
+        var failed = 0
+        let ownerBefore = domain.version()
+        let _ = window.setReduceMotionEnabled(false)
+
+        // Timing diagnostics are a real, opt-in snapshot path. Toggling and
+        // reading it must not submit a scene; the accepted rebase below gives
+        // the enabled mode a real normal-build refresh to time.
+        let timingOffSet = window.setTimingDiagnostics(false)
+        let timingOff = window.diagnosticSnapshot(maximumNodes: 1)
+        let timingOffOk = timingOffSet && timingOff.timingStatus == "disabled" && timingOff.buildNanoseconds == -1 &&
+            timingOff.layoutNanoseconds == -1 && timingOff.nativeStageAndSubmitNanoseconds == -1 &&
+            timingOff.timingReadCount == -1
+        let timingOnSet = window.setTimingDiagnostics(true)
+        let timingOnFirst = window.diagnosticSnapshot(maximumNodes: 1)
+        let timingOnSecond = window.diagnosticSnapshot(maximumNodes: 1)
+        let timingToggleIsolated = timingOnSet && timingOnFirst.timingStatus == "enabled" &&
+            timingOnFirst.timingReadCount >= 0 && timingOnSecond.timingReadCount > timingOnFirst.timingReadCount &&
+            timingOnFirst.acceptedSceneVersion == timingOff.acceptedSceneVersion &&
+            timingOnSecond.acceptedSceneVersion == timingOff.acceptedSceneVersion &&
+            timingOnFirst.submittedSceneVersion == timingOff.submittedSceneVersion &&
+            timingOnSecond.submittedSceneVersion == timingOff.submittedSceneVersion &&
+            timingOnFirst.nativeSubmissionCount == timingOff.nativeSubmissionCount &&
+            timingOnSecond.nativeSubmissionCount == timingOff.nativeSubmissionCount
+        if (!timingOffOk || !timingToggleIsolated) {
+            failed += 1
+        }
+        getStdOut().writeln(
+            "CJGUI_ADAPTIVE_ORIGIN_TIMING phase=off_on_reads " +
+                "off_ok=${if (timingOffOk) { 1 } else { 0 }} on_ok=${if (timingToggleIsolated) { 1 } else { 0 }} " +
+                "status=${timingOnSecond.timingStatus} reads=${timingOnFirst.timingReadCount}->${timingOnSecond.timingReadCount} " +
+                "scene=${timingOff.acceptedSceneVersion}/${timingOnSecond.acceptedSceneVersion} " +
+                "submissions=${timingOff.nativeSubmissionCount}/${timingOnSecond.nativeSubmissionCount}")
+
+        var splitIdentity = ""
+        var baseX = 0.0
+        var baseY = 0.0
+        for (node in window.acceptedSceneNodes()) {
+            if (node.semanticId == "adaptive-translated-split") {
+                splitIdentity = node.identityKey
+                baseX = node.declaredStyle.translateX
+                baseY = node.declaredStyle.translateY
+            }
+        }
+        let started = cjguiAdaptiveActivateAcceptedButton(window, controller, NODE_POSITION_MOTION,
+            "POSITION_MOTION_TOGGLE")
+        var turns = 0
+        var movingStatus: ?CjguiComposableUiPositionStatus = None
+        while (turns < 16 && host.isOpen()) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            movingStatus = window.animatedNodeTranslation(splitIdentity)
+            if (let Some(value) <- movingStatus) {
+                if (value.active && value.target.x == baseX + 24.0 && value.target.y == baseY + 12.0 &&
+                    value.presented.x > baseX && value.presented.x < baseX + 24.0) {
+                    break
+                }
+            }
+            turns += 1
+        }
+        let hasMovingSample = match (movingStatus) {
+            case Some(value) => value.active && value.target.x == baseX + 24.0 && value.target.y == baseY + 12.0 &&
+                value.presented.x > baseX && value.presented.x < baseX + 24.0 && value.originTicket.isSome()
+            case None => false
+        }
+        if (!started || !hasMovingSample || splitIdentity.size == 0) {
+            failed += 1
+        }
+
+        let rollbackBefore = controller.originRebaseRollbackCount()
+        let commitBefore = controller.originRebaseCommitCount()
+        let originSceneBeforeRequest = window.diagnosticSnapshot(maximumNodes: 1)
+        controller.rejectNextOriginCandidateForVerification()
+        let rejectedRequest = cjguiAdaptiveActivateAcceptedButton(window, controller, NODE_POSITION_ORIGIN_REBASE,
+            "POSITION_ORIGIN_REBASE")
+        let duplicateRequest = cjguiAdaptiveActivateAcceptedButton(window, controller, NODE_POSITION_ORIGIN_REBASE,
+            "POSITION_ORIGIN_REBASE")
+        turns = 0
+        while (turns < 40 && host.isOpen() && controller.originRebaseRollbackCount() == rollbackBefore) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let rejectedReadback = controller.rejectedOriginCandidatePreserved()
+        let rejectedBaseline = controller.rejectedOriginCandidateObservation()
+        let rejectedActual = controller.currentOriginReadbackObservation(window)
+        let rejectedStageObservation = controller.originRebaseStagesObservation()
+        let pendingStillRejectsDuplicate = cjguiAdaptiveActivateAcceptedButton(window, controller,
+            NODE_POSITION_ORIGIN_REBASE, "POSITION_ORIGIN_REBASE")
+        let rollbackOk = rejectedRequest && !duplicateRequest && controller.originRebaseRollbackCount() ==
+            rollbackBefore + 1 && rejectedReadback && rejectedStageObservation.contains("first=staged") &&
+            !pendingStillRejectsDuplicate && domain.version() == ownerBefore
+        if (!rollbackOk) {
+            failed += 1
+        }
+        getStdOut().writeln(
+            "CJGUI_ADAPTIVE_ORIGIN_ASSERT name=reject_keeps_accepted ok=${if (rollbackOk) { 1 } else { 0 }} " +
+                "rollback=${rollbackBefore}->${controller.originRebaseRollbackCount()} duplicate_request=${if (duplicateRequest) { 1 } else { 0 }} " +
+                "pending_duplicate=${if (pendingStillRejectsDuplicate) { 1 } else { 0 }} " +
+                "frozen=[${rejectedBaseline}] current=[${rejectedActual}] stages=[${rejectedStageObservation}] " +
+                "owner=${ownerBefore}->${domain.version()}")
+
+        // The first candidate was deliberately rejected. A subsequent normal
+        // animation candidate may already have retried the retained intent; if
+        // not, a real position retarget asks for the next complete candidate.
+        // Staging always samples its fresh accepted ticket inside
+        // participant.beginSceneRefresh().
+        var retryRetargeted = false
+        if (controller.originRebaseCommitCount() == commitBefore) {
+            retryRetargeted = cjguiAdaptiveActivateAcceptedButton(window, controller, NODE_POSITION_MOTION,
+                "POSITION_MOTION_TOGGLE")
+        }
+        let acceptedSceneBefore = window.diagnosticSnapshot(maximumNodes: 1)
+        turns = 0
+        while (turns < 60 && host.isOpen() && controller.originRebaseCommitCount() == commitBefore) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            turns += 1
+        }
+        let afterBounds = window.acceptedNodeBounds("adaptive-translated-split")
+        let afterVisual = window.acceptedNodeVisualBounds("adaptive-translated-split")
+        let afterStatus = window.animatedNodeTranslation(splitIdentity)
+        let acceptedSceneAfter = window.diagnosticSnapshot(maximumNodes: 1)
+        let rebased = controller.originRebaseCommitCount() == commitBefore + 1 &&
+            controller.committedOriginCandidateContinuous(window) &&
+            acceptedSceneAfter.acceptedSceneVersion > originSceneBeforeRequest.acceptedSceneVersion &&
+            domain.version() == ownerBefore
+        if (!rebased) {
+            failed += 1
+        }
+        let afterScreenPosition = match ((afterBounds, afterStatus)) {
+            case (Some(bounds), Some(status)) => Float64(bounds.y) + status.presented.y
+            case _ => -10000.0
+        }
+        let stageObservation = controller.originRebaseStagesObservation()
+        let afterBoundsY = match (afterBounds) {
+            case Some(value) => value.y
+            case None => -1
+        }
+        let afterPresentedY = match (afterStatus) {
+            case Some(value) => value.presented.y
+            case None => -10000.0
+        }
+        let afterTargetY = match (afterStatus) {
+            case Some(value) => value.target.y
+            case None => -10000.0
+        }
+        let committedBaseline = controller.committedOriginCandidateObservation()
+        let stagingOk = stageObservation.contains("duplicate=staged") && stageObservation.contains(
+            "conflict=candidate_conflict")
+        if (!stagingOk) {
+            failed += 1
+        }
+        getStdOut().writeln(
+            "CJGUI_ADAPTIVE_ORIGIN_ASSERT name=accepted_rebase_continuous ok=${if (rebased) { 1 } else { 0 }} " +
+                "candidate_frozen=[${committedBaseline}] B_after=${afterBoundsY} " +
+                "screenY_after=${afterScreenPosition} presentedY_after=${afterPresentedY} targetY_after=${afterTargetY} " +
+                "stage_ok=${if (stagingOk) { 1 } else { 0 }} ${stageObservation} " +
+                "scene=${acceptedSceneBefore.acceptedSceneVersion}->${acceptedSceneAfter.acceptedSceneVersion} " +
+                "owner=${ownerBefore}->${domain.version()}")
+
+        let timedRefresh = window.diagnosticSnapshot(maximumNodes: 1)
+        let timedRefreshOk = timedRefresh.timingStatus == "enabled" && timedRefresh.timingEnabled &&
+            timedRefresh.buildNanoseconds >= 0 && timedRefresh.layoutNanoseconds >= 0 &&
+            timedRefresh.nativeStageAndSubmitNanoseconds >= 0 && timedRefresh.timingReadCount > timingOnSecond
+            .timingReadCount
+        if (!timedRefreshOk) {
+            failed += 1
+        }
+        let timingOffAgainSet = window.setTimingDiagnostics(false)
+        let timingOffAgain = window.diagnosticSnapshot(maximumNodes: 1)
+        let timingOffAgainOk = timingOffAgainSet && timingOffAgain.timingStatus == "disabled" &&
+            timingOffAgain.buildNanoseconds == -1 && timingOffAgain.layoutNanoseconds == -1 &&
+            timingOffAgain.nativeStageAndSubmitNanoseconds == -1 && timingOffAgain.timingReadCount == -1 &&
+            timingOffAgain.acceptedSceneVersion == timedRefresh.acceptedSceneVersion &&
+            timingOffAgain.submittedSceneVersion == timedRefresh.submittedSceneVersion &&
+            timingOffAgain.nativeSubmissionCount == timedRefresh.nativeSubmissionCount
+        if (!timingOffAgainOk) {
+            failed += 1
+        }
+        getStdOut().writeln(
+            "CJGUI_ADAPTIVE_ORIGIN_TIMING phase=accepted_off " +
+                "refresh_ok=${if (timedRefreshOk) { 1 } else { 0 }} off_ok=${if (timingOffAgainOk) { 1 } else { 0 }} " +
+                "status=${timedRefresh.timingStatus}->${timingOffAgain.timingStatus} " +
+                "ns=${timedRefresh.buildNanoseconds},${timedRefresh.layoutNanoseconds}," +
+                "${timedRefresh.nativeStageAndSubmitNanoseconds} reads=${timedRefresh.timingReadCount}->" +
+                "${timingOffAgain.timingReadCount} scene=${timedRefresh.acceptedSceneVersion}->" +
+                "${timingOffAgain.acceptedSceneVersion} submissions=${timedRefresh.nativeSubmissionCount}->" +
+                "${timingOffAgain.nativeSubmissionCount}")
+
+        let oldTicketArmed = controller.probeOldOriginTicketForVerification()
+        let oldTicketExpectedHigh = controller.nextPositionMotionTargetIsHighForVerification()
+        let expectedOldTargetX = baseX + (if (oldTicketExpectedHigh) { 24.0 } else { 0.0 })
+        let expectedOldTargetY = baseY + 58.0 + (if (oldTicketExpectedHigh) { 12.0 } else { 0.0 })
+        let retargeted = cjguiAdaptiveActivateAcceptedButton(window, controller, NODE_POSITION_MOTION,
+            "POSITION_MOTION_TOGGLE")
+        var oldTicketTurns = 0
+        while (oldTicketTurns < 40 && host.isOpen() &&
+                !controller.originRebaseStagesObservation().contains("old=accepted_scene_stale")) {
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            oldTicketTurns += 1
+        }
+        let postRetarget = window.animatedNodeTranslation(splitIdentity)
+        let postRetargetTarget = match (postRetarget) {
+            case Some(value) => "${value.target.x},${value.target.y}"
+            case None => "none"
+        }
+        let oldTicketOk = oldTicketArmed && retargeted && controller
+            .originRebaseStagesObservation()
+            .contains("old=accepted_scene_stale") && (match (postRetarget) {
+            case Some(value) => value.target.x == expectedOldTargetX && value.target.y == expectedOldTargetY &&
+                value.active
+            case None => false
+        }) && domain.version() == ownerBefore
+        if (!oldTicketOk) {
+            failed += 1
+        }
+        getStdOut().writeln(
+            "CJGUI_ADAPTIVE_ORIGIN_ASSERT name=old_ticket_and_retarget ok=${if (oldTicketOk) { 1 } else { 0 }} " +
+                "status=${controller.originRebaseStagesObservation()} " + "target=${postRetargetTarget} " +
+                "owner=${ownerBefore}->${domain.version()}")
+
+        let clearSceneBefore = window.diagnosticSnapshot(maximumNodes: 1)
+        let cleared = cjguiAdaptiveActivateAcceptedButton(window, controller, NODE_POSITION_MOTION_CLEAR,
+            "POSITION_MOTION_CLEAR")
+        var clearSettlement = window.diagnosticSnapshot(maximumNodes: 1)
+        var clearAcceptedIdentity = ""
+        var clearSettled = false
+        var clearTurns = 0
+        while (clearTurns < 40 && host.isOpen() && !clearSettled) {
+            let statusGone = window.animatedNodeTranslation(splitIdentity).isNone()
+            let tickSettled = !window.needsAnimationTick()
+            if (statusGone && tickSettled) {
+                for (node in window.acceptedSceneNodes()) {
+                    if (node.semanticId == "adaptive-translated-split") {
+                        clearAcceptedIdentity = node.identityKey
+                    }
+                }
+                clearSettlement = window.diagnosticSnapshot(maximumNodes: 1)
+                clearSettled = clearAcceptedIdentity == splitIdentity &&
+                    clearSettlement.acceptedSceneVersion >= clearSceneBefore.acceptedSceneVersion
+                if (clearSettled) { break }
+            }
+            let _ = host.pumpOneTurn()
+            sleep(Duration.millisecond)
+            clearTurns += 1
+        }
+        let clearedOk = cleared && clearSettled && domain.version() == ownerBefore
+        if (!clearedOk || injectVerifyFailure) {
+            failed += 1
+        }
+        getStdOut().writeln(
+            "CJGUI_ADAPTIVE_ORIGIN_DONE instance_token=${instanceToken} " +
+                "rollback=${if (rollbackOk) { 1 } else { 0 }} rebase=${if (rebased) { 1 } else { 0 }} " +
+                "retarget=${if (oldTicketOk) { 1 } else { 0 }} diagnostics=${if (timedRefreshOk && timingOffAgainOk) { 1 } else { 0 }} " +
+                "clear=${if (clearedOk) { 1 } else { 0 }} clear_return=${if (cleared) { 1 } else { 0 }} " +
+                "clear_settled=${if (clearSettled) { 1 } else { 0 }} clear_identity=${clearAcceptedIdentity} " +
+                "clear_scene=${clearSceneBefore.acceptedSceneVersion}->${clearSettlement.acceptedSceneVersion} " +
+                "failed=${failed}")
+        getStdOut().flush()
+        host.close()
+        return if (failed == 0) {
+            0
+        } else {
+            1
+        }
     }
     if (verifiesPositionMotion) {
         var failed = 0

@@ -74,6 +74,9 @@ typedef enum CjguiInternalRendererStatus {
     // accepted scene and every texture generation it uses remain untouched.
     CJGUI_INTERNAL_RENDERER_EFFECT_RESOURCE_BUDGET_EXCEEDED = 22,
     CJGUI_INTERNAL_RENDERER_EFFECT_DECLARATION_REJECTED = 23,
+    // No input byte can name a containing cluster (empty/out-of-range query).
+    // Internal bytes of a valid UTF-8 scalar belong to that scalar's cluster.
+    CJGUI_INTERNAL_RENDERER_GRAPHEME_BOUNDARY_INVALID = 24,
     CJGUI_INTERNAL_RENDERER_PNG_INVALID = 25,
     CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED = 26,
     CJGUI_INTERNAL_RENDERER_PNG_DECODE_FAILED = 27,
@@ -86,6 +89,10 @@ typedef enum CjguiInternalRendererStatus {
     // 只能阻止槽位误认领，不能证明原事务结算完成；旧实例身份也不得在资源仍
     // 存活时被复用。
     CJGUI_INTERNAL_RENDERER_PENDING_SETTLEMENT_UNRESOLVED = 21,
+    // The platform text service cannot answer grapheme-cluster queries on this backend, so NO
+    // cluster can be named. A named refusal, never a scalar fallback: the caller keeps the
+    // original text and reports this state (OHOS text-service bridging is not wired yet).
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED = 32,
     CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR = 99
 } CjguiInternalRendererStatus;
 
@@ -196,7 +203,23 @@ typedef enum CjguiInternalRendererEventKind {
     // `set_composable_owned_text_session` declaration names this node with a
     // matching binding epoch; every other node keeps the ordinary text events
     // above and never receives this kind.
-    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_COMPOSITION = 52
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_COMPOSITION = 52,
+    // The platform's hidden input proxy reports that it ACTUALLY installed a
+    // frozen proxy-restore request (accepted value and/or selection) that the
+    // window had queued. Queuing is not installation: the window must not
+    // release a refused-edit calibration lock or a pending native selection
+    // restore until this receipt arrives with the SAME request identity.
+    // `bindingEpoch` is the native request id, `nodeId`/`resourceId`/`nodeKind`/
+    // `projectionVersion` are the frozen accepted identity, and
+    // `selectionStart`/`selectionEnd` are the UTF-16 range the platform
+    // installed. `recordIndex` distinguishes the outcome: 0 = installed,
+    // 1 = the request was cancelled (platform install failed, proxy not
+    // mounted, or the identity changed before the send) and NOTHING was
+    // installed — the window must clear its pending request and retry under
+    // its bounded budget instead of waiting forever. `formText` is empty: the
+    // value is the accepted one the queue already validated. `compositionPhase`
+    // stays 0.
+    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_PROXY_RESTORED = 55
 } CjguiInternalRendererEventKind;
 
 typedef enum CjguiInternalRendererTextCompositionPhase {
@@ -802,6 +825,73 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint64_t nodeId,
                                                           int64_t resourceId, uint32_t nodeKind,
                                                           uint64_t bindingEpoch, uint32_t enabled);
+
+// H1-R：一次逻辑平台恢复 = 一张票据（沿用本框架已成熟的 present 票据结算形状，
+// 不另造协议）。窗口在**签发前**冻结自己的会话/镜像/选区意图身份，签发返回的票据
+// 承载 native 侧身份（上下文/代次/绑定代/场景版本）、单调截止和签发前确定的规范
+// 落点。终态互斥，事实单调：
+//   NONE                 没有这张票据（已消费、从未登记或身份不符）
+//   QUEUED               已冻结待发送
+//   SENT                 已交付出口，等待平台安装证据
+//   INSTALLED            平台按规范落点安装并被观测确认，等待窗口原子采纳
+//   ADOPTED              窗口采纳成功（唯一成功终态）
+//   NOT_INSTALLED        未执行平台安装即终结（换绑/退役/取代/无出口/明确失败）
+//   UNCONFIRMED          安装未确认即终结（截止/身份漂移/落点不符）——禁止采纳，
+//                        但不宣称平台没有发生安装（平台可能已部分或完整安装）
+enum CjguiInternalRendererProxyRestoreState {
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_NONE = 0,
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_QUEUED = 1,
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_SENT = 2,
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_INSTALLED = 3,
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ADOPTED = 4,
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_NOT_INSTALLED = 5,
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_UNCONFIRMED = 6,
+};
+
+typedef struct {
+    uint64_t requestId;
+    int64_t contextId;
+    uint64_t contextGeneration;
+    uint64_t acceptedBindingEpoch;
+    uint64_t acceptedProjectionVersion;
+    int64_t deadlineMonoMs;
+    uint32_t canonicalStart;   // 签发前的规范目标；INSTALLED 后为观测确认的落点
+    uint32_t canonicalEnd;
+    int32_t state;
+} CjguiInternalRendererProxyRestoreTicket;
+
+// ABI canary：布局漂移必须编译期暴露（8*6+4+4+4+pad4 = 64）。
+_Static_assert(sizeof(CjguiInternalRendererProxyRestoreTicket) == 64,
+               "CjguiInternalRendererProxyRestoreTicket layout drifted");
+
+// 一次原子恢复签发：在同一临界区内验证 accepted 正文、场景版本与规范落点，
+// 重置 native 编辑缓冲，并只登记一张票据。任一校验不通过则零状态改动、零票据，
+// 也不留下窗口不知道的孤儿请求。selectionStart/End 传
+// CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT 表示"accepted 正文的字素安全
+// 末位"，规范值经 outTicket 返回，调用方此后不得再改。
+// 本调用只代表签发成功，不代表平台安装：窗口只有在收到 kind-55 且采纳成功后
+// 才能解除输入锁。
+CjguiInternalRendererStatus
+cjgui_internal_renderer_recover_text_proxy_ticket(uint64_t session, uint64_t nodeId,
+                                                  int64_t resourceId, uint32_t nodeKind,
+                                                  uint64_t sceneVersion, const char *acceptedValue,
+                                                  uint32_t selectionStart, uint32_t selectionEnd,
+                                                  CjguiInternalRendererProxyRestoreTicket *outTicket);
+
+// 规范落点哨兵：请求"accepted 正文的字素安全末位"。
+#define CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT (0xFFFFFFFFu)
+
+// 按请求号查询票据（窗口的截止检查用；事件丢失时仍能终结自己的待办）。
+CjguiInternalRendererStatus
+cjgui_internal_renderer_query_proxy_restore_ticket(uint64_t session, uint64_t requestId,
+                                                   CjguiInternalRendererProxyRestoreTicket *outTicket);
+
+// 窗口采纳的唯一消费点：INSTALLED 且落点相符才翻成 ADOPTED 并结清票据。
+// 与 native 的截止/取消竞争同一票据，只有一个胜者。
+CjguiInternalRendererStatus
+cjgui_internal_renderer_consume_proxy_restore_ticket(uint64_t session, uint64_t requestId,
+                                                     uint32_t adoptedStart, uint32_t adoptedEnd,
+                                                     int32_t *outConsumed);
 
 // Roll back the hidden text proxy after the application refused a human range
 // edit. Only restores text the owner already accepted; fails (and changes
@@ -2014,6 +2104,23 @@ cjgui_internal_renderer_restore_composable_selection(uint64_t session, uint64_t 
                                                      uint64_t sceneVersion, const char *expectedValue,
                                                      uint32_t selectionStart, uint32_t selectionEnd,
                                                      uint32_t *outSelectionStart, uint32_t *outSelectionEnd);
+
+// H1-R.a (HarmonyOS platform variant only). Take the ONE-SHOT anchor frozen when
+// a person placed the caret on the native surface themselves (caret hit test or
+// native long-press select-all). A queued selection event may only clear the
+// session's "native selection restore required" gate when it matches that
+// anchor's frozen node identity AND its exact UTF-16 range; a platform echo
+// (including the transient end-of-text range produced by assigning proxy text)
+// does not match and therefore cannot be mistaken for human navigation.
+// Returns 1 and marks the anchor consumed on an exact match, 0 when nothing
+// matched (no state change), -1 for invalid arguments or session.
+int32_t cjgui_internal_renderer_take_human_selection_anchor(uint64_t session, uint64_t nodeId,
+                                                            int64_t resourceId, uint32_t nodeKind,
+                                                            uint64_t projectionVersion,
+                                                            uint64_t acceptedBindingEpoch,
+                                                            uint32_t selectionStart,
+                                                            uint32_t selectionEnd,
+                                                            uint64_t *outAnchorSeq);
 
 // REANCHOR: keep a live session-owned marked composition on this node while the
 // surrounding projection moves to a new owner version. `newBaseText` is the new

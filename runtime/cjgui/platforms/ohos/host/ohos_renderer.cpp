@@ -21,8 +21,9 @@
 //    空命令菜单与空数据传输、viewport/进度/生命周期诊断。
 //  - 图片资源：应用沙箱 PNG 有界异步解码、fit/fill 与圆角裁剪；
 //    key/version/path 由应用声明，已接受场景保持精确资源绑定。
-//  - 不支持（显式失败）：可编辑文本与选区恢复/文本命中、
-//    非空 text runs、非空命令菜单、非空数据传输、IME caret、悬停/按压
+//  - 文本：系统输入代理与窗口拥有的范围会话、实际安装恢复、
+//    同一 Paint 对象的命中/caret/选区高亮与焦点 blink。
+//  - 不支持（显式失败）：非空 text runs、非空命令菜单、非空数据传输、悬停/按压
 //    视觉层（不影响业务正确性，视觉反馈后续阶段接回）。
 
 #include "cjgui_internal_renderer.h"
@@ -36,6 +37,7 @@
 #include <native_drawing/drawing_font_collection.h>
 #include <native_drawing/drawing_gpu_context.h>
 #include <native_drawing/drawing_pen.h>
+#include <native_drawing/drawing_point.h>
 #include <native_drawing/drawing_rect.h>
 #include <native_drawing/drawing_round_rect.h>
 #include <native_drawing/drawing_sampling_options.h>
@@ -50,6 +52,8 @@
 #include <inputmethod/inputmethod_text_avoid_info_capi.h>
 #include <native_window/external_window.h>
 #include <multimedia/image_framework/image/image_source_native.h>
+#include <unicode/ubrk.h>
+#include <unicode/ustring.h>
 
 #include <algorithm>
 #include <array>
@@ -59,6 +63,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <deque>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -172,6 +177,74 @@ uint32_t clampToCodePointBoundary(const std::u16string &text, uint32_t offset)
     return offset;
 }
 
+// wire 端点（UTF-8 显示字节）→ UTF-16 单位。合法标量边界必须**精确**保留：
+// 前缀 UTF-16 长度就是该边界的答案（"中" byte 3 → 1，emoji byte 4 → 2）。
+// 只有落点自身是延续字节（0x80..0xBF，即落在标量内部）时才回退到该标量的
+// 起点——这才是 macOS CjguiComposableUtf16OffsetForByte 的 walk-back 语义；
+// 原实现检查的是 `utf8[clamped-1]`，把每一个合法的多字节末边界都误当成内部
+// 端点回退，于是 run 的末端被算到上一个字符内部。0 与 EOF 是合法边界。
+uint32_t utf8ByteOffsetToUtf16(const std::string &utf8, uint32_t byteOffset)
+{
+    uint32_t clamped = byteOffset;
+    if (clamped > utf8.size()) clamped = static_cast<uint32_t>(utf8.size());
+    while (clamped > 0 && clamped < utf8.size() &&
+           (static_cast<unsigned char>(utf8[clamped]) & 0xC0) == 0x80) {
+        clamped -= 1;
+    }
+    return static_cast<uint32_t>(utf8ToUtf16(utf8.substr(0, clamped)).size());
+}
+
+// Mechanical encoding map around the platform ICU oracle. Text and query are
+// one immutable snapshot; no cluster rule or document/selection mutation lives here.
+CjguiInternalRendererStatus cjgui_internal_renderer_grapheme_cluster_range(
+    const char *utf8, uint64_t inputBytes, uint64_t containingByte, uint64_t *outStart, uint64_t *outEnd);
+bool cjguiOhosGraphemeRange16(const std::u16string &text, uint32_t offset,
+                            uint32_t &start, uint32_t &end)
+{
+    start = end = 0;
+    if (offset >= text.size()) return false;
+    const uint32_t scalar = clampToCodePointBoundary(text, offset);
+    const std::string encoded = utf16ToUtf8(text);
+    const uint64_t byte = utf16ToUtf8(text.substr(0, scalar)).size();
+    uint64_t lo = 0, hi = 0;
+    if (cjgui_internal_renderer_grapheme_cluster_range(encoded.c_str(), encoded.size(), byte,
+        &lo, &hi) != CJGUI_INTERNAL_RENDERER_OK) return false;
+    start = static_cast<uint32_t>(utf8ToUtf16(encoded.substr(0, lo)).size());
+    end = static_cast<uint32_t>(utf8ToUtf16(encoded.substr(0, hi)).size());
+    return start <= offset && offset < end && end <= text.size();
+}
+
+bool utf16IsHighSurrogate(uint16_t unit) { return unit >= 0xD800 && unit <= 0xDBFF; }
+bool utf16IsLowSurrogate(uint16_t unit) { return unit >= 0xDC00 && unit <= 0xDFFF; }
+
+// 该偏移是否落在 UTF-16 的**合法标量边界**上（不切开代理对）。范围差分的两端
+// 都必须满足这个条件，否则重放会产生孤立代理并编码成非法 UTF-8。
+bool utf16IsScalarBoundary(const std::u16string &text, size_t offset)
+{
+    if (offset == 0 || offset >= text.size()) return true;
+    return !(utf16IsHighSurrogate(static_cast<uint16_t>(text[offset - 1])) &&
+             utf16IsLowSurrogate(static_cast<uint16_t>(text[offset])));
+}
+
+// 该串是否只含合法标量（没有不成对的代理）。平台回调可能送来畸形 UTF-16；
+// 那类输入不能被表达成一个合法的 UTF-8 范围增量，必须具名拒绝。
+bool utf16IsWellFormed(const std::u16string &text)
+{
+    for (size_t i = 0; i < text.size(); ++i) {
+        uint16_t unit = static_cast<uint16_t>(text[i]);
+        if (utf16IsHighSurrogate(unit)) {
+            if (i + 1 >= text.size() ||
+                !utf16IsLowSurrogate(static_cast<uint16_t>(text[i + 1]))) {
+                return false;
+            }
+            i += 1;
+        } else if (utf16IsLowSurrogate(unit)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 // ArkTS TextInput 代理路径入口（bridge 经 C ABI 调用；定义在文件尾）
@@ -200,6 +273,20 @@ constexpr uint32_t kKindBooleanInput = 7;
 constexpr uint32_t kKindScrollArea = 8;
 constexpr uint32_t kKindImage = 9;
 constexpr uint32_t kKindMultiline = 10;
+
+// 文本盒内缩进：绘制、光标、选区高亮与触摸命中必须用同一个常量。此前绘制用
+// 6.0（多行）/2.0（单行）而命中用硬编码 7.0，高亮又用 7.0，三者原点互不相同，
+// 于是"点中的位置"和"看到的字符"差 1px，且高亮与字形在纵向不共线。
+constexpr double kTextInsetSingleLine = 2.0;
+constexpr double kTextInsetMultiline = 6.0;
+
+// 可编辑文本节点集合，与 macOS 的 `CjguiComposableNodeIsTextInput` 同集：
+// 单行 / 整数 / 多行。多行是连续写作面（真实 Pharos 源码正文）的实际类型；
+// 漏掉它，点击永远不会激活编辑上下文——触摸与程序化聚焦都被拒。
+bool isEditableTextKind(uint32_t kind)
+{
+    return kind == kKindTextInput || kind == kKindIntegerInput || kind == kKindMultiline;
+}
 
 // BEGIN CJGUI OHOS IMAGE GEOMETRY
 struct OhosImageGeometry {
@@ -278,6 +365,13 @@ constexpr uint32_t kEvPointerBegin = 37;
 constexpr uint32_t kEvPointerUpdate = 38;
 constexpr uint32_t kEvPointerEnd = 39;
 constexpr uint32_t kEvPointerCancel = 40;
+// H1-C：窗口拥有的正文会话。声明后该节点的提交以**精确 UTF-16 范围增量**
+// 交付（selectionStart/End 是被替换的区间，text 是替换文本），整值事件被
+// 抑制：消费方只经会话 Sink 写一次正文。
+constexpr uint32_t kEvTextRangeChanged = 51;
+// 平台隐藏代理**实际安装**完一次冻结的恢复请求后的回执。排队成功不等于已安装：
+// 窗口要等到这张带原请求身份（bindingEpoch=请求号）与实际安装区间的回执才解锁。
+constexpr uint32_t kEvTextProxyRestored = 55;
 
 // 渲染等待上限：present/measure 事务超时后不得再推进任何已接受状态。
 constexpr auto kRenderWaitTimeout = std::chrono::milliseconds{2000};
@@ -918,12 +1012,104 @@ struct OhosImageRetirementWake {
     }
 };
 
+// 已接受的文字样式 run（C，h-source-preview-next）：与 macOS/框架同一 wire 编码
+// （start:end:fontSize:weight:family:r:g:b:a[:bgFlag:br:bg:bb:ba]，';' 分隔）。
+// wire 端点是节点显示文本的 **UTF-8 显示字节偏移**（SourceMap/网格 caret run/
+// macOS CjguiComposableUtf16OffsetForByte 都按字节说这条协议）；安装时按节点
+// 当前文本换成 UTF-16 单位（TypographyAddText 吃 UTF-8，切段按 UTF-16 边界），
+// 两平台的可见行为因此一致。
+struct OhosTextStyleRun {
+    uint32_t start = 0, end = 0;  // parse 后 = wire 字节；install 后 = UTF-16 单位
+    double fontSize = 13.0;
+    uint32_t fontWeight = 0;
+    uint32_t fontFamily = 0;  // 0 系统 1 等宽 2 斜体 3 等宽斜体
+    float red = 0, green = 0, blue = 0, alpha = 1;
+    bool hasBackground = false;
+    float bgRed = 0, bgGreen = 0, bgBlue = 0, bgAlpha = 1;
+};
+
+static std::atomic<uint64_t> textStyleRunsInstalled{0};
+
+// 每节点样式 run 数量上限：分配前准入，超出整批具名拒绝（保旧）。
+static constexpr size_t kMaxTextStyleRunsPerNode = 64;
+
+static bool parseTextStyleRuns(const char *encoded, std::vector<OhosTextStyleRun> &out)
+{
+    out.clear();
+    if (!encoded) return true;  // 空 = 清除
+    std::string src(encoded);
+    if (src.empty()) return true;
+    size_t pos = 0;
+    while (pos <= src.size()) {
+        size_t semi = src.find(';', pos);
+        std::string item = src.substr(pos, semi == std::string::npos ? std::string::npos : semi - pos);
+        pos = (semi == std::string::npos) ? src.size() + 1 : semi + 1;
+        if (item.empty()) continue;
+        std::vector<std::string> f;
+        size_t fp = 0;
+        while (fp <= item.size()) {
+            size_t colon = item.find(':', fp);
+            f.push_back(item.substr(fp, colon == std::string::npos ? std::string::npos : colon - fp));
+            fp = (colon == std::string::npos) ? item.size() + 1 : colon + 1;
+        }
+        if (f.size() < 9) return false;
+        OhosTextStyleRun run = {};
+        run.start = static_cast<uint32_t>(strtoul(f[0].c_str(), nullptr, 10));
+        run.end = static_cast<uint32_t>(strtoul(f[1].c_str(), nullptr, 10));
+        run.fontSize = strtod(f[2].c_str(), nullptr);
+        run.fontWeight = static_cast<uint32_t>(strtoul(f[3].c_str(), nullptr, 10));
+        run.fontFamily = static_cast<uint32_t>(strtoul(f[4].c_str(), nullptr, 10));
+        run.red = strtof(f[5].c_str(), nullptr);
+        run.green = strtof(f[6].c_str(), nullptr);
+        run.blue = strtof(f[7].c_str(), nullptr);
+        run.alpha = strtof(f[8].c_str(), nullptr);
+        if (f.size() >= 14) {
+            run.hasBackground = strtoul(f[9].c_str(), nullptr, 10) != 0;
+            run.bgRed = strtof(f[10].c_str(), nullptr);
+            run.bgGreen = strtof(f[11].c_str(), nullptr);
+            run.bgBlue = strtof(f[12].c_str(), nullptr);
+            run.bgAlpha = strtof(f[13].c_str(), nullptr);
+        }
+        if (run.start >= run.end) return false;  // 空/倒置范围整批拒绝
+        out.push_back(run);
+        if (out.size() > kMaxTextStyleRunsPerNode) return false;
+    }
+    // 排序并拒绝重叠：重叠语义（后胜）在 Typography 分段里无法表达为
+    // 单一区间集合，具名拒绝比静默合并诚实。字节域与 UTF-16 域单调同序，
+    // 这里在 wire 字节域检查即可。
+    std::sort(out.begin(), out.end(), [](const OhosTextStyleRun &a, const OhosTextStyleRun &b) {
+        return a.start < b.start;
+    });
+    for (size_t i = 1; i < out.size(); ++i) {
+        if (out[i].start < out[i - 1].end) return false;
+    }
+    return true;
+}
+
 struct SceneNode {
     CjguiInternalRendererComposableNode pod{};
     std::string label;
     std::string value;
     std::string semanticId;
     OhosImageRef image;
+    std::vector<OhosTextStyleRun> textStyleRuns;
+    // R2：本候选事务是否**实际写入**过这个槽位。configure 从 accepted 播种时为
+    // false（此刻 candidate.value 仍是上一代文本，不能作为 run 准入基准）；
+    // set_composable_scene_node 写入后为 true（candidate.value 才是本候选文本）。
+    bool stagedThisCandidate = false;
+};
+
+// Pure geometry from the exact Paint/Flush, never a text owner or an input protocol.
+struct PaintedSelectionHandles {
+    bool valid = false;
+    bool startVisible = false, endVisible = false;
+    uint64_t session = 0, nodeId = 0, binding = 0, ticket = 0, projection = 0;
+    uint64_t generation = 0, geometryRevision = 0;
+    int64_t context = 0, resource = -1;
+    uint32_t kind = 0, start = 0, end = 0;
+    std::u16string text;
+    double startX = 0, startY = 0, startLineY = 0;
+    double endX = 0, endY = 0, endLineY = 0;
 };
 
 
@@ -946,6 +1132,13 @@ struct QueuedEvent {
     uint64_t surfaceGeneration = 0;
     int64_t pointerId = -1;
     uint64_t acceptedBindingEpoch = 0;
+    // H1-C：正文会话的绑定代次（只有窗口声明过的节点才有非零值）。事件 POD
+    // 的同名字段原样回传，窗口据此拒绝换绑前入队的旧增量。
+    uint64_t bindingEpoch = 0;
+    // Private provenance for a platform selection observation. A refocus can
+    // reuse the same node, scene and binding while creating a new proxy.
+    int64_t editingContextId = 0;
+    uint64_t editingContextGeneration = 0;
     std::string text;
 };
 
@@ -970,8 +1163,36 @@ struct Session {
     std::string title;
     uint32_t windowWidth = 0;
     uint32_t windowHeight = 0;
+    // C：run 表是渲染器的真理源（与 macOS composableTextStyleRunsRaw 同一
+    // 语义）。窗口在每个候选事务构建的早期安装 runs（configure 重置候选
+    // 之前）；把 runs 只挂在候选/已接受对象上会在事务换代时被丢弃，因此
+    // 经会话级表存放，节点 stage 时按 nodeId 应用到当帧对象。
+    // R2 判别 4（删除后同 id 复用）：表的键是 nodeId，但**声明必须绑定身份**。
+    // 同一 session 内某 id 被删除后复用为另一个对象时，只按 nodeId 查表会把旧
+    // run 沿用到新对象上（旧端点可能越界或指向错误文本）。这里随表记录首次
+    // stage 时的身份三元组；身份不符即视为无声明，新对象不得沿用。
+    struct TextRunBinding {
+        std::vector<OhosTextStyleRun> runs;
+        int64_t resourceId = -1;
+        uint32_t nodeKind = 0;
+        uint64_t bindingEpoch = 0;
+        bool identityKnown = false;
+    };
+    // S1（Astra 裁决的快照事务）：发布快照与候选声明分离。acceptedRunTable 是
+    // 与 accepted 场景**同一次提交**晋升的字节域声明（A.rawRuns）；buildingRunTable
+    // 是当前 Building 候选的声明集（configure 从发布快照播种，抛弃即丢弃）。
+    // 成功 present 才把 building 冻结晋升为发布快照；候选丢弃/失败不泄漏。
+    std::map<uint64_t, TextRunBinding> acceptedRunTable;
+    std::map<uint64_t, TextRunBinding> buildingRunTable;
     double clearR = 0.08, clearG = 0.16, clearB = 0.20, clearA = 1.0;
     bool rangeEditDeltaRequested = false;
+    // H1-C：窗口声明的正文会话节点。声明生效时该节点的提交走精确范围增量，
+    // 未声明的节点一律不产生 kind 51——消费方不会在没有绑定的节点上 fail-closed。
+    bool ownedTextSessionEnabled = false;
+    uint64_t ownedTextSessionNodeId = 0;
+    int64_t ownedTextSessionResourceId = -1;
+    uint32_t ownedTextSessionNodeKind = 0;
+    uint64_t ownedTextSessionBindingEpoch = 0;
     bool closeRequested = false;
 
     // 最近一次观察到的 surface 事实（viewport 与 resizeVersion 的来源）
@@ -986,7 +1207,11 @@ struct Session {
     // 已接受场景（present 成功后晋升）与候选事务
     std::vector<SceneNode> accepted;
     uint64_t acceptedProjectionVersion = 0;
+    uint64_t acceptedPaintTicketId = 0;
     bool candidateOpen = false;
+    // S1（Astra）：候选进入 Failed 后禁止 present——run 准入失败必须终止本次
+    // 窗口尝试，防止调用方忽略错误后发布「旧样式 + 新文本」的混合结果。
+    bool candidateFailed = false;
     uint64_t candidateProjectionVersion = 0;
     std::vector<SceneNode> candidate;
     uint64_t imageCompletionVersion = 0;
@@ -1020,6 +1245,7 @@ struct Session {
             kGestureScroll = 1,
             kGesturePointerDrag = 2,
             kGestureEditorHold = 3,
+            kGestureSelectionDrag = 4,
         };
         bool active = false;
         uint32_t phase = kGesturePending;
@@ -1058,12 +1284,23 @@ struct Session {
         uint64_t appInstance = 0;
         uint64_t componentInstance = 0;
         int64_t pointerId = -1;
+        uint32_t tapCount = 1, timeSource = 0;
+        int64_t beginNs = 0, endNs = 0;
+        bool shortTapCompleted = false, longPressRecognized = false;
+        bool caretMenuTap = false, caretMenuShow = false;
     };
     TouchGesture gesture;
-    // C：字段切换时旧编辑上下文的收场身份（pump 的 end 通知按此取值，
-    // 不得读新上下文字段）。
-    int64_t detachContextId = 0;
-    std::string detachFieldName;
+    // C/S2（R1，Astra s2-identity-handoff）：待发 end 通知队列。每个收场入口
+    // （点击空白、跨字段切换、平台 finish、回车、场景撤销 kill）都在**冻结
+    // 旧身份的同一临界区**压入自己那条 (contextId, fieldName, settle)；pump 按
+    // FIFO 逐条投递。单槽会被后续收场覆盖（finish(A)→bind(B) 后 A 的 end 丢失
+    // 或误寄新身份），队列保证每条退役通知只携带它自己的将死身份。
+    struct PendingEnd {
+        int64_t contextId = 0;
+        std::string fieldName;
+        bool settleOnDelivery = false;  // 投递前按失焦语义结算组合缓冲（恰好一次）
+    };
+    std::deque<PendingEnd> pendingEnds;
     // C：本编辑上下文是否已经公共通道请求过屏外 reveal（核心 flush 一次到
     // 位后按当前几何聚焦；超出夹紧上限时按可见部分聚焦，不重复请求）。
     bool editingContextRevealRequested = false;
@@ -1076,6 +1313,10 @@ struct Session {
     int64_t editingResourceId = -1;
     uint32_t editingNodeKind = 0;
     uint64_t editingProjectionVersion = 0;
+    // 绑定代次（S2/Astra）：节点级 acceptedBindingEpoch 属于绑定身份——同 id
+    // 换代次（换绑/重声明）不是同一对象，sync 失配判定必须比较它，否则
+    // 旧上下文借复用的节点 id 存活（ABA 缺口，咨询 s2-identity-handoff-astra）。
+    uint64_t editingAcceptedBindingEpoch = 0;
     std::u16string editingText;
     uint32_t caretUtf16 = 0;
     uint32_t selStartUtf16 = 0;
@@ -1092,11 +1333,8 @@ struct Session {
     uint32_t markedEnd = 0;
     bool markedCallbackObserved = false;
     bool pendingImeAttach = false;
-    bool pendingImeDetach = false;
-    // 框架主动结束编辑（点到别处/空白）时的失焦语义：未提交的组合预览必须
-    // 按当前可见值结算给 owner，恰好一次。平台侧 finish 触发的 detach 不置此位
-    // （值已由平台提交路径写入，再结算就是重复写）。
-    bool pendingSettleOnDetach = false;
+    // 框架主动结束编辑（点到别处/空白）时的失焦语义由 pendingEnds 条目自己的
+    // settleOnDelivery 携带；不再用单布尔位（会被后续收场/新焦点覆盖）。
     // 逻辑编辑已结束（上下文失效、平台代理释放、延迟回调被拒），但原生编辑器
     // 仍是该节点的绘制方。核心的「本地文字延续」窗口会把 native 值置空并约定
     // 由 native 编辑器绘制可见文本（macOS 用输入代理的字符串做同一件事）；若在
@@ -1104,17 +1342,139 @@ struct Session {
     // 上下文与代理，不结束绘制；下一次聚焦按 accepted 值重新初始化缓冲。
     bool editorRetired = false;
     double editingTapX = 0.0;
+    double editingTapY = 0.0;
     bool editingTapPending = false;
+    uint32_t editingHitMode = 0;  // 0=caret, 1=platform word, 2=drag extent, 3=logical paragraph
+    uint64_t selectionOperationGeneration = 0;
+    PaintedSelectionHandles selectionHandles;
+    // Transient user request, separate from usable Paint coordinates.
+    uint32_t textMenuIntent = 0;  // 0=hidden, 1=selected text, 2=explicit caret menu
+    struct TextTapChain {
+        bool armed = false;
+        uint32_t count = 0, timeSource = 0, kind = 0;
+        int64_t endNs = 0, context = 0, resource = -1;
+        uint64_t app = 0, component = 0, surface = 0, geometry = 0, node = 0, binding = 0, base = 0;
+        float x = 0, y = 0;
+        std::u16string text;
+    } textTapChain;
+    struct SelectionDrag {
+        bool active = false, anchorReady = false, terminal = false;
+        bool wordHold = false, moved = false;
+        uint64_t operation = 0, nodeId = 0, binding = 0, projection = 0;
+        uint64_t generation = 0, geometryRevision = 0, app = 0, component = 0, epoch = 0;
+        int64_t context = 0, resource = -1, pointer = -1;
+        uint32_t kind = 0, anchor = 0;
+        std::u16string text;
+        double offsetX = 0, offsetY = 0;
+        double lastX = 0, lastY = 0;
+    } selectionDrag;
     bool focusNotifyPending = false;
     bool reconcileNotifyPending = false;
     int64_t reconcileOldContextId = 0;
+    // 平台代理已知的落点（native→平台 差分推送用）。命中/编辑命令/外部换版把 caret
+    // 挪走后，已挂载的代理仍停在自己的旧落点，人的下一次键入就落错位置（实测：
+    // 命中 caret=8，代理仍在 1，键入插到正文开头）。因此按差分把 native 落点推给
+    // 平台；平台回声（ime_set_selection_ctx）与恢复 ACK 同步这两个字段，避免自激。
+    uint32_t selPlatformStart = 0;
+    uint32_t selPlatformEnd = 0;
+    // 新的人类锚需要锚之后的一次实际平台观测，即使落点与两本去重账相同。
+    // 只在成功投递 caret 通知时消费，换绑/退役随锚一起撤回。
+    bool humanCaretNotificationPending = false;
+    // pump owns the clock/phase; input only requests reset. Rendering reads one
+    // frozen phase, including pending reset so the first input frame is bright.
+    bool caretBlinkVisible = false;
+    bool caretBlinkActive = false;
+    bool caretBlinkResetPending = false;
+    int64_t caretBlinkNextMs = 0;
+    // 已经转发给窗口的平台落点观测（kind-33）。与 selPlatform* 不是一回事：后者是
+    // "native 推给平台的目标"，用于差分去重；这里是"窗口收到过哪个观测"。判重必须
+    // 按后者——人点击正文时 native 先算出命中落点，平台装好后回声的就是同一个值，
+    // 按 selPlatform*/caret 判重会把这次回声吞掉，窗口于是永远不知道"平台已安装人的
+    // 落点"，人类锚只 recorded 不 taken，紧随的键入被 selection_native_alignment_required
+    // 拒掉（实测 09-30 03:49:28.822 `ime select [24,24) rc=0` 之后无任何窗口侧记录）。
+    uint32_t selForwardedStart = 0;
+    uint32_t selForwardedEnd = 0;
+    bool selForwardedValid = false;
+    int32_t caretAffinity = 0;  // native-only visual affinity; UTF16 protocol is unchanged
+    // 人类锚（H1-R.a）：人在 native 表面上亲手放置的落点（命中测试/原生全选）。
+    // 与平台回声不同类——回声只证明"组件报告过某区间"，锚证明"人把光标放到了哪里"。
+    // 外部换版后窗口置 selectionNeedsNativeRestore 挡住一切输入，而它既有的两条解除
+    // 路径都要求框架焦点 + accepted 对齐，人第一次点击之前不可能触发（实测：Agent
+    // 替换后点击正文，键入被 selection_native_alignment_required 静默丢弃，owner 停在
+    // 44 字节）。锚冻结身份与序号，由窗口一次性核验采纳；回声仍按安装观测处理。
+    struct HumanSelectionAnchor {
+        uint64_t seq = 0;          // 0 = 无锚；单调递增，窗口按序号防重放
+        uint64_t nodeId = 0;
+        int64_t resourceId = -1;
+        uint32_t nodeKind = 0;
+        uint64_t projectionVersion = 0;
+        uint64_t acceptedBindingEpoch = 0;
+        uint32_t start16 = 0;
+        uint32_t end16 = 0;
+        bool consumed = false;     // 窗口已取走：同一锚不得二次采纳
+    };
+    HumanSelectionAnchor humanAnchor;
+    uint64_t humanAnchorSeq = 0;
+    // 平台代理恢复请求（**冻结身份**）。owner 拒绝人的范围编辑、或窗口在外部换版后
+    // 重设落点时签发；创建时把上下文/代际/节点/字段/accepted 版本与绑定/正文/选区
+    // 全部冻结，发送与回执都只读这份冻结值——绝不重读当前 context/field/base。
+    // 原因：pump 先 drainTouches 再发通知，"A 排恢复 → 点击 B 换焦 → 发送" 会带出
+    // A 的正文配 B 的身份，越过平台的当前身份检查。换绑/退役/结束/外部换版 reconcile
+    // 一律取消旧请求：旧恢复串不得贴到新节点，迟到的旧回执也不得解任何锁。
+    // H1-R（Astra 裁决）：请求状态、恢复意图、安装事实三本账分开。
+    // state 是互斥的进行中相位；terminal 一旦写入就是该请求的终态，
+    // 终态不得抹掉已经发生的事实（transportReceived/platformInstalled）。
+    struct ProxyRestoreRequest {
+        uint64_t requestId = 0;
+        bool armed = false;         // 已冻结、等待发送
+        bool awaitingAck = false;   // 已发送、等待平台实际安装回执
+        bool sent = false;          // 事实：已交付 sink（transportAccepted）
+        bool received = false;      // 事实：平台就本请求回报过（不论裁决）
+        bool platformInstalled = false;  // 事实：平台观测确认安装（落点等于规范目标）
+        bool reported = false;      // 事实：终态事件已投递给窗口
+        int64_t deadlineMonoMs = 0; // 覆盖排队→发送→安装→窗口裁决
+        uint64_t nodeId = 0;
+        int64_t resourceId = -1;
+        uint32_t nodeKind = 0;
+        uint64_t acceptedProjectionVersion = 0;
+        uint64_t acceptedBindingEpoch = 0;
+        int64_t contextId = 0;
+        uint64_t contextGeneration = 0;
+        std::string fieldName;
+        std::u16string text;
+        uint32_t selStart = 0;      // 规范目标（签发前确定，ACK 时不迁就结果）
+        uint32_t selEnd = 0;
+        uint32_t observedStart = 0; // 观测账本：平台报告的实际落点
+        uint32_t observedEnd = 0;
+        std::string terminalReason;
+    };
+    // 票据终局账本（有界）：迟到/重复回执按 requestId 返回既有裁决，不重复计终态；
+    // 窗口查询票据时也读它，事件丢失时仍能终结自己的待办。
+    struct ProxyRestoreTerminal {
+        uint64_t requestId = 0;
+        // 1=未安装即终结 2=安装未确认终结 3=平台已安装待窗口采纳 4=窗口已采纳
+        int32_t code = 0;
+        std::string reason;
+        bool platformInstalled = false;
+        uint32_t observedStart = 0;
+        uint32_t observedEnd = 0;
+    };
+    std::deque<ProxyRestoreTerminal> proxyRestoreTerminals;
+    ProxyRestoreRequest proxyRestore;
+    uint64_t proxyRestoreRequestSeq = 0;
     // 通用文字代理上下文（不透明）：关联 session、节点/绑定、编辑代际与基版本。
     // 平台代理的每次延迟回调必须携带并校验它；不匹配的回调不得改写编辑状态。
     int64_t editingContextId = 0;
     std::string editingFieldName;
     uint64_t editingContextGeneration = 0;     // 分配上下文时的 surface 代际
     uint64_t editingContextBaseVersion = 0;    // 分配上下文时的场景投影版本
+    // R1补轮：曾以此记录"绑定出生票据"做 sync 容忍；票号大小不能证明来源
+    // 关系，来源判定已前移到结算入口的来源上下文比较（PendingSettlement），本
+    // 字段退役。
     bool editingContextLive = false;
+    // D2（S3 抖动修复）：新上下文对「过渡 accepted 帧」的宽限计数。rebind 后
+    // 最早一两帧可能是模式切换的过渡场景（编辑节点缺席/旗标退化）；编辑缓冲
+    // 同步在此宽限期内不 kill 上下文，稳定后才按原判据收场。
 };
 
 // BEGIN CJGUI OHOS IMAGE LEASE DIAGNOSTICS
@@ -1203,6 +1563,33 @@ struct SessionTable {
 };
 
 SessionTable g_sessions;
+
+// Pump-only phase decision. Rendering reads the decision and pending reset;
+// it never reads the clock or advances application/scene/selection state.
+bool advanceCaretBlinkLocked(Session &s, int64_t nowMs, bool eligible)
+{
+    if (!eligible) {
+        const bool erase = s.caretBlinkActive || s.caretBlinkVisible || s.caretBlinkResetPending;
+        s.caretBlinkActive = false;
+        s.caretBlinkVisible = false;
+        s.caretBlinkResetPending = false;
+        s.caretBlinkNextMs = 0;
+        return erase;
+    }
+    if (!s.caretBlinkActive || s.caretBlinkResetPending) {
+        s.caretBlinkActive = true;
+        s.caretBlinkVisible = true;
+        s.caretBlinkResetPending = false;
+        s.caretBlinkNextMs = nowMs + 500;
+        return true;
+    }
+    if (nowMs >= s.caretBlinkNextMs) {
+        s.caretBlinkVisible = !s.caretBlinkVisible;
+        s.caretBlinkNextMs = nowMs + 500;  // late pump toggles once, never a catch-up burst
+        return true;
+    }
+    return false;
+}
 // 同一进程的 host STOP/RESTART 会重用 Session 槽；context 不可随槽重置而
 // 复用，否则旧 ArkTS end/submit 可以撞中新实例的相同数字。
 std::atomic<int64_t> g_nextEditingContextId{1};
@@ -1953,14 +2340,35 @@ struct MeasureJob : WaitableJob {
     CjguiInternalRendererTextMeasurement measurement{};
 };
 
+// Logical source paragraphs; visual wrapping never introduces a separator.
+void sourceParagraphRange16(const std::u16string &text, uint32_t caret, uint32_t &lo, uint32_t &hi)
+{
+    lo = hi = std::min(caret, static_cast<uint32_t>(text.size()));
+    if (text.empty()) return;
+    const auto separator = [](char16_t c) { return c == u'\n' || c == u'\r' || c == u'\u2029'; };
+    const uint32_t at = lo == text.size() ? lo - 1 : lo;
+    if (separator(text[at])) return; // an empty line retains its collapsed caret
+    lo = hi = at;
+    while (lo > 0 && !separator(text[lo - 1])) --lo;
+    while (hi < text.size() && !separator(text[hi])) ++hi;
+}
+
 struct CaretHitTestJob : WaitableJob {
     CaretHitTestJob() : WaitableJob(JobKind::CaretHitTest) {}
     std::u16string text;   // 组合缓冲（UTF-16）
     double fontSize = 13.0;
     uint32_t fontWeight = 400;
     double nodeWidth = 0.0;
+    double nodeHeight = 0.0;
+    uint32_t nodeKind = 0;
     double tapX = 0.0;     // 节点内相对坐标
+    double tapY = 0.0;     // 节点内相对坐标（多行正文靠它定位行）
     uint32_t caretUtf16 = 0;
+    int32_t caretAffinity = 0;
+    uint64_t session = 0, nodeId = 0, bindingEpoch = 0, projectionVersion = 0;
+    int64_t resourceId = -1, contextId = 0, nodeX = 0, nodeY = 0;
+    uint64_t paintSerial = 0, sourcePaintTicket = 0;
+    uint32_t mode = 0, wordStart = 0, wordEnd = 0;
 };
 
 struct PresentJob : WaitableJob {
@@ -1985,6 +2393,28 @@ struct ShutdownJob : WaitableJob {
 // 末帧重绘任务：非等待式（fire-and-forget），渲染线程自持有副本。
 struct RedrawJob : WaitableJob {
     RedrawJob() : WaitableJob(JobKind::Redraw) {}
+    bool caretBlinkWake = false;
+    uint64_t renderEpoch = 0;
+};
+
+// Render-thread-only ownership of the Typography actually passed to Paint.
+// Jobs and Sessions carry value identities only, never this native object.
+struct PaintedTextLayout {
+    std::unique_ptr<OH_Drawing_Typography, decltype(&OH_Drawing_DestroyTypography)> typography
+        {nullptr, &OH_Drawing_DestroyTypography};
+    CjguiInternalRendererComposableNode node{};
+    std::u16string text;
+    uint64_t session = 0, renderEpoch = 0, basePresentTicket = 0, projectionVersion = 0, serial = 0;
+    uint64_t generation = 0, geometryRevision = 0;
+    void *window = nullptr;
+    int32_t width = 0, height = 0;
+    int64_t paintContext = 0;
+    double density = 1.0, relativeOriginX = 0.0, relativeOriginY = 0.0;
+    PaintedSelectionHandles handles;
+};
+struct TextPaintFrame {
+    uint64_t session = 0, ticket = 0, projectionVersion = 0;
+    std::unique_ptr<PaintedTextLayout> candidate;
 };
 
 struct ImageRealizeJob : WaitableJob {
@@ -2007,9 +2437,13 @@ struct TeardownJob : WaitableJob {
 //
 // A1：记录在 ACK 之前一直保留（终态保持不变，重复查询返回同一结果）。
 // 这是“查询原提交”与“提交新候选”拆成两个入口的前提。
+struct Session;
 struct PendingSettlement {
     JobRef job;
     std::vector<SceneNode> nodes;
+    // S1（Astra）：提交票据冻结整个候选快照（含字节域声明表）。延迟成功结算
+    // 晋升的是这份冻结表，绝不回读提交后可能已被下一候选改写的 working 表。
+    std::map<uint64_t, Session::TextRunBinding> runTable;
     uint64_t projectionVersion = 0;
     bool valid = false;
     // 票据身份与终态。settled 后 decision/terminalStatus/frameIndex 不再改变。
@@ -2021,6 +2455,13 @@ struct PendingSettlement {
     int32_t drawableHeight = 0;
     double density = 1.0;
     bool settled = false;
+    // R1补轮（2026-10-02 指导复核）：候选冻结（present 锁内登记票据）时的编辑
+    // 上下文来源快照。结算时若存在**另一个**活上下文（编号不同），说明该候选
+    // 是旧来源的模式结果——它对编辑节点的缺席/退化不代表当前绑定的真实撤销，
+    // 必须在不可逆晋升（accepted 树交换/绘制提交）**之前**整票拒绝，不得先
+    // 发布删除节点的旧树再靠跳过 sync 保活（票号大小不构成来源关系证明）。
+    int64_t sourceEditingContextId = 0;
+    bool sourceEditingLive = false;
 };
 PendingSettlement g_pending[kMaxSessions];
 
@@ -2064,13 +2505,23 @@ struct RenderThread {
     SurfaceBackend surfaceBackend = SurfaceBackend::None;
     int32_t surfaceW = 0;
     int32_t surfaceH = 0;
+    // 绑定代次的逻辑密度：surface 尺寸是物理 px，节点几何是 vp，绘制按它放大。
+    double surfaceDensity = 1.0;
 
     // 末帧副本（渲染线程自有）：预览态重绘的数据来源
     std::vector<SceneNode> lastNodes;
     uint64_t lastProjectionVersion = 0;
+    uint64_t lastFrameSession = 0;
+    uint64_t lastFrameGeneration = 0;
+    void *lastFrameWindow = nullptr;
     double lastClearR = 0, lastClearG = 0, lastClearB = 0, lastClearA = 1;
     bool hasLastFrame = false;
+    // Queue lock owns both fields. Only a wake from this run can enter, and
+    // only its dequeue clears the queued bit (one executing + one queued).
+    uint64_t renderEpoch = 0;
+    bool caretBlinkRedrawQueued = false;
     uint64_t submittedFrames = 0;
+    uint64_t redrawFrames = 0;
     int64_t rejectedFlushes = 0;
     // 退役屏障：当前正处于「已取得提交许可、Flush 尚未完成」的代际。
     // **只作取证读数**：Sol 复核指出它只盖住闸门之后到 Flush 之前，redraw 的
@@ -2168,6 +2619,8 @@ struct RenderThread {
         std::lock_guard<std::mutex> g(lock);
         if (running || stopping) return;
         running = true;
+        renderEpoch += 1;
+        caretBlinkRedrawQueued = false;
         // 上一轮已退出的线程必须先 join，避免 std::thread 赋值时 terminate。
         if (thread.joinable()) thread.join();
         cjguiOhosTestGateBeginRendererEpoch();
@@ -2203,6 +2656,103 @@ struct RenderThread {
         }
         cv.notify_all();
         return true;
+    }
+
+    uint64_t currentRunEpoch()
+    {
+        std::lock_guard<std::mutex> g(lock);
+        return running && !stopping ? renderEpoch : 0;
+    }
+
+    std::unique_ptr<PaintedTextLayout> lastPaintLayout;
+    bool paintedLayoutUsable = false;
+    uint64_t textPaintSerial = 0;
+    uint64_t textLayoutsBuilt = 0, textLayoutInputBytes = 0;
+    uint64_t lastFrameTicket = 0;
+
+    void invalidatePaintedLayout(uint64_t session)
+    {
+        paintedLayoutUsable = false;
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        Session *s = lookupSessionLocked(session);
+        if (s) s->selectionHandles = PaintedSelectionHandles{};
+    }
+
+    void publishPaintedLayout(TextPaintFrame &frame)
+    {
+        // A successful frame with no painted editing node revokes old geometry.
+        lastPaintLayout = std::move(frame.candidate);
+        paintedLayoutUsable = true;
+        {
+            // Pure value geometry is published only after this frame's Flush.
+            // The native Typography remains owned by the render thread.
+            std::lock_guard<std::mutex> g(g_sessions.lock);
+            Session *s = lookupSessionLocked(frame.session);
+            if (s) {
+                s->selectionHandles = PaintedSelectionHandles{};
+                if (lastPaintLayout && lastPaintLayout->handles.valid && s->editing &&
+                    s->editingContextLive && !s->editorRetired && !s->previewActive &&
+                    s->editingContextId == lastPaintLayout->paintContext &&
+                    composedBuffer(*s) == lastPaintLayout->text &&
+                    std::min(s->selStartUtf16, s->selEndUtf16) == lastPaintLayout->handles.start &&
+                    std::max(s->selStartUtf16, s->selEndUtf16) == lastPaintLayout->handles.end) {
+                    s->selectionHandles = lastPaintLayout->handles;
+                }
+            }
+        }
+        if (lastPaintLayout) {
+            RLOGI("text layout flushed serial=%{public}llu session=%{public}llu ticket=%{public}llu projection=%{public}llu",
+                static_cast<unsigned long long>(lastPaintLayout->serial),
+                static_cast<unsigned long long>(lastPaintLayout->session),
+                static_cast<unsigned long long>(lastPaintLayout->basePresentTicket),
+                static_cast<unsigned long long>(lastPaintLayout->projectionVersion));
+        }
+    }
+
+    bool postCaretBlink(uint64_t expectedEpoch)
+    {
+        {
+            std::lock_guard<std::mutex> g(lock);
+            if (!running || stopping || expectedEpoch == 0 || expectedEpoch != renderEpoch) return false;
+            if (caretBlinkRedrawQueued) return true;  // queued wake renders the latest phase
+            auto job = std::make_shared<RedrawJob>();
+            job->caretBlinkWake = true;
+            job->renderEpoch = expectedEpoch;
+            caretBlinkRedrawQueued = true;
+            jobs.push_back(job);
+        }
+        cv.notify_all();
+        return true;
+    }
+
+    bool postCaretHitAfterRedraw(const JobRef &hit, uint64_t expectedEpoch)
+    {
+        {
+            std::lock_guard<std::mutex> g(lock);
+            if (!running || stopping || expectedEpoch == 0 || expectedEpoch != renderEpoch) return false;
+            // First focus/preview can precede its ordinary redraw. The real
+            // Paint+Flush goes first; the hit itself never creates a layout.
+            jobs.push_back(std::make_shared<RedrawJob>());
+            jobs.push_back(hit);
+        }
+        cv.notify_all();
+        return true;
+    }
+
+    void consumeCaretBlinkWakeLocked(const JobRef &job)
+    {
+        if (job->kind == JobKind::Redraw) {
+            const auto *redraw = static_cast<const RedrawJob *>(job.get());
+            if (redraw->caretBlinkWake && redraw->renderEpoch == renderEpoch) {
+                caretBlinkRedrawQueued = false;
+            }
+        }
+    }
+
+    bool cachedFrameMatchesSurface() const
+    {
+        return hasLastFrame && surface && lastFrameSession != 0 &&
+            lastFrameGeneration == boundGeneration && lastFrameWindow == boundWindow;
     }
 
     void requestImagePrune()
@@ -2263,6 +2813,7 @@ struct RenderThread {
             imagePruneRequested = false;
             JobRef job = jobs.front();
             jobs.pop_front();
+            consumeCaretBlinkWakeLocked(job);
             activeJob = job;
             g.unlock();
             // 出队闸门只作用于真实 PresentJob；停机和 teardown 不能再次被
@@ -2356,6 +2907,7 @@ struct RenderThread {
             activeJob.reset();
             running = false;
             stopping = false;
+            caretBlinkRedrawQueued = false;
             hasLastFrame = false;
             lastNodes.clear();
         }
@@ -2522,7 +3074,7 @@ struct RenderThread {
     void executeRedraw()
     {
         pruneImageBitmaps();
-        if (!hasLastFrame || !surface) return;
+        if (!cachedFrameMatchesSurface()) return;
         // 第七次复核 B：无引用档下退役代的重绘同样不得触碰平台资源
         // （SurfaceGetCanvas/SurfaceFlush 都作用在该代的 window 上）。
         if (!leaseValid(boundGeneration)) {
@@ -2573,6 +3125,14 @@ struct RenderThread {
         OH_Drawing_BrushSetColor(bg, packColor(lastClearR, lastClearG, lastClearB, lastClearA));
         OH_Drawing_CanvasDrawBackground(canvas, bg);
         OH_Drawing_BrushDestroy(bg);
+        // 与 present 同一 canvas、同一换算：vp 几何整帧放大一次 density，并用
+        // Save/Restore 配对归还（矩阵跨帧保留，见 present 处说明）。
+        OH_Drawing_CanvasSave(canvas);
+        if (surfaceDensity > 0.0 && surfaceDensity != 1.0) {
+            OH_Drawing_CanvasScale(canvas, static_cast<float>(surfaceDensity),
+                                   static_cast<float>(surfaceDensity));
+        }
+        TextPaintFrame paintFrame{lastFrameSession, lastFrameTicket, lastProjectionVersion, nullptr};
         for (const SceneNode &n : lastNodes) {
             if (n.pod.width <= 0 || n.pod.height <= 0) continue;
             OH_Drawing_CanvasSave(canvas);
@@ -2580,17 +3140,36 @@ struct RenderThread {
                 drawFill(canvas, n.pod);
                 drawNodeImage(canvas, n);
                 drawBorder(canvas, n.pod);
-                drawNodeText(canvas, n);
+                drawNodeText(canvas, n, paintFrame);
             }
             OH_Drawing_CanvasRestore(canvas);
         }
+        OH_Drawing_CanvasRestore(canvas);
         if (!leaseValid(boundGeneration) ||
             !geometryMatches(boundWindow, boundGeneration, surfaceW, surfaceH,
                              permitGeometryRevision)) {
             teardownSurface(!leaseValid(boundGeneration));
             return;
         }
-        OH_Drawing_SurfaceFlush(surface);
+        const uint64_t generation = boundGeneration;
+        const uint64_t revision = permitGeometryRevision;
+        const OH_Drawing_ErrorCode flush = OH_Drawing_SurfaceFlush(surface);
+        if (!leaseValid(generation) || !geometryMatches(boundWindow, generation, surfaceW, surfaceH, revision)) {
+            RLOGW("redraw flush lost lease/geometry gen=%{public}llu", static_cast<unsigned long long>(generation));
+            teardownSurface(!leaseValid(generation));
+            return;
+        }
+        if (flush != OH_DRAWING_SUCCESS) {
+            invalidatePaintedLayout(lastFrameSession);
+            RLOGW("redraw SurfaceFlush error=%{public}d", static_cast<int>(flush));
+            return;
+        }
+        publishPaintedLayout(paintFrame);
+        redrawFrames += 1;
+        RLOGI("redraw frame ok session=%{public}llu gen=%{public}llu geometry=%{public}llu seq=%{public}llu layouts=%{public}llu layoutBytes=%{public}llu",
+            static_cast<unsigned long long>(lastFrameSession), static_cast<unsigned long long>(generation),
+            static_cast<unsigned long long>(revision), static_cast<unsigned long long>(redrawFrames),
+            static_cast<unsigned long long>(textLayoutsBuilt), static_cast<unsigned long long>(textLayoutInputBytes));
     }
 
     // 前缀宽度（UTF-16 码元前缀 → 渲染宽度）；测量与绘制同一排版引擎。
@@ -2609,21 +3188,117 @@ struct RenderThread {
 
     void executeCaretHitTest(CaretHitTestJob *job)
     {
-        // 二分：找使前缀宽度最接近 tapX 的码点边界（不拆代理对）。
-        std::u16string text = job->text;
-        uint32_t lo = 0, hi = static_cast<uint32_t>(text.size());
-        while (lo < hi) {
-            uint32_t mid = clampToCodePointBoundary(text, (lo + hi) / 2 + 1);
-            if (mid <= lo) { lo = std::min(lo + 1, hi); continue; }
-            double w = prefixWidthUtf16(text, mid, job->fontSize, job->fontWeight, job->nodeWidth);
-            if (w < job->tapX) {
-                lo = mid;
-            } else {
-                hi = mid - (mid > 0 ? 1 : 0);
-                if ((lo + hi) / 2 + 1 > mid) break;
+        const auto *painted = lastPaintLayout.get();
+        if (!paintedLayoutUsable || !painted || !painted->typography) {
+            RLOGW("caret hit refused: painted_layout_unavailable");
+            job->finish(CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY);
+            return;
+        }
+        if (painted->renderEpoch != renderEpoch || painted->window != boundWindow ||
+            painted->generation != boundGeneration || !leaseValid(painted->generation) ||
+            !geometryMatches(painted->window, painted->generation, painted->width,
+                             painted->height, painted->geometryRevision)) {
+            RLOGW("caret hit refused: painted_surface_stale serial=%{public}llu", static_cast<unsigned long long>(painted->serial));
+            job->finish(CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> g(g_sessions.lock);
+            const Session *s = lookupSessionLocked(job->session);
+            if (!s || !s->editing || !s->editingContextLive || s->editorRetired ||
+                s->editingContextId != job->contextId || s->editingNodeId != job->nodeId ||
+                s->editingResourceId != job->resourceId || s->editingNodeKind != job->nodeKind ||
+                s->editingProjectionVersion != job->projectionVersion || composedBuffer(*s) != job->text) {
+                RLOGW("caret hit refused: editing_snapshot_stale");
+                job->finish(CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED);
+                return;
+            }
+            if (s->acceptedPaintTicketId != painted->basePresentTicket) {
+                RLOGW("caret hit refused: paint_pending_acceptance serial=%{public}llu ticket=%{public}llu accepted=%{public}llu",
+                    static_cast<unsigned long long>(painted->serial), static_cast<unsigned long long>(painted->basePresentTicket),
+                    static_cast<unsigned long long>(s->acceptedPaintTicketId));
+                job->finish(CJGUI_INTERNAL_RENDERER_PRESENT_PENDING);
+                return;
             }
         }
-        job->caretUtf16 = clampToCodePointBoundary(text, lo);
+        const auto &node = painted->node;
+        if (painted->session != job->session || painted->text != job->text ||
+            node.nodeId != job->nodeId || node.resourceId != job->resourceId || node.nodeKind != job->nodeKind ||
+            node.acceptedBindingEpoch != job->bindingEpoch || painted->projectionVersion != job->projectionVersion ||
+            node.x != job->nodeX || node.y != job->nodeY || node.width != job->nodeWidth ||
+            node.height != job->nodeHeight || node.fontSize != job->fontSize || node.fontWeight != job->fontWeight) {
+            RLOGW("caret hit refused: painted_layout_stale serial=%{public}llu", static_cast<unsigned long long>(painted->serial));
+            job->finish(CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED);
+            return;
+        }
+        OH_Drawing_PositionAndAffinity *hit = OH_Drawing_TypographyGetGlyphPositionAtCoordinateWithCluster(
+            painted->typography.get(), job->tapX - painted->relativeOriginX, job->tapY - painted->relativeOriginY);
+        if (!hit) {
+            job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
+            return;
+        }
+        const size_t position = OH_Drawing_GetPositionFromPositionAndAffinity(hit);
+        const int affinity = OH_Drawing_GetAffinityFromPositionAndAffinity(hit);
+        OH_Drawing_DestroyPositionAndAffinity(hit);
+        job->caretUtf16 = static_cast<uint32_t>(std::min<size_t>(position, painted->text.size()));
+        if (job->caretUtf16 < painted->text.size()) {
+            uint32_t lo = 0, hi = 0;
+            if (!cjguiOhosGraphemeRange16(painted->text, job->caretUtf16, lo, hi)) {
+                job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
+                return;
+            }
+            if (job->caretUtf16 != lo) job->caretUtf16 = affinity == 1 ? lo : hi;
+        }
+        if (job->mode == 1 && !painted->text.empty()) {
+            // GetWordBoundary uses UTF-16 in this SDK. Query the actual painted
+            // paragraph, then verify/expand both edges with the platform ICU oracle.
+            uint32_t at = job->caretUtf16;
+            if (at == painted->text.size() || (affinity == 0 && at > 0)) --at;
+            OH_Drawing_Range *word = OH_Drawing_TypographyGetWordBoundary(painted->typography.get(), at);
+            if (!word) {
+                RLOGW("word_boundary_failed: platform range unavailable");
+                job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
+                return;
+            }
+            const size_t start = OH_Drawing_GetStartFromRange(word);
+            const size_t end = OH_Drawing_GetEndFromRange(word);
+            OH_Drawing_ReleaseRangeBuffer(word);
+            uint32_t lo = 0, hi = 0, lastLo = 0, lastHi = 0;
+            if (start >= end || end > painted->text.size() ||
+                !cjguiOhosGraphemeRange16(painted->text, static_cast<uint32_t>(start), lo, hi) ||
+                !cjguiOhosGraphemeRange16(painted->text, static_cast<uint32_t>(end - 1), lastLo, lastHi)) {
+                RLOGW("word_boundary_failed: invalid or unverified edges");
+                job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
+                return;
+            }
+            job->wordStart = lo;
+            job->wordEnd = lastHi;
+            RLOGI("word hit painted serial=%{public}llu range=%{public}u:%{public}u",
+                static_cast<unsigned long long>(painted->serial), lo, lastHi);
+        }
+        if (job->mode == 3) {
+            uint32_t lo = 0, hi = 0;
+            sourceParagraphRange16(painted->text, job->caretUtf16, lo, hi);
+            if (lo < hi) {
+                uint32_t firstLo = 0, firstHi = 0, lastLo = 0, lastHi = 0;
+                if (!cjguiOhosGraphemeRange16(painted->text, lo, firstLo, firstHi) ||
+                    !cjguiOhosGraphemeRange16(painted->text, hi - 1, lastLo, lastHi)) {
+                    job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
+                    return;
+                }
+                lo = firstLo; hi = lastHi;
+            }
+            job->wordStart = lo; job->wordEnd = hi;
+            RLOGI("paragraph hit painted serial=%{public}llu range=%{public}u:%{public}u",
+                  static_cast<unsigned long long>(painted->serial), lo, hi);
+        }
+        job->caretAffinity = affinity;
+        job->paintSerial = painted->serial;
+        job->sourcePaintTicket = painted->basePresentTicket;
+        RLOGI("caret hit painted serial=%{public}llu session=%{public}llu ticket=%{public}llu context=%{public}lld caret=%{public}u affinity=%{public}d",
+            static_cast<unsigned long long>(painted->serial), static_cast<unsigned long long>(painted->session),
+            static_cast<unsigned long long>(painted->basePresentTicket), static_cast<long long>(job->contextId),
+            job->caretUtf16, affinity);
         job->finish(CJGUI_INTERNAL_RENDERER_OK);
     }
 
@@ -2695,6 +3370,7 @@ struct RenderThread {
             job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
             return;
         }
+        TextPaintFrame paintFrame{job->session, job->ticketId, job->projectionVersion, nullptr};
         if (surfaceBackend == SurfaceBackend::Stub) {
             // 第九次复核 A1：替身句柄上的绘制由替身分派（身份计数；
             // 身份阻塞制造「绘制窗口内退役」交错）——与 ARM 状态无关。
@@ -2719,6 +3395,15 @@ struct RenderThread {
         OH_Drawing_BrushSetColor(bg, packColor(job->clearR, job->clearG, job->clearB, job->clearA));
         OH_Drawing_CanvasDrawBackground(canvas, bg);
         OH_Drawing_BrushDestroy(bg);
+        // 节点几何是布局 vp、surface 缓冲是物理 px，所以整帧放大一次 density。
+        // SurfaceGetCanvas 返回的是 surface 自己的 canvas，矩阵跨帧保留：不配对
+        // Save/Restore 的话每次 present/redraw 都会再乘一次，两帧后整帧按 density²
+        // 绘制（实测 3.5 密度下 18vp 正文行距 257px、超出右边界被裁掉）。
+        OH_Drawing_CanvasSave(canvas);
+        if (surfaceDensity > 0.0 && surfaceDensity != 1.0) {
+            OH_Drawing_CanvasScale(canvas, static_cast<float>(surfaceDensity),
+                                   static_cast<float>(surfaceDensity));
+        }
 #ifdef CJGUI_OHOS_TEST_GATES
         // A2 闸门：canvas 已取得、绘制中段按住（反例 3：销毁重建落在绘制窗口）。
         g_gateDrawCount += 1;
@@ -2732,11 +3417,12 @@ struct RenderThread {
                 drawFill(canvas, n.pod);
                 drawNodeImage(canvas, n);
                 drawBorder(canvas, n.pod);
-                drawNodeText(canvas, n);
+                drawNodeText(canvas, n, paintFrame);
             }
             OH_Drawing_CanvasRestore(canvas);
         }
         g_pcCalls.drawExit.fetch_add(1);
+        OH_Drawing_CanvasRestore(canvas);   // 归还本帧的 density 变换（矩阵跨帧保留）
         }   // 结束真实绘制 else 分支（替身分支已在上方计数返回同一汇合点）
 #ifdef CJGUI_OHOS_TEST_GATES
         // A2 闸门：最终提交准入前按住（反例 4：准入前销毁重建——旧代取消不得 Flush）。
@@ -2823,13 +3509,20 @@ struct RenderThread {
         }
         busyGeneration.store(0);
         if (flush != OH_DRAWING_SUCCESS) {
+            invalidatePaintedLayout(job->session);
             RLOGW("SurfaceFlush error=%{public}d", static_cast<int>(flush));
             job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
             return;
         }
-        RLOGI("present frame ok (nodes=%{public}zu)", job->nodes.size());
+        RLOGI("present frame ok (nodes=%{public}zu) layouts=%{public}llu layoutBytes=%{public}llu", job->nodes.size(),
+            static_cast<unsigned long long>(textLayoutsBuilt), static_cast<unsigned long long>(textLayoutInputBytes));
+        publishPaintedLayout(paintFrame);
         lastNodes = job->nodes;
+        lastFrameTicket = job->ticketId;
         lastProjectionVersion = job->projectionVersion;
+        lastFrameSession = job->session;
+        lastFrameGeneration = job->generation;
+        lastFrameWindow = job->window;
         lastClearR = job->clearR;
         lastClearG = job->clearG;
         lastClearB = job->clearB;
@@ -2878,7 +3571,17 @@ struct RenderThread {
 
     void teardownSurface(bool terminalGeneration = true)
     {
+        invalidatePaintedLayout(lastPaintLayout ? lastPaintLayout->session : lastFrameSession);
+        lastPaintLayout.reset();  // including same-generation surface rebuild/resize
         const uint64_t tornGeneration = boundGeneration;
+        if (terminalGeneration) {
+            hasLastFrame = false;
+            lastNodes.clear();
+            lastFrameSession = 0;
+            lastFrameGeneration = 0;
+            lastFrameWindow = nullptr;
+            lastFrameTicket = 0;
+        }
         if (surface) {
             destroyBoundHandle(surface, surfaceBackend, tornGeneration);
             surface = nullptr;
@@ -2888,11 +3591,29 @@ struct RenderThread {
         boundGeneration = 0;
         surfaceW = 0;
         surfaceH = 0;
+        surfaceDensity = 1.0;
         // A2 顺序不可颠倒：先归还使用许可（证明本线程已不再使用该代），
         // 再回传拆除确认；宿主收到确认后才归还 NativeWindow 引用。
         // 先归还引用会让「确认到达之前的任何平台访问」失去引用保护。
         releaseSurfacePermit();
         if (terminalGeneration) notifyTornDown(tornGeneration);
+    }
+
+    // 绑定 surface 时冻结同一代次的逻辑密度：ingress 租约是 surface 事实的唯一
+    // 来源，代次或窗口对不上就保持 1.0（旧行为），绝不拿别的代次的密度绘制。
+    double liveSurfaceDensity(void *window, uint64_t generation) {
+        if (g_ingress.surfaceActive == nullptr) return 1.0;
+        void *liveWindow = nullptr;
+        uint64_t liveGeneration = 0, liveRevision = 0;
+        int32_t liveW = 0, liveH = 0;
+        double liveDensity = 1.0;
+        if (g_ingress.surfaceActive(&liveWindow, &liveGeneration, &liveW, &liveH,
+                                    &liveDensity, &liveRevision) != 1 ||
+            liveWindow != window || liveGeneration != generation ||
+            !std::isfinite(liveDensity) || liveDensity <= 0.0) {
+            return 1.0;
+        }
+        return liveDensity;
     }
 
     bool ensureSurface(void *window, uint64_t generation, int w, int h,
@@ -3054,11 +3775,12 @@ struct RenderThread {
         boundGeneration = generation;
         surfaceW = w;
         surfaceH = h;
+        surfaceDensity = liveSurfaceDensity(window, generation);
 #ifdef CJGUI_OHOS_TEST_GATES
         g_gateCreateOkCount += 1;
 #endif
-        RLOGI("surface bound gen=%{public}llu %dx%d backend=%{public}d",
-              static_cast<unsigned long long>(generation), w, h,
+        RLOGI("surface bound gen=%{public}llu %{public}dx%{public}d density=%{public}.3f backend=%{public}d",
+              static_cast<unsigned long long>(generation), w, h, surfaceDensity,
               static_cast<int>(wantBackend));
         return true;
     }
@@ -3292,8 +4014,9 @@ struct RenderThread {
         OH_Drawing_RectDestroy(rect);
     }
 
-    void drawNodeText(OH_Drawing_Canvas *canvas, const SceneNode &node)
+    void drawNodeText(OH_Drawing_Canvas *canvas, const SceneNode &node, TextPaintFrame &frame)
     {
+        const uint64_t frameSession = frame.session;
         uint32_t kind = node.pod.nodeKind;
         bool hasText = kind == kKindText || kind == kKindButton || kind == kKindTextInput ||
             kind == kKindIntegerInput || kind == kKindBooleanInput || kind == kKindMultiline;
@@ -3302,14 +4025,37 @@ struct RenderThread {
                                        node.pod.textAlpha);
         std::string text = displayTextForNode(node);
         bool isEditingNode = false;
+        bool showCaret = false;
+        bool showHandles = false;
+        int64_t caretContext = 0;
+        int32_t caretAffinity = 0;
+        const bool foreground = !g_ingress.foregroundLevel || g_ingress.foregroundLevel() == 1;
+        std::u16string editComposed;
+        uint32_t selStartUtf16 = 0;
+        uint32_t selEndUtf16 = 0;
+        uint32_t caretUtf16 = 0;
         {
             std::lock_guard<std::mutex> g(g_sessions.lock);
             // 绘制当前会话的编辑视图：渲染线程是编辑缓冲绘制归属方；
             // 只有绑定本节点的活跃编辑覆盖静态 value。
             for (size_t i = 0; i < kMaxSessions; ++i) {
                 Session &sess = g_sessions.sessions[i];
-                if (sess.inUse && sess.editing && sess.editingNodeId == node.pod.nodeId &&
-                    sess.editingResourceId == node.pod.resourceId) {
+                if (sess.inUse && sess.token == frameSession && sess.editing &&
+                    sess.editingNodeId == node.pod.nodeId && sess.editingResourceId == node.pod.resourceId &&
+                    sess.editingNodeKind == node.pod.nodeKind) {
+                    // Match binding continuity across the legal Flush→accepted
+                    // interval, without borrowing another Session or requiring
+                    // equality with a projection not yet settled by the owner.
+                    bool sameBinding = false;
+                    for (const SceneNode &accepted : sess.accepted) {
+                        if (accepted.pod.nodeId == node.pod.nodeId && accepted.pod.resourceId == node.pod.resourceId &&
+                            accepted.pod.nodeKind == node.pod.nodeKind && node.pod.acceptedBindingEpoch != 0 &&
+                            accepted.pod.acceptedBindingEpoch == node.pod.acceptedBindingEpoch) {
+                            sameBinding = true;
+                            break;
+                        }
+                    }
+                    if (!sameBinding) break;
                     // 逻辑编辑已结束（retired）时本地缓冲只用来补核心「本地文字延续」
                     // 窗口内的空投影（约定由原生编辑器绘制该节点）。一旦 accepted 已经
                     // 给出这个节点的值，那就是 owner 的裁决——包括本地编辑被拒、owner
@@ -3319,81 +4065,137 @@ struct RenderThread {
                     // 判定——accepted 值为空只是业务空值，不得推断为延续窗口。
                     if (sess.editorRetired && node.pod.preservesActiveLocalText == 0) break;
                     isEditingNode = true;
-                    std::u16string composed = composedBuffer(sess);
-                    text = utf16ToUtf8(composed);
+                    editComposed = composedBuffer(sess);
+                    text = utf16ToUtf8(editComposed);
                     if (text.empty()) text = " ";  // 空缓冲也绘制光标
-                    // 选区高亮（简单背景块）
-                    if (sess.selStartUtf16 != sess.selEndUtf16) {
-                        uint32_t a = std::min(sess.selStartUtf16, sess.selEndUtf16);
-                        uint32_t b = std::max(sess.selStartUtf16, sess.selEndUtf16);
-                        double x0 = prefixWidthUtf16(composed, a, node.pod.fontSize, node.pod.fontWeight,
-                                                     static_cast<double>(node.pod.width));
-                        double x1 = prefixWidthUtf16(composed, b, node.pod.fontSize, node.pod.fontWeight,
-                                                     static_cast<double>(node.pod.width));
-                        double insetY2 = (kind == kKindText) ? 2.0 : 6.0;
-                        double lineH = node.pod.fontSize * 1.2;
-                        OH_Drawing_Brush *hl = OH_Drawing_BrushCreate();
-                        OH_Drawing_BrushSetColor(hl, packColor(0.30, 0.50, 0.85, 0.35));
-                        OH_Drawing_CanvasAttachBrush(canvas, hl);
-                        OH_Drawing_Rect *rect = OH_Drawing_RectCreate(
-                            static_cast<float>(node.pod.x + 7.0 + x0),
-                            static_cast<float>(node.pod.y + insetY2),
-                            static_cast<float>(node.pod.x + 7.0 + x1),
-                            static_cast<float>(node.pod.y + insetY2 + lineH));
-                        OH_Drawing_CanvasDrawRect(canvas, rect);
-                        OH_Drawing_RectDestroy(rect);
-                        OH_Drawing_CanvasDetachBrush(canvas);
-                        OH_Drawing_BrushDestroy(hl);
-                    }
+                    // 选区只取事实；高亮在字形排版（同一原点/行高）之后绘制，
+                    // 否则框与字符来自两个不同的 y 基线。
+                    selStartUtf16 = std::min(sess.selStartUtf16, sess.selEndUtf16);
+                    selEndUtf16 = std::max(sess.selStartUtf16, sess.selEndUtf16);
+                    caretUtf16 = std::min(sess.caretUtf16, static_cast<uint32_t>(editComposed.size()));
+                    caretAffinity = sess.caretAffinity;
+                    caretContext = sess.editingContextId;
+                    showCaret = foreground && !sess.editorRetired && sess.editingContextLive &&
+                        selStartUtf16 == selEndUtf16 && (sess.caretBlinkResetPending || sess.caretBlinkVisible);
+                    showHandles = foreground && !sess.editorRetired && sess.editingContextLive &&
+                        !sess.previewActive && selStartUtf16 < selEndUtf16;
                     break;
                 }
             }
         }
         if (text.empty()) return;
-        Measured m = layoutText(text, node.pod.fontSize, node.pod.fontWeight,
-                                static_cast<double>(node.pod.width), false, textColor);
+        if (isEditingNode) frame.candidate.reset();
+        Measured m = layoutTextStyled(text, node.pod.fontSize, node.pod.fontWeight,
+                                       static_cast<double>(node.pod.width), false, textColor,
+                                       node.textStyleRuns.data(), node.textStyleRuns.size());
         if (!m.typography) return;
-        double lineHeight = m.lineCount > 0 ? m.height / static_cast<double>(m.lineCount) : node.pod.fontSize * 1.2;
-        double insetY = (kind == kKindText) ? 2.0 : 6.0;
-        double drawY = static_cast<double>(node.pod.y);
-        if (m.height < static_cast<double>(node.pod.height)) {
-            drawY += (static_cast<double>(node.pod.height) - m.height) / 2.0;
-        } else {
-            drawY += insetY;
+        TextGeometry geom = computeTextGeometry(static_cast<double>(node.pod.x),
+                                                static_cast<double>(node.pod.y),
+                                                static_cast<double>(node.pod.height), kind, m,
+                                                node.pod.fontSize);
+        // 选区高亮先画（字形压在上面），矩形与字形出自同一排版对象。
+        if (isEditingNode && selEndUtf16 > selStartUtf16) {
+            drawSelectionBoxes(canvas, m.typography, selStartUtf16, selEndUtf16, geom);
         }
-        double drawX = static_cast<double>(node.pod.x) + insetY;
-        OH_Drawing_TypographyPaint(m.typography, canvas, drawX, drawY);
-        OH_Drawing_DestroyTypography(m.typography);
-        // 光标（仅编辑节点；渲染线程内测量前缀宽度，与绘制同引擎）
+        OH_Drawing_TypographyPaint(m.typography, canvas, geom.originX, geom.originY);
         if (isEditingNode) {
-            std::u16string composed;
-            uint32_t caret = 0;
+            auto painted = std::make_unique<PaintedTextLayout>();
+            painted->typography.reset(m.typography);
+            painted->node = node.pod;
+            painted->text = editComposed;
+            painted->session = frame.session;
+            painted->basePresentTicket = frame.ticket;
+            painted->projectionVersion = frame.projectionVersion;
+            painted->renderEpoch = renderEpoch;
+            painted->serial = ++textPaintSerial;
+            painted->paintContext = caretContext;
+            painted->window = boundWindow;
+            painted->generation = boundGeneration;
+            painted->geometryRevision = permitGeometryRevision;
+            painted->width = surfaceW;
+            painted->height = surfaceH;
+            painted->density = surfaceDensity;
+            painted->relativeOriginX = geom.originX - static_cast<double>(node.pod.x);
+            painted->relativeOriginY = geom.originY - static_cast<double>(node.pod.y);
             {
-                std::lock_guard<std::mutex> g(g_sessions.lock);
-                for (size_t i = 0; i < kMaxSessions; ++i) {
-                    Session &sess = g_sessions.sessions[i];
-                    if (sess.inUse && sess.editing && sess.editingNodeId == node.pod.nodeId &&
-                        sess.editingResourceId == node.pod.resourceId) {
-                        composed = composedBuffer(sess);
-                        caret = std::min(sess.caretUtf16, static_cast<uint32_t>(composed.size()));
-                        break;
+                double sx = 0, st = 0, sb = 0, ex = 0, et = 0, eb = 0;
+                if (caretRectFor(m.typography, selStartUtf16, editComposed, 1, sx, st, sb) &&
+                    caretRectFor(m.typography, selEndUtf16, editComposed, 0, ex, et, eb)) {
+                    auto &h = painted->handles;
+                    h.session = frame.session; h.nodeId = node.pod.nodeId;
+                    h.resource = node.pod.resourceId; h.kind = node.pod.nodeKind;
+                    h.binding = node.pod.acceptedBindingEpoch; h.ticket = frame.ticket;
+                    h.projection = frame.projectionVersion; h.context = caretContext;
+                    h.generation = boundGeneration; h.geometryRevision = permitGeometryRevision;
+                    h.start = selStartUtf16; h.end = selEndUtf16; h.text = editComposed;
+                    h.startX = geom.originX + sx; h.startY = geom.originY + st - 8;
+                    h.endX = geom.originX + ex; h.endY = geom.originY + eb + 8;
+                    h.startLineY = geom.originY + (st + sb) / 2;
+                    h.endLineY = geom.originY + (et + eb) / 2;
+                    h.startVisible = pointInsideClips(node.pod, h.startX, h.startY);
+                    h.endVisible = pointInsideClips(node.pod, h.endX, h.endY);
+                    h.valid = h.startVisible || h.endVisible;
+                    if (showHandles) {
+                    OH_Drawing_Brush *brush = OH_Drawing_BrushCreate();
+                    OH_Drawing_BrushSetAntiAlias(brush, true);
+                    OH_Drawing_BrushSetColor(brush, packColor(0.0, 0.45, 1.0, 1.0));
+                    OH_Drawing_CanvasAttachBrush(canvas, brush);
+                    for (int edge = 0; edge < 2; ++edge) {
+                        const double cx = edge == 0 ? h.startX : h.endX;
+                        const double cy = edge == 0 ? h.startY : h.endY;
+                        const double top = geom.originY + (edge == 0 ? st : et);
+                        const double bottom = geom.originY + (edge == 0 ? sb : eb);
+                        OH_Drawing_Rect *stem = OH_Drawing_RectCreate(cx - 1, std::min(cy, top),
+                            cx + 1, std::max(cy, bottom));
+                        OH_Drawing_CanvasDrawRect(canvas, stem);
+                        OH_Drawing_RectDestroy(stem);
+                        OH_Drawing_Point *centre = OH_Drawing_PointCreate(cx, cy);
+                        OH_Drawing_CanvasDrawCircle(canvas, centre, 6);
+                        OH_Drawing_PointDestroy(centre);
+                    }
+                    OH_Drawing_CanvasDetachBrush(canvas);
+                    OH_Drawing_BrushDestroy(brush);
+                    RLOGI("selection handles painted ctx=%{public}lld range=%{public}u:%{public}u start=(%{public}.3f,%{public}.3f) end=(%{public}.3f,%{public}.3f)",
+                        static_cast<long long>(caretContext), h.start, h.end, h.startX, h.startY, h.endX, h.endY);
                     }
                 }
             }
-            double caretX = prefixWidthUtf16(composed, caret, node.pod.fontSize, node.pod.fontWeight,
-                                             static_cast<double>(node.pod.width));
+            frame.candidate = std::move(painted);
+            RLOGI("text layout painted serial=%{public}llu ctx=%{public}lld ticket=%{public}llu node=%{public}llu units=%{public}zu",
+                static_cast<unsigned long long>(frame.candidate->serial), static_cast<long long>(caretContext),
+                static_cast<unsigned long long>(frame.ticket), static_cast<unsigned long long>(node.pod.nodeId), editComposed.size());
+        }
+        // 光标（仅编辑节点；矩形由排版给出，落在真正被命中的那一行）
+        if (isEditingNode && showCaret) {
+            const uint32_t caret = caretUtf16;
+            double caretX = 0.0;
+            double caretTop = 0.0;
+            double caretBottom = geom.lineHeight;
+            if (!caretRectFor(m.typography, caret, editComposed, caretAffinity,
+                              caretX, caretTop, caretBottom)) {
+                // 拒答不能变成首行 longestLine 的假落点；正文仍照常绘制。
+                RLOGW("caret geometry unavailable caret=%{public}u units=%{public}zu", caret, editComposed.size());
+                if (!isEditingNode) OH_Drawing_DestroyTypography(m.typography);
+                return;
+            }
+            RLOGI("caret geometry session=%{public}llu ctx=%{public}lld caret=%{public}u affinity=%{public}d "
+                "x=%{public}.3f top=%{public}.3f bottom=%{public}.3f",
+                static_cast<unsigned long long>(frameSession), static_cast<long long>(caretContext), caret,
+                caretAffinity, geom.originX + caretX, geom.originY + caretTop, geom.originY + caretBottom);
             OH_Drawing_Brush *cb = OH_Drawing_BrushCreate();
             OH_Drawing_BrushSetColor(cb, packColor(0.65, 0.85, 1.0, 1.0));
             OH_Drawing_CanvasAttachBrush(canvas, cb);
             OH_Drawing_Rect *caretRect = OH_Drawing_RectCreate(
-                static_cast<float>(drawX + caretX - 1.0), static_cast<float>(drawY),
-                static_cast<float>(drawX + caretX + 1.0),
-                static_cast<float>(drawY + lineHeight));
+                static_cast<float>(geom.originX + caretX - 1.0),
+                static_cast<float>(geom.originY + caretTop),
+                static_cast<float>(geom.originX + caretX + 1.0),
+                static_cast<float>(geom.originY + caretBottom));
             OH_Drawing_CanvasDrawRect(canvas, caretRect);
             OH_Drawing_RectDestroy(caretRect);
             OH_Drawing_CanvasDetachBrush(canvas);
             OH_Drawing_BrushDestroy(cb);
         }
+        if (!isEditingNode) OH_Drawing_DestroyTypography(m.typography);
     }
 
     struct Measured {
@@ -3408,34 +4210,207 @@ struct RenderThread {
     Measured layoutText(const std::string &text, double fontSize, uint32_t fontWeight,
                         double constraintWidth, bool unlimitedWidth, uint32_t textColor)
     {
+        return layoutTextStyled(text, fontSize, fontWeight, constraintWidth, unlimitedWidth,
+                                textColor, nullptr, 0);
+    }
+
+    Measured layoutTextStyled(const std::string &text, double fontSize, uint32_t fontWeight,
+                              double constraintWidth, bool unlimitedWidth, uint32_t textColor,
+                              const OhosTextStyleRun *runs, size_t runCount)
+    {
         Measured result;
         OH_Drawing_TypographyStyle *style = OH_Drawing_CreateTypographyStyle();
-        OH_Drawing_TextStyle *textStyle = OH_Drawing_CreateTextStyle();
-        OH_Drawing_SetTextStyleFontSize(textStyle, fontSize);
-        OH_Drawing_SetTextStyleFontWeight(textStyle, mapWeight(fontWeight));
-        // 共同定义的前景色由节点携带，后端不重新指定颜色。
-        OH_Drawing_SetTextStyleColor(textStyle, textColor);
-        const char *family = "HarmonyOS Sans";
-        OH_Drawing_SetTextStyleFontFamilies(textStyle, 1, &family);
         OH_Drawing_TypographyCreate *handler =
             OH_Drawing_CreateTypographyHandler(style, OH_Drawing_GetFontCollectionGlobalInstance());
-        OH_Drawing_TypographyHandlerPushTextStyle(handler, textStyle);
-        OH_Drawing_TypographyHandlerAddText(handler, text.c_str());
-        OH_Drawing_TypographyHandlerPopTextStyle(handler);
+        OH_Drawing_DestroyTypographyStyle(style);
+        if (!handler) return result;
+        const char *family = "HarmonyOS Sans";
+        auto pushBase = [&]() {
+            OH_Drawing_TextStyle *st = OH_Drawing_CreateTextStyle();
+            OH_Drawing_SetTextStyleFontSize(st, fontSize);
+            OH_Drawing_SetTextStyleFontWeight(st, mapWeight(fontWeight));
+            // 共同定义的前景色由节点携带，后端不重新指定颜色。
+            OH_Drawing_SetTextStyleColor(st, textColor);
+            OH_Drawing_SetTextStyleFontFamilies(st, 1, &family);
+            OH_Drawing_TypographyHandlerPushTextStyle(handler, st);
+            return st;
+        };
+        auto pushRun = [&](const OhosTextStyleRun &run) {
+            OH_Drawing_TextStyle *st = OH_Drawing_CreateTextStyle();
+            OH_Drawing_SetTextStyleFontSize(st, run.fontSize > 0 ? run.fontSize : fontSize);
+            OH_Drawing_SetTextStyleFontWeight(st, mapWeight(run.fontWeight));
+            OH_Drawing_SetTextStyleColor(st, packColor(run.red, run.green, run.blue, run.alpha));
+            OH_Drawing_SetTextStyleFontFamilies(st, 1, &family);
+            if (run.fontFamily == 2 || run.fontFamily == 3) {
+                // 斜体（system-italic / monospaced-italic）；等宽族见下方回退注记。
+                OH_Drawing_SetTextStyleFontStyle(st, FONT_STYLE_ITALIC);
+            }
+            if (run.hasBackground) {
+                OH_Drawing_Brush *bg = OH_Drawing_BrushCreate();
+                OH_Drawing_BrushSetColor(bg, packColor(run.bgRed, run.bgGreen, run.bgBlue, run.bgAlpha));
+                OH_Drawing_SetTextStyleBackgroundBrush(st, bg);
+                OH_Drawing_BrushDestroy(bg);
+            }
+            OH_Drawing_TypographyHandlerPushTextStyle(handler, st);
+            return st;
+        };
+        // 按 UTF-16 边界切段（runs 已排序且不重叠）；间隙用基础样式。
+        if (runs == nullptr || runCount == 0) {
+            OH_Drawing_TextStyle *st = pushBase();
+            OH_Drawing_TypographyHandlerAddText(handler, text.c_str());
+            OH_Drawing_TypographyHandlerPopTextStyle(handler);
+            OH_Drawing_DestroyTextStyle(st);
+        } else {
+            const std::u16string u16 = utf8ToUtf16(text);
+            uint32_t cursor = 0;
+            for (size_t i = 0; i < runCount; ++i) {
+                const uint32_t rs = std::min(runs[i].start, static_cast<uint32_t>(u16.size()));
+                const uint32_t re = std::min(runs[i].end, static_cast<uint32_t>(u16.size()));
+                if (re <= rs) continue;
+                if (rs > cursor) {
+                    OH_Drawing_TextStyle *st = pushBase();
+                    OH_Drawing_TypographyHandlerAddText(handler,
+                        utf16ToUtf8(u16.substr(cursor, rs - cursor)).c_str());
+                    OH_Drawing_TypographyHandlerPopTextStyle(handler);
+                    OH_Drawing_DestroyTextStyle(st);
+                }
+                OH_Drawing_TextStyle *st = pushRun(runs[i]);
+                OH_Drawing_TypographyHandlerAddText(handler,
+                    utf16ToUtf8(u16.substr(rs, re - rs)).c_str());
+                OH_Drawing_TypographyHandlerPopTextStyle(handler);
+                OH_Drawing_DestroyTextStyle(st);
+                cursor = re;
+            }
+            if (cursor < u16.size()) {
+                OH_Drawing_TextStyle *st = pushBase();
+                OH_Drawing_TypographyHandlerAddText(handler,
+                    utf16ToUtf8(u16.substr(cursor)).c_str());
+                OH_Drawing_TypographyHandlerPopTextStyle(handler);
+                OH_Drawing_DestroyTextStyle(st);
+            }
+        }
         result.typography = OH_Drawing_CreateTypography(handler);
         OH_Drawing_DestroyTypographyHandler(handler);
-        OH_Drawing_DestroyTextStyle(textStyle);
-        OH_Drawing_DestroyTypographyStyle(style);
         if (!result.typography) return result;
         double layoutWidth = unlimitedWidth ? 1000000.0 : constraintWidth;
         if (layoutWidth < 1.0) layoutWidth = 1.0;
         OH_Drawing_TypographyLayout(result.typography, layoutWidth);
+        textLayoutsBuilt += 1;
+        textLayoutInputBytes += text.size();
         result.height = OH_Drawing_TypographyGetHeight(result.typography);
         result.longestLine = OH_Drawing_TypographyGetLongestLine(result.typography);
         result.maxWidth = OH_Drawing_TypographyGetMaxWidth(result.typography);
         result.lineCount = OH_Drawing_TypographyGetLineCount(result.typography);
         result.alphabeticBaseline = OH_Drawing_TypographyGetAlphabeticBaseline(result.typography);
         return result;
+    }
+
+    /// 文本盒几何的唯一来源：字形绘制、光标矩形、选区高亮与触摸命中都按这里
+    /// 算出的原点定位。此前每处各算一次（高亮按 pod.y、字形按盒内居中、命中只有 x），
+    /// 结果是多行正文里"点中的行"和"看到的行"不是同一行。
+    struct TextGeometry {
+        double originX = 0.0;
+        double originY = 0.0;
+        double lineHeight = 0.0;
+        double textHeight = 0.0;
+    };
+
+    TextGeometry computeTextGeometry(double nodeX, double nodeY, double nodeHeight, uint32_t kind,
+                                     const Measured &m, double fontSize)
+    {
+        const double inset = (kind == kKindText) ? kTextInsetSingleLine : kTextInsetMultiline;
+        TextGeometry g;
+        g.textHeight = m.height;
+        g.lineHeight = m.lineCount > 0 ? m.height / static_cast<double>(m.lineCount) : fontSize * 1.2;
+        g.originX = nodeX + inset;
+        g.originY = nodeY + inset;
+        // 正文（多行编辑节点）从节点上沿开始排版；只有单行 label/button 才在盒内垂直居中，
+        // 居中会把一段短文档推到画面正中。
+        if (kind != kKindMultiline && m.height < nodeHeight) {
+            g.originY = nodeY + (nodeHeight - m.height) / 2.0;
+        }
+        return g;
+    }
+
+    /// 某个码元位置的光标矩形（排版给出的 x 与该行上下沿）；排版答不出时返回 false。
+    bool caretRectFor(OH_Drawing_Typography *typography, uint32_t caret, const std::u16string &text, int32_t affinity,
+                      double &x, double &top, double &bottom)
+    {
+        if (text.empty()) {
+            x = top = 0.0;
+            bottom = OH_Drawing_TypographyGetHeight(typography);
+            return std::isfinite(bottom) && bottom > top;
+        }
+        caret = std::min(caret, static_cast<uint32_t>(text.size()));
+        const bool afterNewline = caret > 0 && (text[caret - 1] == u'\n' || text[caret - 1] == u'\r');
+        // 尾部硬换行的盒属于上一行。实际 API24 对照证明最后一条行指标
+        // 保留了新空行的 y/height；这里仅消费同一个排版对象，最低构建 API24。
+        if (afterNewline && caret == text.size()) {
+            const size_t lines = OH_Drawing_TypographyGetLineCount(typography);
+            OH_Drawing_LineMetrics line{};
+            if (lines == 0 || !OH_Drawing_TypographyGetLineMetricsAt(typography,
+                static_cast<int>(lines - 1), &line) || !std::isfinite(line.x) ||
+                !std::isfinite(line.y) || !std::isfinite(line.height) || line.height <= 0) return false;
+            x = line.x;
+            top = line.y;
+            bottom = line.y + line.height;
+            return true;
+        }
+        const bool leading = caret == 0 || afterNewline || (affinity == 1 && caret < text.size());
+        const uint32_t offset = leading ? caret : caret - 1;
+        uint32_t start = 0, end = 0;
+        if (!cjguiOhosGraphemeRange16(text, offset, start, end)) return false;
+        if ((leading && start != caret) || (!leading && end != caret)) return false;
+        // GetRectsForRange 的单位是 UTF16，但半 surrogate/combining/ZWJ 不给
+        // 文本框。查询完整平台字素，而不是 [caret-1,caret) 的单一码元。
+        OH_Drawing_TextBox *box = OH_Drawing_TypographyGetRectsForRange(typography, start, end,
+            RECT_HEIGHT_STYLE_TIGHT, RECT_WIDTH_STYLE_TIGHT);
+        if (!box) return false;
+        size_t count = OH_Drawing_GetSizeOfTextBox(box);
+        if (count != 1) {
+            OH_Drawing_TypographyDestroyTextBox(box);
+            return false;
+        }
+        const int index = 0;
+        const bool rtl = OH_Drawing_GetTextDirectionFromTextBox(box, index) == 0;
+        x = (leading != rtl) ? OH_Drawing_GetLeftFromTextBox(box, index)
+                             : OH_Drawing_GetRightFromTextBox(box, index);
+        top = OH_Drawing_GetTopFromTextBox(box, index);
+        bottom = OH_Drawing_GetBottomFromTextBox(box, index);
+        OH_Drawing_TypographyDestroyTextBox(box);
+        return std::isfinite(x) && std::isfinite(top) && std::isfinite(bottom) && bottom > top;
+    }
+
+    /// 选区高亮：逐段矩形直接取自 accepted 排版，因此跨行选区是每行一段，
+    /// 而不是从选区起点宽度到终点宽度的一条整宽横杠。
+    void drawSelectionBoxes(OH_Drawing_Canvas *canvas, OH_Drawing_Typography *typography,
+                            uint32_t selStart, uint32_t selEnd, const TextGeometry &geom)
+    {
+        OH_Drawing_TextBox *boxes = OH_Drawing_TypographyGetRectsForRange(typography, selStart, selEnd,
+            RECT_HEIGHT_STYLE_INCLUDELINESPACEMIDDLE, RECT_WIDTH_STYLE_TIGHT);
+        if (!boxes) return;
+        size_t count = OH_Drawing_GetSizeOfTextBox(boxes);
+        if (count > 0) {
+            OH_Drawing_Brush *hl = OH_Drawing_BrushCreate();
+            OH_Drawing_BrushSetColor(hl, packColor(0.30, 0.50, 0.85, 0.35));
+            OH_Drawing_CanvasAttachBrush(canvas, hl);
+            for (size_t i = 0; i < count; ++i) {
+                int index = static_cast<int>(i);
+                float left = OH_Drawing_GetLeftFromTextBox(boxes, index);
+                float right = OH_Drawing_GetRightFromTextBox(boxes, index);
+                float top = OH_Drawing_GetTopFromTextBox(boxes, index);
+                float bottom = OH_Drawing_GetBottomFromTextBox(boxes, index);
+                if (right <= left) continue;   // 行尾空白等零宽段不画块
+                OH_Drawing_Rect *rect = OH_Drawing_RectCreate(
+                    static_cast<float>(geom.originX + left), static_cast<float>(geom.originY + top),
+                    static_cast<float>(geom.originX + right), static_cast<float>(geom.originY + bottom));
+                OH_Drawing_CanvasDrawRect(canvas, rect);
+                OH_Drawing_RectDestroy(rect);
+            }
+            OH_Drawing_CanvasDetachBrush(canvas);
+            OH_Drawing_BrushDestroy(hl);
+        }
+        OH_Drawing_TypographyDestroyTextBox(boxes);
     }
 
     static int mapWeight(uint32_t weight)
@@ -3711,6 +4686,9 @@ double estimateReleaseVelocityPxPerMs(const Session::TouchGesture &g)
     return -dy / (dtNs / 1'000'000.0);
 }
 
+bool selectionDragMatchesLocked(Session &s, const Session::SelectionDrag &drag);
+static void recordHumanSelectionAnchorLocked(Session &, const char *);
+
 void cancelTouchGestureLocked(Session &s)
 {
     if (s.gesture.active && s.gesture.scrollSampleCount > 0) {
@@ -3745,8 +4723,149 @@ void cancelTouchGestureLocked(Session &s)
     }
     // 有效取消：终结手势，不激活、不结算、不改 owner。长按计时一并清除
     // （系统夺走事件流后不再补发全选）。
+    if (!s.gesture.shortTapCompleted) s.textTapChain.armed = false;
     s.gesture = Session::TouchGesture{};
     s.textPressBeginMs = 0;
+    // END keeps its final coordinate alive until the single pending hit job
+    // resolves. Every other cancellation releases the platform-notify gate.
+    if (!s.selectionDrag.terminal) {
+        if (s.selectionDrag.anchorReady && selectionDragMatchesLocked(s, s.selectionDrag))
+            recordHumanSelectionAnchorLocked(s, "selection_drag_cancel");
+        if (s.editingHitMode != 0) s.editingTapPending = false;
+        s.selectionDrag = Session::SelectionDrag{};
+    }
+}
+
+// 取消未完成的平台恢复请求（换绑/退役/结束/外部换版/截止到期/被新请求取代）。
+// 取消后旧请求号不再被 ACK 接受：旧恢复串与旧落点都不得贴到新上下文或新节点上。
+//
+// recordIndex 的语义按 Astra 裁决收窄——终态只声明"本请求不得采纳"，不声明平台
+// 没有发生安装：
+//   1 = 尚未发送即终结：平台安装从未被执行；
+//   2 = 已发送后超时/取消：安装未确认，禁止采纳（平台可能已发生部分安装）。
+// 取消也必须回到窗口：窗口只在收到回执时才清掉待安装请求。若不通知，窗口会
+// 一直以为"平台安装中"，同身份的后续恢复全部被去重跳过，输入门永久关闭
+// （实测：代理尚未挂载时的 platform_install_failed 取消就是这样卡死的）。
+static void terminateProxyRestoreRequestLocked(Session &s, const char *reason)
+{
+    // 已安装但窗口迟迟未采纳的票据同样受截止约束：不能留一张永远悬着的已安装票。
+    if (!s.proxyRestore.armed && !s.proxyRestore.awaitingAck && !s.proxyRestore.platformInstalled) {
+        return;
+    }
+    const Session::ProxyRestoreRequest cancelled = s.proxyRestore;
+    // 事件侧窄口径：1=未执行平台安装，2=安装未确认（禁止采纳，不否认平台可能已装）。
+    const uint32_t code = cancelled.sent ? 2u : 1u;
+    const int32_t ticketState = cancelled.sent
+        ? CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_UNCONFIRMED
+        : CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_NOT_INSTALLED;
+    RLOGI("proxy restore terminated reason=%{public}s request=%{public}llu ctx=%{public}lld code=%{public}u",
+          reason, static_cast<unsigned long long>(cancelled.requestId),
+          static_cast<long long>(cancelled.contextId), code);
+    s.proxyRestore = Session::ProxyRestoreRequest{};
+    if (cancelled.requestId != 0 && !cancelled.reported) {
+        Session::ProxyRestoreTerminal terminal;
+        terminal.requestId = cancelled.requestId;
+        terminal.code = ticketState;
+        terminal.reason = reason;
+        terminal.platformInstalled = cancelled.platformInstalled;
+        terminal.observedStart = cancelled.observedStart;
+        terminal.observedEnd = cancelled.observedEnd;
+        s.proxyRestoreTerminals.push_back(terminal);
+        if (s.proxyRestoreTerminals.size() > 8) {
+            s.proxyRestoreTerminals.pop_front();
+        }
+        QueuedEvent ev;
+        ev.kind = kEvTextProxyRestored;
+        ev.recordIndex = code;
+        ev.nodeId = cancelled.nodeId;
+        ev.resourceId = cancelled.resourceId;
+        ev.nodeKind = cancelled.nodeKind;
+        ev.projectionVersion = cancelled.acceptedProjectionVersion;
+        ev.acceptedBindingEpoch = cancelled.acceptedBindingEpoch;
+        ev.bindingEpoch = cancelled.requestId;
+        ev.text = reason;
+        s.events.push_back(ev);
+    }
+}
+
+// 旧调用点沿用同名入口。
+static void cancelProxyRestoreRequest(Session &s, const char *reason)
+{
+    terminateProxyRestoreRequestLocked(s, reason);
+}
+
+// 冻结"人在 native 表面上亲手放置的落点"（命中测试 / 原生长按全选）。与平台回声
+// 分开记账：回声属于安装观测流，锚属于人的导航事实。记录的同时在**同一临界区**
+// 终结进行中的平台恢复票据——人的导航优先于恢复目标（Astra 人类优先表第 2 行），
+// 否则窗口会一直等一张不可能装上的票据，人的输入被门禁挡住。
+// 只冻结，不投递事件：窗口消费 kind-33 时按身份 + 值核验并一次性取走。
+static void recordHumanSelectionAnchorLocked(Session &s, const char *origin)
+{
+    const SceneNode *acceptedNode = nullptr;
+    for (const SceneNode &node : s.accepted) {
+        if (node.pod.nodeId == s.editingNodeId &&
+            node.pod.resourceId == s.editingResourceId &&
+            node.pod.nodeKind == s.editingNodeKind &&
+            node.pod.projectionVersion == s.editingProjectionVersion &&
+            node.pod.acceptedBindingEpoch != 0) {
+            acceptedNode = &node;
+            break;
+        }
+    }
+    if (!acceptedNode) {
+        // 没有 accepted 绑定就没有可核验的身份：不伪造锚（窗口继续按既有门禁拒绝）。
+        RLOGW("human anchor skipped: no accepted binding origin=%{public}s node=%{public}llu",
+              origin, static_cast<unsigned long long>(s.editingNodeId));
+        return;
+    }
+    s.humanAnchorSeq += 1;
+    s.humanAnchor = Session::HumanSelectionAnchor{};
+    s.humanAnchor.seq = s.humanAnchorSeq;
+    s.humanAnchor.nodeId = acceptedNode->pod.nodeId;
+    s.humanAnchor.resourceId = acceptedNode->pod.resourceId;
+    s.humanAnchor.nodeKind = acceptedNode->pod.nodeKind;
+    s.humanAnchor.projectionVersion = acceptedNode->pod.projectionVersion;
+    s.humanAnchor.acceptedBindingEpoch = acceptedNode->pod.acceptedBindingEpoch;
+    s.humanAnchor.start16 = std::min(s.selStartUtf16, s.selEndUtf16);
+    s.humanAnchor.end16 = std::max(s.selStartUtf16, s.selEndUtf16);
+    s.humanCaretNotificationPending = true;
+    s.selForwardedValid = false;
+    s.caretBlinkResetPending = true;
+    RLOGI("human anchor recorded origin=%{public}s seq=%{public}llu node=%{public}llu "
+          "sel=%{public}u:%{public}u",
+          origin, static_cast<unsigned long long>(s.humanAnchor.seq),
+          static_cast<unsigned long long>(s.humanAnchor.nodeId),
+          s.humanAnchor.start16, s.humanAnchor.end16);
+    terminateProxyRestoreRequestLocked(s, "human_anchor_supersedes");
+}
+
+// 换绑/换焦/退役：旧锚连同旧恢复票据一起退场，迟到的旧落点不得贴到新节点。
+static void clearHumanSelectionAnchorLocked(Session &s)
+{
+    s.textMenuIntent = 0;
+    s.humanAnchor = Session::HumanSelectionAnchor{};
+    s.humanCaretNotificationPending = false;
+    s.selectionOperationGeneration += 1;
+    s.selectionHandles = PaintedSelectionHandles{};
+    s.selectionDrag = Session::SelectionDrag{};
+    if (s.editingHitMode != 0) s.editingTapPending = false;
+}
+
+// R1（Astra s2-identity-handoff）：统一收场出口。每个退役/结束入口都在冻结
+// 旧身份的同一临界区调用；pump 按 FIFO 投递，旧身份之间互不覆盖。
+static void pushPendingEndLocked(Session &s, int64_t contextId, const std::string &fieldName,
+                                  bool settleOnDelivery)
+{
+    // 同一上下文的重复收场（多入口先后到达）只保留首条：结算语义恰好一次，
+    // end 通知也只发一次。
+    for (const Session::PendingEnd &e : s.pendingEnds) {
+        if (e.contextId == contextId) return;
+    }
+    Session::PendingEnd entry;
+    entry.contextId = contextId;
+    entry.fieldName = fieldName;
+    entry.settleOnDelivery = settleOnDelivery;
+    s.pendingEnds.push_back(std::move(entry));
 }
 
 void enqueueEndEditingForTapLocked(Session &s)
@@ -3758,8 +4877,10 @@ void enqueueEndEditingForTapLocked(Session &s)
     if (s.editing && !s.editorRetired) {
         s.editorRetired = true;
         s.editingContextLive = false;
-        s.pendingSettleOnDetach = true;
-        s.pendingImeDetach = true;
+        pushPendingEndLocked(s, s.editingContextId, s.editingFieldName, true);
+        // 上下文退役：未完成的恢复请求一并作废（旧回执不得再解任何锁）。
+        cancelProxyRestoreRequest(s, "retired");
+        clearHumanSelectionAnchorLocked(s);
     }
 }
 
@@ -3771,22 +4892,35 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
 {
     const uint32_t kind = node.pod.nodeKind;
     const bool wasEditing = s.editing && !s.editorRetired && s.editingNodeId == node.pod.nodeId;
+    // R1（Astra s2-identity-handoff）：幂等与换绑都按**完整绑定身份**判定
+    // （node/resource/kind/semantic/acceptedBindingEpoch）。只比 node/resource
+    // 会让「同 id 换 epoch（对象重声明）」复用旧上下文与旧绑定（离线反例：
+    // epoch 7→99 仍 context15/binding7）——同值同号不是同一对象。
+    const bool sameBindingAsBefore = s.editingNodeId == node.pod.nodeId &&
+        s.editingResourceId == node.pod.resourceId &&
+        s.editingNodeKind == node.pod.nodeKind &&
+        s.editingFieldName == node.semanticId &&
+        s.editingAcceptedBindingEpoch == node.pod.acceptedBindingEpoch;
+    // 仅 node/resource 相等（不含 epoch/kind/semantic）的历史语义：局部缓冲延续
+    // 与选区保持只在**同一对象**上允许，换 epoch 后不再沿用。
     const bool sameNodeAsBefore = s.editingNodeId == node.pod.nodeId &&
-        s.editingResourceId == node.pod.resourceId;
+        s.editingResourceId == node.pod.resourceId && sameBindingAsBefore;
     // C：同一有效绑定重复聚焦幂等——不换上下文编号，系统代理继续持旧编号，
     // 后续输入不会因换号被 stale 拒绝；caret 重定位由调用方按需触发。
-    if (wasEditing && sameNodeAsBefore && s.editingContextLive) {
+    if (wasEditing && sameBindingAsBefore && s.editingContextLive) {
         return;
     }
-    // C：跨字段切换——先按旧身份落实失焦语义（组合草稿折进缓冲并以旧身份
-    // 交付 owner 恰好一次），再发布新上下文；旧编号从此失效（stale 拒绝），
-    // 旧回调不可写入新字段。end 通知的身份在切换时捕获，pump 不得读新字段。
-    if (s.editing && !s.editorRetired && s.editingContextLive && !sameNodeAsBefore) {
-        s.detachContextId = s.editingContextId;
-        s.detachFieldName = s.editingFieldName;
+    // 换绑/换焦：旧上下文号、旧字段与旧节点identity都要退场，旧恢复请求连同其
+    // 待发正文/选区一并作废——否则"A 的恢复"会被贴到 B 的身份上。
+    cancelProxyRestoreRequest(s, "rebind");
+    clearHumanSelectionAnchorLocked(s);
+    // C：跨字段/跨绑定切换——先按旧身份落实失焦语义（组合草稿折进缓冲并以旧
+    // 身份交付 owner 恰好一次），再发布新上下文；旧编号从此失效（stale 拒绝），
+    // 旧回调不可写入新字段。end 通知的身份在切换时冻结进待发队列，pump 不得
+    // 读新字段。
+    if (s.editing && !s.editorRetired && s.editingContextLive && !sameBindingAsBefore) {
         settleComposedBufferOnBlurLocked(s);
-        s.pendingSettleOnDetach = false;  // 已同步结算，pump 不再重复
-        s.pendingImeDetach = true;        // 旧代理收场通知
+        pushPendingEndLocked(s, s.editingContextId, s.editingFieldName, false);
     }
     s.editing = true;
     s.editorRetired = false;          // 新交互：重新成为绘制方与回调接收方
@@ -3794,9 +4928,12 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
     s.editingResourceId = node.pod.resourceId;
     s.editingNodeKind = kind;
     s.editingProjectionVersion = node.pod.projectionVersion;
+    s.editingAcceptedBindingEpoch = node.pod.acceptedBindingEpoch;
     // 通用编辑上下文：每次绑定新节点/同一节点重新聚焦都分配新编号，
     // 旧上下文的延迟回调（提交/预览/失焦）从此失效，不得改写新焦点。
     s.editingContextId = g_nextEditingContextId.fetch_add(1);
+    s.caretBlinkResetPending = true;
+    s.caretAffinity = 0;
     s.editingFieldName = node.semanticId;
     s.editingContextGeneration = s.surfaceGeneration;
     s.editingContextBaseVersion = node.pod.projectionVersion;
@@ -3804,7 +4941,6 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
     s.editingContextRevealRequested = false;  // 新上下文重置 reveal 请求
     s.reconcileNotifyPending = false;
     s.reconcileOldContextId = 0;
-    s.pendingSettleOnDetach = false;  // 新焦点继承旧 detach 意图会重复结算
     if (!wasEditing) {
         // 编辑缓冲从已接受场景值起步（外部值即起点）。
         // 例外：核心的「本地文字延续」窗口会把 native 值置空，并约定由
@@ -3822,13 +4958,223 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
         } else {
             s.editingText = ownerValue;
         }
-        s.caretUtf16 = static_cast<uint32_t>(s.editingText.size());
-        s.selStartUtf16 = s.caretUtf16;
-        s.selEndUtf16 = s.caretUtf16;
+        // R3：**同一节点**重新聚焦时不得把选区重置成末尾 caret。切回源码、
+        // 重新点正文、页面往返都会走这里；无条件重置正是"中段非空选区在双切换
+        // 后折叠"的最根上来源（2026-10-01 实测：拖选后 ctx=1 为 [101,104)，
+        // 重建会话后变 [104,104)）。按新正文长度收敛原选区并保持非空；只有
+        // 换到**不同节点**、或新区间无法表达时才退化为末尾 caret。
+        const uint32_t focusSize = static_cast<uint32_t>(s.editingText.size());
+        bool keptSelection = false;
+        if (sameNodeAsBefore && s.selEndUtf16 > s.selStartUtf16) {
+            uint32_t keepStart = clampToCodePointBoundary(s.editingText,
+                std::min(s.selStartUtf16, s.selEndUtf16));
+            uint32_t keepEnd = clampToCodePointBoundary(s.editingText,
+                std::max(s.selStartUtf16, s.selEndUtf16));
+            if (keepStart > focusSize) keepStart = focusSize;
+            if (keepEnd > focusSize) keepEnd = focusSize;
+            if (keepEnd > keepStart) {
+                s.caretUtf16 = keepEnd;
+                s.selStartUtf16 = keepStart;
+                s.selEndUtf16 = keepEnd;
+                keptSelection = true;
+                RLOGI("ime refocus keeps non-empty selection node=%{public}llu sel=%{public}u:%{public}u",
+                      static_cast<long long>(node.pod.nodeId), keepStart, keepEnd);
+            }
+        }
+        if (!keptSelection) {
+            s.caretUtf16 = focusSize;
+            s.selStartUtf16 = s.caretUtf16;
+            s.selEndUtf16 = s.caretUtf16;
+        }
+        // 挂载时平台按上下文快照取初值，落点账本随之对齐：不给刚挂载的代理
+        // 再推一条与快照重复的 caret 通知。
+        s.selPlatformStart = s.selStartUtf16;
+        s.selPlatformEnd = s.selEndUtf16;
+        // 新上下文的第一条落点观测必须转发给窗口，即使它的值与旧上下文最后一次
+        // 转发值相同：窗口需要"这个上下文已经装好落点"这条事实本身。
+        s.selForwardedValid = false;
         s.previewActive = false;
         s.previewText.clear();
         s.focusNotifyPending = true;   // ArkTS TextInput 代理路径
     }
+}
+
+// Private visual gesture state. No document owner or editing protocol is added.
+bool selectionDragMatchesLocked(Session &s, const Session::SelectionDrag &drag)
+{
+    if (!drag.active || drag.operation != s.selectionOperationGeneration ||
+        !s.editing || !s.editingContextLive || s.editorRetired || s.previewActive ||
+        drag.context != s.editingContextId || drag.nodeId != s.editingNodeId ||
+        drag.resource != s.editingResourceId || drag.kind != s.editingNodeKind ||
+        drag.projection != s.editingProjectionVersion || drag.generation != s.surfaceGeneration ||
+        drag.geometryRevision != s.surfaceGeometryRevision || drag.text != composedBuffer(s)) return false;
+    size_t index = 0;
+    return sceneIndexByIdentityLocked(s, drag.nodeId, drag.resource, drag.kind, &index) &&
+        drag.binding != 0 && s.accepted[index].pod.acceptedBindingEpoch == drag.binding;
+}
+
+void initializeSelectionDragLocked(Session &s, const SceneNode &node)
+{
+    s.selectionDrag = Session::SelectionDrag{};
+    auto &d = s.selectionDrag;
+    d.active = true; d.operation = ++s.selectionOperationGeneration;
+    d.nodeId = node.pod.nodeId; d.resource = node.pod.resourceId; d.kind = node.pod.nodeKind;
+    d.binding = node.pod.acceptedBindingEpoch; d.projection = s.editingProjectionVersion;
+    d.context = s.editingContextId; d.text = composedBuffer(s);
+    d.generation = s.surfaceGeneration; d.geometryRevision = s.surfaceGeometryRevision;
+    d.app = s.gesture.appInstance; d.component = s.gesture.componentInstance;
+    d.epoch = s.gesture.gestureEpoch; d.pointer = s.gesture.pointerId;
+    d.lastX = s.gesture.startX; d.lastY = s.gesture.startY;
+}
+
+bool beginSelectionHandleDragLocked(Session &s, float x, float y)
+{
+    const auto &h = s.selectionHandles;
+    if (!h.valid || h.session != s.token || h.ticket == 0 || h.ticket != s.acceptedPaintTicketId ||
+        !s.editing || !s.editingContextLive || s.editorRetired || s.previewActive ||
+        h.context != s.editingContextId || h.nodeId != s.editingNodeId ||
+        h.resource != s.editingResourceId || h.kind != s.editingNodeKind ||
+        h.projection != s.editingProjectionVersion || h.generation != s.surfaceGeneration ||
+        h.geometryRevision != s.surfaceGeometryRevision || h.text != composedBuffer(s) ||
+        h.start != std::min(s.selStartUtf16, s.selEndUtf16) ||
+        h.end != std::max(s.selStartUtf16, s.selEndUtf16) || h.start >= h.end) return false;
+    size_t index = 0;
+    if (!sceneIndexByIdentityLocked(s, h.nodeId, h.resource, h.kind, &index) ||
+        h.binding == 0 || s.accepted[index].pod.acceptedBindingEpoch != h.binding ||
+        !RenderThread::pointInsideClips(s.accepted[index].pod, x, y)) return false;
+    const double sd = std::hypot(x - h.startX, y - h.startY);
+    const double ed = std::hypot(x - h.endX, y - h.endY);
+    const bool start = h.startVisible && sd <= 14 && (!h.endVisible || ed > 14 || sd < ed);
+    if (!start && !(h.endVisible && ed <= 14)) return false;
+    const SceneNode &node = s.accepted[index];
+    initializeSelectionDragLocked(s, node);
+    auto &d = s.selectionDrag;
+    d.anchorReady = true; d.anchor = start ? h.end : h.start;
+    // Finger stays on the grip; the paragraph hit query follows its line centre.
+    d.offsetX = (start ? h.startX : h.endX) - x;
+    d.offsetY = (start ? h.startLineY : h.endLineY) - y;
+    s.editingTapPending = false;
+    s.gesture.phase = Session::TouchGesture::kGestureSelectionDrag;
+    s.gesture.hasTarget = s.gesture.targetEditableText = true;
+    s.gesture.targetNodeId = node.pod.nodeId; s.gesture.targetResourceId = node.pod.resourceId;
+    s.gesture.targetNodeKind = node.pod.nodeKind; s.gesture.targetBindingEpoch = node.pod.acceptedBindingEpoch;
+    s.gesture.targetProjectionVersion = node.pod.projectionVersion; s.gesture.targetSemanticId = node.semanticId;
+    RLOGI("selection handle begin edge=%{public}s anchor=%{public}u epoch=%{public}llu",
+        start ? "start" : "end", d.anchor, static_cast<unsigned long long>(d.epoch));
+    return true;
+}
+
+bool queueSelectionExtentLocked(Session &s, float x, float y, bool terminal)
+{
+    if (!selectionDragMatchesLocked(s, s.selectionDrag)) return false;
+    size_t index = 0;
+    if (!sceneIndexByIdentityLocked(s, s.editingNodeId, s.editingResourceId, s.editingNodeKind, &index)) return false;
+    const auto &node = s.accepted[index].pod;
+    s.editingTapX = x + s.selectionDrag.offsetX - node.x;
+    s.editingTapY = y + s.selectionDrag.offsetY - node.y;
+    s.editingHitMode = 2; s.editingTapPending = true;
+    s.selectionDrag.moved = true; s.selectionDrag.terminal = terminal;
+    s.selectionDrag.lastX = x; s.selectionDrag.lastY = y;
+    return true;
+}
+
+bool requestLongPressWordLocked(Session &s, int64_t nowMs)
+{
+    if (!s.gesture.active || !s.gesture.targetEditableText || s.gesture.thresholdLatch ||
+        s.gesture.pressBeginMs <= 0 || nowMs - s.gesture.pressBeginMs < 400 ||
+        s.previewActive || s.selectionDrag.active) return false;
+    size_t index = 0;
+    if (!sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+        s.gesture.targetNodeKind, &index) || s.gesture.targetBindingEpoch == 0 ||
+        s.accepted[index].pod.acceptedBindingEpoch != s.gesture.targetBindingEpoch) return false;
+    const SceneNode &node = s.accepted[index];
+    const bool focused = s.editing && s.editingContextLive && !s.editorRetired &&
+        s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId;
+    beginEditingOnNodeLocked(s, node);
+    s.textTapChain.armed = false;
+    s.gesture.longPressRecognized = true;
+    if (s.editingText.empty()) {
+        s.textMenuIntent = 2;
+        s.editingTapPending = false;
+        s.gesture.pressBeginMs = s.textPressBeginMs = 0;
+        recordHumanSelectionAnchorLocked(s, "empty_hold");
+        if (!focused) {
+            QueuedEvent focus; focus.kind = kEvFocus; focus.recordIndex = static_cast<uint32_t>(index);
+            focus.nodeId = node.pod.nodeId; focus.resourceId = node.pod.resourceId;
+            focus.nodeKind = node.pod.nodeKind; focus.projectionVersion = node.pod.projectionVersion;
+            focus.acceptedBindingEpoch = node.pod.acceptedBindingEpoch;
+            stampTouchEvent(s, focus); s.events.push_back(focus);
+        }
+        g_render.post(std::make_shared<RedrawJob>());
+        return true;
+    }
+    initializeSelectionDragLocked(s, node);
+    s.selectionDrag.wordHold = true;
+    s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
+    s.gesture.pressBeginMs = s.textPressBeginMs = 0; // trigger once
+    s.editingTapX = s.gesture.startX - node.pod.x;
+    s.editingTapY = s.gesture.startY - node.pod.y;
+    s.editingHitMode = 1; s.editingTapPending = true; // replaces BEGIN's caret job
+    if (!focused) {
+        QueuedEvent focus;
+        focus.kind = kEvFocus; focus.recordIndex = static_cast<uint32_t>(index);
+        focus.nodeId = node.pod.nodeId; focus.resourceId = node.pod.resourceId;
+        focus.nodeKind = node.pod.nodeKind; focus.projectionVersion = node.pod.projectionVersion;
+        focus.acceptedBindingEpoch = node.pod.acceptedBindingEpoch;
+        stampTouchEvent(s, focus); s.events.push_back(focus);
+    }
+    return true;
+}
+
+bool applySelectionHitLocked(Session &s, uint64_t operation, uint32_t mode, uint32_t caret,
+                             int32_t affinity, uint32_t wordStart, uint32_t wordEnd)
+{
+    if (operation != s.selectionOperationGeneration) return false;
+    if (mode != 0 && !selectionDragMatchesLocked(s, s.selectionDrag)) return false;
+    caret = std::min(caret, static_cast<uint32_t>(s.editingText.size()));
+    s.caretAffinity = affinity;
+    if (mode == 1 || mode == 3) {
+        if (wordStart > wordEnd || (mode == 1 && wordStart == wordEnd) || wordEnd > s.editingText.size()) return false;
+        s.selStartUtf16 = wordStart; s.selEndUtf16 = wordEnd; s.caretUtf16 = wordEnd;
+        s.selectionDrag.anchorReady = true; s.selectionDrag.anchor = wordStart;
+        s.textMenuIntent = wordStart < wordEnd ? 1 : 0;
+        recordHumanSelectionAnchorLocked(s, mode == 3 ? "triple_tap_paragraph" : "word_select");
+        // 三击段落与长按选词是两种手势：日志标签按实际 mode 区分，修正此前把
+        // 段落选择也标成 word/长按的误标（h-source-preview-next A）。
+        RLOGI("selection applied mode=%{public}u gesture=%{public}s range=%{public}u:%{public}u",
+              mode, mode == 3 ? "triple_tap_paragraph" : "long_press_word", wordStart, wordEnd);
+        const bool terminal = s.selectionDrag.terminal;
+        if (s.selectionDrag.moved) {
+            queueSelectionExtentLocked(s, s.selectionDrag.lastX, s.selectionDrag.lastY, terminal);
+        } else if (terminal) {
+            s.selectionDrag = Session::SelectionDrag{};
+        } else if (s.gesture.active && s.gesture.gestureEpoch == s.selectionDrag.epoch &&
+                   s.gesture.pointerId == s.selectionDrag.pointer && s.gesture.appInstance == s.selectionDrag.app &&
+                   s.gesture.componentInstance == s.selectionDrag.component) {
+            s.gesture.phase = Session::TouchGesture::kGestureSelectionDrag;
+        }
+    } else if (mode == 2) {
+        const uint32_t anchor = s.selectionDrag.anchor;
+        s.selStartUtf16 = std::min(anchor, caret); s.selEndUtf16 = std::max(anchor, caret);
+        s.caretUtf16 = caret;
+        if (s.selectionDrag.terminal) {
+            s.textMenuIntent = s.selStartUtf16 < s.selEndUtf16 ? 1 : 0;
+            recordHumanSelectionAnchorLocked(s, "selection_drag_end");
+            s.selectionDrag = Session::SelectionDrag{};
+            // 拖选已经终结：同一手势**不得**再以 caret_hit（mode 0）结算一次
+            // `editingTapPending`，否则紧随其后的那次落点处理会把刚确立的非空选区
+            // 折成 caret（实测 `human anchor recorded origin=caret_hit sel=104:104`
+            // 紧跟在 `selection_drag_end sel=101:104` 之后），推送与安装随之为折叠，
+            // 会话源选区无锚可映射，外部改版后首笔输入退化为插入。
+            s.editingTapPending = false;
+            s.editingHitMode = 0;
+        }
+    } else {
+        s.caretUtf16 = s.selStartUtf16 = s.selEndUtf16 = caret;
+        recordHumanSelectionAnchorLocked(s, "caret_hit");
+    }
+    g_render.post(std::make_shared<RedrawJob>());
+    return true;
 }
 
 // A：MOVE/END 共用的位移采样入口。差分由调用方以（y − lastY）传入（last
@@ -3841,9 +5187,9 @@ int64_t consumeScrollSampleLocked(Session &s, float dySample)
     s.gesture.scrollRawSumY += static_cast<double>(dySample);
     ++s.gesture.scrollSampleCount;
     s.gesture.scrollAccumY += dySample;
-    int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);  // 截断保余量
-    if (whole == 0) return 0;
-    s.gesture.scrollAccumY -= static_cast<float>(whole);
+    // B（复核修）：冻结绑定校验先于零尾差提前返回——同 node/resource 的
+    // 换绑/ABA 即使尾差不足 1px（含 END 零尾差）也必须终结手势，旧 END
+    // 不得借新绑定身份继续到 fling。视图/身份变化先于一切位移交付。
     size_t index = 0;
     if (!sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
                                     CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
@@ -3855,6 +5201,9 @@ int64_t consumeScrollSampleLocked(Session &s, float dySample)
         cancelTouchGestureLocked(s);
         return 0;
     }
+    int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);  // 截断保余量
+    if (whole == 0) return 0;
+    s.gesture.scrollAccumY -= static_cast<float>(whole);
     appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
                              s.accepted[index].pod.projectionVersion, -whole);
     s.gesture.scrollWholeDeliveredY += whole;
@@ -3873,7 +5222,9 @@ void appendScrollIntentLocked(Session &s, uint64_t nodeId, int64_t resourceId, u
         // A：只合并连续同号整数段——反号段按序交付，共享 viewport 逐段按
         // requestedOffset 夹紧（offset=0 时 -30,+30 的净效果是 30 而非 0）。
         const bool sameSign = (tail.scrollDelta >= 0) == (delta >= 0);
-        if (sameSign && tail.kind == kEvScroll && tail.nodeId == nodeId &&
+        // takeover 意图不是位移：不得被同手势的首段拖动合并覆盖（否则窗口
+        // 收不到接管通知，空白按住的惯性停不下来）。
+        if (sameSign && tail.text != "takeover:" && tail.kind == kEvScroll && tail.nodeId == nodeId &&
             tail.resourceId == resourceId && tail.projectionVersion == version &&
             tail.appInstance == s.gesture.appInstance &&
             tail.componentInstance == s.gesture.componentInstance &&
@@ -3901,6 +5252,68 @@ void appendScrollIntentLocked(Session &s, uint64_t nodeId, int64_t resourceId, u
 
 // B：待定手势在有效抬起时执行一次点击。移出目标、目标退役/换绑、
 // surface 换代都不激活；命中目标以当前 accepted 场景重验身份。
+uint32_t consecutiveTextTapCountLocked(Session &s, const RawTouchSample &sample)
+{
+    const auto previous = std::move(s.textTapChain);
+    s.textTapChain = Session::TextTapChain{}; // consume once, even if this press is later cancelled
+    size_t index = 0;
+    if (!previous.armed || !hitTestAccepted(s, sample.x, sample.y, &index) ||
+        !s.editingContextLive || s.editorRetired || s.previewActive || s.markedActive) return 1;
+    const auto &node = s.accepted[index].pod;
+    const int64_t dt = sample.timestampNs - previous.endNs;
+    if (sample.timestampNs <= 0 || previous.endNs <= 0 || dt < 0 || dt > 300000000 ||
+        sample.timeSource != previous.timeSource ||
+        std::hypot(sample.x - previous.x, sample.y - previous.y) > 60.0f ||
+        previous.app != sample.appInstance || previous.component != sample.componentInstance ||
+        previous.surface != sample.surfaceGeneration || previous.geometry != s.surfaceGeometryRevision ||
+        previous.node != node.nodeId || previous.resource != node.resourceId || previous.kind != node.nodeKind ||
+        previous.binding == 0 || previous.binding != node.acceptedBindingEpoch ||
+        previous.context != s.editingContextId || previous.base != s.editingContextBaseVersion ||
+        previous.text != s.editingText) return 1;
+    return previous.count == 3 ? 1 : previous.count + 1;
+}
+
+void rememberTextTapLocked(Session &s, float x, float y)
+{
+    auto &g = s.gesture;
+    if (!s.editingContextLive || s.editorRetired || s.previewActive || s.markedActive ||
+        g.endNs <= g.beginNs || g.beginNs <= 0 || g.endNs - g.beginNs >= 400000000) return;
+    auto &t = s.textTapChain;
+    t.armed = true; t.count = g.tapCount; t.timeSource = g.timeSource; t.endNs = g.endNs;
+    t.x = x; t.y = y; t.app = g.appInstance; t.component = g.componentInstance;
+    t.surface = g.surfaceGeneration; t.geometry = s.surfaceGeometryRevision;
+    t.node = g.targetNodeId; t.resource = g.targetResourceId; t.kind = g.targetNodeKind;
+    t.binding = g.targetBindingEpoch; t.context = s.editingContextId;
+    t.base = s.editingContextBaseVersion; t.text = s.editingText;
+    g.shortTapCompleted = true;
+}
+
+bool collapsedCaretMenuHitLocked(const Session &s, float x, float y)
+{
+    const auto &h = s.selectionHandles;
+    return s.editingContextLive && !s.editorRetired && !s.previewActive && !s.markedActive &&
+        h.valid && h.startVisible && h.start == h.end && h.ticket != 0 &&
+        h.ticket == s.acceptedPaintTicketId && h.context == s.editingContextId &&
+        h.text == s.editingText && h.start == s.selStartUtf16 && h.end == s.selEndUtf16 &&
+        h.generation == s.surfaceGeneration && h.geometryRevision == s.surfaceGeometryRevision &&
+        h.projection == s.editingProjectionVersion &&
+        std::fabs(x - h.startX) <= 10 && std::fabs(y - h.startLineY) <= 10;
+}
+
+bool requestConsecutiveTapSelectLocked(Session &s, const SceneNode &node)
+{
+    if (s.gesture.tapCount < 2 || s.previewActive || s.markedActive || s.editorRetired ||
+        !s.editingContextLive || s.selectionDrag.active) return false;
+    initializeSelectionDragLocked(s, node);
+    s.selectionDrag.terminal = true;
+    s.selectionDrag.wordHold = s.gesture.tapCount == 2;
+    s.editingHitMode = s.gesture.tapCount == 2 ? 1 : 3;
+    s.editingTapPending = true;
+    RLOGI("text consecutive tap count=%{public}u mode=%{public}u context=%{public}lld",
+          s.gesture.tapCount, s.editingHitMode, static_cast<long long>(s.editingContextId));
+    return true;
+}
+
 void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
 {
     if (!s.gesture.hasTarget) {
@@ -3959,17 +5372,34 @@ void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
         ev.pointerX = static_cast<int64_t>(x);
         ev.pointerY = static_cast<int64_t>(y);
         stampTouchEvent(s, ev);
+        // S3（ACTIVATE 分发延迟追因）：入队侧行径——与出队行配对，缺出队行
+        // 即队列未消费（pump 停摆），缺入队行即命中没走到按钮分支。
+        RLOGI("activate enqueue node=%{public}llu projection=%{public}llu tap=(%{public}.0f,%{public}.0f) queue=%{public}zu",
+              static_cast<unsigned long long>(ev.nodeId),
+              static_cast<unsigned long long>(ev.projectionVersion), x, y, s.events.size());
         s.events.push_back(ev);
         return;
     }
     if (s.gesture.targetEditableText) {
+        if (longPress && requestLongPressWordLocked(s, nowMs)) return;
         // 点击编辑器：直接激活本节点的平台编辑上下文并回发 FOCUS。不在此
         // 结束旧编辑上下文——pump 的 detach/end 通知按当前编辑状态取上下文，
         // 先 end 后 begin 会把旧字段的收场报成新字段（编辑器间切换维持
         // 既有语义：旧缓冲随新焦点初始化被替换，不经失焦结算）。
+        const bool wasActive = s.editingContextLive && !s.editorRetired &&
+            s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId;
         beginEditingOnNodeLocked(s, node);
         s.editingTapX = x - static_cast<double>(node.pod.x);   // 节点内相对坐标
+        s.editingTapY = y - static_cast<double>(node.pod.y);
         s.editingTapPending = true;
+        s.editingHitMode = 0;
+        if (s.gesture.tapCount >= 2) {
+            if (!requestConsecutiveTapSelectLocked(s, node)) return;
+        } else if (s.gesture.caretMenuTap) {
+            s.textMenuIntent = s.gesture.caretMenuShow ? 2 : 0;
+        }
+        rememberTextTapLocked(s, x, y);
+        if (wasActive) return;
         QueuedEvent focus;
         focus.kind = kEvFocus;
         focus.recordIndex = static_cast<uint32_t>(liftIndex);
@@ -3980,15 +5410,6 @@ void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
         focus.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
         stampTouchEvent(s, focus);
         s.events.push_back(focus);
-        if (longPress) {
-            // 长按 ≥400ms → 全选（移动端长按选择的最小实现），与既有
-            // 语义一致：caret 点击先入队，全选在其后落账并触发重绘。
-            s.selStartUtf16 = 0;
-            s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
-            RLOGI("long-press selection: select-all len=%{public}u",
-                  static_cast<unsigned>(s.selEndUtf16));
-            g_render.post(std::make_shared<RedrawJob>());
-        }
         return;
     }
     // 其他交互节点（展示文本/背景层等）：点击 = 完整指针相位对，
@@ -4050,6 +5471,15 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
                 s.gesture.gestureEpoch == sample.gestureEpoch) return;
             cancelTouchGestureLocked(s);
         }
+        // New BEGIN revokes an older in-flight visual hit, including a terminal
+        // operation whose caller has not yet observed completion.
+        const uint32_t tapCount = consecutiveTextTapCountLocked(s, sample);
+        const bool caretMenuTap = tapCount == 1 && collapsedCaretMenuHitLocked(s, x, y);
+        const bool caretMenuShow = s.textMenuIntent != 2;
+        s.textMenuIntent = 0;
+        s.selectionDrag = Session::SelectionDrag{};
+        s.selectionOperationGeneration += 1;
+        s.editingTapPending = false;
         s.gesture = Session::TouchGesture{};
         s.gesture.active = true;
         s.gesture.startX = s.gesture.lastX = x;
@@ -4059,6 +5489,9 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
         s.gesture.appInstance = sample.appInstance;
         s.gesture.componentInstance = sample.componentInstance;
         s.gesture.pointerId = sample.pointerId;
+        s.gesture.tapCount = tapCount; s.gesture.beginNs = sample.timestampNs;
+        s.gesture.timeSource = sample.timeSource;
+        s.gesture.caretMenuTap = caretMenuTap; s.gesture.caretMenuShow = caretMenuShow;
         size_t viewportIndex = 0;
         s.gesture.hasViewport = scrollAreaIndexContainingPoint(s, x, y, &viewportIndex);
         RLOGI("touch begin: viewport=%{public}d acceptedCount=%{public}zu",
@@ -4087,7 +5520,22 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
             s.gesture.viewportNodeId = s.accepted[viewportIndex].pod.nodeId;
             s.gesture.viewportResourceId = s.accepted[viewportIndex].pod.resourceId;
             s.gesture.viewportBindingEpoch = s.accepted[viewportIndex].pod.acceptedBindingEpoch;
+            // H2（astra 空白接管）：新触摸落在视口内就要终结该视口的惯性活动——
+            // 空白/只读内容根本不产生指针事件，窗口收不到 BEGIN。复用共同 scroll
+            // 通道发 takeover 意图（无位移、携完整 GestureKey 与冻结绑定），核心按
+            // 严格门校验后终结活动并发放释放票据；不伪造控件的 POINTER_BEGIN。
+            QueuedEvent ev;
+            ev.kind = kEvScroll;
+            ev.nodeId = s.gesture.viewportNodeId;
+            ev.resourceId = s.gesture.viewportResourceId;
+            ev.nodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA;
+            ev.projectionVersion = s.accepted[viewportIndex].pod.projectionVersion;
+            ev.acceptedBindingEpoch = s.gesture.viewportBindingEpoch;
+            ev.text = "takeover:";
+            stampTouchEvent(s, ev);
+            s.events.push_back(ev);
         }
+        if (tapCount == 1 && beginSelectionHandleDragLocked(s, x, y)) return;
         size_t index = 0;
         if (!hitTestAccepted(s, x, y, &index)) {
             return;  // 空白/非交互内容：无点击目标；滚动仍由包含视口接管。
@@ -4095,7 +5543,7 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
         const SceneNode &node = s.accepted[index];
         if (node.pod.isReadOnly != 0) return;  // 只读内容可滚动，不可激活
         const uint32_t kind = node.pod.nodeKind;
-        const bool isEditableText = kind == kKindTextInput || kind == kKindIntegerInput;
+        const bool isEditableText = isEditableTextKind(kind);
         s.gesture.hasTarget = true;
         s.gesture.targetEditableText = isEditableText;
         s.gesture.targetNodeId = node.pod.nodeId;
@@ -4108,15 +5556,18 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
         // 解析），真换绑在副作用发生前拒绝。
         s.gesture.targetSemanticId = node.semanticId;
         s.gesture.targetProjectionVersion = node.pod.projectionVersion;
+        if (isEditableText) s.gesture.pressBeginMs = nowMs;
         if (isEditableText && s.editing && !s.editorRetired &&
             s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId) {
-            // 已激活编辑器优先：caret 点击立即落账，长按计时开始；位移不
-            // 接管为滚动（选区拖动/系统代理按明确优先级保留）。
+            // Handle BEGIN was tested first. Ordinary touch places the caret;
+            // a fast drag can still be taken by the existing viewport.
             s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
             s.gesture.pressBeginMs = nowMs;
             s.textPressBeginMs = nowMs;
             s.editingTapX = x - static_cast<double>(node.pod.x);
+            s.editingTapY = y - static_cast<double>(node.pod.y);
             s.editingTapPending = true;
+            s.editingHitMode = 0;
         }
         return;
     }
@@ -4132,6 +5583,31 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
         // 差分样本必须在 last 更新前计算。待定期间样本不推进 last；
         // 视口接管后的首个差分即从起始点累计的全部位移，总量不丢。
         const float dySample = y - s.gesture.lastY;
+        if (s.gesture.phase == Session::TouchGesture::kGestureSelectionDrag) {
+            s.gesture.lastX = x; s.gesture.lastY = y;
+            if (s.selectionDrag.wordHold && !s.selectionDrag.moved &&
+                std::fabs(dx) < kTouchScrollThresholdPx && std::fabs(dy) < kTouchScrollThresholdPx) return;
+            if (!queueSelectionExtentLocked(s, x, y, false)) cancelTouchGestureLocked(s);
+            return;
+        }
+        if (s.gesture.phase == Session::TouchGesture::kGestureEditorHold ||
+            (s.gesture.phase == Session::TouchGesture::kGesturePending && s.gesture.targetEditableText)) {
+            requestLongPressWordLocked(s, nowMs);
+            if (s.selectionDrag.active && s.selectionDrag.wordHold) {
+                s.gesture.lastX = x; s.gesture.lastY = y;
+                s.selectionDrag.lastX = x; s.selectionDrag.lastY = y;
+                if (std::fabs(dx) >= kTouchScrollThresholdPx || std::fabs(dy) >= kTouchScrollThresholdPx)
+                    s.selectionDrag.moved = true;
+                return; // word job is still in the bounded pending slot
+            }
+            if (s.gesture.phase == Session::TouchGesture::kGestureEditorHold &&
+                (std::fabs(dx) >= kTouchScrollThresholdPx || std::fabs(dy) >= kTouchScrollThresholdPx)) {
+                s.gesture.phase = Session::TouchGesture::kGesturePending;
+                s.editingTapPending = false;
+                s.selectionOperationGeneration += 1;
+                s.gesture.pressBeginMs = s.textPressBeginMs = 0;
+            }
+        }
         if (s.gesture.phase == Session::TouchGesture::kGesturePending) {
             if (std::fabs(dx) >= kTouchScrollThresholdPx || std::fabs(dy) >= kTouchScrollThresholdPx) {
                 // A：跨阈值不可逆闰（Flutter monodrag 的
@@ -4247,10 +5723,12 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
             return;
         }
         if (action == CJGUI_OHOS_TOUCH_CANCEL) {
+            s.selectionDrag.terminal = false;
             cancelTouchGestureLocked(s);
             return;
         }
         const uint32_t phase = s.gesture.phase;
+        s.gesture.endNs = sample.timestampNs;
         switch (phase) {
             case Session::TouchGesture::kGesturePending: {
                 // B：END 重判阈值——快速轻扫（BEGIN 后无 UPDATE）的全部位移在
@@ -4266,11 +5744,15 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
                     break;
                 }
                 executePendingTapLocked(s, x, y, nowMs);
+                if (s.selectionDrag.active) s.selectionDrag.terminal = true;
                 break;
             }
             case Session::TouchGesture::kGestureScroll: {
                 // A：END 消费最后坐标差 + 浮点余量（同一采样入口，尾段不丢）。
+                // B（复核修）：零尾差也先校验冻结绑定；换绑/ABA 已在入口取消
+                // （gesture 复位），下列速度/发射必须只针对仍存活的手势。
                 consumeScrollSampleLocked(s, y - s.gesture.lastY);
+                if (!s.gesture.active) break;  // 绑定丢失：不估算、不发射活动
                 // B（复核修）：END (t,y) 也入速度窗——快拖后停住再松手时，
                 // END 样本刷新窗口尾部，不沿用停顿前的旧速度。
                 {
@@ -4290,10 +5772,12 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
                     size_t index = 0;
                     if (sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId,
                                                     s.gesture.viewportResourceId,
-                                                    CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
-                        // B（复核修）：fling 携带完整身份——GestureKey + 当前
-                        // accepted 事实的 acceptedBindingEpoch（同 node/resource
-                        // 的旧 END 不给新绑定启动活动，核心执行前比对）。
+                                                    CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index) &&
+                        s.gesture.viewportBindingEpoch != 0 &&
+                        s.accepted[index].pod.acceptedBindingEpoch == s.gesture.viewportBindingEpoch) {
+                        // B（复核修）：fling 携 BEGIN 时冻结的 viewport 绑定身份
+                        // （不是当前节点重贴的版本）——同 node/resource 的旧 END
+                        // 对换绑/ABA 后的新绑定不启动活动；核心以同一严格门比对。
                         char buf[48];
                         std::snprintf(buf, sizeof(buf), "fling:%.3f", velocity);
                         QueuedEvent ev;
@@ -4302,7 +5786,7 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
                         ev.resourceId = s.gesture.viewportResourceId;
                         ev.nodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA;
                         ev.projectionVersion = s.accepted[index].pod.projectionVersion;
-                        ev.acceptedBindingEpoch = s.accepted[index].pod.acceptedBindingEpoch;
+                        ev.acceptedBindingEpoch = s.gesture.viewportBindingEpoch;
                         stampTouchEvent(s, ev);  // 完整 GestureKey（appInstance 等）
                         ev.text = buf;
                         s.events.push_back(ev);
@@ -4332,14 +5816,29 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
                 break;
             }
             case Session::TouchGesture::kGestureEditorHold:
-                // 已激活编辑器长按 ≥400ms → 全选（既有语义保持）。
-                if (s.editing && !s.editorRetired && s.textPressBeginMs > 0 &&
-                    nowMs - s.textPressBeginMs >= 400) {
-                    s.selStartUtf16 = 0;
-                    s.selEndUtf16 = static_cast<uint32_t>(s.editingText.size());
-                    RLOGI("long-press selection: select-all len=%{public}u",
-                          static_cast<unsigned>(s.selEndUtf16));
-                    g_render.post(std::make_shared<RedrawJob>());
+                requestLongPressWordLocked(s, nowMs);
+                if (s.selectionDrag.active) {
+                    s.gesture.lastX = x; s.gesture.lastY = y;
+                    s.selectionDrag.lastX = x; s.selectionDrag.lastY = y;
+                    s.selectionDrag.terminal = true;
+                } else if (s.gesture.hasViewport &&
+                    (std::fabs(x - s.gesture.startX) >= kTouchScrollThresholdPx ||
+                     std::fabs(y - s.gesture.startY) >= kTouchScrollThresholdPx)) {
+                    s.editingTapPending = false;
+                    s.selectionOperationGeneration += 1;
+                    consumeScrollSampleLocked(s, y - s.gesture.lastY);
+                } else if (!s.gesture.longPressRecognized &&
+                    std::fabs(x - s.gesture.startX) < kTouchScrollThresholdPx &&
+                    std::fabs(y - s.gesture.startY) < kTouchScrollThresholdPx) {
+                    executePendingTapLocked(s, x, y, nowMs);
+                }
+                break;
+            case Session::TouchGesture::kGestureSelectionDrag:
+                if (s.selectionDrag.wordHold && !s.selectionDrag.moved) {
+                    s.textMenuIntent = s.selStartUtf16 < s.selEndUtf16 ? 1 : 0;
+                    s.selectionDrag = Session::SelectionDrag{}; // retain the selected word
+                } else if (!queueSelectionExtentLocked(s, x, y, true)) {
+                    s.selectionDrag.terminal = false;
                 }
                 break;
         }
@@ -4399,6 +5898,106 @@ void editorEnqueueTextChanged(Session &s)
     s.events.push_back(ev);
 }
 
+// 窗口声明拥有该节点的范围会话，且开启范围增量投递：只有这时整值事件被抑制、
+// 精确范围增量成为权威通道。未声明的节点行为完全不变。
+bool editorOwnsTextSession(const Session &s)
+{
+    return s.ownedTextSessionEnabled && s.rangeEditDeltaRequested &&
+        s.editingNodeId == s.ownedTextSessionNodeId &&
+        s.editingResourceId == s.ownedTextSessionResourceId &&
+        s.editingNodeKind == s.ownedTextSessionNodeKind;
+}
+
+// H1-C：编辑缓冲的一次提交。窗口声明拥有该节点时，**精确范围增量**（kind 51）
+// 是权威通道，整值事件（kind 28）被抑制：消费方只经会话的 Sink 写一次正文，
+// 不会出现第二个写入者。未声明（或未开启范围增量）时行为完全不变。
+// 系统 TextInput 代理只回调显示全文，所以增量由「已接受的编辑缓冲 → 新文本」
+// 复算最小公共前后缀得到：结果文本逐字节等价，区间是它的一个合法表达。
+//
+// 代理对边界（复核反例）：逐码元取公共前后缀会在代理对中间切分——`😀→😁`
+// 得到 `[1,2)` 加一个孤立低代理，`utf16ToUtf8` 又会把它编码成非法 UTF-8。
+// 因此两端各自退/扩到**合法标量边界**后才生成替换；重放逐字节等于 next。
+// 平台送来畸形 UTF-16（不成对代理）时无法表达成合法增量：具名拒绝、
+// 恢复编辑缓冲、owner 零变化。返回 true 表示已交付一次 kind-51。
+bool editorEnqueueTextCommit(Session &s, const std::u16string &previous, const std::u16string &next)
+{
+    if (previous != next) s.textMenuIntent = 0;
+    const bool ownsNode = editorOwnsTextSession(s);
+    if (!ownsNode || previous == next) {
+        editorEnqueueTextChanged(s);
+        return true;
+    }
+    size_t prefix = 0;
+    const size_t shortest = std::min(previous.size(), next.size());
+    while (prefix < shortest && previous[prefix] == next[prefix]) prefix += 1;
+    // 前缀必须停在两串的标量边界上（两串前缀段相同，故两串判断同值）。
+    if (prefix > 0 && !utf16IsScalarBoundary(previous, prefix)) prefix -= 1;
+    size_t suffix = 0;
+    const size_t remaining = shortest - prefix;
+    while (suffix < remaining &&
+           previous[previous.size() - 1 - suffix] == next[next.size() - 1 - suffix]) {
+        suffix += 1;
+    }
+    size_t previousEnd = previous.size() - suffix;
+    size_t nextEnd = next.size() - suffix;
+    // 后缀起点同样必须合法；不合法就缩短后缀（扩大替换区，保持逐字节等价）。
+    while (suffix > 0 &&
+           (!utf16IsScalarBoundary(previous, previousEnd) || !utf16IsScalarBoundary(next, nextEnd))) {
+        suffix -= 1;
+        previousEnd = previous.size() - suffix;
+        nextEnd = next.size() - suffix;
+    }
+    if (previousEnd < prefix) previousEnd = prefix;
+    if (nextEnd < prefix) nextEnd = prefix;
+    const std::u16string removed = previous.substr(prefix, previousEnd - prefix);
+    const std::u16string inserted = next.substr(prefix, nextEnd - prefix);
+    if (!utf16IsWellFormed(removed) || !utf16IsWellFormed(inserted)) {
+        // 畸形输入：不制造非法增量，恢复编辑缓冲，owner 与本帧提交都保持原状。
+        RLOGW("ime range delta refused: malformed_surrogate node=%{public}lld",
+              static_cast<long long>(s.editingNodeId));
+        s.editingText = previous;
+        if (s.caretUtf16 > previous.size()) s.caretUtf16 = static_cast<uint32_t>(previous.size());
+        s.caretUtf16 = clampToCodePointBoundary(previous, s.caretUtf16);
+        s.selStartUtf16 = s.caretUtf16;
+        s.selEndUtf16 = s.caretUtf16;
+        return false;
+    }
+    if (previous != next) {
+        s.caretBlinkResetPending = true;
+        s.caretAffinity = 0;
+    }
+    QueuedEvent ev;
+    ev.kind = kEvTextRangeChanged;  // 51
+    ev.nodeId = s.editingNodeId;
+    ev.projectionVersion = s.editingProjectionVersion;
+    ev.resourceId = s.editingResourceId;
+    ev.nodeKind = s.editingNodeKind;
+    ev.selectionStart = static_cast<uint32_t>(prefix);
+    ev.selectionEnd = static_cast<uint32_t>(previousEnd);
+    ev.text = utf16ToUtf8(inserted);
+    ev.bindingEpoch = s.ownedTextSessionBindingEpoch;
+    s.events.push_back(ev);
+    RLOGI("ime range delta node=%{public}lld range=%{public}u:%{public}u bytes=%{public}zu",
+          static_cast<long long>(s.editingNodeId), ev.selectionStart, ev.selectionEnd, ev.text.size());
+    return true;
+}
+
+// 平台落点观测要不要转发给窗口。判重只看"窗口已经收到过哪个观测"，绝不看 native
+// 自己的 caret/推送目标：人点击正文时命中测试先把 native 落点写成命中值，平台装好
+// 之后回声的正是同一个值，按 caret 判重会把这次回声整个吞掉（窗口收不到 kind-33，
+// 人类锚只在 native 侧 recorded、永不 taken）。同一值不重复入队，避免自激。
+static bool selectionObservationNeedsForwarding(const Session &s, uint32_t start, uint32_t end)
+{
+    return !s.selForwardedValid || s.selForwardedStart != start || s.selForwardedEnd != end;
+}
+
+static void rememberForwardedSelectionLocked(Session &s, uint32_t start, uint32_t end)
+{
+    s.selForwardedValid = true;
+    s.selForwardedStart = start;
+    s.selForwardedEnd = end;
+}
+
 // The system IME reports selection changes independently from text commits.
 // Forward that view state through the same event FIFO as other native input so
 // the Cangjie window can update its focused-selection ledger. Stamp the event
@@ -4429,8 +6028,20 @@ bool editorEnqueueSelectionChanged(Session &s, uint32_t start, uint32_t end)
     ev.acceptedBindingEpoch = acceptedNode->pod.acceptedBindingEpoch;
     ev.selectionStart = start;
     ev.selectionEnd = end;
+    ev.editingContextId = s.editingContextId;
+    ev.editingContextGeneration = s.editingContextGeneration;
+    // Freeze the coordinate system of this actual observation, rather than
+    // interpreting an earlier selection against a later accepted postimage.
+    ev.text = utf16ToUtf8(composedBuffer(s));
     s.events.push_back(ev);
     return true;
+}
+
+static bool queuedSelectionContextIsCurrent(const Session &s, const QueuedEvent &ev)
+{
+    return ev.editingContextId != 0 && s.editingContextLive && !s.editorRetired &&
+        ev.editingContextId == s.editingContextId &&
+        ev.editingContextGeneration == s.editingContextGeneration;
 }
 
 // 失焦结算（框架主动结束编辑，恰好一次）：把当前未提交的组合预览折进编辑
@@ -4441,6 +6052,7 @@ bool editorEnqueueSelectionChanged(Session &s, uint32_t start, uint32_t end)
 bool settleComposedBufferOnBlurLocked(Session &s)
 {
     if (!s.previewActive) return false;
+    const std::u16string previous = s.editingText;
     uint32_t start = std::min(s.previewStart, static_cast<uint32_t>(s.editingText.size()));
     uint32_t end = std::min(std::max(s.previewEnd, start), static_cast<uint32_t>(s.editingText.size()));
     std::u16string settled = s.editingText.substr(0, start);
@@ -4456,7 +6068,7 @@ bool settleComposedBufferOnBlurLocked(Session &s)
     if (s.caretUtf16 > s.editingText.size()) s.caretUtf16 = static_cast<uint32_t>(s.editingText.size());
     s.selStartUtf16 = s.caretUtf16;
     s.selEndUtf16 = s.caretUtf16;
-    editorEnqueueTextChanged(s);
+    editorEnqueueTextCommit(s, previous, s.editingText);
     return true;
 }
 
@@ -4493,6 +6105,7 @@ void ImeInsertText(InputMethod_TextEditorProxy *proxy, const char16_t *text, siz
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = findEditingSessionLocked();
     if (!s) return;
+    const std::u16string previous = s->editingText;
     // 提交通常先 FinishTextPreview；防御：仍处预览时先落盘预览段。
     if (s->previewActive) {
         uint32_t start = std::min(s->previewStart, static_cast<uint32_t>(s->editingText.size()));
@@ -4513,7 +6126,7 @@ void ImeInsertText(InputMethod_TextEditorProxy *proxy, const char16_t *text, siz
     s->caretUtf16 = caret + static_cast<uint32_t>(inserted.size());
     s->selStartUtf16 = s->caretUtf16;
     s->selEndUtf16 = s->caretUtf16;
-    editorEnqueueTextChanged(*s);
+    editorEnqueueTextCommit(*s, previous, s->editingText);
 }
 
 void ImeDeleteForward(InputMethod_TextEditorProxy *proxy, int32_t length)
@@ -4523,6 +6136,7 @@ void ImeDeleteForward(InputMethod_TextEditorProxy *proxy, int32_t length)
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = findEditingSessionLocked();
     if (!s) return;
+    const std::u16string previous = s->editingText;
     uint32_t caret = s->caretUtf16;
     if (s->selStartUtf16 != s->selEndUtf16) {
         editorDeleteSelection(s);
@@ -4535,7 +6149,7 @@ void ImeDeleteForward(InputMethod_TextEditorProxy *proxy, int32_t length)
     s->caretUtf16 = caret;
     s->selStartUtf16 = caret;
     s->selEndUtf16 = caret;
-    editorEnqueueTextChanged(*s);
+    editorEnqueueTextCommit(*s, previous, s->editingText);
 }
 
 void ImeDeleteBackward(InputMethod_TextEditorProxy *proxy, int32_t length)
@@ -4545,6 +6159,7 @@ void ImeDeleteBackward(InputMethod_TextEditorProxy *proxy, int32_t length)
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = findEditingSessionLocked();
     if (!s) return;
+    const std::u16string previous = s->editingText;
     uint32_t caret = s->caretUtf16;
     if (s->selStartUtf16 != s->selEndUtf16) {
         editorDeleteSelection(s);
@@ -4558,7 +6173,7 @@ void ImeDeleteBackward(InputMethod_TextEditorProxy *proxy, int32_t length)
     s->caretUtf16 = caret;
     s->selStartUtf16 = caret;
     s->selEndUtf16 = caret;
-    editorEnqueueTextChanged(*s);
+    editorEnqueueTextCommit(*s, previous, s->editingText);
 }
 
 void ImeSendKeyboardStatus(InputMethod_TextEditorProxy *proxy, InputMethod_KeyboardStatus status)
@@ -4571,9 +6186,13 @@ void ImeSendEnterKey(InputMethod_TextEditorProxy *proxy, InputMethod_EnterKeyTyp
 {
     (void)proxy; (void)keyType;
     // 单行字段：回车=结束编辑（值已经由 InsertText 交付 owner）。
+    // R1：回车也是收场入口——冻结将死身份进待发队列，不得让 pump 回读
+    // （此时可能已换绑的）当前上下文字段。
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = findEditingSessionLocked();
-    if (s) s->pendingImeDetach = true;
+    if (s && s->editing && !s->editorRetired) {
+        pushPendingEndLocked(*s, s->editingContextId, s->editingFieldName, false);
+    }
 }
 
 void ImeMoveCursor(InputMethod_TextEditorProxy *proxy, InputMethod_Direction direction)
@@ -4782,16 +6401,23 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
         s.clearB = config->clearColorBlue;
         s.clearA = config->clearColorAlpha;
         s.rangeEditDeltaRequested = false;
+        s.ownedTextSessionEnabled = false;
+        s.ownedTextSessionNodeId = 0;
+        s.ownedTextSessionResourceId = -1;
+        s.ownedTextSessionNodeKind = 0;
+        s.ownedTextSessionBindingEpoch = 0;
         s.accepted.clear();
         s.acceptedProjectionVersion = 0;
         s.candidate.clear();
+        s.acceptedRunTable.clear();
+        s.buildingRunTable.clear();
         s.imageCompletionVersion = 0;
         s.imageObservedSerial.clear();
         s.candidateOpen = false;
         s.events.clear();
         s.gesture = Session::TouchGesture{};  // B：新实例不得继承旧手势状态
         s.editorRetired = false;
-        s.pendingSettleOnDetach = false;
+        s.pendingEnds.clear();
         s.submittedFrameIndex = 0;
         s.surfaceSeen = false;
         // A1：票据身份与取证计数按新实例重置；结算槽必须干净（防 ABA）。
@@ -4836,33 +6462,140 @@ int32_t cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (enabled != 0) {
-        // 阶段1不支持范围编辑增量投递。
-        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    }
-    s->rangeEditDeltaRequested = false;
+    s->rangeEditDeltaRequested = enabled != 0;
+    RLOGI("range edit delta requested=%{public}d", s->rangeEditDeltaRequested ? 1 : 0);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
-// 共享仓颉运行时会链接该 ABI；当前 OHOS 文本链使用系统 IME 代理及既有
-// range/preview 入口，尚无 macOS 的窗口拥有文本会话事件桥。显式拒绝启用，
-// 避免缺符号使整个 HAP 无法加载，也不把未接通的组合态冒称为成功。
+// H1-C：窗口声明它拥有某个正文节点的范围会话。声明生效后，该节点的提交以
+// **精确 UTF-16 范围增量**（kind 51）交付并带上绑定的代次；整值事件被抑制。
+// 未声明的节点永不产生 kind 51——消费方不会在没有绑定的表面上 fail-closed。
+// `bindingEpoch` 原样回传，供窗口拒绝换绑前入队的旧增量；`enabled` 为 false
+// 时撤回声明（代次仍然记录：撤回本身也是一次绑定变化）。
 extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_owned_text_session(
     uint64_t session, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
     uint64_t bindingEpoch, uint32_t enabled)
 {
-    (void)nodeId;
-    (void)resourceId;
-    (void)nodeKind;
-    (void)bindingEpoch;
     std::lock_guard<std::mutex> g(g_sessions.lock);
-    if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (enabled != 0) {
-        RLOGW("window-owned text session unavailable on OHOS backend");
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (enabled != 0 && nodeId == 0) {
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
+    s->ownedTextSessionEnabled = enabled != 0;
+    s->ownedTextSessionNodeId = enabled != 0 ? nodeId : 0;
+    s->ownedTextSessionResourceId = enabled != 0 ? resourceId : -1;
+    s->ownedTextSessionNodeKind = enabled != 0 ? nodeKind : 0;
+    s->ownedTextSessionBindingEpoch = bindingEpoch;
+    RLOGI("owned text session enabled=%{public}d node=%{public}llu epoch=%{public}llu",
+          enabled != 0 ? 1 : 0, static_cast<unsigned long long>(s->ownedTextSessionNodeId),
+          static_cast<unsigned long long>(bindingEpoch));
     return CJGUI_INTERNAL_RENDERER_OK;
 }
+
+// OHOS_GRAPHEME_SERVICE_BEGIN
+// System ICU is the platform boundary oracle. Each call owns its library handle,
+// immutable UTF-16 buffer and iterator; destruction closes the iterator before
+// releasing the buffer/library. Missing symbols/rule data is a named refusal.
+// UTF-8/UTF-16 mapping below maps scalars only, never implements UAX#29.
+#ifndef CJGUI_OHOS_ICU_LIBRARY
+#define CJGUI_OHOS_ICU_LIBRARY "libicu.so"
+#endif
+struct CjguiOhosIcuApi {
+    void *handle = nullptr;
+    decltype(&u_strFromUTF8) fromUtf8 = nullptr;
+    decltype(&ubrk_open) open = nullptr;
+    decltype(&ubrk_close) close = nullptr;
+    decltype(&ubrk_isBoundary) isBoundary = nullptr;
+    decltype(&ubrk_preceding) preceding = nullptr;
+    decltype(&ubrk_following) following = nullptr;
+    CjguiOhosIcuApi() {
+        handle = dlopen(CJGUI_OHOS_ICU_LIBRARY, RTLD_NOW | RTLD_LOCAL);
+        if (!handle) return;
+        fromUtf8 = reinterpret_cast<decltype(fromUtf8)>(dlsym(handle, "u_strFromUTF8"));
+        open = reinterpret_cast<decltype(open)>(dlsym(handle, "ubrk_open"));
+        close = reinterpret_cast<decltype(close)>(dlsym(handle, "ubrk_close"));
+        isBoundary = reinterpret_cast<decltype(isBoundary)>(dlsym(handle, "ubrk_isBoundary"));
+        preceding = reinterpret_cast<decltype(preceding)>(dlsym(handle, "ubrk_preceding"));
+        following = reinterpret_cast<decltype(following)>(dlsym(handle, "ubrk_following"));
+    }
+    ~CjguiOhosIcuApi() { if (handle) dlclose(handle); }
+    bool ready() const { return fromUtf8 && open && close && isBoundary && preceding && following; }
+    CjguiOhosIcuApi(const CjguiOhosIcuApi&) = delete;
+    CjguiOhosIcuApi& operator=(const CjguiOhosIcuApi&) = delete;
+};
+
+extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_grapheme_cluster_range(
+    const char *utf8, uint64_t declaredLength, uint64_t offsetByte,
+    uint64_t *outStartByte, uint64_t *outEndByte)
+{
+    if (outStartByte) *outStartByte = 0;
+    if (outEndByte) *outEndByte = 0;
+    if (!utf8 || !outStartByte || !outEndByte) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (declaredLength > static_cast<uint64_t>(INT32_MAX - 1)) {
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+    }
+    // The FFI caller owns a CString allocation. A NUL before the declared end,
+    // or a different CString length, cannot stand in for the original bytes.
+    if (strnlen(utf8, static_cast<size_t>(declaredLength + 1)) != declaredLength) {
+        return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    }
+    if (offsetByte >= declaredLength) return CJGUI_INTERNAL_RENDERER_GRAPHEME_BOUNDARY_INVALID;
+    CjguiOhosIcuApi api;
+    if (!api.ready()) return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+    try {
+        UErrorCode error = U_ZERO_ERROR;
+        int32_t units = 0;
+        api.fromUtf8(nullptr, 0, &units, utf8, static_cast<int32_t>(declaredLength), &error);
+        if (error != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(error)) {
+            return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+        }
+        error = U_ZERO_ERROR;
+        std::vector<UChar> text(static_cast<size_t>(units) + 1);
+        api.fromUtf8(text.data(), static_cast<int32_t>(text.size()), &units, utf8,
+                     static_cast<int32_t>(declaredLength), &error);
+        if (U_FAILURE(error)) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+        struct ScalarBoundary { uint64_t byte; int32_t unit; };
+        std::vector<ScalarBoundary> boundaries;
+        uint64_t byte = 0;
+        int32_t unit = 0, targetUnit = -1;
+        // ICU already strictly decoded these bytes; this only records each
+        // scalar's byte/unit position, including a query inside its bytes.
+        while (byte < declaredLength) {
+            boundaries.push_back({byte, unit});
+            const auto lead = static_cast<unsigned char>(utf8[byte]);
+            const uint64_t size = lead < 0x80 ? 1 : (lead < 0xe0 ? 2 : (lead < 0xf0 ? 3 : 4));
+            if (byte <= offsetByte && offsetByte < byte + size) targetUnit = unit;
+            byte += size;
+            unit += size == 4 ? 2 : 1;
+        }
+        boundaries.push_back({byte, unit});
+        if (byte != declaredLength || unit != units || targetUnit < 0) {
+            return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+        }
+        error = U_ZERO_ERROR;
+        std::unique_ptr<UBreakIterator, decltype(api.close)> iterator(
+            api.open(UBRK_CHARACTER, "root", text.data(), units, &error), api.close);
+        if (!iterator || U_FAILURE(error)) return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+        const int32_t start = api.isBoundary(iterator.get(), targetUnit) ? targetUnit :
+                              api.preceding(iterator.get(), targetUnit);
+        const int32_t end = api.following(iterator.get(), targetUnit);
+        uint64_t startByte = UINT64_MAX, endByte = UINT64_MAX;
+        for (const auto& boundary : boundaries) {
+            if (boundary.unit == start) startByte = boundary.byte;
+            if (boundary.unit == end) endByte = boundary.byte;
+        }
+        if (startByte > offsetByte || endByte <= offsetByte || endByte > declaredLength) {
+            return CJGUI_INTERNAL_RENDERER_GRAPHEME_BOUNDARY_INVALID;
+        }
+        *outStartByte = startByte;
+        *outEndByte = endByte;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    } catch (...) {
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+    }
+}
+// OHOS_GRAPHEME_SERVICE_END
 
 // 关闭链第 5 步：投递唯一 ShutdownJob、等待渲染线程 teardown surface/GPU
 // 并退出、join 线程、复位启动身份。非渲染线程调用。
@@ -5366,6 +7099,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t session)
     s->inUse = false;
     s->token = 0;
     s->candidate.clear();
+    s->acceptedRunTable.clear();
+    s->buildingRunTable.clear();
     s->imageObservedSerial.clear();
     s->events.clear();
     s->gesture = Session::TouchGesture{};  // B：销毁即取消，旧相位不得延续
@@ -5391,6 +7126,13 @@ uint32_t cjgui_internal_renderer_occupied_session_count(void)
     return static_cast<uint32_t>(g_sessions.occupied);
 }
 
+// surface 尺寸是物理 px，布局/命中/滚动都在 vp：对外视口与窗框只报 vp。
+static int32_t physicalToLayout(int32_t physicalPixels, double density) {
+    if (physicalPixels <= 0) return 0;
+    if (!std::isfinite(density) || density <= 0.0) density = 1.0;
+    return static_cast<int32_t>(std::llround(static_cast<double>(physicalPixels) / density));
+}
+
 CjguiInternalRendererStatus cjgui_internal_renderer_composable_viewport(uint64_t session, CjguiInternalRendererViewport *outViewport)
 {
     if (!outViewport) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
@@ -5399,8 +7141,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composable_viewport(uint64_t
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     // 以 ingress 的实时租约为准；无 surface 时保留最后已知尺寸与版本。
     cjguiOhosRefreshSurfaceLocked(s);
-    outViewport->width = static_cast<uint32_t>(std::max(0, s->surfaceWidth));
-    outViewport->height = static_cast<uint32_t>(std::max(0, s->surfaceHeight));
+    outViewport->width = static_cast<uint32_t>(physicalToLayout(s->surfaceWidth, s->surfaceDensity));
+    outViewport->height = static_cast<uint32_t>(physicalToLayout(s->surfaceHeight, s->surfaceDensity));
     outViewport->resizeVersion = s->surfaceResizeVersion;
     outViewport->resourceCompletionVersion = s->imageCompletionVersion;
     if (outViewport->resizeVersion != s->loggedResizeVersion) {
@@ -5424,8 +7166,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_window_frame(uint64_t sessio
     cjguiOhosRefreshSurfaceLocked(s);
     *outX = 0;
     *outY = 0;
-    *outWidth = s->surfaceWidth;
-    *outHeight = s->surfaceHeight;
+    *outWidth = physicalToLayout(s->surfaceWidth, s->surfaceDensity);
+    *outHeight = physicalToLayout(s->surfaceHeight, s->surfaceDensity);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -5503,9 +7245,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_text(uint
 {
     (void)fontFamily;
     if (!text || !outMeasurement) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    std::lock_guard<std::mutex> g(g_sessions.lock);
-    Session *s = lookupSessionLocked(session);
-    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
     MeasureJob *job = new MeasureJob();
     job->text = text;
     job->fontSize = fontSize;
@@ -5520,6 +7263,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_text(uint
         RLOGW("measure_composable_text failed status=%{public}d", static_cast<int>(waited));
         return waited;
     }
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
     *outMeasurement = job->measurement;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -5530,9 +7277,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_multiline
 {
     (void)fontFamily;
     if (!text || !outHeight) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    std::lock_guard<std::mutex> g(g_sessions.lock);
-    Session *s = lookupSessionLocked(session);
-    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
     MeasureJob *job = new MeasureJob();
     job->text = text;
     job->fontSize = fontSize;
@@ -5543,6 +7291,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_multiline
     g_render.post(jobRef);
     CjguiInternalRendererStatus waited = job->waitFor();
     if (waited != CJGUI_INTERNAL_RENDERER_OK) return waited;
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
     *outHeight = job->measurement.height;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -5573,15 +7325,112 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composed_prefix_utf8_length(
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+// C：把一批 wire（UTF-8 字节域）runs 应用到给定文本上。准入 = 末点不越
+// 文本末尾；通过后换算 UTF-16（塌缩为空的 run 丢弃，与 macOS 同语义）。
+// 返回 false = 整批拒绝（越界），调用方保旧；outEmpty = 整批塌缩（清除）。
+static bool admitTextRunsAgainstValue(const std::vector<OhosTextStyleRun> &byteRuns,
+                                      const std::string &value,
+                                      std::vector<OhosTextStyleRun> &outConverted)
+{
+    outConverted.clear();
+    const size_t byteLen = value.size();
+    for (const OhosTextStyleRun &run : byteRuns) {
+        if (run.end > byteLen) return false;
+    }
+    for (OhosTextStyleRun run : byteRuns) {
+        const uint32_t s16 = utf8ByteOffsetToUtf16(value, run.start);
+        const uint32_t e16 = utf8ByteOffsetToUtf16(value, run.end);
+        if (e16 <= s16) continue;
+        run.start = s16;
+        run.end = e16;
+        outConverted.push_back(run);
+    }
+    return true;
+}
+
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_text_runs(uint64_t session, uint64_t nodeId,
                                                          const char *encoded)
 {
+    std::vector<OhosTextStyleRun> parsed;
+    if (!parseTextStyleRuns(encoded, parsed)) {
+        // 非法 wire/倒置或重叠范围/超预算：整批拒绝，保留节点旧样式。
+        RLOGW("text runs refused: invalid/overlapping/over-budget node=%{public}llu",
+              static_cast<unsigned long long>(nodeId));
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    (void)nodeId;
-    // 清空（encoded 为空）必须成功；非空样式 runs 阶段1不支持。
-    if (encoded && encoded[0] != '\0') return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    // S1（Astra）：setter 只属于当前 Building 候选。无打开的候选（尚未 configure
+    // 或候选已投递/关闭）时具名拒绝——"configure 之前预装给下一轮"的歧义从此
+    // 不存在，窗口顺序已改为 configure → install → stage。
+    if (!s->candidateOpen) {
+        RLOGW("text runs refused: no open candidate node=%{public}llu",
+              static_cast<unsigned long long>(nodeId));
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (parsed.empty()) {
+        // 空 = 清除：候选声明（building 表）删除 + 清候选对象；发布快照
+        // （acceptedRunTable 与 accepted 场景）只能随 present 成功晋升改变。
+        s->buildingRunTable.erase(nodeId);
+        for (SceneNode &n : s->candidate) {
+            if (n.pod.nodeId == nodeId) n.textStyleRuns.clear();
+        }
+        RLOGI("text runs cleared node=%{public}llu", static_cast<unsigned long long>(nodeId));
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    // 会话表始终存 wire 字节域批次（真理源）。准入按**本次候选的文本**进行：
+    // 候选已经 configure 并 stage 过该节点时，候选文本就是权威基准；候选里还
+    // 没有该节点（事务尚未开始，或该节点本事务尚未 stage）时先入表，由 stage
+    // 用其真实文本完成同一准入——绝不拿旧 accepted 文本去拒绝新候选的声明，
+    // 那正是“旧 A → 新 ABC 的合法 [2,3) 被先拒”的成因。
+    const SceneNode *candidateNode = nullptr;
+    for (const SceneNode &n : s->candidate) {
+        // 只认**本候选事务实际写入过**的槽位：configure 从 accepted 播种的槽位
+        // 仍带着上一代文本，拿它准入就是按旧正文判定（R2 反例第二条）。
+        if (n.pod.nodeId == nodeId && n.stagedThisCandidate) { candidateNode = &n; break; }
+    }
+    if (!candidateNode) {
+        // 身份未知（本事务尚未 stage 该节点）：先只记 runs 于 building 表，身份
+        // 由随后的 stage 首次写入时补齐并校验。deferred 的含义固定为"归属本候选、
+        // 文本尚待验证"，不再是"可能属于下一轮"。
+        Session::TextRunBinding entry;
+        entry.runs = std::move(parsed);
+        s->buildingRunTable[nodeId] = std::move(entry);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    std::vector<OhosTextStyleRun> converted;
+    if (!admitTextRunsAgainstValue(parsed, candidateNode->value, converted)) {
+        // 越界声明整批拒绝：候选对象保持旧样式，已接受场景一字不改。
+        RLOGW("text runs refused: range past candidate text endBytes node=%{public}llu",
+              static_cast<unsigned long long>(nodeId));
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (converted.empty()) {
+        // 整批塌缩成空：语义等价于清除，同样只作用于 building 表与候选。
+        s->buildingRunTable.erase(nodeId);
+        for (SceneNode &n : s->candidate) {
+            if (n.pod.nodeId == nodeId) n.textStyleRuns.clear();
+        }
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    {
+        Session::TextRunBinding entry;
+        entry.runs = std::move(parsed);
+        entry.resourceId = candidateNode->pod.resourceId;
+        entry.nodeKind = candidateNode->pod.nodeKind;
+        entry.bindingEpoch = candidateNode->pod.acceptedBindingEpoch;
+        entry.identityKnown = true;
+        s->buildingRunTable[nodeId] = std::move(entry);
+    }
+    // 只刷新候选对象：本事务后续 raster 与 present 晋升都以它为准；
+    // 已接受对象等 present 成功后再随候选整体生效。
+    for (SceneNode &n : s->candidate) {
+        if (n.pod.nodeId == nodeId) n.textStyleRuns = converted;
+    }
+    textStyleRunsInstalled += converted.size();
+    RLOGI("text runs applied node=%{public}llu runs=%{public}zu",
+          static_cast<unsigned long long>(nodeId), converted.size());
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -5589,42 +7438,513 @@ CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(uin
                                                          double x, double y, uint32_t *outByteOffset,
                                                          uint32_t *outAffinity)
 {
-    (void)session; (void)nodeId; (void)x; (void)y; (void)outByteOffset; (void)outAffinity;
-    return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;  // 阶段1不支持文本级命中
+    if (!outByteOffset || !outAffinity || !std::isfinite(x) || !std::isfinite(y)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outByteOffset = 0;
+    *outAffinity = 0;
+    auto job = std::make_shared<CaretHitTestJob>();
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        const Session *s = lookupSessionLocked(session);
+        if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        if (!s->editing || !s->editingContextLive || s->editorRetired || s->editingNodeId != nodeId)
+            return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+        const SceneNode *node = nullptr;
+        for (const SceneNode &n : s->accepted) {
+            if (n.pod.nodeId == nodeId && n.pod.resourceId == s->editingResourceId &&
+                n.pod.nodeKind == s->editingNodeKind) { node = &n; break; }
+        }
+        if (!node) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+        job->session = session;
+        job->contextId = s->editingContextId;
+        job->nodeId = nodeId;
+        job->resourceId = node->pod.resourceId;
+        job->bindingEpoch = node->pod.acceptedBindingEpoch;
+        job->projectionVersion = node->pod.projectionVersion;
+        job->nodeKind = node->pod.nodeKind;
+        job->fontSize = node->pod.fontSize;
+        job->fontWeight = node->pod.fontWeight;
+        job->nodeWidth = node->pod.width;
+        job->nodeHeight = node->pod.height;
+        job->nodeX = node->pod.x;
+        job->nodeY = node->pod.y;
+        job->tapX = x - node->pod.x;
+        job->tapY = y - node->pod.y;
+        job->text = composedBuffer(*s);
+    }
+    // This observation never requests a redraw or a new layout.
+    if (!g_render.postIfRunning(job)) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+    const auto status = job->waitFor();
+    if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        const Session *s = lookupSessionLocked(session);
+        if (!s || s->editingContextId != job->contextId || !s->editingContextLive ||
+            s->acceptedPaintTicketId != job->sourcePaintTicket || s->editingProjectionVersion != job->projectionVersion ||
+            composedBuffer(*s) != job->text) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+    }
+    *outByteOffset = static_cast<uint32_t>(utf16ToUtf8(job->text.substr(0, job->caretUtf16)).size());
+    *outAffinity = static_cast<uint32_t>(job->caretAffinity);
+    return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+// 冻结一次平台恢复请求。只在身份/版本/值/边界全部核对通过后调用；请求号单调递增，
+// 使迟到的旧回执按号被拒（ACK 只读冻结值，不再重读当前编辑状态）。
+//
+// 单调截止覆盖"排队→发送→平台安装→窗口裁决"：终结不依赖下一次重绘，也不依赖
+// 新的输入到达（pump 自带限时等待，到期即检查）。
+static constexpr int64_t kProxyRestoreDeadlineMs = 2500;
+
+static int64_t proxyRestoreNowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static void armProxyRestoreRequestLocked(Session &s, const SceneNode &accepted,
+    uint32_t selStart, uint32_t selEnd)
+{
+    s.proxyRestoreRequestSeq += 1;
+    Session::ProxyRestoreRequest &req = s.proxyRestore;
+    req = Session::ProxyRestoreRequest{};
+    req.requestId = s.proxyRestoreRequestSeq;
+    req.armed = true;
+    req.nodeId = accepted.pod.nodeId;
+    req.resourceId = accepted.pod.resourceId;
+    req.nodeKind = accepted.pod.nodeKind;
+    req.acceptedProjectionVersion = accepted.pod.projectionVersion;
+    req.acceptedBindingEpoch = accepted.pod.acceptedBindingEpoch;
+    req.contextId = s.editingContextId;
+    req.contextGeneration = s.editingContextGeneration;
+    req.fieldName = s.editingFieldName;
+    req.text = utf8ToUtf16(accepted.value);
+    req.selStart = selStart;
+    req.selEnd = selEnd;
+    req.deadlineMonoMs = proxyRestoreNowMs() + kProxyRestoreDeadlineMs;
+    // units 是 UTF-16 码元数，不是正文 UTF-8 字节数（Astra 复核：日志不得混用单位）。
+    RLOGI("proxy restore armed request=%{public}llu ctx=%{public}lld node=%{public}llu "
+          "v=%{public}llu sel=%{public}u:%{public}u units=%{public}zu deadline=%{public}lld",
+          static_cast<unsigned long long>(req.requestId), static_cast<long long>(req.contextId),
+          static_cast<unsigned long long>(req.nodeId),
+          static_cast<unsigned long long>(req.acceptedProjectionVersion), selStart, selEnd,
+          req.text.size(), static_cast<long long>(req.deadlineMonoMs));
+}
+
+// 在 accepted 场景里按编辑身份找目标节点（回滚值必须来自本地已接受事实）。
+static const SceneNode *acceptedEditingNodeLocked(const Session &s, uint64_t nodeId,
+    int64_t resourceId, uint32_t nodeKind)
+{
+    for (const SceneNode &n : s.accepted) {
+        if (n.pod.nodeId == nodeId && n.pod.resourceId == resourceId &&
+            n.pod.nodeKind == nodeKind && n.semanticId == s.editingFieldName &&
+            n.pod.isInteractive != 0 && n.pod.isReadOnly == 0) {
+            return &n;
+        }
+    }
+    return nullptr;
+}
+
+// 规范落点哨兵：调用方请求"accepted 正文的字素安全末位"。规范目标必须在**签发前**
+// 确定并由票据返回，ACK 时不得迁就平台实际给出的合法落点（Astra：目标 4:9 装成
+// 13:13 即使合法也应失败）。
+static constexpr uint32_t kProxyRestoreEndOfText = 0xFFFFFFFFu;
+
+static void fillProxyRestoreTicketLocked(const Session &s, uint64_t requestId,
+    CjguiInternalRendererProxyRestoreTicket *outTicket);
+
+// 一次逻辑恢复的唯一签发入口：验证 accepted 正文、场景版本与目标范围，然后一次性
+// 重置 native 编辑缓冲并只签发一张票据。任一校验不通过都零状态改动、零票据。
+//
+// 旧实现分两次调用（先回滚正文、再恢复选区），第一段成功已签发票据而窗口尚未登记、
+// 第二段失败时留下窗口不知道的孤儿请求。合并成一次之后不存在该交错。
+static CjguiInternalRendererStatus recoverTextProxyTicketLocked(Session &s, uint64_t nodeId, int64_t resourceId,
+    uint32_t nodeKind, uint64_t sceneVersion, const char *expectedValue,
+    uint32_t selectionStart, uint32_t selectionEnd, CjguiInternalRendererProxyRestoreTicket *outTicket)
+{
+    if (!expectedValue || !outTicket) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (!s.editing || s.editorRetired || !s.editingContextLive) {
+        RLOGW("proxy restore ticket rejected: no live context node=%{public}llu",
+              static_cast<unsigned long long>(nodeId));
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (s.editingNodeId != nodeId || s.editingResourceId != resourceId ||
+        s.editingNodeKind != nodeKind) {
+        RLOGW("proxy restore ticket rejected: identity mismatch node=%{public}llu native=%{public}llu",
+              static_cast<unsigned long long>(nodeId), static_cast<unsigned long long>(s.editingNodeId));
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (sceneVersion != s.editingProjectionVersion) {
+        RLOGW("proxy restore ticket rejected: scene version mismatch asked=%{public}llu native=%{public}llu",
+              static_cast<unsigned long long>(sceneVersion),
+              static_cast<unsigned long long>(s.editingProjectionVersion));
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    const SceneNode *accepted = acceptedEditingNodeLocked(s, nodeId, resourceId, nodeKind);
+    if (!accepted) {
+        RLOGW("proxy restore ticket rejected: node missing from accepted node=%{public}llu accepted=%{public}zu",
+              static_cast<unsigned long long>(nodeId), s.accepted.size());
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    // 调用方的值必须就是本地 accepted 事实；不等说明调用方描述的是另一份正文。
+    if (accepted->value != std::string(expectedValue)) {
+        RLOGW("proxy restore ticket rejected: accepted value mismatch accepted_units=%{public}zu asked_units=%{public}zu",
+              accepted->value.size(), std::strlen(expectedValue));
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    const std::u16string text = utf8ToUtf16(accepted->value);
+    const uint32_t size = static_cast<uint32_t>(text.size());
+    uint32_t start = selectionStart;
+    uint32_t end = selectionEnd;
+    if (start == kProxyRestoreEndOfText) {
+        start = clampToCodePointBoundary(text, size);
+    }
+    if (end == kProxyRestoreEndOfText) {
+        end = clampToCodePointBoundary(text, size);
+    }
+    if (end > size || start > end) {
+        RLOGW("proxy restore ticket rejected: range out of bounds range=%{public}u:%{public}u size=%{public}u",
+              start, end, size);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (clampToCodePointBoundary(text, start) != start ||
+        clampToCodePointBoundary(text, end) != end) {
+        RLOGW("proxy restore ticket rejected: non_scalar_boundary range=%{public}u:%{public}u", start, end);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    const Session::ProxyRestoreRequest &active = s.proxyRestore;
+    if ((active.armed || active.awaitingAck || active.platformInstalled) && active.requestId != 0 &&
+        active.nodeId == nodeId && active.resourceId == resourceId && active.nodeKind == nodeKind &&
+        active.acceptedProjectionVersion == sceneVersion && active.selStart == start &&
+        active.selEnd == end && active.text == text && proxyRestoreNowMs() < active.deadlineMonoMs) {
+        // 完全相同且仍有效的请求：返回原票据，不重复签发、不消耗预算。
+        fillProxyRestoreTicketLocked(s, active.requestId, outTicket);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    // 目标已改变或旧票据已失效：先给旧票据确定终态，禁止直接覆写活跃槽。
+    terminateProxyRestoreRequestLocked(s, "superseded_by_new_request");
+    // 全部核对通过，此刻起才允许改状态。
+    s.editingText = text;
+    s.previewActive = false;
+    s.previewText.clear();
+    s.markedActive = false;
+    s.markedStart = 0;
+    s.markedEnd = 0;
+    s.editingContextBaseVersion = sceneVersion;
+    s.selStartUtf16 = start;
+    s.selEndUtf16 = end;
+    s.caretUtf16 = end;
+    armProxyRestoreRequestLocked(s, *accepted, start, end);
+    fillProxyRestoreTicketLocked(s, s.proxyRestore.requestId, outTicket);
+    // 可见正文以编辑缓冲为准：回滚后必须重绘，否则画面仍是被拒草稿。
+    g_render.post(std::make_shared<RedrawJob>());
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// 票据填充：窗口只信它**调用前**冻结的会话/镜像身份 + 这里返回的 native 身份。
+// 因此 deadline、规范落点与代次必须由 native 一次给出，不能在签发后再读当前状态。
+static void fillProxyRestoreTicketLocked(const Session &s, uint64_t requestId,
+    CjguiInternalRendererProxyRestoreTicket *outTicket)
+{
+    std::memset(outTicket, 0, sizeof(*outTicket));
+    outTicket->requestId = requestId;
+    outTicket->deadlineMonoMs = proxyRestoreNowMs();
+    if (requestId == 0) {
+        outTicket->state = CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_NONE;
+        return;
+    }
+    const Session::ProxyRestoreRequest &req = s.proxyRestore;
+    // 已安装待采纳的票仍在活动槽里，必须查得到（窗口的事件可能丢失，它要按票对账）。
+    if (req.requestId == requestId && (req.armed || req.awaitingAck || req.platformInstalled)) {
+        outTicket->contextId = req.contextId;
+        outTicket->contextGeneration = req.contextGeneration;
+        outTicket->acceptedBindingEpoch = req.acceptedBindingEpoch;
+        outTicket->acceptedProjectionVersion = req.acceptedProjectionVersion;
+        outTicket->deadlineMonoMs = req.deadlineMonoMs;
+        outTicket->canonicalStart = req.selStart;
+        outTicket->canonicalEnd = req.selEnd;
+        outTicket->state = req.armed ? CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_QUEUED
+                                     : CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_SENT;
+        if (req.platformInstalled) {
+            outTicket->state = CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_INSTALLED;
+            outTicket->canonicalStart = req.observedStart;
+            outTicket->canonicalEnd = req.observedEnd;
+        }
+        return;
+    }
+    for (const Session::ProxyRestoreTerminal &t : s.proxyRestoreTerminals) {
+        if (t.requestId != requestId) {
+            continue;
+        }
+        outTicket->state = t.code;
+        outTicket->canonicalStart = t.observedStart;
+        outTicket->canonicalEnd = t.observedEnd;
+        return;
+    }
+    outTicket->requestId = 0;
+    outTicket->state = CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_NONE;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_recover_text_proxy_ticket(uint64_t session, uint64_t nodeId,
+    int64_t resourceId, uint32_t nodeKind, uint64_t sceneVersion, const char *acceptedValue,
+    uint32_t selectionStart, uint32_t selectionEnd, CjguiInternalRendererProxyRestoreTicket *outTicket)
+{
+    if (!outTicket) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    std::memset(outTicket, 0, sizeof(*outTicket));
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    return recoverTextProxyTicketLocked(*s, nodeId, resourceId, nodeKind, sceneVersion, acceptedValue,
+        selectionStart, selectionEnd, outTicket);
+}
+
+// 按票据号查询终态：窗口自己的截止检查用它，事件丢失时也能终结待办。
+// 未知/已滚出的请求返回 NONE（窗口据此清账并按有界重试重新签发）。
+CjguiInternalRendererStatus cjgui_internal_renderer_query_proxy_restore_ticket(uint64_t session, uint64_t requestId,
+    CjguiInternalRendererProxyRestoreTicket *outTicket)
+{
+    if (!outTicket) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    std::memset(outTicket, 0, sizeof(*outTicket));
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    fillProxyRestoreTicketLocked(*s, requestId, outTicket);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// 窗口采纳的唯一消费点（唯一胜者）：只有"平台已安装且尚未被消费"的票据能翻成
+// ADOPTED；采纳失败或已终结的票据一律返回失败，窗口保留恢复意图重新签发。
+// 消费不执行任何平台操作，只做短小状态比较与转换（锁序 owner→native）。
+CjguiInternalRendererStatus cjgui_internal_renderer_consume_proxy_restore_ticket(uint64_t session,
+    uint64_t requestId, uint32_t adoptedStart, uint32_t adoptedEnd, int32_t *outConsumed)
+{
+    if (!outConsumed) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outConsumed = 0;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    Session::ProxyRestoreRequest &req = s->proxyRestore;
+    if (requestId == 0 || req.requestId != requestId || !req.platformInstalled ||
+        req.observedStart != adoptedStart || req.observedEnd != adoptedEnd) {
+        RLOGW("proxy restore consume refused request=%{public}llu active=%{public}llu installed=%{public}d",
+              static_cast<unsigned long long>(requestId),
+              static_cast<unsigned long long>(req.requestId), req.platformInstalled ? 1 : 0);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    Session::ProxyRestoreTerminal terminal;
+    terminal.requestId = requestId;
+    terminal.code = CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ADOPTED;
+    terminal.reason = "window_adopted";
+    terminal.platformInstalled = true;
+    terminal.observedStart = adoptedStart;
+    terminal.observedEnd = adoptedEnd;
+    s->proxyRestoreTerminals.push_back(terminal);
+    if (s->proxyRestoreTerminals.size() > 8) {
+        s->proxyRestoreTerminals.pop_front();
+    }
+    *outConsumed = 1;
+    // 票据已结清：清空活动槽，使后续输入不再被这张旧恢复去重跳过。
+    s->proxyRestore = Session::ProxyRestoreRequest{};
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// 代理回滚（owner 拒绝人的范围编辑后）。共享 ABI 的鸿蒙实现：正文取本地 accepted
+// 事实、落点取字素安全末位，签发走唯一入口。本调用只冻结并排队，不代表平台已安装。
 CjguiInternalRendererStatus cjgui_internal_renderer_recover_active_text_proxy(uint64_t session, uint64_t nodeId,
                                                           int64_t resourceId, uint32_t nodeKind,
                                                           const char *acceptedValue,
                                                           uint32_t *outSelectionStart,
                                                           uint32_t *outSelectionEnd)
 {
-    (void)session; (void)nodeId; (void)resourceId; (void)nodeKind; (void)acceptedValue;
-    (void)outSelectionStart; (void)outSelectionEnd;
-    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;  // 无 IME/文本代理
+    if (!acceptedValue || !outSelectionStart || !outSelectionEnd) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CjguiInternalRendererProxyRestoreTicket ticket{};
+    const CjguiInternalRendererStatus st = recoverTextProxyTicketLocked(*s, nodeId, resourceId, nodeKind,
+        s->editingProjectionVersion, acceptedValue, kProxyRestoreEndOfText, kProxyRestoreEndOfText, &ticket);
+    *outSelectionStart = ticket.canonicalStart;
+    *outSelectionEnd = ticket.canonicalEnd;
+    return st;
 }
 
+// 光标声明：macOS 用它把插入点矩形交给 AppKit 定位候选窗。鸿蒙的候选取向由平台
+// 输入法随聚焦的 TextInput 自行处理，无需框架再声明；保持 ABI 槽位与仓颉声明
+// 六参一致（session,nodeId,x,y,width,height）并显式失败，不伪造已声明。
 CjguiInternalRendererStatus cjgui_internal_renderer_declare_input_caret(uint64_t session, uint64_t nodeId, double x,
-                                                    double y, double lineHeight)
+                                                    double y, double width, double height)
 {
-    (void)session; (void)nodeId; (void)x; (void)y; (void)lineHeight;
-    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;  // 无 IME 阶段1
+    (void)session; (void)nodeId; (void)x; (void)y; (void)width; (void)height;
+    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
 }
 
+// 选区恢复：坐标属于它们被测量时的那份正文。版本与值必须同时命中活动编辑绑定，
+// 两点必须落在标量边界上；任何不符都零改动拒绝，绝不把旧坐标贴到新文本或
+// 把非标量落点交给系统选择手柄。签发与状态改动全部走唯一入口。
+//
+// 与回滚同一事务：本调用只冻结并排队，窗口等 kind-55 回执带实际安装区间后才确认
+// （校准锁与 `confirmNativeSelectionRestored` 都不在这里解锁）。
 CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection(uint64_t session, uint64_t nodeId,
                                                              int64_t resourceId, uint32_t nodeKind,
                                                              uint64_t sceneVersion, const char *expectedValue,
                                                              uint32_t selectionStart, uint32_t selectionEnd,
                                                              uint32_t *outSelectionStart, uint32_t *outSelectionEnd)
 {
-    (void)session; (void)nodeId; (void)resourceId; (void)nodeKind; (void)sceneVersion;
-    (void)expectedValue; (void)selectionStart; (void)selectionEnd; (void)outSelectionStart; (void)outSelectionEnd;
-    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;  // 无选区恢复
+    if (!expectedValue || !outSelectionStart || !outSelectionEnd) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CjguiInternalRendererProxyRestoreTicket ticket{};
+    const CjguiInternalRendererStatus st = recoverTextProxyTicketLocked(*s, nodeId, resourceId, nodeKind,
+        sceneVersion, expectedValue, selectionStart, selectionEnd, &ticket);
+    *outSelectionStart = ticket.canonicalStart;
+    *outSelectionEnd = ticket.canonicalEnd;
+    return st;
+}
+
+// 人类锚一次性取走（H1-R.a）：窗口消费 kind-33 时用它区分"人在 native 表面上亲手
+// 放置的落点"与"平台代理的安装回声"。只有冻结身份与本次事件的身份、值**全部**命中
+// 一枚未消费的锚才返回 1，并当场置 consumed（同一锚不得二次采纳）；任何不符都零改动
+// 返回 0——尤其是值不符：把 caret 甩到正文末尾的瞬时回声属于安装观测，不是人的意图。
+// 返回 -1 表示参数/会话无效。
+int32_t cjgui_internal_renderer_take_human_selection_anchor(uint64_t session, uint64_t nodeId,
+                                                            int64_t resourceId, uint32_t nodeKind,
+                                                            uint64_t projectionVersion,
+                                                            uint64_t acceptedBindingEpoch,
+                                                            uint32_t selectionStart,
+                                                            uint32_t selectionEnd,
+                                                            uint64_t *outAnchorSeq)
+{
+    if (!outAnchorSeq) return -1;
+    *outAnchorSeq = 0;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return -1;
+    const Session::HumanSelectionAnchor anchor = s->humanAnchor;
+    if (anchor.seq == 0 || anchor.consumed) return 0;
+    if (acceptedBindingEpoch == 0 || anchor.nodeId != nodeId || anchor.resourceId != resourceId ||
+        anchor.nodeKind != nodeKind || anchor.projectionVersion != projectionVersion ||
+        anchor.acceptedBindingEpoch != acceptedBindingEpoch) {
+        RLOGI("human anchor mismatch: identity seq=%{public}llu anchorNode=%{public}llu eventNode=%{public}llu",
+              static_cast<unsigned long long>(anchor.seq),
+              static_cast<unsigned long long>(anchor.nodeId),
+              static_cast<unsigned long long>(nodeId));
+        return 0;
+    }
+    if (anchor.start16 != selectionStart || anchor.end16 != selectionEnd) {
+        RLOGI("human anchor mismatch: value seq=%{public}llu anchor=%{public}u:%{public}u "
+              "event=%{public}u:%{public}u",
+              static_cast<unsigned long long>(anchor.seq), anchor.start16, anchor.end16,
+              selectionStart, selectionEnd);
+        return 0;
+    }
+    s->humanAnchor.consumed = true;
+    *outAnchorSeq = anchor.seq;
+    RLOGI("human anchor taken seq=%{public}llu node=%{public}llu sel=%{public}u:%{public}u",
+          static_cast<unsigned long long>(anchor.seq), static_cast<unsigned long long>(nodeId),
+          selectionStart, selectionEnd);
+    return 1;
+}
+
+// 日志用值渲染：只转义控制字符（0x00–0x1F、0x7F），可打印 UTF-8 原样保留。
+// 多行正文因此落在**一条** hilog 记录里：原来的裸值输出会把 "\n" 变成记录边界，
+// 读回端只能看到被日志头切开的两段（实测：accepted 正文的值被误读成旧草稿）。
+// 单行值不受影响，既有读回脚本的 `value=<文本>` 形状保持不变。
+static std::string cjguiOhosLogValue(const std::string &value)
+{
+    std::string out;
+    out.reserve(value.size() + 8);
+    for (unsigned char c : value) {
+        if (c == '\n') {
+            out += "\\n";
+        } else if (c == '\r') {
+            out += "\\r";
+        } else if (c == '\t') {
+            out += "\\t";
+        } else if (c < 0x20 || c == 0x7F) {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "\\x%02X", static_cast<unsigned>(c));
+            out += buf;
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out;
+}
+
+// accepted 帧诊断：几何行与 label/value 行**成对**输出。
+// 手写树几何没有任何公共查询面（instances() 只暴露 agent 生成投影），这两行因此
+// 是探针判定「导航前编辑器被裁掉 / IME 聚焦后完整可见」的唯一权威来源，属正常
+// 产物的一等诊断，不是测试闸门专属。两条 settle 路径（同步成功与票据结算）必须
+// 发同一对：只发几何不发 label，延迟提交的帧就无法按语义标签定位节点。
+// 两行按 nodeId 配对，与批次内先后无关；坐标为 vp（见 N2-V 密度换算）。
+static void cjguiOhosLogAcceptedFrame(const std::vector<SceneNode> &accepted)
+{
+    for (const SceneNode &n : accepted) {
+        RLOGI("node-rect id=%{public}lld x=%{public}lld y=%{public}lld w=%{public}lld h=%{public}lld "
+              "clip=(%{public}lld,%{public}lld,%{public}lld,%{public}lld)",
+              static_cast<long long>(n.pod.nodeId),
+              static_cast<long long>(n.pod.x), static_cast<long long>(n.pod.y),
+              static_cast<long long>(n.pod.width), static_cast<long long>(n.pod.height),
+              static_cast<long long>(n.pod.clipX), static_cast<long long>(n.pod.clipY),
+              static_cast<long long>(n.pod.clipWidth), static_cast<long long>(n.pod.clipHeight));
+    }
+    for (const SceneNode &n : accepted) {
+        // semantic 排在 value 之前：正文可以很长而 hilog 单条记录有上限，截断只
+        // 能丢掉值尾，不能丢掉定位节点用的身份。label 是可见文字（按钮=标题、
+        // 编辑器=占位文字），两个节点可以同名，因此不能作为几何解析键。
+        RLOGI("accepted node=%{public}lld semantic=%{public}s kind=%{public}u label=%{public}s "
+              "value=%{public}s v=%{public}llu",
+              static_cast<long long>(n.pod.nodeId), n.semanticId.c_str(), n.pod.nodeKind,
+              n.label.c_str(), cjguiOhosLogValue(n.value).c_str(),
+              static_cast<unsigned long long>(n.pod.projectionVersion));
+    }
 }
 
 // ---------------------------------------------------------------------------
 // ABI：场景事务（configure → set → present）
 // ---------------------------------------------------------------------------
+
+
+// S1（Astra）：present 前的候选终验与快照冻结（g_sessions.lock 内调用）。
+// 1) 对"有 run 声明变化但本候选未重新 stage"的保留节点，按其最终候选文本完成
+//    deferred 准入——`configure → setter(newStyle) → present`（不 stage）也必须
+//    应用声明；准入失败返回 false（候选 Failed，present 拒绝）。
+// 2) 裁剪声明集合：只保留最终候选场景中存在且身份匹配的声明（删除节点/未入
+//    场的声明不得潜伏到未来候选）。
+// 3) 返回冻结后的 building 表副本（提交票据持有；延迟成功结算晋升这份冻结，
+//    不回读提交后可能已被下一候选改写的 working 表）。
+static bool freezeCandidateRunTableLocked(Session *s, std::map<uint64_t, Session::TextRunBinding> &outFrozen)
+{
+    std::map<uint64_t, Session::TextRunBinding> frozen;
+    for (const SceneNode &n : s->candidate) {
+        auto it = s->buildingRunTable.find(n.pod.nodeId);
+        if (it == s->buildingRunTable.end()) continue;
+        if (it->second.runs.empty()) continue;  // 空声明不占快照（无声明=无样式）
+        // 身份匹配：声明绑定的身份必须与最终场景节点一致（换绑/槽位重排淘汰）。
+        if (it->second.identityKnown &&
+            (it->second.resourceId != n.pod.resourceId ||
+             it->second.nodeKind != n.pod.nodeKind)) {
+            continue;
+        }
+        if (!n.stagedThisCandidate) {
+            // 保留节点：按其最终候选文本（=播种自 accepted 的当前值）完成准入。
+            std::vector<OhosTextStyleRun> converted;
+            if (!admitTextRunsAgainstValue(it->second.runs, n.value, converted)) {
+                RLOGW("text runs refused at present: retained node=%{public}llu",
+                      static_cast<unsigned long long>(n.pod.nodeId));
+                return false;
+            }
+        }
+        frozen[n.pod.nodeId] = it->second;
+    }
+    outFrozen = std::move(frozen);
+    return true;
+}
 
 CjguiInternalRendererStatus cjgui_internal_renderer_configure_composable_scene(uint64_t session, uint64_t projectionVersion,
                                                            uint32_t nodeCount)
@@ -5633,7 +7953,18 @@ CjguiInternalRendererStatus cjgui_internal_renderer_configure_composable_scene(u
         std::lock_guard<std::mutex> g(g_sessions.lock);
         Session *s = lookupSessionLocked(session);
         if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        // S1（Astra）：在途票据保护——已投递未结算、或已结算未 ACK 的票仍在时，
+        // configure 具名拒绝并保留原票。快照事务里节点与声明表一起属于那张票，
+        // 不得在结算前开新候选。
+        int slot = sessionSlotLocked(session);
+        if (slot >= 0 && g_pending[slot].valid) {
+            RLOGW("configure refused: pending ticket=%{public}llu settled=%{public}d",
+                  static_cast<unsigned long long>(g_pending[slot].ticketId),
+                  g_pending[slot].settled ? 1 : 0);
+            return static_cast<CjguiInternalRendererStatus>(CJGUI_INTERNAL_RENDERER_PENDING);
+        }
         s->candidateOpen = true;
+        s->candidateFailed = false;
         s->candidateProjectionVersion = projectionVersion;
         // 增量事务语义：候选从"已接受场景"播种（保留未重新 stage 的节点内容/
         // 身份/文字），随后核心只覆盖变化的槽位；present 成功才整体晋升。
@@ -5643,7 +7974,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_configure_composable_scene(u
         for (size_t i = 0; i < nodeCount && i < s->accepted.size(); ++i) {
             s->candidate[i] = s->accepted[i];
             s->candidate[i].pod.projectionVersion = projectionVersion;
+            // 播种只是复制上一代状态；run 准入不能把它当本候选文本（R2）。
+            s->candidate[i].stagedThisCandidate = false;
         }
+        // S1（Astra）：声明表同样从**发布快照**播种。上一个未提交候选的声明
+        // （含 clear）随之丢弃——候选抛弃不泄漏到本候选（RED-A/B 的语义）。
+        s->buildingRunTable = s->acceptedRunTable;
     }
     cjguiOhosPruneReleasedImages();  // a replaced rejected candidate may have been the last owner
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -5677,10 +8013,74 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_node(ui
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
     SceneNode &dst = s->candidate[nodeIndex];
+    // S1（Astra）：stage 先准备、后写入——用新节点身份和新文本解析 building 表
+    // 的有效声明，全部成功后一次替换节点与绑定元数据。准入失败把候选标记
+    // Failed（present 拒绝），不"只写警告然后照常接受"。
+    const std::string nextValue = value ? value : "";
+    std::vector<OhosTextStyleRun> stagedRuns;
+    bool hasStagedRuns = false;
+    {
+        auto it = s->buildingRunTable.find(node->nodeId);
+        if (it != s->buildingRunTable.end() && !it->second.runs.empty()) {
+            // R2 判别 4：**同 id 换绑**不得沿用旧声明。表按 nodeId 存放，而同一
+            // session 内该 id 可能被删除后复用为另一个对象——只按 id 查表会把旧
+            // run 套到新文本上（旧端点可能越界或指向错误位置）。这里把声明绑定到
+            // **首次 stage 时的身份三元组**：身份不符即视为"本对象从未声明过"，
+            // 丢弃旧声明，绝不静默沿用。
+            const bool identityMismatch = it->second.identityKnown &&
+                (it->second.resourceId != node->resourceId ||
+                 it->second.nodeKind != node->nodeKind ||
+                 (node->acceptedBindingEpoch != 0 &&
+                  it->second.bindingEpoch != node->acceptedBindingEpoch));
+            if (identityMismatch) {
+                RLOGW("text runs dropped: node id rebound node=%{public}llu "
+                      "was=%{public}lld/%{public}u now=%{public}lld/%{public}u",
+                      static_cast<unsigned long long>(node->nodeId),
+                      static_cast<long long>(it->second.resourceId), it->second.nodeKind,
+                      static_cast<long long>(node->resourceId), node->nodeKind);
+                s->buildingRunTable.erase(it);
+                stagedRuns.clear();
+                hasStagedRuns = true;
+            } else {
+                it->second.resourceId = node->resourceId;
+                it->second.nodeKind = node->nodeKind;
+                it->second.bindingEpoch = node->acceptedBindingEpoch;
+                it->second.identityKnown = true;
+                std::vector<OhosTextStyleRun> converted;
+                if (!admitTextRunsAgainstValue(it->second.runs, nextValue, converted)) {
+                    RLOGW("text runs refused at stage: range past candidate text endBytes node=%{public}llu",
+                          static_cast<unsigned long long>(node->nodeId));
+                    // S1（Astra）：run 准入失败终止本次窗口尝试——候选标 Failed，
+                    // present 拒绝；节点、building 表项与发布快照均保持失败前内容。
+                    s->candidateFailed = true;
+                    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                }
+                stagedRuns = std::move(converted);
+                hasStagedRuns = true;
+            }
+        } else {
+            // S1（Astra）：没有有效声明时**明确写入空 runs**——"查表无项就不碰
+            // 槽位"会让 configure 播种进候选的上一代样式残留进本候选画面
+            // （RED-B 的直接成因）。声明表是唯一真理源：无声明 = 无样式。
+            stagedRuns.clear();
+            hasStagedRuns = true;
+        }
+    }
     dst.pod = *node;
     dst.label = label ? label : "";
-    dst.value = value ? value : "";
+    dst.value = nextValue;
     dst.semanticId = "";
+    // 本槽位已被本候选事务实际写入：此后 candidate.value 才是 run 准入的基准。
+    dst.stagedThisCandidate = true;
+    if (hasStagedRuns) {
+        // 塌缩成空 = 清除（与 setter 同一语义）；否则安装本候选的 run 表。
+        if (stagedRuns.empty()) {
+            dst.textStyleRuns.clear();
+        } else {
+            dst.textStyleRuns = stagedRuns;
+            textStyleRunsInstalled += stagedRuns.size();
+        }
+    }
     replacedImage = static_cast<bool>(dst.image);
     dst.image = std::move(image);
     g.unlock();
@@ -5709,22 +8109,52 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic
 static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
 {
     if (!s->editing) return;
+    // R1补轮（2026-10-02 指导复核）：本函数只在**当前来源**的提交上运行——
+    // 旧来源候选已在 settlePendingTicketLocked 的不可逆晋升前被整票拒绝
+    //（pendingSettlementSourceStaleLocked），票号大小不构成来源关系证明，
+    // 也不存在任何「先发布旧树再跳过退役判定」的宽限。因此到达这里的每一棵
+    // accepted 树都是绑定建立后由其来源提交的：缺席/失配/只读化即真实撤销，
+    // 首次发布立即退役（Astra 协议 e/case-b），删除后旧输入由 takeEditing
+    // ContextLocked 的活上下文守卫拒绝。
+    // 历史：曾以 acceptedPaintTicketId < editingBornTicketId 容忍"绑定前结算"，
+    // 该比较既非来源关系证明，又先交换了 accepted 树（旧树删除节点的画面已
+    // 发布）才决定跳过 sync——正是 Astra 否定的反模式，已随结算前拒绝移除。
     bool found = false;
     for (const SceneNode &n : s->accepted) {
         if (n.pod.nodeId != s->editingNodeId || n.pod.resourceId != s->editingResourceId) continue;
         found = true;
         if (n.pod.nodeKind != s->editingNodeKind ||
+            n.pod.acceptedBindingEpoch != s->editingAcceptedBindingEpoch ||
             n.semanticId != s->editingFieldName ||
             n.pod.isReadOnly != 0 || n.pod.isInteractive == 0) {
-            s->pendingImeDetach = true;  // 换绑/禁用：旧上下文失效
-            s->pendingSettleOnDetach = false;
+            // S2（Astra 2026-10-02，consultations/s2-identity-handoff-astra）：
+            // 生效绑定在**首张真实撤销提交**立即失效。到达这里的提交版本必
+            // >= 绑定基线（更早的票据结算在函数顶部按版本容忍），失配即真
+            // 实撤销/换绑，不再数帧。绑定随其提交成功才激活（platform focus
+            // 只跟随已发布树）+ acceptedBindingEpoch 全量身份比较收 ABA。
+            RLOGW("editing sync kills context node=%{public}llu "
+                  "kind=%{public}u/%{public}u epoch=%{public}llu/%{public}llu "
+                  "semantic=%{public}s/%{public}s ro=%{public}u live=%{public}u",
+                  static_cast<unsigned long long>(n.pod.nodeId),
+                  s->editingNodeKind, n.pod.nodeKind,
+                  static_cast<unsigned long long>(s->editingAcceptedBindingEpoch),
+                  static_cast<unsigned long long>(n.pod.acceptedBindingEpoch),
+                  s->editingFieldName.c_str(),
+                  n.semanticId.c_str(), n.pod.isReadOnly, n.pod.isInteractive);
+            // S2（r18 实测）：kill 排队的 end 通知必须携带**将死上下文**的身份。
+            // 不捕获时投递端回退读"当前"上下文——rebind 已把编号换成新的，
+            // end 会误杀刚挂载的新代理（"end 贴着 mount"，旧两帧宽限靠时序
+            // 侥幸掩盖了这一误寄）。R1：统一走待发队列，身份在冻结点入队。
+            pushPendingEndLocked(*s, s->editingContextId, s->editingFieldName, false);
             s->editing = false;          // 节点不可编辑：连同绘制一起结束
             s->editorRetired = true;
             s->editingContextLive = false;
+            s->textMenuIntent = 0;
             s->previewActive = false;
             s->previewText.clear();
             s->markedActive = false;
             s->reconcileNotifyPending = false;
+            cancelProxyRestoreRequest(*s, "rebound_kind_or_field");
             break;
         }
         std::u16string ownerValue = utf8ToUtf16(n.value);
@@ -5738,6 +8168,17 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             s->editingProjectionVersion = n.pod.projectionVersion;
             break;
         }
+        // H1-C：本地编辑被 owner 接受后，accepted 投影带回的就是屏幕上这段文本
+        // （ownerValue == 编辑缓冲）。这是同一段本地连续的准入版本推进，不是外部
+        // 换版：只推进版本并保留平台光标/组合态。否则每敲一个字都要重建编辑
+        // 上下文并让页面重挂系统输入代理，光标与 preedit 全部丢失。
+        if (s->editingContextLive && !s->previewActive && !editorOwnsTextSession(*s) &&
+            n.pod.projectionVersion != s->editingContextBaseVersion &&
+            ownerValue == s->editingText) {
+            s->editingContextBaseVersion = n.pod.projectionVersion;
+            s->editingProjectionVersion = n.pod.projectionVersion;
+            break;
+        }
         if (s->editingContextLive &&
             n.pod.projectionVersion != s->editingContextBaseVersion) {
             // projectionVersion 与 editingContextBaseVersion 均取本节点入场时
@@ -5745,7 +8186,13 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             // 版本使旧整值草稿失效，不以字符串相等推断事务仍有效。
             int64_t oldContext = s->editingContextId;
             if (!s->reconcileNotifyPending) s->reconcileOldContextId = oldContext;
+            // 外部换版：新上下文编号即新身份，旧恢复请求（连同待发正文/选区）作废，
+            // 否则旧恢复串会带着旧上下文号落到新上下文上。
+            cancelProxyRestoreRequest(*s, "external_version");
+            s->textMenuIntent = 0;
             s->editingContextId = g_nextEditingContextId.fetch_add(1);
+            s->caretBlinkResetPending = true;
+            s->caretAffinity = 0;
             s->editingContextBaseVersion = n.pod.projectionVersion;
             s->editingProjectionVersion = n.pod.projectionVersion;
             s->editingFieldName = n.semanticId;
@@ -5755,10 +8202,29 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             s->markedActive = false;
             s->markedStart = 0;
             s->markedEnd = 0;
-            s->pendingSettleOnDetach = false;
-            s->caretUtf16 = static_cast<uint32_t>(ownerValue.size());
-            s->selStartUtf16 = s->caretUtf16;
-            s->selEndUtf16 = s->caretUtf16;
+            // R3：上下文重建是**视图/会话**事件，不是"人的落点被丢弃"的理由。
+            // 原实现无条件把选区重置为正文末尾的折叠 caret，于是"中段非空选区
+            // → 双切换 → 切回"之后只剩末尾 caret，首笔系统输入变成插入而不是
+            // 替换（2026-10-01 实测：ctx=1 已是 [101,104)，重建后变 [104,104)）。
+            // 这里按新正文长度收敛原选区：两端 clamp 到合法标量边界，保持非空
+            // 区间；只有在新正文里确实无法表达时才退化为 caret。
+            const uint32_t newSize = static_cast<uint32_t>(ownerValue.size());
+            uint32_t keepStart = clampToCodePointBoundary(ownerValue,
+                std::min(s->selStartUtf16, s->selEndUtf16));
+            uint32_t keepEnd = clampToCodePointBoundary(ownerValue,
+                std::max(s->selStartUtf16, s->selEndUtf16));
+            if (keepStart > newSize) keepStart = newSize;
+            if (keepEnd > newSize) keepEnd = newSize;
+            if (keepEnd < keepStart) keepEnd = keepStart;
+            if (keepEnd > keepStart) {
+                s->selStartUtf16 = keepStart;
+                s->selEndUtf16 = keepEnd;
+                s->caretUtf16 = keepEnd;
+            } else {
+                s->caretUtf16 = newSize;
+                s->selStartUtf16 = s->caretUtf16;
+                s->selEndUtf16 = s->caretUtf16;
+            }
             s->editingTapPending = false;
             // 如果最初的 focus 还未送达，直接发送新 context 的 focus；
             // 否则发送 reconcile，供页面先卸旧 TextInput 再挂新实例。
@@ -5789,15 +8255,21 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
         break;
     }
     if (!found) {
-        s->pendingImeDetach = true;  // 节点被移除：结束编辑
-        s->pendingSettleOnDetach = false;
+        // S2：同上——出生票据之后的提交仍缺席即真实移除，立即收场；出生票据
+        // 之前的结算已在函数顶部按票据 lineage 容忍（旧模式结果不得杀新绑定）。
+        // R1：将死身份随通知冻结进待发队列。
+        RLOGW("editing sync kills context (node absent) node=%{public}llu",
+              static_cast<unsigned long long>(s->editingNodeId));
+        pushPendingEndLocked(*s, s->editingContextId, s->editingFieldName, false);
         s->editing = false;
         s->editorRetired = true;
         s->editingContextLive = false;
+        s->textMenuIntent = 0;
         s->previewActive = false;
         s->previewText.clear();
         s->markedActive = false;
         s->reconcileNotifyPending = false;
+        cancelProxyRestoreRequest(*s, "node_removed");
     }
 }
 
@@ -5809,6 +8281,18 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
 //
 // A1：终态写入后不再改变（重复调用直接返回同一 decision），记录保留到 ACK。
 // 这是“重复查询返回相同结果”“原候选只结算一次”的实现点。
+// R1补轮（Astra s2-identity-handoff 落地）：候选来源是否已过期。present 锁内
+// 冻结的来源上下文与结算时仍活着的上下文编号不同 = 该候选由旧来源生成（旧模式
+// 结果/旧树），对编辑节点的缺席/退化不是当前绑定的退役证据。必须在不可逆晋升
+// 前整票拒绝——而不是先发布它再在 sync 里按任何阈值/票号宽限跳过退役判定。
+// 同一锁内冻结与比较，上下文编号在每次完整身份变化时单调轮换（R1 完整绑定
+// 幂等），因此编号相等即同一绑定，无需再比节点字段。
+static bool pendingSettlementSourceStaleLocked(const Session &s, const PendingSettlement &p)
+{
+    return s.editingContextLive && p.sourceEditingLive &&
+        s.editingContextId != p.sourceEditingContextId;
+}
+
 static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageChanged)
 {
     PendingSettlement &p = g_pending[slot];
@@ -5826,6 +8310,24 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageCh
         g_lastSettlementVerdict.store(kSettlementStillCommitting);
         return CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING;
     }
+    if (phase == JobPhase::Done && pendingSettlementSourceStaleLocked(*s, p)) {
+        // 旧来源候选：不可逆晋升前整票拒绝。旧 accepted 保留（画面继续呈现
+        // 当前绑定可见的树），票据终态 REJECTED，owner 按失败结算后提交新候选。
+        RLOGW("pending settlement rejected stale_source ticket=%{public}llu "
+              "sourceCtx=%{public}lld liveCtx=%{public}lld",
+              static_cast<unsigned long long>(p.ticketId),
+              static_cast<long long>(p.sourceEditingContextId),
+              static_cast<long long>(s->editingContextId));
+        p.job = nullptr;
+        p.nodes.clear();
+        p.terminalStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        p.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_REJECTED;
+        p.settled = true;
+        s->ticketRejectedCount += 1;
+        g_abortedSettlements.fetch_add(1);
+        g_lastSettlementVerdict.store(kSettlementAborted);
+        return p.decision;
+    }
     CjguiInternalRendererStatus status =
         p.job ? p.job->statusSnapshot() : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     if (phase == JobPhase::Done && status == CJGUI_INTERNAL_RENDERER_OK) {
@@ -5833,21 +8335,13 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageCh
         const uint64_t oldProjection = s->acceptedProjectionVersion;
         s->accepted.swap(p.nodes);
         s->acceptedProjectionVersion = p.projectionVersion;
+        s->acceptedPaintTicketId = p.ticketId;
+        // S1（Astra）：晋升**票据冻结的**声明快照——延迟成功绝不回读提交后
+        // 可能已被下一候选改写的 working 表。
+        s->acceptedRunTable = p.runTable;
         cjguiOhosLogAcceptedImageSwap(*s, p.nodes, oldProjection, p.ticketId, "commit");
         bool imageChanged = reconcileAcceptedImagesLocked(s);
-#ifdef CJGUI_OHOS_TEST_GATES
-        // D 夹具取证：输出 accepted 节点几何与裁剪框（探针据此计算触摸坐标、
-        // 核对裁剪边界）。
-        for (const SceneNode &n : s->accepted) {
-            RLOGI("node-rect id=%{public}lld x=%{public}lld y=%{public}lld w=%{public}lld h=%{public}lld "
-                  "clip=(%{public}lld,%{public}lld,%{public}lld,%{public}lld)",
-                  static_cast<long long>(n.pod.nodeId),
-                  static_cast<long long>(n.pod.x), static_cast<long long>(n.pod.y),
-                  static_cast<long long>(n.pod.width), static_cast<long long>(n.pod.height),
-                  static_cast<long long>(n.pod.clipX), static_cast<long long>(n.pod.clipY),
-                  static_cast<long long>(n.pod.clipWidth), static_cast<long long>(n.pod.clipHeight));
-        }
-#endif
+        cjguiOhosLogAcceptedFrame(s->accepted);
         s->candidateOpen = false;
         s->submittedFrameIndex += 1;
         p.frameIndex = s->submittedFrameIndex;
@@ -5893,6 +8387,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     }
     // 快照候选 → 投递渲染事务 → 等待明确结果 → 成功才晋升为已接受场景。
     std::vector<SceneNode> nodes;
+    // S1（Astra）：提交前冻结的候选声明快照（提交票据持有；成功晋升为发布态）。
+    std::map<uint64_t, Session::TextRunBinding> frozenRunTable;
     uint64_t projectionVersion = 0;
     // A1：本次提交的票据编号。0 = 未登记票据（同步成功，已当场接受）。
     uint64_t ticketId = 0;
@@ -5923,6 +8419,18 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
                                     &geometryRevision) != 1) {
             // 无 surface：可恢复失败，不接受候选、不推进帧号。
             return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
+        }
+        // S1（Astra）：Failed 候选禁止 present——run 准入失败必须终止本次窗口
+        // 尝试，防止发布「旧样式 + 新文本」的混合结果。
+        if (s->candidateFailed) {
+            RLOGW("present refused: candidate failed (run admission)");
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+        // S1（Astra）：present 前完成候选终验（保留节点的 deferred 准入）并
+        // 冻结声明快照——投递票据持有这份冻结，结算晋升它而非 working 表。
+        if (!freezeCandidateRunTableLocked(s, frozenRunTable)) {
+            s->candidateFailed = true;
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         }
         nodes = s->candidate;
         projectionVersion = s->candidateProjectionVersion;
@@ -5964,6 +8472,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             PendingSettlement &p = g_pending[slot];
             p.job = job;
             p.nodes = nodes;
+            p.runTable = frozenRunTable;
             p.projectionVersion = projectionVersion;
             p.ticketId = ticketId;
             p.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING;
@@ -5971,6 +8480,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             p.frameIndex = 0;
             p.settled = false;
             p.valid = true;
+            p.sourceEditingContextId = s->editingContextId;
+            p.sourceEditingLive = s->editingContextLive;
             s->unackedTicketId = ticketId;
         }
         if (outObservation) outObservation->ticketId = ticketId;
@@ -5996,27 +8507,13 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         const uint64_t oldProjection = s->acceptedProjectionVersion;
         s->accepted.swap(nodes);
         s->acceptedProjectionVersion = projectionVersion;
+        s->acceptedPaintTicketId = ticketId;
+        // S1（Astra）：声明快照与节点同一次提交晋升（发布快照 = 冻结表）。
+        s->acceptedRunTable = frozenRunTable;
         cjguiOhosLogAcceptedImageSwap(*s, nodes, oldProjection, ticketId, "commit");
         imageChanged = reconcileAcceptedImagesLocked(s);
-#ifdef CJGUI_OHOS_TEST_GATES
-        // D 夹具取证：同步 settle 路径的 accepted 几何（与 PENDING-settle 路径
-        // 同格式，resize 后几何采样两条路径都能取到）。
-        for (const SceneNode &n : s->accepted) {
-            RLOGI("node-rect id=%{public}lld x=%{public}lld y=%{public}lld w=%{public}lld h=%{public}lld "
-                  "clip=(%{public}lld,%{public}lld,%{public}lld,%{public}lld)",
-                  static_cast<long long>(n.pod.nodeId),
-                  static_cast<long long>(n.pod.x), static_cast<long long>(n.pod.y),
-                  static_cast<long long>(n.pod.width), static_cast<long long>(n.pod.height),
-                  static_cast<long long>(n.pod.clipX), static_cast<long long>(n.pod.clipY),
-                  static_cast<long long>(n.pod.clipWidth), static_cast<long long>(n.pod.clipHeight));
-        }
-#endif
-        // 诊断：本帧各节点的投影 label/value（分离打印，便于定位渲染空值）
-        for (const SceneNode &n : s->accepted) {
-            RLOGI("accepted node=%{public}lld kind=%{public}u label=%{public}s value=%{public}s v=%{public}llu",
-                  static_cast<long long>(n.pod.nodeId), n.pod.nodeKind, n.label.c_str(), n.value.c_str(),
-                  static_cast<unsigned long long>(n.pod.projectionVersion));
-        }
+        // 与 PENDING-settle 路径同一对诊断，resize 后几何采样两条路径都能取到。
+        cjguiOhosLogAcceptedFrame(s->accepted);
         s->candidateOpen = false;
         s->submittedFrameIndex += 1;
         // A1：同步成功与延迟成功（票据结算）共用同一条收尾，避免两条路径分叉。
@@ -6316,7 +8813,7 @@ static CjguiInternalRendererStatus focusComposableNodeLocked(Session &s, uint64_
     for (const SceneNode &node : s.accepted) {
         if (node.pod.nodeId != nodeId) continue;
         const uint32_t kind = node.pod.nodeKind;
-        const bool editable = kind == kKindTextInput || kind == kKindIntegerInput;
+        const bool editable = isEditableTextKind(kind);
         if (!editable || node.pod.isReadOnly != 0 || node.pod.isInteractive == 0) {
             return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
         }
@@ -6552,6 +9049,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     // 2) 队首事件出队；空则等待（condvar 上限 16ms，保证 owner 及时拿回控制）。
     static std::mutex pumpMutex;  // pump 串行化（单一仓颉循环调用方）
     std::lock_guard<std::mutex> pumpGuard(pumpMutex);
+    const uint64_t pumpRenderEpoch = g_render.currentRunEpoch();
 
     Session *s = nullptr;
     auto drainTouches = [&s]()
@@ -6576,6 +9074,9 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
                 sample.y = static_cast<float>(sample.y / s->surfaceDensity);
             }
             synthesizeEventsFromRawTouch(*s, sample);
+            // Resolve END's last coordinate before taking the next BEGIN from
+            // ingress. MOVE remains coalesced in one Session slot.
+            if (s->selectionDrag.terminal && s->editingTapPending) break;
         }
     };
 
@@ -6588,6 +9089,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         return CJGUI_INTERNAL_RENDERER_OK;
     }
     drainTouches();
+    if (s->selectionDrag.active && !selectionDragMatchesLocked(*s, s->selectionDrag)) {
+        // External text/context changes and surface retirement revoke a held
+        // visual gesture even when no further MOVE/END arrives.
+        s->selectionDrag.terminal = false;
+        cancelTouchGestureLocked(*s);
+    }
     if (s->events.empty()) {
         uint32_t clamped = std::min(timeoutMs, static_cast<uint32_t>(kPumpWaitMax.count()));
         if (clamped > 0) {
@@ -6602,36 +9109,73 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             drainTouches();
         }
     }
+    if (s->gesture.active && (s->gesture.phase == Session::TouchGesture::kGestureEditorHold ||
+        s->gesture.phase == Session::TouchGesture::kGesturePending)) {
+        const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        requestLongPressWordLocked(*s, nowMs);
+    }
     // 锁外处理：caret 命中（渲染线程测量）与 IME attach/detach（服务调用）。
     if (s->editingTapPending) {
         s->editingTapPending = false;
+        const uint32_t hitMode = s->editingHitMode;
+        const uint64_t hitOperation = s->selectionOperationGeneration;
         uint64_t nodeId = s->editingNodeId;
+        const int64_t hitContext = s->editingContextId;
+        const uint64_t hitContextGeneration = s->editingContextGeneration;
+        const int64_t hitResource = s->editingResourceId;
+        const uint64_t hitProjection = s->editingProjectionVersion;
+        const uint64_t hitSurfaceRevision = s->surfaceGeometryRevision;
         double tapX = s->editingTapX;
+        double tapY = s->editingTapY;
         std::u16string composed;
         double fontSize = 13.0;
         uint32_t fontWeight = 400;
         double nodeWidth = 0.0;
+        double nodeHeight = 0.0;
+        int64_t nodeX = 0, nodeY = 0;
+        uint64_t bindingEpoch = 0;
+        uint32_t nodeKind = 0;
         for (const SceneNode &n : s->accepted) {
-            if (n.pod.nodeId == nodeId) {
+            if (n.pod.nodeId == nodeId && n.pod.resourceId == hitResource &&
+                n.pod.nodeKind == s->editingNodeKind) {
                 composed = composedBuffer(*s);
                 fontSize = n.pod.fontSize;
                 fontWeight = n.pod.fontWeight;
                 nodeWidth = static_cast<double>(n.pod.width);
+                nodeHeight = static_cast<double>(n.pod.height);
+                nodeKind = n.pod.nodeKind;
+                nodeX = n.pod.x;
+                nodeY = n.pod.y;
+                bindingEpoch = n.pod.acceptedBindingEpoch;
                 break;
             }
         }
-        if (!composed.empty() && nodeWidth > 0.0) {
+        if (nodeWidth > 0.0) {
             g.unlock();
             CaretHitTestJob *job = new CaretHitTestJob();
             job->text = composed;
             job->fontSize = fontSize;
             job->fontWeight = fontWeight;
             job->nodeWidth = nodeWidth;
-            job->tapX = std::max(0.0, tapX - 7.0);  // 与绘制 inset 一致
+            job->nodeHeight = nodeHeight;
+            job->nodeKind = nodeKind;
+            job->session = session;
+            job->contextId = hitContext;
+            job->nodeId = nodeId;
+            job->resourceId = hitResource;
+            job->bindingEpoch = bindingEpoch;
+            job->projectionVersion = hitProjection;
+            job->nodeX = nodeX;
+            job->nodeY = nodeY;
+            job->mode = hitMode;
+            // 节点内相对坐标原样传入；文本原点由渲染线程按绘制同一套几何换算。
+            job->tapX = tapX;
+            job->tapY = tapY;
             JobRef jobRef(job);
-            g_render.post(jobRef);
+            const bool posted = g_render.postCaretHitAfterRedraw(jobRef, pumpRenderEpoch);
             uint32_t caret = 0;
-            CjguiInternalRendererStatus waited = job->waitFor();
+            CjguiInternalRendererStatus waited = posted ? job->waitFor() : CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
             bool caretOk = waited == CJGUI_INTERNAL_RENDERER_OK;
             if (caretOk) {
                 caret = job->caretUtf16;
@@ -6642,12 +9186,43 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
                 kCaretHitTestFailureWindow += 1;
             }
             g.lock();
+            // 命中输入与结果同条落日志：多行命中错行时，没有这条就只能靠屏幕猜
+            // 坐标单位与几何原点的组合（实测 tap→caret 错行就是这么定位的）。
+            RLOGI("caret hit applied tap=(%{public}.1f,%{public}.1f) node=(%{public}.1f,%{public}.1f) "
+                  "kind=%{public}u composed=%{public}zu caret=%{public}u ok=%{public}d",
+                  tapX, tapY, nodeWidth, nodeHeight, nodeKind, composed.size(),
+                  caret, static_cast<int>(caretOk));
             // 复核：等待期间编辑目标未被替换
-            if (caretOk && s->editing && s->editingNodeId == nodeId) {
-                s->caretUtf16 = std::min(caret, static_cast<uint32_t>(s->editingText.size()));
-                s->selStartUtf16 = s->caretUtf16;
-                s->selEndUtf16 = s->caretUtf16;
+            s = lookupSessionLocked(session);
+            if (caretOk && s && s->editing && s->editingContextLive && !s->editorRetired && s->editingNodeId == nodeId &&
+                s->selectionOperationGeneration == hitOperation && (hitMode == 0 || !s->previewActive) &&
+                s->editingResourceId == hitResource && s->editingNodeKind == nodeKind &&
+                s->editingContextId == hitContext && s->editingContextGeneration == hitContextGeneration &&
+                s->editingProjectionVersion == hitProjection && s->surfaceGeometryRevision == hitSurfaceRevision &&
+                bindingEpoch != 0 && s->acceptedPaintTicketId == job->sourcePaintTicket && composedBuffer(*s) == composed) {
+                bool sameGeometry = false;
+                for (const SceneNode &current : s->accepted) {
+                    if (current.pod.nodeId == nodeId && current.pod.resourceId == hitResource &&
+                        current.pod.nodeKind == nodeKind && current.pod.width == nodeWidth &&
+                        current.pod.x == nodeX && current.pod.y == nodeY &&
+                        current.pod.acceptedBindingEpoch == bindingEpoch &&
+                        current.pod.height == nodeHeight && current.pod.fontSize == fontSize &&
+                        current.pod.fontWeight == fontWeight) { sameGeometry = true; break; }
+                }
+                if (!sameGeometry) {
+                    RLOGW("caret hit discarded after geometry change ctx=%{public}lld", static_cast<long long>(hitContext));
+                } else {
+                applySelectionHitLocked(*s, hitOperation, hitMode, caret, job->caretAffinity,
+                    job->wordStart, job->wordEnd);
+                }
             }
+            if (s && hitMode != 0 && s->selectionOperationGeneration == hitOperation &&
+                !s->editingTapPending && (!caretOk || !selectionDragMatchesLocked(*s, s->selectionDrag))) {
+                // A refused/stale visual job cannot leave notification suppression
+                // armed forever. Never manufacture a word or replay the gesture.
+                s->selectionDrag = Session::SelectionDrag{};
+            }
+            if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
         }
     }
     if (s->focusNotifyPending) {
@@ -6659,6 +9234,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         payload += ",\"field\":\"";
         appendJsonEscaped(payload, s->editingFieldName);
         payload += "\"}";
+        // 平台挂载时按上下文快照取正文与落点：账本对齐到当前值，不再补一条
+        // 与快照重复的 caret 通知。
+        s->selPlatformStart = std::min(s->selStartUtf16, s->selEndUtf16);
+        s->selPlatformEnd = std::max(s->selStartUtf16, s->selEndUtf16);
+        s->selForwardedValid = false;   // 平台重新取初值后的首条观测对窗口是新事实
         g.unlock();
         if (sink) sink(payload.c_str());
         g.lock();
@@ -6675,6 +9255,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             payload += "\"}";
             s->reconcileNotifyPending = false;
             s->reconcileOldContextId = 0;
+            // 重挂同样按新上下文快照取初值：账本对齐，不补重复通知。
+            s->selPlatformStart = std::min(s->selStartUtf16, s->selEndUtf16);
+            s->selPlatformEnd = std::max(s->selStartUtf16, s->selEndUtf16);
+            s->selForwardedValid = false;
             RLOGI("ime reconcile notification old=%{public}lld new=%{public}lld",
                   static_cast<long long>(oldContext), static_cast<long long>(newContext));
             g.unlock();
@@ -6682,37 +9266,130 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             g.lock();
         }
     }
-    if (s->pendingImeDetach) {
-        s->pendingImeDetach = false;
+    // native 落点 → 平台代理（H1-3）：命中、编辑命令与外部换版都会移动 caret/选区，
+    // 而代理只按自己的事件更新落点。不推送时"点正文后继续打字"会落在代理的旧偏移
+    // （实测命中 caret=8、代理仍在 1，键入插到正文开头）。差分推送 + 回声同步账本，
+    // 因此不会自激；恢复事务进行中由该事务自己装落点，这里让路。
+    if (s->editing && s->editingContextLive) {
+        const Session::ProxyRestoreRequest &live = s->proxyRestore;
+        const bool restoreLive = live.requestId != 0 &&
+            (live.armed || live.awaitingAck || live.platformInstalled);
+        const uint32_t a = std::min(s->selStartUtf16, s->selEndUtf16);
+        const uint32_t b = std::max(s->selStartUtf16, s->selEndUtf16);
+        const bool movingSelection = s->selectionDrag.active && s->selectionDrag.anchorReady &&
+            !s->selectionDrag.terminal;
+        if (!restoreLive && (!movingSelection || s->humanCaretNotificationPending) && (s->humanCaretNotificationPending ||
+            a != s->selPlatformStart || b != s->selPlatformEnd)) {
+            s->selPlatformStart = a;
+            s->selPlatformEnd = b;
+            void (*sink)(const char *) = g_focusRequestSink;
+            if (sink) {
+                s->humanCaretNotificationPending = false;
+                std::string payload = "{\"action\":\"caret\",\"context\":" +
+                    std::to_string(s->editingContextId) +
+                    ",\"selStart\":" + std::to_string(a) +
+                    ",\"selEnd\":" + std::to_string(b) + "}";
+                RLOGI("ime caret notification ctx=%{public}lld sel=%{public}u:%{public}u caret=%{public}u",
+                      static_cast<long long>(s->editingContextId), a, b, s->caretUtf16);
+                g.unlock();
+                sink(payload.c_str());
+                g.lock();
+            }
+        }
+    }
+    // Blink is visual work on the existing render queue. Decide under the
+    // Session lock and post only after releasing it, against the captured run.
+    bool blinkTarget = false;
+    for (const SceneNode &node : s->accepted) {
+        if (node.pod.nodeId == s->editingNodeId && node.pod.resourceId == s->editingResourceId &&
+            node.pod.nodeKind == s->editingNodeKind && node.pod.acceptedBindingEpoch != 0) {
+            blinkTarget = true;
+            break;
+        }
+    }
+    const bool blinkForeground = !g_ingress.foregroundLevel || g_ingress.foregroundLevel() == 1;
+    const bool blinkEligible = blinkTarget && blinkForeground && s->editing && s->editingContextLive &&
+        !s->editorRetired && s->selStartUtf16 == s->selEndUtf16;
+    if (advanceCaretBlinkLocked(*s, proxyRestoreNowMs(), blinkEligible)) {
+        RLOGI("caret phase session=%{public}llu ctx=%{public}lld visible=%{public}d active=%{public}d nextMs=%{public}lld",
+            static_cast<unsigned long long>(session), static_cast<long long>(s->editingContextId),
+            s->caretBlinkVisible ? 1 : 0, s->caretBlinkActive ? 1 : 0, static_cast<long long>(s->caretBlinkNextMs));
+        g.unlock();
+        g_render.postCaretBlink(pumpRenderEpoch);
+        g.lock();
+        s = lookupSessionLocked(session);
+        if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    // 截止到期：native 独立裁决，不依赖 ArkTS 回调也不依赖下一次输入。
+    // 已发送→"安装未确认"（code 2）；尚未发送→"未执行平台安装"（code 1）。
+    if ((s->proxyRestore.armed || s->proxyRestore.awaitingAck || s->proxyRestore.platformInstalled) &&
+        s->proxyRestore.deadlineMonoMs > 0 && proxyRestoreNowMs() >= s->proxyRestore.deadlineMonoMs) {
+        terminateProxyRestoreRequestLocked(*s, s->proxyRestore.platformInstalled
+            ? "window_adoption_deadline" : "platform_ack_deadline");
+    }
+    if (s->proxyRestore.armed) {
+        // 只读冻结值：绝不在此重读当前 context/field/base——pump 先 drainTouches，
+        // 重读会把"A 排恢复→点击 B 换焦"变成 A 的正文配 B 的身份。
+        s->proxyRestore.armed = false;
+        s->proxyRestore.awaitingAck = true;
+        void (*sink)(const char *) = g_focusRequestSink;
+        if (!sink) {
+            // 无出口：平台不可能安装，不伪造等待，直接取消（窗口按有界重试记账）。
+            cancelProxyRestoreRequest(*s, "no_sink");
+        } else {
+            const Session::ProxyRestoreRequest &req = s->proxyRestore;
+            std::string payload = "{\"action\":\"restore\",\"request\":" + std::to_string(req.requestId);
+            payload += ",\"context\":" + std::to_string(req.contextId);
+            payload += ",\"field\":\"";
+            appendJsonEscaped(payload, req.fieldName);
+            payload += "\",\"nodeId\":" + std::to_string(req.nodeId);
+            payload += ",\"baseVersion\":" + std::to_string(req.acceptedProjectionVersion);
+            payload += ",\"selStart\":" + std::to_string(req.selStart);
+            payload += ",\"selEnd\":" + std::to_string(req.selEnd);
+            payload += ",\"text\":\"";
+            appendJsonEscaped(payload, utf16ToUtf8(req.text));
+            payload += "\"}";
+            RLOGI("ime proxy restore notification request=%{public}llu ctx=%{public}lld units=%{public}zu sel=%{public}u:%{public}u",
+                  static_cast<unsigned long long>(req.requestId), static_cast<long long>(req.contextId),
+                  req.text.size(), req.selStart, req.selEnd);
+            g.unlock();
+            sink(payload.c_str());
+            g.lock();
+            // sink 是 void 出口：只声明"已交付出口"，不声明平台已入队（Astra 第 6 点）。
+            // 真正终态由平台 ACK 或 native 截止裁决。
+            s->proxyRestore.sent = true;
+        }
+    }
+    // R1：待发 end 队列逐条投递。每条自带冻结身份与结算意图；多条（如
+    // begin(A)→begin(B)→finish(B) 在同一次 pump 前）按 FIFO 全部送达，互不
+    // 覆盖。身份在各自收场入口已冻结，这里绝不回读"当前"上下文字段。
+    while (!s->pendingEnds.empty()) {
+        const Session::PendingEnd end = s->pendingEnds.front();
+        s->pendingEnds.pop_front();
         // 框架主动结束编辑（点到别处/空白）先做一次失焦结算：把用户已看见的
-        // 组合预览折进编辑缓冲并交付 owner。平台 finish 触发的 detach 不带此位，
-        // 因为值已经由平台的提交路径写入，再结算就是重复写。
-        if (s->pendingSettleOnDetach) {
+        // 组合预览折进编辑缓冲并交付 owner。平台 finish / 跨字段同步结算 /
+        // kill 触发的条目 settle=false（值已交付或已结算，再结算就是重复写）。
+        if (end.settleOnDelivery) {
             bool settled = settleComposedBufferOnBlurLocked(*s);
-            s->pendingSettleOnDetach = false;
             std::string settledText = utf16ToUtf8(s->editingText);
             RLOGI("ime blur settle ctx=%{public}lld settled=%{public}d node=%{public}lld text=%{public}s",
-                  static_cast<long long>(s->editingContextId), settled ? 1 : 0,
+                  static_cast<long long>(end.contextId), settled ? 1 : 0,
                   static_cast<long long>(s->editingNodeId), settledText.c_str());
         }
         void (*sink)(const char *) = g_focusRequestSink;
         // 结束通知（与 focus 成对）：框架侧结束编辑（点到别的控件/换绑/节点移除）
         // 时，平台代理必须同步收场，否则代理会带着已被回收的上下文继续持有
         // 焦点与系统键盘（实测：点空白处结束编辑后键盘不收起）。
-        // 跨字段切换时身份在切换点捕获（detachContextId/detachFieldName），
-        // 不得读新上下文字段；普通结束（空白/退役）两者为空，取当前值。
-        const int64_t endContextId = s->detachContextId != 0
-            ? s->detachContextId : s->editingContextId;
-        const std::string endFieldName = !s->detachFieldName.empty()
-            ? s->detachFieldName : s->editingFieldName;
-        s->detachContextId = 0;
-        s->detachFieldName.clear();
-        std::string payload = "{\"action\":\"end\",\"context\":" + std::to_string(endContextId);
+        std::string payload = "{\"action\":\"end\",\"context\":" + std::to_string(end.contextId);
         payload += ",\"field\":\"";
-        appendJsonEscaped(payload, endFieldName);
+        appendJsonEscaped(payload, end.fieldName);
         payload += "\"}";
+        // R1：底层 imeDetach 只在会话没有更新的活上下文时执行——旧 A 的 end
+        // 不得拆掉后来建立的 B 的会话（当前 native 代理从未 attach，此处为
+        // 语义正确性守卫）。
+        const bool newerContextLive = s->editingContextLive;
         g.unlock();
-        imeDetach();
+        if (!newerContextLive) imeDetach();
         if (sink) sink(payload.c_str());
         g.lock();
     }
@@ -6722,6 +9399,26 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     }
     QueuedEvent ev = s->events.front();
     s->events.pop_front();
+    if (ev.kind == kEvSelectionChanged) {
+        ev.recordIndex = queuedSelectionContextIsCurrent(*s, ev) ? 0u : 1u;
+        if (ev.recordIndex != 0) {
+            RLOGI("ime selection event refused reason=selection_context_stale captured=%{public}lld current=%{public}lld",
+                  static_cast<long long>(ev.editingContextId), static_cast<long long>(s->editingContextId));
+        }
+    }
+    if (ev.kind == kEvTextRangeChanged) {
+        RLOGI("ime range delta dequeue node=%{public}llu projection=%{public}llu binding=%{public}llu range=%{public}u:%{public}u bytes=%{public}zu",
+              static_cast<unsigned long long>(ev.nodeId), static_cast<unsigned long long>(ev.projectionVersion),
+              static_cast<unsigned long long>(ev.bindingEpoch), ev.selectionStart, ev.selectionEnd, ev.text.size());
+    }
+    if (ev.kind == kEvActivate) {
+        // S3（ACTIVATE 分发延迟追因）：按钮激活出队时留一行事实——若此行缺席
+        // 而触摸已到（end/blur-settle 已打印），问题在命中/入队侧；若此行在而
+        // 预览面迟迟不出现，问题在窗口路由/owner 拒绝侧。
+        RLOGI("activate dequeue node=%{public}llu projection=%{public}llu binding=%{public}llu lift=%{public}u",
+              static_cast<unsigned long long>(ev.nodeId), static_cast<unsigned long long>(ev.projectionVersion),
+              static_cast<unsigned long long>(ev.acceptedBindingEpoch), ev.recordIndex);
+    }
     outEvent->kind = ev.kind;
     outEvent->recordIndex = ev.recordIndex;
     outEvent->selectionStart = ev.selectionStart;
@@ -6739,6 +9436,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     outEvent->gesturePointerId = ev.pointerId;
     outEvent->gestureEpoch = ev.gestureEpoch;
     outEvent->acceptedBindingEpoch = ev.acceptedBindingEpoch;
+    outEvent->bindingEpoch = ev.bindingEpoch;
     s->lastEventText = ev.text;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -6809,6 +9507,45 @@ static void appendJsonEscaped(std::string &out, const std::string &value)
                 }
         }
     }
+}
+
+// 菜单有界元数据（h-source-preview-next B）：与整文上下文同一 menuValid 判定，
+// 但**不含正文/预览文本**——体积 O(1)，供 ArkUI 菜单周期消费；正文只在真正
+// 复制/剪切动作时按冻结身份经整文查询取一次（imeMenuCommand 仍原子复验）。
+// 返回 0 = 无有效上下文；1 = 已写入元数据 JSON。
+extern "C" int32_t ohos_renderer_ime_menu_meta_json(char *out, int32_t capacity)
+{
+    if (!out || capacity <= 0) return 0;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = findEditingSessionLocked();
+    if (!s || !s->editingContextLive) return 0;
+    const auto &menu = s->selectionHandles;
+    const bool menuRequested = menu.start < menu.end ? s->textMenuIntent != 0 : s->textMenuIntent == 2;
+    const bool menuValid = menuRequested && menu.valid && menu.ticket != 0 &&
+        menu.ticket == s->acceptedPaintTicketId && menu.context == s->editingContextId &&
+        menu.text == s->editingText && menu.start == s->selStartUtf16 && menu.end == s->selEndUtf16 &&
+        menu.generation == s->surfaceGeneration && menu.geometryRevision == s->surfaceGeometryRevision &&
+        menu.projection == s->editingProjectionVersion && !s->previewActive && !s->markedActive &&
+        !s->proxyRestore.armed && !s->proxyRestore.awaitingAck && !s->proxyRestore.platformInstalled &&
+        !(s->selectionDrag.active && !s->selectionDrag.terminal);
+    std::string json = "{\"context\":";
+    json += std::to_string(s->editingContextId);
+    json += ",\"generation\":" + std::to_string(s->editingContextGeneration);
+    json += ",\"baseVersion\":" + std::to_string(s->editingContextBaseVersion);
+    json += ",\"selStart\":" + std::to_string(s->selStartUtf16);
+    json += ",\"selEnd\":" + std::to_string(s->selEndUtf16);
+    json += ",\"menuAvailable\":";
+    json += menuValid ? "true" : "false";
+    if (menuValid) {
+        const bool first = menu.startVisible;
+        json += ",\"menuX\":" + std::to_string(first ? menu.startX : menu.endX);
+        json += ",\"menuTop\":" + std::to_string(first ? menu.startLineY - 10 : menu.endLineY - 10);
+        json += ",\"menuBottom\":" + std::to_string(first ? menu.startLineY + 10 : menu.endLineY + 10);
+    }
+    json += "}";
+    if (static_cast<int32_t>(json.size()) + 1 > capacity) return 0;
+    std::memcpy(out, json.c_str(), json.size() + 1);
+    return 1;
 }
 
 // 当前编辑上下文快照。返回 0 = 无有效上下文；非 0 = 已写入 JSON。
@@ -6882,6 +9619,25 @@ extern "C" int32_t ohos_renderer_ime_context_json(char *out, int32_t capacity)
             json += ",\"markedEnd\":" + std::to_string(s->markedEnd);
         }
     }
+    const auto &menu = s->selectionHandles;
+    const bool menuRequested = menu.start < menu.end ? s->textMenuIntent != 0 : s->textMenuIntent == 2;
+    const bool menuValid = menuRequested && menu.valid && menu.ticket != 0 && menu.ticket == s->acceptedPaintTicketId &&
+        menu.context == s->editingContextId && menu.text == s->editingText &&
+        menu.start == s->selStartUtf16 && menu.end == s->selEndUtf16 &&
+        menu.generation == s->surfaceGeneration && menu.geometryRevision == s->surfaceGeometryRevision &&
+        menu.projection == s->editingProjectionVersion && !s->previewActive && !s->markedActive &&
+        !s->proxyRestore.armed && !s->proxyRestore.awaitingAck && !s->proxyRestore.platformInstalled &&
+        !(s->selectionDrag.active && !s->selectionDrag.terminal);
+    json += ",\"menuAvailable\":";
+    json += menuValid ? "true" : "false";
+    if (menuValid) {
+        // Coordinates are logical vp from the actual Paint/Flush. Do not apply
+        // surface density again in ArkUI. Prefer the visible selected endpoint.
+        const bool first = menu.startVisible;
+        json += ",\"menuX\":" + std::to_string(first ? menu.startX : menu.endX);
+        json += ",\"menuTop\":" + std::to_string(first ? menu.startLineY - 10 : menu.endLineY - 10);
+        json += ",\"menuBottom\":" + std::to_string(first ? menu.startLineY + 10 : menu.endLineY + 10);
+    }
     json += ",\"text\":\"";
     appendJsonEscaped(json, utf16ToUtf8(s->editingText));
     json += "\"}";
@@ -6904,6 +9660,34 @@ static Session *takeEditingContextLocked(int64_t contextId)
     return s;
 }
 
+// Pure platform query: verifies the captured proxy baseline under the native
+// context lock. It neither locks nor edits the Cangjie owner; kind51 retains
+// its original owner arbitration after the REAL platform change.
+extern "C" int32_t ohos_renderer_ime_grapheme_range_ctx(const char *text, size_t length,
+    int32_t offset16, int64_t contextId, int32_t *outStart, int32_t *outEnd)
+{
+    if (outStart) *outStart = 0;
+    if (outEnd) *outEnd = 0;
+    if (!text || !outStart || !outEnd || length > 65536) return 16;
+    const std::string input(text, length);
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = takeEditingContextLocked(contextId);
+    if (!s || s->previewActive || s->markedActive || s->proxyRestore.armed ||
+        s->proxyRestore.awaitingAck || s->proxyRestore.platformInstalled ||
+        utf16ToUtf8(s->editingText) != input) return 1;
+    if (offset16 < 0 || static_cast<size_t>(offset16) >= s->editingText.size()) return 24;
+    uint32_t scalar = static_cast<uint32_t>(offset16);
+    if (scalar > 0 && s->editingText[scalar] >= 0xdc00 && s->editingText[scalar] <= 0xdfff &&
+        s->editingText[scalar - 1] >= 0xd800 && s->editingText[scalar - 1] <= 0xdbff) --scalar;
+    const uint64_t byte = utf16ToUtf8(s->editingText.substr(0, scalar)).size();
+    uint64_t start = 0, end = 0;
+    const auto status = cjgui_internal_renderer_grapheme_cluster_range(input.c_str(), input.size(), byte, &start, &end);
+    if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+    *outStart = static_cast<int32_t>(utf8ToUtf16(input.substr(0, start)).size());
+    *outEnd = static_cast<int32_t>(utf8ToUtf16(input.substr(0, end)).size());
+    return 0;
+}
+
 // 普通编辑变化（提交）：一次结算。返回 0 = 已应用，1 = 上下文失效被拒。
 extern "C" int32_t ohos_renderer_ime_commit_text_ctx(const char *text, size_t length, int64_t contextId)
 {
@@ -6915,6 +9699,9 @@ extern "C" int32_t ohos_renderer_ime_commit_text_ctx(const char *text, size_t le
         return 1;
     }
     RLOGI("ime commit len=%{public}zu ctx=%{public}lld", length, static_cast<long long>(contextId));
+    // 人的新提交取代未完成的恢复：显示已经往前走，旧恢复的落点不再适用。
+    cancelProxyRestoreRequest(*s, "human_commit_supersedes");
+    const std::u16string previous = s->editingText;
     s->editingText = utf8ToUtf16(input);
     s->caretUtf16 = static_cast<uint32_t>(s->editingText.size());
     s->selStartUtf16 = s->caretUtf16;
@@ -6922,8 +9709,61 @@ extern "C" int32_t ohos_renderer_ime_commit_text_ctx(const char *text, size_t le
     s->previewActive = false;
     s->previewText.clear();
     s->markedActive = false;
-    editorEnqueueTextChanged(*s);
+    editorEnqueueTextCommit(*s, previous, s->editingText);
     return 0;
+}
+
+// 无 marked 区间的整值变化 = 一次普通编辑（插入/删除/选区替换）。窗口声明
+// 拥有该节点时它就是真实提交，不是视觉预览：系统代理的全文回调在这里转成
+// **同版本精确范围增量**交付 owner，视图不被本地草稿遮盖，也不是"提交后才
+// 落地"。组字中的变化走 preview_range_ctx（有 marked 区间），仍是预览。
+// 返回 true 表示已按提交处理，或确认没有变化。
+bool editorCommitPlainChangeLocked(Session &s, const std::u16string &next)
+{
+    // A freshly mounted TextInput can echo the already accepted text before
+    // installing its selection. Text alone carries no new caret intention:
+    // preserve the placed word/range and any in-flight restoration. A live
+    // composition still goes through its original path. This applies equally
+    // to generic explicit-submit fields: an echo must not create a false draft
+    // that blocks their word hit testing and selection handles.
+    if (next == s.editingText && !s.previewActive && !s.markedActive) return true;
+    s.textMenuIntent = 0;
+    if (!editorOwnsTextSession(s)) {
+        // 具名定位：整值提交被降级为视觉预览的**唯一**原因是这一组会话声明不齐。
+        // 不打印就无法区分「窗口没声明 owned text session」「声明了但没开范围增量」
+        // 与「声明的节点身份与当前编辑节点不一致」——三者修法完全不同。
+        static std::atomic<uint64_t> notOwnedReports{0};
+        if (notOwnedReports.fetch_add(1) < 8) {
+            RLOGW("ime plain change NOT owner: enabled=%{public}d deltaReq=%{public}d "
+                  "declaredNode=%{public}llu editingNode=%{public}llu declaredKind=%{public}llu editingKind=%{public}llu "
+                  "declaredRes=%{public}llu editingRes=%{public}llu",
+                  s.ownedTextSessionEnabled ? 1 : 0, s.rangeEditDeltaRequested ? 1 : 0,
+                  static_cast<unsigned long long>(s.ownedTextSessionNodeId),
+                  static_cast<unsigned long long>(s.editingNodeId),
+                  static_cast<unsigned long long>(s.ownedTextSessionNodeKind),
+                  static_cast<unsigned long long>(s.editingNodeKind),
+                  static_cast<unsigned long long>(s.ownedTextSessionResourceId),
+                  static_cast<unsigned long long>(s.editingResourceId));
+        }
+        return false;
+    }
+    // 真实提交共同经过这里（onChange 整值变化与无 marked 的预览折入都走本入口）：
+    // 人的编辑取代未完成的恢复，取消必须放在共同入口而不是某一个 ABI 外壳里。
+    cancelProxyRestoreRequest(s, "human_commit_supersedes");
+    const std::u16string previous = s.editingText;
+    s.editingText = next;
+    s.caretUtf16 = static_cast<uint32_t>(s.editingText.size());
+    s.selStartUtf16 = s.caretUtf16;
+    s.selEndUtf16 = s.caretUtf16;
+    s.previewActive = false;
+    s.previewText.clear();
+    s.markedActive = false;
+    // 畸形输入被具名拒绝时编辑缓冲已由 `editorEnqueueTextCommit` 恢复为
+    // previous：这里仍返回 true（该变化由提交路径处理完毕），否则调用方会把
+    // 同一段畸形文本当成视觉预览再贴回来。
+    const bool committed = editorEnqueueTextCommit(s, previous, s.editingText);
+    static_cast<void>(committed);
+    return true;
 }
 
 // 组合/编辑预览：仅视觉投影，不进 owner。返回 0 = 已接受，1 = 上下文失效。
@@ -6937,12 +9777,29 @@ extern "C" int32_t ohos_renderer_ime_preview_text_ctx(const char *text, size_t l
             RLOGW("ime preview rejected: stale context=%{public}lld", static_cast<long long>(contextId));
             return 1;
         }
-        s->previewText = utf8ToUtf16(input);
-        s->previewStart = 0;
-        s->previewEnd = static_cast<uint32_t>(s->editingText.size());
-        s->previewActive = true;
-        s->markedActive = false;
-        s->caretUtf16 = static_cast<uint32_t>(s->previewText.size());
+        const std::u16string visibleBefore = composedBuffer(*s);
+        const bool ownsEntry = editorOwnsTextSession(*s);
+        const bool deliveredEntry = editorCommitPlainChangeLocked(*s, utf8ToUtf16(input));
+        {
+            // 入口归属诊断：区分「整值提交被降级成预览」与「组合/带 marked 区间
+            // 只做视觉预览」。两者在外部都表现为 owner 不动，修法完全不同。
+            static std::atomic<uint64_t> previewTextReports{0};
+            if (previewTextReports.fetch_add(1) < 6) {
+                RLOGI("ime preview_text entry: owns=%{public}d delivered=%{public}d bytes=%{public}zu",
+                      ownsEntry ? 1 : 0, deliveredEntry ? 1 : 0, input.size());
+            }
+        }
+        if (deliveredEntry) {
+            // 提交已交付：本轮仍需要重绘（下一帧 accepted 会接管可见文本）。
+        } else {
+            s->previewText = utf8ToUtf16(input);
+            s->previewStart = 0;
+            s->previewEnd = static_cast<uint32_t>(s->editingText.size());
+            s->previewActive = true;
+            s->markedActive = false;
+            s->caretUtf16 = static_cast<uint32_t>(s->previewText.size());
+        }
+        if (visibleBefore != composedBuffer(*s)) s->caretBlinkResetPending = true;
     }
     g_render.post(std::make_shared<RedrawJob>());
     return 0;
@@ -6964,6 +9821,18 @@ extern "C" int32_t ohos_renderer_ime_preview_range_ctx(const char *text, size_t 
                   static_cast<long long>(contextId));
             return 1;
         }
+        const std::u16string visibleBefore = composedBuffer(*s);
+        s->textMenuIntent = 0;
+        {
+            // 本入口**只做视觉预览**（没有 commit 分支）。记录它被普通系统输入
+            // 命中的事实，才能区分「owner 不动」是设计（组合中）还是缺提交路径。
+            static std::atomic<uint64_t> previewRangeReports{0};
+            if (previewRangeReports.fetch_add(1) < 6) {
+                RLOGI("ime preview_range entry: bytes=%{public}zu marked=%{public}d:%{public}d "
+                      "owns=%{public}d",
+                      input.size(), start, end, editorOwnsTextSession(*s) ? 1 : 0);
+            }
+        }
         s->previewText = utf8ToUtf16(input);
         s->previewStart = 0;
         s->previewEnd = static_cast<uint32_t>(s->editingText.size());
@@ -6981,6 +9850,7 @@ extern "C" int32_t ohos_renderer_ime_preview_range_ctx(const char *text, size_t 
         s->markedEnd = valid ? static_cast<uint32_t>(end) : 0;
         if (valid) s->markedCallbackObserved = true;
         s->caretUtf16 = valid ? s->markedEnd : size;
+        if (visibleBefore != composedBuffer(*s)) s->caretBlinkResetPending = true;
         RLOGI("ime composition ctx=%{public}lld marked=%{public}d start=%{public}u end=%{public}u bytes=%{public}zu",
               static_cast<long long>(contextId), valid ? 1 : 0,
               s->markedStart, s->markedEnd, input.size());
@@ -7004,8 +9874,24 @@ extern "C" int32_t ohos_renderer_ime_finish_editing_ctx(int64_t contextId)
     s->previewActive = false;
     s->previewText.clear();
     s->markedActive = false;
-    s->pendingSettleOnDetach = false;  // 平台已提交，不再重复结算
-    s->pendingImeDetach = true;
+    // R1（生产反例 finish(A=13)→bind(B=14)）：finish 也是收场入口，必须在此
+    // 冻结将死身份。此前不冻结，pump 回读"当前"上下文——finish 后再绑定 B 时
+    // end 会误寄 14/B，A 的代理永远收不到收场通知。
+    // 平台已提交，不再重复结算（settle=false）。
+    pushPendingEndLocked(*s, contextId, s->editingFieldName, false);
+    cancelProxyRestoreRequest(*s, "finished");
+    return 0;
+}
+
+// 通用窗口诊断出口（框架可观测性，不承载任何业务语义）：Cangjie 侧的
+// `println` 在 OHOS **不进 hilog**，窗口内部的判定（是否重建编辑会话、身份是否
+// 命中、被哪条具名分支拒绝）在设备上完全不可见——2026-10-01 的模式切换排查正是
+// 卡在这一步。这个出口只把调用方给的字符串原样记进渲染器日志，不读写会话状态，
+// 因此任何窗口代码都能用它留证，而无需为每处判定新增专用 ABI。
+extern "C" int32_t ohos_renderer_window_log(const char *message)
+{
+    if (!message) return -1;
+    RLOGI("window-diag: %{public}s", message);
     return 0;
 }
 
@@ -7024,14 +9910,42 @@ extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t en
         a = std::min(a, size);
         b = std::min(b, size);
         changed = (s->selStartUtf16 != a) || (s->selEndUtf16 != b) || (s->caretUtf16 != b);
-        if (changed && !editorEnqueueSelectionChanged(*s, a, b)) {
+        // 转发判据与 changed 分开：平台装好人的落点之后回声的值常常正好等于命中测试
+        // 写下的 native 值（changed=false），而窗口恰恰需要这条"平台已安装"的观测才能
+        // 核验人类锚、解除外部换版留下的输入门禁。按 changed 判重就是首字丢失的根因。
+        const bool forward = selectionObservationNeedsForwarding(*s, a, b);
+        if (forward && !editorEnqueueSelectionChanged(*s, a, b)) {
             RLOGW("ime selection rejected: no matching accepted binding ctx=%{public}lld node=%{public}llu",
                   static_cast<long long>(contextId), static_cast<unsigned long long>(s->editingNodeId));
             return 1;
         }
-        s->selStartUtf16 = a;
-        s->selEndUtf16 = b;
-        s->caretUtf16 = b;
+        if (forward) {
+            rememberForwardedSelectionLocked(*s, a, b);
+            if (!changed) {
+                RLOGI("ime selection observation forwarded ctx=%{public}lld sel=%{public}u:%{public}u native_changed=0",
+                      static_cast<long long>(contextId), a, b);
+            }
+        }
+        // An initial word installation may echo while the finger has already
+        // moved. It is still an installation fact, not the latest visual extent.
+        const bool movingSelection = s->selectionDrag.active && s->selectionDrag.anchorReady &&
+            !s->selectionDrag.terminal;
+        if (!movingSelection) {
+            s->selStartUtf16 = a;
+            s->selEndUtf16 = b;
+            s->caretUtf16 = b;
+        } else {
+            changed = false;
+        }
+        if (changed) {
+            if (a == b) s->textMenuIntent = 0;
+            s->caretBlinkResetPending = true;
+            s->caretAffinity = 0;
+        }
+        // 回声就是平台的当前落点：账本同步，pump 的差分推送不会再把它推回去
+        // （否则"平台装 → native 推 → 平台装"会自激）。
+        s->selPlatformStart = a;
+        s->selPlatformEnd = b;
     }
     // 选区/光标是纯视觉投影：不 bump 场景版本，必须显式请求重绘，否则拖动
     // 系统选择手柄期间没有新帧，高亮停留在上一次绘制的状态（实测手动拖选
@@ -7039,6 +9953,219 @@ extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t en
     if (changed) {
         g_render.post(std::make_shared<RedrawJob>());
     }
+    return 0;
+}
+
+// Toolbar commands retain the original whole text and selection across the
+// system pasteboard await. A stale result cannot be rebound to another owner.
+// This is a private platform adapter; business edits still use the same FIFO.
+bool editorApplyMenuCommandLocked(Session &s, const std::string &action,
+    const std::u16string &expected, const std::u16string &inserted,
+    uint64_t generation, uint64_t base, int32_t start, int32_t end)
+{
+    if (!s.editingContextLive || s.editorRetired || s.previewActive || s.markedActive ||
+        s.proxyRestore.armed || s.proxyRestore.awaitingAck || s.proxyRestore.platformInstalled ||
+        (s.selectionDrag.active && !s.selectionDrag.terminal) ||
+        generation != s.editingContextGeneration || base != s.editingContextBaseVersion ||
+        expected != s.editingText || start < 0 || end < start ||
+        static_cast<uint32_t>(start) != s.selStartUtf16 ||
+        static_cast<uint32_t>(end) != s.selEndUtf16 ||
+        static_cast<size_t>(end) > expected.size() ||
+        !utf16IsScalarBoundary(expected, static_cast<size_t>(start)) ||
+        !utf16IsScalarBoundary(expected, static_cast<size_t>(end)) ||
+        !utf16IsWellFormed(inserted)) return false;
+    if (action == "validate") return true;
+    if (action == "selectAll") {
+        s.textMenuIntent = 1;
+        s.selStartUtf16 = 0;
+        s.selEndUtf16 = s.caretUtf16 = static_cast<uint32_t>(expected.size());
+    } else if (action == "replace") {
+        s.textMenuIntent = 0;
+        const std::u16string next = expected.substr(0, start) + inserted + expected.substr(end);
+        const uint32_t caret = static_cast<uint32_t>(start + inserted.size());
+        if (editorOwnsTextSession(s)) {
+            cancelProxyRestoreRequest(s, "human_menu_supersedes");
+            s.editingText = next;
+            s.selStartUtf16 = s.selEndUtf16 = s.caretUtf16 = caret;
+            if (next != expected && !editorEnqueueTextCommit(s, expected, s.editingText)) return false;
+        } else {
+            // Preserve generic fields' explicit-submit contract. Enter/blur
+            // performs their existing settlement, not the platform toolbar.
+            s.previewText = next;
+            s.previewStart = 0;
+            s.previewEnd = static_cast<uint32_t>(expected.size());
+            s.previewActive = next != expected;
+            s.selStartUtf16 = s.selEndUtf16 = s.caretUtf16 = caret;
+        }
+    } else return false;
+    s.caretBlinkResetPending = true;
+    s.caretAffinity = 0;
+    s.humanCaretNotificationPending = true;
+    return true;
+}
+
+extern "C" int32_t ohos_renderer_ime_menu_command_ctx(const char *action,
+    const char *expected, size_t expectedLength, const char *inserted, size_t insertedLength,
+    int64_t context, uint64_t generation, uint64_t base, int32_t start, int32_t end)
+{
+    bool ok = false;
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        Session *s = takeEditingContextLocked(context);
+        if (s && action && expected && inserted) {
+            ok = editorApplyMenuCommandLocked(*s, action,
+                utf8ToUtf16(std::string(expected, expectedLength)),
+                utf8ToUtf16(std::string(inserted, insertedLength)), generation, base, start, end);
+        }
+        RLOGI("ime menu command ctx=%{public}lld action=%{public}s range=%{public}d:%{public}d accepted=%{public}d",
+            static_cast<long long>(context), action ? action : "", start, end, ok ? 1 : 0);
+    }
+    if (ok && std::strcmp(action, "validate") != 0) g_render.post(std::make_shared<RedrawJob>());
+    return ok ? 0 : 1;
+}
+
+// ACK 的会话定位按 contextId→票据归属查找：请求属于哪个编辑上下文，回执就只能落到
+// 那个会话的票据上（Astra 复核第 5 点：不得取"第一个仍在编辑的会话"）。槽位已结清
+// 时没有任何会话匹配，迟到的重复回执一律被拒，不会改写当前票据。
+static Session *findSessionByRestoreContextLocked(int64_t contextId, uint64_t requestId)
+{
+    if (contextId == 0) return nullptr;
+    for (size_t i = 0; i < kMaxSessions; ++i) {
+        Session &candidate = g_sessions.sessions[i];
+        const Session::ProxyRestoreRequest &req = candidate.proxyRestore;
+        if (!candidate.inUse || req.requestId == 0 || req.contextId != contextId) {
+            continue;
+        }
+        if (req.requestId == requestId || req.armed || req.awaitingAck || req.platformInstalled) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
+// 平台安装回执。语义（H1-R/Astra 裁决）：
+//   * 按 contextId 定位请求所属会话，不取"第一个仍在编辑的会话"；
+//   * 同一 requestId 的迟到/重复回执返回既有裁决，不重复计终态；
+//   * ok=0（平台明确失败）终结请求，让窗口的有界重试重新签发，绝不记成功；
+//   * ok=1 只有在**观测落点精确等于签发前的规范目标**时才算平台安装：合法的错误
+//     落点（目标 4:9、平台 13:13）一律具名失败，不以"落点合法"迁就采纳；
+//   * 成功后投递 kind-55（recordIndex=0，带实际区间与请求号），窗口核验并原子
+//     采纳之后调用 consume 票据；native 不在此解除任何会话锁。
+// 返回 0 = 回执被接受；1 = 被拒绝（无请求、请求号不符、身份已变、区间非法）。
+extern "C" int32_t ohos_renderer_ime_restore_ack_ctx(int64_t contextId, uint64_t requestId,
+                                                     int32_t selStart, int32_t selEnd, int32_t ok)
+{
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = findSessionByRestoreContextLocked(contextId, requestId);
+    if (!s) {
+        RLOGW("proxy restore ack rejected: no session owns ctx=%{public}lld req=%{public}llu",
+              static_cast<long long>(contextId), static_cast<unsigned long long>(requestId));
+        return 1;
+    }
+    Session::ProxyRestoreRequest &req = s->proxyRestore;
+    if (requestId == 0 || req.requestId != requestId) {
+        // 不是当前票据号：先查既有终局并原样返回，绝不改写当前票据；没有终局记录
+        // 就是陌生/串号回执——即使此刻有一张别的票在等，也不能替它签收。
+        for (const Session::ProxyRestoreTerminal &t : s->proxyRestoreTerminals) {
+            if (t.requestId == requestId) {
+                RLOGI("proxy restore ack late request=%{public}llu code=%{public}d reason=%{public}s",
+                      static_cast<unsigned long long>(requestId), t.code, t.reason.c_str());
+                return t.code == CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ADOPTED ||
+                       t.platformInstalled ? 0 : 1;
+            }
+        }
+        RLOGW("proxy restore ack rejected: unknown/stale request ctx=%{public}lld req=%{public}llu "
+              "active=%{public}llu awaiting=%{public}d armed=%{public}d",
+              static_cast<long long>(contextId), static_cast<unsigned long long>(requestId),
+              static_cast<unsigned long long>(req.requestId),
+              req.awaitingAck ? 1 : 0, req.armed ? 1 : 0);
+        return 1;
+    }
+    if (req.platformInstalled) {
+        // 重复成功回执：返回已有结果，不重复投递终态。
+        return 0;
+    }
+    if (!req.awaitingAck) {
+        RLOGW("proxy restore ack rejected: not awaiting ctx=%{public}lld req=%{public}llu",
+              static_cast<long long>(contextId), static_cast<unsigned long long>(requestId));
+        return 1;
+    }
+    if (ok == 0) {
+        terminateProxyRestoreRequestLocked(*s, "platform_install_failed");
+        return 0;
+    }
+    // 冻结身份必须仍等于当前身份：换焦/换绑/结束/外部换版之后到达的旧回执不解锁。
+    if (s->editingContextId != req.contextId ||
+        s->editingContextGeneration != req.contextGeneration ||
+        s->editingNodeId != req.nodeId || s->editingResourceId != req.resourceId ||
+        s->editingNodeKind != req.nodeKind || s->editingFieldName != req.fieldName) {
+        RLOGW("proxy restore ack rejected: identity changed ctx=%{public}lld native=%{public}lld "
+              "req=%{public}llu node=%{public}llu nativeNode=%{public}llu",
+              static_cast<long long>(req.contextId), static_cast<long long>(s->editingContextId),
+              static_cast<unsigned long long>(requestId),
+              static_cast<unsigned long long>(req.nodeId),
+              static_cast<unsigned long long>(s->editingNodeId));
+        terminateProxyRestoreRequestLocked(*s, "identity_changed");
+        return 1;
+    }
+    const uint32_t size = static_cast<uint32_t>(req.text.size());
+    if (selStart < 0 || selEnd < static_cast<int32_t>(selStart) ||
+        static_cast<uint32_t>(selEnd) > size) {
+        RLOGW("proxy restore ack rejected: range out of bounds req=%{public}llu range=%{public}d:%{public}d size=%{public}u",
+              static_cast<unsigned long long>(requestId), selStart, selEnd, size);
+        terminateProxyRestoreRequestLocked(*s, "range_out_of_bounds");
+        return 1;
+    }
+    if (clampToCodePointBoundary(req.text, static_cast<uint32_t>(selStart)) !=
+            static_cast<uint32_t>(selStart) ||
+        clampToCodePointBoundary(req.text, static_cast<uint32_t>(selEnd)) !=
+            static_cast<uint32_t>(selEnd)) {
+        RLOGW("proxy restore ack rejected: non_scalar_boundary req=%{public}llu range=%{public}d:%{public}d",
+              static_cast<unsigned long long>(requestId), selStart, selEnd);
+        terminateProxyRestoreRequestLocked(*s, "non_scalar_boundary");
+        return 1;
+    }
+    // 规范目标等式：观测落点必须精确等于签发前冻结的目标。合法的错误落点不采纳。
+    if (static_cast<uint32_t>(selStart) != req.selStart || static_cast<uint32_t>(selEnd) != req.selEnd) {
+        RLOGW("proxy restore ack rejected: installed_range_mismatch req=%{public}llu "
+              "target=%{public}u:%{public}u observed=%{public}d:%{public}d",
+              static_cast<unsigned long long>(requestId), req.selStart, req.selEnd, selStart, selEnd);
+        req.received = true;
+        req.observedStart = static_cast<uint32_t>(selStart);
+        req.observedEnd = static_cast<uint32_t>(selEnd);
+        terminateProxyRestoreRequestLocked(*s, "installed_range_mismatch");
+        return 1;
+    }
+    req.received = true;
+    req.platformInstalled = true;
+    req.observedStart = static_cast<uint32_t>(selStart);
+    req.observedEnd = static_cast<uint32_t>(selEnd);
+    req.awaitingAck = false;
+    req.reported = false;
+    s->selStartUtf16 = static_cast<uint32_t>(selStart);
+    s->selEndUtf16 = static_cast<uint32_t>(selEnd);
+    s->caretUtf16 = static_cast<uint32_t>(selEnd);
+    // 平台已按观测装上这份落点：账本同步，差分推送不再重复通知。
+    s->selPlatformStart = static_cast<uint32_t>(selStart);
+    s->selPlatformEnd = static_cast<uint32_t>(selEnd);
+    QueuedEvent ev;
+    ev.kind = kEvTextProxyRestored;  // 55
+    ev.recordIndex = 0;              // 平台已安装（观测确认），窗口可尝试原子采纳
+    ev.nodeId = req.nodeId;
+    ev.resourceId = req.resourceId;
+    ev.nodeKind = req.nodeKind;
+    ev.projectionVersion = req.acceptedProjectionVersion;
+    ev.acceptedBindingEpoch = req.acceptedBindingEpoch;
+    ev.bindingEpoch = req.requestId;  // 请求身份：窗口据此拒绝与自己待办不符的回执
+    ev.selectionStart = static_cast<uint32_t>(selStart);
+    ev.selectionEnd = static_cast<uint32_t>(selEnd);
+    ev.text = "platform_installed";
+    s->events.push_back(ev);
+    RLOGI("proxy restore ack accepted request=%{public}llu ctx=%{public}lld node=%{public}llu "
+          "installed=%{public}d:%{public}d v=%{public}llu",
+          static_cast<unsigned long long>(req.requestId), static_cast<long long>(req.contextId),
+          static_cast<unsigned long long>(req.nodeId), selStart, selEnd,
+          static_cast<unsigned long long>(req.acceptedProjectionVersion));
     return 0;
 }
 

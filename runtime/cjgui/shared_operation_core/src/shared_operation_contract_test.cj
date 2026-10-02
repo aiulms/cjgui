@@ -1044,3 +1044,37 @@ func sharedOperationValueHasOneCanonicalTextForm(): Unit {
     let empty = CjguiSharedOperationValue.string("")
     @Assert(empty.displayText(), "")
 }
+
+private class TimingSentinelProjection <: CjguiSharedOperationWindowProjectionProvider {
+    let elapsed: Int64
+
+    init(elapsed: Int64) { this.elapsed = elapsed }
+
+    public func windowProjection(): CjguiSharedOperationWindowProjection {
+        return CjguiSharedOperationWindowProjection(true, 1, 1, "unavailable", "none", 0, 0,
+            ArrayList<CjguiSharedOperationRelation>(), lastBuildElapsedMs: elapsed,
+            lastLayoutElapsedMs: elapsed, lastNativeMeasurementElapsedMs: elapsed,
+            lastNativeStageAndSubmitElapsedMs: elapsed)
+    }
+}
+
+@Test
+func unavailableTimingKeepsPublicWindowSnapshotReadable(): Unit {
+    let connection = CjguiSharedOperationExternalConnection(BackupRuleContractDomain(),
+        backupRuleAuthorization(), TimingSentinelProjection(-1))
+    let response = connection.dispatchPayload(
+        "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH core-contract-capability\nGET_CONTEXT 0")
+    @Assert(response.contains("KIND SNAPSHOT"), true)
+    @Assert(response.contains("WINDOW_WORK_TIMING_MS -1 -1 -1 -1"), true)
+    @Assert(connection.consumeWindowRefreshRequest(), false)
+}
+
+@Test
+func timingSentinelDoesNotAdmitOtherNegativeValues(): Unit {
+    let connection = CjguiSharedOperationExternalConnection(BackupRuleContractDomain(),
+        backupRuleAuthorization(), TimingSentinelProjection(-2))
+    let response = connection.dispatchPayload(
+        "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH core-contract-capability\nGET_CONTEXT 0")
+    @Assert(response.contains("ERROR invalid_snapshot"), true)
+    @Assert(connection.consumeWindowRefreshRequest(), false)
+}

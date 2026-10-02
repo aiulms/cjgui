@@ -435,7 +435,12 @@ func ohosApplicationLoop(): Unit {
     // 触发「PENDING 无票据」协议缺口路径（实测导致 host start failed）。
 
     let host = CjguiMacosApplicationHost(controller,
-        configuration: CjguiMacosApplicationWindowConfiguration("恒温示例", 720u32, 1400u32))
+        configuration: CjguiMacosApplicationWindowConfiguration("恒温示例", 720u32, 1400u32,
+            // R3（h-source-preview-followup 2026-10-02）：开启范围文本增量交付——
+            // 生成 TEXT 字段（备注）在编辑聚焦时由框架绑定通用范围会话，系统
+            // 输入以 kind-51 精确范围经会话镜像到达 owner 事务；不开则整值提交
+            // 被 native 降级为视觉预览（设备断点 NOT owner enabled=0）。
+            rangeTextEditDeltaDelivery: true))
     let window = host.window()
     controller.generatedUiRegion().attachWindow(window)
     let progressReady = connection.enableWindowProgressReads(window)
@@ -459,6 +464,10 @@ func ohosApplicationLoop(): Unit {
         return
     }
     cjguiOhosInfo("CjguiApp", "host started; pumping turns")
+    let physicsDeclared = window.configureScrollPhysicsToken("experimental_exponential")
+    let physics = window.scrollPhysicsInfo()
+    cjguiOhosInfo("CjguiApp", "scroll physics declared=${physicsDeclared} " +
+        "declared_token=${physics.declared} effective=${physics.effective} support=${physics.support}")
     cjguiOhosInfo("CjguiApp", "generated_work phase=host_started ${controller.generatedUiRegion().testWorkCounts()}")
 
     // 停止协议（Sol 归属）：surface 卸载只退役租约并保留 owner；
@@ -521,12 +530,9 @@ func ohosApplicationLoop(): Unit {
             window.requestRefresh()
         }
         let _ = host.pumpOneTurn()
-        // C（惯性包）：推进活跃惯性滚动。
-        if (cjguiComposableInertialScrollEnabled) {
-            if (controller.stepActiveInertialScrolls(MonoTime.now())) {
-                window.requestRefresh()
-            }
-        }
+        // H2：滚动活动由**共同宿主**在 pumpOneTurn 内推进（changed→刷新、
+        // active→有界唤醒）；样例本地 step 已退役——宿主与样例各推一次会把
+        // 活动按双倍速率推进。此处只保留只读诊断。
         // C（触摸包指导接续）：屏外 reveal 的显式目标导航——应用控制器在
         // ACTIVATE 中挂起的语义焦点请求，在 pump 后经窗口公共
         // focusAcceptedSemanticNode 提交（内部 reveal→新 accepted→commit 后

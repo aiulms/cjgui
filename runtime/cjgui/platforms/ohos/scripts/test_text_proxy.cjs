@@ -1,5 +1,6 @@
 // Run with: node --disable-warning=ExperimentalWarning test_text_proxy.cjs
 // Execute the shared ArkTS template itself; only its type syntax is stripped.
+global.TextDeleteDirection = { BACKWARD: 0, FORWARD: 1 };
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -160,4 +161,56 @@ test('stale reconcile callback cannot retire a newer mount', async () => {
   assert.equal(f.registry.currentMount(), newer);
   assert.equal(newer.alive, true);
   assert.equal(f.calls.some(c => ['preview', 'previewRange', 'commit', 'finish'].includes(c[0])), false);
+});
+
+async function deleteFixture() {
+ const f=await fixture('xe\u0301');
+ f.registry.onChange(f.mount,'xe\u0301',{offset:-1,value:''});
+ f.registry.observeSelection(f.mount,3,3);
+ const edits=[];
+ const apply=(start,end)=>{edits.push([start,end]);};
+ return {...f,edits,apply};
+}
+test('partial combining backward corrects the platform once, awaits actual echo',async()=>{
+ const f=await deleteFixture();
+ f.registry.bridge.grapheme=()=>JSON.stringify({status:0,start:1,end:3});
+ const allow=f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'\u0301'},3,3,true,f.apply);
+ assert.equal(allow,false);assert.deepEqual(f.edits,[[1,3]]);assert.equal(f.mount.draft,'xe\u0301');
+ assert.equal(f.registry.onChange(f.mount,'x',{offset:-1,value:''}),'ok');
+ assert.deepEqual(f.calls.filter(x=>x[0]==='preview').at(-1),['preview',10,'x']);
+});
+test('known insert followed by deletion stays exact and never expands a compound range',async()=>{
+ const f=await deleteFixture();f.registry.bridge.grapheme=()=>{throw Error('must not query');};
+ f.registry.onWillInsert(f.mount);
+ assert.equal(f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'\u0301'},3,3,true,f.apply),true);
+ assert.deepEqual(f.edits,[]);
+});
+test('unknown preview, stale observed selection, restore in flight and stale mount never correct',async()=>{
+ const f=await deleteFixture();f.registry.bridge.grapheme=()=>{throw Error('must not query');};
+ const d={direction:0,deleteOffset:3,deleteValue:'\u0301'};
+ assert.equal(f.registry.onWillDelete(f.mount,d,3,3,false,f.apply),false);
+ assert.equal(f.registry.onWillDelete(f.mount,d,2,2,true,f.apply),false);
+ f.mount.previewKnown=false;assert.equal(f.registry.onWillDelete(f.mount,d,3,3,true,f.apply),true);
+ f.registry.mount(11,8,'proxy','other',1,1,'new');
+ assert.equal(f.registry.onWillDelete(f.mount,d,3,3,true,f.apply),false);assert.deepEqual(f.edits,[]);
+});
+test('controller throw cancels the original deletion and cannot claim actual text installation',async()=>{
+ const f=await deleteFixture();f.registry.bridge.grapheme=()=>JSON.stringify({status:0,start:1,end:3});
+ assert.equal(f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'\u0301'},3,3,true,()=>{throw Error('setter');}),false);
+ assert.equal(f.mount.draft,'xe\u0301');assert.equal(f.mount.deleteOperation.state,'failed');
+ assert.equal(f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'\u0301'},3,3,true,f.apply),false);
+ assert.deepEqual(f.edits,[]);
+});
+test('nonempty explicit range and multi-cluster delete never expand',async()=>{
+ const f=await deleteFixture();f.registry.bridge.grapheme=()=>JSON.stringify({status:0,start:1,end:3});
+ f.registry.observeSelection(f.mount,0,3);
+ assert.equal(f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'xe\u0301'},0,3,true,f.apply),true);
+ f.registry.observeSelection(f.mount,3,3);
+ assert.equal(f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'xe\u0301'},3,3,true,f.apply),true);
+ assert.deepEqual(f.edits,[]);
+});
+test('missing ICU refuses partial deletion with zero platform change',async()=>{
+ const f=await deleteFixture();f.registry.bridge.grapheme=()=>JSON.stringify({status:32,start:0,end:0});
+ assert.equal(f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'\u0301'},3,3,true,f.apply),false);
+ assert.deepEqual(f.edits,[]);assert.equal(f.mount.draft,'xe\u0301');
 });

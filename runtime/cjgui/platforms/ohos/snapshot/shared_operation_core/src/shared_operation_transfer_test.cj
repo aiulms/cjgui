@@ -48,6 +48,36 @@ func transferContractWillRejectWrongFormatTargetAndOperation(): Unit {
 }
 
 @Test
+func transferBinaryOfferWillCopyBytesAndNeverMatchText(): Unit {
+    let format = CjguiSharedOperationTransferFormat.png(maximumBytes: 8)
+    let input: Array<Byte> = [0x89u8, 0u8, 0xffu8, 0x50u8]
+    let binary = CjguiSharedOperationTransferOffer.createBinary(
+        "COPY", "image_source", "window-a", 4, format, input)
+    @Assert(binary.isSome(), true)
+    if (let Some(offer) <- binary) {
+        @Assert(offer.payloadByteCount, 4)
+        @Assert(offer.contentDigest.size > 0, true)
+        input[0] = 0u8
+        @Assert(offer.binaryBytes()[0], 0x89u8)
+        let exposed = offer.binaryBytes()
+        exposed[1] = 0x11u8
+        @Assert(offer.binaryBytes()[1], 0u8)
+        let accepted = CjguiSharedOperationTransferAcceptRequest.create(
+            "image_target", "window-b", 5, offer, format, 3)
+        @Assert(accepted.isSome(), true)
+        let wrong = CjguiSharedOperationTransferAcceptRequest.create(
+            "image_target", "window-b", 5, offer,
+            CjguiSharedOperationTransferFormat.utf8Text(), 3)
+        @Assert(wrong.isNone(), true)
+    }
+    @Assert(CjguiSharedOperationTransferOffer.createBinary(
+        "COPY", "image_source", "window-a", 4, format,
+        Array<Byte>(9, repeat: 0)).isNone(), true)
+    @Assert(CjguiSharedOperationTransferOffer.create(
+        "COPY", "image_source", "window-a", 4, format, "PNG").isNone(), true)
+}
+
+@Test
 func transferResultWillPreserveExistingActionCasOutcome(): Unit {
     let format = CjguiSharedOperationTransferFormat.utf8Text(maximumBytes: 64)
     let offer = CjguiSharedOperationTransferOffer.create(

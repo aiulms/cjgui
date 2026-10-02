@@ -142,9 +142,31 @@ def fresh_rows(before, after):
         raise AssertionError("no same-PID app log baseline")
     overlap = next((n for n in range(min(len(before), len(after)), 0, -1)
                     if before[-n:] == after[:n]), 0)
-    if overlap < min(3, len(before)):
+    if overlap >= min(3, len(before)):
+        return after[overlap:]
+    # Buffer rotation can evict the baseline tail between the two dumps while the
+    # action still lands. Device timestamps keep freshness provable, but only for
+    # a dump that is wholly parseable, wholly newer than the newest baseline row
+    # and still in emission order; anything less is unprovable, and callers with a
+    # stricter rotation contract report it in their own terms.
+    baseline_stamps = [stamp for stamp in map(_row_ts, before) if stamp is not None]
+    after_stamps = [_row_ts(row) for row in after]
+    if (not baseline_stamps or not after_stamps
+            or any(stamp is None for stamp in after_stamps)
+            or any(stamp <= max(baseline_stamps) for stamp in after_stamps)
+            or any(later < earlier for earlier, later in zip(after_stamps, after_stamps[1:]))):
         raise AssertionError("hilog baseline missing/rotated; freshness unprovable")
-    return after[overlap:]
+    return list(after)
+
+
+LOG_TS = re.compile(r"^(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3})")
+
+
+def _row_ts(row: str):
+    match = LOG_TS.match(row)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.groups())
 
 
 def assert_fresh_focus(before, after, pid, field):

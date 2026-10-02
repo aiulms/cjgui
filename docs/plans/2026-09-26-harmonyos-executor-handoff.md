@@ -7,7 +7,7 @@
 <a id="review9-current-package"></a>
 ## 第九次指导复核：统一资源生命周期，完成当前可达项（2026-09-27）
 
-**当前结论：**第九次 A–E、接续入口、TCP 归属返工及[输入](#h-input-consumption-next)/[生成](#h-generated-consumption-next)/[图片](#h-image-resource-next)各自已验成果保留。[触摸原 A–E 的本轮交付](#h-touch-third-delivery-review)已按华为模拟器范围通过指导限域复核；旧 hr5 缺口表是历史返工依据。接续执行[惯性包 r10 复核与实施](#h-inertial-scroll-review-20260929)，原[惯性 A–E](#h-inertial-scroll-next)范围不变；优先修 H Node ABI/冻结绑定及共同窗口活动，保留已验触摸、图片和双 normal HAP 消费。marked/cancel 版本化边界、物理性能与发布审核另列。
+**当前结论（2026-10-02）：**S1样式反例修复与Pharos共享类接线保留；本次生产函数离线反例仍证实旧end误寄、绑定幂等漏epoch、安装挂起/假成功，双owner总门可接受错区间和误删。thermo尚未调用新生命周期。按[当前R1–R4整包](#h-source-preview-followup-20261001)接续，S1–S4未整体收口；旧N1–N4不重跑。
 
 <a id="review9-handover-review"></a>
 ### 收尾限域复核：修接续入口，保留能力门控待验（2026-09-27）
@@ -299,6 +299,274 @@ bridge 队列、核心/renderer 身份、焦点和消费按写集推进；等待
 
 **指导限域复核（2026-09-29）。** 接受上述模拟器消费范围。本次只读生产代码、测试和归档，独立复算两份 HAP 哈希；bridge `828130e0…`、renderer `d2d0cdf9…` 及构建副本核心与当前 H snapshot 对应，不把并行主树整仓也称为同源。逐事件完整 key、终态预留/物理终结回收、独立 acceptedBindingEpoch、双向唯一 CANCEL 和 pending 焦点恢复已实质落实；不再要求重修 hr5 已关闭项。两款生成链在真实重排、非空选区和 Surface 几何变化后直接提交既有草稿，owner 精确；thermo 手写与生成在 PID 16108 连续。滚动交错各一次公开写入、10 个新 MOVE 与图片持有链成立，范围是手写视口与生成面板共存；结果中的 `not_applicable_clamp_or_unproven_path` 不扩称通用无裁剪总位移已验。未重跑构建、测试或设备。以下两项快照差异由源码可具体推演，随下一包先建立反例，不撤销正常 HAP 的已有消费。
 
+<a id="h-pharos-product-validation-next"></a>
+### H/OHOS 下一包：真实 Pharos 源码编辑闭环＋原惯性接缝收尾（2026-09-29）
+
+**执行对象。** 本节给鸿蒙侧 H 线，框架根 `/Users/jiangxuanyang/Desktop/cangjie`，同一产品根 `/Users/jiangxuanyang/Desktop/Pharos Mark`。本包已由用户分发并开始实施；本次指导只读复核及更新要求，未启动/联系线程、构建或操作设备。macOS E 负责 accepted 位置/连续写作；按 [2+1 当前分工](2026-09-26-framework-capability-roadmap.md#two-plus-one-product-lines)并行。H 新消费目标转向真实编辑器，设置/thermo 保留为机制回归，不再只围绕样例循环验收。
+
+**两个交付切面。** H1：一个真实 Pharos normal HAP 的小文档源码编辑→人/Agent接续→撤销/重做→保存重开。H2：[原惯性 r10 必做修复](#h-inertial-scroll-review-20260929)及共同窗口消费。二者均属本包，完成情况分别报告；完整惯性不是 H1 的总前置，ABI/冻结绑定则是运行新 GUI 的安全前置。不得用 H1 通过替 H2 结项，也不因惯性细节把产品目标构建、存储端口和宿主工作全部停下。完整 visual、出版导出与 GB 文件后续再做。
+
+<a id="h-source-preview-followup-20261001"></a>
+#### H 接续：把共享输入交接做成完整事务，完成严格双 owner 消费（2026-10-02 指导复核）
+
+**2026-10-02 R3补轮指导复核：有实质进展，整包不接受“全部收口、无剩余”。** 保留新 provider／范围桥、共享类接线、完整绑定幂等和 end FIFO、固定截止/native拒绝修复，以及执行者报告的 thermo 精确字符串与 Pharos 双owner运行结果；后者仍按原HAP/脚本范围记录。本次没有重建HAP或操作设备，仅核源码和原JSON，用当前生产函数与同步命令做隔离反例。新增桥的二次复用、正典交付和新检查器仍有下列确定缺口；R1原提交契约也未兑现。旧N1–N4/S1与未受影响绿色不重开。
+
+| 接续项（同一包，非新产品范围） | 本次证据与要求 |
+| --- | --- |
+| **正典同源交付（R3）** | `thermostat_application` 的五个provider入口、note历史/重基、两处operationResourceId仅存在`labs/ohos_thermo_app/entry/thermostat_application/src`，正式`runtime/cjgui/examples/thermostat_application/src`缺失。[实际同步段反例](../../artifacts/h-r-final-20261002/guidance-review/driver-and-sync.json)在临时副本执行原rsync，provider由存在变为消失。把所需改动归回正典应用，核对entry配置与构建参数的权威来源；连续两次正式同步不得丢接线。从无旧target的独立装配目录经正式入口完成最终一次normal构建，不以手改lab副本交付；不重写已正确的同步基础设施。 |
+| **活动会话绑定（R3框架）** | [原方法仓颉反例](../../artifacts/h-r-final-20261002/guidance-review/binding-result.json)：A942首次绑定及重复聚焦正控成立；窗口改绑B313后回A，实际仍313；同node更换semantic仍沿用旧field-A。region的四字段缓存不能代表窗口当前绑定，主树/snapshot同缺口。以窗口实际活动会话、accepted完整身份与绑定代次判幂等；同绑定重复focus保留组合/选区，真正换绑、关闭/重开、其他region接管后回访必须重绑。先验证当前accepted目标，再绑定；迟到旧FOCUS不得夺回新owner。程序化与平台FOCUS共用一次接入，核对回调重复、返回值与重入边界。将反例纳入现有真实窗口/region测试，不只保留本指导的最小替身。 |
+| **thermo总门与资源归属（R4工具）** | [当前函数/实际main反例](../../artifacts/h-r-final-20261002/guidance-review/driver-and-sync.json)：找不到PID退到全局日志；新无关INSTALLED触发旧[0,4)配对；fport创建rc32仍rm固定映射。严格绑定target/bundle/PID/连接实例、field/context/mount、安装序号与动作前游标；失配/日志缺失具名失败，不回退旧记录。使用既有转发归属工具，创建确认和当前映射匹配才清理。插入、替换、外部SET_NOTE、继续输入各冻结owner版本与完整字节，校验真实回执及恰好一次，不只最终字符串相同；零输入/重复写/错PID/旧确认/错字段/创建失败负控须使实际总门失败。保存原协议回包及当轮相关完整日志，不能只保存自报summary；可重用确实存在的原件，不补造。 |
+| **提交来源与输入权限（原R1未完）** | 当前仅比较`acceptedPaintTicketId < editingBornTicketId`，两条成功路径已先交换accepted树，再决定跳过sync；未落实原Astra的来源/父accepted/完整绑定后像在Flush前的准入。[原函数反例](../../artifacts/h-r-final-20261002/guidance-review/ticket-result.json)沿现有测试6a造状态，得到`accepted_nodes=0 live=1 input_context_accepted=1`。这是现有测试状态的反例，不冒充设备上已复现乱序。不能把票号大小改名lineage就算闭合；核实实际串行提交可达性和等价契约，若该状态不可达，用真实提交入口证明并移除虚假的保活正控。来源过期/不完整候选仍须在不可逆提交前拒绝，有效删除/只读化首次发布即退役，缓冲修改前验证当前accepted授权。已有end FIFO/完整身份修复保留。 |
+
+**执行顺序与终点。** 先将上述当前反例接入受影响测试，再连续修正典来源、活动绑定、总门和原R1剩余。新公开范围桥保留experimental；读取的版本/长度/正文应来自同一一致观察，写入仍由owner原子校验，沿既有有界字段契约，不扩成GB会话。新报告测试实际点的是`hand-scroll-note`，不能仅因经过region就称运行时生成字段已消费；最终同一thermo运行中增加公共候选生成TEXT的焦点→输入→owner读回，再切至另一owner/编辑面并回访，证明共享桥可重新获得正确绑定。Pharos只补受本次共享变更影响的双owner/旧输入隔离链，不循环全部历史。
+
+最终冻结一次源码，经正式同步/构建得到Pharos＋thermo normal包，记录正典输入→同步副本→平台/模板→HAP→当轮PID的可复核关系。修改共享主树需一次受影响macOS普通消费者定向检查；不接管E大文档，不改其在途函数或重跑E整包。成本仅沿本轮采样记同身份聚焦重绑次数、安装次数、终态停止及owner读回；不另建成本表。全部新增边界通过后只更新本节和ACTIVE/STATUS的H短状态，报告实现／正常消费／未验范围。
+
+**咨询与停止打补丁。** 普通明确接线直接做；查当前华为SDK/官方文档的focus/attach/selection契约，成熟框架仅参考活动客户端、提交来源和失效机制，简记采用与差异，不引依赖。R1已有[Astra原裁决](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/s2-identity-handoff-astra/answer.md>)；若认为当前串行结构改变适用前提，将本次反例、实际提交路径和拟定不变量交`gpt-6-astra/max`一次聚焦只读裁决，不再问泛泛路线。日常疑难Pi显式`zai-coding-cn/glm-5.3`独立上下文；复杂根因无可靠方案用`gpt-6-sol/max`。沿两仓AGENTS累计失败规则，不以换模型清零、延时/冷启动追绿或新增宽限替代机制。重放入口见[replay.py](../../artifacts/h-r-final-20261002/guidance-review/replay.py)；仓颉编译在临时目录，不使用共享cjpm target。
+
+**前次复核依据（历史；已修项按上方最新复核保留）。** S1 样式事务的原反例修复、Pharos 接入共享类、getter 异常终结、attach 拒绝退避及部分旧 end 身份冻结均保留；不认可“S1–S4全部完成，只剩可选日志字段”。当前三个离线生产函数反例证明：旧 finish 仍可误寄 end、新绑定幂等判断不完整、安装生命周期可能永挂或错误成功，双 owner 驱动会接受错误替换。本次只审阅源码/原件并跑离线小反例，未构建 HAP、操作模拟器、改生产代码或恢复线程。
+
+本包继续迁移**现有 Pharos**，复用 document_core / app_services / markdown_engine / editor_surface、公开 owner、N1 恢复事务、acceptedBindingEpoch、S1 候选快照和现有共享代理类。交付的是“多个编辑面共用一套可确认、可失效的输入交接机制”，并由 Pharos 与 thermo 两个正常应用消费；不再开一套代理，不扩完整 visual、GB、备注持久化或新的样例应用。框架负责提交/绑定/安装/焦点生命周期，产品仅负责文档/备注 owner、源锚映射、模式版本和容量策略。E/macOS 大文档包继续独立推进。
+
+**先用本次反例，不重查全部历史。** [复核索引](../../artifacts/h-source-preview-20260930/guidance-review-20261002/review.json)固定源码哈希；[关键输入核对](../../artifacts/h-source-preview-20260930/guidance-review-20261002/selected-inputs.json)证明所审 renderer、Pharos/thermo 页面与共享模板均匹配所报最终两包的对应清单。本次不是全量清单或设备复验。原件 `followup-20261001/s1-transaction-green.txt`、`s1-rerun-after-aba.txt` 的9项低层样式绿色保留，不能当作S2提交身份的证明。
+
+| 必须闭合 | 本次直接证据 | 修复与判别要求 |
+| --- | --- | --- |
+| **R1 完整提交与绑定退役**（CJGUI OHOS） | [生产函数反例](../../artifacts/h-source-preview-20260930/guidance-review-20261002/detach-counterexample.json)：正常跨字段的正控 end 指向旧A；`finish(A=13)→bind(B=14)`后待发end却为14/B。同node/resource换epoch7→99，`beginEditingOnNodeLocked`仍幂等返回旧context15/epoch7。另，当前sync仅以`acceptedProjectionVersion < editingContextBaseVersion`跳过退役；[Astra原答复](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/s2-identity-handoff-astra/answer.md>)明确否定版本阈值，而不是授权把两帧宽限改为版本宽限。 | 按下方R1协议连续修完来源准入、完整绑定、输入门与全部end入口。保留已修的三处站点；不得再新增零散宽限或只改一个触发点。 |
+| **R2 有终态的共享安装事务**（框架ArkTS/窄桥，页面薄接线） | [原共享类＋原Pharos host反例](../../artifacts/h-source-preview-20260930/guidance-review-20261002/lifecycle-counterexamples.json)：attach Promise不回调时，虚拟60s仍pending且无截止计时；正文A的页面级`proxyImeTrafficSeen=true`可让新备注B在12800009拒绝后开门；`imeSetSelection`明确返回`1`，类仍记`INSTALLED`。页面仍按“非空→折叠且不在起点”直接丢观测，没有回声身份判定。 | 一份请求带挂载/上下文、绑定、内容/选择及焦点修订；统一截止覆盖请求无回调，不只覆盖已reject后的4次重试。证据绑定本次mount/context，不能借前一编辑面曾有输入。host回传明确native接受结果，确认前不写成功账目；失败/超时保留可恢复源锚且有唯一终态，旧计时器/Promise不得作用于新请求。合法用户收拢选区要生效，旧程序回声才按票据身份丢弃，不能以形状判“非空永远优先”。 |
+| **R3 真正的独立复用及正常成本**（消费者接线/产品策略） | thermo虽然随包复制同一模板，`Index.ets`未导入/实例化`CjguiImeSelectionLifecycle`，仍是内联arm/install。`thermo-continuity-PASS-v2.txt`的人腿是升温按钮，备注由外部SET_NOTE写，未执行系统选区安装。Pharos正典`bindNoteSession`创建独立owner未配置256KiB共同准入，`noteProjection()`每次build直接读范围，不能按报告认定版本缓存已落地。 | thermo接同一框架类并退役对应内联状态机，保留薄平台seam；一次真实系统非空选区安装→输入精确替换→外部改版→继续输入，owner独立读回。复用既有样式改/清/拒绝原证，缺证才补受影响切面。Pharos备注在创建时接共同容量准入并按owner身份/版本缓存投影，不复制容量算法；边界拒绝零写入、同版刷新零重复正文读取。当前没有实测掉帧结论，不伪造性能归因。 |
+| **R4 让验收真的能拒绝错误结果**（工具） | [原main总门负控](../../artifacts/h-source-preview-20260930/guidance-review-20261002/driver-negative-controls.json)：应把`abcdef`的`bc`换成N，却替换`de`，仍9/9；应在`abc`的a后插“回”，却把b删成`a回c`，仍9/9。这证明判据过弱，不声称r19实际发生了错写。 | 先冻结真实平台选区与同版本源跨度，再独立算完整期望；A续写必须removed=0且落冻结caret，不能只验inserted=“回”。零事务查完整字节及版本/历史，不只看内容相等。下方工具要求进入实际总门；不能只补helper自测。 |
+
+**R1机制应如何落地。** 已有Astra裁决前提未变，直接实施，不再泛问“是否需要事务”：
+
+1. 复用现有提交票据记录来源快照、父accepted关系、完整绑定后像及可选焦点交接。先辨明现有字段可否等价表达，不强制照抄顾问字段名。来源过期/不完整的候选在不可逆Flush前拒绝，不能先发布删除B的旧树再仅跳过sync保B可写。S1的run冻结表不是完整绑定后像。
+2. 健康accepted节点可直接建立活绑定；未提交目标只能是PendingBind。幂等、恢复和输入准入校验完整身份（session、node/resource/kind/semantic、acceptedBindingEpoch及有效surface），不能只有node/resource或context/live。输入缓冲修改前须仍获当前accepted授权。
+3. 场景删除与焦点副作用分开：有效当前提交删除/只读化/换绑B，应立即退役，即使提交开始时焦点在A；旧A的focus/end只能作用于A。所有finish、Enter、点击收场、节点退役、换绑共用冻结身份出口；移除投递时借“当前context”的兜底，检查底层`imeDetach()`不会解除后来建立的会话。只在锁内冻结状态，平台调用遵守现有线程边界。
+4. 定向反例必须区分：旧来源A提交晚到而B仍健康；有效B删除即使始于A焦点也立即生效；删除后无下一帧仍拒旧输入；同id/同值新epoch；finish(A)排队后绑定B，end只属于A。复用当前生产提取反例，加入现有宿主测试；不得靠延时或重复冷启动来检验这些确定性关系。
+
+**R2生命周期终点。** 复用N1票据/确认通路；区分组件实际读到目标、native接受、窗口采纳，不把setter、两次定时读值或日志打印直接叫“已采纳”。同mount的新请求也要替代旧序号；实际人类导航/新焦点优先，旧安装不得拉回旧非空选择或抢焦。补本次三个反例以及晚成功/晚失败、合法非空→折叠、新请求覆盖旧请求；正控仍要可输入。耗尽/关闭后待办、计时器和安装调用停止增长，失败不丢源锚。不为解决超时再增加页面永久布尔状态。
+
+**R4实际驱动与证据。**
+
+- `verify_pharos_dual_owner.py`动作前固定当轮bundle/PID、连接实例、accepted绑定/安装票、各owner documentId/resourceId/版本/完整字节与目标范围。B拖选后先取得平台真实UTF-16选区和对应源跨度，按严格oracle映射；不能从操作后的diff反推出期望。主文档基线必须早于全部备注动作；正文与备注使用各自owner。
+- 完整公共请求/回包、冻结输入、安装确认和结果落盘。非空READ也核AVAILABLE、版本/范围、声明长度与实际解码字节数；不截断正文/回包，不把delta或INSTALLED日志当owner接受。原r19摘要无完整冻结范围，不补造缺失原件。
+- 加入上述错区间/误删负控及零输入、拒绝、重复写、错PID/旧日志、漏安装确认、备注被清空的总门反例。负控必须使实际总程序退出失败；正常正控通过。现有harness里的共享`rejects`数组跨case泄漏也应隔离：case6须触发本case捕获的旧Promise，而不是全局`rejects[0]`。
+- 当前mode与几何取本轮accepted事实；`cursor0`要实际参与日志围栏。无当前owner状态/几何时具名失败，去掉历史preview几何和点击翻转兜底。每次toggle只发一次，按单调deadline等结果，不在`reach_mode`循环重放用户意图。只读版本冲突可按既有协议有限重取，不能重放写入。
+- 转发/实例复用已有归属工具：成功退出＋明确创建回执才取得清理权，清理前核当前映射，异常也只清自己；不按固定bundle清他方、不先rm未知映射。保留用户7856映射与剪贴板，沿已有保护机制执行。
+
+**一次最终消费与收口。** 先让R4的错误结果变红，再把R1/R2机制及R3接线连续完成。普通编译错误当轮修，不按文件请示。完成后冻结一次最终输入，用正式同步/构建入口串行构建normal Pharos＋thermo；含空格装配保留为最终一次，不每补丁重导出。
+
+- Pharos同PID：A→B，冻结双方→B非空范围确认→免点击首笔精确替换仅B一笔→回A免点击原锚插入仅A一笔→再访B全文/版本/历史保持。一次合法收拢后再输入须落新caret，不能又替换旧选择。已有无编辑双切换、预览期Agent映射、Undo/保存重开只补受本包改动影响部分，不再循环N1–N4。
+- thermo通过真实系统编辑证明共享生命周期复用；正常成功与受控拒绝后的接续分别标明。按钮点击＋外部改备注仍是有效旧业务回归，但不抵选区安装。
+- 原始记录绑定源码/模板/renderer/HAP与当轮实例。受影响宿主/共享回归和`cjpm build --skip-script`一次汇合，同target串行。记录安装调用、终态后计时器、备注取文次数/字节及公开操作耗时即可，不新增成本台账。少量原数不宣称p95；两款HAP源码同源不等于两款实际调用同一机制。
+
+**查阅与咨询。** 最小读两仓AGENTS、ACTIVE/STATUS的H条目、本节、三个反例及Astra原答复；写仓颉先读cangjie-coding。attach/getSelection/回调语义查当前SDK与对应华为官方文档，区分系统承诺与本镜像观察。新机制按[本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)只读成熟框架的活动文本客户端、提交快照和取消处理，在原节简记“符号/版本→采用机制→CJGUI差异→反例”，只学思路，不引外部框架依赖。
+
+已定方案直接做。日常疑难用Pi显式`zai-coding-cn/glm-5.3`、独立只读上下文（主执行本身GLM也适用）；复杂根因仍不明用`gpt-6-sol/max`，来源/提交/绑定权限仍有实质未决风险直接`gpt-6-astra/max`。本问题已有多次修复，咨询材料带原裁决、本次反例和实施差异；不再以原裁决标题包装相反方案。顾问不改码/构建/操作设备，不递归咨询。普通两次实质修复无进展、核心首次修复失败即升级；既有失败累计不清零，其他独立工作继续。
+
+**协作与报告。** H主写OHOS host/snapshot/共享ArkTS、产品OHOS与工具；保留E的macOS/正文/公共位置及大文档在途写集。必要共享契约按函数/ABI集成，不整文件覆盖；执行模型由用户配置决定，不自动创建/恢复其他线程。构建和模拟器/桌面串行，等待时做独立必要工作，无工作才等待。桌面授权沿AGENTS，不另设让用户逐步确认的门；用户接手时停前台。保留已有staged集，不stage/commit/push/reset/stash，按准确身份清自有资源。只在机制闭合或新事实时短更本节与ACTIVE/STATUS，STATUS保持30–50行；不逐轮写报告、不累计“第几轮绿”。最终报告分别列生产修复、正常消费、仍未验，不将摘要/离线harness当设备通过。
+
+**范围边界。** 起点插入亲和性按现有`affectsRange`保守具名拒绝；系统marked/cancel的SDK/镜像组合、物理设备性能及发布审核按原界限保留。历史剪贴板事故不能用旧PASS覆盖。S1有效绿色不重开；a11y行补字段可选，当前R1–R4不是可选加固。
+
+<a id="h-source-preview-review-20261001"></a>
+#### H 接续复核：样式事务与真正的选区恢复（2026-10-01，交执行模型）
+
+**结论与目标。** 上节执行报告的“原 A–D 全部收口”不予整体接受；A/B 已取得的清理、菜单成本与动作成果、正常源码／只读预览入口和保存重开原件继续保留。当前原文档、菜单测试源 SHA 匹配，回归记录的 266→289→301B 与保存／重开 301B 字节一致；这些事实不补足下面 C/D 的机制与验收缺口。仍迁移现有 Pharos 和同一 owner，不重造编辑器、不推倒 N1–N4、不接管 E。新终点是：同一 normal HAP 上，样式声明随候选原子接受；中段非空选区双切换后第一笔系统输入精确替换并可撤销，Agent 改版后仍正确映射和接续。
+
+**指导本次只做离线审阅与三个小反例，未连接模拟器、运行 HAP 或重跑绿色矩阵。** [原函数端点反例](../../artifacts/h-source-preview-20260930/guidance-review-20261001/utf8-boundary-result.json)和[原函数事务反例](../../artifacts/h-source-preview-20260930/guidance-review-20261001/text-runs-transaction-result.json)从当前生产函数原样提取；事务 harness 只补最小 Session/SceneNode 环境，不冒充完整 renderer／ABI／设备验证。[驱动负控](../../artifacts/h-source-preview-20260930/guidance-review-20261001/driver-false-positive.json)运行原 main，设备、传输、输入均替换为不生效夹具；[重放脚本](../../artifacts/h-source-preview-20260930/guidance-review-20261001/replay-driver-negative.py)可复核假阳性。完整入口和本次源码 SHA 见 [review-inputs](../../artifacts/h-source-preview-20260930/guidance-review-20261001/review-inputs.json)。迁成回归时读取当前生产实现，不能改冻结坏副本宣称修复。
+
+| 必要返工 | 当前实证 | 修复与验收要求 |
+| --- | --- | --- |
+| **R1 UTF-8 run 端点换算**（框架） | `utf8ByteOffsetToUtf16` 检查 `utf8[clamped-1]`，把合法末边界回退到上一字符内。原函数实跑：“中” byte3 应 UTF16=1、实得0；“混排” byte6 应2、实得1；emoji byte4 应2、实得0；分解重音 byte3 应2、实得1。ASCII与一个中点对照正确，4个决定性失败。并非报告所说“与 macOS 同语义” | 有效边界必须精确；内部端点按当前公共/macOS契约处理，不自行洗成错误区间。先把四例及 0/EOF/连续 CJK/非 BMP/组合标记、相邻 run 接缝做成生产反例，再修一次共享转换。独立期望由完整合法 UTF-8 前缀换算产生。像素必须证明具体字符的样式，不只“任意区域变了”；准入、布局切段及查询用同一单位 |
+| **R2 run 表越过候选事务**（框架） | setter 在 configure/submit 前直接改 `s->accepted`；清除同样立即清 accepted。反例 accepted scene10 未提交就改变样式。它又按旧正文准入：旧A→新ABC的合法[2,3)先被拒；旧ABCD→新X仍带[3,4)时，stage只写警告并返回OK，候选留有越界旧run。`textRunsByNode` 仅按nodeId跨事务持有 | run 声明、目标文本、绑定与候选代次一起准备，按新候选文本准入，成功接受后才发布。候选失败/丢弃不能修改旧 accepted、旧样式表或可复用布局；非法 stage 必须传播拒绝到窗口，不能只写 lastNativeStatus 后继续接受。空声明清除、节点删除/换绑/同id复用和会话退役均有明确收敛。允许为布局测量先建候选样式，但不得以此提前污染 accepted。补“仅改run＋后续节点拒绝”“清空run＋提交失败”“同id新文本变长/变短”“删除后复用id”判别。正常源码→预览→源码，除选择装饰外字体/样式应回原声明；现有01/05截图已可见标题字号变化，不能把这种差异记成选区证据 |
+| **R3 非空选择尚未确认**（框架平台适配＋产品接线） | [Sol原答复](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/d-selection-collapse-sol/answer.md>)明确“折叠触发者尚未定位”，要求当前平台选区稳定＋下一笔正常IME替换；不是已确认平台bug。当前Index.ets仍在onFocus直接install，arm也直接起投；showTextInput.then只是另加入口，尚未唯一attach门控。重试耗尽把proxySelMount清空。归档只按宽区域像素差的40%门称恢复，没有真实替换证据 | 保留“待办期不匹配回声不写owner”的正确防护，但将首次安装、重试、旧异步完成与实际确认收进同一带身份生命周期。若采用attach门控，所有入口都必须验当前mount/context及本次接续状态；旧show完成不能安装新挂载。沿已有N1恢复事务表达INSTALLED/ADOPTED或UNCONFIRMED等终态，失败保留可恢复源选择，不能悄悄清待办当成功。通用代理机制归框架，产品只持源锚点/模式规则。补onFocus早于attach、attach迟到/换挂载、选择迟到/超时以及新用户选择取代旧请求反例。不再加caret nudge、堆延时或靠屏幕高亮宣布平台安装成功 |
+| **R4 验收可假绿与归属保护**（工具） | 原main在所有输入不生效、Agent回包APPLIED false、各阶段owner一直v1/同字节时仍exit0/status OK；判据依赖正文里预存的“预览前人写/Agent/续写完成”，最终甚至未纳入agent_applied_response。selection脚本只计差分面积，不验实际范围。驱动还截断Agent原回包到120字符，并先无条件rm指定转发、按固定bundle停止应用 | 用新临时夹具和唯一实例，动作前冻结完整owner/版本/预期源范围；每笔接受意图恰好一笔、拒绝零写入、其余字节原样，系统输入未到必须失败。Agent完整请求/回包落盘且终态进入总判据；保存读真实目标并重开精确核对。负控至少包括零输入、Agent拒绝、错位插入、重复写、纯caret假装非空恢复，都应变红。分窗READ按同版本byteLength和精确内容长度核验，仅具名边界/版本冲突按契约处理。无PID/accepted身份时不得回退全局旧日志或默认几何。转发/进程复用已有归属工具，只清自己成功创建和仍匹配的资源，不先删同端点他方映射 |
+
+**先后顺序与新增正常消费。** R4的离线负控先固化，R1/R2是C链，R3是D链，可在不争源码／target时交错；不先让坏检查器给新实现盖章。接着完成以下一次真实产品闭环（这才是原D尚欠的可消费能力）：
+
+1. **无编辑双切换。** 冻结中段非空源跨度、正文版本、mount和实际平台UTF-16选区；source→只读preview→source期间正文零事务。待实际安装确认后，不额外点击正文，通过正常系统输入替换该范围；完整owner等于`原前缀+本笔文本+原后缀`，版本/事务恰好一次，Undo精确恢复。源码/preview正常样式、选区装饰与平台选区分别验证，不用像素面积替代范围；把手差异可以单列，但不能降低文字替换门。
+2. **外部交错。** 相同中段锚点在preview期间接受一笔公开Agent编辑；经现有ChangeMap按新版本映射，切回后下一笔人类编辑准确接续。映射不可得或平台未确认必须具名，不用旧偏移猜写。接保存、关闭、重开，核对实际文件和完整owner；系统marked/cancel仍按原版本边界单列。
+3. **第二消费者与成本。** thermo/settings复用同一框架的样式改/清/拒绝事务；选区安装生命周期若做成通用代理接缝，也要用已有消费者验证一次复用。原C要求的run-only失效、纯重绘/滚动复用及删除/关窗回收按受影响路径给有界计数，发现缺口按同一机制补齐，不建立第二渲染器。B的菜单零整文查询及动作快照原证按影响复用，不再循环旧触摸/惯性/PNG矩阵。
+
+**产物和边界。** 本次实际找到当前正式输出 HAP SHA `8e1fcb20289e6d29990a0ac9ee8ca2e05616b04dcf6b5e81bfea14eed07d1342`，与报告前缀一致；但证据根下 `d-preview/pharos-h-source-preview-unsigned.hap` 仍为早期 `fb4f7053…`，不能作为最终包使用。修后通过正式同步/构建入口固定同源Pharos＋第二消费者，给明确源码／HAP／renderer／platform指纹与运行身份，更新一个最终入口，保留旧失败原件。一次受影响回归和独立含空格装配足够，无新改动/失败/疑点不重跑全套。Mac/E运行不受影响时只核声明和受影响共享回归，不替E跑其首页任务。
+
+**执行与咨询硬要求。** 最小阅读：两仓AGENTS、本节、ACTIVE/STATUS对应H条目、三个反例及Sol答复相关段。写仓颉先用cangjie-coding；平台选区/attach/样式有疑问先核本机SDK与华为对应版本官方文档，源码与镜像提交不一致要标明。按[只读参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)借鉴成熟框架的候选样式、事务发布和输入恢复机制，只学思路不引入依赖；在原节简记参考符号/版本、采用机制、CJGUI差异与反例。
+
+日常疑难用Pi CLI显式 `--provider zai-coding-cn --model glm-5.3`，独立只读新上下文；已有Sol结论按前提实施，不把顾问没有确认的结论升级为平台事实。复杂根因仍无方案用`gpt-6-sol/max`；候选/accepted归属或跨平台恢复契约实质未决可直接`gpt-6-astra/max`。材料包含本次反例和旧失败累计，顾问不得递归再请顾问、改文件或操作设备。普通两次实质修复无进展、核心首次失败后及时咨询；已经多次失败的选择问题不能因换模型把次数清零，未取得新可区分证据不继续nudge/延时试错。
+
+等待构建/咨询先做独立必要工作；同target和模拟器串行，构建输入固定。H主写OHOS host/snapshot/ArkTS适配、产品OHOS controller与验收工具；E的main.cj/macOS native/公共文字位置写集保持。禁止整文件覆盖、重置或清不明实例；保留已有staged状态，本轮不得stage/commit/push。只在机制闭合或事实变化时短更本节/ACTIVE/STATUS，不逐轮追加Markdown。连续完成R1–R4与上述正常消费后集中报告；若平台选择仍未确认，明确保留D未通过，其余独立实现继续，不能把“自绘看起来选中”登记成正式恢复。
+
+<a id="h-source-preview-next-20260930"></a>
+#### 指导复核与接续：保留正常编辑成果，修菜单观察成本，接通同源 Markdown 预览（2026-09-30）
+
+**调度与目标。** 用户已暂停旧 H 执行者，本节交给新模型后实施；指导本次只核对源码、冻结输入和原件并更新文档，未启动线程、构建或操作模拟器。继续迁移现有 Pharos，同一 document_core / app_services / markdown_engine / editor_surface 和正文 owner；本包交付“可编辑源码＋只读 Markdown 预览”的正常 HAP，以及支撑它的 CJGUI OHOS 文字样式能力。不是从零造编辑器，也不恢复常驻 F 线。前节 H1-R/H2 的旧缺陷表保留为历史，已关闭项不再照表返工。
+
+**已复核的基线，不重复打回。** 原 [N1–N4 夜间任务](#h-overnight-product-goal-20260930)的恢复、正常编辑与共同滚动已有真实生产交付；N4 的运行验收成立，交付清理未完成。结论只覆盖冻结快照和华为模拟器注入范围，不扩成当前整仓、物理设备或发布验收。
+
+| 复核对象 | 独立核对结果与复用范围 |
+| --- | --- |
+| 最终产物 | [Pharos normal HAP](../../artifacts/h-overnight-final-20260930/pharos-h-final-normal.hap) SHA-256 `0f94f34f186e486734d35953a5297b8fbfe03eca7578be9dfa4651ff4f7ed15c` 实际匹配；bundle `com.pharos.mark.hovernight20260930`。791 项冻结输入实际哈希全部匹配；macOS/H 两冻结树共用的 170 项输入逐项一致。474 项框架、345 项产品回归按该冻结版本保留 |
+| 最终运行 | [原件根](../../artifacts/h-overnight-final-20260930/)中 117–123、130 为 Pharos，124–129 为 thermo。63 份 owner 记录的 UTF-8 长度/摘要核对一致；5 份实际保存文件与对应完整 owner 字节相等。122 是滚动中间结果，须与 123 的滚动后编辑合看；118 的剪切/复制/粘贴功能通过不等于原剪贴板恢复通过 |
+| 第二消费者与成本 | thermo final normal SHA `21c1d7366a1743ab25161961eccde3b9ec3c923824b0e64f326ca8fa92dee307`。127 原件中释放后惯性期间一次公开写入为 **15.900292 ms**，新 BEGIN 于释放后约 184 ms 接管，1.2 秒空闲滚动求解 236→236；是一次样本，不写成 p95 或整个应用零空闲工作 |
+| 用户现场与未完成收尾 | 130 的原文档已恢复保存为 34 B，SHA `9ab66874f0697e03947c4e47ba6daac64bfc74641cda5a29fdee1fd826268781`；最后归档 PID6574 是历史身份，接手时重新核实，保留用户正在使用的实例。`identity.json` 的 pending 与旧 freeze 指针尚未收敛；转发清理失败、剪贴板丢失备份事实不能用旧 PASS 覆盖 |
+
+**当前源码的两个明确事实。** `platforms/ohos/arkts/cjgui-text-menu.ets` 的菜单组件每 100 ms 调 `imeEditingContext()`，先获取/解析完整正文才判断菜单是否可见；`host/ohos_renderer.cpp` 的 `ohos_renderer_ime_context_json` 在 `g_sessions.lock` 内做 UTF-16→UTF-8、JSON 转义和整文复制。因此即使菜单隐藏或正文不变，仍有与文档长度成比例的周期性工作；这是源码可确定的成本缺口，本次未量测实际掉帧或耗电。另，`cjgui_internal_renderer_set_composable_text_runs` 当前对非空 runs 返回 `INTERNAL_ERROR`；共享 `editor_surface` 已会产生 `textStyleRuns`，这是接入预览时必须修的框架缺口，不能以纯文字降级冒充样式通过。
+
+**连续完成 A–D，不能只清理或只建样例就停工。** A 的历史资料收敛一次完成，B/C 的独立实现交错，C 接通后 D 汇合；已有绿色链路按输入影响复用。
+
+| 工作项 / 归属 | 实施要求 | 可区分验收 |
+| --- | --- | --- |
+| **A 必要收尾与测试安全**（工具/交接） | 先核对 `final-cleanup.json`、创建回执及当前 `hdc fport` 列表/帮助。原删除把两端点拼成一个带空格参数，且 rc=0 时正文仍是 `[Fail]`；按真实语法与结果判定，仅清确属本轮的 `28856→7856`、`28861→7856`、`28862→7857`，保留用户 `7856→7856`，归属变化则不删。将剪贴板保全/测试/恢复收为一个有 finally 的运行生命周期，新一轮破坏性测试前核活保管进程与 target；备份不可用即跳过该片段，不能先覆盖后发现丢失。外部更新时不覆盖用户新剪贴板；不要把原内容输出到日志。修正三击日志的 word/long-press 误标 | 离线反例：rc0但失败回包不能报成功；同端点他方映射不删除；保管进程失效时拒绝后续剪贴板写；异常退出进入恢复/具名失败；外部剪贴板变化保留。历史原剪贴板已无法恢复，永久如实记录，不制造恢复成功。补一个最终结果索引或更新已有汇总指针，原始失败日志保留，不重跑 N1–N4 来补文档 |
+| **B 菜单观察与动作快照**（CJGUI OHOS） | 将常驻整文轮询改为按状态变化通知/修订消费的有界菜单元数据（身份、可用性、选区、锚点）；正文只在真正复制/剪切等动作需要时按冻结身份取值。可复用现有 native→ArkTS 通知路径；若有待安装计时，只为有限在途事务服务，不能换成较慢的永久整文轮询。不要破坏仍需全文的已有查询消费者。异步剪贴板完成前再次核验原 context/挂载/正文版本/选区，不能给旧动作贴新身份；blur/换绑/关闭退订，几何改变仍正确移动/隐藏菜单 | 先固化隐藏菜单且正文不变时整文查询持续增长的 RED；修后小文档与 256 KiB 文档空闲均不因菜单触发全文读取/编码，菜单显示但未操作也不周期性复制正文。选择/滚动后菜单及时跟随；实际操作恰好一笔、正文精确、迟到旧动作零写入。复用 `test_text_menu.cjs` 的异步陈旧/失败反例，必要计数接现有诊断，不新增大监控系统 |
+| **C accepted 文字样式 runs**（CJGUI 公共契约的 OHOS 实现） | 复用既有 run 编码与 `set_composable_text_runs` 接口，补真实准入、候选准备、接受发布、回收；覆盖产品预览需要的粗体/斜体、颜色、行内代码背景等既有声明。核对 UTF-8 byte span 与 Typography 使用单位，不能用字节当 UTF-16；明确非法范围、代理对、样式重叠/清除和数量预算。量测/绘制/查询如共用布局，必须来自同一 accepted Typography 及样式身份；仅改 run 要失效，纯重绘/滚动不得每次重排，空 runs 清掉旧样式，失败保留旧场景与资源 | 非空 runs 旧拒绝为 RED；样式在真实像素生效，run-only 修改、清除、非法范围拒绝保旧、中文/emoji 边界、滚动裁剪、旧完成/资源退役有针对性判别。预算在分配前守住。既有 thermo 或 settings 通过同一框架声明消费混合样式，改/清/拒绝都能观察；不新增一套第二渲染器或产品私有绘制 |
+| **D Pharos 源码/只读预览及最终汇合**（产品接线＋框架正常消费） | OHOS controller 接已有 Markdown 解析/投影/片段和 `PharosEditorScene.build(...visual:...)`。源码继续用现有窗口拥有会话，预览只读；同一文档/版本缓存，owner 改变后重算或有界更新，闪烁/空闲不重复解析。中段选区与滚动以同版本源锚点切换，回源码仍可接着替换；Agent 在预览期间写入用共享 ChangeMap/既有映射更新，映射不可得具名处理，不悄悄跳到末尾。组合/恢复在途遵循原事务，不能丢草稿。保存/撤销/重做继续同 owner | 同一最终 normal HAP：源码人编辑→预览标题/强调/代码背景/列表或引用→Agent 公开改正文→预览更新→切回源码续写→保存/关闭重开，逐阶段完整 owner 与最终文件精确。独立证明无编辑双切换保留中段非空选区、有 Agent 编辑时正确映射；不是文尾夹具。密集小文档预览复用已有块/节点预算，超限有界拒绝且源码仍可用。两款消费者来自同一固定平台输入；一轮受影响回归与正式入口含空格独立装配，指纹、原回包、实际画面对应 |
+
+**旧资产怎么接。** 产品优先定位 `apps/pharos_mark_ohos/application/src/pharos_ohos_controller.cj`、`packages/markdown_engine/src/presentation.cj` 和 `packages/editor_surface/src/surface.cj`；复用现有 source owner、解析/SourceMap/片段、场景、保存历史与公开通道，退役被共同机制替换的局部绕行。框架重点 `platforms/ohos/arkts/cjgui-text-menu.ets`、`host/ohos_renderer.cpp`、snapshot 的 run staging/accepted 发布。正式 `sync_platform.sh` 已同步整份 ArkTS 模板；当前三个装配目录旧 proxy/缺 menu 是生成副本状态，权威模板与最终冻结一致，不据此重新实现或整树覆盖。构建应通过正式同步钩子生成正确依赖，不能手改 target 才能运行。
+
+**范围与写集。** H 主写 OHOS adapter/host/snapshot、公共能力的平台实现和产品 OHOS controller；主树公共接口沿已固定契约，公共框架确有必要的窄修可做并核 macOS 影响，不复制 68 处会话代码追逐 E 在途实现。E 的公共文本位置/会话、macOS native、产品 main.cj 保留；Node/Event ABI 若确需改由 H 统一同步，先做布局/拒旧判别。本包不做完整 visual 编辑、GB/多文档扩张、导出/PDF、全新生成面板、右键菜单或新输入法引擎；现有 256 KiB 共同容量不放大。marked/cancel 版本边界、物理设备/发布仍单列，不能阻断已可用的模拟器路径。
+
+**查阅、借鉴与咨询是执行要求。**
+
+- 先读两仓 AGENTS、ACTIVE、本节和直接相关源码；阶段不再读全历史或另建执行卡。仓颉编码前读 cangjie-coding 技能。新的菜单观察/样式布局机制按[本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)查成熟框架对应实现与测试；只借鉴通知/失效/样式区间与布局持有思路，不引入依赖。在本节交付记录用几行写清“参考符号/版本→采用规则→CJGUI前提差异→对应反例”。
+- OHOS Typography 样式栈、索引单位、文本背景能力和对象所有权，以及 ArkUI 菜单通知/剪贴板生命周期有疑问时，先查本机 SDK 头文件/声明，再核华为官方**对应版本**文档；本节下方 N 任务的官方入口继续可用。不要凭别的平台 API 名称猜实现；页面读不到用 SDK/最小对照补，注明证据级别。
+- 日常根因/方案不清，用 [Pi 精确 `zai-coding-cn/glm-5.3`](../../AGENTS.md#independent-model-consultation) 开新的只读上下文，主执行自己是 GLM5.3 也如此；只给当前反例、必要源码、预期/实际和已失败假设。GLM 仍无可靠方案的复杂定位用 `gpt-6-sol/max`；公共契约、并发/资源生命周期或算法存在实质未决风险可直接 `gpt-6-astra/max`。既有 N1/惯性裁决前提没变直接复用，不为本包重问整套架构。
+- 顾问不得递归启动其他顾问、构建、改文件或操作设备；禁止把整仓/整夜日志搬进去重做阶段。一次答复加一次有新事实的追问仍无可验证方案，带材料升级该问题，独立实现继续；认证/超时失败不当答复，不静默换型号。`laya-ask`仅作批量可复核分类，不代替根因或验收。
+
+**效率与交付。** 等编译/咨询时先做写集与产物独立的必要工作；没有独立工作才等待，不能边改同一构建输入边解释失败。同 target、模拟器和桌面串行，复用自有实例；按实际事件/身份/截止时间等结果，不固定延时后重放动作直到绿。A/B/C 的可区分反例→修生产链→受影响验证→D 一次最终汇合；不因每个函数改动重跑旧触摸/恢复/滚动矩阵。Mac 锁屏不等于 hdc 模拟器不可用。只在闭环、新判断或真实阻塞时短更原节/ACTIVE/STATUS，STATUS≤60行；不把咨询次数、代码行数或写报告当完成。若被暂停，精确交接当前未绿项与下一条动作，不说“只剩收尾”来隐藏代码缺口。
+
+最终集中报告分别列 A–D 的实现/验到/未验、框架与产品归属、最终 HAP/输入哈希、同 owner 连续消费与第二消费者、成本原数和清理结果；纯光标/图片/布局等其他活动分别计量，缺失指标写未测。历史剪贴板事故留在同一报告边界；无授权不 stage/commit/push、reset/stash/切分支，不动归属不明实例或转发。指导此次不执行清理或新开发。
+
+<a id="h-overnight-product-goal-20260930"></a>
+#### 夜间连续目标：交付能实际接续写作的鸿蒙源码编辑器与共同滚动（2026-09-30）
+
+**本节是原 H1/H2 的长目标，不另开一包，也不是只修 ACK。** 用户将本节交给执行模型后即按整包自主实施；指导本次只写要求，没有启动后台任务或定时。执行根为本框架仓和 `/Users/jiangxuanyang/Desktop/Pharos Mark`。有目标工具就更新/继续既有目标，无则用既有任务列表推进，不创建重复目标；子任务通过不能把整个目标标完成。用户休息期间无需逐步请示，工具/上下文允许时持续完成下表；达到目标可以正常结束，不必为了“跑满一夜”追加工作。
+
+**完成画面。** 一份 normal Pharos HAP 在华为模拟器上呈现可读的多行源码正文和正常编辑命令；人能触摸定位、选区替换、继续输入，外部 Agent 经公开接口修改同一 owner 后，人仍能接着写；拒绝恢复、撤销/重做及保存关闭重开不丢内容。其底下的文本恢复/accepted 几何和惯性滚动是 CJGUI 可复用能力，并由既有第二消费者证明。小文档上限继续使用已有 256 KiB 共同准入。完整 visual、GB 文件、PDF、弹性回弹/多指、物理性能和上架不扩入本夜目标。
+
+**实施与完成判据。** 下表是连续工作顺序，详细反例仍引用后文原表；已修冻结/取消/ACK、UTF-16差分、容量、构建入口、严格ABI及已绿积分保留。后文 A–E 的历史动词不是重新打开已关闭问题的指令。
+
+| 里程碑 | 必须交付 | 何时算该项完成 |
+| --- | --- | --- |
+| N1 恢复事务 H1-R.a–d | 实际正文/选区安装确认、失败/超时终态、完整请求/绑定身份、窗口采纳与有限重试；修掉弱验收 | setter失败后同范围重试、无回声、迟回、ACK排队时owner换版均有可区分反例；未安装/未采纳不报成功。实际非空选区恢复后的下一笔替换落在预期范围；焦点就绪后完整输入无“容许丢首字”，Agent原回包及完整owner必须核对 |
+| N2 正常源码编辑面 H1-3 | 保存/撤销/重做真实业务入口；多行正文合理占用窗口，键盘弹出与滚动后仍可编辑；命中/caret/范围高亮消费同一accepted排版 | 真实触摸有可区分落点、非空范围替换；中文、emoji/多标量语料不拆坏字节/簇。换行、滚动或几何改变后位置对应正文，旧身份查询具名拒绝；调试PROBE/CYCLE面板退到测试入口，不能只有日志证明可用 |
+| N3 共同滚动 H2 | 正式host推进changed/active，有界唤醒；合法BEGIN接管、同值reveal、旧release失效、重复viewport接受前拒绝；移除样例重复step | 确定性反例加正常手写/公开生成视口消费；拖动→惯性→触摸停止→reveal→系统输入与公开owner写入可接续；停止后滚动活动退役，无其他活动时不再由滚动调度持续帧，光标等合法活动单列。沿已到Astra积分裁决，不再重问或重写已绿数学 |
+| N4 最终产品与复用汇合 | 一次冻结输入、正式入口独立目录构建、最终normal产品连续消费及受影响的第二消费者/macOS回归 | 同一HAP完成人→Agent→人、拒绝恢复、撤销/重做、保存→关闭→重开；完整owner/文件/实际选区及画面可对应。设置/thermo合计覆盖本次文字及手写/生成惯性机制；记录真实成本、最终产物身份与尚未验证的边界 |
+
+N1是最终输入验收门槛，**不是N2/N3独立实现的开工门槛**。先给恢复链做下述一次聚焦机制咨询；等待时做N2产品命令/布局、N3活动及各自反例。可以委派独立子任务，共同window、ABI和集成由主执行者掌握，不能两个代理同时改同一函数。同target构建、模拟器操作和桌面使用串行；正在构建的输入先固定，其他工作用不相交文件/独立产物，不能边改构建源边解释随机错误。
+
+**查鸿蒙资料是实施步骤，不能只靠模型印象。** 遇到平台API、回调顺序、线程/所有权、坐标/索引单位不清，先定位本机SDK头文件、ArkTS声明和当前调用，再查华为官方对应版本的指南/API/变更说明；API版本、DevEco/仓颉SDK、模拟器镜像分别记录。以下是查阅入口，不保证本机版本与这些页面相同，必须切到实际版本核对：
+
+| 本包问题 | 官方入口与必须查清的事项 |
+| --- | --- |
+| 自绘输入与代理恢复 | [在自绘编辑框中使用输入法（版本化指南入口）](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides-V13/use-inputmethod-in-custom-edit-box-V13)。按当前实际用到的InputMethodController或TextInput/TextArea控制器查attach、焦点、选区设置/查询、change/selection回调与卸载；不同API族不能按同名行为混用。setter返回、文本回声和平台实际选区是不同事实 |
+| 正文改变后的选择重置 | [官方TextInput光标重置FAQ](https://developer.huawei.com/consumer/cn/doc/doccenter-dev-faq/faqs-arkui-933)。作为“赋值后光标可能变化”的排查入口，不据它推定当前代理的回调顺序；用本机最小对照验证，不直接抄示例塞进生产 |
+| 同一排版的命中和范围几何 | [Native Drawing Typography参考入口](https://developer.huawei.com/consumer/cn/doc/harmonyos-references-V14/drawing__text__typography_8h-V14)。定向查本机对应的glyph-position、affinity、range rect、line metrics及对象释放：可用API级别、UTF-16/其他索引、px/vp/density、裁剪/变换和布局对象持有期。使用实际绘制的accepted对象，不另排文字伪装同帧几何 |
+
+官方网页抓不到正文时，用可用浏览器或本机SDK声明/随包示例继续；搜索摘要只能定位入口，不能证明线程、安装确认或资源所有权。平台行为仍不清就做最小ArkTS/Native对照。文档缺失不直接等于API不存在，对照同样失败也只限定当前SDK/镜像/输入法组合，不泛化为“模拟器不支持”。marked/cancel的已知版本边界不反复空跑；普通提交/替换和框架状态机继续实现。
+
+**借鉴机制必须落到设计。** 依据[本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)，到 `/Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库` 定向查系统文字同步/选择状态、accepted布局持有、滚动活动接管与终结的实现和测试；Flutter/SDL等只是参考，不能引入其依赖。每个新机制在原咨询答复或本节现有记录简记“参考符号/版本→借鉴哪条状态规则→CJGUI哪些前提不同→哪条反例验证”，不另写长篇调研。已有裁决/前提未变直接复用。仓颉编码前读 `/Users/jiangxuanyang/.agents/skills/cangjie-coding/SKILL.md`，语法/FFI不确定先按技能查。
+
+**CLI咨询是明确执行要求，不是可有可无的提醒。** 普通明确接线直接做；日常疑难及时Pi→精确`zai-coding-cn/glm-5.3`，即使主模型也是GLM5.3也用独立上下文。提供最小复现、期望/实际、必要源码、版本、原日志及已失败假设，要求顾问质疑既有归因。恢复链本次直接用`gpt-6-astra/max`审阅完整事务（前文所列N1四项），不要继续局部猜修；新公共契约、并发/资源归属、架构算法有实质风险也可直接Astra。GLM无可靠方案的复杂技术定位用`gpt-6-sol/max`，不要求每题逐级问遍三个模型。首次咨询+一次有新证据追问仍无可验证方案，将该问题标为待指导、继续独立工作，不把模型轮换当清零失败次数。
+
+Pi按[AGENTS精确只读模板](../../AGENTS.md#independent-model-consultation)执行。当前问题材料放现有`artifacts/consultations/<问题>/request.md`，使用独立输出目录；以下路径中的`current-question`要替换为实际目录并先建好：
+
+```bash
+/Users/jiangxuanyang/.local/bin/pi -p \
+  --provider zai-coding-cn --model glm-5.3 \
+  --no-session --no-context-files --no-extensions --no-skills \
+  --no-prompt-templates --no-themes --tools read,grep,find,ls \
+  --system-prompt '只读技术咨询。仅查问题所需文件，不修改、不构建、不操作设备或桌面。区分证据与推断，质疑已有归因，给区分实验、机制方案和验收反例。' \
+  @artifacts/consultations/current-question/request.md \
+  > artifacts/consultations/current-question/answer.md \
+  2> artifacts/consultations/current-question/stderr.log
+consult_exit=$?
+printf '%s\n' "$consult_exit" > artifacts/consultations/current-question/exit-code.txt
+```
+
+Sol/Astra沿[产品AGENTS的完整Codex CLI模板](</Users/jiangxuanyang/Desktop/Pharos Mark/AGENTS.md#codex-cli-调用方法>)（`codex -a never exec`、`-s read-only`、stdin材料、`-o`答复与JSONL日志），显式`-m gpt-6-astra -c 'model_reasoning_effort="max"'`（复杂技术题换`gpt-6-sol`），独立只读上下文，不让顾问修改或抢设备。答复、退出码及必要版本信息落同一问题目录；在启用shell失败即退出的环境也要显式收取失败码。认证/服务/参数失败具名记录，不把空答复当建议、不静默换型号；顾问建议必须经反例与正常消费验收。`laya-ask`只用于成批可复核分类/排序，不能替代查API、根因分析或必须咨询。
+
+**夜间执行纪律。**
+
+- 每完成一条生产链自动接下一项，不在“本轮编译成功/测试绿/下一步可做”处等用户回复。一般内部实现已授权；改变自绘路线、引入外部框架依赖、丢弃用户数据或其他原规则要求决策的事项不擅自实施，暂挂该项继续其余范围。
+- 等编译/咨询/设备启动时推进独立且必要的实现、反例或集成准备；没有独立工作才有界等待。禁止靠反复读同一文档、重跑已绿全套或每轮写.md来占时间。合理诊断算进展，不以代码行数设配额。
+- 修缺陷先找能区分根因的最小反例，修通生产链后跑受影响回归，最后N4一次汇合。不得固定sleep/重复投递直到绿，不放宽字节/范围/恰好一次等判据；按事件身份+实际状态+截止时间等待，不把验收工具失焦误归产品。
+- 当前已授权桌面操作无需再等“已解锁”回复；可经hdc/uitest在模拟器完成的工作直接做。Mac锁屏仅跳过确实依赖宿主前台的动作，不改锁屏策略、不反复抢焦点；遇设备问题先一次定向诊断/合理恢复，不循环重启模拟器。设备不可用时推进代码与离线反例，不能直接把整个H包写成待真机。
+- E主树文字会话/位置、macOS renderer与产品main仍由E负责；H只同步固定的公共契约及必要依赖，不能整文件覆盖并行修改。共享修复若确实需E重叠写集而无通信，留下具体窄接缝与输入指纹，独立工作继续。框架问题补CJGUI，文档命令/存储/Markdown规则留Pharos，ArkTS薄壳不自造owner/撤销/输入引擎。
+- 同轮复用自有实例，HAP哈希、target、PID/重开PID、实例/绑定/请求/版本和原协议对应留证；只清本轮精确身份的实例与转发，保留用户实例、剪贴板及并行产物。未经用户要求不stage/commit/push、reset/stash或切分支。
+- 只有链路完成、新结论改变方案或真实阻塞时短更原任务/ACTIVE/产品STATUS；不增加执行卡或逐轮报告。上下文将耗尽时留下短接续点（当前状态/文件、失败原数、下一条可执行动作、运行作业身份），按工具能力接续，不以预算末轮冒充完成或宣称停止后仍在后台工作。
+
+**晨间交付格式。** 只交一份集中报告：N1–N4分别“实现/已验/未验/阻塞”；两仓实际生产改动及归属；最终normal HAP/运行入口/源码指纹；一条人→Agent→人的完整正文/文件读回证据；正常编辑界面截图；拖动与惯性分组的真实响应、读取/布局工作量与内存/停帧原数。已有性能判据不放宽，缺指标明确未测，不以单帧外推收益。自有运行结束后统一清理并保存引用日志。若只有物理设备、上架或当前版本marked/cancel等本包明确排除项未验，可按限定范围报告本包完成；N1–N4内任何必做仍缺就保持未完成，准确交接，不能靠“登记待验”结项。
+
+**历史指导限域复核（2026-09-30，H1-R 恢复事务；执行后状态以上方 [N1–N4 复核与接续](#h-source-preview-next-20260930)为准，以下不是未完成清单）。** 冻结请求、native 换绑取消、kind-55 成功/取消回执、窗口 `recalibrate→confirmProxyRestored` 和按挂载/目标值识别回声已真正接上；上一轮“没有ACK、旧正文发送时重贴新身份、全局Bool门禁”的实现缺陷不再原样重开。**但“完整事务闭合／17项全部验收通过”不能接受**：平台安装失败和无回声仍有具体断点，窗口忽略最终采纳失败，脚本又存在恒真及容许丢首字符的判据。下面只列本次必要修正，仍与H1-3/H2一起完成原包。指导只读生产链、测试/脚本和原件，未构建、重跑测试或操作模拟器。
+
+[本轮原件](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/h1-ohos-recovery-20260930/README.md>)中的 normal HAP `d3f59e5f…422ce`（h1r3h）构建首次启动PID27287；实际probe是 **PID29934→重开30361**。request3的文本回声ACK→窗口结束等待→无需再次点击续写Z→UNDO/REDO/SAVE→完整 **19 B** 重开一致有原证，保留此范围。PID23602属于较早的 `hilog_live.txt`，不能混入当前17项；“真机”应写华为模拟器系统输入注入。`hilog_10_burst.txt:49–55` 请求/ACK为0:0，随后的系统选择为13:13，不能把请求值当平台实际安装值。17个检查布尔值为真不等于17项有效判别，具体脚本问题见表。上一包normal `1a52aad4…c692` 的镜像刷新、43 B重开和14/14成果继续保留，两个运行的正文与PID分别记录。
+
+#### 本次接续顺序：先接可运行产品，同时完成已定惯性机制
+
+| 必要返工 | 机制与可区分验收 |
+| --- | --- |
+| **R1 生产接线已修，保留。** `CJGUI_CONSUMER_SYNC`、`CJGUI_APP_EXTRA_DEPS`、显式 `CJGUI_APP_PKG_LIB` 已由正式入口消费。 | 不再重改入口或单独重复构建。最终产品汇合时从明确无旧 target 的独立装配目录经同一入口构建，记录实际路径/输入指纹/命令与前提；不能靠手补清单或删除 E 的 macOS 产物。当前两份原目录构建/闭包可以引用，不夸大为独立目录运行。 |
+| **R2 动态容量本轮已修，保留。** `capacityIssue` 被 apply/replay 在正文/版本/双栈修改前共用，允许 `result<=cap || result<=current`。 | 10→9/上限4、历史恢复6B越界两反例及144/144见 `artifacts/h1-build-entry-20260929/doc-core-capacity-green-144.log`（产品仓）。拒绝不写 journal 有源码依据；测试未独立量测磁盘前后，不扩大为该项实测。后续无相关变化不重跑容量包。 |
+| **R3 生产检查已补严，保留。** 完整赋值提取含运算符续行，新增旧 OR 负控；现存 `abi-mirror.log` 仍为旧7项，未包含本次所报8项。 | 补已有新运行/变异原件索引；确实丢失才定向运行该负控，不重跑 ABI/触摸全矩阵。当前生产旁路不再重修，四向静态/宿主哨兵/目标运行范围继续分开。 |
+
+| 本次仍须完成的生产链 | 已定位断点、修复方向与判别 |
+| --- | --- |
+| **已修链路保留** | 镜像刷新、H1-2合法UTF-16差分及原14项消费保留；新恢复已具冻结请求/native取消/ACK/会话校准接线，6项native摘录反例有用，但未执行ArkTS真实选择失败和窗口采纳失败路径。以下修复在现有机制内完成，不另写一套恢复协议。 |
+| **H1-R.a 平台安装事实：失败重试与正文/选区顺序** | `Index.ets`约749在`setTextSelection`前更新`imeSelStart/End`；首次setter抛错后，同区间重试约746直接因缓存相等返回true，约739发成功ACK。且文本回声ACK用的是请求账本，本轮原日志ACK0:0随后系统13:13。分开期望与已观察值，按平台实际能力核安装完成：正文改变引起的选择重置必须结算，不能只因setter无异常或字符串回声就确认选区；失败保旧账本，同区间重试仍需真实安装。判别：先抛错→同范围重试不能伪成功；旧实际0:0→目标4:9→正文更新→同请求实际选择确认后才能解锁，下一笔替换必须落在4:9。 |
+| **H1-R.b 无回声必须有终态** | `Index.ets`约726的900ms只清pendingEcho不发失败回执；native awaitingAck和窗口去重待办均保留，后续恢复永久等。按冻结身份收敛为失败/取消，让窗口有限重试；迟到回声/ACK不得命中新请求，成功不靠超时推定。判别：目标回声缺失→失败终态→后续有效恢复可继续；首请求迟回不重复完成。重试上限到达时具名可恢复失败，不能静默关输入门。 |
+| **H1-R.c 窗口完成必须采纳成功** | snapshot window约5819先清pending，5841忽略`adoptNativeSelectionRestored`返回false，仍成功计数并回写旧焦点/bookmark。静态交错：平台ACK(v1)入FIFO→Agent把owner推进v2→窗口消费，源版本守卫拒采纳却报成功。仅核验与采纳成功才记完成；失败保持恢复意图/请求新投影并有限重试，不覆盖当前焦点。pending须接收并冻结native requestId及绑定/会话代次，成功和取消都精确匹配；当前四元/三元匹配的遗漏不宣称已实测ABA，但不能把头字段存在当窗口已核验。本项补实际生产窗口接缝反例，不仅跑C++摘录。 |
+| **H1-R.d 验收恢复判别性、核清输入账目** | `probe_h1r.py:289–294`发H1R却允许只落1R，summary已记first_char_lost=True；336的`agent_shrink_accepted`恒True。改等同实例真实焦点/可输入状态再投整串，严格完整owner差分；Agent结果检查原回包、版本及字节，错误必红。burst发2345678实际仅45678，逐笔区分未投递/具名拒绝/接受/恢复，不能按末串“看着合理”判通过；拒绝遵守既有草稿保全和可见失败契约，不私自重放写入。补Agent拒绝、首字符缺失、选区未安装的负控。当前17项原报告保留为历史原件，在原README/状态纠正口径；不要为漂亮全绿放宽判据或重试掩盖。 |
+| **H1 正常源码编辑面与 accepted 位置（尚未交付）** | 文本级命中、caret声明仍拒绝；恢复已接ACK但平台实际选区确认和失败收敛见上表，不能以整控件焦点证明精确落点。按原 C 用实际 accepted 排版补必要查询、触摸落点、光标/高亮和拒绝恢复。归档画面仍含 PROBE/CYCLE/状态大面板，控制器 `applyUiEvent` 对业务控件全返回 false；正常产品入口应提供可用的保存/撤销/重做，正文可读、正确使用可用区域与缩放，调试控制留测试入口。复用原 editor_surface 和服务，ArkTS 保持薄壳，不在壳里另写编辑器。 |
+| **H2 标准宿主消费及活动生命周期（静态反例）** | 13项证明积分/请求代次，窗口测试手动step不能证明宿主接线。main/snapshot共同host未推进，只有lab宿主显式step；将活动接入正式host，`changed`请求刷新、`active`安排有界唤醒，移除样例重复推进；Pharos不得另写逐视口循环。raw BEGIN 空白处只冻结后返回，snapshot指针BEGIN先stop后验身份；按既有Astra接完整身份接管通知、先判身份再终结。显式reveal即使目标相同也应从accepted接管；活动100→reveal同100→下tick不得继续。新BEGIN/显式定位使旧release票失效，迟到同绑定END不能重新启动，`inertialActivityGeneration`必须实际参与判决。 |
+| **H2 歧义绑定与正常消费（静态反例/未验）** | 同一viewport放两个独立scrollArea目前在接受后才记错并保留首记录，布局已可能覆盖staged extents。候选绑定准入时拒绝重复对象，保留旧accepted及活动；两种不同高度视口是判别。随后两款normal样例合计补手写/公开生成视口、惯性期间带身份公开写入和直接拖动/惯性分组原数；`bindings=1`及构建不替代这条消费链。 |
+
+**这一包的推进顺序。** 恢复事务先集中闭合H1-R.a–d，H1-3的actual accepted几何、正常正文布局与保存/撤销/重做接线，以及H2共同host/接管/终结/重复viewport准入由独立写集同步推进。不要再次把整包停成只修几个恢复函数；有真实依赖才等。原H1/H2范围不缩，调试面板移测试入口、生成视口消费和最终汇合继续。无新改动/失败/疑点不重跑容量、ABI、数学及旧触摸矩阵。
+
+**一次机制评审，避免继续逐点补丁。** 同一异步恢复问题已连续实质返工。本次将冻结请求→平台正文/选区安装→成功/取消/超时→窗口采纳→重试的完整路径，以及上表原日志和静态反例交Astra/max做一次聚焦只读评审；只给相关源码与问题，不从头扫描项目，不重新争论已定架构。要求覆盖终态、身份、安装顺序和失败账本，形成可实施方案后由当前执行者连续完成，答复不当证据。日常技术定位按AGENTS用Pi→精确GLM5.3，必要Sol/max，不逐级问遍。咨询/编译等待时推进H1-3/H2独立工作，不再空等或增加轮次文档。
+
+**归属与汇合。** 恢复事务、文本几何、平台回执和滚动调度归CJGUI；Pharos只负责文档命令、投影通知、存储及正常布局，ArkTS保持窄平台操作。按本地导航借鉴成熟框架的异步文字状态/确认机制，复用已采纳文字会话和惯性裁决，不引依赖。修后先做上述最小失败反例，再在同一最终normal产物做一次人→Agent→人、非空选区/拒绝恢复、保存重开与惯性共同消费，记录完整owner、实际选择及版本；最后受影响macOS和独立目录构建。E写集保留，同target/桌面串行，未授权不stage/commit/push。
+
+1. **H1 主线连续做到真实消费。** 首个完整切面是“窗口绑定已有 Source/Sink → 真实系统编辑/非空替换 → 同一 owner 确认 → accepted 画面校准”，随后接工具栏命令与 E.1 的人→Agent→人→撤销/重做→保存重开。窗口普通会话/平台草稿与确认在CJGUI，文件/预算/文档命令在Pharos。同步的 `text_session.cj` 必须固定源指纹及依赖，按绑定、事件归属、提交确认、拒绝恢复、换绑/关闭逐段接窗口；不得按“主树68处引用”整文件覆盖 E 在途 `window`。OHOS geometry 从实际绘制所用 accepted 排版取命中/光标/选区，核本机SDK索引单位及布局对象持有/退役，不另排一份文本冒充同帧位置。字素拒绝桩只允许过渡：若普通移动/删除依赖它，必须接真实平台服务或经现有契约认可的系统范围事实；不能无限返回 unsupported 后称编辑器可用，也不退为按标量删除。基础编辑可独立于未观测marked/cancel继续，别等待完整visual或E全部新模块。
+2. **H2 方案已到，直接实施。** [Astra 完整裁决](../../runtime/cjgui/platforms/ohos/consultations/inertial-activity-astra/answer.md)已落盘，不再写“等待答复”或重问同题。按其顺序接 requested/候选代次→截止积分→accepted 活动绑定/终结→窗口策略/调度→正常消费。活动表必须来自 accepted 的实际视口绑定并含 viewport 对象身份，不仅靠所有权/liveStamp；候选冻结实际用于布局的 `requestGenerationUsed`，接受 A 后仍保留后发 B。原始新触摸（含空白处）、显式定位/reveal、换绑/隐藏/停止取消活动；旧 END 不重启已失效释放票。`changed` 决定刷新、`active` 决定后续唤醒；最后有位移即交付，诊断不得再 step。绝对截止积分及每窗口不可变策略按答复实施，删除样例枚举和全局开关控制权；split 捕获/CAS/自身修订继续按原要求闭合。
+3. **并行只分独立写集，汇合只做受影响检查。** H1 平台会话/产品接线与 H2 共同滚动可分工；共同 window/ABI 由主执行者集成。复用已验证路径，必要新反例先红后绿，最终一次受影响 normal HAP 汇合。旧构建记录的 `--no-emulator-start`/hdc为空已被上述正常HAP实跑取代，不再作当前阻塞；后续使用既有华为模拟器入口和明确target，保留用户实例。实际启动/连接失败才具名记录具体阻塞，禁止反复重启或把未启动自动升级为待真机。无新改动/失败/疑点不重复全量、截图或Markdown；接续H1/H2直到包内工作完成，独立代码不随设备等待停下。
+
+### A．修 ABI 与严格身份，准备同源目标
+
+- 按原 r10 第1项，对齐实际主 src、H snapshot、C头与lab staging的完整Node布局、初始化和关键偏移，新增实际仓颉→C哨兵读回，不能仅做文本字段名对比。H不支持的效果明确禁用但保留ABI槽位；包同步阻断错配。
+- 恢复严格 acceptedBindingEpoch 校验；零尾差 END 也先校验手势冻结绑定，fling 传原冻结身份，不借当前节点重贴新版本，不以 `fling:`/非零GestureKey替代绑定守卫。同ID换绑/ABA拒绝与同绑定刷新继续成对验证。保留前包原始FIFO/唯一CANCEL/正常触摸成果，不重开hr3–hr5。
+- 不必等设备完成才处理产品目标构建。用当前OHOS仓颉工具链编译、链接共享 document_core/app_services/所需markdown子集，并在HAP运行实际事务/历史/读取用例；分别记录宿主测试、目标构建与模拟器执行。禁止未执行分支中残留不可链接Darwin符号却称可移植。
+
+### B．薄平台宿主与存储端口，保留一个产品
+
+- 在产品仓新增清晰的OHOS目标/宿主目录，复用H已有Ability/XComponent、自绘renderer、输入和TCP公开传输。ArkTS只承担既定薄平台壳；正文、版本、撤销、Markdown和授权操作仍为共享仓颉代码。复用 `DocumentSession`、`Workspace`、`AppServices`、`editor_surface` 和现有provider，不复制长期独立的编辑器/owner/控制器，不另造产品CLI/MCP。
+- 先组合已有可复用服务；桌面 `PharosEditorController` 仍嵌在 main.cj，不先大拆这个E写集。需要平台无关的小文档命令装配时，H在独立共享模块提取最小机制，禁止复制Markdown算法；确需改桌面调用点由E集成该窄接缝。
+- 以窄端口提供私有目录、稳定底本、范围读、候选写/同步、同文件系统原子发布、取消/失败释放。保留macOS实现和保存失败保旧/撤销语义。首包可限定新建及应用私有小UTF-8文件（明确并在分配前执行字节预算），底本可用有界内存；不能把任意外部文件流式复制或mtime相等说成原子快照。保存端Darwin常量必须真正替换为目标实现，不能只绕过clone。
+- Node公式/图表、PDF、桌面文件对话框与Unix socket按能力装配；不支持的能力具名发布/禁用，不伪造成功。源码编辑表面沿Pharos简洁视觉规范，保持自绘正文与现有主题，不做调试按钮堆砌的第二款产品。
+
+### C．把共同范围会话接到鸿蒙实际排版和输入
+
+- 从已结束E包固定一份最小 Source/Sink/CompositionSink、text_session、身份/确认/恢复契约输入及指纹，按依赖同步snapshot。main src仍是公共机制来源，snapshot是可追溯交付副本，不能另立长期语义。E的新位置模块尚未完成时，不整包追逐其在途文件；已定内容/绑定/范围/确认字段直接复用，新增平台接缝按共享交接规则合入。
+- 让真实Pharos源码面使用CJGUI窗口拥有的会话，OHOS适配器只保有界镜像/草稿。UTF-16↔UTF-8、基版本、替换范围、请求ID与owner确认贯通；入队不算接受。系统全文回调可转同版本精确差分，不把长期协议退回整篇字符串、不引第二owner。
+- 补真实正文命中、光标、高亮/范围几何与外部换版校准，来源必须是实际accepted排版；不能用控件大矩形或另排文字伪装精确位置。普通文本状态/选择在框架，文档命令/文件/Markdown SourceMap在产品。优先源码多行面，不等待完整富文本visual或本轮mac全部bidi接口。
+- 对可观测的系统提交/非空替换先形成正常链；旧绑定/版本的回调零错误写入，保存能获得的草稿后校准继续。缺失的marked/cancel不猜造，不用失焦/空值当系统终态，不无限重跑同版本镜像；公共状态机反例与真实回调支持范围分别报告。字素/复杂文字服务按系统能力和共同契约接入，不能以标量降级假称整簇编辑通过。
+
+### D．原惯性包按机制补齐，不再靠截图代替接线
+
+原 r10 复核第2–5项仍是必做，具体反例直接复用：共同窗口拥有手写/生成viewport活动；requested/accepted按请求代次确认，旧候选A不覆盖后发B；explicit定位/reveal/新触摸/换绑/停止终结活动；末步 changed 与 active 分开，诊断只读。删除样例逐个step和全局开关的控制权，平台不常驻计时器，macOS系统惯性不叠加。
+
+修绝对时间截止积分、亚像素集中量化、有限数转换准入，BEGIN/UPDATE/END共同追加时间样本而不是END覆写历史；保留10/30/20/40、首次2/2.6s、低速最后一帧等原反例。split同步整个捕获/CAS/自身修订接续，不能只搬状态方法。宿主gesture抽取缺helper、队列C++标准与Node ABI分别诊断，修测试调用但保留行为断言。此切面可先独立落定向测试，最后与H1共用一次冻结构建汇合。
+
+### E．一次真实产品闭环与有限回归
+
+1. 最终normal Pharos HAP：新建/打开受控小文档→多行滚动/触摸定位→中文/emoji及非空替换→公共发现/读取→授权Agent范围写入→过期版本拒绝→人继续编辑→撤销/重做→保存→关闭重开。按documentId/binding/version/requestId核完整owner原字节、实际文件及画面，不能只读代理文本或用测试私有setter代替公开事务；失败保存保留旧目标。
+2. 一个既有设置/thermo普通文本消费者复用同一框架接缝做针对性回归；原惯性包的设置与thermo最终normal消费合计覆盖手写/生成视口、惯性期间公共写入、触摸停止、reveal/系统编辑、未变图片复用及空闲停帧。只跑受影响切面，不重做所有历史样例矩阵。
+3. 证据绑定当轮SDK/镜像/HAP哈希/PID/实例/accepted身份，公开请求与owner/画面逐笔关联。记录打开/可编辑、范围读取/排版工作、输入到owner/accepted、峰值内存；惯性/直接拖动自然响应样本分组，受控闸门分列。模拟器结果不冒充物理性能、GPU完成不冒充实际显示、AX/协议不能冒充系统输入。
+4. 共享机制改动补macOS受影响定向回归，固定一次最终源码与包清单。设备能力不足只阻塞具体真实回调，不阻塞代码、确定性状态机或已能运行的产品链；来源不明失败先定位，不能把反复快扫、重建、长报告当实现。
+
+**写集与咨询。** H负责OHOS host/snapshot/scripts/HAP、新产品平台装配/存储端口、Node/Event ABI和共同滚动活动；E负责主文字会话/位置、mac renderer及产品语义。H不得整体覆盖E在途window/main/头文件，E不另改Node/Event布局；新文字查询优先独立头/模块，结构性ABI调整只由H集成。共享函数确实重叠时冻结最小输入并在现有任务节说明交接；没有跨工具消息渠道不猜测对方已收到，继续独立写集，必要窄交接交用户转达。见[两线具体写集](2026-09-26-framework-capability-roadmap.md#two-editor-write-sets)。
+
+日常疑难用[Pi独立GLM5.3只读咨询](../../AGENTS.md#independent-model-consultation)，主执行也是GLM5.3照常使用；已有裁决直接落实，新的公共契约/生命周期算法实质未决可直接Astra，复杂技术仍无解用Sol。沿本地导航学习Flutter活动/速度与系统文字服务、SDL OHOS生命周期的机制，只借思路不引依赖；每个问题定向读实现与反例，不扫整个参考仓库。仓颉技能先读；Laya仅作可复核批量分类。等待编译/咨询时做独立必要工作；同target/模拟器/桌面串行，只短更现有任务/ACTIVE，包末集中报告H1/H2真实完成与剩余项。保留用户实例及两仓既有改动，不stage/commit/push。
+
 <a id="h-inertial-scroll-next"></a>
 ### H 接续：快照接线收尾与可中断惯性滚动（2026-09-29）
 
@@ -364,6 +632,13 @@ bridge 队列、核心/renderer 身份、焦点和消费按写集推进；等待
 5. **一次受影响汇合，保留原 D/E 交付。** 先确认主框架、共同样例及 macOS 相关消费构建，再同步冻结两款 normal HAP。合计覆盖手写与真实公开候选的生成视口：松手减速→活动期间触摸停止→按钮唯一激活→reveal与系统输入→owner精确读回，惯性中带身份公开写入、未变图片复用及空闲停帧；直接拖动/惯性各一组自然响应样本，预算按原 D。r10目录的 pid文件/startup为17105，报告写15288；现有 `hilog_inertia.txt` 可见17105提交90→145，却未含报告的fling/END/中止日志。先查已有原件及重启关联，缺失部分随最终连续链补采，不补造旧记录或只为归档再跑一轮原型。回弹/多指/嵌套、marked/cancel版本边界、物理性能继续后置。
 
 **咨询与节奏。** 主执行者承担跨层接线，明确数学/测试等独立写集可委派；不把未知根因反复拆给子代理。先消费已有针对惯性活动/接受事务的 Astra 答复；若尚无该裁决且方案不明，把本节最小接口、A/B请求反例与解析截止方案交 `gpt-6-astra` 当前次高档聚焦只读裁决。ABI或测试实现根因用 `gpt-6-sol` 同档咨询，普通接线直接做；旧FIFO/触摸身份裁决不重问。按原 E 参考本地 Flutter activity/position/velocity tracker 的状态替换与时间窗思路，适配 CJGUI 自己的 accepted 事务，只借思路。编译/咨询/设备等待期间推进独立工作，客观互斥才等待；文档只在新增事实或闭环后短更，无变化不重复整套测试。完成生产接线和受影响汇合后集中报告，本包必做项保持在本包。保留 E/F 写集，同 target/设备串行；未获用户要求不 stage/commit/push。
+
+**H1-C/H1-E/H2 执行者原记录（2026-09-29 深夜；受上方最新指导复核限定）。** HAP `6596579b…` 的输入/owner事务与H2数学成果保留；“画面一致、最终关闭重开、H2全部完成”不由以下旧记录证明，缺口以上表为准。
+- **H1-C 接通：**窗口拥有范围会话（`bindRangeTextSession` → node 107 / 资源 1 / MULTILINE，`materializeLimit=256 KiB`、组合仲裁开）；系统 IME 经 ArkTS 代理送**精确 UTF-16 范围增量**（kind 51，携绑定代次），窗口路由到会话后写同一 owner。系统落点实测 3 笔 `PHAROS_OHOS_EDIT … applied=true mirror=2..4 owner_bytes=16..18 undo=1..3`、`ROUTE_MISS=0`，accepted 场景与画面一致。
+- **H1-E 闭环：**外部通道经 `hdc fport tcp:7856` 打到宿主已注册 loopback 传输，业务只在 owner 线程 `dispatchPayload`。人键入 → owner v4 `'# Pharos Mark\n\nAgentH1C'`；Agent `REPLACE_RANGE`(v4→v5) → `'…AgentAgent'`；`UNDO`(v6) → `'…AgentH1C'`；`REDO`(v7) → `'…AgentAgent'`；`SAVE` 后 `savedContentVersion=7`、`isDirty=0`；**关闭重开** owner 逐字节读回等于保存内容（两次均核）。
+- **产品侧修复（H1-E 前提）：**授权声明了 `SNAPSHOT_ACQUIRE/READ/RELEASE`，但宿主只 `enableRangeReads`；`hasSafeAuthorization()` 要求每个声明范围都在本连接可见，缺快照提供者会让**整条**外部通道判 `unauthorized_caller`。按桌面 `main.cj:7088–7095` 补 `enableSnapshotReads` + `attachLeaseInvalidator` 并具名失败，`lease_diag` 公布 epoch/未撤销。
+- **H2 已实现+测试：**按[已到 Astra 裁决](../../runtime/cjgui/platforms/ohos/consultations/inertial-activity-astra/answer.md)——每窗口不可变权重策略（撤 `cjguiComposableInertialScrollEnabled`）、候选请求代次（A 只确认 A，stage 后来到的 B 按新范围夹紧并保留身份）、截止积分 `T=min(Tmax,τ·ln(|v_s|/ε))`、`changed/active` 分离、窗口拥有已接受滚动绑定（node/resource/kind/accepted 代次换绑即失效）。`runtime/cjgui/src/composable_ui_scroll_activity_test.cj` 13 项确定性反例（A/B 判决、v_s=±1/0.02、重复时刻、时钟倒退、触边末帧、准入、策略 token、两窗口隔离）全绿，框架 `cjpm test` **469/469**。最小机制同步进 H snapshot；两个样例（settings/thermo）退役 `stepActiveInertialScrolls` 与全局开关，宿主改 `configureScrollPhysicsToken` + `window.stepWindowActivities`，设置 lab 重建后 `declared/effective=experimental_exponential bindings=1`。
+- **保留/剩余：**R1/R3 与 ABI 成果不变；R2 动态容量由 `document_core.session` 的 apply 与 replay 共用 `capacityIssue`。剩余：独立干净目录最终构建、真机性能/发布审核、macOS 定向回归、snapshot 其余历史差异。E/F 写集未触碰，未 stage/commit/push。
 
 **执行者 r10 自报记录（2026-09-29；“共同窗口、身份、数学及 split 已完成”的表述受上方当前复核限定）。**
 **自报五项改动：**

@@ -32,7 +32,7 @@ static BOOL checkHeightStyle(uint64_t token, NSString *value, uint32_t contentWi
     source.fontFamily = fontFamily;
     source.textAlpha = 1.0;
     node.node = source;
-    CjguiPreparedTextNodeLayout *prepared = CjguiPrepareTextNodeLayout(node, value, 1.0);
+    CjguiPreparedTextNodeLayout *prepared = CjguiPrepareTextNodeLayout(node, value, 1.0, nil, NULL);
     if (!prepared) return NO;
     [prepared.layoutManager ensureLayoutForTextContainer:prepared.container];
     NSRect used = [prepared.layoutManager usedRectForTextContainer:prepared.container];
@@ -88,6 +88,18 @@ int main(void) {
         NSMutableString *longLine = [NSMutableString stringWithCapacity:100000];
         for (NSUInteger index = 0; index < 10000; index++) [longLine appendString:@"abcdefghij"];
         pass &= checkHeight(token, longLine, 320, "100k-one-paragraph");
+        NSMutableString *overBudget = [NSMutableString stringWithCapacity:131073];
+        for (NSUInteger index = 0; index < 131073; index++) [overBudget appendString:@"x"];
+        uint32_t refusedHeight = UINT32_MAX;
+        uint32_t beforeRefusal = session.composableTextMeasurementCount;
+        CjguiInternalRendererStatus overBudgetStatus =
+            cjgui_internal_renderer_measure_composable_multiline_natural_height(
+                token, overBudget.UTF8String, 13.0, 0, 0, 320, &refusedHeight);
+        BOOL budgetRefused = overBudgetStatus == CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED &&
+            refusedHeight == 0 && session.composableTextMeasurementCount == beforeRefusal;
+        printf("NATURAL_HEIGHT_BUDGET status=%d height=%u count_before=%u count_after=%u pass=%d\n",
+            overBudgetStatus, refusedHeight, beforeRefusal, session.composableTextMeasurementCount, budgetRefused);
+        pass &= budgetRefused;
         session.forcedComposableMeasurementFailures = 1;
         uint32_t failedHeight = UINT32_MAX;
         CjguiInternalRendererStatus failed =

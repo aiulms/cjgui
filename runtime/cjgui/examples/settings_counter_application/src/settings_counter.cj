@@ -319,6 +319,8 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
     public static let nodeIdAlias: Int64 = 25
     public static let nodeIdImage: Int64 = 31
     public static let nodeIdImageSwitch: Int64 = 32
+    // C（h-source-preview-next）：样式阶段循环按钮（本地 UI 状态，不经 owner）。
+    public static let nodeIdStylePhase: Int64 = 34
     // H 触摸滚动区（手写视口）：滚动区容器/内容与区内控件。
     public static let nodeIdHandScroll: Int64 = 900
     public static let nodeIdHandScrollImage: Int64 = 940
@@ -343,24 +345,25 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         return pending
     }
 
-    // C（惯性包）：推进手写视口的活跃惯性（由宿主循环每轮调用）。
-    public func stepActiveInertialScrolls(now: MonoTime): Bool {
-        return handScrollViewport.stepInertialScroll(now)
-    }
-
+    // H2：滚动物理策略与活动由**窗口**拥有；样例不再逐个枚举视口，也不再有
+    // 全局开关。宿主声明策略（`configureScrollPhysicsToken`）并只调
+    // `window.stepWindowActivities`。
     private let domain: CjguiSettingsCounterDomain
     private let generatedRegion: CjguiGeneratedUiWindowRegion
     private var localRevision: Int64
     private var statusText: String
+    // C：样式阶段（0 混合 → 1 修改 → 2 倒置 → 3 重叠 → 4 超 64 → 5 清除）。
+    // 纯 UI 声明状态：非法批次的拒绝与保旧都发生在框架渲染器，这里只负责
+    // 把每阶段的声明真实送到同一条 wire。
+    private var styleRunsPhase: Int64
 
     public init(domain: CjguiSettingsCounterDomain) {
-        // C（惯性包）：启用实验性惯性滚动（手写/生成共同策略声明）。
-        cjguiComposableInertialScrollEnabled = true
         this.domain = domain
         this.generatedRegion = CjguiGeneratedUiWindowRegion(settingsGeneratedCatalog(domain),
             CjguiSettingsCounterGeneratedBinding(domain), "settings-generated")
         this.localRevision = 1
         this.statusText = "编辑后应用计数配置"
+        this.styleRunsPhase = 0
     }
 
     public func generatedUiRegion(): CjguiGeneratedUiWindowRegion { return generatedRegion }
@@ -382,10 +385,13 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
 
     public func buildUi(): CjguiComposableUiNode {
         let snapshot = domain.counterSnapshot()
-        let heading = CjguiComposableUiStyle(fixedHeight: 52, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
-            fontSize: 30.0, fontWeight: 700)
-        let body = CjguiComposableUiStyle(fixedHeight: 40, textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0),
-            fontSize: 22.0)
+        // N2-V 密度修复后布局单位是 vp（模拟器窗口实测 377x487 vp）。头部与手写
+        // 视口按 vp 收紧，让生成区与手写视口同屏可见；卡片与 D 夹具的相对几何
+        // 保持原样（裁剪/命中负控依赖 50/40/80 的比例），它们位于首屏之下。
+        let heading = CjguiComposableUiStyle(fixedHeight: 24, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
+            fontSize: 17.0, fontWeight: 700)
+        let body = CjguiComposableUiStyle(fixedHeight: 16, textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0),
+            fontSize: 12.0)
         let value = CjguiComposableUiStyle(fixedHeight: 84, textColor: CjguiComposableUiColor(1.0, 0.92, 0.55, 1.0),
             fontSize: 54.0, fontWeight: 600)
         let action = CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 64, gap: 16,
@@ -399,10 +405,68 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
             cornerRadius: 18)
 
         let root = cjguiComposableVertical(1, "counter-root",
-            CjguiComposableUiStyle(padding: 28, gap: 18,
+            CjguiComposableUiStyle(padding: 12, gap: 10,
                 background: CjguiComposableUiColor(0.06, 0.09, 0.15, 1.0)))
         root.add(cjguiComposableText(10, "counter-title", "设置与计数", heading))
-        root.add(cjguiComposableText(11, "counter-mixed", "混排 Mixed 0129 样例", body))
+        // C（h-source-preview-next）：既有第二消费者经同一框架声明消费混合
+        // textStyleRuns。run 端点是节点显示文本的 UTF-8 显示字节偏移（与
+        // macOS/网格 caret run 同一 wire 契约）："混排 Mixed 0129 样例" 共
+        // 24 字节——混排 0..6、"Mixed" 7..12、"0129" 13..17。阶段由样式按钮
+        // 循环推进（0 混合生效 → 1 修改 → 2 倒置 → 3 重叠 → 4 超 64 → 5 清除），
+        // 非法批次在框架渲染器整批拒绝、保留旧 runs；不新增第二编辑面。
+        let phase = styleRunsPhase
+        let mixedRuns = match (phase) {
+            case 1 => [
+                CjguiComposableUiTextStyleRun(0, 6, 12.0, 400, "system", 0.98, 0.85, 0.30, 1.0),
+                CjguiComposableUiTextStyleRun(7, 12, 12.0, 700, "system", 0.35, 0.90, 0.55, 1.0),
+                CjguiComposableUiTextStyleRun(13, 17, 14.0, 600, "monospaced", 1.0, 1.0, 1.0, 1.0,
+                    hasBackground: true, backgroundRed: 0.10, backgroundGreen: 0.45,
+                    backgroundBlue: 0.42, backgroundAlpha: 1.0)]
+            case 2 => [
+                CjguiComposableUiTextStyleRun(9, 3, 12.0, 700, "system", 1.0, 0.0, 0.0, 1.0)]
+            case 3 => [
+                CjguiComposableUiTextStyleRun(0, 8, 12.0, 700, "system", 0.20, 0.40, 1.0, 1.0),
+                CjguiComposableUiTextStyleRun(7, 12, 12.0, 400, "system", 1.0, 0.60, 0.10, 1.0)]
+            case _ => [
+                CjguiComposableUiTextStyleRun(0, 6, 12.0, 700, "system", 1.0, 1.0, 1.0, 1.0),
+                CjguiComposableUiTextStyleRun(7, 12, 12.0, 700, "system", 1.0, 0.30, 0.28, 1.0),
+                CjguiComposableUiTextStyleRun(13, 17, 12.0, 400, "monospaced", 0.92, 0.96, 1.0, 1.0,
+                    hasBackground: true, backgroundRed: 0.16, backgroundGreen: 0.22,
+                    backgroundBlue: 0.30, backgroundAlpha: 1.0)]
+        }
+        root.add(cjguiComposableText(11, "counter-mixed", "混排 Mixed 0129 样例", body,
+            textStyleRuns: mixedRuns))
+        // 超 64 预算的载具：100 字节 ASCII 长文本，常规阶段两段样式，阶段 4
+        // 声明 65 个单字节 run（排序、不重叠、各自非空）——按数量上限整批
+        // 拒绝、保旧。
+        let stressText = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+        let stressRuns = ArrayList<CjguiComposableUiTextStyleRun>()
+        if (phase == 4) {
+            var i: Int64 = 0
+            while (i < 65) {
+                stressRuns.add(CjguiComposableUiTextStyleRun(i, i + 1, 11.0, 400, "system",
+                    1.0, 0.50, 0.10, 1.0))
+                i += 1
+            }
+        } else if (phase != 5) {
+            stressRuns.add(CjguiComposableUiTextStyleRun(0, 10, 11.0, 700, "system", 1.0, 0.45, 0.95, 1.0))
+            stressRuns.add(CjguiComposableUiTextStyleRun(10, 20, 11.0, 400, "monospaced", 0.92, 0.96, 1.0, 1.0,
+                hasBackground: true, backgroundRed: 0.16, backgroundGreen: 0.22,
+                backgroundBlue: 0.30, backgroundAlpha: 1.0))
+        }
+        root.add(cjguiComposableText(33, "counter-runs-stress", stressText,
+            CjguiComposableUiStyle(fixedHeight: 14, growX: 1,
+                textColor: CjguiComposableUiColor(0.70, 0.74, 0.82, 1.0), fontSize: 11.0),
+            textStyleRuns: stressRuns.toArray()))
+        root.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdStylePhase,
+            "counter-style-phase", "样式阶段 ${phase}", "CYCLE_STYLE_PHASE",
+            CjguiSettingsCounterDomain.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 150, fixedHeight: 34,
+                background: CjguiComposableUiColor(0.20, 0.24, 0.40, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0), fontSize: 13.0)))
+        // 生成区提到手写视口之前：487 vp 的首屏里两者必须同时可见，
+        // 公开生成视口与手写视口才能在同一个 normal 产物上被消费。
+        root.add(generatedRegion.buildNode())
 
         let cardBox = cjguiComposableVertical(15, "counter-card", card)
         cardBox.add(cjguiComposableText(12, "counter-value", "计数：${snapshot.count}",
@@ -511,34 +575,34 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         let handImageSpec = domain.imageResourceSpec()
         let handScroll = cjguiComposableScrollArea(CjguiSettingsCounterController.nodeIdHandScroll,
             "settings-hand-scroll", handScrollViewport,
-            CjguiComposableUiStyle(fixedHeight: 420, growX: 1, cornerRadius: 12, clipsContent: true,
+            CjguiComposableUiStyle(fixedHeight: 150, growX: 1, cornerRadius: 12, clipsContent: true,
                 background: CjguiComposableUiColor(0.09, 0.12, 0.20, 1.0),
                 border: CjguiComposableUiColor(0.26, 0.34, 0.50, 1.0), borderWidth: 1))
         let handContent = cjguiComposableVertical(901, "settings-hand-scroll-content",
-            CjguiComposableUiStyle(padding: 20, gap: 12, growX: 1))
+            CjguiComposableUiStyle(padding: 8, gap: 6, growX: 1))
         handContent.add(cjguiComposableText(902, "hand-scroll-head", "手写滚动区（上下拖动查看）",
-            CjguiComposableUiStyle(fixedHeight: 46, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
-                fontSize: 26.0, fontWeight: 600)))
+            CjguiComposableUiStyle(fixedHeight: 18, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
+                fontSize: 13.0, fontWeight: 600)))
         handContent.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdFocusNoteNav,
             "settings-focus-note-nav", "定位滚动备注", "FOCUS_SCROLL_NOTE",
             CjguiSettingsCounterDomain.resourceId,
-            CjguiComposableUiStyle(fixedWidth: 220, fixedHeight: 56,
+            CjguiComposableUiStyle(fixedWidth: 110, fixedHeight: 30,
                 background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
                 textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
         var rowNodeId: Int64 = 910
         for (i in 1..=8) {
             handContent.add(cjguiComposableText(rowNodeId, "hand-scroll-row${i}",
                 "滚动行 ${i}：内容超过三屏，行号用于滚动后画面与命中对照",
-                CjguiComposableUiStyle(fixedHeight: 44, growX: 1,
-                    textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0), fontSize: 22.0)))
+                CjguiComposableUiStyle(fixedHeight: 28, growX: 1,
+                    textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0), fontSize: 12.0)))
             rowNodeId += 1
             if (i == 4) {
                 // 屏2：图片与切换按钮（复用既有图片资源与 owner 动作）。
                 let handImageRow = cjguiComposableHorizontal(930, "hand-scroll-image-row",
-                    CjguiComposableUiStyle(fixedHeight: 72, gap: 16))
+                    CjguiComposableUiStyle(fixedHeight: 40, gap: 8))
                 handImageRow.add(cjguiComposableImage(CjguiSettingsCounterController.nodeIdHandScrollImage,
                     "hand-scroll-beacon", handImageSpec.rasterPath,
-                    CjguiComposableUiStyle(fixedWidth: 160, fixedHeight: 72),
+                    CjguiComposableUiStyle(fixedWidth: 80, fixedHeight: 40),
                     contentMode: 1, imageResourceId: handImageSpec.key,
                     imageResourceVersion: handImageSpec.version))
                 handImageRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdHandScrollIncrement,
@@ -551,10 +615,10 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
                 handContent.add(cjguiComposableTextInput(CjguiSettingsCounterController.nodeIdHandScrollNote,
                     "hand-scroll-note", "滚动备注", snapshot.scrollNote,
                     CjguiSettingsCounterDomain.resourceId,
-                    CjguiComposableUiStyle(fixedHeight: 64, growX: 1, fontSize: 24.0,
+                    CjguiComposableUiStyle(fixedHeight: 32, growX: 1, fontSize: 13.0,
                         background: CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
                         border: CjguiComposableUiColor(0.32, 0.40, 0.54, 1.0), borderWidth: 1,
-                        cornerRadius: 10, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0)),
+                        cornerRadius: 6, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0)),
                     fieldId: "scrollNote", operationActionName: "EDIT_SCROLL_NOTE",
                     displayValueRole: "applied"))
             }
@@ -565,7 +629,6 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         handScroll.add(handContent)
         root.add(handScroll)
         root.add(cardBox)
-        root.add(generatedRegion.buildNode())
         return root
     }
 
@@ -580,6 +643,15 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
             // 显式目标导航：请求聚焦滚动区内编辑器（屏外 reveal→系统输入）。
             requestFocusSemantic("hand-scroll-note")
             statusText = "已请求定位滚动备注"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdStylePhase) {
+            // 本地循环：阶段推进只改 UI 声明（localRevision 驱动重建与 runs 重装），
+            // 不产生 owner 写入——C 的判别对象是渲染器准入，不是业务状态。
+            styleRunsPhase = (styleRunsPhase + 1) % 6
+            statusText = "样式阶段 ${styleRunsPhase}"
+            println("SETTINGS_STYLE_PHASE phase=${styleRunsPhase}")
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }

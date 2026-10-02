@@ -1,5 +1,76 @@
 package cjgui
 
+func positionCoordinateAfterDeltaAllowed(value: Float64, delta: Float64): Bool {
+    if (!cjguiAnimationIsFiniteScalar(value) || !cjguiAnimationIsFiniteScalar(delta)) {
+        return false
+    }
+    let shifted = value + delta
+    return cjguiAnimationIsFiniteScalar(shifted) && shifted >= -1024.0 && shifted <= 1024.0
+}
+
+/// Window-issued capability for one accepted position channel's coordinate
+/// origin. The ticket is public only so status can return it; its constructor
+/// and fields stay package-private so callers cannot forge or edit it.
+public class CjguiComposableUiPositionOriginTicket {
+    let identityKey: String
+    let binding: CjguiComposableUiAnimationBinding
+    let sessionIdentity: String
+    let acceptedSceneVersion: Int64
+    let geometryRevision: Int64
+    let channelGeneration: Int64
+    let originRevision: Int64
+    let requestRevision: Int64
+
+    init(identityKey: String, binding: CjguiComposableUiAnimationBinding, sessionIdentity: String,
+        acceptedSceneVersion: Int64, geometryRevision: Int64, channelGeneration: Int64, originRevision: Int64,
+        requestRevision: Int64) {
+        this.identityKey = identityKey
+        this.binding = binding
+        this.sessionIdentity = sessionIdentity
+        this.acceptedSceneVersion = acceptedSceneVersion
+        this.geometryRevision = geometryRevision
+        this.channelGeneration = channelGeneration
+        this.originRevision = originRevision
+        this.requestRevision = requestRevision
+    }
+
+    func matches(other: CjguiComposableUiPositionOriginTicket): Bool {
+        return identityKey == other.identityKey && binding.matches(other.binding) && sessionIdentity == other
+            .sessionIdentity && acceptedSceneVersion == other.acceptedSceneVersion && geometryRevision == other
+            .geometryRevision && channelGeneration == other.channelGeneration && originRevision == other.originRevision &&
+            requestRevision == other.requestRevision
+    }
+}
+
+/// Driver-verifiable readback for a position channel's current generation and
+/// coordinate system. Session, scene, geometry, and request admission remain
+/// owned by the window.
+class CjguiComposableUiPositionOriginState {
+    let channelGeneration: Int64
+    let originRevision: Int64
+    init(channelGeneration: Int64, originRevision: Int64) {
+        this.channelGeneration = channelGeneration
+        this.originRevision = originRevision
+    }
+}
+
+/// The coordinate delta attached to one window candidate. Equal tickets and
+/// equal compensation identify the same idempotent operation.
+class CjguiComposableUiPositionOriginRebase {
+    let ticket: CjguiComposableUiPositionOriginTicket
+    let compensation: CjguiComposableUiPositionValue
+    init(ticket: CjguiComposableUiPositionOriginTicket, compensation: CjguiComposableUiPositionValue) {
+        this.ticket = ticket
+        this.compensation = compensation
+    }
+
+    func matches(other: CjguiComposableUiPositionOriginRebase): Bool {
+        return ticket.matches(other.ticket) && compensation.x == other.compensation.x && compensation.y == other
+            .compensation
+            .y
+    }
+}
+
 /// A node's local post-layout translation, in logical points. The accepted
 /// scene resolves parent translations and clip owners from these local values.
 /// Stability: experimental.
@@ -24,9 +95,10 @@ public class CjguiComposableUiPositionStatus {
     public let acceptedSceneVersion: Int64
     public let submittedFrameIndex: Int64
     public let active: Bool
+    public let originTicket: ?CjguiComposableUiPositionOriginTicket
     public init(target: CjguiComposableUiPositionValue, presented: CjguiComposableUiPositionValue,
         binding: CjguiComposableUiAnimationBinding, sessionIdentity: String,
-        acceptedSceneVersion: Int64, submittedFrameIndex: Int64, active: Bool) {
+        acceptedSceneVersion: Int64, submittedFrameIndex: Int64, active: Bool, originTicket!: ?CjguiComposableUiPositionOriginTicket = None) {
         this.target = target
         this.presented = presented
         this.binding = binding
@@ -34,6 +106,7 @@ public class CjguiComposableUiPositionStatus {
         this.acceptedSceneVersion = acceptedSceneVersion
         this.submittedFrameIndex = submittedFrameIndex
         this.active = active
+        this.originTicket = originTicket
     }
 }
 
@@ -46,15 +119,18 @@ class CjguiComposableUiPositionSample {
     let velocity: CjguiComposableUiPositionValue
     let revision: Int64
     let channelGeneration: Int64
+    let originRevision: Int64
     init(identityKey: String, binding: CjguiComposableUiAnimationBinding,
         value: CjguiComposableUiPositionValue, velocity: CjguiComposableUiPositionValue,
-        revision: Int64, channelGeneration!: Int64 = 0) {
+        revision: Int64, channelGeneration!: Int64 = 0,
+        originRevision!: Int64 = 0) {
         this.identityKey = identityKey
         this.binding = binding
         this.value = value
         this.velocity = velocity
         this.revision = revision
         this.channelGeneration = channelGeneration
+        this.originRevision = originRevision
     }
 }
 
@@ -72,6 +148,7 @@ class CjguiComposableUiNodePositionAnimation {
     private var sampleRevision: Int64
     private var acceptedRevision: Int64
     private let channelGeneration: Int64
+    private var originRevision: Int64
 
     init(identityKey: String, binding: CjguiComposableUiAnimationBinding,
         x: CjguiComposableUiScalarAnimation, y: CjguiComposableUiScalarAnimation,
@@ -87,19 +164,49 @@ class CjguiComposableUiNodePositionAnimation {
         this.sampleRevision = 1
         this.acceptedRevision = 0
         this.channelGeneration = channelGeneration
+        this.originRevision = 0
     }
 
     func sample(): CjguiComposableUiPositionSample {
         return CjguiComposableUiPositionSample(identityKey, binding,
             CjguiComposableUiPositionValue(x.presented(), y.presented()),
             CjguiComposableUiPositionValue(x.velocity(), y.velocity()), sampleRevision,
-            channelGeneration: channelGeneration)
+            channelGeneration: channelGeneration, originRevision: originRevision)
     }
     func target(): CjguiComposableUiPositionValue {
         return CjguiComposableUiPositionValue(x.target(), y.target())
     }
     func accepted(): CjguiComposableUiPositionValue {
         return CjguiComposableUiPositionValue(acceptedX, acceptedY)
+    }
+    func originState(): CjguiComposableUiPositionOriginState {
+        return CjguiComposableUiPositionOriginState(channelGeneration, originRevision)
+    }
+    func canRebaseOrigin(compensation: CjguiComposableUiPositionValue): Bool {
+        return x.canTranslate(compensation.x) && y.canTranslate(compensation.y) &&
+            positionCoordinateAfterDeltaAllowed(acceptedX, compensation.x) &&
+            positionCoordinateAfterDeltaAllowed(acceptedY, compensation.y)
+    }
+    /// Shift all scalar coordinates without retargeting or restarting time.
+    /// This preserves spring velocity, tween start time, accepted checkpoint,
+    /// and the channel's existing sample revision.
+    func rebaseOrigin(compensation: CjguiComposableUiPositionValue, nextOriginRevision: Int64): Bool {
+        if (nextOriginRevision != originRevision + 1 || !canRebaseOrigin(compensation)) {
+            return false
+        }
+        let shiftedX = x.translated(compensation.x)
+        let shiftedY = y.translated(compensation.y)
+        if (let Some(nextX) <- shiftedX) {
+            if (let Some(nextY) <- shiftedY) {
+                acceptedX += compensation.x
+                acceptedY += compensation.y
+                x = nextX
+                y = nextY
+                originRevision = nextOriginRevision
+                return true
+            }
+        }
+        return false
     }
     func isActive(): Bool { return x.isActive() || y.isActive() }
     func lastTime(): Float64 { return x.lastTime() }
@@ -156,7 +263,7 @@ class CjguiComposableUiNodePositionAnimation {
         return changed
     }
     func accept(sample: CjguiComposableUiPositionSample, nowMs: Float64): Unit {
-        if (!binding.matches(sample.binding)) { return }
+        if (!binding.matches(sample.binding) || sample.identityKey != identityKey) { return }
         let sameChannel = sample.channelGeneration == channelGeneration
         if (sameChannel && sample.revision < acceptedRevision) { return }
         acceptedX = sample.value.x

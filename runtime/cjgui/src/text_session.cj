@@ -12,6 +12,25 @@ package cjgui
 
 import std.collection.ArrayList
 
+/// Semantic ticket: selection has its own revision even when bytes and content
+/// version stay equal. A click A -> B -> A still retires a pending candidate.
+public struct CjguiTextSelectionTicket {
+    public let contextEpoch: Int64
+    public let mirrorRevision: Int64
+    public let contentVersion: Int64
+    public let sourceVersion: Int64
+    public let selectionRevision: Int64
+    init(context: Int64, mirror: Int64, content: Int64, source: Int64, selection: Int64) {
+        contextEpoch = context
+        mirrorRevision = mirror
+        contentVersion = content
+        sourceVersion = source
+        selectionRevision = selection
+    }
+}
+
+
+
 /// 一次会话编辑的判决结果。`contextEpoch` + `ticket` 一起构成回执身份:代次不同的
 /// 回执不得校准任何当前状态(重绑后 nodeId 可能被复用,身份由代次区分)。
 public class CjguiTextSessionEdit {
@@ -176,6 +195,36 @@ public class CjguiTextSessionRecoveryDraft {
 /// 已满时新的组字被具名拒绝(`recovery_draft_capacity`),中断后绝不静默覆盖。
 public let CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS: Int64 = 2
 
+/// 普通文字意图（Astra Q5 共同处理器词汇）：一次按键表达的**用户级**动作。
+/// 单位是用户感知字素（平台 oracle），不是 UTF-8/UTF-16 标量。
+public enum CjguiTextPlainIntent {
+    | DeleteBackward
+    | DeleteForward
+    | MoveLeft
+    | MoveRight
+    | ExtendLeft
+    | ExtendRight
+}
+
+/// 一次普通文字意图的判决结果。`handled=false` 是具名拒绝（零写入、零选区
+/// 变化），调用方不得再让平台默认行为执行一遍；`wroteOwner=true` 表示恰好一
+/// 笔 owner 事务（移动/扩选恒为 false）。
+public class CjguiPlainIntentOutcome {
+    public let handled: Bool
+    public let reason: String
+    public let wroteOwner: Bool
+    public let selectionStart16: Int64
+    public let selectionEnd16: Int64
+
+    init(handled!: Bool, reason!: String, wroteOwner!: Bool, start16!: Int64, end16!: Int64) {
+        this.handled = handled
+        this.reason = reason
+        this.wroteOwner = wroteOwner
+        this.selectionStart16 = start16
+        this.selectionEnd16 = end16
+    }
+}
+
 /// 单个逻辑编辑表面的输入会话。同一正文的多个 fragment 共用一个会话;
 /// 换绑(文档切换/节点销毁)即失效,旧绑定上的后续编辑与旧回执都具名拒绝。
 public class CjguiTextSession {
@@ -190,10 +239,15 @@ public class CjguiTextSession {
     private var mirrorUtf16Length: Int64 = 0
 
     private var selStart16: Int64 = 0
+    /// 普通意图的方向事实：Shift 只移动 focus，anchor 保持（Astra 位置契约）。
+    /// 平台代理只接收 min/max 投影，方向是会话内部状态；-1 = 未定（折叠/未知）。
+    private var selectionAnchor16: Int64 = -1
+    private var selectionFocus16: Int64 = -1
     private var selEnd16: Int64 = 0
     /// Absolute source-byte selection is the durable view anchor. UTF-16
     /// coordinates above are only its projection into the current mirror.
     private var selectionVersion: Int64 = -1
+    private var selectionRevision: Int64 = 0
     private var selectionStartByte: Int64 = -1
     private var selectionEndByte: Int64 = -1
     private var selectionNeedsNativeRestore: Bool = false
@@ -338,6 +392,7 @@ public class CjguiTextSession {
     /// 解绑语义由 `bind` 推进代次 + 窗口归属变化实现:旧 nodeId 上的后续编辑与
     /// 旧回执都因代次不符而具名拒绝,组合草稿随上下文一起丢弃。
     public func invalidate(): Unit {
+        this.selectionRevision += 1
         this.bound = false
         this.contextEpoch += 1
         this.selStart16 = 0
@@ -398,9 +453,9 @@ public class CjguiTextSession {
         let wasVersion = this.window.contentVersion()
         var rebased: ?(Int64, Int64, Int64) = None
         let externalChange = this.window.sourceVersion() != wasVersion
-        if (externalChange && this.selectionVersion == wasVersion &&
+        if (externalChange && this.selectionVersion >= 0 &&
             this.selectionStartByte >= 0 && !this.compositionActive) {
-            rebased = this.window.rebaseSelection(wasVersion, this.selectionStartByte,
+            rebased = this.window.rebaseSelection(this.selectionVersion, this.selectionStartByte,
                 this.selectionEndByte)
         }
         let changed = this.window.refresh()
@@ -417,7 +472,11 @@ public class CjguiTextSession {
                     this.selectionEndByte = mapped[2]
                     this.selectionNeedsNativeRestore = true
                 } else {
-                    this.invalidateSourceSelection("selection_projection_unavailable")
+                    // The owner proved these byte endpoints even when a page is
+                    // unavailable. Keep their version so a later read, including
+                    // another owner rebase, can project this same choice.
+                    this.retainUnprojectedSourceSelection(mapped[0], mapped[1], mapped[2],
+                        "selection_projection_unavailable")
                 }
             } else {
                 this.invalidateSourceSelection("selection_rebase_unavailable")
@@ -434,7 +493,20 @@ public class CjguiTextSession {
         this.lastReason = reason
     }
 
+    private func retainUnprojectedSourceSelection(version: Int64, startByte: Int64,
+        endByte: Int64, reason: String): Unit {
+        this.selectionRevision += 1
+        this.selectionVersion = version
+        this.selectionStartByte = startByte
+        this.selectionEndByte = endByte
+        this.selectionNeedsNativeRestore = true
+        this.needsCalibration = true
+        this.calibrationRecalibrated = false
+        this.lastReason = reason
+    }
+
     private func projectSourceSelection(startByte: Int64, endByte: Int64): Bool {
+        this.selectionRevision += 1
         var start = this.window.windowStartByte()
         var coverEnd = start + cjguiUtf8Length(this.window.text())
         if (startByte < start || endByte > coverEnd) {
@@ -453,8 +525,11 @@ public class CjguiTextSession {
         let localEnd = cjguiUtf8OffsetToUtf16(this.window.text(), endByte - start)
         if (let Some(a) <- localStart) {
             if (let Some(b) <- localEnd) {
+                let reverse = this.selectionFocus16 < this.selectionAnchor16
                 this.selStart16 = a
                 this.selEnd16 = b
+                this.selectionAnchor16 = if (reverse) { b } else { a }
+                this.selectionFocus16 = if (reverse) { a } else { b }
                 return true
             }
         }
@@ -466,7 +541,8 @@ public class CjguiTextSession {
     }
 
     public func confirmNativeSelectionRestored(version: Int64, start16: Int64, end16: Int64): Bool {
-        if (!this.selectionNeedsNativeRestore || version != this.selectionVersion ||
+        if (!this.selectionNeedsNativeRestore || this.needsCalibration || !this.window.isPrepared() ||
+            version != this.selectionVersion ||
             version != this.window.contentVersion() || start16 != this.selStart16 ||
             end16 != this.selEnd16) {
             return false
@@ -519,6 +595,20 @@ public class CjguiTextSession {
             this.lastReason = this.window.unpreparedReason()
             return false
         }
+        if (this.selectionNeedsNativeRestore) {
+            let start16 = if (selectionStart16 >= 0) { selectionStart16 } else { this.selStart16 }
+            let end16 = if (selectionEnd16 >= 0) { selectionEnd16 } else { this.selEnd16 }
+            let installedSource = this.window.documentRangeForUtf16(start16, end16 - start16)
+            let matches = match (installedSource) {
+                case Some(range) => this.selectionVersion == this.window.contentVersion() &&
+                    range[0] == this.selectionStartByte && range[1] == this.selectionEndByte
+                case None => false
+            }
+            if (!this.calibrationRecalibrated || !matches) {
+                this.lastReason = "restore_selection_mismatch"
+                return false
+            }
+        }
         if (!this.window.confirmContentVersion({ =>
             // Source runs this tiny state change in the same boundary as its
             // owner-version check. Native work and mirror reads are outside it.
@@ -566,6 +656,11 @@ public class CjguiTextSession {
 
     /// 纯选区变化(平台选区导航/鼠标):只推进视图状态,不产生事务、不推进内容版本。
     public func setSelection16(start16: Int64, end16: Int64): Unit {
+        this.selectionRevision += 1
+        // 平台/外部调用点给的是无方向区间：方向事实按"起点=锚"的保守缺省记录，
+        // 只有普通意图的 directed 变体显式保留反向。折叠时 anchor=focus。
+        this.selectionAnchor16 = start16
+        this.selectionFocus16 = end16
         let lo = if (start16 <= end16) { start16 } else { end16 }
         let hi = if (start16 <= end16) { end16 } else { start16 }
         this.selStart16 = this.clamp16(lo)
@@ -593,6 +688,20 @@ public class CjguiTextSession {
         return Some((this.selectionVersion, this.selectionStartByte, this.selectionEndByte))
     }
 
+    /// Semantic source coordinates for SourceMap preparation, including while
+    /// the native proxy still needs installation. This does not acknowledge that
+    /// installation or authorize input; the eventual commit must validate the
+    /// same complete ticket again.
+    public func sourceRangeForSelectionTicket(ticket: CjguiTextSelectionTicket): ?(Int64, Int64, Int64) {
+        if (!this.selectionTicketMatches(ticket) || this.needsCalibration || this.selectionVersion < 0 ||
+            this.selectionStartByte < 0 || this.selectionEndByte < this.selectionStartByte ||
+            this.selectionVersion != this.window.contentVersion() ||
+            this.window.sourceVersion() != this.window.contentVersion()) {
+            return None
+        }
+        return Some((this.selectionVersion, this.selectionStartByte, this.selectionEndByte))
+    }
+
     private func clamp16(value: Int64): Int64 {
         var out = value
         if (out < 0) {
@@ -606,6 +715,341 @@ public class CjguiTextSession {
 
     public func selection16(): (Int64, Int64) {
         return (this.selStart16, this.selEnd16)
+    }
+
+    public func selectionRevisionValue(): Int64 { return this.selectionRevision }
+
+    public func freezeSelectionTicket(): CjguiTextSelectionTicket {
+        return CjguiTextSelectionTicket(this.contextEpoch, this.mirrorRevision,
+            this.window.contentVersion(), this.window.sourceVersion(), this.selectionRevision)
+    }
+
+    public func selectionTicketMatches(ticket: CjguiTextSelectionTicket): Bool {
+        return this.bound && !this.compositionActive &&
+            ticket.contextEpoch == this.contextEpoch && ticket.mirrorRevision == this.mirrorRevision &&
+            ticket.contentVersion == this.window.contentVersion() &&
+            ticket.sourceVersion == this.window.sourceVersion() &&
+            ticket.selectionRevision == this.selectionRevision
+    }
+
+    /// Calculate and validate before native work. The source's version guard
+    /// encloses installation and the single selection publication. Native
+    /// callbacks are suppressed during installation; failed installation does
+    /// not publish anchor/focus or consume this semantic ticket.
+    func commitSelectionTicket(ticket: CjguiTextSelectionTicket, anchor16: Int64,
+        focus16: Int64, install: () -> Bool): Bool {
+        if (!this.selectionTicketMatches(ticket)) { return false }
+        let lo = if (anchor16 < focus16) { anchor16 } else { focus16 }
+        let hi = if (anchor16 < focus16) { focus16 } else { anchor16 }
+        if (lo < 0 || hi > this.mirrorUtf16Length ||
+            this.window.documentRangeForUtf16(lo, hi - lo).isNone()) { return false }
+        return this.window.confirmContentVersion({ =>
+            if (!this.selectionTicketMatches(ticket) || !install() ||
+                !this.selectionTicketMatches(ticket)) { return false }
+            this.setSelection16(lo, hi)
+            this.selectionAnchor16 = anchor16
+            this.selectionFocus16 = focus16
+            this.selectionNeedsNativeRestore = false
+            return true
+        })
+    }
+
+    // ---- 普通文字意图共同处理器（Astra Q5；E/macOS B 切片） ----
+
+    /// 判决一次普通文字意图。删除=用户感知字素整簇（内部 caret 零写入、缺簇
+    /// 具名拒绝，不退回标量）；移动/扩选只改选区（零正文事务），选区改动标记
+    /// 原生恢复，由窗口推回代理。组字期间一律具名拒绝——组合会话拥有选区与
+    /// 终态；非空选区的删除只提交一笔精确事务。
+    public func handlePlainIntent(intent: CjguiTextPlainIntent): CjguiPlainIntentOutcome {
+        let (failA, failB) = this.selection16()
+        if (!this.bound) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "session_unbound",
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        if (this.compositionActive) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "composition_busy",
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        if (this.needsCalibration) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "recalibration_required",
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        if (!this.window.isPrepared()) {
+            return CjguiPlainIntentOutcome(handled: false, reason: this.window.unpreparedReason(),
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        // 写入路径保留完整对齐门（版本+边界+代理恢复未决）；纯选区意图对选区
+        // 自身是权威的，只要求版本与字节边界已对齐——上一次移动的代理推送尚未
+        // 结算不应阻断下一次移动（窗口按序推送并确认）。
+        if (this.selectionVersion != this.window.contentVersion() || this.selectionStartByte < 0) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "selection_native_alignment_required",
+                wroteOwner: false, start16: failA, end16: failB)
+        }
+        let text = this.window.text()
+        let total16 = this.mirrorUtf16Length
+        let (lo, hi) = this.selection16()
+        let bytes = text.toArray()
+        if (match (intent) { case DeleteBackward | DeleteForward => true case _ => false }) {
+            if (this.selectionNeedsNativeRestore) {
+                return CjguiPlainIntentOutcome(handled: false, reason: "selection_native_alignment_required",
+                    wroteOwner: false, start16: failA, end16: failB)
+            }
+            if (hi > lo) {
+                // 非空选区删除：两端必须都是字素边界（指导反例 1：Ae\u{0301}B 的
+                // [2,3) 只删重音）。内部端点具名拒绝并保持原文**与原选区**。
+                if (!this.clusterBoundary16(text, bytes, lo) || !this.clusterBoundary16(text, bytes, hi)) {
+                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_endpoint_inside_grapheme",
+                        wroteOwner: false, start16: lo, end16: hi)
+                }
+                return this.submitPlainDelete(lo, hi)
+            }
+            let caretByte = match (cjguiUtf16OffsetToUtf8(text, lo)) {
+                case Some(byte) => byte
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            if (match (intent) { case DeleteBackward => true case _ => false }) {
+                if (lo == 0 || caretByte == 0) {
+                    return CjguiPlainIntentOutcome(handled: false, reason: "at_document_start",
+                        wroteOwner: false, start16: lo, end16: hi)
+                }
+                match (cjguiGraphemeClusterRangeUtf8(text, caretByte - 1)) {
+                    case Some((clusterStart, clusterEnd)) =>
+                        let clusterStart16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterStart]))
+                        let clusterEnd16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterEnd]))
+                        if (clusterEnd16 != lo) {
+                            // caret 落在簇内部：删除半个用户字符没有合法名字，保持原文。
+                            return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_interior",
+                                wroteOwner: false, start16: lo, end16: hi)
+                        }
+                        return this.submitPlainDelete(clusterStart16, clusterEnd16)
+                    case None =>
+                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                            wroteOwner: false, start16: lo, end16: hi)
+                }
+            }
+            if (lo >= total16 || caretByte >= Int64(bytes.size)) {
+                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_end",
+                    wroteOwner: false, start16: lo, end16: hi)
+            }
+            match (cjguiGraphemeClusterRangeUtf8(text, caretByte)) {
+                case Some((clusterStart, clusterEnd)) =>
+                    if (clusterStart != caretByte) {
+                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_interior",
+                            wroteOwner: false, start16: lo, end16: hi)
+                    }
+                    let clusterEnd16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterEnd]))
+                    return this.submitPlainDelete(lo, clusterEnd16)
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+        }
+        if (match (intent) { case MoveLeft | MoveRight => true case _ => false }) {
+            // 普通移动：非空选区先**折叠**到目标端（指导反例 3：[0,2) 在文首按
+            // Left、[1,4) 在文尾按 Right 都必须折叠成功，不因端点贴边被拒），
+            // 折叠是零事务且不做边界判断；已折叠才判移动边界。
+            if (hi > lo) {
+                let target = if (match (intent) { case MoveLeft => true case _ => false }) { lo } else { hi }
+                return this.applyPlainSelection(target, target)
+            }
+            if (match (intent) { case MoveLeft => true case _ => false }) {
+                if (lo == 0) {
+                    return CjguiPlainIntentOutcome(handled: false,
+                        reason: this.mirrorEdgeRefusalReason(atStart: true),
+                        wroteOwner: false, start16: lo, end16: hi)
+                }
+                let clusterStart16 = match (this.clusterStartLeftOf16(text, bytes, lo)) {
+                    case Some(start) => start
+                    case None =>
+                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                            wroteOwner: false, start16: lo, end16: hi)
+                }
+                return this.applyPlainSelection(clusterStart16, clusterStart16)
+            }
+            if (hi >= total16) {
+                return CjguiPlainIntentOutcome(handled: false,
+                    reason: this.mirrorEdgeRefusalReason(atStart: false),
+                    wroteOwner: false, start16: lo, end16: hi)
+            }
+            let clusterEnd16 = match (this.clusterEndRightOf16(text, bytes, hi)) {
+                case Some(end) => end
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            return this.applyPlainSelection(clusterEnd16, clusterEnd16)
+        }
+        if (match (intent) { case ExtendLeft | ExtendRight => true case _ => false }) {
+            // 扩选（指导反例 2）：Shift 只移动 **focus**，anchor 不动；越过 anchor
+            // 后选区收缩/翻转连续正确（abcd caret2 → Shift+Left [1,2) anchor=2 →
+            // Shift+Right 应回 [2,2)，不是 [1,3)）。focus 缺省取选区活动端/折叠点。
+            let anchor = if (this.selectionAnchor16 >= 0) { this.selectionAnchor16 } else { hi }
+            let focus = if (this.selectionFocus16 >= 0 &&
+                this.selectionFocus16 >= lo && this.selectionFocus16 <= hi) {
+                this.selectionFocus16
+            } else {
+                hi
+            }
+            if (match (intent) { case ExtendLeft => true case _ => false }) {
+                if (focus == 0) {
+                    return CjguiPlainIntentOutcome(handled: false,
+                        reason: this.mirrorEdgeRefusalReason(atStart: true),
+                        wroteOwner: false, start16: lo, end16: hi)
+                }
+                let newFocus = match (this.clusterStartLeftOf16(text, bytes, focus)) {
+                    case Some(start) => start
+                    case None =>
+                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                            wroteOwner: false, start16: lo, end16: hi)
+                }
+                return this.applyDirectedSelection(anchor, newFocus)
+            }
+            if (focus >= total16) {
+                return CjguiPlainIntentOutcome(handled: false,
+                    reason: this.mirrorEdgeRefusalReason(atStart: false),
+                    wroteOwner: false, start16: lo, end16: hi)
+            }
+            let newFocus = match (this.clusterEndRightOf16(text, bytes, focus)) {
+                case Some(end) => end
+                case None =>
+                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                        wroteOwner: false, start16: lo, end16: hi)
+            }
+            return this.applyDirectedSelection(anchor, newFocus)
+        }
+        return CjguiPlainIntentOutcome(handled: false, reason: "intent_unknown",
+            wroteOwner: false, start16: lo, end16: hi)
+    }
+
+    /// x16 是否为字素边界（0/镜像末端天然合法；否则含该偏移字节的簇必须恰从 x16 起）。
+    private func clusterBoundary16(text: String, bytes: Array<Byte>, x16: Int64): Bool {
+        if (x16 == 0 || x16 >= this.mirrorUtf16Length) {
+            return true
+        }
+        let byte = match (cjguiUtf16OffsetToUtf8(text, x16)) {
+            case Some(at) => at
+            case None => return false
+        }
+        match (cjguiGraphemeClusterRangeUtf8(text, byte)) {
+            case Some((clusterStart, _)) =>
+                let clusterStart16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterStart]))
+                return clusterStart16 == x16
+            case None => return false
+        }
+    }
+
+    /// x16 左侧最近字素边界的 UTF-16 坐标（用于 Move/Extend 向左停靠）。
+    private func clusterStartLeftOf16(text: String, bytes: Array<Byte>, x16: Int64): ?Int64 {
+        let byte = match (cjguiUtf16OffsetToUtf8(text, x16)) {
+            case Some(at) => at
+            case None => return None
+        }
+        if (byte <= 0) {
+            return None
+        }
+        match (cjguiGraphemeClusterRangeUtf8(text, byte - 1)) {
+            case Some((clusterStart, _)) =>
+                return Some(cjguiUtf16Length(String.fromUtf8(bytes[0..clusterStart])))
+            case None => return None
+        }
+    }
+
+    /// x16 右侧最近字素边界（簇终点）的 UTF-16 坐标（用于 Move/Extend 向右停靠）。
+    private func clusterEndRightOf16(text: String, bytes: Array<Byte>, x16: Int64): ?Int64 {
+        let byte = match (cjguiUtf16OffsetToUtf8(text, x16)) {
+            case Some(at) => at
+            case None => return None
+        }
+        if (byte >= Int64(bytes.size)) {
+            return None
+        }
+        match (cjguiGraphemeClusterRangeUtf8(text, byte)) {
+            case Some((_, clusterEnd)) =>
+                return Some(cjguiUtf16Length(String.fromUtf8(bytes[0..clusterEnd])))
+            case None => return None
+        }
+    }
+
+    /// 镜像边界 vs 文档边界：窗口未覆盖全文时，贴边拒绝是**窗口**边缘而非文档
+    /// 首尾，具名区分，不以窗口边缘冒充文档首尾。
+    /// 镜像边缘 ≠ 文档边缘：有界镜像的窗口边缘与 owner 文档首尾分别具名，
+    /// 供窗口级视觉导航（M2 水平/垂直）与逻辑意图共用同一拒绝词表。
+    public func mirrorEdgeRefusalReason(atStart!: Bool): String {
+        let atDocumentEdge = if (atStart) {
+            this.window.windowStartByte() <= 0
+        } else {
+            this.window.windowStartByte() + Int64(this.window.text().toArray().size) >=
+                this.window.sourceByteLength()
+        }
+        return if (atDocumentEdge) {
+            if (atStart) { "at_document_start" } else { "at_document_end" }
+        } else {
+            if (atStart) { "at_window_start" } else { "at_window_end" }
+        }
+    }
+
+    private func applyPlainSelection(start16: Int64, end16: Int64): CjguiPlainIntentOutcome {
+        this.setSelection16(start16, end16)
+        this.selectionNeedsNativeRestore = true
+        let (a, b) = this.selection16()
+        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false,
+            start16: a, end16: b)
+    }
+
+    /// 普通意图的方向事实只读入口（窗口垂直导航等需要移动 focus）。
+    public func plainSelectionAnchorValue(): Int64 {
+        return this.selectionAnchor16
+    }
+
+    public func plainSelectionFocusValue(): Int64 {
+        return this.selectionFocus16
+    }
+
+    /// 窗口级普通意图（垂直导航）的方向选区应用：与水平意图同一投影与恢复标记。
+    public func applyDirectedPlainSelection(anchor16: Int64, focus16: Int64): Bool {
+        if (!this.bound || this.compositionActive) {
+            return false
+        }
+        let lo = if (anchor16 <= focus16) { anchor16 } else { focus16 }
+        let hi = if (anchor16 <= focus16) { focus16 } else { anchor16 }
+        if (lo < 0 || hi > this.mirrorUtf16Length) {
+            return false
+        }
+        this.applyDirectedSelection(anchor16, focus16)
+        return true
+    }
+
+    /// 方向保留的选区应用：anchor/focus 原样记录，投影 min/max 给平台与镜像。
+    private func applyDirectedSelection(anchor16: Int64, focus16: Int64): CjguiPlainIntentOutcome {
+        this.selectionAnchor16 = anchor16
+        this.selectionFocus16 = focus16
+        let lo = if (anchor16 <= focus16) { anchor16 } else { focus16 }
+        let hi = if (anchor16 <= focus16) { focus16 } else { anchor16 }
+        this.setSelection16(lo, hi)
+        // setSelection16 会按保守缺省覆写方向；恢复本意图的真实方向。
+        this.selectionAnchor16 = anchor16
+        this.selectionFocus16 = focus16
+        this.selectionNeedsNativeRestore = true
+        let (a, b) = this.selection16()
+        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false,
+            start16: a, end16: b)
+    }
+
+    private func submitPlainDelete(start16: Int64, end16: Int64): CjguiPlainIntentOutcome {
+        let decision = this.replaceRange16(start16, end16, "")
+        let (a, b) = this.selection16()
+        if (decision.accepted) {
+            // 会话驱动的写入：会话算出的 caret 是权威。标记原生恢复，让场景刷新
+            // 时代理旧选区的钳制事件（kind 33）被拒，窗口在 accepted 边界把会话
+            // caret 推回代理后才放行。
+            this.selectionNeedsNativeRestore = true
+            return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: true,
+                start16: a, end16: b)
+        }
+        return CjguiPlainIntentOutcome(handled: false, reason: decision.reason, wroteOwner: false,
+            start16: a, end16: b)
     }
 
     // ---- 组合(IME marked) ----
@@ -1285,7 +1729,13 @@ public class CjguiTextSession {
         this.compositionInvalidReason = ""
     }
 
-    /// 组字期间平台报告的 marked 内部选区(相对传入 preedit),供选区查询原样回答。
+    /// 镜像坐标下的当前选区(UTF-16;折叠时两端相等)。只读观测:消费探针据此
+    /// 核对 source 表面的停靠/删除落点,不参与任何判决。
+    public func selectionUtf16Value(): (Int64, Int64) {
+        return (this.selStart16, this.selEnd16)
+    }
+
+    /// 组字期间平台报告的 marked 内部选区(相对传入 preedit),供选区查询原答。
     public func markedInnerSelection16(): (Int64, Int64) {
         return if (this.compositionActive) {
             (this.markedInnerAnchor16, this.markedInnerFocus16)
@@ -1591,26 +2041,26 @@ public class CjguiTextSession {
         let outcome = this.window.applyByteEdit(startByte, endByte, text)
         if (outcome.applied) {
             this.editSeq += 1
+            // This is an accepted human range edit, so its new caret is the
+            // consumed start plus inserted bytes. Rebasing the prior selection
+            // is reserved for independent owner changes in refreshMirror.
+            let caretByte = startByte + cjguiUtf8Length(text)
+            let _ = this.window.revealByte(caretByte)
             this.mirrorRevision += 1
             this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
-            if (this.selectionVersion >= 0 && this.selectionStartByte >= 0) {
-                if (let Some(mapped) <- this.window.rebaseSelection(this.selectionVersion,
-                    this.selectionStartByte, this.selectionEndByte)) {
-                    if (mapped[0] == outcome.versionAfter &&
-                        this.projectSourceSelection(mapped[1], mapped[2])) {
-                        this.selectionVersion = mapped[0]
-                        this.selectionStartByte = mapped[1]
-                        this.selectionEndByte = mapped[2]
-                        this.selectionNeedsNativeRestore = true
-                    } else {
-                        this.invalidateSourceSelection("selection_projection_unavailable")
-                    }
-                } else {
-                    this.invalidateSourceSelection("selection_rebase_unavailable")
-                }
+            let caret: ?Int64 = if (this.window.isPrepared() &&
+                this.window.contentVersion() == outcome.versionAfter) {
+                cjguiUtf8OffsetToUtf16(this.window.text(), caretByte - this.window.windowStartByte())
+            } else { None }
+            if (let Some(caret16) <- caret) {
+                this.setSelection16(caret16, caret16)
+                this.selectionNeedsNativeRestore = !sourceProxyChanged
+                this.lastReason = ""
+            } else {
+                this.retainUnprojectedSourceSelection(outcome.versionAfter, caretByte, caretByte,
+                    "accepted_caret_unprepared")
             }
-            this.lastReason = ""
-            let accepted = this.edit(this.editSeq, true, outcome.versionAfter, "", ticket)
+            let accepted = this.edit(this.editSeq, true, outcome.versionAfter, this.lastReason, ticket)
             this.pending.add(CjguiTextSessionPending(ticket, mirror, accepted,
                 sourceProxyChanged: sourceProxyChanged))
             return accepted
@@ -1645,6 +2095,7 @@ public class CjguiTextSession {
             this.selectionStartByte < 0 || this.selectionNeedsNativeRestore) {
             // Native may still hold coordinates from the previous accepted
             // scene. Do not reinterpret those numbers against the new mirror.
+            // 诊断（只读）：区分三个子条件与两个版本数的实际值。
             this.lastReason = "selection_native_alignment_required"
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
@@ -1697,9 +2148,8 @@ public class CjguiTextSession {
             } else {
                 // The owner transaction is already accepted. Keep its receipt,
                 // but stop further input until the native proxy is recalibrated.
-                this.needsCalibration = true
-                this.calibrationRecalibrated = false
-                this.lastReason = "accepted_caret_unprepared"
+                this.retainUnprojectedSourceSelection(outcome.versionAfter, caretByte, caretByte,
+                    "accepted_caret_unprepared")
             }
             let result = this.edit(this.editSeq, true, outcome.versionAfter, this.lastReason, ticket)
             this.pending.add(CjguiTextSessionPending(ticket, baseMirror, result))
@@ -1783,6 +2233,10 @@ public class CjguiTextSession {
     public func recalibrate(): Bool {
         this.refreshMirror()
         this.calibrationRecalibrated = this.window.isPrepared()
+        if (this.calibrationRecalibrated && this.needsCalibration && this.selectionNeedsNativeRestore) {
+            this.calibrationRecalibrated = this.selectionVersion == this.window.contentVersion() &&
+                this.projectSourceSelection(this.selectionStartByte, this.selectionEndByte)
+        }
         return this.calibrationRecalibrated
     }
 }

@@ -495,7 +495,10 @@ public class CjguiTextDocument {
     }
 }
 
-private func isTextRangeBoundary(bytes: Array<Byte>, range: CjguiTextDocumentRange): Bool {
+// Package-visible: the fixed-snapshot handle enforces the SAME UTF-8 cluster
+// boundary rule on frozen bytes, so a range the live document accepts is not
+// rejected by its own snapshot (and vice versa).
+func isTextRangeBoundary(bytes: Array<Byte>, range: CjguiTextDocumentRange): Bool {
     return range.start >= 0 && range.end >= range.start && range.end <= bytes.size &&
         isTextClusterBoundary(bytes, range.start) && isTextClusterBoundary(bytes, range.end)
 }

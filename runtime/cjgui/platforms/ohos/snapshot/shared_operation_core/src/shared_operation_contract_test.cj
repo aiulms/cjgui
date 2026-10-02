@@ -241,7 +241,28 @@ private class WindowProgressProbe <: CjguiSharedOperationWindowProgressProvider 
             true, 13, 12, "unavailable", "progress_window_1",
             13, 12, 44, 43, -1, 71, 13, "none", "none",
             9, "field_title", true, 3, 5, "edit_dialog",
-            focusState: CJGUI_WINDOW_FOCUS_STATE_VALID
+            focusState: CJGUI_WINDOW_FOCUS_STATE_VALID,
+            effectIdentity: "root_backdrop", effectRequestedRadiusPoints: 8,
+            effectSubmittedSceneVersion: 13, effectSubmittedFrameIndex: 44,
+            effectSubmittedRadiusPoints: 8, effectSubmittedMode: "unblurred",
+            effectFallbackReason: "resource_budget", effectCompletion: "succeeded",
+            windowBackgroundRequested: "system_material",
+            windowBackgroundBackend: "appkit_behind_window",
+            windowBackgroundActual: "opaque",
+            windowBackgroundFallbackReason: "reduce_transparency",
+            windowBackgroundAcceptedSceneVersion: 13,
+            windowBackgroundFrameIndex: 44,
+            windowBackgroundRequestRevision: 3,
+            windowBackgroundEnvironmentRevision: 4,
+            windowBackgroundObservationRevision: 5,
+            windowBackgroundCompletion: "succeeded",
+            windowBackgroundReduceTransparency: true,
+            windowBackgroundActive: true,
+            windowBackgroundColorScheme: "dark",
+            workload: CjguiSharedOperationWindowWorkload("enabled", 13, 21, 7, 4, 3, 2, 65536,
+                "accepted", 1, 1, 0, 0, 0),
+            geometry: CjguiSharedOperationWindowGeometry("available", 320.5, 180.25, 2.0,
+                641, 361, 7, "committed", 320.5, 180.25, 1.0, 321, 181, 6, 12, 44)
         )
     }
 }
@@ -860,6 +881,39 @@ func genericTransportReadsNarrowWindowProgressWithoutSerializingContextResources
     @Assert(progress.contains("WINDOW_SESSION progress_window_1"), true)
     @Assert(progress.contains("WINDOW_SCENE_VERSION 13"), true)
     @Assert(progress.contains("WINDOW_METAL_COMPLETED_FRAME_INDEX 43"), true)
+    @Assert(progress.contains("WINDOW_CURRENT_POINT_SIZE 320.500000 180.250000"), true)
+    @Assert(progress.contains("WINDOW_CURRENT_DRAWABLE_PIXELS 641 361"), true)
+    @Assert(progress.contains("WINDOW_CURRENT_GEOMETRY_REVISION 7"), true)
+    @Assert(progress.contains("WINDOW_SUBMITTED_BACKING_SCALE 1.000000"), true)
+    @Assert(progress.contains("WINDOW_SUBMITTED_GEOMETRY_SCENE_VERSION 12"), true)
+    @Assert(progress.contains("WINDOW_SUBMITTED_GEOMETRY_FRAME_INDEX 44"), true)
+    @Assert(progress.contains("WINDOW_EFFECT_ID root_backdrop"), true)
+    @Assert(progress.contains("WINDOW_EFFECT_REQUESTED_RADIUS_POINTS 8"), true)
+    @Assert(progress.contains("WINDOW_EFFECT_SUBMITTED_SCENE_VERSION 13"), true)
+    @Assert(progress.contains("WINDOW_EFFECT_SUBMITTED_FRAME_INDEX 44"), true)
+    @Assert(progress.contains("WINDOW_EFFECT_SUBMITTED_MODE unblurred"), true)
+    @Assert(progress.contains("WINDOW_EFFECT_FALLBACK_REASON resource_budget"), true)
+    @Assert(progress.contains("WINDOW_EFFECT_COMPLETION succeeded"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_IDENTITY window_content_background"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_REQUESTED system_material"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_BACKEND appkit_behind_window"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_ACTUAL opaque"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_FALLBACK_REASON reduce_transparency"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_ACCEPTED_SCENE_VERSION 13"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_FRAME_INDEX 44"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_REQUEST_REVISION 3"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_ENVIRONMENT_REVISION 4"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_OBSERVATION_REVISION 5"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_COMPLETION succeeded"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_REDUCE_TRANSPARENCY true"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_ACTIVE true"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_VISUAL_RESULT unobserved"), true)
+    @Assert(progress.contains("WINDOW_BACKGROUND_COLOR_SCHEME dark"), true)
+    @Assert(progress.contains("WINDOW_WORKLOAD_STATUS enabled"), true)
+    @Assert(progress.contains("WINDOW_WORKLOAD_SCENE_VERSION 13"), true)
+    @Assert(progress.contains("WINDOW_WORKLOAD_NODE_WRITES 21"), true)
+    @Assert(progress.contains("WINDOW_WORKLOAD_LAST_ATTEMPT_NODE_WRITES 1"), true)
+    @Assert(progress.contains("WINDOW_WORKLOAD_REUSABLE_RESOURCE_BYTES 65536"), true)
     @Assert(progress.contains("WINDOW_INTERACTION_VERSION"), false)
     @Assert(progress.contains("WINDOW_FOCUS"), false)
     @Assert(progress.contains("WINDOW_SELECTION"), false)
@@ -871,6 +925,26 @@ func genericTransportReadsNarrowWindowProgressWithoutSerializingContextResources
         "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH window-progress-capability\nGET_WINDOW_INTERACTION"
     )
     @Assert(missingInteractionGrant.contains("ERROR unauthorized_action"), true)
+}
+
+@Test
+func windowBackgroundProgressHasNeutralDefaultsAndNeverClaimsVisualOutput(): Unit {
+    let progress = CjguiSharedOperationWindowProgress.inactive()
+    @Assert(progress.windowBackgroundIdentity, "window_content_background")
+    @Assert(progress.windowBackgroundRequested, "opaque")
+    @Assert(progress.windowBackgroundBackend, "unavailable")
+    @Assert(progress.windowBackgroundActual, "opaque")
+    @Assert(progress.windowBackgroundFallbackReason, "not_requested")
+    @Assert(progress.windowBackgroundAcceptedSceneVersion, -1)
+    @Assert(progress.windowBackgroundFrameIndex, -1)
+    @Assert(progress.windowBackgroundRequestRevision, 0)
+    @Assert(progress.windowBackgroundEnvironmentRevision, 0)
+    @Assert(progress.windowBackgroundObservationRevision, 0)
+    @Assert(progress.windowBackgroundCompletion, "unavailable")
+    @Assert(progress.windowBackgroundReduceTransparency, false)
+    @Assert(progress.windowBackgroundActive, false)
+    @Assert(progress.windowBackgroundVisualResult, "unobserved")
+    @Assert(progress.windowBackgroundColorScheme, "unavailable")
 }
 
 @Test

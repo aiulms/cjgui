@@ -313,8 +313,10 @@ full_events="$(sum_field full_text_events)"
 (( accepted == applied )) || fail "accepted ($accepted) != applied ($applied): $summary_line"
 decisions="$(sum_field range_decisions)"
 refused="$(sum_field session_refused)"
-[[ "$decisions" == <-> && "$refused" == <-> ]] || fail "decision counters missing: $summary_line"
-(( decisions == accepted + refused )) || fail "decisions ($decisions) != accepted+refused ($accepted+$refused): $summary_line"
+zeroWrite="$(sum_field zero_write_selections)"
+[[ "$decisions" == <-> && "$refused" == <-> && "$zeroWrite" == <-> ]] || fail "decision counters missing: $summary_line"
+# 三类守恒（终局快照）：正文接受 + 零写入选区意图（Shift 扩选等）+ 具名拒绝。
+(( decisions == accepted + refused + zeroWrite )) || fail "decisions ($decisions) != accepted+refused+zeroWrite ($accepted+$refused+$zeroWrite): $summary_line"
 [[ "$rejected" == "0" ]] || fail "owner refused an edit: $summary_line"
 # 整值事件必须**照常到达**（每笔意图的伴随事件，如实记录），但不被消费、不写正文；
 # 唯一写入路径由 accepted == applied 与 owner 正文一致证明。

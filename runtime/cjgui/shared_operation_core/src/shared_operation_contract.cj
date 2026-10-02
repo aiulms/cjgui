@@ -999,6 +999,9 @@ public class CjguiSharedOperationContextSnapshot {
     public let resourceType: String
     public let resources: ArrayList<CjguiSharedOperationResource>
     public let relations: ArrayList<CjguiSharedOperationRelation>
+    /// Owner-declared surface state (e.g. "MODE=preview"). Read on every
+    /// GET_CONTEXT. Empty preserves compatibility with legacy snapshot owners.
+    public let ownerState: String
 
     public init(
         version: Int64,
@@ -1006,7 +1009,8 @@ public class CjguiSharedOperationContextSnapshot {
         resourceType: String,
         resources: ArrayList<CjguiSharedOperationResource>,
         relations!: ArrayList<CjguiSharedOperationRelation> = ArrayList<CjguiSharedOperationRelation>(),
-        streamIdentity!: String = ""
+        streamIdentity!: String = "",
+        ownerState!: String = ""
     ) {
         this.version = version
         this.streamIdentity = streamIdentity
@@ -1014,6 +1018,7 @@ public class CjguiSharedOperationContextSnapshot {
         this.resourceType = resourceType
         this.resources = ArrayList<CjguiSharedOperationResource>(resources)
         this.relations = ArrayList<CjguiSharedOperationRelation>(relations)
+        this.ownerState = ownerState
     }
 }
 

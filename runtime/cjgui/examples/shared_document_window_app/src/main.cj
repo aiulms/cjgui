@@ -1449,11 +1449,13 @@ private class CjguiSharedDocumentLaunchOptions {
     let recordsResponseWorkload: Bool
     let responseEffectMode: String
     let responseInputIntervalTurns: Int64
+    let responsePublicClientOnly: Bool
 
     init(filePath: String, enablesExternalConnection: Bool, expectsConnectionStartFailure: Bool,
         opensMultipleWindows: Bool, measurementDurationMs: Int64, measurementWarmupMs: Int64,
         closeFirstWindowAfterMs: Int64, recordsTurnObservations: Bool, reopensFirstWindowAfterClose: Bool,
-        recordsResponseWorkload: Bool, responseEffectMode: String, responseInputIntervalTurns: Int64) {
+        recordsResponseWorkload: Bool, responseEffectMode: String, responseInputIntervalTurns: Int64,
+        responsePublicClientOnly: Bool) {
         this.filePath = filePath
         this.enablesExternalConnection = enablesExternalConnection
         this.expectsConnectionStartFailure = expectsConnectionStartFailure
@@ -1466,6 +1468,7 @@ private class CjguiSharedDocumentLaunchOptions {
         this.recordsResponseWorkload = recordsResponseWorkload
         this.responseEffectMode = responseEffectMode
         this.responseInputIntervalTurns = responseInputIntervalTurns
+        this.responsePublicClientOnly = responsePublicClientOnly
     }
 }
 
@@ -1480,6 +1483,7 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
     var recordsTurnObservations = false
     var reopensFirstWindowAfterClose = false
     var recordsResponseWorkload = false
+    var responsePublicClientOnly = false
     var responseEffectMode = "active"
     var responseInputIntervalTurns: Int64 = 2
     var hasResponseInputInterval = false
@@ -1547,6 +1551,9 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
         } else if (args[index] == "--multi-window-response" && !recordsResponseWorkload) {
             recordsResponseWorkload = true
             index += 1
+        } else if (args[index] == "--response-public-client" && !responsePublicClientOnly) {
+            responsePublicClientOnly = true
+            index += 1
         } else if (args[index] == "--response-effect-mode" && index + 1 < args.size && responseEffectMode == "active") {
             let mode = args[index + 1]
             if (mode != "no_effect" && mode != "static" && mode != "active") { return None }
@@ -1566,7 +1573,8 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
             return None
         }
     }
-    if ((hasCloseFirstWindowAfter && !opensMultipleWindows) || (recordsTurnObservations && !opensMultipleWindows) || (reopensFirstWindowAfterClose &&
+    if ((responsePublicClientOnly && (!opensMultipleWindows || !recordsResponseWorkload || !enablesExternalConnection)) ||
+        (hasCloseFirstWindowAfter && !opensMultipleWindows) || (recordsTurnObservations && !opensMultipleWindows) || (reopensFirstWindowAfterClose &&
         (!opensMultipleWindows || !hasCloseFirstWindowAfter)) || (hasCloseFirstWindowAfter &&
         expectsConnectionStartFailure) || (recordsResponseWorkload && !opensMultipleWindows) ||
         (responseEffectMode != "active" && !recordsResponseWorkload) ||
@@ -1577,7 +1585,7 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
         CjguiSharedDocumentLaunchOptions(filePath, enablesExternalConnection, expectsConnectionStartFailure,
             opensMultipleWindows, measurementDurationMs, measurementWarmupMs, closeFirstWindowAfterMs,
             recordsTurnObservations, reopensFirstWindowAfterClose, recordsResponseWorkload, responseEffectMode,
-            responseInputIntervalTurns))
+            responseInputIntervalTurns, responsePublicClientOnly))
 }
 
 private func initialPrimaryDocument(binding: CjguiTextDocumentFileBinding, path: String): CjguiTextDocument {
@@ -1597,7 +1605,7 @@ private func initialPrimaryDocument(binding: CjguiTextDocumentFileBinding, path:
 private func runMultiWindow(path: String, enablesExternalConnection: Bool, expectsConnectionStartFailure: Bool,
     measurementDurationMs: Int64, measurementWarmupMs: Int64, closeFirstWindowAfterMs: Int64,
     recordsTurnObservations: Bool, reopensFirstWindowAfterClose: Bool, recordsResponseWorkload: Bool,
-    responseEffectMode: String, responseInputIntervalTurns: Int64): Int32 {
+    responseEffectMode: String, responseInputIntervalTurns: Int64, responsePublicClientOnly: Bool): Int32 {
     let fileBinding = CjguiTextDocumentFileBinding()
     let primary = initialPrimaryDocument(fileBinding, path)
     let notes = CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档",
@@ -1750,7 +1758,13 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
     var requestSceneLatencyMs: Int64 = -1
     var maxRequestSceneMs: Int64 = -1
     var acceptedIdentityChecks: Int64 = 0
-    let responseRequestLimit: Int64 = 120
+    // Keep A's ordinary animation active while the external public client
+    // owns and measures its writes; this mode creates no internal typing.
+    let responseRequestLimit: Int64 = if (responsePublicClientOnly) { 0 } else { 120 }
+    if (responsePublicClientOnly) {
+        output.writeln("CJGUI_MULTI_WINDOW_PUBLIC_CLIENT ready=true internal_requests=0 cpu_stage_observation=unavailable")
+        output.flush()
+    }
     while (application.isOpen() && (measurementDurationMs <= 0 ||
             (MonoTime.now() - measurementStarted).toMilliseconds() < measurementDurationMs)) {
         // This opt-in, bounded probe switch exercises the same public
@@ -2159,7 +2173,8 @@ main(args: Array<String>): Int64 {
             return Int64(runMultiWindow(options.filePath, options.enablesExternalConnection,
                 options.expectsConnectionStartFailure, options.measurementDurationMs, options.measurementWarmupMs,
                 options.closeFirstWindowAfterMs, options.recordsTurnObservations, options.reopensFirstWindowAfterClose,
-                options.recordsResponseWorkload, options.responseEffectMode, options.responseInputIntervalTurns))
+                options.recordsResponseWorkload, options.responseEffectMode, options.responseInputIntervalTurns,
+                options.responsePublicClientOnly))
         }
         return Int64(runWindow(options.filePath, options.enablesExternalConnection,
             options.expectsConnectionStartFailure, options.measurementDurationMs, options.measurementWarmupMs))

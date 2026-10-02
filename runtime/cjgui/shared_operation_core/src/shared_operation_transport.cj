@@ -3264,6 +3264,7 @@ public class CjguiSharedOperationExternalConnection {
     ): CjguiSharedOperationSnapshotBody {
         if (!isSafeIdentifier(snapshot.resourceType) || (snapshot.streamIdentity.size > 0 &&
             !isSafeIdentifier(snapshot.streamIdentity)) || snapshot.contextName.size == 0 || snapshot.contextName.size >
+            CJGUI_SHARED_OPERATION_MAX_STRING_BYTES || snapshot.ownerState.size >
             CJGUI_SHARED_OPERATION_MAX_STRING_BYTES) {
             return CjguiSharedOperationSnapshotBody(false, "")
         }
@@ -3278,6 +3279,10 @@ public class CjguiSharedOperationExternalConnection {
             return CjguiSharedOperationSnapshotBody(false, "", failureReason: "response_too_large")
         }
         if (snapshot.streamIdentity.size > 0 && !body.append("STREAM_ID ${snapshot.streamIdentity}\n")) {
+            return CjguiSharedOperationSnapshotBody(false, "", failureReason: "response_too_large")
+        }
+        if (snapshot.ownerState.size > 0 && !body.append(
+            "OWNER_STATE_UTF8_HEX ${snapshot.ownerState.size} ${encodeUtf8HexValue(snapshot.ownerState)}\n")) {
             return CjguiSharedOperationSnapshotBody(false, "", failureReason: "response_too_large")
         }
         for (action in actions) {
@@ -3422,9 +3427,9 @@ public class CjguiSharedOperationExternalConnection {
                 windowProjection.observedMetalFailureFrameIndex < -1 ||
                 windowProjection.observedMetalGpuDurationMicros < -1 || windowProjection.overlayDrawnSceneVersion < -1 ||
                 windowProjection.buildPassCount < 0 || windowProjection.layoutPassCount < 0 ||
-                windowProjection.nativeSubmissionCount < 0 || windowProjection.lastBuildElapsedMs < 0 ||
-                windowProjection.lastLayoutElapsedMs < 0 || windowProjection.lastNativeMeasurementElapsedMs < 0 ||
-                windowProjection.lastNativeStageAndSubmitElapsedMs < 0 ||
+                windowProjection.nativeSubmissionCount < 0 || windowProjection.lastBuildElapsedMs < -1 ||
+                windowProjection.lastLayoutElapsedMs < -1 || windowProjection.lastNativeMeasurementElapsedMs < -1 ||
+                windowProjection.lastNativeStageAndSubmitElapsedMs < -1 ||
                 windowProjection.lastNativeMeasurementCallCount < 0 || windowProjection.layoutReuseHitCount < 0 ||
                 windowProjection.layoutReuseMissCount < 0 || windowProjection.layoutReuseRevalidationNodeCount < 0 ||
                 windowProjection.layoutReuseReplayedNodeCount < 0 || windowProjection.layoutReuseEntryCount < 0 ||

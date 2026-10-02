@@ -1,10 +1,18 @@
 # CJGUI 当前方向与实施状态
 
-更新：2026-09-28。目标：仓颉核心、macOS 首平台、高性能自绘/GPU GUI 框架；人和外部系统操作同一份内容，支持手写、生成及混合界面，共同信息单一定义。
+更新：2026-10-01。目标：仓颉核心、macOS 首平台、高性能自绘/GPU GUI 框架；人和外部系统操作同一份内容，支持手写、生成及混合界面，共同信息单一定义。
 
-**三线缺口校准（2026-09-28）：**[框架/产品/待验归属](../../docs/plans/2026-09-26-framework-capability-roadmap.md#joint-operation-gap-review-20260928)保留。E 暂停后已合并为[换模型接续 A–G](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-resume-package-20260928>)：先修文档实例/原子版本守卫及首页框架失效，再接统一解析、有界密度判定、公共租约、组合生命周期与共同生成消费。已有 Luna 真实生成与共同定义原证复用。F 文件 PNG、[F11 可平移容器/有界文字](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-translation-containers-bounded-text-review)及[连续位置动效](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-position-motion-next)已交付 macOS 消费；H 原触摸包已限域验收，沿原线接续惯性滚动。
+**H R3补轮经指导复核，整包仍待闭合（2026-10-02）。** 新公共范围桥与thermo/Pharos原HAP运行结果保留；离线原方法反例确认：thermo必要应用改动仅在lab副本，正式同步会覆盖；region缓存漏A→B→A及同node换semantic；新thermo驱动可借错PID/旧确认并在转发创建失败后删除映射。原R1仅换成票号大小保活，提交前来源/完整绑定准入尚未落实。按[原任务最新复核](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-source-preview-followup-20261001)连续修正典、活动绑定、验收/清理与R1剩余，再一次normal双消费者汇合。反例见[h-r-final指导原件](../../artifacts/h-r-final-20261002/guidance-review/driver-and-sync.json)；本次未构建HAP/操作设备，保留旧绿与E/staged写集。
+
+**三线缺口校准（2026-09-28）：**[框架/产品/待验归属](../../docs/plans/2026-09-26-framework-capability-roadmap.md#joint-operation-gap-review-20260928)保留。E 暂停后已合并为[换模型接续 A–G](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-resume-package-20260928>)：先修文档实例/原子版本守卫及首页框架失效，再接统一解析、有界密度判定、公共租约、组合生命周期与共同生成消费。已有 Luna 真实生成与共同定义原证复用。F 文件 PNG、[F11 可平移容器/有界文字](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-translation-containers-bounded-text-review)及[连续位置动效](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-position-motion-next)已交付 macOS 消费；H 触摸、惯性与正常源码编辑已有模拟器范围证据。
 
 ## 当前阶段与执行状态
+
+**H当前任务（交用户选择的执行模型）：**[现有R1–R4的R3补轮复核接续](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-source-preview-followup-20261001)：正典可重建、窗口活动绑定与旧FOCUS隔离、严格thermo总门/转发归属、Flush前提交来源与输入权限。保留end FIFO/固定截止和旧正常消费，最终Pharos＋thermo一次汇合；不重开N1–N4、不接管E大文档。
+
+**执行/咨询配置。** 上包E由GLM5.3执行，新两线主执行以用户各工具实际配置为准。日常疑难默认[Pi→精确GLM5.3独立只读咨询](../../AGENTS.md#independent-model-consultation)，即使主模型也是GLM5.3也开新上下文；既定方案直接落实，重大未决契约可直接Astra、复杂技术仍无解用Sol（既定max）。Pi模型目录/凭据ready已核，未在本次发送推理请求；不依赖Pi默认DeepSeek，不静默换型号。
+
+**交接规则。** E主写公共文字会话/位置、macOS文字桥和产品语义；H主写OHOS、存储端口、共同滚动活动并统一集成Node/Event ABI。共享window按函数分工，不整体覆盖，Node/Event布局变更只由H合并；同target和前台串行，独立工作交错。H先固定上一包已完成的最小文本契约再适配，不等待E全部新位置能力，也不追逐E在途快照。
 
 [长文本增量更新与完整样式绑定](../../docs/plans/2026-09-23-incremental-text-style-binding-milestone.md) **已通过指导验收，以页末「指导验收结论（2026-09-24，本阶段收口）」的适用域和保留边界为准**。原始任务、裁决与逐轮记录是历史证据，不再是待执行清单。[交接说明](../../docs/plans/2026-09-19-external-executor-handoff-prompt.md) 已同步。
 
@@ -14,7 +22,9 @@
 
 **H 线共享图片实际消费包已按模拟器范围交付。** [原交接节](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-image-resource-next)记录有界异步 PNG/fit/fill/裁剪/缓存与退役、设置及 thermo 两款 normal HAP 的手写/生成图片→系统编辑→owner 精确读回，以及最终 renderer `16ed72ce…`、transport `24cb035a…` 的真实产物和逐笔 owner 排队原数。四组图片交错、加载中编辑、STOP 全零与同 PID 重开由设置测试 HAP 留证；旧真实模型候选在同 renderer 正常产物上重放接受。正常解码太快而未见 `loading` 瞬态，纯读取不触发 scene，内部 build/scene 耗时仍无同口径计数；当前 marked/cancel 回调、物理设备性能与发布审核按原边界保留。F 的 PNG 交换、E 的文档语义及并行改动保持各自责任，未 stage/commit/push。
 
-**H 惯性 r10 有部分修复，原 A–E 未收口（2026-09-29 指导复核）。** [当前实施要求](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-inertial-scroll-review-20260929)：保留主 src viewport API/亚像素余量/END 时间与 split 修订原语；H Node 镜像缺字段且与实际 C 头错配，须同步完整 ABI 并恢复冻结绑定，不能以 fling 旁路放行。共同窗口/生成视口推进、请求与 accepted 确认、固定停止积分、END 追加及 split 自身修订接续仍需实现；受影响宿主测试未闭合，失败不能统归 F ABI。先完成这些生产接缝与判别，再一次双 normal HAP/公开生成/交错响应汇合。r10 PID与惯性日志归档需校准，原触摸/图片已验成果保留。指导本轮仅只读复核和公式复算、修改文档，未构建或操作设备；E/F 改动保留，未 stage/commit/push。
+**H 惯性历史已被 N3 最终消费更新。** r10的ABI、共同host、接管与release旧待办按最终冻结原件保留已修范围；设置/thermo手写与生成消费及停止后零求解增长已有证据，不再按历史动词重做。后续仅因当前改动或新反例补受影响检查，物理性能、弹性回弹/多指仍未据此通过。
+
+**H 产品接续仍是现有 Pharos。** 正常源码／只读预览、Agent改版后映射与保存关开已有有效消费；当前补样式事务、共享安装生命周期和多编辑面身份，使用同一内核与owner协议。基础菜单、图片、生成和触摸成果按证据范围复用，产品不私建native编辑路径。
 
 **H 触摸原 A–E 已按模拟器范围通过指导限域复核（2026-09-29）。** [原证与复核](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-touch-third-delivery-review)保留逐事件 GestureKey、独立 acceptedBindingEpoch、双向唯一终态、过载终结与焦点恢复；设置 `1668a131…`、thermo `32b66d73…` 两 normal HAP 的手写/生成、活草稿重排/resize、系统输入和 owner 精确读回成立。滚动交错各 10 个有效 MOVE，图片连续 114/117 次提交、228/234 次匹配绘制、销毁 0。接续[快照接线与惯性滚动 A–E](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-inertial-scroll-next)：补普通 TEXT 指针和 split 修订，再交付带原始时间的共同滚动活动、松手减速、新触摸中断和边界停止；旧 hr5 不再重修。marked/cancel 版本边界、物理性能与发布审核另列。此次指导仅只读复核和文档更新，未重跑设备；E/F 改动保留。
 
@@ -26,7 +36,7 @@
 
 **H 线上包交付：**[系统输入能力与正常消费接续](../../docs/plans/2026-09-26-harmonyos-executor-handoff.md#h-input-consumption-next)已按模拟器当前能力交付：设置与 thermo 正常 HAP 各完成同实例系统输入→公开 owner 读回→外部换版/校准→继续编辑，并以真实系统非空选区、提交前可见草稿和精确替换补证；同 PID `12810` 的 STOP 全零→新实例真实引用/首帧→授权写读通过。框架已修全文草稿/UTF-16 范围、旧回调、同代几何重绘和仍挂载重开。当前 SDK/镜像/小艺组合及独立 ArkTS 对照未收到应用 marked/cancel 回调，保留版本化复现与上游反馈；这不推出模拟器整体不支持。详细身份、反例与截图见原交接节；E/F 并行改动保留，未 stage/commit/push。
 
-Pharos Mark 在 `/Users/jiangxuanyang/Desktop/Pharos Mark` 以产品检验框架；[STATUS](</Users/jiangxuanyang/Desktop/Pharos Mark/STATUS.md>)与[三处生产接缝及字素/accepted 位置接续](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-text-position-next-20260929>)为 E 入口（2026-09-29 指导限域复核）。光标 source/visual 实钟各14次、source失焦停帧、同二进制 E2 16/16和25/25完整owner、G13/13与v4本机搬迁原证成立；主解析/可信窗口和增量尾复用成果保留。source迟到CANCEL在B外部扰动时仍产生错误恢复意图、小文档无预算投影、生产旧scanner回退三处接缝待修；新框架目标是字素/视觉位置与扩选，由编辑器消费，保持方案R/同owner，F/H不接管。旧锁屏暂停与旧RED不作为当前结论。物理输入、跨机、GB编码覆盖、大导出及尾检查点性能余量分列。本次指导只读复核/离线复算与改文档，未构建/操作桌面；并行改动保留，未 stage/commit/push。
+Pharos Mark 在 `/Users/jiangxuanyang/Desktop/Pharos Mark` 以产品检验框架。[E位置／交接／右键包](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-macos-position-review-20260930>)原证保留；[E连续滚动与正常成本](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-macos-scroll-cost-next-20261001>)及首页多选/雾化追加已交付。框架消费accepted原点重基、绑定持续期滚轮原票准入、NSApplication单一系统事件owner、普通Boolean/press与正常按需计时；产品保留条目/槽位/Markdown规则。6种精确滚轮、17个具名绑定回归及正常有界wait/ABA通过；受控drawable64/64、517帧系统录像无具名短时跳变，原视频不唯一归因于GPU双绘。最终含空格普通Pharos完整50B保存读回、同源三窗公共20/20通过，owner/accepted p95 56.222/67.938ms；修复当前owner空转后空闲51.815s布局/提交0增量。63份冻结源、9678项导出与[证据索引](</Users/jiangxuanyang/Desktop/cangjie/artifacts/e-macos-scroll-cost-20261001/evidence-index.json>)固定；当前H在共享window/external的并行写入保留于原树，验收只覆盖冻结E包。G/E2/R1/旧Shift按影响复用，接口experimental；物理显示呈现、人工物理输入、VoiceOver、跨屏和GB仍未验。两仓未stage/commit/push。 2026-10-02指导独立核对上述原件、源码／清单、50B及公共成本通过，未重跑构建／桌面；[复核记录](../../artifacts/e-macos-scroll-cost-20261001/guidance-review-20261002.json)。当前[大文档包](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-macos-large-document-next-20261002>)A–D未收口：指导核对26份源码、38份原件及9670项清单一致，生产接线／两个正常构建与定向修正原证保留。E可按符号同步主树ownerState声明和有界序列化，H平台写集不动；先补二窗accepted归属及逐笔负载重叠判据，再完成GB／DOC-09／长行和正常成本。[本次反例与范围](../../artifacts/e-macos-large-document-20261002/guidance-review-20261002.json)为离线审阅，未新增构建或前台验收，真实消费仍not_run；锁屏仅暂停前台依赖，不循环旧绿矩阵。
 
 **macOS 文本会话文件误写与恢复（2026-09-27 15:19，Pharos 线写集）：** `runtime/cjgui/src/text_session.cj`（未跟踪）在 15:11:34 被未知写入替换为早期有界窗口实现（9,234 B，`bindWindow` API，缺 ticket/代次/校准/镜像成员），令 `composable_ui_window.cj` 的 G4 会话接缝与 `text_session_test.cj` 共 10 处编译失败，框架树与 P4 线 15:12–15:16 的构建检查同时受阻。已按权威内容恢复（25,640 B，sha `155762c2…`，与 12:43–14:12 四份 Spaced 导出快照逐字节一致），`cjpm build --skip-script` 与 `cjpm test` 333/333 均通过；被替换内容隔离于 `Pharos Mark/artifacts/session-incident-20260927/`。窗口/测试/产品三处消费者均按镜像版 API，如要改用有界窗口实现需先迁移三者。
 
@@ -50,7 +60,7 @@ Pharos Mark 在 `/Users/jiangxuanyang/Desktop/Pharos Mark` 以产品检验框架
 
 **F 连续平移包已按固定导出 macOS CGEvent/AX 范围通过指导限域复核（2026-09-29）。** [原证与复核](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-position-motion-acceptance-review)确认候选确认/重建接续、联合几何、绑定退役及单行tile修复；两应用活动帧输入、外部事务后续写和精确owner成立，锁屏前报告已过时。自然20样本owner/accepted p95独立复算为 `11.874/14.478 ms`。同帧记录是AX输入框矩形、光标偏移与选区区间；少量前置选区/手写点击原回包和合法pump判别已由F5包补齐。
 
-**F5 VoiceOver 正常消费包已按工具驱动范围交付（2026-09-29，外部执行 AI 完成）。** [F5 接续节](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-accessibility-consumption-next)记录：wrong-thread legalPump 行为判据补强（二次拒绝判别器成立）、F11 三项留证缺口全部闭合（手写 `0:1` 选区+owner 原回包+替换字节、旧/新点分段回包、生成 `3:4`）、两消费者语义桥核对通过（AXPress 稳态 9–11ms，冷连接慢归因客户端 TCC 非框架缺陷）；VoiceOver 实测：真实 VO 导航/光标定位成立（截图黑框逐元素落位：页签单选钮、owner 按钮、生成按钮/备注字段），手写应用完成 VO 激活→原 owner `isMarked 0→1` 精确读回全链；生成应用 VO 光标定位+直接 AXPress 计数 `0→1`。系统边界如实记录：合成 ctrl+opt 和弦下 VO 约 1–4 命令后随机干净退出（Finder 对照复现），VO 激活变体/VO 内编辑/滚动后可达留待人工物理键盘；字幕面板未配置。无生产机制缺陷或修复；driver 和弦命令与 focus-id 探针为测试工具增强。E/H 写集保留，未 stage/commit/push。
+**F5 经指导复核仍未收口（2026-09-29）。** [原任务与复核接续](../../docs/plans/2026-09-26-framework-capability-roadmap.md#f-accessibility-consumption-review)：wrong-thread 补强及 F11 普通输入原证按范围复用；原报手写 VO 激活缺紧邻 owner 回包且普通 Space 可同效，生成侧只有直接 AXPress，不能判双应用 VO 通过。日志存在非 UA daemon 启动警告与约10秒退出，先校准系统启动/驱动而非归因系统随机故障。接续修标准 AX 焦点/选区/value selector、真实可见字符范围和裁剪后有效身份/reveal，再以两款正常应用完成可归因 VO 链；不重做未受影响 F11 矩阵。当前未另开 F 线，不占用 E/H 写集。
 
 ## 已接受的交付
 

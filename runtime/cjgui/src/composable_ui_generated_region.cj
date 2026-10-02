@@ -54,6 +54,20 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     private var buildNanoseconds: Int64
     private var commitNanoseconds: Int64
     private var rollbackNanoseconds: Int64
+    // R3补轮（2026-10-02）：字段编辑聚焦时绑定的通用范围会话的**完整绑定身份**
+    // memo。它只描述"我们上次绑定的身份"，幂等跳过还必须同时满足窗口的**当前
+    // 活动会话**就是这一节点（ownedTextSessionBoundNodeId）——其他消费方/区域
+    // 的 bind 会释放本会话，关闭/重开会清空，region 记忆单独存在不代表绑定
+    // 仍然活着。任一身份维度变化（node/semantic/kind/field/writer/resource/
+    // ownerTarget）都视为真正换绑，重新 bindRangeTextSession（窗口自动释放旧
+    // 会话并推进声明代次）。
+    private var rangeSessionNodeId: Int64 = -1
+    private var rangeSessionSemanticId: String = ""
+    private var rangeSessionNodeKind: Int64 = -1
+    private var rangeSessionFieldId: String = ""
+    private var rangeSessionWriterOperation: String = ""
+    private var rangeSessionFieldResource: Int64 = -1
+    private var rangeSessionOwnerTarget: Int64 = -1
 
     public init(catalog: CjguiGeneratedUiCapabilityCatalog, binding: CjguiGeneratedUiRegionBinding,
                 rootScopeName: String) {
@@ -191,6 +205,9 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     }
 
     public func handleEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        synchronized(lock) {
+            bindFieldRangeSessionIfFocused(event)
+        }
         let intent = synchronized(lock) { holder.resolveIntent(event.node, event.eventKind, event.text) }
         if (intent.isFieldEdit()) {
             return binding.applyFieldIntent(intent)
@@ -202,6 +219,93 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         return CjguiComposableUiDispatchResult(false)
     }
 
+    /// R3/R3补轮：生成 TEXT 字段在**编辑聚焦**（kind 31 FOCUS）时绑定通用范围
+    /// 会话（CjguiGeneratedFieldRangeSession）。绑定后该节点的系统输入以精确
+    /// 范围增量（kind 51）经会话镜像到达 provider 的 owner 事务文本写。程序化
+    /// 聚焦（窗口 recordProjectedFocus 合成通知）与平台 FOCUS 事件共用本入口。
+    /// 判定顺序（R3补轮反例驱动）：
+    ///   1. 字段声明与事件节点的绑定事实一致（同 resolveIntent ordinary 校验）；
+    ///   2. **先验证当前 accepted 目标**：accepted 场景里该 nodeId 的完整身份
+    ///      （semantic/kind/resource/field/writer/ownerTarget）必须与事件节点
+    ///      一致——迟到旧 FOCUS（节点已换绑/移除/换语义）在此具名拒绝，不得
+    ///      夺回新 owner；
+    ///   3. 幂等 = 窗口**当前活动会话**绑定本节点 **且** region memo 的完整
+    ///      绑定身份逐一相等。只满足后者不跳过：其他消费方 bind/关闭重开已把
+    ///      会话换走（A→B→A 反例）；只满足前者不跳过：同 node 换 semantic/
+    ///      换绑是真正新绑定（semantic_rebind 反例）。真重复聚焦不重建会话，
+    ///      组合态与选区保留。
+    private func bindFieldRangeSessionIfFocused(event: CjguiComposableUiEvent): Unit {
+        if (event.eventKind != CJGUI_COMPOSABLE_UI_EVENT_FOCUS) {
+            return
+        }
+        let node = event.node
+        if (node.fieldId.size == 0) {
+            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} reason=no_field_id")
+            return
+        }
+        let window = match (attachedWindow) {
+            case Some(value) => value
+            case None => return
+        }
+        if (catalog.fieldFor(node.fieldId).isNone()) {
+            internalRendererWindowLog(
+                "GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} reason=unknown_field")
+            return
+        }
+        let field = match (catalog.fieldFor(node.fieldId)) {
+            case Some(value) => value
+            case None => return
+        }
+        if (field.editorKind != "TEXT" || field.writeActionName.size == 0 ||
+            node.operationActionName != field.writeActionName ||
+            node.resourceId != field.resourceId || node.operationResourceId < 0) {
+            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
+                "reason=binding_mismatch editor=${field.editorKind} writer=${field.writeActionName} " +
+                "nodeWriter=${node.operationActionName} fieldRes=${field.resourceId} nodeRes=${node.resourceId} " +
+                "ownerTarget=${node.operationResourceId}")
+            return
+        }
+        if (!binding.rangeTextEditSupported(field.fieldId)) {
+            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
+                "reason=provider_unsupported")
+            return
+        }
+        var acceptedMatched = false
+        for (accepted in window.acceptedSceneNodes()) {
+            if (accepted.nodeId != node.nodeId) {
+                continue
+            }
+            acceptedMatched = accepted.semanticId == node.semanticId &&
+                accepted.nodeKind == node.nodeKind && accepted.resourceId == node.resourceId &&
+                accepted.fieldId == node.fieldId &&
+                accepted.operationActionName == node.operationActionName &&
+                accepted.operationResourceId == node.operationResourceId
+            break
+        }
+        if (!acceptedMatched) {
+            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
+                "semantic=${node.semanticId} reason=stale_focus_not_accepted")
+            return
+        }
+        if (window.ownedTextSessionBoundNodeId() == node.nodeId &&
+            rangeSessionNodeId == node.nodeId && rangeSessionSemanticId == node.semanticId &&
+            rangeSessionNodeKind == node.nodeKind && rangeSessionFieldId == field.fieldId &&
+            rangeSessionWriterOperation == field.writeActionName &&
+            rangeSessionFieldResource == field.resourceId &&
+            rangeSessionOwnerTarget == node.operationResourceId) {
+            return // 同一绑定的重复聚焦：不重建会话，组合态/选区保留
+        }
+        let session = CjguiGeneratedFieldRangeSession(binding, field.fieldId)
+        let _ = window.bindRangeTextSession(node.nodeId, node.semanticId, session, session,
+            field.resourceId, node.nodeKind)
+        rangeSessionNodeId = node.nodeId
+        rangeSessionSemanticId = node.semanticId
+        rangeSessionNodeKind = node.nodeKind
+        rangeSessionFieldId = field.fieldId
+        rangeSessionWriterOperation = field.writeActionName
+        rangeSessionFieldResource = field.resourceId
+        rangeSessionOwnerTarget = node.operationResourceId
+    }
     public func capabilitiesPayload(): String {
         return CjguiGeneratedUiEncoding.describe(catalog)
     }

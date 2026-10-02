@@ -1,0 +1,30 @@
+[
+  {
+    "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp",
+    "sha256": "05505fa17a983c4aadfddc900834aa3973dc8dc9c9122111decddaa0df28f87d"
+  },
+  {
+    "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj",
+    "sha256": "e704b9e691f7201432489f06d5bd628f72323c3852bd7b3eb1d38d2a1b7b3a08"
+  },
+  {
+    "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/h_source_preview_consumption.py",
+    "sha256": "00a936a8d63f72c2e78e62eaba4fa3cf9d3ab0bf2c83ef697ad053f800bc459f"
+  },
+  {
+    "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/d_preview_frames.py",
+    "sha256": "113bf29e5a5ed0197d1f6fe694bf87820ecf1353801857830523fc2df25bbeef"
+  },
+  {
+    "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/arkts/cjgui-text-menu.ets",
+    "sha256": "2787117cb2afc99cb8c0e6df228f1b1459621e920cedc70181fbab41a2105369"
+  },
+  {
+    "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/entry/src/main/ets/pages/Index.ets",
+    "sha256": "708a8007b6447448835ff2132236c2552b37fa7dcc9332f61a65be49e05d100b"
+  },
+  {
+    "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/d-selection-collapse-sol/answer.md",
+    "sha256": "c98eb1678662ce67306b09518e0529891c9250d914b4550daf8fbff835a1f2aa"
+  }
+]

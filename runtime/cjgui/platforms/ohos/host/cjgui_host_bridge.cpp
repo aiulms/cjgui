@@ -22,6 +22,7 @@
 // 该接口自 8.0.0 起可用，文档明确标注为非线程安全，因此只在 UI 线程回调里
 // 成对调用（reference 在 onSurfaceCreated，unreference 在 onSurfaceDestroyed）。
 #include <native_window/external_window.h>
+#include <window_manager/oh_display_manager.h>
 
 #include "cjgui_ohos_ingress.h"
 
@@ -1399,6 +1400,17 @@ std::vector<std::string> libraryCandidates() {
 
 OH_NativeXComponent_Callback g_xcomponentCallback;
 
+// 布局单位是 vp，surface/XComponent 尺寸是物理 px：发布 surface 事实时带上
+// 真实逻辑密度，渲染端据此换算视口与绘制缩放。取不到或非法时保持 1.0（旧行为）。
+static double displayDensityPixels() {
+    float density = 1.0f;
+    if (OH_NativeDisplayManager_GetDefaultDisplayDensityPixels(&density) != DISPLAY_MANAGER_OK ||
+        !std::isfinite(static_cast<double>(density)) || density <= 0.0f) {
+        return 1.0;
+    }
+    return static_cast<double>(density);
+}
+
 // 链1：surface 分类与发布（引用取证 + 三态准入 + 记录创建）。只在 UI 线程
 // 调用——同步路径（回调内）与补分类路径（TSFN call_js_cb）都是 UI 线程。
 static void classifyAndPublishSurface(OH_NativeXComponent *component, void *window,
@@ -1454,7 +1466,7 @@ static void classifyAndPublishSurface(OH_NativeXComponent *component, void *wind
         rec.window = window;
         rec.width = static_cast<int32_t>(width);
         rec.height = static_cast<int32_t>(height);
-        rec.density = 1.0;  // real density follows with the render probe
+        rec.density = displayDensityPixels();
         // 三态准入（Sol Q1）：Verified 档持有引用才发布；KnownShimNoRef 档发布
         // degradedActive（nativeRefUnavailable，绝不虚记 held）；其余失败关闭。
         rec.nativeRefHeld = refHeld;
@@ -1589,7 +1601,7 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
             nrec.window = window;
             nrec.width = static_cast<int32_t>(width);
             nrec.height = static_cast<int32_t>(height);
-            nrec.density = 1.0;
+            nrec.density = displayDensityPixels();
             nrec.nativeRefHeld = refHeld;
             nrec.nativeRefUnavailable = refDegraded;
             nrec.nativeRefFailed = !refHeld;
@@ -1619,6 +1631,7 @@ void onSurfaceChangedImpl(OH_NativeXComponent *component, void *window) {
         }
         rec->width = static_cast<int32_t>(width);
         rec->height = static_cast<int32_t>(height);
+        rec->density = displayDensityPixels();
         // 几何变更必须分配**不复用**的 geometryRevision：同尺寸重建也要能被
         // 识别为一次新的几何（旧代用旧版本，渲染线程据此拒绝混用）。
         rec->geometryRevision = g_nextGeometryRevision++;
@@ -1932,7 +1945,12 @@ using ImeContextCommitFn = int32_t (*)(const char *, size_t, int64_t);
 using ImeContextPreviewFn = int32_t (*)(const char *, size_t, int64_t);
 using ImeContextEndFn = int32_t (*)(int64_t);
 using ImeContextQueryFn = int32_t (*)(char *, int32_t);
+using ImeGraphemeQueryFn = int32_t (*)(const char *, size_t, int32_t, int64_t, int32_t *, int32_t *);
 using ImeSetSelectionFn = int32_t (*)(int32_t, int32_t, int64_t);
+using ImeMenuCommandFn = int32_t (*)(const char *, const char *, size_t, const char *, size_t, int64_t, uint64_t, uint64_t, int32_t, int32_t);
+// 代理恢复回执：平台**实际安装**完冻结的 accepted 正文/选区后回报
+// (contextId, requestId, installedStart, installedEnd, ok)。
+using ImeRestoreAckFn = int32_t (*)(int64_t, uint64_t, int32_t, int32_t, int32_t);
 // 显式测试接缝（B1）：**普通产物没有**这个符号，这是预期状态、不是缺陷。
 // 只有把 transport/verify/ohos_transport_verify.cj 一起编入的测试构建才有。
 using TransportVerifyInstallFn = int32_t (*)();
@@ -1966,7 +1984,13 @@ using ImeContextPreviewRangeFn = int32_t (*)(const char *, size_t, int32_t, int3
 static ImeContextPreviewRangeFn imeContextPreviewRangeFn = nullptr;
 static ImeContextEndFn imeContextEndFn = nullptr;
 static ImeContextQueryFn imeContextQueryFn = nullptr;
+// 菜单有界元数据（B）：与整文查询同一符号族，但只含 O(1) 字段。
+using ImeMenuMetaFn = int32_t (*)(char *, int32_t);
+static ImeMenuMetaFn imeMenuMetaFn = nullptr;
+static ImeGraphemeQueryFn imeGraphemeQueryFn = nullptr;
 static ImeSetSelectionFn imeSetSelectionFn = nullptr;
+static ImeMenuCommandFn imeMenuCommandFn = nullptr;
+static ImeRestoreAckFn imeRestoreAckFn = nullptr;
 // 通用文字代理上下文：ArkTS 侧聚焦时得到的编辑上下文编号，回调必须原样带回。
 static std::atomic<int64_t> g_editingContext{0};
 
@@ -2089,10 +2113,19 @@ static void resolvePlatformEntryPoints(void *handle)
         dlsym(handle, "ohos_renderer_ime_preview_range_ctx"));
     imeContextEndFn = reinterpret_cast<ImeContextEndFn>(
         dlsym(handle, "ohos_renderer_ime_finish_editing_ctx"));
+    imeGraphemeQueryFn = reinterpret_cast<ImeGraphemeQueryFn>(
+        dlsym(handle, "ohos_renderer_ime_grapheme_range_ctx"));
     imeContextQueryFn = reinterpret_cast<ImeContextQueryFn>(
         dlsym(handle, "ohos_renderer_ime_context_json"));
+    imeMenuMetaFn = reinterpret_cast<ImeMenuMetaFn>(
+        dlsym(handle, "ohos_renderer_ime_menu_meta_json"));
+    if (imeMenuMetaFn == nullptr) HLOGW("symbol missing: ohos_renderer_ime_menu_meta_json");
     imeSetSelectionFn = reinterpret_cast<ImeSetSelectionFn>(
         dlsym(handle, "ohos_renderer_ime_set_selection_ctx"));
+    imeMenuCommandFn = reinterpret_cast<ImeMenuCommandFn>(
+        dlsym(handle, "ohos_renderer_ime_menu_command_ctx"));
+    imeRestoreAckFn = reinterpret_cast<ImeRestoreAckFn>(
+        dlsym(handle, "ohos_renderer_ime_restore_ack_ctx"));
 
     // 逐个点名缺失项：文字代理的任一环节缺失都应显式可见，不能静默降级。
     if (setFocusSinkFn == nullptr) HLOGW("symbol missing: ohos_renderer_set_focus_sink");
@@ -2111,6 +2144,7 @@ static void resolvePlatformEntryPoints(void *handle)
     if (imeContextEndFn == nullptr) HLOGW("symbol missing: ime_finish_editing_ctx");
     if (imeContextQueryFn == nullptr) HLOGW("symbol missing: ime_context_json");
     if (imeSetSelectionFn == nullptr) HLOGW("symbol missing: ime_set_selection_ctx");
+    if (imeRestoreAckFn == nullptr) HLOGW("symbol missing: ime_restore_ack_ctx (proxy restore receipt)");
 
     // 验证接缝（B1）：普通产物缺符号是**预期**，只记状态不告警；测试构建在此注册，
     // 注册后仓颉侧才会解析控制帧并允许切换认领闸门。
@@ -2880,7 +2914,7 @@ static void resolveImeEntryPoints()
 {
     if (imeContextCommitFn != nullptr && imeContextPreviewFn != nullptr &&
         imeContextEndFn != nullptr && imeContextQueryFn != nullptr &&
-        imeSetSelectionFn != nullptr) {
+        imeSetSelectionFn != nullptr && imeRestoreAckFn != nullptr) {
         return;
     }
     resolvePlatformEntryPoints(g_cangjieLib);
@@ -2917,21 +2951,64 @@ static napi_value ImeEditingContext(napi_env env, napi_callback_info info)
 {
     (void)info;
     resolveImeEntryPoints();
-    // 快照现在同时带能力/marked 元数据；给正常字段全文留出明确上界。
-    char buffer[8192];
-    buffer[0] = '\0';
+    // A normal bounded document may occupy 256 KiB before JSON escaping.
+    // Keep one atomic native snapshot, with a heap buffer that also covers a
+    // similarly sized composition preview. Larger platform previews retain
+    // the native named capacity refusal; no partial value is installed.
+    std::vector<char> buffer(4u * 1024u * 1024u, '\0');
     int32_t ok = 0;
     if (imeContextQueryFn != nullptr) {
-        ok = imeContextQueryFn(buffer, static_cast<int32_t>(sizeof(buffer)));
+        ok = imeContextQueryFn(buffer.data(), static_cast<int32_t>(buffer.size()));
         if (ok == 1) {
-            // 原始快照留证：平台侧解析出的值与这里必须一致。
-            HLOGI("ime context json: %{public}s", buffer);
+            HLOGI("ime context json bytes=%{public}zu capacity=%{public}zu",
+                  std::strlen(buffer.data()), buffer.size());
         }
     } else {
         HLOGW("ime context query symbol unresolved; platform entry resolution incomplete");
     }
     napi_value result;
+    napi_create_string_utf8(env, ok == 1 ? buffer.data() : "", NAPI_AUTO_LENGTH, &result);
+    return result;
+}
+
+// 菜单有界元数据：固定小缓冲，O(1) 体积；周期消费不再触碰整文。
+static napi_value ImeMenuMeta(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    resolveImeEntryPoints();
+    char buffer[1024];
+    int32_t ok = 0;
+    if (imeMenuMetaFn != nullptr) {
+        ok = imeMenuMetaFn(buffer, static_cast<int32_t>(sizeof(buffer)));
+    }
+    napi_value result;
     napi_create_string_utf8(env, ok == 1 ? buffer : "", NAPI_AUTO_LENGTH, &result);
+    return result;
+}
+
+// System character-boundary query, scoped to the captured editing context.
+static napi_value ImeGraphemeRange(napi_env env, napi_callback_info info)
+{
+    size_t argc = 3;
+    napi_value argv[3] = {nullptr, nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    resolveImeEntryPoints();
+    std::string text;
+    int32_t start = 0, end = 0, status = 1;
+    double offset = -1, context = -1;
+    if (argc == 3 && readStringArg(env, argv[0], &text) &&
+        napi_get_value_double(env, argv[1], &offset) == napi_ok &&
+        napi_get_value_double(env, argv[2], &context) == napi_ok &&
+        std::isfinite(offset) && std::floor(offset) == offset && offset >= 0 && offset <= INT32_MAX &&
+        std::isfinite(context) && std::floor(context) == context && context > 0 && context <= 9007199254740991.0 &&
+        imeGraphemeQueryFn != nullptr) {
+        status = imeGraphemeQueryFn(text.c_str(), text.size(), static_cast<int32_t>(offset),
+            static_cast<int64_t>(context), &start, &end);
+    }
+    std::string json = "{\"status\":" + std::to_string(status) + ",\"start\":" +
+        std::to_string(start) + ",\"end\":" + std::to_string(end) + "}";
+    napi_value result;
+    napi_create_string_utf8(env, json.data(), json.size(), &result);
     return result;
 }
 
@@ -3010,6 +3087,56 @@ static napi_value ImeSetSelection(napi_env env, napi_callback_info info)
     return result;
 }
 
+// Private self-drawn toolbar adapter. Numeric identities/ranges must be exact,
+// never silently coerced from NaN, fractions or missing arguments.
+static napi_value ImeMenuCommand(napi_env env, napi_callback_info info)
+{
+    size_t argc = 8;
+    napi_value argv[8] = {};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    resolveImeEntryPoints();
+    std::string action, inserted, expected;
+    double numbers[5] = {};
+    bool valid = argc == 8 && imeMenuCommandFn && readStringArg(env, argv[0], &action) &&
+        readStringArg(env, argv[1], &inserted) && readStringArg(env, argv[7], &expected);
+    for (size_t i = 0; valid && i < 5; ++i) {
+        valid = napi_get_value_double(env, argv[i + 2], &numbers[i]) == napi_ok &&
+            std::isfinite(numbers[i]) && std::floor(numbers[i]) == numbers[i] &&
+            numbers[i] >= 0 && numbers[i] <= (i >= 3 ? INT32_MAX : 9007199254740991.0);
+    }
+    int32_t rc = 1;
+    if (valid && numbers[0] > 0) {
+        rc = imeMenuCommandFn(action.c_str(), expected.data(), expected.size(), inserted.data(), inserted.size(),
+            static_cast<int64_t>(numbers[0]), static_cast<uint64_t>(numbers[1]), static_cast<uint64_t>(numbers[2]),
+            static_cast<int32_t>(numbers[3]), static_cast<int32_t>(numbers[4]));
+    }
+    napi_value result;
+    napi_create_string_utf8(env, rc == 0 ? "0" : "1", NAPI_AUTO_LENGTH, &result);
+    return result;
+}
+
+// 代理恢复回执（contextId, requestId, start, end, ok）：平台把冻结的 accepted
+// 正文/选区**实际**装进隐藏 TextInput 之后调用。ok=0 表示安装失败。渲染器按
+// 冻结请求号与当前编辑身份校验；被拒时返回 "1"，调用方不得把被拒当成功。
+static napi_value ImeRestoreAck(napi_env env, napi_callback_info info)
+{
+    size_t argc = 5;
+    napi_value argv[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    resolveImeEntryPoints();
+    int32_t rc = 1;
+    if (imeRestoreAckFn != nullptr && argc >= 5) {
+        rc = imeRestoreAckFn(readInt64Arg(env, argv[0]),
+                             static_cast<uint64_t>(readInt64Arg(env, argv[1])),
+                             static_cast<int32_t>(readInt64Arg(env, argv[2])),
+                             static_cast<int32_t>(readInt64Arg(env, argv[3])),
+                             static_cast<int32_t>(readInt64Arg(env, argv[4])));
+    }
+    napi_value result;
+    napi_create_string_utf8(env, rc == 0 ? "0" : "1", NAPI_AUTO_LENGTH, &result);
+    return result;
+}
+
 static napi_value ImeFinishEditing(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
@@ -3053,10 +3180,14 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"setTestGateFailFirst", nullptr, SetTestGateFailFirst, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"testGateState", nullptr, TestGateState, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeEditingContext", nullptr, ImeEditingContext, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeMenuMeta", nullptr, ImeMenuMeta, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeCommitText", nullptr, ImeCommitText, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeGraphemeRange", nullptr, ImeGraphemeRange, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePreviewText", nullptr, ImePreviewText, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePreviewRange", nullptr, ImePreviewRange, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeSetSelection", nullptr, ImeSetSelection, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeMenuCommand", nullptr, ImeMenuCommand, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeRestoreAck", nullptr, ImeRestoreAck, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeFinishEditing", nullptr, ImeFinishEditing, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors);

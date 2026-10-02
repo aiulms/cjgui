@@ -41,14 +41,24 @@ def hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def nav_point_from_accepted_log(raw: str, label: str,
-                                xcomponent_origin: tuple[int, int]) -> tuple[int, int]:
-    """Map one accepted label to its matching visible node-rect center."""
+def _px(value: float, density: float) -> int:
+    """Convert one accepted vp coordinate to the device's physical px.
+
+    Truncation keeps the density=1 identity byte-for-byte equal to the integer
+    midpoints this probe produced before accepted geometry became vp.
+    """
+    return int(value * density)
+
+
+def nav_point_from_accepted_log(raw: str, semantic_id: str,
+                                xcomponent_origin: tuple[int, int],
+                                density: float) -> tuple[int, int]:
+    """Map one accepted semantic id to its matching visible node-rect center."""
     ids = {int(match.group(1)) for line in raw.splitlines()
-           if (match := re.search(r"accepted node=(-?\d+).*?label=(.*?) value=", line))
-           and match.group(2) == label}
+           if (match := re.search(r"accepted node=(-?\d+) semantic=(.*?) kind=", line))
+           and match.group(2) == semantic_id}
     if len(ids) != 1:
-        raise ValueError(f"accepted label {label!r} is absent or ambiguous")
+        raise ValueError(f"accepted semantic id {semantic_id!r} is absent or ambiguous")
     node_id = next(iter(ids))
     rects = []
     pattern = re.compile(
@@ -70,35 +80,164 @@ def nav_point_from_accepted_log(raw: str, label: str,
     # Repeated accepted frames are expected. Conflicting live geometry is not.
     if len(set(rects)) != 1:
         raise ValueError(f"accepted bounds for node {node_id} are ambiguous")
-    return _point_from_clipped_rect(rects[0], xcomponent_origin)
+    return _point_from_clipped_rect(rects[0], xcomponent_origin, density)
 
 
 def _point_from_clipped_rect(rect: tuple[int, int, int, int],
-                             xcomponent_origin: tuple[int, int]) -> tuple[int, int]:
+                             xcomponent_origin: tuple[int, int],
+                             density: float) -> tuple[int, int]:
+    """Accepted rects are vp since the N2-V density fix; uitest takes physical px."""
     left, top, right, bottom = rect
     if right <= left or bottom <= top:
         raise ValueError("accepted target has no visible clip intersection")
-    return _check_point(xcomponent_origin[0] + (left + right) // 2,
-                        xcomponent_origin[1] + (top + bottom) // 2)
+    return _check_point(xcomponent_origin[0] + _px((left + right) / 2, density),
+                        xcomponent_origin[1] + _px((top + bottom) / 2, density))
 
 
-def _parse_touch_geometry(row: str, record_name: str, label: str) -> dict[str, object] | None:
+def _accepted_semantic_node_id(rows: list[str], semantic_id: str) -> int | None:
+    """The single node id this accepted semantic id maps to, or None when uncommitted."""
+    ids: set[int] = set()
+    for row in rows:
+        match = re.search(r"accepted node=(-?\d+) semantic=(.*?) kind=", row)
+        if match is not None and match.group(2) == semantic_id:
+            ids.add(int(match.group(1)))
+    if len(ids) > 1:
+        raise ValueError(f"accepted semantic id {semantic_id!r} is ambiguous")
+    return next(iter(ids)) if ids else None
+
+
+def accepted_geometry_records(rows: list[str], semantic_id: str, *,
+                              strictly_after: tuple[int, int, int, int, int, int] | None = None,
+                              require_positive_clip: bool = False
+                              ) -> list[tuple[tuple[int, int, int, int, int, int],
+                                              dict[str, object]]]:
+    """Resolve one accepted semantic id to its committed rect+clip rows, with timestamps.
+
+    Handwritten tree geometry has exactly one authoritative source: the frame the
+    renderer actually committed. `accepted node=<id> semantic=<S> kind=` maps the
+    semantic id to a node id and `node-rect id=<id> … clip=(…)` carries that node's
+    vp rect for the same batch, so pairing by id is exact and needs no role-specific
+    diagnostic. The visible label cannot serve as this key: two nodes may share one
+    text, and the editor's label is its placeholder rather than its identity.
+    Rows are returned in log order; callers fence them by timestamp.
+    """
+    node_id = _accepted_semantic_node_id(rows, semantic_id)
+    if node_id is None:
+        raise ValueError(f"accepted semantic id {semantic_id!r} is absent")
     pattern = re.compile(
-        re.escape(record_name) + r" label=(\S+) x=(-?\d+) y=(-?\d+) "
-        r"w=(\d+) h=(\d+) clip=\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)")
-    match = pattern.search(row)
-    if match is None or match.group(1) != label:
+        r"node-rect id=(-?\d+) x=(-?\d+) y=(-?\d+) w=(\d+) h=(\d+) "
+        r"clip=\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)")
+    records: list[tuple[tuple[int, int, int, int, int, int], dict[str, object]]] = []
+    for row in rows:
+        if "node-rect" not in row:
+            continue
+        match = pattern.search(row)
+        if match is None or int(match.group(1)) != node_id:
+            continue
+        timestamp = _hilog_timestamp_key(row)
+        if timestamp is None:
+            raise ValueError("accepted geometry row lacks a parseable hilog timestamp")
+        if strictly_after is not None and timestamp <= strictly_after:
+            continue
+        x, y, width, height, clip_x, clip_y, clip_width, clip_height = map(
+            int, match.groups()[1:])
+        # A negative clip is a malformed diagnostic, not a clipped-away target:
+        # both are rejected here so no consumer can mistake one for the other.
+        if width <= 0 or height <= 0 or clip_width < 0 or clip_height < 0:
+            raise ValueError(
+                f"accepted {semantic_id!r} geometry has non-positive bounds or clip")
+        if require_positive_clip and clip_width == 0:
+            raise ValueError(f"accepted {semantic_id!r} geometry has a non-positive clip")
+        records.append((timestamp, {"x": x, "y": y, "w": width, "h": height,
+                                    "clip": (clip_x, clip_y, clip_width, clip_height)}))
+    return records
+
+
+def _unique_accepted_geometry(rows: list[str], semantic_id: str, *,
+                              strictly_after: tuple[int, int, int, int, int, int] | None = None,
+                              require_positive_clip: bool = False) -> dict[str, object]:
+    """One semantic id must yield exactly one distinct committed geometry."""
+    records = accepted_geometry_records(rows, semantic_id, strictly_after=strictly_after,
+                                        require_positive_clip=require_positive_clip)
+    unique = {json.dumps(record[1], sort_keys=True) for record in records}
+    if len(unique) != 1:
+        raise ValueError(
+            f"expected exactly one fresh accepted geometry for {semantic_id!r}; "
+            f"found {len(unique)}")
+    return json.loads(next(iter(unique)))
+
+
+class AcceptedGeometryPending(ValueError):
+    """The newest batch is not yet completely committed after the fence."""
+
+
+class AcceptedGeometryInvalid(ValueError):
+    """A committed batch is malformed; polling cannot turn it into evidence."""
+
+
+def _latest_accepted_batch(rows: list[str], strictly_after=None
+                           ) -> tuple[list[str], dict[str, object]] | None:
+    """Select one complete renderer batch, never pair geometry across tickets.
+
+    A root rect starts the renderer's batch and its successful phase-3 terminal
+    closes it. Motion legitimately produces many batches with different rects.
+    A trailing unfinished batch must wait rather than falling back to an older
+    terminal. Logs without batch markers retain the strict legacy reader.
+    """
+    terminal_pattern = re.compile(
+        r"present terminal session=(\d+) ticket=(\d+) status=(-?\d+) phase=(\d+)")
+    terminals = [(index, match) for index, row in enumerate(rows)
+                 if (match := terminal_pattern.search(row))]
+    roots = [index for index, row in enumerate(rows)
+             if re.search(r"node-rect id=1\s", row)]
+    if not terminals and not roots:
         return None
-    x, y, width, height, clip_x, clip_y, clip_width, clip_height = map(
-        int, match.groups()[1:])
-    # Zero-height accepted clips are the normal diagnostic representation for
-    # a completely clipped target; geometry consumers decide whether that is
-    # valid for their particular proof.
-    invalid_clip_height = clip_height < 0
-    if min(width, height, clip_width) <= 0 or invalid_clip_height:
-        raise ValueError(f"fresh {record_name} has non-positive bounds or clip")
-    return {"x": x, "y": y, "w": width, "h": height,
-            "clip": (clip_x, clip_y, clip_width, clip_height)}
+    if not terminals:
+        raise AcceptedGeometryPending("newest accepted batch is incomplete: no terminal")
+    end, terminal = terminals[-1]
+    if any("node-rect id=" in row or "accepted node=" in row for row in rows[end + 1:]):
+        raise AcceptedGeometryPending("newest accepted batch is incomplete after the last terminal")
+    session, ticket, status, phase = map(int, terminal.groups())
+    if session <= 0 or ticket <= 0 or status != 0 or phase != 3:
+        raise AcceptedGeometryInvalid(
+            f"latest accepted terminal refused session={session} ticket={ticket} "
+            f"status={status} phase={phase}")
+    timestamp = _hilog_timestamp_key(rows[end])
+    if timestamp is None:
+        raise AcceptedGeometryInvalid("accepted terminal has no device timestamp")
+    if strictly_after is not None and timestamp <= strictly_after:
+        raise AcceptedGeometryPending("no accepted terminal strictly after the gesture fence")
+    starts = [index for index in roots if index <= end]
+    if not starts or (len(terminals) > 1 and starts[-1] <= terminals[-2][0]):
+        raise AcceptedGeometryPending("newest accepted batch is incomplete: root not captured")
+    batch = rows[starts[-1]:end + 1]
+    pids = {_hilog_pid(row) for row in batch}
+    if None in pids or len(pids) != 1:
+        raise AcceptedGeometryInvalid("accepted batch does not have one parseable PID")
+    accepted = [row for row in batch if "accepted node=" in row]
+    if not accepted:
+        raise AcceptedGeometryInvalid(f"accepted batch ticket={ticket} has no accepted nodes")
+    for row in accepted:
+        version = re.search(r"\bv=(\d+)\s*$", row)
+        if version is None or int(version.group(1)) != ticket:
+            raise AcceptedGeometryInvalid(f"mixed accepted version in terminal ticket={ticket}")
+    return batch, {"accepted_session": session, "accepted_ticket": ticket,
+                   "accepted_terminal_timestamp": timestamp}
+
+
+def _geometry_in_batch(batch: list[str], metadata: dict[str, object],
+                       semantic_id: str, *, require_positive_clip=False
+                       ) -> dict[str, object]:
+    if _accepted_semantic_node_id(batch, semantic_id) is None:
+        raise AcceptedGeometryInvalid(
+            f"missing semantic {semantic_id!r} from accepted batch "
+            f"ticket={metadata['accepted_ticket']}")
+    try:
+        geometry = _unique_accepted_geometry(
+            batch, semantic_id, require_positive_clip=require_positive_clip)
+    except ValueError as exc:
+        raise AcceptedGeometryInvalid(str(exc)) from exc
+    return {**geometry, **metadata, "accepted_semantic": semantic_id}
 
 
 def _hilog_timestamp_key(row: str) -> tuple[int, int, int, int, int, int] | None:
@@ -195,7 +334,7 @@ def gesture_terminal_fence(before: list[str], after: list[str]
 
 
 def fresh_nav_viewport_geometry(before: list[str], after: list[str],
-                                nav_label: str, viewport_label: str,
+                                nav_semantic: str, viewport_semantic: str,
                                 strictly_after_timestamp: tuple[int, int, int, int, int, int]
                                 | None = None
                                 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -204,38 +343,24 @@ def fresh_nav_viewport_geometry(before: list[str], after: list[str],
         fresh = fresh_hilog_rows(before, after)
     except (AssertionError, ValueError) as exc:
         raise ValueError(f"fresh nav/viewport geometry cannot be proven: {exc}") from exc
-    records = (
-        ("h_touch_nav_bounds", nav_label),
-        ("h_touch_hand_viewport_bounds", viewport_label),
-    )
+    selected = _latest_accepted_batch(fresh, strictly_after_timestamp)
+    if selected is not None:
+        batch, metadata = selected
+        nav, viewport = (_geometry_in_batch(batch, metadata, semantic,
+                                            require_positive_clip=True)
+                         for semantic in (nav_semantic, viewport_semantic))
+        if _visible_rect(viewport) is None:
+            raise AcceptedGeometryInvalid("fresh hand-scroll viewport has no visible clip intersection")
+        return nav, viewport
     parsed: list[dict[str, object]] = []
-    for record_name, label in records:
-        candidates = []
-        malformed = False
-        for row in fresh:
-            if record_name not in row:
-                continue
-            label_match = re.search(re.escape(record_name) + r" label=(\S+)", row)
-            if label_match is not None and label_match.group(1) != label:
-                continue
-            if strictly_after_timestamp is not None:
-                row_timestamp = _hilog_timestamp_key(row)
-                if row_timestamp is None:
-                    raise ValueError(f"fresh {record_name} lacks a parseable hilog timestamp")
-                if row_timestamp <= strictly_after_timestamp:
-                    continue
-            geometry = _parse_touch_geometry(row, record_name, label)
-            if geometry is None:
-                malformed = True
-            else:
-                candidates.append(geometry)
-        unique = {json.dumps(item, sort_keys=True) for item in candidates}
-        if malformed or len(unique) != 1:
+    for semantic_id in (nav_semantic, viewport_semantic):
+        try:
+            parsed.append(_unique_accepted_geometry(
+                fresh, semantic_id, strictly_after=strictly_after_timestamp,
+                require_positive_clip=True))
+        except ValueError as exc:
             raise ValueError(
-                f"expected exactly one fresh labeled {record_name} geometry for {label!r}; "
-                f"found {len(unique)}" if not malformed else
-                f"fresh {record_name} is missing the matching label or full clip")
-        parsed.append(json.loads(next(iter(unique))))
+                f"fresh accepted geometry for {semantic_id!r} is unavailable: {exc}") from exc
     nav, viewport = parsed
     if _visible_rect(viewport) is None:
         raise ValueError("fresh hand-scroll viewport has no visible clip intersection")
@@ -252,6 +377,7 @@ def _visible_rect(geometry: dict[str, object]) -> tuple[int, int, int, int] | No
 
 
 def nav_screen_point(nav: dict[str, object], xcomponent_origin: tuple[int, int],
+                     density: float,
                      viewport: dict[str, object] | None = None) -> tuple[int, int]:
     """A nav click is valid only when its whole accepted rect is visible."""
     nav_rect = (int(nav["x"]), int(nav["y"]),
@@ -264,7 +390,7 @@ def nav_screen_point(nav: dict[str, object], xcomponent_origin: tuple[int, int],
         visible_viewport = _visible_rect(viewport)
         if visible_viewport is None or not _rect_contains(visible_viewport, nav_rect):
             raise ValueError("navigation target is not fully inside the visible hand viewport clip")
-    return _point_from_clipped_rect(nav_rect, xcomponent_origin)
+    return _point_from_clipped_rect(nav_rect, xcomponent_origin, density)
 
 
 def _rect_contains(outer: tuple[int, int, int, int],
@@ -274,7 +400,7 @@ def _rect_contains(outer: tuple[int, int, int, int],
 
 
 def viewport_restore_swipe(nav: dict[str, object], viewport: dict[str, object],
-                           xcomponent_origin: tuple[int, int],
+                           xcomponent_origin: tuple[int, int], density: float,
                            edge_margin: int = 1) -> tuple[int, int, int, int]:
     """Return a reverse vertical swipe wholly inside the current visible viewport."""
     nav_rect = (int(nav["x"]), int(nav["y"]),
@@ -311,17 +437,16 @@ def viewport_restore_swipe(nav: dict[str, object], viewport: dict[str, object],
     end_y = max(low, min(high, start_y + wanted_delta))
     if end_y == start_y:
         raise ValueError("visible hand viewport cannot make progress restoring navigation")
-    x = (view[0] + view[2]) // 2 + xcomponent_origin[0]
-    return (_check_point(x, start_y + xcomponent_origin[1])[0],
-            _check_point(x, start_y + xcomponent_origin[1])[1],
-            _check_point(x, end_y + xcomponent_origin[1])[0],
-            _check_point(x, end_y + xcomponent_origin[1])[1])
+    x = xcomponent_origin[0] + _px((view[0] + view[2]) / 2, density)
+    start_point = _check_point(x, xcomponent_origin[1] + _px(start_y, density))
+    end_point = _check_point(x, xcomponent_origin[1] + _px(end_y, density))
+    return (start_point[0], start_point[1], end_point[0], end_point[1])
 
 
 def nav_offset_to_initial_y(nav: dict[str, object], viewport: dict[str, object],
                             initial_screen_point: tuple[int, int],
-                            xcomponent_origin: tuple[int, int],
-                            tolerance: int = 12) -> int:
+                            xcomponent_origin: tuple[int, int], density: float,
+                            tolerance: int = 12) -> float:
     """Return the vertical scroll delta needed to restore the initial nav offset.
 
     The initial point is the accepted nav center captured before the first
@@ -336,8 +461,8 @@ def nav_offset_to_initial_y(nav: dict[str, object], viewport: dict[str, object],
         raise ValueError("visible hand viewport is too small for a safe offset restore swipe")
     nav_x, nav_y = (int(nav[key]) for key in ("x", "y"))
     nav_width, nav_height = (int(nav[key]) for key in ("w", "h"))
-    target_x = initial_screen_point[0] - xcomponent_origin[0]
-    target_y = initial_screen_point[1] - xcomponent_origin[1]
+    target_x = (initial_screen_point[0] - xcomponent_origin[0]) / density
+    target_y = (initial_screen_point[1] - xcomponent_origin[1]) / density
     current_center_x = nav_x + nav_width // 2
     current_center_y = nav_y + nav_height // 2
     if abs(current_center_x - target_x) > max(4, nav_width // 4):
@@ -350,8 +475,8 @@ def nav_offset_to_initial_y(nav: dict[str, object], viewport: dict[str, object],
     return 0 if abs(delta) <= tolerance else delta
 
 
-def viewport_scroll_delta_swipe(delta_y: int, viewport: dict[str, object],
-                                xcomponent_origin: tuple[int, int],
+def viewport_scroll_delta_swipe(delta_y: float, viewport: dict[str, object],
+                                xcomponent_origin: tuple[int, int], density: float,
                                 edge_margin: int = 1) -> tuple[int, int, int, int]:
     """Return a bounded vertical finger swipe inside the accepted viewport."""
     if delta_y == 0:
@@ -369,41 +494,47 @@ def viewport_scroll_delta_swipe(delta_y: int, viewport: dict[str, object],
     end_y = max(low, min(high, start_y + delta_y))
     if end_y == start_y:
         raise ValueError("visible hand viewport cannot make progress restoring initial offset")
-    x = (view[0] + view[2]) // 2 + xcomponent_origin[0]
-    return (_check_point(x, start_y + xcomponent_origin[1])[0],
-            _check_point(x, start_y + xcomponent_origin[1])[1],
-            _check_point(x, end_y + xcomponent_origin[1])[0],
-            _check_point(x, end_y + xcomponent_origin[1])[1])
+    x = xcomponent_origin[0] + _px((view[0] + view[2]) / 2, density)
+    start_point = _check_point(x, xcomponent_origin[1] + _px(start_y, density))
+    end_point = _check_point(x, xcomponent_origin[1] + _px(end_y, density))
+    return (start_point[0], start_point[1], end_point[0], end_point[1])
 
 
-def editor_visible_in_fenced_geometry(rows: list[str], label: str,
+def editor_visible_in_fenced_geometry(rows: list[str], semantic_id: str,
                                       viewport: dict[str, object],
                                       strictly_after_timestamp
                                       : tuple[int, int, int, int, int, int]
                                       ) -> bool | None:
     """Return whether the editor intersects the viewport in fresh post-terminal logs."""
-    pattern = re.compile(
-        r"h_touch_note_bounds label=(\S+) x=(-?\d+) y=(-?\d+) "
-        r"w=(\d+) h=(\d+) clip=\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)")
+    try:
+        selected = _latest_accepted_batch(rows, strictly_after_timestamp)
+    except AcceptedGeometryPending:
+        return None
+    if selected is not None:
+        batch, metadata = selected
+        geometry = _geometry_in_batch(batch, metadata, semantic_id)
+        viewport_semantic = viewport.get("accepted_semantic")
+        if isinstance(viewport_semantic, str):
+            viewport = _geometry_in_batch(batch, metadata, viewport_semantic,
+                                          require_positive_clip=True)
+        view = _visible_rect(viewport)
+        rect = _visible_rect(geometry)
+        if view is None:
+            raise AcceptedGeometryInvalid("fresh hand-scroll viewport has no visible clip intersection")
+        if rect is None:
+            return False
+        return min(rect[2], view[2]) > max(rect[0], view[0]) \
+            and min(rect[3], view[3]) > max(rect[1], view[1])
+    # 还没提交过该节点的 accepted 帧 = 证据未到，不是失败：继续轮询。
+    if _accepted_semantic_node_id(rows, semantic_id) is None:
+        return None
     geometries = []
-    for row_index, row in enumerate(rows):
-        if "h_touch_note_bounds" not in row:
-            continue
-        match = pattern.search(row)
-        if match is None:
-            raise ValueError("fresh editor diagnostic lacks label or full clip geometry")
-        if match.group(1) != label:
-            continue
-        row_timestamp = _hilog_timestamp_key(row)
-        if row_timestamp is None:
-            raise ValueError("fresh editor geometry lacks a parseable hilog timestamp")
-        if row_timestamp <= strictly_after_timestamp:
-            continue
-        x, y, width, height, clip_x, clip_y, clip_width, clip_height = map(
-            int, match.groups()[1:])
-        if min(width, height) <= 0 or clip_width < 0 or clip_height < 0:
-            raise ValueError("fresh editor geometry has invalid bounds or clip")
-        geometries.append((x, y, width, height, clip_x, clip_y, clip_width, clip_height))
+    for _timestamp, geometry in accepted_geometry_records(
+            rows, semantic_id, strictly_after=strictly_after_timestamp):
+        clip = geometry["clip"]
+        geometries.append((int(geometry["x"]), int(geometry["y"]),
+                           int(geometry["w"]), int(geometry["h"]),
+                           clip[0], clip[1], clip[2], clip[3]))
     unique = set(geometries)
     if not unique:
         return None
@@ -419,7 +550,7 @@ def editor_visible_in_fenced_geometry(rows: list[str], label: str,
     return intersection[2] > intersection[0] and intersection[3] > intersection[1]
 
 
-def poll_editor_visible_in_fenced_geometry(initial_rows: list[str], label: str,
+def poll_editor_visible_in_fenced_geometry(initial_rows: list[str], semantic_id: str,
                                            viewport: dict[str, object], fence,
                                            capture, *, timeout_seconds: float,
                                            poll_interval_seconds: float = 0.25,
@@ -437,7 +568,7 @@ def poll_editor_visible_in_fenced_geometry(initial_rows: list[str], label: str,
     rows = initial_rows
     polls = 1
     while True:
-        visible = editor_visible_in_fenced_geometry(rows, label, viewport, fence)
+        visible = editor_visible_in_fenced_geometry(rows, semantic_id, viewport, fence)
         if visible is not None:
             return visible, rows, polls
         remaining = deadline - time.monotonic()
@@ -448,62 +579,44 @@ def poll_editor_visible_in_fenced_geometry(initial_rows: list[str], label: str,
         polls += 1
 
 
-def field_point_from_fresh_logs(before: list[str], after: list[str], label: str,
-                                xcomponent_origin: tuple[int, int]) -> tuple[int, int]:
+def field_point_from_fresh_logs(before: list[str], after: list[str], semantic_id: str,
+                                xcomponent_origin: tuple[int, int],
+                                density: float) -> tuple[int, int]:
     """Resolve the editor point only from fresh current-PID post-reveal geometry."""
     fresh = fresh_hilog_rows(before, after)
-    diag = re.compile(
-        r"h_touch_note_bounds(?: label=(\S+))? x=(-?\d+) y=(-?\d+) "
-        r"w=(\d+) h=(\d+) clip=\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)")
     rects = []
-    unbound_diagnostics = []
-    for row in fresh:
-        if "h_touch_note_bounds" not in row:
-            continue
-        match = diag.search(row)
-        if match is None or match.group(1) != label:
-            unbound_diagnostics.append(row)
-            continue
-        x, y, width, height, clip_x, clip_y, clip_width, clip_height = map(
-            int, match.groups()[1:])
+    for _timestamp, geometry in accepted_geometry_records(fresh, semantic_id):
+        x, y = int(geometry["x"]), int(geometry["y"])
+        width, height = int(geometry["w"]), int(geometry["h"])
+        clip_x, clip_y, clip_width, clip_height = geometry["clip"]
         if min(width, height, clip_width, clip_height) <= 0:
             continue
         left, top = max(x, clip_x), max(y, clip_y)
         right, bottom = min(x + width, clip_x + clip_width), min(y + height, clip_y + clip_height)
         if right > left and bottom > top:
             rects.append((left, top, right, bottom))
-    if rects:
-        if len(set(rects)) != 1:
-            raise ValueError("fresh editor bounds are ambiguous")
-        return _point_from_clipped_rect(rects[0], xcomponent_origin)
-    if unbound_diagnostics:
-        raise ValueError("fresh h_touch_note_bounds must include the matching label and full clip")
-    # The same accepted label/node-rect form is also supported. Since only the
-    # fresh post-nav rows are passed here, stale pre-reveal rectangles cannot win.
-    return nav_point_from_accepted_log("\n".join(fresh), label, xcomponent_origin)
+    if not rects:
+        raise ValueError("fresh accepted editor geometry has no visible clip intersection")
+    # Only the fresh post-nav rows reach here, so stale pre-reveal rectangles
+    # cannot win; repeated identical commits of the same frame still may.
+    if len(set(rects)) != 1:
+        raise ValueError("fresh editor bounds are ambiguous")
+    return _point_from_clipped_rect(rects[0], xcomponent_origin, density)
 
 
-def field_text_hit_point_from_fresh_logs(before: list[str], after: list[str], label: str,
+def field_text_hit_point_from_fresh_logs(before: list[str], after: list[str], semantic_id: str,
                                          xcomponent_origin: tuple[int, int],
-                                         left_inset: int = 52) -> tuple[int, int]:
+                                         density: float,
+                                         left_inset: int = 15) -> tuple[int, int]:
     """Place long-press over the leading text glyph, inside fresh clipped bounds."""
     if left_inset < 0:
         raise ValueError("text hit inset must be non-negative")
     fresh = fresh_hilog_rows(before, after)
-    diag = re.compile(
-        r"h_touch_note_bounds(?: label=(\S+))? x=(-?\d+) y=(-?\d+) "
-        r"w=(\d+) h=(\d+) clip=\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)")
     geometries = []
-    malformed = False
-    for row in fresh:
-        if "h_touch_note_bounds" not in row:
-            continue
-        match = diag.search(row)
-        if match is None or match.group(1) != label:
-            malformed = True
-            continue
-        x, y, width, height, clip_x, clip_y, clip_width, clip_height = map(
-            int, match.groups()[1:])
+    for _timestamp, geometry in accepted_geometry_records(fresh, semantic_id):
+        x, y = int(geometry["x"]), int(geometry["y"])
+        width, height = int(geometry["w"]), int(geometry["h"])
+        clip_x, clip_y, clip_width, clip_height = geometry["clip"]
         if min(width, height, clip_width, clip_height) <= 0:
             continue
         visible = (max(x, clip_x), max(y, clip_y),
@@ -512,8 +625,6 @@ def field_text_hit_point_from_fresh_logs(before: list[str], after: list[str], la
         if visible[2] > visible[0] and visible[3] > visible[1]:
             geometries.append((x, y, width, height, visible))
     if not geometries:
-        if malformed:
-            raise ValueError("fresh h_touch_note_bounds must include matching label and full clip")
         raise ValueError("fresh clipped editor geometry is required for a text hit point")
     unique = set(geometries)
     if len(unique) != 1:
@@ -523,8 +634,8 @@ def field_text_hit_point_from_fresh_logs(before: list[str], after: list[str], la
     if not visible[0] <= hit_x < visible[2]:
         raise ValueError("editor leading text hit is outside the current accepted clip")
     hit_y = (visible[1] + visible[3]) // 2
-    return _check_point(xcomponent_origin[0] + hit_x,
-                        xcomponent_origin[1] + hit_y)
+    return _check_point(xcomponent_origin[0] + _px(hit_x, density),
+                        xcomponent_origin[1] + _px(hit_y, density))
 
 
 def utf16_code_unit_length(text: str) -> int:
@@ -609,7 +720,8 @@ def resolve_nav_point(args: argparse.Namespace) -> tuple[int, int, str]:
         raise ValueError("accepted bounds mode requires a log and both XComponent origin coordinates")
     raw = Path(args.accepted_bounds_log).read_text(encoding="utf-8")
     x, y = nav_point_from_accepted_log(
-        raw, args.nav_label, (args.xcomponent_origin_x, args.xcomponent_origin_y))
+        raw, args.nav_semantic_id,
+        (args.xcomponent_origin_x, args.xcomponent_origin_y), args.density)
     return x, y, "accepted_bounds_log"
 
 
@@ -655,8 +767,8 @@ def _capture_hilog(hdc, out: Path, label: str, pid: str,
 
 
 def poll_fresh_nav_viewport_geometry(hdc, out: Path, before: list[str],
-                                     label: str, pid: str, nav_label: str,
-                                     viewport_label: str, *, timeout_seconds: float = 8.0,
+                                     label: str, pid: str, nav_semantic: str,
+                                     viewport_semantic: str, *, timeout_seconds: float = 8.0,
                                      poll_interval_seconds: float = 0.5,
                                      pause=time.sleep
                                      ) -> tuple[dict[str, object], dict[str, object],
@@ -680,16 +792,23 @@ def poll_fresh_nav_viewport_geometry(hdc, out: Path, before: list[str],
             if fence is None:
                 raise ValueError("no fresh raw touch END/CANCEL yet")
             nav, viewport = fresh_nav_viewport_geometry(
-                before, rows, nav_label, viewport_label,
+                before, rows, nav_semantic, viewport_semantic,
                 strictly_after_timestamp=fence["timestamp"])
         except ValueError as exc:
             last_error = str(exc)
             message = str(exc)
-            retryable = (
+            # Only "the frame has not been committed yet" is retryable: the semantic
+            # id is absent from every accepted frame, or it is committed but all of
+            # its node-rect rows predate this gesture's terminal fence (found 0).
+            # Ambiguous or malformed geometry is a hard failure and surfaces now.
+            retryable = not isinstance(exc, AcceptedGeometryInvalid) and (
+                isinstance(exc, AcceptedGeometryPending)
+                or
                 "no fresh raw touch END/CANCEL yet" in message
                 or "rotated hilog freshness" in message
                 or "same-PID touch event freshness cannot be proven" in message
-                or ("expected exactly one fresh labeled" in message and "found 0" in message)
+                or ("fresh accepted geometry for" in message
+                    and ("is absent" in message or "found 0" in message))
             )
             if not retryable:
                 raise
@@ -703,7 +822,7 @@ def poll_fresh_nav_viewport_geometry(hdc, out: Path, before: list[str],
         pause(min(poll_interval_seconds, remaining))
     raise ValueError(
         f"no accepted nav/viewport geometry strictly after the current same-PID "
-        f"raw END/CANCEL for {nav_label!r}/{viewport_label!r} within "
+        f"raw END/CANCEL for {nav_semantic!r}/{viewport_semantic!r} within "
         f"{timeout_seconds:g}s: {last_error}; poll logs are archived")
 
 
@@ -715,15 +834,22 @@ def _pid_hilog_rows(raw: str, pid: str) -> list[str]:
 
 def _assert_fresh_reveal_then_focus(before: list[str], after: list[str], pid: str,
                                     ime_field: str,
-                                    nav_label: str = "settings-focus-note-nav",
-                                    viewport_label: str = "settings-hand-scroll"
+                                    viewport_semantic: str = "settings-hand-scroll"
                                     ) -> tuple[str, str]:
     """Require a same-PID offscreen-to-visible geometry transition and ordered focus.
 
     The renderer's diagnostic `platform focus reveal requested` is conditional:
     it is absent when the accepted editor has already become visible by the time
-    focus reaches the renderer. Accepted bounds are the proof of reveal; focus
-    and IME events only prove that the revealed editor received system focus.
+    focus reaches the renderer. Accepted bounds are the proof of reveal, fenced by
+    this click's terminal event: the same-PID geometry before the click must show
+    the editor clipped and the freshest accepted geometry after the click must show
+    it fully visible inside its viewport, so an already-visible editor cannot
+    satisfy this gate. The reveal frame is *not* required to postdate the IME
+    FOCUSED row: the reveal scroll is a consequence of the focus request and the
+    renderer routinely commits that frame before the IME proxy reports focus
+    (observed on device: reveal settle .396, mounted .397, FOCUSED .680), which made
+    a post-FOCUSED fence a race. Focus and IME events must still be fresh, singular,
+    and strictly ordered after the same terminal.
     """
     before_rows = _pid_hilog_rows("\n".join(before), pid)
     after_rows = _pid_hilog_rows("\n".join(after), pid)
@@ -733,25 +859,22 @@ def _assert_fresh_reveal_then_focus(before: list[str], after: list[str], pid: st
         raise ValueError("navigation click has no fresh same-PID raw END/CANCEL fence")
     terminal_time = fence["timestamp"]
 
-    def records(source: list[str], record_name: str, label: str,
+    def records(source: list[str], semantic_id: str,
                 *, strictly_after: tuple[int, int, int, int, int, int] | None = None
                 ) -> list[tuple[tuple[int, int, int, int, int, int], dict[str, object]]]:
-        result = []
-        for row in source:
-            if record_name not in row:
-                continue
-            timestamp = _hilog_timestamp_key(row)
-            if timestamp is None:
-                continue
-            if strictly_after is not None and timestamp <= strictly_after:
-                continue
-            geometry = _parse_touch_geometry(row, record_name, label)
-            if geometry is not None:
-                result.append((timestamp, geometry))
-        return result
+        selected = _latest_accepted_batch(source, strictly_after)
+        if selected is not None:
+            batch, metadata = selected
+            geometry = _geometry_in_batch(batch, metadata, semantic_id)
+            return [(metadata["accepted_terminal_timestamp"], geometry)]
+        # 该 semantic id 尚未出现在任何 accepted 帧 = 证据未到，由调用方按阶段判定，
+        # 不当成几何畸形；已出现但畸形/歧义仍由 accepted_geometry_records 拒绝。
+        if _accepted_semantic_node_id(source, semantic_id) is None:
+            return []
+        return accepted_geometry_records(source, semantic_id, strictly_after=strictly_after)
 
-    prior_note = records(before_rows, "h_touch_note_bounds", ime_field)
-    prior_viewport = records(before_rows, "h_touch_hand_viewport_bounds", viewport_label)
+    prior_note = records(before_rows, ime_field)
+    prior_viewport = records(before_rows, viewport_semantic)
     if not prior_note or not prior_viewport:
         raise ValueError("same-PID accepted editor and viewport geometry are required before navigation")
     prior_note_time, prior_note_geometry = max(prior_note, key=lambda item: item[0])
@@ -816,11 +939,11 @@ def _assert_fresh_reveal_then_focus(before: list[str], after: list[str], pid: st
             or not api_index < platform_index < payload_index < mounted_index < ime_index):
         raise ValueError("same-PID focus API, platform focus, payload, and IME events are out of order")
 
-    post_note = records(rows, "h_touch_note_bounds", ime_field, strictly_after=ime_time)
-    post_viewport = records(rows, "h_touch_hand_viewport_bounds", viewport_label,
-                            strictly_after=ime_time)
+    post_note = records(rows, ime_field, strictly_after=terminal_time)
+    post_viewport = records(rows, viewport_semantic, strictly_after=terminal_time)
     if not post_note or not post_viewport:
-        raise ValueError("fresh accepted editor geometry after IME focus is required to prove reveal")
+        raise ValueError(
+            "fresh accepted editor geometry after the nav click is required to prove reveal")
     _, note_geometry = max(post_note, key=lambda item: item[0])
     _, viewport_geometry = max(post_viewport, key=lambda item: item[0])
     note_rect = (int(note_geometry["x"]), int(note_geometry["y"]),
@@ -837,8 +960,8 @@ def _assert_fresh_reveal_then_focus(before: list[str], after: list[str], pid: st
 
 
 def poll_fresh_reveal_then_focus(hdc, out: Path, before: list[str], label: str,
-                                 pid: str, ime_field: str, nav_label: str,
-                                 viewport_label: str, *, timeout_seconds: float = 8.0,
+                                 pid: str, ime_field: str,
+                                 viewport_semantic: str, *, timeout_seconds: float = 8.0,
                                  poll_interval_seconds: float = 0.5,
                                  pause=time.sleep) -> tuple[str, str, list[str], int]:
     """Poll same-PID logs until terminal, ordered focus, and visible geometry agree."""
@@ -855,7 +978,9 @@ def poll_fresh_reveal_then_focus(hdc, out: Path, before: list[str], label: str,
                               timeout=max(1, math.ceil(remaining)))
         try:
             result = _assert_fresh_reveal_then_focus(
-                before, rows, pid, ime_field, nav_label, viewport_label)
+                before, rows, pid, ime_field, viewport_semantic)
+        except AcceptedGeometryInvalid:
+            raise
         except ValueError as exc:
             last_error = str(exc)
         else:
@@ -1063,7 +1188,7 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
         for attempt in range(args.nav_restore_max_swipes + 1):
             try:
                 nav_click_point = nav_screen_point(
-                    current_nav, xcomponent_origin, current_viewport)
+                    current_nav, xcomponent_origin, args.density, current_viewport)
                 break
             except ValueError as geometry_error:
                 if attempt >= args.nav_restore_max_swipes:
@@ -1071,7 +1196,7 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
                         f"navigation remained clipped after {attempt} bounded reverse swipes: "
                         f"{geometry_error}") from geometry_error
                 restore_points = viewport_restore_swipe(
-                    current_nav, current_viewport, xcomponent_origin)
+                    current_nav, current_viewport, xcomponent_origin, args.density)
                 _gesture(hdc, args, out, f"before_nav_restore_{attempt + 1}",
                          "uitest uiInput swipe "
                          f"{restore_points[0]} {restore_points[1]} "
@@ -1117,7 +1242,8 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
         initial_nav_point = (nav_x, nav_y)
         for attempt in range(args.nav_restore_max_swipes + 1):
             offset_delta = nav_offset_to_initial_y(
-                current_nav, current_viewport, initial_nav_point, xcomponent_origin)
+                current_nav, current_viewport, initial_nav_point, xcomponent_origin,
+                args.density)
             if offset_delta == 0:
                 break
             if attempt >= args.nav_restore_max_swipes:
@@ -1125,7 +1251,7 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
                     f"navigation did not return to its initial scroll offset after "
                     f"{attempt} bounded swipes; remaining vertical delta={offset_delta}")
             restore_points = viewport_scroll_delta_swipe(
-                offset_delta, current_viewport, xcomponent_origin)
+                offset_delta, current_viewport, xcomponent_origin, args.density)
             _gesture(hdc, args, out, f"before_nav_offset_restore_{attempt + 1}",
                      "uitest uiInput swipe "
                      f"{restore_points[0]} {restore_points[1]} "
@@ -1165,7 +1291,8 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
             _write_json(out / "nav_geometry.json", nav_geometry)
         nav_geometry["initial_offset_restore_steps"] = initial_offset_restore_steps
         nav_geometry["initial_offset_alignment_delta"] = nav_offset_to_initial_y(
-            current_nav, current_viewport, initial_nav_point, xcomponent_origin)
+            current_nav, current_viewport, initial_nav_point, xcomponent_origin,
+            args.density)
         if latest_geometry_fence is None:
             raise ValueError("initial-offset geometry has no same-PID touch terminal fence")
         editor_capture_count = 0
@@ -1178,7 +1305,7 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
                                   args.pid, timeout=5)
         editor_visible, latest_geometry_log, editor_geometry_polls = (
             poll_editor_visible_in_fenced_geometry(
-                latest_geometry_log, args.field_label, current_viewport,
+                latest_geometry_log, args.field_semantic_id, current_viewport,
                 latest_geometry_fence["timestamp"], capture_current_editor_geometry,
                 timeout_seconds=args.nav_geometry_timeout_seconds, pause=pause))
         nav_geometry["editor_geometry_polls"] = editor_geometry_polls
@@ -1194,7 +1321,7 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
         # The center can move while restoring the scroll offset; click only its
         # final accepted geometry.
         nav_click_point = nav_screen_point(
-            current_nav, xcomponent_origin, current_viewport)
+            current_nav, xcomponent_origin, args.density, current_viewport)
         _write_json(out / "nav_geometry.json", nav_geometry)
 
         nav_geometry["point_clicked_after_fresh_geometry"] = {
@@ -1211,20 +1338,22 @@ def run_probe(args: argparse.Namespace, hdc, exchange=None, *, pause=time.sleep)
         _require_owner_same(owner_before, owner_after_nav, "handwritten navigation")
         reveal_node_id, mount, after_nav_log, reveal_poll_count = poll_fresh_reveal_then_focus(
             hdc, out, latest_geometry_log, "after_nav", args.pid, args.ime_field,
-            args.nav_label, args.viewport_semantic_id,
+            args.viewport_semantic_id,
             timeout_seconds=args.nav_geometry_timeout_seconds, pause=pause)
         nav_geometry["reveal_poll_count"] = reveal_poll_count
         nav_geometry["reveal_node_id"] = reveal_node_id
         nav_geometry["ime_mount"] = mount
         _write_json(out / "nav_geometry.json", nav_geometry)
         points["field"] = field_point_from_fresh_logs(
-            latest_geometry_log, after_nav_log, args.field_label, xcomponent_origin)
+            latest_geometry_log, after_nav_log, args.field_semantic_id, xcomponent_origin,
+            args.density)
         points["field_text_hit"] = field_text_hit_point_from_fresh_logs(
-            latest_geometry_log, after_nav_log, args.field_label, xcomponent_origin)
+            latest_geometry_log, after_nav_log, args.field_semantic_id, xcomponent_origin,
+            args.density)
         (out / "field_point.json").write_text(json.dumps({
             "screen_point": points["field"], "xcomponent_origin": xcomponent_origin,
             "long_press_screen_point": points["field_text_hit"],
-            "source": "fresh_same_pid_post_nav_bounds", "field_label": args.field_label,
+            "source": "fresh_same_pid_post_nav_bounds", "field_semantic_id": args.field_semantic_id,
         }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         bindings.append(_check_binding(hdc, args, receipt))
 
@@ -1374,7 +1503,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resource-id", type=int, required=True)
     parser.add_argument("--auth", required=True)
     parser.add_argument("--ime-field", required=True)
-    parser.add_argument("--nav-label", required=True)
+    # 导航目标只按 semantic id 定位：可见文字（按钮标题）不是身份，两个节点可以同名。
     parser.add_argument("--nav-semantic-id", required=True)
     parser.add_argument("--viewport-semantic-id", required=True)
     nav = parser.add_mutually_exclusive_group(required=True)
@@ -1383,10 +1512,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--nav-y", type=int)
     parser.add_argument("--xcomponent-origin-x", type=int, required=True)
     parser.add_argument("--xcomponent-origin-y", type=int, required=True)
+    parser.add_argument("--density", type=float, required=True,
+                        help="vp->physical-px factor of the running device (emulator 3.5); "
+                             "accepted bounds and clips are vp")
     for name in ("swipe-start", "swipe-end"):
         parser.add_argument(f"--{name}-x", type=int, required=True)
         parser.add_argument(f"--{name}-y", type=int, required=True)
-    parser.add_argument("--field-label", required=True)
+    # 与 --nav-semantic-id 同理：编辑器只按 semantic id 定位，可见文字不是身份。
+    parser.add_argument("--field-semantic-id", required=True)
     parser.add_argument("--swipe-duration-ms", type=int, default=700)
     parser.add_argument("--nav-restore-max-swipes", type=int, default=4)
     parser.add_argument("--nav-geometry-timeout-seconds", type=float, default=8.0)
@@ -1400,6 +1533,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--hap-sha256 must contain exactly 64 hexadecimal digits")
     if not re.fullmatch(r"[1-9]\d*", args.pid):
         parser.error("--pid must be a positive decimal process id")
+    if args.density <= 0:
+        parser.error("--density must be positive")
     if args.local_port <= 0 or args.device_port <= 0 or args.resource_id < 0:
         parser.error("ports must be positive and resource id nonnegative")
     if args.local_port > 65535 or args.device_port > 65535:

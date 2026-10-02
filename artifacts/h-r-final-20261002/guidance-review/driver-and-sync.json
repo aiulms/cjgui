@@ -1,0 +1,41 @@
+{
+  "scope": "Offline current-function replay; no HDC, UI, or device calls",
+  "input_sha256": "57456bfa32c8c0aba1a7e4d73c38f0da1831258c6c61c9bc6a7b3bb17e04ec3d",
+  "wrong_pid_fallback": {
+    "expected": [],
+    "actual": [
+      "D 9999 unrelated terminal=INSTALLED"
+    ],
+    "bug_reproduced": true
+  },
+  "old_confirmation_after_unrelated_new_terminal": {
+    "expected": null,
+    "actual": [
+      0,
+      4
+    ],
+    "bug_reproduced": true
+  },
+  "failed_forward_creation_cleanup": {
+    "creation_returncode": 32,
+    "main_exit": 1,
+    "cleanup_commands": [
+      [
+        "hdc-stub",
+        "fport",
+        "rm",
+        "tcp:17857",
+        "tcp:7857"
+      ]
+    ],
+    "bug_reproduced": true
+  },
+  "canonical_sync": {
+    "scope": "Actual rsync block from sync_platform.sh; temporary destination",
+    "exit": 0,
+    "bridge_provider_before": true,
+    "bridge_provider_after": false,
+    "bug_reproduced": true,
+    "stderr": ""
+  }
+}

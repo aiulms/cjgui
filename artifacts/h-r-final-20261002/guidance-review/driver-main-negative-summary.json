@@ -1,0 +1,13 @@
+{
+  "legs": [
+    {
+      "leg": "focus-nav",
+      "point": null
+    }
+  ],
+  "identity": {
+    "bundle": "test.bundle",
+    "pid": "1234"
+  },
+  "status": "note_nav_not_reachable"
+}

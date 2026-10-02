@@ -1,0 +1,31 @@
+{
+  "changed_documents": {
+    "/Users/jiangxuanyang/Desktop/cangjie/docs/plans/2026-09-26-harmonyos-executor-handoff.md": {
+      "added_lines": 45,
+      "new_total_lines": 1146
+    },
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/ACTIVE_DIRECTION.md": {
+      "added_lines": 2,
+      "new_total_lines": 79
+    },
+    "/Users/jiangxuanyang/Desktop/cangjie/artifacts/h-source-preview-20260930/README.md": {
+      "added_lines": 27,
+      "new_total_lines": 453
+    },
+    "/Users/jiangxuanyang/Desktop/Pharos Mark/STATUS.md": {
+      "added_lines": 10,
+      "new_total_lines": 40
+    }
+  },
+  "new_local_links_checked": 16,
+  "missing": [],
+  "reviewed_production_unchanged": {
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp": true,
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/arkts/cjgui-text-proxy.ets": true,
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/verify_pharos_dual_owner.py": true,
+    "/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_thermo_app/entry/src/main/ets/pages/Index.ets": true,
+    "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/entry/src/main/ets/pages/Index.ets": true,
+    "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/application/src/pharos_ohos_controller.cj": true
+  },
+  "scope": "only task document additions and selected reviewed production files"
+}

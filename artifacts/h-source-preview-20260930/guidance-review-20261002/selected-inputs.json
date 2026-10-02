@@ -1,0 +1,49 @@
+{
+  "s2-endfix-030422": {
+    "manifest": "/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/s2-endfix-030422/source_manifest_s2-endfix-030422.txt",
+    "selected_inputs": [
+      {
+        "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp",
+        "recorded": "a079027def32168bb43bedc17dc43b121de3f13b98286d8ed3f70cc4387ee5d1",
+        "current": "a079027def32168bb43bedc17dc43b121de3f13b98286d8ed3f70cc4387ee5d1",
+        "matches": true
+      },
+      {
+        "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/entry/src/main/ets/pages/Index.ets",
+        "recorded": "150ca38df50f1351c03d07f7b5a30853fc419d89306ee2b6eb8ce22d1f42cf31",
+        "current": "150ca38df50f1351c03d07f7b5a30853fc419d89306ee2b6eb8ce22d1f42cf31",
+        "matches": true
+      },
+      {
+        "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/entry/src/main/ets/proxy/cjgui-text-proxy.ets",
+        "recorded": "00d9fb41abecb2503753b919c6107d3760014ab5d85c313a958c1e643b43c088",
+        "current": "00d9fb41abecb2503753b919c6107d3760014ab5d85c313a958c1e643b43c088",
+        "matches": true
+      }
+    ]
+  },
+  "thermo-regress-030529": {
+    "manifest": "/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/thermo-regress-030529/source_manifest_thermo-regress-030529.txt",
+    "selected_inputs": [
+      {
+        "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp",
+        "recorded": "a079027def32168bb43bedc17dc43b121de3f13b98286d8ed3f70cc4387ee5d1",
+        "current": "a079027def32168bb43bedc17dc43b121de3f13b98286d8ed3f70cc4387ee5d1",
+        "matches": true
+      },
+      {
+        "path": "/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_thermo_app/entry/src/main/ets/pages/Index.ets",
+        "recorded": "3230d2034b5d17a2c5880d538b5ca50cba7fdae12079ead1ad7068e296d49a75",
+        "current": "3230d2034b5d17a2c5880d538b5ca50cba7fdae12079ead1ad7068e296d49a75",
+        "matches": true
+      },
+      {
+        "path": "/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_thermo_app/entry/src/main/ets/proxy/cjgui-text-proxy.ets",
+        "recorded": "00d9fb41abecb2503753b919c6107d3760014ab5d85c313a958c1e643b43c088",
+        "current": "00d9fb41abecb2503753b919c6107d3760014ab5d85c313a958c1e643b43c088",
+        "matches": true
+      }
+    ]
+  },
+  "scope": "Selected relevant inputs, not a full manifest or HAP audit"
+}

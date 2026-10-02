@@ -1,0 +1,73 @@
+{
+  "scope": "Production main AST; controlled owner replies; no device run",
+  "source_sha256": "a6212d6d5a385e8ceffc12c7d5397bb49655cc3d5f7612a7db65b3ec73e99998",
+  "reproduced": true,
+  "cases": [
+    {
+      "name": "positive-control",
+      "driver_exit": 0,
+      "driver_status": "OK",
+      "wrong_note": false,
+      "destructive_resume": false,
+      "expected_note_hex": "614e646566",
+      "actual_note_hex": "614e646566",
+      "expected_main_hex": "61e59b9e6263",
+      "actual_main_hex": "61e59b9e6263",
+      "required_values": {
+        "fixture_reset": true,
+        "b_replace_exactly_once": true,
+        "b_replace_inserted_is_N": true,
+        "b_replace_removed_nonempty": true,
+        "a_unchanged_during_b": true,
+        "a_resume_exactly_once": true,
+        "a_resume_inserted_exact": true,
+        "b_unchanged_during_a": true,
+        "b_revisit_preserved": true
+      }
+    },
+    {
+      "name": "wrong-note-range",
+      "driver_exit": 0,
+      "driver_status": "OK",
+      "wrong_note": true,
+      "destructive_resume": false,
+      "expected_note_hex": "614e646566",
+      "actual_note_hex": "6162634e66",
+      "expected_main_hex": "61e59b9e6263",
+      "actual_main_hex": "61e59b9e6263",
+      "required_values": {
+        "fixture_reset": true,
+        "b_replace_exactly_once": true,
+        "b_replace_inserted_is_N": true,
+        "b_replace_removed_nonempty": true,
+        "a_unchanged_during_b": true,
+        "a_resume_exactly_once": true,
+        "a_resume_inserted_exact": true,
+        "b_unchanged_during_a": true,
+        "b_revisit_preserved": true
+      }
+    },
+    {
+      "name": "destructive-A-resume",
+      "driver_exit": 0,
+      "driver_status": "OK",
+      "wrong_note": false,
+      "destructive_resume": true,
+      "expected_note_hex": "614e646566",
+      "actual_note_hex": "614e646566",
+      "expected_main_hex": "61e59b9e6263",
+      "actual_main_hex": "61e59b9e63",
+      "required_values": {
+        "fixture_reset": true,
+        "b_replace_exactly_once": true,
+        "b_replace_inserted_is_N": true,
+        "b_replace_removed_nonempty": true,
+        "a_unchanged_during_b": true,
+        "a_resume_exactly_once": true,
+        "a_resume_inserted_exact": true,
+        "b_unchanged_during_a": true,
+        "b_revisit_preserved": true
+      }
+    }
+  ]
+}

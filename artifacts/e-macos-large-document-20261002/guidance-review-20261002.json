@@ -1,0 +1,226 @@
+{
+  "scope": "offline source/evidence/checker review; no application or performance acceptance",
+  "source_files": [
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/utf8_validation.cj",
+      "actual_sha256": "94b199581faa95de5b91dcfe4c3b6f6d733946402eabdf9d22265eda4dd96122",
+      "frozen_sha256": "94b199581faa95de5b91dcfe4c3b6f6d733946402eabdf9d22265eda4dd96122",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/encoding_task.cj",
+      "actual_sha256": "7614ee80f00f91d792b626a862ea72513fc7cdbfd05749d1d263f36834abfb08",
+      "frozen_sha256": "7614ee80f00f91d792b626a862ea72513fc7cdbfd05749d1d263f36834abfb08",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/immutable_base.cj",
+      "actual_sha256": "0b217567ad186fb170f33ebf7fee996d826fa3252f7bd68a5344979a7d7dce46",
+      "frozen_sha256": "0b217567ad186fb170f33ebf7fee996d826fa3252f7bd68a5344979a7d7dce46",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/errors.cj",
+      "actual_sha256": "9df9f331d3d99bd698c2ab468e4444eae48388285ee10a66777f8dc1e5124d09",
+      "frozen_sha256": "9df9f331d3d99bd698c2ab468e4444eae48388285ee10a66777f8dc1e5124d09",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/save_as_lossless_test.cj",
+      "actual_sha256": "5298c97ede61250c4dd4ef1baece885879eb03d93ad09d8695367abca902ee6d",
+      "frozen_sha256": "5298c97ede61250c4dd4ef1baece885879eb03d93ad09d8695367abca902ee6d",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/session_test.cj",
+      "actual_sha256": "ac88f964edb0f871a21e31b6d92dc9e2273bc7467ce04d6b2bc21ccbdbbf403c",
+      "frozen_sha256": "ac88f964edb0f871a21e31b6d92dc9e2273bc7467ce04d6b2bc21ccbdbbf403c",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/snapshot_retention_test.cj",
+      "actual_sha256": "76fe33e7f00839b2c00c8877400748b6720e57b4dafa1905f9f565a29824faf6",
+      "frozen_sha256": "76fe33e7f00839b2c00c8877400748b6720e57b4dafa1905f9f565a29824faf6",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/encoding_task_test.cj",
+      "actual_sha256": "feadff86562cbe62d3aa8dcb1e17411969b6f4ad9092b339a69327681f1924ef",
+      "frozen_sha256": "feadff86562cbe62d3aa8dcb1e17411969b6f4ad9092b339a69327681f1924ef",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/encoding_progressive_test.cj",
+      "actual_sha256": "d90cb73f03a8bad7386cb29d5f81f30e5d332ee98e95dcded7533fa238f810a2",
+      "frozen_sha256": "d90cb73f03a8bad7386cb29d5f81f30e5d332ee98e95dcded7533fa238f810a2",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/persistence_test.cj",
+      "actual_sha256": "0c060e6f907e2b2e97ab4542d467c23689b4925bc79c492b0bf8378674519153",
+      "frozen_sha256": "0c060e6f907e2b2e97ab4542d467c23689b4925bc79c492b0bf8378674519153",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/session.cj",
+      "actual_sha256": "4982ecd8a4d8f6c34dfeeb8f940fdf29a06e8a3d35b0717e252099646ae4cdbb",
+      "frozen_sha256": "4982ecd8a4d8f6c34dfeeb8f940fdf29a06e8a3d35b0717e252099646ae4cdbb",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/range_read_budget.cj",
+      "actual_sha256": "48ba2c49d6de18d42bd3659248e0b325addd242b6200bd7d4ebb83f2d24491de",
+      "frozen_sha256": "48ba2c49d6de18d42bd3659248e0b325addd242b6200bd7d4ebb83f2d24491de",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/tree.cj",
+      "actual_sha256": "a979d5fe5b2fcc6b77a2dc75b2abe81c055678e8aa03fdf00d890ca161f3bcf2",
+      "frozen_sha256": "a979d5fe5b2fcc6b77a2dc75b2abe81c055678e8aa03fdf00d890ca161f3bcf2",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/store.cj",
+      "actual_sha256": "78d8db6f1edbd0b18255b7433571d229cf823eee9710ad8138ef4617fa1aa391",
+      "frozen_sha256": "78d8db6f1edbd0b18255b7433571d229cf823eee9710ad8138ef4617fa1aa391",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/recovery_identity_test.cj",
+      "actual_sha256": "e9713dfcf700417d8028adc695e3f84e2cc5e02c862c63ae406b455816cfce0f",
+      "frozen_sha256": "e9713dfcf700417d8028adc695e3f84e2cc5e02c862c63ae406b455816cfce0f",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/document_core/src/persistence.cj",
+      "actual_sha256": "3e5d588022ef6196c7d1425d1773b8d6d656d9af07581423297bddbd6394653e",
+      "frozen_sha256": "3e5d588022ef6196c7d1425d1773b8d6d656d9af07581423297bddbd6394653e",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/app_services/src/external.cj",
+      "actual_sha256": "0c2cde8fc2ce5d61ecf9cbe52847865b29c71373f30f2dd7c2770e78066dcf54",
+      "frozen_sha256": "0c2cde8fc2ce5d61ecf9cbe52847865b29c71373f30f2dd7c2770e78066dcf54",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/app_services/src/workspace.cj",
+      "actual_sha256": "e53230c429d4e795b939e50eb0d6f0092f6785acf6c36a476edf8ebe974f631a",
+      "frozen_sha256": "e53230c429d4e795b939e50eb0d6f0092f6785acf6c36a476edf8ebe974f631a",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/app_services/src/capabilities.cj",
+      "actual_sha256": "bdc364c3bc188baff2bc7d9978d0c3b004c297467e57a7872291038e4d4a5843",
+      "frozen_sha256": "bdc364c3bc188baff2bc7d9978d0c3b004c297467e57a7872291038e4d4a5843",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/app_services/src/workspace_test.cj",
+      "actual_sha256": "903a5381a91a0fd88452758eaba7812109bf61ceaa8ab95010f11f4ebd42793f",
+      "frozen_sha256": "903a5381a91a0fd88452758eaba7812109bf61ceaa8ab95010f11f4ebd42793f",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/app_services/src/service_test.cj",
+      "actual_sha256": "7c6fcfa7672819270701be488ee7c0a2f18484e4cced7f5c0c4700bd5067dc30",
+      "frozen_sha256": "7c6fcfa7672819270701be488ee7c0a2f18484e4cced7f5c0c4700bd5067dc30",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/packages/app_services/src/service.cj",
+      "actual_sha256": "e3974f66ea2a46579a1824609d606fabdd215a4b00c9bac869343bdade897306",
+      "frozen_sha256": "e3974f66ea2a46579a1824609d606fabdd215a4b00c9bac869343bdade897306",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark/src/main.cj",
+      "actual_sha256": "cb0a45b1bc7ca13938f3dfbdaca3adc2c86012ac1512b32e31239349701a498f",
+      "frozen_sha256": "cb0a45b1bc7ca13938f3dfbdaca3adc2c86012ac1512b32e31239349701a498f",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark/src/response_window.cj",
+      "actual_sha256": "7c7f9b842ee87c3c87630713dfcaa12bfbd9c68be91765432f6b146d57103395",
+      "frozen_sha256": "7c7f9b842ee87c3c87630713dfcaa12bfbd9c68be91765432f6b146d57103395",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/tools/export_preview.sh",
+      "actual_sha256": "d70871f3fc3a3d55afd6a52e4e28cc0650a34a2462957cc6a2ef155da660d0eb",
+      "frozen_sha256": "d70871f3fc3a3d55afd6a52e4e28cc0650a34a2462957cc6a2ef155da660d0eb",
+      "matches": true
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/examples/range_text_window_app/src/main.cj",
+      "actual_sha256": "5c75cc2ec44e1697d1a8b5986ccbca6cbc4190244a3c032f02b25f3f01bef4fe",
+      "frozen_sha256": "5c75cc2ec44e1697d1a8b5986ccbca6cbc4190244a3c032f02b25f3f01bef4fe",
+      "matches": true
+    }
+  ],
+  "source_matches": 26,
+  "manifest": {
+    "path": "/Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/e-large-document-delivery-20261002/Pharos E Large Document Space/EXPORT-MANIFEST.txt",
+    "sha256": "db55b262e5691fb776da3aa7b5f9ce39c474633364ce362019973d7f1634c17b",
+    "entries": 9670,
+    "mismatches": []
+  },
+  "indexed_artifacts": {
+    "count": 38,
+    "mismatches": []
+  },
+  "historical_core_non_green_followup": {
+    "TestCase_testProgressivePartialScalarRequestDoesNotRestrictLegalOwner": {
+      "original": "FAILED",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testRecoveryRefusesWhenTheBaseChangedInAnUnsampledRegion": {
+      "original": "FAILED",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testSaveAsWorkerFailureAndCancellationPreserveBothFilesAndUnownedCandidate": {
+      "original": "ERROR",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testDarwinIdentityBridgeDistinguishesPathEqualityFromHardLinks": {
+      "original": "ERROR",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testSaveAsRejectsHardlinkAliasBeforeTouchingEitherName": {
+      "original": "ERROR",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testSaveAsReplacesHardlinkToDifferentFileWithoutChangingOtherName": {
+      "original": "ERROR",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testSaveAsRejectsHardlinkToSourceJournal": {
+      "original": "ERROR",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testSaveAsRejectsChangedLiveVersionBeforePublication": {
+      "original": "ERROR",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_testOriginalInvalidBytesCannotEnterTextHistory": {
+      "original": "FAILED",
+      "later_targeted": "PASSED"
+    },
+    "TestCase_sealedSegmentsStayReadableUntilTheLastLeaseGoesAway": {
+      "original": "FAILED",
+      "later_targeted": "PASSED"
+    }
+  },
+  "full_repaired_core_suite_rerun": false,
+  "checker_counterexamples": {
+    "checker_sha256": "72aacb64ac7a0c0166262df06e9bd2b495d9c3f1b4f363d91a52d01ca3dd78ef",
+    "unrelated_new_frame_with_old_owner_returns_accepted": true,
+    "displayed_owner_version_in_control": 7,
+    "expected_owner_version_in_control": 8,
+    "only_range_action_overlaps_all_20_response_samples_do_not": true,
+    "interpretation": "Missing evidence gates, not proof of an observed application misrender or latency regression."
+  },
+  "canonical_owner_state_sync": "not yet applied; existing snapshot contract/serialization can be ported narrowly",
+  "real_large_document_consumption": "not_run",
+  "reviewer_build_or_desktop_or_device_actions": false
+}

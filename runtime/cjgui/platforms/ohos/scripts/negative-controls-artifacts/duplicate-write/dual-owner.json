@@ -1,0 +1,93 @@
+{
+  "steps": [],
+  "identity": {
+    "pid": 11,
+    "bundle": "controlled"
+  },
+  "log_cursor0": 3,
+  "fixture_reset": true,
+  "note_resource_id": 1001,
+  "a_freeze": {
+    "main_version": 1,
+    "main_hex": "616263",
+    "note_hex": "616263646566"
+  },
+  "toggle_evidence": {
+    "mode": "preview"
+  },
+  "b_freeze": {
+    "note_version": 2,
+    "note_bytes": 6,
+    "main_version": 1
+  },
+  "b_replace": {
+    "version_before": 2,
+    "version_after": 4,
+    "exactly_once": false,
+    "frozen_selection_utf16": [
+      1,
+      3
+    ],
+    "frozen_span_bytes": [
+      1,
+      3
+    ],
+    "expected_hex": "614e646566",
+    "expected_bytes": 5,
+    "actual_hex": "614e4e646566",
+    "actual_bytes": 6,
+    "exact_owner": false,
+    "removed_bytes": 2,
+    "inserted_is_N": true
+  },
+  "a_unchanged_during_b": true,
+  "a_resume": {
+    "version_before": 1,
+    "version_after": 2,
+    "exactly_once": true,
+    "frozen_selection_utf16": [
+      1,
+      1
+    ],
+    "frozen_span_bytes": [
+      1,
+      1
+    ],
+    "expected_hex": "61e59b9e6263",
+    "actual_hex": "61e59b9e6263",
+    "exact_owner": true,
+    "removed_bytes": 0,
+    "removed_is_zero": true
+  },
+  "b_unchanged_during_a": true,
+  "b_revisit": {
+    "version": 4,
+    "bytes": 6,
+    "preserved": true
+  },
+  "required": [
+    "fixture_reset",
+    "b_replace_exactly_once",
+    "b_replace_exact_owner",
+    "b_install_confirmed",
+    "a_unchanged_during_b",
+    "a_resume_exactly_once",
+    "a_resume_exact_owner",
+    "a_resume_removed_is_zero",
+    "b_unchanged_during_a",
+    "b_revisit_preserved"
+  ],
+  "required_values": {
+    "fixture_reset": true,
+    "b_replace_exactly_once": false,
+    "b_replace_exact_owner": false,
+    "b_install_confirmed": true,
+    "a_unchanged_during_b": true,
+    "a_resume_exactly_once": true,
+    "a_resume_exact_owner": true,
+    "a_resume_removed_is_zero": true,
+    "b_unchanged_during_a": true,
+    "b_revisit_preserved": true
+  },
+  "status": "FAIL"
+}

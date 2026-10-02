@@ -62,7 +62,19 @@ let CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED: Int32 = 28
 let CJGUI_INTERNAL_RENDERER_PNG_PAYLOAD_TOO_LARGE: Int32 = 29
 let CJGUI_INTERNAL_RENDERER_PNG_QUEUE_BUDGET_EXCEEDED: Int32 = 30
 let CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED: Int32 = 31
+// M1（2026-09-30）：位置查询的具名拒绝码——无此节点（17）、无已持留排版（18）、
+// 场景尚未 staged（19）、调用方携带的 accepted 场景版本已前进（33）。
+let CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND: Int32 = 17
+let CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY: Int32 = 18
+let CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED: Int32 = 19
+let CJGUI_INTERNAL_RENDERER_SCENE_STALE: Int32 = 33
+let CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID: Int32 = 34
+// M2：视觉导航的行插入点枚举超出有界预算——不具名邻位，调用方保持 caret。
+let CJGUI_INTERNAL_RENDERER_VISUAL_NAV_UNSUPPORTED: Int32 = 35
 let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
+// Secondary pointer context request; the C enum value is mirrored here without
+// changing the POD event ABI.
+let CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST: UInt32 = 56u32
 
 // Invalid session token sentinel.
 let CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN: UInt64 = 0
@@ -220,6 +232,29 @@ struct CjguiInternalRendererDiagnosticWorkload {
     var textUploadMicros: UInt64 = 0
     var textTextureLiveBytes: UInt64 = 0
     var textCandidatePeakBytes: UInt64 = 0
+}
+
+/// Fixed-size, per-window opt-in timing totals. All durations are nanoseconds
+/// from mach_continuous_time; counters are session-owned and saturating.
+@C
+struct CjguiInternalRendererDiagnosticTiming {
+    var sceneVersion: UInt64 = 0
+    var frameIndex: UInt64 = 0
+    var enabled: UInt32 = 0
+    var clockAvailable: UInt32 = 0
+    var positionPrepareCount: UInt64 = 0
+    var positionQueryCount: UInt64 = 0
+    var positionLineBuildCount: UInt64 = 0
+    var positionCacheHitCount: UInt64 = 0
+    var positionPrepareNanoseconds: UInt64 = 0
+    var positionQueryNanoseconds: UInt64 = 0
+    var positionLineBuildNanoseconds: UInt64 = 0
+    var encodeNanoseconds: UInt64 = 0
+    var submitNanoseconds: UInt64 = 0
+    var rasterNanoseconds: UInt64 = 0
+    var uploadNanoseconds: UInt64 = 0
+    var readCount: UInt64 = 0
+    var readNanoseconds: UInt64 = 0
 }
 
 /// C mirror of the native window-background observation. This describes
@@ -933,6 +968,21 @@ foreign {
         enabled: Int32
     ): Int32
 
+    func cjgui_internal_renderer_set_composable_context_menu_guard(
+        session: UInt64,
+        sceneVersion: UInt64,
+        layerScope: UInt64,
+        requestId: UInt64,
+        layerNodeId: UInt64,
+        resourceId: Int64,
+        nodeKind: UInt32,
+        x: Int64,
+        y: Int64,
+        width: Int64,
+        height: Int64,
+        enabled: UInt32
+    ): Int32
+
     func cjgui_internal_renderer_recover_active_text_proxy(
         session: UInt64,
         nodeId: UInt64,
@@ -1132,6 +1182,12 @@ foreign {
         session: UInt64, outWorkload: CPointer<CjguiInternalRendererDiagnosticWorkload>
     ): Int32
 
+    func cjgui_internal_renderer_set_diagnostic_timing(session: UInt64, enabled: UInt32): Int32
+
+    func cjgui_internal_renderer_diagnostic_timing(
+        session: UInt64, outTiming: CPointer<CjguiInternalRendererDiagnosticTiming>
+    ): Int32
+
     func cjgui_internal_renderer_set_diagnostic_overlay(
         session: UInt64, flags: UInt32, selectedNodeId: UInt64, hasSelection: UInt8
     ): Int32
@@ -1226,6 +1282,7 @@ foreign {
         nodeId: UInt64,
         x: Float64,
         y: Float64,
+        expectedSceneVersion: UInt64,
         outByteOffset: CPointer<UInt32>,
         outAffinity: CPointer<UInt32>
     ): Int32
@@ -2458,6 +2515,16 @@ func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt
     return unsafe {
         cjgui_internal_renderer_set_composable_owned_text_session(session, nodeId, resourceId, nodeKind,
             bindingEpoch, flag)
+    }
+}
+
+func internalRendererSetComposableContextMenuGuard(session: UInt64, sceneVersion: UInt64, layerScope: UInt64,
+    requestId: UInt64, layerNodeId: UInt64, resourceId: Int64, nodeKind: UInt32,
+    x: Int64, y: Int64, width: Int64, height: Int64, enabled: Bool): Int32 {
+    let flag: UInt32 = if (enabled) { 1u32 } else { 0u32 }
+    return unsafe {
+        cjgui_internal_renderer_set_composable_context_menu_guard(session, sceneVersion, layerScope,
+            requestId, layerNodeId, resourceId, nodeKind, x, y, width, height, flag)
     }
 }
 

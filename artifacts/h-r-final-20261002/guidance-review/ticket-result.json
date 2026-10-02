@@ -1,0 +1,9 @@
+{
+  "scope": "Current extracted production functions, reproducing existing test case 6a; actual submit-path reachability NOT established",
+  "input_sha256": "fd717fc1f0ccf7131434ff025aaa3030c9e1acee8575834b579ef5ee2fb8f7dc",
+  "compile_exit": 0,
+  "compile_output": "",
+  "exit": 0,
+  "stdout": "positive_healthy=1\nafter_old_ticket_accepted_nodes=0 live=1 input_context_accepted=1\n",
+  "stderr": ""
+}

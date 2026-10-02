@@ -2104,9 +2104,31 @@ public class CjguiComposableUiTabsState {
 /// Stability: experimental. This is the minimal public seam for shared view
 /// state while the generated scroll/split layout package evolves; the shape may
 /// change, and applications should keep owning their business values.
-// B/C（惯性包）：滚动物理策略全局开关——手写与生成 scrollArea 共同消费
-// 的框架能力声明。稳定性 experimental；默认关闭，由窗口/应用显式启用。
-public var cjguiComposableInertialScrollEnabled: Bool = false
+// H2（r10/Astra）：滚动物理策略是**每窗口的不可变声明**，不是一个可变的
+// 全局开关。全局变量会让两个窗口互相串扰（关闭一个窗口会改变另一个窗口的
+// 行为），也无法在窗口之间分别验收。声明值经 `configureScrollPhysics` 写入
+// 窗口，`scrollPhysicsInfo()` 公布声明值/实际生效值/支持状态与规范。
+public enum CjguiComposableUiScrollPhysicsPolicy {
+    /// 默认：共同核心不合成任何额外惯性。系统自身的滚动/惯性保持单次消费。
+    | PlatformDefault
+    /// 实验策略：固定指数衰减的有界惯性（参数见规范字符串）。
+    | ExperimentalExponential
+}
+
+/// 一次滚动活动推进的结果。**必须区分**“这一次有没有改变 requested 位置”
+/// 与“之后还需不需要继续推进”：
+///  - 只有 `changed` 才请求刷新；否则亚像素累计帧会白刷一帧。
+///  - 只要 `active` 就必须安排下一次有界唤醒，否则长睡宿主会漏掉后续位移。
+///  - 停止但仍有位置变化（含部分移动后触边）必须交付末帧：`changed=true`、
+///    `active=false`。
+public struct CjguiComposableUiActivityStep {
+    public let changed: Bool
+    public let active: Bool
+    public init(changed: Bool, active: Bool) {
+        this.changed = changed
+        this.active = active
+    }
+}
 
 public class CjguiComposableUiScrollViewport {
     // The window INSTANCE that accepted a scene containing this viewport. A
@@ -2123,6 +2145,12 @@ public class CjguiComposableUiScrollViewport {
     private var contentExtentValue: Int64 = 0
     private var viewportExtentValue: Int64 = 0
     private var acceptedSolveCountValue: Int64 = 0
+    // H2：请求代次。每一次**有效**的请求变化（显式请求 / 初始化定位 / 夹紧 /
+    // 惯性写入）都推进它。候选把「布局实际读到的代次」与 extents 一起冻结；
+    // 提交时只有代次仍然相同才把 requested 收敛为 accepted，否则说明在读到
+    // 与提交之间又来了更新的请求（B），必须按新合法范围夹紧后保留 B 的身份。
+    private var requestGenerationValue: Int64 = 0
+    private var stagedRequestGenerationValue: Int64 = 0
     // The layout's CANDIDATE facts for the solve currently in flight. They are
     // promoted only when the window accepts the scene that contains this
     // viewport, so a rejected/early-returned candidate can never leak into the
@@ -2207,6 +2235,7 @@ public class CjguiComposableUiScrollViewport {
             return false
         }
         requestedOffsetValue = clamped
+        requestGenerationValue += 1
         return true
     }
     /// The declaration's INITIAL value for a brand-new instance. Unlike
@@ -2215,25 +2244,48 @@ public class CjguiComposableUiScrollViewport {
     /// refresh that re-submits the same structure cannot reset the view state of
     /// an instance that already exists.
     public func requestInitialOffset(offset: Int64): Unit {
-        requestedOffsetValue = if (offset > 0) {
+        let next = if (offset > 0) {
             offset
         } else {
             0
         }
+        if (next != requestedOffsetValue) {
+            requestedOffsetValue = next
+        }
+        // 初始化定位也是一次请求：它必须使先前在途候选的确认失效，否则首帧
+        // 之后、接受之前的定位会被旧候选的提交吞掉。
+        requestGenerationValue += 1
+    }
+
+    /// 请求代次（诊断/测试只读）：它与 requested 值同源，任何有效写入都推进。
+    public func requestGeneration(): Int64 {
+        return requestGenerationValue
     }
 
     public func scrollBy(delta: Int64): Bool {
         return requestOffset(requestedOffsetValue.saturatingAdd(delta))
     }
 
-    // B/C（惯性包）：松手减速滚动活动。固定容量速度窗 + 边界夹紧的解析
-    // 衰减模型；使用显式单调时间，不逐帧乘系数。活动属于本 viewport（窗口
-    // 实例 + 稳定身份），新触摸/程序化定位/换绑即退役旧活动。
-    // 实验性声明：稳定性等级 experimental，默认关闭；由手写与生成 scrollArea
-    // 共同消费（同一份策略，不在样例分别调 native 常量）。
-    private var inertialVelocityPxPerMs: Float64 = 0.0
-    private var inertialLastTick: MonoTime = MonoTime.now()
+    // H2（r10/Astra）：松手减速滚动活动。**截止积分**的解析衰减模型，使用显式
+    // 单调时间；活动属于本 viewport（窗口实例 + 稳定身份）。速度阈值交点
+    // T = min(Tmax, τ·ln(|v_s|/ε)) 在启动时算定，积分终点一律截到 min(真实年龄,
+    // T)：长暂停、掉帧、首步 2600ms 都交付同一个约定终值，不丢掉整段。
+    // 实验性声明：稳定性等级 experimental，由窗口策略开启（手写与生成 scrollArea
+    // 同源）；不在样例分别调 native 常量。
+    private var inertialVelocityPxPerMs: Float64 = 0.0   // 全程初始速度 v_s
+    private var inertialStart: MonoTime = MonoTime.now()
+    private var inertialLastObserved: MonoTime = MonoTime.now()
+    /// 已积分时间（截到截止点）。这是“积分年龄”，不是真实观察年龄——
+    /// 真实年龄由 start/lastObserved 表达，两者不可混用同一字段。
+    private var inertialIntegratedNs: Int64 = 0
+    /// 截止时刻（相对 start，ns）。速度阈值交点与 Tmax 的较小者。
+    private var inertialStopNs: Int64 = 0
+    private var inertialSubPixelRemainder: Float64 = 0.0
     private var inertialGeneration: Int64 = 0
+    /// 本 viewport 生效的滚动物理策略。窗口接受候选时写入；默认平台默认值
+    /// （不合成额外惯性）。
+    private var scrollPhysicsPolicyValue: CjguiComposableUiScrollPhysicsPolicy =
+        CjguiComposableUiScrollPhysicsPolicy.PlatformDefault
 
     /// 滚动物理策略（experimental）：速度低于该值（px/ms）即停止。
     public static let inertialStopVelocityPxPerMs: Float64 = 0.01
@@ -2242,108 +2294,176 @@ public class CjguiComposableUiScrollViewport {
     /// 单次惯性总时长上界（ms），防止极端输入长跑。
     public static let inertialMaxDurationMs: Int64 = 2500
 
+    /// 速度阈值交点（ms）：T = min(Tmax, τ·ln(|v_s|/ε))。
+    /// |v_s| <= ε 时为 0——等于阈值即不启动，最小契约。
+    public static func inertialCutoffMs(initialSpeed: Float64): Float64 {
+        let epsilon = CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs
+        if (initialSpeed <= epsilon) {
+            return 0.0
+        }
+        let tau = CjguiComposableUiScrollViewport.inertialDecayTauMs
+        let logT = tau * log(initialSpeed / epsilon)
+        let limit = Float64(CjguiComposableUiScrollViewport.inertialMaxDurationMs)
+        return if (logT < limit) {
+            logT
+        } else {
+            limit
+        }
+    }
+
+    /// 区间解析积分位移：v_s·τ·(e^(-t0/τ) − e^(-t1/τ))，单位为逻辑 px。
+    /// 每段都用**全程初始速度**乘这个式子——绝不能用当前速度去乘
+    /// (1 − e^(-Δ/τ))，两者相差一个已经衰减掉的因子。
+    public static func inertialDisplacementPx(initialSpeed: Float64, fromMs: Float64, toMs: Float64): Float64 {
+        if (toMs <= fromMs) {
+            return 0.0
+        }
+        let tau = CjguiComposableUiScrollViewport.inertialDecayTauMs
+        return initialSpeed * tau * (exp(-fromMs / tau) - exp(-toMs / tau))
+    }
+
+    /// 写入本 viewport 的策略（窗口在候选接受时写入；非法值不改变现状）。
+    public func setScrollPhysicsPolicy(policy: CjguiComposableUiScrollPhysicsPolicy): Unit {
+        scrollPhysicsPolicyValue = policy
+    }
+
+    public func scrollPhysicsPolicy(): CjguiComposableUiScrollPhysicsPolicy {
+        return scrollPhysicsPolicyValue
+    }
+
     /// 记录一次松手速度（由速度估计器在 END 后写入；正方向 = 内容向上滚动）。
-    /// 返回 true 表示启动了惯性活动。
+    /// 返回 true 表示启动了惯性活动。有限性、阈值与截止时间在这里一次判清：
+    /// NaN/Inf、极端有限数与「速度不超过阈值」都不启动。
     public func beginInertialScroll(velocityPxPerMs: Float64, now: MonoTime): Bool {
-        if (!isWindowInertialScrollEnabled()) {
+        if (!this.inertialScrollEnabled()) {
             return false
         }
         // NaN/Inf 准入拒绝（复核反例：不制造速度）。
         if (velocityPxPerMs != velocityPxPerMs || abs(velocityPxPerMs) > 1.0e300) {
             return false
         }
-        if (velocityPxPerMs < CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs &&
-            velocityPxPerMs > -CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs) {
+        let cutoffMs = CjguiComposableUiScrollViewport.inertialCutoffMs(abs(velocityPxPerMs))
+        if (cutoffMs <= 0.0) {
             return false
         }
         inertialVelocityPxPerMs = velocityPxPerMs
-        inertialLastTick = now
+        inertialStart = now
+        inertialLastObserved = now
+        inertialIntegratedNs = 0
+        inertialStopNs = Int64(cutoffMs * 1_000_000.0)
         inertialSubPixelRemainder = 0.0
-        inertialElapsedNs = 0
         inertialGeneration += 1
         return true
     }
 
-    // C（复核修）：亚像素累计余量——集中量化，避免 Int64 截断随帧率丢距离。
-    private var inertialSubPixelRemainder: Float64 = 0.0
-    // C（复核修）：活动累计时长（ns），用于 2500ms 工作上界。
-    private var inertialElapsedNs: Int64 = 0
-
-    /// 一次惯性推进（由窗口 pump 周期调用）：解析衰减积分 + 集中量化。
-    /// 帧率无关：位移由 (v0, τ, dt) 解析决定，Int64 量化只发生在亚像素
-    /// 余量累计后。停止条件（按序评估）：NaN/Inf 准入拒绝、总时长上界、
-    /// 速度耗尽（积分到明确定义的停止时刻）、边界夹紧。
-    public func stepInertialScroll(now: MonoTime): Bool {
+    /// 一次惯性推进（由窗口 pump 周期调用）：截止积分 + 集中量化。
+    /// 返回 `(changed, active)`，两者语义见 `CjguiComposableUiActivityStep`。
+    public func stepInertialScroll(now: MonoTime): CjguiComposableUiActivityStep {
         if (inertialVelocityPxPerMs == 0.0) {
-            return false
+            return CjguiComposableUiActivityStep(false, false)
         }
         // NaN/Inf 准入：不制造速度（复核反例）。
         if (inertialVelocityPxPerMs != inertialVelocityPxPerMs || abs(inertialVelocityPxPerMs) > 1.0e300) {
-            inertialVelocityPxPerMs = 0.0
-            inertialSubPixelRemainder = 0.0
-            inertialElapsedNs = 0
-            return false
+            this.endInertialScroll()
+            return CjguiComposableUiActivityStep(false, false)
         }
-        let elapsedNs = (now - inertialLastTick).toNanoseconds()
-        if (elapsedNs < 0) {
-            // 时钟倒退：终结活动（不制造位移）。
-            inertialVelocityPxPerMs = 0.0
-            inertialSubPixelRemainder = 0.0
-            inertialElapsedNs = 0
-            return false
+        let ageNs = (now - inertialStart).toNanoseconds()
+        let observedNs = (now - inertialLastObserved).toNanoseconds()
+        if (observedNs < 0) {
+            // 时钟倒退：终结活动（不制造位移），也不回滚已经产生的请求。
+            this.endInertialScroll()
+            return CjguiComposableUiActivityStep(false, false)
         }
-        if (elapsedNs == 0) {
-            return true  // 时钟重复：跳过本帧，不制造位移
+        if (observedNs == 0) {
+            // 重复时刻：活动仍然有效，但不制造位移、也不白刷一帧。
+            return CjguiComposableUiActivityStep(false, true)
         }
-        // 工作上界：总时长超过 inertialMaxDurationMs 即终结。
-        inertialElapsedNs += elapsedNs
-        if (inertialElapsedNs > CjguiComposableUiScrollViewport.inertialMaxDurationMs * 1_000_000) {
-            inertialVelocityPxPerMs = 0.0
-            inertialSubPixelRemainder = 0.0
-            inertialElapsedNs = 0
-            return false
+        let clampedAge = if (ageNs < inertialStopNs) {
+            ageNs
+        } else {
+            inertialStopNs
         }
-        let elapsedMs = Float64(elapsedNs) / 1_000_000.0
-        // 解析衰减 v(t) = v0 * exp(-t/τ)（帧率无关）。
-        let decay = exp(-elapsedMs / CjguiComposableUiScrollViewport.inertialDecayTauMs)
-        let newVelocity = inertialVelocityPxPerMs * decay
-        // 解析积分位移 = v0*τ*(1-e^(-t/τ))（本段积分，帧率无关）。
-        let displacement = inertialVelocityPxPerMs *
-            CjguiComposableUiScrollViewport.inertialDecayTauMs * (1.0 - decay)
-        inertialVelocityPxPerMs = newVelocity
-        inertialLastTick = now
-        // 集中量化：亚像素余量跨帧累计，整数部分一次交付。
+        if (clampedAge <= inertialIntegratedNs) {
+            // 已到截止点：不再积分。自然结束保留末次请求，由普通接受事务提交。
+            this.endInertialScroll()
+            return CjguiComposableUiActivityStep(false, false)
+        }
+        let fromMs = Float64(inertialIntegratedNs) / 1_000_000.0
+        let toMs = Float64(clampedAge) / 1_000_000.0
+        var displacement = CjguiComposableUiScrollViewport.inertialDisplacementPx(inertialVelocityPxPerMs,
+            fromMs, toMs)
+        inertialIntegratedNs = clampedAge
+        inertialLastObserved = now
+        // 有限速度也可能超出 Int64：在浮点转整数之前按**剩余合法距离**截断，
+        // 不靠 abs(v) <= 1e300 兜底。
+        let remaining = if (inertialVelocityPxPerMs > 0.0) {
+            maximumOffset() - requestedOffsetValue
+        } else {
+            requestedOffsetValue
+        }
+        let bound = if (remaining > 0) {
+            Float64(remaining)
+        } else {
+            0.0
+        }
+        if (displacement > bound) {
+            displacement = bound
+        }
+        if (displacement < -bound) {
+            displacement = -bound
+        }
+        // 集中量化：量化的是**累计位移**（不是绝对位置），跨帧保留亚像素余量。
         inertialSubPixelRemainder += displacement
         let wholeF = if (inertialSubPixelRemainder >= 0.0) {
             floor(inertialSubPixelRemainder)
         } else {
             ceil(inertialSubPixelRemainder)
         }
-        let whole = Int64(wholeF)
-        if (whole != 0) {
+        var changed = false
+        if (wholeF != 0.0) {
+            let whole = Int64(wholeF)
             inertialSubPixelRemainder -= Float64(whole)
-            let moved = scrollBy(whole)
-            if (!moved) {
-                // 到达边界（夹紧后无变化）：活动结束。
-                stopInertialScroll()
-                return false
+            changed = scrollBy(whole)
+            if (!changed) {
+                // 到达运动方向的边界：即使本次已经移动过一部分，也在本帧收敛，
+                // 不等下一次“移动失败”才停。
+                this.endInertialScroll()
+                return CjguiComposableUiActivityStep(true, false)
             }
         }
-        // 速度耗尽：积分已交付到停止时刻（余量保留但不继续推进）。
-        if (newVelocity < CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs &&
-            newVelocity > -CjguiComposableUiScrollViewport.inertialStopVelocityPxPerMs) {
-            inertialVelocityPxPerMs = 0.0
-            inertialElapsedNs = 0
-            return false
+        var active = inertialIntegratedNs < inertialStopNs
+        if (active) {
+            // 运动方向上已无可移动范围：立即收敛（不再等待整段积分跑完）。
+            let atEdge = if (inertialVelocityPxPerMs > 0.0) {
+                requestedOffsetValue >= maximumOffset()
+            } else {
+                requestedOffsetValue <= 0
+            }
+            if (atEdge) {
+                active = false
+            }
         }
-        return true
+        if (!active) {
+            this.endInertialScroll()
+        }
+        return CjguiComposableUiActivityStep(changed, active)
     }
 
-    /// 新触摸/程序化定位立即停止惯性（外部不重复调用）。
+    /// 新触摸/程序化定位立即停止惯性（外部不重复调用）。代次推进使旧票据失效。
     public func stopInertialScroll(): Unit {
+        this.endInertialScroll()
+    }
+
+    /// 活动代次：换绑/停止/重开都推进；旧推进票据据此具名拒绝。
+    public func inertialActivityGeneration(): Int64 {
+        return inertialGeneration
+    }
+
+    private func endInertialScroll(): Unit {
         inertialVelocityPxPerMs = 0.0
         inertialSubPixelRemainder = 0.0
-        inertialElapsedNs = 0
+        inertialIntegratedNs = 0
+        inertialStopNs = 0
         inertialGeneration += 1
     }
 
@@ -2351,9 +2471,12 @@ public class CjguiComposableUiScrollViewport {
         return inertialVelocityPxPerMs != 0.0
     }
 
-    private func isWindowInertialScrollEnabled(): Bool {
-        // 共同声明：默认关闭，由窗口的统一策略开关控制（手写/生成同源）。
-        return cjguiComposableInertialScrollEnabled
+    private func inertialScrollEnabled(): Bool {
+        // 每窗口的不可变策略声明：只有显式声明实验策略的窗口才合成惯性。
+        return match (scrollPhysicsPolicyValue) {
+            case CjguiComposableUiScrollPhysicsPolicy.ExperimentalExponential => true
+            case CjguiComposableUiScrollPhysicsPolicy.PlatformDefault => false
+        }
     }
 
     /// One wheel step: `next` moves toward the end of the content, `previous`
@@ -2410,6 +2533,9 @@ public class CjguiComposableUiScrollViewport {
         } else {
             0
         }
+        // 与 extents 一起冻结「布局实际读到的请求代次」。提交时只有代次仍然
+        // 相同才说明布局读到的就是当前请求；否则必须保留后到请求的身份。
+        stagedRequestGenerationValue = requestGenerationValue
         stagedSolvedValue = true
     }
 
@@ -2419,8 +2545,10 @@ public class CjguiComposableUiScrollViewport {
     }
 
     /// Promotes the staged solve to the accepted facts. The pending request
-    /// converges to the clamped offset the accepted scene really used, so a
-    /// request is never reported as accepted before this point.
+    /// converges to the clamped offset the accepted scene really used **only when
+    /// no newer request arrived between the layout read and this commit**;
+    /// otherwise the newer request keeps its identity and is only re-clamped
+    /// against the newly accepted extents.
     public func commitStagedExtents(): Unit {
         if (!stagedSolvedValue) {
             return
@@ -2443,8 +2571,16 @@ public class CjguiComposableUiScrollViewport {
         } else {
             0
         }
-        // The request has been presented; it is no longer pending.
-        requestedOffsetValue = acceptedOffsetValue
+        if (requestGenerationValue == stagedRequestGenerationValue) {
+            // 布局读到的就是这个请求：它已被呈现，不再待决。
+            requestedOffsetValue = acceptedOffsetValue
+        } else {
+            // 提交前又来了更新的请求（B）。只按**新的**合法范围夹紧后保留它的
+            // 身份：A 的接受只能确认 A，不能覆盖 B；也不把它记成 B 已确认。
+            // 夹紧后恰好等于 accepted 时无需重复提交同一位置，代次已经区分了两者。
+            let rebased = clamp(requestedOffsetValue)
+            requestedOffsetValue = rebased
+        }
         acceptedSolveCountValue += 1
         stagedSolvedValue = false
     }
@@ -2457,9 +2593,16 @@ public class CjguiComposableUiScrollViewport {
         stagedSolvedValue = false
     }
     /// Content can shrink or disappear: the requested offset never keeps an
-    /// out-of-range value that would show blank space.
+    /// out-of-range value that would show blank space. If this actually changes
+    /// the request it ALSO advances the request generation — a clamp is a real
+    /// write to the request and must not become a generation-free entry point.
     public func clampToAccepted(): Unit {
-        requestedOffsetValue = clamp(requestedOffsetValue)
+        let clamped = clamp(requestedOffsetValue)
+        if (clamped == requestedOffsetValue) {
+            return
+        }
+        requestedOffsetValue = clamped
+        requestGenerationValue += 1
     }
     private func clamp(offset: Int64): Int64 {
         if (offset < 0) {
@@ -3595,6 +3738,9 @@ public class CjguiComposableUiNode {
     private let layerOwnerSemanticIdValue: String
     private let layerAnchorSemanticIdValue: String
     private var layerAnchorNodeIdValue: Int64
+    private let layerAnchorAtPointValue: Bool
+    private let layerAnchorPointXValue: Int64
+    private let layerAnchorPointYValue: Int64
     private let layerAnchorReferenceValue: ?CjguiComposableUiNodeReference
     private let layerIsModalValue: Bool
     private var layerInitialFocusNodeIdValue: Int64
@@ -3631,6 +3777,7 @@ public class CjguiComposableUiNode {
         virtualContentHeight!: Int64 = 0, virtualVerticalOrigin!: Int64 = 0, layerId!: String = "",
         layerKind!: String = "", layerOwnerSemanticId!: String = "", layerAnchorSemanticId!: String = "",
         layerAnchorNodeId!: Int64 = -1, layerAnchorReference!: ?CjguiComposableUiNodeReference = None,
+        layerAnchorAtPoint!: Bool = false, layerAnchorPointX!: Int64 = 0, layerAnchorPointY!: Int64 = 0,
         layerIsModal!: Bool = false, layerInitialFocusNodeId!: Int64 = -1,
         layerInitialFocusReference!: ?CjguiComposableUiNodeReference = None, layoutHeightOverride!: Int64 = 0,
         inputScopeId!: String = "", layoutReuseKey!: String = "", pointerControlRole!: String = "",
@@ -3783,6 +3930,9 @@ public class CjguiComposableUiNode {
         this.layerOwnerSemanticIdValue = layerOwnerSemanticId
         this.layerAnchorSemanticIdValue = layerAnchorSemanticId
         this.layerAnchorNodeIdValue = layerAnchorNodeId
+        this.layerAnchorAtPointValue = layerAnchorAtPoint
+        this.layerAnchorPointXValue = layerAnchorPointX
+        this.layerAnchorPointYValue = layerAnchorPointY
         this.layerAnchorReferenceValue = layerAnchorReference
         this.layerIsModalValue = layerIsModal && this.layerKindValue == "dialog"
         this.layerInitialFocusNodeIdValue = layerInitialFocusNodeId
@@ -3850,6 +4000,15 @@ public class CjguiComposableUiNode {
     }
     public func layerAnchorNodeId(): Int64 {
         return layerAnchorNodeIdValue
+    }
+    public func layerAnchorAtPoint(): Bool {
+        return layerAnchorAtPointValue
+    }
+    public func layerAnchorPointX(): Int64 {
+        return layerAnchorPointXValue
+    }
+    public func layerAnchorPointY(): Int64 {
+        return layerAnchorPointYValue
     }
     func layerAnchorReference(): ?CjguiComposableUiNodeReference {
         return layerAnchorReferenceValue
@@ -3954,6 +4113,8 @@ public class CjguiComposableUiNode {
             virtualContentHeight: virtualContentHeightValue, virtualVerticalOrigin: virtualVerticalOriginValue,
             layerId: layerIdValue, layerKind: layerKindValue, layerOwnerSemanticId: layerOwnerSemanticIdValue,
             layerAnchorSemanticId: layerAnchorSemanticIdValue, layerAnchorNodeId: layerAnchorNodeIdValue,
+            layerAnchorAtPoint: layerAnchorAtPointValue, layerAnchorPointX: layerAnchorPointXValue,
+            layerAnchorPointY: layerAnchorPointYValue,
             layerAnchorReference: layerAnchorReferenceValue, layerIsModal: layerIsModalValue,
             layerInitialFocusNodeId: layerInitialFocusNodeIdValue,
             layerInitialFocusReference: layerInitialFocusReferenceValue, layoutHeightOverride: layoutHeightOverrideValue,
@@ -5056,6 +5217,36 @@ public func cjguiComposableAnchoredLayerWithReference(nodeId: Int64, semanticId:
             "menu"
         }, layerOwnerSemanticId: ownerSemanticId, layerAnchorSemanticId: ownerSemanticId,
         layerAnchorReference: Some(anchor))
+}
+
+/// A generic, Cangjie-owned context menu anchored at a pointer location inside
+/// the layer host. The accepted owner remains the focus/selection restore
+/// target; native input never invokes a menu-specific callback.
+public func cjguiComposableContextMenuLayer(nodeId: Int64, semanticId: String, layerId: String,
+    ownerSemanticId: String, ownerNodeId: Int64, anchorX: Int64, anchorY: Int64,
+    style: CjguiComposableUiStyle): CjguiComposableUiNode {
+    return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, style,
+        layerId: layerId, layerKind: "menu", layerOwnerSemanticId: ownerSemanticId,
+        layerAnchorSemanticId: ownerSemanticId, layerAnchorNodeId: ownerNodeId,
+        layerAnchorAtPoint: true, layerAnchorPointX: anchorX, layerAnchorPointY: anchorY)
+}
+
+/// Clamp a host-local pointer anchor and menu extent to the accepted host.
+public func cjguiComposableContextMenuBounds(host: CjguiComposableUiRect, anchorX: Int64, anchorY: Int64,
+    requestedWidth: Int64, requestedHeight: Int64): CjguiComposableUiRect {
+    let width = if (requestedWidth > host.width) { host.width } else if (requestedWidth < 0) { 0 } else {
+        requestedWidth
+    }
+    let height = if (requestedHeight > host.height) { host.height } else if (requestedHeight < 0) { 0 } else {
+        requestedHeight
+    }
+    let rawX = host.x + anchorX
+    let rawY = host.y + anchorY
+    let maxX = host.x + host.width - width
+    let maxY = host.y + host.height - height
+    let x = if (rawX < host.x) { host.x } else if (rawX > maxX) { maxX } else { rawX }
+    let y = if (rawY < host.y) { host.y } else if (rawY > maxY) { maxY } else { rawY }
+    return CjguiComposableUiRect(x, y, width, height)
 }
 
 /// A dialog centers in the host and contributes an input-blocking backdrop.
@@ -6924,6 +7115,44 @@ private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
 }
 
 public class CjguiComposableUiLayoutEngine {
+    // Per-node native shaping admission. The range-text seam may request a
+    // larger transport page, but one composable text value must stay within
+    // both the total and unbroken-paragraph work budgets. Native staging has
+    // the same guard for callers that bypass this layout entry point.
+    private static func textLayoutBudgetIssue(node: CjguiComposableUiNode): String {
+        let kind = node.nodeKind
+        if (kind == CJGUI_COMPOSABLE_UI_TEXT || kind == CJGUI_COMPOSABLE_UI_BUTTON ||
+            kind == CJGUI_COMPOSABLE_UI_TAB_TITLE || kind == CJGUI_COMPOSABLE_UI_TEXT_INPUT ||
+            kind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT || kind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT ||
+            kind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
+            if (Int64(node.value.size) > 262144) {
+                return "text_layout_budget_exceeded"
+            }
+            let bytes = node.value.toArray()
+            if (Int64(bytes.size) > 262144) {
+                return "text_layout_budget_exceeded"
+            }
+            var paragraphBytes: Int64 = 0
+            for (value in bytes) {
+                if (value == 0x0A || value == 0x0D) {
+                    paragraphBytes = 0
+                } else {
+                    paragraphBytes += 1
+                    if (paragraphBytes > 131072) {
+                        return "text_layout_budget_exceeded"
+                    }
+                }
+            }
+        }
+        for (child in node.children()) {
+            let issue = textLayoutBudgetIssue(child)
+            if (issue.size > 0) {
+                return issue
+            }
+        }
+        return ""
+    }
+
     public static func layout(root: CjguiComposableUiNode, viewport: CjguiComposableUiRect, version: Int64): CjguiComposableUiScene {
         return layoutWithMetrics(root, viewport, version, CjguiComposableUiFallbackTextMeasurer()).scene
     }
@@ -6943,6 +7172,13 @@ public class CjguiComposableUiLayoutEngine {
         let nodes = ArrayList<CjguiComposableUiLayoutNode>()
         let work = CjguiComposableUiLayoutWorkCounter()
         let layoutMeasurer = CjguiComposableUiLayoutMeasurer(measurer, reuseMeasurements: reuseMeasurements)
+        let textBudgetIssue = textLayoutBudgetIssue(root)
+        if (textBudgetIssue.size > 0) {
+            let refused = CjguiComposableUiScene(version, viewport, nodes, valid: false,
+                layoutError: textBudgetIssue)
+            return CjguiComposableUiLayoutResult(refused, layoutMeasurer.metrics(work, reuseCache: reuseCache),
+                viewports: work.stagedViewports, splitTracks: work.stagedSplitTracks)
+        }
         if (let Some(cache) <- reuseCache) {
             cache.beginPass()
         }
@@ -7314,6 +7550,10 @@ public class CjguiComposableUiLayoutEngine {
         if (layer.layerKind() == "dialog") {
             return CjguiComposableUiRect(hostBounds.x + (hostBounds.width - width) / 2,
                 hostBounds.y + (hostBounds.height - height) / 2, width, height)
+        }
+        if (layer.layerAnchorAtPoint()) {
+            return cjguiComposableContextMenuBounds(hostBounds, layer.layerAnchorPointX(),
+                layer.layerAnchorPointY(), width, height)
         }
         let anchor = layoutNodeForId(output, layer.layerAnchorNodeId())
         if (anchor.nodeId < 0) {

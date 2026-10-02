@@ -1,0 +1,22 @@
+{
+  "positive_control": {
+    "old": 11,
+    "end": 11
+  },
+  "finish_then_rebind": {
+    "finish_rc": 0,
+    "old": 13,
+    "new": 14,
+    "end": 14,
+    "end_field": "B"
+  },
+  "same_id_new_epoch": {
+    "old": 15,
+    "actual": 15,
+    "expected_binding": 99,
+    "actual_binding": 7
+  },
+  "source_sha256": "a079027def32168bb43bedc17dc43b121de3f13b98286d8ed3f70cc4387ee5d1",
+  "scope": "production functions + minimal one-session environment; no renderer or device run",
+  "reproduced": true
+}

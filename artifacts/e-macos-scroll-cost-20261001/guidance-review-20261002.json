@@ -1,0 +1,144 @@
+{
+  "raw": {
+    "count": 32,
+    "errors": []
+  },
+  "frozen": {
+    "count": 63,
+    "errors": []
+  },
+  "selected_export": {
+    "count": 63,
+    "errors": []
+  },
+  "live_differences": [
+    "framework/src/composable_ui_window.cj",
+    "product/packages/app_services/src/external.cj"
+  ],
+  "export": {
+    "count": 9678,
+    "errors": [],
+    "manifest_sha256": "5e667a6ce2526c7346d5f77d27053ed76790564f97b97423ff97f9f3677a452d"
+  },
+  "owner": {
+    "bytes": 50,
+    "equal": true,
+    "sha256": "d58bbc293d59325a4d8a484df073f25aeaada056a7354fd18379043d81b85c97",
+    "text": "# ENTRY08 unique\n\nBody identity 08。\n源视代续"
+  },
+  "review_date": "2026-10-02",
+  "scope": "E/macOS frozen scroll-cost package; offline evidence and scoped production-source review; no build, desktop, device or production mutation",
+  "decision": "accept_with_original_boundaries",
+  "required_rework": [],
+  "binary_sha256": {
+    "pharos": "c93ae37794bb0b7235d0f95f2b6b1f8204105cd8c1a6df3753a70c16108b5d5a",
+    "ordinary_consumer": "128493fbb93b3cef6bebe29c23d9d773fa8035941778280dd14fb15df6fcb774"
+  },
+  "public_recalculated": {
+    "samples": 20,
+    "unique_requests": 20,
+    "versions_once_in_order": true,
+    "owner_accepted_hash_and_length_match": true,
+    "owner_p95_ms": 56.221917,
+    "accepted_p95_ms": 67.93775
+  },
+  "idle_raw_recalculated": {
+    "total_samples": 337,
+    "idle_samples": 260,
+    "duration_ms": 51815,
+    "constant_values": {
+      "content": [
+        "7"
+      ],
+      "build_count": [
+        "24"
+      ],
+      "layout_count": [
+        "24"
+      ],
+      "accepted": [
+        "110"
+      ],
+      "submitted": [
+        "121"
+      ],
+      "completed": [
+        "121"
+      ],
+      "raster": [
+        "345"
+      ],
+      "upload": [
+        "345"
+      ]
+    }
+  },
+  "wheel_raw_cases": [
+    {
+      "case": "58_small_points",
+      "expected_point_delta": -58,
+      "application_point_delta": -58.0,
+      "expected_selected": 3,
+      "observed_selected": 3
+    },
+    {
+      "case": "one_58_point",
+      "expected_point_delta": -58,
+      "application_point_delta": -58.0,
+      "expected_selected": 4,
+      "observed_selected": 4
+    },
+    {
+      "case": "reverse_58_point",
+      "expected_point_delta": 58,
+      "application_point_delta": 58.0,
+      "expected_selected": 3,
+      "observed_selected": 3
+    },
+    {
+      "case": "one_point_snap",
+      "expected_point_delta": -1,
+      "application_point_delta": -1.0,
+      "expected_selected": 3,
+      "observed_selected": 3
+    },
+    {
+      "case": "finger_end_then_os_momentum",
+      "expected_point_delta": -58,
+      "application_point_delta": -58.0,
+      "expected_selected": 4,
+      "observed_selected": 4
+    },
+    {
+      "case": "navigate_fixture_neighbor",
+      "expected_point_delta": -174,
+      "application_point_delta": -174.0,
+      "expected_selected": 7,
+      "observed_selected": 7
+    }
+  ],
+  "static_review": [
+    "wheel admission follows continuous full binding lifetime; unchanged binding accepts old projection, scope/rebind/removal ends lifetime",
+    "NSApplication event-loop owner remains separate from bounded worker framework-FIFO reads; session generation rechecked after wait",
+    "idle refresh compares controller current owner, not startup service",
+    "multi-select visual state is independent checkbox state, fixed title weight"
+  ],
+  "not_proven": [
+    "unique cause of original ghosting video",
+    "physical display scanout",
+    "physical human input",
+    "VoiceOver",
+    "cross-screen",
+    "current H additions to shared files",
+    "natural CPU/GPU overlap"
+  ],
+  "next_package_basis": {
+    "task": "E/macOS progressive UTF-8 coverage and bounded large-document editing",
+    "source_findings": [
+      "main.cj pharosValidateCapturedBase scans head/tail only above 128 MiB; no background coverage scheduling found at call sites",
+      "DocumentSession.validateAndRecordUtf8Range loops over the full requested span while holding transactionLock; bounded chunks do not bound owner lock duration",
+      "DOC-09 requires retaining original bytes and accepted edits after later invalid-byte discovery"
+    ],
+    "not_current_package_regressions": true
+  }
+}

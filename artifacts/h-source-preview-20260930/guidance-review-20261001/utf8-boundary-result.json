@@ -1,0 +1,14 @@
+{
+  "source": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp",
+  "source_sha256": "05505fa17a983c4aadfddc900834aa3973dc8dc9c9122111decddaa0df28f87d",
+  "extracted_functions": [
+    "utf8ToUtf16",
+    "utf8ByteOffsetToUtf16"
+  ],
+  "expected_policy": "valid UTF-8 boundaries preserve exact prefix UTF-16 length; interior clamps to preceding scalar start",
+  "compiler_exit": 0,
+  "probe_exit": 1,
+  "stdout": "ASCII end byte=2 expected_utf16=2 actual=2\nCJK end byte=3 expected_utf16=1 actual=0\ntwo CJK end byte=6 expected_utf16=2 actual=1\nemoji end byte=4 expected_utf16=2 actual=0\ndecomposed end byte=3 expected_utf16=2 actual=1\nCJK interior byte=2 expected_utf16=0 actual=0\nFAILURES=4\n",
+  "stderr": "",
+  "scope": "host C++ original-function counterexample; no HAP/device run; production source unchanged"
+}

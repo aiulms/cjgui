@@ -49,16 +49,20 @@ static const QueuedEvent *lastEvent(const Session &s) {
   return s.events.empty() ? nullptr : &s.events.back();
 }
 int main() {
-  // 1. 按钮点击：BEGIN 不激活；有效抬起恰好一次 ACTIVATE。
+  // 1. 按钮点击：BEGIN 只发视口接管意图，不激活；有效抬起恰好一次 ACTIVATE。
   {
     Session s; addScrollScene(s);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120);
-    if (!s.events.empty()) return 1;
+    if (!onlyTakeoverQueued(s)) return 1;
+    if (s.events.front().nodeId != 900 ||
+        s.events.front().nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA) return 28;
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 120);
-    if (s.events.size() != 1 || s.events.back().kind != kEvActivate ||
+    if (countTakeover(s) != 1 || countScrollDelta(s) != 0) return 29;
+    if (s.events.size() != 2 || s.events.back().kind != kEvActivate ||
         s.events.back().nodeId != 941) return 2;
   }
-  // 2. 无视口按钮上滑动：指针相位流，零 ACTIVATE（移出/拖动不误激活）。
+  // 2. 无视口按钮上滑动：指针相位流，零 ACTIVATE（移出/拖动不误激活）；
+  //    没有包含视口就没有接管意图可发。
   {
     Session s; addScrollScene(s);
     s.accepted.erase(s.accepted.begin());  // 移除视口：只剩按钮/编辑器
@@ -68,9 +72,11 @@ int main() {
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 190);
     if (countKind(s, kEvActivate) != 0) return 3;
     if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 4;
+    if (countTakeover(s) != 0) return 30;
   }
   // 3. 视口内从按钮起手滑动：视口接管取消点击，纯滚动零 ACTIVATE/FOCUS；
-  //    下拖 30px → 单条累计 "by:-30"（向下拖露出上方内容，offset 减小）。
+  //    下拖 30px → 接管意图 + 单条累计 "by:-30"（向下拖露出上方内容，offset
+  //    减小）；接管意图不得被同手势首段位移合并覆盖。
   {
     Session s; addScrollScene(s);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120);
@@ -78,19 +84,21 @@ int main() {
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 148);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 150);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 150);
-    if (countKind(s, kEvScroll) != 1) return 5;
+    if (countScrollDelta(s) != 1 || countTakeover(s) != 1) return 5;
     if (countKind(s, kEvActivate) != 0 || countKind(s, kEvFocus) != 0) return 6;
+    if (s.events.front().text != "takeover:" || s.events.front().scrollDelta != 0) return 31;
     const QueuedEvent &tail = s.events.back();
     if (tail.nodeId != 900 || tail.text != "by:-30" || tail.scrollDelta != -30) return 7;
     if (tail.projectionVersion != 100) return 8;
   }
-  // 4. 有效取消：CANCEL 终结手势，不激活；迟到的 END 不补发。
+  // 4. 有效取消：CANCEL 终结手势，不激活；迟到的 END 不补发。接管意图已在
+  //    BEGIN 入账（窗口需要它停下惯性），取消不得再追加位移或激活。
   {
     Session s; addScrollScene(s);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_CANCEL, 42, 60, 121);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 121);
-    if (!s.events.empty()) return 9;
+    if (!onlyTakeoverQueued(s)) return 9;
   }
   // 5. Surface 换代：旧代手势不得延续（UPDATE 取消，END 不激活）。
   {
@@ -99,9 +107,9 @@ int main() {
     s.surfaceGeneration += 1;
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 180);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 180);
-    if (!s.events.empty()) return 10;
+    if (!onlyTakeoverQueued(s)) return 10;
   }
-  // 6. 视口移除：滚动中视口退役即取消，无后续事件。
+  // 6. 视口移除：滚动中视口退役即取消，无后续事件（换绑前的接管与位移保留）。
   {
     Session s; addScrollScene(s);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120);
@@ -109,7 +117,7 @@ int main() {
     s.accepted.erase(s.accepted.begin());
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 160);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 160);
-    if (countKind(s, kEvScroll) != 1) return 11;
+    if (countScrollDelta(s) != 1 || countTakeover(s) != 1) return 11;
     if (lastEvent(s)->kind == kEvActivate || lastEvent(s)->kind == kEvFocus) return 12;
   }
   // 7. 新 accepted 场景后同一手势继续：版本变化产生新滚动事件（不并入旧
@@ -122,14 +130,15 @@ int main() {
     s.accepted[1].pod.projectionVersion = 101;
     s.accepted[2].pod.projectionVersion = 101;
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 150);  // by:-10 v101
-    if (countKind(s, kEvScroll) != 2) return 13;
+    if (countScrollDelta(s) != 2 || countTakeover(s) != 1) return 13;
     if (s.events.back().projectionVersion != 101 || s.events.back().text != "by:-10") return 14;
   }
-  // 8. 编辑器点击：有效抬起激活（FOCUS 恰一次 + 编辑上下文 + caret 点击）。
+  // 8. 编辑器点击：有效抬起激活（FOCUS 恰一次 + 编辑上下文 + caret 点击）；
+  //    BEGIN 只发视口接管，不落编辑事件。
   {
     Session s; addScrollScene(s);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 320);
-    if (!s.events.empty() || s.editing) return 15;
+    if (!onlyTakeoverQueued(s) || s.editing) return 15;
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 320);
     if (countKind(s, kEvFocus) != 1) return 16;
     if (!s.editing || s.editingNodeId != 942 || !s.editingContextLive) return 17;
@@ -145,18 +154,21 @@ int main() {
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 320);
     if (countKind(s, kEvFocus) != 1) return 20;
   }
-  // 10. 已激活编辑器长按：位移不接管为滚动；≥400ms 抬起全选。
+  // 10. 已激活编辑器的普通快拖仍由视口接管；长按没有命令它全选。
+  //     BEGIN 的惯性接管与全部 -60 位移都必须交付，owner 与焦点不变。
   {
     Session s; addScrollScene(s);
     s.editing = true; s.editingNodeId = 942; s.editingResourceId = 9700;
     s.editingText = utf8ToUtf16("abcdef");
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 320);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 380);
-    if (!s.events.empty()) return 21;
+    if (countTakeover(s) != 1 || countScrollDelta(s) != 1 || s.editingTapPending) return 21;
     struct timespec ts = {0, 450 * 1000 * 1000};
     nanosleep(&ts, nullptr);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 380);
-    if (s.selStartUtf16 != 0 || s.selEndUtf16 != 6) return 22;
+    if (s.selStartUtf16 != 0 || s.selEndUtf16 != 0 || s.editingText != u"abcdef") return 22;
+    int64_t total = 0; for (const auto &ev:s.events) if(ev.kind==kEvScroll) total+=ev.scrollDelta;
+    if(total != -60) return 26;
     if (countKind(s, kEvFocus) != 0) return 23;  // 已激活：无重复焦点事件
   }
   // 11. 待定手势移出目标后抬起：不激活（点击容差内的移出）。
@@ -174,12 +186,12 @@ int main() {
     s.accepted[2].pod.isReadOnly = 1;
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 320);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 320);
-    if (!s.events.empty() || s.editing) return 26;
+    if (!onlyTakeoverQueued(s) || s.editing) return 26;
     Session s2; addScrollScene(s2);
     s2.accepted[2].pod.isReadOnly = 1;
     synthesizeEventsFromRawTouch(s2, CJGUI_OHOS_TOUCH_BEGIN, 60, 320);
     synthesizeEventsFromRawTouch(s2, CJGUI_OHOS_TOUCH_UPDATE, 60, 380);
-    if (countKind(s2, kEvScroll) != 1) return 27;
+    if (countScrollDelta(s2) != 1 || countTakeover(s2) != 1) return 27;
   }
   return 0;
 }
@@ -224,7 +236,7 @@ int main() {
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 250);
     if (countKind(s, kEvActivate) != 0) return 100;
-    if (countKind(s, kEvScroll) != 1) return 101;
+    if (countScrollDelta(s) != 1 || countTakeover(s) != 1) return 101;
     if (s.events.back().scrollDelta != -130) return 102;
   }
   // R2 小数位移：0.5px 连续样本不得逐样本截断丢失（截断总和为 0），也
@@ -237,12 +249,13 @@ int main() {
     }
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 113.0f);
     for (const QueuedEvent &ev : s.events) {
-      if (ev.kind == kEvScroll && ev.scrollDelta == 0) return 103;
+      // 接管意图本就无位移；零位移检查只针对 "by:" 交付。
+      if (ev.kind == kEvScroll && ev.text != "takeover:" && ev.scrollDelta == 0) return 103;
     }
     int64_t total = 0;
     for (const QueuedEvent &ev : s.events) if (ev.kind == kEvScroll) total += ev.scrollDelta;
     if (total != -13) return 104;
-    if (countKind(s, kEvScroll) != 1) return 119;  // 同身份压缩为单一事件
+    if (countScrollDelta(s) != 1 || countTakeover(s) != 1) return 119;  // 同身份位移压缩为单条
   }
   // R3（被 N4 取代并修正）：纯版本变化不构成换绑判据——同绑定换帧必须
   //    存活（激活以当前版本 101 发出）；真换绑由 N4 的语义冻结拒绝。
@@ -292,7 +305,8 @@ int main() {
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 120);
     if (countKind(s, kEvActivate) != 1) return 111;
     if (countKind(s, kEvTextChanged) != 0) return 112;
-    if (!s.editorRetired || !s.pendingSettleOnDetach) return 113;
+    if (!s.editorRetired || s.pendingEnds.size() != 1 ||
+        !s.pendingEnds.front().settleOnDelivery) return 113;
   }
   // N1 二次复核：跨阈值后回到起点不恢复点击资格（阈值闰不可逆）。
   //    BEGIN(60,120)→MOVE(60,150)→MOVE(60,120)→END(60,120)：
@@ -304,7 +318,7 @@ int main() {
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 120);
     synthesizeEventsFromRawTouch(s, CJGUI_OHOS_TOUCH_END, 42, 60, 120);
     if (countKind(s, kEvActivate) != 0) return 130;
-    if (countKind(s, kEvScroll) < 1) return 131;
+    if (countScrollDelta(s) < 1) return 131;  // 接管意图不算位移交付
   }
   // N2 END 尾段：BEGIN y100→MOVE y80→END y50，总滚动意图 50（含 END 尾差）。
   {
@@ -461,6 +475,97 @@ int main() {
 '''
 
 
+# H1-A 冻结绑定反例（r10 复核接续）：BEGIN 冻结的 viewport 绑定贯穿手势；
+# 换绑/ABA 后旧 END（含零尾差）不得启动活动或继续交付；同绑定刷新继续，
+# fling 携原冻结身份而不是当前节点重贴的版本。
+MAIN_FROZEN = MAIN_ORIGINAL.split("int main() {")[0] + r'''
+static size_t countFling(const Session &s) {
+  size_t n = 0;
+  for (const QueuedEvent &ev : s.events) {
+    if (ev.kind == kEvScroll && ev.text.rfind("fling:", 0) == 0) ++n;
+  }
+  return n;
+}
+static bool lastFling(const Session &s, const QueuedEvent **out) {
+  for (auto it = s.events.rbegin(); it != s.events.rend(); ++it) {
+    if (it->kind == kEvScroll && it->text.rfind("fling:", 0) == 0) {
+      *out = &*it;
+      return true;
+    }
+  }
+  return false;
+}
+int main() {
+  // F1 同绑定刷新继续：手势期间同一 node 的 accepted 版本推进（accepted 刷新），
+  //    冻结绑定不变——抬起仍按原手势启动惯性；fling 事件携 BEGIN 时冻结的
+  //    viewport 绑定 epoch 与完整 GestureKey（1/2/7/0/42），不重贴新版本。
+  {
+    Session s; addScrollScene(s);
+    touchAt(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120, 100000000);
+    touchAt(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 100, 110000000);   // 跨阈值接管滚动
+    s.accepted[0].pod.projectionVersion = 101;                     // 同绑定换帧
+    touchAt(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 80, 130000000);
+    touchAt(s, CJGUI_OHOS_TOUCH_END, 42, 60, 60, 150000000);
+    if (countFling(s) != 1) return 200;
+    const QueuedEvent *fling = nullptr;
+    if (!lastFling(s, &fling)) return 201;
+    if (fling->acceptedBindingEpoch != 1) return 202;              // 冻结身份
+    if (fling->appInstance != 1 || fling->componentInstance != 2 ||
+        fling->surfaceGeneration != 7 || fling->pointerId != 0 ||
+        fling->gestureEpoch != 42) return 203;
+    if (s.gesture.active) return 204;
+  }
+  // F2 同 key 换绑/ABA + 零尾差 END：acceptedBindingEpoch 推进后，旧手势的
+  //    零尾差 END 也必须先校验冻结绑定——拒绝启动活动，不给新绑定发 fling
+  //    （速度窗已满足，旧实现会在此发出 fling）。
+  {
+    Session s; addScrollScene(s);
+    touchAt(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 140, 100000000);
+    touchAt(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 120, 110000000);   // 接管滚动
+    touchAt(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 100, 120000000);   // 速度窗两样本
+    s.accepted[0].pod.acceptedBindingEpoch = 2;                    // 真换绑
+    touchAt(s, CJGUI_OHOS_TOUCH_END, 42, 60, 100, 130000000);      // 零尾差
+    if (countFling(s) != 0) return 205;
+    if (countScrollDelta(s) != 1 || countTakeover(s) != 1) return 206;  // 只有换绑前那条位移
+    if (s.gesture.active) return 207;
+  }
+  // F3 同 key 换绑 + 带尾差 END：换绑后位移不再交付（旧相位零覆盖新绑定），
+  //    也不启动惯性。
+  {
+    Session s; addScrollScene(s);
+    touchAt(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 140, 100000000);
+    touchAt(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 120, 110000000);
+    touchAt(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 100, 120000000);
+    s.accepted[0].pod.acceptedBindingEpoch = 2;
+    touchAt(s, CJGUI_OHOS_TOUCH_END, 42, 60, 80, 130000000);       // 尾差 -20 被拒
+    if (countFling(s) != 0) return 208;
+    if (countScrollDelta(s) != 1 || countTakeover(s) != 1) return 209;  // 尾差被拒，只留换绑前位移
+    if (s.gesture.active) return 210;
+  }
+  // F4 换绑后的 MOVE：旧手势不得向新绑定交付任何位移（正控：换绑前正常）。
+  {
+    Session s; addScrollScene(s);
+    touchAt(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120, 100000000);
+    s.accepted[0].pod.acceptedBindingEpoch = 2;
+    touchAt(s, CJGUI_OHOS_TOUCH_UPDATE, 42, 60, 100, 110000000);
+    if (countScrollDelta(s) != 0 || countTakeover(s) != 1) return 211;  // 换绑后零位移交付
+    if (s.gesture.active) return 212;
+  }
+  // F5 fling 速度窗不足时不发活动：单样本快速轻扫（无 UPDATE）不带速度，
+  //    只结算一次滚动位移。
+  {
+    Session s; addScrollScene(s);
+    touchAt(s, CJGUI_OHOS_TOUCH_BEGIN, 42, 60, 120, 100000000);
+    touchAt(s, CJGUI_OHOS_TOUCH_END, 42, 60, 40, 130000000);
+    if (countFling(s) != 0) return 213;
+    if (countScrollDelta(s) != 1 || countTakeover(s) != 1) return 214;
+    if (s.events.back().scrollDelta != 80) return 215;  // 上扫 dy=-80 → delta=+80
+  }
+  return 0;
+}
+'''
+
+
 def extract_method(text: str, signature: str) -> str:
     start = text.index(signature)
     opening = text.index("{", start)
@@ -482,9 +587,15 @@ def extract_constants(text: str) -> str:
 
 REPLICA = """
 struct Session {
+  uint64_t token=1, acceptedPaintTicketId=1, surfaceGeometryRevision=1;
+__SELECTIONSTATE__
+  bool caretBlinkResetPending=false;
+  int32_t caretAffinity=0;
+  bool humanCaretNotificationPending=false;
 __TOUCHGESTURE__
   TouchGesture gesture;
   uint64_t surfaceGeneration = 7;
+  double surfaceDensity = 1.0;  // 与生产 Session 默认一致（已接受几何单位换算副本身份）
   std::vector<SceneNode> accepted;
   std::deque<QueuedEvent> events;
   int64_t textPressBeginMs = 0;
@@ -498,15 +609,46 @@ __TOUCHGESTURE__
   std::string editingFieldName;
   uint64_t editingContextGeneration = 0;
   uint64_t editingContextBaseVersion = 0;
+  // R1（2026-10-02）：与生产对齐——完整绑定身份 + 出生票据 + 待发 end 队列。
+  uint64_t editingAcceptedBindingEpoch = 0;
+  uint64_t editingBornTicketId = 0;
+  uint64_t acceptedProjectionVersion = 0;
   bool editingContextLive = false;
   bool reconcileNotifyPending = false;
   int64_t reconcileOldContextId = 0;
-  bool pendingSettleOnDetach = false;
-  bool pendingImeDetach = false;
+  struct PendingEnd {
+    int64_t contextId = 0;
+    std::string fieldName;
+    bool settleOnDelivery = false;
+  };
+  std::deque<PendingEnd> pendingEnds;
   std::u16string editingText;
   uint32_t caretUtf16 = 0;
   uint32_t selStartUtf16 = 0;
   uint32_t selEndUtf16 = 0;
+  // 与生产 Session 同名同默认值的三本落点账本 + 人类锚。被测的 end_edit / begin_edit /
+  // tap / synth 现在都会读写它们（H1-R.a：人的落点在 native 侧冻结成一次性锚，重挂与
+  // 换焦作废转发判重），缺字段整段摘录就编不过。本 harness 的判据仍是触摸链本身；
+  // 锚的完整语义（身份冻结、序号防重放、窗口一次性取走）由
+  // test_human_selection_anchor_native.py 覆盖，不在这里重复断言。
+  uint32_t selPlatformStart = 0;
+  uint32_t selPlatformEnd = 0;
+  uint32_t selForwardedStart = 0;
+  uint32_t selForwardedEnd = 0;
+  bool selForwardedValid = false;
+  struct HumanSelectionAnchor {
+    uint64_t seq = 0;
+    uint64_t nodeId = 0;
+    int64_t resourceId = -1;
+    uint32_t nodeKind = 0;
+    uint64_t projectionVersion = 0;
+    uint64_t acceptedBindingEpoch = 0;
+    uint32_t start16 = 0;
+    uint32_t end16 = 0;
+    bool consumed = false;
+  };
+  HumanSelectionAnchor humanAnchor;
+  uint64_t humanAnchorSeq = 0;
   bool previewActive = false;
   std::u16string previewText;
   uint32_t previewStart = 0;
@@ -514,9 +656,8 @@ __TOUCHGESTURE__
   bool markedActive = false;
   bool focusNotifyPending = false;
   double editingTapX = 0.0;
+  double editingTapY = 0.0;
   bool editingTapPending = false;
-  int64_t detachContextId = 0;
-  std::string detachFieldName;
   uint64_t touchGestureEpoch = 0;
   bool editingContextRevealRequested = false;
 };
@@ -526,11 +667,42 @@ static std::string utf16ToUtf8(const std::u16string &text) {
   for (char16_t c : text) out.push_back(static_cast<char>(c));
   return out;
 }
+// 恢复票据取消与 UTF-16 差分提交都不是本 harness 的被测面（分别由
+// test_text_proxy_recovery_native.py / test_ime_range_delta_native.py 覆盖），
+// 但被测的 begin_edit / settle 会调用它们。桩保留真实分支的可观测效果并记录调用，
+// 不做静默 no-op：取消理由与提交值都必须能在失败时回看。
+// 本 REPLICA 没有范围会话归属字段，因此只能表达"窗口未拥有该文本会话"这一种模式；
+// 生产代码在该模式下把每次提交都走整值事件（R7 断言的正是这个：A 恰好结算一次
+// 且 text == "ABXY"）。范围增量分支由 test_ime_range_delta_native.py 覆盖。
+void editorEnqueueTextChanged(Session &s);
+static std::vector<std::string> g_cancelledRestoreReasons;
+static std::vector<std::u16string> g_commitNextValues;
+static void cancelProxyRestoreRequest(Session &s, const char *reason) {
+  (void)s;
+  g_cancelledRestoreReasons.push_back(reason == nullptr ? "" : reason);
+}
+// 生产的人类锚在同一临界区终结进行中的恢复票据（人的导航优先于恢复目标）。票据机制
+// 本身不是本 harness 的被测面（test_text_proxy_recovery_native.py 覆盖），但"人的落点
+// 顶掉恢复"这个可观测效果必须留痕，不做静默 no-op；单独记账，避免与 cancel 的理由
+// 混进同一个向量而扰动既有断言。
+static std::vector<std::string> g_terminatedRestoreReasons;
+static void terminateProxyRestoreRequestLocked(Session &s, const char *reason) {
+  (void)s;
+  g_terminatedRestoreReasons.push_back(reason == nullptr ? "" : reason);
+}
+static bool editorEnqueueTextCommit(Session &s, const std::u16string &previous,
+                                    const std::u16string &next) {
+  (void)previous;
+  g_commitNextValues.push_back(next);
+  editorEnqueueTextChanged(s);
+  return true;
+}
 """
 
 STUBS = """
-#define RLOGI(...) do {} while (0)
-#define RLOGW(...) do {} while (0)
+template <class... Args> static void cjguiLogSinkStub(Args&&...) {}
+#define RLOGI(...) cjguiLogSinkStub(__VA_ARGS__)
+#define RLOGW(...) cjguiLogSinkStub(__VA_ARGS__)
 struct RedrawJob {};
 struct RenderThread {
   template <class T> void post(T) {}
@@ -555,39 +727,71 @@ struct SceneNode {
 """
 
 # 依赖次序：text_changed/settle 引用 composedBuffer/utf16ToUtf8；
-# begin_edit 引用 settle；synthesize 引用其余。
-EXTRACT_ORDER = ["hit", "viewport_hit", "identity", "stamp", "cancel", "end_edit",
-                 "text_changed", "settle", "begin_edit", "scroll_intent",
-                 "consume", "tap", "synth"]
+# begin_edit 引用 settle；velocity/stamp 供 synth 引用；synth 引用其余。
+# anchor_* 必须排在 end_edit/begin_edit/tap/synth 之前：这四个都会调用它们。
+EXTRACT_ORDER = ["editable_kind", "hit", "viewport_hit", "identity", "stamp", "velocity", "cancel",
+                 "anchor_record", "anchor_clear", "clamp", "push_end",
+                 "end_edit", "text_changed", "settle", "begin_edit", "drag_matches", "drag_init",
+                 "handle_begin", "extent_queue", "word_request", "selection_apply", "scroll_intent",
+                 "consume", "tap_count", "tap_remember", "caret_menu_hit", "tap_select", "tap", "synth"]
 
 
-def build_harness_text(main_text: str) -> str:
-    source = SOURCE.read_text()
+def selection_declarations(source: str, include_menu_intent: bool = True) -> tuple[str, str]:
+    handles = extract_method(source, "struct PaintedSelectionHandles {") + ";\n"
+    fields = "uint32_t editingHitMode=0;\nuint64_t selectionOperationGeneration=0;\nPaintedSelectionHandles selectionHandles;\n"
+    fields += extract_method(source, "    struct SelectionDrag {") + ";\nSelectionDrag selectionDrag;\n"
+    if include_menu_intent: fields += "uint32_t textMenuIntent=0;\n"
+    fields += extract_method(source, "    struct TextTapChain {") + ";\nTextTapChain textTapChain;\n"
+    return handles, fields
+
+
+def build_harness_text(main_text: str, source_text: str | None = None) -> str:
+    source = source_text if source_text is not None else SOURCE.read_text()
     gesture = extract_method(source, "    struct TouchGesture {") + ";"
     queued = extract_method(source, "struct QueuedEvent {") + ";"
     raw = extract_method(source, "struct RawTouchSample {") + ";"
     constants = extract_constants(source)
     signatures = {
+        "editable_kind": "bool isEditableTextKind(uint32_t kind)",
         "hit": "bool hitTestAccepted(Session &s, float x, float y, size_t *outIndex)",
         "viewport_hit": "bool scrollAreaIndexContainingPoint(Session &s, float x, float y, size_t *outIndex)",
         "identity": ("bool sceneIndexByIdentityLocked(Session &s, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,\n"
                      "                                size_t *outIndex)"),
         "stamp": "void stampTouchEvent(const Session &s, QueuedEvent &ev)",
+        "velocity": "double estimateReleaseVelocityPxPerMs(const Session::TouchGesture &g)",
         "cancel": "void cancelTouchGestureLocked(Session &s)",
+        # 人类锚（H1-R.a）原样摘出：end_edit/begin_edit 清锚，tap/synth 在人的落点上
+        # 记锚。它是触摸链自己的可观测结果，不是可以桩掉的外部依赖。
+        "anchor_record": "static void recordHumanSelectionAnchorLocked(Session &s, const char *origin)",
+        "anchor_clear": "static void clearHumanSelectionAnchorLocked(Session &s)",
+        # begin_edit 的选区保持路径调用真实边界收敛（原真实函数，非桩）。
+        "clamp": "uint32_t clampToCodePointBoundary(const std::u16string &text, uint32_t offset)",
+        # R1：end_edit / begin_edit 都经统一收场出口冻结将死身份，必须先摘出。
+        "push_end": "static void pushPendingEndLocked(",
         "end_edit": "void enqueueEndEditingForTapLocked(Session &s)",
         "text_changed": "void editorEnqueueTextChanged(Session &s)",
         "settle": "bool settleComposedBufferOnBlurLocked(Session &s)\n{",
         "begin_edit": "void beginEditingOnNodeLocked(Session &s, const SceneNode &node)",
+        "drag_matches": "bool selectionDragMatchesLocked(Session &s, const Session::SelectionDrag &drag)\n{",
+        "drag_init": "void initializeSelectionDragLocked(Session &s, const SceneNode &node)",
+        "handle_begin": "bool beginSelectionHandleDragLocked(Session &s, float x, float y)",
+        "extent_queue": "bool queueSelectionExtentLocked(Session &s, float x, float y, bool terminal)",
+        "word_request": "bool requestLongPressWordLocked(Session &s, int64_t nowMs)",
+        "selection_apply": "bool applySelectionHitLocked(Session &s, uint64_t operation, uint32_t mode, uint32_t caret,\n                             int32_t affinity, uint32_t wordStart, uint32_t wordEnd)",
         "scroll_intent": ("void appendScrollIntentLocked(Session &s, uint64_t nodeId, int64_t resourceId, uint64_t version,\n"
                           "                              int64_t delta)\n{"),
         "consume": "int64_t consumeScrollSampleLocked(Session &s, float dySample)",
         "tap": "void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)",
+        "tap_count": "uint32_t consecutiveTextTapCountLocked(Session &s, const RawTouchSample &sample)",
+        "tap_remember": "void rememberTextTapLocked(Session &s, float x, float y)",
+        "caret_menu_hit": "bool collapsedCaretMenuHitLocked(const Session &s, float x, float y)",
+        "tap_select": "bool requestConsecutiveTapSelectLocked(Session &s, const SceneNode &node)",
         "synth": "void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)",
     }
     body = "\n".join(extract_method(source, signatures[name]) for name in EXTRACT_ORDER)
     harness = '#include "cjgui_internal_renderer.h"\n#include "cjgui_ohos_ingress.h"\n'
     harness += '#include <atomic>\n#include <cmath>\n#include <cstdint>\n#include <deque>\n'
-    harness += '#include <memory>\n#include <mutex>\n#include <string>\n#include <vector>\n'
+    harness += '#include <memory>\n#include <mutex>\n#include <string>\n#include <vector>\n#include <algorithm>\n#include <utility>\n'
     harness += constants + "\n"
     adapter = '''
 static void touch(Session &s, uint32_t action, uint64_t epoch, float x, float y,
@@ -596,6 +800,29 @@ static void touch(Session &s, uint32_t action, uint64_t epoch, float x, float y,
 }
 static void touch(Session &s, uint32_t action, float x, float y) {
   touch(s, action, 42, x, y);
+}
+static void touchAt(Session &s, uint32_t action, uint64_t epoch, float x, float y,
+                    int64_t timestampNs) {
+  synthesizeEventsFromRawTouch(s, RawTouchSample{action, x, y, 1, 2, 7, 0, epoch, timestampNs, 0});
+}
+// H2-1（astra 空白接管）：BEGIN 落在视口内即经共同 scroll 通道发一条无位移
+// "takeover:" 意图（携 GestureKey 与冻结绑定），窗口据此终结该视口的惯性活动。
+// 它是手势的既定前置而不是位移交付，反例必须把两者分开断言：接管恰好一条，
+// 位移仍按原语义计数，任何一侧丢失都不通过。
+static size_t countTakeover(const Session &s) {
+  size_t n = 0;
+  for (const QueuedEvent &ev : s.events)
+    if (ev.kind == kEvScroll && ev.text == "takeover:") ++n;
+  return n;
+}
+static size_t countScrollDelta(const Session &s) {
+  size_t n = 0;
+  for (const QueuedEvent &ev : s.events)
+    if (ev.kind == kEvScroll && ev.text.rfind("by:", 0) == 0) ++n;
+  return n;
+}
+static bool onlyTakeoverQueued(const Session &s) {
+  return s.events.size() == 1 && countTakeover(s) == 1;
 }
 '''
     sessions = '''
@@ -607,16 +834,70 @@ static Session *lookupSessionLocked(uint64_t session) {
 '''
     exact_cancel = extract_method(source,
         "CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(")
-    harness += STUBS + queued + raw + REPLICA.replace("__TOUCHGESTURE__", gesture)
+    handles, selection_state = selection_declarations(source)
+    harness += STUBS + queued + raw + handles + REPLICA.replace("__TOUCHGESTURE__", gesture).replace("__SELECTIONSTATE__", selection_state)
+    harness += '''bool selectionDragMatchesLocked(Session &, const Session::SelectionDrag &);
+static void recordHumanSelectionAnchorLocked(Session &, const char *);
+'''
     harness += sessions + body + exact_cancel + adapter
     harness += main_text.replace("synthesizeEventsFromRawTouch(", "touch(")
     return harness
 
 
+def legacy_binding_red_source() -> str:
+    """Test-only inversion to the pre-fix renderer behavior (r10 gaps):
+    zero-tail samples return before the frozen viewport binding check, and the
+    fling event re-stamps the CURRENT accepted node epoch instead of the frozen
+    one. Used by the negative control; never written back to the tree."""
+    source = SOURCE.read_text()
+    current = extract_method(source, "int64_t consumeScrollSampleLocked(Session &s, float dySample)")
+    legacy = '''int64_t consumeScrollSampleLocked(Session &s, float dySample)
+{
+    s.gesture.scrollRawSumY += static_cast<double>(dySample);
+    ++s.gesture.scrollSampleCount;
+    s.gesture.scrollAccumY += dySample;
+    int64_t whole = static_cast<int64_t>(s.gesture.scrollAccumY);
+    if (whole == 0) return 0;
+    s.gesture.scrollAccumY -= static_cast<float>(whole);
+    size_t index = 0;
+    if (!sceneIndexByIdentityLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                                    CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, &index)) {
+        cancelTouchGestureLocked(s);
+        return 0;
+    }
+    if (s.gesture.viewportBindingEpoch == 0 ||
+        s.accepted[index].pod.acceptedBindingEpoch != s.gesture.viewportBindingEpoch) {
+        cancelTouchGestureLocked(s);
+        return 0;
+    }
+    appendScrollIntentLocked(s, s.gesture.viewportNodeId, s.gesture.viewportResourceId,
+                             s.accepted[index].pod.projectionVersion, -whole);
+    s.gesture.scrollWholeDeliveredY += whole;
+    return -whole;
+}'''
+    red = source.replace(current, legacy)
+    if red == source:
+        raise AssertionError("legacy consume inversion did not apply")
+    frozen_stamp = ("ev.acceptedBindingEpoch = s.gesture.viewportBindingEpoch;\n"
+                    "                        stampTouchEvent(s, ev);  // 完整 GestureKey（appInstance 等）")
+    restamped = ("ev.acceptedBindingEpoch = s.accepted[index].pod.acceptedBindingEpoch;\n"
+                 "                        stampTouchEvent(s, ev);  // 完整 GestureKey（appInstance 等）")
+    if red.count(frozen_stamp) != 1:
+        raise AssertionError("frozen fling stamp not found exactly once")
+    red = red.replace(frozen_stamp, restamped)
+    frozen_condition = ("s.gesture.viewportBindingEpoch != 0 &&\n"
+                        "                        s.accepted[index].pod.acceptedBindingEpoch"
+                        " == s.gesture.viewportBindingEpoch)")
+    if red.count(frozen_condition) != 1:
+        raise AssertionError("frozen fling condition not found exactly once")
+    red = red.replace(frozen_condition, "true)")
+    return red
+
+
 class TouchGestureNativeTest(unittest.TestCase):
     def test_terminal_scroll_accounting_uses_the_real_renderer_chain(self) -> None:
         harness = build_harness_text(MAIN_SCROLL_ACCOUNTING)
-        harness = harness.replace("#define RLOGI(...) do {} while (0)", r'''
+        harness = harness.replace("#define RLOGI(...) cjguiLogSinkStub(__VA_ARGS__)", r'''
 #include <sstream>
 static std::string g_scrollFormat;
 static std::string g_scrollLog;
@@ -649,7 +930,7 @@ template <class... Args> static void captureLog(const char *format, Args... args
             binary = pathlib.Path(directory) / "touch_gesture"
             path.write_text(harness)
             subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
-                            "-Wno-unused-const-variable",
+                            "-Wno-unused-const-variable", "-Wno-unused-function",
                             "-I", str(SNAPSHOT), "-I", str(INGRESS.parent),
                             str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
@@ -664,10 +945,43 @@ template <class... Args> static void captureLog(const char *format, Args... args
             binary = pathlib.Path(directory) / "touch_review"
             path.write_text(harness)
             subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
-                            "-Wno-unused-const-variable",
+                            "-Wno-unused-const-variable", "-Wno-unused-function",
                             "-I", str(SNAPSHOT), "-I", str(INGRESS.parent),
                             str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
+
+    def test_frozen_binding_rejects_rebind_before_any_activity(self) -> None:
+        """H1-A 冻结绑定反例（r10 复核接续）：同 key 换绑/ABA 后旧 END（含零尾差）
+        拒绝启动活动；同绑定刷新继续，fling 携 BEGIN 冻结身份。"""
+        harness = build_harness_text(MAIN_FROZEN)
+        self.assertIn("void synthesizeEventsFromRawTouch", harness)
+        self.assertIn("double estimateReleaseVelocityPxPerMs", harness)
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "touch_frozen.cpp"
+            binary = pathlib.Path(directory) / "touch_frozen"
+            path.write_text(harness)
+            subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-Wno-unused-const-variable", "-Wno-unused-function",
+                            "-I", str(SNAPSHOT), "-I", str(INGRESS.parent),
+                            str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
+    def test_frozen_binding_negative_control_fails_on_legacy_behavior(self) -> None:
+        """负对照：把生产源码反演回旧行为（零尾差先返回、fling 重贴当前 epoch），
+        同一批 F 反例必须以非零退出拒绝——证明反例对旧实现有判别力。"""
+        red = legacy_binding_red_source()
+        harness = build_harness_text(MAIN_FROZEN, source_text=red)
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "touch_frozen_red.cpp"
+            binary = pathlib.Path(directory) / "touch_frozen_red"
+            path.write_text(harness)
+            subprocess.run(["clang++", "-std=c++17",
+                            "-Wno-unused-const-variable", "-Wno-unused-function",
+                            "-I", str(SNAPSHOT), "-I", str(INGRESS.parent),
+                            str(path), "-o", str(binary)], check=True)
+            completed = subprocess.run([str(binary)], capture_output=True)
+            self.assertNotEqual(completed.returncode, 0,
+                                "legacy zero-tail/fling re-stamp behavior must fail the frozen counterexamples")
 
 
 if __name__ == "__main__":

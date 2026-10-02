@@ -26,6 +26,10 @@ class FakeTextOwner <: CjguiRangeTextSource & CjguiRangeTextEditSink {
     var maxReadBytes: Int64 = 0
     var writeCalls: Int64 = 0
     var reportIncompleteBoundedReads: Bool = false
+    /// Test-only failures around the accepted-edit readback boundary. The default
+    /// leaves all existing session tests on the normal owner path.
+    var readsUnavailable: Bool = false
+    var refuseReadsAfterNextAccept: Bool = false
     var maps: ArrayList<(Int64, Int64, Int64, Int64)> = ArrayList<(Int64, Int64, Int64, Int64)>()
 
     init(text: String) {
@@ -87,6 +91,10 @@ class FakeTextOwner <: CjguiRangeTextSource & CjguiRangeTextEditSink {
         if (maxBytes > this.maxReadBytes) {
             this.maxReadBytes = maxBytes
         }
+        if (this.readsUnavailable) {
+            return CjguiRangeTextSlice(startByte, startByte, "", this.ver,
+                this.data.size, false, "test_read_unavailable")
+        }
         let start = if (startByte < 0) { 0 } else { startByte }
         let cap = if (start > this.data.size) { 0 } else { this.data.size - start }
         let take = if (maxBytes < cap) { maxBytes } else { cap }
@@ -108,6 +116,10 @@ class FakeTextOwner <: CjguiRangeTextSource & CjguiRangeTextEditSink {
             return CjguiRangeTextEditOutcome.conflict(this.ver, "version_conflict")
         }
         this.splice(startByte, endByte, inserted)
+        if (this.refuseReadsAfterNextAccept) {
+            this.refuseReadsAfterNextAccept = false
+            this.readsUnavailable = true
+        }
         return CjguiRangeTextEditOutcome.accepted(baseVersion, this.ver)
     }
 
@@ -1945,4 +1957,449 @@ func testRecoveryDraftIdentityCheckedBeforeAnyWrite(): Unit {
     @Assert(owner.writeCalls, 0)
     @Assert(owner.ver, 2)
     @Assert(session.recoveryDraftsValue().size, 1)
+}
+
+
+/// 模拟生产窗口在纯选区意图后的"推送+确认"链（restore 标记清除）。
+private func confirmPlainSelectionPush(session: CjguiTextSession): Unit {
+    let (a, b) = session.selection16()
+    let version = session.mirrorSnapshot().contentVersion
+    let _ = session.confirmNativeSelectionRestored(version, a, b)
+}
+
+// ---- 普通文字意图共同处理器（Astra Q5；E/macOS B 切片） ----
+
+@Test
+func testPlainIntentMovesByWholeGraphemeCluster(): Unit {
+    // "a👨‍👩‍👧b"：a[0,1) 家庭[1,19) b[19,20)；UTF-16 a=0, 家庭=[1,9), b=9, 末=10。
+    let owner = FakeTextOwner("a👨‍👩‍👧b")
+    let session = makeSession(owner)
+    session.setSelection16(10, 10)
+    let left = session.handlePlainIntent(CjguiTextPlainIntent.MoveLeft)
+    @Assert(left.handled, true)
+    @Assert(left.wroteOwner, false)
+    @Assert(left.selectionStart16, 9)
+    @Assert(left.selectionEnd16, 9)
+    let left2 = session.handlePlainIntent(CjguiTextPlainIntent.MoveLeft)
+    @Assert(left2.selectionStart16, 1)   // 一次跨过整个家庭（8 个 UTF-16 单位）
+    confirmPlainSelectionPush(session)
+    let right = session.handlePlainIntent(CjguiTextPlainIntent.MoveRight)
+    @Assert(right.selectionStart16, 9)   // 回程同样整簇
+    @Assert(right.wroteOwner, false)
+    @Assert(owner.writeCalls, 0)          // 纯移动零正文事务
+}
+
+@Test
+func testPlainIntentExtendCoversWholeCluster(): Unit {
+    let owner = FakeTextOwner("AéB")
+    let session = makeSession(owner)
+    session.setSelection16(1, 1)
+    let extendSel = session.handlePlainIntent(CjguiTextPlainIntent.ExtendRight)
+    @Assert(extendSel.handled, true)
+    @Assert(extendSel.wroteOwner, false)
+    @Assert(extendSel.selectionStart16, 1)
+    @Assert(extendSel.selectionEnd16, 2)     // é（预组合）整簇一次覆盖
+    // 扩选后的删除=一笔精确事务（生产中窗口先推送确认选区）。
+    confirmPlainSelectionPush(session)
+    let del = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    @Assert(del.handled, true)
+    @Assert(del.wroteOwner, true)
+    @Assert(owner.text(), "AB")
+    @Assert(owner.writeCalls, 1)          // 恰好一笔
+}
+
+@Test
+func testPlainIntentDeleteBackwardWholeCluster(): Unit {
+    // 分解式 e+U+0301：一次 Backspace 删整簇 3B（不是只删组合符）。
+    let owner = FakeTextOwner("Ae\u{0301}B")
+    let session = makeSession(owner)
+    session.setSelection16(3, 3)          // UTF-16: A=0, e=1, U+0301=2, B=3
+    let del = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    @Assert(del.handled, true)
+    @Assert(del.wroteOwner, true)
+    @Assert(owner.text(), "AB")
+    @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func testPlainIntentInteriorCaretRefusesWithZeroWrite(): Unit {
+    let owner = FakeTextOwner("Ae\u{0301}B")
+    let session = makeSession(owner)
+    session.setSelection16(2, 2)          // caret 落在 e 与组合符之间（簇内部）
+    let del = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    @Assert(del.handled, false)
+    @Assert(del.reason, "grapheme_interior")
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.text(), "Ae\u{0301}B")
+}
+
+@Test
+func testPlainIntentBoundaryRefusals(): Unit {
+    let owner = FakeTextOwner("ab")
+    let session = makeSession(owner)
+    session.setSelection16(0, 0)
+    let back = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    @Assert(back.handled, false)
+    @Assert(back.reason, "at_document_start")
+    let left = session.handlePlainIntent(CjguiTextPlainIntent.MoveLeft)
+    @Assert(left.reason, "at_document_start")
+    session.setSelection16(2, 2)
+    let fwd = session.handlePlainIntent(CjguiTextPlainIntent.DeleteForward)
+    @Assert(fwd.reason, "at_document_end")
+    let right = session.handlePlainIntent(CjguiTextPlainIntent.MoveRight)
+    @Assert(right.reason, "at_document_end")
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testPlainIntentSelectionCollapseBeforeMove(): Unit {
+    let owner = FakeTextOwner("abcd")
+    let session = makeSession(owner)
+    session.setSelection16(1, 3)
+    let left = session.handlePlainIntent(CjguiTextPlainIntent.MoveLeft)
+    @Assert(left.handled, true)
+    @Assert(left.wroteOwner, false)
+    @Assert(left.selectionStart16, 1)     // 非空选区先折叠到左端
+    confirmPlainSelectionPush(session)
+    let selBack = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    @Assert(selBack.handled, true)
+    @Assert(selBack.wroteOwner, true)
+    @Assert(owner.text(), "bcd")   // 折叠到左端后 Backspace 删 caret 前的 'a'
+}
+
+// ---- 指导复核反例（editor-macos-position-session-next 2026-09-29 深夜复审） ----
+
+@Test
+func testPlainIntentSelectionDeleteRejectsInteriorEndpoint(): Unit {
+    // 反例 1：Ae\u{0301}B 的 UTF-16 选区 [2,3)（重音符半簇）——此前 hi>lo 直接
+    // 提交会只删组合符。共同处理器必须先证明两端边界，内部端点具名零写入并
+    // 保持原选区。
+    let owner = FakeTextOwner("Ae\u{0301}B")
+    let session = makeSession(owner)
+    session.setSelection16(2, 3)
+    let del = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    @Assert(del.handled, false)
+    @Assert(del.reason, "selection_endpoint_inside_grapheme")
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.text(), "Ae\u{0301}B")
+    let (a, b) = session.selection16()
+    @Assert(a, 2)
+    @Assert(b, 3)
+}
+
+@Test
+func testPlainIntentSelectionDeleteWholeClusterOnce(): Unit {
+    // 正控：合法整簇选区 [1,3)（完整 e+重音簇）一笔精确删除。
+    let owner = FakeTextOwner("Ae\u{0301}B")
+    let session = makeSession(owner)
+    session.setSelection16(1, 3)
+    let del = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    @Assert(del.handled, true)
+    @Assert(del.wroteOwner, true)
+    @Assert(owner.text(), "AB")
+    @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func testPlainIntentReverseShiftCollapsesNotExpands(): Unit {
+    // 反例 2：abcd caret 2 → Shift+Left [1,2)（anchor=2 focus=1）→ Shift+Right
+    // 应回 [2,2)（收缩），不是 [1,3)（扩张）。
+    let owner = FakeTextOwner("abcd")
+    let session = makeSession(owner)
+    session.setSelection16(2, 2)
+    let extendLeft = session.handlePlainIntent(CjguiTextPlainIntent.ExtendLeft)
+    @Assert(extendLeft.handled, true)
+    @Assert(extendLeft.selectionStart16, 1)
+    @Assert(extendLeft.selectionEnd16, 2)
+    confirmPlainSelectionPush(session)
+    let extendRight = session.handlePlainIntent(CjguiTextPlainIntent.ExtendRight)
+    @Assert(extendRight.handled, true)
+    @Assert(extendRight.selectionStart16, 2)
+    @Assert(extendRight.selectionEnd16, 2)
+    // 连续反向再扩张仍然正确：anchor=2 保持，focus 回到 3 → [2,3)。
+    confirmPlainSelectionPush(session)
+    let again = session.handlePlainIntent(CjguiTextPlainIntent.ExtendRight)
+    @Assert(again.selectionStart16, 2)
+    @Assert(again.selectionEnd16, 3)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testPlainIntentSelectionCollapseAtDocumentEdges(): Unit {
+    // 反例 3：abcd 选 [0,2) 在文首按 Left、选 [1,4) 在文尾按 Right——都必须先
+    // 折叠成功（零事务），不因贴边被拒。
+    let owner = FakeTextOwner("abcd")
+    let session = makeSession(owner)
+    session.setSelection16(0, 2)
+    let left = session.handlePlainIntent(CjguiTextPlainIntent.MoveLeft)
+    @Assert(left.handled, true)
+    @Assert(left.selectionStart16, 0)
+    @Assert(left.selectionEnd16, 0)
+    confirmPlainSelectionPush(session)
+    session.setSelection16(1, 4)
+    let right = session.handlePlainIntent(CjguiTextPlainIntent.MoveRight)
+    @Assert(right.handled, true)
+    @Assert(right.selectionStart16, 4)
+    @Assert(right.selectionEnd16, 4)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testPlainIntentCounterClassificationConservation(): Unit {
+    // 三类守恒（指导复核反例 4）：每个普通意图恰归一类——正文接受/零写入选区/
+    // 具名拒绝。此处在会话层校验行为分类，窗口层守恒由真实消费脚本核对。
+    let owner = FakeTextOwner("abcd")
+    let session = makeSession(owner)
+    var accepted: Int64 = 0
+    var zeroWrite: Int64 = 0
+    var refused: Int64 = 0
+    session.setSelection16(1, 1)
+    var i: Int64 = 0
+    while (i < 3) {
+        let move = session.handlePlainIntent(CjguiTextPlainIntent.MoveRight)
+        if (move.handled && !move.wroteOwner) { zeroWrite += 1 } else if (move.wroteOwner) { accepted += 1 } else { refused += 1 }
+        confirmPlainSelectionPush(session)
+        i += 1
+    }
+    let edge = session.handlePlainIntent(CjguiTextPlainIntent.MoveRight)
+    if (edge.handled && !edge.wroteOwner) { zeroWrite += 1 } else if (edge.wroteOwner) { accepted += 1 } else { refused += 1 }
+    confirmPlainSelectionPush(session)
+    let del = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+    if (del.wroteOwner) { accepted += 1 } else if (del.handled) { zeroWrite += 1 } else { refused += 1 }
+    @Assert(accepted, 1)     // 一次删除恰好一笔正文事务
+    @Assert(zeroWrite, 3)    // 三次移动
+    @Assert(refused, 1)      // 文尾拒绝一次
+    @Assert(owner.writeCalls, 1)
+}
+
+
+// Semantic selection tickets are independent of text versions and values.
+@Test
+func testSelectionRebasePublishesCollapsedDirectedEndpoints(): Unit {
+    let owner = FakeTextOwner("Uabcd")
+    let session = makeSession(owner)
+    session.setSelection16(3, 3)
+    let ticket = session.freezeSelectionTicket()
+    owner.externalWrite(0, 1, "")
+    @Assert(session.refreshMirror(), true)
+    @Assert(session.selectionTicketMatches(ticket), false)
+    @Assert(session.selection16()[0], 2)
+    @Assert(session.selection16()[1], 2)
+    @Assert(session.plainSelectionAnchorValue(), 2)
+    @Assert(session.plainSelectionFocusValue(), 2)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.confirmNativeSelectionRestored(2, 2, 2), true)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testPreparedHumanReplacementAndInsertionPublishNewCaret(): Unit {
+    let owner = FakeTextOwner("A中B文C")
+    let session = makeSession(owner)
+    session.setSelection16(1, 2)
+    let old = session.freezeSelectionTicket()
+    let replacement = session.prepareSourceRange(1, 1, 4).getOrThrow().replace("换")
+    @Assert(replacement.accepted, true)
+    @Assert(owner.text(), "A换B文C")
+    @Assert(session.selectionTicketMatches(old), false)
+    @Assert(session.selection16()[0], 2)
+    @Assert(session.selection16()[1], 2)
+    @Assert(session.plainSelectionAnchorValue(), 2)
+    @Assert(session.plainSelectionFocusValue(), 2)
+    @Assert(session.selectedSourceRange().isNone(), true)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).getOrThrow()[1], 4)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.confirmNativeSelectionRestored(2, 2, 2), true)
+    let insertion = session.prepareSourceRange(2, 4, 4).getOrThrow().replace("视")
+    @Assert(insertion.accepted, true)
+    @Assert(owner.text(), "A换视B文C")
+    @Assert(session.selection16()[0], 3)
+    @Assert(session.selection16()[1], 3)
+    @Assert(session.plainSelectionAnchorValue(), 3)
+    @Assert(session.plainSelectionFocusValue(), 3)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).getOrThrow()[1], 7)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).getOrThrow()[2], 7)
+    @Assert(session.confirmNativeSelectionRestored(3, 3, 3), true)
+    @Assert(owner.writeCalls, 2)
+}
+
+@Test
+func testPreparedHumanReplacementCollapsesReverseSourceSelection(): Unit {
+    let owner = FakeTextOwner("A中B文C")
+    let session = makeSession(owner)
+    let old = session.freezeSelectionTicket()
+    @Assert(session.commitSelectionTicket(old, 4, 1, { => true }), true)
+    let reverse = session.freezeSelectionTicket()
+    let replacement = session.prepareSourceRange(1, 1, 8).getOrThrow().replace("中文")
+    @Assert(replacement.accepted, true)
+    @Assert(owner.text(), "A中文C")
+    @Assert(session.selectionTicketMatches(reverse), false)
+    @Assert(session.selection16()[0], 3)
+    @Assert(session.selection16()[1], 3)
+    @Assert(session.plainSelectionAnchorValue(), 3)
+    @Assert(session.plainSelectionFocusValue(), 3)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).getOrThrow()[1], 7)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).getOrThrow()[2], 7)
+    @Assert(session.confirmNativeSelectionRestored(2, 3, 3), true)
+    @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func testSelectionRebasePreservesReverseDirection(): Unit {
+    let owner = FakeTextOwner("Uabcd")
+    let session = makeSession(owner)
+    let ticket = session.freezeSelectionTicket()
+    @Assert(session.commitSelectionTicket(ticket, 4, 2, { => true }), true)
+    owner.externalWrite(0, 1, "")
+    @Assert(session.refreshMirror(), true)
+    @Assert(session.selection16()[0], 1)
+    @Assert(session.selection16()[1], 3)
+    @Assert(session.plainSelectionAnchorValue(), 3)
+    @Assert(session.plainSelectionFocusValue(), 1)
+    @Assert(session.confirmNativeSelectionRestored(2, 1, 3), true)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testSelectionTicketSameValueABARejectsOldChoice(): Unit {
+    let owner = FakeTextOwner("abcd")
+    let session = makeSession(owner)
+    session.setSelection16(2, 2)
+    let old = session.freezeSelectionTicket()
+    session.setSelection16(1, 1)
+    session.setSelection16(2, 2)
+    @Assert(session.selectionTicketMatches(old), false)
+    @Assert(session.commitSelectionTicket(old, 3, 3, { => true }), false)
+    @Assert(session.selection16()[0], 2)
+    @Assert(session.selection16()[1], 2)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testSelectionTicketFailedInstallPublishesNothingAndRemainsUsable(): Unit {
+    let owner = FakeTextOwner("abcd")
+    let session = makeSession(owner)
+    session.setSelection16(2, 2)
+    let ticket = session.freezeSelectionTicket()
+    @Assert(session.commitSelectionTicket(ticket, 2, 1, { => false }), false)
+    @Assert(session.selection16()[0], 2)
+    @Assert(session.selection16()[1], 2)
+    @Assert(session.plainSelectionAnchorValue(), 2)
+    @Assert(session.plainSelectionFocusValue(), 2)
+    @Assert(session.selectionTicketMatches(ticket), true)
+    @Assert(session.commitSelectionTicket(ticket, 2, 1, { => true }), true)
+    @Assert(session.selection16()[0], 1)
+    @Assert(session.selection16()[1], 2)
+    @Assert(session.plainSelectionAnchorValue(), 2)
+    @Assert(session.plainSelectionFocusValue(), 1)
+    @Assert(session.selectionTicketMatches(ticket), false)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testSelectionTicketInvalidSourceMappingRejectsBeforeInstall(): Unit {
+    let owner = FakeTextOwner("中🙂x")
+    let session = makeSession(owner)
+    session.setSelection16(0, 0)
+    let ticket = session.freezeSelectionTicket()
+    @Assert(session.commitSelectionTicket(ticket, 2, 2, { =>
+        owner.bumpVersionOnly()
+        return true
+    }), false)
+    @Assert(owner.ver, 1) // invalid surrogate mapping never invokes install
+    @Assert(session.selection16()[0], 0)
+    @Assert(session.selection16()[1], 0)
+}
+
+@Test
+func testSelectionTicketOwnerVersionChangeRejectsBeforeInstall(): Unit {
+    let owner = FakeTextOwner("abcd")
+    let session = makeSession(owner)
+    let ticket = session.freezeSelectionTicket()
+    owner.bumpVersionOnly()
+    @Assert(session.commitSelectionTicket(ticket, 1, 1, { =>
+        owner.bumpVersionOnly()
+        return true
+    }), false)
+    @Assert(owner.ver, 2)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
+func testAcceptedCaretSurvivesUnavailableReadUntilRestoreConfirmation(): Unit {
+    let owner = FakeTextOwner("A中B文C")
+    let session = makeSession(owner)
+    session.setSelection16(1, 2)
+    let oldTicket = session.freezeSelectionTicket()
+    owner.refuseReadsAfterNextAccept = true
+    let edit = session.prepareSourceRange(1, 1, 4).getOrThrow().replace("视续")
+
+    @Assert(edit.accepted, true)
+    @Assert(owner.text(), "A视续B文C")
+    @Assert(session.selectionTicketMatches(oldTicket), false)
+    @Assert(session.selectedSourceRange().isNone(), true)
+    @Assert(session.awaitingCalibration(), true)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).isNone(), true)
+    @Assert(session.acknowledge(edit.ticket, session.contextEpochValue()), true)
+    @Assert(session.pendingCount(), 0)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).isNone(), true)
+
+    @Assert(session.recalibrate(), false)
+    owner.readsUnavailable = false
+    @Assert(session.recalibrate(), true)
+    @Assert(session.selection16()[0], 3)
+    @Assert(session.selection16()[1], 3)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    let (receiptEpoch, receiptMirror) = session.restorationReceipt()
+    @Assert(session.confirmProxyRestored(receiptEpoch, receiptMirror,
+        selectionStart16: 1, selectionEnd16: 1), false)
+    @Assert(session.awaitingCalibration(), true)
+    @Assert(session.confirmProxyRestored(receiptEpoch, receiptMirror,
+        selectionStart16: 3, selectionEnd16: 3), true)
+    @Assert(session.awaitingCalibration(), false)
+    let restored = session.selectedSourceRange().getOrThrow()
+    @Assert(restored[0], 2)
+    @Assert(restored[1], 7)
+    @Assert(restored[2], 7)
+    @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func testAcceptedCaretRebasesAcrossExternalWriteWhileReadsUnavailable(): Unit {
+    let owner = FakeTextOwner("A中B文C")
+    let session = makeSession(owner)
+    session.setSelection16(1, 2)
+    owner.refuseReadsAfterNextAccept = true
+    let edit = session.prepareSourceRange(1, 1, 4).getOrThrow().replace("视续")
+
+    @Assert(edit.accepted, true)
+    @Assert(session.acknowledge(edit.ticket, session.contextEpochValue()), true)
+    @Assert(session.pendingCount(), 0)
+    @Assert(session.awaitingCalibration(), true)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).isNone(), true)
+
+    owner.externalWrite(0, 0, "【A】")
+    @Assert(owner.text(), "【A】A视续B文C")
+    @Assert(session.recalibrate(), false)
+    @Assert(owner.text(), "【A】A视续B文C")
+    @Assert(session.awaitingCalibration(), true)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).isNone(), true)
+
+    owner.readsUnavailable = false
+    @Assert(session.recalibrate(), true)
+    @Assert(session.selection16()[0], 6)
+    @Assert(session.selection16()[1], 6)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    let (receiptEpoch, receiptMirror) = session.restorationReceipt()
+    @Assert(session.confirmProxyRestored(receiptEpoch, receiptMirror,
+        selectionStart16: 6, selectionEnd16: 6), true)
+    @Assert(session.awaitingCalibration(), false)
+    let restored = session.selectedSourceRange().getOrThrow()
+    @Assert(restored[0], 3)
+    @Assert(restored[1], 14)
+    @Assert(restored[2], 14)
+    @Assert(owner.writeCalls, 1)
 }

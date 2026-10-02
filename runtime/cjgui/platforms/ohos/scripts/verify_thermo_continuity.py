@@ -26,6 +26,21 @@ import time
 sys.path.insert(0, "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts")
 sys.path.insert(0, "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/shared_operation_core")
 from ohos_transport_probe_lib import BoundedExchange, parse_control_frame_strict  # noqa: E402
+
+# 人改腿坐标链（2026-10-02 修复）：与 Pharos 驱动同一 `_viewport_transform`
+# 推导（a11y 矩形 vp → 屏幕像素）。旧 inject_tap 把 a11y 的 vp 值原样注入
+# 触摸队列（该队列是屏幕像素空间），点进了 H 时代新加的手滚控件区（节点
+# thermo-hand-scroll），孤立 tap 的 POINTER_END 被捕获门拒绝——"事件 39 的
+# 原控件已刷新"实为探针坐标错配，框架输入链健康（真实点击实测 TEMP_UP
+# 每次 v+2 连续五次生效）。
+import importlib.util as _ilu
+from pathlib import Path as _Path
+_spec = _ilu.spec_from_file_location(
+    "pharos_driver",
+    _Path("/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts"
+          "/h_source_preview_consumption.py"))
+_m = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_m)
 from client import parse_response  # noqa: E402
 
 HOST, PORT = "127.0.0.1", 17857
@@ -82,10 +97,57 @@ def gate_command_and_wait(op, timeout=5.0):
     return "dispatch-timeout"
 
 
+
+def scroll_card_to_buttons():
+    """上滑卡片滚动区（thermo-card-scroll，节点 40）把动作按钮行带回视口。"""
+    p = thermo_semantic_point("thermo-card-scroll")
+    if p is None:
+        return
+    cx, cy = int(p[0]), int(p[1])
+    _m.uitest("drag", str(cx), str(cy + 160), str(cx), str(cy - 200))
+    time.sleep(1.2)
+
 def inject_tap(x, y):
-    gate_command_and_wait(f"TOUCH_37_{int(x)}_{int(y)}")
-    time.sleep(0.12)
-    return gate_command_and_wait(f"TOUCH_39_{int(x)}_{int(y)}")
+    """真实用户路径：uitest 点击屏幕像素坐标（vp→px 由调用方完成）。"""
+    _m.uitest("click", str(int(x)), str(int(y)))
+    time.sleep(0.3)
+    return "0"
+
+
+BUNDLE_THERMO = "com.example.cjguithermo"
+
+
+def thermo_semantic_point(semantic):
+    """thermo 自己的语义命中链。_m.accepted_semantic_point 按 Pharos bundle
+    做 PID 过滤（后台 Pharos 的行会污染 rect/transform），这里按 thermo PID
+    过滤后走同一条 accepted→rect→dumpLayout-transform 推导。"""
+    import subprocess as _sp
+    pid_out = _sp.run([HDC, "shell", f"pidof {BUNDLE_THERMO}"],
+                      capture_output=True, text=True).stdout.strip()
+    rows = _m.hilog_rows()
+    if pid_out:
+        rows = [r for r in rows if f" {pid_out} " in r] or rows
+    rect, _nid = _m._semantic_rect_vp(rows, semantic)
+    if rect is None:
+        return None
+    tr = _m._viewport_transform(rows)
+    if tr is None:
+        return None
+    ox, oy, density = tr
+    x = rect[0] + 15
+    y = (rect[1] + rect[3]) / 2
+    return (ox + x * density, oy + y * density)
+
+
+def tap_semantic(semantic, fallback_xy=None):
+    """按语义节点命中（滚动后区内子节点 clip 恢复非零，rect 推导可用）。"""
+    p = thermo_semantic_point(semantic)
+    if p is None and fallback_xy is not None:
+        p = fallback_xy
+    if p is None:
+        return None
+    inject_tap(p[0], p[1])
+    return p
 
 
 def fields_of(text):
@@ -192,9 +254,12 @@ def main() -> int:
     failures += check("T0 resourceId 独立（无 count/name 字段）",
                       ("count" in fields) or ("name" in fields), False)
 
-    # T1 人改：注入点击「升温」按钮（节点 22）
+    # T1 人改：注入点击「升温」按钮（节点 22）。卡片内容超表面（调试面板占
+    # 下半屏，表面仅 ~487vp 而卡片 ~836vp）——先上滑卡片滚动区把按钮行带回
+    # 视口（滚动后区内子节点 clip 随偏移更新，rect 推导恢复可用）再点击。
     x22, y22, w22, h22 = rects[22]
-    inject_tap(x22 + w22 / 2, y22 + h22 / 2)
+    scroll_card_to_buttons()
+    tap_semantic("thermo-up", fallback_xy=(x22 + w22 / 2, y22 + h22 / 2))
     time.sleep(0.8)
     version, fields = read_state()
     failures += check("T1 人改升温 → targetTemp=23", fields.get("targetTemp"), "23")
@@ -238,9 +303,11 @@ def main() -> int:
     v_now, _ = read_state()
     failures += check("T4 版本不变", v_now, version)
 
-    # T5 人续写：新版本上再点升温 → 精确读回
+    # T5 人续写：新版本上再点升温 → 精确读回（外部腿不碰滚动位置，仍先确保
+    # 按钮在视口内再点）
     x22, y22, w22, h22 = rects[22]
-    inject_tap(x22 + w22 / 2, y22 + h22 / 2)
+    scroll_card_to_buttons()
+    tap_semantic("thermo-up", fallback_xy=(x22 + w22 / 2, y22 + h22 / 2))
     time.sleep(0.8)
     version, fields = read_state()
     failures += check("T5 人续写升温 → targetTemp=24", fields.get("targetTemp"), "24")

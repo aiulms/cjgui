@@ -85,6 +85,80 @@ private func largeLifecycleContextPayload(): String {
     return "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH large-lifecycle-capability\nGET_CONTEXT 0"
 }
 
+private class OwnerStateLifecycleDomain <: CjguiSharedOperationDomain {
+    private let ownerState: String
+
+    init(ownerState: String) { this.ownerState = ownerState }
+
+    public func resourceType(): String { return "owner_state" }
+
+    public func contextSnapshot(): CjguiSharedOperationContextSnapshot {
+        if (ownerState.size == 0) {
+            // Keep compiling the pre-ownerState constructor form used by old owners.
+            return CjguiSharedOperationContextSnapshot(1, "状态快照", resourceType(),
+                ArrayList<CjguiSharedOperationResource>())
+        }
+        return CjguiSharedOperationContextSnapshot(1, "状态快照", resourceType(),
+            ArrayList<CjguiSharedOperationResource>(), ownerState: ownerState)
+    }
+
+    public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> {
+        return ArrayList<CjguiSharedOperationActionDescriptor>()
+    }
+
+    public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+        return CjguiSharedOperationActionResult(false, false, 1, 1, "unsupported")
+    }
+
+    public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+        return CjguiSharedOperationActionResult(false, false, 1, 1, "unsupported")
+    }
+}
+
+private func ownerStateLifecycleAuthorization(): CjguiSharedOperationExternalAuthorization {
+    return CjguiSharedOperationExternalAuthorization("owner-state-client", "owner-state-capability",
+        ArrayList<CjguiSharedOperationExternalActionScope>([
+            CjguiSharedOperationExternalActionScope("GET_CONTEXT", ArrayList<Int64>(), true)
+        ]))
+}
+
+private func ownerStateLifecycleRequest(): String {
+    return "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH owner-state-capability\nGET_CONTEXT 0"
+}
+
+@Test
+func publicGetContextKeepsLegacyEmptyOwnerStateSnapshotCompatible(): Unit {
+    let connection = CjguiSharedOperationExternalConnection(OwnerStateLifecycleDomain(""),
+        ownerStateLifecycleAuthorization())
+    let response = connection.dispatchPayload(ownerStateLifecycleRequest())
+
+    @Assert(response.contains("KIND SNAPSHOT"), true)
+    @Assert(response.contains("OWNER_STATE_UTF8_HEX"), false)
+    @Assert(response.contains("PROTOCOL CJGUI_SHARED_OPERATION/2"), true)
+}
+
+@Test
+func publicGetContextReadsOwnerStateAsExactUtf8Bytes(): Unit {
+    let ownerState = "模式=预览🙂"
+    let connection = CjguiSharedOperationExternalConnection(OwnerStateLifecycleDomain(ownerState),
+        ownerStateLifecycleAuthorization())
+    let response = connection.dispatchPayload(ownerStateLifecycleRequest())
+
+    @Assert(response.contains("OWNER_STATE_UTF8_HEX ${ownerState.toArray().size} E6A8A1E5BC8F3DE9A284E8A788F09F9982"), true)
+    @Assert(response.contains("ERROR invalid_snapshot"), false)
+}
+
+@Test
+func publicGetContextNamesOwnerStateStringLimitRejection(): Unit {
+    let ownerState = String.fromUtf8(Array<Byte>(64 * 1024 + 1, repeat: 120))
+    let connection = CjguiSharedOperationExternalConnection(OwnerStateLifecycleDomain(ownerState),
+        ownerStateLifecycleAuthorization())
+    let response = connection.dispatchPayload(ownerStateLifecycleRequest())
+
+    @Assert(response.contains("ERROR invalid_snapshot"), true)
+    @Assert(response.contains("response_too_large"), false)
+}
+
 @Test
 func genericTransportClassifiesActualOversizedSnapshot(): Unit {
     let connection = CjguiSharedOperationExternalConnection(oversizedLifecycleList(), largeLifecycleAuthorization())

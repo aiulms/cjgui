@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 
 // ---- helpers reused by both runtime probe and smoke shim ----
 
@@ -66,6 +67,7 @@ static uint64_t CjguiCaretBlinkClockMicros(void) {
     return (uint64_t)(((__uint128_t)ticks * timebase.numer) /
                       ((__uint128_t)MAX((uint32_t)1, timebase.denom) * 1000u));
 }
+
 #ifdef CJGUI_INTERNAL_TESTING
 static uint64_t CjguiMonotonicMicros(void) {
     return CjguiCaretBlinkClockMicros();
@@ -82,6 +84,19 @@ static uint64_t CjguiMonotonicMicros(void) {
 static uint64_t CjguiSaturatingAddU64(uint64_t value, uint64_t delta) {
     return delta > UINT64_MAX - value ? UINT64_MAX : value + delta;
 }
+
+// Normal-build diagnostics clock. Call sites guard this read with the owning
+// session's explicit timing switch; it is intentionally independent of caret,
+// animation and scroll scheduling clocks.
+static uint64_t CjguiDiagnosticMonotonicNanoseconds(void) {
+    static mach_timebase_info_data_t timebase;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ mach_timebase_info(&timebase); });
+    uint64_t ticks = mach_continuous_time();
+    return (uint64_t)(((__uint128_t)ticks * timebase.numer) /
+                      ((__uint128_t)MAX((uint32_t)1, timebase.denom)));
+}
+
 
 @class CJGuiInternalComposableSceneNode;
 
@@ -1149,6 +1164,21 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 @property(nonatomic, assign) uint64_t composableSceneCloneCount;
 @property(nonatomic, assign) uint64_t composableSceneNodeAllocationCount;
 @property(nonatomic, assign) uint64_t composableTextLayoutPreparationCount;
+// Opt-in, fixed-size diagnostics owned by this exact native window session.
+@property(nonatomic, assign) BOOL diagnosticTimingEnabled;
+@property(nonatomic, assign) uint64_t positionPrepareCount;
+@property(nonatomic, assign) uint64_t positionQueryCount;
+@property(nonatomic, assign) uint64_t positionLineBuildCount;
+@property(nonatomic, assign) uint64_t positionCacheHitCount;
+@property(nonatomic, assign) uint64_t positionPrepareNanoseconds;
+@property(nonatomic, assign) uint64_t positionQueryNanoseconds;
+@property(nonatomic, assign) uint64_t positionLineBuildNanoseconds;
+@property(nonatomic, assign) uint64_t diagnosticEncodeNanoseconds;
+@property(nonatomic, assign) uint64_t diagnosticSubmitNanoseconds;
+@property(nonatomic, assign) uint64_t diagnosticRasterNanoseconds;
+@property(nonatomic, assign) uint64_t diagnosticUploadNanoseconds;
+@property(nonatomic, assign) uint64_t diagnosticReadCount;
+@property(nonatomic, assign) uint64_t diagnosticReadNanoseconds;
 // High water of all retained text generations plus candidate allocations.
 @property(nonatomic, assign) uint64_t composableTextCandidatePeakBytes;
 #ifdef CJGUI_INTERNAL_TESTING
@@ -1358,10 +1388,23 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 @property(nonatomic, assign) int64_t ownedTextSessionResourceId;
 @property(nonatomic, assign) uint32_t ownedTextSessionNodeKind;
 @property(nonatomic, assign) uint64_t ownedTextSessionBindingEpoch;
+// Accepted Cangjie context layer guard. A secondary focus/selection change
+// cannot happen for an outside click: the overlay queues DISMISS_LAYER and
+// returns before routing that physical down into the underlying scene.
+@property(nonatomic, assign) BOOL composableContextMenuGuardEnabled;
+@property(nonatomic, assign) uint64_t composableContextMenuGuardSceneVersion;
+@property(nonatomic, assign) uint64_t composableContextMenuGuardLayerScope;
+@property(nonatomic, assign) uint64_t composableContextMenuGuardRequestId;
+@property(nonatomic, assign) uint64_t composableContextMenuGuardLayerNodeId;
+@property(nonatomic, assign) int64_t composableContextMenuGuardResourceId;
+@property(nonatomic, assign) uint32_t composableContextMenuGuardNodeKind;
+@property(nonatomic, assign) NSRect composableContextMenuGuardBounds;
 // Monotonic per-session composition identity. When a RESET is observed after
 // the session was bound, the window must clear this through the setter.
 @property(nonatomic, assign) uint64_t nextCompositionId;
 @end
+
+static void CjguiTraceWindowInputGeometry(CJGuiInternalSession *session, const char *phase, NSEvent *event);
 
 @implementation CJGuiInternalSession
 
@@ -1377,6 +1420,14 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
     self.ownedTextSessionResourceId = -1;
     self.ownedTextSessionNodeKind = 0;
     self.ownedTextSessionBindingEpoch = 0;
+    self.composableContextMenuGuardEnabled = NO;
+    self.composableContextMenuGuardSceneVersion = 0;
+    self.composableContextMenuGuardLayerScope = 0;
+    self.composableContextMenuGuardRequestId = 0;
+    self.composableContextMenuGuardLayerNodeId = 0;
+    self.composableContextMenuGuardResourceId = -1;
+    self.composableContextMenuGuardNodeKind = 0;
+    self.composableContextMenuGuardBounds = NSZeroRect;
     self.nextCompositionId = 0;
     self.composableNodes = [NSMutableArray array];
     self.stagedComposableNodes = [NSMutableArray array];
@@ -1395,6 +1446,20 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
     self.pumpedDataTransferSourceIdentityUtf8 = [NSData dataWithBytes:"" length:1];
     self.pumpedDataTransferSourceId = -1;
     self.observedMetalGpuDurationMicros = -1;
+    self.diagnosticTimingEnabled = NO;
+    self.positionPrepareCount = 0;
+    self.positionQueryCount = 0;
+    self.positionLineBuildCount = 0;
+    self.positionCacheHitCount = 0;
+    self.positionPrepareNanoseconds = 0;
+    self.positionQueryNanoseconds = 0;
+    self.positionLineBuildNanoseconds = 0;
+    self.diagnosticEncodeNanoseconds = 0;
+    self.diagnosticSubmitNanoseconds = 0;
+    self.diagnosticRasterNanoseconds = 0;
+    self.diagnosticUploadNanoseconds = 0;
+    self.diagnosticReadCount = 0;
+    self.diagnosticReadNanoseconds = 0;
     return self;
 }
 
@@ -1469,7 +1534,18 @@ int cjgui_internal_renderer_test_transfer_ledger_record(unsigned long long obser
 
 - (void)windowDidResize:(NSNotification *)notification {
     (void)notification;
+    CjguiTraceWindowInputGeometry(self, "resize", NSApp.currentEvent);
     [self windowGeometryDidChange];
+}
+
+- (void)windowWillStartLiveResize:(NSNotification *)notification {
+    (void)notification;
+    CjguiTraceWindowInputGeometry(self, "live_begin", NSApp.currentEvent);
+}
+
+- (void)windowDidEndLiveResize:(NSNotification *)notification {
+    (void)notification;
+    CjguiTraceWindowInputGeometry(self, "live_end", NSApp.currentEvent);
 }
 
 - (void)windowDidChangeBackingProperties:(NSNotification *)notification {
@@ -1509,10 +1585,10 @@ static BOOL gCjguiSessionOccupied[4];
 static NSUInteger gCjguiActiveDataTransferDragSessions = 0;
 static uint64_t gCjguiNextSessionGeneration = 1;
 static char CJGuiSessionWindowAssociationKey;
-static BOOL gCjguiMainThreadDispatchEnabled;
-#ifdef CJGUI_INTERNAL_TESTING
-static BOOL gCjguiMainThreadDispatchEverEnabled;
-#endif
+static _Atomic(bool) gCjguiMainThreadDispatchEnabled;
+// The launcher installs NSApplication.run for this process. Permission to
+// marshal work may be gated by tests; ownership of NSEvent never changes.
+static _Atomic(bool) gCjguiLauncherOwnsEventLoop;
 // Standard Quit may reach AppKit several times before the Cangjie application
 // worker gets its next bounded turn. Retain only one process-level intent;
 // completion is acknowledged by that owner after it accepts or rejects.
@@ -1552,6 +1628,24 @@ static void CjguiStampPointerPositionOnQueuedInteraction(CJGuiInternalSession *s
     if (!last || last.kind != kind || last.recordIndex != nodeIndex) return;
     if (nodeIndex >= session.composableNodes.count) return;
     CjguiCapturePrecisePointer(last, session.composableNodes[nodeIndex], point);
+}
+
+// Focus is enqueued before the paired selection/activation record, so stamp
+// the most recent matching focus record rather than assuming it is still the
+// FIFO tail. Used only by the overlay's physical mouse-down path.
+static void CjguiStampPointerPositionOnRecentQueuedInteraction(CJGuiInternalSession *session,
+                                                               uint32_t kind, uint32_t nodeIndex,
+                                                               NSPoint point, NSUInteger firstPendingIndex) {
+    if (!session || session.destroyed || nodeIndex >= session.composableNodes.count) return;
+    for (NSInteger index = (NSInteger)session.pendingInteractions.count - 1;
+         index >= (NSInteger)firstPendingIndex; index--) {
+        CJGuiInternalQueuedInteraction *interaction = session.pendingInteractions[(NSUInteger)index];
+        if (interaction.kind == kind && interaction.recordIndex == nodeIndex &&
+            interaction.projectionVersion == session.composableSceneVersion) {
+            CjguiCapturePrecisePointer(interaction, session.composableNodes[nodeIndex], point);
+            return;
+        }
+    }
 }
 
 static void CjguiStampKeyboardModifiersOnQueuedInteraction(CJGuiInternalSession *session,
@@ -2231,7 +2325,12 @@ static BOOL CjguiEnqueueComposableCapturedPointerInteraction(CJGuiInternalSessio
     // payload. The input FIFO belongs to the currently committed scene,
     // including when it reuses that payload; never stamp the stale node POD.
     uint64_t acceptedVersion = session.composableSceneVersion;
-    if (nodeId == 0 || nodeIndex >= session.composableNodes.count) return NO;
+    // A cancelled press names its retained original node even after removal.
+    // It terminates routing only and cannot authorize a replacement target.
+    BOOL retainedPressTerminal = gestureEpoch != 0 &&
+        (kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL ||
+         kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_END);
+    if (nodeId == 0 || (!retainedPressTerminal && nodeIndex >= session.composableNodes.count)) return NO;
     CJGuiInternalQueuedInteraction *last = session.pendingInteractions.lastObject;
     // Only adjacent updates for exactly one captured identity can merge. A
     // terminal end/cancel is deliberately never coalesced behind a move.
@@ -5159,6 +5258,10 @@ static NSString *CjguiComposableGpuTextValueWithActiveValue(CJGuiInternalComposa
     // resolves the activation against, so painting "label value" would put a
     // machine key on screen next to the human title.
     if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE) return node.label ?: @"";
+    if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) {
+        NSString *mark = [value isEqualToString:@"true"] ? @"☑" : @"☐";
+        return node.label.length > 0 ? [NSString stringWithFormat:@"%@ %@", mark, node.label] : mark;
+    }
     // Buttons carry their visible action in both projection fields: label is
     // the semantic name and value remains the ordinary display value.  Paint
     // it once when those fields agree, without changing either the accessible
@@ -5192,6 +5295,25 @@ static BOOL CjguiComposableNodeHasGpuText(uint32_t kind) {
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT ||
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT ||
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT;
+}
+
+// Bound an ordinary composable text candidate before full TextKit shaping,
+// focused layout or raster preparation. A range-backed editor normally sends
+// a smaller viewport, but direct consumers must receive the same refusal.
+enum { CjguiComposableLayoutMaxUtf8Bytes = 262144, CjguiComposableLayoutMaxParagraphBytes = 131072 };
+static BOOL CjguiComposableTextWithinLayoutBudget(const char *value) {
+    if (!value) return YES;
+    size_t length = strnlen(value, CjguiComposableLayoutMaxUtf8Bytes + 1u);
+    if (length > CjguiComposableLayoutMaxUtf8Bytes) return NO;
+    size_t paragraphBytes = 0;
+    for (size_t index = 0; index < length; index++) {
+        if (value[index] == '\n' || value[index] == '\r') {
+            paragraphBytes = 0;
+        } else if (++paragraphBytes > CjguiComposableLayoutMaxParagraphBytes) {
+            return NO;
+        }
+    }
+    return YES;
 }
 
 // A plain text label and a tab page title draw their own single line inside the
@@ -5469,88 +5591,191 @@ static uint64_t CjguiComposableFreshTextTileBytes(CJGuiInternalComposableSceneNo
 // Captured at prepare time because an empty value has no glyph to measure, and
 // asking the storage for the attribute at index 0 throws on zero length.
 @property(nonatomic, assign) CGFloat defaultLineHeight;
+// The lease follows the retained layout, not the scene or a borrowed pointer.
+@property(nonatomic, assign) uint64_t positionLease;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, id> *positionLines;
+@property(nonatomic, weak) CJGuiInternalSession *diagnosticSession;
 @end
 @implementation CjguiPreparedTextNodeLayout
 @end
+
+static const NSUInteger CjguiVisualNavMaxLinePositions = 8192;
+static CjguiInternalRendererStatus
+CjguiReadLineInsertionPointsEx(NSLayoutManager *lm, NSUInteger anchorChar, BOOL alternate,
+                               NSUInteger *outCount, CGFloat **outPos, NSUInteger **outIdx);
+
+// R2（Astra 裁决，2026-09-30）：平台行终止符判定（\n \r NEL U+2028 U+2029；
+// CRLF 的后随位置前一字符是 \n，同样命中）。位置在硬终止符之后 ⇒ 该位置唯一
+// 属于下一行（Downstream 语义）；软折行边界才有双侧渲染（Upstream 上一折出行末）。
+static BOOL CjguiIsHardLineTerminatorBefore(NSString *text, NSUInteger character) {
+    if (character == 0 || character > text.length) return NO;
+    unichar c = [text characterAtIndex:character - 1];
+    return c == (unichar)'\n' || c == (unichar)'\r' ||
+           c == (unichar)0x0085 || c == (unichar)0x2028 || c == (unichar)0x2029;
+}
+
+// R1（2026-09-30）：统一的行插入点读取——先以 NULL 缓冲从**同一查询行**取得
+// 真实插入点数（SDK 契约：无容量参数，NULL=只计数；插入点数 ≤ 行字符数+1），
+// 预算准入后才按 pointCount 精确分配并二次调用填充。旧行为按"命中行"容量
+// 分配、却查询"anchorChar 所在行"（软折行末 anchor 已是下一行首）——宽短行
+// 后接窄长折行时 heap-buffer-overflow（ASan 实证，asan-r1-red.log）。预算或
+// 分配失败具名拒绝，调用方保状态；两次调用计数不一致（同布局不应发生）同样
+// 具名拒绝，不以截短数组冒充预算。
+static CjguiInternalRendererStatus
+CjguiReadLineInsertionPoints(NSLayoutManager *lm, NSUInteger anchorChar,
+                             NSUInteger *outCount, CGFloat **outPos, NSUInteger **outIdx) {
+    return CjguiReadLineInsertionPointsEx(lm, anchorChar, NO, outCount, outPos, outIdx);
+}
+
+// Astra 裁决（正式）：primary 与 alternate **分别**有界读取（各自 NULL 取数→
+// 预算准入→精确分配），不能拿 primary 的容量填 alternate。
+static CjguiInternalRendererStatus
+CjguiReadLineInsertionPointsEx(NSLayoutManager *lm, NSUInteger anchorChar, BOOL alternate,
+                               NSUInteger *outCount, CGFloat **outPos, NSUInteger **outIdx) {
+    *outCount = 0;
+    *outPos = NULL;
+    *outIdx = NULL;
+    NSUInteger count = [lm getLineFragmentInsertionPointsForCharacterAtIndex:anchorChar
+                                                           alternatePositions:alternate
+                                                                inDisplayOrder:YES
+                                                                    positions:NULL
+                                                              characterIndexes:NULL];
+    if (count == 0) return CJGUI_INTERNAL_RENDERER_OK;
+    if (count > CjguiVisualNavMaxLinePositions) {
+        return CJGUI_INTERNAL_RENDERER_VISUAL_NAV_UNSUPPORTED;
+    }
+    CGFloat *pos = (CGFloat *)calloc(count, sizeof(CGFloat));
+    NSUInteger *idx = (NSUInteger *)calloc(count, sizeof(NSUInteger));
+    if (!pos || !idx) {
+        free(pos);
+        free(idx);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSUInteger filled = [lm getLineFragmentInsertionPointsForCharacterAtIndex:anchorChar
+                                                               alternatePositions:alternate
+                                                                    inDisplayOrder:YES
+                                                                        positions:pos
+                                                                  characterIndexes:idx];
+    if (filled != count) {
+        free(pos);
+        free(idx);
+        return CJGUI_INTERNAL_RENDERER_VISUAL_NAV_UNSUPPORTED;
+    }
+    *outCount = count;
+    *outPos = pos;
+    *outIdx = idx;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// ---- Astra 正式裁决：共同 accepted 停靠点解析器 ----
+// 一行的一组停靠点：primary 与 alternate 各自有界读取（R1 同款 NULL 取数→
+// 预算准入→精确分配），按显示序 x 归并；相同 charIndex 且 x 重合的 alternate
+// 条目视为 primary 的**别名**（不增加一次按键停靠），不按 byte/x 盲目去重，
+// 也不把 alternate 直接解释为 Upstream。
+typedef struct {
+    NSUInteger charIndex;   // UTF-16 边界
+    uint8_t branch;         // 0 = primary，1 = alternate（独有条目）
+    CGFloat x;
+} CjguiStopPoint;
+
+typedef struct {
+    CjguiStopPoint *points; // 显示序（x 升序）
+    NSUInteger count;
+    NSUInteger lineLocation;
+    NSUInteger lineLength;
+    NSRange lineGlyphRange;
+} CjguiStopLine;
+
+static void CjguiFreeStopLine(CjguiStopLine *line) {
+    if (line->points) free(line->points);
+    line->points = NULL;
+    line->count = 0;
+}
+
+// 解析一行（anchorChar 所属行）的停靠点。失败返回具名状态；调用方释放。
+static CjguiInternalRendererStatus
+CjguiResolveStopLine(NSLayoutManager *lm, NSString *text, NSUInteger anchorChar,
+                     CjguiStopLine *outLine) {
+    memset(outLine, 0, sizeof(*outLine));
+    NSUInteger glyphCount = lm.numberOfGlyphs;
+    if (glyphCount == 0) return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+    NSUInteger anchorGlyph = MIN([lm glyphIndexForCharacterAtIndex:MIN(anchorChar, lm.textStorage.length ? lm.textStorage.length - 1 : 0)], glyphCount - 1);
+    NSRange lineGlyphRange = NSMakeRange(0, 0);
+    [lm lineFragmentRectForGlyphAtIndex:anchorGlyph effectiveRange:&lineGlyphRange];
+    NSRange lineCharRange = [lm characterRangeForGlyphRange:lineGlyphRange actualGlyphRange:NULL];
+    CGFloat *pPos = NULL; NSUInteger *pIdx = NULL; NSUInteger pCount = 0;
+    CGFloat *aPos = NULL; NSUInteger *aIdx = NULL; NSUInteger aCount = 0;
+    CjguiInternalRendererStatus st =
+        CjguiReadLineInsertionPointsEx(lm, anchorChar, NO, &pCount, &pPos, &pIdx);
+    if (st != CJGUI_INTERNAL_RENDERER_OK) { free(pPos); free(pIdx); return st; }
+    st = CjguiReadLineInsertionPointsEx(lm, anchorChar, YES, &aCount, &aPos, &aIdx);
+    if (st != CJGUI_INTERNAL_RENDERER_OK) {
+        free(pPos); free(pIdx); free(aPos); free(aIdx);
+        return st;
+    }
+    // 归并：primary 全保留；alternate 仅保留无 primary 别名（同 charIndex 且
+    // x 重合 < 0.25pt）的条目。
+    NSUInteger cap = pCount + aCount;
+    CjguiStopPoint *merged = cap ? calloc(cap, sizeof(CjguiStopPoint)) : NULL;
+    if (cap && !merged) {
+        free(pPos); free(pIdx); free(aPos); free(aIdx);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    NSUInteger n = 0;
+    for (NSUInteger i = 0; i < pCount; i++) {
+        merged[n].charIndex = pIdx[i]; merged[n].branch = 0; merged[n].x = pPos[i]; n++;
+    }
+    for (NSUInteger i = 0; i < aCount; i++) {
+        BOOL aliased = NO;
+        for (NSUInteger j = 0; j < pCount; j++) {
+            if (pIdx[j] == aIdx[i] && fabs(pPos[j] - aPos[i]) < 0.25) { aliased = YES; break; }
+        }
+        if (!aliased) {
+            merged[n].charIndex = aIdx[i]; merged[n].branch = 1; merged[n].x = aPos[i]; n++;
+        }
+    }
+    // 显示序：x 升序，稳定。
+    for (NSUInteger i = 1; i < n; i++) {
+        CjguiStopPoint key = merged[i];
+        NSUInteger j = i;
+        while (j > 0 && merged[j - 1].x > key.x) { merged[j] = merged[j - 1]; j--; }
+        merged[j] = key;
+    }
+    free(pPos); free(pIdx); free(aPos); free(aIdx);
+    outLine->points = merged;
+    outLine->count = n;
+    outLine->lineLocation = lineCharRange.location;
+    outLine->lineLength = lineCharRange.length;
+    outLine->lineGlyphRange = lineGlyphRange;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// 在停靠点行内找 charIndex 的条目；branchIn(2=AUTO) 时取**首选**（primary 优先，
+// 无 primary 条目才取 alternate），branchIn 0/1 时精确匹配该分支。
+static BOOL CjguiStopLineFind(const CjguiStopLine *line, NSUInteger charIndex,
+                              uint32_t branchIn, NSUInteger *outOrdinal) {
+    NSUInteger best = NSNotFound;
+    for (NSUInteger i = 0; i < line->count; i++) {
+        if (line->points[i].charIndex != charIndex) continue;
+        if (branchIn == 2) {
+            if (best == NSNotFound || line->points[i].branch == 0) best = i;
+            if (line->points[i].branch == 0) break;
+        } else if (line->points[i].branch == branchIn) {
+            best = i; break;
+        }
+    }
+    if (best == NSNotFound) return NO;
+    *outOrdinal = best;
+    return YES;
+}
 
 // Forward declaration: the UTF-8 byte -> UTF-16 offset helper is defined below
 // its first use in the accepted-caret query, so it must be declared before that
 // caller (C99 forbids implicit function declarations).
 static NSUInteger CjguiComposableUtf16OffsetForByte(const char *utf8, NSUInteger utf8Length, NSUInteger byteOffset);
 
-// Prepares the shared layout for one text node with the exact attributes the
-// per-tile `drawWithRect` path used (same font, color, paragraph break mode,
-// and inset rect), so glyph-range tile drawing renders identical pixels.
-// 2026-09-26(B2):**只读**查询 —— 由节点上**已持留**的 accepted 排版产物求 caret 矩形。
-// 组合全程使用本文件既有 AppKit 用法(:6525 行矩形 / :6536 字形位置),**不新建临时布局**,
-// 因而不会重排(契约 implementation order 2)。返回 NO 时调用方应给出具名 pending(不得静默零矩形)。
-
-static BOOL CjguiComposableAcceptedTextCaretRect(CJGuiInternalComposableSceneNode *node,
-                                                 NSUInteger displayByte, CGFloat caretWidthPt,
-                                                 NSRect *outRect) {
-    if (!node || !outRect) return NO;
-    CjguiPreparedTextNodeLayout *prepared = node.preparedTextLayout;
-    if (!prepared || !prepared.layoutManager || !prepared.container) return NO;
-    NSLayoutManager *layoutManager = prepared.layoutManager;
-    NSUInteger glyphCount = layoutManager.numberOfGlyphs;
-    NSUInteger storageLength = prepared.storage.length;
-    // displayByte is a UTF-8 BYTE offset; TextKit wants UTF-16 character indices.
-    // Passing bytes as characters misplaces the caret on CJK text (3-byte chars
-    // shift it ~2 chars late — measured on a 4-char CJK title).
-    NSUInteger character = MIN(displayByte, storageLength);
-    NSString *storageText = prepared.storage.string;
-    const char *storageUtf8 = storageText.UTF8String;
-    if (storageUtf8) {
-        character = MIN((NSUInteger)CjguiComposableUtf16OffsetForByte(
-            storageUtf8, strlen(storageUtf8), (uint32_t)displayByte), storageLength);
-    }
-    if (glyphCount == 0) {
-        // An empty value still has a caret: the writer has to see where the first
-        // character will land. Returning NO here made an empty paragraph look
-        // unfocused, and a document whose first line is empty lost the caret on
-        // click. There is no glyph to measure, so the position is the container's
-        // own origin and the height is the line height captured at prepare time —
-        // asking the storage for the attribute at index 0 throws on zero length.
-        *outRect = NSMakeRect(prepared.textRect.origin.x, prepared.textRect.origin.y,
-                              caretWidthPt, prepared.defaultLineHeight);
-        return YES;
-    }
-    NSUInteger glyph = MIN([layoutManager glyphIndexForCharacterAtIndex:MIN(character, storageLength)],
-                           glyphCount - 1);
-    NSRange lineGlyphRange = NSMakeRange(0, 0);
-    NSRect line = [layoutManager lineFragmentRectForGlyphAtIndex:glyph effectiveRange:&lineGlyphRange];
-    if (NSIsEmptyRect(line)) {
-        glyph = glyphCount - 1;
-        line = [layoutManager lineFragmentRectForGlyphAtIndex:glyph effectiveRange:&lineGlyphRange];
-    }
-    CGFloat caretOriginX = prepared.textRect.origin.x +
-        [layoutManager locationForGlyphAtIndex:glyph].x;
-    // A position at or past the last character of its line fragment has no glyph
-    // to stand on: it belongs at the END of the laid-out part of that line. Taking
-    // the first unlabelled glyph's origin instead put the caret before the last
-    // character the moment the value ended (and before the wrapped word at an
-    // end-of-line caret).
-    NSRange lineCharacterRange = [layoutManager characterRangeForGlyphRange:lineGlyphRange
-                                                          actualGlyphRange:NULL];
-    if (character >= NSMaxRange(lineCharacterRange)) {
-        NSRect used = [layoutManager lineFragmentUsedRectForGlyphAtIndex:glyph effectiveRange:NULL];
-        caretOriginX = prepared.textRect.origin.x + used.origin.x + used.size.width;
-        // A value ending in a newline owns one more, empty line: TextKit reports it
-        // as the extra fragment after that glyph, and the caret belongs at its start.
-        // This applies only at the END of the value. `extraLineFragmentRect` is a
-        // single layout-wide property, so a caret parked at the end of an interior
-        // line ("abc|" before its '\n') would otherwise be dragged down to that
-        // trailing empty line.
-        NSRect extra = layoutManager.extraLineFragmentRect;
-        if (character >= storageLength && !NSIsEmptyRect(extra)) {
-            caretOriginX = prepared.textRect.origin.x + extra.origin.x;
-            line = extra;
-        }
-    }
-    *outRect = NSMakeRect(caretOriginX, prepared.textRect.origin.y + line.origin.y,
-                          caretWidthPt, line.size.height);
-    return YES;
-}
+// Accepted caret geometry is resolved by text_position_v1 below, using the
+// same canonical stop records as hit and visual navigation.
 
 // A presentation style run: display byte range plus the attributes to apply over
 // it. The product composes nesting into one flat, non-overlapping list, so the
@@ -5579,7 +5804,9 @@ static NSAttributedString *CjguiComposableAttributedText(CJGuiInternalComposable
     uint32_t runCount);
 static CjguiPreparedTextNodeLayout *CjguiPrepareTextNodeLayout(
     CJGuiInternalComposableSceneNode *node, NSString *displayText, CGFloat scaleX,
-    NSData *styleRunData) {
+    NSData *styleRunData, CJGuiInternalSession *diagnosticSession) {
+    BOOL timing = diagnosticSession && diagnosticSession.diagnosticTimingEnabled;
+    uint64_t timingStarted = timing ? CjguiDiagnosticMonotonicNanoseconds() : 0;
     NSRect bounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
     CGFloat verticalInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
     NSRect textRect = NSInsetRect(bounds, 7.0, verticalInset);
@@ -5635,6 +5862,17 @@ static CjguiPreparedTextNodeLayout *CjguiPrepareTextNodeLayout(
     prepared.container = container;
     prepared.textRect = textRect;
     prepared.defaultLineHeight = ceil([layoutManager defaultLineHeightForFont:baseFont]);
+    static uint64_t nextPositionLease = 0; // AppKit work is serialized on main.
+    prepared.positionLease = ++nextPositionLease;
+    prepared.diagnosticSession = diagnosticSession;
+    if (diagnosticSession) {
+        diagnosticSession.positionPrepareCount = CjguiSaturatingAddU64(
+            diagnosticSession.positionPrepareCount, 1);
+        if (timing) diagnosticSession.positionPrepareNanoseconds = CjguiSaturatingAddU64(
+            diagnosticSession.positionPrepareNanoseconds,
+            CjguiDiagnosticMonotonicNanoseconds() - timingStarted);
+    }
+    prepared.positionLines = [NSMutableDictionary dictionary];
     return prepared;
 }
 
@@ -5759,6 +5997,9 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
                                                         ) {
     if (outByteCount) *outByteCount = 0;
     uint64_t rasterStarted = CjguiMonotonicMicros();
+    CJGuiInternalSession *diagnosticSession = CjguiLookupSession(metalView.sessionToken);
+    BOOL diagnosticTiming = diagnosticSession && diagnosticSession.diagnosticTimingEnabled;
+    uint64_t diagnosticRasterStarted = diagnosticTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
     if (!metalView.device || !node || node.node.width <= 0 || node.node.height <= 0) return nil;
     NSString *text = displayText ?: @"";
     if (text.length == 0 || node.node.textAlpha <= 0.0) return nil;
@@ -5919,6 +6160,9 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
         return nil;
     }
     uint64_t workloadUploadStarted = CjguiMonotonicMicros();
+    uint64_t diagnosticUploadStarted = diagnosticTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
+    if (diagnosticTiming) diagnosticSession.diagnosticRasterNanoseconds = CjguiSaturatingAddU64(
+        diagnosticSession.diagnosticRasterNanoseconds, diagnosticUploadStarted - diagnosticRasterStarted);
     metalView.textRasterCount = CjguiSaturatingAddU64(metalView.textRasterCount, 1);
     metalView.textRasterBytes = CjguiSaturatingAddU64(metalView.textRasterBytes, byteCount);
     metalView.textRasterMicros = CjguiSaturatingAddU64(metalView.textRasterMicros,
@@ -5933,6 +6177,9 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
                                                                        uploadStarted - rasterStarted);
 #endif
     [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0 withBytes:bgra.bytes bytesPerRow:bytesPerRow];
+    uint64_t diagnosticUploadEnded = diagnosticTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
+    if (diagnosticTiming) diagnosticSession.diagnosticUploadNanoseconds = CjguiSaturatingAddU64(
+        diagnosticSession.diagnosticUploadNanoseconds, diagnosticUploadEnded - diagnosticUploadStarted);
     uint64_t workloadUploadEnded = CjguiMonotonicMicros();
     metalView.textUploadCount = CjguiSaturatingAddU64(metalView.textUploadCount, 1);
     metalView.textUploadBytes = CjguiSaturatingAddU64(metalView.textUploadBytes, byteCount);
@@ -5966,7 +6213,18 @@ static id<MTLTexture> CjguiComposableTextTexture(CJGuiInternalMetalView *metalVi
     NSArray<NSValue *> *tiles = CjguiPlanComposableTextTiles(textureRect,
         CjguiComposableTextNodeLayoutRect(node), scaleX, &plannedBytes);
     if (tiles.count == 0 || plannedBytes == 0) return nil;
-    if (CjguiComposableTextTilesAlreadyCovered(node, key, tiles, scaleX)) {
+    // M1（resize 层失效）：tile 覆盖提前复用同样要求**容器宽度未变**——同文字
+    // 改宽时 tile 纹理可逐像素复用，但持留排版必须按新宽度重排，否则几何查询
+    // 以旧宽度排版作答。
+    BOOL retainedLayoutWidthMatches = NO;
+    if (node.preparedTextLayout.container) {
+        NSRect coverBounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
+        CGFloat coverInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
+        retainedLayoutWidthMatches =
+            fabs(node.preparedTextLayout.container.size.width -
+                 NSWidth(NSInsetRect(coverBounds, 7.0, coverInset))) < 0.001;
+    }
+    if (retainedLayoutWidthMatches && CjguiComposableTextTilesAlreadyCovered(node, key, tiles, scaleX)) {
         node.textTileRects = tiles.count > 1 ? tiles : nil;
         node.textTextureRect = tiles.count == 1 ? tiles.firstObject.rectValue : CjguiComposableTextTileUnion(tiles);
         node.textTileLayoutOrigin = NSMakePoint((CGFloat)node.node.x, (CGFloat)node.node.y);
@@ -5982,12 +6240,24 @@ static id<MTLTexture> CjguiComposableTextTexture(CJGuiInternalMetalView *metalVi
     // "取自绘制实际使用的 accepted 排版、且查询不重排",故每个文本节点都必须有可查索引;
     // 原先只覆盖多行 / 多 tile,导致单 tile 文本走 drawWithRect、查询恒得 GEOMETRY_EMPTY(实测 2 MiB 夹具)。
     BOOL needsSharedLayout = YES;
-    CjguiPreparedTextNodeLayout *sharedLayout = [node.textTextureCacheKey isEqualToString:key]
+    // M1（resize 层失效）：持留排版只在**容器宽度未变**时复用——缓存键含文字/
+    // 样式/缩放但不含节点宽度，同文字改宽（resize）会把旧宽度排的版当当前事实
+    // 回答（native 反例：宽 160→320 后同字节区段行数不变）。
+    CGFloat reusedContentWidth = 0.0;
+    if (node.preparedTextLayout.container) {
+        NSRect reuseBounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
+        CGFloat reuseInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
+        reusedContentWidth = NSWidth(NSInsetRect(reuseBounds, 7.0, reuseInset));
+    }
+    CjguiPreparedTextNodeLayout *sharedLayout =
+        ([node.textTextureCacheKey isEqualToString:key] && node.preparedTextLayout.container &&
+         fabs(node.preparedTextLayout.container.size.width - reusedContentWidth) < 0.001)
         ? node.preparedTextLayout : nil;
     if (!sharedLayout) sharedLayout = needsSharedLayout ?
         CjguiPrepareTextNodeLayout(node, displayText, scaleX,
             CjguiComposableDecodeStyleRuns(
-                [CjguiLookupSession(metalView.sessionToken) composableTextStyleRunsRaw][@(node.node.nodeId)])) : nil;
+                [CjguiLookupSession(metalView.sessionToken) composableTextStyleRunsRaw][@(node.node.nodeId)]),
+            CjguiLookupSession(metalView.sessionToken)) : nil;
 #ifdef CJGUI_INTERNAL_TESTING
     if (needsSharedLayout && metalView.testForceSharedTextLayoutNilOnce) {
         metalView.testForceSharedTextLayoutNilOnce = NO;
@@ -6339,7 +6609,7 @@ static CjguiInternalRendererStatus CjguiPrepareComposableTextResources(CJGuiInte
                 if (!node) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
                 ctx.stagedComposableNodes[index] = node;
             }
-            node.preparedTextLayout = CjguiPrepareTextNodeLayout(node, @"", scale, nil);
+            node.preparedTextLayout = CjguiPrepareTextNodeLayout(node, @"", scale, nil, ctx);
             if (ctx.composableTextLayoutPreparationCount < UINT64_MAX) {
                 ctx.composableTextLayoutPreparationCount += 1;
             }
@@ -6592,7 +6862,9 @@ static NSRect CjguiEffectGroupOutputBounds(NSArray<CJGuiInternalComposableSceneN
     }
     CjguiInternalRendererComposableNode group = nodes[start].node;
     if (group.effectMaskPresent && !NSIsEmptyRect(output))
-        output = NSIntersectionRect(output, NSMakeRect(group.x, group.y, group.width, group.height));
+        // Content, the mask shader and its allocated target share the same
+        // accepted visual coordinates, including inherited translations.
+        output = NSIntersectionRect(output, CjguiComposableVisualNodeRect(nodes[start]));
     return output;
 }
 
@@ -8065,6 +8337,7 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 // The point of the mouse-down currently being routed, so a queued interaction
 // that reports a pointer position can be stamped with it.
 @property(nonatomic, assign) NSPoint lastPointerDownPoint;
+@property(nonatomic, assign) NSUInteger lastMouseDownClickCount;
 @property(nonatomic, weak) CJGuiInternalSession *session;
 @property(nonatomic, strong) NSArray<CJGuiInternalComposableSceneNode *> *nodes;
 // M8/IME: the caret the PRODUCT drew, declared explicitly (never inferred from a run style).
@@ -8266,6 +8539,8 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 @property(nonatomic, assign) uint64_t pressedNodeId;
 @property(nonatomic, assign) int64_t pressedResourceId;
 @property(nonatomic, assign) uint32_t pressedNodeKind;
+@property(nonatomic, assign) uint64_t pressedSequence;
+@property(nonatomic, strong) CJGuiInternalComposableSceneNode *pressedRoutingNode;
 @property(nonatomic, assign) BOOL pressedCancelled;
 @property(nonatomic, assign) CGFloat pressedX;
 @property(nonatomic, assign) CGFloat pressedY;
@@ -8623,6 +8898,47 @@ static BOOL CjguiEmitProxyCompositionPhase(CJGuiInternalComposableInputProxy *pr
 
 static BOOL CjguiAccessibilitySameText(NSString *left, NSString *right) {
     return left == right || (left != nil && right != nil && [left isEqualToString:right]);
+}
+
+// Opt-in scalar input observations, bounded per process. They never fetch an
+// event, mutate a window/press, request a frame, or claim physical display time.
+static void CjguiTraceWindowInputGeometry(CJGuiInternalSession *session, const char *phase, NSEvent *event) {
+    if (!session || getenv("CJGUI_TRACE_POINTER_GEOMETRY") == NULL) return;
+    static uint32_t count = 0, skippedCount = 0;
+    if (strcmp(phase, "owner_skip") == 0) {
+        if (skippedCount >= 64) return;
+        skippedCount += 1;
+    }
+    if (count >= 512) return;
+    count += 1;
+    NSRect frame = session.window.frame;
+    BOOL mouseEvent = event && (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeLeftMouseUp ||
+        event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeMouseMoved ||
+        event.type == NSEventTypeRightMouseDown || event.type == NSEventTypeRightMouseUp ||
+        event.type == NSEventTypeRightMouseDragged || event.type == NSEventTypeOtherMouseDown ||
+        event.type == NSEventTypeOtherMouseUp || event.type == NSEventTypeOtherMouseDragged);
+    NSPoint point = mouseEvent ? event.locationInWindow : NSZeroPoint;
+    NSPoint actualPoint = session.window.mouseLocationOutsideOfEventStream;
+    NSPoint globalPoint = NSEvent.mouseLocation;
+    NSString *runloopMode = NSRunLoop.currentRunLoop.currentMode;
+    fprintf(stderr, "CJGUI_POINTER_GEOMETRY sample=%u phase=%s session=%llu scene=%llu resize=%llu "
+        "in_live=%d view_live=%d type=%lu pressed=%llu sequence=%llu pending=%lu "
+        "point_window=%.3f,%.3f frame_cocoa=%.3f,%.3f,%.3f,%.3f "
+        "event_window=%ld target_window=%ld event_number=%ld click_count=%ld pressure=%.3f "
+        "buttons=%llu actual_window=%.3f,%.3f actual_global_cocoa=%.3f,%.3f runloop=%s\n",
+        count, phase, (unsigned long long)session.rendererSessionToken,
+        (unsigned long long)session.composableSceneVersion, (unsigned long long)session.resizeVersion,
+        session.window.inLiveResize ? 1 : 0, session.view.inLiveResize ? 1 : 0,
+        (unsigned long)(event ? event.type : 0),
+        (unsigned long long)session.composableSceneOverlay.pressedNodeId,
+        (unsigned long long)session.composableSceneOverlay.pressedSequence,
+        (unsigned long)session.pendingInteractions.count, point.x, point.y,
+        frame.origin.x, frame.origin.y, frame.size.width, frame.size.height,
+        (long)(event ? event.windowNumber : 0), (long)session.window.windowNumber,
+        (long)(mouseEvent ? event.eventNumber : 0), (long)(mouseEvent ? event.clickCount : 0),
+        mouseEvent ? event.pressure : 0.0, (unsigned long long)NSEvent.pressedMouseButtons,
+        actualPoint.x, actualPoint.y, globalPoint.x, globalPoint.y,
+        runloopMode ? runloopMode.UTF8String : "none");
 }
 
 @implementation CJGuiInternalComposableSceneOverlay
@@ -9388,6 +9704,7 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
         self.hoveredNodeId = 0; self.hoveredResourceId = -1; self.hoveredNodeKind = 0;
     }
     if (self.pressedNodeId != 0 && ![self pressedPressableNode]) {
+        [self cancelPressAtPoint:NSMakePoint(self.pressedX, self.pressedY)];
         [self clearPressRouting];
     }
     if (self.dataTransferHoverNodeId != 0) {
@@ -9934,12 +10251,26 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
     }
     return nil;
 }
-- (void)routeScrollAtPoint:(NSPoint)point deltaY:(CGFloat)deltaY {
-    if (deltaY == 0.0) return;
+- (void)routeScrollAtPoint:(NSPoint)point event:(NSEvent *)event {
+    double deltaX = event.scrollingDeltaX;
+    double deltaY = event.scrollingDeltaY;
+    NSUInteger phase = event.phase;
+    NSUInteger momentum = event.momentumPhase;
+    if (!isfinite(deltaX) || !isfinite(deltaY) || fabs(deltaX) > 1000000.0 ||
+        fabs(deltaY) > 1000000.0 || phase > 63 || momentum > 63) return;
+    // A zero-ended/cancelled event carries lifecycle, not a scroll step. Keep
+    // it in the same bounded accepted-identity FIFO for opted-in consumers.
+    if (deltaX == 0.0 && deltaY == 0.0 && phase == 0 && momentum == 0) return;
     CJGuiInternalComposableSceneNode *scrollNode = [self scrollNodeContainingPoint:point];
     if (scrollNode) {
+        // NSEvent.h: precise deltas already use logical points; non-precise
+        // deltas retain their row/line unit. Do not invent a second momentum
+        // engine or convert each tiny point sample into a whole row here.
+        NSString *payload = [NSString stringWithFormat:@"cjgui-wheel-v1|%.17f|%.17f|%u|%lu|%lu",
+            deltaX, deltaY, event.hasPreciseScrollingDeltas ? 1u : 0u,
+            (unsigned long)phase, (unsigned long)momentum];
         (void)CjguiEnqueueComposableInteraction(self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SCROLL,
-                                                scrollNode.index, deltaY < 0.0 ? @"next" : @"previous", NSMakeRange(0, 0));
+                                                scrollNode.index, payload, NSMakeRange(0, 0));
     }
 }
 - (void)prepareInactiveTextResourceForFocusChange:(CJGuiInternalComposableSceneNode *)node {
@@ -10489,12 +10820,16 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
         if (candidate.node.nodeId == self.pressedNodeId &&
             candidate.node.resourceId == self.pressedResourceId &&
             candidate.node.nodeKind == self.pressedNodeKind && candidate.node.isInteractive != 0 &&
-            candidate.node.isReadOnly == 0 && CjguiComposableNodeIsPressable(candidate.node.nodeKind)) return candidate;
+            candidate.node.isReadOnly == 0 &&
+            (candidate.semanticBindingKey == self.pressedRoutingNode.semanticBindingKey ||
+             [candidate.semanticBindingKey isEqualToString:self.pressedRoutingNode.semanticBindingKey]) &&
+            CjguiComposableNodeIsPressable(candidate.node.nodeKind)) return candidate;
     }
     return nil;
 }
 - (void)clearPressRouting {
     self.pressedNodeId = 0; self.pressedResourceId = -1; self.pressedNodeKind = 0;
+    self.pressedSequence = 0; self.pressedRoutingNode = nil;
     self.pressedCancelled = NO; self.pressedX = 0.0; self.pressedY = 0.0;
     self.dataTransferSourceMouseDownEvent = nil;
 }
@@ -10522,45 +10857,59 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
 - (void)beginPressForNode:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point {
     if (!node || node.node.isInteractive == 0 || node.node.isReadOnly != 0 ||
         !CjguiComposableNodeIsPressable(node.node.nodeKind)) return;
+    if (self.pressedNodeId != 0) [self cancelPressAtPoint:NSMakePoint(self.pressedX, self.pressedY)];
     [self clearPressRouting];
+    if (self.session.nextPointerGestureEpoch == UINT64_MAX) return;
     [self focusNode:node enqueue:YES];
+    self.pressedSequence = ++self.session.nextPointerGestureEpoch;
+    self.pressedRoutingNode = node;
     self.pressedNodeId = node.node.nodeId; self.pressedResourceId = node.node.resourceId;
     self.pressedNodeKind = node.node.nodeKind; self.pressedX = point.x; self.pressedY = point.y;
-    if (!CjguiEnqueueComposablePointerInteraction(
-        self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_BEGIN, node, point)) {
+    if (!CjguiEnqueueComposableCapturedPointerInteraction(
+        self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_BEGIN, node, point,
+        self.pressedSequence)) {
         [self clearPressRouting];
     }
 }
 - (void)cancelPressAtPoint:(NSPoint)point {
-    CJGuiInternalComposableSceneNode *node = [self pressedPressableNode];
+    CJGuiInternalComposableSceneNode *node = self.pressedRoutingNode;
     if (!node) { [self clearPressRouting]; return; }
+    if (self.pressedCancelled) return;
     self.pressedCancelled = YES; self.pressedX = point.x; self.pressedY = point.y;
-    (void)CjguiEnqueueComposablePointerInteraction(
-        self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL, node, point);
+    (void)CjguiEnqueueComposableCapturedPointerInteraction(
+        self.session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL, node, point,
+        self.pressedSequence);
 }
 - (void)completePressAtPoint:(NSPoint)point {
     CJGuiInternalComposableSceneNode *pressed = [self pressedPressableNode];
-    if (!pressed) { [self clearPressRouting]; return; }
+    if (!pressed) {
+        [self cancelPressAtPoint:point];
+        [self clearPressRouting]; return;
+    }
+    uint64_t sequence = self.pressedSequence;
     CJGuiInternalComposableSceneNode *hit = [self nodeAtPoint:point];
     BOOL activates = !self.pressedCancelled && hit && hit.node.nodeId == pressed.node.nodeId &&
         hit.node.resourceId == pressed.node.resourceId && hit.node.nodeKind == pressed.node.nodeKind;
     self.pressedX = point.x; self.pressedY = point.y;
-    (void)CjguiEnqueueComposablePointerInteraction(
+    BOOL terminalQueued = CjguiEnqueueComposableCapturedPointerInteraction(
         self.session, activates ? CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_END :
-            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL, pressed, point);
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL,
+        self.pressedRoutingNode, point, sequence);
     [self clearPressRouting];
-    if (!activates) return;
+    if (!activates || !terminalQueued || sequence == 0) return;
     if (pressed.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) {
         NSString *next = [pressed.value isEqualToString:@"true"] ? @"false" : @"true";
-        (void)CjguiEnqueueComposableInteraction(self.session,
-            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index, next, NSMakeRange(0, 0));
+        if (!CjguiEnqueueComposableInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index, next, NSMakeRange(0, 0))) return;
+        self.session.pendingInteractions.lastObject.bindingEpoch = sequence;
         CjguiStampPointerModifiersOnQueuedInteraction(self.session,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index);
         CjguiStampPointerPositionOnQueuedInteraction(self.session,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED, pressed.index, point);
     } else {
-        (void)CjguiEnqueueComposableInteraction(self.session,
-            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index, @"", NSMakeRange(0, 0));
+        if (!CjguiEnqueueComposableInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index, @"", NSMakeRange(0, 0))) return;
+        self.session.pendingInteractions.lastObject.bindingEpoch = sequence;
         CjguiStampPointerModifiersOnQueuedInteraction(self.session,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE, pressed.index);
         CjguiStampPointerPositionOnQueuedInteraction(self.session,
@@ -10741,6 +11090,119 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
     [self clearDataTransferHoverAtPoint:point];
     return status == CJGUI_INTERNAL_RENDERER_OK;
 }
+// 双击=选词/簇、三击及以上=选段落。命中展开为字符范围，再取范围两端的
+// 布局位置，合成 begin→update→end 指针序列交给产品既有选区流。
+- (void)handleMultiClickSelectionForNode:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point {
+    NSString *text = CjguiComposableGpuTextValue(node);
+    if (text.length == 0) {
+        (void)[self beginPointerCaptureForNode:node atPoint:point];
+        return;
+    }
+    CjguiPreparedTextNodeLayout *prepared = node.preparedTextLayout;
+    if (!prepared || !prepared.layoutManager || !prepared.container ||
+        ![prepared.storage.string isEqualToString:text]) {
+        NSData *decoded = CjguiComposableDecodeStyleRuns(
+            self.session.composableTextStyleRunsRaw[@(node.node.nodeId)]);
+        prepared = CjguiPrepareTextNodeLayout(node, text, 1.0, decoded, self.session);
+        if (!prepared) { return; }
+        node.preparedTextLayout = prepared;
+    }
+    NSLayoutManager *lm = prepared.layoutManager;
+    NSPoint local = NSMakePoint(point.x - node.node.x - node.geometry.translateX - prepared.textRect.origin.x,
+                                point.y - node.node.y - node.geometry.translateY - prepared.textRect.origin.y);
+    NSUInteger charIndex = [lm characterIndexForPoint:local inTextContainer:prepared.container
+                        fractionOfDistanceBetweenInsertionPoints:NULL];
+    if (charIndex > text.length) charIndex = text.length;
+    NSRange range;
+    if (self.lastMouseDownClickCount >= 3) {
+        // 三击：选段落（换行到换行，无换行则全文）。
+        NSUInteger start = charIndex;
+        while (start > 0 && [text characterAtIndex:start - 1] != '\n') start--;
+        NSUInteger end = charIndex;
+        while (end < text.length && [text characterAtIndex:end] != '\n') end++;
+        if (end < text.length) end++; // 含换行
+        range = NSMakeRange(start, end - start);
+    } else {
+        // 双击：**CJK 选两个字**（苹果/华为惯例），拉丁/数字选词——先取组合簇，
+        // 判断簇内字符类型再扩展。
+        CFRange cluster = CFStringGetRangeOfComposedCharactersAtIndex((CFStringRef)text,
+            MIN(charIndex, text.length - 1));
+        NSUInteger start = cluster.location;
+        NSUInteger end = cluster.location + cluster.length;
+        unichar firstChar = [text characterAtIndex:MIN(cluster.location, text.length - 1)];
+        BOOL isCJK = (firstChar >= 0x4E00 && firstChar <= 0x9FFF) ||
+                     (firstChar >= 0x3400 && firstChar <= 0x4DBF) ||
+                     (firstChar >= 0xF900 && firstChar <= 0xFAFF);
+        if (isCJK) {
+            // CJK：恰好**两个**汉字（含此簇）；若不在文首且前一字也是 CJK，
+            // 取前一字+本字；否则取本字+后一字。不再扫到词/标点边界（曾选
+            // 到整句——用户反例：双击一下选的比较长）。
+            NSUInteger chars = 0;
+            NSUInteger scanStart = cluster.location;
+            // 向前找前一个 CJK 簇
+            if (scanStart > 0) {
+                CFRange prev = CFStringGetRangeOfComposedCharactersAtIndex(
+                    (CFStringRef)text, scanStart - 1);
+                unichar prevChar = [text characterAtIndex:prev.location];
+                BOOL prevCJK = (prevChar >= 0x4E00 && prevChar <= 0x9FFF);
+                if (prevCJK && prev.location + prev.length == scanStart) {
+                    start = prev.location;
+                    chars = 1;
+                }
+            }
+            chars += cluster.length;
+            // 向后取下一簇凑满 2 字
+            while (chars < 2 && end < text.length) {
+                CFRange next = CFStringGetRangeOfComposedCharactersAtIndex(
+                    (CFStringRef)text, end);
+                unichar nextChar = [text characterAtIndex:next.location];
+                BOOL nextCJK = (nextChar >= 0x4E00 && nextChar <= 0x9FFF);
+                if (!nextCJK || next.location != end) break;
+                end += next.length;
+                chars++;
+            }
+        } else {
+            // 拉丁/数字：向两侧扩展到词边界（空格/标点/换行）。
+            static NSCharacterSet *breakSet = nil;
+            if (!breakSet) {
+                breakSet = [NSCharacterSet characterSetWithCharactersInString:
+                    @" \t\n\r,.!?;:()[]{}\"'<>|/\\@#$%^&*_-+=~`"];
+            }
+            while (start > 0 && ![breakSet characterIsMember:[text characterAtIndex:start - 1]]) start--;
+            while (end < text.length && ![breakSet characterIsMember:[text characterAtIndex:end]]) end++;
+        }
+        range = NSMakeRange(start, end - start);
+    }
+    // 取范围两端的布局位置（局部坐标 → 场景坐标）。
+    NSUInteger startGlyph = [lm glyphIndexForCharacterAtIndex:range.location];
+    NSUInteger endGlyph = [lm glyphIndexForCharacterAtIndex:
+        MIN(NSMaxRange(range) - 1, text.length - 1)];
+    NSRect startLine, endLine;
+    startLine = [lm lineFragmentRectForGlyphAtIndex:startGlyph effectiveRange:NULL];
+    endLine = [lm lineFragmentRectForGlyphAtIndex:endGlyph effectiveRange:NULL];
+    CGFloat endX;
+    NSUInteger endCharBoundary = NSMaxRange(range);
+    if (endCharBoundary < text.length) {
+        // 范围末尾的边界=下一字符的左缘（曾取末字左缘——产品命中解析到该
+        // 字前边界，选区因此只含一个字——用户反例：双击只选一个字）。
+        NSUInteger nextGlyph = [lm glyphIndexForCharacterAtIndex:endCharBoundary];
+        endX = [lm locationForGlyphAtIndex:nextGlyph].x;
+    } else {
+        NSRect usedRect = [lm lineFragmentUsedRectForGlyphAtIndex:endGlyph effectiveRange:NULL];
+        endX = NSMaxX(usedRect);
+    }
+    NSPoint startPos = NSMakePoint(
+        [lm locationForGlyphAtIndex:startGlyph].x + node.node.x + node.geometry.translateX + prepared.textRect.origin.x,
+        NSMidY(startLine) + node.node.y + node.geometry.translateY + prepared.textRect.origin.y);
+    NSPoint endPos = NSMakePoint(
+        endX + node.node.x + node.geometry.translateX + prepared.textRect.origin.x,
+        NSMidY(endLine) + node.node.y + node.geometry.translateY + prepared.textRect.origin.y);
+    // 展开 begin→update→end：产品既有拖选流按 anchor=start、caret=end 建选区。
+    if (![self beginPointerCaptureForNode:node atPoint:startPos]) return;
+    (void)[self updatePointerCaptureAtPoint:endPos];
+    [self endPointerCaptureAtPoint:endPos cancelled:NO];
+}
+
 - (BOOL)beginPointerCaptureForNode:(CJGuiInternalComposableSceneNode *)node atPoint:(NSPoint)point {
     if (!node || node.node.isInteractive == 0 || node.node.isReadOnly != 0 ||
         !CjguiComposableNodeAcceptsPointerCapture(node.node.nodeKind)) return NO;
@@ -10812,6 +11274,14 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
     uint32_t kind = node.node.nodeKind;
     if (node.node.isInteractive == 0) return;
     if (CjguiComposableNodeAcceptsPointerCapture(kind)) {
+        // 多击选词/选段（用户报告缺失）：双击选词/簇、三击选段落——展开为
+        // begin(起点)→update(终点)→end(终点) 的指针序列，走产品**既有**拖选
+        // 流（不改 Node/Event ABI）。
+        if (self.lastMouseDownClickCount >= 2 &&
+            kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT) {
+            [self handleMultiClickSelectionForNode:node atPoint:point];
+            return;
+        }
         (void)[self beginPointerCaptureForNode:node atPoint:point];
         return;
     }
@@ -10868,11 +11338,46 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
 }
 - (void)mouseDown:(NSEvent *)event {
     self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
+    self.lastMouseDownClickCount = event.clickCount;
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if (self.session.composableContextMenuGuardEnabled &&
+        self.session.composableContextMenuGuardSceneVersion == self.session.composableSceneVersion &&
+        !NSPointInRect(point, self.session.composableContextMenuGuardBounds)) {
+        CJGuiInternalComposableSceneNode *layerNode = nil;
+        for (CJGuiInternalComposableSceneNode *candidate in self.nodes) {
+            if (candidate.node.nodeId == self.session.composableContextMenuGuardLayerNodeId &&
+                candidate.node.resourceId == self.session.composableContextMenuGuardResourceId &&
+                candidate.node.nodeKind == self.session.composableContextMenuGuardNodeKind &&
+                candidate.node.inputScope == self.session.composableContextMenuGuardLayerScope) {
+                layerNode = candidate;
+                break;
+            }
+        }
+        if (layerNode) {
+            NSString *reason = [NSString stringWithFormat:@"outside:%llu",
+                (unsigned long long)self.session.composableContextMenuGuardRequestId];
+            BOOL queued = CjguiEnqueueComposableInteraction(self.session,
+                CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
+                layerNode.index, reason, NSMakeRange(0, 0));
+            if (queued) {
+                CjguiStampPointerPositionOnQueuedInteraction(self.session,
+                    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER, layerNode.index, point);
+                CjguiStampPointerModifiersOnQueuedInteraction(self.session,
+                    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER, layerNode.index);
+            }
+            // On a full FIFO, the native overflow notice is the only accepted
+            // result; never leak this same press through to selection/focus.
+            return;
+        }
+    }
     [self updateHoverAtPoint:point];
     CJGuiInternalComposableSceneNode *node = [self nodeAtPoint:point];
     if (node) {
+        self.lastPointerDownPoint = point;
+        NSUInteger firstPendingIndex = self.session.pendingInteractions.count;
         [self mouseDownForNode:node atPoint:point];
+        CjguiStampPointerPositionOnRecentQueuedInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS, node.index, point, firstPendingIndex);
         if (self.pressedNodeId == node.node.nodeId &&
             [self dataTransferItemForNode:node role:CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE]) {
             self.dataTransferSourceMouseDownEvent = event;
@@ -10880,6 +11385,17 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
     } else {
         [self clearDraggingSelection];
     }
+}
+- (void)rightMouseDown:(NSEvent *)event {
+    // A context-menu request is an intent only. Keep the currently accepted
+    // selection/focus untouched and stamp the same copied identity and
+    // pointer coordinates used by the bounded composable interaction FIFO.
+    self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    CJGuiInternalComposableSceneNode *node = [self nodeAtPoint:point];
+    if (!node) return;
+    (void)CjguiEnqueueComposableCapturedPointerInteraction(self.session,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST, node, point, 0);
 }
 - (void)mouseDragged:(NSEvent *)event {
     self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
@@ -10930,6 +11446,7 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
     [self setNeedsDisplay:YES];
 }
 - (void)mouseUp:(NSEvent *)event {
+    CjguiTraceWindowInputGeometry(self.session, "overlay_up", event);
     self.session.pointerModifierFlags = (int64_t)event.modifierFlags;
     if (self.pointerCaptureActive) {
         NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
@@ -10993,7 +11510,7 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
         [self scrollActiveMultiline:active deltaY:event.scrollingDeltaY];
         return;
     }
-    [self routeScrollAtPoint:point deltaY:event.scrollingDeltaY];
+    [self routeScrollAtPoint:point event:event];
 }
 - (BOOL)textView:(NSTextView *)textView shouldChangeTextInRange:(NSRange)affectedCharRange
  replacementString:(NSString *)replacementString {
@@ -11292,6 +11809,46 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
 
 - (BOOL)textView:(NSTextView *)textView doCommandBySelector:(SEL)selector {
     (void)textView;
+    // A1 统一普通文字意图（Astra Q5）：会话拥有的文字表面（source 绑定节点或
+    // 呈现 TEXT）的删除/移动/Shift 扩选选择器不再让 NSTextView 默认执行（那
+    // 会在代理本地再改一遍正文），而是入队同一条 NAVIGATE 意图，由 Cangjie
+    // 侧的共同处理器唯一裁决；返回 YES 表示本选择器已被消费。
+    {
+        NSString *plainIntent = nil;
+        NSEventModifierFlags intentFlags = 0;
+        if (selector == @selector(deleteBackward:)) plainIntent = @"deleteBackward";
+        else if (selector == @selector(deleteForward:)) plainIntent = @"deleteForward";
+        else if (selector == @selector(moveLeft:)) plainIntent = @"left";
+        else if (selector == @selector(moveRight:)) plainIntent = @"right";
+        else if (selector == @selector(moveUp:)) plainIntent = @"up";
+        else if (selector == @selector(moveDown:)) plainIntent = @"down";
+        else if (selector == @selector(moveLeftAndModifySelection:)) {
+            plainIntent = @"left";
+            intentFlags = NSEventModifierFlagShift;
+        } else if (selector == @selector(moveRightAndModifySelection:)) {
+            plainIntent = @"right";
+            intentFlags = NSEventModifierFlagShift;
+        } else if (selector == @selector(moveUpAndModifySelection:)) {
+            plainIntent = @"up";
+            intentFlags = NSEventModifierFlagShift;
+        } else if (selector == @selector(moveDownAndModifySelection:)) {
+            plainIntent = @"down";
+            intentFlags = NSEventModifierFlagShift;
+        }
+        if (plainIntent && ([self activeNodeOwnsCompositionSession] ||
+                            [self composableActiveNodeIsPresentationText])) {
+            CJGuiInternalComposableSceneNode *active = [self activeFocusableNode];
+            if (active) {
+                (void)CjguiEnqueueComposableInteraction(self.session,
+                                                        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                                        active.index, plainIntent, NSMakeRange(0, 0));
+                CjguiStampKeyboardModifiersOnQueuedInteraction(self.session,
+                                                               CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                                               active.index, intentFlags);
+                return YES;
+            }
+        }
+    }
     if (selector == @selector(saveDocument:) || selector == @selector(saveDocumentAs:)) {
         return CjguiEnqueueComposableShortcut(self.session, @"shortcut:command+s");
     }
@@ -11356,10 +11913,62 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     if (!CjguiComposableActiveScopeDeclaresShortcut(self.session, shortcut)) return NO;
     return CjguiEnqueueComposableShortcut(self.session, shortcut);
 }
+// Command 修饰键**先于**菜单系统到达这里（keyDown 在菜单匹配之后——Cmd+Z
+// 曾被菜单的 Undo 项发给空 undoManager，keyDown 从未被调）。自绘编辑器的
+// undo/redo/剪贴板快捷键在此入队 NAVIGATE 意图给 Cangjie。
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    if (event.keyCode == 6 &&
+        (event.modifierFlags & NSEventModifierFlagCommand)) {
+        NSString *intent = (event.modifierFlags & NSEventModifierFlagShift)
+            ? @"redo" : @"undo";
+        CJGuiInternalComposableSceneNode *active =
+            [self capturedPointerNode] ?: [self activeFocusableNode];
+        if (!active) {
+            for (CJGuiInternalComposableSceneNode *candidate in self.nodes) {
+                if (candidate.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT) {
+                    active = candidate; break;
+                }
+            }
+        }
+        NSUInteger nodeIndex = active ? active.index : 0;
+        (void)CjguiEnqueueComposableInteraction(self.session,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+            nodeIndex, intent, NSMakeRange(0, 0));
+        fprintf(stderr, "CJGUI_PKEQ undo intent=%s nodeIndex=%lu\n",
+            intent.UTF8String, (unsigned long)nodeIndex);
+        return YES;
+    }
+    return NO;
+}
+
 - (void)keyDown:(NSEvent *)event {
 #ifdef CJGUI_INTERNAL_TESTING
     self.testKeyDownReceiptCount += 1;
 #endif
+    // Cmd+Z undo / Cmd+Shift+Z redo：菜单 Undo 项的 undoManager 空时禁用、
+    // keyDown 被调（菜单未消费）；用 keyCode 匹配（CGEvent characters 空）。
+    if (event.modifierFlags & NSEventModifierFlagCommand) {
+        if (event.keyCode == 6) { // z
+            NSString *intent = (event.modifierFlags & NSEventModifierFlagShift)
+                ? @"redo" : @"undo";
+            CJGuiInternalComposableSceneNode *active =
+                [self capturedPointerNode] ?: [self activeFocusableNode];
+            if (!active) {
+                for (CJGuiInternalComposableSceneNode *candidate in self.nodes) {
+                    if (candidate.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT) {
+                        active = candidate; break;
+                    }
+                }
+            }
+            NSUInteger nodeIndex = active ? active.index : 0;
+            (void)CjguiEnqueueComposableInteraction(self.session,
+                CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                nodeIndex, intent, NSMakeRange(0, 0));
+            fprintf(stderr, "CJGUI_UNDO_KEY intent=%s nodeIndex=%lu\n",
+                intent.UTF8String, (unsigned long)nodeIndex);
+            return;
+        }
+    }
     if (CjguiDataTransferTraceEnabled() &&
         (CjguiEventIsExactCommandCharacter(event, @"c") ||
          CjguiEventIsExactCommandCharacter(event, @"v"))) {
@@ -11372,6 +11981,62 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     if (event.keyCode == 53 && self.pointerCaptureActive) {
         [self endPointerCaptureAtPoint:NSMakePoint(self.pointerCaptureX, self.pointerCaptureY) cancelled:YES];
         return;
+    }
+    // 复制/剪切/粘贴/全选（自绘编辑器操作入口——用户报告缺失；系统菜单被
+    // 隐藏代理屏蔽）。在有活动文字选区/焦点的表面拦截并驱动代理剪贴板，
+    // 然后走**既有** TEXT_RANGE_CHANGED / SELECTION_CHANGED 事件链。
+    if ((event.modifierFlags & NSEventModifierFlagCommand) == NSEventModifierFlagCommand) {
+        NSString *key = event.charactersIgnoringModifiers.lowercaseString;
+        CJGuiInternalComposableSceneNode *activeNode = [self capturedPointerNode] ?: [self activeFocusableNode];
+        if (activeNode && [key isEqualToString:@"c"] &&
+            self.inputProxy.selectedRange.length > 0) {
+            NSString *sel = [self.inputProxy.string substringWithRange:self.inputProxy.selectedRange];
+            NSPasteboard *pb = [NSPasteboard generalPasteboard];
+            [pb clearContents]; [pb writeObjects:@[sel]];
+            return;
+        }
+        if (activeNode && [key isEqualToString:@"x"] &&
+            self.inputProxy.selectedRange.length > 0) {
+            NSString *sel = [self.inputProxy.string substringWithRange:self.inputProxy.selectedRange];
+            NSPasteboard *pb = [NSPasteboard generalPasteboard];
+            [pb clearContents]; [pb writeObjects:@[sel]];
+            // 剪切 = 复制 + 删除选区（走代理 shouldChangeTextInRange 链）
+            [self.inputProxy shouldChangeTextInRange:self.inputProxy.selectedRange
+                                   replacementString:@""];
+            self.inputProxy.selectedRange = NSMakeRange(self.inputProxy.selectedRange.location, 0);
+            return;
+        }
+        if (activeNode && [key isEqualToString:@"v"]) {
+            NSPasteboard *pb = [NSPasteboard generalPasteboard];
+            NSString *content = [pb stringForType:NSPasteboardTypeString];
+            if (content.length > 0) {
+                NSRange target = self.inputProxy.selectedRange;
+                [self.inputProxy shouldChangeTextInRange:target
+                                       replacementString:content];
+                self.inputProxy.selectedRange =
+                    NSMakeRange(target.location + content.length, 0);
+            }
+            return;
+        }
+        if (activeNode && [key isEqualToString:@"a"]) {
+            self.inputProxy.selectedRange = NSMakeRange(0, self.inputProxy.string.length);
+            return;
+        }
+        // Cmd+Z undo / Cmd+Shift+Z redo：隐藏代理 undoManager 无条目、
+        // `undo:` selector 的 WINDOW_COMMAND(34) 不达 Cangjie——直接入队
+        // NAVIGATE 意图给产品 kind-35 处理器（与 left/right 同通道）。
+        if ([key isEqualToString:@"z"]) {
+            CJGuiInternalComposableSceneNode *nav =
+                [self capturedPointerNode] ?: [self activeFocusableNode];
+            if (nav) {
+                NSString *intent = (event.modifierFlags & NSEventModifierFlagShift)
+                    ? @"redo" : @"undo";
+                (void)CjguiEnqueueComposableInteraction(self.session,
+                    CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                    nav.index, intent, NSMakeRange(0, 0));
+                return;
+            }
+        }
     }
     if ([self handleWindowCommandKeyDown:event]) {
         return;
@@ -11438,10 +12103,32 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
         }
         return;
     }
+    if (event.keyCode == 53 && self.session.composableContextMenuGuardEnabled) {
+        // Opening a context menu preserves the text focus. Dismiss the exact
+        // accepted menu layer rather than requiring that focus to move into
+        // its scope; an expired guard must never target a replacement layer.
+        if (self.session.composableContextMenuGuardSceneVersion == self.session.composableSceneVersion) {
+            for (CJGuiInternalComposableSceneNode *layer in self.nodes) {
+                if (layer.node.nodeId == self.session.composableContextMenuGuardLayerNodeId &&
+                    layer.node.resourceId == self.session.composableContextMenuGuardResourceId &&
+                    layer.node.nodeKind == self.session.composableContextMenuGuardNodeKind &&
+                    layer.node.inputScope == self.session.composableContextMenuGuardLayerScope) {
+                    NSString *reason = [NSString stringWithFormat:@"escape:%llu",
+                        (unsigned long long)self.session.composableContextMenuGuardRequestId];
+                    (void)CjguiEnqueueComposableInteraction(self.session,
+                        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
+                        layer.index, reason, NSMakeRange(0, 0));
+                    break;
+                }
+            }
+        }
+        return;
+    }
     if (event.keyCode == 53 && active && active.node.inputScope != 0) {
+        NSString *dismissReason = @"escape";
         (void)CjguiEnqueueComposableInteraction(self.session,
                                                 CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
-                                                active.index, @"escape", NSMakeRange(0, 0));
+                                                active.index, dismissReason, NSMakeRange(0, 0));
         return;
     }
     if (!activeIsText && active) {
@@ -12035,8 +12722,11 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                                    {
     if (outByteCount) *outByteCount = 0;
     if (outTextureRect) *outTextureRect = NSZeroRect;
-    uint64_t rasterStarted = CjguiMonotonicMicros();
     CJGuiInternalMetalView *metalView = self.session.view;
+    uint64_t rasterStarted = CjguiMonotonicMicros();
+    CJGuiInternalSession *diagnosticSession = CjguiLookupSession(metalView.sessionToken);
+    BOOL diagnosticTiming = diagnosticSession && diagnosticSession.diagnosticTimingEnabled;
+    uint64_t diagnosticRasterStarted = diagnosticTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
     if (!metalView || !node || node.node.width <= 0 || node.node.height <= 0) return nil;
     if (NSIsEmptyRect(textureRect)) return nil;
     NSUInteger width = 0, height = 0, bytesPerRow = 0;
@@ -12146,6 +12836,9 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     if (!texture) { CjguiDropTextCpuScratch(metalView, byteCount); return nil; }
     uint64_t textureCreateMicros = CjguiMonotonicMicros() - textureCreateStarted;
     uint64_t workloadUploadStarted = CjguiMonotonicMicros();
+    uint64_t diagnosticUploadStarted = diagnosticTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
+    if (diagnosticTiming) diagnosticSession.diagnosticRasterNanoseconds = CjguiSaturatingAddU64(
+        diagnosticSession.diagnosticRasterNanoseconds, diagnosticUploadStarted - diagnosticRasterStarted);
     metalView.textRasterCount = CjguiSaturatingAddU64(metalView.textRasterCount, 1);
     metalView.textRasterBytes = CjguiSaturatingAddU64(metalView.textRasterBytes, byteCount);
     metalView.textRasterMicros = CjguiSaturatingAddU64(metalView.textRasterMicros,
@@ -12163,6 +12856,9 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                                                                        uploadStarted - rasterStarted);
 #endif
     [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0 withBytes:bgra.bytes bytesPerRow:bytesPerRow];
+    uint64_t diagnosticUploadEnded = diagnosticTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
+    if (diagnosticTiming) diagnosticSession.diagnosticUploadNanoseconds = CjguiSaturatingAddU64(
+        diagnosticSession.diagnosticUploadNanoseconds, diagnosticUploadEnded - diagnosticUploadStarted);
     uint64_t workloadUploadEnded = CjguiMonotonicMicros();
     metalView.textUploadCount = CjguiSaturatingAddU64(metalView.textUploadCount, 1);
     metalView.textUploadBytes = CjguiSaturatingAddU64(metalView.textUploadBytes, byteCount);
@@ -14625,10 +15321,8 @@ static void CjguiTestHookOnMainThread(dispatch_block_t block) {
 
 void cjgui_internal_renderer_enable_main_thread_dispatch(void) {
     if (CjguiIsMainThread()) {
-        gCjguiMainThreadDispatchEnabled = YES;
-#ifdef CJGUI_INTERNAL_TESTING
-        gCjguiMainThreadDispatchEverEnabled = YES;
-#endif
+        atomic_store_explicit(&gCjguiLauncherOwnsEventLoop, true, memory_order_release);
+        atomic_store_explicit(&gCjguiMainThreadDispatchEnabled, true, memory_order_release);
     }
 }
 
@@ -14636,7 +15330,8 @@ void cjgui_internal_renderer_enable_main_thread_dispatch(void) {
 CjguiInternalRendererStatus cjgui_internal_renderer_test_set_main_thread_dispatch_enabled(int enabled) {
     // Only a launcher-owned, already-running AppKit loop may be gated. A bare
     // cjc process has no main-queue consumer and must not dispatch_sync here.
-    if (!gCjguiMainThreadDispatchEverEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+    if (!atomic_load_explicit(&gCjguiLauncherOwnsEventLoop, memory_order_acquire))
+        return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
     if (CjguiIsMainThread()) {
         gCjguiMainThreadDispatchEnabled = enabled != 0;
     } else {
@@ -15031,9 +15726,8 @@ static void CjguiAddStandardApplicationMenus(NSMenu *mainMenu,
 
     NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
     editMenu.autoenablesItems = NO;
-    CjguiAddStandardMenuItem(editMenu, @"Undo", @selector(undo:), @"z", NSEventModifierFlagCommand);
-    CjguiAddStandardMenuItem(editMenu, @"Redo", @selector(redo:), @"z",
-                             NSEventModifierFlagCommand | NSEventModifierFlagShift);
+    // 标准 Undo/Redo 菜单项退役：它们把 Cmd+Z 发给空 undoManager 并阻止
+    // keyDown 收到事件。撤销走 keyDown 的 NAVIGATE "undo"/"redo" 路由。
     [editMenu addItem:[NSMenuItem separatorItem]];
     CjguiAddStandardMenuItem(editMenu, @"Cut", @selector(cut:), @"x", NSEventModifierFlagCommand);
     CjguiAddStandardMenuItem(editMenu, @"Copy", @selector(copy:), @"c", NSEventModifierFlagCommand);
@@ -15545,6 +16239,73 @@ cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint
     if (bindingChanged) [resolved.composableSceneOverlay resetCaretBlink];
     return CJGUI_INTERNAL_RENDERER_OK;
 }
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_context_menu_guard(uint64_t session, uint64_t sceneVersion,
+    uint64_t layerScope, uint64_t requestId, uint64_t layerNodeId, int64_t resourceId,
+    uint32_t nodeKind, int64_t x, int64_t y, int64_t width, int64_t height, uint32_t enabled) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_set_composable_context_menu_guard(session, sceneVersion,
+                layerScope, requestId, layerNodeId, resourceId, nodeKind, x, y, width, height, enabled);
+        });
+        return status;
+    }
+    CJGuiInternalSession *resolved = CjguiLookupSession(session);
+    if (!resolved) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!enabled) {
+        // A delayed close for an older request must never withdraw the new
+        // accepted menu's outside-click guard.
+        if (resolved.composableContextMenuGuardRequestId == requestId) {
+            resolved.composableContextMenuGuardEnabled = NO;
+            resolved.composableContextMenuGuardSceneVersion = 0;
+            resolved.composableContextMenuGuardLayerScope = 0;
+            resolved.composableContextMenuGuardRequestId = 0;
+            resolved.composableContextMenuGuardLayerNodeId = 0;
+            resolved.composableContextMenuGuardResourceId = -1;
+            resolved.composableContextMenuGuardNodeKind = 0;
+            resolved.composableContextMenuGuardBounds = NSZeroRect;
+        }
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if (sceneVersion != resolved.composableSceneVersion) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    if (requestId == 0 || layerScope == 0 || layerNodeId == 0 || width <= 0 || height <= 0 ||
+        !resolved.composableSceneOverlay) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    BOOL foundLayer = NO;
+    for (CJGuiInternalComposableSceneNode *node in resolved.composableSceneOverlay.nodes) {
+        if (node.node.nodeId == layerNodeId && node.node.resourceId == resourceId &&
+            node.node.nodeKind == nodeKind && node.node.inputScope == layerScope) {
+            foundLayer = YES;
+            break;
+        }
+    }
+    if (!foundLayer) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    resolved.composableContextMenuGuardSceneVersion = sceneVersion;
+    resolved.composableContextMenuGuardLayerScope = layerScope;
+    resolved.composableContextMenuGuardRequestId = requestId;
+    resolved.composableContextMenuGuardLayerNodeId = layerNodeId;
+    resolved.composableContextMenuGuardResourceId = resourceId;
+    resolved.composableContextMenuGuardNodeKind = nodeKind;
+    resolved.composableContextMenuGuardBounds = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)width, (CGFloat)height);
+    resolved.composableContextMenuGuardEnabled = YES;
+    // Diagnostic coordinate bridge for real CGEvent acceptance. The view's
+    // local origin is the accepted host viewport origin; convert through the
+    // actual overlay window instead of estimating from an accessibility frame
+    // or the title bar. AppKit screen coordinates are bottom-left based, while
+    // CG mouse coordinates use the primary display's top-left origin.
+    CJGuiInternalComposableSceneOverlay *overlay = resolved.composableSceneOverlay;
+    NSPoint windowOrigin = [overlay convertPoint:NSMakePoint(0.0, 0.0) toView:nil];
+    NSPoint cocoaScreenOrigin = overlay.window ? [overlay.window convertPointToScreen:windowOrigin] : NSZeroPoint;
+    NSScreen *primaryScreen = NSScreen.mainScreen;
+    CGFloat primaryMaxY = primaryScreen ? NSMaxY(primaryScreen.frame) : 0.0;
+    CGFloat cgScreenY = primaryMaxY - cocoaScreenOrigin.y;
+    NSLog(@"CJGUI_CONTEXT_MENU_SCREEN request_id=%llu session=%llu scene=%llu viewport_screen=%.3f,%.3f",
+          (unsigned long long)requestId, (unsigned long long)resolved.rendererSessionToken,
+          (unsigned long long)sceneVersion, cocoaScreenOrigin.x, cgScreenY);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
 // ---- ABI: presentClear ----
 
 static id<MTLTexture> CjguiComposableMultisampleTarget(CJGuiInternalMetalView *view, id<MTLTexture> drawableTexture) {
@@ -15936,8 +16697,13 @@ cjgui_internal_renderer_present_clear(uint64_t session,
 #ifdef CJGUI_INTERNAL_TESTING
         uint64_t composableEncodeStarted = CjguiMonotonicMicros();
 #endif
+        BOOL diagnosticTiming = ctx.diagnosticTimingEnabled;
+        uint64_t diagnosticEncodeStarted = diagnosticTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
         BOOL composableEncoded = [view encodeComposableNodes:encoder
             drawableSize:drawableSize];
+        if (diagnosticTiming) ctx.diagnosticEncodeNanoseconds = CjguiSaturatingAddU64(
+            ctx.diagnosticEncodeNanoseconds,
+            CjguiDiagnosticMonotonicNanoseconds() - diagnosticEncodeStarted);
 #ifdef CJGUI_INTERNAL_TESTING
         view.testComposableEncoderCpuMicros = CjguiMonotonicMicros() - composableEncodeStarted;
 #endif
@@ -16199,7 +16965,12 @@ cjgui_internal_renderer_present_clear(uint64_t session,
             ctx.submittedTextCompletionFlags = [NSMutableDictionary dictionary];
         ctx.submittedTextTextures[@(submittedFrameIndex)] = submittedTextTextures;
         ctx.submittedTextCompletionFlags[@(submittedFrameIndex)] = textCompletion;
+        BOOL diagnosticCommitTiming = ctx.diagnosticTimingEnabled;
+        uint64_t diagnosticSubmitStarted = diagnosticCommitTiming ? CjguiDiagnosticMonotonicNanoseconds() : 0;
         [commandBuffer commit];
+        if (diagnosticCommitTiming) ctx.diagnosticSubmitNanoseconds = CjguiSaturatingAddU64(
+            ctx.diagnosticSubmitNanoseconds,
+            CjguiDiagnosticMonotonicNanoseconds() - diagnosticSubmitStarted);
 #ifdef CJGUI_INTERNAL_TESTING
         const uint64_t testCommittedMicros = CjguiMonotonicMicros();
         CjguiInternalRendererSubmissionTimeline testTimeline = {0};
@@ -16898,6 +17669,9 @@ static CjguiInternalRendererStatus CjguiSetComposableSceneNodeOnMain(
 #endif
     if (!node || nodeIndex >= ctx.stagedComposableNodes.count || node->projectionVersion != ctx.stagedComposableSceneVersion ||
         node->width < 0 || node->height < 0 || node->clipWidth < 0 || node->clipHeight < 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (CjguiComposableNodeHasGpuText(node->nodeKind) &&
+        !CjguiComposableTextWithinLayoutBudget(value))
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
 #ifdef CJGUI_INTERNAL_TESTING
     if (ctx.forcedComposableSceneNodeFailures > 0) {
         ctx.forcedComposableSceneNodeFailures -= 1;
@@ -17195,27 +17969,61 @@ cjgui_internal_renderer_restore_composable_selection(uint64_t session, uint64_t 
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
     CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
+    // Opt-in refusal injection exercises retained recovery in a normal build.
+    // No selection or ownership is changed by this one failed installation.
+    const char *restoreRefusal = getenv("CJGUI_SELECTION_RESTORE_REFUSE_ONCE");
+    static NSMutableSet<NSNumber *> *restoreRefusedSessions = nil;
+    if (restoreRefusal && strcmp(restoreRefusal,"1") == 0) {
+        if (!restoreRefusedSessions) restoreRefusedSessions = [NSMutableSet set];
+        if (![restoreRefusedSessions containsObject:@(session)]) {
+            [restoreRefusedSessions addObject:@(session)];
+            return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        }
+    }
+
     NSString *expected = [NSString stringWithUTF8String:expectedValue];
     if (!expected || overlay.inputProxy.hasMarkedText || ctx.window.firstResponder != overlay.inputProxy) {
+        if (getenv("CJGUI_TRACE_IME_PUMP")) {
+            fprintf(stderr, "CJGUI_SEL_RESTORE_NATIVE reason=proxy_not_ready session=%llu scene=%llu node=%llu expected_valid=%d marked=%d proxy_is_responder=%d\n",
+                (unsigned long long)session, (unsigned long long)sceneVersion, (unsigned long long)nodeId,
+                expected != nil, overlay.inputProxy.hasMarkedText, ctx.window.firstResponder == overlay.inputProxy);
+        }
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
     for (CJGuiInternalComposableSceneNode *node in ctx.composableNodes) {
         if (node.node.nodeId != nodeId || node.node.resourceId != resourceId ||
-            node.node.nodeKind != nodeKind || node.node.isInteractive == 0 ||
-            overlay.activeNodeId != nodeId || overlay.activeNodeIndex != node.index ||
+            node.node.nodeKind != nodeKind || node.node.isInteractive == 0) continue;
+        if (overlay.activeNodeId != nodeId || overlay.activeNodeIndex != node.index ||
             overlay.activeNodeResourceId != resourceId || overlay.activeNodeKind != nodeKind ||
             overlay.activeProjectionVersion != node.node.projectionVersion) continue;
         if (![node.value isEqualToString:expected] || ![overlay.inputProxy.string isEqualToString:expected] ||
             selectionStart > expected.length || selectionEnd > expected.length) {
+            if (getenv("CJGUI_TRACE_IME_PUMP")) {
+                fprintf(stderr, "CJGUI_SEL_RESTORE_NATIVE reason=value_or_range session=%llu scene=%llu node=%llu node_value_match=%d proxy_value_match=%d expected_units=%lu proxy_units=%lu range=%u:%u\n",
+                    (unsigned long long)session, (unsigned long long)sceneVersion, (unsigned long long)nodeId,
+                    [node.value isEqualToString:expected], [overlay.inputProxy.string isEqualToString:expected],
+                    (unsigned long)expected.length, (unsigned long)overlay.inputProxy.string.length, selectionStart, selectionEnd);
+            }
             return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         }
         NSRange applied = CjguiComposedSelection(expected, selectionStart, selectionEnd);
+        // A request for an internal grapheme/CRLF point must fail before native
+        // selection changes. Clamping then reporting rejection loses the old
+        // selection even though the ticket has not been committed.
+        if (applied.location != selectionStart || NSMaxRange(applied) != selectionEnd) {
+            return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+        }
+        NSRange previousSelection = overlay.inputProxy.selectedRange;
         overlay.applyingProjection = YES;
         overlay.inputProxy.selectedRange = applied;
         overlay.applyingProjection = NO;
         applied = overlay.inputProxy.selectedRange;
-        if (applied.location > UINT32_MAX || NSMaxRange(applied) > UINT32_MAX) {
-            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        if (applied.location != selectionStart || NSMaxRange(applied) != selectionEnd ||
+            applied.location > UINT32_MAX || NSMaxRange(applied) > UINT32_MAX) {
+            overlay.applyingProjection = YES;
+            overlay.inputProxy.selectedRange = previousSelection;
+            overlay.applyingProjection = NO;
+            return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
         }
         *outSelectionStart = (uint32_t)applied.location;
         *outSelectionEnd = (uint32_t)NSMaxRange(applied);
@@ -18291,6 +19099,76 @@ cjgui_internal_renderer_diagnostic_resources(
 }
 
 CjguiInternalRendererStatus
+cjgui_internal_renderer_set_diagnostic_timing(uint64_t session, uint32_t enabled) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_set_diagnostic_timing(session, enabled);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed || !ctx.view)
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    BOOL next = enabled != 0;
+    if (ctx.diagnosticTimingEnabled != next) {
+        ctx.diagnosticTimingEnabled = next;
+        ctx.positionPrepareNanoseconds = 0;
+        ctx.positionQueryNanoseconds = 0;
+        ctx.positionLineBuildNanoseconds = 0;
+        ctx.diagnosticEncodeNanoseconds = 0;
+        ctx.diagnosticSubmitNanoseconds = 0;
+        ctx.diagnosticRasterNanoseconds = 0;
+        ctx.diagnosticUploadNanoseconds = 0;
+        ctx.diagnosticReadCount = 0;
+        ctx.diagnosticReadNanoseconds = 0;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_diagnostic_timing(
+    uint64_t session, CjguiInternalRendererDiagnosticTiming *outTiming) {
+    if (!outTiming) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    memset(outTiming, 0, sizeof(*outTiming));
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status = cjgui_internal_renderer_diagnostic_timing(session, outTiming);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed || !ctx.view)
+        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    outTiming->sceneVersion = ctx.composableSceneVersion;
+    outTiming->frameIndex = ctx.view.frameIndex;
+    outTiming->enabled = ctx.diagnosticTimingEnabled ? 1u : 0u;
+    if (!ctx.diagnosticTimingEnabled) return CJGUI_INTERNAL_RENDERER_OK;
+    uint64_t started = CjguiDiagnosticMonotonicNanoseconds();
+    outTiming->clockAvailable = 1u;
+    outTiming->positionPrepareCount = ctx.positionPrepareCount;
+    outTiming->positionQueryCount = ctx.positionQueryCount;
+    outTiming->positionLineBuildCount = ctx.positionLineBuildCount;
+    outTiming->positionCacheHitCount = ctx.positionCacheHitCount;
+    outTiming->positionPrepareNanoseconds = ctx.positionPrepareNanoseconds;
+    outTiming->positionQueryNanoseconds = ctx.positionQueryNanoseconds;
+    outTiming->positionLineBuildNanoseconds = ctx.positionLineBuildNanoseconds;
+    outTiming->encodeNanoseconds = ctx.diagnosticEncodeNanoseconds;
+    outTiming->submitNanoseconds = ctx.diagnosticSubmitNanoseconds;
+    outTiming->rasterNanoseconds = ctx.diagnosticRasterNanoseconds;
+    outTiming->uploadNanoseconds = ctx.diagnosticUploadNanoseconds;
+    ctx.diagnosticReadCount = CjguiSaturatingAddU64(ctx.diagnosticReadCount, 1);
+    uint64_t elapsed = CjguiDiagnosticMonotonicNanoseconds() - started;
+    ctx.diagnosticReadNanoseconds = CjguiSaturatingAddU64(ctx.diagnosticReadNanoseconds, elapsed);
+    outTiming->readCount = ctx.diagnosticReadCount;
+    outTiming->readNanoseconds = ctx.diagnosticReadNanoseconds;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
 cjgui_internal_renderer_diagnostic_workload(
     uint64_t session, CjguiInternalRendererDiagnosticWorkload *outWorkload) {
     if (!outWorkload) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
@@ -18392,6 +19270,8 @@ static CjguiInternalRendererStatus CjguiMeasureComposableTextOnMain(
         ctx.forcedComposableMeasurementFailures -= 1;
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
+    if (!CjguiComposableTextWithinLayoutBudget(text))
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
     if (ctx.composableTextMeasurementCount < UINT32_MAX) ctx.composableTextMeasurementCount += 1;
     NSFont *font = CjguiComposableFontForStyle(fontSize, fontWeight, fontFamily);
     if (!font) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
@@ -18430,82 +19310,13 @@ cjgui_internal_renderer_set_composable_text_runs(uint64_t session, uint64_t node
 CjguiInternalRendererStatus
 cjgui_internal_renderer_hit_test_composable_text(uint64_t session, uint64_t nodeId,
                                                  double x, double y,
+                                                 uint64_t expectedSceneVersion,
                                                  uint32_t *outByteOffset, uint32_t *outAffinity) {
     if (!outByteOffset || !outAffinity) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    *outByteOffset = 0;
-    *outAffinity = 0;
-    CJGuiInternalSession *ctx = CjguiLookupSession(session);
-    if (!ctx || ctx.destroyed || !ctx.view) {
-        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    }
-    NSArray<CJGuiInternalComposableSceneNode *> *sceneNodes = ctx.composableSceneOverlay.nodes;
-    if (!ctx.composableSceneOverlay) {
-        return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
-    }
-    if (sceneNodes.count == 0) {
-        return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
-    }
-    CJGuiInternalComposableSceneNode *node = nil;
-    for (CJGuiInternalComposableSceneNode *candidate in sceneNodes) {
-        if (candidate.node.nodeId == nodeId) {
-            node = candidate;
-            break;
-        }
-    }
-    if (!node) {
-        return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
-    }
-    if (node.node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT) {
-        fprintf(stderr, "PHAROS_GEOM_EMPTY node=%llu why=not_text kind=%u\n",
-                (unsigned long long)nodeId, (unsigned)node.node.nodeKind);
-        return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
-    }
-    NSString *text = CjguiComposableGpuTextValue(node);
-    if (text.length == 0) return CJGUI_INTERNAL_RENDERER_OK;
-    NSRect textureRect = CjguiComposableTextTextureRectForNode(node);
-    if (NSIsEmptyRect(textureRect)) {
-        fprintf(stderr, "PHAROS_GEOM_EMPTY node=%llu why=empty_rect w=%lld h=%lld "
-                "fontSize=%.1f weight=%u family=%u textUtf16=%lu boundsW=%lld boundsH=%lld\n",
-                (unsigned long long)nodeId, (long long)node.node.width, (long long)node.node.height,
-                (double)node.node.fontSize, (unsigned)node.node.fontWeight, (unsigned)node.node.fontFamily,
-                (unsigned long)text.length, (long long)node.node.width, (long long)node.node.height);
-        return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
-    }
-    NSRect bounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
-    CGFloat verticalInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
-    NSRect textRect = NSInsetRect(bounds, 7.0, verticalInset);
-    NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
-    paragraph.lineBreakMode = NSLineBreakByWordWrapping;
-    paragraph.lineBreakStrategy = NSLineBreakStrategyPushOut;
-    NSDictionary *attributes = @{NSFontAttributeName: CjguiComposableFont(node),
-                                 NSForegroundColorAttributeName: [NSColor blackColor],
-                                 NSParagraphStyleAttributeName: paragraph};
-    NSData *decoded = CjguiComposableDecodeStyleRuns(ctx.composableTextStyleRunsRaw[@(nodeId)]);
-    NSAttributedString *attributed = CjguiComposableAttributedText(node, text, attributes,
-        decoded.length > 0 ? (const CjguiInternalTextStyleRun *)decoded.bytes : NULL,
-        decoded.length > 0 ? (uint32_t)(decoded.length / sizeof(CjguiInternalTextStyleRun)) : 0);
-    NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:attributed];
-    NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
-    NSTextContainer *container = [[NSTextContainer alloc]
-        initWithSize:NSMakeSize(MAX(1.0, NSWidth(textRect)), CGFLOAT_MAX)];
-    container.lineFragmentPadding = 0;
-    [storage addLayoutManager:layoutManager];
-    [layoutManager addTextContainer:container];
-    [layoutManager ensureLayoutForTextContainer:container];
-    // The point arrives in scene coordinates; the layout is node-local.
-    CGFloat localX = (CGFloat)x - ((CGFloat)node.node.x + (CGFloat)node.geometry.translateX) - NSMinX(textRect);
-    CGFloat localY = (CGFloat)y - ((CGFloat)node.node.y + (CGFloat)node.geometry.translateY) - NSMinY(textRect);
-    CGFloat fraction = 0.0;
-    NSUInteger charIndex = [layoutManager characterIndexForPoint:NSMakePoint(localX, localY)
-                                                 inTextContainer:container
-                        fractionOfDistanceBetweenInsertionPoints:&fraction];
-    if (charIndex > text.length) charIndex = text.length;
-    NSString *prefix = [text substringToIndex:charIndex];
-    *outByteOffset = (uint32_t)[prefix lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-    // Affinity tells the caller which side of a boundary the caret sits on; a
-    // fraction past the middle of the glyph belongs to the following character.
-    *outAffinity = fraction > 0.5 ? 1u : 0u;
-    return CJGUI_INTERNAL_RENDERER_OK;
+    uint64_t m[8]; double r[4];
+    CjguiInternalRendererStatus st=cjgui_internal_renderer_text_position_v1(session,nodeId,
+        expectedSceneVersion,1,0,2,0,0,0,x,y,m,r);
+    *outByteOffset=(uint32_t)m[2]; *outAffinity=(uint32_t)m[3]; return st;
 }
 
 // Whether this window is the key/main window and whether the app is active. A
@@ -18532,6 +19343,64 @@ cjgui_internal_renderer_node_rect(uint64_t session, uint64_t nodeId,
     return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
 }
 
+// Private FIFO seam for the queued-wheel/accepted-scene boundary. This does
+// not synthesize a platform event or change the production Node/Event ABI.
+#ifdef CJGUI_INTERNAL_TESTING
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_enqueue_composable_wheel(uint64_t session, uint64_t nodeId,
+                                                       double deltaY, uint32_t phase,
+                                                       uint32_t momentum) {
+    if (!isfinite(deltaY) || fabs(deltaY) > 1000000.0 || phase > 63 || momentum > 63) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *ctx = CjguiLookupSession(session);
+        if (!ctx || ctx.destroyed) { status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION; return; }
+        for (CJGuiInternalComposableSceneNode *node in ctx.composableSceneOverlay.nodes) {
+            if (node.node.nodeId != nodeId) continue;
+            NSString *payload = [NSString stringWithFormat:@"cjgui-wheel-v1|0|%.17f|1|%u|%u",
+                deltaY, phase, momentum];
+            status = CjguiEnqueueComposableInteraction(ctx,
+                CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SCROLL, node.index, payload,
+                NSMakeRange(0, 0)) ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            break;
+        }
+    });
+    return status;
+}
+
+// Envelope corruption is intentionally separate from the real enqueue seam:
+// tests can reject zero/future versions, foreign targets and malformed payloads
+// without claiming those envelopes were emitted by a platform gesture.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_enqueue_composable_wheel_override(
+    uint64_t session, uint64_t nodeId, uint64_t projectionVersion, int64_t resourceId,
+    uint32_t nodeKind, const char *payload) {
+    if (!payload || strnlen(payload, 256) >= 256) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSString *text = [NSString stringWithUTF8String:payload];
+    if (!text) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    CjguiTestHookOnMainThread(^{
+        CJGuiInternalSession *ctx = CjguiLookupSession(session);
+        if (!ctx || ctx.destroyed) { status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION; return; }
+        for (CJGuiInternalComposableSceneNode *node in ctx.composableSceneOverlay.nodes) {
+            if (node.node.nodeId != nodeId) continue;
+            if (!CjguiEnqueueComposableInteraction(ctx,
+                CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SCROLL, node.index, text,
+                NSMakeRange(0, 0))) { status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR; break; }
+            CJGuiInternalQueuedInteraction *interaction = ctx.pendingInteractions.lastObject;
+            interaction.projectionVersion = projectionVersion;
+            interaction.resourceId = resourceId;
+            interaction.nodeKind = nodeKind;
+            status = CJGUI_INTERNAL_RENDERER_OK;
+            break;
+        }
+    });
+    return status;
+}
+
+#endif
 // Test-only wheel-region query. It runs the SAME production routing rule as
 // `routeScrollAtPoint` (topmost scroll area or wheelScrollable container whose
 // rect and clip contain the point) and reports the owner instead of enqueuing an
@@ -18577,8 +19446,25 @@ cjgui_internal_renderer_test_composable_scroll_owner_at_point(uint64_t session, 
 // 2026-09-26(B2/B3):**逐行选择框** —— 按视觉行枚举范围覆盖的矩形(选择覆盖层用)。
 // 只读既有 TextKit 布局(lineFragmentRectForGlyphAtIndex / locationForGlyphAtIndex),**不重排**。
 // 因仓颉 `inout` 只接受 CType,出口拆为"计数(标量)+ 分量(标量)"两个函数。
+// 2026-09-30(M1,夜间位置身份):三层修正——
+// ① 单次查询内验身份:`expectedSceneVersion` 与命中/caret 同票(0=兼容旧调用),
+//    staged 场景已前进 ⇒ SCENE_STALE 具名拒绝,不得拿旧字节查新排版;
+// ② 入参是 UTF-8 display byte:先严格边界检查(越界/劈开标量 ⇒ 具名
+//    TEXT_RANGE_INVALID(34),不钳制洗白),再精确换算 UTF-16 character index;
+//    旧实现把字节直接喂 `glyphIndexForCharacterAtIndex`,CJK(3字节)处逐行错位;
+// ③ 选区矩形改用 Apple 选区绘制原语 `enumerateEnclosingRectsForGlyphRange:`
+//    (NSTextView 同源):首行从选区起点到行尾、中间行整行、末行从行首到选区
+//    终点,bidi 一行多矩形由平台给出;旧实现行内右端取 lastInLine,选区终点
+//    从未参与右边界。
+static BOOL CjguiStrictUtf8Boundary(const char *utf8, NSUInteger utf8Length, NSUInteger byteOffset) {
+    if (byteOffset > utf8Length) return NO;
+    if (byteOffset == 0 || byteOffset == utf8Length) return YES;
+    return (utf8[byteOffset] & 0xC0) != 0x80; // continuation byte ⇒ 标量内部
+}
+
 static int32_t CjguiTextLineRectsCore(uint64_t session, uint64_t nodeId, int64_t startByte,
-                                      int64_t endByte, int32_t maxRects, int32_t *outCount,
+                                      int64_t endByte, int32_t maxRects,
+                                      uint64_t expectedSceneVersion, int32_t *outCount,
                                       double *outRects) {
     if (!outCount || maxRects <= 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     *outCount = 0;
@@ -18586,38 +19472,95 @@ static int32_t CjguiTextLineRectsCore(uint64_t session, uint64_t nodeId, int64_t
     if (!ctx || ctx.destroyed || !ctx.view) {
         return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     }
+    if (expectedSceneVersion != 0 && ctx.composableSceneVersion != expectedSceneVersion) {
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    }
+    if (startByte < 0 || endByte < startByte) {
+        return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    }
     for (CJGuiInternalComposableSceneNode *node in ctx.composableSceneOverlay.nodes) {
         if (node.node.nodeId != nodeId) continue;
+        // 与绘制路径同源的**权威文字**：焦点输入节点的正文在隐藏代理
+        // （inputProxy.string，kind-51 编辑即时反映）；非输入/非焦点节点用
+        // staged 值。曾直接读 staged/持留旧值——编辑后立即按键字节越界。
+        NSString *text = CjguiComposableGpuTextValue(node);
+        if (CjguiStagedNodeIsFocusedInput(ctx, node)) {
+            NSString *proxyText = ctx.composableSceneOverlay.inputProxy.string;
+            if (proxyText.length > 0) {
+                text = proxyText;
+            }
+        }
         CjguiPreparedTextNodeLayout *prepared = node.preparedTextLayout;
-        if (!prepared || !prepared.layoutManager || !prepared.container) {
-            return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+        if (getenv("CJGUI_TRACE_NEIGHBOR")) {
+            fprintf(stderr, "NEIGHBOR_FRESH node=%llu valueLen=%lu preparedLen=%lu match=%d\n",
+                (unsigned long long)nodeId, (unsigned long)text.length,
+                (unsigned long)(prepared ? prepared.storage.length : 0),
+                (int)(prepared != nil && [prepared.storage.string isEqualToString:text]));
+        }
+        if (!prepared || !prepared.layoutManager || !prepared.container ||
+            ![prepared.storage.string isEqualToString:text]) {
+            NSData *decoded = CjguiComposableDecodeStyleRuns(ctx.composableTextStyleRunsRaw[@(nodeId)]);
+            prepared = CjguiPrepareTextNodeLayout(node, text, 1.0, decoded, ctx);
+            if (!prepared) {
+                return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+            }
+            node.preparedTextLayout = prepared;
         }
         NSLayoutManager *lm = prepared.layoutManager;
-        NSUInteger glyphCount = lm.numberOfGlyphs;
-        if (glyphCount == 0) return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
-        NSUInteger storageLength = prepared.storage.length;
-        NSUInteger startGlyph = MIN([lm glyphIndexForCharacterAtIndex:(NSUInteger)MIN(startByte, (int64_t)storageLength)], glyphCount - 1);
-        NSUInteger endGlyph = MIN([lm glyphIndexForCharacterAtIndex:(NSUInteger)MIN(endByte, (int64_t)storageLength)], glyphCount - 1);
-        NSUInteger glyph = startGlyph;
-        int32_t count = 0;
-        while (glyph <= endGlyph && count < maxRects) {
-            NSRange lineRange = NSMakeRange(0, 0);
-            NSRect line = [lm lineFragmentRectForGlyphAtIndex:glyph effectiveRange:&lineRange];
-            NSUInteger lastInLine = NSMaxRange(lineRange) > 0 ? NSMaxRange(lineRange) - 1 : glyph;
-            double left = (glyph == startGlyph) ? [lm locationForGlyphAtIndex:glyph].x : line.origin.x;
-            double right = (lastInLine >= endGlyph)
-                ? [lm locationForGlyphAtIndex:lastInLine].x : (line.origin.x + line.size.width);
-            if (right < left) right = left + 1.0;
-            if (outRects) {
-                NSRect visual = CjguiComposableVisualNodeRect(node);
-                outRects[count * 4 + 0] = NSMinX(visual) + prepared.textRect.origin.x + left;
-                outRects[count * 4 + 1] = NSMinY(visual) + prepared.textRect.origin.y + line.origin.y;
-                outRects[count * 4 + 2] = right - left;
-                outRects[count * 4 + 3] = line.size.height;
+        NSUInteger storageLength = text.length;
+        NSUInteger utf8Length = [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        const char *utf8 = text.UTF8String;
+        if (!utf8 || (uint64_t)startByte > (uint64_t)utf8Length ||
+            (uint64_t)endByte > (uint64_t)utf8Length ||
+            !CjguiStrictUtf8Boundary(utf8, utf8Length, (NSUInteger)startByte) ||
+            !CjguiStrictUtf8Boundary(utf8, utf8Length, (NSUInteger)endByte)) {
+            return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+        }
+        // 半开空范围([x,x)):合法零矩形;折叠选区的高亮归 caret 矩形管辖。
+        if (startByte == endByte) {
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        NSUInteger startChar = CjguiComposableUtf16OffsetForByte(utf8, utf8Length, (NSUInteger)startByte);
+        NSUInteger endChar = CjguiComposableUtf16OffsetForByte(utf8, utf8Length, (NSUInteger)endByte);
+        if (startChar >= endChar || startChar > storageLength || endChar > storageLength) {
+            return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+        }
+        // M2 修正（2026-09-30）：整范围 enclosing 枚举返回**联合包围盒**（native
+        // 反例：6 行文档 [0,138) 只得 1 矩形），多行选区高亮会塌成一个框。改
+        // **逐行片段**调用：每行的选区子范围各枚举一次——平台仍给出每行内
+        // bidi 多矩形与真实选区端点，行数完整、部分布局状态不再漏行。
+        NSRect visual = CjguiComposableVisualNodeRect(node);
+        __block int32_t count = 0;
+        NSUInteger walkGlyph = [lm glyphIndexForCharacterAtIndex:MIN(startChar, (int64_t)lm.numberOfGlyphs)];
+        if (walkGlyph >= lm.numberOfGlyphs && lm.numberOfGlyphs > 0) walkGlyph = lm.numberOfGlyphs - 1;
+        while (walkGlyph < lm.numberOfGlyphs && count < maxRects) {
+            NSRange lineGlyphRange = NSMakeRange(0, 0);
+            [lm lineFragmentRectForGlyphAtIndex:walkGlyph effectiveRange:&lineGlyphRange];
+            NSRange lineCharRange = [lm characterRangeForGlyphRange:lineGlyphRange actualGlyphRange:NULL];
+            NSUInteger selStart = MAX(startChar, lineCharRange.location);
+            NSUInteger selEnd = MIN(endChar, NSMaxRange(lineCharRange));
+            if (selEnd > selStart) {
+                NSRange selGlyphs = [lm glyphRangeForCharacterRange:NSMakeRange(selStart, selEnd - selStart)
+                                               actualCharacterRange:NULL];
+                [lm enumerateEnclosingRectsForGlyphRange:selGlyphs
+                                withinSelectedGlyphRange:selGlyphs
+                                         inTextContainer:prepared.container
+                                              usingBlock:^(NSRect rect, BOOL *stop) {
+                    if (count >= maxRects) {
+                        *stop = YES; // 容量截断:调用方按既有约定以 count==maxRects 读取 partial。
+                        return;
+                    }
+                    if (outRects) {
+                        outRects[count * 4 + 0] = NSMinX(visual) + prepared.textRect.origin.x + NSMinX(rect);
+                        outRects[count * 4 + 1] = NSMinY(visual) + prepared.textRect.origin.y + NSMinY(rect);
+                        outRects[count * 4 + 2] = NSWidth(rect);
+                        outRects[count * 4 + 3] = NSHeight(rect);
+                    }
+                    count += 1;
+                }];
             }
-            count += 1;
-            if (NSMaxRange(lineRange) == 0) break;
-            glyph = NSMaxRange(lineRange);
+            if (NSMaxRange(lineGlyphRange) == 0 || NSMaxRange(lineGlyphRange) >= lm.numberOfGlyphs) break;
+            walkGlyph = NSMaxRange(lineGlyphRange);
         }
         *outCount = count;
         return CJGUI_INTERNAL_RENDERER_OK;
@@ -18625,12 +19568,15 @@ static int32_t CjguiTextLineRectsCore(uint64_t session, uint64_t nodeId, int64_t
     return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
 }
 
-// ≥0 = 行数;负值 = 具名错误(-1 参数 / -10 视图失效 / -11 会话无效 / -17 无此节点 / -18 无持留几何)
+// ≥0 = 行数;负值 = 具名错误(-1 参数 / -10 视图失效 / -11 会话无效 / -17 无此节点 / -18 无持留几何
+// / -33 场景版本过期 / -34 范围越界或劈开标量)
 int32_t cjgui_internal_renderer_text_line_rect_count(uint64_t session, uint64_t nodeId,
                                                      int64_t startByte, int64_t endByte,
-                                                     int32_t maxRects) {
+                                                     int32_t maxRects,
+                                                     uint64_t expectedSceneVersion) {
     int32_t count = 0;
-    int32_t status = CjguiTextLineRectsCore(session, nodeId, startByte, endByte, maxRects, &count, NULL);
+    int32_t status = CjguiTextLineRectsCore(session, nodeId, startByte, endByte, maxRects,
+                                            expectedSceneVersion, &count, NULL);
     if (status == CJGUI_INTERNAL_RENDERER_OK) return count;
     return -status;
 }
@@ -18639,13 +19585,15 @@ int32_t cjgui_internal_renderer_text_line_rect_count(uint64_t session, uint64_t 
 double cjgui_internal_renderer_text_line_rect_value(uint64_t session, uint64_t nodeId,
                                                     int64_t startByte, int64_t endByte,
                                                     int32_t maxRects, int32_t index,
-                                                    int32_t component) {
+                                                    int32_t component,
+                                                    uint64_t expectedSceneVersion) {
     if (index < 0 || maxRects <= 0 || index >= maxRects) return 0.0;
     if (component < 0 || component > 3) return 0.0;
     double *all = (double *)calloc((size_t)(index + 1) * 4, sizeof(double));
     if (!all) return 0.0;
     int32_t count = 0;
-    int32_t status = CjguiTextLineRectsCore(session, nodeId, startByte, endByte, index + 1, &count, all);
+    int32_t status = CjguiTextLineRectsCore(session, nodeId, startByte, endByte, index + 1,
+                                            expectedSceneVersion, &count, all);
     double result = (status == CJGUI_INTERNAL_RENDERER_OK && index < count)
         ? all[index * 4 + component] : 0.0;
     free(all);
@@ -18654,33 +19602,551 @@ double cjgui_internal_renderer_text_line_rect_value(uint64_t session, uint64_t n
 
 int32_t cjgui_internal_renderer_text_geometry_caret(uint64_t session, uint64_t nodeId,
                                                     int64_t displayByte, double caretWidthPt,
+                                                    uint64_t expectedSceneVersion,
+                                                    uint32_t affinity,
                                                     double *outX, double *outY, double *outWidth,
                                                     double *outHeight) {
     if (!outX || !outY || !outWidth || !outHeight) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    CJGuiInternalSession *ctx = CjguiLookupSession(session);
-    if (!ctx || ctx.destroyed || !ctx.view) {
-        return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    }
-    // 区分两种具名失败(按头文件真实值):NODE_NOT_FOUND=17(无此 nodeId)与
-    // GEOMETRY_EMPTY=18(节点在,但尚无已接受的持留排版产物 ⇒ 契约的具名 pending)。
-    for (CJGuiInternalComposableSceneNode *node in ctx.composableSceneOverlay.nodes) {
-        if (node.node.nodeId != nodeId) continue;
-        NSRect rect;
-        if (!CjguiComposableAcceptedTextCaretRect(node, (NSUInteger)displayByte, caretWidthPt,
-                                                  &rect)) {
-            return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
-        }
-        NSRect visual = CjguiComposableVisualNodeRect(node);
-        *outX = NSMinX(visual) + rect.origin.x;
-        *outY = NSMinY(visual) + rect.origin.y;
-        *outWidth = rect.size.width;
-        *outHeight = rect.size.height;
-        return CJGUI_INTERNAL_RENDERER_OK;
-    }
-    return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    uint64_t m[8]; double r[4];
+    CjguiInternalRendererStatus st=cjgui_internal_renderer_text_position_v1(session,nodeId,
+        expectedSceneVersion,0,displayByte,affinity,0,0,0,0,0,m,r);
+    *outX=r[0]; *outY=r[1]; *outWidth=caretWidthPt; *outHeight=r[3]; return st;
+}
+
+// M2（2026-09-30，视觉导航）：从同一 accepted 持留排版取**真实插入点**并求视觉
+// 左/右邻位。平台事实 = `getLineFragmentInsertionPointsForCharacterAtIndex:`
+// （caret 所在视觉行的主插入点组，inDisplayOrder=YES），按几何 x 找严格相邻的
+// 插入点；本行没有（行首/行尾）⇒ 落到相邻视觉行的端点插入点。bidi 行的位置组
+// 由平台给出，不自研重排；软折行两侧因插入点几何不同天然可分。每行扫描上限
+// `CjguiVisualNavMaxLinePositions`，超限具名 VISUAL_NAV_UNSUPPORTED（不静默截断
+// 半行）。返回邻位所在**簇边界**的 UTF-8 字节：左移=簇末（下游、affinity 1），
+// 右移=簇首（上游、affinity 0）——与 NSTextView「箭头按视觉邻位、停在簇边界」
+// 一致，由下方 NSTextView 对照测试核。邻位与原字节相同 ⇒ 已证实的可视边界。
+// 身份：单次查询内验 expectedSceneVersion（0=兼容旧调用）。
+// UTF-16 char index → UTF-8 byte offset，严格边界（越界/负 ⇒ NSNotFound 语义）。
+// 对 text.UTF8String 前缀线性累积，与既有 caret 路径同一换算事实。
+static NSUInteger CjguiByteOffsetForUtf16Index(NSString *text, const char *utf8,
+                                               NSUInteger utf8Length, NSUInteger charIndex) {
+    if (charIndex == 0) return 0;
+    if (charIndex > text.length) return NSNotFound;
+    NSString *prefix = [text substringToIndex:charIndex];
+    NSUInteger byte = [prefix lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    if (byte == 0 && charIndex > 0) return NSNotFound;
+    (void)utf8; (void)utf8Length;
+    return byte;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_text_visual_neighbor(uint64_t session, uint64_t nodeId,
+                                             int64_t displayByte, uint32_t left,
+                                             uint64_t expectedSceneVersion,
+                                             uint32_t caretAffinity,
+                                             uint32_t *outNeighborByte, uint32_t *outAffinity) {
+    if (!outNeighborByte || !outAffinity) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    uint64_t m[8]; double r[4];
+    CjguiInternalRendererStatus st=cjgui_internal_renderer_text_position_v1(session,nodeId,
+        expectedSceneVersion,2,displayByte,caretAffinity,0,0,left ? 0 : 1,0,0,m,r);
+    *outNeighborByte=(uint32_t)m[2]; *outAffinity=(uint32_t)m[3]; return st;
 }
 
 
+
+// Accepted TextKit position table. Each line retains both platform groups and
+// their aliases. The navigation graph follows platform display order within a
+// group, rather than treating an alternate as an Upstream bit.
+@interface CjguiPositionLine : NSObject
+@property(nonatomic, strong) NSData *primary;
+@property(nonatomic, strong) NSData *alternate;
+@property(nonatomic, strong) NSData *stops;
+@property(nonatomic, assign) NSRange glyphs;
+@property(nonatomic, assign) NSRange characters;
+@property(nonatomic, assign) NSRect rect;
+@property(nonatomic, assign) BOOL extra;
+@end
+@implementation CjguiPositionLine
+@end
+
+typedef struct {
+    NSUInteger character;
+    double x;
+    uint32_t branch;
+    uint32_t platformOrdinal;
+} CjguiPositionStop;
+
+static BOOL CjguiPositionIsBoundary(NSString *text, NSUInteger character) {
+    if (character > text.length) return NO;
+    if (character == text.length) return YES;
+    CFRange cluster = CFStringGetRangeOfComposedCharactersAtIndex((CFStringRef)text, character);
+    return (NSUInteger)cluster.location == character;
+}
+
+static CjguiInternalRendererStatus CjguiPositionLineForGlyph(
+    CjguiPreparedTextNodeLayout *p, NSUInteger glyph, BOOL extra, CjguiPositionLine **out) {
+    NSLayoutManager *lm = p.layoutManager;
+    NSRange glyphs = NSMakeRange(lm.numberOfGlyphs, 0);
+    NSRect rect = lm.extraLineFragmentRect;
+    NSRange chars = NSMakeRange(p.storage.length, 0);
+    if (!extra && lm.numberOfGlyphs) {
+        rect = [lm lineFragmentRectForGlyphAtIndex:glyph effectiveRange:&glyphs];
+        chars = [lm characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
+    } else if (NSIsEmptyRect(rect)) {
+        rect = NSMakeRect(0, 0, p.textRect.size.width, p.defaultLineHeight);
+    }
+    NSNumber *key = @(extra ? UINT64_MAX : glyphs.location);
+    CjguiPositionLine *cached = p.positionLines[key];
+    if (cached) {
+        if (p.diagnosticSession) {
+            p.diagnosticSession.positionCacheHitCount = CjguiSaturatingAddU64(
+                p.diagnosticSession.positionCacheHitCount, 1);
+        }
+        *out = cached;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    CJGuiInternalSession *diagnosticSession = p.diagnosticSession;
+    BOOL timing = diagnosticSession && diagnosticSession.diagnosticTimingEnabled;
+    uint64_t timingStarted = timing ? CjguiDiagnosticMonotonicNanoseconds() : 0;
+    // Cache at most 32 bounded lines. Eviction invalidates no id: ids derive from
+    // line+canonical ordinal and rebuilding the same immutable lease is exact.
+    if (p.positionLines.count >= 32) [p.positionLines removeAllObjects];
+    CjguiPositionLine *line = [CjguiPositionLine new];
+    line.glyphs = glyphs; line.characters = chars; line.rect = rect; line.extra = extra;
+    if (extra || p.storage.length == 0) {
+        CjguiPositionStop stop = {p.storage.length, 0, 0, 0};
+        line.stops = [NSData dataWithBytes:&stop length:sizeof(stop)];
+        line.primary = line.stops; line.alternate = [NSData data];
+    } else {
+        CGFloat *pos[2] = {NULL, NULL}; NSUInteger *idx[2] = {NULL, NULL}, counts[2] = {0,0};
+        for (NSUInteger branch = 0; branch < 2; branch++) {
+            CjguiInternalRendererStatus st = CjguiReadLineInsertionPointsEx(lm, chars.location,
+                branch != 0, &counts[branch], &pos[branch], &idx[branch]);
+            if (st != CJGUI_INTERNAL_RENDERER_OK) {
+                for (NSUInteger b=0;b<2;b++) { free(pos[b]); free(idx[b]); }
+                return st;
+            }
+        }
+        NSMutableData *canonical = [NSMutableData data], *groups[2] = {[NSMutableData data], [NSMutableData data]};
+        NSString *text = p.storage.string;
+        NSUInteger logicalStart=0, logicalEnd=0, contentsEnd=0;
+        [text getLineStart:&logicalStart end:&logicalEnd contentsEnd:&contentsEnd
+                 forRange:NSMakeRange(chars.location,0)];
+        BOOL endsHard = NSMaxRange(chars) == logicalEnd && contentsEnd < logicalEnd;
+        for (NSUInteger branch=0;branch<2;branch++) {
+            for (NSUInteger i=0;i<counts[branch];i++) {
+                NSUInteger c = idx[branch][i];
+                // Do not clamp a platform point into a different grapheme. CRLF,
+                // combining clusters and non-BMP internal boundaries are skipped.
+                if (!CjguiPositionIsBoundary(text,c) || c < chars.location || c > NSMaxRange(chars) ||
+                    (endsHard && c > contentsEnd)) continue;
+                CjguiPositionStop stop = {c, rect.origin.x + pos[branch][i], (uint32_t)branch, (uint32_t)i};
+                [groups[branch] appendBytes:&stop length:sizeof(stop)];
+                const CjguiPositionStop *old = canonical.bytes;
+                BOOL alias = NO;
+                for (NSUInteger j=0;j<canonical.length/sizeof(stop);j++) {
+                    if (old[j].character==c && fabs(old[j].x-stop.x)<1e-7) { alias=YES; break; }
+                }
+                if (!alias) [canonical appendBytes:&stop length:sizeof(stop)];
+            }
+        }
+        for (NSUInteger b=0;b<2;b++) { free(pos[b]); free(idx[b]); }
+        if (canonical.length == 0) return CJGUI_INTERNAL_RENDERER_VISUAL_NAV_UNSUPPORTED;
+        line.stops = canonical; line.primary=groups[0]; line.alternate=groups[1];
+    }
+    p.positionLines[key] = line;
+    if (diagnosticSession) {
+        diagnosticSession.positionLineBuildCount = CjguiSaturatingAddU64(
+            diagnosticSession.positionLineBuildCount, 1);
+        if (timing) diagnosticSession.positionLineBuildNanoseconds = CjguiSaturatingAddU64(
+            diagnosticSession.positionLineBuildNanoseconds,
+            CjguiDiagnosticMonotonicNanoseconds() - timingStarted);
+    }
+    *out=line;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+static uint64_t CjguiPositionStopId(CjguiPositionLine *line, NSUInteger ordinal) {
+    return line.extra ? (UINT64_C(1)<<63) : ((uint64_t)(line.glyphs.location+1)<<16)|(ordinal+1);
+}
+static NSUInteger CjguiPositionFind(CjguiPositionLine *line, NSUInteger character, uint32_t branch) {
+    const CjguiPositionStop *s=line.stops.bytes;
+    NSUInteger count=line.stops.length/sizeof(*s), fallback=NSNotFound;
+    for (NSUInteger i=0;i<count;i++) if (s[i].character==character) {
+        if (branch==2 && s[i].branch==0) return i;
+        if (branch==s[i].branch) return i;
+        if (fallback==NSNotFound) fallback=i;
+    }
+    return branch==2 ? fallback : NSNotFound;
+}
+// Map a platform point back by full geometry, including alias groups. A
+// character may own several distinct bidi stops; it must never choose a
+// different-x point merely because byte and branch happen to match.
+static NSUInteger CjguiPositionFindPoint(CjguiPositionLine *line, CjguiPositionStop point) {
+    const CjguiPositionStop *s=line.stops.bytes;
+    NSUInteger alias=NSNotFound;
+    for (NSUInteger i=0;i<line.stops.length/sizeof(*s);i++) {
+        if (s[i].character!=point.character || fabs(s[i].x-point.x)>=1e-7) continue;
+        if (s[i].branch==point.branch) return i;
+        alias=i;
+    }
+    return alias;
+}
+
+static NSUInteger CjguiPositionStepWithinLine(CjguiPositionLine *line, NSUInteger ordinal, BOOL forward) {
+    const CjguiPositionStop *s=line.stops.bytes;
+    CjguiPositionStop current=s[ordinal];
+    NSData *group=current.branch ? line.alternate : line.primary;
+    const CjguiPositionStop *g=group.bytes;
+    NSUInteger n=group.length/sizeof(*g);
+    for (NSUInteger i=0;i<n;i++) {
+        if (g[i].character!=current.character || fabs(g[i].x-current.x)>=1e-7) continue;
+        NSInteger next=(NSInteger)i+(forward ? 1 : -1);
+        return next>=0 && (NSUInteger)next<n ? CjguiPositionFindPoint(line,g[next]) : NSNotFound;
+    }
+    return NSNotFound;
+}
+
+static CjguiInternalRendererStatus CjguiPositionResolve(
+    CjguiPreparedTextNodeLayout *p, NSUInteger character, uint32_t side,
+    uint64_t lease, uint64_t id, CjguiPositionLine **outLine, NSUInteger *outOrdinal) {
+    NSLayoutManager *lm=p.layoutManager;
+    BOOL extra = p.storage.length==0 || (character==p.storage.length && !NSIsEmptyRect(lm.extraLineFragmentRect));
+    NSUInteger glyph=0;
+    if (id) {
+        if (lease!=p.positionLease) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        extra=(id>>63)!=0;
+        glyph=extra ? 0 : (NSUInteger)((id>>16)-1);
+        if (!extra && glyph>=lm.numberOfGlyphs) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    } else if (!extra) {
+        glyph=[lm glyphIndexForCharacterAtIndex:MIN(character,p.storage.length-1)];
+    }
+    CjguiPositionLine *line=nil;
+    CjguiInternalRendererStatus st=CjguiPositionLineForGlyph(p,glyph,extra,&line);
+    if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+    if (!id && side==0 && !extra && character==line.characters.location && line.glyphs.location>0) {
+        NSUInteger a=0,b=0,e=0;
+        [p.storage.string getLineStart:&a end:&b contentsEnd:&e forRange:NSMakeRange(character,0)];
+        // A preceding hard terminator belongs to another logical boundary.
+        BOOL afterHard = character==a && character>0;
+        if (!afterHard) {
+            CjguiPositionLine *previous=nil;
+            st=CjguiPositionLineForGlyph(p,line.glyphs.location-1,NO,&previous);
+            if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+            if (NSMaxRange(previous.characters)==character && CjguiPositionFind(previous,character,2)!=NSNotFound) line=previous;
+        }
+    }
+    NSUInteger ordinal=id ? (extra ? 0 : (NSUInteger)((id&0xffff)-1)) : CjguiPositionFind(line,character,2);
+    if (ordinal>=line.stops.length/sizeof(CjguiPositionStop)) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    const CjguiPositionStop *points=line.stops.bytes;
+    if (points[ordinal].character!=character) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    *outLine=line; *outOrdinal=ordinal; return CJGUI_INTERNAL_RENDERER_OK;
+}
+static NSUInteger CjguiPositionNearest(CjguiPositionLine *line, double x) {
+    const CjguiPositionStop *s=line.stops.bytes;
+    NSUInteger count=line.stops.length/sizeof(*s), best=0;
+    double distance=DBL_MAX;
+    for (NSUInteger i=0;i<count;i++) {
+        double d=fabs(s[i].x-x);
+        if (d<distance-1e-7 || (fabs(d-distance)<1e-7 && s[i].branch==0)) { best=i; distance=d; }
+    }
+    return best;
+}
+static CjguiInternalRendererStatus CjguiPositionAdjacentLine(CjguiPreparedTextNodeLayout *p,
+    CjguiPositionLine *line, BOOL forward, CjguiPositionLine **out, BOOL *boundary) {
+    NSUInteger glyphs=p.layoutManager.numberOfGlyphs;
+    *boundary=NO;
+    if (!forward) {
+        if (line.extra && glyphs) return CjguiPositionLineForGlyph(p,glyphs-1,NO,out);
+        if (line.glyphs.location==0) { *boundary=YES; return CJGUI_INTERNAL_RENDERER_OK; }
+        return CjguiPositionLineForGlyph(p,line.glyphs.location-1,NO,out);
+    }
+    NSUInteger next=NSMaxRange(line.glyphs);
+    if (!line.extra && next<glyphs) return CjguiPositionLineForGlyph(p,next,NO,out);
+    if (!line.extra && !NSIsEmptyRect(p.layoutManager.extraLineFragmentRect))
+        return CjguiPositionLineForGlyph(p,0,YES,out);
+    *boundary=YES; return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+static CjguiInternalRendererStatus CjguiTextPositionImpl(
+    uint64_t session, uint64_t nodeId, uint64_t expectedSceneVersion, uint32_t op,
+    int64_t displayByte, uint32_t side, uint64_t lease, uint64_t id, uint32_t direction,
+    double x, double y, uint64_t *meta, double *rect) {
+    if (!meta || !rect) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    memset(meta,0,8*sizeof(uint64_t)); memset(rect,0,4*sizeof(double));
+    CJGuiInternalSession *ctx=CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed || !ctx.view) return ctx ? CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (expectedSceneVersion && expectedSceneVersion!=ctx.composableSceneVersion) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    if (op>3 || direction>1 || !isfinite(x) || !isfinite(y)) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    CJGuiInternalComposableSceneNode *node=nil;
+    for (CJGuiInternalComposableSceneNode *n in ctx.composableSceneOverlay.nodes) if (n.node.nodeId==nodeId) { node=n; break; }
+    if (!node) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    // Queries read accepted display bytes. Unaccepted proxy edits must not
+    // create a fresh layout and silently change the meaning of an old ticket.
+    NSString *text=CjguiComposableGpuTextValue(node);
+    CjguiPreparedTextNodeLayout *p=node.preparedTextLayout;
+    if (!p || ![p.storage.string isEqualToString:text]) {
+        if (id) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        NSData *runs=CjguiComposableDecodeStyleRuns(ctx.composableTextStyleRunsRaw[@(nodeId)]);
+        p=CjguiPrepareTextNodeLayout(node,text,1.0,runs,ctx);
+        if (!p) return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+        node.preparedTextLayout=p;
+    }
+    ctx.positionQueryCount = CjguiSaturatingAddU64(ctx.positionQueryCount, 1);
+    NSUInteger length=[text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    const char *utf8=text.UTF8String;
+    if (op!=1 && (displayByte<0 || (uint64_t)displayByte>length ||
+        !CjguiStrictUtf8Boundary(utf8,length,(NSUInteger)displayByte))) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    NSRect visual=CjguiComposableVisualNodeRect(node);
+    double localX=x-visual.origin.x-p.textRect.origin.x, localY=y-visual.origin.y-p.textRect.origin.y;
+    NSUInteger character=op==1 ? 0 : CjguiComposableUtf16OffsetForByte(utf8,length,(NSUInteger)displayByte);
+    if (!CjguiPositionIsBoundary(text,character)) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    CjguiPositionLine *line=nil; NSUInteger ordinal=0;
+    CjguiInternalRendererStatus st;
+    if (op==1) {
+        NSUInteger glyphs=p.layoutManager.numberOfGlyphs;
+        BOOL extra=glyphs==0 || (!NSIsEmptyRect(p.layoutManager.extraLineFragmentRect) && localY>=p.layoutManager.extraLineFragmentRect.origin.y);
+        NSUInteger glyph=extra ? 0 : MIN([p.layoutManager glyphIndexForPoint:NSMakePoint(localX,localY) inTextContainer:p.container],glyphs-1);
+        st=CjguiPositionLineForGlyph(p,glyph,extra,&line);
+        if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+        ordinal=CjguiPositionNearest(line,localX);
+    } else {
+        st=CjguiPositionResolve(p,character,side,lease,id,&line,&ordinal);
+        if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+    }
+    BOOL boundary=NO;
+    if (op==3) {
+        CjguiPositionLine *adjacent=nil;
+        st=CjguiPositionAdjacentLine(p,line,direction!=0,&adjacent,&boundary);
+        if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+        if (!boundary) { line=adjacent; ordinal=CjguiPositionNearest(line,localX); }
+    } else if (op==2) {
+        const CjguiPositionStop *s=line.stops.bytes;
+        CjguiPositionStop current=s[ordinal];
+        // Display-order movement within the current platform branch. The
+        // keyboard edge across a soft wrap skips its equal-character rendering
+        // alias once, as NSTextView moveLeft:/moveRight: does. Both stop records
+        // remain available to hit/caret and vertical navigation.
+        NSUInteger next=CjguiPositionStepWithinLine(line,ordinal,direction!=0);
+        if (next!=NSNotFound) {
+            ordinal=next;
+        } else {
+            CjguiPositionLine *adjacent=nil;
+            st=CjguiPositionAdjacentLine(p,line,direction!=0,&adjacent,&boundary);
+            if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+            if (!boundary) {
+                line=adjacent;
+                const CjguiPositionStop *e=line.stops.bytes;
+                NSUInteger count=line.stops.length/sizeof(*e);
+                ordinal=0;
+                for (NSUInteger i=1;i<count;i++) if (direction ? e[i].x<e[ordinal].x : e[i].x>e[ordinal].x) ordinal=i;
+                if (!line.extra && e[ordinal].character==current.character) {
+                    NSUInteger keyboardEdge=CjguiPositionStepWithinLine(line,ordinal,direction!=0);
+                    if (keyboardEdge!=NSNotFound) ordinal=keyboardEdge;
+                }
+            }
+        }
+    }
+    const CjguiPositionStop *s=line.stops.bytes; CjguiPositionStop stop=s[ordinal];
+    NSUInteger byte=CjguiByteOffsetForUtf16Index(text,utf8,length,stop.character);
+    if (byte==NSNotFound) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    uint32_t renderSide=1;
+    if (!line.extra && stop.character==NSMaxRange(line.characters) && stop.character<text.length) renderSide=0;
+    meta[0]=p.positionLease; meta[1]=CjguiPositionStopId(line,ordinal); meta[2]=byte;
+    meta[3]=renderSide; meta[4]=stop.branch; meta[5]=line.extra ? UINT64_MAX : line.glyphs.location;
+    meta[6]=stop.character; meta[7]=boundary;
+    rect[0]=visual.origin.x+p.textRect.origin.x+stop.x;
+    rect[1]=visual.origin.y+p.textRect.origin.y+line.rect.origin.y;
+    rect[2]=1.0; rect[3]=line.rect.size.height;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+CjguiInternalRendererStatus cjgui_internal_renderer_text_position_v1(
+    uint64_t session, uint64_t nodeId, uint64_t expectedSceneVersion, uint32_t op,
+    int64_t displayByte, uint32_t side, uint64_t lease, uint64_t id, uint32_t direction,
+    double x, double y, uint64_t *meta, double *rect) {
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status;
+        dispatch_sync(dispatch_get_main_queue(), ^{ status=cjgui_internal_renderer_text_position_v1(
+            session,nodeId,expectedSceneVersion,op,displayByte,side,lease,id,direction,x,y,meta,rect); });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    BOOL timing = ctx && !ctx.destroyed && ctx.view && ctx.diagnosticTimingEnabled;
+    uint64_t before = ctx ? ctx.positionQueryCount : 0;
+    uint64_t started = timing ? CjguiDiagnosticMonotonicNanoseconds() : 0;
+    CjguiInternalRendererStatus status = CjguiTextPositionImpl(session,nodeId,
+        expectedSceneVersion,op,displayByte,side,lease,id,direction,x,y,meta,rect);
+    if (timing && ctx.positionQueryCount != before) {
+        ctx.positionQueryNanoseconds = CjguiSaturatingAddU64(ctx.positionQueryNanoseconds,
+            CjguiDiagnosticMonotonicNanoseconds() - started);
+    }
+    return status;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_text_position_stats_v1(uint64_t session,uint64_t *counts) {
+    if (!counts) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status=cjgui_internal_renderer_text_position_stats_v1(session,counts);
+        });
+        return status;
+    }
+    CJGuiInternalSession *ctx = CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    counts[0]=ctx.positionPrepareCount; counts[1]=ctx.positionQueryCount;
+    counts[2]=ctx.positionLineBuildCount; counts[3]=ctx.positionCacheHitCount;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// ---- 版本化停靠点查询（Astra：旧 byte+affinity 查询只是兼容投影） ----
+// resolve：把 (displayByte, sideIn) 解析为该 accepted 排版内的停靠点。跨 FFI 的
+// 分支语义统一为**渲染侧**（0=Upstream 上一折出行末 / 1=Downstream 本行 /
+// 2=AUTO）；primary/alternate 只是解析器内部的枚举事实（alternate 独有条目
+// 同样是一次合法停靠，不压缩也不解释为 Upstream）。sideIn=Up 且字节是软折行
+// 边界 ⇒ 按上一折出行的虚拟行末停靠点解析。
+CjguiInternalRendererStatus
+cjgui_internal_renderer_text_stop_resolve(uint64_t session, uint64_t nodeId,
+                                           int64_t displayByte, uint32_t branchIn,
+                                           uint64_t expectedSceneVersion,
+                                           uint32_t *outByte, uint32_t *outBranch,
+                                           uint32_t *outLineFirstChar,
+                                           uint32_t *outLineLength, double *outX) {
+    if (!outByte || !outBranch || !outLineFirstChar || !outLineLength || !outX) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outByte=0; *outBranch=0; *outLineFirstChar=0; *outLineLength=0; *outX=0;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            status=cjgui_internal_renderer_text_stop_resolve(session,nodeId,displayByte,branchIn,
+                expectedSceneVersion,outByte,outBranch,outLineFirstChar,outLineLength,outX);
+        });
+        return status;
+    }
+    uint64_t m[8]; double r[4];
+    CjguiInternalRendererStatus st=cjgui_internal_renderer_text_position_v1(session,nodeId,
+        expectedSceneVersion,0,displayByte,branchIn,0,0,0,0,0,m,r);
+    if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+    CJGuiInternalSession *ctx=CjguiLookupSession(session);
+    for (CJGuiInternalComposableSceneNode *node in ctx.composableSceneOverlay.nodes) {
+        if (node.node.nodeId!=nodeId) continue;
+        CjguiPositionLine *line=nil; NSUInteger ordinal=0;
+        st=CjguiPositionResolve(node.preparedTextLayout,m[6],m[3],m[0],m[1],&line,&ordinal);
+        if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+        *outLineFirstChar=(uint32_t)line.characters.location;
+        *outLineLength=(uint32_t)line.characters.length;
+        break;
+    }
+    *outByte=(uint32_t)m[2]; *outBranch=(uint32_t)m[3]; *outX=r[0]; return st;
+}
+
+// 停靠点邻位（版本化）：从 (displayByte, branchIn) 的**当前停靠点**出发取
+// 视觉左/右邻位；同行内按合并显示序（含 alternate 独有条目）取相邻条目；行端
+// 跨行按硬/软换行规则；已证实排版边缘透传 (原字节, 原分支)。落点字节=簇边界。
+CjguiInternalRendererStatus
+cjgui_internal_renderer_text_stop_neighbor(uint64_t session, uint64_t nodeId,
+                                            int64_t displayByte, uint32_t branchIn,
+                                            uint32_t left, uint64_t expectedSceneVersion,
+                                            uint32_t *outByte, uint32_t *outBranch) {
+    if (!outByte || !outBranch) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    uint64_t m[8]; double r[4];
+    CjguiInternalRendererStatus st=cjgui_internal_renderer_text_position_v1(session,nodeId,
+        expectedSceneVersion,2,displayByte,branchIn,0,0,left ? 0 : 1,0,0,m,r);
+    *outByte=(uint32_t)m[2]; *outBranch=(uint32_t)m[3]; return st;
+}
+
+// Pure text service (no session, no scene): the user-perceived character
+// (extended grapheme cluster) CONTAINING a given byte offset, answered in the
+// same UTF-8 byte domain the caller edits in. Platform truth is
+// CFStringGetRangeOfComposedCharactersAtIndex over the decoded string; on this
+// OS it returns full extended clusters for the acceptance corpus (combining
+// accent, ZWJ family [1,9), regional-indicator pair, emoji modifier, surrogate
+// pairs -- measured /tmp probe 2026-09-29). The byte<->UTF-16 mapping is walked
+// explicitly here so the answer never depends on the caller's unit convention.
+// A status other than OK means NO cluster can be named; the caller must keep
+// the text and report the named state, never clamp.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_grapheme_cluster_range(const char *utf8, uint64_t declaredLength,
+                                               uint64_t offsetByte,
+                                               uint64_t *outStartByte, uint64_t *outEndByte) {
+    if (!utf8 || !outStartByte || !outEndByte) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outStartByte = 0;
+    *outEndByte = 0;
+    if (offsetByte >= declaredLength) {
+        // One-past-the-end (or beyond) has no containing cluster; the caller
+        // probes the byte on the consumed side (t-1 for backspace).
+        return CJGUI_INTERNAL_RENDERER_GRAPHEME_BOUNDARY_INVALID;
+    }
+    if (strlen(utf8) != declaredLength) {
+        // An embedded NUL truncated the C string: buffer and declared length
+        // disagree, so no boundary can be proven for this text.
+        return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    }
+    NSString *text = [NSString stringWithUTF8String:utf8];
+    if (!text) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    // One walk builds the byte<->UTF-16 alignment and finds the scalar that
+    // CONTAINS the offset byte (a mid-scalar offset resolves to its own
+    // scalar's cluster -- same contract as CF at a mid-surrogate-pair index).
+    uint64_t bytePos = 0;
+    uint64_t utf16Pos = 0;
+    uint64_t offsetUtf16 = 0;
+    BOOL found = NO;
+    while (bytePos < declaredLength) {
+        uint8_t lead = (uint8_t)utf8[bytePos];
+        int scalarBytes = 0;
+        int utf16Units = 0;
+        if (lead < 0x80) { scalarBytes = 1; utf16Units = 1; }
+        else if ((lead & 0xE0) == 0xC0) { scalarBytes = 2; utf16Units = 1; }
+        else if ((lead & 0xF0) == 0xE0) { scalarBytes = 3; utf16Units = 1; }
+        else if ((lead & 0xF8) == 0xF0) { scalarBytes = 4; utf16Units = 2; }
+        else return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+        if (bytePos + (uint64_t)scalarBytes > declaredLength) {
+            return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+        }
+        for (int k = 1; k < scalarBytes; k++) {
+            if (((uint8_t)utf8[bytePos + k] & 0xC0) != 0x80) {
+                return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+            }
+        }
+        if (offsetByte >= bytePos && offsetByte < bytePos + (uint64_t)scalarBytes) {
+            offsetUtf16 = utf16Pos;
+            found = YES;
+        }
+        bytePos += (uint64_t)scalarBytes;
+        utf16Pos += (uint64_t)utf16Units;
+    }
+    if (utf16Pos != (uint64_t)text.length) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    if (!found) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CFRange cluster = CFStringGetRangeOfComposedCharactersAtIndex(
+        (__bridge CFStringRef)text, (CFIndex)offsetUtf16);
+    if (cluster.location < 0 || cluster.length <= 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    // Second walk maps the cluster's UTF-16 bounds back to byte offsets.
+    uint64_t startByte = UINT64_MAX;
+    uint64_t endByte = UINT64_MAX;
+    bytePos = 0;
+    utf16Pos = 0;
+    while (bytePos <= declaredLength) {
+        if (utf16Pos == (uint64_t)cluster.location) startByte = bytePos;
+        if (utf16Pos == (uint64_t)(cluster.location + cluster.length)) {
+            endByte = bytePos;
+            break;
+        }
+        if (bytePos == declaredLength) break;
+        uint8_t lead = (uint8_t)utf8[bytePos];
+        int scalarBytes = (lead < 0x80) ? 1 : ((lead & 0xE0) == 0xC0) ? 2
+            : ((lead & 0xF0) == 0xE0) ? 3 : ((lead & 0xF8) == 0xF0) ? 4 : 0;
+        if (scalarBytes == 0 || bytePos + (uint64_t)scalarBytes > declaredLength) {
+            return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+        }
+        utf16Pos += (uint64_t)((lead & 0xF8) == 0xF0 ? 2 : 1);
+        bytePos += (uint64_t)scalarBytes;
+    }
+    if (startByte == UINT64_MAX || endByte == UINT64_MAX || endByte <= startByte) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outStartByte = startByte;
+    *outEndByte = endByte;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
 
 // Declare the product's DRAWN text caret, so IME geometry can be answered from what is
 // actually on screen. A self-drawn editor's caret is not an NSTextView; without this the
@@ -18943,6 +20409,8 @@ static CjguiInternalRendererStatus CjguiMeasureComposableMultilineNaturalHeightO
         ctx.forcedComposableMeasurementFailures -= 1;
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
+    if (!CjguiComposableTextWithinLayoutBudget(text))
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
     if (ctx.composableTextMeasurementCount < UINT32_MAX) ctx.composableTextMeasurementCount += 1;
     NSFont *font = CjguiComposableFontForStyle(fontSize, fontWeight, fontFamily);
     NSString *value = text ? [NSString stringWithUTF8String:text] : @"";
@@ -20490,6 +21958,18 @@ cjgui_internal_renderer_test_enqueue_composable_event(uint64_t session, uint32_t
         CJGuiInternalSession *ctx = CjguiLookupSession(session);
         if (!ctx || nodeIndex >= ctx.composableNodes.count) {
             status = ctx ? CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR : CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+            return;
+        }
+        // Test-only injection retains the SAME captured accepted identity and
+        // geometry as rightMouseDown. It proves lifecycle refusal, not CGEvent
+        // delivery; normal consumer acceptance drives the real right button.
+        if (eventKind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST) {
+            if (!ctx.composableSceneOverlay || nodeIndex >= ctx.composableSceneOverlay.nodes.count) return;
+            CJGuiInternalComposableSceneNode *node = ctx.composableSceneOverlay.nodes[nodeIndex];
+            NSRect visual = CjguiComposableVisualNodeRect(node);
+            status = CjguiEnqueueComposableCapturedPointerInteraction(ctx, eventKind, node,
+                NSMakePoint(NSMidX(visual), NSMidY(visual)), 0)
+                ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
             return;
         }
         if (eventKind < CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE || eventKind > CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL) {
@@ -22936,15 +24416,61 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         if (!gCjguiMainThreadDispatchEnabled) {
             return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
         }
+        // AppKit's standard loop already receives and dispatches NSEvents.
+        // A nested dequeue here can steal a drag/up from native tracking.
+        // Only scalar lifetime facts cross this worker wait; every FIFO read
+        // stays on main and is complete before the synchronous block returns.
+        uint64_t waitMicros = (uint64_t)timeoutMs * 1000;
+        uint64_t maxWaitMicros = (uint64_t)(kCjguiPumpTimeoutMaxSeconds * 1000000.0);
+        if (maxWaitMicros > 16000) maxWaitMicros = 16000;
+        if (waitMicros > maxWaitMicros) waitMicros = maxWaitMicros;
+        uint64_t deadline = CjguiCaretBlinkClockMicros() + waitMicros;
         __block CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block uint64_t generation = 0;
+        __block BOOL idle = NO;
         dispatch_sync(dispatch_get_main_queue(), ^{
-            status = cjgui_internal_renderer_pump_event(session, timeoutMs, outEvent);
+            CJGuiInternalSession *ctx = CjguiLookupSession(session);
+            if (!ctx || ctx.destroyed) {
+                status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+                return;
+            }
+            generation = ctx.sessionGeneration;
+            status = cjgui_internal_renderer_pump_event(session, 0, outEvent);
+            idle = outEvent ? outEvent->kind == CJGUI_INTERNAL_RENDERER_EVENT_NONE :
+                (ctx.pendingInteractions.count == 0 && ctx.pendingTransferTerminalFacts.count == 0 &&
+                 !ctx.pendingInputQueueFullNotice && !ctx.closeRequested);
+        });
+        if (status != CJGUI_INTERNAL_RENDERER_OK || !idle || waitMicros == 0) return status;
+        uint64_t now = CjguiCaretBlinkClockMicros();
+        if (now >= deadline) return status;
+        // One deadline, including time already spent waiting for main. An
+        // interrupted sleep recomputes only the original remaining budget.
+        while (now < deadline) {
+            uint64_t remaining = deadline - now;
+            struct timespec delay = { .tv_sec = (time_t)(remaining / 1000000),
+                .tv_nsec = (long)((remaining % 1000000) * 1000) };
+            if (nanosleep(&delay, NULL) == 0) break;
+            if (errno != EINTR) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            now = CjguiCaretBlinkClockMicros();
+        }
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            CJGuiInternalSession *ctx = CjguiLookupSession(session);
+            if (!ctx || ctx.destroyed || ctx.sessionGeneration != generation) {
+                status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+                if (outEvent) memset(outEvent, 0, sizeof(*outEvent));
+                return;
+            }
+            if (!gCjguiMainThreadDispatchEnabled) {
+                status = CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+                return;
+            }
+            status = cjgui_internal_renderer_pump_event(session, 0, outEvent);
         });
         return status;
     }
 
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
-    if (!ctx) {
+    if (!ctx || ctx.destroyed) {
         return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     }
 
@@ -22981,7 +24507,11 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         if (hasImmediateOwnerEvent) imeTraceOwnerSkips += 1;
         if (gCjguiActiveDataTransferDragSessions != 0) imeTraceDragSkips += 1;
     }
-    if (CjguiIsMainThread() && !hasImmediateOwnerEvent &&
+    if (hasImmediateOwnerEvent && (ctx.window.inLiveResize || ctx.composableSceneOverlay.pressedNodeId != 0)) {
+        CjguiTraceWindowInputGeometry(ctx, "owner_skip", nil);
+    }
+    if (!atomic_load_explicit(&gCjguiLauncherOwnsEventLoop, memory_order_acquire) &&
+        !hasImmediateOwnerEvent &&
         gCjguiActiveDataTransferDragSessions == 0) {
         NSDate *untilDate = [NSDate dateWithTimeIntervalSinceNow:timeoutSeconds];
         // Do not use an unbounded AppKit loop here: the Cangjie owner must
@@ -22992,6 +24522,9 @@ cjgui_internal_renderer_pump_event(uint64_t session,
                                                  inMode:NSDefaultRunLoopMode
                                                 dequeue:YES];
         if (event) {
+            BOOL tracePointer = event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeLeftMouseUp ||
+                event.type == NSEventTypeLeftMouseDragged;
+            if (tracePointer) CjguiTraceWindowInputGeometry(ctx, "acquire_before", event);
             if (traceImePump) {
                 imeTraceAcquired += 1;
                 if (event.type == NSEventTypeKeyDown) {
@@ -23002,6 +24535,19 @@ cjgui_internal_renderer_pump_event(uint64_t session,
                 }
             }
             [ctx.app sendEvent:event];
+            if (tracePointer) CjguiTraceWindowInputGeometry(ctx, "acquire_after", event);
+            if (traceImePump && (event.type == NSEventTypeLeftMouseDown ||
+                event.type == NSEventTypeLeftMouseUp || event.type == NSEventTypeRightMouseDown ||
+                event.type == NSEventTypeRightMouseUp)) {
+                fprintf(stderr, "CJGUI_IME_PUMP_POINTER type=%lu session=%llu scene=%llu "
+                    "window=%ld point=%.3f,%.3f pressed=%llu active=%llu pending=%lu\n",
+                    (unsigned long)event.type, (unsigned long long)ctx.rendererSessionToken,
+                    (unsigned long long)ctx.composableSceneVersion, (long)event.windowNumber,
+                    event.locationInWindow.x, event.locationInWindow.y,
+                    (unsigned long long)ctx.composableSceneOverlay.pressedNodeId,
+                    (unsigned long long)ctx.composableSceneOverlay.activeNodeId,
+                    (unsigned long)ctx.pendingInteractions.count);
+            }
         }
     }
     if (traceImePump && imeTracePumps % 100 == 0) {
@@ -23050,6 +24596,14 @@ cjgui_internal_renderer_pump_event(uint64_t session,
         outEvent->compositionId = interaction.compositionId;
         outEvent->bindingEpoch = interaction.bindingEpoch;
         outEvent->dataTransferEventId = interaction.dataTransferEventId;
+        if (traceImePump) {
+            fprintf(stderr, "CJGUI_IME_PUMP_INTENT kind=%u session=%llu node=%llu "
+                "projection=%llu accepted=%llu selection=%u:%u pending=%lu\n",
+                interaction.kind, (unsigned long long)ctx.rendererSessionToken,
+                (unsigned long long)interaction.nodeId, (unsigned long long)interaction.projectionVersion,
+                (unsigned long long)ctx.composableSceneVersion, interaction.selectionStart,
+                interaction.selectionEnd, (unsigned long)ctx.pendingInteractions.count);
+        }
         CJGuiInternalTransferDeliveryIdentity *delivery = interaction.transferDeliveryIdentity;
         if (interaction.dataTransferEventId > 0 && delivery && delivery.firstDeliveryOrdinal == 0 &&
             ctx.nextTransferDeliveryOrdinal < UINT64_MAX) {

@@ -516,12 +516,121 @@ public let CJGUI_WINDOW_FOCUS_STATE_VALID = "valid"
 public let CJGUI_WINDOW_FOCUS_STATE_UNFOCUSED = "unfocused"
 public let CJGUI_WINDOW_FOCUS_STATE_UNKNOWN = "unknown"
 
+/// One read-only platform geometry sample. `current` values are the window's
+/// latest observed bounds/scale; `submitted` values belong to one committed
+/// frame and deliberately remain old after a failed redraw.
+public class CjguiSharedOperationWindowGeometry {
+    public let state: String
+    public let pointUnit: String
+    public let currentWidthPoints: Float64
+    public let currentHeightPoints: Float64
+    public let currentBackingScale: Float64
+    public let currentDrawableWidthPixels: Int64
+    public let currentDrawableHeightPixels: Int64
+    public let currentRevision: Int64
+    public let submittedState: String
+    public let submittedWidthPoints: Float64
+    public let submittedHeightPoints: Float64
+    public let submittedBackingScale: Float64
+    public let submittedDrawableWidthPixels: Int64
+    public let submittedDrawableHeightPixels: Int64
+    public let submittedRevision: Int64
+    public let submittedSceneVersion: Int64
+    public let submittedFrameIndex: Int64
+
+    public init(state: String, currentWidthPoints: Float64, currentHeightPoints: Float64,
+        currentBackingScale: Float64, currentDrawableWidthPixels: Int64,
+        currentDrawableHeightPixels: Int64, currentRevision: Int64,
+        submittedState: String, submittedWidthPoints: Float64, submittedHeightPoints: Float64,
+        submittedBackingScale: Float64, submittedDrawableWidthPixels: Int64,
+        submittedDrawableHeightPixels: Int64, submittedRevision: Int64,
+        submittedSceneVersion: Int64, submittedFrameIndex: Int64) {
+        this.state = state; this.pointUnit = "window_point"
+        this.currentWidthPoints = currentWidthPoints; this.currentHeightPoints = currentHeightPoints
+        this.currentBackingScale = currentBackingScale
+        this.currentDrawableWidthPixels = currentDrawableWidthPixels
+        this.currentDrawableHeightPixels = currentDrawableHeightPixels
+        this.currentRevision = currentRevision; this.submittedState = submittedState
+        this.submittedWidthPoints = submittedWidthPoints
+        this.submittedHeightPoints = submittedHeightPoints
+        this.submittedBackingScale = submittedBackingScale
+        this.submittedDrawableWidthPixels = submittedDrawableWidthPixels
+        this.submittedDrawableHeightPixels = submittedDrawableHeightPixels
+        this.submittedRevision = submittedRevision
+        this.submittedSceneVersion = submittedSceneVersion
+        this.submittedFrameIndex = submittedFrameIndex
+    }
+
+    public static func unavailable(): CjguiSharedOperationWindowGeometry {
+        return CjguiSharedOperationWindowGeometry("unavailable", 0.0, 0.0, 0.0, 0, 0, -1,
+            "none", 0.0, 0.0, 0.0, 0, 0, -1, -1, -1)
+    }
+}
+
+/// Bounded scalar work from the real window refresh path. `-1` means the
+/// observation is disabled or unavailable; it never carries scene content.
+public class CjguiSharedOperationWindowWorkload {
+    public let status: String
+    public let sceneVersion: Int64
+    public let nodeWrites: Int64
+    public let nodeClones: Int64
+    public let nodeAllocations: Int64
+    public let textLayoutPreparations: Int64
+    public let imageDecodeStarts: Int64
+    public let reusableResourceBytes: Int64
+    public let lastAttemptResult: String
+    public let lastAttemptNodeWrites: Int64
+    public let lastAttemptNodeClones: Int64
+    public let lastAttemptNodeAllocations: Int64
+    public let lastAttemptTextLayoutPreparations: Int64
+    public let lastAttemptImageDecodeStarts: Int64
+
+    public init(status: String, sceneVersion: Int64, nodeWrites: Int64, nodeClones: Int64,
+        nodeAllocations: Int64, textLayoutPreparations: Int64, imageDecodeStarts: Int64,
+        reusableResourceBytes: Int64, lastAttemptResult: String, lastAttemptNodeWrites: Int64,
+        lastAttemptNodeClones: Int64, lastAttemptNodeAllocations: Int64,
+        lastAttemptTextLayoutPreparations: Int64, lastAttemptImageDecodeStarts: Int64) {
+        this.status = status; this.sceneVersion = sceneVersion
+        this.nodeWrites = nodeWrites; this.nodeClones = nodeClones; this.nodeAllocations = nodeAllocations
+        this.textLayoutPreparations = textLayoutPreparations; this.imageDecodeStarts = imageDecodeStarts
+        this.reusableResourceBytes = reusableResourceBytes; this.lastAttemptResult = lastAttemptResult
+        this.lastAttemptNodeWrites = lastAttemptNodeWrites; this.lastAttemptNodeClones = lastAttemptNodeClones
+        this.lastAttemptNodeAllocations = lastAttemptNodeAllocations
+        this.lastAttemptTextLayoutPreparations = lastAttemptTextLayoutPreparations
+        this.lastAttemptImageDecodeStarts = lastAttemptImageDecodeStarts
+    }
+
+    public static func disabled(): CjguiSharedOperationWindowWorkload {
+        return CjguiSharedOperationWindowWorkload("disabled", -1, -1, -1, -1, -1, -1, -1,
+            "none", -1, -1, -1, -1, -1)
+    }
+
+    public func factsPayload(): String {
+        return "WINDOW_WORKLOAD_STATUS ${status}\n" +
+            "WINDOW_WORKLOAD_SCENE_VERSION ${sceneVersion}\n" +
+            "WINDOW_WORKLOAD_NODE_WRITES ${nodeWrites}\n" +
+            "WINDOW_WORKLOAD_NODE_CLONES ${nodeClones}\n" +
+            "WINDOW_WORKLOAD_NODE_ALLOCATIONS ${nodeAllocations}\n" +
+            "WINDOW_WORKLOAD_TEXT_LAYOUT_PREPARATIONS ${textLayoutPreparations}\n" +
+            "WINDOW_WORKLOAD_IMAGE_DECODE_STARTS ${imageDecodeStarts}\n" +
+            "WINDOW_WORKLOAD_REUSABLE_RESOURCE_BYTES ${reusableResourceBytes}\n" +
+            "WINDOW_WORKLOAD_LAST_ATTEMPT_RESULT ${lastAttemptResult}\n" +
+            "WINDOW_WORKLOAD_LAST_ATTEMPT_NODE_WRITES ${lastAttemptNodeWrites}\n" +
+            "WINDOW_WORKLOAD_LAST_ATTEMPT_NODE_CLONES ${lastAttemptNodeClones}\n" +
+            "WINDOW_WORKLOAD_LAST_ATTEMPT_NODE_ALLOCATIONS ${lastAttemptNodeAllocations}\n" +
+            "WINDOW_WORKLOAD_LAST_ATTEMPT_TEXT_LAYOUT_PREPARATIONS ${lastAttemptTextLayoutPreparations}\n" +
+            "WINDOW_WORKLOAD_LAST_ATTEMPT_IMAGE_DECODE_STARTS ${lastAttemptImageDecodeStarts}"
+    }
+}
+
 public class CjguiSharedOperationWindowProgress {
     public let isActive: Bool
     public let sceneVersion: Int64
     public let nativeSubmissionVersion: Int64
     public let presentationState: String
     public let sessionIdentity: String
+    public let geometry: CjguiSharedOperationWindowGeometry
+    public let workload: CjguiSharedOperationWindowWorkload
     public let acceptedSceneVersion: Int64
     public let submittedSceneVersion: Int64
     public let submittedFrameIndex: Int64
@@ -550,6 +659,35 @@ public class CjguiSharedOperationWindowProgress {
     /// content exists, whether it is clipped, and which viewport owns it, without
     /// serializing the capability catalog again.
     public let viewportFacts: ArrayList<String>
+    /// Current accepted scene's one admitted in-app backdrop request. The
+    /// fixed identity is scoped by sessionIdentity and acceptedSceneVersion.
+    public let effectIdentity: String
+    public let effectRequestedRadiusPoints: Int64
+    /// The newest COMMITTED Metal command buffer's effect decision. Completion
+    /// is a separate observation of that exact frame, not physical display.
+    public let effectSubmittedSceneVersion: Int64
+    public let effectSubmittedFrameIndex: Int64
+    public let effectSubmittedRadiusPoints: Int64
+    public let effectSubmittedMode: String
+    public let effectFallbackReason: String
+    public let effectCompletion: String
+    /// Platform-neutral observation of the system window background material.
+    /// This does not claim that a desktop display showed the requested result.
+    public let windowBackgroundIdentity: String
+    public let windowBackgroundRequested: String
+    public let windowBackgroundBackend: String
+    public let windowBackgroundActual: String
+    public let windowBackgroundFallbackReason: String
+    public let windowBackgroundAcceptedSceneVersion: Int64
+    public let windowBackgroundFrameIndex: Int64
+    public let windowBackgroundRequestRevision: Int64
+    public let windowBackgroundEnvironmentRevision: Int64
+    public let windowBackgroundObservationRevision: Int64
+    public let windowBackgroundCompletion: String
+    public let windowBackgroundReduceTransparency: Bool
+    public let windowBackgroundActive: Bool
+    public let windowBackgroundVisualResult: String
+    public let windowBackgroundColorScheme: String
 
     public init(
         isActive: Bool,
@@ -573,11 +711,37 @@ public class CjguiSharedOperationWindowProgress {
         selectionEnd: Int64,
         activeLayerId: String,
         focusState!: String = CJGUI_WINDOW_FOCUS_STATE_UNKNOWN,
-        viewportFacts!: ArrayList<String> = ArrayList<String>()
+        viewportFacts!: ArrayList<String> = ArrayList<String>(),
+        effectIdentity!: String = "none",
+        effectRequestedRadiusPoints!: Int64 = 0,
+        effectSubmittedSceneVersion!: Int64 = -1,
+        effectSubmittedFrameIndex!: Int64 = -1,
+        effectSubmittedRadiusPoints!: Int64 = 0,
+        effectSubmittedMode!: String = "unavailable",
+        effectFallbackReason!: String = "none",
+        effectCompletion!: String = "unavailable",
+        windowBackgroundIdentity!: String = "window_content_background",
+        windowBackgroundRequested!: String = "opaque",
+        windowBackgroundBackend!: String = "unavailable",
+        windowBackgroundActual!: String = "opaque",
+        windowBackgroundFallbackReason!: String = "not_requested",
+        windowBackgroundAcceptedSceneVersion!: Int64 = -1,
+        windowBackgroundFrameIndex!: Int64 = -1,
+        windowBackgroundRequestRevision!: Int64 = 0,
+        windowBackgroundEnvironmentRevision!: Int64 = 0,
+        windowBackgroundObservationRevision!: Int64 = 0,
+        windowBackgroundCompletion!: String = "unavailable",
+        windowBackgroundReduceTransparency!: Bool = false,
+        windowBackgroundActive!: Bool = false,
+        windowBackgroundColorScheme!: String = "unavailable",
+        geometry!: CjguiSharedOperationWindowGeometry = CjguiSharedOperationWindowGeometry.unavailable(),
+        workload!: CjguiSharedOperationWindowWorkload = CjguiSharedOperationWindowWorkload.disabled()
     ) {
         this.isActive = isActive; this.sceneVersion = sceneVersion
         this.nativeSubmissionVersion = nativeSubmissionVersion; this.presentationState = presentationState
         this.sessionIdentity = sessionIdentity; this.acceptedSceneVersion = acceptedSceneVersion
+        this.geometry = geometry
+        this.workload = workload
         this.submittedSceneVersion = submittedSceneVersion; this.submittedFrameIndex = submittedFrameIndex
         this.observedMetalCompletionFrameIndex = observedMetalCompletionFrameIndex
         this.observedMetalFailureFrameIndex = observedMetalFailureFrameIndex
@@ -589,6 +753,78 @@ public class CjguiSharedOperationWindowProgress {
         this.selectionEnd = selectionEnd; this.activeLayerId = activeLayerId
         this.focusState = focusState
         this.viewportFacts = ArrayList<String>(viewportFacts)
+        this.effectIdentity = effectIdentity
+        this.effectRequestedRadiusPoints = effectRequestedRadiusPoints
+        this.effectSubmittedSceneVersion = effectSubmittedSceneVersion
+        this.effectSubmittedFrameIndex = effectSubmittedFrameIndex
+        this.effectSubmittedRadiusPoints = effectSubmittedRadiusPoints
+        this.effectSubmittedMode = effectSubmittedMode
+        this.effectFallbackReason = effectFallbackReason
+        this.effectCompletion = effectCompletion
+        this.windowBackgroundIdentity = windowBackgroundIdentity
+        this.windowBackgroundRequested = windowBackgroundRequested
+        this.windowBackgroundBackend = windowBackgroundBackend
+        this.windowBackgroundActual = windowBackgroundActual
+        this.windowBackgroundFallbackReason = windowBackgroundFallbackReason
+        this.windowBackgroundAcceptedSceneVersion = windowBackgroundAcceptedSceneVersion
+        this.windowBackgroundFrameIndex = windowBackgroundFrameIndex
+        this.windowBackgroundRequestRevision = windowBackgroundRequestRevision
+        this.windowBackgroundEnvironmentRevision = windowBackgroundEnvironmentRevision
+        this.windowBackgroundObservationRevision = windowBackgroundObservationRevision
+        this.windowBackgroundCompletion = windowBackgroundCompletion
+        this.windowBackgroundReduceTransparency = windowBackgroundReduceTransparency
+        this.windowBackgroundActive = windowBackgroundActive
+        this.windowBackgroundVisualResult = "unobserved"
+        this.windowBackgroundColorScheme = windowBackgroundColorScheme
+    }
+
+    /// A bounded scalar section sampled with this progress object. It is also
+    /// the generated observer's EFFECTS fingerprint, so one cursor and section
+    /// describe the same native receipt instead of two independent reads.
+    public func effectFactsPayload(): String {
+        return "EFFECT_ID ${effectIdentity}\n" +
+            "EFFECT_ACCEPTED_SCENE_VERSION ${acceptedSceneVersion}\n" +
+            "EFFECT_REQUESTED_RADIUS_POINTS ${effectRequestedRadiusPoints}\n" +
+            "EFFECT_SUBMITTED_SCENE_VERSION ${effectSubmittedSceneVersion}\n" +
+            "EFFECT_SUBMITTED_FRAME_INDEX ${effectSubmittedFrameIndex}\n" +
+            "EFFECT_SUBMITTED_RADIUS_POINTS ${effectSubmittedRadiusPoints}\n" +
+            "EFFECT_SUBMITTED_MODE ${effectSubmittedMode}\n" +
+            "EFFECT_FALLBACK_REASON ${effectFallbackReason}\n" +
+            "EFFECT_COMPLETION ${effectCompletion}\n" +
+            "WINDOW_BACKGROUND_IDENTITY ${windowBackgroundIdentity}\n" +
+            "WINDOW_BACKGROUND_REQUESTED ${windowBackgroundRequested}\n" +
+            "WINDOW_BACKGROUND_BACKEND ${windowBackgroundBackend}\n" +
+            "WINDOW_BACKGROUND_ACTUAL ${windowBackgroundActual}\n" +
+            "WINDOW_BACKGROUND_FALLBACK_REASON ${windowBackgroundFallbackReason}\n" +
+            "WINDOW_BACKGROUND_ACCEPTED_SCENE_VERSION ${windowBackgroundAcceptedSceneVersion}\n" +
+            "WINDOW_BACKGROUND_FRAME_INDEX ${windowBackgroundFrameIndex}\n" +
+            "WINDOW_BACKGROUND_REQUEST_REVISION ${windowBackgroundRequestRevision}\n" +
+            "WINDOW_BACKGROUND_ENVIRONMENT_REVISION ${windowBackgroundEnvironmentRevision}\n" +
+            "WINDOW_BACKGROUND_OBSERVATION_REVISION ${windowBackgroundObservationRevision}\n" +
+            "WINDOW_BACKGROUND_COMPLETION ${windowBackgroundCompletion}\n" +
+            "WINDOW_BACKGROUND_REDUCE_TRANSPARENCY ${windowBackgroundReduceTransparency}\n" +
+            "WINDOW_BACKGROUND_ACTIVE ${windowBackgroundActive}\n" +
+            "WINDOW_BACKGROUND_VISUAL_RESULT ${windowBackgroundVisualResult}\n" +
+            "WINDOW_BACKGROUND_COLOR_SCHEME ${windowBackgroundColorScheme}"
+    }
+
+    /// Reused by the narrow window endpoint and the generated PLATFORM
+    /// section. Every number comes from one native main-thread sample; the
+    /// submitted identity remains separate from the current platform state.
+    public func geometryFactsPayload(): String {
+        return "WINDOW_GEOMETRY_STATE ${geometry.state}\n" +
+            "WINDOW_GEOMETRY_UNIT ${geometry.pointUnit}\n" +
+            "WINDOW_CURRENT_POINT_SIZE ${geometry.currentWidthPoints} ${geometry.currentHeightPoints}\n" +
+            "WINDOW_CURRENT_BACKING_SCALE ${geometry.currentBackingScale}\n" +
+            "WINDOW_CURRENT_DRAWABLE_PIXELS ${geometry.currentDrawableWidthPixels} ${geometry.currentDrawableHeightPixels}\n" +
+            "WINDOW_CURRENT_GEOMETRY_REVISION ${geometry.currentRevision}\n" +
+            "WINDOW_SUBMITTED_GEOMETRY_STATE ${geometry.submittedState}\n" +
+            "WINDOW_SUBMITTED_POINT_SIZE ${geometry.submittedWidthPoints} ${geometry.submittedHeightPoints}\n" +
+            "WINDOW_SUBMITTED_BACKING_SCALE ${geometry.submittedBackingScale}\n" +
+            "WINDOW_SUBMITTED_DRAWABLE_PIXELS ${geometry.submittedDrawableWidthPixels} ${geometry.submittedDrawableHeightPixels}\n" +
+            "WINDOW_SUBMITTED_GEOMETRY_REVISION ${geometry.submittedRevision}\n" +
+            "WINDOW_SUBMITTED_GEOMETRY_SCENE_VERSION ${geometry.submittedSceneVersion}\n" +
+            "WINDOW_SUBMITTED_GEOMETRY_FRAME_INDEX ${geometry.submittedFrameIndex}"
     }
 
     public static func inactive(): CjguiSharedOperationWindowProgress {
@@ -600,6 +836,147 @@ public class CjguiSharedOperationWindowProgress {
 /// in separately rather than paying to build a complete window projection.
 public interface CjguiSharedOperationWindowProgressProvider {
     func windowProgress(): CjguiSharedOperationWindowProgress
+}
+
+/// One explicitly exposed accepted position target. The CAS token is opaque to
+/// clients and carries the window's accepted session, binding incarnation,
+/// scene and motion-request revision. It is never an authorization credential.
+public class CjguiSharedOperationPositionMotionFact {
+    public let nodeId: Int64
+    public let resourceId: Int64
+    public let semanticId: String
+    public let sessionIdentity: String
+    public let casToken: String
+    public let requestRevision: Int64
+    public let acceptedRequestRevision: Int64
+    public let requestedMode: String
+    public let requestedX: Float64
+    public let requestedY: Float64
+    public let presentedX: Float64
+    public let presentedY: Float64
+    public let declaredX: Float64
+    public let declaredY: Float64
+    public let acceptedSceneVersion: Int64
+    public let submittedFrameIndex: Int64
+    public let active: Bool
+    public let pending: Bool
+    public let lastFailure: String
+    public init(nodeId: Int64, resourceId: Int64, semanticId: String, sessionIdentity: String,
+        casToken: String, requestRevision: Int64, acceptedRequestRevision: Int64,
+        requestedMode: String, requestedX: Float64, requestedY: Float64,
+        presentedX: Float64, presentedY: Float64, declaredX: Float64, declaredY: Float64,
+        acceptedSceneVersion: Int64, submittedFrameIndex: Int64, active: Bool, pending: Bool,
+        lastFailure: String) {
+        this.nodeId = nodeId
+        this.resourceId = resourceId
+        this.semanticId = semanticId
+        this.sessionIdentity = sessionIdentity
+        this.casToken = casToken
+        this.requestRevision = requestRevision
+        this.acceptedRequestRevision = acceptedRequestRevision
+        this.requestedMode = requestedMode
+        this.requestedX = requestedX
+        this.requestedY = requestedY
+        this.presentedX = presentedX
+        this.presentedY = presentedY
+        this.declaredX = declaredX
+        this.declaredY = declaredY
+        this.acceptedSceneVersion = acceptedSceneVersion
+        this.submittedFrameIndex = submittedFrameIndex
+        this.active = active
+        this.pending = pending
+        this.lastFailure = lastFailure
+    }
+}
+
+public class CjguiSharedOperationPositionMotionDecision {
+    public let admitted: Bool
+    public let reason: String
+    public let fact: ?CjguiSharedOperationPositionMotionFact
+    public init(admitted: Bool, reason: String, fact: ?CjguiSharedOperationPositionMotionFact) {
+        this.admitted = admitted
+        this.reason = reason
+        this.fact = fact
+    }
+}
+
+/// Invoked by the existing public queue on the window owner thread. Hosts
+/// choose an explicit target allowlist before publishing their descriptor.
+public interface CjguiSharedOperationPositionMotionProvider {
+    func positionMotionTargets(): ArrayList<Int64>
+    func positionMotionRead(nodeId: Int64): ?CjguiSharedOperationPositionMotionFact
+    func positionMotionSet(nodeId: Int64, casToken: String, x: Float64, y: Float64,
+        motionReference: String): CjguiSharedOperationPositionMotionDecision
+    func positionMotionClear(nodeId: Int64, casToken: String): CjguiSharedOperationPositionMotionDecision
+}
+
+/// Bounded read-only result of one platform or external transfer operation.
+/// The owner versions come from its actual transaction, never from a UI bool.
+public class CjguiSharedOperationTransferReceiptFact {
+    public let sessionIdentity: String
+    public let eventId: UInt64
+    public let eventKind: Int64
+    public let semanticId: String
+    public let nodeId: Int64
+    public let bindingEpoch: UInt64
+    public let sourceKind: String
+    public let format: String
+    public let contentDigest: String
+    public let state: String
+    public let reason: String
+    public let expectedOwnerVersion: Int64
+    public let ownerAttempted: Bool
+    public let ownerVersionBefore: Int64
+    public let ownerVersionAfter: Int64
+    public let acceptedSceneVersion: Int64
+    public let submittedFrameIndex: Int64
+    public let revision: Int64
+    public init(sessionIdentity: String, eventId: UInt64, eventKind: Int64, semanticId: String,
+        nodeId: Int64, bindingEpoch: UInt64, sourceKind: String, format: String,
+        contentDigest: String, state: String, reason: String, expectedOwnerVersion: Int64,
+        ownerAttempted: Bool, ownerVersionBefore: Int64, ownerVersionAfter: Int64,
+        acceptedSceneVersion: Int64, submittedFrameIndex: Int64, revision: Int64) {
+        this.sessionIdentity = sessionIdentity
+        this.eventId = eventId
+        this.eventKind = eventKind
+        this.semanticId = semanticId
+        this.nodeId = nodeId
+        this.bindingEpoch = bindingEpoch
+        this.sourceKind = sourceKind
+        this.format = format
+        this.contentDigest = contentDigest
+        this.state = state
+        this.reason = reason
+        this.expectedOwnerVersion = expectedOwnerVersion
+        this.ownerAttempted = ownerAttempted
+        this.ownerVersionBefore = ownerVersionBefore
+        this.ownerVersionAfter = ownerVersionAfter
+        this.acceptedSceneVersion = acceptedSceneVersion
+        this.submittedFrameIndex = submittedFrameIndex
+        this.revision = revision
+    }
+}
+
+public class CjguiSharedOperationTransferReceiptPage {
+    public let lookupState: String
+    public let revision: Int64
+    public let retentionFloor: Int64
+    public let resyncRequired: Bool
+    public let receipts: ArrayList<CjguiSharedOperationTransferReceiptFact>
+    public init(lookupState: String, revision: Int64, retentionFloor: Int64,
+        resyncRequired: Bool, receipts: ArrayList<CjguiSharedOperationTransferReceiptFact>) {
+        this.lookupState = lookupState
+        this.revision = revision
+        this.retentionFloor = retentionFloor
+        this.resyncRequired = resyncRequired
+        this.receipts = receipts
+    }
+}
+
+public interface CjguiSharedOperationTransferReceiptProvider {
+    func transferReceiptPage(sessionIdentity: String, eventId: UInt64): CjguiSharedOperationTransferReceiptPage
+    func transferReceiptChangesPage(sessionIdentity: String, afterRevision: Int64,
+        maximum: Int64): CjguiSharedOperationTransferReceiptPage
 }
 
 /// Target-bound narrow facts for an application that owns several windows.
@@ -622,6 +999,11 @@ public class CjguiSharedOperationContextSnapshot {
     public let resourceType: String
     public let resources: ArrayList<CjguiSharedOperationResource>
     public let relations: ArrayList<CjguiSharedOperationRelation>
+    /// Owner-declared surface state (e.g. "MODE=preview"). Read on every
+    /// GET_CONTEXT, so external clients can observe editor mode without
+    /// relying on accessibility-tree dumps that only re-emit on interaction.
+    /// Empty preserves compatibility with legacy snapshot owners.
+    public let ownerState: String
 
     public init(
         version: Int64,
@@ -629,7 +1011,8 @@ public class CjguiSharedOperationContextSnapshot {
         resourceType: String,
         resources: ArrayList<CjguiSharedOperationResource>,
         relations!: ArrayList<CjguiSharedOperationRelation> = ArrayList<CjguiSharedOperationRelation>(),
-        streamIdentity!: String = ""
+        streamIdentity!: String = "",
+        ownerState!: String = ""
     ) {
         this.version = version
         this.streamIdentity = streamIdentity
@@ -637,6 +1020,7 @@ public class CjguiSharedOperationContextSnapshot {
         this.resourceType = resourceType
         this.resources = ArrayList<CjguiSharedOperationResource>(resources)
         this.relations = ArrayList<CjguiSharedOperationRelation>(relations)
+        this.ownerState = ownerState
     }
 }
 
@@ -979,4 +1363,189 @@ private func containsResourceId(resourceIds: ArrayList<Int64>, resourceId: Int64
         }
     }
     return false
+}
+
+// ---------------------------------------------------------------------------
+// Fixed-snapshot leases (E1 / Astra 2026-09-28).
+//
+// A lease freezes ONE version of a resource and keeps it readable while the
+// live document moves on. The framework owns the token, the TTL, the limits
+// and the accounting; the application supplies an opaque handle whose reads
+// never consult current document truth. The framework never copies content and
+// never depends on the document implementation.
+// ---------------------------------------------------------------------------
+
+/// Immutable identity and size of the snapshot a handle was taken from.
+public class CjguiSharedOperationSnapshotInfo {
+    public let resourceId: Int64
+    public let resourceInstanceId: String
+    public let version: Int64
+    public let byteLength: Int64
+
+    public init(resourceId: Int64, resourceInstanceId: String, version: Int64,
+        byteLength: Int64) {
+        this.resourceId = resourceId
+        this.resourceInstanceId = resourceInstanceId
+        this.version = version
+        this.byteLength = byteLength
+    }
+}
+
+/// Conservative keep-alive upper bounds that hold for the WHOLE lease, not just
+/// for the handle object. A provider that cannot state an upper bound must
+/// refuse the acquire instead of under-declaring it.
+public class CjguiSharedOperationSnapshotRetentionCost {
+    public let residentBytesUpperBound: Int64
+    public let backingBytesUpperBound: Int64
+    public let openResourceCountUpperBound: Int64
+
+    public init(residentBytesUpperBound: Int64, backingBytesUpperBound: Int64,
+        openResourceCountUpperBound: Int64) {
+        this.residentBytesUpperBound = residentBytesUpperBound
+        this.backingBytesUpperBound = backingBytesUpperBound
+        this.openResourceCountUpperBound = openResourceCountUpperBound
+    }
+}
+
+/// What THIS acquire may reserve. The provider must not hand out a handle whose
+/// retention exceeds these amounts, and it must not silently clamp them.
+public class CjguiSharedOperationSnapshotRetentionBudget {
+    public let residentBytes: Int64
+    public let backingBytes: Int64
+    public let openResources: Int64
+
+    public init(residentBytes: Int64, backingBytes: Int64, openResources: Int64) {
+        this.residentBytes = residentBytes
+        this.backingBytes = backingBytes
+        this.openResources = openResources
+    }
+}
+
+/// Lease policy. These are starting points, not measured costs.
+public class CjguiSharedOperationSnapshotLeaseLimits {
+    public let maxActiveLeasesPerGrant: Int64
+    public let maxActiveLeasesPerResourceInstance: Int64
+    public let maxActiveLeasesPerEndpoint: Int64
+    public let maxRetainedRecords: Int64
+    public let defaultTtlMs: Int64
+    public let maxTtlMs: Int64
+    public let maxReadBytes: Int64
+    public let maxResidentBytes: Int64
+    public let maxBackingBytes: Int64
+    public let maxOpenResources: Int64
+    /// Bounded diagnostic window a TERMINAL record stays answerable (idempotent
+    /// replay of its requestId, first terminal reason) before maintenance may
+    /// recycle its slot so a full table can accept again. Values below 1 clamp
+    /// to 1ms: the window is bounded, never disabled by a zero.
+    public let terminalRetentionMs: Int64
+
+    public init(
+        maxActiveLeasesPerGrant!: Int64 = 8,
+        maxActiveLeasesPerResourceInstance!: Int64 = 4,
+        maxActiveLeasesPerEndpoint!: Int64 = 32,
+        maxRetainedRecords!: Int64 = 512,
+        defaultTtlMs!: Int64 = 300 * 1000,
+        maxTtlMs!: Int64 = 1800 * 1000,
+        maxReadBytes!: Int64 = 64 * 1024,
+        maxResidentBytes!: Int64 = 256 * 1024 * 1024,
+        maxBackingBytes!: Int64 = 64 * 1024 * 1024 * 1024,
+        maxOpenResources!: Int64 = 256,
+        terminalRetentionMs!: Int64 = 30 * 1000
+    ) {
+        this.maxActiveLeasesPerGrant = maxActiveLeasesPerGrant
+        this.maxActiveLeasesPerResourceInstance = maxActiveLeasesPerResourceInstance
+        this.maxActiveLeasesPerEndpoint = maxActiveLeasesPerEndpoint
+        this.maxRetainedRecords = maxRetainedRecords
+        this.defaultTtlMs = defaultTtlMs
+        this.maxTtlMs = maxTtlMs
+        this.maxReadBytes = maxReadBytes
+        this.maxResidentBytes = maxResidentBytes
+        this.maxBackingBytes = maxBackingBytes
+        this.maxOpenResources = maxOpenResources
+        this.terminalRetentionMs = if (terminalRetentionMs < 1) { 1 } else { terminalRetentionMs }
+    }
+}
+
+/// One frozen snapshot. `readRange` reads ONLY the frozen version; `release` is
+/// idempotent. The framework calls both from the owner thread.
+public interface CjguiSharedOperationSnapshotHandle {
+    func snapshotInfo(): CjguiSharedOperationSnapshotInfo
+
+    func readRange(start: Int64, end: Int64): CjguiSharedOperationRangeRead
+
+    func release(): Unit
+}
+
+/// Acquire outcome. `reason` is a safe identifier in both branches: "acquired"
+/// on success, a named refusal otherwise.
+public class CjguiSharedOperationSnapshotAcquireResult {
+    public let isAcquired: Bool
+    public let handle: ?CjguiSharedOperationSnapshotHandle
+    public let cost: ?CjguiSharedOperationSnapshotRetentionCost
+    public let reason: String
+
+    private init(isAcquired: Bool, handle: ?CjguiSharedOperationSnapshotHandle,
+        cost: ?CjguiSharedOperationSnapshotRetentionCost, reason: String) {
+        this.isAcquired = isAcquired
+        this.handle = handle
+        this.cost = cost
+        this.reason = reason
+    }
+
+    public static func acquired(handle: CjguiSharedOperationSnapshotHandle,
+        cost: CjguiSharedOperationSnapshotRetentionCost): CjguiSharedOperationSnapshotAcquireResult {
+        return CjguiSharedOperationSnapshotAcquireResult(true, Some(handle), Some(cost), "acquired")
+    }
+
+    public static func refused(reason: String): CjguiSharedOperationSnapshotAcquireResult {
+        return CjguiSharedOperationSnapshotAcquireResult(false, None, None, reason)
+    }
+}
+
+/// Bounded liveness/identity probe: never takes a new content snapshot. The
+/// provider may return Unknown when it cannot answer cheaply.
+public class CjguiSharedOperationSnapshotResourceState {
+    public let isKnown: Bool
+    public let isOpen: Bool
+    public let instanceId: String
+    public let reason: String
+
+    public init(isKnown: Bool, isOpen: Bool, instanceId: String, reason: String) {
+        this.isKnown = isKnown
+        this.isOpen = isOpen
+        this.instanceId = instanceId
+        this.reason = reason
+    }
+
+    public static func open(instanceId: String): CjguiSharedOperationSnapshotResourceState {
+        return CjguiSharedOperationSnapshotResourceState(true, true, instanceId, "open")
+    }
+
+    public static func closed(instanceId: String): CjguiSharedOperationSnapshotResourceState {
+        return CjguiSharedOperationSnapshotResourceState(true, false, instanceId, "resource_closed")
+    }
+
+    public static func unknown(): CjguiSharedOperationSnapshotResourceState {
+        return CjguiSharedOperationSnapshotResourceState(false, false, "", "unknown_resource")
+    }
+}
+
+/// The application side of fixed-snapshot reads. `expectedVersion < 0` means
+/// ANY: take whatever the owner current version is AT THIS owner execution
+/// point. `expectedInstanceId == ""` means the caller did not pin an instance.
+public interface CjguiSharedOperationSnapshotProvider {
+    func acquireSnapshotFromExternal(
+        resourceId: Int64,
+        expectedInstanceId: String,
+        expectedVersion: Int64,
+        retentionBudget: CjguiSharedOperationSnapshotRetentionBudget
+    ): CjguiSharedOperationSnapshotAcquireResult
+
+    func snapshotResourceState(resourceId: Int64): CjguiSharedOperationSnapshotResourceState
+}
+
+/// Clock seam: leases expire on this clock. The default reads the monotonic
+/// clock; tests install a controllable one.
+public interface CjguiSharedOperationSnapshotClock {
+    func snapshotNow(): MonoTime
 }

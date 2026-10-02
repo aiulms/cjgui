@@ -17,6 +17,7 @@ class MemoryRangeStore <: CjguiRangeTextSource & CjguiRangeTextEditSink {
     var lastInserted: String = ""
     var readCallCount: Int64 = 0
     var conflictNext: Bool = false
+    var oversizedReadNext: Bool = false
 
     init(text: String) {
         this.bytes = text.toArray()
@@ -52,6 +53,11 @@ class MemoryRangeStore <: CjguiRangeTextSource & CjguiRangeTextEditSink {
 
     public func readRangeText(startByte: Int64, maxBytes: Int64): CjguiRangeTextSlice {
         this.readCallCount += 1
+        if (this.oversizedReadNext) {
+            this.oversizedReadNext = false
+            return CjguiRangeTextSlice(startByte, startByte, this.text(), this.version,
+                this.rangeTextByteLength(), true, "")
+        }
         var requested = startByte
         if (requested < 0) {
             requested = 0
@@ -169,6 +175,23 @@ func testWindowMaterialisesBoundedSliceOfLargeText(): Unit {
     let text = window.text()
     @Assert(!window.refresh())
     @Assert(window.text(), text)
+}
+
+@Test
+func testOversizedSourceCandidateNeverBecomesLayoutText(): Unit {
+    let store = MemoryRangeStore("abcdefghijk")
+    store.oversizedReadNext = true
+    let window = CjguiRangeTextWindow(12, "untrusted-source", store, store, materializeLimit: 8)
+    @Assert(window.refresh())
+    @Assert(window.text(), "")
+    @Assert(!window.isPrepared())
+    @Assert(window.unpreparedReason(), CJGUI_RANGE_TEXT_REASON_BUDGET)
+    @Assert(store.version, 1)
+    // A later compliant read may restore the same owner version without a
+    // stale oversized projection reaching native layout in between.
+    @Assert(window.refresh())
+    @Assert(window.text(), "abcdefgh")
+    @Assert(window.isPrepared())
 }
 
 @Test

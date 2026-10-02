@@ -10,8 +10,10 @@ CJGUI_FRAMEWORK_SOURCE_NAMES=(
   composable_vector_graphics.cj
   composable_vector_graphics_component.cj
   range_text.cj
+  text_grapheme.cj
   text_session.cj
   composable_ui_window.cj
+  composable_ui_wheel.cj
   composable_ui_diagnostics.cj
   composable_ui_animation.cj
   composable_ui_position_motion.cj

@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-02",
+  "verdict": "S1 low-level fixes and Pharos shared-class wiring retained; S2-S4 incomplete",
+  "scope": "Read source and archived evidence; extracted offline counterexamples only. No HAP build, device access, production edits or new executor.",
+  "sources": {
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp": "a079027def32168bb43bedc17dc43b121de3f13b98286d8ed3f70cc4387ee5d1",
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/arkts/cjgui-text-proxy.ets": "00d9fb41abecb2503753b919c6107d3760014ab5d85c313a958c1e643b43c088",
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/verify_pharos_dual_owner.py": "a6212d6d5a385e8ceffc12c7d5397bb49655cc3d5f7612a7db65b3ec73e99998",
+    "/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_thermo_app/entry/src/main/ets/pages/Index.ets": "3230d2034b5d17a2c5880d538b5ca50cba7fdae12079ead1ad7068e296d49a75",
+    "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/entry/src/main/ets/pages/Index.ets": "150ca38df50f1351c03d07f7b5a30853fc419d89306ee2b6eb8ce22d1f42cf31",
+    "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/application/src/pharos_ohos_controller.cj": "baf542bd29acf1235b83bc68327408e86ac976ca740b7b2ce103acd1023c91da"
+  },
+  "findings": [
+    {
+      "id": "R1",
+      "owner": "CJGUI OHOS renderer / window submission",
+      "evidence": "detach-counterexample.json",
+      "actual": "finish(A=13) -> bind(B=14) -> pending end=14/B; same id epoch 7->99 still context15/binding7",
+      "required": "All end/retire sites freeze old identity; full binding idempotency; source-authorized candidate publication and input admission",
+      "consultation": "/Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/s2-identity-handoff-astra/answer.md",
+      "consultation_conflict": "Answer rejects numeric version threshold. Current sync uses acceptedProjectionVersion < editingContextBaseVersion early return."
+    },
+    {
+      "id": "R2",
+      "owner": "shared ArkTS lifecycle + host seam",
+      "evidence": "lifecycle-counterexamples.json",
+      "actual": [
+        "never-settling attach stays pending with no timer",
+        "traffic on A authorizes detached B",
+        "native rc1 still terminal INSTALLED"
+      ],
+      "additional_source_risk": "Pharos collapsed selection guard uses only numeric range shape, not echo/request identity"
+    },
+    {
+      "id": "R3",
+      "owner": "consumer wiring / product policy",
+      "evidence": "selected-inputs.json",
+      "actual": "thermo template contains class but Index does not instantiate it; continuity test is button + external note, not system selection installation",
+      "product_remainder": "note owner created without configureContentCapacity; noteProjection calls full read on each build; no performance impact claim made"
+    },
+    {
+      "id": "R4",
+      "owner": "acceptance driver",
+      "evidence": "driver-negative-controls.json",
+      "actual": "Production main accepts wrong B replacement range and destructive A resume, all nine gates true",
+      "scope_limit": "This proves oracle weakness, not that archived r19 actually corrupted content"
+    }
+  ],
+  "retained": [
+    "preview revision fix",
+    "S1 recorded 9-case style transaction green",
+    "getter exception terminal and detached rejection retry limit",
+    "Pharos calls shared lifecycle and recorded r19 exercises normal owner updates",
+    "thermo business continuity PASS; does not prove shared lifecycle reuse"
+  ],
+  "not_run": [
+    "HAP build",
+    "device replay",
+    "full framework suite",
+    "old N1-N4 matrix"
+  ]
+}

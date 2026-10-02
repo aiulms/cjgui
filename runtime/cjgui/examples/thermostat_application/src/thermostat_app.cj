@@ -33,6 +33,16 @@ public class CjguiThermostatSnapshot {
     }
 }
 
+/// R3（2026-10-02）：备注按版本的有界历史条目（该版本接受动作后的备注值）。
+public class CjguiThermostatNoteVersion {
+    public let version: Int64
+    public let note: String
+    public init(version: Int64, note: String) {
+        this.version = version
+        this.note = note
+    }
+}
+
 public class CjguiThermostatDomain <: CjguiSharedOperationDomain & CjguiSharedOperationChangeDomain {
     public static let resourceId: Int64 = 9801
     public static let tempMin: Int64 = 16
@@ -49,6 +59,11 @@ public class CjguiThermostatDomain <: CjguiSharedOperationDomain & CjguiSharedOp
     private var imageCatalog: ?CjguiGeneratedUiCapabilityCatalog
     private let streamIdentity: String
     private let changeLog: ArrayList<CjguiSharedOperationChangeEntry>
+    // R3（h-source-preview-followup 2026-10-02）：备注文本按版本的**有界历史**，
+    // 供生成字段范围会话的选区重基（外部改版后继续输入不丢锚点）。每条是
+    // (该版本接受后的备注值)；只保留最近 32 条，超出丢最旧（窗口会话只重基
+    // 近期选区，远期按不可映射具名拒绝）。
+    private let noteHistory: ArrayList<CjguiThermostatNoteVersion>
 
     public init() {
         this.versionValue = 0
@@ -60,6 +75,8 @@ public class CjguiThermostatDomain <: CjguiSharedOperationDomain & CjguiSharedOp
         // 每次启动的 capability 均为新发；编入流标识防跨重启续读。
         this.streamIdentity = "thermostat_stream_${Random().nextUInt64()}"
         this.changeLog = ArrayList<CjguiSharedOperationChangeEntry>()
+        this.noteHistory = ArrayList<CjguiThermostatNoteVersion>()
+        recordNoteVersion()
     }
 
     public func resourceType(): String { return "thermostat" }
@@ -207,6 +224,72 @@ public class CjguiThermostatDomain <: CjguiSharedOperationDomain & CjguiSharedOp
 
     private func recordChange(kind: String) {
         changeLog.add(CjguiSharedOperationChangeEntry(versionValue, CjguiThermostatDomain.resourceId, kind))
+        recordNoteVersion()
+    }
+
+    /// R3：把「当前版本接受后的备注值」追加进有界历史（每笔已接受动作一次）。
+    private func recordNoteVersion(): Unit {
+        noteHistory.add(CjguiThermostatNoteVersion(versionValue, noteValue))
+        if (noteHistory.size > 32) {
+            let _ = noteHistory.remove(at: 0)
+        }
+    }
+
+    /// R3：fromVersion 时点的备注文本；历史越界（更早版本）返回 None。
+    public func noteAtVersion(version: Int64): ?String {
+        var found: ?String = None
+        for (entry in noteHistory) {
+            if (entry.version <= version) {
+                found = Some(entry.note)
+            } else {
+                break
+            }
+        }
+        return match (found) {
+            case Some(value) => Some(value)
+            case None => if (version >= versionValue) { Some(noteValue) } else { None }
+        }
+    }
+
+    /// R3：把备注的源字节选区从 fromVersion 重基到当前版本。文本未变→原样；
+    /// 单处替换按前后缀差分平移；跨过/交叠替换区→无歧义时平移，部分交叠→
+    /// None（不猜偏移）。
+    public func rebaseNoteSelection(fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64) {
+        let oldText = match (noteAtVersion(fromVersion)) {
+            case Some(value) => value
+            case None => return None
+        }
+        let currentVersion = versionValue
+        if (oldText == noteValue) {
+            return Some((currentVersion, startByte, endByte))
+        }
+        let oldBytes = oldText.toArray()
+        let newBytes = noteValue.toArray()
+        var prefix: Int64 = 0
+        let shared = if (oldBytes.size < newBytes.size) { oldBytes.size } else { newBytes.size }
+        while (prefix < shared && oldBytes[prefix] == newBytes[prefix]) {
+            prefix += 1
+        }
+        var suffix: Int64 = 0
+        while (suffix < shared - prefix && oldBytes[oldBytes.size - 1 - suffix] == newBytes[newBytes.size - 1 - suffix]) {
+            suffix += 1
+        }
+        let replacedStart = prefix
+        let replacedEnd = oldBytes.size - suffix
+        let insertedBytes = newBytes.size - suffix - prefix
+        let delta = insertedBytes - (replacedEnd - replacedStart)
+        if (endByte <= replacedStart) {
+            return Some((currentVersion, startByte, endByte))
+        }
+        if (startByte >= replacedEnd) {
+            return Some((currentVersion, startByte + delta, endByte + delta))
+        }
+        // 完全跨过替换区（两端都在外）：整体平移右端。
+        if (startByte <= replacedStart && endByte >= replacedEnd) {
+            return Some((currentVersion, startByte, endByte + delta))
+        }
+        return None
     }
 
     private func rejected(before: Int64, conflict: Bool, reason: String): CjguiSharedOperationActionResult {
@@ -246,6 +329,8 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     public static let nodeIdNote: Int64 = 24
     public static let nodeIdImage: Int64 = 31
     public static let nodeIdImageSwitch: Int64 = 32
+    // C（h-source-preview-next）：样式阶段循环按钮（本地 UI 状态，不经 owner）。
+    public static let nodeIdStylePhase: Int64 = 34
     // H 触摸滚动区（手写视口）：滚动区容器/内容与区内控件。
     public static let nodeIdHandScroll: Int64 = 900
     public static let nodeIdHandScrollImage: Int64 = 940
@@ -254,6 +339,12 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     public static let nodeIdHandScrollTempDown: Int64 = 943
     // 手写滚动视口：与生成 scrollArea 共用核心同一 viewport 机制。
     public let handScrollViewport: CjguiComposableUiScrollViewport = CjguiComposableUiScrollViewport()
+    // 卡片滚动区：恒温卡内容（约 836vp）超过宿主表面（调试面板占下半屏时
+    // 仅约 487vp）——按钮/开关/备注/状态行在折叠线下，clip 正确归零且不可
+    // 命中。把卡片区收进滚动区后，滑动能把这些控件带回视口（区内子节点
+    // 的 clip 随滚动偏移正确更新）。复用与手写视口同一机制，不新增第二套。
+    public static let nodeIdCardScroll: Int64 = 40
+    public let cardScrollViewport: CjguiComposableUiScrollViewport = CjguiComposableUiScrollViewport()
     // C（触摸包指导接续）：屏外 reveal 的显式目标导航——应用内导航按钮经
     // 公共 focusAcceptedSemanticNode 请求滚动区内编辑器。宿主循环在 pump 后
     // 消费挂起请求。
@@ -264,10 +355,9 @@ public class CjguiThermostatController <: CjguiComposableUiController &
         pendingFocusSemantic = Some(semanticId)
     }
 
-    public func stepActiveInertialScrolls(now: MonoTime): Bool {
-        return handScrollViewport.stepInertialScroll(now)
-    }
-
+    // H2：滚动物理策略与活动由**窗口**拥有；样例不再逐个枚举视口，也不再有
+    // 全局开关。宿主声明策略（`configureScrollPhysicsToken`）并只调
+    // `window.stepWindowActivities`。
     public func takePendingFocusRequest(): ?String {
         let pending = pendingFocusSemantic
         pendingFocusSemantic = None
@@ -278,16 +368,19 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     private let generatedRegion: CjguiGeneratedUiWindowRegion
     private var localRevision: Int64
     private var statusText: String
+    // C：样式阶段（0 混合 → 1 修改 → 2 倒置 → 3 重叠 → 4 超 64 → 5 清除）。
+    // 纯 UI 声明状态：非法批次的拒绝与保旧都发生在框架渲染器，这里只负责
+    // 把每阶段的声明真实送到同一条 wire。
+    private var styleRunsPhase: Int64
 
     public init(domain: CjguiThermostatDomain) {
-        // C（惯性包）：启用实验性惯性滚动（与设置同一份策略声明）。
-        cjguiComposableInertialScrollEnabled = true
         this.domain = domain
         this.generatedRegion = CjguiGeneratedUiWindowRegion(
             CjguiThermostatGeneratedBinding.catalog(domain), CjguiThermostatGeneratedBinding(domain),
             "thermo-generated")
         this.localRevision = 1
         this.statusText = "编辑后应用恒温配置"
+        this.styleRunsPhase = 0
     }
 
     public func uiSceneVersion(): Int64 {
@@ -309,8 +402,8 @@ public class CjguiThermostatController <: CjguiComposableUiController &
 
     public func buildUi(): CjguiComposableUiNode {
         let snapshot = domain.thermostatSnapshot()
-        let heading = CjguiComposableUiStyle(fixedHeight: 52, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
-            fontSize: 30.0, fontWeight: 700)
+        let heading = CjguiComposableUiStyle(fixedHeight: 24, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
+            fontSize: 17.0, fontWeight: 700)
         let value = CjguiComposableUiStyle(fixedHeight: 84, textColor: CjguiComposableUiColor(1.0, 0.82, 0.55, 1.0),
             fontSize: 54.0, fontWeight: 600)
         let action = CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 64, gap: 16,
@@ -324,9 +417,79 @@ public class CjguiThermostatController <: CjguiComposableUiController &
             cornerRadius: 18)
 
         let root = cjguiComposableVertical(1, "thermo-root",
-            CjguiComposableUiStyle(padding: 28, gap: 18,
+            CjguiComposableUiStyle(padding: 12, gap: 10,
                 background: CjguiComposableUiColor(0.10, 0.07, 0.05, 1.0)))
         root.add(cjguiComposableText(10, "thermo-title", "恒温示例", heading))
+        // C（h-source-preview-next）：既有第二消费者经同一框架声明消费混合
+        // textStyleRuns。run 端点是节点显示文本的 UTF-8 显示字节偏移（与
+        // macOS/网格 caret run 同一 wire 契约）："混排 Mixed 0129 样例" 共
+        // 24 字节——混排 0..6、"Mixed" 7..12、"0129" 13..17。阶段由样式按钮
+        // 循环推进（0 混合生效 → 1 修改 → 2 倒置 → 3 重叠 → 4 超 64 → 5 清除），
+        // 非法批次在框架渲染器整批拒绝、保留旧 runs；不新增第二编辑面。
+        let phase = styleRunsPhase
+        let mixedRuns = match (phase) {
+            case 1 => [
+                CjguiComposableUiTextStyleRun(0, 6, 12.0, 400, "system", 0.98, 0.85, 0.30, 1.0),
+                CjguiComposableUiTextStyleRun(7, 12, 12.0, 700, "system", 0.35, 0.90, 0.55, 1.0),
+                CjguiComposableUiTextStyleRun(13, 17, 14.0, 600, "monospaced", 1.0, 1.0, 1.0, 1.0,
+                    hasBackground: true, backgroundRed: 0.10, backgroundGreen: 0.45,
+                    backgroundBlue: 0.42, backgroundAlpha: 1.0)]
+            // 阶段 4 的判别对象是长文本节点的超 64 批次；这里重声明与阶段 1
+            // 相同的合法 runs，保证拒绝阶段里本节点画面稳定不换样。
+            case 4 => [
+                CjguiComposableUiTextStyleRun(0, 6, 12.0, 400, "system", 0.98, 0.85, 0.30, 1.0),
+                CjguiComposableUiTextStyleRun(7, 12, 12.0, 700, "system", 0.35, 0.90, 0.55, 1.0),
+                CjguiComposableUiTextStyleRun(13, 17, 14.0, 600, "monospaced", 1.0, 1.0, 1.0, 1.0,
+                    hasBackground: true, backgroundRed: 0.10, backgroundGreen: 0.45,
+                    backgroundBlue: 0.42, backgroundAlpha: 1.0)]
+            case 5 => Array<CjguiComposableUiTextStyleRun>()
+            case 2 => [
+                CjguiComposableUiTextStyleRun(9, 3, 12.0, 700, "system", 1.0, 0.0, 0.0, 1.0)]
+            case 3 => [
+                CjguiComposableUiTextStyleRun(0, 8, 12.0, 700, "system", 0.20, 0.40, 1.0, 1.0),
+                CjguiComposableUiTextStyleRun(7, 12, 12.0, 400, "system", 1.0, 0.60, 0.10, 1.0)]
+            case _ => [
+                CjguiComposableUiTextStyleRun(0, 6, 12.0, 700, "system", 1.0, 1.0, 1.0, 1.0),
+                CjguiComposableUiTextStyleRun(7, 12, 12.0, 700, "system", 1.0, 0.30, 0.28, 1.0),
+                CjguiComposableUiTextStyleRun(13, 17, 12.0, 400, "monospaced", 0.92, 0.96, 1.0, 1.0,
+                    hasBackground: true, backgroundRed: 0.16, backgroundGreen: 0.22,
+                    backgroundBlue: 0.30, backgroundAlpha: 1.0)]
+        }
+        let mixedStyle = CjguiComposableUiStyle(fixedHeight: 16,
+            textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0), fontSize: 12.0)
+        root.add(cjguiComposableText(11, "thermo-mixed", "混排 Mixed 0129 样例", mixedStyle,
+            textStyleRuns: mixedRuns))
+        // 超 64 预算的载具：100 字节 ASCII 长文本，常规阶段两段样式，阶段 4
+        // 声明 65 个单字节 run（排序、不重叠、各自非空）——按数量上限整批
+        // 拒绝、保旧。
+        let stressText = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+        let stressRuns = ArrayList<CjguiComposableUiTextStyleRun>()
+        if (phase == 4) {
+            var i: Int64 = 0
+            while (i < 65) {
+                stressRuns.add(CjguiComposableUiTextStyleRun(i, i + 1, 11.0, 400, "system",
+                    1.0, 0.50, 0.10, 1.0))
+                i += 1
+            }
+        } else if (phase != 5) {
+            stressRuns.add(CjguiComposableUiTextStyleRun(0, 10, 11.0, 700, "system", 1.0, 0.45, 0.95, 1.0))
+            stressRuns.add(CjguiComposableUiTextStyleRun(10, 20, 11.0, 400, "monospaced", 0.92, 0.96, 1.0, 1.0,
+                hasBackground: true, backgroundRed: 0.16, backgroundGreen: 0.22,
+                backgroundBlue: 0.30, backgroundAlpha: 1.0))
+        }
+        root.add(cjguiComposableText(33, "thermo-runs-stress", stressText,
+            CjguiComposableUiStyle(fixedHeight: 14, growX: 1,
+                textColor: CjguiComposableUiColor(0.70, 0.74, 0.82, 1.0), fontSize: 11.0),
+            textStyleRuns: stressRuns.toArray()))
+        root.add(cjguiComposableButton(CjguiThermostatController.nodeIdStylePhase,
+            "thermo-style-phase", "样式阶段 ${phase}", "CYCLE_STYLE_PHASE",
+            CjguiThermostatDomain.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 150, fixedHeight: 34,
+                background: CjguiComposableUiColor(0.30, 0.24, 0.16, 1.0),
+                textColor: CjguiComposableUiColor(0.98, 0.94, 0.90, 1.0), fontSize: 13.0)))
+        // 布局单位是 vp；377×487 vp 首屏同时消费公开生成与手写视口。
+        // 直接放入真实候选根，避免零高度包装层令后续兄弟与候选重叠。
+        root.add(generatedRegion.buildNode())
 
         let cardBox = cjguiComposableVertical(15, "thermo-card", card)
         cardBox.add(cjguiComposableText(12, "thermo-value", "目标温度：${snapshot.targetTemp}℃",
@@ -363,18 +526,18 @@ public class CjguiThermostatController <: CjguiComposableUiController &
                 background: CjguiComposableUiColor(0.13, 0.10, 0.07, 1.0),
                 border: CjguiComposableUiColor(0.44, 0.36, 0.26, 1.0), borderWidth: 1,
                 cornerRadius: 10, textColor: CjguiComposableUiColor(0.95, 0.93, 0.88, 1.0)),
-            fieldId: "note", operationActionName: "SET_NOTE", displayValueRole: "applied"))
+            fieldId: "note", operationActionName: "SET_NOTE",
+            operationResourceId: CjguiThermostatDomain.resourceId, displayValueRole: "applied"))
         cardBox.add(cjguiComposableText(30, "thermo-status", statusLine(), value,
             resourceId: CjguiThermostatDomain.resourceId, fieldId: "eco",
             displayValueRole: "applied"))
-        root.add(cardBox)
         // H 触摸滚动：手写视口（>3 屏有界内容，混排文字/图片/按钮/编辑器）。
         // 滚动经共享 viewport 的 scroll 意图通道，不改 owner；区内按钮与
         // 编辑器照常推进 owner，与生成 scrollArea 共同调用同一机制。
         // 区内备注编辑器与顶部编辑器绑定同一 owner 字段（同值双入口）。
         let handScroll = cjguiComposableScrollArea(CjguiThermostatController.nodeIdHandScroll,
             "thermo-hand-scroll", handScrollViewport,
-            CjguiComposableUiStyle(fixedHeight: 420, growX: 1, cornerRadius: 12, clipsContent: true,
+            CjguiComposableUiStyle(fixedHeight: 150, growX: 1, cornerRadius: 12, clipsContent: true,
                 background: CjguiComposableUiColor(0.14, 0.10, 0.07, 1.0),
                 border: CjguiComposableUiColor(0.44, 0.32, 0.20, 1.0), borderWidth: 1))
         let handContent = cjguiComposableVertical(901, "thermo-hand-scroll-content",
@@ -413,19 +576,20 @@ public class CjguiThermostatController <: CjguiComposableUiController &
                         background: CjguiComposableUiColor(0.13, 0.10, 0.07, 1.0),
                         border: CjguiComposableUiColor(0.44, 0.36, 0.26, 1.0), borderWidth: 1,
                         cornerRadius: 10, textColor: CjguiComposableUiColor(0.95, 0.93, 0.88, 1.0)),
-                    fieldId: "note", operationActionName: "SET_NOTE", displayValueRole: "applied"))
+                    fieldId: "note", operationActionName: "SET_NOTE",
+                    operationResourceId: CjguiThermostatDomain.resourceId, displayValueRole: "applied"))
             }
         }
         handContent.add(cjguiComposableButton(CjguiThermostatController.nodeIdHandScrollTempDown,
             "hand-scroll-down", "滚动区降温", "TEMP_DOWN", CjguiThermostatDomain.resourceId, action))
         handScroll.add(handContent)
         root.add(handScroll)
-        // Every accepted generated node enters the same layout, scene and
-        // XComponent input path as the handwritten controls above.
-        let generatedBox = cjguiComposableVertical(800, "thermo-generated-region",
-            CjguiComposableUiStyle(growX: 1, gap: 8))
-        generatedBox.add(generatedRegion.buildNode())
-        root.add(generatedBox)
+        let cardScroll = cjguiComposableScrollArea(CjguiThermostatController.nodeIdCardScroll,
+            "thermo-card-scroll", this.cardScrollViewport,
+            CjguiComposableUiStyle(fixedHeight: 340, growX: 1, clipsContent: true,
+                background: CjguiComposableUiColor(0.10, 0.08, 0.06, 1.0)))
+        cardScroll.add(cardBox)
+        root.add(cardScroll)
         return root
     }
 
@@ -446,6 +610,15 @@ public class CjguiThermostatController <: CjguiComposableUiController &
             // 显式目标导航：请求聚焦滚动区内编辑器（屏外 reveal→系统输入）。
             requestFocusSemantic("hand-scroll-note")
             statusText = "已请求定位滚动备注"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 27 && event.node.nodeId == CjguiThermostatController.nodeIdStylePhase) {
+            // 本地循环：阶段推进只改 UI 声明（localRevision 驱动重建与 runs 重装），
+            // 不产生 owner 写入——C 的判别对象是渲染器准入，不是业务状态。
+            styleRunsPhase = (styleRunsPhase + 1) % 6
+            statusText = "样式阶段 ${styleRunsPhase}"
+            println("THERMO_STYLE_PHASE phase=${styleRunsPhase}")
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }

@@ -39,7 +39,7 @@
 | E5 | 富文本样式 run、内联内容的测量/命中/布局接缝由真实编辑需求检验 | 部分 / **E** | 现有 style runs 复用；tokenize、Markdown、公式语义和脚注属于产品。需要公共 inline box 时再按真实用例增加，而非把完整排版出版系统塞进框架 |
 | E6 | 固定快照租约、撤权/关闭/重装与第二消费者公开生命周期 | 已有真实socket原证 / **E牵头shared core** | 多轮旧凭证有界记账、cleanup_pending拒绝重装、A→revoke→close→grantB与重发布保留；E1 core95/95，容量8的淘汰边界如实发布，无相关改动不重验 |
 | H1 | surface 身份、原生引用、停止/重开与迟到回调 | 模拟器已交付 / **H** | 真实引用、在途卸载、原票停止/ACK、全零与同 PID 新实例已有证据；新增资源继续遵守同一仲裁，物理设备性能单列 |
-| H2 | 系统文字/选区/组合输入、焦点及外部修改接续 | 草稿/选区与双域接续已消费，marked/cancel 待验 / **H** | 两款 normal HAP 的系统编辑→提交→外部改值→校准→续写及旧挂载防护已验；marked/cancel 保留当前 SDK/镜像/输入法的版本化边界 |
+| H2 | 系统文字/选区/组合输入、范围会话及编辑器平台消费 | 基础字段双域已消费；编辑器范围会话/几何待接，marked/cancel待验 / **H** | 设置/thermo草稿、选区、外部校准和续写原证保留；[Pharos真实源码编辑闭环](2026-09-26-harmonyos-executor-handoff.md#h-pharos-product-validation-next)已规划、未启动，复用主树契约并补H adapter，不等待E全部完成；marked/cancel仅按已测SDK/镜像/输入法记录未观测边界 |
 | H3 | 裁剪像素/命中、独立消费者与 normal/verify 同源交付 | 模拟器已交付，新增能力继续按包量测 / **H** | 实际像素、裁剪与命中负控及双域同源 HAP 原证复用；各阶段累计计数/TCP 往返不等于逐请求渲染性能 |
 | H4 | 共享 region、生成候选接受事务与真实控件消费 | 双 normal HAP 已交付 / **H** | 设置/thermo 的外部提交→画面→系统输入/动作→owner，重排/拒绝保旧及同源指纹已验；模型与脚本候选分列 |
 | H5 | 共享图片资源在鸿蒙的加载、绘制和生命周期 | 双 normal HAP 已消费，观察记录回收已修 / **H** | [图片结果](2026-09-26-harmonyos-executor-handoff.md#h-image-resource-next)及[触摸包 A](2026-09-26-harmonyos-executor-handoff.md#h-touch-scroll-next)：异步 PNG、fit/fill、缓存/交错/停止与退役观察表收敛按原证保留；SDK 临时内存/物理性能另列，不重复重开图片包 |
@@ -55,7 +55,7 @@ E 的具体执行入口：[Pharos Mark 三处接缝与文字能力接续](</User
 | F2 | 帧时钟、可中断补间/弹簧、交互状态过渡、停止后休眠 | macOS 共同动效及位置呈现事务已限域消费 / **P2/F11** | 候选只确认自身 mutation，通道重建按真实 accepted checkpoint 接续；自然20样本及空闲停帧已验。具体通道覆盖见[复核](#f-position-motion-acceptance-review)，未声明属性后续 |
 | F3 | 通用效果分组、alpha mask、组透明度与受支持的混合模式 | macOS 三项复核机制与两消费者汇合已通过 / **P4 前段** | normal/multiply、mask、提交前失败重试、缓存命中在途代次、独立节点/组动效及公开消费均有判别证据；不扩称所有模式或 H 后端 |
 | F4 | 背景模糊/材质与窗口级系统材质适配 | macOS 内部背景模糊与系统内容背景材质首片已消费 / **P4 后段** | 内部 blur 有采样/缓存/预算/回退；系统材质有窗口宿主、主题事务与公开实际状态，OHOS 后端和前台系统视觉另验 |
-| F5 | VoiceOver 实际操作、通用焦点可见性/键盘消费与系统主题/减少动态效果策略 | macOS 控件/AX/键盘已消费；**F 下一包**接真实 VoiceOver | [正常手写/生成消费任务](#f-accessibility-consumption-next)：导航、角色/状态、动作→同 owner、重排及通知接续；AX查询与普通CGEvent不替代VoiceOver，复用accepted语义及已有系统输入代理 |
+| F5 | VoiceOver 实际操作、通用焦点可见性/键盘消费与系统主题/减少动态效果策略 | macOS 控件/AX/键盘已有消费；F5 真实 VO 链未闭合，接续标准 AX 接线与可达性 | [正常手写/生成消费任务](#f-accessibility-consumption-next)：导航、角色/状态、动作→同 owner、重排及通知接续；AX查询与普通CGEvent不替代VoiceOver，复用accepted语义及已有系统输入代理 |
 | F6 | 多显示器不同 scale、运行中缩放的真实覆盖；新效果的边缘抗锯齿一致性 | macOS 同版几何、双消费者受控 scale、正常 resize 与最终前台输入已交付；物理跨屏待验 | [本包结果](#f-scale-consumption-next)：当前/提交事实、失败恢复、2×→1×→2× 像素/命中/成本；真实跨显示器单列 |
 | F7 | 开发者可用的布局/裁剪/效果边界叠加，以及分阶段帧成本汇总 | macOS 首个公共诊断切面与双消费者已交付 / **F 诊断包** | [本包结果](#f-diagnostics-and-regression)含有界同版本快照、可关闭叠加和原始开关成本；未提供的细分指标标 unavailable，全帧绘制不称为局部重绘 |
 | F8 | 剪贴板/拖放的图片、文件或富文本格式扩展 | PNG、Finder 单文件粘贴/真拖入与精确回执已由两消费者消费 / **F 文件首片** | [本包接续结果](#f-file-png-receipt-review)含特殊文件、读中变化、会话身份和有界结算反例；通用文件管理、富文本和 E 插图语义后续 |
@@ -797,7 +797,7 @@ A3 语义桥在 F11 固定导出的两正常应用上以 AX 查询核对通过�
 
 **F5 C 段静默窗口重跑与 VoiceOver 实测（2026-09-29 12:00–12:35，F）。** 三项 F11 留证缺口全部以普通 CGEvent 输入闭合：手写窗口输入前非空选区精确为 `0:1`（shift+right 于 caret 0）且 owner 原回包版本0、标题24B 原文；键入 `V` 替换后版本1、标题 `V宽布局动态项目` 22B、选区 `1:1`。平移 `(-80.25,3.5)` 收敛后（SETTLED scene60）旧位置独有点 `(1020,715)` 版本保持1、焦点不变，新按钮点 `(860,718)` 版本 `1→2`、焦点 `adaptive-translated-owner-action`，分段原回包各自保存。生成输入前 `3:4` 选区证据见事故段。证据 `/private/tmp/cjgui-f5-voiceover/evidence/adaptive3-*`、`generated-preinput-*`。
 
-VoiceOver 实测（工具驱动合成 ctrl+opt 和弦，逐项标注）：VO 经 `open -a VoiceOver` 启动（合成 cmd+F5 因 F5 媒体键语义不触发，加 fn 标志后才可用）；**真实 VO 导航成立**——VO 光标黑框在截图中逐步落位：窗口标题→标题文本→PNG 按钮→页签单选钮「大纲」/「按钮与复选」（`vo-nav-06/07`、`vo-cycle2-02`），及键盘焦点锚定的 owner-action 按钮（`vo-cycle1-01`）与生成应用按钮/备注字段（`vo-gen-01/04/05`）。**手写应用 VO 激活链完整**：click+Tab 焦点锚定→VO 启动光标落于「切换同一资源」按钮→单一 VO 和弦（唯一输入）→原 owner `isMarked 0→1`（基线自输入前快照，标题 22B 不变）——导航→读出定位→激活→原 owner 精确读回全链闭合。生成应用：VO 光标定位成立、直接 AXPress 按钮计数 `0→1`（标注 AXPress 非 VO）；VO 激活和弦四次尝试均在和弦处遇 VO 进程干净退出（无崩溃报告）。**系统边界**：合成 ctrl+opt 和弦驱动下 VO 在约 1–4 个命令后随机退出，Finder 对照同样复现（`vo-finder-final` 段），与 CJGUI AX 树无关；VO 对 tab group 的导航语义在页签单选钮后跳出窗口（AX 树完整含 outline 子树，`ax_children_probe` 证实 children=3），树/后续兄弟需 VO interact 或鼠标跳转到达。VO 结束时恢复原关闭状态，实例与轮次目录清理。VoiceOver 字幕面板未获免 sudo 配置，输出证据采用光标定位+状态变化+syslog（`vo-syslog.txt`）组合。生成应用 VO 激活、页签/树状态变化的 VO 激活变体、VO 内编辑与滚动后可达留待人工物理键盘补验；上述工具驱动证据不冒充人工体验。工具改进（无生产代码改动）：`desktop_input_driver` 增 vo/vo-shift/vo-cmd/vo-cmd-fn/vo-toggle/shift-key 等和弦命令（flagsChanged 真实修饰流），`control_ax_driver` 增 focus-id（AX 纯聚焦），`ax_field_probe`/`ax_children_probe`/`ax_system_focus` 新探针。
+**VoiceOver 执行原报与指导更正（2026-09-29）。** 执行者曾据截图、和弦与 owner 声称“手写 VO 激活链完整”，并把约 1–4 次命令后退出归为系统边界；本次指导核原日志、截图与源码后不采纳这两项结论。`vo-cycle1-01/02` 两图均为 shared operation version=2、资源选中，背景仍有 Quickstart 第2面板；没有该次动作紧邻的 `isMarked 0→1` 原回包。普通 Space/Enter 也可经 native `keyDown:` 激活相同 owner，故 owner 变化本身不能区分 VO 与普通键盘。`vo-nav-06/07` 图与归档进程时间不匹配，不能一律把黑框当作存活且就绪的 VO 光标。`vo-syslog.txt` 的 PID35069/37784 从最早日志到退出分别约10.32/10.34秒，均在退出前报 `VoiceOver was not launched by UA daemon as expected`；Finder 使用同一启动方式，只证明现象不局限于 CJGUI，未排除启动/驱动缺陷。保留 AX 查询、直接 AXPress、普通 CGEvent 的原范围；两款应用的完整 VO 导航/读出/激活与编辑继续未验，不自动转为“只能人工物理键盘”。字幕面板未配置不推断必须 sudo。测试工具新增和弦、focus-id 与 AX 探针属已写工具；本轮未修生产 AX 桥不代表该桥已无缺口。下一步按下述指导接续。
 
 **B 分层结论（2026-09-29）。** 本包实测未发现应用声明或框架投影缺陷：语义投影与 accepted 一致（A3）、AXPress/AX 查询路径全部有效、CJGUI AX 树不触发 VO 异常（Finder 对照同亡）；两次观测到的"慢/死窗"分别归因客户端 TCC 冷连接与 VO 对合成和弦的系统行为。无生产机制修复；不因缺实测重建 AX 层。E/H 写集保留，未 stage/commit/push。
 
@@ -830,19 +830,67 @@ VoiceOver 实测（工具驱动合成 ctrl+opt 和弦，逐项标注）：VO 经
 
 复杂平台根因通过 Codex CLI 聚焦咨询 `gpt-6-sol`；新的公共语义/生命周期方案不明确时用 `gpt-6-astra`，采用当前可用次高思考档，附准确请求与原始结果。现有 accepted/owner/输入会话裁决不重问。仓颉编码先读 skill；`laya-ask` 用于可复核的批量日志分类，不能代替平台研究或实际操作。等待构建/咨询时推进独立工作，同 target 和桌面操作串行。只在原节记录闭环和新事实，ACTIVE 短更，不另开执行卡或逐轮长文；保留 E/H 并行修改，不 stage/commit/push。
 
+<a id="f-accessibility-consumption-review"></a>
+#### F5 指导复核与整包接续（2026-09-29）
+
+**结论与范围。** 这是 F5 的本次指导复核；F11 连续平移已有范围继续接受，不重开其性能、Metal 或完整导出矩阵。wrong-thread 行为补强和普通输入原证按实际范围复用；F5 原 A–D 尚未整体通过。下面把旧任务中遗漏的生产接缝与验收工具问题合并推进，不新建任务卡。指导本轮只读源码/SDK、日志与截图，未启动桌面、构建或修改生产代码。H 产品驱动编辑器方案仍是未启动规划，E 当前文本位置任务不变。
+
+**接受的补证。** `/private/tmp/cjgui-f5-wrongthread/wrong-thread.log:48` 与探针356行确认同实例合法恢复、owner `512→320`、二次受控拒绝及后续224/最终清理；F11两款输入前非空选区与完整字节、手写旧点v1/新点v2原回包已补齐，均属普通 CGEvent/AX 范围。wrong-thread 的 `!refusedConsumption` 尚不能单独排除“报错却偷消费”，下次触碰该探针时在恢复dispatch前补 owner=320/begins不变的独立断言即可，不据此重复整套旧包。
+
+**1．先修验收入口，不能把失败启动当平台限制。** `vo-syslog.txt:1254/1269/1425`、`:1608/1623/1779` 已给出可区分线索。按 Apple [启动/关闭说明](https://support.apple.com/en-az/guide/voiceover/vo2682/mac)用系统公开开关或标准快捷键启动；不能只 `open -a VoiceOver` 后见进程便宣告 ready。识别并正常退出 Quickstart，保留用户原设置；做一次无输入、跨越原约10秒退出窗口的存活/就绪正控，再投一个导航/激活命令。查当前 VO 修饰键、导航分组与焦点跟随设置，按[导航说明](https://support.apple.com/en-gb/guide/voiceover/cpvounav/mac)区分 VO 光标和键盘焦点；树/组不能仅用连续右箭头即判不可达。驱动 `postVoiceOverCommand` 第一笔 Control flagsChanged 已同时带 Option，应校准完整按下/释放序列；不宣称它已被证明导致退出。若正控仍失败，带启动时间线及准确事件咨询 Sol，一次有新证据的追问后升级，停止无差别重启/换和弦；同时继续下面独立生产修复。
+
+**2．修标准 AX selector 到真实输入/owner 的接线。** 本机 SDK `NSAccessibilityProtocols.h:251/727` 要求 `isAccessibilityFocused`、`setAccessibilityFocused:`、`setAccessibilitySelectedTextRange:(NSRange)`；当前 `CJGuiInternalComposableAccessibilityAction`（renderer约8545–8583）使用 `accessibilityFocused`、`accessibilitySetFocused:`、`accessibilitySetSelectedTextRange:(NSValue*)`，value setter同样未覆盖标准 `setAccessibilityValue:`。这是已核实的入口不匹配；具体客户端失败结果先用正式 AX 请求固定，不凭源码宣称已复现所有症状。接回既有 focusNode、选区、文本会话与 owner，统一 settable/只读/禁用准入，不增加第二编辑通道。外部 AX 写焦点必须读到真实焦点/firstResponder与公共 WINDOW_FOCUS；以 CFRange 写非空 Unicode 选区后精确读回，value 操作进入原 owner；失效 wrapper 与禁止写入零副作用。`composable_scene_probe.m:1404` 直接调用自定义 getter 不能继续充作标准协议判据，补正式 selector 和进程外 AX 的区分反例。F 只修 AX 适配，不接管 E 的正文、IME 或新字素机制。
+
+**3．落实可见范围与屏外可达，不把裁剪当身份销毁。** `accessibilityVisibleCharacterRange`（约8572）当前无条件 `0..全文`；`reconcileAccessibilityActions`（约8931/9016）把 clip 为零的节点排除并退役 wrapper，均与原 B 要求不符。按同一 accepted 排版事实提供有界可见范围，无法得到时明确不可用，不能用全文/零矩形冒充；查询不得触发全文布局。对已物化且绑定仍有效的节点区分“在屏外”与“已移除/换绑”，复用当前 viewport/reveal 和身份，不把 GB 文档全量建成 AX 节点。以部分裁剪单行/多行滚动前后范围、保留旧引用→滚出→导航/reveal→滚回、真移除/ABA三组反例闭合；命中仍受当前裁剪限制。保留重排/resize有效身份，按 accepted 变化发需要的通知，空闲无通知/提交增长。树标准动作、虚拟节点可达若方案不明确，先用本地 Flutter AX 实现与测试作机制参考，必要时 Astra 裁决，不另起一套语义树所有权。
+
+**4．一轮正常消费，建立真实 VO 因果链。** 修后复用两款消费者，生成侧经公开候选进入同一 accepted 事务。先建立一个能区别普通 Space 的 VO 按钮正控：记录紧邻前后完整 owner 回包、VO 就绪与目标身份，利用 VO 光标与键盘焦点分离或受控入口观察区分 AX 动作与普通 keyDown，补 VO 关闭时同和弦对照；不得只凭一次 owner 变化判 VO 成功。正常链合计覆盖页签/树变化、屏外可达、短输入编辑、同 key 重排及拒绝保旧，保留每款的 PID/semantic/scene 与可归因角色/名称/状态输出。实际失败修所属机制，直接 AXPress/普通输入仍单列。只在生产修改后做一次受影响测试、核心构建与含空格同源汇合；未变 F11 原证直接复用。
+
+**推进与报告。** 先完成2/3的确定机制和1的启动判别，独立工作交错进行，最后汇合4，不把每个探针结果拆成新一轮文档。技术根因用 `gpt-6-sol`、公共契约/生命周期不明用 `gpt-6-astra`，按当前可用次高思考档；咨询提供原始反例并只读，普通明确接线直接实施。`laya-ask` 可批量归类日志，不能代替根因或通过判定。等待编译/咨询时推进独立工作；同 target、桌面串行，发现外部输入污染立即隔离该段，不重投用户动作。只短更本节与 ACTIVE，集中报告生产变化、判别结果和剩余项；保留 E/H 写集，不 stage/commit/push。
+
 ## 5. 不把“技术清单”误当交付目标
 
 - **优先完整消费链。** 阴影、动画、无障碍分别是不同完整包；每包有真实普通应用和公共消费结果，不按每个函数/文档拆成一轮。
 - **优化由实测选择。** 已有文字 tiling/缓存无需重建；普通 GUI 的资源缓存不能替代编辑器的范围存储/增量解析；后台布局、atlas、LOD、partial present 都要先证明瓶颈和语义可接受性。
 - **框架完备性按使用面讨论。** 本表不是“所有现代框架特性都必须齐全”的清单，也不以控件数或阶段数计算百分比。每次接受注明平台、输入方式、负载、调用来源与尚未验证范围。
 
-## 6. 三线共享代码与交付方式
+<a id="two-plus-one-product-lines"></a>
+## 6. 下一阶段 2+1 分工方案与共享交付（2026-09-29）
 
-1. **主责随问题层级走。** E 发现框架问题，E 可在 CJGUI 修复并带回独立框架用例/消费；F 不重复接管。H 的平台问题在后端修，共同 contract 的修改与其 macOS 消费一并说明。主责转移时在原任务交接，不让两边都等待“对方会做”。
-2. **共享文件需要协调写集。** 三线可能同时涉及 `composable_ui.cj`、`composable_ui_window.cj`、`composable_ui_generated.cj`、`runtime_renderer_session.cj`、`native/cjgui_internal_renderer.m`。F 起步先核对 E/H 正在修改的符号；重叠段由一名执行者负责集成，其他线先做独立模块/消费者。独立目录不能证明共享核心没有冲突。
-3. **共享构建与桌面串行。** 同一 cjpm target 由执行者协调 build/test 顺序；桌面同一时刻一个操作者。等待期间推进有用的独立工作；确无独立工作时用等待工具，避免循环查状态、重复测试或写进度文档填时间。
-4. **阶段证据集中更新。** 复用未受影响基线；有代码变更、失败或新疑点才重跑相关检查，包末一次汇合验证。本文更新能力状态和证据链接即可，不追加逐轮长日志。第一包直接使用本文 P1，不再复制成一套执行卡。
-5. **执行对象由用户选择。** 当前只完成规划与开工依据；收到第三线实施指令后，在 ACTIVE 写入执行对象和当前 P 包。后续包沿本表接续，保持既有 E/H 工作；咨询、升级与仓库操作沿 [AGENTS](../../AGENTS.md)。
+**本次分工下发（2026-09-29）。** E 字素首包结束后，已按当前源码和证据安排 [macOS 连续写作/accepted 位置](</Users/jiangxuanyang/Desktop/Pharos Mark/docs/IMPLEMENTATION_PLAN.md#editor-macos-position-session-next>)与 [OHOS 真实小文档编辑器＋惯性接缝](2026-09-26-harmonyos-executor-handoff.md#h-pharos-product-validation-next)两包，由用户分发提示词开工。原 F 转能力任务池，F5 仍未完成；本次没有自动创建、恢复或联系任何执行线程，实际运行状态只看 ACTIVE。
+
+**方案边界。** 同一个 Pharos 产品的两端消费线，不复制业务或建立两个长期编辑器。H 原惯性返工和 F5 未完事实保留；新包完成以各自真实终点判断，旧未验不改名为通过。
+
+| 主线 | 主要交付 | 框架责任 |
+| --- | --- | --- |
+| E：Pharos macOS 主线 | 同一产品的正文/事务/解析/SourceMap、共同应用服务与 macOS 编辑体验 | 编辑器遇到的通用文字、布局、语义或渲染缺口修回 CJGUI，并给出独立框架反例及必要第二消费者；不把通用能力藏进产品 |
+| H：Pharos OHOS 主线 | 复用同一产品 owner/规则/服务，接 OHOS 宿主、存储端口与真实 HAP 编辑链 | 平台输入/绘制/触摸/生命周期在 OHOS 适配层；发现共同契约缺陷时修共同核心，保留 macOS 有限回归。设置/thermo 保留为小型机制回归，主要新消费目标转向真实编辑器 |
+| +1：临时专项 | 一项明确的通用能力、跨平台衔接、性能瓶颈或独立审阅 | 每包明确写集、接入主线、验收终点与退出条件；完成即回归两条主线，不连续自增新包。F5/VoiceOver、未来效果或平台能力在池中按真实需求排序，不因非阻塞而永久丢弃 |
+
+**同一产品、同一框架。** 两端不同的是平台宿主/适配器与能力支持范围；正文模型、版本事务、撤销、解析和共同语义维持同一实现。主 `src` 是公共机制来源，H `snapshot` 是可追溯的同步交付副本，不另立一套长期分叉规则。新增平台宿主目录可以独立，不能复制整份编辑器后两边分别修业务。平台未支持的能力明确发布边界，不能假成功或回落到私有 owner。
+
+**共同核心每包一个集成人，不固定让 E 排队。** 包主责通常承担其跨层改动；H 当前 ABI/身份/共同滚动接缝仍由 H 集成，E 当前文字会话/字素/位置接缝仍由 E 集成。实际重叠的字段/函数/文件在动手前明确交接；对无法安全分开的同一文件修改串行。ABI 按 C 头、主仓颉镜像、H 镜像、生产填充/读取、两端针对性验证作为一个交付单元同步，不能一线改布局、另一线靠宽松身份判据兜底。冻结构建输入并记录来源/同步差异；同 target 串行，不以源码分目录推断产物隔离。
+
+**发现方修到正确层。** 产品格式/规则/持久化语义留产品；通用 GUI 机制回 CJGUI；平台 API 差异落桥接。两条产品线都承担框架建设，不因取消常驻 F 而把所有新缺口搁置，也不能以两个编辑器能跑替代框架手写/生成/混合、共同 owner、普通消费者及公共发现的完整目标。指导继续在现有 roadmap 排通用缺口，必要时交 +1；不新增每轮台账。
+
+**当前先后。** E先修跨片段/非空选区边界、连续写作镜像与表格命令预算，再落实已定的accepted统一位置/视觉导航；H先修Node ABI与冻结事件绑定两个GUI前置，同时做产品目标构建/存储端口，再交小文档源码编辑→人/Agent接续→撤销→保存重开。原惯性必做项仍在H包，完整惯性、visual大文件或所有IME回调不是小文档接入总前置。F5保留具体反例，暂不自动派发第三常驻包。
+
+<a id="two-editor-write-sets"></a>
+### 本次两线具体写集与交接
+
+| 写入归属 | 本包范围 | 另一线的使用方式 |
+| --- | --- | --- |
+| E/macOS | 主 `src/text_session.cj`、新文字位置/意图模块、`composable_ui_window.cj` 的文字镜像/意图/查询函数；macOS renderer文字段；Pharos `main.cj`、editor_surface、edit_intent/SourceMap及表格命令 | H先固定上一包已完成的最小文本契约及指纹，按依赖同步到平台副本；新契约稳定后窄接入，不追随每次在途修改 |
+| H/OHOS | `platforms/ohos/{host,snapshot,scripts}`、HAP和新产品OHOS宿主；产品文件平台端口/构建装配；共同viewport活动、滚动接受与split接续 | E不改这些函数或存储/目标构建；H不能把同文件内E文字段整体覆盖 |
+| H统一集成ABI | Node/Event C结构、主仓颉镜像/H镜像、staging/填充/读取与尺寸哨兵测试；实际不兼容修改作为一份交付 | E新文字查询优先独立C头/查询值与仓颉模块，不往Node/Event继续加字段；不得为方便把E现有字段删掉或改变原义 |
+| H薄平台装配，E桌面消费点 | 复用共享AppServices/DocumentSession/editor_surface；H新增独立平台端口或小文档命令装配 | 不大拆/复制桌面main私有控制器；确需调整桌面调用点由E集成，不能双方重写main |
+
+同一文件不同函数仍需先查最新差异，按上下文最小补丁写入，禁止整文件从旧副本覆盖；同一函数只有一个集成人。实际重叠无法安全分开时只暂停该段，冻结待交接的最小接口/差分及来源，其他工作继续。两外部工具没有消息通道时不得假设对方已收到，必要窄交接在当前任务/状态说明，由用户转达，不自建跨线程调度系统。主src是公共来源，H snapshot按依赖同步并记录来源，不全量追赶未完成E包。
+
+新一轮构建前固定输入/指纹；同target串行，必要时各用已存在的独立产物目录但不私建分支/worktree。E桌面输入与H模拟器的主机前台操作也须错开。构建/咨询等待时推进不会修改该次构建输入的工作；不因等待而重复稳定验证。
+
+日常根因/方案咨询按 [Pi独立GLM5.3入口](../../AGENTS.md#independent-model-consultation)，主执行也是GLM5.3仍适用；复杂未决公共契约直接Astra、技术仍无解用Sol，不要求三层都问。模型答复不作验收，Laya仅用于可复核批量分类。
+
+**互斥与交付。** 同一桌面、模拟器 target 和同一构建目录只由一个执行者操作；等候时推进确实独立工作，完成后使用等待工具，不重复扫描或重跑旧绿色套件。临时 +1 触及 E/H 写集时，转交相关片段的独占集成权，其他独立工作继续。每个包保留反例、正常产品消费和必要第二消费者，按修改风险一次汇合；不把每个补丁拆成报告。未经用户要求不 stage/commit/push，不重启暂停任务/自动化；执行对象仍由用户选择。
 
 ## 7. 直接相关入口
 

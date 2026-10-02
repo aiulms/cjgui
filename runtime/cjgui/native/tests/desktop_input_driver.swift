@@ -51,10 +51,12 @@ func postUnicode(_ text: String) {
         // and two lone-surrogate events would be dropped by AppKit anyway.
         var units = Array(String(scalar).utf16)
         if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {
+            down.flags = []
             down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
             down.post(tap: .cghidEventTap)
         } else { failDelivery("no_keyboard_event") }
         if let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
+            up.flags = []
             up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
             up.post(tap: .cghidEventTap)
         }

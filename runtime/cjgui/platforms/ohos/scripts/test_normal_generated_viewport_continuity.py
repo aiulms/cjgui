@@ -423,15 +423,25 @@ class GeneratedViewportContinuityTests(unittest.TestCase):
             verifier.accepted_instance(instances, "editor", kind="textInput", field="name")
 
     def test_accepted_instance_center_adds_measured_xcomponent_origin_once(self):
-        # R4 XComponent layout was [0,137][1320,1842]. The generated action
-        # bounds are local to that component, so the UITest screen point is
-        # (28+1150/2, 137+1333+60/2) = (603,1500). Omitting the origin lands
-        # 137 px above the visible action; adding it twice would land at 1637.
+        # R4 XComponent layout was [0,137][1320,1842]. At density 1 the accepted
+        # bounds are already physical px, so the generated action's UITest screen
+        # point is (28+1150/2, 137+1333+60/2) = (603,1500). Omitting the origin
+        # lands 137 px above the visible action; adding it twice lands at 1637.
         trigger = SimpleNamespace(bounds=(28, 1333, 1150, 60))
-        point = verifier._screen_point(trigger, (0, 137))
+        point = verifier._screen_point(trigger, (0, 137), 1.0)
         self.assertEqual(point, (603, 1500))
         self.assertNotEqual(point, (603, 1363))
         self.assertNotEqual(point, (603, 1637))
+
+    def test_accepted_instance_center_scales_vp_to_physical_px(self):
+        # Accepted bounds became vp after the density fix, so on the 3.5 emulator
+        # the same trigger at vp (12,380,353,40) must be injected at physical px
+        # (round(188.5*3.5), 137+round(400*3.5)) = (660,1537), not at its vp
+        # centre (188,537) which would land far above the real action.
+        trigger = SimpleNamespace(bounds=(12, 380, 353, 40))
+        point = verifier._screen_point(trigger, (0, 137), 3.5)
+        self.assertEqual(point, (660, 1537))
+        self.assertNotEqual(point, (188, 537))
 
     def test_focused_os_proxy_point_uses_fresh_visible_same_mount_layout(self):
         proxy = {"attributes": {"id": "cjguiImeProxy", "type": "TextInput",

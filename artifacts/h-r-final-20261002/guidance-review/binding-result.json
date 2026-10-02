@@ -1,0 +1,11 @@
+{
+  "scope": "Current production bind method verbatim; minimal window/provider doubles",
+  "input_sha256": "4703536ac294ecdccb2855b25c0ce1107ac3ad09a97e2f4086501f2ef442fba8",
+  "compile_exit": 0,
+  "compile_output": "",
+  "exit": 0,
+  "stdout": "positive_initial_node=942 binds=1\npositive_idempotent_binds=1\nreturn_to_A_expected=942 actual=313 binds=2\nsemantic_rebind_expected=replacement-semantic actual=field-A binds=1\n",
+  "stderr": "",
+  "lost_binding_reproduced": true,
+  "semantic_rebind_skipped": true
+}

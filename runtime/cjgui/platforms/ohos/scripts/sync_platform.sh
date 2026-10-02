@@ -23,6 +23,15 @@ HOST="$PLATFORM/host"
 FINGERPRINT="$(cat "$PLATFORM/FINGERPRINT.txt")"
 SHORT="${FINGERPRINT:0:12}"
 
+# 0) ABI 镜像门（r10 复核要求）：C 头与仓颉镜像的 Node/Event 布局必须一致，
+#    错配组合不得发布给消费者。原生拷贝按完整 C 结构进行，镜像缺字段/乱序
+#    会让 acceptedBindingEpoch 等通道读到 garbage；这里在复制前阻断。
+if ! ABI_OUT="$(python3 "$HERE/test_event_abi_mirror.py" 2>&1)"; then
+  echo "ABI 镜像检查失败（C 头/仓颉镜像不一致，拒绝同步错配组合）:" >&2
+  echo "$ABI_OUT" >&2
+  exit 1
+fi
+
 # 1) 核心包 + 共享操作核心（来自快照）
 #    用 rsync 镜像而不是「先 rm -rf 再复制」：只删除真正多出来的文件，
 #    既避免误删范围过大，也不会在构建中途把整个源码树清空。
@@ -99,6 +108,12 @@ mkdir -p "$MODULE/$APP_DIR_NAME/src"
 # They are not part of either normal HarmonyOS consumer's runtime package.
 rsync -a --delete --exclude 'target' --exclude 'build' --exclude '*_test.cj' \
   "$APP_SRC/" "$MODULE/$APP_DIR_NAME/src/"
+# 消费方附加依赖（CJGUI_APP_EXTRA_DEPS）：独立产品把共享包（document/session/
+# 服务/表面）作为同一应用模块的依赖，而框架生成的清单只含 cjgui/共享核心。
+# 由环境变量注入而不是「生成后再由产品脚本打补丁」：这样框架入口每次重新
+# 同步都不会把消费方的依赖清单覆盖掉（旧做法补丁在二次 sync 后丢失）。
+# 取值是多行 TOML 依赖行，缩进与路径由消费方负责，框架只原样写入。
+APP_EXTRA_DEPS="${CJGUI_APP_EXTRA_DEPS:-}"
 cat > "$MODULE/$APP_DIR_NAME/cjpm.toml" <<TOML
 [package]
   cjc-version = "1.1.3"
@@ -110,7 +125,7 @@ cat > "$MODULE/$APP_DIR_NAME/cjpm.toml" <<TOML
 [dependencies]
   cjgui = { path = "../cjgui" }
   cjgui_shared_operation_core = { path = "../shared_operation_core" }
-
+${APP_EXTRA_DEPS}
 [target.aarch64-linux-ohos]
   compile-option = "-B \"\${DEVECO_CANGJIE_HOME}/build-tools/third_party/llvm/bin\" -B \"\${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"\${DEVECO_OH_NATIVE_HOME}/sysroot/usr/lib/aarch64-linux-ohos\" -L \"\${DEVECO_OH_NATIVE_HOME}/llvm/lib/clang/15.0.4/lib/aarch64-linux-ohos\" -L \"\${DEVECO_OH_NATIVE_HOME}/llvm/lib/aarch64-linux-ohos\" --sysroot \"\${DEVECO_OH_NATIVE_HOME}/sysroot\""
 [target.aarch64-linux-ohos.bin-dependencies]

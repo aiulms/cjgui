@@ -1,0 +1,102 @@
+{
+  "steps": [],
+  "identity": {
+    "bundle": "com.pharos.mark",
+    "pid": "15347"
+  },
+  "log_cursor0": 3981,
+  "fixture_reset": true,
+  "note_resource_id": null,
+  "a_freeze": {
+    "main_version": 2,
+    "main_hex": "2320E9A284E8A788E58F96E8AF81E6A0…",
+    "note_hex": null
+  },
+  "mode_probes": [
+    {
+      "enter-b": "owner-state-click"
+    },
+    {
+      "back-a": "owner-state-click"
+    },
+    {
+      "revisit-b": "owner-state-click"
+    }
+  ],
+  "toggle_evidence": "owner-state",
+  "b_freeze": {
+    "note_version": 29,
+    "note_bytes": 28,
+    "main_version": 2
+  },
+  "b_replace": {
+    "version_before": 29,
+    "version_after": 30,
+    "exactly_once": true,
+    "frozen_selection_utf16": [
+      0,
+      3
+    ],
+    "frozen_span_bytes": [
+      0,
+      3
+    ],
+    "expected_hex": "4e6520626f647920666f722073656c656374696f6e2074657374",
+    "expected_bytes": 26,
+    "actual_hex": "4E6520626F647920666F722073656C656374696F6E2074657374",
+    "actual_bytes": 26,
+    "exact_owner": true,
+    "removed_bytes": 3,
+    "inserted_is_N": true
+  },
+  "a_unchanged_during_b": true,
+  "a_resume": {
+    "version_before": 2,
+    "version_after": 3,
+    "exactly_once": true,
+    "frozen_selection_utf16": [
+      63,
+      63
+    ],
+    "frozen_span_bytes": [
+      137,
+      137
+    ],
+    "expected_hex": "2320e9a284e8a788e58f96e8af81e6a087e9a2980a0ae6ada3e69687e590ab202a2ae58aa0e7b297e5bcbae8b0832a2a20e4b88e202ae6969ce4bd93e5bcbae8b0832a20e4bba5e58f8a2060e8a18ce58685e4bba3e7a0816020e4b889e7a78de6a0b7e5bc8fe380820a0a2d20e58897e8a1a8e9a1b9e4b8800a2d20e58897e8a1a8e9a1b9e4ba8c0ae59b9e",
+    "actual_hex": "2320E9A284E8A788E58F96E8AF81E6A087E9A2980A0AE6ADA3E69687E590AB202A2AE58AA0E7B297E5BCBAE8B0832A2A20E4B88E202AE6969CE4BD93E5BCBAE8B0832A20E4BBA5E58F8A2060E8A18CE58685E4BBA3E7A0816020E4B889E7A78DE6A0B7E5BC8FE380820A0A2D20E58897E8A1A8E9A1B9E4B8800A2D20E58897E8A1A8E9A1B9E4BA8C0AE59B9E",
+    "exact_owner": true,
+    "removed_bytes": 0,
+    "removed_is_zero": true
+  },
+  "b_unchanged_during_a": true,
+  "b_revisit": {
+    "version": 30,
+    "bytes": 26,
+    "preserved": true
+  },
+  "required": [
+    "fixture_reset",
+    "b_replace_exactly_once",
+    "b_replace_exact_owner",
+    "b_install_confirmed",
+    "a_unchanged_during_b",
+    "a_resume_exactly_once",
+    "a_resume_exact_owner",
+    "a_resume_removed_is_zero",
+    "b_unchanged_during_a",
+    "b_revisit_preserved"
+  ],
+  "required_values": {
+    "fixture_reset": true,
+    "b_replace_exactly_once": true,
+    "b_replace_exact_owner": true,
+    "b_install_confirmed": true,
+    "a_unchanged_during_b": true,
+    "a_resume_exactly_once": true,
+    "a_resume_exact_owner": true,
+    "a_resume_removed_is_zero": true,
+    "b_unchanged_during_a": true,
+    "b_revisit_preserved": true
+  },
+  "status": "OK"
+}

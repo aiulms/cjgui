@@ -1,135 +1,73 @@
-![CJGUI — 同一份应用，人和 AI 共同参与。仓颉自绘 GUI 框架。](docs/assets/cjgui-hero.svg)
+# CJGUI
 
-<p align="center">
-  <strong>以仓颉为核心，面向 macOS 与鸿蒙的自绘 GUI 框架。</strong><br>
-  人和 AI 共同构建、操作界面；手写、运行时生成与混合界面共享组件和应用内容。
-</p>
+**用仓颉写界面，让人和 Agent 直接操作同一份应用。**
 
-<p align="center">
-  <a href="#鸿蒙自绘后端">鸿蒙支持</a> ·
-  <a href="#运行一个窗口">macOS 示例</a> ·
-  <a href="#创建自己的应用">创建应用</a> ·
-  <a href="runtime/cjgui/README.md">开发文档</a> ·
-  <a href="LICENSE">Apache 2.0</a>
-</p>
+CJGUI 是面向 macOS 与鸿蒙的自绘 GUI 框架。用仓颉定义组件、布局和业务状态，以自绘、排版缓存和虚拟列表减少编辑与滚动中的重复工作。
 
-## 最近的进展
+窗口与 Agent 共用字段、规则和动作。Agent 可以读取当前选择、修改应用数据，也可以在运行中组合表单和面板；人随后继续在窗口里操作。
 
-- **鸿蒙自绘后端**：共享仓颉核心已进入鸿蒙 HAP，在模拟器中运行自绘界面、接收触摸与文字编辑，并与外部程序共同操作应用数据。[了解鸿蒙支持](#鸿蒙自绘后端)
-- **长文本增量渲染**：局部编辑复用已有排版与文字纹理，长文档的滚动、选区和持续编辑共用这套机制。多片文字共享准备结果，让一次修改集中更新受影响的内容。
-- **统一样式与多窗口**：命名样式将基础外观和交互状态一起绑定，手写界面、生成组件与页签同步响应主题变化。一个应用可以打开多个窗口，分别编辑并接续处理操作。[了解实现](docs/plans/2026-09-23-incremental-text-style-binding-milestone.md)
-- **运行时生成界面**：外部程序通过公开接口发现组件、字段与动作，提交新的界面结构；生成区域与手写界面共用组件、数据绑定和绘制，支持在运行中调整布局与样式。[开发指南](runtime/cjgui/README.md#运行时生成式接入experimental已接通公开闭环)
+[开始使用](#运行一个窗口) · [创建应用](#创建自己的应用) · [鸿蒙支持](#macos-与鸿蒙) · [开发文档](runtime/cjgui/README.md)
 
-## 鸿蒙自绘后端
+<sub>开发预览 · macOS / Apple Silicon 优先 · 鸿蒙模拟器预览 · Apache 2.0</sub>
 
-**一套仓颉核心，连接 macOS 与鸿蒙。** 鸿蒙是 CJGUI 的重点平台：应用用仓颉定义组件、布局、场景和业务规则，平台后端负责接入各自的窗口、绘制与输入服务。macOS 上积累的组件体系、状态管理和人机协作能力，为鸿蒙应用提供了可以继续复用的框架基础。
+## 看一次接续编辑
 
-鸿蒙后端已经把这条路线带进实际应用：**仓颉核心加载到 HAP，自绘界面接收触摸和文字输入，外部程序通过共同操作接口读取、修改同一份应用数据。** 当前提供模拟器开发预览，设置与计数示例已覆盖中文显示、按钮操作、名称编辑、选区高亮和外部修改。
+在窗口里写一段文字，通过公开接口追加内容，再回到窗口继续写。三个步骤读写同一份文档，修改直接出现在编辑区。
 
-### 在鸿蒙上，仓颉负责什么
+![窗口编辑、公开接口追加、回到窗口续写的 26 秒实录](https://raw.githubusercontent.com/aiulms/cjgui/main/docs/assets/demo/cjgui-shared-document-real-demo.gif)
 
-组件树、布局计算、业务状态、字段校验和操作协议都由仓颉核心维护。ArkTS 承载应用入口与系统文字代理，XComponent 提供自绘承载面，原生后端通过 OH_Drawing 完成绘制。界面中的触摸、输入和外部调用再回到仓颉应用，更新同一份内容。
+<sub>26 秒实录，外部操作由脚本调用公开接口。[观看 MP4](docs/assets/demo/cjgui-shared-document-real-demo.mp4) · [截图与录制说明](docs/assets/demo/README.md)</sub>
 
-这种分工让平台适配集中在系统服务一侧。应用可以复用组件和领域代码，桌面端积累的布局、样式、动态界面与共同操作设计也能持续延伸到鸿蒙。
+## 为什么这样设计
 
-### 已经接入的能力
+### 窗口和 Agent 共用业务规则
 
-| 能力 | 鸿蒙侧的实现 |
-| --- | --- |
-| **仓颉组件与自绘场景** | 共享核心生成组件、布局和场景，鸿蒙原生后端绘制中文文字、形状与控件，并将触摸位置映射到应用动作。 |
-| **系统文字输入** | 单行字段接入系统文字代理，支持文字变化、选区同步与可见高亮，提交和失焦将编辑内容写回仓颉应用。 |
-| **人与 AI 共同操作** | 用户点击和外部指令调用同一套业务操作；支持字段读取与修改、计数动作、授权检查和版本冲突处理，修改同步反馈到界面。 |
-| **平台宿主** | ArkTS 应用入口、XComponent 自绘承载面与仓颉运行时连接起来，为应用提供绘制、触摸和系统输入的接入位置。 |
-| **HAP 构建与部署** | 框架源码同步、原生后端编译、运行时依赖打包、HAP 生成与模拟器安装启动已串成工程流程。 |
+以规则编辑器为例：人在窗口里修改记录，Agent 读取当前选择并批量修改，随后人继续检查和编辑。双方操作同一份数据，字段校验、授权和版本冲突由应用与框架统一处理。
 
-以设置示例为例，你可以在鸿蒙窗口点击增加、减少，编辑设备名称；外部程序也可以读取当前值、修改名称或执行计数动作，随后继续在窗口中操作。这套接续方式沿用桌面端的共同操作协议，让 Agent 和自动化工具能够参与鸿蒙应用。
+字段的类型、必填、长度限制和写入动作由应用声明。手写表单、生成表单和外部查询读取这份声明；生成控件的修改仍交给该字段的业务处理器。[字段与操作接入](runtime/cjgui/README.md#运行时生成式接入experimental已接通公开闭环)
 
-对开发者而言，CJGUI 提供了一条**用仓颉沉淀应用逻辑与 UI，再向桌面和鸿蒙扩展**的路径。设置工具、数据面板、结构化编辑器与 Agent 工作界面，都可以围绕这套共享核心组织代码。
+### 界面可以在运行中调整
 
-[平台架构与构建说明](runtime/cjgui/platforms/ohos/README.md) · [鸿蒙示例工程](labs/ohos_cjgui_app/) · [共享仓颉应用源码](runtime/cjgui/examples/settings_counter_application/)
+手写主窗口旁边，可以留出一块生成区：Agent 根据应用提供的组件、字段、样式和动作提交面板结构，框架将它显示在窗口里。生成控件直接使用应用的数据绑定。
 
-## 演示：接续编辑同一份文档
+调整结构时，同 key 的控件可以接续草稿；结构不合法时保留原界面。移除生成区后，人仍能继续操作手写控件。[生成接口与示例](runtime/cjgui/README.md#运行时生成式接入experimental已接通公开闭环)
 
-![同一份仓颉文档：界面编辑、公开接口调用演示与界面续接](https://raw.githubusercontent.com/aiulms/cjgui/main/docs/assets/demo/cjgui-shared-document-real-demo.gif)
+### 用仓颉组织 UI，复用到桌面与鸿蒙
 
-*26 秒实录：先在窗口中编辑，再通过公开接口追加内容，最后回到窗口继续输入。窗口与外部调用读写同一份文档，修改同步显示。[观看 MP4](docs/assets/demo/cjgui-shared-document-real-demo.mp4) · [演示说明](docs/assets/demo/README.md)*
+组件树、布局、场景和业务逻辑由仓颉维护，平台后端接入窗口、绘制与系统输入。macOS 使用 AppKit / Metal；鸿蒙使用 ArkTS 薄宿主、XComponent / OH_Drawing。设置和温控示例已把共享仓颉核心带进鸿蒙 HAP。
+
+应用可以从普通 UI 模板开始，再按需开放共同操作和界面生成。模型、Agent 和交互方式由应用开发者选择。[应用模板](runtime/cjgui/MACOS_APPLICATION_HOST.md) · [鸿蒙后端](runtime/cjgui/platforms/ohos/README.md)
+
+### 编辑和滚动复用已有资源
+
+改动一段正文时，复用仍有效的排版与纹理；滚动大列表时，按视口创建条目。图片按身份和版本缓存，动效结束后停止持续提交。
+
+已有 3700 行混合文本的双窗口局部修改、滚动和接续编辑测量；PNG 传递、效果与连续平移也已有 macOS 应用验证。[文字性能记录](docs/plans/2026-09-23-incremental-text-style-binding-milestone.md) · [局部刷新记录](docs/plans/2026-09-26-framework-capability-roadmap.md#f-local-refresh-next)
+
+## macOS 与鸿蒙
+
+| | macOS / Apple Silicon | 鸿蒙 / 华为模拟器 |
+| --- | --- | --- |
+| 绘制 | AppKit 窗口、Metal 自绘合成 | XComponent、OH_Drawing 自绘 |
+| 已可试用 | 多窗口、文字编辑、生成界面、共同操作、PNG 传递、主题、效果与连续平移 | 设置与温控 HAP 的触摸、系统字段编辑、生成面板、共享图片和共同操作 |
+| 从哪里开始 | [文档窗口](runtime/cjgui/examples/shared_document_window_app/) · [规则编辑器](runtime/cjgui/examples/rule_set_window_app/) | [设置应用](labs/ohos_cjgui_app/) · [温控应用](labs/ohos_thermo_app/) |
+
+鸿蒙已在两款 HAP 中验证外部提交界面、系统输入、应用数据读回和继续编辑。手写区域与生成区域使用同一套组件和业务绑定。[平台构建与部署](runtime/cjgui/platforms/ohos/README.md)
 
 <details>
-<summary>分步截图（视频无法自动播放的环境）</summary>
+<summary>开发预览的范围</summary>
 
-1. **界面编辑**：在窗口中输入文字，应用同步更新内容与选区。
+公共 API 仍为 experimental。当前可用范围和正在推进的工作见 [开发动态](runtime/cjgui/ACTIVE_DIRECTION.md)。
 
-   ![界面编辑](docs/assets/demo/cjgui-demo-01-ui-edit.png)
-
-2. **外部接续**：通过公开接口追加内容，窗口随之更新。
-
-   ![公开接口调用](docs/assets/demo/cjgui-demo-02-public-interface-sync.png)
-
-3. **回到窗口**：继续编辑刚刚更新的文档，外部程序也能读取最新内容。
-
-   ![界面续接](docs/assets/demo/cjgui-demo-03-ui-continuation.png)
+- macOS 的编辑器持续输入与统一位置机制仍在完善；完整 VoiceOver 操作和物理跨屏表现仍待验。
+- 鸿蒙的小文档编辑器与可中断惯性滚动仍在汇合；当前 SDK / 镜像 / 输入法组合的 marked range 与取消回调待验。模拟器记录的适用范围限于模拟器，真机性能与发布审核另行验证。
+- macOS PNG 交换支持静态、非交错的 8-bit RGB/RGBA 子集。局部刷新复用排版、纹理与场景资源，Metal 主绘制路径仍提交完整帧。
 
 </details>
 
-## 一个框架，两种参与方式
-
-CJGUI 是一个以仓颉为核心、面向 macOS 与鸿蒙的**自绘 GUI 框架**。人通过窗口选择和编辑；AI、脚本或其他应用通过结构化接口理解内容、执行动作。双方读写同一份应用状态，也能接续修改界面。
-
-开发者可以用仓颉手写界面，通过公开接口在运行时生成界面，或将两者组合。它们共用组件、布局、输入与自绘机制，适合构建编辑器、规则工具、数据面板和 AI 工作台。
-
-| 自绘与低延迟 | 人与 AI 共同操作和构建 | 应用由你定义 |
-| :--- | :--- | :--- |
-| 仓颉组件与布局，Metal 场景合成。局部更新、文字与图片缓存、虚拟列表共同减少重复工作。 | 窗口和公开接口共享内容、选择与动作，外部程序可以直接参与数据操作和界面组合。 | 自由组合界面，按需接入模型或 Agent，自行定义业务规则、交流方式与工作流。 |
-
-## 人和 AI 都是一等公民
-
-你在窗口里选中一条规则，修改草稿；AI 读取当前上下文，批量调整记录；你继续在界面里检查和编辑。处理 100 条屏外记录，也可以直接调用应用的数据操作。授权、版本冲突与业务校验由框架和应用统一处理。
-
-关键是建立可靠的对应关系：**人看到的字段、AI 读取的对象，以及最终执行的动作，属于同一个应用。**
-
-共同参与也包括**构建界面**：应用发布可用的组件、字段、样式和动作，AI 可以据此组合面板、调整布局。生成的控件使用应用已有的数据与操作，人可以直接在窗口中继续工作。
-
-```mermaid
-flowchart LR
-    H[人] -->|鼠标、键盘、文本| UI[可视界面]
-    A[AI / Agent / 脚本] -->|结构化读取与授权动作| API[公开接口]
-    UI --> S[同一份应用内容与业务规则]
-    API --> S
-    S -->|布局、绘制与交互反馈| UI
-    S -->|上下文、变更与执行结果| API
-```
-
-开发者可以保留手写主体，只开放局部生成区域，也可以让外部程序组织整个面板。框架负责结构更新时的版本、焦点、草稿与绑定关系，并为调用方提供明确的处理结果。[了解生成与共同操作设计](docs/core/AI_NATIVE_UI_SEMANTICS.md#运行时生成与修改界面)
-
-## 构建应用所需的能力
-
-| 能力 | 可以用来做什么 |
-| --- | --- |
-| **自绘与 GPU 合成** | 共享场景对接平台绘制后端：macOS 使用 Metal 合成形状、图片与文字纹理；鸿蒙通过 XComponent 与 OH_Drawing 呈现自绘内容。 |
-| **仓颉组件与布局** | 用容器、文字、按钮、表单、页签、滑块、滚动区、分隔视图和弹层组合界面；绘制、命中与语义信息共享布局结果。 |
-| **文字编辑与输入** | 多行文档、增量更新、焦点、选区、快捷键和连续拖动；复用系统文字排版与输入服务，支持中文、emoji 等混合内容。 |
-| **主题与交互样式** | 通过命名样式统一配置基础外观、悬停、按下、聚焦、选中与禁用状态，让手写控件和生成组件保持一致。 |
-| **动态数据与大列表** | 固定与可变行高虚拟列表、树形数据、多选和稳定条目身份；按视口创建需要显示的内容。 |
-| **运行时生成与混合界面** | 发现组件能力，提交和更新界面结构；注册应用自己的组合组件，与手写区域共享字段、动作和样式。 |
-| **共同操作** | 对象读取、授权调用、版本冲突检测、批量修改与变更观察；通过本地 Python API / CLI 连接 Agent 或自动化工具。 |
-| **多窗口与应用宿主** | 在同一应用中管理多个窗口；使用模板创建应用，由统一 runner 完成构建、bundle 和资源管理，也可导出框架源码预览供独立项目使用。 |
-
-## 按你的方式接入 AI
-
-应用定义组件、字段和业务动作，CJGUI 将它们同时提供给可视界面与结构化接口。Agent 可以读取当前选择、观察内容变化、调用业务动作，也可以提交新的界面结构。你可以选择自己的模型、Agent、聊天界面和连接方式，将这些能力嵌入现有工作流。
-
-例如，规则编辑器可以向 Agent 开放批量修改与校验；文档工具可以共享当前选区和范围编辑；数据面板可以根据任务动态组合表单与操作区。每一种接入都沿用应用已有的数据与规则。
-
-## 试用场景
-
-- **鸿蒙设置与计数应用**：中文自绘、触摸按钮、名称编辑，以及外部程序的读取与修改，体验共享仓颉核心在鸿蒙上的运行方式。[工程](labs/ohos_cjgui_app/)
-- **规则集编辑器**：多记录列表、详情草稿、校验、撤销重做、文件保存与外部批量操作。[源码](runtime/cjgui/examples/rule_set_window_app/)
-- **共享文档窗口**：多行文字编辑、文档切换、选区与外部范围修改，体验窗口和公开接口的接续编辑。[源码](runtime/cjgui/examples/shared_document_window_app/)
-- **最小应用模板**：从纯 UI 应用开始，或者选择包含共享操作接入的模板，自行定义业务对象与界面。[模板](runtime/cjgui/templates/macos_application/)
-
 ## 运行一个窗口
 
-准备 macOS / Apple Silicon、仓颉 1.1.3 和 Xcode Command Line Tools，将下面的 SDK 路径替换为你的安装目录：
+准备 macOS / Apple Silicon、仓颉 1.1.3 和 Xcode Command Line Tools。将 SDK 路径替换为你的安装目录：
 
 ```sh
 export CANGJIE_HOME=/absolute/path/to/cangjie-1.1.3
@@ -140,47 +78,32 @@ cd cjgui
 zsh runtime/cjgui/examples/rule_set_window_app/run.sh
 ```
 
-只构建可在最后一条命令追加 `--build-only`。文档窗口的入口是 `runtime/cjgui/examples/shared_document_window_app/run.sh`。
+最后一条命令启动规则编辑器；追加 `--build-only` 可只构建。要试用上面的文档窗口，运行 `zsh runtime/cjgui/examples/shared_document_window_app/run.sh`。
 
-runner 会构建平台桥接并生成本地应用 bundle。[宿主与构建说明](runtime/cjgui/MACOS_APPLICATION_HOST.md) 包含环境配置与资源打包方式；构建问题可查阅[工具链说明](docs/setup/CANGJIE_ISSUE_LEDGER.md)。
+runner 负责平台桥接构建和应用 bundle。[环境与打包说明](runtime/cjgui/MACOS_APPLICATION_HOST.md) · [工具链问题](docs/setup/CANGJIE_ISSUE_LEDGER.md)
 
 ## 创建自己的应用
 
-在仓库根目录，沿用上面的工具链环境：
+沿用上面的工具链环境，在仓库根目录执行：
 
 ```sh
 zsh runtime/cjgui/scripts/create_macos_application.sh ui-only /tmp/MyCJGUIApp
 zsh /tmp/MyCJGUIApp/run.sh
 ```
 
-需要共同操作入口时，将 `ui-only` 换成 `collaboration`，并使用另一个新目录。应用通过仓颉 controller 定义界面和业务动作，平台桥接与打包由框架 runner 管理。
+`ui-only` 创建普通 UI 应用。需要共同操作入口时，换成 `collaboration` 并使用另一个新目录。界面和业务动作由仓颉 controller 定义，框架 runner 管理构建与打包。
 
-[应用宿主与模板指南](runtime/cjgui/MACOS_APPLICATION_HOST.md) 包含依赖、资源、源码预览导出和外部连接示例；[公开客户端说明](runtime/cjgui/shared_operation_core/README.md) 介绍授权、读取与调用。
+[模板与资源指南](runtime/cjgui/MACOS_APPLICATION_HOST.md) · [公开客户端：授权、读取与调用](runtime/cjgui/shared_operation_core/README.md)
 
-## 性能设计
+## 文档与贡献
 
-CJGUI 围绕持续编辑、滚动和多窗口交互减少重复工作：
-
-- **按变化更新**：局部文字编辑保留有效排版，按影响范围刷新可见纹理。
-- **复用资源**：稳定布局、文字与图片缓存跨帧复用，多片文字共用准备结果。
-- **按视口组织内容**：虚拟列表只创建当前需要显示的条目，支持固定与可变行高。
-- **让交互轻量化**：合并连续指针事件，悬停、按下与聚焦通过绘制更新呈现，减少无变化时的重绘。
-
-长文本与双窗口开发记录覆盖了 3700 行文档中的局部修改、滚动和接续编辑。实现细节与测量结果见[长文本与样式更新记录](docs/plans/2026-09-23-incremental-text-style-binding-milestone.md)。
-
-## 参与与深入了解
-
-欢迎用 CJGUI 构建自己的编辑器、规则工具和数据面板，分享应用、组件与接入经验。项目处于开发预览阶段，API 与工具链随功能一起演进；开发动态与技术细节可从以下入口了解。
-
-- [框架开发文档](runtime/cjgui/README.md)：组件、布局、输入、渲染与公开消费入口。
-- [设计意图与资产导航](docs/plans/DESIGN_INTENT_INDEX.md)：设计目的、已有实现与历史研究。
-- [人与 AI 的共同操作设计](docs/core/AI_NATIVE_UI_SEMANTICS.md)：对象、上下文、动作与授权边界。
-- [开发动态](runtime/cjgui/ACTIVE_DIRECTION.md)：近期成果与正在推进的功能。
-- [问题反馈与工具链记录](docs/setup/CANGJIE_ISSUE_LEDGER.md)：复现、影响与上下游跟进。
-- [贡献协作入口](AGENTS.md) · [完整文档导航](docs/README.md) · [历史资料](docs/archive/2026-09-11-direction-governance/README.md)。
+- [开发文档](runtime/cjgui/README.md)：组件、布局、输入、生成界面与渲染。
+- [共同操作设计](docs/core/AI_NATIVE_UI_SEMANTICS.md)：字段、上下文、动作和授权。
+- [开发动态](runtime/cjgui/ACTIVE_DIRECTION.md) · [设计导航](docs/plans/DESIGN_INTENT_INDEX.md) · [完整文档目录](docs/README.md)。
+- [协作规则](AGENTS.md) · [问题反馈](docs/setup/CANGJIE_ISSUE_LEDGER.md)。
 
 ## 许可证
 
-Copyright 2026 CJGUI contributors。
+[Apache License 2.0](LICENSE) · Copyright 2026 CJGUI contributors · [NOTICE](NOTICE)
 
-CJGUI 原创代码、文档和随附原创资源采用 [Apache License 2.0](LICENSE)，归属声明见 [NOTICE](NOTICE)。第三方软件及平台 SDK 保持各自许可证；已有的第三方声明不受本项目许可替代。
+原创代码、文档和原创资源采用 Apache 2.0；第三方软件与平台 SDK 保持各自许可证。

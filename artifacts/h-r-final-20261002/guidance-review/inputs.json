@@ -1,0 +1,54 @@
+[
+  {
+    "path": "runtime/cjgui/src/composable_ui_generated_region.cj",
+    "sha256": "4703536ac294ecdccb2855b25c0ce1107ac3ad09a97e2f4086501f2ef442fba8"
+  },
+  {
+    "path": "runtime/cjgui/src/composable_ui_generated_range_session.cj",
+    "sha256": "ff94ee9947ff1573f0405ac477c7fb409bf2ace2b7d2091980f1b845d80e1f62"
+  },
+  {
+    "path": "runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_generated_region.cj",
+    "sha256": "4703536ac294ecdccb2855b25c0ce1107ac3ad09a97e2f4086501f2ef442fba8"
+  },
+  {
+    "path": "runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_generated_range_session.cj",
+    "sha256": "ff94ee9947ff1573f0405ac477c7fb409bf2ace2b7d2091980f1b845d80e1f62"
+  },
+  {
+    "path": "runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp",
+    "sha256": "fd717fc1f0ccf7131434ff025aaa3030c9e1acee8575834b579ef5ee2fb8f7dc"
+  },
+  {
+    "path": "runtime/cjgui/platforms/ohos/scripts/verify_thermo_shared_lifecycle.py",
+    "sha256": "57456bfa32c8c0aba1a7e4d73c38f0da1831258c6c61c9bc6a7b3bb17e04ec3d"
+  },
+  {
+    "path": "runtime/cjgui/platforms/ohos/scripts/sync_platform.sh",
+    "sha256": "a9bb6105996120d23500dca47972c19f3abc91d05fa3cd80e27ecd95de69d525"
+  },
+  {
+    "path": "runtime/cjgui/examples/thermostat_application/src/thermostat_generated_region.cj",
+    "sha256": "3733f500c94d5331feb0e02438bc639c417a2e784dd0ee8c88dc1853a5612bb0"
+  },
+  {
+    "path": "runtime/cjgui/examples/thermostat_application/src/thermostat_app.cj",
+    "sha256": "8ddbc34ca6d28e10be9bc9e6342871d40b36d6bbd118db3925b215d5f8600c8c"
+  },
+  {
+    "path": "labs/ohos_thermo_app/entry/thermostat_application/src/thermostat_generated_region.cj",
+    "sha256": "cfaf46ef50f9eef0fd804a6171549bbc6de8ba2fab915a0bafdd2b6ed824eb4a"
+  },
+  {
+    "path": "labs/ohos_thermo_app/entry/thermostat_application/src/thermostat_app.cj",
+    "sha256": "c5b48454f1e4799cf766940c76e43cad288a839e9833dc3fe29caee9d2c2b872"
+  },
+  {
+    "path": "artifacts/h-r-final-20261002/thermo-shared/thermo-shared.json",
+    "sha256": "c634e8a53da17ffac9cd9bf488d5072b35fd2fb85d249438ab66bbb8a2230bf6"
+  },
+  {
+    "path": "artifacts/h-r-final-20261002/dual-owner/dual-owner.json",
+    "sha256": "b058027c15110ec5dcb3420dcdc228a3f6f70a46d652ed52f61c380f12c86553"
+  }
+]

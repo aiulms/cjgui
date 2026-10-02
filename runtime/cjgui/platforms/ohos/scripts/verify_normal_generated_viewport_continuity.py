@@ -562,10 +562,18 @@ def select_full_text_keyboard(hdc, out, args, pid, checked_binding, checked_publ
     return selected, selected_log, selected_raw, interaction
 
 
-def _screen_point(instance, origin):
-    """Convert accepted XComponent-local bounds to UITest screen coordinates."""
+def _px(value: float, density: float) -> int:
+    return int(round(value * density))
+
+
+def _screen_point(instance, origin, density: float):
+    """Convert accepted vp bounds to physical-px UITest screen coordinates.
+
+    Accepted instance bounds are vp since the N2-V density fix while uitest
+    uiInput takes physical px, so every coordinate leaves here scaled.
+    """
     x0, y0, width, height = instance.bounds
-    x, y = origin[0] + x0 + width//2, origin[1] + y0 + height//2
+    x, y = origin[0] + _px(x0 + width / 2, density), origin[1] + _px(y0 + height / 2, density)
     if not (0 <= x < 5000 and 0 <= y < 5000): raise ValueError("screen point out of bounds")
     return x, y
 
@@ -608,7 +616,7 @@ def _vertical_overflow(child, parent) -> int:
     return top + bottom
 
 
-def _scroll_trigger_into_view(session, hdc, out, args, pid, checked_binding, label):
+def _scroll_trigger_into_view(session, hdc, out, args, pid, checked_binding, label, density: float):
     """Use real UITest drags until accepted action bounds are back in the viewport."""
     history = []
     direction = 1
@@ -623,10 +631,10 @@ def _scroll_trigger_into_view(session, hdc, out, args, pid, checked_binding, lab
             tree, origin, = _layout(hdc, out, f"{label}_settled", pid, args.bundle)
             return trigger, viewport, origin, history
         tree, origin = _layout(hdc, out, f"{label}_{attempt}", pid, args.bundle)
-        vx, vy = origin[0] + viewport.bounds[0], origin[1] + viewport.bounds[1]
-        x = vx + viewport.bounds[2] // 2
+        vx, vy = origin[0] + _px(viewport.bounds[0], density), origin[1] + _px(viewport.bounds[1], density)
+        x = vx + _px(viewport.bounds[2], density) // 2
         y1 = vy + 36
-        y2 = vy + viewport.bounds[3] - 36
+        y2 = vy + _px(viewport.bounds[3], density) - 36
         if y2 <= y1:
             raise ValueError("generated viewport is too short to restore action visibility")
         start_y, end_y = (y1, y2) if direction > 0 else (y2, y1)
@@ -755,20 +763,22 @@ def _run(args, hdc, out, v1, reorder, first_nodes, reorder_nodes):
                                require_visible=False)
     viewport = accepted_instance(instances, "viewport", kind="scrollArea")
     trigger, viewport, origin, reset_to_start = _scroll_trigger_into_view(
-        session, hdc, out, args, pid, checked_binding, "reset_start")
-    point = _screen_point(trigger, origin)
+        session, hdc, out, args, pid, checked_binding, "reset_start", args.density)
+    point = _screen_point(trigger, origin, args.density)
     _capture(hdc, out, "initial", pid, args.bundle)
     hilog_before = hdc.shell("hilog -x 2>/dev/null | grep -a 'CjguiApp:'")
     (out / "hilog_before.txt").write_text(hilog_before, encoding="utf-8")
     owner_touch_before = normal.parse_owner(session.client.get_context(), args.field, field_spec.resource_id)
     business_field = action_counter_field(args.action)
     business_before = public_integer(session.client.get_context(), field_spec.resource_id, business_field)
-    vp = _screen_point(viewport, origin)
-    viewport_top = origin[1] + viewport.bounds[1]
-    viewport_bottom = viewport_top + viewport.bounds[3]
+    vp = _screen_point(viewport, origin, args.density)
+    viewport_top = origin[1] + _px(viewport.bounds[1], args.density)
+    viewport_bottom = viewport_top + _px(viewport.bounds[3], args.density)
     swipe_end_y = viewport_bottom - 20
     if not (viewport_top < swipe_end_y < viewport_bottom):
         raise ValueError("generated scrollArea is too short for a real swipe")
+    if not (origin[1] <= viewport_top and viewport_bottom <= origin[1] + origin[3]):
+        raise ValueError("converted generated viewport escapes the app window px bounds")
     recorder.phase = "generated_swipe"
     # Start inside the accepted action and end within the generated scroll viewport.
     bindings.append(checked_binding())
@@ -784,8 +794,9 @@ def _run(args, hdc, out, v1, reorder, first_nodes, reorder_nodes):
     bindings.append(checked_binding())
     # Re-resolve and, if needed, scroll back to the start before clicking.
     trigger_after_swipe, viewport_after_swipe, origin_after_swipe, reset_after_swipe = (
-        _scroll_trigger_into_view(session, hdc, out, args, pid, checked_binding, "reset_after_swipe"))
-    current_point = _screen_point(trigger_after_swipe, origin_after_swipe)
+        _scroll_trigger_into_view(session, hdc, out, args, pid, checked_binding,
+                                  "reset_after_swipe", args.density))
+    current_point = _screen_point(trigger_after_swipe, origin_after_swipe, args.density)
     # A single deliberate click on the re-resolved accepted action must change its business field once.
     recorder.phase = "generated_action_click"
     bindings.append(checked_binding())
@@ -823,7 +834,7 @@ def _run(args, hdc, out, v1, reorder, first_nodes, reorder_nodes):
     app_window_id = _app_window_id(tree, args.bundle)
     pre_ime_snapshot = session.snapshot()
     pre_ime_bounds = component_bounds
-    editor_point = _screen_point(editor, component_bounds)
+    editor_point = _screen_point(editor, component_bounds, args.density)
     baseline = hdc.shell("hilog -x 2>/dev/null | grep -a 'CjguiApp:'")
     bindings.append(checked_binding())
     _ui_input(hdc, out, args, pid, checked_binding, "editor_focus",
@@ -1058,6 +1069,15 @@ def _run(args, hdc, out, v1, reorder, first_nodes, reorder_nodes):
     assert_generated_draft(session.fields(), args.field, owner_action_baseline["value"],
                            expected_selection=selection_range)
 
+    # Geometry baseline for the republish: the editor may legitimately end up
+    # clipped afterwards, so the pre-reorder bounds are the comparison point.
+    pre_reorder = session.instances()
+    before_editor = accepted_instance(pre_reorder, "editor", kind="textInput",
+                                      field=args.field, require_visible=False)
+    before_trigger = accepted_instance(pre_reorder, "trigger", kind="action",
+                                       action=args.action, require_visible=False)
+    before_viewport = accepted_instance(pre_reorder, "viewport", kind="scrollArea")
+
     bindings.append(checked_binding())
     recorder.phase = "same_key_reorder"
     reorder_result = _submit(session, recorder, reorder, args.wait_ms, args.poll_ms, expect_accept=True)
@@ -1070,8 +1090,31 @@ def _run(args, hdc, out, v1, reorder, first_nodes, reorder_nodes):
     if reorder_component is None:
         _check_ime_only_foreground(hdc, app_window_id, args.bundle, pid)
         checked_public_focus()
-    moved_editor = accepted_instance(session.instances(), "editor", kind="textInput", field=args.field)
+    reorder_instances = session.instances()
+    moved_editor = accepted_instance(reorder_instances, "editor", kind="textInput",
+                                     field=args.field, require_visible=False)
+    moved_trigger = accepted_instance(reorder_instances, "trigger", kind="action",
+                                      action=args.action, require_visible=False)
+    moved_viewport = accepted_instance(reorder_instances, "viewport", kind="scrollArea")
     if moved_editor.semantic_id != editor.semantic_id: raise ValueError("reorder changed editor identity")
+    # Visibility is not the post-reorder criterion: the viewport keeps the user's
+    # scroll offset across a same-key republish, so moving the editor to an earlier
+    # sibling slot legitimately clips it. What must survive is identity, real
+    # geometry, the retained offset (proved by the unmoved first child and the
+    # unchanged viewport frame) and the live draft; the moved node must move.
+    if moved_editor.bounds == before_editor.bounds:
+        raise ValueError("same-key reorder did not re-lay-out the accepted editor")
+    if (moved_trigger.bounds != before_trigger.bounds or
+            moved_viewport.bounds != before_viewport.bounds):
+        raise ValueError("same-key reorder lost the accepted viewport scroll offset")
+    (out / "reorder_geometry.json").write_text(json.dumps({
+        "before": {"editor": before_editor.bounds, "editor_visible": before_editor.visible,
+                   "trigger": before_trigger.bounds, "viewport": before_viewport.bounds},
+        "after": {"editor": moved_editor.bounds, "editor_visible": moved_editor.visible,
+                  "trigger": moved_trigger.bounds, "viewport": moved_viewport.bounds},
+        "editor_semantic_id": moved_editor.semantic_id,
+        "instance_order_after": [item.key for item in reorder_instances.instances],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
     interaction_reordered = parse_interaction(session.client.get_window_interaction().raw)
     assert_live_selection(interaction_reordered, editor.semantic_id, selection_range)
     owner_reordered = normal.parse_owner(session.client.get_context(), args.field, field_spec.resource_id)
@@ -1136,6 +1179,8 @@ def main(argv=None):
     parser.add_argument("--candidate", type=Path, required=True); parser.add_argument("--reorder-candidate", type=Path, required=True)
     parser.add_argument("--field", required=True); parser.add_argument("--action", required=True)
     parser.add_argument("--draft", required=True); parser.add_argument("--continuation", required=True)
+    parser.add_argument("--density", type=float, required=True,
+        help="vp->physical-px factor of the running device (emulator 3.5); accepted bounds are vp")
     parser.add_argument("--run-dir", type=Path, required=True); parser.add_argument("--hdc", default=normal.DEFAULT_HDC)
     parser.add_argument("--wait-ms", type=int, default=5000); parser.add_argument("--poll-ms", type=int, default=50)
     parser.add_argument("--settle-seconds", type=float, default=0.6)

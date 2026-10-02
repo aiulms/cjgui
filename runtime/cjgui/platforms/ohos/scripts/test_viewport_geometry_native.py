@@ -25,7 +25,8 @@ class ViewportGeometryNativeTest(unittest.TestCase):
         source = SOURCE.read_text()
         helper = "\n".join(
             extract_function(source, signature)
-            for signature in ("static void cjguiOhosObserveSurfaceLocked(",
+            for signature in ("static int32_t physicalToLayout(",
+                              "static void cjguiOhosObserveSurfaceLocked(",
                               "static void cjguiOhosRefreshSurfaceLocked(")
             if signature in source
         )
@@ -91,6 +92,18 @@ int main() {
   fact = {8, 4, 360, 700, 2.0};
   if (cjgui_internal_renderer_composable_viewport(1, &density) != CJGUI_INTERNAL_RENDERER_OK ||
       density.resizeVersion <= recreated.resizeVersion) return 5;
+  // 布局单位是 vp：物理 px 按绑定密度折算（720px / 3 = 240vp，1400/3 四舍五入 467）。
+  fact = {9, 5, 720, 1400, 3.0};
+  CjguiInternalRendererViewport vp{};
+  if (cjgui_internal_renderer_composable_viewport(1, &vp) != CJGUI_INTERNAL_RENDERER_OK ||
+      vp.width != 240 || vp.height != 467) return 6;
+  int64_t vx = -1, vy = -1, vw = -1, vh = -1;
+  if (cjgui_internal_renderer_window_frame(1, &vx, &vy, &vw, &vh) != CJGUI_INTERNAL_RENDERER_OK ||
+      vx != 0 || vy != 0 || vw != 240 || vh != 467) return 7;
+  // 密度回 1.0：同一物理尺寸恢复 1:1（负控：折算不是常量除法）。
+  fact = {9, 6, 720, 1400, 1.0};
+  if (cjgui_internal_renderer_composable_viewport(1, &vp) != CJGUI_INTERNAL_RENDERER_OK ||
+      vp.width != 720 || vp.height != 1400) return 8;
   return 0;
 }
 '''

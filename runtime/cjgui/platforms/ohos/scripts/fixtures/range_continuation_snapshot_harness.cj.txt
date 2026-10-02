@@ -1,0 +1,140 @@
+package cjgui
+import std.collection.*
+func internalRendererTakeHumanSelectionAnchor(token: UInt64, node: Int64, resource: Int64, kind: Int64, projection: Int64, epoch: Int64, a: Int64, b: Int64): Array<Int64> { return [0, 0] }
+// @CONSTANTS
+// @OWNER
+
+// No test here calls the platform grapheme service.
+public func cjguiGraphemeClusterRangeUtf8(text: String, offsetByte: Int64): ?(Int64, Int64) { return None }
+struct InternalRendererPumpResult {
+    let recordIndex: UInt32
+    let acceptedBindingEpoch: UInt64
+    let eventKind: UInt32
+    let nodeId: UInt64
+    let resourceId: Int64
+    let nodeKind: UInt32
+    let projectionVersion: UInt64
+    let bindingEpoch: UInt64
+    let selectionStart: UInt32
+    let selectionEnd: UInt32
+    init(kind: UInt32, projection: UInt64, start: UInt32, end: UInt32, epoch!: UInt64 = 3u64, status!: UInt32 = 0u32) {
+        recordIndex = status; acceptedBindingEpoch = epoch; eventKind = kind; nodeId = 107u64; resourceId = 77; nodeKind = UInt32(CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        projectionVersion = projection; bindingEpoch = epoch; selectionStart = start; selectionEnd = end
+    }
+}
+class CjguiComposableUiLayoutNode {
+    let nodeId: Int64
+    let resourceId: Int64
+    let nodeKind: Int64
+    let value: String
+    let enabled: Bool
+    let identityKey: String = "body"
+    let semanticId: String = "body"
+    let fieldId: String = "text"
+    let actionName: String = "edit"
+    let operationActionName: String = "edit"
+    let operationResourceId: Int64 = 77
+    let displayValueRole: String = "applied"
+    let inputScopeId: String = ""
+    let layerId: String = ""
+    let layerKind: Int64 = 0
+    let isEnabled: Bool = true
+    let isReadOnly: Bool = false
+    let tabInsertsText: Bool = false
+    let semanticIncarnation: Int64 = 1
+    init(value: String, enabled!: Bool = true, id!: Int64 = 107) {
+        nodeId = id; resourceId = 77; nodeKind = CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+        this.value = value; this.enabled = enabled
+    }
+    static func missing(): CjguiComposableUiLayoutNode { return CjguiComposableUiLayoutNode("", id: -1) }
+    func canReceiveInput(): Bool { return enabled }
+}
+class HarnessScene {
+    let validValue: Bool = true
+    // @RESOLVE_SELECTION
+    let version: Int64
+    let node: CjguiComposableUiLayoutNode
+    init(version: Int64, text: String) { this.version = version; node = CjguiComposableUiLayoutNode(text) }
+    func nodeForId(id: Int64): CjguiComposableUiLayoutNode {
+        return if (id == node.nodeId) { node } else { CjguiComposableUiLayoutNode.missing() }
+    }
+}
+class HarnessController {
+    let owner: FakeTextOwner
+    init(owner: FakeTextOwner) { this.owner = owner }
+    func uiSceneVersion(): Int64 { return owner.ver }
+}
+class CjguiComposableUiDispatchResult {
+    let didApply: Bool
+    init(applied: Bool) { didApply = applied }
+}
+class RangeWindowHarness {
+    let owner: FakeTextOwner
+    let controller: HarnessController
+    var ownedTextSession: ?CjguiTextSession
+    let ownedTextSessionNodeId: Int64 = 107
+    var ownedRangeLocalContinuation: ?CjguiLocalRangeContinuation = None
+    let ownedTextSessionNodeKind: Int64 = CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+    let ownedTextSessionResourceId: Int64 = 77
+    let textSessionBindingEpoch: UInt64 = 3u64
+    let sessionToken: UInt64 = 1u64
+    var refusedRangeTextPending: Bool = false
+    var refusedRangeTextNodeId: Int64 = -1
+    var refusedRangeTextResourceId: Int64 = -1
+    var refusedRangeTextNodeKind: Int64 = -1
+    var staleOwnedSelectionEvents: Int64 = 0
+    var humanSelectionAnchorsAdopted: Int64 = 0
+    var observedStart: Int64 = 0
+    var observedEnd: Int64 = 0
+    var textSessionRangeDecisions: Int64 = 0
+    var textSessionAcceptedEdits: Int64 = 0
+    var textSessionRefusedEdits: Int64 = 0
+    var lastTextSessionDecision: ?CjguiTextSessionEdit = None
+    var pendingLocalTextNodeId: Int64 = -1
+    var pendingLocalTextResourceId: Int64 = -1
+    var pendingLocalTextNodeKind: Int64 = -1
+    var pendingLocalTextValue: String = ""
+    var pendingLocalTextOwnerRevision: Int64 = -1
+    var localTextContinuationNodeId: Int64 = -1
+    var localTextContinuationResourceId: Int64 = -1
+    var localTextContinuationNodeKind: Int64 = -1
+    var localTextContinuationValue: String = ""
+    var localTextContinuationOwnerVersion: Int64 = -1
+    var focusedNodeId: Int64 = 107
+    var focusedResourceId: Int64 = 77
+    var focusedNodeKind: Int64 = CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+    var nativeInputScene: HarnessScene = HarnessScene(1, "alpha Z")
+    init(text!: String = "alpha Z") {
+        owner = FakeTextOwner(text)
+        controller = HarnessController(owner)
+        nativeInputScene = HarnessScene(1, text)
+        let range = CjguiRangeTextWindow(107, "body", owner, owner, materializeLimit: 65536)
+        let session = CjguiTextSession(range)
+        session.bind()
+        session.setSelection16(0, 5)
+        ownedTextSession = Some(session)
+    }
+    func currentBusinessOwnerRevision(): Int64 { return owner.ver }
+    func stamp(nativeEvent: InternalRendererPumpResult, continuation: CjguiComposableUiLayoutNode,
+        eventText: String, applied: Bool): Unit {
+        let dispatch = CjguiComposableUiDispatchResult(applied)
+        // @STAMP
+    }
+    func commit(event: InternalRendererPumpResult, text: String): Bool {
+        let target = nativeInputScene.nodeForId(107)
+        let result = routeOwnedTextSessionRangeEdit(event, target, text)
+        let applied = match (result) { case Some(r) => r.didApply; case None => false }
+        stamp(event, target, text, applied)
+        return applied
+    }
+    func select(event: InternalRendererPumpResult, text: String): Bool {
+        let target = resolvePlatformSelectionEvent(event, text)
+        if (target.nodeId != 107 || event.acceptedBindingEpoch != 3u64) { return false }
+        let adopted = adoptOwnedTextSelection(target, Int64(event.selectionStart),
+            Int64(event.selectionEnd), Int64(event.projectionVersion), 3)
+        if (adopted == CJGUI_OWNED_SELECTION_NAMED_STALE) { return false }
+        observedStart = Int64(event.selectionStart); observedEnd = Int64(event.selectionEnd)
+        return true
+    }
+    // @METHODS
+}

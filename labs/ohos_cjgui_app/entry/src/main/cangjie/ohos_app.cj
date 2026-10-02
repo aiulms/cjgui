@@ -532,6 +532,13 @@ func ohosApplicationLoop(): Unit {
     }
     unsafe { cjgui_ohos_trace_mark(208) }
     cjguiOhosInfo("CjguiApp", "host started; pumping turns")
+    // H2：滚动物理策略是**窗口声明**（不是全局开关）。手写与公开生成的
+    // scrollArea 走同一个可发现 token、同一套校验与公布；非法 token 具名拒绝
+    // 并保持原配置。
+    let physicsDeclared = window.configureScrollPhysicsToken("experimental_exponential")
+    let physics = window.scrollPhysicsInfo()
+    cjguiOhosInfo("CjguiApp", "scroll physics declared=${physicsDeclared} " +
+        "declared_token=${physics.declared} effective=${physics.effective} support=${physics.support}")
     cjguiOhosInfo("CjguiApp", "generated_work phase=host_started ${controller.generatedUiRegion().testWorkCounts()}")
 
     // 停止协议（Sol 归属）：surface 卸载只退役租约并保留 owner；
@@ -594,14 +601,9 @@ func ohosApplicationLoop(): Unit {
             window.requestRefresh()
         }
         let _ = host.pumpOneTurn()
-        // C（惯性包）：推进活跃惯性滚动（每 pump 轮次按显式单调时间步进；
-        // 活动结束时停止请求帧）。实验性开关由应用在启动时设置。
-        if (cjguiComposableInertialScrollEnabled) {
-            let inertialMoving = controller.stepActiveInertialScrolls(MonoTime.now())
-            if (inertialMoving) {
-                window.requestRefresh()  // 惯性有位移 → 请求下一帧
-            }
-        }
+        // H2：滚动活动由**共同宿主**在 pumpOneTurn 内推进（changed→刷新、
+        // active→有界唤醒）；样例本地 step 已退役——宿主与样例各推一次会把
+        // 活动按双倍速率推进。下方诊断只读，不再 step。
         // C（触摸包指导接续）：屏外 reveal 的显式目标导航——应用控制器在
         // ACTIVATE 中挂起的语义焦点请求，在 pump 后经窗口公共
         // focusAcceptedSemanticNode 提交（内部 reveal→新 accepted→commit 后
@@ -612,8 +614,13 @@ func ohosApplicationLoop(): Unit {
         }
         ticks += 1
         APP_LOOP_TICKS.store(ticks)
-        if (ticks % 500 == 0 && cjguiComposableInertialScrollEnabled) {
-            cjguiOhosInfo("CjguiApp", "inertia check: moving=${controller.stepActiveInertialScrolls(MonoTime.now())}")
+        if (ticks % 500 == 0) {
+            // 诊断只查询，不再额外 step（此前第二份 step 会在日志里推进活动，
+            // 制造与生产循环无关的副作用）。
+            cjguiOhosInfo("CjguiApp", "inertia check: active=${window.hasActiveWindowActivities()} " +
+                "bindings=${window.acceptedScrollBindingCount()} " +
+                "declared=${window.scrollPhysicsInfo().declared} " +
+                "effective=${window.scrollPhysicsInfo().effective}")
         }
         if (ticks % 200 == 0) {
             cjguiOhosInfo("CjguiApp", "generated_work tick=${ticks} ${controller.generatedUiRegion().testWorkCounts()}")

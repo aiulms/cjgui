@@ -1,0 +1,104 @@
+{
+  "scope": "extracted production classes; controlled platform seams; not a device run",
+  "sources": {
+    "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/arkts/cjgui-text-proxy.ets": "00d9fb41abecb2503753b919c6107d3760014ab5d85c313a958c1e643b43c088",
+    "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/entry/src/main/ets/pages/Index.ets": "150ca38df50f1351c03d07f7b5a30853fc419d89306ee2b6eb8ce22d1f42cf31"
+  },
+  "reproduced": true,
+  "expected_contract": [
+    "positive: installed",
+    "hung attach: bounded terminal",
+    "B cannot use A traffic",
+    "native refusal cannot yield installed"
+  ],
+  "cases": [
+    {
+      "name": "positive_control",
+      "virtual_ms": 60000,
+      "terminal": "INSTALLED",
+      "pending": false,
+      "attached": true,
+      "attach_calls": 1,
+      "scheduled_callbacks": 0,
+      "native_calls": [
+        {
+          "start": 1,
+          "end": 3,
+          "contextId": 22,
+          "rc": "0"
+        }
+      ],
+      "logs": [
+        "%{public}s ime proxy selection waiting for attach reason=positive_control mount=s1/c22/m2",
+        "%{public}s ime showTextInput ok field=B-note seq=1 reason=positive_control",
+        "%{public}s ime proxy selection set [1,3) reason=attach attempt=0",
+        "%{public}s ime selection immediate read [1,3) target=[1,3) reason=attach (not evidence by itself)",
+        "ime selection confirmed [%{public}d,%{public}d) rc=%{public}s (shared lifecycle) 1 3 0",
+        "%{public}s ime proxy selection terminal=INSTALLED reason=attach_confirmed target=[1,3) mount=s1/c22/m2"
+      ]
+    },
+    {
+      "name": "attach_never_settles",
+      "virtual_ms": 60000,
+      "terminal": "pending",
+      "pending": true,
+      "attached": false,
+      "attach_calls": 1,
+      "scheduled_callbacks": 0,
+      "native_calls": [],
+      "logs": [
+        "%{public}s ime proxy selection waiting for attach reason=attach_never_settles mount=s1/c22/m2"
+      ]
+    },
+    {
+      "name": "old_A_traffic_authorizes_detached_B",
+      "virtual_ms": 60000,
+      "terminal": "INSTALLED",
+      "pending": false,
+      "attached": true,
+      "attach_calls": 1,
+      "scheduled_callbacks": 0,
+      "native_calls": [
+        {
+          "start": 1,
+          "end": 3,
+          "contextId": 22,
+          "rc": "0"
+        }
+      ],
+      "logs": [
+        "%{public}s ime proxy selection waiting for attach reason=old_A_traffic_authorizes_detached_B mount=s1/c22/m2",
+        "%{public}s ime attach reused (client detached, traffic seen) field=B-note seq=1 reason=old_A_traffic_authorizes_detached_B",
+        "%{public}s ime proxy selection set [1,3) reason=attach-reused attempt=0",
+        "%{public}s ime selection immediate read [1,3) target=[1,3) reason=attach-reused (not evidence by itself)",
+        "ime selection confirmed [%{public}d,%{public}d) rc=%{public}s (shared lifecycle) 1 3 0",
+        "%{public}s ime proxy selection terminal=INSTALLED reason=attach-reused_confirmed target=[1,3) mount=s1/c22/m2"
+      ]
+    },
+    {
+      "name": "native_rejection_still_installed",
+      "virtual_ms": 60000,
+      "terminal": "INSTALLED",
+      "pending": false,
+      "attached": true,
+      "attach_calls": 1,
+      "scheduled_callbacks": 0,
+      "native_calls": [
+        {
+          "start": 1,
+          "end": 3,
+          "contextId": 22,
+          "rc": "1"
+        }
+      ],
+      "logs": [
+        "%{public}s ime proxy selection waiting for attach reason=native_rejection_still_installed mount=s1/c22/m2",
+        "%{public}s ime showTextInput ok field=B-note seq=1 reason=native_rejection_still_installed",
+        "%{public}s ime proxy selection set [1,3) reason=attach attempt=0",
+        "%{public}s ime selection immediate read [1,3) target=[1,3) reason=attach (not evidence by itself)",
+        "ime selection confirmed [%{public}d,%{public}d) rc=%{public}s (shared lifecycle) 1 3 1",
+        "%{public}s ime proxy selection terminal=INSTALLED reason=attach_confirmed target=[1,3) mount=s1/c22/m2"
+      ]
+    }
+  ]
+}

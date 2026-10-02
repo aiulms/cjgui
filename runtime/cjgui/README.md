@@ -1,6 +1,6 @@
 # CJGUI runtime 与样例
 
-更新：2026-09-19。状态：[ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md)。本页说明已有 API 与使用入口，不另定义项目定位、架构或当前任务；规范归属见[文档导航](../../docs/README.md)。
+更新：2026-10-01。状态：[ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md)。本页说明已有 API 与使用入口，不另定义项目定位、架构或当前任务；规范归属见[文档导航](../../docs/README.md)。
 仓颉包当前名为 cjgui，版本 0.0.0，输出 static；不承诺稳定公共 API。
 
 ## 当前目录
@@ -56,6 +56,16 @@
 默认把 Tab 用作导航，只有显式 `tabInsertsText: true` 才插入制表符。窗口可用
 `bindCommand("save"|"undo"|"redo", nodeId)` 把 Command 快捷键映射到已有语义按钮，而非向
 native 写业务规则。
+
+### accepted 文字位置、选择恢复与上下文菜单（experimental）
+
+窗口 hit/caret/水平/垂直导航共用 accepted 排版中的 `CjguiAcceptedTextPosition`，以 layout lease/stop ID 保留真实行及 primary/alternate 分支；byte+affinity 为兼容投影。重新排版使旧位置失效，查询失败须按具名结果处理。应用完成 SourceMap 转换后，使用窗口 `freezeAcceptedSelection`／`commitAcceptedSelection`提交完整票与源／代理范围；选择在精确 native 安装和 session 提交后一次发布。
+
+模式切换或代理重建使用 `requestAcceptedSelectionRestore`／`requestTextSelectionRestore`及 `selectionRestoreState`。请求由框架持有，首次拒绝保留待办，安装确认才终结；同语义菜单关闭保留待安装映射，新用户选择／换绑会使旧请求失效。`CjguiTextSession.sourceRangeForSelectionTicket`只供准备 SourceMap 映射，不能充当输入授权或 native 安装确认。
+
+controller 实现 `CjguiComposableUiContextMenuRequestHandler`提供内容，框架从现有事件队列生成右键请求并保持选择。用 `cjguiComposableContextMenuBounds`／`cjguiComposableContextMenuLayer`按请求点击点声明弹层，再以 `declareContextMenuCommand`／`invokeContextMenuCommand`接已有公共命令；失效目标被拒绝，Esc／外部点击关闭和焦点恢复归统一窗口机制。普通消费者见 [range_text_window_app](examples/range_text_window_app/src/main.cj)；真实右键验收入口为 `native/scripts/verify_range_text_window_app_context_menu.sh`。独立位置输入验收入口为 `native/scripts/verify_range_text_window_app_position.sh`。
+
+`positionWorkCounts()`提供正常构建的 process-local prepares、queries、line-builds、cache-hits；计时未启用时标 unavailable。macOS 原件与未扩展范围见 [E 最终证据](</Users/jiangxuanyang/Desktop/cangjie/artifacts/e-macos-position-20260930/evidence-index.json>)，签名／指纹见 [产品 H 最小契约](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/e-text-position-20260929/m1-m2-overnight/README.md#h-可消费最小契约不要求-h-追逐在途文件>)；本节不承诺稳定 API 或 OHOS V1。
 
 ### 树形数据与多选（experimental）
 

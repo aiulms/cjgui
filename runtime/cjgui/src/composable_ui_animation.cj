@@ -268,6 +268,47 @@ public class CjguiComposableUiScalarAnimation {
         this.completedValue = completed
     }
 
+    /// Copy the scalar into a translated coordinate system while preserving
+    /// its exact motion clock and phase.
+    private init(presented: Float64, target: Float64, velocity: Float64, spec: CjguiComposableUiAnimationSpec,
+        startValue: Float64, startTimeMs: Float64, lastTimeMs: Float64, active: Bool, completed: Bool,
+        translatedState!: Bool) {
+        this.presentedValue = presented
+        this.targetValue = target
+        this.velocityValue = velocity
+        this.specValue = spec
+        this.startValue = startValue
+        this.startTimeMs = startTimeMs
+        this.lastTimeMs = lastTimeMs
+        this.activeValue = active
+        this.completedValue = completed
+    }
+
+    func canTranslate(delta: Float64): Bool {
+        if (!cjguiAnimationIsFiniteScalar(delta)) {
+            return false
+        }
+        let presented = presentedValue + delta
+        let target = targetValue + delta
+        let start = startValue + delta
+        if (!CjguiComposableUiScalarAnimation.allFinite([presented, target, start, velocityValue, startTimeMs,
+            lastTimeMs]) || presented < -1024.0 || presented > 1024.0 || target < -1024.0 || target > 1024.0 || start <
+            -1024.0 || start > 1024.0) {
+            return false
+        }
+        return true
+    }
+
+    func translated(delta: Float64): ?CjguiComposableUiScalarAnimation {
+        if (!canTranslate(delta)) {
+            return None
+        }
+        return Some(
+            CjguiComposableUiScalarAnimation(presentedValue + delta, targetValue + delta, velocityValue, specValue,
+                startValue + delta, startTimeMs, lastTimeMs,
+                activeValue, completedValue, translatedState: true))
+    }
+
     /// 从 `from` 到 `to` 的有界补间。`from == to` 或时长为零时直接完成，
     /// 不产生中间帧。
     ///
@@ -291,13 +332,20 @@ public class CjguiComposableUiScalarAnimation {
     /// 从 `from` 以 `velocity` 起振的弹簧。改目标会保留当前值与速度，因此
     /// 中途反向的运动会连续改变而不是从零重新开始。非有限起点/目标/初速/时间或
     /// 非有限规格一律返回 None（拒绝）。
+    /// 创建时已满足静止判据则精确呈现目标并归零速度，不保留起点残值。
     public static func sprung(from: Float64, to: Float64, nowMs: Float64, velocity!: Float64 = 0.0,
         spec!: CjguiComposableUiAnimationSpec = CjguiComposableUiAnimationSpec.spring()): ?CjguiComposableUiScalarAnimation {
         if (!CjguiComposableUiScalarAnimation.allFinite([from, to, velocity, nowMs]) || spec.isRejected()) {
             return None
         }
         let settled = CjguiComposableUiScalarAnimation.atRest(from, to, velocity)
-        return Some(CjguiComposableUiScalarAnimation(from, to, velocity, spec, from, nowMs, !settled, settled))
+        // A terminal spring uses the same exact target/zero velocity as
+        // converge and retarget. Keeping a near-target start on an inactive
+        // channel leaves a permanent residual after an origin rebase.
+        let presented = if (settled) { to } else { from }
+        let initialVelocity = if (settled) { 0.0 } else { velocity }
+        return Some(CjguiComposableUiScalarAnimation(presented, to, initialVelocity, spec, presented, nowMs,
+            !settled, settled))
     }
 
     /// 以新规格重建同一通道，但保留当前呈现值与速度作为起点/初速。绑定已存在
@@ -1728,16 +1776,95 @@ public class CjguiComposableUiAnimationDriver {
         return Some(positionEntries[index].sample())
     }
 
+    func positionOriginStateFor(identityKey: String, binding: CjguiComposableUiAnimationBinding): ?CjguiComposableUiPositionOriginState {
+        let index = positionIndexOf(identityKey)
+        if (index < 0 || !positionEntries[index].binding.matches(binding)) {
+            return None
+        }
+        return Some(positionEntries[index].originState())
+    }
+
+    func canRebasePositionOrigin(identityKey: String, binding: CjguiComposableUiAnimationBinding,
+        compensation: CjguiComposableUiPositionValue): Bool {
+        let index = positionIndexOf(identityKey)
+        return index >= 0 && positionEntries[index].binding.matches(binding) &&
+            positionEntries[index].canRebaseOrigin(compensation)
+    }
+
+    /// Transform one immutable candidate sample into the ticket's next local
+    /// origin. The operation does not mutate the live animation channel.
+    func rebasePositionSample(sample: CjguiComposableUiPositionSample, rebase: CjguiComposableUiPositionOriginRebase): ?CjguiComposableUiPositionSample {
+        let ticket = rebase.ticket
+        let currentState = match (positionOriginStateFor(ticket.identityKey, ticket.binding)) {
+            case Some(value) => value
+            case None => return None
+        }
+        if (sample.identityKey != ticket.identityKey || !sample.binding.matches(ticket.binding) ||
+            sample.channelGeneration != ticket.channelGeneration || sample.originRevision != ticket.originRevision ||
+            currentState.channelGeneration != ticket.channelGeneration || currentState.originRevision != ticket
+            .originRevision || ticket.originRevision < 0 || ticket.originRevision == Int64.Max ||
+            !CjguiComposableUiAnimationDriver.validPosition(sample.value) ||
+            !canRebasePositionOrigin(ticket.identityKey, ticket.binding, rebase.compensation)) {
+            return None
+        }
+        let shifted = CjguiComposableUiPositionValue(sample.value.x + rebase.compensation.x,
+            sample.value.y + rebase.compensation.y)
+        if (!CjguiComposableUiAnimationDriver.validPosition(shifted)) {
+            return None
+        }
+        return Some(
+            CjguiComposableUiPositionSample(sample.identityKey, sample.binding, shifted, sample.velocity,
+                sample.revision, channelGeneration: sample.channelGeneration, originRevision: ticket.originRevision + 1))
+    }
+
     public func positionRevision(): Int64 { return positionMutationRevisionValue }
 
     /// Publish only the samples of the scene that native accepted. A later
     /// retarget keeps its pending revision, including across an in-flight
     /// ticket that accepts an older candidate.
     func markPositionSamplesAccepted(samples: HashMap<String, CjguiComposableUiPositionSample>,
-        stagedRevision: Int64): Unit {
+        stagedRevision: Int64,
+        originRebases!: HashMap<String, CjguiComposableUiPositionOriginRebase> = HashMap()): Unit {
         for ((identityKey, sample) in samples) {
             let index = positionIndexOf(identityKey)
-            if (index >= 0) { positionEntries[index].accept(sample, currentTimeMsValue) }
+            if (index < 0) {
+                continue
+            }
+            let entry = positionEntries[index]
+            if (let Some(rebase) <- originRebases.get(identityKey)) {
+                let ticket = rebase.ticket
+                let state = entry.originState()
+                let ticketRevisionCanAdvance = ticket.originRevision >= 0 && ticket.originRevision < Int64.Max
+                let candidateIsRebased = ticketRevisionCanAdvance && sample.identityKey == identityKey &&
+                    sample.binding.matches(ticket.binding) && sample.channelGeneration == ticket.channelGeneration &&
+                    sample.originRevision == ticket.originRevision + 1
+                let ticketIsCurrent = ticket.identityKey == identityKey && entry.binding.matches(ticket.binding) &&
+                    state.channelGeneration == ticket.channelGeneration && state.originRevision == ticket
+                    .originRevision && ticket.originRevision >= 0 && ticketRevisionCanAdvance &&
+                    cjguiAnimationIsFiniteScalar(rebase.compensation.x) && cjguiAnimationIsFiniteScalar(
+                    rebase.compensation.y)
+                if (candidateIsRebased && ticketIsCurrent && entry.canRebaseOrigin(rebase.compensation)) {
+                    if (entry.rebaseOrigin(rebase.compensation, ticket.originRevision + 1)) {
+                        entry.accept(sample, currentTimeMsValue) }
+                    continue
+                }
+                // Once a candidate carries an origin operation, a stale or
+                // malformed sample for that identity cannot fall through to
+                // ordinary acceptance in the previous coordinate system.
+                continue
+            }
+            let state = entry.originState()
+            let sameChannel = sample.channelGeneration == state.channelGeneration
+            // An ordinary receipt can outlive cancellation/recreation after a
+            // prior rebase. Its pixels still use the same accepted layout:
+            // acknowledge them on the recreated, origin-zero channel while
+            // preserving its latest target. A rebased live channel cannot be
+            // overwritten by an older channel's coordinate system.
+            if ((sameChannel && sample.originRevision != state.originRevision) ||
+                (!sameChannel && state.originRevision != 0)) {
+                continue
+            }
+            entry.accept(sample, currentTimeMsValue)
         }
         if (stagedRevision > positionCommittedRevisionValue && stagedRevision <= positionMutationRevisionValue) {
             positionCommittedRevisionValue = stagedRevision

@@ -1,0 +1,15 @@
+{
+  "driver_source": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/h_source_preview_consumption.py",
+  "source_sha256": "00a936a8d63f72c2e78e62eaba4fa3cf9d3ab0bf2c83ef697ad053f800bc459f",
+  "main_exit": 0,
+  "reported_status": "OK",
+  "agent_applied_response": false,
+  "all_recorded_owner_versions": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "all_owner_bytes_unchanged": true,
+  "scope": "actual main with all device, input, transport, delay and evidence IO helpers replaced by no-op/stable fixtures; no device or socket used; exposes acceptance predicate, not product failure"
+}

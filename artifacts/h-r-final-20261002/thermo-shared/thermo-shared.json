@@ -1,0 +1,64 @@
+{
+  "legs": [
+    {
+      "leg": "focus-nav",
+      "point": [
+        164.56233421750662,
+        1033.3395225464192
+      ]
+    },
+    {
+      "leg": "input-insert",
+      "note": "thermo shared lifecycle ok"
+    },
+    {
+      "leg": "nonempty-select",
+      "selection": [
+        0,
+        4
+      ]
+    },
+    {
+      "leg": "exact-replace",
+      "frozen_selection": [
+        0,
+        4
+      ],
+      "expected": "Xmo shared lifecycle ok",
+      "note": "Xmo shared lifecycle ok"
+    },
+    {
+      "leg": "external-set",
+      "applied": true,
+      "note": "外部改版后的备注 thermΩ"
+    },
+    {
+      "leg": "post-external-select",
+      "selection": [
+        15,
+        15
+      ]
+    },
+    {
+      "leg": "continue-input",
+      "frozen_selection": [
+        15,
+        15
+      ],
+      "expected": "外部改版后的备注 thermΩY",
+      "note": "外部改版后的备注 thermΩY"
+    }
+  ],
+  "identity": {
+    "bundle": "com.example.cjguithermo",
+    "pid": "28542"
+  },
+  "install": {
+    "confirmed": true,
+    "selection": [
+      0,
+      0
+    ]
+  },
+  "status": "OK"
+}

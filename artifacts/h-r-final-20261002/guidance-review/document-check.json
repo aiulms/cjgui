@@ -1,0 +1,12 @@
+{
+  "new_local_links_checked": 14,
+  "invalid_links": [],
+  "reviewed_inputs_changed": [],
+  "E_status_retained_byte_exact": true,
+  "other_ACTIVE_sections_retained": true,
+  "STATUS_lines": 42,
+  "framework_diff_check": 0,
+  "product_diff_check": 0,
+  "output": "",
+  "scope": "Only H task/status documents and offline review artifacts changed; no production fixes, builds, device/UI calls, or git index writes."
+}

@@ -129,6 +129,13 @@ export class CjguiTextProxyRegistry {
   private current: CjguiTextProxyMount | null = null;
   private bridge: CjguiTextProxyBridge;
   private mountGeneration: number = 0;
+  // R5（2026-10-02 Astra 裁决）：退役前驱（交接记录）。owned 节点同值换版会在
+  // 页面挂载回声落地前把 context 推进（native external-version 分支），使该回声被
+  // 以 stale 拒（native preview 唯一非零返回即 takeEditingContextLocked 失败）。
+  // 输入必须立即关闭（isCurrent 一律拒），但保留**至多一条**可一次性消费的退役
+  // 前驱，供合法 reconcile 交接；新挂载／明确终结／会话更换即令其失效。它不是
+  // 「必有 successor」的断言，也不授权重挂——授权仍来自 reconcile 与有效目标快照。
+  private retiredPredecessor: CjguiTextProxyMount | null = null;
 
   constructor(bridge: CjguiTextProxyBridge) {
     this.bridge = bridge;
@@ -144,6 +151,8 @@ export class CjguiTextProxyRegistry {
     const m = new CjguiTextProxyMount(key, controlId, fieldId, initialText);
     this.mounts.set(key.mountGeneration, m);
     this.current = m;
+    // 新挂载取代任何待消费的退役前驱（交接记录至多一条）。
+    this.retiredPredecessor = null;
     this.bridge.logInfo(`proxy mounted key=${key.describe()} field=${fieldId}`);
     return m;
   }
@@ -318,10 +327,13 @@ export class CjguiTextProxyRegistry {
     }
     if (rc !== '0') {
       this.bridge.logWarn(`preview rejected ctx=${m.key.contextId} rc=${rc}; retiring mount`);
+      // R5：输入立即关闭（isCurrent 一律拒），但保留可一次性消费的退役前驱，
+      // 交合法 reconcile 交接——不得把这次 stale 拒绝当成终局拆除。
       m.alive = false;
       if (this.current === m) {
         this.current = null;
       }
+      this.retiredPredecessor = m;
       return 'rejected';
     }
     return 'ok';
@@ -330,6 +342,11 @@ export class CjguiTextProxyRegistry {
   // 返回裁决：'ok'=提交与结束均接受；'rejected'=至少一步被 owner 拒绝；
   // 'stale'=身份校验失败（未触碰 owner）。
   submitAndFinish(m: CjguiTextProxyMount, reason: string): string {
+    // R5：对退役前驱的明确终结请求直接使交接记录失效（不得留下可被迟到
+    // reconcile 消费的幽灵）；前驱已 alive=false，validate 会判 stale。
+    if (this.retiredPredecessor === m) {
+      this.retiredPredecessor = null;
+    }
     if (!this.validate(m)) {
       return 'stale';
     }
@@ -342,17 +359,29 @@ export class CjguiTextProxyRegistry {
     if (this.current === m) {
       this.current = null;
     }
+    if (this.retiredPredecessor === m) {
+      this.retiredPredecessor = null;
+    }
     return rc === '0' && end === '0' ? 'ok' : 'rejected';
   }
 
   // owner 外部换版推送携旧 context；只撤掉这个当前挂载，不提交旧草稿，
   // 新 context 的初值必须由页面重新读取 owner 快照后另行 mount。
+  // R5：也接受**本注册表认可的退役前驱**（preview 被 stale 拒后留下的交接记录），
+  // 且只消费一次；绝不误清另一份 current。
   retireForReconcile(m: CjguiTextProxyMount, oldContext: number): string {
-    if (!this.isCurrent(m) || m.key.contextId !== oldContext) {
+    const isCurrent: boolean = this.current === m && m.alive && !m.finishing;
+    const isPredecessor: boolean = this.retiredPredecessor === m;
+    if ((!isCurrent && !isPredecessor) || m.key.contextId !== oldContext) {
       return 'stale';
     }
+    if (this.current === m) {
+      this.current = null;
+    }
+    if (this.retiredPredecessor === m) {
+      this.retiredPredecessor = null;
+    }
     m.alive = false;
-    this.current = null;
     this.bridge.logInfo(`proxy retired for external reconcile ctx=${oldContext}`);
     return 'retired';
   }
@@ -377,7 +406,18 @@ export class CjguiTextProxyRegistry {
     if (cur !== null && cur.key.contextId === contextId) {
       cur.alive = false;
       this.current = null;
+      if (this.retiredPredecessor === cur) {
+        this.retiredPredecessor = null;
+      }
       this.bridge.logInfo(`proxy released by framework ctx=${contextId}`);
+      return true;
+    }
+    // R5：退役前驱也响应框架 end（current 已为 null 不得使 end 静默失效）。
+    const pred = this.retiredPredecessor;
+    if (pred !== null && pred.key.contextId === contextId) {
+      pred.alive = false;
+      this.retiredPredecessor = null;
+      this.bridge.logInfo(`proxy predecessor released by framework ctx=${contextId}`);
       return true;
     }
     this.bridge.logInfo(`framework end ignored: ctx=${contextId} (not current)`);
@@ -452,6 +492,14 @@ export class CjguiImeSelectionLifecycle {
   // 上报 native——不得再按"非空→折叠"的形状规则吞掉（2026-10-02 复核）。
   private echoMount: CjguiTextProxyMount | null = null;
   private echoOpen: boolean = false;
+  // R4：同一 (mount, selSeq) 的平台选区 setter 只下发一次。arm 与紧随的
+  // requestAttach→maybeInstall 可能对同一 seq 各进一次 install（既有非幂等风险，
+  // Astra 指出）；seq 单调递增，旧值不会撞上新请求，故无需跨请求复位。
+  private installSentSeq: number = -1;
+  // r18 接缝 1：让位只转移执行权。恢复事务占用期间保留同一待办（selMount/
+  // selSeq）与原绝对截止（deadlineTimer 不清），零 setter、零采纳；恢复落定后
+  // 原请求凭原 seq 与原截止继续，不重新 arm/重计截止。新 arm/显式退役清此旗。
+  private yieldedToRestore: boolean = false;
 
   constructor(host: CjguiImeSelectionHost) {
     this.host = host;
@@ -484,7 +532,9 @@ export class CjguiImeSelectionLifecycle {
       this.attachedMount = null;
     }
     if (this.selMount === mount) {
-      this.selMount = null;
+      // 换绑显式退役旧请求：具名恰一次终态（原 seq/截止随之收口），迟到旧回执
+      // 凭 seq/挂载门零影响，不恢复已退役请求。
+      this.settle(mount, 'UNCONFIRMED', 'mount_changed_retired');
     }
     if (this.echoMount === mount) {
       this.echoMount = null;
@@ -521,6 +571,8 @@ export class CjguiImeSelectionLifecycle {
     this.selEnd = end;
     this.selSeq += 1;
     this.selTerminal = 'pending';
+    // 新意图取回执行权：旧让位状态随新 seq 终结（旧在飞计时器凭 seq 门自失效）。
+    this.yieldedToRestore = false;
     // 新请求替代旧回声括号：旧请求的观测流到此为止。
     this.echoMount = null;
     this.echoOpen = false;
@@ -531,7 +583,12 @@ export class CjguiImeSelectionLifecycle {
   // attach（系统输入会话）的唯一发起口。幂等、带本次安装序号门控：旧 show 的
   // 迟到完成不得为新挂载/新一次安装开门；被拒即具名 UNCONFIRMED。
   requestAttach(mount: CjguiTextProxyMount, reason: string): void {
-    if (this.selMount !== mount || !this.host.isCurrentMount(mount)) {
+    // R4（2026-10-02 Astra 裁决）：attach 是**会话级事实**，其发起只依赖挂载身份
+    // （仍是当前挂载），不与 pending 选区耦合。此前 `selMount !== mount` 的门使
+    // 恢复让位（settle 清 selMount）之后的焦点 attach 永久静默早退——H 线实测
+    // 笔记面「让位清 pending → 焦点 attach 被门挡 → 后续 caret 只等待 → 8s
+    // request_deadline」。pending 只决定「有无选区要装」，见 maybeInstall。
+    if (!this.host.isCurrentMount(mount)) {
       return;
     }
     if (this.attachedMount === mount) {
@@ -543,8 +600,10 @@ export class CjguiImeSelectionLifecycle {
       this.attachRetryLeft = 4;
     }
     this.host.attachSession().then(() => {
-      if (!this.host.isCurrentMount(mount) || this.selMount !== mount ||
-        attachSeq !== this.attachSeq) {
+      // R4：成功记账只要求「仍是当前挂载 + 本次尝试身份」——pending 选区可能已被
+      // 恢复让位/真人输入清空，会话事实仍成立。若仍以 `selMount === mount` 门控，
+      // 成功会被误判 stale、attachedMount 永不置位（Astra 反例 (b)）。
+      if (!this.host.isCurrentMount(mount) || attachSeq !== this.attachSeq) {
         this.host.logInfo(`ime attach completed but stale seq=${attachSeq} live=${this.attachSeq}`);
         return;
       }
@@ -568,34 +627,51 @@ export class CjguiImeSelectionLifecycle {
       } catch (parseErr) {
         code = 0;
       }
-      const currentRequest: boolean = this.host.isCurrentMount(mount) && this.selMount === mount &&
-        attachSeq === this.attachSeq;
-      if (code === 12800009 && currentRequest) {
+      // R4（Astra 裁决）：把「会话恢复资格」与「选区结算资格」分开。
+      //   会话资格 = 仍是当前挂载 + 本次尝试身份（与 pending 无关——attach 是
+      //     会话级事实，恢复让位清 pending 不得取消会话的建立/恢复）。
+      //   结算资格 = 会话资格 **且** 当前确有该挂载的 pending 选区（settle 无入口
+      //     守卫：对已让位/被输入取代的旧选区追加终态会污染它的终态）。
+      const sessionEligible: boolean = this.host.isCurrentMount(mount) && attachSeq === this.attachSeq;
+      const selectionPending: boolean = this.selMount === mount;
+      if (code === 12800009 && sessionEligible) {
         if (this.host.hasImeTrafficEvidence(mount)) {
-          this.attachedMount = mount;
+          this.attachedMount = mount;   // 会话事实：无 pending 也保留
           this.host.logInfo(`ime attach reused (client detached, traffic seen) field=${mount.fieldId}` +
             ` seq=${attachSeq} reason=${reason}`);
           this.maybeInstall(mount, 'attach-reused');
         } else {
           // 无证据 ≠ 会话不存在（fresh 挂载首笔输入前恒无证据）：按瞬时分离
-          // 处理，保留待办并退避重试 attach；耗尽才具名 UNCONFIRMED。
+          // 处理，有界退避重试 attach；耗尽只终结**确有 pending** 的选区请求，
+          // 无 pending 时仅记录会话未恢复（不重写旧选区终态）。
           this.host.logWarn(`ime attach detached, retrying (no traffic evidence yet) field=${mount.fieldId}` +
             ` seq=${attachSeq} reason=${reason} retriesLeft=${this.attachRetryLeft}`);
           if (this.attachRetryLeft <= 0) {
-            this.settle(mount, 'UNCONFIRMED', 'attach_reused_without_evidence');
+            if (selectionPending) {
+              this.settle(mount, 'UNCONFIRMED', 'attach_reused_without_evidence');
+            } else {
+              this.host.logWarn(`ime attach unrecovered (no traffic evidence, no pending)` +
+                ` field=${mount.fieldId} seq=${attachSeq}`);
+            }
           } else {
             this.attachRetryLeft -= 1;
             const retryMount: CjguiTextProxyMount = mount;
             const retryReason: string = reason;
+            const retrySeq: number = attachSeq;
             setTimeout(() => {
-              this.requestAttach(retryMount, `retry-${retryReason}`);
+              // R4：重试票据归属——只有创建它的尝试仍是 live 时才重试。否则重试
+              // 会递增 attachSeq，把更新的在飞成功/重试误判成 stale（Astra 指出
+              // 的抢占：焦点路径与重试链互相淘汰）。
+              if (this.host.isCurrentMount(retryMount) && retrySeq === this.attachSeq) {
+                this.requestAttach(retryMount, `retry-${retryReason}`);
+              }
             }, 150 * (5 - this.attachRetryLeft));
           }
         }
         return;
       }
       this.host.logWarn(`ime showTextInput rejected: ${detail} seq=${attachSeq} reason=${reason}`);
-      if (currentRequest) {
+      if (sessionEligible && selectionPending) {
         this.settle(mount, 'UNCONFIRMED', 'attach_rejected');
       }
     });
@@ -623,11 +699,27 @@ export class CjguiImeSelectionLifecycle {
       return; // 已被新目标/新挂载/收尾取代的过期定时器
     }
     if (this.host.restoreTaskActive()) {
-      // 恢复事务自己按票据装选区，不与之争夺控制器。让位必须具名：记
-      // UNCONFIRMED 并保留可恢复源选择，不把清槽当成功。
-      this.settle(mount, 'UNCONFIRMED', 'restore_task_took_over');
+      // 恢复事务自己按票据装选区，不与之争夺控制器。让位只转移执行权：保留
+      // 同一待办（selMount/selSeq）与原绝对截止（不清 deadlineTimer），零
+      // setter、零采纳；恢复落定后原请求凭原 seq 继续，不重新 arm/重计截止。
+      if (!this.yieldedToRestore) {
+        this.yieldedToRestore = true;
+        this.host.logInfo(`ime proxy selection yielded to restore task seq=${seq} ` +
+          `target=[${start},${end}) mount=${mount.key.describe()} ` +
+          `restore_task_took_over (pending retained)`);
+      }
+      const yieldMount: CjguiTextProxyMount = mount;
+      const yieldStart: number = start;
+      const yieldEnd: number = end;
+      const yieldSeq: number = seq;
+      const yieldReason: string = reason.endsWith('-resumed') ? reason : reason + '-resumed';
+      const yieldAttempt: number = attempt;
+      setTimeout(() => {
+        this.install(yieldMount, yieldStart, yieldEnd, yieldAttempt, yieldSeq, yieldReason);
+      }, 150);
       return;
     }
+    this.yieldedToRestore = false;
     if (this.attachedMount !== mount) {
       this.host.logInfo(`ime proxy selection deferred (attach pending) reason=${reason} attempt=${attempt}`);
       if (attempt >= 8) {
@@ -641,6 +733,12 @@ export class CjguiImeSelectionLifecycle {
       return;
     }
     try {
+      // R4：同一请求不重复下发平台 setter（跨帧确认窗口仍在跑）；重复下发只会
+      // 让平台把落点再推一次、与确认窗口抢光标。seq 单调，故不会误挡新请求。
+      if (seq === this.installSentSeq) {
+        return;
+      }
+      this.installSentSeq = seq;
       this.host.setSelection(start, end);
       // R2：程序选区命令已下发——它的平台回声按本命令的括号消费。
       this.echoMount = mount;
@@ -660,7 +758,17 @@ export class CjguiImeSelectionLifecycle {
     } catch (err) {
       this.host.logWarn(`ime selection getter unavailable reason=${reason} err=${String(err)}`);
     }
-    this.confirm(mount, start, end, seq, reason, 0);
+    // 首轮确认必须跨帧：本函数内联 confirm(...,0) 与 setter 落在同一毫秒，读到的是
+    // 平台尚未回声的旧落点。设备原件（外部改版后的新 ctx=2 挂载）：
+    //   ime proxy selection set [8,8) reason=attach attempt=0
+    //   ime selection immediate read [2,2) target=[8,8) reason=attach (not evidence by itself)
+    //   ime selection confirm mismatch round=0 target=[8,8) observed=[2,2)
+    //   ime proxy selection terminal=UNCONFIRMED reason=attach_confirm_mismatch
+    // 三条同毫秒 —— 代码自己声明即时读数"not evidence by itself"，却把它当成终态
+    // 证据，连烧 8 张恢复票（与历史 ctx=3 八票全 platform_install_failed 同形）。
+    setTimeout(() => {
+      this.confirm(mount, start, end, seq, reason, 0);
+    }, 32);
   }
 
   // 跨帧确认窗口：连续两帧读数精确命中目标才结算 INSTALLED；任何一次不命中
@@ -671,6 +779,28 @@ export class CjguiImeSelectionLifecycle {
       !this.host.isCurrentMount(mount) || this.attachedMount !== mount) {
       return; // 已被新目标/新挂载/收尾取代
     }
+    if (this.host.restoreTaskActive()) {
+      // 在飞确认让位：保留同一待办（selMount/selSeq）与原绝对截止（不清
+      // deadlineTimer），不读数、不采纳、不结算；恢复释放后接续原轮次
+      // （同 round），绝不重发 setter（confirm 本来就不下发平台写）。
+      if (!this.yieldedToRestore) {
+        this.yieldedToRestore = true;
+        this.host.logInfo(`ime proxy selection confirm yielded to restore task seq=${seq} ` +
+          `round=${round} target=[${start},${end}) mount=${mount.key.describe()} ` +
+          `restore_task_took_over (pending retained)`);
+      }
+      const yieldMount: CjguiTextProxyMount = mount;
+      const yieldStart: number = start;
+      const yieldEnd: number = end;
+      const yieldSeq: number = seq;
+      const yieldReason: string = reason;
+      const yieldRound: number = round;
+      setTimeout(() => {
+        this.confirm(yieldMount, yieldStart, yieldEnd, yieldSeq, yieldReason, yieldRound);
+      }, 150);
+      return;
+    }
+    this.yieldedToRestore = false;
     let observedStart: number = -1;
     let observedEnd: number = -1;
     try {
@@ -721,6 +851,7 @@ export class CjguiImeSelectionLifecycle {
     this.selTerminal = terminal;
     if (this.selMount === mount) {
       this.selMount = null;
+      this.yieldedToRestore = false;
     }
     // R2：终态即清理——固定截止计时器与回声括号不跨请求存活。
     if (this.deadlineTimer !== -1) {
@@ -732,7 +863,8 @@ export class CjguiImeSelectionLifecycle {
       this.echoOpen = false;
     }
     this.host.logInfo(`ime proxy selection terminal=${terminal} reason=${reason} ` +
-      `target=[${this.selStart},${this.selEnd}) mount=${mount.key.describe()}`);
+      `target=[${this.selStart},${this.selEnd}) mount=${mount.key.describe()} ` +
+      `field=${mount.fieldId}`);
   }
 
   // R2：回声票据门（页面 onTextSelectionChange 的统一分流入口）。

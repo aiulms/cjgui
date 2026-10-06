@@ -633,7 +633,12 @@ public class CjguiComposableUiInteractionStyle {
             alignX: base.alignX,
             alignY: base.alignY,
             cornerRadius: base.cornerRadius,
-            clipsContent: base.clipsContent
+            clipsContent: base.clipsContent,
+            // 交互旗标不是 paint：交互解析重建样式时必须原样携带，否则
+            // resolved 场景（nativeInputScene/pod 来源之一）丢失
+            // pointerInteractive——IME 上下文门、owned 锚点豁免与命中投递
+            // 会与布局场景两处真值分叉（可视编辑包实测：安装链据此漏签发）。
+            pointerInteractive: base.pointerInteractive
         )
     }
 
@@ -4130,13 +4135,14 @@ public func cjguiComposableSlider(nodeId: Int64, semanticId: String, value: Int6
 
 public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String, style: CjguiComposableUiStyle,
     resourceId!: Int64 = -1, fieldId!: String = "", displayValueRole!: String = "", operationResourceId!: Int64 = -1,
-    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    operationActionName!: String = "", interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
     identity!: ?CjguiComposableUiIdentity = None,
     textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>()): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT, "", value, "", resourceId, style,
         textStyleRuns: textStyleRuns,
-        fieldId: fieldId, operationResourceId: operationResourceId, displayValueRole: displayValueRole,
+        fieldId: fieldId, operationActionName: operationActionName, operationResourceId: operationResourceId,
+        displayValueRole: displayValueRole,
         interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, identity: identity)
 }
 
@@ -4145,11 +4151,13 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
 public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String,
     boundStyle: CjguiComposableUiBoundStyle, resourceId!: Int64 = -1, fieldId!: String = "",
     displayValueRole!: String = "", operationResourceId!: Int64 = -1,
+    operationActionName!: String = "",
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
     identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return cjguiComposableText(nodeId, semanticId, value, boundStyle.style,
         resourceId: resourceId, fieldId: fieldId, displayValueRole: displayValueRole,
-        operationResourceId: operationResourceId, interactionStyle: boundStyle.interaction,
+        operationResourceId: operationResourceId, operationActionName: operationActionName,
+        interactionStyle: boundStyle.interaction,
         ownerInteractionState: ownerInteractionState, identity: identity)
 }
 

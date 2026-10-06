@@ -278,6 +278,118 @@ int main() {
     EXPECT(s.proxyRestoreRequestSeq == 2, 144);  // 目标改变 → 旧票有终态、新票新号
     EXPECT(s.proxyRestoreTerminals.size() == 1, 145);
   }
+  // 15) 人锚优先（round5-C，GLM 裁定）：本票若伴随一笔**未消费人锚**、身份一致、
+  //     但票目标与人的真实落点分歧，则在一切状态改动前拒绝 arming——native 落点
+  //     保持人的点击，由 humanCaretNotificationPending 走 caret 推送交给共享生命周期安装。
+  {
+    Session &s = armRefused(kAccepted);
+    const uint32_t landingBefore = s.selStartUtf16;
+    s.humanAnchor.seq = 7;
+    s.humanAnchor.consumed = false;
+    s.humanAnchor.nodeId = 107;
+    s.humanAnchor.resourceId = 1;
+    s.humanAnchor.nodeKind = 10;
+    s.humanAnchor.projectionVersion = 9;
+    s.humanAnchor.start16 = 12;
+    s.humanAnchor.end16 = 12;
+    CjguiInternalRendererProxyRestoreTicket ticket{};
+    // 分歧 → 拒绝 arming，且 native 落点零改动（不执行硬写）。
+    EXPECT(cjgui_internal_renderer_recover_text_proxy_ticket(g_sessionToken, 107, 1, 10, 9,
+               kAccepted.c_str(), 4, 9, &ticket) != CJGUI_INTERNAL_RENDERER_OK, 151);
+    EXPECT(ticket.requestId == 0 && s.proxyRestoreRequestSeq == 0, 152);
+    EXPECT(s.selStartUtf16 == landingBefore && s.selEndUtf16 == landingBefore, 153);
+    // 票目标与人锚一致 → 不拦（同一落点，安装无分歧）。
+    EXPECT(cjgui_internal_renderer_recover_text_proxy_ticket(g_sessionToken, 107, 1, 10, 9,
+               kAccepted.c_str(), 12, 12, &ticket) == CJGUI_INTERNAL_RENDERER_OK, 154);
+    EXPECT(s.proxyRestoreRequestSeq == 1, 155);
+    // 身份不符的人锚不拦。
+    s.humanAnchor.nodeId = 108;
+    EXPECT(cjgui_internal_renderer_recover_text_proxy_ticket(g_sessionToken, 107, 1, 10, 9,
+               kAccepted.c_str(), 0, 1, &ticket) == CJGUI_INTERNAL_RENDERER_OK, 156);
+    EXPECT(s.proxyRestoreRequestSeq == 2, 157);
+    // 已消费的人锚不拦。
+    s.humanAnchor.nodeId = 107;
+    s.humanAnchor.consumed = true;
+    EXPECT(cjgui_internal_renderer_recover_text_proxy_ticket(g_sessionToken, 107, 1, 10, 9,
+               kAccepted.c_str(), 4, 9, &ticket) == CJGUI_INTERNAL_RENDERER_OK, 158);
+    EXPECT(s.proxyRestoreRequestSeq == 3, 159);
+  }
+  // 16) 等待与失败必须可区分（round5 后指导 C）：人锚让路返回**具名等待码**，
+  //     不是通用 INTERNAL_ERROR——窗口据此不消耗失败重试预算。真失败仍走原码。
+  {
+    Session &s = armRefused(kAccepted);
+    const uint32_t landingBefore = s.selStartUtf16;
+    s.humanAnchor.seq = 21;
+    s.humanAnchor.consumed = false;
+    s.humanAnchor.nodeId = 107;
+    s.humanAnchor.resourceId = 1;
+    s.humanAnchor.nodeKind = 10;
+    s.humanAnchor.projectionVersion = 9;
+    s.humanAnchor.start16 = 12;
+    s.humanAnchor.end16 = 12;
+    CjguiInternalRendererProxyRestoreTicket ticket{};
+    EXPECT(cjgui_internal_renderer_recover_text_proxy_ticket(g_sessionToken, 107, 1, 10, 9,
+               kAccepted.c_str(), 4, 9, &ticket)
+               == CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING, 161);
+    EXPECT(ticket.requestId == 0 && s.proxyRestoreRequestSeq == 0 &&
+               s.selStartUtf16 == landingBefore, 162);
+    // 无活体上下文＝真失败，不得混用等待码（锚已消费，判据走到真实失败分支）。
+    s.humanAnchor.consumed = true;
+    s.editing = false;
+    EXPECT(cjgui_internal_renderer_recover_text_proxy_ticket(g_sessionToken, 107, 1, 10, 9,
+               kAccepted.c_str(), 4, 9, &ticket) == CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 163);
+  }
+  // 17) B 组贯穿反例：声明缺失→声明晋升→签发→安装失败终态→旧 ACK 零解锁→新票独立。
+  //     对应设备时序 PID23342（首绑缺声明→ctx 换代→同空文 reconcile）与"native 自签
+  //     新票迁 live ctx"的旧缺陷：旧票必须按冻结身份恰一次终态，新事务只由窗口重新登记。
+  {
+    Session &s = armRefused(kAccepted);
+    s.ownedTextSessionEnabled = true;
+    s.ownedTextSessionNodeId = s.editingNodeId;
+    s.ownedTextSessionResourceId = s.editingResourceId;
+    s.ownedTextSessionNodeKind = s.editingNodeKind;
+    s.ownedTextSessionBindingEpoch = 9;
+    s.ownedMirrorAccepted = Session::OwnedMirrorDeclaration{};
+    s.ownedMirrorAccepted.valid = true;
+    s.ownedMirrorAccepted.text = utf8ToUtf16(kAccepted);
+    s.ownedMirrorAccepted.ownerContentVersion = 0;
+    s.ownedMirrorAccepted.bindingEpoch = 7;
+    s.ownedMirrorAccepted.declaredBindingEpoch = 7;   // 旧声明代：不得借给新绑定
+    // (a) 首绑缺声明：生产就绪门 nullptr（不是"任意 scene 版本增长"能替代的事实）。
+    EXPECT(ownedMirrorDeclarationLocked(s, s.editingNodeId, s.editingResourceId,
+                                        s.editingNodeKind) == nullptr, 171);
+    // (b) 声明晋升到当前绑定代：就绪门给出这份 accepted 镜像文本。
+    s.ownedMirrorAccepted.declaredBindingEpoch = 9;
+    const Session::OwnedMirrorDeclaration *ready = ownedMirrorDeclarationLocked(
+        s, s.editingNodeId, s.editingResourceId, s.editingNodeKind);
+    EXPECT(ready != nullptr && ready->text == utf8ToUtf16(kAccepted) &&
+               ready->ownerContentVersion == 0, 172);
+    // (c) 平台安装失败：旧票落**恰一次**终态，槽位清空，不留下可续命的半张票。
+    const auto t1 = issue(s, kAccepted, 4, 9);
+    sendRestore(s);
+    EXPECT(ohos_renderer_ime_restore_ack_ctx(s.editingContextId, t1.requestId, 4, 9, 0) == 0, 173);
+    EXPECT(s.proxyRestoreTerminals.size() == 1 &&
+               s.proxyRestoreTerminals[0].requestId == t1.requestId &&
+               s.proxyRestoreTerminals[0].reason == "platform_install_failed", 174);
+    EXPECT(!s.proxyRestore.armed && !s.proxyRestore.awaitingAck &&
+               s.proxyRestore.requestId == 0, 175);
+    // (d) 迟到的旧 ACK——即使是"成功"回执——对已终态旧票零解锁。
+    EXPECT(ohos_renderer_ime_restore_ack_ctx(s.editingContextId, t1.requestId, 4, 9, 1) == 1, 176);
+    EXPECT(!s.proxyRestore.platformInstalled && s.proxyRestore.requestId == 0, 177);
+    // (e) 窗口按当前身份重新登记：新事务号独立、处于已登记态；投递后旧号迟到
+    //     不解锁新票，只有新号的成功回执才置已安装。
+    const auto t2 = issue(s, kAccepted, 4, 9);
+    EXPECT(t2.requestId != t1.requestId && s.proxyRestore.armed, 178);
+    sendRestore(s);
+    EXPECT(s.proxyRestore.awaitingAck && s.proxyRestore.requestId == t2.requestId, 179);
+    EXPECT(ohos_renderer_ime_restore_ack_ctx(s.editingContextId, t1.requestId, 4, 9, 1) == 1 &&
+               !s.proxyRestore.platformInstalled, 180);
+    EXPECT(ohos_renderer_ime_restore_ack_ctx(s.editingContextId, t2.requestId, 4, 9, 1) == 0 &&
+               s.proxyRestore.platformInstalled, 181);
+    // (f) 外部改版换身份（换 ctx）后，已安装回执不得被复用：新 ctx 上旧号零命中。
+    s.editingContextId += 1;
+    EXPECT(ohos_renderer_ime_restore_ack_ctx(s.editingContextId, t2.requestId, 4, 9, 1) == 1, 182);
+  }
   return g_failures == 0 ? 0 : 1;
 }
 """
@@ -299,6 +411,7 @@ template <class... Args> static void cjguiLogSinkStub(Args&&...) {}
 typedef enum CjguiInternalRendererStatus {
   CJGUI_INTERNAL_RENDERER_OK = 0,
   CJGUI_INTERNAL_RENDERER_INVALID_SESSION = 11,
+  CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING = 36,
   CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR = 99
 } CjguiInternalRendererStatus;
 struct RedrawJob {};
@@ -420,8 +533,26 @@ struct Session {
     uint32_t observedEnd = 0;
   };
   std::deque<ProxyRestoreTerminal> proxyRestoreTerminals;
+  // 生产 Session 的镜像声明与 owned 会话身份：一律抽生产原文注入，字段漂移即编译错。
+%MIRROR_FIELDS%
+%OWNED_ID_FIELDS%
+  int64_t editingMirrorOwnerVersion = -1;
+  uint64_t surfaceGeneration = 0;
   ProxyRestoreRequest proxyRestore;
   uint64_t proxyRestoreRequestSeq = 0;
+  // 生产 `Session::HumanSelectionAnchor` 的最小镜像：入口 1 的人锚优先判据读这些字段。
+  struct HumanSelectionAnchor {
+    uint64_t seq = 0;
+    uint64_t nodeId = 0;
+    int64_t resourceId = -1;
+    uint32_t nodeKind = 0;
+    uint64_t projectionVersion = 0;
+    uint64_t acceptedBindingEpoch = 0;
+    uint32_t start16 = 0;
+    uint32_t end16 = 0;
+    bool consumed = false;
+  };
+  HumanSelectionAnchor humanAnchor;
   std::vector<SceneNode> accepted;
   std::vector<QueuedEvent> events;
 };
@@ -444,6 +575,10 @@ static Session *lookupSessionLocked(uint64_t token) {
 '''
 
 FUNCTIONS = [
+    # 声明就绪门先于所有使用者抽取（生产里它是文件级 static，顺序同理）。
+    # B 组：镜像声明就绪门用**生产原文**（换绑不得借旧声明），不用手写替身。
+    ("static const Session::OwnedMirrorDeclaration *ownedMirrorDeclarationLocked(const Session &s,",
+     "ownedMirrorDeclarationLocked"),
     ("static void terminateProxyRestoreRequestLocked(Session &s", "terminateProxyRestoreRequestLocked"),
     ("static void cancelProxyRestoreRequest(Session &s", "cancelProxyRestoreRequest"),
     ("static int64_t proxyRestoreNowMs()", "proxyRestoreNowMs"),
@@ -513,10 +648,22 @@ def replica_with_ledger(source_text: str) -> str:
                            production_ledger_fields(source_text) + REPLICA_SESSION_MARKER, 1)
 
 
+def production_span(text: str, first: str, last: str) -> str:
+    start = text.index(first)
+    end = text.index(last, start) + len(last)
+    return text[start:end] + "\n"
+
+
 def build_harness(source_text: str) -> str:
     harness = '#include "cjgui_ohos_ingress.h"\n'
     harness += STUBS
-    harness += replica_with_ledger(source_text)
+    harness += replica_with_ledger(source_text).replace(
+        "%MIRROR_FIELDS%", production_span(
+            source_text, "    struct OwnedMirrorDeclaration {",
+            "    OwnedMirrorDeclaration ownedMirrorAccepted;")).replace(
+        "%OWNED_ID_FIELDS%", production_span(
+            source_text, "    bool ownedTextSessionEnabled = false;",
+            "    uint64_t ownedTextSessionBindingEpoch = 0;"))
     harness += "\n".join(extract_decl(source_text, sig) for sig in SUPPORT)
     harness += "\n".join(extract_decl(source_text, marker) for marker, _ in FUNCTIONS)
     harness += "\n" + MAIN_BODY
@@ -570,6 +717,11 @@ def drop_consume_single_winner(source: str) -> str:
                   "    if (requestId == 0) {", "consume_single_winner")
 
 
+def drop_failed_ack_terminal(source: str) -> str:
+    return mutate(source, '        terminateProxyRestoreRequestLocked(*s, "platform_install_failed");',
+                  '        s->proxyRestore = Session::ProxyRestoreRequest{};', "failed_ack_terminal")
+
+
 def drop_ticket_arm(source: str) -> str:
     """签发不登记票据：窗口永远等不到回执，等于没有恢复事务。"""
     return mutate(source, "    armProxyRestoreRequestLocked(s, *accepted, start, end);", "", "ticket_arm")
@@ -582,11 +734,11 @@ def drop_ticket_boundary(source: str) -> str:
 
 
 class TextProxyRecoveryNativeTest(unittest.TestCase):
-    def _compile_and_run(self, source_text: str, tmp: pathlib.Path) -> int:
+    def _compile_and_run(self, source_text: str, tmp: pathlib.Path) -> tuple[int, str]:
         harness = tmp / "text_proxy_recovery_harness.cpp"
         harness.write_text(build_harness(source_text))
         binary = tmp / "text_proxy_recovery_harness"
-                # 负控会摘掉某个守卫，被摘的那个 helper 就成了"定义了但没人调"——那不是被测
+        # 负控会摘掉某个守卫，被摘的那个 helper 就成了"定义了但没人调"——那不是被测
         # 语义，只是抽取式 harness 的产物，所以只关掉这一条告警，其余保持 -Werror。
         compile_cmd = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
                        "-Wno-unused-function",
@@ -595,52 +747,62 @@ class TextProxyRecoveryNativeTest(unittest.TestCase):
         compiled = subprocess.run(compile_cmd, capture_output=True, text=True)
         if compiled.returncode != 0:
             self.fail(f"harness compile failed:\n{compiled.stderr}")
-        return subprocess.run([str(binary)], capture_output=True, text=True).returncode
+        run = subprocess.run([str(binary)], capture_output=True, text=True)
+        # EXPECT 只写 stderr。这里**不**替调用方判定：负控本来就期望非零退出码，
+        # 提前 fail 会让"变异被摘掉的守卫"表现为测试报错而不是断言失败。
+        return run.returncode, run.stderr
 
     def test_freeze_and_receipt_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(SOURCE.read_text(), pathlib.Path(tmpdir))
-            self.assertEqual(rc, 0, f"text proxy recovery harness failed with rc={rc}")
+            rc, log = self._compile_and_run(SOURCE.read_text(), pathlib.Path(tmpdir))
+            self.assertEqual(rc, 0, f"text proxy recovery harness legs failed:\n{log[-2500:]}")
+
+    def _assert_mutation_detected(self, source_text: str, guard: str) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rc, log = self._compile_and_run(source_text, pathlib.Path(tmpdir))
+            self.assertNotEqual(
+                rc, 0,
+                f"mutation '{guard}' removed a production guard but every leg still passed; "
+                "the harness is not sensitive to this guard")
+            self.assertIn("FAIL ", log, guard)
 
     def test_negative_control_without_ack_awaiting_state(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(drop_ack_request_identity(SOURCE.read_text()),
-                                       pathlib.Path(tmpdir))
-            self.assertNotEqual(rc, 0, "accepting a stale/foreign receipt must fail")
+        self._assert_mutation_detected(
+            drop_ack_request_identity(SOURCE.read_text()), "ack_request_identity")
 
     def test_negative_control_without_identity_recheck(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(drop_ack_identity_recheck(SOURCE.read_text()),
-                                       pathlib.Path(tmpdir))
-            self.assertNotEqual(rc, 0, "accepting a receipt after a focus change must fail")
+        self._assert_mutation_detected(
+            drop_ack_identity_recheck(SOURCE.read_text()), "ack_identity_recheck")
 
     def test_negative_control_without_canonical_equality(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(drop_canonical_equality(SOURCE.read_text()),
-                                       pathlib.Path(tmpdir))
-            self.assertNotEqual(rc, 0, "adopting a legal-but-wrong landing point must fail")
+        self._assert_mutation_detected(
+            drop_canonical_equality(SOURCE.read_text()), "canonical_equality")
 
     def test_negative_control_without_terminal_notification(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(drop_terminal_notification(SOURCE.read_text()),
-                                       pathlib.Path(tmpdir))
-            self.assertNotEqual(rc, 0, "terminating without notifying the window must fail")
+        self._assert_mutation_detected(
+            drop_terminal_notification(SOURCE.read_text()), "terminal_notification")
 
     def test_negative_control_without_consume_single_winner(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(drop_consume_single_winner(SOURCE.read_text()),
-                                       pathlib.Path(tmpdir))
-            self.assertNotEqual(rc, 0, "a ticket consumed twice must fail")
+        self._assert_mutation_detected(
+            drop_consume_single_winner(SOURCE.read_text()), "consume_single_winner")
+
+    def test_negative_control_without_failed_ack_terminal(self) -> None:
+        self._assert_mutation_detected(
+            drop_failed_ack_terminal(SOURCE.read_text()), "failed_ack_terminal")
+
+    def test_production_does_not_resign_tickets_inside_native(self) -> None:
+        """B 组裁决：恢复票新事务由**窗口**登记；native 不得自签票据迁 live ctx。"""
+        text = SOURCE.read_text()
+        for needle in ("proxy restore re-signed", "&re =", "reSelStart"):
+            self.assertNotIn(needle, text, f"native re-sign branch returned: {needle}")
 
     def test_negative_control_without_ticket_arm(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(drop_ticket_arm(SOURCE.read_text()), pathlib.Path(tmpdir))
-            self.assertNotEqual(rc, 0, "issuing without registering a ticket must fail")
+        self._assert_mutation_detected(
+            drop_ticket_arm(SOURCE.read_text()), "ticket_arm")
 
     def test_negative_control_without_ticket_boundary(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = self._compile_and_run(drop_ticket_boundary(SOURCE.read_text()), pathlib.Path(tmpdir))
-            self.assertNotEqual(rc, 0, "issuing a non-scalar canonical target must fail")
+        self._assert_mutation_detected(
+            drop_ticket_boundary(SOURCE.read_text()), "ticket_boundary")
 
 
 

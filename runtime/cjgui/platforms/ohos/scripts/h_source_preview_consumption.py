@@ -293,6 +293,263 @@ def tap_semantic(semantic):
     return True
 
 
+# ---- round11-D4：读回目标几何（不读 hilog node-rect、不按屏幕猜比例） ----
+#
+# 生产在 accepted 发布边界冻结有界几何记录（renderer 的 ` geo ...` 段，经
+# OWNER_STATE 读回）。目标定位从这份记录取几何与 density；平台侧只取**一个**
+# 布局事实——XComponent 的屏幕原点（dumpLayout bounds，非比例推导）。
+# 命中判定（hitTestAccepted）不作为反向探点；三态具名：
+#   geo_truncated   记录被 cap 截断，目标可能在未列部分
+#   not_in_accepted 记录完整（truncated=0）但没有该目标——未纳入 accepted
+#   fully_invisible 记录在而 vis=1（bounds∩clips 为空）
+# 查询失败一律返回 (None, 原因)——**绝不复用旧坐标**。
+
+GEO_HEADER = re.compile(
+    r" geo units=(\S+) density=([0-9.]+) viewport=(\d+)x(\d+) used=(\d+) truncated=(\d+)")
+GEO_RECORD = re.compile(
+    r" G(-?\d+):([^,\s]+),b=(\d+),p=(\d+),c=(\d+)"
+    r",i=(-?\d+),(-?\d+),(-?\d+),(-?\d+)"
+    r",v=(-?\d+),(-?\d+),(-?\d+),(-?\d+),vis=(\d+)"
+    r"(?:,q=([^ \n]*))?")
+
+
+def parse_constraints(text):
+    """解析 `q=` 段：`x,y,w,h,r;x,y,w,h,r`（浮点；空/缺省 → 无约束）。"""
+    out = []
+    if not text:
+        return out
+    for chunk in text.split(';'):
+        parts = chunk.split(',')
+        if len(parts) != 5:
+            continue
+        try:
+            out.append(tuple(float(v) for v in parts))
+        except ValueError:
+            continue
+    return out
+
+
+def point_in_clips(x, y, clips, bounds=None):
+    """与生产 `pointInsideClips` 相同语义的判点：矩形包含 + 圆角就近角心圆判。
+
+    clips 为 [(x,y,w,h,r)]（生产 clipConstraintAt 的原值）。任一约束拒绝即
+    False；零尺寸约束拒绝；圆角半径按生产 clamp 到 min(w,h)/2。
+    """
+    if bounds is not None:
+        bx, by, bw, bh = bounds
+        if not (bx <= x < bx + bw and by <= y < by + bh):
+            return False
+    for cx, cy, cw, ch, cr in clips:
+        if cw <= 0 or ch <= 0:
+            return False
+        if not (cx <= x < cx + cw and cy <= y < cy + ch):
+            return False
+        if cr > 0:
+            r = min(cr, min(cw, ch) / 2.0)
+            px = min(max(x, cx + r), cx + cw - r)
+            py = min(max(y, cy + r), cy + ch - r)
+            dx, dy = x - px, y - py
+            if dx * dx + dy * dy > r * r:
+                return False
+    return True
+
+
+def hittable_point(record):
+    """在记录的可见范围内找一个**确实可命中**的点（同一 clip 语义验证）。
+
+    候选确定性枚举（有界 ~25 点）：AABB 中心 → 四分/网格点 → 内缩角点与
+    边中点（圆角约束的有效区常贴近 AABB 角——round13-R2 反例 (0,0,16,16) ∩
+    圆角祖先 clip 的唯一样本在 (15,15)）。全部被拒返回 None：调用方必须具名
+    `point_unavailable`（没找到采样点 ≠ 证明交集为空，不得称 fully_invisible）。
+    """
+    vx, vy, vw, vh = record['visible']
+    if vw <= 0 or vh <= 0:
+        return None
+    clips = record.get('clips') or []
+    bounds = record['bounds']
+    cands = [(vx + vw / 2.0, vy + vh / 2.0)]
+    cands += [(vx + vw * q, vy + vh * t) for q in (0.25, 0.75) for t in (0.25, 0.5, 0.75)]
+    cands += [(vx + vw * (i / 3.0), vy + vh * (j / 3.0)) for i in (1, 2) for j in (1, 2)]
+    # 内缩角点（±1px）与边中点：小 AABB × 圆角约束的常见有效区。
+    cands += [(vx + sx * (vw - 1), vy + sy * (vh - 1)) for sx in (0, 1) for sy in (0, 1)]
+    cands += [(vx + vw / 2.0, vy + sy * (vh - 1)) for sy in (0, 1)]
+    cands += [(vx + sx * (vw - 1), vy + vh / 2.0) for sx in (0, 1)]
+    seen = set()
+    for x, y in cands:
+        ix, iy = int(x), int(y)
+        if (ix, iy) in seen:
+            continue
+        seen.add((ix, iy))
+        if point_in_clips(ix, iy, clips, bounds=bounds):
+            return ix, iy
+    return None
+
+
+# ---- round13-R1：`edit=` 当前身份段的**唯一**解析规范（两个验证器共用） ----
+#
+# native 输出两种形状：`edit=live ctx=C gen=G node=N res=R kind=K b=B v=V field=F`
+# 与 `edit=none`。四类判定结果互不混淆：
+#   live       完整当前身份 dict（live=True + 全字段）
+#   none       {'live': False}——生产明确报告"当前无编辑"
+#   malformed  {'malformed': True}——有 edit= 段但既非 live 也非 none（字段缺失/
+#              值非法），绝不能当 live 或 none 消费
+#   None       状态线上没有 edit= 段（旧产物/读取失败）——同样不能借日志填
+EDIT_LIVE_RE = re.compile(
+    r" edit=live ctx=(-?\d+) gen=(-?\d+) node=(\d+) res=(-?\d+) kind=(\d+) "
+    r"b=(\d+) v=(\d+) field=(\S+)")
+
+
+def parse_edit_section(state):
+    """解析 OWNER_STATE 的 ` edit=` 段，返回 live/none/malformed/None 四类之一。"""
+    if not state or ' edit=' not in state:
+        return None
+    mo = EDIT_LIVE_RE.search(state)
+    if mo:
+        return {
+            'live': True,
+            'ctx': int(mo.group(1)), 'gen': int(mo.group(2)),
+            'node': int(mo.group(3)), 'resource': int(mo.group(4)),
+            'kind': int(mo.group(5)), 'binding': int(mo.group(6)),
+            'v': int(mo.group(7)), 'field': mo.group(8),
+            'source': 'readback_edit_identity',
+        }
+    if ' edit=none' in state:
+        return {'live': False}
+    return {'malformed': True}
+
+
+def parse_geo_section(state):
+    """解析 OWNER_STATE 里的 geo 段。无 geo 段返回 None（旧产物）。"""
+    mo = GEO_HEADER.search(state)
+    if not mo:
+        return None
+    records = []
+    for g in GEO_RECORD.finditer(state):
+        records.append({
+            'node': int(g.group(1)), 'semantic': g.group(2),
+            'binding': int(g.group(3)), 'projection': int(g.group(4)),
+            'clip_count': int(g.group(5)),
+            'bounds': tuple(int(g.group(i)) for i in range(6, 10)),
+            'visible': tuple(int(g.group(i)) for i in range(10, 14)),
+            'invisible': g.group(14) == '1',
+            'clips': parse_constraints(g.group(15)),
+        })
+    return {
+        'units': mo.group(1), 'density': float(mo.group(2)),
+        'viewport': (int(mo.group(3)), int(mo.group(4))),
+        'used': int(mo.group(5)), 'truncated': mo.group(6) == '1',
+        'records': records,
+    }
+
+
+def public_owner_state(port):
+    """GET_CONTEXT 的 OWNER_STATE 解码原文（一次请求，一份响应）。"""
+    resp = request(["GET_CONTEXT 0"], port)
+    mo = re.search(r"OWNER_STATE_UTF8_HEX (\d+) ([0-9a-fA-F]*)", resp)
+    if not mo:
+        return None
+    return bytes.fromhex(mo.group(2)).decode("utf-8", "replace")
+
+
+# XComponent 屏幕原点的两种 dumpLayout 形状（bounds 在前 / origBounds 在前），
+# 以及空 bounds 时补 origBounds 的竞态形状（S3 实测）。**只**接受这两个事实；
+# 查不到表面返回 None，绝不回退 (0,0) 或屏宽比例（round12-R2）。
+_XC_BOUNDS = re.compile(r'"type":"XComponent"[^}]*?"bounds":"\[([\d.]+),([\d.]+)\]\[([\d.]+),([\d.]+)\]"')
+_XC_BOUNDS_REV = re.compile(r'"bounds":"\[([\d.]+),([\d.]+)\]\[([\d.]+),([\d.]+)\]"[^}]*?"type":"XComponent"')
+_XC_ORIG = re.compile(r'"type":"XComponent"[^}]*?"origBounds":"\[([\d.]+),([\d.]+)\]\[([\d.]+),([\d.]+)\]"')
+_XC_ORIG_REV = re.compile(r'"origBounds":"\[([\d.]+),([\d.]+)\]\[([\d.]+),([\d.]+)\]"[^}]*?"type":"XComponent"')
+
+
+def surface_origin_px(rows=None):
+    """surface 的屏幕原点（px）：**只**取 dumpLayout 里 XComponent 的
+    bounds/origBounds。查不到（空布局/无 XComponent）返回 None——缺失具名，
+    不猜屏幕左上、不用屏宽比例推导。density 与 viewport 由读回 geo 段给出。"""
+    dump = hdc("shell", "uitest", "dumpLayout", "-p", "/data/local/tmp/lp_geo.json")
+    raw = hdc("shell", "cat", "/data/local/tmp/lp_geo.json").stdout
+    for pat in (_XC_BOUNDS, _XC_BOUNDS_REV, _XC_ORIG, _XC_ORIG_REV):
+        mo = pat.search(raw)
+        if mo:
+            return float(mo.group(1)), float(mo.group(2))
+    return None
+
+
+def find_geo_record(geo, semantic):
+    """按语义（精确优先，唯一前缀次之）选记录。返回 (record, None) 或 (None, 原因)。"""
+    exact = [r for r in geo['records'] if r['semantic'] == semantic]
+    if not exact:
+        prefix = [r for r in geo['records'] if r['semantic'].startswith(semantic)]
+        if len(prefix) == 1:
+            exact = prefix
+        elif len(prefix) > 1:
+            return None, 'geo_ambiguous'
+    if not exact:
+        return None, ('geo_truncated' if geo['truncated'] else 'not_in_accepted')
+    return exact[0], None
+
+
+def readback_target_rect(semantic, port):
+    """读回几何的**保守可见 AABB**（vp）。返回 ((x,y,w,h), None) 或 (None, 原因)。
+
+    注意这是包围盒：圆角/约束内的确实可命中点用 `readback_target_point`
+    （它按约束验证）。拖选端点等需要矩形的应用此函数 + point 校验。
+    """
+    state = public_owner_state(port)
+    if state is None:
+        return None, 'owner_state_absent'
+    geo = parse_geo_section(state)
+    if geo is None:
+        return None, 'geo_section_absent'
+    rec, why = find_geo_record(geo, semantic)
+    if rec is None:
+        return None, why
+    if rec['invisible']:
+        return None, 'fully_invisible'
+    vx, vy, vw, vh = rec['visible']
+    if vw <= 0 or vh <= 0:
+        return None, 'fully_invisible'
+    return (vx, vy, vw, vh), None
+
+
+def readback_target_point(semantic, port, vp_x=None, vp_y=None, origin=None):
+    """按目标身份从读回几何定位 tap 点。返回 ((x, y), None) 或 (None, 具名原因)。
+
+    round12-R2：几何/density 来自 accepted 发布边界的冻结记录；点必须在该身份
+    的**真实裁剪内**（逐条约束 + 圆角，与生产 pointInsideClips 同语义验证），
+    显式 vp_x/vp_y 不在裁剪内时具名 `point_not_hittable`，不静默换点。日志
+    node-rect 全缺也可定位；失败具名且不回退旧坐标。
+    """
+    state = public_owner_state(port)
+    if state is None:
+        return None, 'owner_state_absent'
+    geo = parse_geo_section(state)
+    if geo is None:
+        return None, 'geo_section_absent'
+    rec, why = find_geo_record(geo, semantic)
+    if rec is None:
+        return None, why
+    if rec['invisible']:
+        return None, 'fully_invisible'
+    if vp_x is not None or vp_y is not None:
+        vx, vy, vw, vh = rec['visible']
+        x_vp = vp_x if vp_x is not None else vx + min(15, max(vw // 4, 1))
+        y_vp = vp_y if vp_y is not None else vy + vh // 2
+        if not point_in_clips(int(x_vp), int(y_vp), rec['clips'], bounds=rec['bounds']):
+            return None, 'point_not_hittable'
+    else:
+        pt = hittable_point(rec)
+        if pt is None:
+            # round13-R4：有界候选全部被拒 ≠ 证明交集为空——如实具名
+            # point_unavailable；fully_invisible 只属于已证明的全裁（vis=1 或
+            # 可见 AABB 为空）。
+            return None, 'point_unavailable'
+        x_vp, y_vp = pt
+    ox_oy = origin if origin is not None else surface_origin_px()
+    if ox_oy is None:
+        return None, 'surface_origin_unavailable'
+    ox, oy = ox_oy
+    return (int(ox + x_vp * geo['density']), int(oy + y_vp * geo['density'])), None
+
+
 def node_center(pattern):
     r = hdc("shell", "uitest", "dumpLayout", "-p", "/data/local/tmp/layout.json")
     hdc("shell", "cat /data/local/tmp/layout.json")  # keep cached

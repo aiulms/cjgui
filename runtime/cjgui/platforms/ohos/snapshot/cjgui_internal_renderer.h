@@ -68,6 +68,11 @@ typedef enum CjguiInternalRendererStatus {
     // No accepted scene nodes are staged at all, as opposed to the requested id
     // being absent from a staged scene.
     CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED = 19,
+    // The query named an expected accepted-scene generation that is no longer
+    // current (a commit landed between freeze and query): the returned offset
+    // would mix generations. Same value/meaning as the mainline code 33; the
+    // caller must re-freeze and re-query instead of using mixed facts.
+    CJGUI_INTERNAL_RENDERER_SCENE_STALE = 33,
     // A native ticket owns the staged candidate until its terminal decision.
     CJGUI_INTERNAL_RENDERER_PRESENT_PENDING = 20,
     // A staged effect group failed bounded target admission. The previous
@@ -93,6 +98,10 @@ typedef enum CjguiInternalRendererStatus {
     // cluster can be named. A named refusal, never a scalar fallback: the caller keeps the
     // original text and reports this state (OHOS text-service bridging is not wired yet).
     CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED = 32,
+    // H 内部（仅 OHOS 恢复票据）：本次签发伴随一笔**尚未被窗口采纳的人类落点**，
+    // native 因此让路、不 arming。这是「等待」而不是平台失败：调用方不得据此消耗
+    // 失败重试预算，也不得自宣已恢复。33–35 是 macOS/E 侧已用值，本码取 36 避开。
+    CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING = 36,
     CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR = 99
 } CjguiInternalRendererStatus;
 
@@ -821,10 +830,14 @@ cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session, int32_
 // Every other node and every non-composition edit keeps the ordinary events.
 // `bindingEpoch` is echoed back on each phase so a queued event from before a
 // rebind can be refused by the window; `enabled = 0` withdraws the declaration.
+// 可视编辑包（2026-10-04）：`mirrorText` 携带会话镜像文本，作为 presentation
+// 锚点节点的编辑缓冲事实（播种/恢复校验以此为准）；传 NULL = 旧节点值契约。
 CjguiInternalRendererStatus
 cjgui_internal_renderer_set_composable_owned_text_session(uint64_t session, uint64_t nodeId,
                                                           int64_t resourceId, uint32_t nodeKind,
-                                                          uint64_t bindingEpoch, uint32_t enabled);
+                                                          uint64_t bindingEpoch, uint32_t enabled,
+                                                          const char *mirrorText,
+                                                          int64_t mirrorVersion);
 
 // H1-R：一次逻辑平台恢复 = 一张票据（沿用本框架已成熟的 present 票据结算形状，
 // 不另造协议）。窗口在**签发前**冻结自己的会话/镜像/选区意图身份，签发返回的票据
@@ -1123,11 +1136,20 @@ cjgui_internal_renderer_window_frame(uint64_t session, int64_t *outX, int64_t *o
                                      int64_t *outWidth, int64_t *outHeight);
 
 // Read-only hit test for a composable text node: point in scene coordinates in,
-// UTF-8 display byte offset plus caret affinity out.
+// UTF-8 display byte offset plus caret affinity out. `expectedSceneVersion` is
+// the caller-frozen accepted-scene generation (see
+// cjgui_internal_renderer_accepted_scene_version); the query verifies it
+// against the current generation under the session lock and refuses with
+// SCENE_STALE on mismatch instead of returning a mixed-generation offset.
 CjguiInternalRendererStatus
 cjgui_internal_renderer_hit_test_composable_text(uint64_t session, uint64_t nodeId,
-                                                 double x, double y,
+                                                 double x, double y, uint64_t expectedSceneVersion,
                                                  uint32_t *outByteOffset, uint32_t *outAffinity);
+
+// Current accepted-scene generation for expected-scene queries above.
+// Monotonic per accepted commit; pure observation, no redraw or state change.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_accepted_scene_version(uint64_t session, uint64_t *outSceneVersion);
 
 // Install the style runs of one scene node. `encoded` is
 // "start:end:fontSize:weight:family:r:g:b:a;..." in display byte offsets.

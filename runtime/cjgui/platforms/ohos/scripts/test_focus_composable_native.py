@@ -29,6 +29,19 @@ def extract_function(source: str, signature: str) -> str:
     raise ValueError(f"native function is incomplete: {signature}")
 
 
+def span(text: str, start_anchor: str, end_anchor: str) -> str:
+    """生产原文切片（含两端）：替身的纯数据字段用它注入，字段漂移即编译失败。"""
+    start = text.index(start_anchor)
+    return text[start:text.index(end_anchor, start) + len(end_anchor)]
+
+
+# 可视编辑包（H 线）：focusComposableNodeLocked 的 owned 锚点判据读这四个身份字段
+# （presentation 节点经声明绑定才能被程序化聚焦）。手写副本落后于生产就会让那道
+# 判据静默少判，因此这里注入生产原文而不是自己重抄一遍。
+OWNED_ID_ANCHORS = ('    bool ownedTextSessionEnabled = false;',
+                    '    uint64_t ownedTextSessionBindingEpoch = 0;')
+
+
 def harness() -> str:
     source = SOURCE.read_text(encoding="utf-8")
     functions = []
@@ -48,7 +61,7 @@ def harness() -> str:
         names.append("kEvFocus")
     constants = "\n".join(re.search(rf"^constexpr uint32_t {name} = \d+;", source, re.M).group()
                           for name in names)
-    return r'''
+    text = r'''
 #include "cjgui_internal_renderer.h"
 #include <cstdint>
 #include <mutex>
@@ -72,6 +85,8 @@ struct Session {
     bool editingContextRevealRequested = false;
     int64_t editingContextId = 0;
     std::string editingFieldName;
+    // owned 会话锚点身份字段取生产原文（占位由 span 注入）。
+    %OWNED_ID_FIELDS%
 };
 static struct { std::mutex lock; } g_sessions;
 static Session *g_testSession = nullptr;
@@ -185,6 +200,7 @@ int main() {
     return 0;
 }
 '''
+    return text.replace("%OWNED_ID_FIELDS%", span(source, *OWNED_ID_ANCHORS))
 
 
 class NativeFocusTest(unittest.TestCase):

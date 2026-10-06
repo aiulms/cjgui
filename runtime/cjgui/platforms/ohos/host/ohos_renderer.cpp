@@ -94,6 +94,11 @@ extern "C" {
 
 static CjguiOhosIngress g_ingress{};
 
+// round7-B：进程内**只读**观测序号（定义在文件下方，与本前向声明配对）。
+// 跨 C++/仓颉唯一可共享的全序域：RMW 对同一原子变量给出全序，真实时间不重叠的
+// 两个事件其序号必然保序；hilog 行序做不到（它是 hilogd 的接收序）。纯日志用途。
+uint64_t cjgui_ohos_observation_seq(void);
+
 // ---------------------------------------------------------------------------
 // UTF-8 ⇄ UTF-16 转换（自包含；偏移单位 = UTF-16 码元，与 IME/仓颉 String 一致）
 // ---------------------------------------------------------------------------
@@ -278,6 +283,17 @@ constexpr uint32_t kKindMultiline = 10;
 // 6.0（多行）/2.0（单行）而命中用硬编码 7.0，高亮又用 7.0，三者原点互不相同，
 // 于是"点中的位置"和"看到的字符"差 1px，且高亮与字形在纵向不共线。
 constexpr double kTextInsetSingleLine = 2.0;
+// A2：presentation 排版租约表的条目上限（保留工作量上界；RSS 另测）。
+constexpr size_t kPresentationLeaseMax = 64;
+// A2（Astra h-visual-edit-a-lifecycle-astra-20261005 落地）：与条目数**同地位**
+// 的另外两个保留工作量上界——都不是内存计量，真实 RSS 另测；文本字节不冒充
+// typography 占用。三者任一超限都走同一套具名结果（可选不保留 / 必需拒候选）。
+constexpr size_t kPresentationLeaseNodeTextMax = 16384;     // 单节点 UTF-16 单元
+constexpr size_t kPresentationLeaseNodeRunsMax = 64;        // 单节点样式 runs 条数
+constexpr size_t kPresentationLeaseTotalUnitsMax = 262144;  // 全表 UTF-16 单元（旧表+新表+临时峰值）
+// A2：presentation 命中查询的**待执行队列上界**（队列里只持值身份快照；
+// 超界新查询具名拒绝，不排队不等待）。
+constexpr size_t kPresentationQueryQueueMax = 32;
 constexpr double kTextInsetMultiline = 6.0;
 
 // 可编辑文本节点集合，与 macOS 的 `CjguiComposableNodeIsTextInput` 同集：
@@ -1193,6 +1209,27 @@ struct Session {
     int64_t ownedTextSessionResourceId = -1;
     uint32_t ownedTextSessionNodeKind = 0;
     uint64_t ownedTextSessionBindingEpoch = 0;
+    // 可视编辑包（A1，Astra h-visual-edit-a-lifecycle-astra-20261005）：镜像声明
+    // 走 **staged →（present 冻结）→ accepted** 三段，与 run 表同一事务方式。
+    // 窗口在候选提交前写入 staged（文本+owner 内容版本+绑定代同源自一份会话
+    // 快照）；票据冻结进 PresentJob；两条结算路径把**原票据的**声明与 accepted
+    // 节点一起晋升。所有消费点（begin/recover/arm/sync/绘制跳过）只读 accepted
+    // 段——声明缺失/失效是具名降级，绝不退回空 carrier 值。
+    struct OwnedMirrorDeclaration {
+        bool valid = false;
+        std::u16string text;
+        int64_t ownerContentVersion = -1;
+        uint64_t bindingEpoch = 0;
+        // A1 复核：声明自身的**声明代**（窗口 textSessionBindingEpoch）。换绑
+        // （epoch 变化）后的查询不得借旧 accepted 声明——helper 必须比较
+        // declaredBindingEpoch 与 setter 当前 ownedTextSessionBindingEpoch。
+        uint64_t declaredBindingEpoch = 0;
+    };
+    OwnedMirrorDeclaration ownedMirrorStaged;
+    OwnedMirrorDeclaration ownedMirrorAccepted;
+    // 当前编辑缓冲播种自的 owner 内容版本（A1 复核：sync 区分纯 resize 与
+    // owner 内容推进）。播种/镜像替换时更新。
+    int64_t editingMirrorOwnerVersion = -1;
     bool closeRequested = false;
 
     // 最近一次观察到的 surface 事实（viewport 与 resizeVersion 的来源）
@@ -1208,6 +1245,10 @@ struct Session {
     std::vector<SceneNode> accepted;
     uint64_t acceptedProjectionVersion = 0;
     uint64_t acceptedPaintTicketId = 0;
+    // r20 接缝 2：已接受场景代际。每次 accepted 提交（present/发布点）递增；
+    // 查询把调用方冻结的预期代际与它在同一锁内核对，不等即具名 SCENE_STALE，
+    // 调用方重冻重查，绝不用混代事实。
+    uint64_t acceptedSceneVersion = 0;
     bool candidateOpen = false;
     // S1（Astra）：候选进入 Failed 后禁止 present——run 准入失败必须终止本次
     // 窗口尝试，防止调用方忽略错误后发布「旧样式 + 新文本」的混合结果。
@@ -1220,6 +1261,14 @@ struct Session {
     // 事件 FIFO 与最近一次 pump 出的事件文本（form_event_text 的生命周期）
     std::deque<QueuedEvent> events;
     std::string lastEventText;
+    // round9-A：最近一次出队事件的冻结来源（per-session，与 lastEventText 同一
+    // 生命周期）。进程级槽会让多会话交替 pump 时互相覆盖——pump 是 per-session
+    // 的，来源也必须如此。出队时在**已有的 g_sessions.lock 临界区内**写入，
+    // 读取走同一个锁，因此 (ctx, gen, valid) 是一次一致的快照而不是三次可能
+    // 撕裂的原子读。
+    int64_t lastEventProvenanceCtx = 0;
+    uint64_t lastEventProvenanceGen = 0;
+    uint64_t lastEventProvenanceSeq = 0;
 
     uint64_t submittedFrameIndex = 0;
     // A1 票据协议（Astra pending-transaction/answer.md 第 1/2 点）：本会话
@@ -2369,6 +2418,10 @@ struct CaretHitTestJob : WaitableJob {
     int64_t resourceId = -1, contextId = 0, nodeX = 0, nodeY = 0;
     uint64_t paintSerial = 0, sourcePaintTicket = 0;
     uint32_t mode = 0, wordStart = 0, wordEnd = 0;
+    // 可视编辑包：presentation TEXT 节点（如预览片段）的命中——文本事实是
+    // accepted 节点值，几何/样式同一份 pod；与绘制共用 layoutTextStyled。
+    bool presentation = false;
+    std::vector<OhosTextStyleRun> runs;
 };
 
 struct PresentJob : WaitableJob {
@@ -2377,6 +2430,20 @@ struct PresentJob : WaitableJob {
     uint64_t ticketId = 0;
     std::vector<SceneNode> nodes;
     uint64_t projectionVersion = 0;
+    // R1补轮（Astra）：候选**构建来源快照**在 present 冻结候选的同一临界区取得，
+    // 随票据携带；结算不得再读当时的焦点 context（旧实现取错时点）。同时冻结
+    // 父 accepted 票据，表达"本候选基于哪份 accepted 构造"。
+    int64_t sourceContextId = 0;
+    bool sourceLive = false;
+    uint64_t parentAcceptedTicketId = 0;
+    // A1：镜像声明的值拷贝（PresentJob 先于 Session 声明，不能嵌其类型）。
+    bool ownedMirrorValid = false;
+    std::u16string ownedMirrorText;
+    int64_t ownedMirrorOwnerVersion = -1;
+    uint64_t ownedMirrorBindingEpoch = 0;
+    // A1 复核：声明代必须随上面四项一同冻结。漏运时延迟结算晋升旧代，
+    // ownedMirrorDeclarationLocked 的换绑门会把这份声明判为不可借用。
+    uint64_t ownedMirrorDeclaredBindingEpoch = 0;
     void *window = nullptr;
     uint64_t generation = 0;
     uint64_t geometryRevision = 0;
@@ -2415,6 +2482,43 @@ struct PaintedTextLayout {
 struct TextPaintFrame {
     uint64_t session = 0, ticket = 0, projectionVersion = 0;
     std::unique_ptr<PaintedTextLayout> candidate;
+    // A2（Astra h-visual-edit-a-lifecycle-astra-20261005）：本帧**实际绘制**的
+    // presentation TEXT 节点租约表（typography + pod + 精确绘制原点 + 身份）。
+    // 渲染线程持有；Flush 成功随 publishPaintedLayout 晋升，新帧整表替换，
+    // teardown/换代逻辑失效。有界：条目数/单节点文本/全表工作量三界同生效
+    // （kPresentationLeaseMax / kPresentationLeaseNodeTextMax /
+    // kPresentationLeaseTotalUnitsMax），计费含旧 published 表共同峰值。
+    std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> presentationLease;
+    // A2：必需目标（实际编辑排版、活动选择/拖动的已知片段）超出保留预算时置位。
+    // 提交层在 Flush **之前**据此整帧拒候选：只销毁本帧 typography 并 return 会让
+    // 超限目标静默失去命中，且提交仍能走到 Flush。
+    bool presentationLeaseOverflow = false;
+    // A2：绘制**前**冻结的必需保留目标节点 id（活动选择/拖动的已知片段；实际
+    // 编辑排版走 candidate 槽位不经本表）。0 = 本帧无必需目标，全部按可选预算。
+    uint64_t leaseRequiredNodeId = 0;
+    // A2：可选目标超限的具名不保留记录（不现场重排、不拒整帧；命中查询按
+    // layout_not_retained 具名拒绝）。存证供诊断，不参与判定。
+    std::vector<uint64_t> leaseSkippedNodeIds;
+    // A2（round5 后指导 C）：**绘制前**为必需保留集合预留、尚未入账的额度。
+    // 可选目标只能在「三界减去剩余预留」内 admission，否则同一负载仅仅把必需
+    // 目标挪到绘制序列末尾就会从"保留成功"变成"Flush 前拒帧"。预留只影响额度
+    // 归属，不重排绘制顺序、不抬上限。必需目标真实自身超限时才拒候选。
+    size_t leaseReservedSlotsLeft = 0;
+    size_t leaseReservedUnitsLeft = 0;
+    // A2：本帧的编辑节点 id（实际编辑排版所属节点；0＝无）。与上一帧仍存活的
+    // `lastPaintLayout` 一起构成"临时峰值"的计费来源。
+    uint64_t leaseEditingNodeId = 0;
+    // A2：本帧已发生的临时（不保留）排版工作量，单位 UTF-16 单元。
+    size_t leaseTransientUnits = 0;
+    // A2：上一帧实际编辑排版（`lastPaintLayout`）只在本帧**第一次**准入时入账
+    // 一次——它到 publishPaintedLayout 才换代，与本帧候选构成真实共同峰值。
+    bool leasePeakCharged = false;
+    // A2：本帧已重绘的节点在旧 published 表里的那一份**即将被这一帧替换掉**
+    // （publish 整表换代），因此它不再占用共同峰值。没有这条让位关系，占满额度
+    // 的稳定表将永远无法重绘（任何一帧都必然越界）——反例见宿主 harness 的
+    // 「稳定满表重绘」腿。只豁免"本帧真的重画了这个 id"，新 id 照常全额计费。
+    size_t leaseReplacedSlots = 0;
+    size_t leaseReplacedUnits = 0;
 };
 
 struct ImageRealizeJob : WaitableJob {
@@ -2444,6 +2548,12 @@ struct PendingSettlement {
     // S1（Astra）：提交票据冻结整个候选快照（含字节域声明表）。延迟成功结算
     // 晋升的是这份冻结表，绝不回读提交后可能已被下一候选改写的 working 表。
     std::map<uint64_t, Session::TextRunBinding> runTable;
+    // A1：本票据冻结的镜像声明（延迟成功结算时随 accepted 一起晋升）。
+    bool ownedMirrorValid = false;
+    std::u16string ownedMirrorText;
+    int64_t ownedMirrorOwnerVersion = -1;
+    uint64_t ownedMirrorBindingEpoch = 0;
+    uint64_t ownedMirrorDeclaredBindingEpoch = 0;
     uint64_t projectionVersion = 0;
     bool valid = false;
     // 票据身份与终态。settled 后 decision/terminalStatus/frameIndex 不再改变。
@@ -2455,14 +2565,509 @@ struct PendingSettlement {
     int32_t drawableHeight = 0;
     double density = 1.0;
     bool settled = false;
-    // R1补轮（2026-10-02 指导复核）：候选冻结（present 锁内登记票据）时的编辑
-    // 上下文来源快照。结算时若存在**另一个**活上下文（编号不同），说明该候选
-    // 是旧来源的模式结果——它对编辑节点的缺席/退化不代表当前绑定的真实撤销，
-    // 必须在不可逆晋升（accepted 树交换/绘制提交）**之前**整票拒绝，不得先
-    // 发布删除节点的旧树再靠跳过 sync 保活（票号大小不构成来源关系证明）。
+    // R1补轮：候选冻结（present 锁内登记票据）时的焦点编辑上下文快照。
+    // 未闭合（2026-10-02 Astra h-r1-source-admission）：这两个字段目前**没有读取方**，
+    // 不构成来源准入门。冻结焦点上下文既不能证明整棵场景的发布权，也不能单独区分
+    // 「过期来源的删除结果」与「仍有效、生成时焦点在别处的删除」；用它做整票拒绝
+    // 会误杀合法删除（Astra case e）。真正的来源事实需由核心在生成时取得并保持有效，
+    // 或在 configure/staging 边界随候选关联（见该裁决 answer.md 的两条路线）。
     int64_t sourceEditingContextId = 0;
     bool sourceEditingLive = false;
 };
+
+// ---------------------------------------------------------------------------
+// round9-D：本次结算与票据阶段的**有界只读事实**（H 私有只读接缝）。
+//
+// 为什么需要：设备 hilog 是环形缓冲，round8「模式切换后没看到提交标记」无法区分
+// ①生产没提交 ②提交了但那批行被丢弃 ③提交了但行已被环形淘汰。tag 沉默本身不是
+// 任何一种结论的证据。要判定 ticket 到底成功/pending/拒绝，必须有一条**不经过
+// 日志**的读回。
+//
+// 有界性：① 每 session 一个「当前结算」单值槽（回答「此刻这次结算发生了什么」，
+// 不是历史）；② 在途票据一项（present 入口登记、settle 后清空）；③ 最近 K=8 张
+// 已结算票据的固定环。槽与环本身静态定长，读者不可能拿到过期条目；**但环内
+// semanticId 与面节点清单用动态存储**（见 OhosAcceptedFact::faceNodes 的说明），
+// round9 曾把本读回注释成「全部静态分配」，那不成立。
+//
+// 通用性：这里**不解释**节点语义。发布的是中性事实——票号、结算 decision、
+// 原生终态、accepted 投影版本、节点几何、semanticId 摘要与内容摘要。
+// 「这一帧属于 source 面还是 preview 面」是**产品**语义，分类语句必须留在产品或
+// 驱动侧（round8 把 pharos-* 前缀硬编码进通用 renderer，是需要撤掉的一层）。
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// round11-D4：目标几何的**有效裁剪**计算（文件级单一实现）。
+//
+// 与绘制/命中共用同一套裁剪数学（RenderThread::clipConstraintAt /
+// effectiveClips 只做转发）——命中几何、绘制几何与读回几何三者必须一致，
+// 任何一处私有重算都会漂移。约束读取规则与 macOS 渲染器一致
+// （CjguiComposableClipConstraintAt）：
+//   - clipConstraintCount 1..4 → 用 clip0..N-1（每个裁剪祖先的原始几何）；
+//   - 否则 → 单 clip 字段 clipX/Y/Width/Height（+clipCornerRadius）。
+// 核心保证 clip ⊆ bounds；坐标为场景绝对坐标（vp）。
+// ---------------------------------------------------------------------------
+static void cjguiOhosClipConstraintAt(const CjguiInternalRendererComposableNode &n,
+                                      uint32_t index, float *x, float *y,
+                                      float *w, float *h, float *radius)
+{
+    if (n.clipConstraintCount == 0u || n.clipConstraintCount > 4u) {
+        *x = static_cast<float>(n.clipX);
+        *y = static_cast<float>(n.clipY);
+        *w = static_cast<float>(n.clipWidth);
+        *h = static_cast<float>(n.clipHeight);
+        *radius = static_cast<float>(n.clipCornerRadius);
+        return;
+    }
+    switch (index) {
+        case 0: *x = static_cast<float>(n.clip0X); *y = static_cast<float>(n.clip0Y);
+                *w = static_cast<float>(n.clip0Width); *h = static_cast<float>(n.clip0Height);
+                *radius = static_cast<float>(n.clip0CornerRadius); break;
+        case 1: *x = static_cast<float>(n.clip1X); *y = static_cast<float>(n.clip1Y);
+                *w = static_cast<float>(n.clip1Width); *h = static_cast<float>(n.clip1Height);
+                *radius = static_cast<float>(n.clip1CornerRadius); break;
+        case 2: *x = static_cast<float>(n.clip2X); *y = static_cast<float>(n.clip2Y);
+                *w = static_cast<float>(n.clip2Width); *h = static_cast<float>(n.clip2Height);
+                *radius = static_cast<float>(n.clip2CornerRadius); break;
+        default: *x = static_cast<float>(n.clip3X); *y = static_cast<float>(n.clip3Y);
+                 *w = static_cast<float>(n.clip3Width); *h = static_cast<float>(n.clip3Height);
+                 *radius = static_cast<float>(n.clip3CornerRadius); break;
+    }
+}
+
+// 有效裁剪的**聚合矩形**（全部约束的交）。返回 false = 某约束为空（零尺寸）
+// ⇒ 节点完全不可见。count 输出约束条数（约束槽始终至少 1：count=0 走单 clip
+// 字段，这是与 effectiveClips 相同的槽位约定）。
+static bool cjguiOhosAggregateClipRect(const CjguiInternalRendererComposableNode &n,
+                                       float *x, float *y, float *w, float *h,
+                                       uint32_t *count)
+{
+    uint32_t c = 1;
+    if (n.clipConstraintCount >= 1u && n.clipConstraintCount <= 4u) {
+        c = n.clipConstraintCount;
+    }
+    if (c > 4u) c = 4u;
+    *count = c;
+    float ax0 = 0.0f, ay0 = 0.0f, ax1 = 0.0f, ay1 = 0.0f;
+    for (uint32_t i = 0; i < c; ++i) {
+        float cx, cy, cw, ch, cr;
+        cjguiOhosClipConstraintAt(n, i, &cx, &cy, &cw, &ch, &cr);
+        if (cw <= 0.0f || ch <= 0.0f) return false;   // 空裁剪：不可见
+        const float x0 = cx, y0 = cy, x1 = cx + cw, y1 = cy + ch;
+        if (i == 0) {
+            ax0 = x0; ay0 = y0; ax1 = x1; ay1 = y1;
+        } else {
+            ax0 = std::max(ax0, x0); ay0 = std::max(ay0, y0);
+            ax1 = std::min(ax1, x1); ay1 = std::min(ay1, y1);
+            if (ax1 <= ax0 || ay1 <= ay0) return false;  // 约束互不相交
+        }
+    }
+    *x = ax0; *y = ay0; *w = ax1 - ax0; *h = ay1 - ay0;
+    return true;
+}
+
+// 每张已结算票据的环形槽位。
+struct OhosTicketFact {
+    uint64_t ticketId = 0;
+    uint32_t decision = 0;        // CjguiInternalRendererPresentDecision
+    int32_t terminalStatus = 0;
+    uint64_t acceptedProjection = 0;
+    uint64_t frameIndex = 0;
+    uint64_t sourceEditingContextId = 0;   // present 入口随票冻结的来源
+    uint64_t publishedNodes = 0;
+    uint64_t nodeId = 0;          // 该次发布里「首次变化」的节点（0=无）
+    int64_t x = 0;
+    int64_t y = 0;
+    int64_t width = 0;
+    int64_t height = 0;
+    uint64_t valueBytes = 0;
+    uint64_t valueHash = 0;
+    uint64_t semanticHash = 0;   // accepted 节点 semanticId 有序拼接的摘要
+    // round10-D1：这张票**为什么**没成功。四值 PresentDecision 契约里没有独立的
+    // 取消/失败值（新增枚举值会动公共契约），因此 decision 记 REJECTED，本字段
+    // 给出真实原因——三值，取自 job 的真实 phase，不是猜测：
+    //   0 = 协议内结算（延迟 commit=ACCEPTED，或延迟 rollback=REJECTED）
+    //   1 = present **同步终态失败**（phase=Done 且 status≠OK）
+    //   2 = phase==Cancelled（渲染线程准入拒绝 / 停机清理取消）
+    // 外部据此区分「平台明确拒绝」「present 终态失败」「被取消」；**x≠0 不得被
+    // 归入「平台拒绝」**（Pi 咨询 §1 的验收线）。
+    uint64_t cancelled = 0;
+};
+
+constexpr size_t kOhosTicketRing = 8;   // 咨询给的 K=8
+
+// 判「与面相关」：文本类 kind。通用层按 **nodeKind** 判定节点是不是可写文本，
+// 不看 semanticId 前缀（那是产品词表）。因此这份清单是中性事实。
+constexpr uint32_t kOhosFaceTextKind = 10;   // Cjgui 文本节点 kind
+constexpr size_t kOhosFaceNodeCap = 8;
+
+struct OhosFaceNode {
+    uint64_t nodeId = 0;
+    std::string semanticId;
+};
+
+// round11-D4：**目标几何记录**（accepted 发布边界冻结的有界事实）。
+//
+// 为什么需要：驱动定位 tap 目标曾经靠 hilog `node-rect` 行 + 屏幕比例反推——
+// 日志被环形缓冲淘汰时目标"消失"，比例靠屏幕宽度猜。这份记录让目标定位
+// 完全不依赖日志：按 semanticId 在**读回**里拿到节点几何。
+//
+// 记录集（hit-relevant）：isInteractive≠0 的节点 + 文本类节点，条数上限
+// kOhosGeoNodeCap、semanticId 截断 kOhosGeoSemanticBytes——条数/字节上界
+// 明确。vis=0（完全不可见）的节点**仍记录**：截断 / 未纳入 / 完全不可见是三
+// 种不同的具名状态，读者必须能区分。
+// `hitTestAccepted` 是命中判定，不作为几何读出（不反向探点）；可见矩形是
+// bounds∩clips 的矩形交（圆角只在角区影响单点命中，不改变轴向可见矩形）。
+struct OhosGeoClipConstraint {
+    float x = 0, y = 0, w = 0, h = 0, radius = 0;
+};
+
+struct OhosGeoNodeFact {
+    uint64_t nodeId = 0;
+    int64_t x = 0, y = 0, width = 0, height = 0;              // bounds（场景 vp）
+    int64_t visibleX = 0, visibleY = 0, visibleW = 0, visibleH = 0;  // bounds∩clips
+                 // ↑ 保守包围盒（AABB）：**不**表达圆角约束（round12-R2 反例：
+                 // 圆角祖先 clip 内 AABB 上的点可被真实点判拒绝）。
+    uint64_t projectionVersion = 0;    // 本节点随本次 accepted 发布的投影版本
+    uint64_t acceptedBindingEpoch = 0; // 同一发布里的绑定代
+    uint32_t clipCount = 0;            // 有效裁剪约束条数（= clips.size()）
+    // round12-R2：**逐条裁剪约束**（与绘制/命中同一 clipConstraintAt 来源），
+    // 有界 ≤4。读者据此用与 pointInsideClips 相同的语义（矩形包含 + 圆角
+    // 就近角心圆判）计算确实可命中点；AABB（visible*）只作保守参考。
+    OhosGeoClipConstraint clips[4];
+    uint32_t fullyInvisible = 0;       // 1 = bounds∩clips 为空（空裁剪/相交为空）
+    std::string semanticId;            // 截断至 kOhosGeoSemanticBytes
+};
+
+constexpr size_t kOhosGeoNodeCap = 16;
+constexpr size_t kOhosGeoSemanticBytes = 48;
+
+// round12-R1：**当前编辑身份**（查询时刻的真实 Session 状态，不是发布冻结值）。
+//
+// 为什么需要：`platform focus` 身份行是验收工具配对恢复 ACK/采纳事实的当前身份
+// 来源，但 hilog 环形缓冲在提交突发里会丢行（设备实测：back-A 换版重建 ctx=7
+// 时，settle 突发把该行连同 15/16 条 node-rect 一起淘汰，而恢复本身成功）。
+//
+// round12 反例（指导 R1）：把身份随**发布**冻结后，发布 ctx7 → 换焦 ctx9 / 结束
+// 编辑而无新帧时，读回仍报 ctx7/live——历史发布身份被当成了当前。因此身份
+// **只在查询时**从 Session 现值读取（getter 已持 g_sessions.lock，sessions→fact
+// 锁序不变），live=false 显式表达；accepted 投影事实与当前输入身份在一条读回里
+// 分别命名，查询零状态推进、不为刷新身份制造提交。
+struct OhosEditingIdentity {
+    int64_t ctx = 0;
+    int64_t generation = 0;       // editingContextGeneration（surface 代）
+    uint64_t node = 0;
+    int64_t resource = 0;
+    uint32_t kind = 0;
+    uint64_t binding = 0;
+    uint64_t version = 0;
+    std::string field;            // 截断至 kOhosGeoSemanticBytes
+    bool live = false;
+};
+
+// 从会话当前编辑状态取身份（查询时刻调用；调用方已持 g_sessions.lock）。
+static OhosEditingIdentity cjguiOhosEditingIdentityOf(const Session &s)
+{
+    OhosEditingIdentity e;
+    e.live = s.editing && s.editingContextLive && !s.editorRetired;
+    if (!e.live) return e;
+    e.ctx = s.editingContextId;
+    e.generation = s.editingContextGeneration;
+    e.node = s.editingNodeId;
+    e.resource = s.editingResourceId;
+    e.kind = s.editingNodeKind;
+    e.binding = s.editingAcceptedBindingEpoch;
+    e.version = s.editingProjectionVersion;
+    e.field = s.editingFieldName.size() > kOhosGeoSemanticBytes
+        ? s.editingFieldName.substr(0, kOhosGeoSemanticBytes) : s.editingFieldName;
+    return e;
+}
+
+struct OhosAcceptedFact {
+    // 当前已发布 accepted 投影
+    uint64_t acceptedProjection = 0;
+    uint64_t acceptedNodes = 0;
+    uint64_t acceptedSemanticHash = 0;
+    uint64_t acceptedFrameIndex = 0;
+    uint64_t lastAcceptedTicketId = 0;
+    // 在途票据（present 已登记、尚未 settle）
+    uint64_t unackedTicketId = 0;
+    uint32_t unackedDecision = 0;
+    int32_t unackedTerminalStatus = 0;
+    uint64_t unackedSourceCtx = 0;
+    uint64_t unackedCandidateNodes = 0;
+    // round9-D：当前 accepted 帧里**文本类节点的语义清单**（nodeId + semanticId），
+    // 有界（上限 kOhosFaceNodeCap）。这是中性事实：semanticId 是节点自身标识，不是
+    // 产品分类；驱动按**自己的**词表判面，产品按 previewFacts() 声明面，两层独立。
+    //
+    // 存储是动态的（std::vector + std::string，每次发布重新分配）——不是静态池。
+    // 本轮不改：发布频率是「每次 accepted 提交」，一轮正常消费里十几次量级，且
+    // 语义串长度有界；改成固定容量静态池会引入「放不下」的新状态而收益不明确。
+    //
+    // 为什么必须有它：accepted 全量转储按内容指纹门控，内容未变时不重发逐节点行，
+    // 于是驱动的独立分类在「提交已发生但内容没变」时永远读不到面（实测
+    // accepted commit v=5 有、v=5 的节点行 0 条）。放开指纹门等于把 LOGLIMIT 丢行
+    // 请回来；这份清单是恒定 1–2 行。
+    std::vector<OhosFaceNode> faceNodes;
+    // round11-D4：目标几何记录集（发布时冻结，读回零重算、零提交、零帧增长）。
+    // 拒绝/失败/取消不改 accepted 树 ⇒ 不改这组记录（保留上一成功发布的几何）。
+    std::vector<OhosGeoNodeFact> geoNodes;
+    uint32_t geoTruncated = 0;      // 1 = hit-relevant 节点多于 cap，截断
+    uint32_t faceTruncated = 0;     // 1 = 文本面清单超过 kOhosFaceNodeCap
+    // 本组几何所属的表面事实（发布时随 p 冻结）：坐标单位 vp；density 为
+    // surface px/vp；viewport 为 surface 逻辑尺寸。读者换算设备点：
+    // device = surface_origin_px + vp * density。
+    double geoDensity = 1.0;
+    int64_t geoViewportWidth = 0;
+    int64_t geoViewportHeight = 0;
+    // round12-R1：当前编辑身份**不再**随发布冻结进 fact（历史发布身份曾把换焦/
+    // 结束编辑后的读回误导成旧 ctx/live）；getter 在查询时刻从 Session 现值读取。
+    // 票据环
+    size_t ringCount = 0;
+    size_t ringHead = 0;          // 下一个写入位
+    OhosTicketFact ring[kOhosTicketRing];
+};
+
+struct OhosAcceptedFactSlot {
+    // round10-D2：槽归属的真实 session token。槽位按**下标**复用（kMaxSessions 个
+    // 槽、会话表也是同规模），因此不带 token 时新实例会读到上一个实例的 accepted、
+    // 节点清单与票环。epoch 每次发布推进，token 不匹配即「本槽不属于该会话」。
+    uint64_t token = 0;
+    uint64_t epoch = 0;           // 每次发布推进，读者据此确认读到新事实
+    OhosAcceptedFact fact;
+};
+static OhosAcceptedFactSlot g_acceptedFact[kMaxSessions];
+static std::mutex g_acceptedFactLock;
+
+// semanticId 摘要：accepted 节点按 nodeId 有序拼接后的 64 位 FNV-1a。中性事实，
+// 不含任何产品词表——读者要判断「面」时用它比对**自己**的分类，不靠它推断。
+static uint64_t cjguiOhosSemanticDigest(const std::vector<SceneNode> &accepted)
+{
+    std::vector<const SceneNode *> ordered;
+    ordered.reserve(accepted.size());
+    for (const SceneNode &n : accepted) ordered.push_back(&n);
+    std::sort(ordered.begin(), ordered.end(),
+              [](const SceneNode *a, const SceneNode *b) {
+                  return a->pod.nodeId < b->pod.nodeId;
+              });
+    uint64_t h = 1469598103934665603ull;
+    for (const SceneNode *n : ordered) {
+        h ^= n->pod.nodeId;
+        h *= 1099511628211ull;
+        for (unsigned char c : n->semanticId) {
+            h ^= c;
+            h *= 1099511628211ull;
+        }
+        h ^= 0x1fu;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+static uint64_t cjguiOhosValueHash(const std::string &value)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : value) {
+        h ^= c;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// 只发布**票据终态**，不动 accepted 字段。
+//
+// round10-D1：拒绝 / 失败 / 取消**只终结这张票**，accepted 保持旧值不变——它们
+// 绝不能调用成功发布器（那会把候选投影写成 accepted，正是「未确认的候选被当成
+// accepted」这条不变量被破坏的最短路径）。
+// `reason`：0=协议内结算、1=present 同步终态失败、2=phase==Cancelled。
+static void cjguiOhosPublishTicketTerminal(uint64_t session, const PendingSettlement &p,
+                                          int reason)
+{
+    // 调用方必须已持有 g_sessions.lock（token 校验与槽位换算需要它）。
+    const int slot = sessionSlotLocked(session);
+    if (slot < 0) return;
+    std::lock_guard<std::mutex> guard(g_acceptedFactLock);
+    OhosAcceptedFactSlot &dst = g_acceptedFact[slot];
+    if (dst.token != session) return;      // 槽不属于该会话：不污染
+    OhosAcceptedFact &f = dst.fact;
+    f.unackedTicketId = 0;
+    f.unackedDecision = 0;
+    f.unackedTerminalStatus = 0;
+    f.unackedSourceCtx = 0;
+    f.unackedCandidateNodes = 0;
+    // round11-D1：终态是**完整新记录**。先值初始化整条记录再逐字段写入——环槽按
+    // 下标复用，逐字段覆盖会继承本次没写的旧值（round11 反例：取消票占槽后 8 次
+    // 成功环绕，成功票仍带旧 x2）。失败/取消的 reason 取自真实 phase。
+    OhosTicketFact t{};
+    t.ticketId = p.ticketId;
+    t.decision = p.decision;
+    t.terminalStatus = p.terminalStatus;
+    // 拒绝/失败/取消**不**改 accepted 投影：acceptedProjection / acceptedNodes /
+    // acceptedSemanticHash / acceptedFrameIndex / lastAcceptedTicketId 全部保持。
+    t.acceptedProjection = f.acceptedProjection;
+    t.frameIndex = f.acceptedFrameIndex;
+    t.sourceEditingContextId = static_cast<uint64_t>(p.sourceEditingContextId);
+    t.publishedNodes = 0;                 // 本次没有发布任何节点
+    t.semanticHash = f.acceptedSemanticHash;
+    t.cancelled = static_cast<uint64_t>(reason);
+    f.ring[f.ringHead] = t;
+    f.ringHead = (f.ringHead + 1) % kOhosTicketRing;
+    if (f.ringCount < kOhosTicketRing) f.ringCount += 1;
+    dst.epoch += 1;
+}
+
+// 发布一次「已发布 accepted 投影」+ 一张已结算票据的阶段事实。
+//
+// round10-D1：**只有**在票据四字段（decision / frameIndex / terminalStatus /
+// settled）全部落定、且 accepted 投影已换成该候选之后才可调用。调用早于这些写入
+// 会让读回读到「已提交但 decision=PENDING、frame 比真值小 1」这种自相矛盾的快照
+// （round10 反例 sync_success frame=7 / delayed_success decision=1 frame=0）。
+static void cjguiOhosPublishSettlement(uint64_t session, const PendingSettlement &p,
+                                       const std::vector<SceneNode> &accepted)
+{
+    // 调用方必须已持有 g_sessions.lock（token 校验与槽位换算需要它）。
+    const int slot = sessionSlotLocked(session);
+    if (slot < 0) return;
+    std::lock_guard<std::mutex> guard(g_acceptedFactLock);
+    OhosAcceptedFactSlot &dst = g_acceptedFact[slot];
+    if (dst.token != session) return;      // 槽不属于该会话：不污染
+    OhosAcceptedFact &f = dst.fact;
+    f.acceptedProjection = p.projectionVersion;
+    f.acceptedNodes = accepted.size();
+    f.acceptedSemanticHash = cjguiOhosSemanticDigest(accepted);
+    f.acceptedFrameIndex = p.frameIndex;
+    f.lastAcceptedTicketId = p.ticketId;
+    f.unackedTicketId = 0;
+    f.unackedDecision = 0;
+    f.unackedTerminalStatus = 0;
+    f.unackedSourceCtx = 0;
+    f.unackedCandidateNodes = 0;
+    f.faceNodes.clear();
+    // round12-R2：截断标志与清单同组——9 面发布后 1 面发布若不复位，读回会
+    // 持续 facesTruncated=1，令后续正确面被误拒（round12 反例）。
+    f.faceTruncated = 0;
+    for (const SceneNode &n : accepted) {
+        if (n.pod.nodeKind != kOhosFaceTextKind) continue;
+        if (f.faceNodes.size() >= kOhosFaceNodeCap) { f.faceTruncated = 1; break; }
+        OhosFaceNode fn;
+        fn.nodeId = n.pod.nodeId;
+        fn.semanticId = n.semanticId;
+        f.faceNodes.push_back(fn);
+    }
+
+    // round11-D4：目标几何在**本次 accepted 发布边界**冻结。可见矩形 =
+    // bounds ∩ 聚合裁剪（与命中/绘制同一套裁剪数学）。vis=0 也记录；超出
+    // cap 置 geoTruncated（读者据此区分「截断」与「未纳入」）。
+    f.geoNodes.clear();
+    f.geoTruncated = 0;
+    f.geoDensity = p.density;
+    f.geoViewportWidth = p.drawableWidth;
+    f.geoViewportHeight = p.drawableHeight;
+    for (const SceneNode &n : accepted) {
+        const bool hitRelevant = n.pod.isInteractive != 0 || n.pod.nodeKind == kOhosFaceTextKind;
+        if (!hitRelevant) continue;
+        if (f.geoNodes.size() >= kOhosGeoNodeCap) { f.geoTruncated = 1; break; }
+        OhosGeoNodeFact g;
+        g.nodeId = n.pod.nodeId;
+        g.x = n.pod.x;
+        g.y = n.pod.y;
+        g.width = n.pod.width;
+        g.height = n.pod.height;
+        g.projectionVersion = n.pod.projectionVersion;
+        g.acceptedBindingEpoch = n.pod.acceptedBindingEpoch;
+        if (n.semanticId.size() > kOhosGeoSemanticBytes) {
+            g.semanticId = n.semanticId.substr(0, kOhosGeoSemanticBytes);
+        } else {
+            g.semanticId = n.semanticId;
+        }
+        float cx = 0.0f, cy = 0.0f, cw = 0.0f, ch = 0.0f;
+        uint32_t clipCount = 0;
+        // round12-R2：逐条约束随记录冻结（与 aggregate 同一 clipConstraintAt
+        // 来源；空裁剪时也记录约束，读者可区分「全被裁」的成因）。槽位数按
+        // 与 effectiveClips 相同的约定从 pod 直接推导（此刻 aggregate 未跑）。
+        {
+            uint32_t slots = 1u;
+            if (n.pod.clipConstraintCount >= 1u && n.pod.clipConstraintCount <= 4u) {
+                slots = n.pod.clipConstraintCount;
+            }
+            for (uint32_t i = 0; i < slots; ++i) {
+                cjguiOhosClipConstraintAt(n.pod, i, &g.clips[i].x, &g.clips[i].y,
+                                          &g.clips[i].w, &g.clips[i].h,
+                                          &g.clips[i].radius);
+            }
+        }
+        if (!cjguiOhosAggregateClipRect(n.pod, &cx, &cy, &cw, &ch, &clipCount)) {
+            g.clipCount = clipCount;
+            g.fullyInvisible = 1;               // 空裁剪/约束互斥：完全不可见
+        } else {
+            g.clipCount = clipCount;
+            const float bx0 = static_cast<float>(n.pod.x);
+            const float by0 = static_cast<float>(n.pod.y);
+            const float bx1 = bx0 + static_cast<float>(n.pod.width);
+            const float by1 = by0 + static_cast<float>(n.pod.height);
+            const float vx0 = std::max(bx0, cx), vy0 = std::max(by0, cy);
+            const float vx1 = std::min(bx1, cx + cw), vy1 = std::min(by1, cy + ch);
+            if (vx1 <= vx0 || vy1 <= vy0) {
+                g.fullyInvisible = 1;           // bounds∩clips 为空
+            } else {
+                g.visibleX = static_cast<int64_t>(vx0);
+                g.visibleY = static_cast<int64_t>(vy0);
+                g.visibleW = static_cast<int64_t>(vx1 - vx0);
+                g.visibleH = static_cast<int64_t>(vy1 - vy0);
+            }
+        }
+        f.geoNodes.push_back(g);
+    }
+
+    // round11-D1：同上——成功终态也是完整新记录，reason 明确为正常（0），不继承
+    // 环槽里上一张票的任何字段。
+    OhosTicketFact t{};
+    t.ticketId = p.ticketId;
+    t.decision = p.decision;
+    t.terminalStatus = p.terminalStatus;
+    t.acceptedProjection = p.projectionVersion;
+    t.frameIndex = p.frameIndex;
+    t.sourceEditingContextId = static_cast<uint64_t>(p.sourceEditingContextId);
+    t.publishedNodes = accepted.size();
+    t.semanticHash = f.acceptedSemanticHash;
+    // 节点几何与内容摘要：只取**一个**代表节点（第一个）即可让读者确认「画面上
+    // 那个面还在不在、尺寸变没变、正文变没变」；整棵树的逐节点数据留在日志通道。
+    if (!accepted.empty()) {
+        const SceneNode &n = accepted.front();
+        t.nodeId = n.pod.nodeId;
+        t.x = n.pod.x;
+        t.y = n.pod.y;
+        t.width = n.pod.width;
+        t.height = n.pod.height;
+        t.valueBytes = n.value.size();
+        t.valueHash = cjguiOhosValueHash(n.value);
+    }
+    f.ring[f.ringHead] = t;
+    f.ringHead = (f.ringHead + 1) % kOhosTicketRing;
+    if (f.ringCount < kOhosTicketRing) f.ringCount += 1;
+    dst.epoch += 1;
+}
+
+// 发布「在途票据」阶段：present 登记后、settle 之前。settled=0 表示结果未定——
+// 读者不得把它当成功，也不得当拒绝。
+static void cjguiOhosPublishInFlight(uint64_t session, uint64_t ticketId, uint32_t decision,
+                                     int32_t terminalStatus, uint64_t sourceCtx,
+                                     uint64_t candidateNodes)
+{
+    // 调用方必须已持有 g_sessions.lock。
+    const int slot = sessionSlotLocked(session);
+    if (slot < 0) return;
+    OhosAcceptedFactSlot &dst = g_acceptedFact[slot];
+    std::lock_guard<std::mutex> guard(g_acceptedFactLock);
+    if (dst.token != session) return;      // 槽不属于该会话：不污染
+    OhosAcceptedFact &f = dst.fact;
+    f.unackedTicketId = ticketId;
+    f.unackedDecision = decision;
+    f.unackedTerminalStatus = terminalStatus;
+    f.unackedSourceCtx = sourceCtx;
+    f.unackedCandidateNodes = candidateNodes;
+    dst.epoch += 1;
+}
+
 PendingSettlement g_pending[kMaxSessions];
 
 // 结算查询结果（对 owner 暴露；不新增公共 ABI 符号，随 present 返回值复用）。
@@ -2471,12 +3076,35 @@ constexpr int32_t kSettlementCommitted = 1;
 constexpr int32_t kSettlementAborted = 2;
 constexpr int32_t kSettlementStillCommitting = 3;
 
+// A1：accepted 段的镜像声明（完整绑定身份匹配才返回；缺失/失效 = nullptr，
+// 调用方具名降级，绝不退回 accepted 节点值）。
+static const Session::OwnedMirrorDeclaration *ownedMirrorDeclarationLocked(const Session &s,
+    uint64_t nodeId, int64_t resourceId, uint32_t nodeKind)
+{
+    // A1 复核：accepted 声明必须属于**当前绑定**。换绑（声明代 ≠ setter 当前
+    // 代）后旧 accepted 声明不得借给新绑定——宁可 nullptr（具名等待）。
+    if (!s.ownedMirrorAccepted.valid || !s.ownedTextSessionEnabled) return nullptr;
+    if (s.ownedTextSessionNodeId != nodeId || s.ownedTextSessionResourceId != resourceId ||
+        s.ownedTextSessionNodeKind != nodeKind) return nullptr;
+    if (s.ownedMirrorAccepted.declaredBindingEpoch != s.ownedTextSessionBindingEpoch) {
+        RLOGW("owned mirror declaration epoch mismatch decl=%{public}llu current=%{public}llu "
+              "node=%{public}llu: new binding must not borrow old mirror",
+              static_cast<unsigned long long>(s.ownedMirrorAccepted.declaredBindingEpoch),
+              static_cast<unsigned long long>(s.ownedTextSessionBindingEpoch),
+              static_cast<unsigned long long>(nodeId));
+        return nullptr;
+    }
+    return &s.ownedMirrorAccepted;
+}
+
 struct RenderThread {
     std::thread thread;
     std::mutex lock;
     std::mutex shutdownJoinLock;
     std::condition_variable cv;
     std::deque<JobRef> jobs;
+    // A2：presentation 命中查询的在途计数（与 jobs 同锁保护；日志处无锁读仅取证）。
+    std::atomic<size_t> queuedCaretQueries{0};
     JobRef activeJob;
     bool running = false;
     bool stopping = false;
@@ -2636,8 +3264,17 @@ struct RenderThread {
             if (stopping) {
                 // 停机中：拒收并立即以取消终态结算，调用方不会等待超时。
                 rejected = true;
+            } else if (job->kind == JobKind::CaretHitTest &&
+                       queuedCaretQueries.load() >= kPresentationQueryQueueMax) {
+                // A2：presentation 命中查询队列有界（仅持值身份快照）。超界新
+                // 查询具名拒绝，不排队不等待；在途查询照常执行。
+                rejected = true;
+                RLOGW("presentation query queue full pending=%{public}zu cap=%{public}zu: "
+                      "query refused (query_queue_over_budget)",
+                      queuedCaretQueries.load(), kPresentationQueryQueueMax);
             } else {
                 jobs.push_back(job);
+                if (job->kind == JobKind::CaretHitTest) queuedCaretQueries.fetch_add(1);
             }
         }
         if (rejected) {
@@ -2649,13 +3286,43 @@ struct RenderThread {
 
     bool postIfRunning(const JobRef &job)
     {
+        bool queueFull = false;
         {
             std::lock_guard<std::mutex> g(lock);
             if (!running || stopping) return false;
-            jobs.push_back(job);
+            if (job->kind == JobKind::CaretHitTest &&
+                queuedCaretQueries.load() >= kPresentationQueryQueueMax) {
+                // A2：同 post——查询队列有界，超界具名拒绝。
+                queueFull = true;
+            } else {
+                jobs.push_back(job);
+                if (job->kind == JobKind::CaretHitTest) queuedCaretQueries.fetch_add(1);
+            }
         }
-        cv.notify_all();
+        if (queueFull) {
+            RLOGW("presentation query queue full pending=%{public}zu cap=%{public}zu: "
+                  "query refused (query_queue_over_budget)",
+                  queuedCaretQueries.load(), kPresentationQueryQueueMax);
+            job->cancelBeforeCommit();
+        } else {
+            cv.notify_all();
+        }
         return true;
+    }
+    // 可视编辑包：指针事件派发本身运行在渲染线程上。渲染线程内的同步命中
+    // 必须内联执行（向自身队列投任务再 waitFor 是自等死锁，实测 2s 超时）；
+    // 其他线程保持既有队列路径。
+    bool isRenderThread() const
+    {
+        return renderThreadId == std::this_thread::get_id();
+    }
+    CjguiInternalRendererStatus executePresentationHit(const std::shared_ptr<CaretHitTestJob> &job)
+    {
+        if (isRenderThread()) {
+            return runPresentationHitLocked(job.get());
+        }
+        if (!postIfRunning(job)) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+        return job->waitFor();
     }
 
     uint64_t currentRunEpoch()
@@ -2666,6 +3333,10 @@ struct RenderThread {
 
     std::unique_ptr<PaintedTextLayout> lastPaintLayout;
     bool paintedLayoutUsable = false;
+    // A2：已发布帧的 presentation 排版租约表（渲染线程持有；查询只在此线程
+    // 执行，条目身份 = 票据/paint serial/generation/geometryRevision/绑定）。
+    std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> publishedPresentationLease;
+    std::thread::id renderThreadId{};
     uint64_t textPaintSerial = 0;
     uint64_t textLayoutsBuilt = 0, textLayoutInputBytes = 0;
     uint64_t lastFrameTicket = 0;
@@ -2678,10 +3349,43 @@ struct RenderThread {
         if (s) s->selectionHandles = PaintedSelectionHandles{};
     }
 
+    // A2（绘制前优先级）：冻结本帧的「必需保留目标」。实际编辑排版恒经
+    // candidate 槽位保留（不占租约表）；这里只认**活动选择/拖动的已知片段**
+    // ——当前活动手势确处于指针拖动/选择拖动相位，且目标是非编辑的
+    // presentation TEXT（其可视片段是唯一命中面）。其余可见可查询 TEXT 全部
+    // 按可选预算处理。只读值身份，不动会话状态。
+    uint64_t activePresentationDragTarget(uint64_t session)
+    {
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        const Session *s = lookupSessionLocked(session);
+        if (!s || !s->gesture.active) return 0;
+        const uint32_t phase = s->gesture.phase;
+        if (phase != Session::TouchGesture::kGesturePointerDrag &&
+            phase != Session::TouchGesture::kGestureSelectionDrag) {
+            return 0;
+        }
+        if (s->gesture.targetEditableText || !s->gesture.hasTarget) return 0;
+        return s->gesture.targetNodeId;
+    }
+
+    // A2（计费）：一张租约表的保留工作量（UTF-16 单元总量）。旧 published 表
+    // 与新帧表在绘制窗口内同时存活，两表共同计费即覆盖「旧表＋新表＋临时峰值」。
+    static size_t leaseTableUnits(const std::map<uint64_t,
+                                  std::unique_ptr<PaintedTextLayout>> &table)
+    {
+        size_t units = 0;
+        for (const auto &entry : table) {
+            if (entry.second) units += entry.second->text.size();
+        }
+        return units;
+    }
+
     void publishPaintedLayout(TextPaintFrame &frame)
     {
         // A successful frame with no painted editing node revokes old geometry.
         lastPaintLayout = std::move(frame.candidate);
+        // A2：整表替换——新帧的租约表成为唯一可查询表，旧表随之退役。
+        publishedPresentationLease = std::move(frame.presentationLease);
         paintedLayoutUsable = true;
         {
             // Pure value geometry is published only after this frame's Flush.
@@ -2732,8 +3436,19 @@ struct RenderThread {
             if (!running || stopping || expectedEpoch == 0 || expectedEpoch != renderEpoch) return false;
             // First focus/preview can precede its ordinary redraw. The real
             // Paint+Flush goes first; the hit itself never creates a layout.
+            // A2 复核：本投递点不得绕过查询队列上界——否则"有界"只在 post() 成立。
+            if (hit->kind == JobKind::CaretHitTest &&
+                queuedCaretQueries.load() >= kPresentationQueryQueueMax) {
+                RLOGW("caret hit after redraw refused (query_queue_over_budget) "
+                      "queued=%{public}zu max=%{public}zu",
+                      static_cast<size_t>(queuedCaretQueries.load()),
+                      kPresentationQueryQueueMax);
+                hit->cancelBeforeCommit();
+                return false;
+            }
             jobs.push_back(std::make_shared<RedrawJob>());
             jobs.push_back(hit);
+            if (hit->kind == JobKind::CaretHitTest) queuedCaretQueries.fetch_add(1);
         }
         cv.notify_all();
         return true;
@@ -2799,6 +3514,7 @@ struct RenderThread {
 
     void run()
     {
+        renderThreadId = std::this_thread::get_id();
         std::unique_lock<std::mutex> g(lock);
         for (;;) {
             cv.wait(g, [this]() { return !jobs.empty() || imagePruneRequested; });
@@ -2813,6 +3529,9 @@ struct RenderThread {
             imagePruneRequested = false;
             JobRef job = jobs.front();
             jobs.pop_front();
+            if (job->kind == JobKind::CaretHitTest && queuedCaretQueries.load() > 0) {
+                queuedCaretQueries.fetch_sub(1);
+            }
             consumeCaretBlinkWakeLocked(job);
             activeJob = job;
             g.unlock();
@@ -2835,9 +3554,16 @@ struct RenderThread {
                 // 在途任务全部以取消终态收敛（不遗留未结算票据）。
                 g.lock();
                 for (JobRef &pendingJob : jobs) {
+                    // A2 复核 ③：排队中的查询在 teardown 时先到具名取消终态；已进入
+                    // Committing 的不可撤销，仍由本循环落 Done，不遗留未结算票据。
+                    if (pendingJob->cancelBeforeCommit()) {
+                        RLOGW("queued presentation query cancelled on shutdown kind=%{public}d",
+                              static_cast<int>(pendingJob->kind));
+                    }
                     pendingJob->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
                 }
                 jobs.clear();
+                queuedCaretQueries.store(0);
                 activeJob.reset();
                 running = false;
                 g.unlock();
@@ -2904,6 +3630,7 @@ struct RenderThread {
         {
             std::lock_guard<std::mutex> gl(lock);
             jobs.clear();
+            queuedCaretQueries.store(0);
             activeJob.reset();
             running = false;
             stopping = false;
@@ -3133,6 +3860,10 @@ struct RenderThread {
                                    static_cast<float>(surfaceDensity));
         }
         TextPaintFrame paintFrame{lastFrameSession, lastFrameTicket, lastProjectionVersion, nullptr};
+        // A2：绘制**前**冻结必需保留目标（活动选择/拖动的已知片段）；绘制顺序
+        // 仍按原场景序，预算只决定保留与否。
+        paintFrame.leaseRequiredNodeId = activePresentationDragTarget(lastFrameSession);
+        planPresentationLeaseReservation(lastNodes, paintFrame);
         for (const SceneNode &n : lastNodes) {
             if (n.pod.width <= 0 || n.pod.height <= 0) continue;
             OH_Drawing_CanvasSave(canvas);
@@ -3153,6 +3884,10 @@ struct RenderThread {
         }
         const uint64_t generation = boundGeneration;
         const uint64_t revision = permitGeometryRevision;
+        if (paintFrame.presentationLeaseOverflow) {
+            RLOGW("redraw refused: presentation_lease_overflow before flush");
+            return;
+        }
         const OH_Drawing_ErrorCode flush = OH_Drawing_SurfaceFlush(surface);
         if (!leaseValid(generation) || !geometryMatches(boundWindow, generation, surfaceW, surfaceH, revision)) {
             RLOGW("redraw flush lost lease/geometry gen=%{public}llu", static_cast<unsigned long long>(generation));
@@ -3186,8 +3921,97 @@ struct RenderThread {
         return w;
     }
 
+    /// 可视编辑包：presentation 命中的**同步**执行体。指针事件派发本身运行在
+    /// 渲染线程上——渲染线程内调用命中等价于向自己的队列投任务再等自己
+    /// （实测自等 2s 超时、状态 7），因此渲染线程调用方必须走本内联路径；
+    /// 其他线程仍经队列 job（executeCaretHitTest 的 presentation 分支转回这里）。
+    /// 只读观察：不改会话状态、不请求重绘。
+    CjguiInternalRendererStatus runPresentationHitLocked(CaretHitTestJob *job)
+    {
+        // A2：命中消费**本帧实际绘制**的排版租约条目（同一 typography 与精确
+        // 绘制原点），不再现排相似排版。身份 = 会话票据 + 条目（票据/serial/
+        // generation/geometryRevision/绑定/文本），任一不符即具名拒绝；表为空
+        // 或条目缺失 = layout_not_retained，绝不现场重排兜底。
+        {
+            std::lock_guard<std::mutex> g(g_sessions.lock);
+            const Session *s = lookupSessionLocked(job->session);
+            if (!s || s->acceptedPaintTicketId != job->sourcePaintTicket) {
+                RLOGW("presentation hit refused: scene_ticket_stale asked=%{public}llu accepted=%{public}llu",
+                      static_cast<unsigned long long>(job->sourcePaintTicket),
+                      s ? static_cast<unsigned long long>(s->acceptedPaintTicketId) : 0ull);
+                return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+            }
+        }
+        // A2：Flush 失败后租约表仍在（只在成功帧整表替换），且票据/几何可能仍与
+        // accepted 相符——表存在不等于已发布。门与普通 caret 命中共用。
+        if (!paintedLayoutUsable) {
+            RLOGW("presentation hit refused: painted_layout_unusable retained=%{public}zu",
+                  publishedPresentationLease.size());
+            return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+        }
+        const auto entryIt = publishedPresentationLease.find(job->nodeId);
+        if (entryIt == publishedPresentationLease.end() || !entryIt->second ||
+            !entryIt->second->typography) {
+            RLOGW("presentation hit refused: layout_not_retained node=%{public}llu retained=%{public}zu",
+                  static_cast<unsigned long long>(job->nodeId), publishedPresentationLease.size());
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+        const PaintedTextLayout &entry = *entryIt->second;
+        if (entry.renderEpoch != renderEpoch || entry.window != boundWindow ||
+            entry.generation != boundGeneration || !leaseValid(entry.generation) ||
+            !geometryMatches(entry.window, entry.generation, entry.width, entry.height,
+                             entry.geometryRevision) ||
+            entry.basePresentTicket != job->sourcePaintTicket ||
+            entry.session != job->session || entry.text != job->text ||
+            entry.node.nodeId != job->nodeId || entry.node.resourceId != job->resourceId ||
+            entry.node.nodeKind != job->nodeKind ||
+            entry.node.acceptedBindingEpoch != job->bindingEpoch ||
+            entry.node.projectionVersion != job->projectionVersion ||
+            entry.node.x != job->nodeX || entry.node.y != job->nodeY ||
+            entry.node.width != job->nodeWidth || entry.node.height != job->nodeHeight ||
+            entry.node.fontSize != job->fontSize || entry.node.fontWeight != job->fontWeight) {
+            RLOGW("presentation hit refused: retained_layout_stale node=%{public}llu serial=%{public}llu",
+                  static_cast<unsigned long long>(job->nodeId),
+                  static_cast<unsigned long long>(entry.serial));
+            return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+        }
+        // 命中坐标 = 窗口布局坐标 − **实际绘制原点**（inset/居中/裁剪同一来源）。
+        OH_Drawing_PositionAndAffinity *hit = OH_Drawing_TypographyGetGlyphPositionAtCoordinateWithCluster(
+            entry.typography.get(), job->tapX - entry.relativeOriginX, job->tapY - entry.relativeOriginY);
+        if (!hit) {
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+        const size_t position = OH_Drawing_GetPositionFromPositionAndAffinity(hit);
+        const int affinity = OH_Drawing_GetAffinityFromPositionAndAffinity(hit);
+        OH_Drawing_DestroyPositionAndAffinity(hit);
+        job->caretUtf16 = static_cast<uint32_t>(std::min<size_t>(position, entry.text.size()));
+        if (job->caretUtf16 < entry.text.size()) {
+            uint32_t lo = 0, hi = 0;
+            if (!cjguiOhosGraphemeRange16(entry.text, job->caretUtf16, lo, hi)) {
+                return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            }
+            if (job->caretUtf16 != lo) job->caretUtf16 = affinity == 1 ? lo : hi;
+        }
+        job->caretAffinity = affinity;
+        job->paintSerial = entry.serial;
+        job->sourcePaintTicket = entry.basePresentTicket;
+        RLOGI("presentation hit node=%{public}llu caret=%{public}u affinity=%{public}d serial=%{public}llu tap=(%{public}.1f,%{public}.1f) origin=(%{public}.1f,%{public}.1f) units=%{public}zu",
+              static_cast<unsigned long long>(job->nodeId), job->caretUtf16, affinity,
+              static_cast<unsigned long long>(entry.serial),
+              job->tapX, job->tapY, entry.relativeOriginX, entry.relativeOriginY, entry.text.size());
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+
     void executeCaretHitTest(CaretHitTestJob *job)
     {
+        // 可视编辑包：presentation TEXT 节点命中——不用编辑缓冲，也不依赖
+        // lastPaintLayout；按 accepted pod 的值/样式/几何**现排一次**（与绘制
+        // 同一 layoutTextStyled），命中即与已画字形同一份排版。
+        if (job->presentation) {
+            const CjguiInternalRendererStatus inlineStatus = runPresentationHitLocked(job);
+            job->finish(inlineStatus);
+            return;
+        }
         const auto *painted = lastPaintLayout.get();
         if (!paintedLayoutUsable || !painted || !painted->typography) {
             RLOGW("caret hit refused: painted_layout_unavailable");
@@ -3371,6 +4195,10 @@ struct RenderThread {
             return;
         }
         TextPaintFrame paintFrame{job->session, job->ticketId, job->projectionVersion, nullptr};
+        // A2：绘制**前**冻结必需保留目标（活动选择/拖动的已知片段）；绘制顺序
+        // 仍按原场景序，预算只决定保留与否。
+        paintFrame.leaseRequiredNodeId = activePresentationDragTarget(job->session);
+        planPresentationLeaseReservation(job->nodes, paintFrame);
         if (surfaceBackend == SurfaceBackend::Stub) {
             // 第九次复核 A1：替身句柄上的绘制由替身分派（身份计数；
             // 身份阻塞制造「绘制窗口内退役」交错）——与 ARM 状态无关。
@@ -3468,6 +4296,14 @@ struct RenderThread {
                   static_cast<unsigned long long>(job->generation));
             teardownSurface(!leaseValid(job->generation));
             job->finish(CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE);
+            return;
+        }
+        // A2：必需目标超出保留预算 ⇒ 零 Flush 拒候选。drawNodeText 的早返回只销毁
+        // 该节点 typography；不守在这里，提交仍会 Flush 并把缺命中面的画面发布
+        // 为 accepted。
+        if (paintFrame.presentationLeaseOverflow) {
+            RLOGW("present refused: presentation_lease_overflow before flush");
+            job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
             return;
         }
         // 退役屏障起点：宿主在 surface 卸载时等该代际静默。
@@ -3573,6 +4409,17 @@ struct RenderThread {
     {
         invalidatePaintedLayout(lastPaintLayout ? lastPaintLayout->session : lastFrameSession);
         lastPaintLayout.reset();  // including same-generation surface rebuild/resize
+        // A2 复核：teardown/shutdown 在渲染线程释放 presentation 租约表（typography
+        // 所有权随 unique_ptr 在本线程析构），旧代条目不得跨代存活。
+        // 释放量必须在 clear **之前**取样：清空后打印常量等于没有凭据——旧实现写死
+        // `retained=0`，使「资源在渲染线程释放」这条只能靠设备原件成立的判据永远
+        // 无法成立（既分不清真的空表，也分不清释放了多少）。
+        const size_t releasedLeaseSlots = publishedPresentationLease.size();
+        const size_t releasedLeaseUnits = leaseTableUnits(publishedPresentationLease);
+        publishedPresentationLease.clear();
+        RLOGI("presentation lease cleared on teardown released_slots=%{public}zu "
+              "released_units=%{public}zu remaining=0",
+              releasedLeaseSlots, releasedLeaseUnits);
         const uint64_t tornGeneration = boundGeneration;
         if (terminalGeneration) {
             hasLastFrame = false;
@@ -3792,31 +4639,12 @@ struct RenderThread {
     //  - 否则 → 用单 clip 字段 clipX/Y/Width/Height（+ clipCornerRadius），
     //    不是 clip0（旧实现读错槽位，导致回退路径裁剪错位）。
     // 坐标为场景绝对坐标；核心保证 clip ⊆ bounds。
+    // round11-D4：数学已上提为文件级 cjguiOhosClipConstraintAt（读回几何与
+    // 绘制/命中共用同一实现），此处只转发。
     static void clipConstraintAt(const CjguiInternalRendererComposableNode &n, uint32_t index,
                                  float *x, float *y, float *w, float *h, float *radius)
     {
-        if (n.clipConstraintCount == 0u || n.clipConstraintCount > 4u) {
-            *x = static_cast<float>(n.clipX);
-            *y = static_cast<float>(n.clipY);
-            *w = static_cast<float>(n.clipWidth);
-            *h = static_cast<float>(n.clipHeight);
-            *radius = static_cast<float>(n.clipCornerRadius);
-            return;
-        }
-        switch (index) {
-            case 0: *x = static_cast<float>(n.clip0X); *y = static_cast<float>(n.clip0Y);
-                    *w = static_cast<float>(n.clip0Width); *h = static_cast<float>(n.clip0Height);
-                    *radius = static_cast<float>(n.clip0CornerRadius); break;
-            case 1: *x = static_cast<float>(n.clip1X); *y = static_cast<float>(n.clip1Y);
-                    *w = static_cast<float>(n.clip1Width); *h = static_cast<float>(n.clip1Height);
-                    *radius = static_cast<float>(n.clip1CornerRadius); break;
-            case 2: *x = static_cast<float>(n.clip2X); *y = static_cast<float>(n.clip2Y);
-                    *w = static_cast<float>(n.clip2Width); *h = static_cast<float>(n.clip2Height);
-                    *radius = static_cast<float>(n.clip2CornerRadius); break;
-            default: *x = static_cast<float>(n.clip3X); *y = static_cast<float>(n.clip3Y);
-                     *w = static_cast<float>(n.clip3Width); *h = static_cast<float>(n.clip3Height);
-                     *radius = static_cast<float>(n.clip3CornerRadius); break;
-        }
+        cjguiOhosClipConstraintAt(n, index, x, y, w, h, radius);
     }
 
     // 有效裁剪链。返回 false = 有效裁剪为空（零尺寸约束）：该节点必须既不可见
@@ -4014,6 +4842,44 @@ struct RenderThread {
         OH_Drawing_RectDestroy(rect);
     }
 
+    // A2（round5 后指导 C）：**绘制前**为必需保留集合预留额度。必需集合＝实际编辑
+    // 节点 ∪ 活动选择/拖动目标。这里算的是"尚未轮到绘制的那部分预留"，只用于限制
+    // 可选目标，不重排绘制顺序、不抬上限。编辑节点的精确缓冲长度要轮到它才知，
+    // 因此取保守下界（上一帧同节点的实际编辑排版 ∪ 本帧显示值）；真实长度超过
+    // 下界时在该节点自己的准入处按"必需超限"具名拒帧（仍在 Flush 前）。
+    void planPresentationLeaseReservation(const std::vector<SceneNode> &nodes,
+                                          TextPaintFrame &frame)
+    {
+        frame.leaseReservedSlotsLeft = 0;
+        frame.leaseReservedUnitsLeft = 0;
+        frame.leaseEditingNodeId = 0;
+        {
+            std::lock_guard<std::mutex> g(g_sessions.lock);
+            for (size_t i = 0; i < kMaxSessions; ++i) {
+                const Session &sess = g_sessions.sessions[i];
+                if (sess.inUse && sess.token == frame.session && sess.editing &&
+                    !sess.editorRetired) {
+                    frame.leaseEditingNodeId = sess.editingNodeId;
+                    break;
+                }
+            }
+        }
+        for (const SceneNode &n : nodes) {
+            const bool required = (frame.leaseEditingNodeId != 0 &&
+                                   n.pod.nodeId == frame.leaseEditingNodeId) ||
+                                  (frame.leaseRequiredNodeId != 0 &&
+                                   n.pod.nodeId == frame.leaseRequiredNodeId);
+            if (!required) continue;
+            std::u16string units = utf8ToUtf16(displayTextForNode(n));
+            if (lastPaintLayout && lastPaintLayout->node.nodeId == n.pod.nodeId &&
+                lastPaintLayout->text.size() > units.size()) {
+                units = lastPaintLayout->text;
+            }
+            frame.leaseReservedSlotsLeft += 1;
+            frame.leaseReservedUnitsLeft += units.size();
+        }
+    }
+
     void drawNodeText(OH_Drawing_Canvas *canvas, const SceneNode &node, TextPaintFrame &frame)
     {
         const uint64_t frameSession = frame.session;
@@ -4024,13 +4890,27 @@ struct RenderThread {
         uint32_t textColor = packColor(node.pod.textRed, node.pod.textGreen, node.pod.textBlue,
                                        node.pod.textAlpha);
         std::string text = displayTextForNode(node);
+        // 消费者包（2026-10-06）：空正文的 pointerInteractive TEXT 仍要能被
+        // 点选——首个 caret 就落在空值上，命中依赖租约条目存在。排版以单空格
+        // 占位（零墨迹）；租约条目的文本身份仍取节点真实值（空），命中与身份
+        // 逐字段一致。非租约资格的空文本照旧早返回。
+        if (text.empty() && kind == kKindText && node.pod.isInteractive != 0 &&
+            node.pod.isReadOnly == 0) {
+            text = " ";
+        }
         bool isEditingNode = false;
         bool showCaret = false;
         bool showHandles = false;
+        // r18 接缝 3：presentation 锚点的已采纳选择可见反馈。沿用同一 accepted
+        // 持留排版与已采纳位置画 caret/非空高亮（无句柄、无 candidate，不建第二份
+        // 布局所有权）；逐帧按实时采纳绘制，剪裁与退役跟随该身份，无残留。
+        bool presentFeedback = false;
+        bool showCaretPres = false;
         int64_t caretContext = 0;
         int32_t caretAffinity = 0;
         const bool foreground = !g_ingress.foregroundLevel || g_ingress.foregroundLevel() == 1;
         std::u16string editComposed;
+        std::u16string presentUnits;
         uint32_t selStartUtf16 = 0;
         uint32_t selEndUtf16 = 0;
         uint32_t caretUtf16 = 0;
@@ -4064,6 +4944,25 @@ struct RenderThread {
                     // C：本地文字延续窗口由显式旗标（preservesActiveLocalText）
                     // 判定——accepted 值为空只是业务空值，不得推断为延续窗口。
                     if (sess.editorRetired && node.pod.preservesActiveLocalText == 0) break;
+                    // 可视编辑包：presentation 锚点（owned 镜像锚、非输入框 kind）
+                    // 不在本节点绘制编辑视图——可见正文是片段节点，缓冲覆盖会把
+                    // 镜像源码整段重画在预览上。已采纳位置仍取事实，用于 caret/
+                    // 非空高亮（同一 accepted 排版，无句柄、无 candidate）。
+                    if (ownedMirrorDeclarationLocked(sess, node.pod.nodeId, node.pod.resourceId,
+                            node.pod.nodeKind) != nullptr &&
+                        !isEditableTextKind(node.pod.nodeKind)) {
+                        presentFeedback = true;
+                        presentUnits = utf8ToUtf16(text);
+                        selStartUtf16 = std::min(sess.selStartUtf16, sess.selEndUtf16);
+                        selEndUtf16 = std::max(sess.selStartUtf16, sess.selEndUtf16);
+                        caretUtf16 = std::min(sess.caretUtf16, static_cast<uint32_t>(presentUnits.size()));
+                        caretAffinity = sess.caretAffinity;
+                        caretContext = sess.editingContextId;
+                        showCaretPres = foreground && !sess.editorRetired && sess.editingContextLive &&
+                            selStartUtf16 == selEndUtf16 &&
+                            (sess.caretBlinkResetPending || sess.caretBlinkVisible);
+                        break;
+                    }
                     isEditingNode = true;
                     editComposed = composedBuffer(sess);
                     text = utf16ToUtf8(editComposed);
@@ -4085,6 +4984,100 @@ struct RenderThread {
         }
         if (text.empty()) return;
         if (isEditingNode) frame.candidate.reset();
+        // ---- A2 准入：**在相关昂贵准备之前**。这一步放在排版之后，超限节点就已经
+        // 被完整排版了一次，"预算在保留之前"只剩记账口号。三界同生效：条目数 /
+        // 单节点文字量与样式 runs / 全表共同工作量；计费含旧 published 表、本帧已
+        // 保留表、**上一帧仍存活的实际编辑排版**（publish 才换代，构成真实峰值）、
+        // 本节点本次排版与本帧临时排版。单位是 UTF-16 单元与条目数，不是内存字节。
+        const bool leaseEligible = kind == kKindText && node.pod.isInteractive != 0 &&
+                                   node.pod.isReadOnly == 0;
+        const bool retainHere = leaseEligible && !isEditingNode;
+        const bool requiredHere = isEditingNode ||
+            (frame.leaseRequiredNodeId != 0 && frame.leaseRequiredNodeId == node.pod.nodeId);
+        if (!frame.leasePeakCharged) {
+            frame.leasePeakCharged = true;
+            if (lastPaintLayout) frame.leaseTransientUnits += lastPaintLayout->text.size();
+        }
+        if (frame.presentationLeaseOverflow) return;
+        // 本帧已在某个必需目标上判定"Flush 前拒候选"：后面每个节点的排版都不会被
+        // 提交，继续排版只是白做（并让具名拒绝计数失真）。旧表按拒绝语义原样保留。
+        const std::u16string chargeText = isEditingNode ? editComposed : utf8ToUtf16(node.value);
+        // 共同峰值 = 旧 published 表中**本帧不会重画**的部分 + 本帧已保留 + 本帧临时
+        // （含上一帧仍存活的实际编辑排版与本节点本次排版）。同一 id 的旧条目即将被
+        // 本帧换代，不重复占用额度；新 id 全额计费。
+        const auto superseded = publishedPresentationLease.find(node.pod.nodeId);
+        const bool hasSuperseded = superseded != publishedPresentationLease.end() && superseded->second;
+        const size_t ownSlots = hasSuperseded ? 1 : 0;
+        const size_t ownUnits = hasSuperseded ? superseded->second->text.size() : 0;
+        const size_t heldSlots = publishedPresentationLease.size() - frame.leaseReplacedSlots - ownSlots +
+            frame.presentationLease.size() + (retainHere ? 1 : 0);
+        const size_t heldUnits = leaseTableUnits(publishedPresentationLease) - frame.leaseReplacedUnits -
+            ownUnits + leaseTableUnits(frame.presentationLease) + frame.leaseTransientUnits;
+        // 可选目标不得侵占"必需集合还没轮到绘制"的那部分预留：同负载仅把必需
+        // 目标从绘制序列首位挪到末位，结论不得从"保留成功"变成"Flush 前拒帧"。
+        const size_t reserveSlots = requiredHere ? 0 : frame.leaseReservedSlotsLeft;
+        const size_t reserveUnits = requiredHere ? 0 : frame.leaseReservedUnitsLeft;
+        const char *overReason = nullptr;
+        if (heldSlots + reserveSlots > kPresentationLeaseMax) {
+            overReason = "entry_count_over_budget";
+        } else if (chargeText.size() > kPresentationLeaseNodeTextMax) {
+            overReason = "node_text_over_budget";
+        } else if (node.textStyleRuns.size() > kPresentationLeaseNodeRunsMax) {
+            overReason = "node_runs_over_budget";
+        } else if (heldUnits + chargeText.size() + reserveUnits >
+                   kPresentationLeaseTotalUnitsMax) {
+            overReason = "total_workload_over_budget";
+        }
+        if (overReason != nullptr) {
+            if (requiredHere) {
+                // 必需目标（实际编辑排版 / 活动选择或拖动目标）自身放不下 ⇒ 在 Flush
+                // 之前整帧拒候选：旧 accepted 与合法命中保持，下一合法帧恢复。
+                frame.presentationLeaseOverflow = true;
+                RLOGW("presentation lease layout_budget_exceeded node=%{public}llu "
+                      "reason=%{public}s required: reject candidate before flush "
+                      "slots=%{public}zu+%{public}zu reserved=%{public}zu "
+                      "units=%{public}zu+%{public}zu reserved=%{public}zu",
+                      static_cast<unsigned long long>(node.pod.nodeId), overReason,
+                      publishedPresentationLease.size(), frame.presentationLease.size(),
+                      reserveSlots, heldUnits, chargeText.size(), reserveUnits);
+            } else if (retainHere) {
+                // 可选租约目标超限：具名不保留（不现场重排兜底、不拒整帧；命中查询
+                // 按 layout_not_retained 具名拒绝）。排版一次都不做。
+                frame.leaseSkippedNodeIds.push_back(node.pod.nodeId);
+                RLOGW("presentation lease layout_not_retained node=%{public}llu "
+                      "reason=%{public}s slots=%{public}zu+%{public}zu reserved=%{public}zu "
+                      "units=%{public}zu+%{public}zu reserved=%{public}zu",
+                      static_cast<unsigned long long>(node.pod.nodeId), overReason,
+                      publishedPresentationLease.size(), frame.presentationLease.size(),
+                      reserveSlots, heldUnits, chargeText.size(), reserveUnits);
+            } else {
+                // 临时（不保留）排版越界：同样在准备前拒绝，并把结论传播到提交层，
+                // 让"旧+新+临时"共同计费成为真约束而不是仅表内计数。
+                frame.presentationLeaseOverflow = true;
+                RLOGW("presentation lease transient_peak_over_budget node=%{public}llu "
+                      "reason=%{public}s units=%{public}zu+%{public}zu",
+                      static_cast<unsigned long long>(node.pod.nodeId), overReason,
+                      heldUnits, chargeText.size());
+            }
+            return;
+        }
+        if (requiredHere) {
+            // 预留只在"尚未轮到该必需目标"时占额度；一旦本节点自己入账，预留即释放。
+            frame.leaseReservedSlotsLeft = frame.leaseReservedSlotsLeft > 0
+                ? frame.leaseReservedSlotsLeft - 1 : 0;
+            frame.leaseReservedUnitsLeft = chargeText.size() < frame.leaseReservedUnitsLeft
+                ? frame.leaseReservedUnitsLeft - chargeText.size() : 0;
+        }
+        if (!retainHere) {
+            // 编辑节点既是"必需"又是"不保留"：只在可选分支入账会把它自己的实际编辑
+            // 排版漏出共同峰值（旧实现正是 `!isEditingNode` 里才计费）。
+            frame.leaseTransientUnits += chargeText.size();
+        }
+        if (hasSuperseded) {
+            // 本帧重画了这个 id ⇒ 它的旧条目到 publish 即换代，之后不再占共同峰值。
+            frame.leaseReplacedSlots += ownSlots;
+            frame.leaseReplacedUnits += ownUnits;
+        }
         Measured m = layoutTextStyled(text, node.pod.fontSize, node.pod.fontWeight,
                                        static_cast<double>(node.pod.width), false, textColor,
                                        node.textStyleRuns.data(), node.textStyleRuns.size());
@@ -4094,7 +5087,7 @@ struct RenderThread {
                                                 static_cast<double>(node.pod.height), kind, m,
                                                 node.pod.fontSize);
         // 选区高亮先画（字形压在上面），矩形与字形出自同一排版对象。
-        if (isEditingNode && selEndUtf16 > selStartUtf16) {
+        if ((isEditingNode || presentFeedback) && selEndUtf16 > selStartUtf16) {
             drawSelectionBoxes(canvas, m.typography, selStartUtf16, selEndUtf16, geom);
         }
         OH_Drawing_TypographyPaint(m.typography, canvas, geom.originX, geom.originY);
@@ -4166,15 +5159,16 @@ struct RenderThread {
                 static_cast<unsigned long long>(frame.ticket), static_cast<unsigned long long>(node.pod.nodeId), editComposed.size());
         }
         // 光标（仅编辑节点；矩形由排版给出，落在真正被命中的那一行）
-        if (isEditingNode && showCaret) {
+        if ((isEditingNode && showCaret) || (presentFeedback && showCaretPres)) {
             const uint32_t caret = caretUtf16;
+            const std::u16string &caretText = presentFeedback ? presentUnits : editComposed;
             double caretX = 0.0;
             double caretTop = 0.0;
             double caretBottom = geom.lineHeight;
-            if (!caretRectFor(m.typography, caret, editComposed, caretAffinity,
+            if (!caretRectFor(m.typography, caret, caretText, caretAffinity,
                               caretX, caretTop, caretBottom)) {
                 // 拒答不能变成首行 longestLine 的假落点；正文仍照常绘制。
-                RLOGW("caret geometry unavailable caret=%{public}u units=%{public}zu", caret, editComposed.size());
+                RLOGW("caret geometry unavailable caret=%{public}u units=%{public}zu", caret, caretText.size());
                 if (!isEditingNode) OH_Drawing_DestroyTypography(m.typography);
                 return;
             }
@@ -4195,7 +5189,35 @@ struct RenderThread {
             OH_Drawing_CanvasDetachBrush(canvas);
             OH_Drawing_BrushDestroy(cb);
         }
-        if (!isEditingNode) OH_Drawing_DestroyTypography(m.typography);
+        if (!isEditingNode) {
+            // A2：pointerInteractive 且非只读的 presentation TEXT 节点——把**实际
+            // 绘制**的排版与其精确原点/身份保留进本帧租约表（三界同生效），命中
+            // 查询消费同一条目；其余照旧销毁。绘制顺序不因预算改变：超限只决定
+            // 「保留与否」，不重排、不重绘。
+            // 准入判定已在排版**之前**完成（见上），这里只做登记，不重复判据。
+            if (retainHere) {
+                auto retained = std::make_unique<PaintedTextLayout>();
+                retained->typography.reset(m.typography);
+                retained->node = node.pod;
+                retained->text = chargeText;
+                retained->session = frame.session;
+                retained->basePresentTicket = frame.ticket;
+                retained->projectionVersion = frame.projectionVersion;
+                retained->renderEpoch = renderEpoch;
+                retained->serial = ++textPaintSerial;
+                retained->window = boundWindow;
+                retained->generation = boundGeneration;
+                retained->geometryRevision = permitGeometryRevision;
+                retained->width = surfaceW;
+                retained->height = surfaceH;
+                retained->density = surfaceDensity;
+                retained->relativeOriginX = geom.originX - static_cast<double>(node.pod.x);
+                retained->relativeOriginY = geom.originY - static_cast<double>(node.pod.y);
+                frame.presentationLease[node.pod.nodeId] = std::move(retained);
+                return;
+            }
+            OH_Drawing_DestroyTypography(m.typography);
+        }
     }
 
     struct Measured {
@@ -4891,7 +5913,14 @@ void enqueueEndEditingForTapLocked(Session &s)
 void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
 {
     const uint32_t kind = node.pod.nodeKind;
-    const bool wasEditing = s.editing && !s.editorRetired && s.editingNodeId == node.pod.nodeId;
+    // B 组复核（2026-10-06）：**上一次激活失败**不算"正在编辑"。首绑缺声明的路径
+    // 早已置 editing=true 并分配了 ctx，但把 editingContextLive 关掉；若这里仍按
+    // `editing` 认定 wasEditing，重入就跳过 `!wasEditing` 的镜像认领与
+    // `editingMirrorOwnerVersion` 初始化——声明晋升之后会话依旧不带 accepted 身份，
+    // sync 会把"未认领的 owner 版本"当成外部推进而换 ctx（实测同空文/owner0、
+    // 场景 159→160 reconcile ctx2→3）。成功激活的凭据是 live 上下文，不是 editing。
+    const bool wasEditing = s.editing && !s.editorRetired && s.editingContextLive &&
+        s.editingNodeId == node.pod.nodeId;
     // R1（Astra s2-identity-handoff）：幂等与换绑都按**完整绑定身份**判定
     // （node/resource/kind/semantic/acceptedBindingEpoch）。只比 node/resource
     // 会让「同 id 换 epoch（对象重声明）」复用旧上下文与旧绑定（离线反例：
@@ -4908,6 +5937,10 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
     // C：同一有效绑定重复聚焦幂等——不换上下文编号，系统代理继续持旧编号，
     // 后续输入不会因换号被 stale 拒绝；caret 重定位由调用方按需触发。
     if (wasEditing && sameBindingAsBefore && s.editingContextLive) {
+        // 显式重聚焦（窗口 reassert / 可视 caret 提交后的宿主通道）：编辑上下文
+        // 幂等不变，但 ArkTS 隐藏代理可能已失焦（可视面点击画布不清编辑上下文
+        // 却会移走组件焦点）。重发焦点通知，宿主 requestProxyFocus 重新挂键盘。
+        s.focusNotifyPending = true;
         return;
     }
     // 换绑/换焦：旧上下文号、旧字段与旧节点identity都要退场，旧恢复请求连同其
@@ -4932,6 +5965,20 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
     // 通用编辑上下文：每次绑定新节点/同一节点重新聚焦都分配新编号，
     // 旧上下文的延迟回调（提交/预览/失焦）从此失效，不得改写新焦点。
     s.editingContextId = g_nextEditingContextId.fetch_add(1);
+    // round11-D4 汇合实测：本函数有**三个**入口（tap 激活 / 长按 / focus API），
+    // 只有 focus API 的外层打印 `platform focus` 身份行——tap/恢复路径建立的
+    // 上下文在日志里没有身份锚点，验收工具无法把恢复 ACK/采纳事实配到当前
+    // 身份（设备反例：back-A 后 ctx=7 存在、恢复成功，但无身份行 ⇒ 判定
+    // no_current_identity）。编号分配点是唯一完备的位置：所有路径在此打
+    // 同一行（focus API 路径会与其外层行重复，解析器取最后一条，值相同）。
+    RLOGI("platform focus node=%{public}llu ctx=%{public}lld field=%{public}s "
+          "resource=%{public}lld kind=%{public}u binding=%{public}llu v=%{public}llu",
+          static_cast<unsigned long long>(node.pod.nodeId),
+          static_cast<long long>(s.editingContextId), node.semanticId.c_str(),
+          static_cast<long long>(node.pod.resourceId),
+          static_cast<unsigned int>(kind),
+          static_cast<unsigned long long>(node.pod.acceptedBindingEpoch),
+          static_cast<unsigned long long>(node.pod.projectionVersion));
     s.caretBlinkResetPending = true;
     s.caretAffinity = 0;
     s.editingFieldName = node.semanticId;
@@ -4954,7 +6001,38 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
         if (sameNodeAsBefore && ownerValue.empty() && !s.editingText.empty()
             && node.pod.preservesActiveLocalText != 0) {
             RLOGW("ime refocus keeps local buffer: continuation window node=%{public}llu",
-                  static_cast<long long>(node.pod.nodeId));
+                  static_cast<unsigned long long>(node.pod.nodeId));
+        } else if (const Session::OwnedMirrorDeclaration *mirror = ownedMirrorDeclarationLocked(s,
+                   node.pod.nodeId, node.pod.resourceId, node.pod.nodeKind)) {
+            // owned 会话锚点（可视编辑包）：文本事实是 **accepted 段**的会话镜像
+            // （本票据冻结），不是节点值。声明缺失/失效走不到这里——ownerValue
+            // 分支对 presentation 节点会种空缓冲，A1 禁止；见 sync 的具名等待。
+            s.editingText = mirror->text;
+            s.editingMirrorOwnerVersion = mirror->ownerContentVersion;
+            RLOGI("ime edit buffer seeded from session mirror node=%{public}llu units=%{public}zu owner_v=%{public}lld",
+                  static_cast<unsigned long long>(node.pod.nodeId), mirror->text.size(),
+                  static_cast<long long>(mirror->ownerContentVersion));
+        } else if (s.ownedTextSessionEnabled &&
+                   node.pod.nodeId == s.ownedTextSessionNodeId &&
+                   node.pod.resourceId == s.ownedTextSessionResourceId &&
+                   node.pod.nodeKind == s.ownedTextSessionNodeKind) {
+            // A1 复核：owned 会话节点（**含普通 owned INPUT**）的镜像声明缺失/失效时
+            // 不得用空 carrier 值或旧缓冲继续输入准入。该门此前被
+            // `!isEditableTextKind` 包住，只覆盖 presentation 锚点。
+            //
+            // 必须**关输入准入**：本函数更早已分配新 editingContextId 并置
+            // editingContextLive=true，只清 focusNotifyPending 会留下
+            // "新身份 + 输入门开着"。语义同 sync 的具名等待。
+            RLOGW("ime begin on owned anchor without valid declaration node=%{public}llu "
+                  "kind=%{public}u decl=%{public}llu current=%{public}llu: "
+                  "keep buffer, close input admission",
+                  static_cast<unsigned long long>(node.pod.nodeId),
+                  static_cast<unsigned int>(node.pod.nodeKind),
+                  static_cast<unsigned long long>(s.ownedMirrorAccepted.declaredBindingEpoch),
+                  static_cast<unsigned long long>(s.ownedTextSessionBindingEpoch));
+            s.editingContextLive = false;
+            s.focusNotifyPending = false;
+            return;
         } else {
             s.editingText = ownerValue;
         }
@@ -5314,6 +6392,25 @@ bool requestConsecutiveTapSelectLocked(Session &s, const SceneNode &node)
     return true;
 }
 
+// B 组（2026-10-06 Astra 复核）：点击目标是否正是**当前活编辑上下文自己的绑定**。
+// 展示型 presentation TEXT（node25，kind=kKindText=3）不在 `isEditableTextKind` 里，
+// 它的点击因此落到 executePendingTapLocked 的"其他交互节点"分支；那里原先无条件
+// `enqueueEndEditingForTapLocked`，等于把"同一有效绑定上的重复点选"制造成一次失焦：
+// 旧上下文退役并挂上 PendingEnd，宿主随后在 POINTER_END 里重新聚焦**同一个节点**，
+// 只能换一个新上下文编号（设备实测 ctx2→3），旧恢复票在退役空档被
+// `proxy restore ticket rejected: no live context` 拒签，安装/采纳链从此失联。
+// 身份必须按完整绑定比较（节点/资源/类型/字段/accepted epoch）——换任一项仍按原路
+// 完整退役，失焦语义不得被这一判断吞掉。
+bool tapHitsLiveEditingBindingLocked(const Session &s, const SceneNode &node)
+{
+    if (!s.editing || s.editorRetired || !s.editingContextLive) return false;
+    return s.editingNodeId == node.pod.nodeId &&
+        s.editingResourceId == node.pod.resourceId &&
+        s.editingNodeKind == node.pod.nodeKind &&
+        s.editingFieldName == node.semanticId &&
+        s.editingAcceptedBindingEpoch == node.pod.acceptedBindingEpoch;
+}
+
 void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
 {
     if (!s.gesture.hasTarget) {
@@ -5414,7 +6511,12 @@ void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
     }
     // 其他交互节点（展示文本/背景层等）：点击 = 完整指针相位对，
     // 身份取当前 accepted 场景的该节点。指针相位同样结束其他编辑。
-    enqueueEndEditingForTapLocked(s);
+    // 例外：命中的正是当前活编辑上下文自己的绑定（presentation TEXT 锚被重复
+    // 点选）——那时退役会在同一手势内制造一次失焦，见
+    // tapHitsLiveEditingBindingLocked 的说明。指针相位照旧交付。
+    if (!tapHitsLiveEditingBindingLocked(s, node)) {
+        enqueueEndEditingForTapLocked(s);
+    }
     QueuedEvent begin;
     begin.kind = kEvPointerBegin;
     begin.recordIndex = static_cast<uint32_t>(liftIndex);
@@ -5434,6 +6536,81 @@ void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
     s.events.push_back(end);
 }
 
+// 可视编辑包（2026-10-05 C 组）：跨阈值位移的**共用分类入口**。MOVE 跨阈值与
+// END-only 抬起重判必须走同一函数——两路任一改判据都会造成分类分叉。判定只看
+// 冻结在 BEGIN 时的目标事实与当前位移，不在函数内改任何手势状态。
+//   PointerSelection：交互 presentation TEXT（可视片段）上的横向拖动 = 拖选；
+//   Scroll：包含视口接管（纵向或非交互目标）；
+//   Pending：可编辑文本上起手且无包含视口（待定到抬起）；
+//   None：无目标（维持既有行为，由调用方按原分支处理）。
+enum class CrossThresholdDragClass { PointerSelection, Scroll, Pending, None };
+static CrossThresholdDragClass classifyCrossThresholdDragLocked(const Session &s, float dx, float dy)
+{
+    if (!s.gesture.hasTarget) {
+        // 无目标（只读内容/空白起手）：既有语义是包含视口照常滚动。
+        return s.gesture.hasViewport ? CrossThresholdDragClass::Scroll : CrossThresholdDragClass::None;
+    }
+    const bool horizontalOnInteractiveText = std::fabs(dx) > std::fabs(dy);
+    if (horizontalOnInteractiveText) {
+        size_t index = 0;
+        if (sceneIndexByIdentityLocked(const_cast<Session &>(s), s.gesture.targetNodeId,
+                                       s.gesture.targetResourceId, s.gesture.targetNodeKind, &index)) {
+            const SceneNode &node = s.accepted[index];
+            if (node.pod.nodeKind == kKindText && node.pod.isInteractive != 0 && node.pod.isReadOnly == 0) {
+                return CrossThresholdDragClass::PointerSelection;
+            }
+        }
+    }
+    if (s.gesture.hasViewport) return CrossThresholdDragClass::Scroll;
+    if (!s.gesture.targetEditableText) return CrossThresholdDragClass::PointerSelection;
+    return CrossThresholdDragClass::Pending;
+}
+// 指针流开流：**BEGIN 用原始触点**（不是跨阈值的当前 MOVE），序列保持 BEGIN 在前。
+static bool openPointerStreamAtGestureStartLocked(Session &s)
+{
+    size_t index = 0;
+    if (!sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                    s.gesture.targetNodeKind, &index)) {
+        return false;  // 目标退役：无流可续
+    }
+    const SceneNode &node = s.accepted[index];
+    QueuedEvent ev;
+    ev.kind = kEvPointerBegin;
+    ev.recordIndex = static_cast<uint32_t>(index);
+    ev.nodeId = node.pod.nodeId;
+    ev.projectionVersion = node.pod.projectionVersion;
+    ev.resourceId = node.pod.resourceId;
+    ev.nodeKind = node.pod.nodeKind;
+    ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+    ev.pointerX = static_cast<int64_t>(s.gesture.startX);
+    ev.pointerY = static_cast<int64_t>(s.gesture.startY);
+    stampTouchEvent(s, ev);
+    s.events.push_back(ev);
+    s.gesture.pointerStreamOpen = true;
+    return true;
+}
+// 按当前位置补发一条指针相位（UPDATE/END）；身份沿手势冻结绑定。
+static void queuePointerPhaseLocked(Session &s, uint32_t kind, float x, float y)
+{
+    size_t index = 0;
+    if (!sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
+                                    s.gesture.targetNodeKind, &index)) {
+        return;
+    }
+    const SceneNode &node = s.accepted[index];
+    QueuedEvent ev;
+    ev.kind = kind;
+    ev.recordIndex = static_cast<uint32_t>(index);
+    ev.nodeId = node.pod.nodeId;
+    ev.projectionVersion = node.pod.projectionVersion;
+    ev.resourceId = node.pod.resourceId;
+    ev.nodeKind = node.pod.nodeKind;
+    ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
+    ev.pointerX = static_cast<int64_t>(x);
+    ev.pointerY = static_cast<int64_t>(y);
+    stampTouchEvent(s, ev);
+    s.events.push_back(ev);
+}
 void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
 {
     const uint32_t action = sample.action;
@@ -5618,37 +6795,25 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
                 std::fabs(dx) < kTouchScrollThresholdPx && std::fabs(dy) < kTouchScrollThresholdPx) {
                 return;
             }
-            if (s.gesture.hasViewport) {
+            // C 组：跨阈值分类走**共用入口**（MOVE 与 END-only 同一判据），拖选
+            // 胜出以**原始触点**开流（真实 BEGIN→阈值段不丢），随后按序交付。
+            const CrossThresholdDragClass classified =
+                classifyCrossThresholdDragLocked(s, x - s.gesture.startX, y - s.gesture.startY);
+            if (classified == CrossThresholdDragClass::Scroll) {
                 // 视口接管：取消子控件点击。纯滚动不结束编辑、不触发焦点
                 // 切换结算，业务 owner 与草稿保持不动。
                 s.gesture.phase = Session::TouchGesture::kGestureScroll;
                 RLOGI("gesture scroll takeover viewport=%{public}llu target=%{public}llu",
                       static_cast<unsigned long long>(s.gesture.viewportNodeId),
                       static_cast<unsigned long long>(s.gesture.targetNodeId));
-            } else if (s.gesture.hasTarget && !s.gesture.targetEditableText) {
-                // 无包含视口：维持指针相位流（BEGIN 立即补发，保持序列）。
+            } else if (classified == CrossThresholdDragClass::PointerSelection) {
+                // 拖选胜出：指针相位流以原始触点开流，保持 BEGIN 在前；胜出不翻转。
                 s.gesture.phase = Session::TouchGesture::kGesturePointerDrag;
-                size_t index = 0;
-                if (sceneIndexByIdentityLocked(s, s.gesture.targetNodeId, s.gesture.targetResourceId,
-                                               s.gesture.targetNodeKind, &index)) {
-                    const SceneNode &node = s.accepted[index];
-                    QueuedEvent ev;
-                    ev.kind = kEvPointerBegin;
-                    ev.recordIndex = static_cast<uint32_t>(index);
-                    ev.nodeId = node.pod.nodeId;
-                    ev.projectionVersion = node.pod.projectionVersion;
-                    ev.resourceId = node.pod.resourceId;
-                    ev.nodeKind = node.pod.nodeKind;
-                    ev.acceptedBindingEpoch = s.gesture.targetBindingEpoch;
-                    ev.pointerX = static_cast<int64_t>(x);
-                    ev.pointerY = static_cast<int64_t>(y);
-                    stampTouchEvent(s, ev);
-                    s.events.push_back(ev);
-                    s.gesture.pointerStreamOpen = true;
-                } else {
+                if (!openPointerStreamAtGestureStartLocked(s)) {
                     cancelTouchGestureLocked(s);  // 目标退役：无流可续
                     return;
                 }
+                queuePointerPhaseLocked(s, kEvPointerUpdate, x, y);
             } else {
                 // 可编辑文本上起手且无包含视口：不滚动不拖动，待定到抬起。
                 return;
@@ -5732,12 +6897,27 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
         switch (phase) {
             case Session::TouchGesture::kGesturePending: {
                 // B：END 重判阈值——快速轻扫（BEGIN 后无 UPDATE）的全部位移在
-                // 抬起结算为一次滚动，不得当作点击激活；仅有界视口接管。
+                // 抬起结算，不得当作点击激活。C 组：重判与 MOVE 跨阈值共用**同一
+                // 分类入口**——交互 presentation TEXT 上的横向快扫同样开指针流
+                // （BEGIN 原始触点 + END 当前位，唯一终结），滚动胜出才走视口接管。
                 const float endDx = x - s.gesture.startX;
                 const float endDy = y - s.gesture.startY;
-                if (s.gesture.hasViewport &&
-                    (std::fabs(endDx) >= kTouchScrollThresholdPx ||
-                     std::fabs(endDy) >= kTouchScrollThresholdPx)) {
+                const bool crossThreshold = std::fabs(endDx) >= kTouchScrollThresholdPx ||
+                    std::fabs(endDy) >= kTouchScrollThresholdPx;
+                const CrossThresholdDragClass classified = crossThreshold
+                    ? classifyCrossThresholdDragLocked(s, endDx, endDy)
+                    : CrossThresholdDragClass::None;
+                if (crossThreshold && classified == CrossThresholdDragClass::PointerSelection) {
+                    s.gesture.phase = Session::TouchGesture::kGesturePointerDrag;
+                    if (!openPointerStreamAtGestureStartLocked(s)) {
+                        cancelTouchGestureLocked(s);
+                        break;
+                    }
+                    queuePointerPhaseLocked(s, kEvPointerEnd, x, y);
+                    s.gesture.pointerStreamEnded = s.gesture.pointerStreamOpen;
+                    break;
+                }
+                if (crossThreshold && classified == CrossThresholdDragClass::Scroll) {
                     // A：无 MOVE 快扫（含中途回落的轻扫）——全部位移经同一
                     // 采样入口在抬起结算，不得当点击激活。
                     consumeScrollSampleLocked(s, y - s.gesture.lastY);
@@ -6441,6 +7621,16 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
             p.frameIndex = 0;
             p.settled = false;
         }
+        // round10-D2：新实例必须**清掉**该槽里上一个实例的 accepted/节点/票环，并
+        // 绑定自己的 token。缺这一步时槽位复用会让新实例读到前实例事实
+        // （round10 反例：新 token=202、原生 projection=0，读回却是旧 proj=20/last=88）。
+        {
+            std::lock_guard<std::mutex> factGuard(g_acceptedFactLock);
+            OhosAcceptedFactSlot &slot = g_acceptedFact[i];
+            slot.token = s.token;
+            slot.epoch = 0;
+            slot.fact = OhosAcceptedFact();
+        }
         return s.token;
     }
     *outStatus = CJGUI_INTERNAL_RENDERER_SESSION_TABLE_FULL;
@@ -6467,6 +7657,7 @@ int32_t cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+
 // H1-C：窗口声明它拥有某个正文节点的范围会话。声明生效后，该节点的提交以
 // **精确 UTF-16 范围增量**（kind 51）交付并带上绑定的代次；整值事件被抑制。
 // 未声明的节点永不产生 kind 51——消费方不会在没有绑定的表面上 fail-closed。
@@ -6474,7 +7665,7 @@ int32_t cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session
 // 时撤回声明（代次仍然记录：撤回本身也是一次绑定变化）。
 extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_owned_text_session(
     uint64_t session, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
-    uint64_t bindingEpoch, uint32_t enabled)
+    uint64_t bindingEpoch, uint32_t enabled, const char *mirrorText, int64_t mirrorVersion)
 {
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
@@ -6487,11 +7678,25 @@ extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_ow
     s->ownedTextSessionResourceId = enabled != 0 ? resourceId : -1;
     s->ownedTextSessionNodeKind = enabled != 0 ? nodeKind : 0;
     s->ownedTextSessionBindingEpoch = bindingEpoch;
-    RLOGI("owned text session enabled=%{public}d node=%{public}llu epoch=%{public}llu",
+    // A1：写入 **staged** 段（文本/owner 内容版本/绑定代同源自窗口的一次会话
+    // 快照）；present 冻结、结算晋升后 begin/recover/arm/sync 才可见。
+    s->ownedMirrorStaged = Session::OwnedMirrorDeclaration{};
+    s->ownedMirrorStaged.valid = enabled != 0 && mirrorText != nullptr;
+    if (s->ownedMirrorStaged.valid) {
+        s->ownedMirrorStaged.text = utf8ToUtf16(std::string(mirrorText));
+        s->ownedMirrorStaged.ownerContentVersion = mirrorVersion;
+        s->ownedMirrorStaged.bindingEpoch = bindingEpoch;
+        s->ownedMirrorStaged.declaredBindingEpoch = bindingEpoch;
+    }
+    RLOGI("owned text session enabled=%{public}d node=%{public}llu epoch=%{public}llu "
+          "mirror=%{public}d mirror_units=%{public}zu mirror_owner_v=%{public}lld",
           enabled != 0 ? 1 : 0, static_cast<unsigned long long>(s->ownedTextSessionNodeId),
-          static_cast<unsigned long long>(bindingEpoch));
+          static_cast<unsigned long long>(bindingEpoch),
+          s->ownedMirrorStaged.valid ? 1 : 0, s->ownedMirrorStaged.text.size(),
+          static_cast<long long>(s->ownedMirrorStaged.ownerContentVersion));
     return CJGUI_INTERNAL_RENDERER_OK;
 }
+
 
 // OHOS_GRAPHEME_SERVICE_BEGIN
 // System ICU is the platform boundary oracle. Each call owns its library handle,
@@ -7113,6 +8318,16 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t session)
         g_pending[slot].job = nullptr;
         g_pending[slot].nodes.clear();
         g_pending[slot].valid = false;
+        // round10-D2：销毁后清空该槽并解绑 token，使「已销毁的 token」与「尚未提交
+        // 的新实例」都不会读到旧事实（accepted / 节点清单 / 票环）。token 归零后
+        // 任何读回都返回无新提交。锁序：调用方已持 g_sessions.lock（unique_lock，
+        // 末尾才 unlock），此处再取 fact 锁——与发布侧、读回侧同序。
+        {
+            std::lock_guard<std::mutex> factGuard(g_acceptedFactLock);
+            g_acceptedFact[slot].token = 0;
+            g_acceptedFact[slot].epoch = 0;
+            g_acceptedFact[slot].fact = OhosAcceptedFact();
+        }
     }
     g_sessions.occupied -= 1;
     g.unlock();
@@ -7435,55 +8650,131 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_text_runs(uin
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(uint64_t session, uint64_t nodeId,
-                                                         double x, double y, uint32_t *outByteOffset,
-                                                         uint32_t *outAffinity)
+                                                         double x, double y, uint64_t expectedSceneVersion,
+                                                         uint32_t *outByteOffset, uint32_t *outAffinity)
 {
     if (!outByteOffset || !outAffinity || !std::isfinite(x) || !std::isfinite(y)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     *outByteOffset = 0;
     *outAffinity = 0;
     auto job = std::make_shared<CaretHitTestJob>();
+    bool presentationHit = false;
     {
         std::lock_guard<std::mutex> g(g_sessions.lock);
         const Session *s = lookupSessionLocked(session);
         if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-        if (!s->editing || !s->editingContextLive || s->editorRetired || s->editingNodeId != nodeId)
-            return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
-        const SceneNode *node = nullptr;
-        for (const SceneNode &n : s->accepted) {
-            if (n.pod.nodeId == nodeId && n.pod.resourceId == s->editingResourceId &&
-                n.pod.nodeKind == s->editingNodeKind) { node = &n; break; }
+        if (expectedSceneVersion != s->acceptedSceneVersion) {
+            RLOGW("presentation hit refused: scene_stale expected=%{public}llu current=%{public}llu node=%{public}llu",
+                  static_cast<unsigned long long>(expectedSceneVersion),
+                  static_cast<unsigned long long>(s->acceptedSceneVersion),
+                  static_cast<unsigned long long>(nodeId));
+            return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         }
-        if (!node) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
-        job->session = session;
-        job->contextId = s->editingContextId;
-        job->nodeId = nodeId;
-        job->resourceId = node->pod.resourceId;
-        job->bindingEpoch = node->pod.acceptedBindingEpoch;
-        job->projectionVersion = node->pod.projectionVersion;
-        job->nodeKind = node->pod.nodeKind;
-        job->fontSize = node->pod.fontSize;
-        job->fontWeight = node->pod.fontWeight;
-        job->nodeWidth = node->pod.width;
-        job->nodeHeight = node->pod.height;
-        job->nodeX = node->pod.x;
-        job->nodeY = node->pod.y;
-        job->tapX = x - node->pod.x;
-        job->tapY = y - node->pod.y;
-        job->text = composedBuffer(*s);
+        // 可视编辑包：presentation 命中——accepted TEXT 节点，须开启指针交互且非
+        // 只读（与 IME 上下文门同基）。命中与绘制共用同一份 accepted 排版；只读
+        // 观察，不请求重绘、不改会话状态。
+        // 消费者包（2026-10-06）：不要求会话先有编辑历史——冷会话（从未聚焦任何
+        // 输入）的 presentation 命中同样合法（只读观察）；accepted 里找不到该节点
+        // 才具名拒绝。
+        const SceneNode *presentation = nullptr;
+        for (const SceneNode &n : s->accepted) {
+            if (n.pod.nodeId == nodeId && n.pod.nodeKind == kKindText &&
+                n.pod.isReadOnly == 0 && n.pod.isInteractive != 0) {
+                presentation = &n;
+                break;
+            }
+        }
+        const bool liveEditingHere = s->editing && s->editingContextLive && !s->editorRetired &&
+            s->editingNodeId == nodeId;
+        // 命中来源必须与绘制来源一致。`paintTextStyledNode`（:4940）对「owned 镜像
+        // 锚 ∧ 非可编辑 kind」在置 `isEditingNode` **之前** break：该节点的可见排版
+        // 因此只进 presentation 租约表，`frame.candidate` 恒空、`lastPaintLayout`
+        // 永不晋升。此前分支只看 `editingNodeId`，于是这种锚一旦成为活编辑节点就改
+        // 按编辑缓冲去查 `lastPaintLayout`，结构性得到 `painted_layout_unavailable`
+        //（设备原件：冷会话时同节点同坐标两次命中成功，聚焦后每笔手势的触点与抬点
+        // 各拒一次，无一条 stale/pending 具名）。镜像声明的完整身份（节点/资源/类型
+        // + 声明代与当前绑定核对）由 ownedMirrorDeclarationLocked 内部完成，这里不
+        // 放宽；租约缺失也不回退 candidate 或现场重排。可编辑 kind（5/6/10）在上面
+        // 的 accepted 查找里就不命中，本条件对其恒假——编辑缓冲与宿主 selectionDrag
+        // 路径逐字不变。
+        const bool mirrorAnchorHere = liveEditingHere && presentation != nullptr &&
+            ownedMirrorDeclarationLocked(*s, presentation->pod.nodeId,
+                presentation->pod.resourceId, presentation->pod.nodeKind) != nullptr;
+        if (!liveEditingHere || mirrorAnchorHere) {
+            if (!presentation) {
+                RLOGW("presentation hit refused: presentation_node_not_found node=%{public}llu accepted=%{public}zu",
+                      static_cast<unsigned long long>(nodeId), s->accepted.size());
+                return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+            }
+            job->presentation = true;
+            job->session = session;
+            job->nodeId = nodeId;
+            job->resourceId = presentation->pod.resourceId;
+            job->bindingEpoch = presentation->pod.acceptedBindingEpoch;
+            job->projectionVersion = presentation->pod.projectionVersion;
+            job->fontSize = presentation->pod.fontSize;
+            job->fontWeight = presentation->pod.fontWeight;
+            job->nodeKind = presentation->pod.nodeKind;
+            job->nodeWidth = presentation->pod.width;
+            job->nodeHeight = presentation->pod.height;
+            job->nodeX = presentation->pod.x;
+            job->nodeY = presentation->pod.y;
+            job->tapX = x - presentation->pod.x;
+            job->tapY = y - presentation->pod.y;
+            job->text = utf8ToUtf16(presentation->value);
+            job->runs = presentation->textStyleRuns;
+            job->sourcePaintTicket = s->acceptedPaintTicketId;
+            presentationHit = true;
+        } else {
+            const SceneNode *node = nullptr;
+            for (const SceneNode &n : s->accepted) {
+                if (n.pod.nodeId == nodeId && n.pod.resourceId == s->editingResourceId &&
+                    n.pod.nodeKind == s->editingNodeKind) { node = &n; break; }
+            }
+            if (!node) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+            job->session = session;
+            job->contextId = s->editingContextId;
+            job->nodeId = nodeId;
+            job->resourceId = node->pod.resourceId;
+            job->bindingEpoch = node->pod.acceptedBindingEpoch;
+            job->projectionVersion = node->pod.projectionVersion;
+            job->nodeKind = node->pod.nodeKind;
+            job->fontSize = node->pod.fontSize;
+            job->fontWeight = node->pod.fontWeight;
+            job->nodeWidth = node->pod.width;
+            job->nodeHeight = node->pod.height;
+            job->nodeX = node->pod.x;
+            job->nodeY = node->pod.y;
+            job->tapX = x - node->pod.x;
+            job->tapY = y - node->pod.y;
+            job->text = composedBuffer(*s);
+        }
     }
-    // This observation never requests a redraw or a new layout.
+    // 锁外执行：presentation 命中在渲染线程调用方上**内联**（指针派发运行在
+    // 渲染线程，向自身队列投任务再等自己是自等死锁）；其余线程走既有队列。
+    if (presentationHit) {
+        const auto status = g_render.executePresentationHit(job);
+        if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+        *outByteOffset = static_cast<uint32_t>(utf16ToUtf8(job->text.substr(0, job->caretUtf16)).size());
+        *outAffinity = static_cast<uint32_t>(job->caretAffinity);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
     if (!g_render.postIfRunning(job)) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
     const auto status = job->waitFor();
     if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
-    {
-        std::lock_guard<std::mutex> g(g_sessions.lock);
-        const Session *s = lookupSessionLocked(session);
-        if (!s || s->editingContextId != job->contextId || !s->editingContextLive ||
-            s->acceptedPaintTicketId != job->sourcePaintTicket || s->editingProjectionVersion != job->projectionVersion ||
-            composedBuffer(*s) != job->text) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
-    }
     *outByteOffset = static_cast<uint32_t>(utf16ToUtf8(job->text.substr(0, job->caretUtf16)).size());
     *outAffinity = static_cast<uint32_t>(job->caretAffinity);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_accepted_scene_version(uint64_t session,
+                                                                          uint64_t *outSceneVersion)
+{
+    if (!outSceneVersion) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outSceneVersion = 0;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    const Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    *outSceneVersion = s->acceptedSceneVersion;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -7516,7 +8807,11 @@ static void armProxyRestoreRequestLocked(Session &s, const SceneNode &accepted,
     req.contextId = s.editingContextId;
     req.contextGeneration = s.editingContextGeneration;
     req.fieldName = s.editingFieldName;
-    req.text = utf8ToUtf16(accepted.value);
+    // owned 会话锚点（可视编辑包）：安装快照的文本事实是**声明的会话镜像**，
+    // 不是 presentation 节点的 accepted 值（容器值为空，装它必然落点越界）。
+    const Session::OwnedMirrorDeclaration *armMirror = ownedMirrorDeclarationLocked(s,
+        accepted.pod.nodeId, accepted.pod.resourceId, accepted.pod.nodeKind);
+    req.text = armMirror ? armMirror->text : utf8ToUtf16(accepted.value);
     req.selStart = selStart;
     req.selEnd = selEnd;
     req.deadlineMonoMs = proxyRestoreNowMs() + kProxyRestoreDeadlineMs;
@@ -7586,13 +8881,21 @@ static CjguiInternalRendererStatus recoverTextProxyTicketLocked(Session &s, uint
               static_cast<unsigned long long>(nodeId), s.accepted.size());
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
+    // owned 会话锚点（可视编辑包）：签发值与文本事实是会话镜像，不是节点值。
+    // presentation 锚点节点的 accepted 值（空/显示文本）不参与比较，也不进缓冲。
+    const Session::OwnedMirrorDeclaration *recoverMirror = ownedMirrorDeclarationLocked(s,
+        nodeId, resourceId, nodeKind);
+    const bool ownedAnchorMirror = recoverMirror != nullptr;
+    std::string acceptedUnitsStr = accepted->value;
+    if (recoverMirror != nullptr) acceptedUnitsStr = utf16ToUtf8(recoverMirror->text);
+    const std::string &expectedUnits = ownedAnchorMirror ? acceptedUnitsStr : accepted->value;
     // 调用方的值必须就是本地 accepted 事实；不等说明调用方描述的是另一份正文。
-    if (accepted->value != std::string(expectedValue)) {
-        RLOGW("proxy restore ticket rejected: accepted value mismatch accepted_units=%{public}zu asked_units=%{public}zu",
-              accepted->value.size(), std::strlen(expectedValue));
+    if (expectedUnits != std::string(expectedValue)) {
+        RLOGW("proxy restore ticket rejected: accepted value mismatch accepted_units=%{public}zu asked_units=%{public}zu mirror=%{public}d",
+              expectedUnits.size(), std::strlen(expectedValue), ownedAnchorMirror ? 1 : 0);
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
-    const std::u16string text = utf8ToUtf16(accepted->value);
+    const std::u16string text = utf8ToUtf16(expectedUnits);
     const uint32_t size = static_cast<uint32_t>(text.size());
     uint32_t start = selectionStart;
     uint32_t end = selectionEnd;
@@ -7694,6 +8997,26 @@ CjguiInternalRendererStatus cjgui_internal_renderer_recover_text_proxy_ticket(ui
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    // 人锚优先（round5-C 实测 + GLM 裁定）：本次签发若伴随一笔**未消费的人锚**、
+    // 身份与本票一致、但票目标与人的真实落点分歧，则拒绝 arming。签发前拒绝＝零状态
+    // 改动（不执行其后的 native 落点硬写 `s.selStartUtf16=start`），native 落点保持
+    // 人的点击；`humanCaretNotificationPending` 遂能经 9321 段推送 caret，走与
+    // 「人在命中处继续打字」同一条共享生命周期安装链，人锚得以被采纳解门。
+    // 只挂本入口（窗口的恢复票据），不挂 Locked 本体全员，避免扩大 owner 回滚
+    // （recover_active_text_proxy）与坐标重基（restore_composable_selection）的行为面。
+    {
+        const Session::HumanSelectionAnchor &ha = s->humanAnchor;
+        if (ha.seq != 0 && !ha.consumed &&
+            ha.nodeId == nodeId && ha.resourceId == resourceId && ha.nodeKind == nodeKind &&
+            ha.projectionVersion == sceneVersion &&
+            (ha.start16 != selectionStart || ha.end16 != selectionEnd)) {
+            RLOGW("proxy restore ticket rejected: human anchor pending seq=%{public}llu "
+                  "anchor=%{public}u:%{public}u asked=%{public}u:%{public}u",
+                  static_cast<unsigned long long>(ha.seq), ha.start16, ha.end16, selectionStart, selectionEnd);
+            // 具名「等待人锚」，不是平台失败：窗口据此不烧恢复重试预算、不自宣成功。
+            return CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING;
+        }
+    }
     return recoverTextProxyTicketLocked(*s, nodeId, resourceId, nodeKind, sceneVersion, acceptedValue,
         selectionStart, selectionEnd, outTicket);
 }
@@ -7876,14 +9199,68 @@ static std::string cjguiOhosLogValue(const std::string &value)
     return out;
 }
 
+// round8-D：上次全量转储的内容指纹（进程级单值即可——本渲染器一次只有一个
+// accepted 帧被发布；指纹只用于「这一帧的转储内容是否与上次相同」）。
+static uint64_t g_lastAcceptedFrameFingerprint = 0;
+
+// round9-D：accepted 提交的**中性摘要**一行（替代 round8 的 source/preview 计数）。
+//
+// round8 在这里按 `pharos-editor-body` / `pharos-document-note` / `pharos-editor-block`
+// 三个前缀把节点分成 source 与 preview 两类。那是**产品语义**，写进通用 renderer 有
+// 两个问题：① 通用层因此对具体产品有硬依赖；② 验收侧 `scene_face` 也有一套前缀
+// 表，两边各写一份，一旦不一致就会出现「生产说 preview、验收说 source」而谁都
+// 不知道自己错了。分类归产品或驱动，通用层只报中性事实（节点数 + semantic 摘要 +
+// 投影版本 + 票号）。诊断价值不减：行数从「按节点数分类」变成恒定一行，而摘要
+// 仍能区分「这一帧的节点集合变了没有」。
+static void cjguiOhosLogAcceptedSummary(const std::vector<SceneNode> &accepted,
+                                        uint64_t projectionVersion, uint64_t ticketId)
+{
+    RLOGI("accepted commit v=%{public}llu ticket=%{public}llu nodes=%{public}zu "
+          "semantic=%{public}llu",
+          static_cast<unsigned long long>(projectionVersion),
+          static_cast<unsigned long long>(ticketId),
+          accepted.size(),
+          static_cast<unsigned long long>(cjguiOhosSemanticDigest(accepted)));
+}
+
 // accepted 帧诊断：几何行与 label/value 行**成对**输出。
 // 手写树几何没有任何公共查询面（instances() 只暴露 agent 生成投影），这两行因此
 // 是探针判定「导航前编辑器被裁掉 / IME 聚焦后完整可见」的唯一权威来源，属正常
 // 产物的一等诊断，不是测试闸门专属。两条 settle 路径（同步成功与票据结算）必须
 // 发同一对：只发几何不发 label，延迟提交的帧就无法按语义标签定位节点。
 // 两行按 nodeId 配对，与批次内先后无关；坐标为 vp（见 N2-V 密度换算）。
+//
+// round8-D：全量转储按**内容指纹变化**收敛。指纹不变时只发上面那一行 faces 摘要，
+// 驱动读回（accepted_semantic_point / accepted_semantic_rect / note_projected_text
+// 都取「最后一次出现」）因此始终新鲜，而纯按键编辑不再每帧喷约 43 行——实测那正是
+// LOGLIMIT 丢行的主要来源（一次窗口丢 1836 行）。指纹按 (id, semantic, kind, rect,
+// clip, value) 计算：任何模式切换、换绑、resize、换行、改值都必然改变它。
 static void cjguiOhosLogAcceptedFrame(const std::vector<SceneNode> &accepted)
 {
+    // 内容指纹：只有 (id, semantic, kind, rect, clip, value) 变化才重发全量转储。
+    // 不按投影版本门控——版本每次按键都 +1，那等于没收敛。
+    uint64_t fingerprint = 1469598103934665603ull;
+    auto mix = [&fingerprint](uint64_t v) {
+        fingerprint ^= v + 0x9e3779b97f4a7c15ull + (fingerprint << 6) + (fingerprint >> 2);
+    };
+    for (const SceneNode &n : accepted) {
+        mix(static_cast<uint64_t>(n.pod.nodeId));
+        for (char ch : n.semanticId) mix(static_cast<uint64_t>(static_cast<unsigned char>(ch)));
+        mix(static_cast<uint64_t>(n.pod.nodeKind));
+        mix(static_cast<uint64_t>(n.pod.x));
+        mix(static_cast<uint64_t>(n.pod.y));
+        mix(static_cast<uint64_t>(n.pod.width));
+        mix(static_cast<uint64_t>(n.pod.height));
+        mix(static_cast<uint64_t>(n.pod.clipX));
+        mix(static_cast<uint64_t>(n.pod.clipY));
+        mix(static_cast<uint64_t>(n.pod.clipWidth));
+        mix(static_cast<uint64_t>(n.pod.clipHeight));
+        mix(static_cast<uint64_t>(std::hash<std::string>{}(n.value)));
+    }
+    if (g_lastAcceptedFrameFingerprint == fingerprint) {
+        return;
+    }
+    g_lastAcceptedFrameFingerprint = fingerprint;
     for (const SceneNode &n : accepted) {
         RLOGI("node-rect id=%{public}lld x=%{public}lld y=%{public}lld w=%{public}lld h=%{public}lld "
               "clip=(%{public}lld,%{public}lld,%{public}lld,%{public}lld)",
@@ -8109,16 +9486,20 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic
 static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
 {
     if (!s->editing) return;
-    // R1补轮（2026-10-02 指导复核）：本函数只在**当前来源**的提交上运行——
-    // 旧来源候选已在 settlePendingTicketLocked 的不可逆晋升前被整票拒绝
-    //（pendingSettlementSourceStaleLocked），票号大小不构成来源关系证明，
-    // 也不存在任何「先发布旧树再跳过退役判定」的宽限。因此到达这里的每一棵
-    // accepted 树都是绑定建立后由其来源提交的：缺席/失配/只读化即真实撤销，
+    // 到达这里的每一棵 accepted 树都是已合法发布的：缺席/失配/只读化即真实撤销，
     // 首次发布立即退役（Astra 协议 e/case-b），删除后旧输入由 takeEditing
-    // ContextLocked 的活上下文守卫拒绝。
+    // ContextLocked 的完整绑定守卫拒绝。
     // 历史：曾以 acceptedPaintTicketId < editingBornTicketId 容忍"绑定前结算"，
     // 该比较既非来源关系证明，又先交换了 accepted 树（旧树删除节点的画面已
-    // 发布）才决定跳过 sync——正是 Astra 否定的反模式，已随结算前拒绝移除。
+    // 发布）才决定跳过 sync——正是 Astra 否定的反模式，已移除。
+    // 未闭合（2026-10-02 Astra h-r1-source-admission）：此处**没有**来源准入门。
+    // 曾经的 pendingSettlementSourceStaleLocked 在 Flush 之后按焦点 context 差异
+    // 拒票（旧缺陷），R1 已删除但**未**在具备零 Flush 的时点补回：native 现有
+    // 冻结字段（候选节点/epoch、candidateProjectionVersion、parentAcceptedTicketId、
+    // editingContextId/live）全部组合也无法区分「过期来源的删除结果(d)」与
+    // 「仍有效、只是生成时焦点在别处的删除(e)」——差异只存在于尚未传入的来源事实。
+    // 见 artifacts/consultations/h-r1-source-admission-astra/answer.md 与
+    // test_s2_identity_handoff_native.py 的 (d)/(e) 用例。
     bool found = false;
     for (const SceneNode &n : s->accepted) {
         if (n.pod.nodeId != s->editingNodeId || n.pod.resourceId != s->editingResourceId) continue;
@@ -8158,6 +9539,122 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             break;
         }
         std::u16string ownerValue = utf8ToUtf16(n.value);
+        // A1（Astra h-visual-edit-a-lifecycle-astra-20261005）：presentation 镜像
+        // 锚点的正文事实是**本票据 accepted 的镜像声明**。声明缺失/失效时不得
+        // 用空 carrier 值重建上下文（空文本中间态），也不得静默跳过——保留旧
+        // 缓冲并具名等待；绑定失配/只读化仍按上方 S2 立即退役。
+        bool mirrorAnchorKeepBuffer = false;
+        if (const Session::OwnedMirrorDeclaration *syncMirror = ownedMirrorDeclarationLocked(*s,
+            n.pod.nodeId, n.pod.resourceId, n.pod.nodeKind)) {
+            if (!isEditableTextKind(n.pod.nodeKind)) {
+                ownerValue = syncMirror->text;
+                // A1 复核（Astra 点 2/3）：镜像锚点的四条准入路径——
+                // ① 同文（owner 接受了本会话编辑，镜像==编辑缓冲）⇒ 本地连续，
+                //   只推进版本，保留平台光标/组合态（多笔系统输入不掉字）；
+                // ② 纯 resize（owner 内容版本未变）⇒ 同上且不动内容；
+                // ③ 本地接受（窗口暂存 preservesActiveLocalText 凭据 + 镜像同文）
+                //   ⇒ 认领声明推进，否则后续纯几何投影按滞后版本重建 ctx；
+                // ④ 其余（owner 内容版本推进且无本地接受凭据）⇒ 既有外部版本仲裁。
+                // 同文分支必须核 owner 版本不变：外部同字节新版本与镜像同文，
+                // 但声明的 ownerContentVersion 已推进；不核版本就会把它当成本地
+                // 连续保 ctx（生产反例：presentation 同文 owner1→2 仍 ctx16）。
+                // 本地接受的推进由 preservesActiveLocalText 分支先行认领，此处
+                // owner 版本推进只可能是外部改版，不存在合法的"自推进"误杀。
+                if (syncMirror->text == s->editingText && s->editingContextLive &&
+                    !s->previewActive && n.pod.projectionVersion != s->editingContextBaseVersion &&
+                    syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion) {
+                    s->editingContextBaseVersion = n.pod.projectionVersion;
+                    s->editingProjectionVersion = n.pod.projectionVersion;
+                    s->editingMirrorOwnerVersion = syncMirror->ownerContentVersion;
+                    RLOGI("editing sync mirror anchor local-continuation keep ctx=%{public}lld v=%{public}llu owner_v=%{public}lld",
+                          static_cast<long long>(s->editingContextId),
+                          static_cast<unsigned long long>(n.pod.projectionVersion),
+                          static_cast<long long>(syncMirror->ownerContentVersion));
+                    break;
+                }
+                if (syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion &&
+                    n.pod.projectionVersion != s->editingContextBaseVersion &&
+                    s->editingContextLive && !s->previewActive) {
+                    s->editingContextBaseVersion = n.pod.projectionVersion;
+                    s->editingProjectionVersion = n.pod.projectionVersion;
+                    RLOGI("editing sync mirror anchor pure-geometry keep ctx=%{public}lld v=%{public}llu",
+                          static_cast<long long>(s->editingContextId),
+                          static_cast<unsigned long long>(n.pod.projectionVersion));
+                    break;
+                }
+                // ③ 本地接受（凭据 = 窗口暂存的 preservesActiveLocalText + 镜像
+                //    同文）：owner 接受了本会话的编辑——声明推进并带回同一段
+                //    编辑缓冲。认领这次推进（刷新 editingMirrorOwnerVersion），
+                //    否则后续纯几何投影仍会因版本滞后把合法推进当外部换版重建
+                //    ctx（实测：文在 range 7:7 被接受后 reconcile old=4 new=5，
+                //    光标丢到文末，随后的输入落错位置）。
+                if (n.pod.preservesActiveLocalText != 0 && syncMirror->text == s->editingText &&
+                    s->editingContextLive && !s->previewActive &&
+                    n.pod.projectionVersion != s->editingContextBaseVersion) {
+                    s->editingContextBaseVersion = n.pod.projectionVersion;
+                    s->editingProjectionVersion = n.pod.projectionVersion;
+                    s->editingMirrorOwnerVersion = syncMirror->ownerContentVersion;
+                    RLOGI("editing sync mirror anchor local-accept keep ctx=%{public}lld v=%{public}llu owner_v=%{public}lld",
+                          static_cast<long long>(s->editingContextId),
+                          static_cast<unsigned long long>(n.pod.projectionVersion),
+                          static_cast<long long>(syncMirror->ownerContentVersion));
+                    break;
+                }
+                RLOGI("editing sync mirror anchor node=%{public}llu units=%{public}zu owner_v=%{public}lld "
+                      "flag=%{public}u textmatch=%{public}u edit_units=%{public}zu base=%{public}llu pv=%{public}llu",
+                      static_cast<unsigned long long>(n.pod.nodeId), syncMirror->text.size(),
+                      static_cast<long long>(syncMirror->ownerContentVersion),
+                      static_cast<unsigned int>(n.pod.preservesActiveLocalText),
+                      (syncMirror->text == s->editingText) ? 1u : 0u,
+                      s->editingText.size(),
+                      static_cast<unsigned long long>(s->editingContextBaseVersion),
+                      static_cast<unsigned long long>(n.pod.projectionVersion));
+            } else {
+                // owned INPUT 的保 ctx：判据是镜像声明身份，不是 ownerValue 字符串。
+                // 同一 owner 版本 + 镜像文本等于编辑缓冲 + 场景推进 = 纯几何/刷新，
+                // 保留 ctx；外部同字节新版本（ownerContentVersion 已推进）不得落入
+                // 此处，必须走原外部仲裁（生产反例：普通 owned INPUT 同 owner
+                // 刷新误换 ctx16→17）。本地接受由 preservesActiveLocalText 先行
+                // 认领，到此的推进不可能是"自推进"。
+                if (syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion &&
+                    syncMirror->text == s->editingText && s->editingContextLive &&
+                    !s->previewActive &&
+                    n.pod.projectionVersion != s->editingContextBaseVersion) {
+                    s->editingContextBaseVersion = n.pod.projectionVersion;
+                    s->editingProjectionVersion = n.pod.projectionVersion;
+                    RLOGI("editing sync owned input keep ctx=%{public}lld v=%{public}llu owner_v=%{public}lld",
+                          static_cast<long long>(s->editingContextId),
+                          static_cast<unsigned long long>(n.pod.projectionVersion),
+                          static_cast<long long>(syncMirror->ownerContentVersion));
+                    break;
+                }
+                RLOGI("editing sync owned input anchor node=%{public}llu units=%{public}zu owner_v=%{public}lld",
+                      static_cast<unsigned long long>(n.pod.nodeId), syncMirror->text.size(),
+                      static_cast<long long>(syncMirror->ownerContentVersion));
+            }
+        } else if (s->ownedTextSessionEnabled &&
+                   n.pod.nodeId == s->ownedTextSessionNodeId &&
+                   n.pod.resourceId == s->ownedTextSessionResourceId &&
+                   n.pod.nodeKind == s->ownedTextSessionNodeKind) {
+            // A1 复核：owned 会话节点（**含普通 owned INPUT**）声明缺失/失效（含
+            // 换绑代差）——保留旧缓冲并**关闭输入准入**，不得用空 carrier 或错误
+            // 缓冲继续输入。guard 此前带 `!isEditableTextKind` 且只比 nodeId，
+            // 普通 owned 输入框因此落不到这里，被误判为外部换版并重建
+            // editingContextId（实测同 owner 内容下 ctx16→17）。判据与
+            // beginEditingOnNodeLocked 的缺声明门同源。
+            RLOGW("editing sync owned anchor without accepted declaration node=%{public}llu "
+                  "kind=%{public}u ctx=%{public}lld keep-buffer input-gate-closed",
+                  static_cast<unsigned long long>(n.pod.nodeId),
+                  static_cast<unsigned int>(n.pod.nodeKind),
+                  static_cast<long long>(s->editingContextId));
+            s->editingContextBaseVersion = n.pod.projectionVersion;
+            s->editingProjectionVersion = n.pod.projectionVersion;
+            s->editingContextLive = false;
+            mirrorAnchorKeepBuffer = true;
+        }
+        if (mirrorAnchorKeepBuffer) {
+            break;
+        }
         // The core marks a locally accepted text event explicitly and stages an
         // empty native value so the active editor keeps drawing the event text.
         // Its scene version advances too: carry that admission version forward
@@ -8166,6 +9663,13 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
         if (n.pod.preservesActiveLocalText != 0) {
             s->editingContextBaseVersion = n.pod.projectionVersion;
             s->editingProjectionVersion = n.pod.projectionVersion;
+            // 本地接受同样会推进镜像声明（owned 输入框与锚点共用这条身份规则）：
+            // 有本节点有效声明就认领其内容版本，否则后续纯几何投影把这次合法
+            // 推进当外部换版重建 ctx。
+            if (const Session::OwnedMirrorDeclaration *claimMirror = ownedMirrorDeclarationLocked(*s,
+                n.pod.nodeId, n.pod.resourceId, n.pod.nodeKind)) {
+                s->editingMirrorOwnerVersion = claimMirror->ownerContentVersion;
+            }
             break;
         }
         // H1-C：本地编辑被 owner 接受后，accepted 投影带回的就是屏幕上这段文本
@@ -8191,12 +9695,26 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             cancelProxyRestoreRequest(*s, "external_version");
             s->textMenuIntent = 0;
             s->editingContextId = g_nextEditingContextId.fetch_add(1);
+            // round11-D4：外部换版重建也是**新编辑身份**（新编号即新挂载代），
+            // 与 beginEditingOnNodeLocked 同一行式，验收工具据此换代。
+            RLOGI("platform focus node=%{public}llu ctx=%{public}lld field=%{public}s "
+                  "resource=%{public}lld kind=%{public}u binding=%{public}llu v=%{public}llu",
+                  static_cast<unsigned long long>(n.pod.nodeId),
+                  static_cast<long long>(s->editingContextId), n.semanticId.c_str(),
+                  static_cast<long long>(n.pod.resourceId),
+                  static_cast<unsigned int>(n.pod.nodeKind),
+                  static_cast<unsigned long long>(n.pod.acceptedBindingEpoch),
+                  static_cast<unsigned long long>(n.pod.projectionVersion));
             s->caretBlinkResetPending = true;
             s->caretAffinity = 0;
             s->editingContextBaseVersion = n.pod.projectionVersion;
             s->editingProjectionVersion = n.pod.projectionVersion;
             s->editingFieldName = n.semanticId;
             s->editingText = ownerValue;
+            if (const Session::OwnedMirrorDeclaration *syncMirror2 = ownedMirrorDeclarationLocked(*s,
+                n.pod.nodeId, n.pod.resourceId, n.pod.nodeKind)) {
+                s->editingMirrorOwnerVersion = syncMirror2->ownerContentVersion;
+            }
             s->previewActive = false;
             s->previewText.clear();
             s->markedActive = false;
@@ -8281,16 +9799,45 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
 //
 // A1：终态写入后不再改变（重复调用直接返回同一 decision），记录保留到 ACK。
 // 这是“重复查询返回相同结果”“原候选只结算一次”的实现点。
-// R1补轮（Astra s2-identity-handoff 落地）：候选来源是否已过期。present 锁内
-// 冻结的来源上下文与结算时仍活着的上下文编号不同 = 该候选由旧来源生成（旧模式
-// 结果/旧树），对编辑节点的缺席/退化不是当前绑定的退役证据。必须在不可逆晋升
-// 前整票拒绝——而不是先发布它再在 sync 里按任何阈值/票号宽限跳过退役判定。
-// 同一锁内冻结与比较，上下文编号在每次完整身份变化时单调轮换（R1 完整绑定
-// 幂等），因此编号相等即同一绑定，无需再比节点字段。
-static bool pendingSettlementSourceStaleLocked(const Session &s, const PendingSettlement &p)
+// R1补轮（Astra 完整绑定）：当前编辑上下文在给定 accepted 树里是否仍健康——
+// 完整身份（nodeId/resourceId/kind/bindingEpoch）匹配，且是可编辑文本类、
+// 可交互、非只读。这是 `Retire`/`CanAcceptInput` 的公共判据（原 Astra 第 2–4 点）。
+// 焦点 context 相等**不**构成场景权限证明，也不承担退役判定。
+static bool editingBindingHealthyLocked(const Session &s, const std::vector<SceneNode> &tree)
 {
-    return s.editingContextLive && p.sourceEditingLive &&
-        s.editingContextId != p.sourceEditingContextId;
+    for (const auto &n : tree) {
+        if (n.pod.nodeId == s.editingNodeId && n.pod.resourceId == s.editingResourceId &&
+            n.pod.nodeKind == s.editingNodeKind &&
+            n.pod.acceptedBindingEpoch == s.editingAcceptedBindingEpoch) {
+            // owned 会话锚点（可视编辑包）：presentation 节点与输入框同为合法
+            // 编辑绑定；文本事实归会话镜像，健康性只看交互/只读位。
+            const bool ownedAnchor = s.ownedTextSessionEnabled &&
+                s.editingNodeId == s.ownedTextSessionNodeId &&
+                s.editingResourceId == s.ownedTextSessionResourceId &&
+                s.editingNodeKind == s.ownedTextSessionNodeKind;
+            return (isEditableTextKind(n.pod.nodeKind) || ownedAnchor) &&
+                n.pod.isInteractive != 0 && n.pod.isReadOnly == 0;
+        }
+    }
+    return false;
+}
+
+// 成功**完整**发布后：若当前编辑绑定的对象在新 accepted 树里已删除／只读化／
+// 换绑（完整身份不再健康），立即撤销其输入权限——即使该提交生成时焦点还在
+// 别的编辑面（原 Astra：B 真删除必须第一次成功发布便退役；无宽限，也不要求
+// 下一帧）。旧的 focus/end/restore 副作用由各自入口按冻结身份淘汰，不在此处理。
+static void retireEditingContextIfUnhealthyLocked(Session *s)
+{
+    if (!s || !s->editing || !s->editingContextLive) return;
+    if (editingBindingHealthyLocked(*s, s->accepted)) return;
+    RLOGW("editing context retired: binding unhealthy in published scene "
+          "ctx=%{public}lld node=%{public}llu",
+          static_cast<long long>(s->editingContextId),
+          static_cast<unsigned long long>(s->editingNodeId));
+    s->editingContextLive = false;
+    s->editorRetired = true;
+    s->previewActive = false;
+    s->markedActive = false;
 }
 
 static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageChanged)
@@ -8310,24 +9857,10 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageCh
         g_lastSettlementVerdict.store(kSettlementStillCommitting);
         return CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING;
     }
-    if (phase == JobPhase::Done && pendingSettlementSourceStaleLocked(*s, p)) {
-        // 旧来源候选：不可逆晋升前整票拒绝。旧 accepted 保留（画面继续呈现
-        // 当前绑定可见的树），票据终态 REJECTED，owner 按失败结算后提交新候选。
-        RLOGW("pending settlement rejected stale_source ticket=%{public}llu "
-              "sourceCtx=%{public}lld liveCtx=%{public}lld",
-              static_cast<unsigned long long>(p.ticketId),
-              static_cast<long long>(p.sourceEditingContextId),
-              static_cast<long long>(s->editingContextId));
-        p.job = nullptr;
-        p.nodes.clear();
-        p.terminalStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-        p.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_REJECTED;
-        p.settled = true;
-        s->ticketRejectedCount += 1;
-        g_abortedSettlements.fetch_add(1);
-        g_lastSettlementVerdict.store(kSettlementAborted);
-        return p.decision;
-    }
+    // R1补轮（Astra）：**不再**在 Flush 之后按焦点 context 差异拒票。合法提交
+    // 一旦进入不可逆阶段，不得因后续焦点变化伪报失败并保旧 accepted（旧实现
+    // 的 post_flush_focus_change 反例）。候选来源由票据冻结的构建快照表达，
+    // 退役由发布点的完整绑定健康判据执行（见 retireEditingContextIfUnhealthyLocked）。
     CjguiInternalRendererStatus status =
         p.job ? p.job->statusSnapshot() : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     if (phase == JobPhase::Done && status == CJGUI_INTERNAL_RENDERER_OK) {
@@ -8336,11 +9869,23 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageCh
         s->accepted.swap(p.nodes);
         s->acceptedProjectionVersion = p.projectionVersion;
         s->acceptedPaintTicketId = p.ticketId;
+        s->acceptedSceneVersion += 1;
         // S1（Astra）：晋升**票据冻结的**声明快照——延迟成功绝不回读提交后
         // 可能已被下一候选改写的 working 表。
         s->acceptedRunTable = p.runTable;
+        // A1：原票据的镜像声明随同一结算晋升（延迟成功不回读新 staged）。
+        s->ownedMirrorAccepted.valid = p.ownedMirrorValid;
+        s->ownedMirrorAccepted.text = p.ownedMirrorText;
+        s->ownedMirrorAccepted.ownerContentVersion = p.ownedMirrorOwnerVersion;
+        s->ownedMirrorAccepted.bindingEpoch = p.ownedMirrorBindingEpoch;
+        s->ownedMirrorAccepted.declaredBindingEpoch = p.ownedMirrorDeclaredBindingEpoch;
+        // R1补轮（Astra）：发布点按完整绑定健康判据立即退役（B 真删除即使始于
+        // A 焦点也生效）。
+        retireEditingContextIfUnhealthyLocked(s);
         cjguiOhosLogAcceptedImageSwap(*s, p.nodes, oldProjection, p.ticketId, "commit");
         bool imageChanged = reconcileAcceptedImagesLocked(s);
+        cjguiOhosLogAcceptedSummary(s->accepted, s->acceptedProjectionVersion,
+                                    p.ticketId);
         cjguiOhosLogAcceptedFrame(s->accepted);
         s->candidateOpen = false;
         s->submittedFrameIndex += 1;
@@ -8350,6 +9895,10 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageCh
         p.density = s->surfaceDensity;
         p.terminalStatus = CJGUI_INTERNAL_RENDERER_OK;
         p.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_ACCEPTED;
+        // round10-D1：发布必须在 decision / frameIndex / terminalStatus / settled
+        // **全部落定之后**。放在四字段写入之前，读回会得到「已提交但 decision=PENDING、
+        // frame=0」这种自相矛盾的快照（round10 反例 delayed_success）。
+        cjguiOhosPublishSettlement(s->token, p, s->accepted);
         p.settled = true;
         p.job = nullptr;
         p.nodes.clear();
@@ -8376,6 +9925,11 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageCh
     s->ticketRejectedCount += 1;
     g_abortedSettlements.fetch_add(1);
     g_lastSettlementVerdict.store(kSettlementAborted);
+    // round10-D1：拒绝**只终结这张票**，accepted 保持旧值——因此走
+    // cjguiOhosPublishTicketTerminal（只写票据终态）而**不是**成功发布器。
+    // 缺这一步时拒绝永远表现为「在途」（round10 反例：decision=REJECTED 却读到
+    // unacked=11 / terminals=0）。
+    cjguiOhosPublishTicketTerminal(s->token, p, /*reason=*/0);
     return p.decision;
 }
 
@@ -8392,6 +9946,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     uint64_t projectionVersion = 0;
     // A1：本次提交的票据编号。0 = 未登记票据（同步成功，已当场接受）。
     uint64_t ticketId = 0;
+    // R1补轮（Astra）：候选构建来源与父 accepted 票据，在冻结候选的同一临界区取得。
+    int64_t frozenSourceContextId = 0;
+    bool frozenSourceLive = false;
+    uint64_t frozenParentTicket = 0;
+    Session::OwnedMirrorDeclaration frozenOwnedMirror;
     double clearR = 0, clearG = 0, clearB = 0, clearA = 1;
     void *window = nullptr;
     uint64_t gen = 0;
@@ -8438,6 +9997,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         // “候选 → 票据”的对应不会与后来 owner 的改动交错。
         ticketId = s->nextTicketId;
         s->nextTicketId += 1;
+        // R1补轮（Astra）：**来源快照在此冻结**（与候选快照/票据同一临界区），
+        // 不是 present 返回 PENDING 后再读当时的焦点 context。父 accepted 票据
+        // 一并冻结，表达本候选基于哪份 accepted 构造。
+        frozenSourceContextId = s->editingContextId;
+        frozenSourceLive = s->editingContextLive;
+        frozenParentTicket = s->acceptedPaintTicketId;
+        // A1：镜像声明与候选/票据同一临界区冻结（窗口已在候选提交前写入 staged）。
+        frozenOwnedMirror = s->ownedMirrorStaged;
         clearR = s->clearR;
         clearG = s->clearG;
         clearB = s->clearB;
@@ -8448,6 +10015,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     presentJob->ticketId = ticketId;
     presentJob->nodes = nodes;
     presentJob->projectionVersion = projectionVersion;
+    presentJob->sourceContextId = frozenSourceContextId;
+    presentJob->sourceLive = frozenSourceLive;
+    presentJob->parentAcceptedTicketId = frozenParentTicket;
+    presentJob->ownedMirrorValid = frozenOwnedMirror.valid;
+    presentJob->ownedMirrorText = frozenOwnedMirror.text;
+    presentJob->ownedMirrorOwnerVersion = frozenOwnedMirror.ownerContentVersion;
+    presentJob->ownedMirrorBindingEpoch = frozenOwnedMirror.bindingEpoch;
+    presentJob->ownedMirrorDeclaredBindingEpoch = frozenOwnedMirror.declaredBindingEpoch;
     presentJob->window = window;
     presentJob->generation = gen;
     presentJob->geometryRevision = geometryRevision;
@@ -8460,7 +10035,32 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     JobRef job = presentJob;   // 队列/等待者共享同一所有权
     g_render.post(job);
     cjguiOhosScheduleUnpostedImages();
+    {
+        // round9-D：本票已登记、结果未定。发布在途阶段，使读者能区分
+        // 「没有票据」「票据在途未结算」「票据已结算为成功/拒绝」四种状态——
+        // round8 缺的正是这一层，所以「tag 沉默」被误读成流控。
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        cjguiOhosPublishInFlight(session, ticketId,
+                                 CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING, 0,
+                                 static_cast<uint64_t>(frozenSourceContextId),
+                                 nodes.size());
+    }
+    // round7-B：**真实等待区间**的两端。`present terminal` 打印在 waitFor 返回
+    // 之后的结算/发布路径上（成功路径在 accepted swap 与 prune 之后），它记的是
+    // 「结算决定」而不是「等待返回」的时刻，不能兼作区间右端。这里在 waitFor 紧
+    // 前紧后各取一次进程内单调序号（跨 C++/仓颉唯一可共享的全序域，纯只读）。
+    const uint64_t waitEnterSeq = cjgui_ohos_observation_seq();
+    RLOGI("present wait enter session=%{public}llu ticket=%{public}llu seq=%{public}llu",
+          static_cast<unsigned long long>(session),
+          static_cast<unsigned long long>(ticketId),
+          static_cast<unsigned long long>(waitEnterSeq));
     CjguiInternalRendererStatus result = job->waitFor();
+    const uint64_t waitExitSeq = cjgui_ohos_observation_seq();
+    RLOGW("present wait exit session=%{public}llu ticket=%{public}llu status=%{public}d seq=%{public}llu",
+          static_cast<unsigned long long>(session),
+          static_cast<unsigned long long>(ticketId),
+          static_cast<int>(result),
+          static_cast<unsigned long long>(waitExitSeq));
     if (result == static_cast<CjguiInternalRendererStatus>(CJGUI_INTERNAL_RENDERER_PENDING)) {
         // 提交未定：把原票据与候选身份交给 session 的结算槽（共享所有权，
         // 调用方超时不再意味着对象被释放）。owner 在下一次 present 时结算，
@@ -8473,6 +10073,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             p.job = job;
             p.nodes = nodes;
             p.runTable = frozenRunTable;
+            // A1：PENDING 结算槽同样携带**本票据冻结的**镜像声明。
+            p.ownedMirrorValid = frozenOwnedMirror.valid;
+            p.ownedMirrorText = frozenOwnedMirror.text;
+            p.ownedMirrorOwnerVersion = frozenOwnedMirror.ownerContentVersion;
+            p.ownedMirrorBindingEpoch = frozenOwnedMirror.bindingEpoch;
+            p.ownedMirrorDeclaredBindingEpoch = frozenOwnedMirror.declaredBindingEpoch;
             p.projectionVersion = projectionVersion;
             p.ticketId = ticketId;
             p.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING;
@@ -8480,8 +10086,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             p.frameIndex = 0;
             p.settled = false;
             p.valid = true;
-            p.sourceEditingContextId = s->editingContextId;
-            p.sourceEditingLive = s->editingContextLive;
+            // R1补轮（Astra）：来源来自**随票据冻结的构建快照**，不再在 wait
+            // 返回后读 `s->editingContextId`（旧实现在焦点已切换时取错来源）。
+            p.sourceEditingContextId = presentJob->sourceContextId;
+            p.sourceEditingLive = presentJob->sourceLive;
             s->unackedTicketId = ticketId;
         }
         if (outObservation) outObservation->ticketId = ticketId;
@@ -8493,6 +10101,33 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         RLOGW("present terminal session=%{public}llu ticket=%{public}llu status=%{public}d phase=%{public}d",
               static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
               static_cast<int>(result), static_cast<int>(job->phaseSnapshot()));
+        {
+            // round10-D1：同步失败/取消也是一张**已登记**票据的终态，必须恰好发布
+            // 一次，否则读回永远显示「在途」（round10 反例：status=99 却读到
+            // unacked=11 / terminals=0）。只发布票据终态：accepted 保持旧值——
+            // 失败的候选从未来得及成为 accepted。
+            //
+            // 四值 PresentDecision 契约里没有独立的取消/失败值（新增枚举会动公共
+            // 契约），因此 decision 记 REJECTED，真实原因走 reason 位：按 job 的
+            // **真实 phase** 分类，而不是一律当取消——渲染线程的「准入拒绝」与
+            // 「停机清理取消」都是 phase=Cancelled，但前者语义是「平台准入拒绝本次
+            // 提交」，两者不该被读成同一件事（Pi 咨询 §1）。
+            const int reason = (job->phaseSnapshot() == JobPhase::Cancelled) ? 2 : 1;
+            std::lock_guard<std::mutex> g(g_sessions.lock);
+            Session *s = lookupSessionLocked(session);
+            if (s) {
+                PendingSettlement term;
+                term.valid = true;
+                term.settled = true;
+                term.ticketId = ticketId;
+                term.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_REJECTED;
+                term.terminalStatus = static_cast<int32_t>(result);
+                term.projectionVersion = s->acceptedProjectionVersion;
+                term.frameIndex = s->submittedFrameIndex;
+                term.sourceEditingContextId = frozenSourceContextId;
+                cjguiOhosPublishTicketTerminal(s->token, term, reason);
+            }
+        }
         nodes.clear();
         job.reset();
         presentJob.reset();
@@ -8508,14 +10143,46 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         s->accepted.swap(nodes);
         s->acceptedProjectionVersion = projectionVersion;
         s->acceptedPaintTicketId = ticketId;
+        s->acceptedSceneVersion += 1;
         // S1（Astra）：声明快照与节点同一次提交晋升（发布快照 = 冻结表）。
         s->acceptedRunTable = frozenRunTable;
+        s->ownedMirrorAccepted = frozenOwnedMirror;
+        // R1补轮（Astra）：同步成功路径与延迟成功路径共用同一发布点退役判据。
+        retireEditingContextIfUnhealthyLocked(s);
         cjguiOhosLogAcceptedImageSwap(*s, nodes, oldProjection, ticketId, "commit");
         imageChanged = reconcileAcceptedImagesLocked(s);
+        // round8-D：面清单与 PENDING-settle 路径同一位置发出（两条 settle 路径
+        // 缺一不可——否则「同步成功」与「延迟结算」的面事实会分叉）。
+        cjguiOhosLogAcceptedSummary(s->accepted, s->acceptedProjectionVersion,
+                                    ticketId);
+        // round10-D1：同步成功路径没有 PendingSettlement 票据对象（票据在这里直接
+        // 回收），因此现场组装等价的中性事实。帧号要等 `submittedFrameIndex += 1`
+        // 之后才知道，所以这份事实分两步发布：先登记（帧号待定），再在递增后发布
+        // 真值。两条提交路径的语义由此统一。
+        PendingSettlement syncDone;
+        syncDone.valid = true;
+        syncDone.settled = true;
+        syncDone.ticketId = ticketId;
+        syncDone.decision = CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_ACCEPTED;
+        syncDone.terminalStatus = 0;
+        syncDone.projectionVersion = s->acceptedProjectionVersion;
+        syncDone.frameIndex = 0;
+        syncDone.sourceEditingContextId = presentJob->sourceContextId;
+        // round11-D4：表面事实与延迟结算路径同源（surfaceWidth/Height/Density），
+        // 几何记录段的 density/viewport 据此冻结——漏填会让读者把 vp 当 px。
+        syncDone.drawableWidth = s->surfaceWidth;
+        syncDone.drawableHeight = s->surfaceHeight;
+        syncDone.density = s->surfaceDensity;
+        // 帧号在下方 `s->submittedFrameIndex += 1` 之后才推进，所以此处**不**发布
+        // （round10 反例：发布早于递增会读到 frame=7 而真值是 8）。等帧号落定后
+        // 再发布唯一一次「已提交 + 真帧号」的终态快照。
         // 与 PENDING-settle 路径同一对诊断，resize 后几何采样两条路径都能取到。
         cjguiOhosLogAcceptedFrame(s->accepted);
         s->candidateOpen = false;
         s->submittedFrameIndex += 1;
+        // round10-D1：帧号已推进，此刻票据四字段与 accepted 投影全部落定。
+        syncDone.frameIndex = s->submittedFrameIndex;
+        cjguiOhosPublishSettlement(s->token, syncDone, s->accepted);
         // A1：同步成功与延迟成功（票据结算）共用同一条收尾，避免两条路径分叉。
         syncEditingBufferAfterAcceptedSceneLocked(s);
         cjguiOhosObserveSurfaceLocked(s, gen, geometryRevision, w, h, density);
@@ -8813,7 +10480,14 @@ static CjguiInternalRendererStatus focusComposableNodeLocked(Session &s, uint64_
     for (const SceneNode &node : s.accepted) {
         if (node.pod.nodeId != nodeId) continue;
         const uint32_t kind = node.pod.nodeKind;
-        const bool editable = isEditableTextKind(kind);
+        // owned 会话锚点（可视编辑包）：presentation 节点（如预览正文容器）经
+        // 声明绑定成为编辑锚，可被程序化聚焦；仍要求非只读、可交互与完整
+        // 绑定身份（node/resource/kind 三元与声明一致）。
+        const bool ownedAnchor = s.ownedTextSessionEnabled &&
+            static_cast<uint64_t>(nodeId) == s.ownedTextSessionNodeId &&
+            node.pod.resourceId == s.ownedTextSessionResourceId &&
+            kind == s.ownedTextSessionNodeKind;
+        const bool editable = isEditableTextKind(kind) || ownedAnchor;
         if (!editable || node.pod.isReadOnly != 0 || node.pod.isInteractive == 0) {
             return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
         }
@@ -8868,9 +10542,18 @@ static CjguiInternalRendererStatus focusComposableNodeLocked(Session &s, uint64_
         // Core owns reveal and retries after a new accepted scene. No focus
         // event is returned for this programmatic request, preventing a loop.
         beginEditingOnNodeLocked(s, node);
-        RLOGI("platform focus node=%{public}llu ctx=%{public}lld field=%{public}s",
+        // round7-A：这是**此刻有效的编辑身份元组**的正控锚点。resource/kind/
+        // binding/v 全部取自 beginEditingOnNodeLocked 刚冻结的同一份编辑上下文
+        // （不额外加锁、不额外读取、不改任何判定），验收工具据此把窗口的采纳
+        // 事实逐字段比到当前身份，而不是只比 node + sel。纯只读日志。
+        RLOGI("platform focus node=%{public}llu ctx=%{public}lld field=%{public}s "
+              "resource=%{public}lld kind=%{public}u binding=%{public}llu v=%{public}llu",
               static_cast<unsigned long long>(nodeId),
-              static_cast<long long>(s.editingContextId), s.editingFieldName.c_str());
+              static_cast<long long>(s.editingContextId), s.editingFieldName.c_str(),
+              static_cast<long long>(s.editingResourceId),
+              static_cast<unsigned int>(s.editingNodeKind),
+              static_cast<unsigned long long>(s.editingAcceptedBindingEpoch),
+              static_cast<unsigned long long>(s.editingProjectionVersion));
         return CJGUI_INTERNAL_RENDERER_OK;
     }
     return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
@@ -9437,6 +11120,13 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     outEvent->gestureEpoch = ev.gestureEpoch;
     outEvent->acceptedBindingEpoch = ev.acceptedBindingEpoch;
     outEvent->bindingEpoch = ev.bindingEpoch;
+    // round9-A：本事件**自己的**冻结 provenance 随它出队。此处记录的是
+    // QueuedEvent 在**入队时**冻结的 editingContextId/Generation，不是出队时
+    // 会话的当前值——晚到事件的旧来源因此仍可被识别（这正是公共 POD 缺少这两个
+    // 字段导致的信息丢失：stale 判定只体现在 recordIndex 上，来源号本身被丢弃）。
+    s->lastEventProvenanceCtx = ev.editingContextId;
+    s->lastEventProvenanceGen = ev.editingContextGeneration;
+    s->lastEventProvenanceSeq += 1;
     s->lastEventText = ev.text;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -9650,13 +11340,16 @@ extern "C" int32_t ohos_renderer_ime_context_json(char *out, int32_t capacity)
     return 1;
 }
 
-// 校验回调携带的上下文：只接受当前活上下文的编号。
-// 返回 nullptr = 上下文已失效（旧焦点/换绑/重建/关闭后的旧回调）。
+// 校验回调携带的上下文：接受当前活上下文，且其**完整绑定**在当前 accepted 树
+// 里仍健康。返回 nullptr = 上下文已失效（旧焦点/换绑/重建/关闭后的旧回调）。
+// R1补轮（Astra）：只比 live/context 编号不足以授权输入——删除/只读化/换绑后
+// 必须按完整身份拒绝旧输入（CanAcceptInput）。
 static Session *takeEditingContextLocked(int64_t contextId)
 {
     Session *s = findEditingSessionLocked();
     if (!s || !s->editingContextLive) return nullptr;
     if (contextId != s->editingContextId) return nullptr;
+    if (!editingBindingHealthyLocked(*s, s->accepted)) return nullptr;
     return s;
 }
 
@@ -9883,6 +11576,190 @@ extern "C" int32_t ohos_renderer_ime_finish_editing_ctx(int64_t contextId)
     return 0;
 }
 
+// round7-B：进程内**只读**观测序号。hilog 的行序是 hilogd 的接收序，不是事件
+// 因果序：owner 线程与 transport 连接 worker 线程之间没有任何共享锁或
+// happens-before 边，两行谁先出现在流里完全可能与真实先后相反（毫秒时间戳还会
+// 并列），所以判据不能建在行序或跨语言时钟上。这个原子计数器是两侧唯一能共享
+// 的全序域：RMW 对同一变量给出全序，真实时间不重叠的两个事件其 seq 必然保序。
+// 它只被日志读取，不参与任何调度、许可或公开协议。
+static std::atomic<uint64_t> g_cjguiObservationSeq{0};
+
+extern "C" uint64_t cjgui_ohos_observation_seq(void)
+{
+    return g_cjguiObservationSeq.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+// round9-A：最近一次出队事件的**冻结来源**（H 私有只读接缝）。
+//
+// 为什么需要它：选区事件的来源身份（editingContextId + editingContextGeneration）
+// 在 QueuedEvent 入队时就冻结了，但公共 `CjguiInternalRendererEvent` POD 没有这两
+// 个字段（POD 布局有 _Static_assert 断言，不可扩），于是出队时只剩
+// `recordIndex` 一个布尔量（0=当前 / 1=stale）。窗口因此无法在采纳事实里带上
+// **该事件自己的**来源，只能打印「处理这一刻」的当前值——验收侧读到的行就永远
+// 缺来源：旧挂载的迟到采纳与新挂载的采纳在文本上不可区分。
+//
+// 形状：单值槽 + 序号。窗口在处理**刚出队的那一个**事件时读它，因此不需要在 POD
+// 上加字段。序号 `seq` 随每次成功出队推进，窗口可据此确认读到的是「本次事件的
+// 来源」而不是上一次残留；不匹配时窗口必须放弃打印来源而不是猜。纯只读，不改
+// 会话状态、不参与任何判定或协议。
+// ---------------------------------------------------------------------------
+// round9-D：拉取式有界只读状态读回（返回一行中性事实串）。
+//
+// 形状（咨询第 2 节裁决）：拉取式 FFI，不引回调——回调会把线程亲和问题带进 C ABI，
+// 而且驱动只有 transport 与 hilog 两条路，收不到回调。返回**字符串**而不是几十个
+// 出参，与本仓库既有先例 `cjgui_internal_renderer_form_event_text` 同一形状：
+// native 持有缓冲，调用方只读一次。票据环展开成出参会得到 109 个实参，既不可读
+// 也超出编译器接受范围。
+//
+// 内容＝当前 accepted 摘要 + 在途票据 + 最近 K=8 张票据环的阶段事实。**不含**产品
+// 语义分类：串里没有 source/preview 字样，调用方按自己的词表判面（分类归产品或
+// 驱动，通用层只报事实）。调用方不得长期持有该指针——下一次调用会覆盖它。
+// ---------------------------------------------------------------------------
+constexpr size_t kOhosAcceptedRing = 8;
+
+extern "C" const char *ohos_renderer_accepted_state(uint64_t session)
+{
+    // 每**线程**一份缓冲（不是每 session）：本函数可能被不同线程调用，各自一份
+    // 避免数据竞争；同一线程内覆盖写，调用方按「借用」对待——下一次同线程调用会覆盖。
+    static thread_local std::string storage;
+    std::string out;
+    {
+        // round10-D2：token→slot 解析与身份校验必须在 **g_sessions.lock 内**完成。
+        // 旧实现在未持该锁时调 `sessionSlotLocked`，于是「解析出的下标」与「随后的
+        // 槽位读取」之间存在销毁/复用窗口（session 换实例、槽被另一个 token 接管），
+        // 可能把上一个实例的事实报成本次读回（round10 槽位复用反例）。
+        //
+        // 锁序固定为 `g_sessions.lock` → `g_acceptedFactLock`：发布侧（create /
+        // destroy / 结算发布）都已在持 sessions 锁时再取 fact 锁，读回与它们同序，
+        // 不会死锁。只读：不创建票据、不改 accepted、不推进帧号。
+        std::lock_guard<std::mutex> sessionGuard(g_sessions.lock);
+        const int slot = sessionSlotLocked(session);
+        if (slot < 0) return nullptr;        // 会话不存在 / 已销毁
+        // round12-R1：当前输入身份在**查询时刻**从 Session 现值读取（sessions
+        // 锁内）。换焦/结束编辑无需等待下一次发布即反映；live=false 显式表达。
+        const Session *liveSession = lookupSessionLocked(session);
+        const OhosEditingIdentity currentEditing =
+            liveSession ? cjguiOhosEditingIdentityOf(*liveSession) : OhosEditingIdentity{};
+        std::lock_guard<std::mutex> guard(g_acceptedFactLock);
+        const OhosAcceptedFactSlot &src = g_acceptedFact[slot];
+        // 槽不属于该 token（尚未提交过，或槽已被新实例接管）⇒ 明确「无新提交」。
+        // 返回**空串**而不是 nullptr：仓颉侧 `internalRendererReadAcceptedStateText`
+        // 直接 `borrowed.toString()` 且按 `isEmpty()` 分流，没有 null 检查；把
+        // 「无新提交」也表达成空串，两种「没有事实」就共用同一条既有分支
+        // （Pi 咨询 §3.2：返回 "" 的改法无论 toString 对 null 的语义如何都安全）。
+        if (src.token != session) return "";
+        const OhosAcceptedFact &f = src.fact;
+        char head[512];
+        std::string faceList;
+        for (const OhosFaceNode &fn : f.faceNodes) {
+            faceList += " F" + std::to_string(fn.nodeId) + ":" + fn.semanticId;
+        }
+        std::snprintf(head, sizeof(head),
+                      "token=%llu epoch=%llu proj=%llu nodes=%llu semantic=%llu "
+                      "frame=%llu last=%llu "
+                      "unacked=%llu unackedDecision=%llu unackedStatus=%lld unackedCtx=%llu "
+                      "unackedNodes=%llu tickets=%llu faces=%zu facesTruncated=%u",
+                      // token 必须在最前：格式串以 token= 开头，漏掉它会让后面每个
+                      // 字段整体错位一格（编译器只报「% conversions > arguments」，
+                      // 不会告诉你哪个字段错了——这类错必须靠实参对齐发现）。
+                      (unsigned long long)src.token,
+                      (unsigned long long)src.epoch,
+                      (unsigned long long)f.acceptedProjection,
+                      (unsigned long long)f.acceptedNodes,
+                      (unsigned long long)f.acceptedSemanticHash,
+                      (unsigned long long)f.acceptedFrameIndex,
+                      (unsigned long long)f.lastAcceptedTicketId,
+                      (unsigned long long)f.unackedTicketId,
+                      (unsigned long long)f.unackedDecision,
+                      (long long)f.unackedTerminalStatus,
+                      (unsigned long long)f.unackedSourceCtx,
+                      (unsigned long long)f.unackedCandidateNodes,
+                      (unsigned long long)f.ringCount,
+                      f.faceNodes.size(),
+                      f.faceTruncated);
+        out = head;
+        out += faceList;
+        // round11-D4：目标几何记录段（有界：cap 条 × 截断 semantic）。读者据此
+        // 定位目标，不读 hilog node-rect、不反推 hitTestAccepted、不按屏幕猜比例。
+        // 三态具名：geoTruncated=1（截断，目标可能在未列部分）/ 记录缺失且
+        // truncated=0（未纳入 accepted）/ 记录在而 vis=0（完全不可见）。
+        out += " geo units=vp density=" + std::to_string(f.geoDensity)
+             + " viewport=" + std::to_string(f.geoViewportWidth) + "x"
+             + std::to_string(f.geoViewportHeight)
+             + " used=" + std::to_string(f.geoNodes.size())
+             + " truncated=" + std::to_string(f.geoTruncated);
+        for (const OhosGeoNodeFact &g : f.geoNodes) {
+            out += " G" + std::to_string(g.nodeId) + ":" + g.semanticId
+                 + ",b=" + std::to_string(g.acceptedBindingEpoch)
+                 + ",p=" + std::to_string(g.projectionVersion)
+                 + ",c=" + std::to_string(g.clipCount)
+                 + ",i=" + std::to_string(g.x) + "," + std::to_string(g.y)
+                 + "," + std::to_string(g.width) + "," + std::to_string(g.height)
+                 + ",v=" + std::to_string(g.visibleX) + "," + std::to_string(g.visibleY)
+                 + "," + std::to_string(g.visibleW) + "," + std::to_string(g.visibleH)
+                 + ",vis=" + std::to_string(g.fullyInvisible);
+            // round12-R2：逐条裁剪约束（保守 AABB 之外的实际命中判据）。段内
+            // 分号分隔约束、逗号分隔字段（x,y,w,h,r）；r>0 即圆角约束。
+            out += ",q=";
+            for (uint32_t i = 0; i < g.clipCount && i < 4u; ++i) {
+                if (i) out += ";";
+                out += std::to_string(g.clips[i].x) + "," + std::to_string(g.clips[i].y)
+                     + "," + std::to_string(g.clips[i].w) + "," + std::to_string(g.clips[i].h)
+                     + "," + std::to_string(g.clips[i].radius);
+            }
+        }
+        // round12-R1：当前输入身份 = 查询时刻 Session 现值（换焦/结束编辑即时
+        // 反映；live=false 显式表达）。与 accepted 投影事实（head/frame/tickets）
+        // 分别命名，历史发布身份不再出现在这条字段里。
+        if (currentEditing.live) {
+            out += " edit=live ctx=" + std::to_string(currentEditing.ctx)
+                 + " gen=" + std::to_string(currentEditing.generation)
+                 + " node=" + std::to_string(currentEditing.node)
+                 + " res=" + std::to_string(currentEditing.resource)
+                 + " kind=" + std::to_string(currentEditing.kind)
+                 + " b=" + std::to_string(currentEditing.binding)
+                 + " v=" + std::to_string(currentEditing.version)
+                 + " field=" + currentEditing.field;
+        } else {
+            out += " edit=none";
+        }
+        // 票据环按时间正序（最旧 → 最新）：调用方无需理解 head/tail，末项即最新。
+        for (size_t i = 0; i < f.ringCount && i < kOhosAcceptedRing; ++i) {
+            const size_t idx = (f.ringHead + kOhosTicketRing - f.ringCount + i) % kOhosTicketRing;
+            const OhosTicketFact &t = f.ring[idx];
+            char item[256];
+            std::snprintf(item, sizeof(item),
+                          " T%llu/%llu/s%lld/v%llu/c%llu/n%llu/x%llu",
+                          (unsigned long long)t.ticketId,
+                          (unsigned long long)t.decision,
+                          (long long)t.terminalStatus,
+                          (unsigned long long)t.acceptedProjection,
+                          (unsigned long long)t.sourceEditingContextId,
+                          (unsigned long long)t.publishedNodes,
+                          (unsigned long long)t.cancelled);
+            out += item;
+        }
+    }
+    storage = std::move(out);
+    return storage.c_str();
+}
+
+extern "C" int32_t ohos_renderer_last_event_provenance(uint64_t session, int64_t *outCtx,
+                                                      uint64_t *outGen, uint64_t *outSeq)
+{
+    if (!outCtx || !outGen || !outSeq) return -1;
+    // 与出队写入**同一个**锁：因此读到的是一个一致快照，不会出现「事件 N 的 ctx
+    // 配事件 N+1 的 gen」这种撕裂组合。
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return 1;
+    *outCtx = s->lastEventProvenanceCtx;
+    *outGen = s->lastEventProvenanceGen;
+    *outSeq = s->lastEventProvenanceSeq;
+    // seq=0 表示还没出队过任何事件；ctx=0 表示该事件没有来源身份。
+    return (s->lastEventProvenanceSeq == 0 || s->lastEventProvenanceCtx == 0) ? 1 : 0;
+}
+
 // 通用窗口诊断出口（框架可观测性，不承载任何业务语义）：Cangjie 侧的
 // `println` 在 OHOS **不进 hilog**，窗口内部的判定（是否重建编辑会话、身份是否
 // 命中、被哪条具名分支拒绝）在设备上完全不可见——2026-10-01 的模式切换排查正是
@@ -9921,10 +11798,21 @@ extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t en
         }
         if (forward) {
             rememberForwardedSelectionLocked(*s, a, b);
-            if (!changed) {
-                RLOGI("ime selection observation forwarded ctx=%{public}lld sel=%{public}u:%{public}u native_changed=0",
-                      static_cast<long long>(contextId), a, b);
-            }
+            // round7-A：**每一次**转发都留一行身份完整的平台实际观测。只在
+            // `!changed` 时打印会让 changed=true 的观测整行缺失，验收工具因此
+            // 无法把采纳事实比到「平台实际观测的那一份身份」上，只能退化成按
+            // sel 猜。resource/kind/binding/v 取自本会话刚冻结的编辑上下文，
+            // 纯只读，不改任何判定。`native_changed` 保留旧字段名与取值语义。
+            RLOGI("ime selection observation forwarded ctx=%{public}lld sel=%{public}u:%{public}u "
+                  "node=%{public}llu resource=%{public}lld kind=%{public}u binding=%{public}llu "
+                  "v=%{public}llu native_changed=%{public}d",
+                  static_cast<long long>(contextId), a, b,
+                  static_cast<unsigned long long>(s->editingNodeId),
+                  static_cast<long long>(s->editingResourceId),
+                  static_cast<unsigned int>(s->editingNodeKind),
+                  static_cast<unsigned long long>(s->editingAcceptedBindingEpoch),
+                  static_cast<unsigned long long>(s->editingProjectionVersion),
+                  changed ? 1 : 0);
         }
         // An initial word installation may echo while the finger has already
         // moved. It is still an installation fact, not the latest visual extent.
@@ -10091,6 +11979,10 @@ extern "C" int32_t ohos_renderer_ime_restore_ack_ctx(int64_t contextId, uint64_t
         return 1;
     }
     if (ok == 0) {
+        // 平台安装失败：**旧票按冻结身份落恰一次终态**，native 不自签新票、不把
+        // live ctx 迁到旧请求上（旧实现同时用 `req`/`re` 指同一槽，清空后再读 req
+        // 只得零身份；更根本的是 native 自造票据、重置截止，却没按窗口账目终结旧票）。
+        // 新事务由窗口依据当前 owner/镜像/绑定重新登记；这张旧 ACK 不解锁任何会话。
         terminateProxyRestoreRequestLocked(*s, "platform_install_failed");
         return 0;
     }

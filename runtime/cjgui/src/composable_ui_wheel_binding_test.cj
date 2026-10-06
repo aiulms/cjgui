@@ -31,6 +31,13 @@ private class QueuedWheelBindingController <: CjguiComposableUiController &
     private var pointerInteractiveValue: Bool = false
     private var interactionPaintValue: Bool = false
     private var viewportValue: ?CjguiComposableUiScrollViewport = None
+    private var consumesDeltaValue: Bool = true
+    private var lastWheelSerialValue: Int64 = 0
+    private var lastFrameworkScrollValue: Bool = false
+    private var lastRequestedBeforeValue: Int64 = 0
+    private var lastRequestedAfterValue: Int64 = 0
+    private var lastAcceptedBeforeValue: Int64 = 0
+    private var lastAcceptedAfterValue: Int64 = 0
     private var accumulatedYValue: Float64 = 0.0
     private var packetCountValue: Int64 = 0
     private var lifecyclePacketCountValue: Int64 = 0
@@ -83,13 +90,19 @@ private class QueuedWheelBindingController <: CjguiComposableUiController &
     }
 
     public func consumesWheelDelta(node: CjguiComposableUiLayoutNode): Bool {
-        return node.nodeId == QUEUED_WHEEL_NODE_ID
+        return consumesDeltaValue && node.nodeId == QUEUED_WHEEL_NODE_ID
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
         if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_SCROLL &&
             event.node.nodeId == QUEUED_WHEEL_NODE_ID) {
             if (let Some(delta) <- event.wheelDelta) {
+                lastWheelSerialValue = event.wheelEventSerial
+                lastFrameworkScrollValue = event.frameworkScrollApplied
+                lastRequestedBeforeValue = event.scrollRequestedBefore
+                lastRequestedAfterValue = event.scrollRequestedAfter
+                lastAcceptedBeforeValue = event.scrollAcceptedBefore
+                lastAcceptedAfterValue = event.scrollAcceptedAfter
                 accumulatedYValue += delta.deltaY
                 packetCountValue += 1
                 // Count each delivered phase packet, including the zero-delta
@@ -128,6 +141,12 @@ private class QueuedWheelBindingController <: CjguiComposableUiController &
     public func appliedIncarnation(): Int64 { return appliedIncarnationValue }
     public func phaseTrace(): String { return phaseTraceValue }
     public func dispatchTrace(): String { return dispatchTraceValue }
+    public func lastWheelSerial(): Int64 { return lastWheelSerialValue }
+    public func lastFrameworkScroll(): Bool { return lastFrameworkScrollValue }
+    public func lastRequestedBefore(): Int64 { return lastRequestedBeforeValue }
+    public func lastRequestedAfter(): Int64 { return lastRequestedAfterValue }
+    public func lastAcceptedBefore(): Int64 { return lastAcceptedBeforeValue }
+    public func lastAcceptedAfter(): Int64 { return lastAcceptedAfterValue }
 
     public func changePaint(): Unit { paintValue = 1 - paintValue; revisionValue += 1 }
     public func rebind(resource: Int64, action: String): Unit {
@@ -147,6 +166,28 @@ private class QueuedWheelBindingController <: CjguiComposableUiController &
         viewportValue = value
         revisionValue += 1
     }
+    public func setConsumesDelta(value: Bool): Unit { consumesDeltaValue = value }
+}
+
+@Test
+func composableQueuedWheelReportsOneFrameworkViewportStepToOrdinaryConsumer(): Unit {
+    let controller = QueuedWheelBindingController()
+    let viewport = CjguiComposableUiScrollViewport()
+    controller.bindViewport(Some(viewport))
+    controller.setConsumesDelta(false)
+    let window = queuedWheelWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        let oldAccepted = viewport.acceptedOffset()
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -1.0, 1u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(controller.packetCount(), 1)
+        @Assert(controller.lastWheelSerial() > 0, true)
+        @Assert(controller.lastFrameworkScroll(), true)
+        @Assert(controller.lastRequestedAfter() != controller.lastRequestedBefore(), true)
+        @Assert(controller.lastAcceptedBefore(), oldAccepted)
+        @Assert(controller.lastAcceptedAfter(), oldAccepted)
+    } finally { window.close() }
 }
 
 private func queuedWheelEnqueue(session: UInt64, deltaY: Float64, phase: UInt32): Int32 {

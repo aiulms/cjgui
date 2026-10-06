@@ -48,7 +48,7 @@ static NSUInteger paintedPixels(CJGuiInternalComposableSceneOverlay *overlay,
     NSGraphicsContext *prior = NSGraphicsContext.currentContext;
     NSGraphicsContext *context = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
     [NSGraphicsContext setCurrentContext:context];
-    [overlay drawMultilineNode:node active:YES outLayoutMicros:NULL outDrawMicros:NULL
+    [overlay drawMultilineNode:node active:YES sourceLayout:nil outLayoutMicros:NULL outDrawMicros:NULL
         outSaveMicros:NULL outClipMicros:NULL outRestoreMicros:NULL outGlyphs:NULL];
     [context flushGraphics];
     [NSGraphicsContext setCurrentContext:prior];

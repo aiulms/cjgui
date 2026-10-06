@@ -27,6 +27,7 @@ consumed。回声身份相同但值不同，取不走锚。
 native caret 判重。
 """
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -262,7 +263,20 @@ def production_anchor_struct(text: str) -> str:
 
 def replica_with_anchor(source_text: str) -> str:
     """在 recovery 已经注入落点账本字段的 replica 上，再注入生产的锚结构与实例字段。"""
-    base = recovery.replica_with_ledger(source_text)
+    # recovery 的 replica 把镜像声明与 owned 会话身份留成 %...% 占位（抽生产原文，
+    # 字段漂移即编译错）；它自己的 build_harness 负责替换，本套件走的是另一条
+    # harness 组装路径，必须就地补上同样的两处生产原文切片。
+    base = recovery.replica_with_ledger(source_text).replace(
+        "%MIRROR_FIELDS%", recovery.production_span(
+            source_text, "    struct OwnedMirrorDeclaration {",
+            "    OwnedMirrorDeclaration ownedMirrorAccepted;")).replace(
+        "%OWNED_ID_FIELDS%", recovery.production_span(
+            source_text, "    bool ownedTextSessionEnabled = false;",
+            "    uint64_t ownedTextSessionBindingEpoch = 0;"))
+    # recovery 的 replica 为票据判据自带一份最小锚镜像；本套件必须用**生产原文**，
+    # 先把镜像副本整块摘掉，否则同一 Session 里出现两个 HumanSelectionAnchor。
+    base = re.sub(r"\n *struct HumanSelectionAnchor \{.*?\n *\};\n", "\n", base, flags=re.S)
+    base = re.sub(r"\n *HumanSelectionAnchor humanAnchor;", "", base)
     import test_touch_gesture_native as touch
     handles, selection_fields = touch.selection_declarations(source_text, include_menu_intent=False)
     injected = production_anchor_struct(source_text) + "\n" + ANCHOR_FIELDS + selection_fields + "bool editingTapPending=false;\n"

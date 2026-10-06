@@ -940,14 +940,28 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// 系统减少动效、窗口隐藏或最小化都会让该窗口确定收敛；恢复可见后回到系统
     /// 策略。同值重复采样不重发动效策略，避免每帧重建。
     private func servicePlatformStateFor(entry: CjguiMacosApplicationWindowEntry): Bool {
+        let platformSpan = entry.composableWindow.beginOwnerTracePhase(65u32)
+        try {
         let windowNumber = entry.composableWindow.windowNumber()
+        let accentSpan = entry.composableWindow.beginOwnerTracePhase(74u32)
         let accentChanged = entry.composableWindow.observeSystemAccent()
+        entry.composableWindow.endOwnerTracePhase(74u32, accentSpan)
+        let motionSpan = entry.composableWindow.beginOwnerTracePhase(71u32)
+        let reduceMotion = CjguiComposableUiPlatformFacts.reduceMotionEnabled()
+        entry.composableWindow.endOwnerTracePhase(71u32, motionSpan)
+        let appearanceSpan = entry.composableWindow.beginOwnerTracePhase(72u32)
+        let colorScheme = CjguiComposableUiPlatformFacts.systemColorScheme()
+        entry.composableWindow.endOwnerTracePhase(72u32, appearanceSpan)
+        let visibilitySpan = entry.composableWindow.beginOwnerTracePhase(73u32)
+        let visible = CjguiComposableUiPlatformFacts.windowVisible(windowNumber)
+        let minimized = CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+        entry.composableWindow.endOwnerTracePhase(73u32, visibilitySpan)
         let changed = entry.platformStateTracker.observe(
-            reduceMotion: CjguiComposableUiPlatformFacts.reduceMotionEnabled(),
-            systemColorScheme: CjguiComposableUiPlatformFacts.systemColorScheme(),
+            reduceMotion: reduceMotion,
+            systemColorScheme: colorScheme,
             themePreference: selectedThemePreference,
-            windowVisible: CjguiComposableUiPlatformFacts.windowVisible(windowNumber),
-            windowMinimized: CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+            windowVisible: visible,
+            windowMinimized: minimized
         )
         if (changed) {
             if (let Some(snapshot) <- entry.platformStateTracker.accepted()) {
@@ -956,6 +970,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             }
         }
         return changed || accentChanged
+        } finally {
+            entry.composableWindow.endOwnerTracePhase(65u32, platformSpan)
+        }
     }
 
     private func containsIdentifier(
@@ -1117,14 +1134,28 @@ public class CjguiMacosApplicationHost {
     /// 窗口隐藏或最小化都会让本窗确定收敛；恢复可见后回到系统策略。同值重复
     /// 采样不重发、不重建主题。返回是否发生变化。
     private func servicePlatformState(): Bool {
+        let platformSpan = composableWindow.beginOwnerTracePhase(65u32)
+        try {
         let windowNumber = composableWindow.windowNumber()
+        let accentSpan = composableWindow.beginOwnerTracePhase(74u32)
         let accentChanged = composableWindow.observeSystemAccent()
+        composableWindow.endOwnerTracePhase(74u32, accentSpan)
+        let motionSpan = composableWindow.beginOwnerTracePhase(71u32)
+        let reduceMotion = CjguiComposableUiPlatformFacts.reduceMotionEnabled()
+        composableWindow.endOwnerTracePhase(71u32, motionSpan)
+        let appearanceSpan = composableWindow.beginOwnerTracePhase(72u32)
+        let colorScheme = CjguiComposableUiPlatformFacts.systemColorScheme()
+        composableWindow.endOwnerTracePhase(72u32, appearanceSpan)
+        let visibilitySpan = composableWindow.beginOwnerTracePhase(73u32)
+        let visible = CjguiComposableUiPlatformFacts.windowVisible(windowNumber)
+        let minimized = CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+        composableWindow.endOwnerTracePhase(73u32, visibilitySpan)
         let changed = platformStateTracker.observe(
-            reduceMotion: CjguiComposableUiPlatformFacts.reduceMotionEnabled(),
-            systemColorScheme: CjguiComposableUiPlatformFacts.systemColorScheme(),
+            reduceMotion: reduceMotion,
+            systemColorScheme: colorScheme,
             themePreference: selectedThemePreference,
-            windowVisible: CjguiComposableUiPlatformFacts.windowVisible(windowNumber),
-            windowMinimized: CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+            windowVisible: visible,
+            windowMinimized: minimized
         )
         if (changed) {
             if (let Some(snapshot) <- platformStateTracker.accepted()) {
@@ -1133,6 +1164,9 @@ public class CjguiMacosApplicationHost {
             }
         }
         return changed || accentChanged
+        } finally {
+            composableWindow.endOwnerTracePhase(65u32, platformSpan)
+        }
     }
 
     /// One bounded normal turn. The existing scheduler remains the only
@@ -1144,17 +1178,23 @@ public class CjguiMacosApplicationHost {
         }
         // C：先采集本窗最小平台状态，只有事实变化时才重发动效策略；随后推进
         // 本窗动效。无活动动画时保持原有休眠。
+        cjguiOwnerTraceBoundary(0u64, 0u64, 311u32, 0u32, 0u32, 0u64, UInt64.Max)
         let _ = servicePlatformState()
+        cjguiOwnerTraceBoundary(0u64, 0u64, 312u32, 0u32, 0u32, 0u64, UInt64.Max)
         let _ = composableWindow.advanceAnimations(atTime: MonoTime.now())
+        cjguiOwnerTraceBoundary(0u64, 0u64, 313u32, 0u32, 0u32, 0u64, UInt64.Max)
         if (let Some(connection) <- externalConnection) {
             let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternal(composableWindow, connection)
         } else {
             let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(composableWindow)
         }
+        cjguiOwnerTraceBoundary(0u64, 0u64, 314u32, 0u32, 0u32, 0u64, UInt64.Max)
+        cjguiOwnerTraceBoundary(0u64, 0u64, 315u32, 0u32, 0u32, 0u64, UInt64.Max)
         if (!composableWindow.isOpen()) {
             close()
             return false
         }
+        cjguiOwnerTraceBoundary(0u64, 0u64, 316u32, 0u32, 0u32, 0u64, UInt64.Max)
         return true
     }
 

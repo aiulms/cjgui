@@ -121,10 +121,14 @@ FINGERPRINT_FILE="$NATIVE_LIB_DIR/cjgui_macos_application_host.fingerprint"
 LINK_FINGERPRINT_FILE="$NATIVE_LIB_DIR/cjgui_macos_application_host.linked.fingerprint"
 RENDERER_SOURCE="$NATIVE_SOURCE_DIR/cjgui_internal_renderer.m"
 BRIDGE_SOURCE="$NATIVE_SOURCE_DIR/cjgui_native_bridge.m"
+ASYNC_MEASURE_SOURCE="$NATIVE_SOURCE_DIR/cjgui_async_multiline_measure.m"
+ASYNC_BRIDGE_SOURCE="$NATIVE_SOURCE_DIR/cjgui_async_multiline_bridge.m"
 RENDERER_HEADER="$NATIVE_SOURCE_DIR/cjgui_internal_renderer.h"
 BRIDGE_HEADER="$NATIVE_SOURCE_DIR/cjgui_native_bridge.h"
+ASYNC_MEASURE_HEADER="$NATIVE_SOURCE_DIR/cjgui_async_multiline_measure.h"
+FONT_SNAPSHOT_HEADER="$NATIVE_SOURCE_DIR/cjgui_composable_font_snapshot.h"
 LAUNCHER_SOURCE="$NATIVE_SOURCE_DIR/cjgui_macos_application_launcher.m"
-for native_input in "$RENDERER_SOURCE" "$BRIDGE_SOURCE" "$RENDERER_HEADER" "$BRIDGE_HEADER" "$LAUNCHER_SOURCE"; do
+for native_input in "$RENDERER_SOURCE" "$BRIDGE_SOURCE" "$ASYNC_MEASURE_SOURCE" "$ASYNC_BRIDGE_SOURCE" "$RENDERER_HEADER" "$BRIDGE_HEADER" "$ASYNC_MEASURE_HEADER" "$FONT_SNAPSHOT_HEADER" "$LAUNCHER_SOURCE"; do
   if [[ ! -f "$native_input" ]]; then
     echo "cjgui macOS application host: missing native input $native_input" >&2
     exit 2
@@ -159,8 +163,12 @@ native_fingerprint() {
   print -r -- "native_source_dir=$NATIVE_SOURCE_DIR"
   print -r -- "renderer=$(hash_file "$RENDERER_SOURCE")"
   print -r -- "bridge=$(hash_file "$BRIDGE_SOURCE")"
+  print -r -- "async_measure=$(hash_file "$ASYNC_MEASURE_SOURCE")"
+  print -r -- "async_bridge=$(hash_file "$ASYNC_BRIDGE_SOURCE")"
   print -r -- "renderer_header=$(hash_file "$RENDERER_HEADER")"
   print -r -- "bridge_header=$(hash_file "$BRIDGE_HEADER")"
+  print -r -- "async_measure_header=$(hash_file "$ASYNC_MEASURE_HEADER")"
+  print -r -- "font_snapshot_header=$(hash_file "$FONT_SNAPSHOT_HEADER")"
   print -r -- "launcher=$(hash_file "$LAUNCHER_SOURCE")"
   print -r -- "clang_path=$CLANG_PATH"
   print -r -- "clang_binary=$(hash_file "$CLANG_PATH")"
@@ -211,7 +219,9 @@ if (( NEEDS_NATIVE_REBUILD )); then
   NATIVE_BUILD_DIR="$(mktemp -d "$NATIVE_LIB_DIR/.cjgui-native-build.XXXXXX")"
   "$CLANG_PATH" "${CLANG_FLAGS[@]}" -isysroot "$SDKROOT_PATH" -c "$RENDERER_SOURCE" -o "$NATIVE_BUILD_DIR/cjgui_internal_renderer.o"
   "$CLANG_PATH" "${CLANG_FLAGS[@]}" -isysroot "$SDKROOT_PATH" -c "$BRIDGE_SOURCE" -o "$NATIVE_BUILD_DIR/cjgui_native_bridge.o"
-  "$AR_PATH" rcs "$NATIVE_BUILD_DIR/libcjgui_internal_renderer.a" "$NATIVE_BUILD_DIR/cjgui_internal_renderer.o" "$NATIVE_BUILD_DIR/cjgui_native_bridge.o"
+  "$CLANG_PATH" "${CLANG_FLAGS[@]}" -isysroot "$SDKROOT_PATH" -c "$ASYNC_MEASURE_SOURCE" -o "$NATIVE_BUILD_DIR/cjgui_async_multiline_measure.o"
+  "$CLANG_PATH" "${CLANG_FLAGS[@]}" -isysroot "$SDKROOT_PATH" -c "$ASYNC_BRIDGE_SOURCE" -o "$NATIVE_BUILD_DIR/cjgui_async_multiline_bridge.o"
+  "$AR_PATH" rcs "$NATIVE_BUILD_DIR/libcjgui_internal_renderer.a" "$NATIVE_BUILD_DIR/cjgui_internal_renderer.o" "$NATIVE_BUILD_DIR/cjgui_native_bridge.o" "$NATIVE_BUILD_DIR/cjgui_async_multiline_measure.o" "$NATIVE_BUILD_DIR/cjgui_async_multiline_bridge.o"
   "$CLANG_PATH" "${CLANG_FLAGS[@]}" -isysroot "$SDKROOT_PATH" -I "$NATIVE_SOURCE_DIR" -c "$LAUNCHER_SOURCE" -o "$NATIVE_BUILD_DIR/cjgui_macos_application_launcher.o"
   "$AR_PATH" rcs "$NATIVE_BUILD_DIR/libcjgui_macos_application_launcher.a" "$NATIVE_BUILD_DIR/cjgui_macos_application_launcher.o"
   # Archives arrive before their key; an unsuccessful compile/archive never advertises a valid new fingerprint.

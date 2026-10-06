@@ -240,7 +240,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         }
         let node = event.node
         if (node.fieldId.size == 0) {
-            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} reason=no_field_id")
+            generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} reason=no_field_id")
             return
         }
         let window = match (attachedWindow) {
@@ -248,7 +248,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             case None => return
         }
         if (catalog.fieldFor(node.fieldId).isNone()) {
-            internalRendererWindowLog(
+            generatedRegionDiagLog(
                 "GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} reason=unknown_field")
             return
         }
@@ -259,14 +259,14 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         if (field.editorKind != "TEXT" || field.writeActionName.size == 0 ||
             node.operationActionName != field.writeActionName ||
             node.resourceId != field.resourceId || node.operationResourceId < 0) {
-            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
+            generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
                 "reason=binding_mismatch editor=${field.editorKind} writer=${field.writeActionName} " +
                 "nodeWriter=${node.operationActionName} fieldRes=${field.resourceId} nodeRes=${node.resourceId} " +
                 "ownerTarget=${node.operationResourceId}")
             return
         }
         if (!binding.rangeTextEditSupported(field.fieldId)) {
-            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
+            generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
                 "reason=provider_unsupported")
             return
         }
@@ -283,7 +283,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             break
         }
         if (!acceptedMatched) {
-            internalRendererWindowLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
+            generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
                 "semantic=${node.semanticId} reason=stale_focus_not_accepted")
             return
         }

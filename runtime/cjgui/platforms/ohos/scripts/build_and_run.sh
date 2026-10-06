@@ -22,6 +22,18 @@ if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
 else
   LAB="$REPO_ROOT/labs/ohos_cjgui_app"
 fi
+# 入口断言（2026-10-05）：LAB 在此无条件落定，后续 20+ 处引用依赖它。曾观测到
+# 某次运行在 line 396 报 LAB 未绑定（`set -u`），而静态核查确认本处双分支必赋值、
+# 无 unset/遮蔽/干扰——疑似瞬态进程状态。若复现，此处 1 秒内具名失败并留全上下文，
+# 不再等构建安装完才报一行含糊错误。正常路径零行为变化。
+if [ -z "${LAB:-}" ] || [ ! -d "$LAB" ]; then
+  echo "ENTRY-FAIL LAB 未落定：LAB='${LAB:-<unset>}' args='$*' ppid=$PPID shell=$0" >&2
+  exit 2
+fi
+# 立即绝对化：step 1 的 `cd "$LAB"` 会改变 cwd，此后所有 `$LAB/...` 引用若还是
+# 相对路径就会指向自身内部（实测传 `apps/pharos_mark_ohos` 时 HAP 已落盘 39MB
+# 却被报「未找到 HAP」）。入口断言在原 cwd 下已确认目录存在，此处只做规范化。
+LAB="$(cd "$LAB" && pwd)"
 source "$HERE/env.sh"
 
 NO_START=0

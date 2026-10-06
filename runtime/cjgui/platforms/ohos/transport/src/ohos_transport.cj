@@ -33,6 +33,9 @@ let TAG_TRANSPORT = "CjguiTransport"
 func ownerClaimOperation(payload: String): String {
     // Diagnostics never need to scan a large generated candidate. Keep the
     // owner-claim path's allocation bounded before splitting protocol lines.
+    // round6-B：公共写（INVOKE ... REPLACE_RANGE）分类为 REPLACE_RANGE——
+    // 验收需要从 claim 行辨认写操作（读请求不得冒充分发证据）；这是纯观测
+    // 分类，不改变任何调度或协议行为。
     if (payload.size > 512) { return "OTHER" }
     let lines = payload.split("\n")
     if (lines.size >= 3) {
@@ -41,6 +44,10 @@ func ownerClaimOperation(payload: String): String {
         }
         if (lines[2] == "GET_GENERATED_UI_INSTANCES") {
             return "GET_GENERATED_UI_INSTANCES"
+        }
+        let head = lines[2].split(" ")
+        if (head.size >= 3 && head[0] == "INVOKE" && head[2] == "REPLACE_RANGE") {
+            return "REPLACE_RANGE"
         }
     }
     return "OTHER"
@@ -233,7 +240,23 @@ public class OhosTransportBridge {
         context.nextRequestId += 1
         context.queue.add(t)
         context.queuedBytes += Int64(payload.size)
+        // round7-B：**真实入队线性化点**。序号必须在 BRIDGE_LOCK 内、紧贴
+        // `context.queue.add(t)` 取：owner 认领同票必须先拿到这把锁，而锁在本次
+        // 取号之后才释放，因此同票恒有 seq(enqueue) < seq(claim)。放到锁外会
+        // 出现 submit 释放锁后被抢占、claim 先取号的假红。日志在解锁后打（不在
+        // 锁内做 IO），判据只比序号不比行序。纯只读观察，不改队列/许可语义。
+        let enqueueSeq = cjguiOhosObservationSeq()
+        let enqueueOp = ownerClaimOperation(payload)
+        let enqueueId = t.requestId
         BRIDGE_LOCK.unlock()
+        try {
+            cjguiOhosInfo(TAG_TRANSPORT,
+                "transport-cost stage=enqueue instance=${context.identity} " +
+                "requestId=${enqueueId} op=${enqueueOp} seq=${enqueueSeq} " +
+                "bytes=${payload.size}")
+        } catch (_) {
+            // Diagnostics must never fail a real enqueue.
+        }
         return (0, Some(t))
     }
 
@@ -284,6 +307,9 @@ public class OhosTransportBridge {
                     EXECUTING_TICKETS.add(t)
                 }
                 let _ = c.queue.remove(at: i)
+                // round7-B：认领序号在锁内取（与 enqueue 同一全序域），日志在解锁
+                // 后打。判据只比 seq，不依赖这一行的行序。
+                let claimSeq = cjguiOhosObservationSeq()
                 BRIDGE_LOCK.unlock()
                 // Queue time is complete-frame enqueue -> owner claim, sampled
                 // before dispatch. Emit outside BRIDGE_LOCK and before returning
@@ -292,7 +318,8 @@ public class OhosTransportBridge {
                     let queueUs = (claimedAt - t.enqueuedAt).toNanoseconds() / 1000
                     cjguiOhosInfo(TAG_TRANSPORT,
                         "transport-cost stage=owner-claim instance=${t.context.identity} " +
-                        "requestId=${t.requestId} op=${ownerClaimOperation(t.payload)} queueUs=${queueUs}")
+                        "requestId=${t.requestId} op=${ownerClaimOperation(t.payload)} " +
+                        "queueUs=${queueUs} seq=${claimSeq}")
                 } catch (_) {
                     // Diagnostics cannot leave a claimed business ticket stuck
                     // in Executing if string formatting or logging fails.

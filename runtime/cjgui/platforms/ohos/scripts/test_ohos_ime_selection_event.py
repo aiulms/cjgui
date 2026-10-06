@@ -16,6 +16,27 @@ ROOT = Path(__file__).resolve().parents[1]
 RENDERER = ROOT / "host" / "ohos_renderer.cpp"
 SNAPSHOT_WINDOW = ROOT / "snapshot" / "src" / "composable_ui_window.cj"
 
+# H 线（可视编辑包 A1）给 Session 加的 owned 会话锚点身份字段。被测的
+# editingBindingHealthyLocked 用它们算 ownedAnchor 门，替身必须有同名字段。
+# 锚点是生产声明行本身：字段改名/删除会在这里 index() 抛错，而不是让那道门
+# 因为手写副本落后而静默少判。
+OWNED_ID_ANCHORS = ('    bool ownedTextSessionEnabled = false;',
+                    '    uint64_t ownedTextSessionBindingEpoch = 0;')
+
+
+def span(text: str, start_anchor: str, end_anchor: str) -> str:
+    """生产原文切片（含两端）。"""
+    start = text.index(start_anchor)
+    return text[start:text.index(end_anchor, start) + len(end_anchor)]
+
+
+def prefix() -> str:
+    """Session 替身模板 + 生产原文注入的 owned 会话锚点身份字段。"""
+    source = RENDERER.read_text(encoding="utf-8")
+    assert SESSION_REPLICA.count('%OWNED_ID_FIELDS%') == 1, "owned 字段占位符不再唯一"
+    return SESSION_REPLICA.replace('%OWNED_ID_FIELDS%', span(source, *OWNED_ID_ANCHORS))
+
+
 SCENARIOS = ("valid", "stale_context", "wrong_binding", "echo_same_value", "repeat_same")
 # 生产里唯一的转发判据。变异控制按它定位，锚点不再唯一时直接判失败，不静默改到别处。
 FORWARD_ANCHOR = "const bool forward = selectionObservationNeedsForwarding(*s, a, b);"
@@ -55,11 +76,15 @@ def production_parts() -> str:
     setter = extract_function(source,
                               'extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t end, int64_t contextId)')
     queue_context = extract_function(source, "static bool queuedSelectionContextIsCurrent(const Session &s, const QueuedEvent &ev)")
-    return (queue_context + "\n" + finding + "\n" + event + "\n" + context + "\n" + forwarding + "\n" + remember + "\n"
-            + setter + "\n")
+    # round5-C 后生产转发判据经健康绑定守卫（editingBindingHealthyLocked）取当前
+    # accepted 树核对，setter/takeEditingContext 都引用它——原样摘出，判据不复制。
+    healthy = extract_function(source, "static bool editingBindingHealthyLocked(const Session &s, const std::vector<SceneNode> &tree)")
+    # takeEditingContextLocked 引用 healthy：声明必须在前。
+    return (queue_context + "\n" + finding + "\n" + event + "\n" + healthy + "\n" + context + "\n"
+            + forwarding + "\n" + remember + "\n" + setter + "\n")
 
 
-HARNESS_PREFIX = r"""
+SESSION_REPLICA = r"""
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -103,6 +128,11 @@ struct Session {
   uint64_t editingNodeId = 51, editingProjectionVersion = 22;
   int64_t editingResourceId = 9700;
   uint32_t editingNodeKind = 5, selStartUtf16 = 12, selEndUtf16 = 12, caretUtf16 = 12;
+  // round5-C：完整绑定身份（健康守卫核对 epoch/kind/semantic 与 accepted 树）。
+  uint64_t editingAcceptedBindingEpoch = 91;  // 与 NodePod 默认 epoch 一致（健康守卫正控）
+  std::string editingFieldName;
+  // H 线 owned 会话锚点身份：取 ohos_renderer.cpp 的生产原文（见 prefix()）。
+  %OWNED_ID_FIELDS%
   // 生产 Session 的两组落点账本，默认值与 ohos_renderer.cpp 一致。base 会话把
   // caret/选区都放在 12（正文末尾），于是"平台回声同一落点"场景的 changed 必为
   // false：能不能入队只取决于 selForwarded*，正是判重口径要钉死的地方。
@@ -116,12 +146,16 @@ struct SessionTable { std::mutex lock; Session sessions[1]; };
 static SessionTable g_sessions;
 static std::string utf16ToUtf8(const std::u16string &text) { return std::string(text.begin(), text.end()); }
 static std::u16string composedBuffer(const Session &) { return u"hello world!"; }
+static bool isEditableTextKind(uint32_t kind) { (void)kind; return true; }
 static uint32_t clampToCodePointBoundary(const std::u16string &, uint32_t index) { return index; }
 static bool g_redrawPosted = false;
 struct RedrawJob {};
 struct RenderQueue { void post(std::shared_ptr<RedrawJob>) { g_redrawPosted = true; } };
 static RenderQueue g_render;
 """
+
+# 编译前的最后一步：把 owned 会话锚点身份字段按生产原文注入 Session 替身。
+HARNESS_PREFIX = prefix()
 
 
 HARNESS_SUFFIX = r"""
@@ -240,7 +274,7 @@ class OhosImeSelectionEventTest(unittest.TestCase):
                 self.assertEqual(self.run_case(name)["queue_current"], "0")
 
     def test_context_negative_control_removing_full_id_admits_old_proxy(self) -> None:
-        parts = HARNESS_PREFIX + production_parts() + HARNESS_SUFFIX
+        parts = prefix() + production_parts() + HARNESS_SUFFIX
         guard = "ev.editingContextId == s.editingContextId &&"
         self.assertEqual(parts.count(guard), 1)
         tmp, binary = compile_harness(parts.replace(guard, "true &&", 1), "context-red")
@@ -252,7 +286,7 @@ class OhosImeSelectionEventTest(unittest.TestCase):
             tmp.cleanup()
 
     def test_context_negative_control_removing_live_guard_admits_retired_proxy(self) -> None:
-        parts = HARNESS_PREFIX + production_parts() + HARNESS_SUFFIX
+        parts = prefix() + production_parts() + HARNESS_SUFFIX
         guard = "s.editingContextLive && !s.editorRetired &&"
         self.assertEqual(parts.count(guard), 1)
         tmp, binary = compile_harness(parts.replace(guard, "true &&", 1), "retired-red")

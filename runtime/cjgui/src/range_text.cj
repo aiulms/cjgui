@@ -494,6 +494,10 @@ public class CjguiRangeTextWindow {
         return this.source.rangeTextVersion()
     }
 
+    func selectionOwner(): ?CjguiRangeTextSelectionOwner {
+        return this.source as CjguiRangeTextSelectionOwner
+    }
+
     /// The callback is the final session-only state transition. Source/owner
     /// protects the version comparison and that transition in one write boundary.
     public func confirmContentVersion(action: () -> Bool): Bool {
@@ -648,6 +652,40 @@ public class CjguiRangeTextWindow {
             return CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY
         }
         return ""
+    }
+
+    // Only document endpoints are proved without materializing their interior.
+    // The source's pure version guard binds its exact length to that version.
+    func confirmedWholeSourceLength(expectedVersion: Int64): ?Int64 {
+        let total = Array<Int64>(1, repeat: -1)
+        let confirmed = this.source.confirmRangeTextVersion(expectedVersion, { =>
+            total[0] = this.source.rangeTextByteLength()
+            return total[0] >= 0
+        })
+        return if (confirmed) { Some(total[0]) } else { None }
+    }
+
+    // Package-only, called with the session's explicit whole-choice proof.
+    // Arbitrary out-of-window spans still use prepareByteRange/applyByteEdit.
+    func applyWholeSourceEdit(expectedVersion: Int64, total: Int64,
+        inserted: String): CjguiRangeTextEditOutcome {
+        let current = this.confirmedWholeSourceLength(expectedVersion)
+        if (total < 0 || current.isNone() || current.getOrThrow() != total) {
+            this.rejectedEditCount += 1
+            return CjguiRangeTextEditOutcome.conflict(this.source.rangeTextVersion(),
+                CJGUI_RANGE_TEXT_REASON_VERSION)
+        }
+        let outcome = this.sink.applyRangeTextEdit(expectedVersion, 0, total, inserted)
+        if (!outcome.applied) {
+            this.rejectedEditCount += 1
+            return outcome
+        }
+        this.forwardedEditCount += 1
+        // The old remote viewport has no coordinates in the replacement body.
+        // Reset only after the real Sink accepted; failure retains the old view.
+        this.startByte = 0
+        let _ = this.refresh()
+        return outcome
     }
 
     /// Map a UTF-16 range inside the materialised text into document byte

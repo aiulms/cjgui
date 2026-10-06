@@ -17,6 +17,41 @@ FUNCTION_START = "static void pushPendingEndLocked("
 FUNCTION_SECOND = "static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)"
 FUNCTION_END = "// 一次性裁决一张未 ACK 的票据"
 
+# H 线（可视编辑包 A1）：被测的 sync 在换绑 / 外部换版 / 认领三条路径上都读
+# accepted 段镜像声明，owned 身份与镜像字段是它的判据来源。替身用**生产原文**
+# 注入（锚点即生产声明行）：字段漂移会在这里抛错或让摘录编不过，而不是让那道
+# 换绑借用门静默少判。
+OWNED_ID_ANCHORS = ('    bool ownedTextSessionEnabled = false;',
+                    '    uint64_t ownedTextSessionBindingEpoch = 0;')
+MIRROR_ANCHORS = ('    struct OwnedMirrorDeclaration {',
+                  '    int64_t editingMirrorOwnerVersion = -1;')
+MIRROR_HELPER = ("static const Session::OwnedMirrorDeclaration *ownedMirrorDeclarationLocked(const Session &s,")
+KIND_CONSTANTS = ("constexpr uint32_t kKindTextInput",
+                  "constexpr uint32_t kKindIntegerInput",
+                  "constexpr uint32_t kKindMultiline")
+
+
+def span(text: str, start_anchor: str, end_anchor: str) -> str:
+    """生产原文切片（含两端）。"""
+    start = text.index(start_anchor)
+    return text[start:text.index(end_anchor, start) + len(end_anchor)]
+
+
+def constant_line(text: str, marker: str) -> str:
+    start = text.index(marker)
+    return text[start:text.index("\n", start)]
+
+
+def harness_text() -> str:
+    """Session 替身注入生产 owned/镜像字段，再接摘录的生产函数。"""
+    source = RENDERER.read_text(encoding="utf-8")
+    prefix = HARNESS_PREFIX
+    for token, anchors in (("%OWNED_ID_FIELDS%", OWNED_ID_ANCHORS),
+                           ("%MIRROR_FIELDS%", MIRROR_ANCHORS)):
+        assert prefix.count(token) == 1, f"占位符 {token} 不再唯一"
+        prefix = prefix.replace(token, span(source, *anchors))
+    return prefix + production_function(source) + HARNESS_SUFFIX
+
 
 def extract_braced(source: str, signature: str) -> str:
     start = source.index(signature)
@@ -29,14 +64,20 @@ def extract_braced(source: str, signature: str) -> str:
     raise ValueError("unterminated method")
 
 
-def production_function() -> str:
-    source = RENDERER.read_text(encoding="utf-8")
+def production_function(source: str | None = None) -> str:
+    source = source if source is not None else RENDERER.read_text(encoding="utf-8")
     push = extract_braced(source, FUNCTION_START)
     clamp = extract_braced(source,
         "uint32_t clampToCodePointBoundary(const std::u16string &text, uint32_t offset)")
+    # 镜像声明就绪门与它依赖的可编辑 kind 集合都取真实生产函数：sync 的三条路径
+    # （换绑 / 外部换版 / 认领）判据就在这道门里，桩掉它等于用自己的假设验自己。
+    editable_kind = extract_braced(source, "bool isEditableTextKind(uint32_t kind)")
+    mirror = extract_braced(source, MIRROR_HELPER)
+    constants = "\n".join(constant_line(source, marker) for marker in KIND_CONSTANTS)
     start = source.index(FUNCTION_SECOND)
     end = source.index(FUNCTION_END, start)
-    return clamp + "\n\n" + push + "\n\n" + source[start:end]
+    return (clamp + "\n\n" + constants + "\n" + editable_kind + "\n\n" + mirror + "\n\n"
+            + push + "\n\n" + source[start:end])
 
 
 HARNESS_PREFIX = r"""
@@ -106,6 +147,11 @@ struct Session {
     uint32_t caretUtf16 = 4, selStartUtf16 = 2, selEndUtf16 = 5;
     bool editingTapPending = false;
     bool focusNotifyPending = false;
+    // H 线 owned 会话锚点身份 + A1 三段镜像声明（含 editingMirrorOwnerVersion）：
+    // 由 harness_text() 用生产原文切片替换下面两个占位符（纯数据字段取原文，
+    // 字段一改就编译失败，不会让镜像借用门静默少判）。
+    %OWNED_ID_FIELDS%
+    %MIRROR_FIELDS%
 };
 
 static bool editorOwnsTextSession(const Session &s) { return s.ownsTextSession; }
@@ -183,7 +229,7 @@ class GeneratedReorderEditingContextTest(unittest.TestCase):
         root = Path(cls.temp.name)
         source = root / "reconcile.cpp"
         cls.binary = root / "reconcile"
-        source.write_text(HARNESS_PREFIX + production_function() + HARNESS_SUFFIX, encoding="utf-8")
+        source.write_text(harness_text(), encoding="utf-8")
         subprocess.run(
             [compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(cls.binary)],
             check=True,

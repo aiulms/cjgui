@@ -43,10 +43,19 @@ TEST_SOURCE = HERE / "fixtures" / "window_restore_adoption_snapshot_test.cj"
 WINDOW_METHODS = (
     "adoptOwnedTextSelection", "rememberInteraction", "onPlatformProxyRestoreReceipt",
     "noteOwnedTextSessionRestoreFailure", "nativeSemanticBindingKey", "candidateBindingEpoch",
-    "publishAcceptedBindingEpochs", "currentAcceptedBindingEpoch", "restoreOwnedTextSelectionAfterAcceptedScene")
+    "publishAcceptedBindingEpochs", "currentAcceptedBindingEpoch", "restoreOwnedTextSelectionAfterAcceptedScene",
+    # owned 锚点可聚焦判定（生产逐字抽取）：决定 presentation 锚点能否承接输入，
+    # 读 node.style.pointerInteractive 真实字段。缺失此抽取时 harness 编译失败
+    # （undeclared identifier），不得用恒真桩代替——恒真会把不可聚焦锚点误判为
+    # 可输入，掩盖声明缺失类的拒绝路径。
+    "ownedAnchorFocusable",
+    # A→B→A 交接锚点（2026-10-03 GLM 裁决）：release 时把已对齐的会话落点冻结进
+    # nodeSelectionMemory；重绑时 carriedSelectionFor 再把它交回新会话。两者都是
+    # 生产决策文本，逐字抽取——改名/改判据即编译失败。
+    "freezeHandoffAnchorFor", "carriedSelectionFor")
 SCENE_METHODS = ("nodeForId", "resolveSelection")
 SESSION_METHODS = ("needsNativeSelectionRestore", "canAdoptNativeRestore", "confirmProxyRestored",
-                   "adoptNativeSelectionRestored")
+                   "adoptNativeSelectionRestored", "awaitingCalibration", "selectionAlignmentFacts")
 
 KIND33_START = "} else if (nativeEvent.eventKind == 33u32) {"
 KIND33_END = "} else if (nativeEvent.eventKind == 41u32) {"
@@ -61,6 +70,48 @@ RED_GUARDS = {
     "named-stale": (
         "                    if (adoption != CJGUI_OWNED_SELECTION_NAMED_STALE) {\n",
         "                    if (adoption != CJGUI_OWNED_SELECTION_NOT_OWNED) {\n",
+    ),
+    # A→B→A 交接锚点：把「已对齐」判据反转 ⇒ release 永不冻结 ⇒ 重绑只能命中
+    # 陈旧落点。守护用例（ohosReleaseFreezesAlignedHandoffAnchor）必须翻红。
+    "no-handoff-freeze": (
+        "            alignment[0] == alignment[1] && !alignment[4] &&\n",
+        "            alignment[0] != alignment[1] && !alignment[4] &&\n",
+    ),
+    # round7-C：删掉 Expired 直返 ⇒ 到期后又落回 attempts 记账，40 次泵送烧满
+    # 8 次预算并翻成 budget_exhausted。守护用例
+    # anchorWaitDeadlineExpiresOnceByNameAndKeepsBudgetSeparate 必须翻红。
+    "expired-direct-return": (
+        "        if (ownedAnchorWaitExpired) {\n            return\n        }\n",
+        "        if (ownedAnchorWaitExpired && false) {\n            return\n        }\n",
+    ),
+    # round7-C：换代键去掉 sel16 分量 ⇒ 同一正文版本上换落点意图不被认作新目标，
+    # 「到期后新意图重开一代」用例必须翻红（否则合法新恢复被静默丢弃）。
+    "generation-key-drops-selection": (
+        "            ownedSelectionRestoreSelStart != selected[0] ||\n"
+        "            ownedSelectionRestoreSelEnd != selected[1] ||\n",
+        "",
+    ),
+    # round9-A：采纳事实的冻结来源被反填成「当前挂载」⇒ 无来源的旧事件被当成新挂载
+    # 的采纳。守护：validate_sources 的来源锚点（source_ctx/source_gen/unverified）
+    # 与本变异共同保证——打印点必须**逐字**用 provValid 判定，不许换成别的来源。
+    "provenance-backfilled": (
+        'let provGenText = if (provValid) { "${provGen}" } else { "unverified" }',
+        'let provGenText = "${provGen}"',
+    ),
+    # round8-C：终态归**恢复目标**不归一次调用。恢复入口每次把
+    # ownedRestoreNamedTerminal 清 false ⇒ Expired 直返后随后的 accepted 收尾把
+    # 原因擦成 none（指导 round8 生产反例 reason=none）。守护用例
+    # expiredGoalRetainsNamedTerminalThroughAcceptedFinish 必须翻红。
+    "terminal-cleared-per-call": (
+        "    func restoreOwnedTextSelectionAfterAcceptedScene(): Unit {\n",
+        "    func restoreOwnedTextSelectionAfterAcceptedScene(): Unit {\n"
+        "        ownedRestoreNamedTerminal = false\n",
+    ),
+    # round8-C：换代时**不**撤销上一代终态 ⇒ 新意图继承旧截止原因，终态变成永久
+    # 粘住的全局错误字符串。守护用例 newIntentAfterFinishClearsOldNamedTerminal 必须翻红。
+    "terminal-not-cleared-on-generation": (
+        "            ownedAnchorWaitExpired = false\n            ownedRestoreNamedTerminal = false\n        }",
+        "            ownedAnchorWaitExpired = false\n        }",
     ),
 }
 
@@ -116,6 +167,15 @@ def production_pending_class() -> str:
                         "class CjguiPendingPlatformRestore {", 1)
 
 
+def production_bookmark_class() -> str:
+    source = WINDOW_SOURCE.read_text(encoding="utf-8")
+    text = production_member(source, "private class CjguiComposableUiPageFocusBookmark {",
+                            "CjguiComposableUiPageFocusBookmark")
+    # 生产里它是 private；carriedSelectionFor 第三条分支要遍历它，harness 需可构造。
+    return text.replace("private class CjguiComposableUiPageFocusBookmark {",
+                        "class CjguiComposableUiPageFocusBookmark {", 1)
+
+
 def production_kind33_branch() -> str:
     source = WINDOW_SOURCE.read_text(encoding="utf-8")
     if source.count(KIND33_START) != 1 or source.count(KIND33_END) != 1:
@@ -127,6 +187,23 @@ def production_kind33_branch() -> str:
     return source[start:end]
 
 
+def production_finish_terminal_guard() -> str:
+    """round8-C：**逐字**抽取生产 `finishAcceptedScene` 里的具名终态守卫。
+
+    指导的 round8 生产反例证明：只直接调用恢复入口的旧 24 例**看不到**收尾把
+    `owned_anchor_wait_deadline` 擦成 `none` 的路径——入口每次把
+    `ownedRestoreNamedTerminal` 清 false，Expired 直返后随后的 accepted 收尾便把
+    原因清掉。这里把生产里那几行原样搬进 harness（不是手抄），改判据即编译失败
+    或变异被拒。
+    """
+    source = WINDOW_SOURCE.read_text(encoding="utf-8")
+    anchor = "        if (!ownedRestoreNamedTerminal) {"
+    if source.count(anchor) != 1:
+        raise ValueError("expected exactly one finish named-terminal guard, "
+                         f"found {source.count(anchor)}")
+    return balanced(source, source.index(anchor), "finishAcceptedScene named terminal guard")
+
+
 def production_harness(red: str | None) -> str:
     tri_state = production_constants(WINDOW_SOURCE, ("CJGUI_OWNED_SELECTION_NOT_OWNED",
                                                      "CJGUI_OWNED_SELECTION_ADOPTED",
@@ -136,10 +213,34 @@ def production_harness(red: str | None) -> str:
                                                      "CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT"),
                                       "public")
     window_methods = "\n\n".join(private_method(name) for name in WINDOW_METHODS)
+
+    # round6-C 测试钟接缝：生产读 MonoTime.now()，harness 用可控时钟驱动截止判别。
+    # 计数校验保证生产表达式变化时此替换立即失败（不会静默失去时钟控制）。
+    clock_calls = window_methods.count("MonoTime.now()")
+    if clock_calls < 1:
+        raise ValueError("clock seam anchor missing in extracted window methods")
+    window_methods = window_methods.replace("MonoTime.now()", "anchorHarnessNow()")
     scene_methods = "\n\n".join(public_method(SCENE_SOURCE, name) for name in SCENE_METHODS)
     session_methods = "\n\n".join(public_method(SESSION_SOURCE, name) for name in SESSION_METHODS)
     pending_class = production_pending_class()
+    bookmark_class = production_bookmark_class()
     branch = production_kind33_branch()
+    # round9-A：采纳打印点用三个局部值（provValid/provCtx/provGen），生产里它们来自
+    # **pump 出口**对 `internalRendererLastEventProvenance` 的捕获；harness 只抽取
+    # kind-33 分支、不含 pump 循环，因此把打印点重绑到 harness 替身字段。生产那三个
+    # 捕获语句逐字留在窗口源码里（并被 validate_sources 的锚点守住），这里只解决
+    # 作用域——语义（有无来源打 unverified）仍由替身字段控制。
+    _prov_anchor = "let provCtxText = if (provValid)"
+    if branch.count(_prov_anchor) != 1:
+        raise ValueError(
+            "provenance rebind anchor must appear exactly once in the extracted "
+            f"kind-33 branch, found {branch.count(_prov_anchor)}")
+    branch = branch.replace(
+        _prov_anchor,
+        "let provValid = harnessProvenanceValid\n"
+        "                            let provCtx = harnessProvenanceCtx\n"
+        "                            let provGen = harnessProvenanceGen\n"
+        "                            let provCtxText = if (provValid)", 1)
     if red is not None:
         old, new = RED_GUARDS[red]
         if window_methods.count(old) != 1 and branch.count(old) != 1:
@@ -147,9 +248,12 @@ def production_harness(red: str | None) -> str:
         window_methods = window_methods.replace(old, new, 1)
         branch = branch.replace(old, new, 1)
 
+    finish_guard = production_finish_terminal_guard()
+
     return f'''package cjgui
 
 import std.collection.*
+import std.time.*
 
 {node_kinds}
 
@@ -217,9 +321,14 @@ class CjguiComposableUiLayoutNode {{
     let semanticIncarnation: Int64
     let isEnabled: Bool
     let value: String
+    // 生产 CjguiComposableUiStyle.pointerInteractive 的 harness 替身：默认 false
+    // 与生产一致（composable_ui.cj:384），用例按需显式置 true。禁止默认 true——
+    // 那会把所有锚点判为可聚焦，等价于恒真桩。
+    let style: CjguiComposableUiStyle
     init(nodeId: Int64, identityKey: String, semanticId: String, actionName: String, fieldId: String,
         operationActionName: String, resourceId: Int64, operationResourceId: Int64, nodeKind: Int64,
-        semanticIncarnation: Int64, isEnabled!: Bool = true, value!: String = "") {{
+        semanticIncarnation: Int64, isEnabled!: Bool = true, value!: String = "",
+        style!: CjguiComposableUiStyle = CjguiComposableUiStyle()) {{
         this.nodeId = nodeId
         this.identityKey = identityKey
         this.semanticId = semanticId
@@ -232,9 +341,17 @@ class CjguiComposableUiLayoutNode {{
         this.semanticIncarnation = semanticIncarnation
         this.isEnabled = isEnabled
         this.value = value
+        this.style = style
     }}
     public static func missing(): CjguiComposableUiLayoutNode {{
         return CjguiComposableUiLayoutNode(-1, "", "", "", "", "", -1, -1, 0, 0)
+    }}
+}}
+
+class CjguiComposableUiStyle {{
+    let pointerInteractive: Bool
+    init(pointerInteractive!: Bool = false) {{
+        this.pointerInteractive = pointerInteractive
     }}
 }}
 
@@ -393,14 +510,17 @@ var harnessAnchorCalls: Int64 = 0
 var harnessTicketConsumeResult: Bool = true
 var harnessTicketConsumeCalls: Int64 = 0
 var harnessRestoreIssueCalls: Int64 = 0
+var harnessRestoreIssueStatus: Int32 = 0
 let CJGUI_INTERNAL_RENDERER_OK: Int32 = 0
+let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING: Int32 = 36
 
 func internalRendererRecoverTextProxyTicket(session: UInt64, nodeId: Int64, resourceId: Int64,
     nodeKind: Int64, version: Int64, text: String, start: Int64,
     end: Int64): (Int32, InternalRendererProxyRestoreTicket) {{
     let _ = (session, nodeId, resourceId, nodeKind, text)
     harnessRestoreIssueCalls += 1
-    return (0, InternalRendererProxyRestoreTicket(UInt64(harnessRestoreIssueCalls), 7, 3u64,
+    return (harnessRestoreIssueStatus, InternalRendererProxyRestoreTicket(UInt64(harnessRestoreIssueCalls), 7, 3u64,
         UInt64(version), UInt64(version), start, end))
 }}
 
@@ -419,6 +539,19 @@ func internalRendererConsumeProxyRestoreTicket(session: UInt64, requestId: UInt6
     return harnessTicketConsumeResult
 }}
 
+// round9-A：记录最后一条窗口诊断，使 fixture 能断言采纳事实**真的带了来源**
+// （缺来源必须是 unverified，而不是被反填成当前挂载）。
+var harnessLastWindowLog: String = ""
+
+func internalRendererWindowLog(message: String): Unit {{
+    harnessLastWindowLog = message
+}}
+
+func internalRendererFormEventText(session: UInt64): String {{
+    let _ = session
+    return ""
+}}
+
 class HarnessController {{
     let appliedKinds = ArrayList<Int64>()
     let appliedSelections = ArrayList<Int64>()
@@ -433,6 +566,8 @@ class HarnessController {{
 
 {pending_class}
 
+{bookmark_class}
+
 class CjguiComposableUiWindow {{
     let sessionToken: UInt64 = 4242u64
     var isWindowOpen: Bool = true
@@ -445,11 +580,34 @@ class CjguiComposableUiWindow {{
     var ownedTextSessionNodeId: Int64 = -1
     var ownedTextSessionResourceId: Int64 = -1
     var ownedTextSessionNodeKind: Int64 = 10
+    var nodeSelectionMemory: HashMap<Int64, (Int64, Int64, Int64, Int64)> =
+        HashMap<Int64, (Int64, Int64, Int64, Int64)>()
+    var pageFocusBookmarks = ArrayList<CjguiComposableUiPageFocusBookmark>()
     var ownedSelectionRestoreAttempts: Int64 = 0
+    var ownedAnchorWaiting: Bool = false
+    // round6-C：与生产同名的单调截止/到期字段（测试可读；截止为 MonoTime 域）。
+    var ownedAnchorWaitDeadline: MonoTime = MonoTime.now()
+    var ownedAnchorWaitExpired: Bool = false
+    // 测试可控时钟：生产读 MonoTime.now()，harness 经 clock seam 读
+    // anchorHarnessNow()；advanceMs 只增，模拟单调时间推进。
+    var harnessClockAdvanceMs: Int64 = 0
+    func anchorHarnessNow(): MonoTime {{
+        return MonoTime.now() + Duration.millisecond * harnessClockAdvanceMs
+    }}
+    var lastAdoptedRestore: (Int64, Int64, Int64, Int64, Int64, Int64, Int64) = (0, 0, 0, 0, 0, 0, 0)
     var ownedSelectionRestoreEpoch: Int64 = -1
     var ownedSelectionRestoreVersion: Int64 = -1
     var ownedSelectionRestoreBinding: UInt64 = 0u64
     var ownedSelectionRestoreExhausted: Bool = false
+    // round7-C：与生产同名的恢复目标身份（选择意图 + 本编辑面选区修订）与到期
+    // 直返所需的字段。测试可读可写，使 fixture 能摆出「新意图重开一代」与
+    // 「同身份 Expired 直返」两种形状。字段名/类型逐字抄生产声明。
+    var ownedSelectionRestoreSelStart: Int64 = -1
+    var ownedSelectionRestoreSelEnd: Int64 = -1
+    var ownedSelectionIntentRevision: Int64 = 0
+    var ownedSelectionRestoreIntentRevision: Int64 = -1
+    var ownedAnchorRestoreNeedObserved: Bool = false
+    var ownedRestoreNamedTerminal: Bool = false
     var humanSelectionAnchorsAdopted: Int64 = 0
     var staleOwnedSelectionEvents: Int64 = 0
     var focusedNodeId: Int64 = -1
@@ -484,6 +642,20 @@ class CjguiComposableUiWindow {{
         return CjguiComposableUiWindowPumpResult(open, didApply)
     }}
 
+    /// 替身（**非**逐字抽取，明确记账）：生产 `resolvePlatformSelectionEvent` 的
+    /// 完整链还牵 `resolveOwnedRangeContinuation` / `isEditableTextNodeKind` 与
+    /// 标量边界核验；本 harness 的被测接缝是 kind-33 分支内的三态决策与账本，
+    /// 故这里只保留「按 accepted 场景解析出该节点」的最小语义，保证分支可编译。
+    func resolvePlatformSelectionEvent(nativeEvent: InternalRendererPumpResult,
+        eventText: String): CjguiComposableUiLayoutNode {{
+        let _ = eventText
+        if (nativeEvent.nodeId == 0u64 || nativeEvent.recordIndex != 0u32) {{
+            return CjguiComposableUiLayoutNode.missing()
+        }}
+        return nativeInputScene.resolveSelection(Int64(nativeEvent.nodeId), nativeEvent.resourceId,
+            Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
+    }}
+
     /// kind-33 分支的逐字生产文本注入点。生产里它内联在 FIFO 排空循环里；这里用
     /// 一个恒假的前置分支把它接成合法的 if/else-if 链，分支体一个字符都没改。
     func pumpSelectionEvent(nativeEvent: InternalRendererPumpResult): CjguiComposableUiWindowPumpResult {{
@@ -491,6 +663,23 @@ class CjguiComposableUiWindow {{
         if (nativeEvent.recordIndex == 4294967295u32) {{
         {branch}        }}
         return result(true, didApply)
+    }}
+
+    /// round9-A：接缝替身——生产在 **pump 出口**捕获本事件的冻结来源
+    /// （`internalRendererLastEventProvenance`），采纳打印点与该捕获点在**同一次
+    /// drain 迭代**内，因此用局部值随事件携带。harness 只抽取采纳方法、不含 pump
+    /// 循环，这里提供同形状的替身，让采纳路径可编译；语义由
+    /// `harnessProvenanceValid` 控制（缺来源时打印 unverified）。
+    var harnessProvenanceValid: Bool = true
+    var harnessProvenanceCtx: Int64 = 7
+    var harnessProvenanceGen: UInt64 = 1u64
+
+    /// round8-C：走**生产收尾守卫**的最小接缝——先跑恢复入口，再逐字执行
+    /// `finishAcceptedScene` 里的具名终态守卫。测试因此能证明「同一恢复目标到期后，
+    /// 随后的 accepted 收尾不会把原因清成 none」，而不必只调恢复方法。
+    func reviewAcceptedRestoreAndFinish(): Unit {{
+        restoreOwnedTextSelectionAfterAcceptedScene()
+{finish_guard}
     }}
 
     func acceptScene(version: Int64, nodes: ArrayList<CjguiComposableUiLayoutNode>): Unit {{
@@ -520,7 +709,11 @@ def validate_sources() -> None:
     for required in ("CJGUI_OWNED_SELECTION_NAMED_STALE", "restore_adoption_source_stale",
                      "private class CjguiPendingPlatformRestore"[:0] + "class CjguiPendingPlatformRestore",
                      "func onPlatformProxyRestoreReceipt(", "func adoptOwnedTextSelection(",
-                     "func rememberInteraction("):
+                     "func rememberInteraction(", "func freezeHandoffAnchorFor(",
+                     "func carriedSelectionFor(",
+                     # round9-A：采纳事实必须带冻结来源，缺来源写 unverified
+                     "source_ctx=", "source_gen=", 'if (provValid) { "${provCtx}" } else { "unverified" }',
+                     'if (provValid) { "${provGen}" } else { "unverified" }'):
         if required not in harness:
             raise ValueError(f"generated harness lost production text: {required}")
     if not TEST_SOURCE.exists():
@@ -531,7 +724,9 @@ def validate_sources() -> None:
                  "ohosHumanAnchorSelectionStillUnlocksAfterReplace",
                  "ohosRestoreReceiptRefusedByOwnerVersionIsNotWindowAdopted",
                  "ohosRestoreReceiptAdoptedCountsSuccessOnce",
-                 "ohosRestoreTerminalRequiresExactRequestIdentity"):
+                 "ohosRestoreTerminalRequiresExactRequestIdentity",
+                 "ohosReleaseFreezesAlignedHandoffAnchor",
+                 "ohosReleaseSkipsUnalignedHandoffAnchor"):
         if f"func {name}(" not in tests:
             raise ValueError(f"focused window-seam test missing: {name}")
 
@@ -596,7 +791,7 @@ def main() -> int:
         return 0
 
     failures = []
-    for red in ("adoption-result", "named-stale"):
+    for red in RED_GUARDS:
         code, _ = run_once(red)
         print(f"[red:{red}] cjpm test exit={code}")
         if code == 0:

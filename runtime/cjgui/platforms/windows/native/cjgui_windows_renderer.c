@@ -227,7 +227,33 @@ typedef struct CjguiWindowsRawRecord {
     uint32_t message;
     uint64_t wParam;
     int64_t lParam;
+    int64_t modifiers;
 } CjguiWindowsRawRecord;
+
+/* UI dispatcher 命令环：C ABI 入口把会话逻辑封送到 UI 线程执行。
+   命令在入队后至多执行一次；调用者在 doneEvent 上等待完成。
+   started 由 UI 线程置位；cancelled 仅在未开始前由入队侧置位。 */
+#define CJGUI_WINDOWS_CMD_RING_CAPACITY 64u
+
+typedef enum CjguiWindowsCommandKind {
+    CJGUI_WINDOWS_CMD_PUMP = 1,
+    CJGUI_WINDOWS_CMD_DESTROY = 2
+} CjguiWindowsCommandKind;
+
+typedef struct CjguiWindowsCommand {
+    uint32_t kind;
+    uint64_t token;
+    uint64_t generation;
+    uint32_t timeoutMs;
+    int hasIdleOut;
+    CjguiInternalRendererEvent outEvent;
+    uint64_t outIdleNs;
+    CjguiInternalRendererStatus status;
+    HANDLE doneEvent;
+    int started;
+    int done;
+    int cancelled;
+} CjguiWindowsCommand;
 
 struct CjguiWindowsRendererSession {
     uint64_t token;
@@ -246,21 +272,29 @@ struct CjguiWindowsRendererSession {
     ID3D11RasterizerState *sceneRasterizer;
     ID3D11SamplerState *sceneSampler;
     IDWriteFactory *writeFactory;
-    /* 线程模型（2026-10-06 裁决 b 的窄实现）：窗口与其消息队列归 renderer 自持
-       的 UI 线程；应用（Cangjie M:N，可能迁移 OS 线程）只经 C ABI 调用。
-       UI 线程的 WndProc 只把原始 Win32 输入追加到 raw 环（+ 唤醒事件），不触碰
-       任何会话状态；全部会话逻辑仍在驱动线程单线程执行。唯一的跨线程同步是
-       raw 环的小锁 + 唤醒事件（持有期间不做任何 user32/等待调用）。 */
+    /* 线程模型（完整 UI dispatcher，phase 1 覆盖 pump/destroy）：
+       每个 session 由自持 UI（泵）线程拥有窗口、消息队列与全部会话逻辑；
+       C ABI 入口把 pump/destroy 封送为命令并等待完成，其余导出函数按批
+       次迁移中。命令在 UI 线程至多执行一次；调用者无限等待 doneEvent，
+       UI 线程以有界切片推进。跨线程同步仅用小锁与事件，持有锁期间不做
+       user32 调用与无限等待。 */
     CRITICAL_SECTION rawLock;
     CjguiWindowsRawRecord rawRing[CJGUI_WINDOWS_RAW_RING_CAPACITY];
     uint32_t rawHead;
     uint32_t rawTail;
     uint64_t rawDropped;
     HANDLE rawWakeEvent;
+    CRITICAL_SECTION cmdLock;
+    CjguiWindowsCommand *cmdRing[CJGUI_WINDOWS_CMD_RING_CAPACITY];
+    uint32_t cmdHead;
+    uint32_t cmdTail;
+    HANDLE cmdWakeEvent;
+    int retiring;
     HANDLE pumpThread;
     DWORD pumpThreadId;
     DWORD ownerThreadId;
     int inputAttached;
+    DWORD lastPumpTid;
     HANDLE pumpReadyEvent;
     HANDLE pumpStopEvent;
     CjguiInternalRendererStatus pumpThreadStatus;
@@ -294,6 +328,15 @@ struct CjguiWindowsRendererSession {
     uint64_t sourceInstallBindingEpoch;
     uint64_t sourceInstallRequestId;
     uint64_t sourceInstallGatedInputs;
+    uint32_t sourceInstallProvisional;
+    uint32_t sourceInstallOutcome;
+#define CJGUI_WINDOWS_INSTALL_OUTCOME_NONE 0u
+#define CJGUI_WINDOWS_INSTALL_OUTCOME_INSTALLED 1u
+#define CJGUI_WINDOWS_INSTALL_OUTCOME_OWNER_CONFIRMED 2u
+#define CJGUI_WINDOWS_INSTALL_OUTCOME_OWNER_CANCELLED 3u
+#define CJGUI_WINDOWS_INSTALL_OUTCOME_SUPERSEDED 4u
+#define CJGUI_WINDOWS_INSTALL_OUTCOME_CONFLICT 5u
+#define CJGUI_WINDOWS_INSTALL_OUTCOME_CLOSED 6u
     // Windows 正常产品链的声明接受状态（无 OS 菜单栏 / 剪贴板投影）。
     uint64_t commandMenuProjectionVersion;
     uint32_t commandMenuPendingCount;
@@ -449,6 +492,8 @@ struct CjguiWindowsRendererSession {
 };
 
 static CjguiWindowsRendererSession g_sessions[CJGUI_WINDOWS_SESSION_CAPACITY];
+static CRITICAL_SECTION g_sessionLock;
+static INIT_ONCE g_sessionLockOnce = INIT_ONCE_STATIC_INIT;
 static volatile LONG64 g_nextSessionToken = 0;
 static volatile LONG64 g_nextSessionGeneration = 0;
 static volatile LONG64 g_nextCoordinateEpoch = 0;
@@ -461,6 +506,11 @@ static volatile LONG g_contractLiveTextTextureResources = 0;
 #endif
 
 static CjguiInternalRendererStatus reap_text_flights(CjguiWindowsRendererSession *s);
+
+static void drain_dispatcher_commands(CjguiWindowsRendererSession *s, int skipPumpAndDestroy);
+static CjguiInternalRendererStatus marshal_pump_command(uint64_t token, uint32_t timeoutMs,
+    CjguiInternalRendererEvent *outEvent, uint64_t *outIdleWaitNs, int hasIdleOut);
+static CjguiInternalRendererStatus marshal_destroy_command(uint64_t token);
 
 static int text_budget_reserve_scratch(CjguiWindowsRendererSession *s, uint64_t bytes) {
     if (!s || bytes > CJGUI_WINDOWS_TEXT_SESSION_SCRATCH_CAPACITY ||
@@ -857,7 +907,9 @@ enum {
 
 static int handle_windows_text_character(CjguiWindowsRendererSession *s,
     const WCHAR *text, uint32_t units);
-static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key);
+static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key,
+    int64_t frozenModifiers);
+static int64_t windows_keyboard_modifiers(void);
 static int handle_windows_ime_composition(CjguiWindowsRendererSession *s, LPARAM flags);
 static void end_windows_ime_composition(CjguiWindowsRendererSession *s);
 static void clear_pending_owned_input(CjguiWindowsRendererSession *s);
@@ -877,12 +929,31 @@ static uint64_t next_positive_counter(volatile LONG64 *counter) {
     }
 }
 
+static BOOL CALLBACK init_session_lock_once(PINIT_ONCE once, PVOID param, PVOID *ctx) {
+    (void)once;
+    (void)param;
+    (void)ctx;
+    InitializeCriticalSection(&g_sessionLock);
+    return TRUE;
+}
+
+static void ensure_session_lock(void) {
+    (void)InitOnceExecuteOnce(&g_sessionLockOnce, init_session_lock_once, NULL, NULL);
+}
+
 static CjguiWindowsRendererSession *find_session(uint64_t token) {
     if (token == 0) return NULL;
+    ensure_session_lock();
+    EnterCriticalSection(&g_sessionLock);
+    CjguiWindowsRendererSession *found = NULL;
     for (uint32_t i = 0; i < CJGUI_WINDOWS_SESSION_CAPACITY; ++i) {
-        if (g_sessions[i].occupied && g_sessions[i].token == token) return &g_sessions[i];
+        if (g_sessions[i].occupied && g_sessions[i].token == token) {
+            found = &g_sessions[i];
+            break;
+        }
     }
-    return NULL;
+    LeaveCriticalSection(&g_sessionLock);
+    return found;
 }
 
 /* ä¼è¯æææ§æ¥ï¼çº¿ç¨æ¨¡åè§æä»¶å¤´ï¼ï¼çªå£ä¸æ¶æ¯æ³µå½èªæ UI çº¿ç¨ï¼é©±å¨çº¿ç¨å¯ä»¥æ¯ä»»æ OS çº¿ç¨ï¼æ­¤å¤åªç¡®è®¤ä¼è¯å­å¨ï¼ä¸åå OS çº¿ç¨äº²åæ­è¨ã */
@@ -2076,7 +2147,7 @@ static void windows_cancel_mouse_on_coordinate_change(CjguiWindowsRendererSessio
 /* UI 线程专用：把一条原始输入追加到 raw 环。只触碰环索引与唤醒事件；
    不读写真正的会话状态，不做 user32 同步调用。 */
 static void raw_ring_push(CjguiWindowsRendererSession *s, uint32_t message,
-    uint64_t wParam, int64_t lParam) {
+    uint64_t wParam, int64_t lParam, int64_t modifiers) {
     if (!s) return;
     EnterCriticalSection(&s->rawLock);
     uint32_t next = (s->rawHead + 1u) % CJGUI_WINDOWS_RAW_RING_CAPACITY;
@@ -2084,6 +2155,7 @@ static void raw_ring_push(CjguiWindowsRendererSession *s, uint32_t message,
         s->rawRing[s->rawHead].message = message;
         s->rawRing[s->rawHead].wParam = wParam;
         s->rawRing[s->rawHead].lParam = lParam;
+        s->rawRing[s->rawHead].modifiers = modifiers;
         s->rawHead = next;
         SetEvent(s->rawWakeEvent);
     } else {
@@ -2094,13 +2166,14 @@ static void raw_ring_push(CjguiWindowsRendererSession *s, uint32_t message,
 
 /* 驱动线程专用：取一条原始输入；空返回 0。 */
 static int raw_ring_pop(CjguiWindowsRendererSession *s, uint32_t *message,
-    uint64_t *wParam, int64_t *lParam) {
+    uint64_t *wParam, int64_t *lParam, int64_t *modifiers) {
     int got = 0;
     EnterCriticalSection(&s->rawLock);
     if (s->rawHead != s->rawTail) {
         if (message) *message = s->rawRing[s->rawTail].message;
         if (wParam) *wParam = s->rawRing[s->rawTail].wParam;
         if (lParam) *lParam = s->rawRing[s->rawTail].lParam;
+        if (modifiers) *modifiers = s->rawRing[s->rawTail].modifiers;
         s->rawTail = (s->rawTail + 1u) % CJGUI_WINDOWS_RAW_RING_CAPACITY;
         got = 1;
     }
@@ -2126,7 +2199,7 @@ static LRESULT CALLBACK cjgui_window_proc(HWND hwnd, UINT message,
         case WM_CLOSE:
         case WM_SIZE:
         case WM_KILLFOCUS:
-            raw_ring_push(s, (uint32_t)message, (uint64_t)wParam, (int64_t)lParam);
+            raw_ring_push(s, (uint32_t)message, (uint64_t)wParam, (int64_t)lParam, 0);
             return 0;
         case WM_DPICHANGED: {
             /* lParam 是系统调用栈上的建议窗口矩形，不可跨线程记录：
@@ -2135,7 +2208,7 @@ static LRESULT CALLBACK cjgui_window_proc(HWND hwnd, UINT message,
             if (suggested) SetWindowPos(hwnd, NULL, suggested->left, suggested->top,
                 suggested->right - suggested->left, suggested->bottom - suggested->top,
                 SWP_NOACTIVATE | SWP_NOZORDER);
-            raw_ring_push(s, (uint32_t)message, (uint64_t)wParam, 0);
+            raw_ring_push(s, (uint32_t)message, (uint64_t)wParam, 0, 0);
             return 0;
         }
         case WM_LBUTTONDOWN:
@@ -2150,8 +2223,10 @@ static LRESULT CALLBACK cjgui_window_proc(HWND hwnd, UINT message,
         case WM_IME_STARTCOMPOSITION:
         case WM_IME_ENDCOMPOSITION:
         case WM_IME_COMPOSITION:
-            /* 只记录原始输入；全部会话状态机仍在驱动线程执行。 */
-            raw_ring_push(s, (uint32_t)message, (uint64_t)wParam, (int64_t)lParam);
+            /* 只记录原始输入；修饰键在到达时刻冻结，随记录搬运，
+               消费侧不再读取“当前”键盘状态。 */
+            raw_ring_push(s, (uint32_t)message, (uint64_t)wParam, (int64_t)lParam,
+                windows_keyboard_modifiers());
             if (message == WM_IME_STARTCOMPOSITION || message == WM_IME_ENDCOMPOSITION ||
                 message == WM_KILLFOCUS) {
                 return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -2185,7 +2260,7 @@ static LRESULT CALLBACK cjgui_window_proc(HWND hwnd, UINT message,
    与旧 WndProc 的唯一区别：hwnd 取自会话；WM_DPICHANGED 的窗口重定位已在
    UI 线程同步完成，这里只做 DPI/尺寸逻辑。 */
 static void dispatch_raw_message(CjguiWindowsRendererSession *s, uint32_t message,
-    uint64_t wParam, int64_t lParam) {
+    uint64_t wParam, int64_t lParam, int64_t frozenModifiers) {
     if (!s) return;
     HWND hwnd = s->hwnd;
     switch (message) {
@@ -2284,7 +2359,7 @@ static void dispatch_raw_message(CjguiWindowsRendererSession *s, uint32_t messag
             windows_cancel_mouse_on_coordinate_change(s);
             break;
         case WM_KEYDOWN:
-            (void)handle_windows_key_down(s, (WPARAM)wParam);
+            (void)handle_windows_key_down(s, (WPARAM)wParam, frozenModifiers);
             break;
         case WM_CHAR: {
             WCHAR unit = (WCHAR)wParam;
@@ -4036,6 +4111,7 @@ static CjguiInternalRendererStatus pump_windows_messages(
     if (outIdleWaitNs) *outIdleWaitNs = 0;
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!s->hwnd) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    s->lastPumpTid = GetCurrentThreadId();
     start_pending_ime_successor(s);
     if (timeoutMs > 16u) timeoutMs = 16u;
     uint64_t started = cjgui_internal_renderer_owner_clock_ns();
@@ -4044,14 +4120,30 @@ static CjguiInternalRendererStatus pump_windows_messages(
         uint32_t message = 0u;
         uint64_t wParam = 0u;
         int64_t lParam = 0;
-        while (raw_ring_pop(s, &message, &wParam, &lParam)) {
-            dispatch_raw_message(s, message, wParam, lParam);
+        int64_t frozenModifiers = 0;
+        while (raw_ring_pop(s, &message, &wParam, &lParam, &frozenModifiers)) {
+            dispatch_raw_message(s, message, wParam, lParam, frozenModifiers);
         }
         CjguiInternalRendererStatus popped = pop_event(s, outEvent);
         if (popped == CJGUI_INTERNAL_RENDERER_OK) return popped;
         if (remaining == 0u) return CJGUI_INTERNAL_RENDERER_OK;
-        DWORD waited = WaitForSingleObject(s->rawWakeEvent, remaining);
-        (void)waited;
+        HANDLE waitHandles[2] = { s->rawWakeEvent, s->cmdWakeEvent };
+        DWORD waited = MsgWaitForMultipleObjectsEx(2, waitHandles, remaining,
+            QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        if (waited == WAIT_FAILED) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        if (WaitForSingleObject(s->pumpStopEvent, 0) == WAIT_OBJECT_0) {
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        MSG drained;
+        while (PeekMessageW(&drained, NULL, 0, 0, PM_REMOVE)) {
+            if (drained.message == WM_QUIT) {
+                raw_ring_push(s, (uint32_t)WM_QUIT, 0u, 0, 0);
+                continue;
+            }
+            TranslateMessage(&drained);
+            DispatchMessageW(&drained);
+        }
+        drain_dispatcher_commands(s, 1);
         if (outIdleWaitNs) {
             uint64_t now = cjgui_internal_renderer_owner_clock_ns();
             *outIdleWaitNs = now >= started ? now - started : 0u;
@@ -4062,8 +4154,9 @@ static CjguiInternalRendererStatus pump_windows_messages(
             : (uint32_t)((uint64_t)timeoutMs - spentMs);
         if (nextRemaining == 0u) {
             /* 截止前再看一次，避免唤醒与排空间隙丢事件。 */
-            while (raw_ring_pop(s, &message, &wParam, &lParam)) {
-                dispatch_raw_message(s, message, wParam, lParam);
+            int64_t deadlineFrozen = 0;
+            while (raw_ring_pop(s, &message, &wParam, &lParam, &deadlineFrozen)) {
+                dispatch_raw_message(s, message, wParam, lParam, deadlineFrozen);
             }
             popped = pop_event(s, outEvent);
             if (popped == CJGUI_INTERNAL_RENDERER_OK) return popped;
@@ -4083,17 +4176,29 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_source_install_gate(
     if (pending) {
         if (bindingEpoch == 0u || requestId == 0u)
             return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+        if (s->sourceInstallPending &&
+            (s->sourceInstallBindingEpoch != bindingEpoch ||
+             s->sourceInstallRequestId != requestId)) {
+            s->sourceInstallOutcome = CJGUI_WINDOWS_INSTALL_OUTCOME_SUPERSEDED;
+        } else {
+            s->sourceInstallOutcome = CJGUI_WINDOWS_INSTALL_OUTCOME_NONE;
+        }
         s->sourceInstallBindingEpoch = bindingEpoch;
         s->sourceInstallRequestId = requestId;
         s->sourceInstallPending = 1u;
+        s->sourceInstallProvisional = 0u;
         return CJGUI_INTERNAL_RENDERER_OK;
     }
     if (!s->sourceInstallPending) return CJGUI_INTERNAL_RENDERER_OK;
     if (s->sourceInstallBindingEpoch != bindingEpoch || s->sourceInstallRequestId != requestId)
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    s->sourceInstallOutcome = s->sourceInstallProvisional
+        ? CJGUI_WINDOWS_INSTALL_OUTCOME_OWNER_CONFIRMED
+        : CJGUI_WINDOWS_INSTALL_OUTCOME_OWNER_CANCELLED;
     s->sourceInstallPending = 0u;
     s->sourceInstallBindingEpoch = 0u;
     s->sourceInstallRequestId = 0u;
+    s->sourceInstallProvisional = 0u;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -4951,18 +5056,22 @@ static void windows_ensure_pump_input_attached(CjguiWindowsRendererSession *s) {
 CjguiInternalRendererStatus cjgui_internal_renderer_pump_event_measured(
     uint64_t token, uint32_t timeoutMs, CjguiInternalRendererEvent *outEvent,
     uint64_t *outIdleWaitNs) {
+    if (!outEvent) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiWindowsRendererSession *s = find_session(token);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     windows_ensure_pump_input_attached(s);
     windows_test_probe_tick(s);
-    return pump_windows_messages(s, timeoutMs, outEvent, outIdleWaitNs);
+    return marshal_pump_command(token, timeoutMs, outEvent, outIdleWaitNs, 1);
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(
     uint64_t token, uint32_t timeoutMs, CjguiInternalRendererEvent *outEvent) {
+    if (!outEvent) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiWindowsRendererSession *s = find_session(token);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     windows_ensure_pump_input_attached(s);
     windows_test_probe_tick(s);
-    return pump_windows_messages(s, timeoutMs, outEvent, NULL);
+    return marshal_pump_command(token, timeoutMs, outEvent, NULL, 0);
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_pumped_pointer_geometry(
@@ -5026,6 +5135,253 @@ int32_t cjgui_macos_window_minimized(int64_t windowNumber) {
     return hwnd && IsWindow(hwnd) && IsIconic(hwnd) ? 1 : 0;
 }
 
+/* ---- UI dispatcher 命令机制（phase 1：pump/destroy 封送） ----
+   会话逻辑在 UI（泵）线程执行；C ABI 入口封送命令并等待完成。
+   每条命令至多执行一次：started 由 UI 线程置位；cancelled 仅 destroy-A
+   对尚未开始的排队命令置位。调用者无限等待 doneEvent；UI 线程以有界
+   切片推进，保证完成；线程消亡只可能发生在 destroy 回收路径，其等待者
+   均已先结算。栈上命令块依赖此等待不变式，禁止提前返回。 */
+static int cmd_ring_full_locked(CjguiWindowsRendererSession *s) {
+    return ((s->cmdHead + 1u) % CJGUI_WINDOWS_CMD_RING_CAPACITY) == s->cmdTail;
+}
+
+static void destroy_ui_phase_a(CjguiWindowsRendererSession *s) {
+    s->retiring = 1;
+    EnterCriticalSection(&s->cmdLock);
+    for (uint32_t i = s->cmdTail; i != s->cmdHead;
+         i = (i + 1u) % CJGUI_WINDOWS_CMD_RING_CAPACITY) {
+        CjguiWindowsCommand *queued = s->cmdRing[i % CJGUI_WINDOWS_CMD_RING_CAPACITY];
+        if (queued && !queued->done && !queued->started) {
+            queued->cancelled = 1;
+        }
+    }
+    LeaveCriticalSection(&s->cmdLock);
+    windows_cancel_mouse_gesture(s);
+    windows_free_mouse_target(s);
+    s->compositionGate = WINDOWS_COMPOSITION_GATE_RETIRING;
+    s->compositionState = WINDOWS_COMPOSITION_RETIRED;
+    s->compositionActive = 0u;
+    s->pendingHighSurrogate = 0u;
+    s->pendingHighSurrogateBindingEpoch = 0u;
+    clear_pending_owned_input(s);
+    range_disarm(s);
+    free(s->pendingImeSuccessorUtf8);
+    s->pendingImeSuccessorUtf8 = NULL;
+    s->pendingImeSuccessorPresent = 0u;
+    s->pendingImeSuccessorReady = 0u;
+    if (s->hwnd) {
+        HIMC context = ImmGetContext(s->hwnd);
+        if (context) {
+            (void)ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0u);
+            ImmReleaseContext(s->hwnd, context);
+        }
+        (void)ImmAssociateContext(s->hwnd, s->originalImeContext);
+    }
+    if (s->ownedImeContext) {
+        ImmDestroyContext(s->ownedImeContext);
+        s->ownedImeContext = NULL;
+    }
+    if (s->inputAttached && s->pumpThreadId != 0u && s->ownerThreadId != 0u &&
+        s->pumpThreadId != s->ownerThreadId) {
+        (void)AttachThreadInput(s->pumpThreadId, s->ownerThreadId, FALSE);
+        s->inputAttached = 0;
+    }
+}
+
+static void destroy_caller_phase_b(CjguiWindowsRendererSession *s) {
+    release_scene(&s->candidateScene);
+    release_scene(&s->acceptedScene);
+    for (uint32_t i = 0; i < s->textRunDeclarationCount; ++i)
+        free(s->textRunDeclarations[i].encoded);
+    release_graphics(s);
+    free(s->proxyValueUtf8);
+    free(s->pendingPngTransferIdentity);
+    for (uint32_t i = 0; i < CJGUI_WINDOWS_EVENT_CAPACITY; ++i)
+        free(s->eventTextPayloads[i]);
+    free(s->formEventText);
+    free(s->compositionBaseUtf8);
+    free(s->compositionExpectedOwnerUtf8);
+    if (s->rawWakeEvent) CloseHandle(s->rawWakeEvent);
+    if (s->pumpReadyEvent) CloseHandle(s->pumpReadyEvent);
+    if (s->pumpStopEvent) CloseHandle(s->pumpStopEvent);
+    if (s->cmdWakeEvent) CloseHandle(s->cmdWakeEvent);
+    DeleteCriticalSection(&s->rawLock);
+    DeleteCriticalSection(&s->cmdLock);
+    ensure_session_lock();
+    EnterCriticalSection(&g_sessionLock);
+    memset(s, 0, sizeof(*s));
+    LeaveCriticalSection(&g_sessionLock);
+}
+
+static void execute_dispatcher_command(CjguiWindowsRendererSession *s,
+    CjguiWindowsCommand *cmd) {
+    if (GetCurrentThreadId() != s->pumpThreadId) {
+        cmd->status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        cmd->done = 1;
+        SetEvent(cmd->doneEvent);
+        return;
+    }
+    if (cmd->cancelled) {
+        cmd->status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        cmd->done = 1;
+        SetEvent(cmd->doneEvent);
+        return;
+    }
+    if (cmd->generation != s->sessionGeneration) {
+        cmd->status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        cmd->done = 1;
+        SetEvent(cmd->doneEvent);
+        return;
+    }
+    cmd->started = 1;
+    if (cmd->kind == CJGUI_WINDOWS_CMD_PUMP) {
+        uint64_t idleNs = 0u;
+        cmd->status = pump_windows_messages(s, cmd->timeoutMs, &cmd->outEvent,
+            cmd->hasIdleOut ? &idleNs : NULL);
+        if (cmd->hasIdleOut) cmd->outIdleNs = idleNs;
+    } else if (cmd->kind == CJGUI_WINDOWS_CMD_DESTROY) {
+        if (s->retiring) {
+            cmd->status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        } else {
+            destroy_ui_phase_a(s);
+            cmd->status = CJGUI_INTERNAL_RENDERER_OK;
+        }
+    } else {
+        cmd->status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    cmd->done = 1;
+    SetEvent(cmd->doneEvent);
+}
+
+static void drain_dispatcher_commands(CjguiWindowsRendererSession *s, int skipPumpAndDestroy) {
+    for (;;) {
+        CjguiWindowsCommand *cmd = NULL;
+        EnterCriticalSection(&s->cmdLock);
+        if (s->cmdHead != s->cmdTail) {
+            CjguiWindowsCommand *front = s->cmdRing[s->cmdTail % CJGUI_WINDOWS_CMD_RING_CAPACITY];
+            if (skipPumpAndDestroy && front &&
+                (front->kind == CJGUI_WINDOWS_CMD_PUMP || front->kind == CJGUI_WINDOWS_CMD_DESTROY)) {
+                LeaveCriticalSection(&s->cmdLock);
+                return;
+            }
+            cmd = front;
+            s->cmdTail = (s->cmdTail + 1u) % CJGUI_WINDOWS_CMD_RING_CAPACITY;
+        }
+        LeaveCriticalSection(&s->cmdLock);
+        if (!cmd) return;
+        execute_dispatcher_command(s, cmd);
+    }
+}
+
+static CjguiInternalRendererStatus marshal_pump_command(uint64_t token, uint32_t timeoutMs,
+    CjguiInternalRendererEvent *outEvent, uint64_t *outIdleWaitNs, int hasIdleOut) {
+    CjguiWindowsRendererSession *s = find_session(token);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    uint64_t generation = s->sessionGeneration;
+    DWORD uiTid = s->pumpThreadId;
+    int running = s->pumpThreadRunning;
+    HWND hwnd = s->hwnd;
+    if (uiTid != 0u && GetCurrentThreadId() == uiTid) {
+        return pump_windows_messages(s, timeoutMs, outEvent,
+            hasIdleOut ? outIdleWaitNs : NULL);
+    }
+    if (!running || uiTid == 0u || !hwnd) {
+        if (!s->hwnd) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        return pump_windows_messages(s, timeoutMs, outEvent,
+            hasIdleOut ? outIdleWaitNs : NULL);
+    }
+    HANDLE doneEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (!doneEvent) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiWindowsCommand cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.kind = CJGUI_WINDOWS_CMD_PUMP;
+    cmd.token = token;
+    cmd.generation = generation;
+    cmd.timeoutMs = timeoutMs;
+    cmd.hasIdleOut = hasIdleOut;
+    cmd.doneEvent = doneEvent;
+    EnterCriticalSection(&s->cmdLock);
+    if (s->retiring || s->sessionGeneration != generation) {
+        LeaveCriticalSection(&s->cmdLock);
+        CloseHandle(doneEvent);
+        return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (((s->cmdHead + 1u) % CJGUI_WINDOWS_CMD_RING_CAPACITY) == s->cmdTail) {
+        LeaveCriticalSection(&s->cmdLock);
+        CloseHandle(doneEvent);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    s->cmdRing[s->cmdHead % CJGUI_WINDOWS_CMD_RING_CAPACITY] = &cmd;
+    s->cmdHead = (s->cmdHead + 1u) % CJGUI_WINDOWS_CMD_RING_CAPACITY;
+    SetEvent(s->cmdWakeEvent);
+    LeaveCriticalSection(&s->cmdLock);
+    WaitForSingleObject(doneEvent, INFINITE);
+    CjguiInternalRendererStatus status = cmd.status;
+    if (!cmd.cancelled && status == CJGUI_INTERNAL_RENDERER_OK) {
+        *outEvent = cmd.outEvent;
+        if (hasIdleOut && outIdleWaitNs) *outIdleWaitNs = cmd.outIdleNs;
+    } else if (cmd.cancelled) {
+        status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    CloseHandle(doneEvent);
+    return status;
+}
+
+static CjguiInternalRendererStatus marshal_destroy_command(uint64_t token) {
+    CjguiWindowsRendererSession *s = find_session(token);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    uint64_t generation = s->sessionGeneration;
+    DWORD uiTid = s->pumpThreadId;
+    int running = s->pumpThreadRunning;
+    HANDLE pumpThread = s->pumpThread;
+    if (uiTid != 0u && GetCurrentThreadId() == uiTid) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    CjguiInternalRendererStatus flightStatus = drain_text_flights(s, 5000u);
+    if (flightStatus != CJGUI_INTERNAL_RENDERER_OK) return flightStatus;
+    if (!running || uiTid == 0u) {
+        if (s->sessionGeneration != generation || s->retiring) {
+            return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+        }
+        destroy_ui_phase_a(s);
+        destroy_caller_phase_b(s);
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    HANDLE doneEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (!doneEvent) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CjguiWindowsCommand cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.kind = CJGUI_WINDOWS_CMD_DESTROY;
+    cmd.token = token;
+    cmd.generation = generation;
+    cmd.doneEvent = doneEvent;
+    EnterCriticalSection(&s->cmdLock);
+    if (s->retiring || s->sessionGeneration != generation) {
+        LeaveCriticalSection(&s->cmdLock);
+        CloseHandle(doneEvent);
+        return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    if (((s->cmdHead + 1u) % CJGUI_WINDOWS_CMD_RING_CAPACITY) == s->cmdTail) {
+        LeaveCriticalSection(&s->cmdLock);
+        CloseHandle(doneEvent);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    s->cmdRing[s->cmdHead % CJGUI_WINDOWS_CMD_RING_CAPACITY] = &cmd;
+    s->cmdHead = (s->cmdHead + 1u) % CJGUI_WINDOWS_CMD_RING_CAPACITY;
+    SetEvent(s->cmdWakeEvent);
+    LeaveCriticalSection(&s->cmdLock);
+    WaitForSingleObject(doneEvent, INFINITE);
+    CjguiInternalRendererStatus status = cmd.cancelled
+        ? CJGUI_INTERNAL_RENDERER_INVALID_SESSION : cmd.status;
+    CloseHandle(doneEvent);
+    if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+    SetEvent(s->pumpStopEvent);
+    WaitForSingleObject(pumpThread, INFINITE);
+    CloseHandle(pumpThread);
+    destroy_caller_phase_b(s);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 static DWORD WINAPI pump_thread_main(LPVOID param) {
     CjguiWindowsRendererSession *s = (CjguiWindowsRendererSession *)param;
     s->pumpThreadId = GetCurrentThreadId();
@@ -5036,9 +5392,9 @@ static DWORD WINAPI pump_thread_main(LPVOID param) {
     SetEvent(s->pumpReadyEvent);
     if (status != CJGUI_INTERNAL_RENDERER_OK) return 1;
     MSG message;
-    HANDLE waitHandles[1] = { s->pumpStopEvent };
+    HANDLE waitHandles[2] = { s->pumpStopEvent, s->cmdWakeEvent };
     for (;;) {
-        DWORD wait = MsgWaitForMultipleObjectsEx(1, waitHandles, INFINITE,
+        DWORD wait = MsgWaitForMultipleObjectsEx(2, waitHandles, INFINITE,
             QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (wait == WAIT_OBJECT_0) break;
         if (wait == WAIT_FAILED) {
@@ -5049,12 +5405,13 @@ static DWORD WINAPI pump_thread_main(LPVOID param) {
             if (message.message == WM_QUIT) {
                 /* 线程消息（含 PostThreadMessage 的停止语义）记为原始退出，由
                    驱动侧转为 APPLICATION_EXIT_REQUESTED 事件。 */
-                raw_ring_push(s, (uint32_t)WM_QUIT, 0u, 0);
+                raw_ring_push(s, (uint32_t)WM_QUIT, 0u, 0, 0);
                 continue;
             }
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+        drain_dispatcher_commands(s, 0);
     }
     /* 在窗口线程拆窗口；D3D 资源由驱动侧 destroy 在 join 后释放。 */
     if (s->hwnd) {
@@ -5069,23 +5426,35 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
     if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     if (!config) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN;
     CjguiWindowsRendererSession *s = NULL;
+    ensure_session_lock();
+    EnterCriticalSection(&g_sessionLock);
     for (uint32_t i = 0; i < CJGUI_WINDOWS_SESSION_CAPACITY; ++i) {
         if (!g_sessions[i].occupied) { s = &g_sessions[i]; break; }
     }
+    if (s) {
+        memset(s, 0, sizeof(*s));
+        s->occupied = 1;
+    }
+    LeaveCriticalSection(&g_sessionLock);
     if (!s) {
         if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_SESSION_TABLE_FULL;
         return CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN;
     }
-    memset(s, 0, sizeof(*s));
-    s->occupied = 1;
     InitializeCriticalSection(&s->rawLock);
+    InitializeCriticalSection(&s->cmdLock);
     s->rawWakeEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
     s->pumpStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     s->pumpReadyEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (!s->rawWakeEvent || !s->pumpStopEvent || !s->pumpReadyEvent) {
+    s->cmdWakeEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+    s->cmdHead = 0u;
+    s->cmdTail = 0u;
+    s->retiring = 0;
+    if (!s->rawWakeEvent || !s->pumpStopEvent || !s->pumpReadyEvent || !s->cmdWakeEvent) {
         if (s->rawWakeEvent) CloseHandle(s->rawWakeEvent);
         if (s->pumpStopEvent) CloseHandle(s->pumpStopEvent);
         if (s->pumpReadyEvent) CloseHandle(s->pumpReadyEvent);
+        if (s->cmdWakeEvent) CloseHandle(s->cmdWakeEvent);
+        DeleteCriticalSection(&s->cmdLock);
         DeleteCriticalSection(&s->rawLock);
         memset(s, 0, sizeof(*s));
         if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
@@ -5111,6 +5480,8 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
         CloseHandle(s->rawWakeEvent);
         CloseHandle(s->pumpStopEvent);
         CloseHandle(s->pumpReadyEvent);
+        CloseHandle(s->cmdWakeEvent);
+        DeleteCriticalSection(&s->cmdLock);
         DeleteCriticalSection(&s->rawLock);
         memset(s, 0, sizeof(*s));
         if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_WINDOW_CREATE_FAILED;
@@ -5127,7 +5498,9 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
         CloseHandle(s->rawWakeEvent);
         CloseHandle(s->pumpStopEvent);
         CloseHandle(s->pumpReadyEvent);
+        CloseHandle(s->cmdWakeEvent);
         release_graphics(s);
+        DeleteCriticalSection(&s->cmdLock);
         DeleteCriticalSection(&s->rawLock);
         memset(s, 0, sizeof(*s));
         if (outStatus) *outStatus = (CjguiInternalRendererStatus)code;
@@ -5515,68 +5888,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_diagnostic_node_geometry(uin
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t token) {
-    /* 任意驱动线程可调用：窗口与其泵线程在此收回。泵线程退出前窗口由它拆掉；
-       此后无并发访问者，再释放其余资源。 */
-    CjguiWindowsRendererSession *s = find_session(token);
-    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    CjguiInternalRendererStatus flightStatus = drain_text_flights(s, 5000u);
-    if (flightStatus != CJGUI_INTERNAL_RENDERER_OK) return flightStatus;
-    windows_cancel_mouse_gesture(s);
-    windows_free_mouse_target(s);
-    s->compositionGate = WINDOWS_COMPOSITION_GATE_RETIRING;
-    s->compositionState = WINDOWS_COMPOSITION_RETIRED;
-    s->compositionActive = 0u;
-    s->pendingHighSurrogate = 0u;
-    s->pendingHighSurrogateBindingEpoch = 0u;
-    clear_pending_owned_input(s);
-    range_disarm(s);
-    free(s->pendingImeSuccessorUtf8);
-    s->pendingImeSuccessorUtf8 = NULL;
-    s->pendingImeSuccessorPresent = 0u;
-    s->pendingImeSuccessorReady = 0u;
-    /* IME 分离在窗口尚存时做；窗口拆卸交给泵线程（窗口线程要求）。 */
-    if (s->hwnd) {
-        HIMC context = ImmGetContext(s->hwnd);
-        if (context) {
-            (void)ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0u);
-            ImmReleaseContext(s->hwnd, context);
-        }
-        (void)ImmAssociateContext(s->hwnd, s->originalImeContext);
-    }
-    if (s->ownedImeContext) {
-        ImmDestroyContext(s->ownedImeContext);
-        s->ownedImeContext = NULL;
-    }
-    if (s->inputAttached && s->pumpThreadId != 0u && s->ownerThreadId != 0u &&
-        s->pumpThreadId != s->ownerThreadId) {
-        (void)AttachThreadInput(s->pumpThreadId, s->ownerThreadId, FALSE);
-        s->inputAttached = 0;
-    }
-    if (s->pumpThreadRunning && s->pumpThread) {
-        SetEvent(s->pumpStopEvent);
-        WaitForSingleObject(s->pumpThread, INFINITE);
-        CloseHandle(s->pumpThread);
-        s->pumpThread = NULL;
-        s->pumpThreadRunning = 0;
-    }
-    release_scene(&s->candidateScene);
-    release_scene(&s->acceptedScene);
-    for (uint32_t i = 0; i < s->textRunDeclarationCount; ++i)
-        free(s->textRunDeclarations[i].encoded);
-    release_graphics(s);
-    free(s->proxyValueUtf8);
-    free(s->pendingPngTransferIdentity);
-    for (uint32_t i = 0; i < CJGUI_WINDOWS_EVENT_CAPACITY; ++i)
-        free(s->eventTextPayloads[i]);
-    free(s->formEventText);
-    free(s->compositionBaseUtf8);
-    free(s->compositionExpectedOwnerUtf8);
-    if (s->rawWakeEvent) CloseHandle(s->rawWakeEvent);
-    if (s->pumpReadyEvent) CloseHandle(s->pumpReadyEvent);
-    if (s->pumpStopEvent) CloseHandle(s->pumpStopEvent);
-    DeleteCriticalSection(&s->rawLock);
-    memset(s, 0, sizeof(*s));
-    return CJGUI_INTERNAL_RENDERER_OK;
+    return marshal_destroy_command(token);
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_request_close(uint64_t token) {
@@ -5588,7 +5900,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_request_close(uint64_t token
 
 uint32_t cjgui_internal_renderer_occupied_session_count(void) {
     uint32_t count = 0;
+    ensure_session_lock();
+    EnterCriticalSection(&g_sessionLock);
     for (uint32_t i = 0; i < CJGUI_WINDOWS_SESSION_CAPACITY; ++i) count += g_sessions[i].occupied ? 1u : 0u;
+    LeaveCriticalSection(&g_sessionLock);
     return count;
 }
 
@@ -5604,11 +5919,14 @@ uint64_t cjgui_internal_renderer_coordinate_lifetime(uint64_t token,
 void cjgui_internal_renderer_request_application_stop(void) {
     /* PostQuitMessage 只作用于调用线程；停止语义必须到达拥有窗口队列的泵线程。 */
     int posted = 0;
+    ensure_session_lock();
+    EnterCriticalSection(&g_sessionLock);
     for (uint32_t i = 0; i < CJGUI_WINDOWS_SESSION_CAPACITY; ++i) {
         if (g_sessions[i].occupied && g_sessions[i].pumpThreadId != 0u) {
             if (PostThreadMessageW(g_sessions[i].pumpThreadId, WM_QUIT, 0, 0)) posted += 1;
         }
     }
+    LeaveCriticalSection(&g_sessionLock);
     (void)posted;
 }
 
@@ -6210,8 +6528,6 @@ static int queue_owned_range_replace(CjguiWindowsRendererSession *s,
         entry->postBodyLength = (uint32_t)strlen(postCopy);
         entry->claimed = 0;
         s->rangeClaimTail += 1u;
-        s->rangeNextSeq = seq;
-        s->rangePrevSeq = seq;
         CjguiInternalRendererEvent chainEvent;
         memset(&chainEvent, 0, sizeof(chainEvent));
         chainEvent.kind = CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED;
@@ -6233,6 +6549,8 @@ static int queue_owned_range_replace(CjguiWindowsRendererSession *s,
             free(nextValue);
             return 1;
         }
+        s->rangeNextSeq = seq;
+        s->rangePrevSeq = seq;
         free(s->rangeChainBody);
         s->rangeChainBody = nextValue;
         s->rangeChainBodyLength = (uint32_t)strlen(nextValue);
@@ -6354,7 +6672,8 @@ static int64_t windows_keyboard_modifiers(void) {
     return flags;
 }
 
-static int enqueue_windows_navigation(CjguiWindowsRendererSession *s, const char *intent) {
+static int enqueue_windows_navigation(CjguiWindowsRendererSession *s, const char *intent,
+    int64_t frozenModifiers) {
     if (!s || !intent || !s->ownedTextSessionEnabled || !s->ownedTextSessionBindingEpoch ||
         GetFocus() != s->hwnd) return 0;
     if (source_install_gate_holds_input(s)) return 0;
@@ -6369,11 +6688,12 @@ static int enqueue_windows_navigation(CjguiWindowsRendererSession *s, const char
     event.resourceId = s->ownedTextSessionResourceId;
     event.nodeKind = s->ownedTextSessionNodeKind;
     event.bindingEpoch = s->ownedTextSessionBindingEpoch;
-    event.modifierFlags = windows_keyboard_modifiers();
+    event.modifierFlags = frozenModifiers;
     return push_event_payload(s, &event, intent, (uint32_t)strlen(intent));
 }
 
-static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key) {
+static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key,
+    int64_t frozenModifiers) {
     if (!s || !s->ownedTextSessionEnabled || GetFocus() != s->hwnd) return 0;
     if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive) {
         if (key == VK_ESCAPE) {
@@ -6396,7 +6716,7 @@ static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key) {
         default: break;
     }
     if (!intent) return 0;
-    return enqueue_windows_navigation(s, intent);
+    return enqueue_windows_navigation(s, intent, frozenModifiers);
 }
 
 static int read_imm_utf8(HIMC context, DWORD index, char **outText,
@@ -6878,10 +7198,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_install_owned_source_selecti
     s->selectionEnd16 = selectionEnd;
     *outSelectionStart = selectionStart;
     *outSelectionEnd = selectionEnd;
-    // 同票成功安装即消费该门，不让旧票继续约束后续输入；新票由 owner 另行下发。
-    s->sourceInstallPending = 0u;
-    s->sourceInstallBindingEpoch = 0u;
-    s->sourceInstallRequestId = 0u;
+    // 同票成功安装进入 provisional：门继续约束后续输入直到 owner 显式结算，
+    // 新票由 owner 另行下发。outcome 区分 native 安装成功与 owner 最终结论。
+    s->sourceInstallProvisional = 1u;
+    s->sourceInstallOutcome = CJGUI_WINDOWS_INSTALL_OUTCOME_INSTALLED;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -7356,4 +7676,22 @@ int32_t CjguiAsyncTextMetricsPoll(uint64_t handle,
     if (outMetrics) memset(outMetrics, 0, sizeof(*outMetrics));
     if (outFailure) *outFailure = 4;
     return 4;
+}
+
+/* 诊断观测：最近一次 pump 调用实际执行的 OS 线程 id。
+   供 A/B 线程反例判定“同一 session 是否恒由同一 UI 线程执行”。
+   完整 dispatcher 落地后，此值应恒等于泵线程 id；当前实现随调用线程变化。 */
+uint32_t cjgui_internal_renderer_debug_last_pump_tid(uint64_t token) {
+    CjguiWindowsRendererSession *s = find_session(token);
+    if (!s) return 0u;
+    return (uint32_t)s->lastPumpTid;
+}
+
+uint32_t cjgui_internal_renderer_debug_source_install_state(uint64_t token,
+    uint32_t *outProvisional, uint32_t *outOutcome) {
+    CjguiWindowsRendererSession *s = find_session(token);
+    if (!s) return 0u;
+    if (outProvisional) *outProvisional = s->sourceInstallProvisional;
+    if (outOutcome) *outOutcome = s->sourceInstallOutcome;
+    return s->sourceInstallPending;
 }

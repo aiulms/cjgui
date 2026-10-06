@@ -1,0 +1,305 @@
+**我的裁决是：输入采用“生产侧保留原始意图与来源、共享 owner 验证接续、安装回执决定放行”；线程采用 Windows 原生专用 UI 线程，同时保留仓颉侧单一逻辑 owner。** 单改 scene 编号或设置 `cjProcessorNum=1`，都不足以建立正确性。
+
+本次只读，未修改文件、运行构建或操作桌面。以下实验均是待执行方案。初读 renderer 与请求中的 `6bb6dc61…` 一致；读取期间并行工作将其改为 `56627473…`，加入了零超时系统消息排水。归档反例涉及的 gate、begin、IME、clear、restamp 五段源码哈希仍全部相同。新泵实现尚不能据此判为通过。
+
+**一、输入来源与安装交接**
+
+**先纠正几项归因。**
+
+1. **“无条件重盖抹掉来源”成立，但不能扩大成“绑定保护全部失效”。** 原事件的 scene 被替换，而原始范围、绑定及载荷保留，确实失去了解释坐标的一个依据；kind 51 的绑定检查仍存在。归档反例证明了元数据修改和 IME 结果丢失，没有单独证明正常产品已经发生跨文档错写。
+2. **“所有文本输入只能经过 scene 严格相等门”已不符合当前共享源码。** E 已有独立的 `InstalledRange` 旁路：kind 51 在普通 scene 查找前进入 `routeCapturedInstalledRange`，通过来源及已接受前缀证明接续。普通 `replaceRange16` 的对齐门保持不变。源码正文的 kind 52 也主要按绑定、composition ID 和会话契约路由；presentation TEXT 才另有严格 scene 检查。[捕获入口](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/composable_ui_window.cj:4383)、[范围提交](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/text_session.cj:2431)、[组字路由](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/composable_ui_window.cj:14734)
+3. **“推送时改取最新 scene”在当前成功入队路径上几乎没有变化。** `queue_owned_range_replace` 先要求 `pendingOwnedInputSceneVersion == s->sceneVersion`，随后才二选一填写这两个值。已经入 FIFO 的第二笔，更不会因改变后续入队代码得到修复。[生产入口](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c:5638)
+4. **press-lease 不能作为“只检查绑定即可接续文本”的依据。** 当前连续性还检查动作身份、可用性、modal、viewport、bounds、clip 等。另，“Windows 的 `acceptedBindingEpoch` 恒零”只适用于这些文本生产路径；指针生产函数实际填写了该字段。文本绑定代次、accepted 控件绑定代次和 press sequence 不能互相代用。[lease 检查](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/composable_ui_window.cj:10616)、[Windows 指针赋值](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c:1547)
+
+**最小方案：普通范围编辑复用 E 已存在的来源协议，安装期间增加 Windows 原生意图保留。**
+
+不需要首先扩展 `CjguiInternalRendererEvent`。共享头已经有旁带的 `Candidate → Receipt → Intent → ACK`，包括所需的大部分字段。Windows 应实现对应生产端，继续由 `submitInstalledRange16` 判决，而不是扩宽 `resolvePointerTarget/resolveInput/resolveSelection`。[现有旁带定义](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.h:2481)
+
+| 记录 | 最少需要的内容 | 归属 |
+|---|---|---|
+| 已安装来源基点 | renderer generation、window instance、binding/context epoch、mirror revision、真实 owner version、安装 scene、node/resource/type、源字节窗口及完整窗口字节、nonce | owner 冻结，native 实装后回执 |
+| 每笔范围输入 | 原始捕获 scene、来源 nonce、proxy generation、selection revision、`seq/previousSeq`、捕获时看到的 ACK 序号/版本、preBody、UTF-16 范围、replacement、postBody | native 捕获且保持不变 |
+| 门内原始意图 | input ID、捕获顺序、目标绑定、安装 request ID、前驱依赖；字符或导航动作、当时修饰键及重复次数；IME 的 composition ID、相位、结果和后继 marked 载荷 | Windows 原生有界队列 |
+| 安装记录 | request ID、冻结的 owner/selection ticket、目标范围、队列分界序号、安装回执、明确结局 | 框架裁决，native 执行 |
+| 结算记录 | input ID、接受/拒绝、owner 版本及 ticket、原因、恢复载荷 ID、native ACK 是否完成 | owner 决策唯一；双方分别持有交接状态 |
+
+这里的 `projectionVersion` 保留**事件实际捕获时的 accepted scene**；链的安装起点由 `installedSceneVersion/nonce` 表示。两者可以不同，但不能通过改写前者伪造相同。
+
+当前 E 的 `CjguiInstalledRangeChain` 已经验证：
+
+- `previousSequence == acceptedSequence`；
+- `preBody == 上一笔已接受 postBody`；
+- 捕获时观察到的 ACK 确实属于该链；
+- 当前真实 `sourceVersion == 链的 acceptedVersion`；
+- 算出的 postBody 与 native 提供的实际 postBody 相等。
+
+这正是连发第二笔所需的证明。[链定义](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/installed_range_input.cj:55)
+
+**四类来源应分别处理。**
+
+| 来源 | 接受条件 | 禁止的替代判据 |
+|---|---|---|
+| 同绑定纯刷新 | 来源基点仍有效，真实 owner version 未变，范围仍由该来源证明；允许 scene 跨多次刷新 | 不能仅检查文本相等；不能给旧指针几何换新 scene |
+| 本人前一笔提交后像 | 前驱已获得唯一 owner 接受回执，当前输入 preBody 等于该前驱 postBody，真实 owner version 连续 | 不能用 accepted 文本等于 pending 最终值推断整链已结算 |
+| 外部正文改版 | 首包走现有 `version_conflict`，零正文/历史修改并保留输入；有真实 owner 锚点服务时才另行映射 | 同长度、同内容、同 binding 都不能替代版本证明 |
+| 换绑／ABA | 原 renderer/window/binding/context/nonce 任一失效即结束旧链，保留旧目标身份的恢复载荷 | 节点号重新出现、文本恢复原值，不得恢复旧输入权限 |
+
+特别是第二类：假设 native 已捕获 `X、Y`，owner 目前只接受 `X`，发布的内容当然不等于 pending 的 `XY`。现有 `synchronize_owned_proxy_after_presentation` 会因此重置选区、清掉整条 shadow，**把正常的部分前缀接受当成整链不匹配**。正确操作是确认已接受前缀，保留未结算后缀；presentation 不是 ACK。
+
+**安装门要从 Bool 改为有结局的交接。**
+
+建议逻辑状态如下，名字为方案名称：
+
+```text
+Ready(A)
+  → Holding(request R, capture cut)
+  → ProvisionalInstalled(R, B)
+  → OwnerConfirmed(R, receipt B)
+  → Draining(R)
+  → Ready(B)
+
+失败／换绑／请求被取代
+  → RejectedRecoverable(reason, recoveryId)
+```
+
+必要顺序如下：
+
+1. **挂门时冻结目标语义。** 普通 selection restore 的门内字符应绑定该 request 已确定的 owner 选区，而不是尚未恢复的 native 旧选区。
+2. **区分门前事件与门内原始意图。** 门前已捕获的范围仍属于原来源；门内字符暂不生成 UTF-16 替换范围，等准确安装回执后才兑现。
+3. **native 安装成功仍保持门关闭。** 当前 `install_owned_source_selection` 自行清门，发生在框架后续 `confirmNativeSelectionRestored` 等确认之前。专用 UI 线程运行后，这个间隙尤其真实。[当前安装函数](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c:6257)
+4. **明确传回安装结局。** `finishSelectionRestore` 目前对 `installed`、`superseded`、`binding_changed` 等都只发同一个清门动作。延期队列不能据此决定重放。需要 Windows 私有的 `finish_source_install(request, outcome, receipt)`，区分成功、取消、冲突和关闭；只有匹配的成功回执放行。[现行清门位置](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/composable_ui_window.cj:16188)
+5. **门的设置和完成失败不能忽略。** 当前两处调用忽略 native 状态；新的交接失败必须保留请求或进入明确恢复状态，不能先忘记请求。
+6. **新输入不得越过旧延期输入。** 使用统一捕获序号合并顺序，不能简单“清门后把延期队列追加到普通 FIFO 尾部”。
+
+已有 E 的跨选择 `selection_transfer` 有“输入取消未提交选择、恢复 A 后重放”的仲裁规则。它与这里“owner 选区已成立，只等 native 恢复”的门不同，不能混用。请求被取代后，原门内输入也不能自动继承新 request。
+
+每笔输入应经历：
+
+```text
+Captured → Deferred/Ready → Claimed → OwnerDecided → AckPending → Settled
+```
+
+`OwnerDecided` 一旦成立，ACK 失败只能重试 ACK。不能再次调用 replace。拒绝的后缀进入带原因和载荷的恢复状态；“计数增加”“返回 handled”“队列已清空”都不是有效终态。
+
+**导航必须成为顺序屏障。**
+
+`A → Left → B` 是字符连发之外的必要反例。当前导航只入 kind 35，native 不同步执行 owner 的选区移动；若它随后立刻用旧 caret 生成 `B` 的范围，来源版本全部正确也可能得到 `AB`。
+
+最小处理是：
+
+- 连续字符可以使用已证明的 speculative 前缀。
+- 遇到导航、选择或组合开始，保留后续原始输入，停止提前物化范围。
+- 导航由现有共享处理器判决；选区安装回执完成后，才物化后续字符。
+- kind 33 若携带旧布局算出的选择，必须保留当时的文本范围与几何来源。没有证明时明确拒绝，不能在新画面上重新命中旧坐标。
+
+kind 33/35/52 可增加一个 **Windows 私有旁带 claim/settle 接口**，携带上述来源与依赖，复用共享选择、导航和组合处理器。普通无旁带旧事件仍走原守卫。
+
+**IME RESULTSTR：正常短暂安装选延期，冲突选具名拒绝并保留结果。**
+
+在处理 `WM_IME_COMPOSITION` 的当次回调内，必须取得并拥有结果字节；不能稍后重新查询可变的 HIMC 来还原旧事件。官方说明也把该消息的字符串读取定位在对应 composition flags 上。[WM_IME_COMPOSITION](https://learn.microsoft.com/en-us/windows/win32/intl/wm-ime-composition)
+
+需要区分：
+
+- **组合已在旧来源上开始**：终态继续属于原 composition/source claim，不能被安装请求改投新范围。
+- **组合在普通恢复门内开始**：保留 request、相位和载荷，安装确认后进入现有组合会话，最终只提交一次。
+- **同一消息含 RESULTSTR 与后继 COMPSTR**：先结算前一组合终态，再启动后继组合；不能只保存其中一个。
+- **RESULTSTR 后到达 ENDCOMPOSITION**：不得把已保留的 commit 改成 cancel。
+- **换绑、外部冲突或无法证明来源**：保留最终结果及原目标，返回明确恢复状态；不得只保留旧 preedit 而丢掉最终词。
+
+**容量建议与保证边界。**
+
+普通队列可沿用 **256 项、4 MiB** 的量级，但预算必须覆盖旁带、在途 claim 和必要副本，不能只计算插入文本。另预留不参与普通准入的恢复槽及 IME 终态载荷额度；按当前单字符串上限，RESULTSTR 和同消息 successor 均要计费。
+
+满载时应：
+
+- 保全已准入项及触发满载的那笔载荷；
+- 产生可读取的 `input_backpressure`／恢复记录；
+- 停止继续兑现该来源链；
+- 对尚未提取的系统消息施加背压，不把“调用 DefWindowProc”当保存。
+
+这里有一个不能省略的边界：**有限内存无法保证无限持续输入全部保存。** 若要求饱和后任意长输入也不丢，必须再有持久化溢写或可确认的上游背压。首包应明确承诺“有界突发完整保存、首次超限载荷可恢复、后续拒绝可见”，不能把溢出计数当成全量保全。
+
+**两种 scene 方案的区分实验。**
+
+固定 `scene=41`，正文 `abcd`，选择 `[1,2)`：
+
+```text
+捕获 X：pre=abcd，post=aXcd，seq=1
+捕获 Y：pre=aXcd，post=aXYcd，seq=2，previous=1
+只消费 seq=1，然后接受 scene=42，再消费 seq=2
+```
+
+| 实现 | 预期轨迹 |
+|---|---|
+| 仅在入队时取最新 accepted scene | 两笔均已在 scene 41 入队；第二笔仍被普通 scene 门拒绝，FAIL |
+| 出队／present 时无条件改成 42 | 可能得到正确文本，但外部改版负控也可能误入；来源验收 FAIL |
+| 原始 scene 不变＋E 的前缀证明 | 第二笔凭 seq=1 的 owner 回执接续，最终 `aXYcd`；PASS |
+| 原生先保留原始意图，安装后才物化新事件 | 可以 PASS，但必须保留原捕获来源及安装证明；这是完整延期协议，不是改一行 scene |
+
+所以两者并非完全互斥：生产者应报告真实捕获场景；**当前已入队旧事件的接续，优先采用共享消费侧的现有证明路径，改动最小、责任最清楚。**
+
+建议固定以下验收反例：
+
+| 实验 | PASS 条件；不满足即 FAIL |
+|---|---|
+| 上述 X/Y 连发，逐笔之间强制 present | 完整 owner 为 `aXYcd`；每笔仅一个决定；原 scene 不被改写 |
+| scene 连续刷新，正文版本不变 | 合法来源仍能接续；不限制为恰好 `scene+1` |
+| 两笔之间外部写入同长度内容；再做“相同字节但 owner 版本前进” | 旧后缀拒绝且可恢复；正文和历史无额外修改 |
+| A→B→A，节点号和内容完全恢复 | 旧 epoch/nonce 输入仍拒绝 |
+| 门保持至显式释放，注入 `A → Left → B` | 安装后结果 `BA`；导航与两字符均有终态 |
+| 自动重复计数 n | 恰好 n 次语义执行；保留当时 Shift/Ctrl 状态 |
+| 高代理项在门内、低代理项在安装完成后 | 同来源下得到一个完整 emoji；换绑时不跨来源拼对 |
+| 门内 RESULTSTR、RESULTSTR+COMPSTR、随后 END | 结果一次提交或完整恢复；无重复提交、无悬挂组合 |
+| 容量缩小至 4 项，投递第 5 项 | 第 5 项明确失败且载荷可取回；前四项不覆盖；普通队列不能占用终态预留 |
+| owner 接受后故意让 native ACK 失败 | 恢复只重试 ACK，owner 版本和历史不再增长 |
+| 去掉或篡改旁带任一关键身份 | 不能回落产品 dispatcher，也不能借当前镜像补来源 |
+
+另有一个应独立排除的源码问题：`handle_windows_text_character` 的 `char utf8[8]` 没有补 NUL，却传给内部使用 `strnlen` 的 `windows_utf16_length`，调试输出也按 `%s` 读取。这是实际的读取越界风险，不能把所有字符异常都归入 scene 接续。可用尾部填入非法 UTF-8 的单字符缓冲做负控；应改为长度明确的读取，或正确终止缓冲。**它是否参与现有运行失败，需实测。**[字符转换](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c:5753)
+
+**与 E/H 的最小对齐面：**
+
+| 位置 | 必要变化 |
+|---|---|
+| Windows renderer | 删除 restamp；实现来源旁带、前缀 ACK、原始意图队列、导航屏障、IME 保留、安装 provisional/finish；修 UTF-8 长度与重复计数处理 |
+| `runtime_renderer_session.cj` | 为 Windows 实现 InstalledRange 的 arm/receipt/activate/claim/copy/ack/release 桥；增加私有控制意图和安装终态桥 |
+| `composable_ui_window.cj` | 对齐 `armSourceSelectionInstallGate`、`pumpPendingSelectionRestore`、`finishSelectionRestore`；复用 `routeCapturedInstalledRange`；在 kind 33/35/52 的现有处理器外加窄的来源准入与结算 |
+| `text_session.cj` | 优先直接复用 `submitInstalledRange16` 和现有组合/选择操作；不放宽 `submitRange16` |
+| Event/Node POD、H snapshot | 此方案不要求新增字段；若接口声明需要调整，由 E/H 按当前分工合并 |
+
+不能只把 `internalRendererInstalledRangeSupported()` 在 Windows 上改成 `true`：该开关还会进入当前仅 macOS 实现的 selection-transfer/source-handoff 分支。应拆分“普通来源范围”“跨选择 transfer”等能力准入，或把所宣称能力的完整调用集合实现齐。当前普通来源基点还有 64 KiB 窗口限制，首包应明确沿用。
+
+**二、线程归属**
+
+**结论：推荐 b，但采用一个 Windows 原生 UI dispatcher 管理这些 renderer session；仓颉正文 owner 不搬过去。**
+
+你提供的 `13452 → 17580` 与实际 `NOT_MAIN_THREAD` 已足以证明：调用线程与创建线程失配，当前接口契约确实被违反。**它尚不能区分同一 cjthread 迁移、另一个 cjthread 接手，或者错误 session 的调用。** 连续 12 条相同值只是一次持续失配，不代表发生了 12 次迁移。
+
+当前 `CjguiWindowsApplicationHost` 本身没有 spawn UI 循环；已装配的产品源码中，普通循环也直接调用 `host.pumpOneTurn()`。这使“同一逻辑线程发生调度变化”成为合理假设，但不等于运行时证明。[Windows host](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/src/windows_application_host.cj:9)
+
+| 方案 | 裁决 |
+|---|---|
+| a. `cjProcessorNum=1` | 只作为诊断对照，不能成为线程归属保证 |
+| b. 专用 OS UI 线程＋marshaling | 推荐。平台亲和性有明确所有者；仓颉调度不再影响 HWND 归属 |
+| c. 失配后 re-home | 不采用。会把线程错误升级为窗口、IME、焦点、输入和资源迁移 |
+| d. 有官方保证的线程固定接口 | 如精确运行时确有受支持接口，可比较；目前没有核到可依赖的保证 |
+| CPU affinity／`AttachThreadInput` | 都不等于把仓颉线程绑定到 HWND 创建线程，不能替代 b |
+
+官方 `cjProcessorNum` 文档描述的是最大并发仓颉线程数，没有承诺固定 OS 线程身份。设为 1 会压低视觉解析等任务的 CPU 并行度，但 `spawn` 的并发交错仍存在，不能称为顺序执行。访问到的官方指南为 1.0 和 1.1 beta；精确 Windows 1.1.3 DLL 的特殊调度行为仍需实测，`cjSingleModeThread*` 字符串不能作为支持证据。[运行时选项](https://docs.cangjie-lang.cn/en/docs/1.0.0/user_manual/source_en/Appendix/runtime_env.html)、[CFFI 线程约束](https://docs.cangjie-lang.cn/docs/1.1.0-beta.23/dev-guide/source_zh_cn/FFI/cangjie-c.html)
+
+也要修正“所有 D3D11 对象必须留在创建线程”的说法：device 与 context 的规则不同。选择统一 UI 线程，是为了让 HWND、消息、IMM32、immediate context 和 DXGI 有简单一致的归属。Win32 消息投向创建窗口的线程；`DestroyWindow` 不能由另一线程执行；D3D11 官方要求串行使用 context，并建议 immediate context 与 DXGI/Present 使用同一线程。[消息队列](https://learn.microsoft.com/en-us/windows/win32/winmsg/about-messages-and-message-queues)、[DestroyWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-destroywindow)、[D3D11 线程规则](https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-render-multi-thread-intro)
+
+**b 的最小实现边界。**
+
+保留现有 C ABI 外形，将导出入口变成封送层，原实现成为只在 dispatcher 线程执行的内部函数。`require_owner_thread` 留在内部执行入口。`find_session` 也应在该线程解析，不能先在任意调用线程读取全局 session 数组，再决定是否封送。
+
+| API 类别 | 执行要求 |
+|---|---|
+| create、start_viewport、configure/set node、present、resize、资源回收、destroy | 必须 marshal |
+| 焦点、激活、caret、IMM32、组合取消、文本会话声明、选区读写、安装门及旁带 claim/ACK | 必须 marshal |
+| pump、FIFO dequeue、pumped geometry、event text | dispatcher 管理；一次取出的事件及相关载荷保持同一消费租约 |
+| GPU readback、命中、布局／文本探针 | marshal；“探针”并不意味着线程无关 |
+| `window_activation_state`、session diagnostics、坐标 lifetime 等 | marshal，或读取明确发布的不可变快照；当前裸读不能直接沿用 |
+| 单调墙钟、纯输入字节算法、不可变能力常量 | 可直调，前提是不访问 session／线程相关对象 |
+| 线程 CPU 时间 | 必须明确测量对象，不能无声从仓颉 owner CPU 改成 renderer CPU |
+
+特别注意两个现有接口：
+
+- `form_event_text` 返回 session 持有的指针。marshaling 返回后，不能让另一个 pump 或 destroy 释放它。最小方案是保留“最后一次取出的事件租约”，同步复制完毕后才允许下一次 dequeue；InstalledRange 的字节继续按 claim→copy→ACK 持有。
+- `request_application_stop` 当前直接 `PostQuitMessage(0)`。它作用于**当前调用线程**的消息队列，必须转为 dispatcher 的停止命令。[当前实现](/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c:5393)、[PostQuitMessage](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-postquitmessage)
+
+**线程状态与命令状态应分别管理。**
+
+```text
+Dispatcher:
+NotStarted → Starting → Running → Closing → Stopped
+                  ↘ Failed
+
+Command:
+Queued → Running → Completed
+   ↘ CancelledBeforeRun
+```
+
+实现要点：
+
+1. dispatcher 用真实原生线程创建 HWND、相关 COM/图形资源及消息循环。初始化失败由该线程清理部分资源，再返回真实错误。
+2. 所有参数在入口取得明确所有权。字符串、数组和输出缓冲不能在超时后仍引用仓颉栈或已释放的 pin。
+3. command queue 用锁／原子加唤醒事件建立可见性；出队后释放队列锁，再调用 Win32/DXGI。不要持队列锁调用可能引发 WndProc 的函数。
+4. dispatcher 内部重入直接执行允许的内部操作，不能向自己发同步命令再等待自己。
+5. **命令已经开始执行后，等待超时不能解释为“没有执行”。** 若需要提前返回，应保留 command ID 和可查询结果；调用者不得重新提交同一副作用。未开始的命令才允许原子取消。
+6. 一个进程共享 UI dispatcher 比每个窗口一条线程更适合当前 `g_sessions`、全局计数和多窗口结构，也减少额外跨线程状态。
+
+这不是“给 `present` 加一个跳线程包装”的修改量。它涉及多数有 session 状态的 native 导出，但共享框架的架构改动可以很小。
+
+**消息循环不能把同步 pump 变成队首阻塞。**
+
+`pump(timeout)` 应表示“请求取得事件，最多等待该时长”，而不是让 UI dispatcher 执行一个阻塞等待函数、期间停止处理后续命令。
+
+可以保留仓颉端同步返回形式，但在 native 内：
+
+- 登记一个待完成的 dequeue 请求；
+- UI 线程继续处理命令和 Win32 消息；
+- 有事件、到截止时间、关闭或失败时完成请求；
+- 使用 `MsgWaitForMultipleObjectsEx` 等等待工作唤醒和系统消息；
+- 命令和系统消息各有有界服务额度，防止任一方长期饿死。
+
+`timeout=0` 不做阻塞等待，但须兑现已就绪消息的有界服务。当前新加入的零超时分支覆盖了 FIFO 空的路径；**FIFO 持续非空时仍先返回，公平性还需要单独验证。**
+
+本地 GPUI 的 dispatcher 和平台循环也采用固定线程、工作队列唤醒与消息服务机制，可借鉴调度方式；不需要引入其依赖。[dispatcher 参考](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/gpui_windows/src/dispatcher.rs:118>)
+
+**WndProc 与正文 owner 的归属必须分开。**
+
+- WndProc 只在 UI 线程捕获输入、维护平台状态、向 native FIFO 写入不可变记录。
+- 它不调用 Cangjie controller、DocumentSession 或 E 的 owner 操作。
+- 仓颉 owner 从 FIFO 取得事件后串行判决，再通过命令返回 ACK／安装请求。
+- FIFO 顺序以真实 WndProc 捕获顺序为准；不要声称它等于所有 posted/sent message 的物理时间总序。
+- `SetFocus` 等引发的重入回调，只能捕获输入；处于 provisional 安装期间时按第一节持留。
+
+**marshaling 不会使 `CjguiComposableUiWindow` 自动线程安全。** 必须继续限制一个逻辑 owner 驱动其可变状态。后台解析线程提交结果，由 owner 采纳；不能让不同 cjthread 并发执行同一窗口的完整 turn。否则 b 会隐藏 OS 线程错误，却留下正文竞态。
+
+关闭时先停止新准入，结算或移交在途输入和恢复载荷，再在 UI 线程结束 IME、销毁 HWND、释放图形资源。关闭某一 session 不应停掉其他窗口的 dispatcher。所有等待者都要得到完成或具名失败；不能在线程退出后悬挂。现有 `destroy` 包含最长 5 秒的 GPU flight 等待，移植时应评估是否需拆成可推进的关闭状态，不能声称套上同步封送后仍有短回合保证。
+
+**区分“迁移”和“不同 cjthread”的最小实验。**
+
+仅在 renderer 内增加 OS tid，无法区分这两种情况。需要从仓颉传入逻辑身份，并在**同一次实际 API 调用**记录：
+
+```text
+PID、EXE/DLL 身份
+hostRunId、Thread.currentThread.id、turn、callSerial、API
+token、sessionGeneration、HWND、GetWindowThreadProcessId(HWND)
+caller OS tid、执行 OS tid、实际返回状态
+```
+
+不要先调用一个设置 TLS 的诊断函数，再调用 renderer；两次 FFI 之间本身就可能发生调度变化。采用携带身份的 Windows 私有包装入口，或等价的每调用上下文。
+
+| 观察 | 可以得出的结论 |
+|---|---|
+| 同一 hostRunId、同一存活 cjthread ID，OS tid 改变 | 直接支持该 cjthread 迁移 |
+| 同一 session，由不同 cjthread ID 驱动 | 直接证明存在调用者交接／越权；是否还伴随迁移另判 |
+| caller 身份稳定，但 session generation／HWND 创建线程变了 | 优先查旧句柄、session 复用或生命周期错误 |
+| b 下 caller OS tid 变化，执行 tid 始终为 UI tid | 正常封送；不应再出现内部 owner guard 失败 |
+
+实验分三组即可：
+
+1. **纯 native 确定性对照**：线程 A 创建 session，线程 B 调用 start/pump/present。原实现应返回线程错误；封送实现应在固定 UI tid 执行成功。它验证 b，不证明 Cangjie 迁移。
+2. **单一 cjthread 主循环**：记录逻辑 ID，加入可控等待、分配和后台解析负载；比较默认、`cjProcessorNum=1`、`=2`。发现一次同 ID 跨 OS tid 即构成迁移证据；未复现只是该轮未观测。
+3. **故意换 cjthread 的负控**：让另一个 `spawn` 调用同一个 host。诊断必须能识别，逻辑 owner 门应阻止并发 turn，不能因 native 封送成功就称为正确。
+
+同步日志本身会改变调度。建议按 session 保存有界前序记录，并在第一次身份变化／拒绝时输出；当前全局 12 条预算和缺 API 名的记录不足以覆盖多个 session。
+
+**线程方案的验收反例：**
+
+| 反例 | PASS 条件 |
+|---|---|
+| 创建、调用来自不同 OS 线程 | 内部执行始终在固定 UI tid；guard 保留 |
+| 同一窗口由两个 cjthread 同时 pump | 明确拒绝或在逻辑 owner 入口串行交接，正文无并发写入 |
+| 安装时 `SetFocus` 重入 WndProc | 无死锁；输入被持留；owner 确认前不兑现 |
+| FIFO 长期非空，同时投递系统输入／关闭 | 系统消息有界获得服务 |
+| 命令已开始后等待超时 | 不出现重复 present、重复 owner 写或悬空输出指针 |
+| pump 等待期间关闭 session | 等待完成；旧 token 后续拒绝；其他窗口存活 |
+| 从非 UI cjthread 请求停止 | 真正唤醒并停止目标 UI 循环 |
+| 启动失败或内部线程断言失败 | 明确结束该启动／会话，不再出现 9.9 万回合重试 |
+| 输入未结算时关闭／换绑 | 每笔有结局，恢复载荷可取回，不被析构静默释放 |
+
+共享层最小变化集中在 `windows_application_host.cj` 的生命周期、逻辑 owner 检查与实际失败传播，以及 Windows 私有 FFI 桥。`text_session.cj` 不应因线程封送而改变正文所有权；E/H 的 Event/Node POD 无需修改。若使用异步完成句柄，也应放在 Windows 私有适配中，继续保持共享侧看到的 owner 操作顺序。
+
+

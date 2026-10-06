@@ -1,0 +1,26 @@
+test_complete_success_is_zero (runner.test_w1_runner_contract.RunnerContractTest.test_complete_success_is_zero) ... ok
+test_disconnect_before_done_is_not_a_complete_transport (runner.test_w1_runner_contract.RunnerContractTest.test_disconnect_before_done_is_not_a_complete_transport) ... ok
+test_duplicate_exit_trailers_fail_closed (runner.test_w1_runner_contract.RunnerContractTest.test_duplicate_exit_trailers_fail_closed) ... RUNNER_FAIL exit_record_count=2
+ok
+test_malformed_exit_trailer_fails_closed (runner.test_w1_runner_contract.RunnerContractTest.test_malformed_exit_trailer_fails_closed) ... RUNNER_FAIL exit_record_count=0
+ok
+test_missing_requested_result_fails (runner.test_w1_runner_contract.RunnerContractTest.test_missing_requested_result_fails) ... RUNNER_FAIL missing_results: task.ps1
+ok
+test_partial_transport_result_cannot_report_success (runner.test_w1_runner_contract.RunnerContractTest.test_partial_transport_result_cannot_report_success) ... RUNNER_FAIL transport_not_complete: transport error: truncated final response
+ok
+test_real_nonzero_exit_code_is_preserved (runner.test_w1_runner_contract.RunnerContractTest.test_real_nonzero_exit_code_is_preserved) ... ok
+test_trailer_must_be_a_standalone_final_line (runner.test_w1_runner_contract.RunnerContractTest.test_trailer_must_be_a_standalone_final_line) ... RUNNER_FAIL exit_record_count=0
+ok
+test_unrequested_extra_result_fails (runner.test_w1_runner_contract.RunnerContractTest.test_unrequested_extra_result_fails) ... RUNNER_FAIL unexpected_results: extra.ps1
+ok
+test_exit_code_boolean_is_not_an_integer_result (runner.test_worker_protocol.StructuredWorkerProtocolTest.test_exit_code_boolean_is_not_an_integer_result) ... ok
+test_exit_code_seven_is_preserved (runner.test_worker_protocol.StructuredWorkerProtocolTest.test_exit_code_seven_is_preserved) ... ok
+test_missing_extra_and_duplicate_results_fail (runner.test_worker_protocol.StructuredWorkerProtocolTest.test_missing_extra_and_duplicate_results_fail) ... ok
+test_nonce_and_terminal_state_are_required (runner.test_worker_protocol.StructuredWorkerProtocolTest.test_nonce_and_terminal_state_are_required) ... ok
+test_partial_transport_never_accepts_success_looking_results (runner.test_worker_protocol.StructuredWorkerProtocolTest.test_partial_transport_never_accepts_success_looking_results) ... ok
+test_timeout_and_truncated_stream_fail_even_with_exit_zero (runner.test_worker_protocol.StructuredWorkerProtocolTest.test_timeout_and_truncated_stream_fail_even_with_exit_zero) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.006s
+
+OK

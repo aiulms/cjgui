@@ -1,0 +1,72 @@
+{
+  "scope": "Bounded offline review of current source predicates; no VM/build/product writes.\n\nThis extracts the production script's literal match and the wrapper's C branch\ncondition. Python evaluates only their equivalent string/boolean predicates.\nIt does not claim to execute PowerShell, Win32 CopyFile, or the built wrapper.",
+  "sources": [
+    {
+      "path": "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/batches/acceptance/pharos-writing-chain-acceptance.ps1",
+      "sha256": "104dbb27e4ff014d46250dcce1b7622bc43b6f848d81e6cf621794db737d54b4"
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c",
+      "sha256": "6bb6dc61e51453292bac1e70eb6047940079221df930cd44fdaa86e362b81c16"
+    },
+    {
+      "path": "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/guest-transfer/llc-relay/llc_wrapper.c",
+      "sha256": "0deddf12227ff1b3a99dc6ebc0ead3363b673a7075f8d2980173466863199144"
+    }
+  ],
+  "probe_click": {
+    "accept_line": 284,
+    "native_missing_line": 4749,
+    "source_match_pattern": "CLICK_RESULT 107",
+    "cases": [
+      {
+        "name": "positive",
+        "reply": "CLICK_RESULT 107 at=100,200",
+        "expected_accept": true,
+        "actual_accept": true,
+        "matches_expectation": true
+      },
+      {
+        "name": "missing_node_negative",
+        "reply": "CLICK_RESULT 107 missing",
+        "expected_accept": false,
+        "actual_accept": true,
+        "matches_expectation": false
+      },
+      {
+        "name": "other_node_negative",
+        "reply": "CLICK_RESULT 108 at=100,200",
+        "expected_accept": false,
+        "actual_accept": false,
+        "matches_expectation": true
+      }
+    ]
+  },
+  "relay": {
+    "wrapper_condition_line": 34,
+    "source_condition": "inPath && outPath && strstr(inPath, \"pharos_mark.opt.bc\") != NULL",
+    "python_equivalent": "inPath  and  outPath  and  strstr(inPath, \"pharos_mark.opt.bc\") != None",
+    "cases": [
+      {
+        "name": "matching_snapshot_positive",
+        "input_bc_sha256": "fe95b54dd8f9105108a11302d2a80822fefb20635c4e9ca9d7efaca2465601a5",
+        "object_built_from_bc_sha256": "fe95b54dd8f9105108a11302d2a80822fefb20635c4e9ca9d7efaca2465601a5",
+        "expected_injection_admitted": true,
+        "actual_injection_branch_entered": true,
+        "object_copy_success_assumed": true,
+        "capture_copy_success_required_by_source": false,
+        "successful_object_copy_returns_zero": true
+      },
+      {
+        "name": "different_snapshot_negative",
+        "input_bc_sha256": "cf1a7b730cc0f00334a1d0d4d10ca6f2b0f8bea9b3b839689a57c1d970e1736d",
+        "object_built_from_bc_sha256": "fe95b54dd8f9105108a11302d2a80822fefb20635c4e9ca9d7efaca2465601a5",
+        "expected_injection_admitted": false,
+        "actual_injection_branch_entered": true,
+        "object_copy_success_assumed": true,
+        "capture_copy_success_required_by_source": false,
+        "successful_object_copy_returns_zero": true
+      }
+    ]
+  }
+}

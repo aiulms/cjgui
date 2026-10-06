@@ -1,0 +1,56 @@
+E..RUNNER_FAIL exit_record_count=2
+.FF.FRUNNER_FAIL exit_record_count=0
+.RUNNER_FAIL missing_results: task.ps1
+.RUNNER_FAIL transport_not_complete: transport error: truncated final response
+..RUNNER_FAIL exit_record_count=0
+.FRUNNER_FAIL unexpected_results: extra.ps1
+.
+======================================================================
+ERROR: test_batch_deadline_has_task_cleanup_and_result_margin (__main__.RunnerContractTest.test_batch_deadline_has_task_cleanup_and_result_margin)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 163, in test_batch_deadline_has_task_cleanup_and_result_margin
+    deadline = module.minimum_batch_timeout_seconds(30, [60000, 120000])
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'pharos_windows_runner_under_test' has no attribute 'minimum_batch_timeout_seconds'
+
+======================================================================
+FAIL: test_eof_with_unterminated_protocol_line_is_named_and_rejected (__main__.RunnerContractTest.test_eof_with_unterminated_protocol_line_is_named_and_rejected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 121, in test_eof_with_unterminated_protocol_line_is_named_and_rejected
+    with self.assertRaisesRegex(module.WorkerProtocolError, "incomplete_protocol_line_eof"):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: WorkerProtocolError not raised
+
+======================================================================
+FAIL: test_interactive_shutdown_failure_changes_exit_code (__main__.RunnerContractTest.test_interactive_shutdown_failure_changes_exit_code)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 282, in test_interactive_shutdown_failure_changes_exit_code
+    self.assertNotEqual(code, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_interactive_transport_failure_stops_later_batches_and_is_logged (__main__.RunnerContractTest.test_interactive_transport_failure_stops_later_batches_and_is_logged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 250, in test_interactive_transport_failure_stops_later_batches_and_is_logged
+    self.assertEqual(FakeSession.calls, 1, "transport failure must retire the interactive session")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1 : transport failure must retire the interactive session
+
+======================================================================
+FAIL: test_transport_timeout_retires_socket_and_shutdown_never_sends_stop (__main__.RunnerContractTest.test_transport_timeout_retires_socket_and_shutdown_never_sends_stop)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 155, in test_transport_timeout_retires_socket_and_shutdown_never_sends_stop
+    self.assertTrue(fake_socket.closed)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.029s
+
+FAILED (failures=4, errors=1)

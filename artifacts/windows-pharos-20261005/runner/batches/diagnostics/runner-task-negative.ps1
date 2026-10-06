@@ -1,0 +1,2 @@
+Write-Output 'RUNNER_TASK_NEGATIVE_CONTROL'
+exit 7

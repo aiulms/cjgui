@@ -1,0 +1,231 @@
+{
+  "schema": "pharos-windows-worker-lifecycle-v1",
+  "result": "PASS",
+  "requested_test_batches": 3,
+  "jobs": 12,
+  "worker_pid": 17700,
+  "worker_session_total_batches": 38,
+  "distinct_child_pids": 12,
+  "all_children_directly_parented_by_worker": true,
+  "all_child_windows_hidden": true,
+  "no_prior_job_directory_accumulation": true,
+  "exit_7_round_trip": true,
+  "shutdown_status": "BYE_AND_SOCKET_CLOSED",
+  "post_shutdown_pid_enumeration": "not_run; worker acknowledged BYE, closed the socket, and exited its session loop",
+  "batches": [
+    {
+      "nonce": "f58e937b25564d35881fdd10b477bee7",
+      "raw_path": "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/9699bb39de514337b2a39f9cfce03e7e/results/f58e937b25564d35881fdd10b477bee7.json",
+      "raw_sha256": "b92fcb8f82de76d0019756063131c562f0abb3ad8dd60ef3f0a8c36a558fa253",
+      "jobs": [
+        {
+          "name": "01-b01-t01.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 1190,
+          "worker_pid": 17700,
+          "child_pid": 18768,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "02-b01-t02.ps1",
+          "exit_code": 7,
+          "elapsed_ms": 1025,
+          "worker_pid": 17700,
+          "child_pid": 15624,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "03-b01-t03.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 986,
+          "worker_pid": 17700,
+          "child_pid": 15128,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "04-b01-t04.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 1006,
+          "worker_pid": 17700,
+          "child_pid": 6392,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        }
+      ]
+    },
+    {
+      "nonce": "4b27c43e5ed547b79789151284443231",
+      "raw_path": "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/9699bb39de514337b2a39f9cfce03e7e/results/4b27c43e5ed547b79789151284443231.json",
+      "raw_sha256": "9ea7a57f51510f0e7bb5308c9fd1b6866b366949977c6f63f59d473bdddefcf9",
+      "jobs": [
+        {
+          "name": "01-b02-t01.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 1013,
+          "worker_pid": 17700,
+          "child_pid": 448,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "02-b02-t02.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 925,
+          "worker_pid": 17700,
+          "child_pid": 18268,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "03-b02-t03.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 861,
+          "worker_pid": 17700,
+          "child_pid": 4908,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "04-b02-t04.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 873,
+          "worker_pid": 17700,
+          "child_pid": 19260,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        }
+      ]
+    },
+    {
+      "nonce": "492ffb09753e42e9b73c5cc596b9612b",
+      "raw_path": "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/9699bb39de514337b2a39f9cfce03e7e/results/492ffb09753e42e9b73c5cc596b9612b.json",
+      "raw_sha256": "42ec688631b82a3a4889368339822e9ee8eede66f61e18e68fad4df53ecd75c6",
+      "jobs": [
+        {
+          "name": "01-b03-t01.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 952,
+          "worker_pid": 17700,
+          "child_pid": 11360,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "02-b03-t02.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 924,
+          "worker_pid": 17700,
+          "child_pid": 16832,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "03-b03-t03.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 860,
+          "worker_pid": 17700,
+          "child_pid": 8136,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        },
+        {
+          "name": "04-b03-t04.ps1",
+          "exit_code": 0,
+          "elapsed_ms": 868,
+          "worker_pid": 17700,
+          "child_pid": 13400,
+          "parent_pid": 17700,
+          "main_window_handle": 0,
+          "active_job_directories": 1,
+          "checks": {
+            "exit": true,
+            "parent": true,
+            "hidden": true,
+            "job_dirs": true
+          }
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

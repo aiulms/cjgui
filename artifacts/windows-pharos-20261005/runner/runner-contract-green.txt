@@ -1,0 +1,11 @@
+..RUNNER_FAIL exit_record_count=2
+.RUNNER_FAIL exit_record_count=0
+.RUNNER_FAIL missing_results: task.ps1
+.RUNNER_FAIL transport_not_complete: transport error: truncated final response
+..RUNNER_FAIL exit_record_count=0
+.RUNNER_FAIL unexpected_results: extra.ps1
+.
+----------------------------------------------------------------------
+Ran 9 tests in 0.009s
+
+OK

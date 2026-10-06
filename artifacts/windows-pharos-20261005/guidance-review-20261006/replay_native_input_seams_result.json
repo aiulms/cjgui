@@ -1,0 +1,92 @@
+{
+  "scope": "host-only exact extracted C branches with stub Win32 dependencies; not a Windows or full owner E2E test",
+  "source": "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c",
+  "source_sha256": "6bb6dc61e51453292bac1e70eb6047940079221df930cd44fdaa86e362b81c16",
+  "extracted_sha256": {
+    "gate": "5e81131f205317560924a66b27ebcc6076565f94783fc7158fa212c975ca7811",
+    "begin": "fcca782e5994fa3fdd65a7ec0294c67c5530629a20aa82494d3a2131f5bf8884",
+    "ime": "18f40d1e2769387a32c2b7287a11e96f4ef44139e6aaaeffb905a3ccc5df0e19",
+    "clear": "36ba39f701fdabdf97761e494b69890dff6e97ec78bdc1d000f6a16c22f541f5",
+    "restamp_loop": "899feb29650af45c08c343810cc766ccb043df1f290f05041987aba4fb0460d5"
+  },
+  "observations": [
+    {
+      "case": "ime_result_baseline",
+      "handled": 1,
+      "result_freed": 1,
+      "updates": 1,
+      "terminals": 1,
+      "successors": 0,
+      "gate_count": 0,
+      "event_count": 0,
+      "queue_full": 0
+    },
+    {
+      "case": "ime_result_gate_pending",
+      "handled": 1,
+      "result_freed": 1,
+      "updates": 0,
+      "terminals": 0,
+      "successors": 0,
+      "gate_count": 1,
+      "event_count": 0,
+      "queue_full": 0
+    },
+    {
+      "case": "restamp_and_clear_pending",
+      "kind": 28,
+      "source_scene": 41,
+      "event_scene": 42,
+      "geometry_scene": 42,
+      "binding_epoch": 5,
+      "range_start": 2,
+      "queue_remaining": 5,
+      "pending_count": 0
+    },
+    {
+      "case": "restamp_and_clear_pending",
+      "kind": 51,
+      "source_scene": 41,
+      "event_scene": 42,
+      "geometry_scene": 42,
+      "binding_epoch": 5,
+      "range_start": 2,
+      "queue_remaining": 5,
+      "pending_count": 0
+    },
+    {
+      "case": "restamp_and_clear_pending",
+      "kind": 52,
+      "source_scene": 41,
+      "event_scene": 42,
+      "geometry_scene": 42,
+      "binding_epoch": 5,
+      "range_start": 2,
+      "queue_remaining": 5,
+      "pending_count": 0
+    },
+    {
+      "case": "restamp_and_clear_pending",
+      "kind": 33,
+      "source_scene": 41,
+      "event_scene": 42,
+      "geometry_scene": 42,
+      "binding_epoch": 5,
+      "range_start": 2,
+      "queue_remaining": 5,
+      "pending_count": 0
+    },
+    {
+      "case": "restamp_and_clear_pending",
+      "kind": 35,
+      "source_scene": 41,
+      "event_scene": 41,
+      "geometry_scene": 41,
+      "binding_epoch": 5,
+      "range_start": 2,
+      "queue_remaining": 5,
+      "pending_count": 0
+    }
+  ],
+  "exit_code": 0
+}

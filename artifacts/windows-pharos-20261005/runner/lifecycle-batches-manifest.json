@@ -1,0 +1,213 @@
+{
+  "batches": [
+    {
+      "directory": "batches/acceptance/lifecycle/batch-01",
+      "tasks": [
+        {
+          "batch": 1,
+          "name": "01-b01-t01.ps1",
+          "task": "b01-t01",
+          "exit_expected": 0,
+          "sha256": "5a4c74c2ba03258abbc4d0afc6f3944c40c4394560a0cc7bdcf3a22da9552584",
+          "bytes": 849
+        },
+        {
+          "batch": 1,
+          "name": "02-b01-t02.ps1",
+          "task": "b01-t02",
+          "exit_expected": 7,
+          "sha256": "32ed88d3322a80caa5f6b3a1b4a66371e5a7ab498b96527f4e63d29fa92ab68e",
+          "bytes": 877
+        },
+        {
+          "batch": 1,
+          "name": "03-b01-t03.ps1",
+          "task": "b01-t03",
+          "exit_expected": 0,
+          "sha256": "26400e2405194dd7fb8859b31db0052652776b06821c051bce7f0afa9882c5bc",
+          "bytes": 849
+        },
+        {
+          "batch": 1,
+          "name": "04-b01-t04.ps1",
+          "task": "b01-t04",
+          "exit_expected": 0,
+          "sha256": "6bd0bc36a42bd15d4b7ae13a1dfb501eca230710b32cb860354109a6e095557a",
+          "bytes": 849
+        }
+      ]
+    },
+    {
+      "directory": "batches/acceptance/lifecycle/batch-02",
+      "tasks": [
+        {
+          "batch": 2,
+          "name": "01-b02-t01.ps1",
+          "task": "b02-t01",
+          "exit_expected": 0,
+          "sha256": "d3a1a820c5fa89729e6d55ac857d9dd1191f0ff2657c485ea87c7b40602ab3a3",
+          "bytes": 849
+        },
+        {
+          "batch": 2,
+          "name": "02-b02-t02.ps1",
+          "task": "b02-t02",
+          "exit_expected": 0,
+          "sha256": "c57185471343c57f4795c176f309567e8fa5aae7b43436a5a3d743fbd5cca95d",
+          "bytes": 849
+        },
+        {
+          "batch": 2,
+          "name": "03-b02-t03.ps1",
+          "task": "b02-t03",
+          "exit_expected": 0,
+          "sha256": "c6801eff42dc615548b8df087ee75ca1250719dab5ac3c0fe7f1384942bdabb8",
+          "bytes": 849
+        },
+        {
+          "batch": 2,
+          "name": "04-b02-t04.ps1",
+          "task": "b02-t04",
+          "exit_expected": 0,
+          "sha256": "967ce9ba120fd5a38d0c87c4bedb557d878d855865d832262002780259a3e3d8",
+          "bytes": 849
+        }
+      ]
+    },
+    {
+      "directory": "batches/acceptance/lifecycle/batch-03",
+      "tasks": [
+        {
+          "batch": 3,
+          "name": "01-b03-t01.ps1",
+          "task": "b03-t01",
+          "exit_expected": 0,
+          "sha256": "a7be0a3b174d8944586e01eec0193d73317925176b746e4a01e2c2831c39e15c",
+          "bytes": 849
+        },
+        {
+          "batch": 3,
+          "name": "02-b03-t02.ps1",
+          "task": "b03-t02",
+          "exit_expected": 0,
+          "sha256": "dcc4a9b2de3fa0cfc93a5706db18bdd2e38837b5f27fce944cb1ce08965b636e",
+          "bytes": 849
+        },
+        {
+          "batch": 3,
+          "name": "03-b03-t03.ps1",
+          "task": "b03-t03",
+          "exit_expected": 0,
+          "sha256": "b675124f9f0cd7eabc3f3d6dc6076d6db889a870fb14035a7620fb8ebcb052bb",
+          "bytes": 849
+        },
+        {
+          "batch": 3,
+          "name": "04-b03-t04.ps1",
+          "task": "b03-t04",
+          "exit_expected": 0,
+          "sha256": "a273bf72e4d80ef4785e9fa8c974991ec5a660eb28e7514f465684b7b8560e67",
+          "bytes": 849
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "batch": 1,
+      "name": "01-b01-t01.ps1",
+      "task": "b01-t01",
+      "exit_expected": 0,
+      "sha256": "5a4c74c2ba03258abbc4d0afc6f3944c40c4394560a0cc7bdcf3a22da9552584",
+      "bytes": 849
+    },
+    {
+      "batch": 1,
+      "name": "02-b01-t02.ps1",
+      "task": "b01-t02",
+      "exit_expected": 7,
+      "sha256": "32ed88d3322a80caa5f6b3a1b4a66371e5a7ab498b96527f4e63d29fa92ab68e",
+      "bytes": 877
+    },
+    {
+      "batch": 1,
+      "name": "03-b01-t03.ps1",
+      "task": "b01-t03",
+      "exit_expected": 0,
+      "sha256": "26400e2405194dd7fb8859b31db0052652776b06821c051bce7f0afa9882c5bc",
+      "bytes": 849
+    },
+    {
+      "batch": 1,
+      "name": "04-b01-t04.ps1",
+      "task": "b01-t04",
+      "exit_expected": 0,
+      "sha256": "6bd0bc36a42bd15d4b7ae13a1dfb501eca230710b32cb860354109a6e095557a",
+      "bytes": 849
+    },
+    {
+      "batch": 2,
+      "name": "01-b02-t01.ps1",
+      "task": "b02-t01",
+      "exit_expected": 0,
+      "sha256": "d3a1a820c5fa89729e6d55ac857d9dd1191f0ff2657c485ea87c7b40602ab3a3",
+      "bytes": 849
+    },
+    {
+      "batch": 2,
+      "name": "02-b02-t02.ps1",
+      "task": "b02-t02",
+      "exit_expected": 0,
+      "sha256": "c57185471343c57f4795c176f309567e8fa5aae7b43436a5a3d743fbd5cca95d",
+      "bytes": 849
+    },
+    {
+      "batch": 2,
+      "name": "03-b02-t03.ps1",
+      "task": "b02-t03",
+      "exit_expected": 0,
+      "sha256": "c6801eff42dc615548b8df087ee75ca1250719dab5ac3c0fe7f1384942bdabb8",
+      "bytes": 849
+    },
+    {
+      "batch": 2,
+      "name": "04-b02-t04.ps1",
+      "task": "b02-t04",
+      "exit_expected": 0,
+      "sha256": "967ce9ba120fd5a38d0c87c4bedb557d878d855865d832262002780259a3e3d8",
+      "bytes": 849
+    },
+    {
+      "batch": 3,
+      "name": "01-b03-t01.ps1",
+      "task": "b03-t01",
+      "exit_expected": 0,
+      "sha256": "a7be0a3b174d8944586e01eec0193d73317925176b746e4a01e2c2831c39e15c",
+      "bytes": 849
+    },
+    {
+      "batch": 3,
+      "name": "02-b03-t02.ps1",
+      "task": "b03-t02",
+      "exit_expected": 0,
+      "sha256": "dcc4a9b2de3fa0cfc93a5706db18bdd2e38837b5f27fce944cb1ce08965b636e",
+      "bytes": 849
+    },
+    {
+      "batch": 3,
+      "name": "03-b03-t03.ps1",
+      "task": "b03-t03",
+      "exit_expected": 0,
+      "sha256": "b675124f9f0cd7eabc3f3d6dc6076d6db889a870fb14035a7620fb8ebcb052bb",
+      "bytes": 849
+    },
+    {
+      "batch": 3,
+      "name": "04-b03-t04.ps1",
+      "task": "b03-t04",
+      "exit_expected": 0,
+      "sha256": "a273bf72e4d80ef4785e9fa8c974991ec5a660eb28e7514f465684b7b8560e67",
+      "bytes": 849
+    }
+  ]
+}

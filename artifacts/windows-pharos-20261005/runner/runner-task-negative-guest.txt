@@ -1,0 +1,8 @@
+WORKER_READY pid=18044 arch=x64 path=C:\cjgui-windows-w1\worker_run.ps1 sha256=2eed155b41b21e6dbc5c2149fb81113cc698ddac8c0bdd19d377f421b1a11f55 session=02764fbfd90d45958056185c0e7d4243
+Commands: run <file.ps1>, batch <directory>, run-timeout <ms> <file.ps1>, status, exit
+COMMAND_FILE_READY /Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/control/commands-runner-task-negative.txt
+TASK_STDOUT name=runner-task-negative.ps1 preview_bytes=30
+RUNNER_TASK_NEGATIVE_CONTROL
+TASK_RESULT name=runner-task-negative.ps1 exit=7 elapsed_ms=727 stdout_bytes=30 stderr_bytes=0
+BATCH_RESULT nonce=92a4a5b18bee4812a806ff6c2b2780bf jobs=1 status=nonzero_exit raw=/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/02764fbfd90d45958056185c0e7d4243/results/92a4a5b18bee4812a806ff6c2b2780bf.json
+WORKER_SHUTDOWN BYE_AND_SOCKET_CLOSED

@@ -1,0 +1,14 @@
+WORKER_READY pid=13932 arch=x64 path=C:\cjgui-windows-w1\worker_run.ps1 sha256=973fd0fb7c5ddb3899f5e75ca053ab690b9e6d28d2a57a41eff5c8e707c910f3 session=4a568ffe5c1d4d9cbdc99a8b0658d74a
+Commands: run <file.ps1>, batch <directory>, run-timeout <ms> <file.ps1>, status, exit
+COMMAND_FILE_READY /Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/control/commands-worker-pipe-green.txt
+TASK_STDOUT name=worker-pipe-inherited-child.ps1 preview_bytes=18
+spawned_pid=1932
+TASK_RESULT name=worker-pipe-inherited-child.ps1 exit=0 elapsed_ms=847 stdout_bytes=18 stderr_bytes=0
+BATCH_RESULT nonce=33d8d500ae2646a48143b4211030214a jobs=1 status=ok raw=/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/4a568ffe5c1d4d9cbdc99a8b0658d74a/results/33d8d500ae2646a48143b4211030214a.json
+TASK_STDOUT name=worker-pipe-child-reaped.ps1 preview_bytes=19
+child_reaped=1932
+TASK_RESULT name=worker-pipe-child-reaped.ps1 exit=0 elapsed_ms=677 stdout_bytes=19 stderr_bytes=0
+BATCH_RESULT nonce=80e878e1776248e28e3a30f703204cfb jobs=1 status=ok raw=/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/4a568ffe5c1d4d9cbdc99a8b0658d74a/results/80e878e1776248e28e3a30f703204cfb.json
+TASK_RESULT name=exit-seven.ps1 exit=7 elapsed_ms=673 stdout_bytes=0 stderr_bytes=0
+BATCH_RESULT nonce=368d04bb0a794ce1b54332bd71cd0595 jobs=1 status=nonzero_exit raw=/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/4a568ffe5c1d4d9cbdc99a8b0658d74a/results/368d04bb0a794ce1b54332bd71cd0595.json
+WORKER_SHUTDOWN BYE_AND_SOCKET_CLOSED

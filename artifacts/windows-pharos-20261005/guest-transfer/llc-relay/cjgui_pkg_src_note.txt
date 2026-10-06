@@ -1,0 +1,1 @@
+composable_ui_window.cj debug build: rebuild cjgui package in guest and relink app

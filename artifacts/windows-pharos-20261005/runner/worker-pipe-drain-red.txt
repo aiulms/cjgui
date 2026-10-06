@@ -1,0 +1,9 @@
+WORKER_READY pid=13648 arch=x64 path=C:\cjgui-windows-w1\worker_run.ps1 sha256=caa406bf365ba4cdfeb4ba6f569ee7ae61ccc56d7fd0d3bb2fc2a8acb9a084d7 session=a68fdc718ca54ad1b1ada154356d125d
+Commands: run <file.ps1>, batch <directory>, run-timeout <ms> <file.ps1>, status, exit
+COMMAND_FILE_READY /Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/control/commands-worker-pipe-red.txt
+RUNNER_FAIL task_error: worker-pipe-inherited-child.ps1: child_output_pipe_drain_timeout
+TASK_STDOUT name=worker-pipe-child-reaped.ps1 preview_bytes=20
+child_reaped=10668
+TASK_RESULT name=worker-pipe-child-reaped.ps1 exit=0 elapsed_ms=680 stdout_bytes=20 stderr_bytes=0
+BATCH_RESULT nonce=f6c1caa6e3f947f4b7c279ff5dee3936 jobs=1 status=ok raw=/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner-sessions/a68fdc718ca54ad1b1ada154356d125d/results/f6c1caa6e3f947f4b7c279ff5dee3936.json
+WORKER_SHUTDOWN BYE_AND_SOCKET_CLOSED

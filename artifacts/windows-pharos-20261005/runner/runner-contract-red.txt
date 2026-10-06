@@ -1,0 +1,54 @@
+.F.F.F.FF
+======================================================================
+FAIL: test_disconnect_before_done_is_not_a_complete_transport (__main__.RunnerContractTest.test_disconnect_before_done_is_not_a_complete_transport)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 112, in test_disconnect_before_done_is_not_a_complete_transport
+    self.assertFalse(status.startswith("OK"), "EOF before DONE must not be accepted as a complete batch")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false : EOF before DONE must not be accepted as a complete batch
+
+======================================================================
+FAIL: test_malformed_exit_trailer_fails_closed (__main__.RunnerContractTest.test_malformed_exit_trailer_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 44, in test_malformed_exit_trailer_fails_closed
+    self.assertNotEqual(invoke("result\n[exit=not-an-integer]"), 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_partial_transport_result_cannot_report_success (__main__.RunnerContractTest.test_partial_transport_result_cannot_report_success)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 47, in test_partial_transport_result_cannot_report_success
+    self.assertNotEqual(
+    ~~~~~~~~~~~~~~~~~~~^
+        invoke("partial result\n[exit=0]", status="transport error: truncated final response"), 0
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_trailer_must_be_a_standalone_final_line (__main__.RunnerContractTest.test_trailer_must_be_a_standalone_final_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 58, in test_trailer_must_be_a_standalone_final_line
+    self.assertNotEqual(invoke("result\n[exit=0] trailing text"), 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_unrequested_extra_result_fails (__main__.RunnerContractTest.test_unrequested_extra_result_fails)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_w1_runner_contract.py", line 55, in test_unrequested_extra_result_fails
+    self.assertNotEqual(invoke("result\n[exit=0]", extra_results={"extra.ps1": "[exit=0]"}), 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.009s
+
+FAILED (failures=5)

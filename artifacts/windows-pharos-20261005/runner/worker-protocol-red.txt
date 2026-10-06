@@ -1,0 +1,74 @@
+FFFFFF
+======================================================================
+FAIL: test_exit_code_boolean_is_not_an_integer_result (__main__.StructuredWorkerProtocolTest.test_exit_code_boolean_is_not_an_integer_result)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 50, in test_exit_code_boolean_is_not_an_integer_result
+    self.validator()(["one.ps1"], payload(result(exit_code=True)), "run-1")
+    ~~~~~~~~~~~~~~^^
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 41, in validator
+    self.assertTrue(callable(function), "structured worker result validator is missing")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : structured worker result validator is missing
+
+======================================================================
+FAIL: test_exit_code_seven_is_preserved (__main__.StructuredWorkerProtocolTest.test_exit_code_seven_is_preserved)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 45, in test_exit_code_seven_is_preserved
+    records = self.validator()(["one.ps1"], payload(result(exit_code=7)), "run-1")
+              ~~~~~~~~~~~~~~^^
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 41, in validator
+    self.assertTrue(callable(function), "structured worker result validator is missing")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : structured worker result validator is missing
+
+======================================================================
+FAIL: test_missing_extra_and_duplicate_results_fail (__main__.StructuredWorkerProtocolTest.test_missing_extra_and_duplicate_results_fail)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 57, in test_missing_extra_and_duplicate_results_fail
+    validate = self.validator()
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 41, in validator
+    self.assertTrue(callable(function), "structured worker result validator is missing")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : structured worker result validator is missing
+
+======================================================================
+FAIL: test_nonce_and_terminal_state_are_required (__main__.StructuredWorkerProtocolTest.test_nonce_and_terminal_state_are_required)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 73, in test_nonce_and_terminal_state_are_required
+    validate = self.validator()
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 41, in validator
+    self.assertTrue(callable(function), "structured worker result validator is missing")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : structured worker result validator is missing
+
+======================================================================
+FAIL: test_partial_transport_never_accepts_success_looking_results (__main__.StructuredWorkerProtocolTest.test_partial_transport_never_accepts_success_looking_results)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 54, in test_partial_transport_never_accepts_success_looking_results
+    self.validator()(["one.ps1"], payload(result(exit_code=0)), "transport_failed: truncated")
+    ~~~~~~~~~~~~~~^^
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 41, in validator
+    self.assertTrue(callable(function), "structured worker result validator is missing")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : structured worker result validator is missing
+
+======================================================================
+FAIL: test_timeout_and_truncated_stream_fail_even_with_exit_zero (__main__.StructuredWorkerProtocolTest.test_timeout_and_truncated_stream_fail_even_with_exit_zero)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 66, in test_timeout_and_truncated_stream_fail_even_with_exit_zero
+    validate = self.validator()
+  File "/Users/jiangxuanyang/Desktop/cangjie/artifacts/windows-pharos-20261005/runner/test_worker_protocol.py", line 41, in validator
+    self.assertTrue(callable(function), "structured worker result validator is missing")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : structured worker result validator is missing
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.002s
+
+FAILED (failures=6)

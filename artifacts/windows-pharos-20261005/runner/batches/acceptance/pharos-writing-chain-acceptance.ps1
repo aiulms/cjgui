@@ -228,14 +228,15 @@ function Read-Owner([string]$agentHost,[int]$port,[int]$id){
   return Agent-Text $agentHost $port $id 0 32768
 }
 # ---- setup ----
-$root='C:\cjgui-windows-w1\Pharos Mark Windows Source'
+$runRoot=if($env:PHAROS_RUN_ROOT){$env:PHAROS_RUN_ROOT}else{'C:\cjgui-windows-w1'}
+$root=Join-Path $runRoot 'Pharos Mark Windows Source'
 $exe=Join-Path $root 'apps\pharos_mark\target\release\bin\main.exe'
 if(!(Test-Path -LiteralPath $exe)){ Fail 40 ("missing_exe:" + $exe) }
 $machine=PeMachine $exe
 Log ("exe_machine=" + ("0x{0:X}" -f $machine))
 if($machine -ne 0x8664){ Fail 40 ("not_x64:" + $machine) }
 [void][PharosSendInput]::SetProcessDPIAware()
-$work=Join-Path 'C:\cjgui-windows-w1' 'accept-run'
+$work=Join-Path $runRoot 'accept-run'
 $sdkRoot=Join-Path $env:LOCALAPPDATA 'Programs\Cangjie'
 $env:PATH=((Join-Path $sdkRoot 'runtime\lib\windows_x86_64_cjnative'),(Join-Path $sdkRoot 'third_party\llvm\bin'),(Join-Path $sdkRoot 'bin'),$env:PATH) -join ';'
 if(Test-Path -LiteralPath $work){Remove-Item -LiteralPath $work -Recurse -Force}

@@ -3556,9 +3556,9 @@ public class CjguiComposableUiNodeReference {
 }
 
 /// One presentation style run of a text node: a UTF-8 display byte range plus the
-/// attributes the renderer applies over it. Runs are flat and non-overlapping:
-/// the product composes nesting before sending them, so no overlapping layers
-/// ever reach the renderer.
+/// attributes the renderer applies over it. Ordinary runs are composed by the
+/// product. Explicit selection backgrounds may overlap them and affect only
+/// the background attribute; they never replace font or foreground attributes.
 public class CjguiComposableUiTextStyleRun {
     public let start: Int64
     public let end: Int64
@@ -3576,6 +3576,7 @@ public class CjguiComposableUiTextStyleRun {
     public let backgroundGreen: Float64
     public let backgroundBlue: Float64
     public let backgroundAlpha: Float64
+    private let selectionBackgroundOnly: Bool
 
     public init(start: Int64, end: Int64, fontSize: Float64, fontWeight: Int64, fontFamily: String, red: Float64,
         green: Float64, blue: Float64, alpha: Float64, hasBackground!: Bool = false, backgroundRed!: Float64 = 0.0,
@@ -3594,7 +3595,36 @@ public class CjguiComposableUiTextStyleRun {
         this.backgroundGreen = backgroundGreen
         this.backgroundBlue = backgroundBlue
         this.backgroundAlpha = backgroundAlpha
+        this.selectionBackgroundOnly = false
     }
+
+    private init(start: Int64, end: Int64, color: CjguiComposableUiColor) {
+        this.start = start
+        this.end = end
+        this.fontSize = 0.0
+        this.fontWeight = 0
+        this.fontFamily = "system"
+        this.red = 0.0
+        this.green = 0.0
+        this.blue = 0.0
+        this.alpha = 0.0
+        this.hasBackground = true
+        this.backgroundRed = color.red
+        this.backgroundGreen = color.green
+        this.backgroundBlue = color.blue
+        this.backgroundAlpha = color.alpha
+        this.selectionBackgroundOnly = true
+    }
+
+    /// Experimental: a macOS selection decoration applied over ordinary runs.
+    /// Admission validates the range against the actual UTF-8 display value.
+    /// Requires a native renderer advertising selection-background version 1.
+    public static func selectionBackground(start: Int64, end: Int64,
+        color: CjguiComposableUiColor): CjguiComposableUiTextStyleRun {
+        return CjguiComposableUiTextStyleRun(start, end, color)
+    }
+
+    func isSelectionBackground(): Bool { return selectionBackgroundOnly }
 
     /// The wire form the renderer accepts: one run per `;`, fields separated by
     /// `:` as start:end:fontSize:weight:family:r:g:b:a.
@@ -3613,10 +3643,40 @@ public class CjguiComposableUiTextStyleRun {
         } else {
             0
         }
-        return "${this.start}:${this.end}:${this.fontSize}:${this.fontWeight}:${family}:" +
+        let ordinary = "${this.start}:${this.end}:${this.fontSize}:${this.fontWeight}:${family}:" +
             "${this.red}:${this.green}:${this.blue}:${this.alpha}:${background}:" +
             "${this.backgroundRed}:${this.backgroundGreen}:${this.backgroundBlue}:${this.backgroundAlpha}"
+        return if (selectionBackgroundOnly) { ordinary + ":1" } else { ordinary }
     }
+}
+
+// Validate only the new additive decoration contract. The existing ordinary
+// run constructor and its fourteen-field wire form retain their semantics.
+func cjguiSelectionBackgroundRunsRejection(value: String,
+    runs: Array<CjguiComposableUiTextStyleRun>): ?String {
+    var decorations: Int64 = 0
+    var bytes: ?Array<UInt8> = None
+    for (run in runs) {
+        if (!run.isSelectionBackground()) { continue }
+        decorations += 1
+        if (decorations > 1024 || runs.size > 2048 || value.size > 65536) {
+            return Some("selection_background_budget_exceeded")
+        }
+        if (run.start < 0 || run.end <= run.start || run.end > Int64(value.size) ||
+            run.end > Int64(UInt32.Max)) { return Some("selection_background_range_invalid") }
+        if (bytes.isNone()) { bytes = Some(value.toArray()) }
+        let actual = bytes.getOrThrow()
+        if ((run.start < actual.size && (actual[run.start] & 0xC0) == 0x80) ||
+            (run.end < actual.size && (actual[run.end] & 0xC0) == 0x80)) {
+            return Some("selection_background_utf8_boundary_invalid")
+        }
+        for (component in [run.backgroundRed, run.backgroundGreen, run.backgroundBlue, run.backgroundAlpha]) {
+            if (!CjguiComposableUiEffectValidation.isFinite(component) || component < 0.0 || component > 1.0) {
+                return Some("selection_background_color_invalid")
+            }
+        }
+    }
+    return None
 }
 
 /// One Cangjie-owned component declaration.  `resourceId` and `actionName`
@@ -4099,7 +4159,10 @@ public class CjguiComposableUiNode {
             // The window snapshots the declaration; presentation runs are part of
             // the declaration and must survive the snapshot, otherwise every
             // accepted node silently loses its inline styles.
-            textStyleRuns: textStyleRuns, scrollOffset: scrollOffset, scrollViewport: scrollViewport,
+            // Runs are immutable values but the Array storage is mutable.
+            // Copy that storage once into this window's private declaration.
+            textStyleRuns: Array<CjguiComposableUiTextStyleRun>(textStyleRuns.size,
+                { index => textStyleRuns[index] }), scrollOffset: scrollOffset, scrollViewport: scrollViewport,
             splitState: splitState, tabsState: tabsState, tabsPageKey: tabsPageKey, tabsPageActive: tabsPageActive,
             tabsTitleHeight: tabsTitleHeight, enabled: isEnabled, readOnly: isReadOnly, fieldId: fieldId,
             operationActionName: operationActionName, operationResourceId: operationResourceId,
@@ -4857,12 +4920,13 @@ public func cjguiComposableSlider(nodeId: Int64, semanticId: String, value: Int6
 
 public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String, style: CjguiComposableUiStyle,
     resourceId!: Int64 = -1, fieldId!: String = "", displayValueRole!: String = "", operationResourceId!: Int64 = -1,
-    interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+    operationActionName!: String = "", interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
     identity!: ?CjguiComposableUiIdentity = None,
     textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>()): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT, "", value, "", resourceId, style,
-        textStyleRuns: textStyleRuns, fieldId: fieldId, operationResourceId: operationResourceId,
+        textStyleRuns: textStyleRuns, fieldId: fieldId, operationActionName: operationActionName,
+        operationResourceId: operationResourceId,
         displayValueRole: displayValueRole, interactionStyle: interactionStyle,
         ownerInteractionState: ownerInteractionState, identity: identity)
 }
@@ -4872,9 +4936,11 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
 public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String,
     boundStyle: CjguiComposableUiBoundStyle, resourceId!: Int64 = -1, fieldId!: String = "",
     displayValueRole!: String = "", operationResourceId!: Int64 = -1,
+    operationActionName!: String = "",
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE, identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
     return cjguiComposableText(nodeId, semanticId, value, boundStyle.style, resourceId: resourceId, fieldId: fieldId,
         displayValueRole: displayValueRole, operationResourceId: operationResourceId,
+        operationActionName: operationActionName,
         interactionStyle: boundStyle.interaction, ownerInteractionState: ownerInteractionState, identity: identity)
 }
 
@@ -5848,6 +5914,7 @@ public class CjguiComposableUiScene {
     private let resolvedVisualGeometry: ArrayList<CjguiComposableUiVisualGeometry>
     private let validValue: Bool
     private let layoutErrorValue: String
+    let hasSelectionBackground: Bool
     public init(version: Int64, viewport: CjguiComposableUiRect, nodes: ArrayList<CjguiComposableUiLayoutNode>,
         valid!: Bool = true, layoutError!: String = "") {
         this.version = version
@@ -5858,8 +5925,15 @@ public class CjguiComposableUiScene {
         var depth: Int64 = 0
         var geometryError = ""
         var index: Int64 = 0
+        var selectionBackground = false
         while (index < nodes.size) {
             let node = nodes[index]
+            for (run in node.textStyleRuns) {
+                if (run.isSelectionBackground()) { selectionBackground = true }
+            }
+            if (let Some(reason) <- cjguiSelectionBackgroundRunsRejection(node.value, node.textStyleRuns)) {
+                geometryError = reason
+            }
             while (depth > 0 && ancestry[depth - 1] + nodes[ancestry[depth - 1]].subtreeNodeCount <= index) {
                 depth -= 1
             }
@@ -5912,6 +5986,7 @@ public class CjguiComposableUiScene {
             index += 1
         }
         this.resolvedVisualGeometry = geometries
+        this.hasSelectionBackground = selectionBackground
         this.validValue = valid && geometryError.size == 0
         this.layoutErrorValue = if (layoutError.size > 0) { layoutError } else { geometryError }
     }
@@ -6944,7 +7019,11 @@ private class CjguiComposableUiLayoutMeasurementCacheEntry {
     }
 }
 
-private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
+interface CjguiComposableUiLayoutPacer {
+    func checkpointLayoutSlice(): Unit
+}
+
+private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment & CjguiComposableUiLayoutPacer {
     // This bounded cache has one measurer identity because a wrapper belongs
     // to exactly one `layout` call. A later layout starts empty and asks the
     // supplied measurer again, so a changed font/session/generation cannot be
@@ -6971,7 +7050,11 @@ private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
             ""
         }
     }
+    public func checkpointLayoutSlice(): Unit {
+        if (let Some(pacer) <- (baseMeasurer as CjguiComposableUiLayoutPacer)) { pacer.checkpointLayoutSlice() }
+    }
     public func measure(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64): CjguiComposableUiTextMeasurement {
+        checkpointLayoutSlice()
         measurementRequestCount += 1
         if (reuseMeasurements) {
             var index: Int64 = 0
@@ -6999,6 +7082,7 @@ private class CjguiComposableUiLayoutMeasurer <: CjguiComposableUiTextMeasurer &
     }
     public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
         let capable = baseMeasurer as CjguiComposableUiMultilineNaturalHeightMeasurer
+        checkpointLayoutSlice()
         if (let Some(multiline) <- capable) {
             measurementRequestCount += 1
             if (reuseMeasurements) {
@@ -7188,6 +7272,7 @@ public class CjguiComposableUiLayoutEngine {
         // rather than accidentally emitting repeated sentinel node IDs.
         let initialClipConstraints = ArrayList<CjguiComposableUiClipConstraint>(
             [CjguiComposableUiClipConstraint(viewport)])
+        try {
         layoutNode(root, viewport, initialClipConstraints, nodes, layoutMeasurer, "", work, reuseCache: reuseCache,
             reuseDepth: 0, identityRegistry: identityRegistry)
         let unresolvedIdentityIssue = if (work.dynamicIdentityIssue.size > 0) {
@@ -7215,6 +7300,14 @@ public class CjguiComposableUiLayoutEngine {
         let scene = CjguiComposableUiScene(version, viewport, nodes, valid: error.size == 0, layoutError: error)
         return CjguiComposableUiLayoutResult(scene, layoutMeasurer.metrics(work, reuseCache: reuseCache),
             viewports: work.stagedViewports, splitTracks: work.stagedSplitTracks)
+        } catch (failure: Exception) {
+            // The engine, not the outer window, owns touched facts until a
+            // complete result is returned. Static preparation can unwind at
+            // any real measurement without leaving half-solved extents live.
+            for (touched in work.stagedViewports) { touched.discardStagedExtents() }
+            if (let Some(cache) <- reuseCache) { cache.discardPass() }
+            throw failure
+        }
     }
 
     /// Entry point for one subtree solve. A declared offset translates the
@@ -7247,6 +7340,7 @@ public class CjguiComposableUiLayoutEngine {
         inheritedInputScope: String, work: CjguiComposableUiLayoutWorkCounter,
         reuseCache!: ?CjguiComposableUiLayoutReuseCache = None, reuseDepth!: Int64 = 0,
         identityRegistry!: ?CjguiComposableUiIdentityRegistry = None): Unit {
+        if (let Some(pacer) <- (measurer as CjguiComposableUiLayoutPacer)) { pacer.checkpointLayoutSlice() }
         let subtreeStartIndex = output.size
         work.recursiveNodeLayoutCount += 1
         let nodeClip = clipConstraintBounds(parentClipConstraints).intersect(bounds)

@@ -5,6 +5,7 @@ import std.collection.*
 import std.convert.*
 import std.env.*
 import std.math.*
+import std.overflow.*
 import std.random.*
 import std.sync.*
 import std.time.*
@@ -106,6 +107,42 @@ private class CjguiComposableUiWindowInstanceAllocator {
     }
 }
 
+// A viewport first mentioned by a candidate must not be half-solved by a
+// sibling while native preparation is pending. This private reservation is
+// separate from accepted ownership and is released by the existing candidate
+// ownership cleanup on accept/reject/cancel/close.
+private class CjguiCandidateViewportReservations {
+    private static let lock = Mutex()
+    private static let owners = HashMap<Int64, Int64>()
+    static func reserve(identity: Int64, owner: Int64): Bool {
+        return synchronized(lock) {
+            if (let Some(prior) <- owners.get(identity)) { return prior == owner }
+            if (owners.size >= 32768) { return false }
+            owners[identity] = owner
+            return true
+        }
+    }
+    static func matches(identity: Int64, owner: Int64): Bool {
+        return synchronized(lock) { (owners.get(identity) ?? 0) == owner }
+    }
+    static func release(identity: Int64, owner: Int64): Unit {
+        synchronized(lock) {
+            if ((owners.get(identity) ?? 0) == owner) { owners.remove(identity) }
+        }
+    }
+}
+
+private class CjguiStaticLayoutViewportBasis {
+    let viewport: CjguiComposableUiScrollViewport
+    let generation: Int64
+    let offset: Int64
+    init(viewport: CjguiComposableUiScrollViewport) {
+        this.viewport = viewport
+        this.generation = viewport.requestGeneration()
+        this.offset = viewport.offset()
+    }
+}
+
 /// B2: the bounded per-page focus/selection bookmark. It records WHERE a person
 /// was (an accepted identity, its resource/kind, and a selection position), never
 /// a business value: a value the owner changed while the page was hidden is read
@@ -158,6 +195,209 @@ public let CJGUI_UI_MODIFIER_CONTROL: Int64 = 1 << 18
 public let CJGUI_UI_MODIFIER_OPTION: Int64 = 1 << 19
 public let CJGUI_UI_MODIFIER_COMMAND: Int64 = 1 << 20
 
+/// Actual native source-selection transfer proof. A proves where the current
+/// source proxy came from; B proves only the real local intersection held by
+/// TextKit. Product code receives this proof from the window and cannot build
+/// one from a same-valued mirror.
+public class CjguiInstalledSelectionInputProof {
+    public let transferId: UInt64
+    public let inputId: UInt64
+    public let inputSequence: UInt64
+    public let previousInputSequence: UInt64
+    public let sourceInstalledNonce: UInt64
+    public let rendererSessionGeneration: UInt64
+    public let windowInstanceToken: UInt64
+    public let sourceBindingEpoch: UInt64
+    public let sourceContextEpoch: Int64
+    public let sourceMirrorRevision: Int64
+    public let sourceOwnerVersion: Int64
+    public let sourceStartByte: Int64
+    public let sourceEndByte: Int64
+    public let sourceProxyGeneration: UInt64
+    public let sourceSelectionRevision: UInt64
+    public let sourceNodeId: Int64
+    public let sourceResourceId: Int64
+    public let sourceSceneVersion: Int64
+    public let sourceSelectionStart16: Int64
+    public let sourceSelectionEnd16: Int64
+    public let sourceBody: String
+    public let targetNodeId: Int64
+    public let targetResourceId: Int64
+    public let targetProjectionVersion: Int64
+    public let targetSceneVersion: Int64
+    public let targetBindingEpoch: UInt64
+    public let targetNodeKind: Int64
+    public let targetSelectionRevision: UInt64
+    public let targetProxyGeneration: UInt64
+    public let targetSelectionStart16: Int64
+    public let targetSelectionEnd16: Int64
+    public let targetFocus16: Int64
+    public let targetBody: String
+    public let editStart16: Int64
+    public let editEnd16: Int64
+    public let replacement: String
+    init(transferId: UInt64, inputId: UInt64, sequence: UInt64, previous: UInt64,
+        sourceNonce: UInt64, sessionGeneration: UInt64, windowToken: UInt64, sourceBinding: UInt64,
+        sourceContext: Int64, sourceMirror: Int64, ownerVersion: Int64, sourceStart: Int64,
+        sourceEnd: Int64, sourceProxy: UInt64, sourceSelectionRevision: UInt64,
+        sourceNode: Int64, sourceResource: Int64, sourceScene: Int64,
+        sourceSelectionStart: Int64, sourceSelectionEnd: Int64, sourceBody: String,
+        targetNode: Int64, targetResource: Int64, targetProjection: Int64, targetScene: Int64,
+        targetBinding: UInt64,
+        targetKind: Int64, targetSelectionRevision: UInt64, targetProxyGeneration: UInt64,
+        targetSelectionStart: Int64, targetSelectionEnd: Int64,
+        targetFocus: Int64, targetBody: String, editStart: Int64, editEnd: Int64,
+        replacement: String) {
+        this.transferId = transferId; this.inputId = inputId
+        this.inputSequence = sequence; this.previousInputSequence = previous
+        this.sourceInstalledNonce = sourceNonce; this.rendererSessionGeneration = sessionGeneration
+        this.windowInstanceToken = windowToken; this.sourceBindingEpoch = sourceBinding
+        this.sourceContextEpoch = sourceContext; this.sourceMirrorRevision = sourceMirror
+        this.sourceOwnerVersion = ownerVersion; this.sourceStartByte = sourceStart
+        this.sourceEndByte = sourceEnd; this.sourceProxyGeneration = sourceProxy
+        this.sourceSelectionRevision = sourceSelectionRevision; this.sourceNodeId = sourceNode
+        this.sourceResourceId = sourceResource; this.sourceSceneVersion = sourceScene
+        this.sourceSelectionStart16 = sourceSelectionStart; this.sourceSelectionEnd16 = sourceSelectionEnd
+        this.sourceBody = sourceBody; this.targetNodeId = targetNode
+        this.targetResourceId = targetResource; this.targetProjectionVersion = targetProjection
+        this.targetSceneVersion = targetScene; this.targetNodeKind = targetKind
+        this.targetBindingEpoch = targetBinding
+        this.targetSelectionRevision = targetSelectionRevision
+        this.targetProxyGeneration = targetProxyGeneration
+        this.targetSelectionStart16 = targetSelectionStart; this.targetSelectionEnd16 = targetSelectionEnd
+        this.targetFocus16 = targetFocus; this.targetBody = targetBody
+        this.editStart16 = editStart; this.editEnd16 = editEnd; this.replacement = replacement
+    }
+}
+
+/// Product-authorized, owner-global selection identity for one text input.
+/// The endpoints preserve direction; only their min/max are used for a write.
+public class CjguiOwnerSelectionChoice {
+    public let documentId: String
+    public let sessionEpoch: Int64
+    public let contentVersion: Int64
+    public let acceptedProjectionId: Int64
+    public let contextEpoch: Int64
+    public let selectionRevision: Int64
+    public let choiceId: Int64
+    public let anchorByte: Int64
+    public let focusByte: Int64
+    public init(documentId: String, sessionEpoch: Int64, contentVersion: Int64,
+        acceptedProjectionId: Int64, contextEpoch: Int64, selectionRevision: Int64,
+        choiceId: Int64, anchorByte: Int64, focusByte: Int64) {
+        this.documentId = documentId; this.sessionEpoch = sessionEpoch
+        this.contentVersion = contentVersion; this.acceptedProjectionId = acceptedProjectionId
+        this.contextEpoch = contextEpoch; this.selectionRevision = selectionRevision
+        this.choiceId = choiceId; this.anchorByte = anchorByte; this.focusByte = focusByte
+    }
+}
+
+/// Typed edit captured before TextKit changes the B proxy. `replacement` is
+/// the actual delegate payload; editStart/editEnd remain B-local evidence.
+public class CjguiInstalledSelectionInput {
+    public let proof: CjguiInstalledSelectionInputProof
+    public init(proof: CjguiInstalledSelectionInputProof) { this.proof = proof }
+}
+
+/// Optional owner boundary for an ordinary insert/Delete arriving on the
+/// verified B TextKit surface of an installed A-to-B selection transfer.
+/// The callback returns the product's directed, owner-global choice; the
+/// window never derives it from B-local UTF-16 coordinates.
+public interface CjguiComposableUiInstalledSelectionInputProvider {
+    func authorizeInstalledSelectionInput(proof: CjguiInstalledSelectionInputProof):
+        ?CjguiOwnerSelectionChoice
+    func installedSelectionChoiceIsCurrent(choice: CjguiOwnerSelectionChoice): Bool
+}
+
+private class CjguiSelectionTransferProofContext {
+    let candidate: CjguiInternalSelectionTransferCandidate
+    let sourceBody: String
+    var receipt: CjguiInternalSelectionTransferReceipt
+    var currentTargetBody: String
+    var lastInputSequence: UInt64
+    var active: Bool = false
+    init(candidate: CjguiInternalSelectionTransferCandidate, sourceBody: String, targetBody: String) {
+        this.candidate = candidate
+        this.sourceBody = sourceBody
+        this.currentTargetBody = targetBody
+        this.lastInputSequence = candidate.sourceAcceptedSequence
+        this.receipt = CjguiInternalSelectionTransferReceipt()
+    }
+    func activate(receipt: CjguiInternalSelectionTransferReceipt): Unit {
+        this.receipt = receipt
+        this.active = receipt.proxyGeneration != 0u64 && receipt.firstResponder == 1u8
+    }
+    func proof(claim: InternalRendererInstalledRangeClaim, inputId: UInt64):
+        ?CjguiInstalledSelectionInputProof {
+        let raw = claim.raw
+        let input = claim.input
+        if (!active || inputId == 0u64 || raw.proxyGeneration != receipt.proxyGeneration ||
+            raw.selectionRevision != receipt.selectionRevision ||
+            raw.rendererSessionGeneration != candidate.sourceRendererSessionGeneration ||
+            raw.windowInstanceToken != candidate.sourceWindowInstanceToken || raw.flags != 2u32 ||
+            raw.nonce != candidate.transferId ||
+            raw.bindingEpoch != receipt.bindingEpoch ||
+            raw.nodeId != candidate.targetNodeId || raw.resourceId != candidate.targetResourceId ||
+            raw.installedSceneVersion != candidate.targetSceneVersion ||
+            raw.previousSeq != lastInputSequence || raw.seq <= raw.previousSeq ||
+            input.preBody != currentTargetBody || raw.selectionEnd16 < raw.selectionStart16 ||
+            Int64(raw.selectionEnd16) > cjguiUtf16Length(input.preBody) ||
+            UInt64(raw.rangeStart16) + UInt64(raw.rangeLength16) > UInt64(cjguiUtf16Length(input.preBody))) {
+            return None
+        }
+        return Some(CjguiInstalledSelectionInputProof(
+            candidate.transferId, inputId, raw.seq, raw.previousSeq,
+            candidate.sourceInstalledNonce, candidate.sourceRendererSessionGeneration,
+            candidate.sourceWindowInstanceToken, candidate.sourceBindingEpoch,
+            Int64(candidate.sourceContextEpoch), Int64(candidate.sourceMirrorRevision),
+            candidate.sourceOwnerVersion, Int64(candidate.sourceStartByte), Int64(candidate.sourceEndByte),
+            candidate.sourceProxyGeneration, candidate.sourceSelectionRevision,
+            Int64(candidate.sourceNodeId), candidate.sourceResourceId, Int64(candidate.sourceSceneVersion),
+            Int64(candidate.sourceSelectionStart16), Int64(candidate.sourceSelectionEnd16), sourceBody,
+            Int64(receipt.nodeId), receipt.resourceId, Int64(receipt.projectionVersion),
+            Int64(receipt.sceneVersion), receipt.bindingEpoch, Int64(receipt.nodeKind), receipt.selectionRevision,
+            receipt.proxyGeneration, Int64(raw.selectionStart16),
+            Int64(raw.selectionEnd16), Int64(raw.selectionEnd16), input.preBody,
+            Int64(raw.rangeStart16), Int64(raw.rangeStart16) + Int64(raw.rangeLength16), claim.replacement))
+    }
+}
+
+/// One owner decision whose native FIFO ACK has not fully settled yet. The
+/// immutable claim/decision and input identity stay together until native
+/// confirmation and (when present) managed memo retirement both succeed.
+private class CjguiHeldInstalledRangeSettlement {
+    let claim: InternalRendererInstalledRangeClaim
+    let decision: CjguiTextSessionEdit
+    let session: CjguiTextSession
+    let transferId: UInt64
+    let inputId: UInt64
+    let needsMemoRetirement: Bool
+    let proofContext: ?CjguiSelectionTransferProofContext
+    var nativeAckConfirmed: Bool = false
+    var lastNativeAckStatus: Int32 = CJGUI_INTERNAL_RENDERER_OK
+
+    init(claim: InternalRendererInstalledRangeClaim, decision: CjguiTextSessionEdit,
+        session: CjguiTextSession, transferId: UInt64, inputId: UInt64,
+        needsMemoRetirement: Bool,
+        proofContext: ?CjguiSelectionTransferProofContext) {
+        this.claim = claim
+        this.decision = decision
+        this.session = session
+        this.transferId = transferId
+        this.inputId = inputId
+        this.needsMemoRetirement = needsMemoRetirement
+        this.proofContext = proofContext
+    }
+}
+
+private class CjguiSelectionTransferReceiptBox {
+    var value: ?CjguiInternalSelectionTransferReceipt = None
+}
+
+private class CjguiSelectionInstallStatusBox {
+    var value: Int32 = -1
+}
+
 public class CjguiComposableUiEvent {
     public let node: CjguiComposableUiLayoutNode
     public let eventKind: Int64
@@ -178,15 +418,37 @@ public class CjguiComposableUiEvent {
     /// NSEventModifierFlag* bits): command = 1 << 20, shift = 1 << 17,
     /// option = 1 << 19, control = 1 << 18. Non-pointer intents carry 0.
     public let modifierFlags: Int64
-    /// Present only for an opted-in wheel consumer; text retains the legacy
-    /// direction vocabulary. A zero-delta terminal has empty text.
+    /// Provenance of one physical Up/Down input from the exact native pump
+    /// result. Zero denotes synthetic or programmatic input.
+    public let inputSessionGeneration: UInt64
+    public let inputSequence: UInt64
+    public let inputPreviousSequence: UInt64
+    /// The decoded displacement, when a native wheel packet has one. Opting in changes who
+    /// applies the displacement; every admitted consumer can inspect the original packet.
     public let wheelDelta: ?CjguiComposableUiWheelDelta
+    /// One admitted wheel dispatch in this window. The observation uses the same event as the
+    /// viewport step, so a consumer can avoid applying the same displacement a second time.
+    public let wheelEventSerial: Int64
+    public let frameworkScrollApplied: Bool
+    public let scrollRequestedBefore: Int64
+    public let scrollRequestedAfter: Int64
+    public let scrollAcceptedBefore: Int64
+    public let scrollAcceptedAfter: Int64
+    public let sliderCaptureIntent: ?CjguiComposableUiSliderCaptureIntent
+    public let installedSelectionInput: ?CjguiInstalledSelectionInput
     public init(node: CjguiComposableUiLayoutNode, eventKind: Int64, text: String, selectionStart: Int64,
         selectionEnd: Int64, projectionVersion: Int64, pointerX!: Int64 = 0, pointerY!: Int64 = 0,
         pointerVisualX!: Float64 = 0.0, pointerVisualY!: Float64 = 0.0,
         pointerTranslateX!: Float64 = 0.0, pointerTranslateY!: Float64 = 0.0,
         pointerGeometryAccepted!: Bool = false,
-        modifierFlags!: Int64 = 0, wheelDelta!: ?CjguiComposableUiWheelDelta = None) {
+        modifierFlags!: Int64 = 0, inputSessionGeneration!: UInt64 = 0u64,
+        inputSequence!: UInt64 = 0u64, inputPreviousSequence!: UInt64 = 0u64,
+        wheelDelta!: ?CjguiComposableUiWheelDelta = None,
+        wheelEventSerial!: Int64 = 0, frameworkScrollApplied!: Bool = false,
+        scrollRequestedBefore!: Int64 = 0, scrollRequestedAfter!: Int64 = 0,
+        scrollAcceptedBefore!: Int64 = 0, scrollAcceptedAfter!: Int64 = 0,
+        sliderCaptureIntent!: ?CjguiComposableUiSliderCaptureIntent = None,
+        installedSelectionInput!: ?CjguiInstalledSelectionInput = None) {
         this.node = node
         this.eventKind = eventKind
         this.text = text
@@ -201,7 +463,18 @@ public class CjguiComposableUiEvent {
         this.pointerTranslateY = pointerTranslateY
         this.pointerGeometryAccepted = pointerGeometryAccepted
         this.modifierFlags = modifierFlags
+        this.inputSessionGeneration = inputSessionGeneration
+        this.inputSequence = inputSequence
+        this.inputPreviousSequence = inputPreviousSequence
         this.wheelDelta = wheelDelta
+        this.wheelEventSerial = wheelEventSerial
+        this.frameworkScrollApplied = frameworkScrollApplied
+        this.scrollRequestedBefore = scrollRequestedBefore
+        this.scrollRequestedAfter = scrollRequestedAfter
+        this.scrollAcceptedBefore = scrollAcceptedBefore
+        this.scrollAcceptedAfter = scrollAcceptedAfter
+        this.sliderCaptureIntent = sliderCaptureIntent
+        this.installedSelectionInput = installedSelectionInput
     }
 }
 
@@ -589,7 +862,10 @@ public interface CjguiComposableUiWindowBackgroundProvider {
 /// unrelated scene changes (for example a different document or status row)
 /// do not revoke a live drag. The returned revision must advance whenever an
 /// independently accepted write changes that target's owner truth. Controllers
-/// that do not implement this interface retain the conservative whole-scene
+/// also keep this revision stable only while the target's source mapping is
+/// unchanged: retained mapped selections reuse this same invalidation boundary
+/// when an unrelated accepted scene replaces a private preparation.
+/// Controllers that do not implement this interface retain the conservative whole-scene
 /// invalidation policy.
 public interface CjguiComposableUiPointerCaptureVersionProvider {
     func pointerCaptureVersion(node: CjguiComposableUiLayoutNode): Int64
@@ -1069,6 +1345,224 @@ class CjguiComposableUiNativeInputScopeTable {
 public var CJGUI_WINDOW_GATE_ACCEPTANCE_THROW = false
 public var CJGUI_WINDOW_GATE_ROLLBACK_THROW = false
 
+private class CjguiComposableUiPreparationIdAllocator {
+    private static let lock = Mutex()
+    private static var nextId: Int64 = 1
+
+    static func allocate(): UInt64 {
+        return synchronized(CjguiComposableUiPreparationIdAllocator.lock) {
+            let value = CjguiComposableUiPreparationIdAllocator.nextId
+            CjguiComposableUiPreparationIdAllocator.nextId += 1
+            UInt64(value)
+        }
+    }
+}
+
+// Immutable, owned projection for one node. Strings are Cangjie-owned values;
+// no CString or borrowed native address crosses an owner turn.
+private class CjguiComposableUiPreparedNodePacket {
+    let node: CjguiComposableUiLayoutNode
+    let nativeNode: CjguiInternalRendererComposableNode
+    let geometry: CjguiInternalRendererComposableGeometry
+    let label: String
+    let value: String
+    let semanticId: String
+    let semanticBindingKey: String
+    let semanticRowKey: String
+    let semanticParentRowKey: String
+    let semanticLabel: String
+    let encodedRuns: String
+    let preservesActiveLocalText: Bool
+    let hasDisruptionIntent: Bool
+    let shouldPrepare: Bool
+    let preserveOwnerRevisionBasis: Int64
+    let preserveHasOwnerRevisionProvider: Bool
+    let pendingTextNodeIdBasis: Int64
+    let pendingTextResourceIdBasis: Int64
+    let pendingTextNodeKindBasis: Int64
+    let pendingTextValueBasis: String
+    let pendingTextOwnerRevisionBasis: Int64
+
+    init(node: CjguiComposableUiLayoutNode, nativeNode: CjguiInternalRendererComposableNode,
+        geometry: CjguiInternalRendererComposableGeometry, label: String, value: String,
+        semanticId: String, semanticBindingKey: String, semanticRowKey: String,
+        semanticParentRowKey: String, semanticLabel: String, encodedRuns: String,
+        preservesActiveLocalText: Bool, hasDisruptionIntent: Bool, shouldPrepare: Bool,
+        preserveOwnerRevisionBasis: Int64, preserveHasOwnerRevisionProvider: Bool,
+        pendingTextNodeIdBasis: Int64, pendingTextResourceIdBasis: Int64,
+        pendingTextNodeKindBasis: Int64, pendingTextValueBasis: String,
+        pendingTextOwnerRevisionBasis: Int64) {
+        this.node = node
+        this.nativeNode = nativeNode
+        this.geometry = geometry
+        this.label = label
+        this.value = value
+        this.semanticId = semanticId
+        this.semanticBindingKey = semanticBindingKey
+        this.semanticRowKey = semanticRowKey
+        this.semanticParentRowKey = semanticParentRowKey
+        this.semanticLabel = semanticLabel
+        this.encodedRuns = encodedRuns
+        this.preservesActiveLocalText = preservesActiveLocalText
+        this.hasDisruptionIntent = hasDisruptionIntent
+        this.shouldPrepare = shouldPrepare
+        this.preserveOwnerRevisionBasis = preserveOwnerRevisionBasis
+        this.preserveHasOwnerRevisionProvider = preserveHasOwnerRevisionProvider
+        this.pendingTextNodeIdBasis = pendingTextNodeIdBasis
+        this.pendingTextResourceIdBasis = pendingTextResourceIdBasis
+        this.pendingTextNodeKindBasis = pendingTextNodeKindBasis
+        this.pendingTextValueBasis = pendingTextValueBasis
+        this.pendingTextOwnerRevisionBasis = pendingTextOwnerRevisionBasis
+    }
+}
+
+private class CjguiComposableUiPreparedRunDeclaration {
+    let nodeId: Int64
+    let encoded: String
+    init(nodeId: Int64, encoded: String) {
+        this.nodeId = nodeId
+        this.encoded = encoded
+    }
+}
+
+private class CjguiComposableUiPreparedScenePacket {
+    let sceneNodes: ArrayList<CjguiComposableUiLayoutNode>
+    let previousNodes: ArrayList<CjguiComposableUiLayoutNode>
+    let nodes = ArrayList<CjguiComposableUiPreparedNodePacket>()
+    let inputScopes: CjguiComposableUiNativeInputScopeTable
+    let previousInputScopes = CjguiComposableUiNativeInputScopeTable()
+    let acceptedNodeIndexes = HashMap<Int64, Int64>()
+    let runSources = ArrayList<CjguiComposableUiNode>()
+    let runDeclarations = ArrayList<CjguiComposableUiPreparedRunDeclaration>()
+    let runsByNodeId = HashMap<Int64, String>()
+    var packetCursor: Int64 = 0
+    var nativeCursor: Int64 = 0
+    var previousScopeCursor: Int64 = 0
+    var runSourcesInitialized: Bool = false
+    var nativeBegun: Bool = false
+    var ready: Bool = false
+    var hasImageNodes: Bool = false
+    var syncFallback: Bool = false
+    var unsupportedReason: String = "none"
+    init(sceneNodes: ArrayList<CjguiComposableUiLayoutNode>,
+        previousNodes: ArrayList<CjguiComposableUiLayoutNode>,
+        inputScopes: CjguiComposableUiNativeInputScopeTable) {
+        this.sceneNodes = sceneNodes
+        this.previousNodes = previousNodes
+        this.inputScopes = inputScopes
+    }
+}
+
+// A paced candidate has completed Cangjie build/layout, but has made NO native
+// staging or present call. Accepted input keeps its original native scene. The
+// next legal owner turn either submits these exact frozen values or retires the
+// candidate before an accepted input/owner invalidation can read staged facts.
+private class CjguiComposableUiPreparedCandidate {
+    let preparationId: UInt64
+    let participant: ?CjguiComposableUiSceneRefreshParticipant
+    let root: CjguiComposableUiNode
+    let paintScene: CjguiComposableUiScene
+    let previousScene: CjguiComposableUiScene
+    let declaredVersion: Int64
+    let businessOwnerRevision: Int64
+    let viewport: InternalRendererViewportResult
+    let commands: ArrayList<CjguiComposableUiCommand>
+    let transfers: ArrayList<CjguiComposableUiDataTransferBinding>
+    let backgroundToken: String
+    let backgroundColorScheme: UInt32
+    let requestEpoch: Int64
+    let session: UInt64
+    let bindingEpoch: UInt64
+    let focus: (Int64, Int64, Int64)
+    let selectionBasis: ?CjguiTextSelectionTicket
+    let viewportBases: ArrayList<CjguiStaticLayoutViewportBasis>
+    let packet: CjguiComposableUiPreparedScenePacket
+    var preparedTurn: Int64 = -1
+    init(participant: ?CjguiComposableUiSceneRefreshParticipant, root: CjguiComposableUiNode,
+        scene: CjguiComposableUiScene, previousScene: CjguiComposableUiScene,
+        declaredVersion: Int64, businessOwnerRevision: Int64, viewport: InternalRendererViewportResult,
+        commands: ArrayList<CjguiComposableUiCommand>, transfers: ArrayList<CjguiComposableUiDataTransferBinding>,
+        backgroundToken: String, backgroundColorScheme: UInt32, requestEpoch: Int64,
+        session: UInt64, bindingEpoch: UInt64, focus: (Int64, Int64, Int64),
+        sceneNodes: ArrayList<CjguiComposableUiLayoutNode>,
+        previousNodes: ArrayList<CjguiComposableUiLayoutNode>,
+        inputScopes: CjguiComposableUiNativeInputScopeTable,
+        selectionBasis: ?CjguiTextSelectionTicket, viewportBases: ArrayList<CjguiStaticLayoutViewportBasis>) {
+        this.participant = participant
+        this.preparationId = CjguiComposableUiPreparationIdAllocator.allocate()
+        this.root = root
+        this.paintScene = scene
+        this.previousScene = previousScene
+        this.declaredVersion = declaredVersion
+        this.businessOwnerRevision = businessOwnerRevision
+        this.viewport = viewport
+        this.commands = commands
+        this.transfers = transfers
+        this.backgroundToken = backgroundToken
+        this.backgroundColorScheme = backgroundColorScheme
+        this.requestEpoch = requestEpoch
+        this.session = session
+        this.bindingEpoch = bindingEpoch
+        this.focus = focus
+        this.selectionBasis = selectionBasis
+        this.viewportBases = viewportBases
+        this.packet = CjguiComposableUiPreparedScenePacket(sceneNodes, previousNodes, inputScopes)
+    }
+}
+
+private class CjguiComposableUiStaticLayoutPreparation {
+    let attemptId: UInt64 = CjguiComposableUiPreparationIdAllocator.allocate()
+    let participant: ?CjguiComposableUiSceneRefreshParticipant
+    let frozenRoot: CjguiComposableUiNode
+    let previousNativeSceneVersion: Int64
+    let declaredVersion: Int64
+    let businessOwnerRevision: Int64
+    let viewport: InternalRendererViewportResult
+    let candidateVersion: Int64
+    let backgroundToken: String
+    let backgroundScheme: UInt32
+    let commands: ArrayList<CjguiComposableUiCommand>
+    let requestEpoch: Int64
+    let session: UInt64
+    let bindingEpoch: UInt64
+    let focus: (Int64, Int64, Int64)
+    let selection: ?CjguiTextSelectionTicket
+    let viewports: ArrayList<CjguiStaticLayoutViewportBasis>
+    let measurer: CjguiPreparedStaticTextMeasurer
+    var advancedTurn: Int64 = -1
+    var layoutNanoseconds: Int64 = -1
+    var nativeCallCount: Int64 = 0
+    var nativeMeasurementMs: Int64 = 0
+    var noProgressSlices: Int64 = 0
+    var readyRoot: ?CjguiComposableUiNode = None
+    var readyResult: ?CjguiComposableUiLayoutResult = None
+    init(participant: ?CjguiComposableUiSceneRefreshParticipant, root: CjguiComposableUiNode,
+        previousNativeSceneVersion: Int64, declaredVersion: Int64, businessOwnerRevision: Int64,
+        viewport: InternalRendererViewportResult, candidateVersion: Int64,
+        backgroundToken: String, backgroundScheme: UInt32, commands: ArrayList<CjguiComposableUiCommand>,
+        requestEpoch: Int64, session: UInt64, bindingEpoch: UInt64, focus: (Int64, Int64, Int64),
+        selection: ?CjguiTextSelectionTicket, viewports: ArrayList<CjguiStaticLayoutViewportBasis>,
+        measurer: CjguiPreparedStaticTextMeasurer) {
+        this.participant = participant
+        this.frozenRoot = root
+        this.previousNativeSceneVersion = previousNativeSceneVersion
+        this.declaredVersion = declaredVersion
+        this.businessOwnerRevision = businessOwnerRevision
+        this.viewport = viewport
+        this.candidateVersion = candidateVersion
+        this.backgroundToken = backgroundToken
+        this.backgroundScheme = backgroundScheme
+        this.commands = commands
+        this.requestEpoch = requestEpoch
+        this.session = session
+        this.bindingEpoch = bindingEpoch
+        this.focus = focus
+        this.selection = selection
+        this.viewports = viewports
+        this.measurer = measurer
+    }
+}
+
 private class CjguiComposableUiPendingPresentTransaction {
     /// 提交类型：0 = 完整刷新投影；1 = 交互投影。
     /// 交互投影没有 participant/identity/layout 候选，因此不得调用完整刷新的
@@ -1144,11 +1638,12 @@ private class CjguiComposableUiPendingPresentTransaction {
     }
 }
 
-/// A1：启动结果三分。Ready = 首帧已确认；AcceptedPending = native 已受理
-/// 首帧票据（终态未定），宿主必须继续泵送至收敛；Failed = 真实失败，
-/// 会话已按 start 的责任清理。
+/// 启动结果：Ready = 首帧已确认；Preparing = 首帧仍在有界 Cangjie 布局
+/// 准备中，native 窗口保持空初始面；AcceptedPending = native 已受理首帧票据
+/// （终态未定），宿主继续泵送至收敛；Failed = 真实失败且会话已清理。
 public enum CjguiComposableUiWindowStartOutcome {
     | StartReady
+    | StartPreparing
     | StartAcceptedPending
     | StartFailed
 }
@@ -1504,6 +1999,20 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// The per-process identity of THIS window instance, used to detect a
     /// declaration that tries to share one mutable view object between windows.
     private let instanceToken: Int64 = CjguiComposableUiWindowInstanceAllocator.allocate()
+    private var installedRangeNonceSequence: UInt64 = 0u64
+    private var installedRangeSessionGeneration: UInt64 = 0u64
+    private var installedRangeCandidate: ?CjguiInstalledRangeBasis = None
+    private var installedRangeCandidateRequest: Int64 = -1
+    private var installedRangeCandidateScene: Int64 = -1
+    // Presentation selection changes the native declaration before the source
+    // proxy is focused. Keep a separate future source basis armed across that
+    // gap; it is not active until an actual TextKit install receipt is read back.
+    private var pendingSourceHandoffBasis: ?CjguiInstalledRangeBasis = None
+    private var pendingSourceHandoffScene: Int64 = -1
+    private var pendingSourceHandoffExpectedBinding: UInt64 = 0u64
+    private var pendingSourceHandoffExpectedNode: Int64 = -1
+    private var pendingSourceHandoffExpectedResource: Int64 = -1
+    private var pendingSourceHandoffSelectionConfirmed: Bool = false
     private let configuration: CjguiMacosApplicationWindowConfiguration
     private var sessionToken: UInt64
     private var isWindowOpen: Bool
@@ -1524,6 +2033,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 消费方不再有第二条写入路径；拒绝后的代理回滚也由窗口把**会话签发**的恢复
     /// 回执交回会话，消费方不必在 `buildUi` 里轮询自签自认。
     private var ownedTextSession: Option<CjguiTextSession> = None
+    private let activationPrefixGate = CjguiMacActivationPrefixGate()
+    private var deferredPairRevealNode: Int64 = -1
+    private func activationPrefixPending(): Bool { activationPrefixGate.pending() }
+    private func traceActivationPrefixMarker(phase: UInt32, prefix: InternalRendererActivationPrefix): Unit {
+        if (prefix.nonce == 0u64) { return }
+        let span = cjguiOwnerTraceRecord(3u32, sessionToken, ownerTraceTurnIdentity(), prefix.nonce,
+            0u64, prefix.sessionGeneration, phase, 0u64)
+        let _ = cjguiOwnerTraceRecord(4u32, sessionToken, ownerTraceTurnIdentity(), prefix.nonce,
+            0u64, prefix.sessionGeneration, phase, span)
+    }
     private var ownedTextSessionNodeId: Int64 = -1
     private var ownedTextSessionResourceId: Int64 = -1
     private var ownedTextSessionNodeKind: Int64 = -1
@@ -1537,6 +2056,29 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var presentationLastTerminalId: Int64 = -1
     private var presentationCompositionRange: ?CjguiPreparedSourceRange = None
     private var staleOwnedSelectionEvents: Int64 = 0
+    private var ownerTurnBudget: ?CjguiOwnerTurnBudget = None
+    private var preparingCandidate: ?CjguiComposableUiPreparedCandidate = None
+    private var staticLayoutPreparation: ?CjguiComposableUiStaticLayoutPreparation = None
+
+    /// Share one allowance across the consumer's complete serialized loop.
+    /// Attaching does not begin/reset it, including inside callbacks.
+    public func useOwnerTurnBudget(budget: CjguiOwnerTurnBudget): Unit {
+        cancelPreparedCandidate("owner_budget_changed")
+        ownerTurnBudget = Some(budget)
+    }
+
+    private func ownerBudgetAdmits(reserveUs: Int64, phase: String): Bool {
+        if (let Some(budget) <- ownerTurnBudget) {
+            let admitted = if (phase == "refresh") {
+                budget.admitsRefresh(sessionToken, reserveUs)
+            } else { budget.admits(reserveUs) }
+            if (!admitted) {
+                this.traceOwnerPhase("budget_defer_${phase}", this.ownerPhaseStarted())
+                return false
+            }
+        }
+        return true
+    }
     /// 换绑/销毁代次：native 在组合开始时快照声明里的这个值，旧队列事件带着它回来。
     /// 窗口拒绝代次不符的事件（具名，不落回 owner dispatcher），即使 node/resource
     /// 原地复用也一样。
@@ -1710,6 +2252,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var totalLayoutNanoseconds: Int64
     private var totalNativeStageAndSubmitNanoseconds: Int64
     private var lastNativeMeasurementCallCount: Int64
+    private var lastStaticLayoutWorkerStartCount: Int64
     private var lastLayoutReuseHitCount: Int64
     private var lastLayoutReuseMissCount: Int64
     private var lastLayoutReuseRevalidationNodeCount: Int64
@@ -1778,6 +2321,19 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var pointerCaptureSplitStartVersion: Int64 = -1
     private var pointerCaptureSplitContinuousVersion: Int64 = -1
     private var pointerCaptureSplitClips = ArrayList<CjguiComposableUiVisualRect>()
+    // mac TEXT owns one original target certificate. It never changes the
+    // native event's scene, binding epoch, or coordinates.
+    private var macTextCapture: ?CjguiMacTextCaptureFacts = None
+    private var macSliderCapture: ?CjguiMacSliderCaptureFacts = None
+    private var macSliderTestFifo: ?CjguiMacSliderPointerFifo = None
+    private var macTextCaptureSerial: UInt64 = 0u64
+    private var wheelObservationSerial: Int64 = 0
+    // Explicit package-test injection. Production only reads the consumed
+    // ticket sideband copied from the actual native FIFO item.
+    private var macTextTestCoordinateActive: Bool = false
+    private var macTextTestGeneration: UInt64 = 0u64
+    private var macTextTestCoordinate: UInt64 = 0u64
+
     // The framework owns these ephemeral visual identities. They are always
     // checked against the accepted native input scene before use; an owner
     // never writes hover/pressed/focus directly.
@@ -1977,6 +2533,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // removed element), a startup failure and a normal close all give the objects
     // back so another window may legally take them over.
     private var ownedViewStateViewports: ArrayList<CjguiComposableUiScrollViewport> = ArrayList<CjguiComposableUiScrollViewport>()
+    private var reservedCandidateViewports: ArrayList<Int64> = ArrayList<Int64>()
     private var ownedViewStateSplits: ArrayList<CjguiComposableUiSplitState> = ArrayList<CjguiComposableUiSplitState>()
     private var ownedViewStateTabs: ArrayList<CjguiComposableUiTabsState> = ArrayList<CjguiComposableUiTabsState>()
     // H2：窗口拥有的滚动活动。注册表只是「当前 **accepted 布局**里真实的
@@ -2172,6 +2729,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         this.totalLayoutNanoseconds = 0
         this.totalNativeStageAndSubmitNanoseconds = 0
         this.lastNativeMeasurementCallCount = 0
+        this.lastStaticLayoutWorkerStartCount = 0
         this.lastLayoutReuseHitCount = 0
         this.lastLayoutReuseMissCount = 0
         this.lastLayoutReuseRevalidationNodeCount = 0
@@ -2233,6 +2791,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 时 stop 都留在同一实例状态机内直到真实收敛。
     public func startWithOutcome(): CjguiComposableUiWindowStartOutcome {
         if (isWindowOpen) {
+            if (isStartingPending()) { return StartAcceptedPending }
+            if (isStartingPreparing()) { return StartPreparing }
             return StartReady
         }
         if (!configuration.isValid()) {
@@ -2240,6 +2800,26 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             firstStartupFailure = "invalid_configuration"
             return StartFailed
         }
+        // Charge all startup work, including renderer creation and native
+        // bootstrap, to one allowance. A host that already owns an active
+        // shared turn retains that turn and its trace envelope.
+        var ownsStartupTurn = false
+        var startupTurnAvailable = true
+        var startupTraceStarted = false
+        var startupTraceTurn: Int64 = 0
+        var startupTraceSpan: UInt64 = 0u64
+        if (let Some(budget) <- ownerTurnBudget) {
+            if (!budget.isActive()) {
+                ownsStartupTurn = budget.begin()
+                startupTurnAvailable = ownsStartupTurn
+                if (ownsStartupTurn) { startupTraceTurn = budget.turnIdentity() }
+            }
+        }
+        if (!startupTurnAvailable) {
+            firstStartupFailure = "owner_turn_unavailable"
+            return StartFailed
+        }
+        try {
         startupPhase = "renderer_create"
         let created = internalRendererCreate(
             CjguiInternalRendererConfig(
@@ -2262,6 +2842,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return StartFailed
         }
         sessionToken = created.token
+        if (ownsStartupTurn) {
+            startupTraceSpan = beginOwnerTraceTurn(startupTraceTurn)
+            startupTraceStarted = true
+        }
         isWindowOpen = true
         textRangeEditDeltaDeliveryEnabled = false
         if (configuration.rangeTextEditDeltaDelivery) {
@@ -2363,6 +2947,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         totalLayoutNanoseconds = 0
         totalNativeStageAndSubmitNanoseconds = 0
         lastNativeMeasurementCallCount = 0
+        lastStaticLayoutWorkerStartCount = 0
         lastLayoutReuseHitCount = 0
         lastLayoutReuseMissCount = 0
         lastLayoutReuseRevalidationNodeCount = 0
@@ -2392,7 +2977,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         layoutReuseCache = CjguiComposableUiLayoutReuseCache()
         identityRegistry.clear()
         requestRefresh()
-        let refreshedAtStart = refreshIfNeeded()
+        var refreshedAtStart = false
+        if (startupTurnAvailable) {
+            refreshedAtStart = refreshIfNeeded()
+        }
         if (!refreshedAtStart) {
             // A1：首帧 PENDING 不是启动失败。native 已受理首帧票据（终态未定），
             // 会话与原事务保留，宿主继续泵送至 Ready/失败；不得 discard——
@@ -2408,6 +2996,18 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 firstStartupFailure = "none"
                 return StartAcceptedPending
             }
+            // A cold layout may have yielded before any native scene ticket
+            // exists. This is a live empty initial surface, not an accepted
+            // first frame; normal owner turns continue the retained request.
+            if (isWindowOpen && refreshRequested && firstStartupFailure == "none" &&
+                lastNativeFailure == "none") {
+                startupPhase = if (staticLayoutPreparation.isSome()) {
+                    "starting_preparation"
+                } else {
+                    "starting_preparation_deferred"
+                }
+                return StartPreparing
+            }
             if (firstStartupFailure == "none") {
                 firstStartupFailure = "refresh_unknown_failure"
             }
@@ -2415,9 +3015,23 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return StartFailed
         }
         return StartReady
+        } finally {
+            if (startupTraceStarted) { endOwnerTraceTurn(startupTraceTurn, startupTraceSpan) }
+            if (ownsStartupTurn) {
+                if (let Some(budget) <- ownerTurnBudget) {
+                    let elapsedUs = budget.elapsedWorkMicroseconds()
+                    if (elapsedUs > 16000) {
+                        getStdOut().writeln("CJGUI_STARTUP_TURN_OVERRUN turn=${startupTraceTurn} " +
+                            "elapsed_us=${elapsedUs} allowance_us=16000")
+                        getStdOut().flush()
+                    }
+                    budget.end()
+                }
+            }
+        }
     }
 
-    /// 兼容入口：受理（首帧未定）与 Ready 都算窗口已打开，只有真实失败返回假。
+    /// 兼容入口：Preparing、native 受理（首帧未定）与 Ready 都算窗口已打开，只有真实失败返回假。
     /// 需要区分受理/Ready 的宿主改用 startWithOutcome 与 isStartingPending。
     public func start(): Bool {
         let outcome = startWithOutcome()
@@ -2430,6 +3044,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// A1：首帧受理状态。native 已收下首帧票据但终态未定；真实 Ready 清零。
     public func isStartingPending(): Bool {
         return isWindowOpen && startingPending
+    }
+
+    /// The empty renderer has not received an accepted first scene yet, but a
+    /// budgeted startup projection is retained for later owner turns.
+    public func isStartingPreparing(): Bool {
+        return isWindowOpen && renderedScene.version <= 0 && refreshRequested &&
+            firstStartupFailure == "none" && lastNativeFailure == "none" && pendingTransaction.isNone()
     }
 
     /// A1：最近一次「核心收尾未完整」的命名原因（终止收敛可观察出口）；
@@ -2450,6 +3071,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// Mark a real external domain/style change for one coalesced refresh.
     /// Repeated marks before `refreshIfNeeded` intentionally stay one pass.
     public func requestRefresh() {
+        cancelPreparedCandidate("request_changed")
         if (isWindowOpen) {
             refreshRequested = true
             // A1：推进刷新请求代际。等待中的原事务只消费它自己记录的 epoch，
@@ -2508,12 +3130,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// only the controller's declared UI revision and native viewport until a
     /// real change, resize, or explicit request requires one full projection.
     public func refreshIfNeeded(): Bool {
+        let phaseStarted = this.ownerPhaseStarted()
+        try {
         if (!isWindowOpen) {
             return false
         }
         // A1 前置结算门：必须先结算原票据，再决定本轮是否提交新候选。它早于
         // viewport 失败判断，因此 PENDING 期间的 viewport 波动不会被误当成新失败。
-        if (settlePendingPresent()) {
+        let settlementSpan = this.beginOwnerTracePhase(1u32)
+        let settledPending = settlePendingPresent()
+        this.endOwnerTracePhase(1u32, settlementSpan)
+        if (settledPending) {
             return false
         }
         if (!isWindowOpen) {
@@ -2528,11 +3155,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         if (closeIntentPending) {
             if (isWindowOpen) {
-                let _ = internalRendererRequestClose(sessionToken)
+                internalRendererRequestCloseBeforeDestroy(sessionToken)
             }
             discardSession("close_after_settlement")
             return false
         }
+        if (activationPrefixPending()) { return false }
+        // Admission precedes any new candidate/staging work. An original
+        // present settlement above always finishes before this pacing gate.
+        if (!this.ownerBudgetAdmits(if (staticLayoutPreparation.isSome()) { 5000 } else { 12000 }, "refresh")) { return false }
+        let nativeStateSpan = this.beginOwnerTracePhase(2u32)
         let _ = deliverPendingPlatformColorScheme()
         let _ = deliverPendingPlatformAccent()
         // A reduction request can hide the material immediately in AppKit.
@@ -2554,9 +3186,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 }
             }
         }
+        this.endOwnerTracePhase(2u32, nativeStateSpan)
         startupPhase = "viewport"
+        let viewportSpan = this.beginOwnerTracePhase(3u32)
         let viewport = internalRendererComposableViewport(sessionToken)
+        this.endOwnerTracePhase(3u32, viewportSpan)
         if (viewport.status != CJGUI_INTERNAL_RENDERER_OK || viewport.width == 0u32 || viewport.height == 0u32) {
+            cancelPreparedCandidate("viewport_unavailable")
             return noteRefreshFailure(if (viewport.status == CJGUI_INTERNAL_RENDERER_OK) {
                 CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
             } else {
@@ -2564,6 +3200,64 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             })
         }
         let declaredVersion = controller.uiSceneVersion()
+        if (let Some(candidate) <- staticLayoutPreparation) {
+            if (!staticLayoutBasisMatches(candidate, viewport, declaredVersion)) {
+                cancelPreparedCandidate("static_layout_basis_changed")
+                return syncProjection(viewport, controller.uiSceneVersion())
+            }
+            return advanceStaticLayoutPreparation(candidate)
+        }
+        if (let Some(candidate) <- preparingCandidate) {
+            if (candidate.session != sessionToken || candidate.previousScene.version != nativeInputScene.version ||
+                candidate.declaredVersion != declaredVersion ||
+                candidate.businessOwnerRevision != currentBusinessOwnerRevision() ||
+                candidate.requestEpoch != refreshRequestEpoch || candidate.bindingEpoch != textSessionBindingEpoch ||
+                candidate.focus != (focusedNodeId, focusedResourceId, focusedNodeKind) ||
+                candidate.viewport.resizeVersion != viewport.resizeVersion ||
+                candidate.viewport.resourceCompletionVersion != viewport.resourceCompletionVersion ||
+                !preparedSelectionAndViewportBasisMatches(candidate)) {
+                cancelPreparedCandidate("owner_or_view_changed")
+                // Rollback may legitimately advance the participant's UI revision.
+                return syncProjection(viewport, controller.uiSceneVersion())
+            }
+            if (candidate.packet.ready && !preparedPreserveBasisStillMatches(candidate)) {
+                cancelPreparedCandidate("preserve_basis_changed")
+                return syncProjection(viewport, controller.uiSceneVersion())
+            }
+            if (let Some(budget) <- ownerTurnBudget) {
+                // Reentrant host calls cannot combine both expensive phases
+                // into the original owner turn, even after a credited idle wait.
+                if (!budget.isActive()) { return false }
+                if (budget.isActive() && candidate.preparedTurn == budget.turnIdentity()) { return false }
+                candidate.preparedTurn = budget.turnIdentity()
+                let progress = advancePreparedCandidate(candidate, budget)
+                if (progress == 0 || progress == 3) { return false }
+                if (candidate.packet.ready && !preparedPreserveBasisStillMatches(candidate)) {
+                    cancelPreparedCandidate("preserve_basis_changed")
+                    return syncProjection(viewport, controller.uiSceneVersion())
+                }
+                // Ready does not reserve staging/present/accepted publication.
+                // They are one indivisible transaction: retain the original
+                // preparation until this SAME owner allowance admits its tail.
+                // No idle or retry is inserted; hasPreparedWork keeps the host
+                // demand active and input is drained against the accepted scene.
+                if (!this.ownerBudgetAdmits(14000, "prepared_submit")) { return false }
+                preparingCandidate = None
+                budget.releasePreparedOwner(sessionToken)
+                if (candidate.packet.syncFallback) {
+                    let traceStatus = if (candidate.packet.unsupportedReason == "native_begin_unsupported" ||
+                        candidate.packet.unsupportedReason == "native_node_unsupported" ||
+                        candidate.packet.unsupportedReason == "native_advance_unsupported") {
+                        "prepare_sync_unsupported"
+                    } else { "prepare_sync_fallback" }
+                    println("CJGUI_PREPARE_TRACE preparation=${candidate.preparationId} " +
+                        "status=${traceStatus} reason=${candidate.packet.unsupportedReason}")
+                }
+                return submitPreparedCandidate(candidate)
+            }
+            preparingCandidate = None
+            return submitPreparedCandidate(candidate)
+        }
         if (!refreshRequested && pendingRefreshReason != "none" && declaredVersion == lastAttemptedControllerSceneVersion &&
             viewport.resizeVersion == lastAttemptedViewportResizeVersion && viewport.resourceCompletionVersion ==
             lastAttemptedResourceCompletionVersion) {
@@ -2581,6 +3275,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         startupPhase = "scene_sync"
         let synced = syncProjection(viewport, declaredVersion)
         return synced
+        } finally {
+            this.traceOwnerPhase("refresh", phaseStarted)
+        }
     }
 
     public func pump(timeoutMs: UInt32): CjguiComposableUiWindowPumpResult {
@@ -2601,10 +3298,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     func refreshAfterDeferredPump(): Bool {
         let refreshed = refreshIfNeeded()
         if (deferredInteractionPaint && isWindowOpen) {
-            let _ = refreshInteractionPaintIfNeeded()
+            if (refreshInteractionPaintIfNeeded()) { deferredInteractionPaint = false }
         }
-        deferredInteractionPaint = false
-        deferredEventWork = false
+        if (!activationPrefixPending() && !deferredInteractionPaint && refreshed) { deferredEventWork = false }
         return refreshed
     }
 
@@ -3018,6 +3714,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return pendingTransaction.isSome() &&
             internalRendererTestResolvePendingComposablePresent(sessionToken) == CJGUI_INTERNAL_RENDERER_OK
     }
+    func testSelectionRestoreAttemptCount(): Int64 {
+        return pendingSelectionRestoreAttempts
+    }
 
     /// 取消一个身份上的动效，恢复该节点为它的 accepted 样式 paint。返回真表示
     /// 确有绑定被取消。
@@ -3049,7 +3748,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 以显式毫秒时间推进所有通道。生产入口用单调时钟换算的毫秒；确定性测试
     /// 直接用固定毫秒序列驱动同一条路径，不依赖真实时钟。
     private func advanceAnimationsAtMs(nowMs: Float64): Bool {
-        if (!isWindowOpen) {
+        if (!isWindowOpen || this.closeStopsNewOwnerWork()) {
             return false
         }
         if (animationDriver.isPaused()) {
@@ -3076,7 +3775,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 调度是否需要为本窗申请下一次动画机会：有活动通道，或有未提交的终值。
     /// 暂停或窗口关闭时为假，宿主不再按动画帧预算唤醒本窗。
     public func needsAnimationTick(): Bool {
-        return isWindowOpen && animationDriver.needsTick()
+        return isWindowOpen && !this.closeStopsNewOwnerWork() && animationDriver.needsTick()
     }
 
     /// 提交一次动效视觉投影。成功清除驱动的未提交标记；失败则保留，使后续帧
@@ -3543,6 +4242,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (!isWindowOpen) {
             return result(false, false)
         }
+        // A failed installation keeps its exact restoration identity. Repair A
+        // before any further AppKit acquisition, owner input, or projection.
+        if (!this.retrySelectionTransferRecovery()) { return result(isWindowOpen, false) }
+        // A captured range claim remains the native FIFO head until both its
+        // ACK and managed memo retirement settle. Retry it before any other
+        // operation can dequeue or replace the native sideband.
+        if (heldInstalledRangeSettlement.isSome()) {
+            if (!this.retryHeldInstalledRangeSettlement()) {
+                return result(isWindowOpen, false)
+            }
+        }
         if (closeIntentPending || discardRetryReason.size > 0) {
             let _ = refreshIfNeeded()
             return result(isWindowOpen, false)
@@ -3561,6 +4271,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         var requiresInteractionPaint = deferredInteractionPaint
         deferredInteractionPaint = false
         var waitMs = timeoutMs
+        if (let Some(budget) <- ownerTurnBudget) {
+            // Only a real retained preparation wakes the next turn. Stable
+            // windows keep their ordinary wait, so idle does not become a spin.
+            if (budget.hasPreparedWork()) { waitMs = 0u32 }
+        }
         // P2：有活动动效时不长睡。把等待上限压到一个帧预算，让本窗（以及共享
         // 宿主）每帧获得一次推进机会；无活动动效时保持原有休眠策略，静止后
         // 帧请求自然收敛。
@@ -3572,9 +4287,27 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // then publish once. Rebuilding after each event used to invalidate
         // later accepted keystrokes from that same displayed scene.
         drainingInputEvents = true
+        let drainStarted = this.ownerPhaseStarted()
         try {
         while (drainBudget.consumeOne()) {
-            let nativeEvent = internalRendererPumpEvent(sessionToken, waitMs)
+            // Leave the next event in the native FIFO when the outer owner
+            // allowance is nearly spent. Accepted callbacks finish atomically;
+            // a fast producer cannot reopen a budget or discard an input.
+            if (!this.ownerBudgetAdmits(4000, "input_event")) { break }
+            // A route may have accepted its owner edit but failed native ACK
+            // earlier in this same drain. Retry the held claim before asking
+            // native for another event, which would replace its pump sideband.
+            if (heldInstalledRangeSettlement.isSome() &&
+                !this.retryHeldInstalledRangeSettlement()) {
+                break
+            }
+            let pollStarted = this.ownerPhaseStarted()
+            let nativeEvent = internalRendererPumpEvent(sessionToken, waitMs, budget: ownerTurnBudget)
+            cjguiOwnerTraceBoundary(sessionToken, 0u64, 305u32, nativeEvent.eventKind, 0u32,
+                nativeEvent.inputSequence, UInt64.Max)
+            this.traceOwnerPhase("pump_native_poll", pollStarted)
+            cjguiOwnerTraceBoundary(sessionToken, 0u64, 306u32, nativeEvent.eventKind, 0u32,
+                nativeEvent.inputSequence, UInt64.Max)
             if (nativeEvent.eventKind == 27u32 || (nativeEvent.eventKind >= 45u32 && nativeEvent.eventKind <= 47u32)) {
                 traceTabsPointerEvent(nativeEvent)
             }
@@ -3587,6 +4320,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return result(isWindowOpen, didApply)
             }
             if (nativeEvent.status != CJGUI_INTERNAL_RENDERER_OK) {
+                activationPrefixGate.cancel()
                 if (nativeEvent.status == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
                     // AppKit rejected this call before reading the FIFO or touching
                     // the session. The accepted projection and pending work remain
@@ -3604,7 +4338,67 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return result(true, didApply)
             }
             if (nativeEvent.eventKind == 0u32) {
+                traceActivationPrefixMarker(34u32, activationPrefixGate.snapshot())
                 break
+            }
+            // Windows keyboard edits carry the binding that owned their value
+            // and UTF-16 range at capture time. Binding retirement can happen
+            // before this queued event is consumed, so retire it here rather
+            // than letting a controller reinterpret stale coordinates.
+            // A sealed installed-range input names the actual presentation
+            // proxy, which need not be the source mirror node. Its complete
+            // receipt is settled below before legacy scene/binding routing.
+            if (nativeEvent.eventKind == 51u32 && !nativeEvent.installedRangeOwned &&
+                nativeEvent.bindingEpoch != 0u64 &&
+                (nativeEvent.bindingEpoch != textSessionBindingEpoch || ownedTextSession.isNone() ||
+                Int64(nativeEvent.nodeId) != ownedTextSessionNodeId ||
+                nativeEvent.resourceId != ownedTextSessionResourceId ||
+                Int64(nativeEvent.nodeKind) != ownedTextSessionNodeKind)) {
+                continue
+            }
+            let prefixTarget = nativeInputScene.resolvePointerTarget(Int64(nativeEvent.nodeId),
+                nativeEvent.resourceId, Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
+            let prefixMember = activationPrefixGate.admit(nativeEvent, textSessionBindingEpoch,
+                prefixTarget.nodeId == Int64(nativeEvent.nodeId))
+            if (prefixMember < 0) {
+                traceActivationPrefixMarker(36u32, nativeEvent.activationPrefix)
+                // Prefix rejection cannot swallow cleanup of a retained old
+                // press. This handler can only terminate the matching lease.
+                if (nativeEvent.eventKind == 47u32 && nativeEvent.bindingEpoch != 0u64) {
+                    requiresInteractionPaint = applyInteractionIntent(47u32, nativeEvent.nodeId,
+                        nativeEvent.resourceId, nativeEvent.nodeKind, nativeEvent.projectionVersion,
+                        pressSequence: nativeEvent.bindingEpoch,
+                        pointX: if (nativeEvent.pointerGeometryAccepted) { nativeEvent.pointerVisualX } else { Float64(nativeEvent.pointerX) },
+                        pointY: if (nativeEvent.pointerGeometryAccepted) { nativeEvent.pointerVisualY } else { Float64(nativeEvent.pointerY) }) || requiresInteractionPaint
+                    continue
+                }
+                let rejection = controller.rejectUiEvent(Int64(nativeEvent.eventKind), Int64(nativeEvent.nodeId))
+                didApply = didApply || rejection.didApply
+                requiresProjection = true
+                if (rejection.shouldClose) { close(); return result(isWindowOpen, didApply) }
+                continue
+            }
+            if (prefixMember == 1) { traceActivationPrefixMarker(33u32, nativeEvent.activationPrefix) }
+            try {
+                    if (nativeEvent.eventKind == 35u32 && nativeEvent.inputSequence != 0u64 && ownedTextSession.isSome()) {
+                        macCaretInput = Some(
+                            InternalRendererInputProvenance(nativeEvent.inputSessionGeneration,
+                                nativeEvent.inputSequence, nativeEvent.inputPreviousSequence, nativeEvent.eventKind))
+                        macCaretInputTicket = Some(ownedTextSession.getOrThrow().freezeSelectionTicket())
+                        macCaretDispatchActive = true
+                    }
+                    // The native FIFO is still tied to the accepted scene. Retire only
+            // an unsubmitted preparation before dispatching a real event; an
+            // idle pump never cancels it and no accepted event is replayed.
+            cancelPreparedCandidate("accepted_input")
+            if (nativeEvent.eventKind == 51u32 && nativeEvent.installedRangeOwned) {
+                // Captured source ranges are resolved by their actual installed
+                // binding before scene lookup. They never fall back to the
+                // product dispatcher if their old source is no longer valid.
+                let accepted = this.routeCapturedInstalledRange(nativeEvent)
+                didApply = didApply || accepted
+                requiresProjection = true
+                continue
             }
             if (nativeEvent.eventKind == 42u32) {
                 // The native AppKit delegate already returned immediately
@@ -3613,6 +4407,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 // process-close decision into an ordinary content action.
                 applicationExitRequested = true
             } else if (nativeEvent.eventKind == 11u32) {
+                let _ = this.collectCaretInputRecovery()
                 // A refused terminal cannot leave an admitted press visually
                 // held or invent an activation after the FIFO has drained.
                 if (pressLease.isSome()) {
@@ -3836,19 +4631,52 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     if (resolved.nodeId == ownedTextSessionNodeId &&
                         resolved.resourceId == ownedTextSessionResourceId) {
                         if (let Some(session) <- ownedTextSession) {
-                            if (session.needsNativeSelectionRestore()) {
-                                acceptSelection = false
-                            } else {
-                                let current = internalRendererReadComposableSelection(sessionToken,
-                                    resolved.nodeId, resolved.resourceId, resolved.nodeKind,
-                                    nativeInputScene.version, resolved.value)
-                                if (current[0] != CJGUI_INTERNAL_RENDERER_OK ||
-                                    current[1] != Int64(nativeEvent.selectionStart) ||
-                                    current[2] != Int64(nativeEvent.selectionEnd) ||
-                                    session.contentVersion() != session.mirrorSnapshot().sourceVersion) {
+                            let pendingNative = session.needsNativeSelectionRestore()
+                            let pacedSource = ownerTurnBudget.isSome() &&
+                                resolved.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+                            let humanSourceSelection = pacedSource && nativeEvent.pointerGeometryAccepted
+                            if (!pacedSource) {
+                                // Preserve the existing recovery path for consumers
+                                // that have not opted into source installation pacing.
+                                if (pendingNative) {
                                     acceptSelection = false
                                 } else {
-                                    session.setSelection16(current[1], current[2])
+                                    let current = internalRendererReadComposableSelection(sessionToken,
+                                        resolved.nodeId, resolved.resourceId, resolved.nodeKind,
+                                        nativeInputScene.version, resolved.value)
+                                    if (current[0] != CJGUI_INTERNAL_RENDERER_OK ||
+                                        current[1] != Int64(nativeEvent.selectionStart) ||
+                                        current[2] != Int64(nativeEvent.selectionEnd) ||
+                                        session.contentVersion() != session.mirrorSnapshot().sourceVersion) {
+                                        acceptSelection = false
+                                    } else {
+                                        session.setSelection16(current[1], current[2])
+                                    }
+                                }
+                            } else if ((pendingNative && !humanSourceSelection) || session.hasComposition() ||
+                                session.awaitingCalibration() || session.mirrorText() != resolved.value ||
+                                session.contentVersion() != session.mirrorSnapshot().sourceVersion) {
+                                acceptSelection = false
+                            } else {
+                                // The exact readback is inside the same owner-version
+                                // guard that publishes the new selection revision.
+                                // A proven fresh pointer can supersede a pending
+                                // installation; old callbacks cannot acknowledge it.
+                                let semantic = session.freezeSelectionTicket()
+                                acceptSelection = session.commitSelectionTicket(semantic,
+                                    Int64(nativeEvent.selectionStart), Int64(nativeEvent.selectionEnd), { =>
+                                        let current = internalRendererReadComposableSelection(sessionToken,
+                                            resolved.nodeId, resolved.resourceId, resolved.nodeKind,
+                                            nativeInputScene.version, resolved.value)
+                                        return current[0] == CJGUI_INTERNAL_RENDERER_OK &&
+                                            current[1] == Int64(nativeEvent.selectionStart) &&
+                                            current[2] == Int64(nativeEvent.selectionEnd)
+                                    })
+                                if (acceptSelection && humanSourceSelection) {
+                                    if (let Some(request) <- pendingSelectionRestore) {
+                                        this.finishSelectionRestore(request.id, "human_selection_superseded")
+                                    }
+                                    this.invalidatePlainPositionBranch()
                                 }
                             }
                             if (!acceptSelection) {
@@ -3858,6 +4686,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     }
                     if (acceptSelection) {
                         rememberInteraction(resolved, 33, Int64(nativeEvent.selectionStart), Int64(nativeEvent.selectionEnd))
+                        // Mouse/AX focus can install the real adapter without
+                        // going through the Cangjie explicit-focus method.
+                        // Register that adapter through the same candidate /
+                        // actual-adoption / receipt handshake before later input.
+                        this.registerInstalledRangeForNativeFocus(resolved, acceptedSourceSelection: true,
+                            selectionStart16: Int64(nativeEvent.selectionStart),
+                            selectionEnd16: Int64(nativeEvent.selectionEnd))
                     let selection = controller.applyUiEvent(
                         CjguiComposableUiEvent(
                             resolved,
@@ -3930,6 +4765,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         Int64(nativeEvent.nodeKind), Int64(nativeEvent.projectionVersion))
                 }
                 let titleKeyboardText = internalRendererFormEventText(sessionToken)
+                if (titleKeyboardText.startsWith("selection_install_pending:")) {
+                    textSessionRangeDecisions += 1
+                    textSessionRefusedEdits += 1
+                    lastTextSessionCompositionReason = "selection_install_pending"
+                    getStdOut().writeln("CJGUI_INPUT_REFUSED reason=selection_install_pending " +
+                        "node=${nativeEvent.nodeId} scene=${nativeEvent.projectionVersion} wrote_owner=false")
+                    getStdOut().flush()
+                    continue
+                }
                 // 统一普通文字意图（Astra Q5）：会话**拥有**的文字表面（source 绑定
                 // 节点）的 delete/move/Shift 扩选由框架文本会话共同处理器唯一裁决
                 // （native 选择器已拦截，不再默认执行一遍）；presentation TEXT 仍
@@ -3950,14 +4794,21 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         // 导航处理器给出**终态**——Success/AtBoundary/NeedPrepare/
                         // Refused 一律终止该意图（不得回落逻辑移动或平台默认）；
                         // 只有 NotApplicable（接管前确定不归本处理器）才走旧逻辑。
-                        if (sessionSurface) {
+                        if (sessionSurface && internalRendererSelectionTransferSupported()) {
                             match (this.handlePlainHorizontalIntent(titleKeyboardText == "left", shiftHeld)) {
                                 case NotApplicable => ()
-                                case Success | AtBoundary | NeedPrepare(_) | Refused(_) =>
+                                case AtBoundary =>
+                                            let _ = this.finishMacCaretInput(2u32)
+                                            didApply = true
+                                            return result(isWindowOpen, didApply)
+                                        case Success | Retained(_) | NeedPrepare(_) | Refused(_) =>
                                     didApply = true
                                     return result(isWindowOpen, didApply)
                             }
                         }
+                        // Windows（无跨选择 transfer）：水平导航落到会话共同处理器，
+                        // 选区零写入即时累积，并由 pushOwnedPlainSelectionToProxy
+                        // 在同一排水步内同步推回 native 代理。
                         plainIntent = Some(if (titleKeyboardText == "left") {
                             if (shiftHeld) {
                                 CjguiTextPlainIntent.ExtendLeft
@@ -3978,7 +4829,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         // 同样唯一消费——拒绝/待准备不落滚动语义。
                         match (this.handlePlainVerticalIntent(titleKeyboardText == "down", shiftHeld)) {
                             case NotApplicable => ()
-                            case Success | AtBoundary | NeedPrepare(_) | Refused(_) =>
+                            case AtBoundary =>
+                                        let _ = this.finishMacCaretInput(2u32)
+                                        didApply = true
+                                        return result(isWindowOpen, didApply)
+                                    case Success | Retained(_) | NeedPrepare(_) | Refused(_) =>
                                 didApply = true
                                 return result(isWindowOpen, didApply)
                         }
@@ -4038,6 +4893,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         // Tab in a presentation text node is the product's own intent
                         // (e.g. table cell navigation), not a key the framework owns.
                         titleKeyboardText == "nextCell" ||
+                        // Select All can be addressed to the focused TEXT
+                        // itself when a long node's center is outside its
+                        // scroll clip. Its source scope still belongs to the
+                        // same product handler as the scroll-addressed intent.
+                        titleKeyboardText == "select_all" ||
                         // Cmd+Z/Cmd+Shift+Z（自绘编辑器撤销——菜单 Undo 项已退役，
                         // native performKeyEquivalent 入队，产品 handleVisualCaretIntent
                         // 前的 undo 分支消费）。
@@ -4047,14 +4907,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     // the framework only reports which key was pressed.
                     let caretDispatch = controller.applyUiEvent(
                         CjguiComposableUiEvent(resolvedNavigate, 35, titleKeyboardText, 0, 0,
-                            Int64(nativeEvent.projectionVersion),
+                        Int64(nativeEvent.projectionVersion),
                             // A caret key carries its own modifiers: Shift+Left/Right
                             // extends the product's range. Dropping them here made every
                             // real Shift+Arrow indistinguishable from a bare arrow
                             // (measured 2026-09-27: PHAROS_CARET_MOVE ... shift=false on a
                             // posted Shift+Right, while the native bridge had stamped the
                             // flag on this queued NAVIGATE).
-                            modifierFlags: Int64(nativeEvent.modifierFlags)))
+                            modifierFlags: Int64(nativeEvent.modifierFlags),
+                            inputSessionGeneration: nativeEvent.inputSessionGeneration,
+                            inputSequence: nativeEvent.inputSequence,
+                            inputPreviousSequence: nativeEvent.inputPreviousSequence))
                     didApply = didApply || caretDispatch.didApply
                     if (caretDispatch.shouldClose) {
                         close()
@@ -4086,7 +4949,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                             // marks select-all); a programmatic/AX navigation is
                             // enqueued with zero and never inherits a mouse
                             // gesture's state.
-                            modifierFlags: Int64(nativeEvent.modifierFlags)
+                            modifierFlags: Int64(nativeEvent.modifierFlags),
+                            inputSessionGeneration: nativeEvent.inputSessionGeneration,
+                            inputSequence: nativeEvent.inputSequence,
+                            inputPreviousSequence: nativeEvent.inputPreviousSequence
                         )
                     )
                     didApply = didApply || dispatch.didApply
@@ -4228,14 +5094,31 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 // next commit presents the new offset. The business version,
                 // drafts and selection are untouched, and no field write is
                 // invented to drive the viewport.
+                let wheelViewport: ?CjguiComposableUiScrollViewport = if (nativeEvent.eventKind == 30u32) {
+                    continuation.scrollViewport
+                } else { None }
+                var scrollRequestedBefore: Int64 = 0
+                var scrollAcceptedBefore: Int64 = 0
+                if (let Some(viewport) <- wheelViewport) {
+                    scrollRequestedBefore = viewport.offset()
+                    scrollAcceptedBefore = viewport.acceptedOffset()
+                }
                 let viewportScrollApplied = gestureBindingReady && nativeEvent.eventKind == 30u32 && !wantsWheelDelta && continuation.nodeId == nodeId &&
                     applyViewportScrollStep(continuation, eventText)
+                var scrollRequestedAfter: Int64 = 0
+                var scrollAcceptedAfter: Int64 = 0
+                if (let Some(viewport) <- wheelViewport) {
+                    scrollRequestedAfter = viewport.offset()
+                    scrollAcceptedAfter = viewport.acceptedOffset()
+                }
                 // Tab can land on a legal control that is currently clipped out of
                 // its viewport. Reveal it and let this commit present the new
                 // offset: the focused identity does not change, so the keyboard
                 // reaches an editor below the fold without a coordinate guess.
+                if (gestureBindingReady && nativeEvent.eventKind == 31u32 && continuation.nodeId == nodeId &&
+                    activationPrefixPending()) { deferredPairRevealNode = continuation.nodeId }
                 let viewportFocusRevealed = gestureBindingReady && nativeEvent.eventKind == 31u32 && continuation.nodeId == nodeId &&
-                    revealAcceptedNodeIfNeeded(continuation.nodeId)
+                    !activationPrefixPending() && revealAcceptedNodeIfNeeded(continuation.nodeId)
                 // A tab TITLE is a framework-owned view intent: pointer activation
                 // and the keyboard both switch the shared tab state, so a page
                 // switch is presented by the next commit without a business write.
@@ -4248,10 +5131,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 let rejectsReboundPressActivation = !isPressActivation && gestureBindingReady && nativeEvent.eventKind == 27u32 && consumeSuppressedPressActivation(
                     continuation)
                 if (gestureBindingReady && continuation.nodeId == nodeId && !rejectsReboundPressActivation && !tabsIntentConsumed) {
+                    if (nativeEvent.eventKind == 30u32) { this.wheelObservationSerial += 1 }
                     let controllerVersionBefore = controller.uiSceneVersion()
                     let positionRevisionBefore = animationDriver.positionRevision()
                     rememberInteraction(continuation, Int64(nativeEvent.eventKind), Int64(nativeEvent.selectionStart),
                         Int64(nativeEvent.selectionEnd))
+                    if (nativeEvent.eventKind == 31u32) {
+                        this.registerInstalledRangeForNativeFocus(continuation)
+                    }
                     // 窗口拥有该节点的会话时，范围意图就地判决：owner 只经会话的 Sink
                     // 被写一次，消费方不重复判决同一意图。None ⇒ 仍走原 owner 路径。
                     let dispatch = match (routeOwnedTextSessionRangeEdit(nativeEvent, continuation, eventText)) {
@@ -4282,7 +5169,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                                 // in the native bridge and therefore never inherit
                                 // a previous mouse gesture's Command/Shift.
                                 modifierFlags: Int64(nativeEvent.modifierFlags),
-                                wheelDelta: if (wantsWheelDelta) { nativeWheel } else { None }
+                                wheelDelta: nativeWheel,
+                                wheelEventSerial: if (nativeEvent.eventKind == 30u32) { this.wheelObservationSerial } else { 0 },
+                                frameworkScrollApplied: viewportScrollApplied,
+                                scrollRequestedBefore: scrollRequestedBefore,
+                                scrollRequestedAfter: scrollRequestedAfter,
+                                scrollAcceptedBefore: scrollAcceptedBefore,
+                                scrollAcceptedAfter: scrollAcceptedAfter
                             )
                         )
                     }
@@ -4366,13 +5259,42 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             } else if (nativeEvent.eventKind == 32u32) {
                 requiresProjection = true
             }
+            } catch (error: Exception) {
+                if (prefixMember > 0) { activationPrefixGate.cancel() }
+                throw error
+            } finally {
+                if (macCaretDispatchActive) {
+                        macCaretDispatchActive = false
+                        let retained = !retainedVisualInputIntents.isEmpty() &&
+                            retainedVisualInputIntents[0].sequence == nativeEvent.inputSequence
+                        if (!retained && macCaretRestoreId < 0 && macCaretInput.isSome()) {
+                            let _ = this.finishMacCaretInput(3u32)
+                        }
+                    }
+                    if (prefixMember == 2) {
+                    traceActivationPrefixMarker(35u32, nativeEvent.activationPrefix)
+                    activationPrefixGate.settleTerminal(nativeEvent.activationPrefix)
+                }
+            }
         }
         } finally {
             drainingInputEvents = false
+            this.traceOwnerPhase("pump_fifo_drain", drainStarted)
         }
         // The native focus/activation pair is emitted adjacently for one
         // pointer-down. An unmatched suppression expires with this FIFO turn.
-        contextMenuOutsideSuppressPending = false
+        if (!activationPrefixPending()) {
+            contextMenuOutsideSuppressPending = false
+            if (deferredPairRevealNode >= 0) {
+                if (focusedNodeId == deferredPairRevealNode) {
+                    requiresProjection = revealAcceptedNodeIfNeeded(deferredPairRevealNode) || requiresProjection
+                }
+                deferredPairRevealNode = -1
+            }
+        }
+        cjguiOwnerTraceBoundary(sessionToken, 0u64, 307u32, 0u32, 0u32, 0u64, UInt64.Max)
+        finishPendingSourceHandoffIfAllowed(activationPrefixPending())
+        cjguiOwnerTraceBoundary(sessionToken, 0u64, 308u32, 0u32, 0u32, 0u64, UInt64.Max)
         if (requiresProjection) {
             requestRefresh()
             if (!refreshNow) {
@@ -4396,15 +5318,45 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // The FIFO is drained for this turn. Only now is it safe to roll a
         // refused range edit's proxy back: every queued delta has been judged
         // against the accepted value, and no later event is pending.
+        let recoveryStarted = this.ownerPhaseStarted()
+        cjguiOwnerTraceBoundary(sessionToken, 0u64, 309u32, 0u32, 0u32, 0u64, UInt64.Max)
         recoverRefusedRangeTextProxy()
+        cjguiOwnerTraceBoundary(sessionToken, 0u64, 310u32, 0u32, 0u32, 0u64, UInt64.Max)
+        this.traceOwnerPhase("pump_refused_proxy_recovery", recoveryStarted)
         return result(true, didApply)
+    }
+
+    private func closeStopsNewOwnerWork(): Bool {
+        return internalRendererCloseStopsNewOwnerWork(closeIntentPending, discardRetryReason.size > 0)
     }
 
     public func close() {
         if (!isWindowOpen) {
             return
         }
+        let prepared = this.prepareTextSessionUnbind()
+        if (!prepared || this.hasUnclaimedCaretRecovery()) {
+            pendingRefreshReason = "input_recovery_draft_pending"
+            lastNativeFailure = "input_recovery_draft_pending"
+            startupPhase = "input_recovery_draft_pending"
+            requestRefresh()
+            return
+        }
+        retainedVisualInputIntents.clear()
+        retainedVisualInputGeneration = 0u64
         closeIntentPending = true
+        activationPrefixGate.cancel()
+        deferredPairRevealNode = -1
+        // An accepted owner decision is still owed its native ACK. Retain the
+        // window/session and the close intent when that exact ACK cannot be
+        // confirmed now; pumpWithRefreshPolicy retries it before any dequeue,
+        // then refreshIfNeeded completes this close after settlement succeeds.
+        if (heldInstalledRangeSettlement.isSome() && !this.retryHeldInstalledRangeSettlement()) {
+            pendingRefreshReason = "close_pending_installed_range_ack"
+            lastNativeFailure = "close_pending_installed_range_ack"
+            startupPhase = "close_pending_installed_range_ack"
+            return
+        }
         // A1：关闭前先尝试结算原票据。仍未定时不得谎称已关闭——native 会拒绝
         // 销毁未结算的会话，核心同样把窗口留在“关闭未完成”，等 owner 继续结算。
         if (settlePendingPresent()) {
@@ -4434,7 +5386,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return
         }
         if (isWindowOpen) {
-            let _ = internalRendererRequestClose(sessionToken)
+            internalRendererRequestCloseBeforeDestroy(sessionToken)
         }
         discardSession("close")
     }
@@ -4746,6 +5698,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         workloadDiagnosticsEnabled = enabled
         workloadDiagnosticsStatus = if (enabled) { "enabled" } else { "disabled" }
+        recordDiagnosticEnableTrace()
         return true
     }
 
@@ -4766,12 +5719,83 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         timingDiagnosticsEnabled = enabled
         timingDiagnosticsStatus = if (enabled) { "enabled" } else { "disabled" }
+        recordDiagnosticEnableTrace()
         return true
     }
 
     private func diagnosticTimerStart(): ?MonoTime {
         if (!timingDiagnosticsEnabled) { return None }
         return Some(MonoTime.now())
+    }
+
+    private func ownerPhaseStarted(): UInt64 {
+        return unsafe { cjgui_internal_renderer_owner_trace_ns() }
+    }
+
+    private func ownerTraceTurnIdentity(): UInt64 {
+        if (let Some(budget) <- ownerTurnBudget) { return UInt64(budget.turnIdentity()) }
+        return UInt64.Max
+    }
+
+    /// Diagnostic hooks used by the product's opt-in owner trace. Native
+    /// session tokens stay owned by this window.
+    public func beginOwnerTraceTurn(turn: Int64): UInt64 {
+        cjguiOwnerTraceBoundary(sessionToken, UInt64(turn), 144u32, 1u32, 0u32, 0u64, UInt64.Max)
+        return cjguiOwnerTraceRecord(1u32, sessionToken, UInt64(turn), 0u64, 0u64,
+            UInt64.Max, 0u32, 0u64)
+    }
+
+    public func endOwnerTraceTurn(turn: Int64, span: UInt64): Unit {
+        let _ = cjguiOwnerTraceRecord(2u32, sessionToken, UInt64(turn), 0u64, 0u64,
+            UInt64.Max, 0u32, span)
+    }
+
+    /// Experimental diagnostic boundary. Fixed native storage only; this
+    /// does not change the budget or ask for a managed thread identity.
+    public func recordOwnerTraceBoundary(turn: Int64, phase: UInt32): Unit {
+        cjguiOwnerTraceBoundary(sessionToken, UInt64(turn), phase, 0u32, 0u32, 0u64, UInt64.Max)
+    }
+
+    public func exportOwnerTrace(): Unit {
+        cjguiOwnerTraceExport()
+    }
+
+    /// Experimental, read-only diagnostic for the current pointer callback.
+    /// Reuses the native FIFO's identity; empty means unknown. This key is not
+    /// selection authority and must not be retained as an input capability.
+    public func consumedPointerTraceIdentity(expectedEventKind: Int64): String {
+        let fifo = internalRendererConsumedPointerFifo(sessionToken)
+        if (fifo.generation == 0u64 || fifo.binding == 0u64 || fifo.first == 0u64 ||
+            fifo.last < fifo.first || Int64(fifo.phase) != expectedEventKind) { return "" }
+        return "${sessionToken}:${fifo.generation}:${fifo.binding}:${fifo.first}:${fifo.last}"
+    }
+
+    public func recordOwnerTraceLegacyPhase(phase: UInt32, startedNs: UInt64): Unit {
+        cjguiOwnerTraceLegacySpan(sessionToken, ownerTraceTurnIdentity(), 0u64, UInt64.Max,
+            phase, startedNs)
+    }
+
+    public func beginOwnerTracePhase(phase: UInt32, request!: UInt64 = 0u64): UInt64 {
+        return cjguiOwnerTraceRecord(3u32, sessionToken, ownerTraceTurnIdentity(), request,
+            0u64, UInt64.Max, phase, 0u64)
+    }
+
+    public func endOwnerTracePhase(phase: UInt32, span: UInt64, request!: UInt64 = 0u64): Unit {
+        let _ = cjguiOwnerTraceRecord(4u32, sessionToken, ownerTraceTurnIdentity(), request,
+            0u64, UInt64.Max, phase, span)
+    }
+
+    // Nested intervals are intentionally retained; consumers take interval
+    // unions rather than adding a refresh to its contained native work.
+    private func traceOwnerPhase(name: String, started: UInt64): Unit {
+        if (started == 0u64) { return }
+        let phase = if (name == "pump_native_poll") { 9u32 }
+            else if (name == "pump_fifo_drain") { 9u32 }
+            else if (name == "sync_projection") { 4u32 }
+            else if (name == "refresh") { 19u32 }
+            else if (name == "pump_refused_proxy_recovery") { 317u32 }
+            else { 0u32 }
+        cjguiOwnerTraceLegacySpan(sessionToken, ownerTraceTurnIdentity(), 0u64, 0u64, phase, started)
     }
 
     private func diagnosticElapsedNanoseconds(started: ?MonoTime): Int64 {
@@ -4784,7 +5808,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
 
     /// Captures the session totals at the start of one refresh attempt so its
     /// own cost can be attributed at the accept/reject terminal.
+    private func recordDiagnosticEnableTrace(): Unit {
+        let flags = (if (workloadDiagnosticsEnabled) { 1u64 } else { 0u64 }) +
+            (if (timingDiagnosticsEnabled) { 2u64 } else { 0u64 })
+        let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), 0u64,
+            0u64, UInt64.Max, 68u32, flags)
+    }
+
     private func beginWorkloadAttempt(): Unit {
+        recordDiagnosticEnableTrace()
         timingAttemptActive = true
         if (!workloadDiagnosticsEnabled || !isWindowOpen ||
             sessionToken == CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
@@ -4792,7 +5824,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return
         }
         var workload = CjguiInternalRendererDiagnosticWorkload()
+        let readSpan = this.beginOwnerTracePhase(66u32)
         let status = unsafe { cjgui_internal_renderer_diagnostic_workload(sessionToken, inout workload) }
+        this.endOwnerTracePhase(66u32, readSpan)
         if (status != CJGUI_INTERNAL_RENDERER_OK) {
             workloadAttemptBaseValid = false
             workloadDiagnosticsStatus = "native_unavailable"
@@ -4805,6 +5839,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// Stores the attempt's deltas at its accept or reject terminal. It is a
     /// no-op when observation is disabled or the attempt never captured a base.
     private func finalizeWorkloadAttempt(result: String): Unit {
+        let totalSpan = this.beginOwnerTracePhase(89u32)
+        try {
         if (timingAttemptActive) {
             timingAttemptActive = false
             let build = lastRefreshTiming.buildNanoseconds
@@ -4830,7 +5866,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (!workloadAttemptBaseValid) { return }
         workloadAttemptBaseValid = false
         var workload = CjguiInternalRendererDiagnosticWorkload()
+        let readSpan = this.beginOwnerTracePhase(67u32)
         let status = unsafe { cjgui_internal_renderer_diagnostic_workload(sessionToken, inout workload) }
+        this.endOwnerTracePhase(67u32, readSpan)
         if (status != CJGUI_INTERNAL_RENDERER_OK) {
             workloadDiagnosticsStatus = "native_unavailable"
             return
@@ -4844,6 +5882,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             workloadAttemptBase.textLayoutPreparationCount)
         workloadLastImageDecodeStarts = workloadDelta(workload.imageDecodeStartCount,
             workloadAttemptBase.imageDecodeStartCount)
+        } finally {
+            this.endOwnerTracePhase(89u32, totalSpan)
+        }
     }
 
     private func workloadDelta(current: UInt64, base: UInt64): Int64 {
@@ -4860,191 +5901,529 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// requires the same window session and accepted version on every page.
     /// A read never invokes controller/build/layout/present or waits for GPU.
     public func diagnosticSnapshot(startIndex!: Int64 = 0, maximumNodes!: Int64 = 128,
-        expectedSessionIdentity!: String = "", expectedAcceptedSceneVersion!: Int64 = -1):
-        CjguiComposableUiDiagnosticSnapshot {
+        expectedSessionIdentity!: String = "", expectedAcceptedSceneVersion!: Int64 = -1): CjguiComposableUiDiagnosticSnapshot {
+        return diagnosticSnapshotImpl(startIndex, maximumNodes, expectedSessionIdentity, expectedAcceptedSceneVersion,
+            false)
+    }
+
+    /// Experimental macOS observation of the last published scalar facts.
+    /// This does not refresh ACK/accepted/settlement state or query AppKit.
+    /// Session/accepted-version mismatches fail closed; a missing publication
+    /// is pending. Nodes, effect resources and traversed resource-byte totals
+    /// are unavailable. Accepted, submitted and completed facts stay distinct.
+    public func diagnosticScalarSnapshot(expectedSessionIdentity!: String = "",
+        expectedAcceptedSceneVersion!: Int64 = -1): CjguiComposableUiDiagnosticSnapshot {
+        return diagnosticSnapshotImpl(0, 1, expectedSessionIdentity, expectedAcceptedSceneVersion, true)
+    }
+
+    private func diagnosticSnapshotImpl(startIndex: Int64, maximumNodes: Int64, expectedSessionIdentity: String,
+        expectedAcceptedSceneVersion: Int64, scalarOnly: Bool): CjguiComposableUiDiagnosticSnapshot {
+        recordDiagnosticEnableTrace()
         let resultNodes = ArrayList<CjguiComposableUiDiagnosticNode>()
         let active = isWindowOpen && renderedScene.version > 0
-        let acceptedVersion = if (active) { renderedScene.version } else { 0 }
-        let session = if (active) { windowSessionIdentity } else { "unavailable" }
-        var state = if (active) { "ok" } else { "closed" }
-        if (active && ((expectedSessionIdentity.size > 0 && expectedSessionIdentity != session) ||
-            (expectedAcceptedSceneVersion >= 0 && expectedAcceptedSceneVersion != acceptedVersion))) {
+        let acceptedVersion = if (active) {
+            renderedScene.version
+        } else {
+            0
+        }
+        let session = if (active) {
+            windowSessionIdentity
+        } else {
+            "unavailable"
+        }
+        var state = if (active) {
+            "ok"
+        } else {
+            "closed"
+        }
+        if (active && ((expectedSessionIdentity.size > 0 && expectedSessionIdentity != session) || (expectedAcceptedSceneVersion >=
+            0 && expectedAcceptedSceneVersion != acceptedVersion))) {
             state = "stale_accepted"
         }
-        if (startIndex < 0 || maximumNodes <= 0) { state = "invalid_range" }
-        if (active) { observeDisplayProgress() }
-        let sceneNodes = if (active && state == "ok") {
+        if (startIndex < 0 || maximumNodes <= 0) {
+            state = "invalid_range"
+        }
+        if (active && !scalarOnly) {
+            observeDisplayProgress(153u32)
+        }
+        let sceneNodes = if (active && state == "ok" && !scalarOnly) {
             renderedScene.nodes()
         } else {
             ArrayList<CjguiComposableUiLayoutNode>()
         }
-        let total = if (active) { renderedScene.nodes().size } else { 0 }
-        let begin = if (startIndex >= 0 && startIndex < total) { startIndex } else { total }
-        let bound = if (maximumNodes > 256) { 256 } else { maximumNodes }
+        let total = if (active && !scalarOnly) {
+            renderedScene.nodes().size
+        } else {
+            0
+        }
+        let begin = if (startIndex >= 0 && startIndex < total) {
+            startIndex
+        } else {
+            total
+        }
+        let bound = if (maximumNodes > 256) {
+            256
+        } else {
+            maximumNodes
+        }
         var cursor = begin
         var resources = CjguiInternalRendererDiagnosticResources()
         var resourcesStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
-        if (active && state == "ok") {
+        if (active && state == "ok" && !scalarOnly) {
             resourcesStatus = unsafe { cjgui_internal_renderer_diagnostic_resources(sessionToken, inout resources) }
             while (cursor < sceneNodes.size && resultNodes.size < bound) {
                 let node = sceneNodes[cursor]
                 let output = node.effectOutputBounds()
                 let visible = node.bounds.intersect(node.clip).intersect(renderedScene.viewport)
                 let visibleOutput = output.intersect(renderedScene.viewport)
-                if (visible.width > 0 && visible.height > 0 ||
-                    visibleOutput.width > 0 && visibleOutput.height > 0) {
+                if (visible.width > 0 && visible.height > 0 || visibleOutput.width > 0 && visibleOutput.height > 0) {
                     let keyAvailable = node.identityKey.size <= 256
                     let clips = ArrayList<CjguiComposableUiDiagnosticClip>()
                     let originalClips = node.clipConstraints()
                     for (clip in originalClips) {
-                        if (clips.size >= 4) { break }
+                        if (clips.size >= 4) {
+                            break
+                        }
                         let ownerAvailable = clip.ownerIdentity.size <= 256
-                        clips.add(CjguiComposableUiDiagnosticClip(clip.rect, clip.cornerRadius,
-                            if (ownerAvailable) { clip.ownerIdentity } else { "" }, ownerAvailable))
+                        clips.add(
+                            CjguiComposableUiDiagnosticClip(clip.rect, clip.cornerRadius, if (ownerAvailable) {
+                                clip.ownerIdentity
+                            } else {
+                                ""
+                            }, ownerAvailable))
                     }
                     var geometry = CjguiInternalRendererDiagnosticNodeGeometry()
                     let eligible = submittedSceneVersion == acceptedVersion && submittedFrameIndex >= 0
                     let nativeStatus = if (eligible) {
-                        unsafe { cjgui_internal_renderer_diagnostic_node_geometry(
-                            sessionToken, UInt32(cursor), inout geometry) }
-                    } else { CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR }
-                    let matching = eligible && nativeStatus == CJGUI_INTERNAL_RENDERER_OK &&
-                        geometry.sceneVersion == UInt64(acceptedVersion) &&
-                        geometry.frameIndex == UInt64(submittedFrameIndex)
-                    let geometryState = if (!eligible) { "not_submitted_for_version" } else if (matching) {
+                        unsafe { cjgui_internal_renderer_diagnostic_node_geometry(sessionToken, UInt32(cursor),
+                            inout geometry) }
+                    } else {
+                        CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+                    }
+                    let matching = eligible && nativeStatus == CJGUI_INTERNAL_RENDERER_OK && geometry.sceneVersion ==
+                        UInt64(acceptedVersion) && geometry.frameIndex == UInt64(submittedFrameIndex)
+                    let geometryState = if (!eligible) {
+                        "not_submitted_for_version"
+                    } else if (matching) {
                         "available"
-                    } else { "native_unavailable" }
-                    let nativeOutput: ?CjguiComposableUiDiagnosticFloatRect = if (matching &&
-                        geometry.flags % 2u32 == 1u32) {
-                        Some(CjguiComposableUiDiagnosticFloatRect(geometry.outputX, geometry.outputY,
-                            geometry.outputWidth, geometry.outputHeight))
-                    } else { None }
+                    } else {
+                        "native_unavailable"
+                    }
+                    let nativeOutput: ?CjguiComposableUiDiagnosticFloatRect = if (matching && geometry.flags % 2u32 ==
+                        1u32) {
+                        Some(
+                            CjguiComposableUiDiagnosticFloatRect(geometry.outputX, geometry.outputY,
+                                geometry.outputWidth, geometry.outputHeight))
+                    } else {
+                        None
+                    }
                     let nativeSample: ?CjguiComposableUiDiagnosticFloatRect = if (matching &&
                         (geometry.flags / 2u32) % 2u32 == 1u32) {
-                        Some(CjguiComposableUiDiagnosticFloatRect(geometry.sampleX, geometry.sampleY,
-                            geometry.sampleWidth, geometry.sampleHeight))
-                    } else { None }
-                    let cacheDisposition = if (!matching) { "unavailable" } else if (
-                        (geometry.flags / 2u32) % 2u32 == 0u32) { "not_sampled" } else if (
-                        (geometry.flags / 4u32) % 2u32 == 1u32) { "redrawn" } else { "reused" }
-                    resultNodes.add(CjguiComposableUiDiagnosticNode(cursor, node.nodeId, node.resourceId,
-                        node.nodeKind, if (keyAvailable) { node.identityKey } else { "" }, keyAvailable,
-                        node.bounds, node.clip, clips, originalClips.size <= 4, output,
-                        geometryState, if (matching) { Int64(geometry.sceneVersion) } else { -1 },
-                        if (matching) { Int64(geometry.frameIndex) } else { -1 },
-                        nativeOutput, nativeSample, cacheDisposition))
+                        Some(
+                            CjguiComposableUiDiagnosticFloatRect(geometry.sampleX, geometry.sampleY,
+                                geometry.sampleWidth, geometry.sampleHeight))
+                    } else {
+                        None
+                    }
+                    let cacheDisposition = if (!matching) {
+                        "unavailable"
+                    } else if ((geometry.flags / 2u32) % 2u32 == 0u32) {
+                        "not_sampled"
+                    } else if ((geometry.flags / 4u32) % 2u32 == 1u32) {
+                        "redrawn"
+                    } else {
+                        "reused"
+                    }
+                    resultNodes.add(
+                        CjguiComposableUiDiagnosticNode(cursor, node.nodeId, node.resourceId, node.nodeKind,
+                            if (keyAvailable) {
+                                node.identityKey
+                            } else {
+                                ""
+                            }, keyAvailable, node.bounds, node.clip, clips, originalClips.size <= 4, output,
+                            geometryState, if (matching) {
+                                Int64(geometry.sceneVersion)
+                            } else {
+                                -1
+                            }, if (matching) {
+                                Int64(geometry.frameIndex)
+                            } else {
+                                -1
+                            }, nativeOutput, nativeSample, cacheDisposition))
                 }
                 cursor += 1
             }
         }
-        let resourcesMatch = resourcesStatus == CJGUI_INTERNAL_RENDERER_OK &&
-            submittedFrameIndex >= 0 && resources.sceneVersion == UInt64(acceptedVersion) &&
-            resources.frameIndex == UInt64(submittedFrameIndex)
+        let resourcesMatch = resourcesStatus == CJGUI_INTERNAL_RENDERER_OK && submittedFrameIndex >= 0 &&
+            resources.sceneVersion == UInt64(acceptedVersion) && resources.frameIndex == UInt64(submittedFrameIndex)
+        var scalarProgress = CjguiInternalRendererComposableDisplayProgress()
         var workload = CjguiInternalRendererDiagnosticWorkload()
-        var workloadAvailable = false
-        if (active && workloadDiagnosticsEnabled) {
+        var timing = CjguiInternalRendererDiagnosticTiming()
+        var scalarAvailable = false
+        if (active && state == "ok" && scalarOnly) {
+            let published = internalRendererDiagnosticScalarSnapshot(sessionToken, UInt64(acceptedVersion))
+            let status = published.status
+            scalarAvailable = status == CJGUI_INTERNAL_RENDERER_OK
+            if (scalarAvailable) {
+                scalarProgress = published.progress
+                workload = published.workload
+                timing = published.timing
+            } else {
+                state = if (status == CJGUI_INTERNAL_RENDERER_INVALID_SESSION) {
+                    "stale_session"
+                } else if (status == CJGUI_INTERNAL_RENDERER_SCENE_STALE) {
+                    "stale_accepted"
+                } else {
+                    "pending_native_snapshot"
+                }
+            }
+        }
+        var workloadAvailable = scalarOnly && scalarAvailable && workloadDiagnosticsEnabled
+        if (active && workloadDiagnosticsEnabled && !scalarOnly) {
             let workloadStatus = unsafe { cjgui_internal_renderer_diagnostic_workload(sessionToken, inout workload) }
             workloadAvailable = workloadStatus == CJGUI_INTERNAL_RENDERER_OK
             if (!workloadAvailable) {
                 workloadDiagnosticsStatus = "native_unavailable"
             }
         }
-        let workloadSceneVersion = if (workloadAvailable) { Int64(workload.sceneVersion) } else { -1 }
-        var timing = CjguiInternalRendererDiagnosticTiming()
-        var timingAvailable = false
-        if (active && timingDiagnosticsEnabled) {
+        let workloadSceneVersion = if (workloadAvailable) {
+            Int64(workload.sceneVersion)
+        } else {
+            -1
+        }
+        var timingAvailable = scalarOnly && scalarAvailable && timingDiagnosticsEnabled && timing.enabled == 1u32 &&
+            timing.clockAvailable == 1u32 && timing.sceneVersion == UInt64(acceptedVersion)
+        if (active && timingDiagnosticsEnabled && !scalarOnly) {
             let nativeTimingStatus = unsafe { cjgui_internal_renderer_diagnostic_timing(sessionToken, inout timing) }
             timingAvailable = nativeTimingStatus == CJGUI_INTERNAL_RENDERER_OK && timing.enabled == 1u32 &&
                 timing.clockAvailable == 1u32 && timing.sceneVersion == UInt64(acceptedVersion)
-            if (!timingAvailable) { timingDiagnosticsStatus = "native_unavailable" }
+            if (!timingAvailable) {
+                timingDiagnosticsStatus = "native_unavailable"
+            }
         }
-        let timingStatus = if (!active) { "closed" } else if (!timingDiagnosticsEnabled) {
+        let timingStatus = if (!active) {
+            "closed"
+        } else if (!timingDiagnosticsEnabled) {
             "disabled"
-        } else if (timingAvailable) { "enabled" } else { timingDiagnosticsStatus }
-        return CjguiComposableUiDiagnosticSnapshot(state, session, acceptedVersion,
-            if (active) { submittedSceneVersion } else { -1 },
-            if (active) { submittedFrameIndex } else { -1 },
-            if (active) { observedMetalCompletionFrameIndex } else { -1 },
-            if (active) { observedMetalFailureFrameIndex } else { -1 },
-            if (active) { observedMetalGpuDurationMicros } else { -1 }, total, begin, cursor,
-            cursor < total, resultNodes,
-            if (active && timingDiagnosticsEnabled) { lastRefreshTiming.buildNanoseconds } else { -1 },
-            if (active && timingDiagnosticsEnabled) { lastRefreshTiming.layoutNanoseconds } else { -1 },
-            if (active && timingDiagnosticsEnabled) { lastRefreshTiming.nativeStageAndSubmitNanoseconds } else { -1 },
-            if (active) { buildPassCount } else { 0 }, if (active) { layoutPassCount } else { 0 },
-            if (active) { nativeSubmissionCount } else { 0 },
-            if (resourcesMatch) { Int64(resources.liveEffectBytes) } else { -1 },
-            if (resourcesMatch) { Int64(resources.cachedEffectBytes) } else { -1 },
-            -1, -1, -1, -1, -1, diagnosticOverlayOptions.enabled, diagnosticOverlayStatus,
-            Int64(diagnosticOverlayFlags(diagnosticOverlayOptions)),
-            if (resourcesMatch) { Int64(resources.overlayDrawCount) } else { -1 },
-            workloadEnabled: workloadDiagnosticsEnabled,
-            workloadStatus: workloadDiagnosticsStatus,
-            workloadSceneVersion: workloadSceneVersion,
-            nodeWriteCount: if (workloadAvailable) { workloadScalar(workload.nodeWriteCount) } else { -1 },
-            nodeCloneCount: if (workloadAvailable) { workloadScalar(workload.nodeCloneCount) } else { -1 },
-            nodeAllocationCount: if (workloadAvailable) { workloadScalar(workload.nodeAllocationCount) } else { -1 },
-            textLayoutPreparationCount: if (workloadAvailable) {
+        } else if (timingAvailable) {
+            "enabled"
+        } else if (scalarOnly) {
+            state
+        } else {
+            timingDiagnosticsStatus
+        }
+        let scalarCommitted = scalarAvailable && scalarProgress.submittedFrameIndex > 0u64 &&
+            scalarProgress.submittedBackingScale > 0.0
+        let scalarGeometry = if (scalarAvailable) {
+            CjguiSharedOperationWindowGeometry("available", scalarProgress.currentPointWidth,
+                scalarProgress.currentPointHeight, scalarProgress.currentBackingScale,
+                Int64(scalarProgress.currentDrawableWidthPixels), Int64(scalarProgress.currentDrawableHeightPixels),
+                Int64(scalarProgress.currentGeometryRevision), if (scalarCommitted) {
+                    "committed"
+                } else {
+                    "none"
+                }, if (scalarCommitted) {
+                    scalarProgress.submittedPointWidth
+                } else {
+                    0.0
+                }, if (scalarCommitted) {
+                    scalarProgress.submittedPointHeight
+                } else {
+                    0.0
+                }, if (scalarCommitted) {
+                    scalarProgress.submittedBackingScale
+                } else {
+                    0.0
+                }, if (scalarCommitted) {
+                    Int64(scalarProgress.submittedDrawableWidthPixels)
+                } else {
+                    0
+                }, if (scalarCommitted) {
+                    Int64(scalarProgress.submittedDrawableHeightPixels)
+                } else {
+                    0
+                }, if (scalarCommitted) {
+                    Int64(scalarProgress.submittedGeometryRevision)
+                } else {
+                    -1
+                }, if (scalarCommitted) {
+                    Int64(scalarProgress.submittedSceneVersion)
+                } else {
+                    -1
+                }, if (scalarCommitted) {
+                    Int64(scalarProgress.submittedFrameIndex)
+                } else {
+                    -1
+                })
+        } else {
+            CjguiSharedOperationWindowGeometry.unavailable()
+        }
+        return CjguiComposableUiDiagnosticSnapshot(state, session, acceptedVersion, if (scalarOnly) {
+            if (scalarAvailable) {
+                Int64(scalarProgress.submittedSceneVersion)
+            } else {
+                -1
+            }
+        } else {
+            if (active) {
+                submittedSceneVersion
+            } else {
+                -1
+            }
+        }, if (scalarOnly) {
+            if (scalarAvailable) {
+                Int64(scalarProgress.submittedFrameIndex)
+            } else {
+                -1
+            }
+        } else {
+            if (active) {
+                submittedFrameIndex
+            } else {
+                -1
+            }
+        }, if (scalarOnly) {
+            if (scalarAvailable) {
+                Int64(scalarProgress.observedMetalCompletionFrameIndex)
+            } else {
+                -1
+            }
+        } else {
+            if (active) {
+                observedMetalCompletionFrameIndex
+            } else {
+                -1
+            }
+        }, if (scalarOnly) {
+            if (scalarAvailable) {
+                Int64(scalarProgress.observedMetalFailureFrameIndex)
+            } else {
+                -1
+            }
+        } else {
+            if (active) {
+                observedMetalFailureFrameIndex
+            } else {
+                -1
+            }
+        }, if (scalarOnly) {
+            if (scalarAvailable) {
+                Int64(scalarProgress.observedMetalGpuDurationMicros)
+            } else {
+                -1
+            }
+        } else {
+            if (active) {
+                observedMetalGpuDurationMicros
+            } else {
+                -1
+            }
+        }, total, begin, cursor, cursor < total, resultNodes, if (active && timingDiagnosticsEnabled) {
+            lastRefreshTiming.buildNanoseconds
+        } else {
+            -1
+        }, if (active && timingDiagnosticsEnabled) {
+            lastRefreshTiming.layoutNanoseconds
+        } else {
+            -1
+        }, if (active && timingDiagnosticsEnabled) {
+            lastRefreshTiming.nativeStageAndSubmitNanoseconds
+        } else {
+            -1
+        }, if (active) {
+            buildPassCount
+        } else {
+            0
+        }, if (active) {
+            layoutPassCount
+        } else {
+            0
+        }, if (active) {
+            nativeSubmissionCount
+        } else {
+            0
+        }, if (resourcesMatch) {
+            Int64(resources.liveEffectBytes)
+        } else {
+            -1
+        }, if (resourcesMatch) {
+            Int64(resources.cachedEffectBytes)
+        } else {
+            -1
+        }, -1, -1, -1, -1, -1, diagnosticOverlayOptions.enabled, diagnosticOverlayStatus,
+            Int64(diagnosticOverlayFlags(diagnosticOverlayOptions)), if (resourcesMatch) {
+                Int64(resources.overlayDrawCount)
+            } else {
+                -1
+            }, workloadEnabled: workloadDiagnosticsEnabled, workloadStatus: if (scalarOnly) {
+                if (workloadAvailable) {
+                    "published_scalars"
+                } else {
+                    state
+                }
+            } else {
+                workloadDiagnosticsStatus
+            }, workloadSceneVersion: workloadSceneVersion, nodeWriteCount: if (workloadAvailable) {
+                workloadScalar(workload.nodeWriteCount)
+            } else {
+                -1
+            }, nodeCloneCount: if (workloadAvailable) {
+                workloadScalar(workload.nodeCloneCount)
+            } else {
+                -1
+            }, nodeAllocationCount: if (workloadAvailable) {
+                workloadScalar(workload.nodeAllocationCount)
+            } else {
+                -1
+            }, textLayoutPreparationCount: if (workloadAvailable) {
                 workloadScalar(workload.textLayoutPreparationCount)
             } else {
                 -1
-            },
-            imageDecodeStartCount: if (workloadAvailable) { workloadScalar(workload.imageDecodeStartCount) } else {
+            }, imageDecodeStartCount: if (workloadAvailable) {
+                workloadScalar(workload.imageDecodeStartCount)
+            } else {
                 -1
-            },
-            reusableResourceBytes: if (workloadAvailable) { workloadScalar(workload.reusableResourceBytes) } else {
+            }, reusableResourceBytes: if (workloadAvailable && !scalarOnly) {
+                workloadScalar(workload.reusableResourceBytes)
+            } else {
                 -1
-            },
-            lastAttemptWorkloadResult: if (workloadDiagnosticsEnabled) { workloadLastResult } else { "none" },
-            lastAttemptNodeWrites: if (workloadDiagnosticsEnabled) { workloadLastNodeWrites } else { -1 },
-            lastAttemptNodeClones: if (workloadDiagnosticsEnabled) { workloadLastNodeClones } else { -1 },
-            lastAttemptNodeAllocations: if (workloadDiagnosticsEnabled) { workloadLastNodeAllocations } else { -1 },
-            lastAttemptTextLayoutPreparations: if (workloadDiagnosticsEnabled) {
+            }, lastAttemptWorkloadResult: if (workloadDiagnosticsEnabled) {
+                workloadLastResult
+            } else {
+                "none"
+            }, lastAttemptNodeWrites: if (workloadDiagnosticsEnabled) {
+                workloadLastNodeWrites
+            } else {
+                -1
+            }, lastAttemptNodeClones: if (workloadDiagnosticsEnabled) {
+                workloadLastNodeClones
+            } else {
+                -1
+            }, lastAttemptNodeAllocations: if (workloadDiagnosticsEnabled) {
+                workloadLastNodeAllocations
+            } else {
+                -1
+            }, lastAttemptTextLayoutPreparations: if (workloadDiagnosticsEnabled) {
                 workloadLastTextLayoutPreparations
             } else {
                 -1
-            },
-            lastAttemptImageDecodeStarts: if (workloadDiagnosticsEnabled) { workloadLastImageDecodeStarts } else {
+            }, lastAttemptImageDecodeStarts: if (workloadDiagnosticsEnabled) {
+                workloadLastImageDecodeStarts
+            } else {
+                -1
+            }, geometry: if (scalarOnly) {
+                scalarGeometry
+            } else {
+                if (active) {
+                    lastGeometry
+                } else {
+                    CjguiSharedOperationWindowGeometry.unavailable()
+                }
+            }, totalBuildNanoseconds: if (active && timingDiagnosticsEnabled) {
+                totalBuildNanoseconds
+            } else {
+                -1
+            }, totalLayoutNanoseconds: if (active && timingDiagnosticsEnabled) {
+                totalLayoutNanoseconds
+            } else {
+                -1
+            }, totalNativeStageAndSubmitNanoseconds: if (active && timingDiagnosticsEnabled) {
+                totalNativeStageAndSubmitNanoseconds
+            } else {
+                -1
+            }, textRasterCount: if (workloadAvailable) {
+                workloadScalar(workload.textRasterCount)
+            } else {
+                -1
+            }, textRasterBytes: if (workloadAvailable) {
+                workloadScalar(workload.textRasterBytes)
+            } else {
                 -1
             },
-            geometry: if (active) { lastGeometry } else { CjguiSharedOperationWindowGeometry.unavailable() },
-            totalBuildNanoseconds: if (active && timingDiagnosticsEnabled) { totalBuildNanoseconds } else { -1 },
-            totalLayoutNanoseconds: if (active && timingDiagnosticsEnabled) { totalLayoutNanoseconds } else { -1 },
-            totalNativeStageAndSubmitNanoseconds: if (active && timingDiagnosticsEnabled) {
-                totalNativeStageAndSubmitNanoseconds
-            } else { -1 },
-            textRasterCount: if (workloadAvailable) { workloadScalar(workload.textRasterCount) } else { -1 },
-            textRasterBytes: if (workloadAvailable) { workloadScalar(workload.textRasterBytes) } else { -1 },
-            // Legacy workload micros are TESTING-only and zero in normal builds.
-            // The opt-in mach_continuous_time nanosecond fields above are authoritative.
-            textRasterMicros: -1,
-            textUploadCount: if (workloadAvailable) { workloadScalar(workload.textUploadCount) } else { -1 },
-            textUploadBytes: if (workloadAvailable) { workloadScalar(workload.textUploadBytes) } else { -1 },
-            textUploadMicros: -1,
-            textTextureLiveBytes: if (workloadAvailable) {
+                // Legacy workload micros are TESTING-only and zero in normal builds.
+                // The opt-in mach_continuous_time nanosecond fields above are authoritative.
+                textRasterMicros: -1, textUploadCount: if (workloadAvailable) {
+                workloadScalar(workload.textUploadCount)
+            } else {
+                -1
+            }, textUploadBytes: if (workloadAvailable) {
+                workloadScalar(workload.textUploadBytes)
+            } else {
+                -1
+            }, textUploadMicros: -1, textTextureLiveBytes: if (workloadAvailable && !scalarOnly) {
                 workloadScalar(workload.textTextureLiveBytes)
-            } else { -1 },
-            textCandidatePeakBytes: if (workloadAvailable) {
+            } else {
+                -1
+            }, textCandidatePeakBytes: if (workloadAvailable) {
                 workloadScalar(workload.textCandidatePeakBytes)
-            } else { -1 },
-            timingEnabled: timingAvailable,
-            timingStatus: timingStatus,
-            timingClockSource: if (timingAvailable) { "mach_continuous_time" } else { "unavailable" },
-            timingSessionIdentity: if (timingAvailable) { session } else { "unavailable" },
-            timingAcceptedSceneVersion: if (timingAvailable) { Int64(timing.sceneVersion) } else { -1 },
-            positionPrepareCount: if (timingAvailable) { workloadScalar(timing.positionPrepareCount) } else { -1 },
-            positionQueryCount: if (timingAvailable) { workloadScalar(timing.positionQueryCount) } else { -1 },
-            positionLineBuildCount: if (timingAvailable) { workloadScalar(timing.positionLineBuildCount) } else { -1 },
-            positionCacheHitCount: if (timingAvailable) { workloadScalar(timing.positionCacheHitCount) } else { -1 },
-            positionPrepareNanoseconds: if (timingAvailable) { workloadScalar(timing.positionPrepareNanoseconds) } else { -1 },
-            positionQueryNanoseconds: if (timingAvailable) { workloadScalar(timing.positionQueryNanoseconds) } else { -1 },
-            positionLineBuildNanoseconds: if (timingAvailable) { workloadScalar(timing.positionLineBuildNanoseconds) } else { -1 },
-            encodeNanoseconds: if (timingAvailable) { workloadScalar(timing.encodeNanoseconds) } else { -1 },
-            submitNanoseconds: if (timingAvailable) { workloadScalar(timing.submitNanoseconds) } else { -1 },
-            textRasterNanoseconds: if (timingAvailable) { workloadScalar(timing.rasterNanoseconds) } else { -1 },
-            textUploadNanoseconds: if (timingAvailable) { workloadScalar(timing.uploadNanoseconds) } else { -1 },
-            timingReadCount: if (timingAvailable) { workloadScalar(timing.readCount) } else { -1 },
-            timingReadNanoseconds: if (timingAvailable) { workloadScalar(timing.readNanoseconds) } else { -1 })
+            } else {
+                -1
+            }, timingEnabled: timingAvailable, timingStatus: timingStatus,
+            timingClockSource: if (timingAvailable) {
+                "mach_continuous_time"
+            } else {
+                "unavailable"
+            }, timingSessionIdentity: if (timingAvailable) {
+                session
+            } else {
+                "unavailable"
+            }, timingAcceptedSceneVersion: if (timingAvailable) {
+                Int64(timing.sceneVersion)
+            } else {
+                -1
+            }, positionPrepareCount: if (timingAvailable) {
+                workloadScalar(timing.positionPrepareCount)
+            } else {
+                -1
+            }, positionQueryCount: if (timingAvailable) {
+                workloadScalar(timing.positionQueryCount)
+            } else {
+                -1
+            }, positionLineBuildCount: if (timingAvailable) {
+                workloadScalar(timing.positionLineBuildCount)
+            } else {
+                -1
+            }, positionCacheHitCount: if (timingAvailable) {
+                workloadScalar(timing.positionCacheHitCount)
+            } else {
+                -1
+            }, positionPrepareNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.positionPrepareNanoseconds)
+            } else {
+                -1
+            }, positionQueryNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.positionQueryNanoseconds)
+            } else {
+                -1
+            }, positionLineBuildNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.positionLineBuildNanoseconds)
+            } else {
+                -1
+            }, encodeNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.encodeNanoseconds)
+            } else {
+                -1
+            }, submitNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.submitNanoseconds)
+            } else {
+                -1
+            }, textRasterNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.rasterNanoseconds)
+            } else {
+                -1
+            }, textUploadNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.uploadNanoseconds)
+            } else {
+                -1
+            }, timingReadCount: if (timingAvailable) {
+                workloadScalar(timing.readCount)
+            } else {
+                -1
+            }, timingReadNanoseconds: if (timingAvailable) {
+                workloadScalar(timing.readNanoseconds)
+            } else {
+                -1
+            })
     }
 
     /// Test-only: enable/disable the bounded per-write trace above.
@@ -5349,6 +6728,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (target.nodeId < 0) {
             return false
         }
+        cancelPreparedCandidate("accepted_command")
         let dispatch = applyBoundCommand(target, nativeInputScene.version)
         if (dispatch.shouldClose) {
             close();
@@ -5433,12 +6813,28 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     func testSessionToken(): UInt64 {
         return sessionToken
     }
+
+    func testPreparedCandidateReady(): Bool {
+        return match (preparingCandidate) {
+            case Some(candidate) => candidate.packet.ready
+            case None => false
+        }
+    }
     // Probe-only snapshot of timings captured inside one actual
     // `syncProjection` execution. It cannot trigger a refresh or expose a
     // native handle, and it intentionally stays outside the public consumer
     // projection contract.
     func testRefreshTiming(): CjguiComposableUiRefreshTiming {
         return lastRefreshTiming
+    }
+    func testNativeMeasurementCallCount(): Int64 {
+        return lastNativeMeasurementCallCount
+    }
+    func testStaticLayoutPreparing(): Bool {
+        return staticLayoutPreparation.isSome()
+    }
+    func testStaticLayoutWorkerStartCount(): Int64 {
+        return lastStaticLayoutWorkerStartCount
     }
     /// Package-only trace of the bounded per-page focus bookmarks. It exposes
     /// view positions (identity + selection) only, never a business value, and no
@@ -5595,7 +6991,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (!isWindowOpen || renderedScene.version <= 0) {
             return CjguiSharedOperationWindowProjection.inactive()
         }
-        observeDisplayProgress()
+        observeDisplayProgress(154u32)
         let focused = renderedScene.nodeForId(focusedNodeId)
         let hasLiveFocusedIdentity = focused.nodeId == focusedNodeId && focused.resourceId == focusedResourceId &&
             focused.nodeKind == focusedNodeKind
@@ -5663,7 +7059,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return CjguiSharedOperationWindowProgress(false, 0, -1, "unavailable", "", 0, -1, -1, -1, -1, -1, -1,
                 pending, failure, interactionVersion, "none", false, 0, 0, "none")
         }
-        observeDisplayProgress()
+        observeDisplayProgress(155u32)
         let focused = renderedScene.nodeForId(focusedNodeId)
         let hasLiveFocusedIdentity = focused.nodeId == focusedNodeId && focused.resourceId == focusedResourceId &&
             focused.nodeKind == focusedNodeKind
@@ -5899,8 +7295,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         )
     }
 
-    private func observeDisplayProgress() {
-        let progress = internalRendererComposableDisplayProgress(sessionToken)
+    private func observeDisplayProgress(caller: UInt32) {
+        cjguiOwnerTraceBoundary(sessionToken, 0u64, caller, 0u32, 75u32, 0u64, UInt64.Max)
+        let progress = internalRendererPublishedComposableDisplayProgress(sessionToken, UInt64(renderedScene.version))
         if (progress.status != CJGUI_INTERNAL_RENDERER_OK) {
             return
         }
@@ -5933,19 +7330,46 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         effectCompletionCode = progress.effectCompletion
         let geometry = progress.geometry
         let committed = progress.submittedFrameIndex > 0u64 && geometry.submittedBackingScale > 0.0
-        lastGeometry = CjguiSharedOperationWindowGeometry(
-            "available", geometry.currentPointWidth, geometry.currentPointHeight,
-            geometry.currentBackingScale, Int64(geometry.currentDrawableWidthPixels),
+        lastGeometry = CjguiSharedOperationWindowGeometry("available", geometry.currentPointWidth,
+            geometry.currentPointHeight, geometry.currentBackingScale, Int64(geometry.currentDrawableWidthPixels),
             Int64(geometry.currentDrawableHeightPixels), Int64(geometry.currentGeometryRevision),
-            if (committed) { "committed" } else { "none" },
-            if (committed) { geometry.submittedPointWidth } else { 0.0 },
-            if (committed) { geometry.submittedPointHeight } else { 0.0 },
-            if (committed) { geometry.submittedBackingScale } else { 0.0 },
-            if (committed) { Int64(geometry.submittedDrawableWidthPixels) } else { 0 },
-            if (committed) { Int64(geometry.submittedDrawableHeightPixels) } else { 0 },
-            if (committed) { Int64(geometry.submittedGeometryRevision) } else { -1 },
-            if (committed) { Int64(geometry.submittedSceneVersion) } else { -1 },
-            if (committed) { Int64(progress.submittedFrameIndex) } else { -1 })
+            if (committed) {
+                "committed"
+            } else {
+                "none"
+            }, if (committed) {
+                geometry.submittedPointWidth
+            } else {
+                0.0
+            }, if (committed) {
+                geometry.submittedPointHeight
+            } else {
+                0.0
+            }, if (committed) {
+                geometry.submittedBackingScale
+            } else {
+                0.0
+            }, if (committed) {
+                Int64(geometry.submittedDrawableWidthPixels)
+            } else {
+                0
+            }, if (committed) {
+                Int64(geometry.submittedDrawableHeightPixels)
+            } else {
+                0
+            }, if (committed) {
+                Int64(geometry.submittedGeometryRevision)
+            } else {
+                -1
+            }, if (committed) {
+                Int64(geometry.submittedSceneVersion)
+            } else {
+                -1
+            }, if (committed) {
+                Int64(progress.submittedFrameIndex)
+            } else {
+                -1
+            })
     }
 
     private func currentBusinessOwnerRevision(): Int64 {
@@ -5955,11 +7379,239 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return -1
     }
 
+    private func recordLayoutMeasurementSlice(layoutStarted: ?MonoTime, layoutSpan: UInt64): Int64 {
+        let layoutElapsed = diagnosticElapsedNanoseconds(layoutStarted)
+        lastLayoutElapsedMs = if (layoutElapsed >= 0) { layoutElapsed / 1000000 } else { -1 }
+        lastRefreshTiming.layoutNanoseconds = layoutElapsed
+        lastNativeMeasurementElapsedMs = textMeasurer.measurementPassNativeElapsedMs()
+        lastNativeMeasurementCallCount = textMeasurer.measurementPassNativeCallCount()
+        this.endOwnerTracePhase(63u32, layoutSpan)
+        // Scalar markers carry observed values in span, never an owner
+        // request or window-generation identity. Unknown stays Max.
+        let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), 0u64,
+            0u64, UInt64.Max, 69u32, if (lastNativeMeasurementCallCount >= 0) {
+                UInt64(lastNativeMeasurementCallCount)
+            } else { UInt64.Max })
+        let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), 0u64,
+            0u64, UInt64.Max, 70u32, if (lastNativeMeasurementElapsedMs >= 0) {
+                UInt64(lastNativeMeasurementElapsedMs)
+            } else { UInt64.Max })
+        let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), 0u64,
+            0u64, UInt64.Max, 91u32, UInt64(textMeasurer.measurementPassCacheHitCount()))
+        let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), 0u64,
+            0u64, UInt64.Max, 92u32, UInt64(textMeasurer.measurementPassCacheEvictionCount()))
+        let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), 0u64,
+            0u64, UInt64.Max, 93u32, UInt64(textMeasurer.measurementCacheEntryCount()))
+        return layoutElapsed
+    }
+
+    private func staticLayoutSelectionBasis(): ?CjguiTextSelectionTicket {
+        if (let Some(session) <- ownedTextSession) { return Some(session.freezeSelectionTicket()) }
+        return None
+    }
+
+    private func staticLayoutSelectionMatches(ticket: ?CjguiTextSelectionTicket): Bool {
+        if (let Some(frozen) <- ticket) {
+            return if (let Some(session) <- ownedTextSession) { session.selectionTicketMatches(frozen) } else { false }
+        }
+        return ownedTextSession.isNone()
+    }
+
+    private func preparedSelectionAndViewportBasisMatches(candidate: CjguiComposableUiPreparedCandidate): Bool {
+        if (let Some(ticket) <- candidate.selectionBasis) {
+            if (!staticLayoutSelectionMatches(Some(ticket))) { return false }
+        }
+        for (basis in candidate.viewportBases) {
+            if (basis.viewport.requestGeneration() != basis.generation || basis.viewport.offset() != basis.offset) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func staticLayoutMovementIdle(): Bool {
+        return !animationDriver.hasActive() && !animationDriver.hasPendingPresentation() &&
+            stagedPositionOriginRebases.size == 0 && !hasActiveWindowActivities()
+    }
+
+    private func canPrepareStaticLayout(root: CjguiComposableUiNode): Bool {
+        if (!staticLayoutMovementIdle()) { return false }
+        if (let Some(session) <- ownedTextSession) {
+            if (!session.isBound() || session.hasComposition() || session.awaitingCalibration()) { return false }
+        }
+        return staticLayoutTreeAdmitted(root, 0, ArrayList<Int64>([0, 0]))
+    }
+
+    private func staticLayoutTreeAdmitted(node: CjguiComposableUiNode, depth: Int64,
+        counts: ArrayList<Int64>): Bool {
+        counts[0] += 1
+        counts[1] += node.value.size + node.label.size + node.semanticId.size + node.textStyleRuns.size * 160
+        if (depth > 64 || counts[0] > 1024 || counts[1] > 1048576 ||
+            node.virtualListSource().isSome() || node.variableHeightListSource().isSome() ||
+            node.virtualListState().isSome() || node.splitState.isSome() || node.tabsState.isSome() ||
+            // Effect/gradient payloads contain mutable stop arrays. They keep
+            // their existing synchronous semantics in this first static subset.
+            node.style.gradient.isSome() || node.style.effectGroup.isSome()) { return false }
+        if (let Some(viewport) <- node.scrollViewport) {
+            if (viewport.ownerWindowToken() != instanceToken &&
+                !(viewport.ownerWindowToken() == 0 &&
+                    CjguiCandidateViewportReservations.matches(viewport.viewStateIdentity(), instanceToken))) {
+                return false
+            }
+        }
+        for (child in node.children()) {
+            if (!staticLayoutTreeAdmitted(child, depth + 1, counts)) { return false }
+        }
+        return true
+    }
+
+    private func collectStaticLayoutViewportBases(node: CjguiComposableUiNode,
+        values: ArrayList<CjguiStaticLayoutViewportBasis>): Unit {
+        if (let Some(viewport) <- node.scrollViewport) { values.add(CjguiStaticLayoutViewportBasis(viewport)) }
+        for (child in node.children()) { collectStaticLayoutViewportBases(child, values) }
+    }
+
+    private func staticLayoutBasisMatches(candidate: CjguiComposableUiStaticLayoutPreparation,
+        viewport: InternalRendererViewportResult, declaredVersion: Int64): Bool {
+        if (candidate.session != sessionToken || candidate.previousNativeSceneVersion != nativeInputScene.version ||
+            candidate.declaredVersion != declaredVersion ||
+            candidate.businessOwnerRevision != currentBusinessOwnerRevision() ||
+            candidate.requestEpoch != refreshRequestEpoch || candidate.bindingEpoch != textSessionBindingEpoch ||
+            candidate.focus != (focusedNodeId, focusedResourceId, focusedNodeKind) ||
+            candidate.viewport.resizeVersion != viewport.resizeVersion ||
+            candidate.viewport.resourceCompletionVersion != viewport.resourceCompletionVersion ||
+            !staticLayoutSelectionMatches(candidate.selection) || !staticLayoutMovementIdle()) { return false }
+        for (basis in candidate.viewports) {
+            if (basis.viewport.requestGeneration() != basis.generation || basis.viewport.offset() != basis.offset ||
+                (basis.viewport.ownerWindowToken() != instanceToken &&
+                    !(basis.viewport.ownerWindowToken() == 0 && CjguiCandidateViewportReservations.matches(
+                        basis.viewport.viewStateIdentity(), instanceToken)))) { return false }
+        }
+        return true
+    }
+
+    private func advanceStaticLayoutPreparation(candidate: CjguiComposableUiStaticLayoutPreparation): Bool {
+        let budget = match (ownerTurnBudget) { case Some(value) => value; case None => return false }
+        if (!budget.isActive() || candidate.advancedTurn == budget.turnIdentity()) { return false }
+        candidate.advancedTurn = budget.turnIdentity()
+        let trace = cjguiOwnerTraceRecord(3u32, sessionToken, ownerTraceTurnIdentity(), candidate.attemptId,
+            0u64, UInt64.Max, 94u32, 0u64)
+        try {
+            if (candidate.readyResult.isNone()) {
+                // The private TextKit worker owns only copied candidate data.
+                // Poll it before cloning so a slow paragraph never repeats
+                // the whole owner traversal on every frame.
+                if (!candidate.measurer.pollPendingMultiline()) { return false }
+                let allowance = budget.remainingMicroseconds()
+                // A natural 17.167ms turn combined 5.329ms build with a
+                // 4.071ms hot traversal and real diagnostics/main-queue work.
+                // The frozen root survives this boundary; no build or user
+                // intent is repeated, and all later slices keep the same turn.
+                if (!budget.admits(10000)) { return false }
+                let pinsBefore = candidate.measurer.pinCount()
+                let layoutStarted = diagnosticTimerStart()
+                let layoutSpan = this.beginOwnerTracePhase(63u32)
+                textMeasurer.beginMeasurementPass()
+                var yielded = false
+                var waitingForWorker = false
+                var workerAtCapacity = false
+                try {
+                    // No application callback, dynamic identity or shared
+                    // virtual state is present in this conservatively admitted
+                    // tree. Only the successful final clone becomes registry root.
+                    let root = candidate.frozenRoot.cloneForWindowCandidate()
+                    let result = CjguiComposableUiLayoutEngine.layoutWithMetrics(root,
+                        CjguiComposableUiRect(0, 0, Int64(candidate.viewport.width), Int64(candidate.viewport.height)),
+                        candidate.candidateVersion, candidate.measurer, reuseCache: layoutReuseCache,
+                        commitReusePass: false, identityRegistry: Some(identityRegistry))
+                    candidate.readyRoot = Some(root)
+                    candidate.readyResult = Some(result)
+                    stagedSceneViewports = result.viewports
+                    stagedSceneSplitTracks = result.splitTracks
+                } catch (_: CjguiLayoutMeasurementNeedBudget) {
+                    yielded = true
+                } catch (pending: CjguiLayoutMeasurementNeedWorker) {
+                    yielded = true
+                    waitingForWorker = true
+                    workerAtCapacity = pending.capacity
+                } finally {
+                    let elapsed = recordLayoutMeasurementSlice(layoutStarted, layoutSpan)
+                    if (elapsed >= 0) {
+                        candidate.layoutNanoseconds = if (candidate.layoutNanoseconds < 0) { elapsed }
+                            else { candidate.layoutNanoseconds.saturatingAdd(elapsed) }
+                    }
+                    lastRefreshTiming.layoutNanoseconds = candidate.layoutNanoseconds
+                    candidate.nativeCallCount += textMeasurer.measurementPassNativeCallCount()
+                    candidate.nativeMeasurementMs += textMeasurer.measurementPassNativeElapsedMs()
+                    lastStaticLayoutWorkerStartCount = candidate.measurer.workerStartCount()
+                    let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), candidate.attemptId,
+                        0u64, UInt64.Max, 95u32, UInt64(candidate.measurer.pinCount()))
+                    let _ = cjguiOwnerTraceRecord(21u32, sessionToken, ownerTraceTurnIdentity(), candidate.attemptId,
+                        0u64, UInt64.Max, 96u32, UInt64(candidate.measurer.retainedKeyBytes()))
+                }
+                if (yielded) {
+                    if (waitingForWorker && !workerAtCapacity) {
+                        candidate.noProgressSlices = 0
+                    } else if (allowance >= 12000 && candidate.measurer.pinCount() == pinsBefore) {
+                        candidate.noProgressSlices += 1
+                    } else { candidate.noProgressSlices = 0 }
+                    if (candidate.noProgressSlices >= 3) {
+                        throw CjguiLayoutPreparationFailure("layout_hot_prefix_budget")
+                    }
+                    return false
+                }
+            }
+            // Completed geometry is kept as Ready. A fresh full allowance is
+            // still needed for command/paint/packet and semantic acceptance.
+            if (!ownerBudgetAdmits(10000, "layout_finish")) { return false }
+            if (!staticLayoutBasisMatches(candidate, candidate.viewport, controller.uiSceneVersion())) {
+                cancelPreparedCandidate("static_layout_finish_basis_changed")
+                return false
+            }
+            let root = candidate.readyRoot.getOrThrow()
+            let result = candidate.readyResult.getOrThrow()
+            let issue = identityRegistry.replaceCandidateRoot(root)
+            if (issue.size > 0) { throw CjguiLayoutPreparationFailure(issue) }
+            lastLayoutElapsedMs = if (candidate.layoutNanoseconds >= 0) { candidate.layoutNanoseconds / 1000000 } else { -1 }
+            lastRefreshTiming.layoutNanoseconds = candidate.layoutNanoseconds
+            lastNativeMeasurementCallCount = candidate.nativeCallCount
+            lastNativeMeasurementElapsedMs = candidate.nativeMeasurementMs
+            // Transfer once to the existing complete-layout/native path.
+            // That path owns commit/rollback from this point onward.
+            staticLayoutPreparation = None
+            budget.releasePreparedOwner(candidate.session)
+            candidate.measurer.release()
+            return finishProjectionLayout(root, result, candidate.participant, candidate.viewport,
+                candidate.declaredVersion, candidate.businessOwnerRevision, candidate.candidateVersion,
+                candidate.backgroundToken, candidate.backgroundScheme, frozenCommands: Some(candidate.commands))
+        } catch (failure: CjguiLayoutPreparationFailure) {
+            cancelPreparedCandidate("static_layout_failed")
+            startupPhase = failure.message
+            lastReportedSceneRejection = failure.message
+            getStdOut().writeln("CJGUI_STATIC_LAYOUT_REFUSED stage=preparation reason=${failure.message}")
+            return noteRefreshFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+        } catch (_: Exception) {
+            cancelPreparedCandidate("static_layout_exception")
+            getStdOut().writeln("CJGUI_STATIC_LAYOUT_REFUSED stage=exception")
+            return noteRefreshFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+        } finally {
+            let _ = cjguiOwnerTraceRecord(4u32, sessionToken, ownerTraceTurnIdentity(), candidate.attemptId,
+                0u64, UInt64.Max, 94u32, trace)
+        }
+    }
+
     private func syncProjection(viewport: InternalRendererViewportResult, declaredVersion: Int64): Bool {
+        if (activationPrefixPending()) { return false }
+        let phaseStarted = this.ownerPhaseStarted()
+        let projectionSpan = this.beginOwnerTracePhase(4u32)
         // A participant prepares only a Cangjie candidate. It is deliberately
         // opened before buildUi, then either promoted with the accepted native
         // scene or rolled back on every early return below.
         let participant = controller as CjguiComposableUiSceneRefreshParticipant
+        let frozenRequestEpoch = refreshRequestEpoch
+        let frozenBindingEpoch = textSessionBindingEpoch
+        let frozenFocus = (focusedNodeId, focusedResourceId, focusedNodeKind)
+        let frozenSelection = staticLayoutSelectionBasis()
         // Reset at the exact real-refresh boundary. Unreached phases retain
         // -1 on a rejection rather than borrowing a prior successful pass.
         lastRefreshTiming = CjguiComposableUiRefreshTiming()
@@ -5970,6 +7622,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (viewport.resizeVersion != lastViewportResizeVersion) {
             layoutReuseCache = CjguiComposableUiLayoutReuseCache()
         }
+        textMeasurer.useMeasurementEnvironment(viewport.resizeVersion)
         // `Exception` is a recoverable language-level failure, distinct from
         // fatal runtime errors.  A controller can legitimately reject a
         // malformed candidate this way; it must not strand a registry
@@ -6004,21 +7657,30 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return noteIdentityRefreshFailure(identityRegistry.lastIssue())
             }
             let buildStarted = diagnosticTimerStart()
+            let buildSpan = this.beginOwnerTracePhase(60u32)
             startupPhase = "controller_build"
             let ownerRevisionBeforeBuild = currentBusinessOwnerRevision()
             let declaredRoot = controller.buildUi()
+            this.endOwnerTracePhase(60u32, buildSpan)
+            let buildTimingSpan = this.beginOwnerTracePhase(86u32)
             let buildElapsed = diagnosticElapsedNanoseconds(buildStarted)
             lastBuildElapsedMs = if (buildElapsed >= 0) { buildElapsed / 1000000 } else { -1 }
             lastRefreshTiming.buildNanoseconds = buildElapsed
             buildPassCount += 1
+            this.endOwnerTracePhase(86u32, buildTimingSpan)
             // 手写非法效果：与生成侧一致，在接受 scene 前拒绝整个候选（具名
             // reason + 声明路径），而不是静默丢弃效果后接受一个被改写的样式。
-            if (let Some(rejection) <- candidateEffectRejection(declaredRoot)) {
+            let effectSpan = this.beginOwnerTracePhase(87u32)
+            let effectRejection = candidateEffectRejection(declaredRoot)
+            this.endOwnerTracePhase(87u32, effectSpan)
+            if (let Some(rejection) <- effectRejection) {
                 return noteEffectCandidateFailure(rejection, participant)
             }
             let identityResolutionStarted = diagnosticTimerStart()
+            let identitySpan = this.beginOwnerTracePhase(61u32)
             startupPhase = "identity_resolve"
             let identityIssue = identityRegistry.resolveCandidate(declaredRoot)
+            this.endOwnerTracePhase(61u32, identitySpan)
             lastRefreshTiming.identityResolutionNanoseconds = diagnosticElapsedNanoseconds(identityResolutionStarted)
             if (identityIssue.size > 0) {
                 if (let Some(value) <- participant) {
@@ -6033,8 +7695,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             // Cangjie snapshot: another window may reuse that declaration but
             // cannot mutate this window's accepted projection or virtual rows.
             let candidateCloneStarted = diagnosticTimerStart()
+            let cloneSpan = this.beginOwnerTracePhase(62u32)
             startupPhase = "candidate_clone"
             let root = declaredRoot.cloneForWindowCandidate()
+            this.endOwnerTracePhase(62u32, cloneSpan)
             traceTabsCandidateTree(root)
             // Shared MUTABLE view objects (scroll viewport, split size, active tab
             // page) belong to ONE window. A declaration that hands the same object
@@ -6092,7 +7756,41 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             } else {
                 nextProjectionVersion + 1
             }
+            if (let Some(budget) <- ownerTurnBudget) {
+                if (budget.isActive() && canPrepareStaticLayout(root)) {
+                    if (declaredVersion != controller.uiSceneVersion() ||
+                        ownerRevisionBeforeBuild != currentBusinessOwnerRevision() ||
+                        frozenRequestEpoch != refreshRequestEpoch || frozenBindingEpoch != textSessionBindingEpoch ||
+                        frozenFocus != (focusedNodeId, focusedResourceId, focusedNodeKind) ||
+                        !staticLayoutSelectionMatches(frozenSelection)) {
+                        return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
+                            reason: "static_layout_build_basis_changed")
+                    }
+                    let frozenCommands = ArrayList<CjguiComposableUiCommand>()
+                    if (let Some(value) <- participant) {
+                        for (command in value.candidateSceneCommands()) { frozenCommands.add(command) }
+                    } else {
+                        for (binding in commandBindings) { frozenCommands.add(binding.declaration) }
+                    }
+                    if (frozenCommands.size > 1024 || !budget.retainPreparedOwner(sessionToken)) {
+                        return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
+                            reason: "static_layout_preparation_capacity")
+                    }
+                    let viewportBases = ArrayList<CjguiStaticLayoutViewportBasis>()
+                    collectStaticLayoutViewportBases(root, viewportBases)
+                    let candidate = CjguiComposableUiStaticLayoutPreparation(participant, root,
+                        nativeInputScene.version, declaredVersion, ownerRevisionBeforeBuild, viewport,
+                        candidateVersion, candidateWindowBackgroundToken, candidateWindowBackgroundColorScheme,
+                        frozenCommands, frozenRequestEpoch, sessionToken, frozenBindingEpoch, frozenFocus,
+                        frozenSelection, viewportBases, CjguiPreparedStaticTextMeasurer(textMeasurer, budget))
+                    staticLayoutPreparation = Some(candidate)
+                    pendingRefreshReason = "refresh_preparing_measurements"
+                    refreshRequested = true
+                    return advanceStaticLayoutPreparation(candidate)
+                }
+            }
             let layoutStarted = diagnosticTimerStart()
+            let layoutSpan = this.beginOwnerTracePhase(63u32)
             startupPhase = "layout"
             textMeasurer.beginMeasurementPass()
             // S1（Astra P4 顺序）：run 安装移到 configure 之后、stage 之前——
@@ -6107,17 +7805,51 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 commitReusePass: false,
                 identityRegistry: Some(identityRegistry)
             )
+            recordLayoutMeasurementSlice(layoutStarted, layoutSpan)
+            return finishProjectionLayout(root, layoutResult, participant, viewport, declaredVersion,
+                ownerRevisionBeforeBuild, candidateVersion, candidateWindowBackgroundToken,
+                candidateWindowBackgroundColorScheme)
+        } catch (_: Exception) {
+            if (acceptedCandidate) {
+                // Do not invoke participant rollback after native present or
+                // a semantic-only Cangjie acceptance. The only honest
+                // recovery boundary is a terminal close; reopening starts a
+                // new transaction from durable application state.
+                lastNativeFailure = "accepted_post_commit_exception"
+                close()
+                return false
+            }
+            // The participant API is Cangjie-only bookkeeping. Its rollback
+            // implementation is required to be total/idempotent so an
+            // ordinary controller exception can return to the accepted scene
+            // and one later explicit retry may begin a fresh candidate.
+            if (let Some(value) <- participant) {
+                value.rollbackSceneRefresh()
+            }
+            identityRegistry.rollbackCandidate()
+            startupPhase = "candidate_exception_after_${startupPhase}"
+            return noteRefreshFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+        } finally {
+            originRebaseCandidateOpen = false
+            this.endOwnerTracePhase(4u32, projectionSpan)
+            this.traceOwnerPhase("sync_projection", phaseStarted)
+        }
+    }
+
+    private func finishProjectionLayout(root: CjguiComposableUiNode,
+        layoutResult: CjguiComposableUiLayoutResult,
+        participant: ?CjguiComposableUiSceneRefreshParticipant, viewport: InternalRendererViewportResult,
+        declaredVersion: Int64, ownerRevisionBeforeBuild: Int64, candidateVersion: Int64,
+        candidateWindowBackgroundToken: String, candidateWindowBackgroundColorScheme: UInt32,
+        frozenCommands!: ?ArrayList<CjguiComposableUiCommand> = None): Bool {
+        var acceptedCandidate = false
+        try {
             let scene = layoutResult.scene
             traceTabsCandidateScene("layout", scene)
             // Candidate viewport facts belong to THIS attempt until the scene is
             // accepted (or rejected) below.
             stagedSceneViewports = layoutResult.viewports
             stagedSceneSplitTracks = layoutResult.splitTracks
-            let layoutElapsed = diagnosticElapsedNanoseconds(layoutStarted)
-            lastLayoutElapsedMs = if (layoutElapsed >= 0) { layoutElapsed / 1000000 } else { -1 }
-            lastRefreshTiming.layoutNanoseconds = layoutElapsed
-            lastNativeMeasurementElapsedMs = textMeasurer.measurementPassNativeElapsedMs()
-            lastNativeMeasurementCallCount = textMeasurer.measurementPassNativeCallCount()
             lastLayoutReuseHitCount = layoutResult.metrics.subtreeReuseHitCount
             lastLayoutReuseMissCount = layoutResult.metrics.subtreeReuseMissCount
             lastLayoutReuseRevalidationNodeCount = layoutResult.metrics.subtreeReuseRevalidationNodeCount
@@ -6132,6 +7864,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     } else {
                         "invalid_scene"
                     })
+            }
+            if (scene.hasSelectionBackground && internalRendererSelectionBackgroundVersion() != 1u32) {
+                return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED,
+                    reason: "selection_background_backend_unsupported")
             }
             let candidateModal = if (let Some(layer) <- topModalLayer(root)) { layer.layerId() } else { "" }
             let paintScene = sceneWithResolvedInteractionPaint(scene, candidateModalLayerId: Some(candidateModal))
@@ -6176,7 +7912,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             let commandBindingStarted = diagnosticTimerStart()
             startupPhase = "command_bindings"
             let candidateCommands = ArrayList<CjguiComposableUiCommand>()
-            if (let Some(value) <- participant) {
+            if (let Some(frozen) <- frozenCommands) {
+                for (command in frozen) { candidateCommands.add(command) }
+                if (!commandsValidForCandidateScene(candidateCommands, scene)) {
+                    return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
+                        reason: "candidate_commands_invalid")
+                }
+            } else if (let Some(value) <- participant) {
                 for (command in value.candidateSceneCommands()) {
                     candidateCommands.add(command)
                 }
@@ -6232,10 +7974,24 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             let focusedTextBindingRequiresNativeReconcile = focusedNodeId >= 0 &&
                 cjguiFocusedTextBindingRequiresNativeReconcile(nativeInputScene.nodeForId(focusedNodeId),
                 paintScene.nodeForId(focusedNodeId), focusedNodeId, focusedResourceId, focusedNodeKind)
+            // The transfer changed native paint before this owner declaration
+            // was published. Even equal declarations need one newer native
+            // scene, otherwise non-focus fragments remain suppressed as old
+            // selection geometry. Reuse the live receipt; no second selection
+            // revision or independent publication state is introduced.
+            let selectionRequiresNativePublication = match (activeSelectionTransferProof) {
+                case Some(proof) => proof.active &&
+                    proof.candidate.targetSceneVersion == UInt64(nativeInputScene.version) &&
+                    proof.receipt.sceneVersion == proof.candidate.targetSceneVersion &&
+                    proof.receipt.bindingEpoch == textSessionBindingEpoch &&
+                    installedRangeSessionGeneration != 0u64 &&
+                    installedRangeSessionGeneration == proof.candidate.sourceRendererSessionGeneration
+                case None => false
+            }
             if (!resourceCompletionChanged && !geometryChanged && !windowBackgroundRecoveryRequested &&
                 stagedPositionOriginRebases.size == 0 &&
                 matchesRenderedScene && !ownerRevisionRequiresNativeTextReconcile &&
-                !focusedTextBindingRequiresNativeReconcile &&
+                !focusedTextBindingRequiresNativeReconcile && !selectionRequiresNativePublication &&
                 candidateWheelBindingsMatchAccepted(paintScene) &&
                 candidateWindowBackgroundToken == acceptedWindowBackgroundToken &&
                 candidateWindowBackgroundColorScheme == acceptedWindowBackgroundColorScheme &&
@@ -6312,11 +8068,617 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 finalizeWorkloadAttempt("accepted")
                 return true
             }
-            nextProjectionVersion = candidateVersion
+            let viewportBases = ArrayList<CjguiStaticLayoutViewportBasis>()
+            collectStaticLayoutViewportBases(root, viewportBases)
+            let selectionBasis: ?CjguiTextSelectionTicket = if (let Some(session) <- ownedTextSession) {
+                if (session.isBound() && !session.hasComposition() && !session.awaitingCalibration()) {
+                    Some(session.freezeSelectionTicket())
+                } else { None }
+            } else { None }
+            let candidate = CjguiComposableUiPreparedCandidate(participant, root, paintScene, nativeInputScene,
+                declaredVersion, candidateBusinessOwnerRevision, viewport, candidateCommands,
+                candidateDataTransferBindings, candidateWindowBackgroundToken,
+                candidateWindowBackgroundColorScheme, refreshRequestEpoch, sessionToken,
+                textSessionBindingEpoch, (focusedNodeId, focusedResourceId, focusedNodeKind), nodes,
+                nativeInputScene.nodes(), inputScopes, selectionBasis, viewportBases)
+            if (let Some(budget) <- ownerTurnBudget) {
+                if (budget.isActive()) {
+                    if (!budget.retainPreparedOwner(sessionToken)) {
+                        return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
+                            reason: "owner_preparation_capacity")
+                    }
+                    candidate.preparedTurn = budget.turnIdentity()
+                    preparingCandidate = Some(candidate)
+                    pendingRefreshReason = "refresh_preparing_resources"
+                    // Preparation is demand for a later legal turn, not a failed
+                    // present and not permission to freeze the accepted FIFO.
+                    refreshRequested = true
+                    return false
+                }
+            }
+            return submitPreparedCandidate(candidate)
+        } catch (_: Exception) {
+            if (acceptedCandidate) {
+                lastNativeFailure = "accepted_post_commit_exception"
+                close()
+                return false
+            }
+            if (let Some(value) <- participant) { value.rollbackSceneRefresh() }
+            identityRegistry.rollbackCandidate()
+            startupPhase = "candidate_exception_after_${startupPhase}"
+            return noteRefreshFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+        }
+    }
+
+    private func cancelPreparedCandidate(reason: String): Unit {
+        cjguiOwnerTraceBoundary(sessionToken, 0u64, 169u32, 0u32, 163u32, 0u64, UInt64.Max)
+        if (let Some(layout) <- staticLayoutPreparation) {
+            staticLayoutPreparation = None
+            if (let Some(budget) <- ownerTurnBudget) { budget.releasePreparedOwner(layout.session) }
+            layout.measurer.release()
+            discardStagedAnimationPaint()
+            layoutReuseCache.discardPass()
+            discardStagedSceneViewports()
+            discardStagedSceneSplitTracks()
+            discardStagedViewStateOwnership()
+            if (let Some(value) <- layout.participant) { value.rollbackSceneRefresh() }
+            identityRegistry.rollbackCandidate()
+            finalizeWorkloadAttempt("cancelled")
+            refreshRequested = true
+        }
+        let candidate = match (preparingCandidate) {
+            case Some(value) => value
+            case None => return
+        }
+        // Clear first: a participant rollback may request another refresh.
+        preparingCandidate = None
+        if (let Some(budget) <- ownerTurnBudget) { budget.releasePreparedOwner(candidate.session) }
+        if (candidate.packet.nativeBegun) {
+            let cancelStatus = internalRendererCancelComposablePreparation(candidate.session,
+                candidate.preparationId)
+            if (cancelStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                lastNativeStatus = cancelStatus
+                startupPhase = "prepare_cancel_native_${reason}"
+            }
+            candidate.packet.nativeBegun = false
+        }
+        discardStagedAnimationPaint()
+        layoutReuseCache.discardPass()
+        discardStagedSceneViewports()
+        discardStagedSceneSplitTracks()
+        discardStagedViewStateOwnership()
+        if (let Some(value) <- candidate.participant) { value.rollbackSceneRefresh() }
+        identityRegistry.rollbackCandidate()
+        finalizeWorkloadAttempt("cancelled")
+        refreshRequested = true
+        pendingRefreshReason = "none"
+        this.traceOwnerPhase("prepare_cancel_${reason}", this.ownerPhaseStarted())
+    }
+
+    // The packet has already left preparingCandidate when native promotion
+    // checks its actual source for the final time. A changed selection/body is
+    // a supersession: keep the prior accepted scene and the new input, retire
+    // only this packet, then build again from the current owner state.
+    private func cancelSubmittedPreparedCandidate(candidate: CjguiComposableUiPreparedCandidate,
+        reason: String): Bool {
+        // A stale promotion is safe to retry only after native has actually
+        // released the old private graph. Keep a failed cancellation visible
+        // instead of overwriting its status with OK below.
+        lastNativeStatus = CJGUI_INTERNAL_RENDERER_OK
+        if (candidate.packet.nativeBegun) { cancelNativePreparation(candidate) }
+        let cancelStatus = lastNativeStatus
+        if (cancelStatus != CJGUI_INTERNAL_RENDERER_OK) {
+            return rejectParticipantCandidate(candidate.participant, cancelStatus,
+                reason: "native_preparation_cancel_failed")
+        }
+        if (sessionToken != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN && isWindowOpen) {
+            let _ = internalRendererDiscardComposableSceneCandidate(sessionToken)
+        }
+        discardStagedAnimationPaint()
+        layoutReuseCache.discardPass()
+        discardStagedSceneViewports()
+        discardStagedSceneSplitTracks()
+        discardStagedViewStateOwnership()
+        if (let Some(value) <- candidate.participant) { value.rollbackSceneRefresh() }
+        identityRegistry.rollbackCandidate()
+        finalizeWorkloadAttempt("cancelled")
+        lastNativeStatus = CJGUI_INTERNAL_RENDERER_OK
+        lastNativeFailure = "none"
+        pendingRefreshReason = "none"
+        refreshRequested = true
+        this.traceOwnerPhase("prepare_cancel_${reason}", this.ownerPhaseStarted())
+        return false
+    }
+
+    private func encodePreparedRunDeclaration(node: CjguiComposableUiNode): String {
+        var encoded = ""
+        var runIndex: Int64 = 0
+        while (runIndex < node.textStyleRuns.size) {
+            if (runIndex > 0) { encoded += ";" }
+            encoded += node.textStyleRuns[runIndex].encoded()
+            runIndex += 1
+        }
+        return encoded
+    }
+
+    private func mayPreserveActiveLocalText(node: CjguiComposableUiLayoutNode,
+        recentLocalText: Bool, ownerStableText: Bool): Bool {
+        // A refusal deliberately leaves the owner version unchanged. That is
+        // not proof that the speculative native body was accepted. Preserve
+        // hints must retire with the refusal, including packets prepared before
+        // it; recovery then installs the real owner-backed value and receipt.
+        if (refusedRangeTextPending && node.nodeId == refusedRangeTextNodeId &&
+            node.resourceId == refusedRangeTextResourceId && node.nodeKind == refusedRangeTextNodeKind) {
+            return false
+        }
+        if (node.nodeId == ownedTextSessionNodeId && node.resourceId == ownedTextSessionResourceId &&
+            node.nodeKind == ownedTextSessionNodeKind) {
+            if (let Some(session) <- ownedTextSession) {
+                if (session.awaitingCalibration()) { return false }
+            }
+        }
+        return recentLocalText || ownerStableText
+    }
+
+    private func freezePreparedNode(candidate: CjguiComposableUiPreparedCandidate, index: Int64,
+        hasBusinessOwnerRevisionProvider: Bool, resourceCompletionChanged: Bool): CjguiComposableUiPreparedNodePacket {
+        let nodes = candidate.packet.sceneNodes
+        let previousNodes = candidate.packet.previousNodes
+        while (candidate.packet.previousScopeCursor <= index &&
+            candidate.packet.previousScopeCursor < previousNodes.size) {
+            let previous = previousNodes[candidate.packet.previousScopeCursor]
+            let _ = candidate.packet.previousInputScopes.codeFor(previous.inputScopeId)
+            let _ = candidate.packet.acceptedNodeIndexes.add(previous.nodeId,
+                candidate.packet.previousScopeCursor)
+            candidate.packet.previousScopeCursor += 1
+        }
+        let node = nodes[index]
+        let scope = candidate.packet.inputScopes.codeFor(node.inputScopeId)
+        let previousScope = if (index < previousNodes.size) {
+            candidate.packet.previousInputScopes.codeFor(previousNodes[index].inputScopeId)
+        } else { 0u64 }
+        let completionNeedsImageRestage = resourceCompletionChanged &&
+            node.nodeKind == CJGUI_COMPOSABLE_UI_IMAGE
+        let canReuse = !completionNeedsImageRestage && index < previousNodes.size &&
+            sameLayoutNode(previousNodes[index], node) && previousScope == scope &&
+            !(node.nodeId == focusedNodeId && isEditableTextNodeKind(node.nodeKind))
+        let style = node.style
+        let preservesOwnerStableText = node.nodeId == focusedNodeId && cjguiPreservesOwnerStableText(
+            candidate.previousScene.nodeForId(node.nodeId), node, lastAcceptedBusinessOwnerRevision,
+            candidate.businessOwnerRevision, focusedNodeId, focusedResourceId, focusedNodeKind)
+        let preservesRecentLocalText = node.nodeId == pendingLocalTextNodeId &&
+            node.resourceId == pendingLocalTextResourceId && node.nodeKind == pendingLocalTextNodeKind &&
+            isEditableTextNodeKind(node.nodeKind) && node.value == pendingLocalTextValue &&
+            focusedNodeId == node.nodeId && focusedResourceId == node.resourceId &&
+            focusedNodeKind == node.nodeKind && cjguiLocalTextOwnerRevisionMatches(
+            hasBusinessOwnerRevisionProvider, pendingLocalTextOwnerRevision, candidate.businessOwnerRevision) &&
+            cjguiSameFocusedTextBinding(candidate.previousScene.nodeForId(node.nodeId), node,
+                focusedNodeId, focusedResourceId, focusedNodeKind)
+        let preservesActiveLocalText = this.mayPreserveActiveLocalText(node,
+            preservesRecentLocalText, preservesOwnerStableText)
+        let clipConstraints = node.clipConstraints()
+        let clip0 = if (clipConstraints.size > 0) { clipConstraints[0] } else {
+            CjguiComposableUiClipConstraint(node.clip)
+        }
+        let clip1 = if (clipConstraints.size > 1) { clipConstraints[1] } else { clip0 }
+        let clip2 = if (clipConstraints.size > 2) { clipConstraints[2] } else { clip1 }
+        let clip3 = if (clipConstraints.size > 3) { clipConstraints[3] } else { clip2 }
+        let (tabGroupId, tabSelected) = nativeTabStopMetadata(node)
+        let effect = CjguiComposableUiNativeEffectProjection(style)
+        var nativeNode = CjguiInternalRendererComposableNode(
+            nodeId: UInt64(node.nodeId), projectionVersion: UInt64(candidate.paintScene.version),
+            resourceId: node.resourceId, x: node.bounds.x, y: node.bounds.y,
+            width: node.bounds.width, height: node.bounds.height, clipX: node.clip.x,
+            clipY: node.clip.y, clipWidth: node.clip.width, clipHeight: node.clip.height,
+            nodeKind: UInt32(node.nodeKind),
+            isInteractive: if (node.canReceiveInput() || node.canReceiveFocus() || style.pointerInteractive) { 1u32 } else { 0u32 },
+            isReadOnly: if (node.isReadOnly && !style.pointerInteractive) { 1u32 } else { 0u32 },
+            tabInsertsText: if (node.tabInsertsText) { 1u32 } else { 0u32 },
+            preservesActiveLocalText: if (preservesActiveLocalText) { 1u32 } else { 0u32 },
+            borderWidth: nonnegativeUInt32(style.borderWidth), cornerRadius: Float64(style.cornerRadius),
+            clipCornerRadius: Float64(node.clipCornerRadius), clipConstraintCount: UInt32(clipConstraints.size),
+            clip0X: clip0.rect.x, clip0Y: clip0.rect.y, clip0Width: clip0.rect.width,
+            clip0Height: clip0.rect.height, clip0CornerRadius: Float64(clip0.cornerRadius),
+            clip1X: clip1.rect.x, clip1Y: clip1.rect.y, clip1Width: clip1.rect.width,
+            clip1Height: clip1.rect.height, clip1CornerRadius: Float64(clip1.cornerRadius),
+            clip2X: clip2.rect.x, clip2Y: clip2.rect.y, clip2Width: clip2.rect.width,
+            clip2Height: clip2.rect.height, clip2CornerRadius: Float64(clip2.cornerRadius),
+            clip3X: clip3.rect.x, clip3Y: clip3.rect.y, clip3Width: clip3.rect.width,
+            clip3Height: clip3.rect.height, clip3CornerRadius: Float64(clip3.cornerRadius),
+            fontSize: style.fontSize, fontWeight: composableNativeFontWeight(style.fontWeight),
+            fontFamily: composableFontFamilyCode(style.fontFamily),
+            imageContentMode: if (node.imageContentMode == 2) { 2u32 } else { 1u32 },
+            fillRed: style.background.red, fillGreen: style.background.green,
+            fillBlue: style.background.blue, fillAlpha: style.background.alpha,
+            borderRed: style.border.red, borderGreen: style.border.green,
+            borderBlue: style.border.blue, borderAlpha: style.border.alpha,
+            textRed: style.textColor.red, textGreen: style.textColor.green,
+            textBlue: style.textColor.blue, textAlpha: style.textColor.alpha,
+            inputScope: scope, tabGroupId: tabGroupId, tabSelected: tabSelected,
+            semanticRole: nativeSemanticRole(node),
+            semanticState: (if (node.semanticSelected) { 1u32 } else { 0u32 }) +
+                (if (node.semanticExpandable) { 2u32 } else { 0u32 }) +
+                (if (node.semanticExpanded) { 4u32 } else { 0u32 }) +
+                (if (!node.isEnabled) { 8u32 } else { 0u32 }),
+            semanticLevel: node.semanticLevel, semanticIncarnation: node.semanticIncarnation,
+            shadowPresent: effect.shadowPresent, shadowOffsetX: effect.shadowOffsetX,
+            shadowOffsetY: effect.shadowOffsetY, shadowBlurRadius: effect.shadowBlurRadius,
+            shadowSpread: effect.shadowSpread, shadowRed: effect.shadowRed,
+            shadowGreen: effect.shadowGreen, shadowBlue: effect.shadowBlue, shadowAlpha: effect.shadowAlpha,
+            gradientPresent: effect.gradientPresent, gradientStopCount: effect.gradientStopCount,
+            gradientStartX: effect.gradientStartX, gradientStartY: effect.gradientStartY,
+            gradientEndX: effect.gradientEndX, gradientEndY: effect.gradientEndY,
+            gradientStop0Position: effect.gradientStop0Position, gradientStop0Red: effect.gradientStop0Red,
+            gradientStop0Green: effect.gradientStop0Green, gradientStop0Blue: effect.gradientStop0Blue,
+            gradientStop0Alpha: effect.gradientStop0Alpha, gradientStop1Position: effect.gradientStop1Position,
+            gradientStop1Red: effect.gradientStop1Red, gradientStop1Green: effect.gradientStop1Green,
+            gradientStop1Blue: effect.gradientStop1Blue, gradientStop1Alpha: effect.gradientStop1Alpha,
+            gradientStop2Position: effect.gradientStop2Position, gradientStop2Red: effect.gradientStop2Red,
+            gradientStop2Green: effect.gradientStop2Green, gradientStop2Blue: effect.gradientStop2Blue,
+            gradientStop2Alpha: effect.gradientStop2Alpha, gradientStop3Position: effect.gradientStop3Position,
+            gradientStop3Red: effect.gradientStop3Red, gradientStop3Green: effect.gradientStop3Green,
+            gradientStop3Blue: effect.gradientStop3Blue, gradientStop3Alpha: effect.gradientStop3Alpha,
+            effectGroupPresent: effect.effectGroupPresent, effectGroupSubtreeCount: UInt32(node.subtreeNodeCount),
+            effectGroupOpacity: effect.effectGroupOpacity, effectGroupBlendMode: effect.effectGroupBlendMode,
+            effectMaskPresent: effect.effectMaskPresent, effectMaskStopCount: effect.effectMaskStopCount,
+            effectMaskStartX: effect.effectMaskStartX, effectMaskStartY: effect.effectMaskStartY,
+            effectMaskEndX: effect.effectMaskEndX, effectMaskEndY: effect.effectMaskEndY,
+            effectMaskStop0Position: effect.effectMaskStop0Position, effectMaskStop0Alpha: effect.effectMaskStop0Alpha,
+            effectMaskStop1Position: effect.effectMaskStop1Position, effectMaskStop1Alpha: effect.effectMaskStop1Alpha,
+            effectMaskStop2Position: effect.effectMaskStop2Position, effectMaskStop2Alpha: effect.effectMaskStop2Alpha,
+            effectMaskStop3Position: effect.effectMaskStop3Position, effectMaskStop3Alpha: effect.effectMaskStop3Alpha,
+            effectBackdropBlurRadiusPoints: effect.effectBackdropBlurRadiusPoints,
+            effectBackdropBlurFallback: effect.effectBackdropBlurFallback)
+        nativeNode.wheelScrollable = if (style.wheelScrollable) { 1u32 } else { 0u32 }
+        nativeNode.acceptedBindingEpoch = preparedCandidateBindingEpoch(candidate, node)
+        let geometrySource = candidate.paintScene.visualGeometryAt(index)
+        let clipCount = geometrySource.clipCount()
+        var geometry = CjguiInternalRendererComposableGeometry()
+        geometry.nodeId = UInt64(node.nodeId)
+        geometry.clipCount = UInt32(clipCount)
+        geometry.translateX = geometrySource.translateX
+        geometry.translateY = geometrySource.translateY
+        if (clipCount > 0) { geometry.clip0X = geometrySource.clipTranslateX(0); geometry.clip0Y = geometrySource.clipTranslateY(0) }
+        if (clipCount > 1) { geometry.clip1X = geometrySource.clipTranslateX(1); geometry.clip1Y = geometrySource.clipTranslateY(1) }
+        if (clipCount > 2) { geometry.clip2X = geometrySource.clipTranslateX(2); geometry.clip2Y = geometrySource.clipTranslateY(2) }
+        if (clipCount > 3) { geometry.clip3X = geometrySource.clipTranslateX(3); geometry.clip3Y = geometrySource.clipTranslateY(3) }
+        var encodedRuns = ""
+        if (let Some(value) <- candidate.packet.runsByNodeId.get(node.nodeId)) { encodedRuns = value }
+        let label = if (node.label.size > 0 || node.nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
+            node.label
+        } else { node.semanticId }
+        return CjguiComposableUiPreparedNodePacket(node, nativeNode, geometry, label,
+            if (preservesActiveLocalText) { "" } else { node.value }, node.semanticId,
+            nativeSemanticBindingKey(node), node.semanticKey, node.semanticParentKey, node.semanticLabel,
+            encodedRuns, preservesActiveLocalText, !preservesActiveLocalText, !canReuse,
+            lastAcceptedBusinessOwnerRevision, hasBusinessOwnerRevisionProvider,
+            pendingLocalTextNodeId, pendingLocalTextResourceId, pendingLocalTextNodeKind,
+            pendingLocalTextValue, pendingLocalTextOwnerRevision)
+    }
+
+    private func preparedCandidateBindingEpoch(candidate: CjguiComposableUiPreparedCandidate,
+        node: CjguiComposableUiLayoutNode): UInt64 {
+        let key = nativeSemanticBindingKey(node)
+        if (let Some(index) <- candidate.packet.acceptedNodeIndexes.get(node.nodeId)) {
+            if (index >= 0 && index < acceptedBindingKeys.size && index < acceptedBindingEpochs.size &&
+                acceptedBindingKeys[index] == key) {
+                return acceptedBindingEpochs[index]
+            }
+        }
+        return UInt64(candidate.paintScene.version)
+    }
+
+    private func tracePreparedScenePacket(candidate: CjguiComposableUiPreparedCandidate): Unit {
+        if (!sceneWriteTraceEnabled) { return }
+        let previousNodes = candidate.packet.previousNodes
+        var index: Int64 = 0
+        while (index < candidate.packet.nodes.size) {
+            let packetNode = candidate.packet.nodes[index]
+            if (packetNode.shouldPrepare) {
+                let node = packetNode.node
+                let previousScope = if (index < previousNodes.size) {
+                    candidate.packet.previousInputScopes.codeFor(previousNodes[index].inputScopeId)
+                } else { 0u64 }
+                let currentScope = packetNode.nativeNode.inputScope
+                var reason = "new_index"
+                var previousRect = ""
+                var previousClip = ""
+                if (index < previousNodes.size) {
+                    let previous = previousNodes[index]
+                    previousRect = "${previous.bounds.x},${previous.bounds.y},${previous.bounds.width},${previous.bounds.height}"
+                    previousClip = "${previous.clip.x},${previous.clip.y},${previous.clip.width},${previous.clip.height}"
+                    if (!sameLayoutNode(previous, node)) {
+                        if (isVisuallyNeutralGroup(previous) && isVisuallyNeutralGroup(node)) {
+                            reason = "identity"
+                        } else if (!sameRect(previous.bounds, node.bounds)) {
+                            reason = "rect"
+                        } else if (!sameRect(previous.clip, node.clip)) {
+                            reason = "clip"
+                        } else if (!sameStyle(previous.style, node.style)) {
+                            reason = "style"
+                        } else { reason = "runs" }
+                    } else if (previousScope != currentScope) {
+                        reason = "scope"
+                    } else { reason = "focused_editor" }
+                }
+                println("CJGUI_SCENE_WRITE index=${index} nodeId=${node.nodeId} kind=${node.nodeKind} " +
+                    "layerKind=[${node.layerKind}] reason=${reason} " +
+                    "prev=[${previousRect}] cur=[${node.bounds.x},${node.bounds.y},${node.bounds.width}," +
+                    "${node.bounds.height}] prev_clip=[${previousClip}] cur_clip=[${node.clip.x}," +
+                    "${node.clip.y},${node.clip.width},${node.clip.height}] neutral=${isVisuallyNeutralGroup(node)} " +
+                    "scope=${previousScope}->${currentScope} reuse_candidate=false")
+            }
+            index += 1
+        }
+    }
+
+    private func installPreparedRunDeclarations(candidate: CjguiComposableUiPreparedCandidate): Int32 {
+        var status = CJGUI_INTERNAL_RENDERER_OK
+        for (declaration in candidate.packet.runDeclarations) {
+            let runStatus = internalRendererSetComposableTextRuns(sessionToken,
+                UInt64(declaration.nodeId), declaration.encoded)
+            if (runStatus != CJGUI_INTERNAL_RENDERER_OK && status == CJGUI_INTERNAL_RENDERER_OK) {
+                status = runStatus
+            }
+        }
+        return status
+    }
+
+    private func cancelNativePreparation(candidate: CjguiComposableUiPreparedCandidate): Unit {
+        if (!candidate.packet.nativeBegun) { return }
+        let status = internalRendererCancelComposablePreparation(candidate.session, candidate.preparationId)
+        if (status != CJGUI_INTERNAL_RENDERER_OK) { lastNativeStatus = status }
+        candidate.packet.nativeBegun = false
+        candidate.packet.ready = false
+    }
+
+    // 0 = pending, 1 = ready/fallback, 3 = terminal failure.
+    private func advancePreparedCandidate(candidate: CjguiComposableUiPreparedCandidate,
+        budget: CjguiOwnerTurnBudget): Int64 {
+        let packetSpan = this.beginOwnerTracePhase(64u32, request: candidate.preparationId)
+        try {
+        // Metal compilation is indivisible. Prepare the actual immutable
+        // frame pipelines asynchronously before either staged or fallback
+        // presentation; accepted paint/input remain authoritative meanwhile.
+        if (budget.remainingMicroseconds() < 2000) { return 0 }
+        let (frameStatus, frameReady) = internalRendererPrepareFrameResources(candidate.session,
+            candidate.preparationId, budget.deadlineNs())
+        if (frameStatus != CJGUI_INTERNAL_RENDERER_OK) {
+            cancelPreparedCandidate("frame_resource_preparation_failed")
+            let _ = noteRefreshFailure(frameStatus)
+            return 3
+        }
+        if (!frameReady) { return 0 }
+        if (candidate.packet.ready) { return 1 }
+        let nodes = candidate.packet.sceneNodes
+        if (!candidate.packet.runSourcesInitialized) {
+            candidate.packet.runSources.add(candidate.root)
+            candidate.packet.runSourcesInitialized = true
+        }
+        let runSpan = this.beginOwnerTracePhase(97u32, request: candidate.preparationId)
+        try {
+        while (candidate.packet.runSources.size > 0 && budget.remainingMicroseconds() > 2000) {
+            let sourceIndex = candidate.packet.runSources.size - 1
+            let source = candidate.packet.runSources[sourceIndex]
+            candidate.packet.runSources.remove(at: sourceIndex)
+            let encoded = encodePreparedRunDeclaration(source)
+            let _ = candidate.packet.runsByNodeId.add(source.nodeId, encoded)
+            candidate.packet.runDeclarations.add(
+                CjguiComposableUiPreparedRunDeclaration(source.nodeId, encoded))
+            let children = source.children()
+            var childIndex = children.size - 1
+            while (childIndex >= 0) {
+                candidate.packet.runSources.add(children[childIndex])
+                childIndex -= 1
+            }
+        }
+        } finally {
+            this.endOwnerTracePhase(97u32, runSpan, request: candidate.preparationId)
+        }
+        if (candidate.packet.runSources.size > 0) { return 0 }
+        let hasOwnerRevision = (controller as CjguiComposableUiBusinessOwnerRevisionProvider).isSome()
+        let resourceCompletionChanged = candidate.viewport.resourceCompletionVersion != lastResourceCompletionVersion
+        let freezeSpan = this.beginOwnerTracePhase(98u32, request: candidate.preparationId)
+        try {
+        while (candidate.packet.packetCursor < nodes.size && budget.remainingMicroseconds() > 2000) {
+            let index = candidate.packet.packetCursor
+            let packetNode = freezePreparedNode(candidate, index, hasOwnerRevision, resourceCompletionChanged)
+            let count = packetNode.geometry.clipCount
+            if (count > 4 || !validPreparedSemanticMetadata(packetNode.node)) {
+                lastNativeStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+                cancelPreparedCandidate("packet_validation_failed")
+                return 3
+            }
+            candidate.packet.nodes.add(packetNode)
+            if (packetNode.node.nodeKind == CJGUI_COMPOSABLE_UI_IMAGE) {
+                candidate.packet.hasImageNodes = true
+                candidate.packet.syncFallback = true
+                candidate.packet.unsupportedReason = "image_candidate"
+                return 1
+            }
+            candidate.packet.packetCursor += 1
+        }
+        } finally {
+            this.endOwnerTracePhase(98u32, freezeSpan, request: candidate.preparationId)
+        }
+        if (candidate.packet.packetCursor < nodes.size) { return 0 }
+        if (candidate.packet.hasImageNodes) {
+            candidate.packet.syncFallback = true
+            candidate.packet.unsupportedReason = "image_candidate"
+            return 1
+        }
+        if (!candidate.packet.nativeBegun) {
+            if (!budget.admits(2000)) { return 0 }
+            let bridgeSpan = this.beginOwnerTracePhase(99u32, request: candidate.preparationId)
+            try {
+            lastNativeStatus = internalRendererBeginComposablePreparation(candidate.session,
+                candidate.preparationId, UInt64(candidate.previousScene.version),
+                UInt64(candidate.paintScene.version), UInt32(nodes.size))
+            } finally {
+                this.endOwnerTracePhase(99u32, bridgeSpan, request: candidate.preparationId)
+            }
+            if (lastNativeStatus == CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED) {
+                // Begin can reserve a private handle before naming the unsupported
+                // capability, so cancellation is routed through that handle only.
+                candidate.packet.nativeBegun = true
+                cancelNativePreparation(candidate)
+                candidate.packet.syncFallback = true
+                candidate.packet.unsupportedReason = "native_begin_unsupported"
+                return 1
+            }
+            if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                cancelPreparedCandidate("native_prepare_begin_failed")
+                let _ = noteRefreshFailure(lastNativeStatus)
+                return 3
+            }
+            candidate.packet.nativeBegun = true
+        }
+        while (candidate.packet.nativeCursor < candidate.packet.nodes.size &&
+            budget.remainingMicroseconds() > 2000) {
+            // Upload at most eight frozen nodes in one synchronous main hop.
+            // The native validator returns the actual copied prefix and checks
+            // the original deadline on main before each node. A yield owns no
+            // borrowed pointer and cannot replay the successful prefix.
+            let first = candidate.packet.nativeCursor
+            let remaining = candidate.packet.nodes.size - first
+            let count = if (remaining < 8) { remaining } else { 8 }
+            let batchNodes = Array<CjguiInternalRendererComposableNode>(count,
+                { i => candidate.packet.nodes[first + i].nativeNode })
+            let batchGeometry = Array<CjguiInternalRendererComposableGeometry>(count,
+                { i => candidate.packet.nodes[first + i].geometry })
+            let batchStrings = Array<String>(count * 8, { i =>
+                let packetNode = candidate.packet.nodes[first + i / 8]
+                match (i % 8) {
+                    case 0 => packetNode.label
+                    case 1 => packetNode.value
+                    case 2 => packetNode.semanticId
+                    case 3 => packetNode.semanticBindingKey
+                    case 4 => packetNode.semanticRowKey
+                    case 5 => packetNode.semanticParentRowKey
+                    case 6 => packetNode.semanticLabel
+                    case _ => packetNode.encodedRuns
+                }
+            })
+            let (status, copied) = internalRendererPrepareComposableNodeBatch(candidate.session,
+                candidate.preparationId, UInt32(first), batchNodes, batchGeometry, batchStrings, budget.deadlineNs())
+            lastNativeStatus = status
+            if (lastNativeStatus == CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED) {
+                cancelNativePreparation(candidate)
+                candidate.packet.syncFallback = true
+                candidate.packet.unsupportedReason = "native_node_unsupported"
+                return 1
+            }
+            if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                cancelPreparedCandidate("native_prepare_node_failed")
+                let _ = noteRefreshFailure(lastNativeStatus)
+                return 3
+            }
+            if (copied > UInt32(count)) {
+                cancelPreparedCandidate("native_prepare_prefix_invalid")
+                return 3
+            }
+            candidate.packet.nativeCursor += Int64(copied)
+            if (copied < UInt32(count)) { return 0 }
+        }
+        if (candidate.packet.nativeCursor < candidate.packet.nodes.size) { return 0 }
+        // Natural trace: one real tile used 8.275ms and subsequent owner work
+        // used 3.515ms. Admit that indivisible unit with the existing 12ms
+        // refresh allowance; native repeats the check on actual main entry.
+        while (budget.remainingMicroseconds() >= 12000) {
+            let (status, ready) = internalRendererAdvanceComposablePreparation(candidate.session,
+                candidate.preparationId, budget.deadlineNs())
+            lastNativeStatus = status
+            if (status == CJGUI_INTERNAL_RENDERER_SCENE_STALE) {
+                // The native preparation froze the actual TextKit source. A
+                // later input or choice supersedes it without rejecting the
+                // accepted scene. Cancellation keeps that input and FIFO;
+                // refreshRequested carries the new candidate to a legal turn.
+                cancelPreparedCandidate("native_source_superseded")
+                return 3
+            }
+            if (status == CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED) {
+                cancelNativePreparation(candidate)
+                candidate.packet.syncFallback = true
+                candidate.packet.unsupportedReason = "native_advance_unsupported"
+                return 1
+            }
+            if (status != CJGUI_INTERNAL_RENDERER_OK) {
+                cancelPreparedCandidate("native_prepare_advance_failed")
+                let _ = noteRefreshFailure(status)
+                return 3
+            }
+            if (ready) {
+                candidate.packet.ready = true
+                return 1
+            }
+        }
+        return 0
+        } finally {
+            this.endOwnerTracePhase(64u32, packetSpan, request: candidate.preparationId)
+        }
+    }
+
+    private func validPreparedSemanticMetadata(node: CjguiComposableUiLayoutNode): Bool {
+        return node.semanticRole >= CJGUI_COMPOSABLE_UI_SEMANTIC_AUTO &&
+            node.semanticRole <= CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX && node.semanticLevel >= 0 &&
+            node.semanticLevel <= 64 && node.semanticIncarnation >= 0 &&
+            (!node.semanticExpanded || node.semanticExpandable) &&
+            (node.semanticRole != CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW || !node.semanticKey.isEmpty())
+    }
+
+    private func preparedPreserveBasisStillMatches(candidate: CjguiComposableUiPreparedCandidate): Bool {
+        if (candidate.packet.nodes.size == 0) { return true }
+        let hasOwnerRevision = (controller as CjguiComposableUiBusinessOwnerRevisionProvider).isSome()
+        if (hasOwnerRevision != candidate.packet.nodes[0].preserveHasOwnerRevisionProvider) { return false }
+        for (packetNode in candidate.packet.nodes) {
+            if (packetNode.preserveOwnerRevisionBasis != lastAcceptedBusinessOwnerRevision ||
+                packetNode.preserveHasOwnerRevisionProvider != hasOwnerRevision ||
+                packetNode.pendingTextNodeIdBasis != pendingLocalTextNodeId ||
+                packetNode.pendingTextResourceIdBasis != pendingLocalTextResourceId ||
+                packetNode.pendingTextNodeKindBasis != pendingLocalTextNodeKind ||
+                packetNode.pendingTextValueBasis != pendingLocalTextValue ||
+                packetNode.pendingTextOwnerRevisionBasis != pendingLocalTextOwnerRevision) { return false }
+            let node = packetNode.node
+            let preservesOwnerStableText = node.nodeId == focusedNodeId && cjguiPreservesOwnerStableText(
+                candidate.previousScene.nodeForId(node.nodeId), node, lastAcceptedBusinessOwnerRevision,
+                candidate.businessOwnerRevision, focusedNodeId, focusedResourceId, focusedNodeKind)
+            let preservesRecentLocalText = node.nodeId == pendingLocalTextNodeId &&
+                node.resourceId == pendingLocalTextResourceId && node.nodeKind == pendingLocalTextNodeKind &&
+                isEditableTextNodeKind(node.nodeKind) && node.value == pendingLocalTextValue &&
+                focusedNodeId == node.nodeId && focusedResourceId == node.resourceId &&
+                focusedNodeKind == node.nodeKind && cjguiLocalTextOwnerRevisionMatches(hasOwnerRevision,
+                pendingLocalTextOwnerRevision, candidate.businessOwnerRevision) &&
+                cjguiSameFocusedTextBinding(candidate.previousScene.nodeForId(node.nodeId), node,
+                    focusedNodeId, focusedResourceId, focusedNodeKind)
+            if (this.mayPreserveActiveLocalText(node, preservesRecentLocalText, preservesOwnerStableText) !=
+                packetNode.preservesActiveLocalText) { return false }
+        }
+        return true
+    }
+
+    private func submitPreparedCandidate(candidate: CjguiComposableUiPreparedCandidate): Bool {
+        let submitSpan = this.beginOwnerTracePhase(78u32, request: candidate.preparationId)
+        let participant = candidate.participant
+        let root = candidate.root
+        let paintScene = candidate.paintScene
+        let nodes = candidate.packet.sceneNodes
+        let declaredVersion = candidate.declaredVersion
+        let candidateBusinessOwnerRevision = candidate.businessOwnerRevision
+        let viewport = candidate.viewport
+        let candidateCommands = candidate.commands
+        let candidateDataTransferBindings = candidate.transfers
+        let candidateWindowBackgroundToken = candidate.backgroundToken
+        let candidateWindowBackgroundColorScheme = candidate.backgroundColorScheme
+        let resourceCompletionChanged = viewport.resourceCompletionVersion != lastResourceCompletionVersion
+        let inputScopes = candidate.packet.inputScopes
+        var acceptedCandidate = false
+        try {
+            nextProjectionVersion = paintScene.version
             let stageAndSubmitStarted = diagnosticTimerStart()
             startupPhase = "native_menu"
             lastNativeStatus = stageNativeCommandMenu(candidateCommands, UInt64(paintScene.version), inputScopes)
             if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                if (candidate.packet.nativeBegun) { cancelNativePreparation(candidate) }
                 lastRefreshTiming.nativeStageAndSubmitNanoseconds = diagnosticElapsedNanoseconds(stageAndSubmitStarted)
                 return rejectParticipantCandidate(participant, lastNativeStatus)
             }
@@ -6324,24 +8686,58 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             lastNativeStatus = internalRendererConfigureComposableScene(sessionToken, UInt64(paintScene.version),
                 UInt32(nodes.size))
             if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                if (candidate.packet.nativeBegun) { cancelNativePreparation(candidate) }
                 lastRefreshTiming.nativeStageAndSubmitNanoseconds = diagnosticElapsedNanoseconds(stageAndSubmitStarted)
                 return rejectParticipantCandidate(participant, lastNativeStatus)
             }
             // S1（Astra P4 顺序）：configure 成功后安装本候选的 run 声明（含空）。
             // 失败必须终止本次窗口尝试（native 已把候选标 Failed），不得把错误
             // 留给后续 stage 覆盖成 OK。
-            let runInstallStatus = internalRendererInstallComposableTextRuns(sessionToken, root)
+            let runSpan = this.beginOwnerTracePhase(108u32, request: candidate.preparationId)
+            let runInstallStatus = try {
+                if (candidate.packet.ready && candidate.packet.nativeBegun) {
+                installPreparedRunDeclarations(candidate)
+            } else {
+                internalRendererInstallComposableTextRuns(sessionToken, root)
+                }
+            } finally {
+                this.endOwnerTracePhase(108u32, runSpan, request: candidate.preparationId)
+            }
             if (runInstallStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                if (candidate.packet.nativeBegun) { cancelNativePreparation(candidate) }
                 lastRefreshTiming.nativeStageAndSubmitNanoseconds = diagnosticElapsedNanoseconds(stageAndSubmitStarted)
                 return rejectParticipantCandidate(participant, runInstallStatus)
             }
+            let previouslySubmittedScene = candidate.previousScene
+            if (candidate.packet.ready && candidate.packet.nativeBegun) {
+                tracePreparedScenePacket(candidate)
+                startupPhase = "native_promote_prepared"
+                lastNativeStatus = internalRendererPromoteComposablePreparation(sessionToken,
+                    candidate.preparationId)
+                if (lastNativeStatus == CJGUI_INTERNAL_RENDERER_SCENE_STALE) {
+                    return cancelSubmittedPreparedCandidate(candidate, "native_source_superseded")
+                }
+                if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
+                    if (candidate.packet.nativeBegun) { cancelNativePreparation(candidate) }
+                    lastRefreshTiming.nativeStageAndSubmitNanoseconds = diagnosticElapsedNanoseconds(stageAndSubmitStarted)
+                    return rejectParticipantCandidate(participant, lastNativeStatus)
+                }
+                candidate.packet.nativeBegun = false
+                // These effects belong to the accepted source transition.
+                // A stale private graph must not disturb the still-live A.
+                for (packetNode in candidate.packet.nodes) {
+                    if (packetNode.shouldPrepare && packetNode.hasDisruptionIntent) {
+                        this.noteOwnedCompositionExternalDisruption(packetNode.node, nativeInputScene)
+                        this.armOwnedCompositionReanchor(packetNode.node, nativeInputScene)
+                    }
+                }
+            } else {
             // Configure creates an isolated native generation whose unchanged
             // immutable nodes are shared COW references to the previous accepted
             // scene. Send an FFI node only when its rendered/input state has
             // actually changed; native then clones only that staged index. This
             // keeps the live scene atomic while avoiding repeated allocation,
             // string conversion and image lookup for a local text/resource change.
-            let previouslySubmittedScene = nativeInputScene
             let previousNativeNodes = previouslySubmittedScene.nodes()
             // The native transaction starts from the previous generation. Its
             // compact scope IDs were assigned from that generation's traversal,
@@ -6430,7 +8826,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     cjguiSameFocusedTextBinding(
                     previouslySubmittedScene.nodeForId(node.nodeId), node, focusedNodeId, focusedResourceId,
                     focusedNodeKind)
-                let preservesActiveLocalText = preservesRecentLocalText || preservesOwnerStableText
+                let preservesActiveLocalText = this.mayPreserveActiveLocalText(node,
+                    preservesRecentLocalText, preservesOwnerStableText)
                 if (!preservesActiveLocalText) {
                     this.noteOwnedCompositionExternalDisruption(node, nativeInputScene)
                     this.armOwnedCompositionReanchor(node, nativeInputScene)
@@ -6661,6 +9058,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return rejectParticipantCandidate(participant, lastNativeStatus,
                     reason: "translation_native_stage_failed")
             }
+            }
             startupPhase = "native_data_transfer"
             lastNativeStatus = stageNativeDataTransfer(candidateDataTransferBindings, paintScene.version)
             if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK) {
@@ -6697,7 +9095,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     candidateDataTransferBindings: candidateDataTransferBindings, ticketId: frame.ticketId,
                     windowBackgroundToken: candidateWindowBackgroundToken,
                     windowBackgroundColorScheme: candidateWindowBackgroundColorScheme,
-                    consumedRequestEpoch: refreshRequestEpoch)
+                    consumedRequestEpoch: candidate.requestEpoch)
             }
             if (lastNativeStatus != CJGUI_INTERNAL_RENDERER_OK && lastNativeStatus !=
                 CJGUI_INTERNAL_RENDERER_READBACK_FAILED) {
@@ -6718,29 +9116,18 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 frameIndex: Int64(frame.frameIndex), readbackCompleted: frame.readbackCompleted,
                 windowBackgroundToken: candidateWindowBackgroundToken,
                 windowBackgroundColorScheme: candidateWindowBackgroundColorScheme,
-                consumedRequestEpoch: refreshRequestEpoch)
+                consumedRequestEpoch: candidate.requestEpoch)
         } catch (_: Exception) {
             if (acceptedCandidate) {
-                // Do not invoke participant rollback after native present or
-                // a semantic-only Cangjie acceptance. The only honest
-                // recovery boundary is a terminal close; reopening starts a
-                // new transaction from durable application state.
                 lastNativeFailure = "accepted_post_commit_exception"
                 close()
                 return false
             }
-            // The participant API is Cangjie-only bookkeeping. Its rollback
-            // implementation is required to be total/idempotent so an
-            // ordinary controller exception can return to the accepted scene
-            // and one later explicit retry may begin a fresh candidate.
-            if (let Some(value) <- participant) {
-                value.rollbackSceneRefresh()
-            }
-            identityRegistry.rollbackCandidate()
-            startupPhase = "candidate_exception_after_${startupPhase}"
-            return noteRefreshFailure(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+            if (candidate.packet.nativeBegun) { cancelNativePreparation(candidate) }
+            return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
+                reason: "prepared_candidate_exception")
         } finally {
-            originRebaseCandidateOpen = false
+            this.endOwnerTracePhase(78u32, submitSpan, request: candidate.preparationId)
         }
     }
 
@@ -6900,6 +9287,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 重做等）把框架焦点移到按钮后，用它把 IME 焦点还给 caret 所在的文字节点
     /// ——走同一正式 focus 路径（安装代理文本与 responder），不是私自改状态。
     public func focusAcceptedNodeById(nodeId: Int64): Bool {
+        let phaseStarted = this.ownerPhaseStarted()
+        try {
         pendingSemanticFocusNode = None
         if (!isWindowOpen || nodeId < 0) {
             lastNativeFailure = "focus_request_invalid"
@@ -6910,6 +9299,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             lastNativeFailure = "focus_target_missing"
             return false
         }
+        cancelPreparedCandidate("accepted_focus")
         if (revealAcceptedNodeIfNeeded(node.nodeId)) {
             pendingSemanticFocusNode = Some(node)
             pendingSemanticFocusAttempts = cjguiFocusNextAttemptCount(pendingSemanticFocusAttempts, false)
@@ -6920,6 +9310,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return true
         }
         return focusProjectedNode(node.nodeId)
+        } finally {
+            this.traceOwnerPhase("focus_accepted", phaseStarted)
+        }
     }
 
     public func focusAcceptedSemanticNode(semanticId: String): Bool {
@@ -7553,9 +9946,226 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             focusNativeTestIndex += 1
             return status
         }
-        return internalRendererFocusComposableNode(sessionToken, nodeId)
+        let node = nativeInputScene.nodeForId(nodeId)
+        let sourceOwned = internalRendererSourceRangeSupported() && textRangeEditDeltaDeliveryEnabled &&
+            nodeId == ownedTextSessionNodeId && node.resourceId == ownedTextSessionResourceId &&
+            node.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+        if (!sourceOwned) { return internalRendererFocusComposableNode(sessionToken, nodeId) }
+        let session = match (ownedTextSession) { case Some(s) => s; case None => return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND }
+        // 跨选择 source-handoff 仍是 macOS-only 能力；Windows 走直接安装路径。
+        if (presentationTextSessionNodeId >= 0 && internalRendererInstalledRangeSupported()) {
+            if (pendingSourceHandoffBasis.isNone() && !this.preparePendingSourceHandoff()) {
+                return CJGUI_INTERNAL_RENDERER_SCENE_STALE
+            }
+            let status = internalRendererFocusComposableNode(sessionToken, nodeId)
+            if (status != CJGUI_INTERNAL_RENDERER_OK) { return status }
+            this.finishPendingSourceHandoffIfAllowed(activationPrefixPending())
+            // The native focus itself succeeded; a paired action or missing
+            // actual receipt keeps the source input gate closed for now.
+            return status
+        }
+        installedRangeNonceSequence += 1u64
+        let basis = match (session.freezeInstalledRangeBasis(installedRangeNonceSequence,
+                UInt64(instanceToken), textSessionBindingEpoch)) {
+            case Some(b) => b
+            case None => return CJGUI_INTERNAL_RENDERER_SCENE_STALE
+        }
+        if (basis.text != node.value || internalRendererArmInstalledRange(sessionToken, basis,
+            UInt64(nativeInputScene.version), UInt64(nodeId), node.resourceId) != CJGUI_INTERNAL_RENDERER_OK) {
+            return CJGUI_INTERNAL_RENDERER_SCENE_STALE
+        }
+        let status = internalRendererFocusComposableNode(sessionToken, nodeId)
+        if (status != CJGUI_INTERNAL_RENDERER_OK ||
+            !this.finishInstalledRangeBasis(session, basis, nativeInputScene.version, nodeId, node.resourceId)) {
+            internalRendererCancelInstalledRange(sessionToken, basis.nonce)
+            return if (status != CJGUI_INTERNAL_RENDERER_OK) { status } else { CJGUI_INTERNAL_RENDERER_SCENE_STALE }
+        }
+        return status
     }
-    private func recordProjectedFocus(node: CjguiComposableUiLayoutNode, rememberBookmark!: Bool = true): Unit {
+    private func registerInstalledRangeForNativeFocus(node: CjguiComposableUiLayoutNode,
+        acceptedSourceSelection!: Bool = false, selectionStart16!: Int64 = -1,
+        selectionEnd16!: Int64 = -1): Unit {
+        if (!internalRendererSourceRangeSupported() || !textRangeEditDeltaDeliveryEnabled ||
+            node.nodeId != ownedTextSessionNodeId ||
+            node.resourceId != ownedTextSessionResourceId ||
+            node.nodeKind != CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) { return }
+        let session = match (ownedTextSession) { case Some(s) => s; case None => return }
+        // 跨选择 source-handoff 仍是 macOS-only 能力；Windows 走直接安装路径。
+        if (presentationTextSessionNodeId >= 0 && internalRendererInstalledRangeSupported()) {
+            // The candidate is normally armed when the presentation declaration
+            // is published, before native can move the proxy to this source.
+            // A late registration may prepare only; without its actual receipt
+            // this path never certifies an already-installed adapter by equality.
+            if (pendingSourceHandoffBasis.isNone()) { this.preparePendingSourceHandoff() }
+            if (acceptedSourceSelection) {
+                if (let Some(basis) <- pendingSourceHandoffBasis) {
+                    if (selectionStart16 < 0 || selectionEnd16 < selectionStart16 ||
+                        selectionEnd16 > 4294967295 ||
+                        internalRendererConfirmSourceHandoffSelection(sessionToken, basis.nonce,
+                            UInt32(selectionStart16), UInt32(selectionEnd16)) != CJGUI_INTERNAL_RENDERER_OK ||
+                        !session.refreshInstalledRangeHandoffSelectionTicket(basis)) {
+                        this.clearPendingSourceHandoff()
+                        return
+                    }
+                    pendingSourceHandoffSelectionConfirmed = true
+                }
+            }
+            this.finishPendingSourceHandoffIfAllowed(activationPrefixPending())
+            return
+        }
+        // A live prefix belongs to its actual adapter and must not be reset by
+        // selection callbacks. New source installation remains on the existing
+        // restoration path; this only closes the first native-focus connection.
+        if (installedRangeSessionGeneration != 0u64 && session.installedRangeExpectedVersion() >= 0) { return }
+        let status = this.focusNativeStatus(node.nodeId)
+        if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            lastNativeStatus = status
+            lastNativeFailure = "installed_range_native_focus_unconfirmed"
+        }
+    }
+
+    private func clearPendingSourceHandoff(): Unit {
+        if (let Some(basis) <- pendingSourceHandoffBasis) {
+            let _ = internalRendererCancelSourceHandoff(sessionToken, basis.nonce)
+            if (let Some(session) <- ownedTextSession) {
+                session.rollbackStagedInstalledRangeBasis(basis.nonce)
+            }
+        }
+        pendingSourceHandoffBasis = None
+        pendingSourceHandoffScene = -1
+        pendingSourceHandoffExpectedBinding = 0u64
+        pendingSourceHandoffExpectedNode = -1
+        pendingSourceHandoffExpectedResource = -1
+        pendingSourceHandoffSelectionConfirmed = false
+    }
+
+    private func preparePendingSourceHandoff(): Bool {
+        if (!isWindowOpen || !internalRendererInstalledRangeSupported() || !textRangeEditDeltaDeliveryEnabled ||
+            presentationTextSessionNodeId < 0 || presentationTextSessionResourceId < 0 ||
+            ownedTextSessionNodeId < 0 || ownedTextSessionNodeKind != CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT ||
+            textSessionBindingEpoch == 0xffffffffffffffffu64) { return false }
+        let session = match (ownedTextSession) { case Some(s) => s; case None => return false }
+        if (!session.isBound() || session.hasComposition() || pendingSelectionRestore.isSome()) { return false }
+        let source = nativeInputScene.nodeForId(ownedTextSessionNodeId)
+        let preview = nativeInputScene.nodeForId(presentationTextSessionNodeId)
+        if (source.nodeId != ownedTextSessionNodeId || source.resourceId != ownedTextSessionResourceId ||
+            source.nodeKind != CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT ||
+            preview.nodeId != presentationTextSessionNodeId ||
+            preview.resourceId != presentationTextSessionResourceId || preview.nodeKind != CJGUI_COMPOSABLE_UI_TEXT ||
+            nativeInputScene.version < 0) { return false }
+        if (let Some(existing) <- pendingSourceHandoffBasis) {
+            if (existing.binding == textSessionBindingEpoch + 1u64 &&
+                pendingSourceHandoffScene == nativeInputScene.version &&
+                pendingSourceHandoffExpectedBinding == textSessionBindingEpoch &&
+                pendingSourceHandoffExpectedNode == presentationTextSessionNodeId &&
+                pendingSourceHandoffExpectedResource == presentationTextSessionResourceId &&
+                session.installedRangeHandoffBasisCurrent(existing)) { return true }
+            this.clearPendingSourceHandoff()
+        }
+        if (installedRangeNonceSequence == 0xffffffffffffffffu64) { return false }
+        installedRangeNonceSequence += 1u64
+        let futureBinding = textSessionBindingEpoch + 1u64
+        let basis = match (session.freezeInstalledRangeHandoffBasis(installedRangeNonceSequence,
+            UInt64(instanceToken), futureBinding)) {
+            case Some(value) => value
+            case None => return false
+        }
+        if (basis.text != source.value || internalRendererArmSourceHandoff(sessionToken, basis,
+            UInt64(nativeInputScene.version), UInt64(ownedTextSessionNodeId), ownedTextSessionResourceId,
+            textSessionBindingEpoch, UInt64(presentationTextSessionNodeId), presentationTextSessionResourceId,
+            UInt32(CJGUI_COMPOSABLE_UI_TEXT)) != CJGUI_INTERNAL_RENDERER_OK) {
+            session.rollbackStagedInstalledRangeBasis(basis.nonce)
+            return false
+        }
+        pendingSourceHandoffSelectionConfirmed = false
+        pendingSourceHandoffBasis = Some(basis)
+        pendingSourceHandoffScene = nativeInputScene.version
+        pendingSourceHandoffExpectedBinding = textSessionBindingEpoch
+        pendingSourceHandoffExpectedNode = presentationTextSessionNodeId
+        pendingSourceHandoffExpectedResource = presentationTextSessionResourceId
+        return true
+    }
+
+    // Called once after the FIFO drain and pair-prefix settlement. It never
+    // manufactures a receipt: only the candidate captured by native at the
+    // actual source proxy installation can cross this boundary.
+    private func finishPendingSourceHandoffIfAllowed(pairPrefixPending: Bool): Unit {
+        if (pairPrefixPending) { return }
+        let basis = match (pendingSourceHandoffBasis) { case Some(value) => value; case None => return }
+        // A focus-only event can install a proxy receipt before the same click's
+        // accepted selection event is dispatched. Do not activate against that
+        // earlier caret revision; kind 33 confirms the readback and owner ticket.
+        if (!pendingSourceHandoffSelectionConfirmed) { return }
+        let session = match (ownedTextSession) { case Some(s) => s; case None => return }
+        if (!isWindowOpen || session.hasComposition() || pendingSelectionRestore.isSome() ||
+            textSessionBindingEpoch != pendingSourceHandoffExpectedBinding ||
+            presentationTextSessionNodeId != pendingSourceHandoffExpectedNode ||
+            presentationTextSessionResourceId != pendingSourceHandoffExpectedResource ||
+            nativeInputScene.version != pendingSourceHandoffScene) {
+            this.clearPendingSourceHandoff()
+            return
+        }
+        let source = nativeInputScene.nodeForId(ownedTextSessionNodeId)
+        if (source.nodeId != ownedTextSessionNodeId || source.resourceId != ownedTextSessionResourceId ||
+            source.nodeKind != CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT || source.value != basis.text) {
+            this.clearPendingSourceHandoff()
+            return
+        }
+        let receipt = match (internalRendererInstalledRangeReceipt(sessionToken, basis.nonce)) {
+            case Some(value) => value
+            case None => return
+        }
+        if (receipt.nonce != basis.nonce || receipt.rendererSessionGeneration == 0u64 ||
+            receipt.windowInstanceToken != basis.document || receipt.bindingEpoch != basis.binding ||
+            receipt.contextEpoch != UInt64(basis.context) || receipt.mirrorRevision != UInt64(basis.mirror) ||
+            receipt.ownerVersion != basis.ownerVersion || receipt.installedSceneVersion != UInt64(pendingSourceHandoffScene) ||
+            receipt.nodeId != UInt64(ownedTextSessionNodeId) || receipt.resourceId != ownedTextSessionResourceId ||
+            receipt.sourceStartByte != UInt64(basis.sourceStart) || receipt.sourceEndByte != UInt64(basis.sourceEnd) ||
+            receipt.proxyGeneration == 0u64 || !session.stageInstalledRangeBasis(basis, receipt.proxyGeneration)) {
+            this.clearPendingSourceHandoff()
+            return
+        }
+        let activated = internalRendererActivateSourceHandoff(sessionToken, basis.nonce,
+            receipt.proxyGeneration, receipt.selectionRevision)
+        if (activated != CJGUI_INTERNAL_RENDERER_OK || !session.commitStagedInstalledRangeBasis(basis.nonce)) {
+            let _ = internalRendererCancelSourceHandoff(sessionToken, basis.nonce)
+            session.rollbackStagedInstalledRangeBasis(basis.nonce)
+            this.clearPendingSourceHandoff()
+            return
+        }
+        let oldBinding = textSessionBindingEpoch
+        let oldPreviewNode = presentationTextSessionNodeId
+        let oldPreviewResource = presentationTextSessionResourceId
+        let oldPreviewScene = presentationTextSessionSceneVersion
+        textSessionBindingEpoch = basis.binding
+        presentationTextSessionNodeId = -1
+        presentationTextSessionResourceId = -1
+        presentationTextSessionSceneVersion = -1
+        let declared = this.declareOwnedTextSession()
+        let finished = if (declared == CJGUI_INTERNAL_RENDERER_OK) {
+            internalRendererFinishSourceHandoff(sessionToken, basis.nonce)
+        } else { declared }
+        if (finished != CJGUI_INTERNAL_RENDERER_OK || !session.finishStagedInstalledRangeBasis(basis.nonce)) {
+            textSessionBindingEpoch = oldBinding
+            presentationTextSessionNodeId = oldPreviewNode
+            presentationTextSessionResourceId = oldPreviewResource
+            presentationTextSessionSceneVersion = oldPreviewScene
+            let _ = internalRendererCancelSourceHandoff(sessionToken, basis.nonce)
+            session.rollbackStagedInstalledRangeBasis(basis.nonce)
+            this.declareOwnedTextSession()
+            this.clearPendingSourceHandoff()
+            return
+        }
+        installedRangeSessionGeneration = receipt.rendererSessionGeneration
+        pendingSourceHandoffBasis = None
+        pendingSourceHandoffScene = -1
+        pendingSourceHandoffExpectedBinding = 0u64
+        pendingSourceHandoffExpectedNode = -1
+        pendingSourceHandoffExpectedResource = -1
+        pendingSourceHandoffSelectionConfirmed = false
+    }
+    private func recordProjectedFocus(node: CjguiComposableUiLayoutNode, rememberBookmark!: Bool = true,
+        installedRange!: ?(Int64, Int64) = None): Unit {
         let changed = focusedNodeId != node.nodeId || focusedResourceId != node.resourceId || focusedNodeKind != node
             .nodeKind
         focusedNodeId = node.nodeId
@@ -7570,8 +10180,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             } else {
                 0
             }
-            focusedSelectionStart = caret
-            focusedSelectionEnd = caret
+            if (let Some(range) <- installedRange) {
+                focusedSelectionStart = range[0]
+                focusedSelectionEnd = range[1]
+            } else {
+                focusedSelectionStart = caret
+                focusedSelectionEnd = caret
+            }
             interactionVersion += 1
             // R3（h-source-preview-followup 2026-10-02）：程序化聚焦（语义定位/
             // 层初始焦点/Tab 导航）不回发原生 FOCUS 事件，控制器因此看不到
@@ -8401,7 +11016,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             pendingLocalTextOwnerRevision, candidateBusinessOwnerRevision) &&
             cjguiSameFocusedTextBinding(
             nativeInputScene.nodeForId(node.nodeId), node, focusedNodeId, focusedResourceId, focusedNodeKind)
-        let preservesActiveLocalText = preservesRecentLocalText || preservesOwnerStableText
+        let preservesActiveLocalText = this.mayPreserveActiveLocalText(node,
+            preservesRecentLocalText, preservesOwnerStableText)
         if (!preservesActiveLocalText) {
             this.noteOwnedCompositionExternalDisruption(node, nativeInputScene)
             this.armOwnedCompositionReanchor(node, nativeInputScene)
@@ -8670,9 +11286,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// change cannot call buildUi, layout or text measurement and does not
     /// advance the controller's UI revision.
     private func refreshInteractionPaintIfNeeded(): Bool {
+        if (this.closeStopsNewOwnerWork()) { return false }
+        if (activationPrefixPending()) { deferredInteractionPaint = true; return false }
         if (!isWindowOpen || nativeInputScene.version <= 0) {
             return true
         }
+        cancelPreparedCandidate("interaction_paint")
         // A1 前置结算门：有未决票据时不提交交互投影，否则会与在途候选争用
         // native 的唯一未确认槽，让原候选被裁决两次。
         if (settlePendingPresent()) {
@@ -8851,6 +11470,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         renderedScene = paintScene
         publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
+        if (macSliderCapture.isSome()) { certifyMacSliderCaptureAfterProjection() }
         // Interaction-only paints also advance the accepted input projection.
         // A captured divider must certify this boundary, including diagnostic
         // overlay redraws, before a later queued move can cross it.
@@ -9124,10 +11744,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return left.x == right.x && left.y == right.y && left.width == right.width && left.height == right.height
     }
     private func result(open: Bool, didApply: Bool): CjguiComposableUiWindowPumpResult {
-        if (open) {
-            // Owner identity may advance while every scene byte stays equal.
-            // Such a mirror still needs an identified native installation.
-            this.restoreOwnedTextSelectionAfterAcceptedScene(installNow: false)
+        if (open && !this.closeStopsNewOwnerWork()) {
+            // Automatic restore checks compare against the accepted body.
+            // Let this paced candidate reach acceptance before signing another
+            // automatic request against its still-old projection. Existing
+            // tickets retain their original identity and continue pumping.
+            let deferAutomaticRestore = ownerTurnBudget.isSome() &&
+                (preparingCandidate.isSome() || staticLayoutPreparation.isSome())
+            if (!deferAutomaticRestore) {
+                this.restoreOwnedTextSelectionAfterAcceptedScene(installNow: false)
+            }
             this.pumpPendingSelectionRestore()
         }
         return CjguiComposableUiWindowPumpResult(open, didApply, lastNativeStatus, renderedScene.version)
@@ -10171,6 +12797,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return controller.uiSceneVersion()
     }
     private func clearPointerCapture(): Unit {
+        if (let Some(slider) <- macSliderCapture) { slider.base.revoke("capture_ended") }
+        macSliderCapture = None
+        macTextCapture = None
         pointerCaptureNode = CjguiComposableUiLayoutNode.missing()
         pointerCaptureOwnerVersion = -1
         pointerCaptureModalLayerId = ""
@@ -10246,6 +12875,338 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return version >= pointerCaptureSplitStartVersion &&
             version <= pointerCaptureSplitContinuousVersion
     }
+    private func traceMacTextCapture(phase: String, facts: CjguiMacTextCaptureFacts,
+        eventScene!: Int64 = -1): Unit {
+        let enabled = match (getVariable("CJGUI_TRACE_IME_PUMP")) {
+            case Some(value) => value == "1"
+            case None => false
+        }
+        if (!enabled) { return }
+        println("CJGUI_MAC_TEXT_CAPTURE phase=${phase} serial=${facts.serial} " +
+            "node=${facts.node.nodeId} resource=${facts.node.resourceId} " +
+            "gesture=${facts.gestureEpoch} binding=${facts.bindingEpoch} owner=${facts.ownerRevision} " +
+            "session=${facts.nativeSession} generation=${facts.nativeGeneration} coordinate=${facts.coordinateGeneration} " +
+            "event_scene=${eventScene} begin_scene=${facts.acceptedScenes[0]} " +
+            "certified_scene=${facts.acceptedScenes[facts.acceptedScenes.size - 1]} " +
+            "accepted_scene=${nativeInputScene.version} reason=${facts.revokedReason}")
+    }
+    private func isMacTextCaptureTarget(event: InternalRendererPumpResult,
+        node: CjguiComposableUiLayoutNode): Bool {
+        return event.gestureEpoch == 0u64 && node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT &&
+            node.style.pointerInteractive && (controller as CjguiComposableUiPointerCaptureVersionProvider).isSome()
+    }
+    private func freezeMacTextCapture(event: InternalRendererPumpResult,
+        node: CjguiComposableUiLayoutNode): ?CjguiMacTextCaptureFacts {
+        if (!isWindowOpen || event.bindingEpoch == 0u64 || !event.pointerGeometryAccepted ||
+            node.value.size > 65536 || node.textStyleRuns.size > 2048 || macTextCaptureSerial == UInt64.Max) {
+            return None
+        }
+        let (generation, coordinate) = internalRendererCoordinateLifetime(sessionToken)
+        let (originGeneration, originCoordinate) = consumedMacTextPointerCoordinate()
+        let owner = pointerCaptureVersionFor(node)
+        let binding = currentAcceptedBindingEpoch(node)
+        if (generation == 0u64 || coordinate == 0u64 || originGeneration != generation ||
+            originCoordinate != coordinate || owner < 0 || binding == 0u64 ||
+            cjguiSelectionBackgroundRunsRejection(node.value, node.textStyleRuns).isSome()) { return None }
+        let geometry = match (nativeInputScene.visualGeometryForId(node.nodeId)) {
+            case Some(value) => value
+            case None => return None
+        }
+        let clips = node.clipConstraints()
+        if (clips.size != geometry.clipCount() || clips.size > 4) {
+            return None
+        }
+        let clipOwners = ArrayList<CjguiComposableUiLayoutNode>()
+        let clipEpochs = ArrayList<UInt64>()
+        var clipIndex: Int64 = 0
+        for (clip in clips) {
+            // The layout engine's first constraint is the window viewport;
+            // it has no node owner. Other anonymous constraints are unknown.
+            if (clip.ownerIdentity.size == 0) {
+                if (clipIndex != 0 || clip.cornerRadius != 0 ||
+                    !sameRect(clip.rect, nativeInputScene.viewport) ||
+                    geometry.clipTranslateX(clipIndex) != 0.0 ||
+                    geometry.clipTranslateY(clipIndex) != 0.0) { return None }
+                clipOwners.add(CjguiComposableUiLayoutNode.missing())
+                clipEpochs.add(0u64)
+                clipIndex += 1
+                continue
+            }
+            var ownerNode = CjguiComposableUiLayoutNode.missing()
+            for (candidate in nativeInputScene.nodes()) {
+                if (candidate.identityKey == clip.ownerIdentity) { ownerNode = candidate; break }
+            }
+            let ownerEpoch = currentAcceptedBindingEpoch(ownerNode)
+            if (ownerNode.nodeId < 0 || ownerEpoch == 0u64) { return None }
+            clipOwners.add(ownerNode)
+            clipEpochs.add(ownerEpoch)
+            clipIndex += 1
+        }
+        macTextCaptureSerial += 1u64
+        return Some(CjguiMacTextCaptureFacts(macTextCaptureSerial, node, geometry,
+            nativeInputScene.viewport, owner, binding, event.bindingEpoch,
+            sessionToken, generation, coordinate, activeModalLayerId, clipOwners, clipEpochs,
+            nativeInputScene.version))
+    }
+    private func sameMacTextCaptureRuns(left: Array<CjguiComposableUiTextStyleRun>,
+        right: Array<CjguiComposableUiTextStyleRun>): Bool {
+        var leftIndex: Int64 = 0
+        var rightIndex: Int64 = 0
+        while (leftIndex < left.size || rightIndex < right.size) {
+            while (leftIndex < left.size && left[leftIndex].isSelectionBackground()) { leftIndex += 1 }
+            while (rightIndex < right.size && right[rightIndex].isSelectionBackground()) { rightIndex += 1 }
+            if (leftIndex == left.size || rightIndex == right.size) {
+                return leftIndex == left.size && rightIndex == right.size
+            }
+            let a = left[leftIndex]
+            let b = right[rightIndex]
+            // Exact accepted scalars, not rounded wire strings or a hash.
+            if (a.start != b.start || a.end != b.end || a.fontSize != b.fontSize ||
+                a.fontWeight != b.fontWeight || a.fontFamily != b.fontFamily ||
+                a.red != b.red || a.green != b.green || a.blue != b.blue || a.alpha != b.alpha ||
+                a.hasBackground != b.hasBackground || a.backgroundRed != b.backgroundRed ||
+                a.backgroundGreen != b.backgroundGreen || a.backgroundBlue != b.backgroundBlue ||
+                a.backgroundAlpha != b.backgroundAlpha) { return false }
+            leftIndex += 1
+            rightIndex += 1
+        }
+        return true
+    }
+    private func consumedMacTextPointerCoordinate(): (UInt64, UInt64) {
+        return if (macTextTestCoordinateActive) { (macTextTestGeneration, macTextTestCoordinate) }
+            else { internalRendererConsumedPointerCoordinateLifetime(sessionToken) }
+    }
+    private func macTextCaptureMismatch(facts: CjguiMacTextCaptureFacts, compareContent!: Bool = true): String {
+        if (facts.revokedReason.size > 0) { return facts.revokedReason }
+        if (!isWindowOpen || sessionToken != facts.nativeSession) { return "window_lifetime" }
+        let (generation, coordinate) = internalRendererCoordinateLifetime(sessionToken)
+        if (generation == 0u64 || generation != facts.nativeGeneration ||
+            coordinate == 0u64 || coordinate != facts.coordinateGeneration) { return "coordinate_lifetime" }
+        let current = nativeInputScene.nodeForId(facts.node.nodeId)
+        let old = facts.node
+        if (pointerCaptureVersionFor(current) != facts.ownerRevision) { return "owner_or_source_binding" }
+        if (activeModalLayerId != facts.modalLayer) { return "modal_binding" }
+        if (current.nodeId != old.nodeId || current.nodeKind != old.nodeKind ||
+            current.resourceId != old.resourceId || current.identityKey != old.identityKey ||
+            current.semanticId != old.semanticId || current.semanticIncarnation != old.semanticIncarnation ||
+            current.actionName != old.actionName || current.fieldId != old.fieldId ||
+            current.operationActionName != old.operationActionName || current.operationResourceId != old.operationResourceId ||
+            current.semanticKey != old.semanticKey || current.semanticParentKey != old.semanticParentKey ||
+            current.semanticRole != old.semanticRole || current.inputScopeId != old.inputScopeId ||
+            current.layerId != old.layerId || current.layerKind != old.layerKind ||
+            current.isEnabled != old.isEnabled || current.isReadOnly != old.isReadOnly ||
+            !isPointerCapturable(current) || currentAcceptedBindingEpoch(current) != facts.bindingEpoch) {
+            return "target_binding"
+        }
+        if (cjguiSelectionBackgroundRunsRejection(current.value, current.textStyleRuns).isSome()) {
+            return "selection_background_invalid"
+        }
+        if ((compareContent && current.value != old.value) || !sameStyle(current.style, facts.style) ||
+            !sameStyle(current.declaredStyle, facts.declaredStyle) ||
+            !sameMacTextCaptureRuns(facts.runs, current.textStyleRuns)) { return "text_or_style" }
+        if (!sameRect(current.bounds, old.bounds) || !sameRect(current.clip, old.clip) ||
+            !sameRect(nativeInputScene.viewport, facts.viewport)) { return "layout_bounds" }
+        let geometry = match (nativeInputScene.visualGeometryForId(current.nodeId)) {
+            case Some(value) => value
+            case None => return "missing_geometry"
+        }
+        if (geometry.translateX != facts.geometry.translateX ||
+            geometry.translateY != facts.geometry.translateY) { return "fractional_translation" }
+        let clips = current.clipConstraints()
+        let originalClips = old.clipConstraints()
+        if (clips.size != originalClips.size || clips.size != facts.clipOwners.size ||
+            clips.size != geometry.clipCount() || clips.size != facts.geometry.clipCount()) { return "clip_count" }
+        var index: Int64 = 0
+        while (index < clips.size) {
+            let a = clips[index]
+            let b = originalClips[index]
+            if (a.ownerIdentity != b.ownerIdentity || a.cornerRadius != b.cornerRadius ||
+                !sameRect(a.rect, b.rect) || geometry.clipTranslateX(index) != facts.geometry.clipTranslateX(index) ||
+                geometry.clipTranslateY(index) != facts.geometry.clipTranslateY(index)) {
+                return "clip_binding_or_geometry"
+            }
+            if (a.ownerIdentity.size == 0) {
+                if (index != 0 || a.cornerRadius != 0 || !sameRect(a.rect, facts.viewport) ||
+                    facts.clipOwners[index].nodeId >= 0 || facts.clipEpochs[index] != 0u64) {
+                    return "anonymous_clip"
+                }
+                index += 1
+                continue
+            }
+            let owner = nativeInputScene.nodeForId(facts.clipOwners[index].nodeId)
+            if (owner.identityKey != facts.clipOwners[index].identityKey ||
+                owner.semanticIncarnation != facts.clipOwners[index].semanticIncarnation ||
+                currentAcceptedBindingEpoch(owner) != facts.clipEpochs[index]) { return "clip_binding_or_geometry" }
+            index += 1
+        }
+        return ""
+    }
+    private func certifyMacTextCaptureAfterProjection(): Unit {
+        if (let Some(facts) <- macTextCapture) {
+            let reason = macTextCaptureMismatch(facts)
+            if (reason.size > 0) { facts.revoke(reason) }
+            if (facts.revokedReason.size == 0) { let _ = facts.certify(nativeInputScene.version) }
+            traceMacTextCapture("accepted", facts)
+            if (facts.revokedReason.size > 0 && pointerCaptureActive) {
+                let cancellation = cancelPointerCapture()
+                if (cancellation.didApply && isWindowOpen) { requestRefresh() }
+            }
+        }
+    }
+    private func legacyMacTextCaptureAllowsVersion(event: InternalRendererPumpResult): Bool {
+        if (!pointerCaptureActive || event.gestureEpoch != 0u64) { return false }
+        if (let Some(facts) <- macTextCapture) {
+            let reason = macTextCaptureMismatch(facts)
+            if (reason.size > 0) { facts.revoke(reason) }
+            let (originGeneration, originCoordinate) = consumedMacTextPointerCoordinate()
+            if (originGeneration != facts.nativeGeneration || originCoordinate != facts.coordinateGeneration) {
+                facts.revoke("queued_coordinate_lifetime")
+            }
+            let admitted = facts.revokedReason.size == 0 && event.bindingEpoch == facts.gestureEpoch &&
+                event.bindingEpoch == pointerCaptureGestureEpoch && event.nodeId == UInt64(facts.node.nodeId) &&
+                event.resourceId == facts.node.resourceId && Int64(event.nodeKind) == facts.node.nodeKind &&
+                event.pointerGeometryAccepted && event.pointerTranslateX == facts.geometry.translateX &&
+                event.pointerTranslateY == facts.geometry.translateY &&
+                CjguiComposableUiEffectValidation.isFinite(event.pointerVisualX) &&
+                CjguiComposableUiEffectValidation.isFinite(event.pointerVisualY) &&
+                facts.containsScene(Int64(event.projectionVersion)) &&
+                facts.containsScene(nativeInputScene.version)
+            traceMacTextCapture(if (admitted) { "admit" } else { "refuse" }, facts,
+                eventScene: Int64(event.projectionVersion))
+            return admitted
+        }
+        return false
+    }
+    private func consumedMacSliderFifo(): CjguiMacSliderPointerFifo {
+        return match (macSliderTestFifo) {
+            case Some(value) => value
+            case None => internalRendererConsumedPointerFifo(sessionToken)
+        }
+    }
+    private func currentSliderMapping(node: CjguiComposableUiLayoutNode): ?CjguiComposableUiSliderCaptureMapping {
+        if (let Some(provider) <- (controller as CjguiComposableUiSliderCaptureProvider)) {
+            return provider.sliderCaptureMapping(node)
+        }
+        return None
+    }
+    private func isMacSliderCaptureTarget(event: InternalRendererPumpResult,
+        node: CjguiComposableUiLayoutNode): Bool {
+        return event.gestureEpoch == 0u64 && node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER &&
+            (controller as CjguiComposableUiPointerCaptureVersionProvider).isSome() &&
+            (controller as CjguiComposableUiSliderCaptureProvider).isSome()
+    }
+    private func freezeMacSliderCapture(event: InternalRendererPumpResult,
+        node: CjguiComposableUiLayoutNode): ?CjguiMacSliderCaptureFacts {
+        let base = match (freezeMacTextCapture(event, node)) {
+            case Some(value) => value
+            case None => return None
+        }
+        let fifo = consumedMacSliderFifo()
+        if (!fifo.follows(0u64, base.nativeGeneration, event.bindingEpoch, event.eventKind) ||
+            fifo.last != 1u64) { return None }
+        let mapping = match (currentSliderMapping(node)) {
+            case Some(value) => value
+            case None => return None
+        }
+        if (!mapping.valid(node) || node.value != mapping.value.toString()) { return None }
+        let position = if (mapping.isVertical) {
+            event.pointerVisualY - base.geometry.translateY
+        } else { event.pointerVisualX - base.geometry.translateX }
+        return Some(CjguiMacSliderCaptureFacts(base, mapping, position))
+    }
+    private func macSliderCaptureMismatch(facts: CjguiMacSliderCaptureFacts): String {
+        let reason = macTextCaptureMismatch(facts.base, compareContent: false)
+        if (reason.size > 0) { return reason }
+        let node = nativeInputScene.nodeForId(facts.base.node.nodeId)
+        if (node.pointerControlMinimum != facts.minimum || node.pointerControlMaximum != facts.maximum ||
+            node.pointerControlStep != facts.step || node.pointerControlAxis != facts.axis ||
+            node.pointerControlHandleThickness != facts.handle || node.pointerControlRole != facts.role) {
+            return "slider_transfer_declaration"
+        }
+        let mapping = match (currentSliderMapping(node)) {
+            case Some(value) => value
+            case None => return "slider_mapping_missing"
+        }
+        if (!mapping.valid(node) || !facts.mapping.sameTransfer(mapping)) { return "slider_mapping_changed" }
+        return ""
+    }
+    private func traceMacSliderCapture(phase: String, facts: CjguiMacSliderCaptureFacts,
+        eventScene!: Int64 = -1): Unit {
+        if ((getVariable("CJGUI_TRACE_IME_PUMP") ?? "") != "1") { return }
+        println("CJGUI_MAC_SLIDER_CAPTURE phase=${phase} serial=${facts.base.serial} " +
+            "node=${facts.base.node.nodeId} resource=${facts.base.node.resourceId} " +
+            "gesture=${facts.base.gestureEpoch} owner=${facts.base.ownerRevision} mapping=${facts.mapping.revision} " +
+            "event_scene=${eventScene} origin_scene=${facts.base.acceptedScenes[0]} " +
+            "certified_scene=${facts.base.acceptedScenes[facts.base.acceptedScenes.size - 1]} " +
+            "accepted_scene=${nativeInputScene.version} fifo=${facts.fifoCursor} output=${facts.outputGeneration} " +
+            "reason=${facts.base.revokedReason}")
+    }
+    private func certifyMacSliderCaptureAfterProjection(): Unit {
+        if (let Some(facts) <- macSliderCapture) {
+            var reason = macSliderCaptureMismatch(facts)
+            if (reason.size == 0) {
+                let node = nativeInputScene.nodeForId(facts.base.node.nodeId)
+                let mapping = currentSliderMapping(node).getOrThrow()
+                if (node.value != mapping.value.toString() ||
+                    !facts.latestReceiptMatches(mapping.outputReceipt, mapping.value)) {
+                    reason = "slider_output_provenance"
+                }
+            }
+            if (reason.size > 0) { facts.base.revoke(reason) }
+            if (facts.base.revokedReason.size == 0) { let _ = facts.base.certify(nativeInputScene.version) }
+            traceMacSliderCapture("accepted", facts)
+            if (facts.base.revokedReason.size > 0 && pointerCaptureActive) {
+                let cancellation = cancelPointerCapture()
+                if (cancellation.didApply && isWindowOpen) { requestRefresh() }
+            }
+        }
+    }
+    private func legacyMacSliderCaptureAllowsVersion(event: InternalRendererPumpResult): Bool {
+        if (!pointerCaptureActive || event.gestureEpoch != 0u64) { return false }
+        if (let Some(facts) <- macSliderCapture) {
+            let reason = macSliderCaptureMismatch(facts)
+            if (reason.size > 0) { facts.base.revoke(reason) }
+            let (generation, coordinate) = consumedMacTextPointerCoordinate()
+            let fifo = consumedMacSliderFifo()
+            if (generation != facts.base.nativeGeneration || coordinate != facts.base.coordinateGeneration ||
+                !fifo.follows(facts.fifoCursor, facts.base.nativeGeneration, facts.base.gestureEpoch, event.eventKind)) {
+                facts.base.revoke("slider_input_origin_or_fifo")
+            }
+            let admitted = facts.base.revokedReason.size == 0 && event.bindingEpoch == facts.base.gestureEpoch &&
+                event.nodeId == UInt64(facts.base.node.nodeId) && event.resourceId == facts.base.node.resourceId &&
+                Int64(event.nodeKind) == facts.base.node.nodeKind && event.pointerGeometryAccepted &&
+                event.pointerTranslateX == facts.base.geometry.translateX &&
+                event.pointerTranslateY == facts.base.geometry.translateY &&
+                CjguiComposableUiEffectValidation.isFinite(event.pointerVisualX) &&
+                CjguiComposableUiEffectValidation.isFinite(event.pointerVisualY) &&
+                facts.base.containsScene(Int64(event.projectionVersion)) &&
+                facts.base.containsScene(nativeInputScene.version)
+            traceMacSliderCapture(if (admitted) { "admit" } else { "refuse" }, facts,
+                eventScene: Int64(event.projectionVersion))
+            return admitted
+        }
+        return false
+    }
+    private func sliderIntentFor(event: InternalRendererPumpResult,
+        facts: CjguiMacSliderCaptureFacts): ?CjguiComposableUiSliderCaptureIntent {
+        if (facts.operationSerial == UInt64.Max || facts.base.revokedReason.size > 0) { return None }
+        facts.operationSerial += 1u64
+        let position = if (facts.mapping.isVertical) {
+            event.pointerVisualY - facts.base.geometry.translateY
+        } else { event.pointerVisualX - facts.base.geometry.translateX }
+        return Some(CjguiComposableUiSliderCaptureIntent(position, facts, facts.operationSerial,
+            { =>
+                let currentSerial = match (macSliderCapture) { case Some(value) => value.base.serial case None => 0u64 }
+                return currentSerial == facts.base.serial && isWindowOpen && macSliderCaptureMismatch(facts).size == 0
+            },
+            { =>
+                let node = nativeInputScene.nodeForId(facts.base.node.nodeId)
+                return match (currentSliderMapping(node)) {
+                    case Some(mapping) => if (mapping.valid(node)) { Some(mapping.value) } else { None }
+                    case None => None
+                }
+            }))
+    }
     private func rememberPointerCaptureGeometry(event: InternalRendererPumpResult): Unit {
         pointerCaptureVisualX = event.pointerVisualX
         pointerCaptureVisualY = event.pointerVisualY
@@ -10259,6 +13220,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return CjguiComposableUiDispatchResult(false)
         }
         let target = pointerCaptureNode
+        let notifyOwner = match (macSliderCapture) {
+            case Some(facts) => pointerCaptureVersionFor(nativeInputScene.nodeForId(target.nodeId)) == facts.base.ownerRevision
+            case None => true
+        }
         let x = pointerCaptureX
         let y = pointerCaptureY
         let visualX = pointerCaptureVisualX
@@ -10281,6 +13246,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
         }
         clearPointerCapture()
+        if (!notifyOwner) { return CjguiComposableUiDispatchResult(false) }
         return controller.applyUiEvent(
             CjguiComposableUiEvent(
                 target,
@@ -10455,6 +13421,24 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 rememberPointerCaptureGeometry(nativeEvent)
                 return CjguiComposableUiDispatchResult(true)
             }
+            let sliderTarget = isMacSliderCaptureTarget(nativeEvent, resolved)
+            let frozenSlider: ?CjguiMacSliderCaptureFacts = if (sliderTarget) {
+                freezeMacSliderCapture(nativeEvent, resolved)
+            } else { None }
+            if (sliderTarget && frozenSlider.isNone()) { return controller.rejectUiEvent(eventKind, nodeId) }
+            if (sliderTarget) { macSliderCapture = frozenSlider }
+            let beginSliderIntent: ?CjguiComposableUiSliderCaptureIntent = match (frozenSlider) {
+                case Some(facts) => sliderIntentFor(nativeEvent, facts)
+                case None => None
+            }
+            let macTarget = isMacTextCaptureTarget(nativeEvent, resolved)
+            let frozenMac: ?CjguiMacTextCaptureFacts = if (macTarget) {
+                freezeMacTextCapture(nativeEvent, resolved)
+            } else { None }
+            if (macTarget && frozenMac.isNone()) {
+                return controller.rejectUiEvent(eventKind, nodeId)
+            }
+            if (macTarget) { macTextCapture = frozenMac }
             let dispatch = controller.applyUiEvent(
                 CjguiComposableUiEvent(
                     resolved,
@@ -10470,9 +13454,49 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     pointerTranslateX: nativeEvent.pointerTranslateX,
                     pointerTranslateY: nativeEvent.pointerTranslateY,
                     pointerGeometryAccepted: nativeEvent.pointerGeometryAccepted,
-                    modifierFlags: Int64(nativeEvent.modifierFlags)
+                    modifierFlags: Int64(nativeEvent.modifierFlags),
+                    sliderCaptureIntent: beginSliderIntent
                 )
             )
+            if (macTarget) {
+                if (let Some(facts) <- frozenMac) {
+                    let currentSerial = match (macTextCapture) { case Some(value) => value.serial case None => 0u64 }
+                    if (facts.serial != currentSerial || !isWindowOpen) { return dispatch }
+                    let reason = macTextCaptureMismatch(facts)
+                    if (reason.size > 0) { facts.revoke(reason) }
+                    if (!dispatch.didApply || facts.revokedReason.size > 0) {
+                        traceMacTextCapture("begin_refused", facts, eventScene: Int64(nativeEvent.projectionVersion))
+                        macTextCapture = None
+                        if (dispatch.didApply) {
+                            let _ = internalRendererCancelComposablePointerCaptureEpoch(sessionToken, facts.gestureEpoch)
+                            let _ = controller.applyUiEvent(CjguiComposableUiEvent(resolved,
+                                CJGUI_COMPOSABLE_UI_EVENT_POINTER_CANCEL, "", 0, 0, nativeInputScene.version,
+                                pointerX: x, pointerY: y, pointerVisualX: nativeEvent.pointerVisualX,
+                                pointerVisualY: nativeEvent.pointerVisualY,
+                                pointerTranslateX: nativeEvent.pointerTranslateX,
+                                pointerTranslateY: nativeEvent.pointerTranslateY,
+                                pointerGeometryAccepted: nativeEvent.pointerGeometryAccepted))
+                        }
+                        return dispatch
+                    }
+                    traceMacTextCapture("begin", facts, eventScene: Int64(nativeEvent.projectionVersion))
+                }
+            }
+            if (let Some(facts) <- frozenSlider) {
+                let currentSerial = match (macSliderCapture) { case Some(value) => value.base.serial case None => 0u64 }
+                if (currentSerial != facts.base.serial || !isWindowOpen) { return dispatch }
+                let reason = macSliderCaptureMismatch(facts)
+                if (reason.size > 0) { facts.base.revoke(reason) }
+                if (!dispatch.didApply || facts.outputs.size != 1 || facts.base.revokedReason.size > 0) {
+                    facts.base.revoke("slider_begin_uncommitted")
+                    traceMacSliderCapture("begin_refused", facts, eventScene: Int64(nativeEvent.projectionVersion))
+                    let _ = internalRendererCancelComposablePointerCaptureEpoch(sessionToken, facts.base.gestureEpoch)
+                    macSliderCapture = None
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                facts.fifoCursor = consumedMacSliderFifo().last
+                traceMacSliderCapture("begin", facts, eventScene: Int64(nativeEvent.projectionVersion))
+            }
             if (dispatch.didApply) {
                 pointerCaptureNode = resolved
                 pointerCaptureOwnerVersion = pointerCaptureVersionFor(resolved)
@@ -10492,7 +13516,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             // 必有不同 epoch。不匹配视为过期终结忽略，不反调 native。
             if (pointerCaptureActive && pointerGestureMatches(nativeEvent) &&
                 (nativeEvent.gestureEpoch != 0u64 || Int64(nativeEvent.projectionVersion) == nativeInputScene.version ||
-                    legacySplitCaptureAllowsVersion(nativeEvent))) {
+                    legacySplitCaptureAllowsVersion(nativeEvent) || legacyMacTextCaptureAllowsVersion(nativeEvent) ||
+                    legacyMacSliderCaptureAllowsVersion(nativeEvent))) {
                 return cancelPointerCapture(notifyNative: false)
             }
             // 不匹配：过期终结，忽略；B 的捕获不变。
@@ -10506,12 +13531,19 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (!pointerGestureMatches(nativeEvent)) {
             return CjguiComposableUiDispatchResult(false)
         }
+        if (macTextCapture.isSome() && !legacyMacTextCaptureAllowsVersion(nativeEvent)) {
+            return cancelPointerCapture()
+        }
+        if (macSliderCapture.isSome() && !legacyMacSliderCaptureAllowsVersion(nativeEvent)) {
+            return cancelPointerCapture()
+        }
         if (nativeEvent.gestureEpoch == 0u64 && Int64(nativeEvent.projectionVersion) != nativeInputScene.version) {
             // A split move can be queued under the prior ACCEPTED projection
             // while this same drag's size is being redrawn. Reconciliation has
             // certified every accepted scene in this bounded interval; native
             // stamps the input snapshot, never a candidate under preparation.
-            if (!legacySplitCaptureAllowsVersion(nativeEvent)) {
+            if (!legacySplitCaptureAllowsVersion(nativeEvent) && !legacyMacTextCaptureAllowsVersion(nativeEvent) &&
+                !legacyMacSliderCaptureAllowsVersion(nativeEvent)) {
                 return cancelPointerCapture()
             }
         }
@@ -10529,7 +13561,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         let current = nativeInputScene.nodeForId(pointerCaptureNode.nodeId)
         if (!pointerEventBindingMatches(nativeEvent, current) &&
-            !legacySplitCaptureAllowsVersion(nativeEvent)) { return cancelPointerCapture() }
+            !legacySplitCaptureAllowsVersion(nativeEvent) && !legacyMacTextCaptureAllowsVersion(nativeEvent) &&
+                !legacyMacSliderCaptureAllowsVersion(nativeEvent)) {
+            return cancelPointerCapture()
+        }
         if (!isPointerCapturable(current) || current.resourceId != pointerCaptureNode.resourceId || current.nodeKind != pointerCaptureNode
             .nodeKind || current.identityKey != pointerCaptureNode.identityKey) {
             return cancelPointerCapture()
@@ -10557,6 +13592,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) { clearPointerCapture() }
             return CjguiComposableUiDispatchResult(splitDragChanged)
         }
+        let macSerial = match (macTextCapture) { case Some(value) => value.serial case None => 0u64 }
+        let sliderFacts = macSliderCapture
+        let sliderIntent: ?CjguiComposableUiSliderCaptureIntent = match (sliderFacts) {
+            case Some(facts) => sliderIntentFor(nativeEvent, facts)
+            case None => None
+        }
         let dispatch = controller.applyUiEvent(
             CjguiComposableUiEvent(
                 current,
@@ -10571,16 +13612,30 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 pointerVisualY: nativeEvent.pointerVisualY,
                 pointerTranslateX: nativeEvent.pointerTranslateX,
                 pointerTranslateY: nativeEvent.pointerTranslateY,
-                pointerGeometryAccepted: nativeEvent.pointerGeometryAccepted
+                pointerGeometryAccepted: nativeEvent.pointerGeometryAccepted,
+                sliderCaptureIntent: sliderIntent
             )
         )
+        if (let Some(facts) <- sliderFacts) {
+            let liveSerial = match (macSliderCapture) { case Some(value) => value.base.serial case None => 0u64 }
+            if (liveSerial != facts.base.serial || !pointerCaptureActive || !isWindowOpen) { return dispatch }
+            if (!dispatch.didApply || facts.outputGeneration != facts.operationSerial ||
+                macSliderCaptureMismatch(facts).size > 0) { return cancelPointerCapture() }
+            facts.fifoCursor = consumedMacSliderFifo().last
+        }
+        if (macSerial != 0u64) {
+            let liveSerial = match (macTextCapture) { case Some(value) => value.serial case None => 0u64 }
+            if (macSerial != liveSerial || !pointerCaptureActive || !isWindowOpen) { return dispatch }
+        }
         pointerCaptureX = x
         pointerCaptureY = y
         rememberPointerCaptureGeometry(nativeEvent)
         if (eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) {
             clearPointerCapture()
         } else if (dispatch.didApply) {
-            pointerCaptureOwnerVersion = pointerCaptureVersionFor(current)
+            // A mac text certificate keeps the original authoritative revision.
+            // A callback cannot renew a stale owner by adopting a new version.
+            if (macSerial == 0u64 && sliderFacts.isNone()) { pointerCaptureOwnerVersion = pointerCaptureVersionFor(current) }
             rememberInteraction(current, eventKind, 0, 0)
         }
         return dispatch
@@ -10589,6 +13644,29 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // through the same capture/controller dispatch used by pumpEvent.
     func dispatchPointerEventForTest(event: InternalRendererPumpResult): CjguiComposableUiDispatchResult {
         return dispatchPointerEvent(event)
+    }
+    func macTextCoordinateLifetimeForTest(): (UInt64, UInt64) {
+        return internalRendererCoordinateLifetime(sessionToken)
+    }
+    func dispatchPointerEventWithCoordinateForTest(event: InternalRendererPumpResult,
+        generation: UInt64, coordinate: UInt64): CjguiComposableUiDispatchResult {
+        macTextTestCoordinateActive = true
+        macTextTestGeneration = generation
+        macTextTestCoordinate = coordinate
+        try { return dispatchPointerEvent(event) }
+        finally {
+            macTextTestCoordinateActive = false
+            macTextTestGeneration = 0u64
+            macTextTestCoordinate = 0u64
+        }
+    }
+    func dispatchSliderPointerWithProvenanceForTest(event: InternalRendererPumpResult,
+        generation: UInt64, coordinate: UInt64, first: UInt64, last: UInt64,
+        previous: UInt64): CjguiComposableUiDispatchResult {
+        macSliderTestFifo = Some(CjguiMacSliderPointerFifo(generation, event.bindingEpoch,
+            first, last, previous, event.eventKind))
+        try { return dispatchPointerEventWithCoordinateForTest(event, generation, coordinate) }
+        finally { macSliderTestFifo = None }
     }
     func acceptedBindingEpochForTest(nodeId: Int64): UInt64 {
         return currentAcceptedBindingEpoch(nativeInputScene.nodeForId(nodeId))
@@ -10621,6 +13699,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     func pointerCaptureSplitStartVersionForTest(): Int64 { return pointerCaptureSplitStartVersion }
     func pointerCaptureSplitContinuousVersionForTest(): Int64 { return pointerCaptureSplitContinuousVersion }
     private func reconcilePointerCaptureAfterProjection(): Unit {
+        if (macSliderCapture.isSome()) {
+            certifyMacSliderCaptureAfterProjection()
+            return
+        }
+        if (macTextCapture.isSome()) {
+            certifyMacTextCaptureAfterProjection()
+            return
+        }
         if (!pointerCaptureActive) {
             return
         }
@@ -10848,6 +13934,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             textSessionRestoreFailures += 1
             return
         }
+        var recoveredBasis: ?CjguiInstalledRangeBasis = None
+        if (!visualTarget && internalRendererInstalledRangeSupported() && textRangeEditDeltaDeliveryEnabled) {
+            if (let Some(session) <- restoredSession) {
+                installedRangeNonceSequence += 1u64
+                recoveredBasis = session.freezeInstalledRangeBasis(installedRangeNonceSequence,
+                    UInt64(instanceToken), textSessionBindingEpoch)
+                let basis = match (recoveredBasis) { case Some(b) => b; case None => return }
+                if (basis.text != target.value || internalRendererArmInstalledRange(sessionToken, basis,
+                    UInt64(nativeInputScene.version), UInt64(target.nodeId), target.resourceId) != CJGUI_INTERNAL_RENDERER_OK) { return }
+            }
+        }
         let outcome = internalRendererRecoverActiveTextProxy(sessionToken, refusedRangeTextNodeId,
             refusedRangeTextResourceId, refusedRangeTextNodeKind, target.value)
         var selectedStatus = outcome[0]
@@ -10880,6 +13977,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     requestRefresh()
                     return
                 }
+                if (let Some(basis) <- recoveredBasis) {
+                    if (!this.finishInstalledRangeBasis(session, basis, nativeInputScene.version,
+                        target.nodeId, target.resourceId)) {
+                        internalRendererCancelInstalledRange(sessionToken, basis.nonce)
+                        textSessionRestoreFailures += 1
+                        requestRefresh()
+                        return
+                    }
+                }
                 textSessionRestores += 1
             }
             refusedRangeTextPending = false
@@ -10892,6 +13998,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // Still focused on the same identity: keep the intent for the next
         // bounded attempt. Otherwise the dirty proxy no longer belongs to this
         // target and the normal staging path is authoritative.
+        if (let Some(basis) <- recoveredBasis) { internalRendererCancelInstalledRange(sessionToken, basis.nonce) }
         if (focusedNodeId != refusedRangeTextNodeId || focusedResourceId != refusedRangeTextResourceId ||
             focusedNodeKind != refusedRangeTextNodeKind) {
             refusedRangeTextPending = false
@@ -10933,6 +14040,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         sink: CjguiRangeTextEditSink, resourceId: Int64, nodeKind: Int64,
         materializeLimit!: Int64 = 65536, compositionArbitration!: Bool = false): CjguiTextSession {
         releaseTextSession()
+        if (let Some(previous) <- ownedTextSession) { return previous }
         let mirror = CjguiRangeTextWindow(nodeId, semanticId, source, sink, materializeLimit: materializeLimit)
         let compositionSink: ?CjguiRangeTextCompositionSink = match (sink as CjguiRangeTextCompositionSink) {
             case Some(wired) => Some(wired)
@@ -10964,6 +14072,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             node.value != value || !node.style.pointerInteractive) {
             return false
         }
+        cancelPreparedCandidate("presentation_selection")
         if (presentationCompositionId >= 0) {
             // 换焦点面即按精确 token 结束呈现面组合的 owner claim;窗口侧状态随后清零。
             if (let Some(session) <- ownedTextSession) {
@@ -11004,6 +14113,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             }
         }
         presentationTextSessionSceneVersion = sceneVersion
+        if (internalRendererInstalledRangeSupported() && textRangeEditDeltaDeliveryEnabled) {
+            this.preparePendingSourceHandoff()
+        }
         return true
     }
 
@@ -11025,6 +14137,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         presentationTextSessionNodeId = -1
         presentationTextSessionResourceId = -1
         presentationTextSessionSceneVersion = -1
+        this.clearPendingSourceHandoff()
         textSessionBindingEpoch += 1
         this.declareOwnedTextSession()
     }
@@ -11040,11 +14153,24 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             this.releasePresentationTextSessionSurface()
         } else {
             presentationTextSessionSceneVersion = nativeInputScene.version
+            // A scene swap changes the source installation lease even when
+            // the preview text is identical. Arm the existing handoff against
+            // this accepted scene before a native source click can arrive.
+            let _ = this.preparePendingSourceHandoff()
         }
     }
 
     /// 交回会话所有权：解绑并清空身份，之后该节点的范围意图重新由 owner 判决。
     public func releaseTextSession(): Unit {
+        if (!this.prepareTextSessionUnbind()) { return }
+        activationPrefixGate.cancel()
+        deferredPairRevealNode = -1
+        cancelPreparedCandidate("text_binding_changed")
+        this.clearPendingSourceHandoff()
+        internalRendererReleaseInstalledRange(sessionToken, UInt64(instanceToken), textSessionBindingEpoch)
+        installedRangeCandidate = None
+        installedRangeCandidateRequest = -1
+        installedRangeSessionGeneration = 0u64
         // 释放前终局快照：最后已结算事件后的完整计数，带绑定身份；活计数随后
         // 照常清零（换绑/关窗语义不变）。
         if (ownedTextSessionNodeId >= 0) {
@@ -11059,6 +14185,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             // 旧平台组合先显式取消：否则它的 preedit 会在代理里活着，以旧代次
             // 走普通路径落到新会话的镜像上。取消产生的事件带旧代次，被路由具名吞掉。
             this.cancelOwnedComposition()
+            if (previous.hasCaretRecovery()) { retiredCaretRecoverySessions.add(previous) }
             previous.invalidate()
         }
         ownedTextSession = None
@@ -11339,9 +14466,22 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (nativeEvent.eventKind != 51u32) {
             return None
         }
+        if (nativeEvent.bindingEpoch != 0u64 && nativeEvent.bindingEpoch != textSessionBindingEpoch) {
+            return Some(CjguiComposableUiDispatchResult(false))
+        }
         let session = match (ownedTextSession) {
             case Some(owned) => owned
-            case None => return None
+            case None =>
+                if (nativeEvent.bindingEpoch != 0u64) {
+                    return Some(CjguiComposableUiDispatchResult(false))
+                }
+                return None
+        }
+        if (nativeEvent.bindingEpoch != 0u64 &&
+            (Int64(nativeEvent.nodeId) != ownedTextSessionNodeId ||
+            nativeEvent.resourceId != ownedTextSessionResourceId ||
+            Int64(nativeEvent.nodeKind) != ownedTextSessionNodeKind)) {
+            return Some(CjguiComposableUiDispatchResult(false))
         }
         let presentationSurface = continuation.nodeId == presentationTextSessionNodeId &&
             continuation.resourceId == presentationTextSessionResourceId &&
@@ -11374,6 +14514,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                             if (mapped.reason == "") { "visual_range_refused" } else { mapped.reason })
                 }
             }
+        } else if (internalRendererInstalledRangeSupported() && textRangeEditDeltaDeliveryEnabled &&
+            continuation.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) {
+            // Every macOS owned source range must be captured before mutation.
+            // An unclaimed legacy callback cannot borrow the current mirror's
+            // coordinates, even if it arrived while the scene still matches.
+            session.refuseCapturedInstalledRange()
         } else {
             session.replaceRange16(Int64(nativeEvent.selectionStart),
                 Int64(nativeEvent.selectionEnd), eventText)
@@ -11389,6 +14535,206 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         lastTextSessionDecision = Some(decision)
         return Some(CjguiComposableUiDispatchResult(decision.accepted))
+    }
+
+    private func holdCapturedSelectionDecision(claim: InternalRendererInstalledRangeClaim,
+        decision: CjguiTextSessionEdit, session: CjguiTextSession,
+        context: CjguiSelectionTransferProofContext, transferId: UInt64, inputId: UInt64,
+        needsMemoRetirement: Bool): Bool {
+        if (decision.ticket >= 0) { let _ = session.acknowledge(decision.ticket, decision.contextEpoch) }
+        textSessionRangeDecisions += 1
+        if (decision.accepted) { textSessionAcceptedEdits += 1 } else { textSessionRefusedEdits += 1 }
+        lastTextSessionDecision = Some(decision)
+        let _ = this.beginHeldInstalledRangeSettlement(claim, decision, session,
+            transferId, inputId, needsMemoRetirement, Some(context))
+        // Owner acceptance is final even when native ACK remains held. The
+        // next pump is gated and retries only this claim's ACK.
+        return decision.accepted
+    }
+
+    private func routeCapturedSelectionTransferInput(claim: InternalRendererInstalledRangeClaim,
+        context: CjguiSelectionTransferProofContext): Bool {
+        let session = match (ownedTextSession) { case Some(s) => s; case None => return false }
+        if (selectionInputIdSequence == UInt64.Max) {
+            let reject = session.refuseCapturedInstalledRange()
+            return this.holdCapturedSelectionDecision(claim, reject, session, context,
+                context.candidate.transferId, 0u64, false)
+        }
+        selectionInputIdSequence += 1u64
+        let inputId = selectionInputIdSequence
+        let proof = context.proof(claim, inputId)
+        let provider: ?CjguiComposableUiInstalledSelectionInputProvider =
+            match (controller as CjguiComposableUiInstalledSelectionInputProvider) {
+            case Some(value) => value
+            case None => None
+        }
+        if (proof.isNone()) {
+            let rejected = session.refuseCapturedInstalledRange()
+            return this.holdCapturedSelectionDecision(claim, rejected, session, context,
+                context.candidate.transferId, inputId, false)
+        }
+        let captured = proof.getOrThrow()
+        let snapshot = match (session.sourceSelectionSnapshot()) {
+            case Some(value) => value
+            case None =>
+                let rejected = session.refuseCapturedInstalledRange()
+                return this.holdCapturedSelectionDecision(claim, rejected, session, context,
+                    captured.transferId, captured.inputId, false)
+        }
+        if (snapshot.documentId.size == 0 || snapshot.sessionEpoch <= 0 || snapshot.version < 0 ||
+            snapshot.revision < 0 || snapshot.anchorByte < 0 || snapshot.focusByte < 0) {
+            let rejected = session.refuseCapturedInstalledRange()
+            return this.holdCapturedSelectionDecision(claim, rejected, session, context,
+                captured.transferId, captured.inputId, false)
+        }
+        let ownerChoice = match (provider) {
+            case Some(owner) =>
+                match (owner.authorizeInstalledSelectionInput(captured)) {
+                    case Some(value) => value
+                    case None =>
+                        getStdOut().writeln("CJGUI_SELECTION_INPUT_REFUSED stage=owner_authorization " +
+                            "transfer=${captured.transferId} source_version=${captured.sourceOwnerVersion} " +
+                            "owner_version=${snapshot.version} node=${captured.targetNodeId}")
+                        let rejected = session.refuseCapturedInstalledRange()
+                        return this.holdCapturedSelectionDecision(claim, rejected, session, context,
+                            captured.transferId, captured.inputId, false)
+            }
+            case None => CjguiOwnerSelectionChoice(snapshot.documentId, snapshot.sessionEpoch,
+                snapshot.version, captured.targetProjectionVersion, session.contextEpochValue(), snapshot.revision,
+                Int64(captured.inputId), snapshot.anchorByte, snapshot.focusByte)
+        }
+        let liveTicket = session.freezeSelectionTicket()
+        if (ownerChoice.documentId != snapshot.documentId || ownerChoice.sessionEpoch != snapshot.sessionEpoch ||
+            ownerChoice.contentVersion != snapshot.version ||
+            ownerChoice.choiceId == 0 || ownerChoice.contextEpoch != session.contextEpochValue() ||
+            ownerChoice.selectionRevision != snapshot.revision || ownerChoice.anchorByte != snapshot.anchorByte ||
+            ownerChoice.focusByte != snapshot.focusByte || ownerChoice.contentVersion != liveTicket.sourceVersion ||
+            ownerChoice.contextEpoch != session.contextEpochValue() ||
+            ownerChoice.selectionRevision != liveTicket.selectionRevision ||
+            ownerChoice.anchorByte < 0 || ownerChoice.focusByte < 0) {
+            let rejected = session.refuseCapturedInstalledRange()
+            return this.holdCapturedSelectionDecision(claim, rejected, session, context,
+                captured.transferId, captured.inputId, false)
+        }
+        let isCurrent = { =>
+            let now = session.sourceSelectionSnapshot()
+            let snapshotMatches = match (now) {
+                case Some(value) => value.documentId == ownerChoice.documentId &&
+                    value.sessionEpoch == ownerChoice.sessionEpoch && value.version == ownerChoice.contentVersion &&
+                    value.revision == ownerChoice.selectionRevision && value.anchorByte == ownerChoice.anchorByte &&
+                    value.focusByte == ownerChoice.focusByte && session.contextEpochValue() == ownerChoice.contextEpoch
+                case None => false
+            }
+            let providerMatches = match (provider) {
+                case Some(owner) => owner.installedSelectionChoiceIsCurrent(ownerChoice)
+                case None => true
+            }
+            return snapshotMatches && providerMatches
+        }
+        let decision = session.submitAuthorizedSelectionRange(
+            captured.transferId, captured.inputId, captured.inputSequence, captured.previousInputSequence,
+            ownerChoice.contentVersion, ownerChoice.selectionRevision,
+            ownerChoice.anchorByte, ownerChoice.focusByte, captured.replacement, isCurrent)
+        let hasMemo = session.hasAuthorizedSelectionInputMemo(captured.transferId, captured.inputId)
+        return this.holdCapturedSelectionDecision(claim, decision, session, context,
+            captured.transferId, captured.inputId, decision.accepted || hasMemo)
+    }
+
+    private func routeCapturedInstalledRange(nativeEvent: InternalRendererPumpResult): Bool {
+        let session = match (ownedTextSession) { case Some(s) => s; case None => return false }
+        let claim = match (nativeEvent.installedRangeClaim) {
+            case Some(c) => c
+            case None =>
+                // Invalid/released sidebands remain owned events and are
+                // consumed here. No coordinates are interpreted or replayed.
+                if (nativeEvent.bindingEpoch == textSessionBindingEpoch &&
+                    Int64(nativeEvent.nodeId) == ownedTextSessionNodeId &&
+                    nativeEvent.resourceId == ownedTextSessionResourceId) {
+                    let decision = session.refuseCapturedInstalledRange()
+                    let _ = session.acknowledge(decision.ticket, decision.contextEpoch)
+                    lastTextSessionDecision = Some(decision)
+                    textSessionRangeDecisions += 1
+                    textSessionRefusedEdits += 1
+                    refusedRangeTextPending = true
+                    refusedRangeTextNodeId = ownedTextSessionNodeId
+                    refusedRangeTextResourceId = ownedTextSessionResourceId
+                    refusedRangeTextNodeKind = ownedTextSessionNodeKind
+                    refusedRangeTextAttempts = 0
+                }
+                return false
+        }
+        if (let Some(context) <- activeSelectionTransferProof) {
+            if (claim.raw.nodeId == context.candidate.targetNodeId) {
+                return this.routeCapturedSelectionTransferInput(claim, context)
+            }
+        }
+        let current = nativeInputScene.nodeForId(ownedTextSessionNodeId)
+        let sameBinding = claim.raw.rendererSessionGeneration == installedRangeSessionGeneration &&
+            claim.raw.windowInstanceToken == UInt64(instanceToken) &&
+            claim.raw.bindingEpoch == textSessionBindingEpoch &&
+            claim.raw.nodeId == UInt64(ownedTextSessionNodeId) &&
+            claim.raw.resourceId == ownedTextSessionResourceId &&
+            current.nodeId == ownedTextSessionNodeId && current.resourceId == ownedTextSessionResourceId &&
+            current.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT && current.isEnabled
+        if (!sameBinding) {
+            let _ = internalRendererAckInstalledRange(sessionToken, claim, false, session.contentVersion())
+            return false
+        }
+        let expectedOwnerVersion = session.installedRangeExpectedVersion()
+        let decision = if (claim.raw.flags != 0u32) { session.refuseCapturedInstalledRange() } else {
+            session.submitInstalledRange16(claim.input, claim.replacement, actualPostBody: Some(claim.postBody))
+        }
+        // Preserve the exact accepted/rejected owner decision until native ACK
+        // succeeds. Retrying this settlement never submits the edit again.
+        if (decision.ticket >= 0) { let _ = session.acknowledge(decision.ticket, decision.contextEpoch) }
+        textSessionRangeDecisions += 1
+        if (decision.accepted) { textSessionAcceptedEdits += 1 } else { textSessionRefusedEdits += 1 }
+        lastTextSessionDecision = Some(decision)
+        let ack = this.beginHeldInstalledRangeSettlement(claim, decision, session,
+            0u64, 0u64, false, None)
+        if (!decision.accepted && decision.proxyRecoveryRequired) {
+            clearPendingLocalTextValue()
+            refusedRangeTextPending = true
+            refusedRangeTextNodeId = ownedTextSessionNodeId
+            refusedRangeTextResourceId = ownedTextSessionResourceId
+            refusedRangeTextNodeKind = ownedTextSessionNodeKind
+            refusedRangeTextAttempts = 0
+        }
+        if (match (getVariable("CJGUI_TRACE_IME_PUMP")) { case Some(v) => v == "1" case None => false }) {
+            let localStart = cjguiUtf16OffsetToUtf8(claim.input.preBody, claim.input.start16)
+            let localEnd = cjguiUtf16OffsetToUtf8(claim.input.preBody, claim.input.end16)
+            let start = if (let Some(b) <- localStart) { claim.input.basis.sourceStart + b } else { -1 }
+            let end = if (let Some(b) <- localEnd) { claim.input.basis.sourceStart + b } else { -1 }
+            let writeSpan = this.beginOwnerTracePhase(7u32, request: claim.raw.seq)
+            getStdOut().writeln("CJGUI_INSTALLED_RANGE seq=${claim.raw.seq} previous=${claim.raw.previousSeq} nonce=${claim.raw.nonce} binding=${claim.raw.bindingEpoch} proxy=${claim.raw.proxyGeneration} base=${claim.raw.ownerVersion} owner_before=${expectedOwnerVersion} source=[${start},${end}) insert_bytes=${cjguiUtf8Length(claim.replacement)} accepted=${decision.accepted} version=${decision.versionAfter} ticket=${decision.ticket} ack=${ack} reason=${decision.reason}")
+            this.endOwnerTracePhase(7u32, writeSpan, request: claim.raw.seq)
+        }
+        return decision.accepted
+    }
+
+    private func finishInstalledRangeBasis(session: CjguiTextSession, basis: CjguiInstalledRangeBasis,
+        scene: Int64, node: Int64, resource: Int64): Bool {
+        let receipt = match (internalRendererInstalledRangeReceipt(sessionToken, basis.nonce)) {
+            case Some(r) => r
+            case None => return false
+        }
+        if (receipt.nonce != basis.nonce || receipt.rendererSessionGeneration == 0u64 ||
+            receipt.windowInstanceToken != basis.document || receipt.bindingEpoch != basis.binding ||
+            receipt.contextEpoch != UInt64(basis.context) || receipt.mirrorRevision != UInt64(basis.mirror) ||
+            receipt.ownerVersion != basis.ownerVersion || receipt.installedSceneVersion != UInt64(scene) ||
+            receipt.nodeId != UInt64(node) || receipt.resourceId != resource ||
+            receipt.sourceStartByte != UInt64(basis.sourceStart) || receipt.sourceEndByte != UInt64(basis.sourceEnd) ||
+            !session.activateInstalledRangeBasis(basis, receipt.proxyGeneration)) { return false }
+        // Native rechecks nonce, actual proxy, mutation and selection revisions
+        // after this pure owner confirmation. This call holds no owner lock.
+        let status = internalRendererActivateInstalledRange(sessionToken, basis.nonce,
+            receipt.proxyGeneration, receipt.selectionRevision)
+        if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            session.abandonInstalledRangeBasis(basis.nonce)
+            return false
+        }
+        installedRangeSessionGeneration = receipt.rendererSessionGeneration
+        return true
     }
 
     /// kind 52 组字相位（update/commit/cancel）的路由。只有**声明过的**节点会产生
@@ -11950,7 +15296,347 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return CjguiVerticalMoveResult.Ready(target.displayByte, column, target.affinity)
     }
 
+    /// Hit the first or last visual row of an accepted TEXT node at a retained
+    /// preferred X. Cross-node movement cannot use `verticalMoveOnAcceptedLayout`
+    /// because that operation correctly stops at this node's own row boundary.
+    /// Resolve the node edge first, use its row center for op=1, then re-resolve
+    /// the hit under the same accepted scene, layout lease, and concrete stop.
+    /// op=1 does not consume its lease/stop arguments in native code, so the
+    /// lineId and second op=0 validation below are required before returning a
+    /// candidate. A mismatch is rejected instead of guessing a nearby row.
+    public func landingOnAcceptedNodeEdge(nodeId: Int64, lastVisualLine: Bool,
+        preferredX: Float64, expectedText: String): CjguiNodeEdgeLandingResult {
+        let node = nativeInputScene.nodeForId(nodeId)
+        if (node.nodeId != nodeId || node.nodeKind != CJGUI_COMPOSABLE_UI_TEXT || node.value != expectedText) {
+            return CjguiNodeEdgeLandingResult.Rejected("text_binding_stale")
+        }
+        let edgeByte = if (lastVisualLine) { cjguiUtf8Length(expectedText) } else { 0 }
+        let edge = this.acceptedPosition(nodeId, edgeByte, CJGUI_TEXT_AFFINITY_AUTO)
+        if (edge.status != CJGUI_INTERNAL_RENDERER_OK) {
+            let reason = cjguiTextGeometryReasonForStatus(edge.status)
+            return if (edge.status == CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY) {
+                CjguiNodeEdgeLandingResult.NeedPrepare(reason)
+            } else { CjguiNodeEdgeLandingResult.Rejected(reason) }
+        }
+        if (edge.nodeId != nodeId || edge.sceneVersion != UInt64(nativeInputScene.version) ||
+            edge.layoutLease == 0u64 || edge.stopId == 0u64) {
+            return CjguiNodeEdgeLandingResult.Rejected("edge_position_stale")
+        }
+        let edgeY = edge.y + edge.height / 2.0
+        let hit = cjguiQueryAcceptedPosition(sessionToken, nodeId, edge.sceneVersion, 1u32,
+            edge.displayByte, edge.affinity, edge.layoutLease, edge.stopId, false, preferredX, edgeY)
+        if (hit.status != CJGUI_INTERNAL_RENDERER_OK) {
+            let reason = cjguiTextGeometryReasonForStatus(hit.status)
+            return if (hit.status == CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY) {
+                CjguiNodeEdgeLandingResult.NeedPrepare(reason)
+            } else { CjguiNodeEdgeLandingResult.Rejected(reason) }
+        }
+        if (hit.nodeId != nodeId || hit.sceneVersion != edge.sceneVersion ||
+            hit.layoutLease != edge.layoutLease || hit.lineId != edge.lineId || hit.stopId == 0u64) {
+            return CjguiNodeEdgeLandingResult.Rejected("target_line_mismatch")
+        }
+        let checked = cjguiQueryAcceptedPosition(sessionToken, nodeId, edge.sceneVersion, 0u32,
+            hit.displayByte, hit.affinity, hit.layoutLease, hit.stopId, false, 0.0, 0.0)
+        if (checked.status != CJGUI_INTERNAL_RENDERER_OK) {
+            return CjguiNodeEdgeLandingResult.Rejected(cjguiTextGeometryReasonForStatus(checked.status))
+        }
+        if (checked.nodeId != nodeId || checked.sceneVersion != edge.sceneVersion ||
+            checked.layoutLease != edge.layoutLease || checked.stopId != hit.stopId ||
+            checked.lineId != edge.lineId || checked.displayByte != hit.displayByte ||
+            checked.affinity != hit.affinity) {
+            return CjguiNodeEdgeLandingResult.Rejected("target_stop_mismatch")
+        }
+        this.recordPositionCandidate(checked)
+        return CjguiNodeEdgeLandingResult.Ready(checked.displayByte, preferredX, checked.affinity)
+    }
+
     private var plainPreferredX: Float64 = -1.0
+    // One actual native caret key owns its prefix until its owner/native
+    // transaction, retained restore or product FIFO head reaches a terminal.
+    private var macCaretInput: ?InternalRendererInputProvenance = None
+    private var macCaretInputTicket: ?CjguiTextSelectionTicket = None
+    private var macCaretDispatchActive: Bool = false
+    private var macCaretRestoreId: Int64 = -1
+    // Invalidated bindings keep admitted input copies until a consumer
+    // explicitly takes ownership. Native's shared byte/slot quota bounds them.
+    private var retiredCaretRecoverySessions: ArrayList<CjguiTextSession> = ArrayList<CjguiTextSession>()
+
+    private func collectCaretInputRecovery(): Bool {
+        var count: Int64 = 0
+        while (count < 64) {
+            let (status, next) = internalRendererPeekCaretRecovery(sessionToken)
+            if (status != CJGUI_INTERNAL_RENDERER_OK) {
+                lastNativeFailure = "input_recovery_read_failed:${status}"
+                return false
+            }
+            let recovery = match (next) {
+                case Some(value) => value;
+                case None => return true
+            }
+            let owner = match (ownedTextSession) {
+                case Some(value) => value
+                case None =>
+                    lastNativeFailure = "input_recovery_binding_absent"
+                    return false
+            }
+            if (!owner.retainCaretRecovery(recovery)) {
+                lastNativeFailure = "input_recovery_handoff_pending"
+                return false
+            }
+            count += 1
+        }
+        let (status, tail) = internalRendererPeekCaretRecovery(sessionToken)
+        return status == CJGUI_INTERNAL_RENDERER_OK && tail.isNone()
+    }
+
+    /// Freeze the original input prefix and retain its complete refused drafts
+    /// before a consumer changes document ownership. No old coordinate is replayed.
+    public func prepareTextSessionUnbind(): Bool {
+        if (sessionToken == 0u64) {
+            return true
+        }
+        let settled = this.finishMacCaretInput(3u32)
+        let status = internalRendererCancelCaretPrefix(sessionToken, UInt64(instanceToken), textSessionBindingEpoch)
+        let retained = this.collectCaretInputRecovery()
+        return settled && status == CJGUI_INTERNAL_RENDERER_OK && retained
+    }
+
+    /// A consumer has copied this complete input draft into a holder under its
+    /// original document identity. Release native's reservation without writing.
+    public func acknowledgeTextSessionRecoveryDraftOwnership(draftId: Int64): Bool {
+        if (let Some(owner) <- ownedTextSession) {
+            if (owner.handoffCaretRecovery(draftId)) {
+                return true
+            }
+        }
+        var index: Int64 = 0
+        while (index < retiredCaretRecoverySessions.size) {
+            let owner = retiredCaretRecoverySessions[index]
+            if (owner.handoffCaretRecovery(draftId)) {
+                if (!owner.hasCaretRecovery()) {
+                    retiredCaretRecoverySessions.remove(at: index)
+                }
+                return true
+            }
+            index += 1
+        }
+        return false
+    }
+
+    /// Retired inputs retain their original binding identity. They are not
+    /// candidates for automatic insertion into the current document.
+    public func retiredTextSessionRecoveryDrafts(): Array<CjguiTextSessionRecoveryDraft> {
+        let result = ArrayList<CjguiTextSessionRecoveryDraft>()
+        for (owner in retiredCaretRecoverySessions) {
+            result.add(all: owner.recoveryDraftsValue())
+        }
+        return result.toArray()
+    }
+
+    private func hasUnclaimedCaretRecovery(): Bool {
+        if (let Some(owner) <- ownedTextSession) {
+            if (owner.hasCaretRecovery()) {
+                return true
+            }
+        }
+        return !retiredCaretRecoverySessions.isEmpty()
+    }
+
+    private func finishMacCaretInput(outcome: UInt32): Bool {
+        let input = match (macCaretInput) {
+            case Some(value) => value;
+            case None => return true
+        }
+        var receipt: ?CjguiInternalInstalledRangeReceipt = None
+        if (outcome != 3u32) {
+            let session = match (ownedTextSession) {
+                case Some(value) => value;
+                case None => return false
+            }
+            if (outcome == 2u32) {
+                let ticket = match (macCaretInputTicket) {
+                    case Some(value) => value;
+                    case None => return false
+                }
+                if (!session.selectionTicketMatches(ticket)) {
+                    return false
+                }
+            }
+            var nonce = 0u64
+            if (let Some(context) <- activeSelectionTransferProof) {
+                if (context.active) {
+                    nonce = context.candidate.transferId
+                }
+            }
+            if (nonce == 0u64) {
+                if (let Some(source) <- session.freezeInstalledSelectionSource(UInt64(instanceToken),
+                    textSessionBindingEpoch)) {
+                    nonce = source.basis.nonce
+                }
+            }
+            if (nonce != 0u64) {
+                receipt = internalRendererActiveInstalledRangeReceipt(sessionToken, nonce)
+            }
+            let actual = match (receipt) {
+                case Some(value) => value;
+                case None => return false
+            }
+            if (actual.rendererSessionGeneration != input.sessionGeneration || actual.windowInstanceToken != UInt64(instanceToken) ||
+                actual.contextEpoch != UInt64(session.contextEpochValue()) || actual.acceptedVersion !=
+                session.contentVersion()) {
+                return false
+            }
+        }
+        let status = internalRendererFinishCaretInput(sessionToken, input, outcome, receipt)
+        if (status == CJGUI_INTERNAL_RENDERER_OK || outcome == 3u32) {
+            macCaretInput = None
+            macCaretInputTicket = None
+            macCaretRestoreId = -1
+        }
+        if (outcome == 3u32 && !this.collectCaretInputRecovery()) {
+            return false
+        }
+        return status == CJGUI_INTERNAL_RENDERER_OK
+    }
+    // A bounded, window-owned FIFO for real Up/Down inputs whose owner action
+    // needs another accepted scene. The native sequence is copied from the
+    // exact pump result; this is not a second keyboard/event source.
+    private var retainedVisualInputIntents: ArrayList<CjguiVisualInputIntent> =
+        ArrayList<CjguiVisualInputIntent>()
+    private var retainedVisualInputGeneration: UInt64 = 0u64
+
+    /// Retain one actual native Up/Down event before the product starts a
+    /// deferred cross-node move. Consecutive items must preserve the native
+    /// predecessor chain. The fixed bound matches the native interaction FIFO.
+    public func retainVisualInputIntent(inputSequence: UInt64, previousInputSequence: UInt64,
+        rendererSessionGeneration: UInt64, sourceTicket: CjguiAcceptedSelectionTicket,
+        direction: String, shift: Bool, preferredX: Float64, transferId: UInt64): Bool {
+        if (!isWindowOpen || (direction != "up" && direction != "down") ||
+            inputSequence == 0u64 || rendererSessionGeneration == 0u64 ||
+            previousInputSequence == UInt64.Max || previousInputSequence + 1u64 != inputSequence ||
+            !this.acceptedSelectionTicketMatches(sourceTicket)) { return false }
+        let (liveGeneration, _) = internalRendererCoordinateLifetime(sessionToken)
+        if (liveGeneration != rendererSessionGeneration) { return false }
+        if (retainedVisualInputGeneration == 0u64) {
+            retainedVisualInputGeneration = rendererSessionGeneration
+        } else if (retainedVisualInputGeneration != rendererSessionGeneration) {
+            retainedVisualInputIntents.clear()
+            retainedVisualInputGeneration = 0u64
+            return false
+        }
+        let expectedPrevious = if (retainedVisualInputIntents.isEmpty()) {
+            // This is the head of a new retained suffix. Earlier physical
+            // keys may have settled immediately in the product, so the native
+            // event's own exact predecessor is the only valid baseline here.
+            previousInputSequence
+        } else {
+            retainedVisualInputIntents[retainedVisualInputIntents.size - 1].sequence
+        }
+        if (previousInputSequence != expectedPrevious || retainedVisualInputIntents.size >= 64) {
+            return false
+        }
+        retainedVisualInputIntents.add(CjguiVisualInputIntent(rendererSessionGeneration,
+            inputSequence, previousInputSequence, sourceTicket, direction, shift, preferredX, transferId))
+        return true
+    }
+
+    /// Read the oldest retained intent. The caller must revalidate its source
+    /// ticket and owner descriptor before performing the requested movement.
+    public func pendingVisualInputIntent(): ?CjguiVisualInputIntent {
+        if (retainedVisualInputIntents.isEmpty()) { return None }
+        return Some(retainedVisualInputIntents[0])
+    }
+
+    /// Validate the retained FIFO head immediately before the product applies
+    /// another movement. A click, agent edit, accepted-scene change, or renderer
+    /// replacement makes the captured source ticket stale; in that case close
+    /// the whole suffix so no later key can move from an obsolete selection.
+    public func visualInputIntentHeadIsCurrent(): Bool {
+        if (!isWindowOpen || retainedVisualInputIntents.isEmpty() ||
+            retainedVisualInputGeneration == 0u64) { return false }
+        let head = retainedVisualInputIntents[0]
+        let (liveGeneration, _) = internalRendererCoordinateLifetime(sessionToken)
+        if (head.rendererSessionGeneration != retainedVisualInputGeneration ||
+            liveGeneration != retainedVisualInputGeneration ||
+            !this.acceptedSelectionTicketMatches(head.sourceTicket)) {
+            let _ = this.finishMacCaretInput(3u32)
+            retainedVisualInputIntents.clear()
+            retainedVisualInputGeneration = 0u64
+            return false
+        }
+        return true
+    }
+
+    /// Attach the transfer cell that the product created for the current FIFO
+    /// head. Each retained key gets its own transfer identity; a predecessor's
+    /// committed cell is never reused for its successor.
+    public func bindVisualInputTransfer(sequence: UInt64, transferId: UInt64): Bool {
+        if (retainedVisualInputIntents.isEmpty() || transferId == 0u64) { return false }
+        let head = retainedVisualInputIntents[0]
+        if (head.sequence != sequence || head.transferId != 0u64 ||
+            head.rendererSessionGeneration != retainedVisualInputGeneration) { return false }
+        retainedVisualInputIntents[0] = head.withTransfer(transferId)
+        return true
+    }
+
+    /// Settle only the FIFO head. A committed predecessor can rebase its
+    /// immediate successor to the newly accepted selection ticket; a boundary
+    /// preserves the source ticket; abort closes the retained suffix.
+    public func settleVisualInputIntent(sequence: UInt64, outcome: CjguiVisualInputIntentOutcome,
+        acceptedSource!: ?CjguiAcceptedSelectionTicket = None,
+        acceptedPreferredX!: Float64 = -1.0): Bool {
+        if (retainedVisualInputIntents.isEmpty() || retainedVisualInputGeneration == 0u64) { return false }
+        let head = retainedVisualInputIntents[0]
+        if (head.sequence != sequence || head.rendererSessionGeneration != retainedVisualInputGeneration) {
+            return false
+        }
+        let isCommitted = match (outcome) {
+            case CjguiVisualInputIntentOutcome.Committed => true
+            case _ => false
+        }
+        let isAborted = match (outcome) {
+            case CjguiVisualInputIntentOutcome.Aborted => true
+            case _ => false
+        }
+        if (isCommitted) {
+            if (let Some(ticket) <- acceptedSource) {
+                if (!this.acceptedSelectionTicketMatches(ticket)) { return false }
+            } else { return false
+            }
+        }
+        if (macCaretInput.isSome() && macCaretInput.getOrThrow().sequence == sequence) {
+            if (!this.finishMacCaretInput(if (isCommitted) {
+                1u32
+            } else {
+                if (isAborted) {
+                    3u32
+                } else {
+                    2u32
+                }
+            })) {
+                let _ = this.finishMacCaretInput(3u32)
+            }
+        }
+        retainedVisualInputIntents.remove(at: 0)
+        if (isAborted) {
+            retainedVisualInputIntents.clear()
+            retainedVisualInputGeneration = 0u64
+            return true
+        }
+        if (isCommitted && !retainedVisualInputIntents.isEmpty()) {
+            let next = retainedVisualInputIntents[0]
+            if (next.previousSequence != sequence) {
+                retainedVisualInputIntents.clear()
+                retainedVisualInputGeneration = 0u64
+                return false
+            }
+            retainedVisualInputIntents[0] = next.rebased(acceptedSource.getOrThrow(), acceptedPreferredX)
+        }
+        if (retainedVisualInputIntents.isEmpty()) {
+            retainedVisualInputGeneration = 0u64
+        }
+        return true
+    }
 
     public func handlePlainVerticalIntent(down: Bool, shift: Bool): CjguiPlainIntentDisposition {
         return this.handlePlainPositionIntent(false, down, shift)
@@ -12027,7 +15713,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         let end = if (anchor < target16) { target16 } else { anchor }
         let acceptedPreferred = preferred
         let acceptedAffinity = targetAffinity
-        let installed = this.commitAcceptedSelection(ticket, anchor, target16, start, end, { =>
+        let submission = this.submitAcceptedSelection(ticket, anchor, target16, start, end, { =>
             plainPreferredX = if (horizontal) { -1.0 } else { acceptedPreferred }
             plainCaretAffinity = acceptedAffinity
             plainPositionRevision = session.selectionRevisionValue()
@@ -12037,9 +15723,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             lastTextSessionCompositionReason = "plain_intent"
         })
         let name = if (horizontal) { if (forward) { "right" } else { "left" } } else { if (forward) { "down" } else { "up" } }
-        getStdOut().writeln("CJGUI_PLAIN_INTENT text=${name} handled=${installed} wrote_owner=false reason=${if (installed) { "visual" } else { "selection_install_refused" }} sel=${session.selection16()[0]}:${session.selection16()[1]}")
+        let disposition = match (submission) {
+            case CjguiSelectionSubmission.Committed => CjguiPlainIntentDisposition.Success
+            case CjguiSelectionSubmission.Retained(id) => CjguiPlainIntentDisposition.Retained(id)
+            case CjguiSelectionSubmission.NotAdmitted(reason) => CjguiPlainIntentDisposition.Refused(reason)
+        }
+        getStdOut().writeln("CJGUI_PLAIN_INTENT text=${name} wrote_owner=false sel=${session.selection16()[0]}:${session.selection16()[1]}")
         getStdOut().flush()
-        return if (installed) { CjguiPlainIntentDisposition.Success } else { CjguiPlainIntentDisposition.Refused("selection_install_refused") }
+        return disposition
     }
 
     /// Astra 冻结身份（2026-09-30）：接管时冻结 (会话对象, 绑定代次)；此后任一
@@ -12096,7 +15787,207 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var committedTextPositions = HashMap<Int64, CjguiAcceptedTextPosition>()
     private var plainPositionRevision: Int64 = -1
     private var plainPositionBinding: UInt64 = 0
+    private var selectionTransferRetirement: UInt64 = 0u64
+    private var selectionTransferOwnerRevision: Int64 = -1
     private var selectionCommitActive: Bool = false
+    private var selectionCommitFailureStage: String = ""
+    private var pendingSelectionTransferProof: ?CjguiSelectionTransferProofContext = None
+    private var activeSelectionTransferProof: ?CjguiSelectionTransferProofContext = None
+    private var selectionInputIdSequence: UInt64 = 0u64
+    private var heldInstalledRangeSettlement: ?CjguiHeldInstalledRangeSettlement = None
+
+    private func traceHeldInstalledRangeSettlement(message: String): Unit {
+        if (match (getVariable("CJGUI_TRACE_IME_PUMP")) { case Some(v) => v == "1" case None => false }) {
+            getStdOut().writeln(message)
+        }
+    }
+
+    /// Retry only the captured native ACK and its managed ledger retirement.
+    /// The owner decision is immutable here and is never submitted again.
+    private func retryHeldInstalledRangeSettlement(): Bool {
+        let held = match (heldInstalledRangeSettlement) { case Some(value) => value; case None => return true }
+        if (!held.nativeAckConfirmed) {
+            let status = internalRendererAckInstalledRange(sessionToken, held.claim,
+                held.decision.accepted, held.decision.versionAfter)
+            held.lastNativeAckStatus = status
+            if (status != CJGUI_INTERNAL_RENDERER_OK) {
+                this.traceHeldInstalledRangeSettlement(
+                    "CJGUI_INSTALLED_RANGE_ACK_RETRY seq=${held.claim.raw.seq} transfer=${held.transferId} input=${held.inputId} ownerAccepted=${held.decision.accepted} status=${status} memoPending=${held.needsMemoRetirement}")
+                return false
+            }
+            held.nativeAckConfirmed = true
+            this.traceHeldInstalledRangeSettlement(
+                "CJGUI_INSTALLED_RANGE_ACK_CONFIRMED seq=${held.claim.raw.seq} transfer=${held.transferId} input=${held.inputId} ownerAccepted=${held.decision.accepted}")
+        }
+        if (held.needsMemoRetirement &&
+            !held.session.acknowledgeAuthorizedSelectionInput(held.transferId, held.inputId)) {
+            this.traceHeldInstalledRangeSettlement(
+                "CJGUI_INSTALLED_RANGE_MEMO_RETIRE_PENDING seq=${held.claim.raw.seq} transfer=${held.transferId} input=${held.inputId}")
+            return false
+        }
+        if (let Some(context) <- held.proofContext) {
+            if (held.decision.accepted) {
+                context.currentTargetBody = held.claim.postBody
+                context.lastInputSequence = held.claim.raw.seq
+            } else {
+                context.active = false
+                if (let Some(active) <- activeSelectionTransferProof) {
+                    if (active.candidate.transferId == context.candidate.transferId) {
+                        activeSelectionTransferProof = None
+                    }
+                }
+            }
+        }
+        this.traceHeldInstalledRangeSettlement(
+            "CJGUI_INSTALLED_RANGE_SETTLED seq=${held.claim.raw.seq} transfer=${held.transferId} input=${held.inputId} ownerAccepted=${held.decision.accepted} memoRetired=${held.needsMemoRetirement}")
+        heldInstalledRangeSettlement = None
+        return true
+    }
+
+    /// Retain an exact claim before attempting its first ACK so failure cannot
+    /// permit another pump to overwrite the native sideband.
+    private func beginHeldInstalledRangeSettlement(claim: InternalRendererInstalledRangeClaim,
+        decision: CjguiTextSessionEdit, session: CjguiTextSession,
+        transferId: UInt64, inputId: UInt64, needsMemoRetirement: Bool,
+        proofContext: ?CjguiSelectionTransferProofContext): Int32 {
+        if (heldInstalledRangeSettlement.isSome()) {
+            // pumpWithRefreshPolicy gates all dequeues while a settlement is
+            // held. Keep the original owner decision if that invariant breaks.
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+        }
+        let held = CjguiHeldInstalledRangeSettlement(claim, decision, session,
+            transferId, inputId, needsMemoRetirement, proofContext)
+        heldInstalledRangeSettlement = Some(held)
+        this.traceHeldInstalledRangeSettlement(
+            "CJGUI_INSTALLED_RANGE_HELD seq=${claim.raw.seq} transfer=${transferId} input=${inputId} ownerAccepted=${decision.accepted} memoRetire=${needsMemoRetirement}")
+        let _ = this.retryHeldInstalledRangeSettlement()
+        return held.lastNativeAckStatus
+    }
+
+    /// Freeze the current actual installed source A and bind the accepted
+    /// target B's local TextKit intersection before selection installation.
+    /// The returned id is the native decision-cell identity; no proxy or body
+    /// equality can substitute for the active installed receipt.
+    public func prepareSelectionTransferFromInstalledSource(ticket: CjguiAcceptedSelectionTicket,
+        targetAnchor16: Int64, targetFocus16: Int64): ?UInt64 {
+        if (pendingSelectionRestore.isSome() && !this.supersedePendingSelectionRestore()) { return None }
+        if (selectionTransferRetirement != 0u64) {
+            if (internalRendererDiscardSelectionTransferCapsule(sessionToken, selectionTransferRetirement) !=
+                CJGUI_INTERNAL_RENDERER_OK) { return None }
+            let _ = internalRendererReleaseSelectionTransfer(sessionToken, selectionTransferRetirement)
+            selectionTransferRetirement = 0u64
+        }
+        if (!isWindowOpen || selectionCommitActive || pendingSelectionTransferProof.isSome() ||
+            !internalRendererInstalledRangeSupported() ||
+            !textRangeEditDeltaDeliveryEnabled || !this.acceptedSelectionTicketMatches(ticket) ||
+            targetAnchor16 < 0 || targetFocus16 < 0 || targetAnchor16 > cjguiUtf16Length(ticket.value) ||
+            targetFocus16 > cjguiUtf16Length(ticket.value) || pendingSelectionRestore.isSome()) {
+            getStdOut().writeln("CJGUI_SELECTION_TRANSFER_REFUSED stage=entry")
+            return None
+        }
+        let session = match (ownedTextSession) { case Some(value) => value; case None => return None }
+        if (session.hasComposition() || session.awaitingCalibration()) {
+            getStdOut().writeln("CJGUI_SELECTION_TRANSFER_REFUSED stage=composition_or_calibration")
+            return None
+        }
+        if (session.sourceSelectionSnapshot().isNone()) { return None }
+        let (createStatus, transferId) = internalRendererCreateSelectionTransfer(sessionToken)
+        if (createStatus == CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED) {
+            getStdOut().writeln("CJGUI_SELECTION_TRANSFER_REFUSED stage=producer_retention_unproven status=${createStatus}")
+            return None
+        }
+        if (createStatus != CJGUI_INTERNAL_RENDERER_OK || transferId == 0u64) { return None }
+        var wanted = CjguiInternalSelectionTransferCandidate()
+        wanted.transferId = transferId
+        wanted.sourceWindowInstanceToken = UInt64(instanceToken)
+        wanted.sourceContextEpoch = UInt64(session.contextEpochValue())
+        wanted.sourceMirrorRevision = UInt64(session.mirrorSnapshot().mirrorRevision)
+        wanted.sourceOwnerVersion = session.contentVersion()
+        wanted.targetNodeId = UInt64(ticket.nodeId)
+        // An accepted scene may reuse an immutable node from an older native
+        // projection. Resolve that actual payload identity inside the exact
+        // accepted scene; capture returns it in the frozen proof for B.
+        wanted.targetProjectionVersion = 0u64
+        wanted.targetResourceId = ticket.resourceId
+        wanted.targetNodeKind = UInt32(ticket.nodeKind)
+        wanted.targetSceneVersion = UInt64(ticket.sceneVersion)
+        wanted.targetAnchor16 = UInt32(targetAnchor16); wanted.targetFocus16 = UInt32(targetFocus16)
+        let capture = internalRendererCaptureCurrentSelectionTransfer(sessionToken, wanted, ticket.value)
+        let captured = capture.status
+        let candidate = capture.candidate
+        let sourceBody = capture.sourceBody
+        // A physical caret owner, including this same detached restore request,
+        // identifies its candidate before publication. A pointer/external
+        // choice supersedes that request and never inherits the native prefix.
+        var caretAssociation = CJGUI_INTERNAL_RENDERER_OK
+        if (captured == CJGUI_INTERNAL_RENDERER_OK &&
+            (macCaretDispatchActive || macCaretRestoreId >= 0)) {
+            if (let Some(input) <- macCaretInput) {
+                caretAssociation = internalRendererBindCaretSelectionTransfer(sessionToken, transferId, input)
+            }
+        }
+        if (captured != CJGUI_INTERNAL_RENDERER_OK || caretAssociation != CJGUI_INTERNAL_RENDERER_OK ||
+            internalRendererPublishSelectionTransferPending(sessionToken, transferId) != CJGUI_INTERNAL_RENDERER_OK) {
+            let _ = internalRendererAdmitSelectionTransferInput(sessionToken, transferId)
+            if (captured == CJGUI_INTERNAL_RENDERER_OK) {
+                let _ = this.finishSelectionTransferAbort(transferId)
+            } else {
+                let _ = internalRendererReleaseSelectionTransfer(sessionToken, transferId)
+                let _ = internalRendererReleaseSelectionTransfer(sessionToken, transferId)
+            }
+            getStdOut().writeln("CJGUI_SELECTION_TRANSFER_REFUSED stage=actual_A_capture status=${captured}")
+            return None
+        }
+        pendingSelectionTransferProof = Some(CjguiSelectionTransferProofContext(
+            candidate, sourceBody, ticket.value))
+        return Some(transferId)
+    }
+
+    private func finishSelectionTransferAbort(transferId: UInt64): Bool {
+        let state = internalRendererSelectionTransferState(sessionToken, transferId)
+        if (state[0] != CJGUI_INTERNAL_RENDERER_OK) { return false }
+        if (state[1] == CJGUI_SELECTION_TRANSFER_FINALIZING ||
+            state[1] == CJGUI_SELECTION_TRANSFER_RECOVERY_BLOCKED) {
+            if (internalRendererRestoreSelectionTransferA(sessionToken, transferId) != CJGUI_INTERNAL_RENDERER_OK) {
+                let _ = internalRendererBlockSelectionTransferRecovery(sessionToken, transferId)
+                return false
+            }
+            if (internalRendererFinishSelectionTransferAbort(sessionToken, transferId) != CJGUI_INTERNAL_RENDERER_OK) {
+                let _ = internalRendererBlockSelectionTransferRecovery(sessionToken, transferId)
+                return false
+            }
+        } else if (state[1] == CJGUI_SELECTION_TRANSFER_PENDING ||
+            state[1] == CJGUI_SELECTION_TRANSFER_PREPARING) {
+            let _ = internalRendererAdmitSelectionTransferInput(sessionToken, transferId)
+            let after = internalRendererSelectionTransferState(sessionToken, transferId)
+            if (after[0] != CJGUI_INTERNAL_RENDERER_OK || after[1] != CJGUI_SELECTION_TRANSFER_ABORTED) {
+                return false
+            }
+        } else if (state[1] != CJGUI_SELECTION_TRANSFER_ABORTED) { return false }
+        if (internalRendererReplaySelectionTransferInput(sessionToken, transferId) != CJGUI_INTERNAL_RENDERER_OK) {
+            let _ = internalRendererBlockSelectionTransferRecovery(sessionToken, transferId)
+            return false
+        }
+        let _ = internalRendererReleaseSelectionTransfer(sessionToken, transferId)
+        return true
+    }
+
+    private func retrySelectionTransferRecovery(): Bool {
+        let proof = match (pendingSelectionTransferProof) { case Some(value) => value; case None => return true }
+        if (selectionCommitActive) { return false }
+        // A retained selection owns this Pending resource preparation. It is
+        // not failed-finalization recovery; A remains the admitted input route.
+        if (pendingSelectionRestore.isSome() && pendingSelectionRestoreTransferId == proof.candidate.transferId) {
+            return true
+        }
+        if (!this.finishSelectionTransferAbort(proof.candidate.transferId)) { return false }
+        if (let Some(session) <- ownedTextSession) {
+            session.settleReservedSelectionRevision(selectionTransferOwnerRevision)
+        }
+        selectionTransferOwnerRevision = -1
+        pendingSelectionTransferProof = None
+        return true
+    }
 
     private func acceptedPosition(nodeId: Int64, byte: Int64, affinity: UInt32): CjguiAcceptedTextPosition {
         var lease = 0u64
@@ -12129,7 +16020,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     public func positionWorkCounts(): Array<UInt64> { return cjguiAcceptedPositionWorkCounts(sessionToken) }
 
     public func freezeAcceptedSelection(nodeId: Int64): ?CjguiAcceptedSelectionTicket {
-        if (selectionCommitActive) { return None }
+        // Read-only certificate: an accepted publication callback can freeze
+        // its terminal choice for FIFO rebasing. Mutating entries still reject
+        // reentry while selectionCommitActive.
         let session = match (ownedTextSession) { case Some(s) => s; case None => return None }
         let node = nativeInputScene.nodeForId(nodeId)
         if (!session.isBound() || node.nodeId != nodeId) { return None }
@@ -12149,10 +16042,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     // setter validates the session before any mutation and cannot fail after
     // applying a nonzero accepted node. The semantic ticket remains unchanged.
     private func stageSelectionSurface(nodeId: Int64, resourceId: Int64, kind: Int64): Bool {
+        let phaseStarted = this.ownerPhaseStarted()
+        try {
         if (kind != CJGUI_COMPOSABLE_UI_TEXT ||
             (presentationTextSessionNodeId == nodeId && presentationTextSessionResourceId == resourceId)) { return true }
         return internalRendererSetComposableOwnedTextSession(sessionToken, UInt64(nodeId), resourceId,
             UInt32(kind), textSessionBindingEpoch + 1u64, true) == CJGUI_INTERNAL_RENDERER_OK
+        } finally {
+            this.traceOwnerPhase("selection_surface_stage", phaseStarted)
+        }
     }
 
     private func publishSelectionSurface(nodeId: Int64, resourceId: Int64, kind: Int64): Unit {
@@ -12163,6 +16061,27 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             textSessionBindingEpoch += 1
         }
         presentationTextSessionSceneVersion = nativeInputScene.version
+        if (internalRendererInstalledRangeSupported() && textRangeEditDeltaDeliveryEnabled) {
+            this.preparePendingSourceHandoff()
+        }
+    }
+
+    /// Read-only input provenance for the just-published accepted surface.
+    /// The opaque identity does not confer a source range or authorize an edit;
+    /// the owner choice and captured native range still have to pass both checks.
+    /// Restore callbacks use it just like pointer-selection callbacks, so they
+    /// never keep an older transfer's version/body as the input origin proof.
+    public func acceptedSelectionTransferId(nodeId: Int64, resourceId: Int64): UInt64 {
+        if (nodeId <= 0) { return 0u64 }
+        let context = match (activeSelectionTransferProof) {
+            case Some(value) => value
+            case None => return 0u64
+        }
+        let receipt = context.receipt
+        if (!context.active || receipt.nodeId != UInt64(nodeId) || receipt.resourceId != resourceId ||
+            receipt.bindingEpoch != textSessionBindingEpoch || receipt.firstResponder != 1u8 ||
+            receipt.proxyGeneration == 0u64) { return 0u64 }
+        return context.candidate.transferId
     }
 
     /// All SourceMap conversion happens before entry. A native rejection leaves
@@ -12170,41 +16089,243 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// already validated product projection and cannot return failure.
     public func commitAcceptedSelection(ticket: CjguiAcceptedSelectionTicket,
         sourceAnchor16: Int64, sourceFocus16: Int64, proxyStart16: Int64, proxyEnd16: Int64,
-        publish: () -> Unit): Bool {
-        if (selectionCommitActive || !this.acceptedSelectionTicketMatches(ticket)) { return false }
-        let session = ownedTextSession.getOrThrow()
-        let candidate = this.positionCandidateForSelection(ticket,
-            if (sourceFocus16 < sourceAnchor16) { proxyStart16 } else { proxyEnd16 })
-        selectionCommitActive = true
-        let ok = session.commitSelectionTicket(ticket.semantic, sourceAnchor16, sourceFocus16, { =>
-            if (!this.acceptedSelectionTicketMatches(ticket)) { return false }
-            let installed = internalRendererRestoreComposableSelection(sessionToken, ticket.nodeId,
-                ticket.resourceId, ticket.nodeKind, ticket.sceneVersion, ticket.value, proxyStart16, proxyEnd16)
-            return installed[0] == CJGUI_INTERNAL_RENDERER_OK && installed[1] == proxyStart16 &&
-                installed[2] == proxyEnd16 && this.acceptedSelectionTicketMatches(ticket) &&
-                this.stageSelectionSurface(ticket.nodeId, ticket.resourceId, ticket.nodeKind)
-        })
-        if (ok) {
-            this.publishSelectionSurface(ticket.nodeId, ticket.resourceId, ticket.nodeKind)
-            focusedSelectionStart = proxyStart16
-            focusedSelectionEnd = proxyEnd16
-            let node = nativeInputScene.nodeForId(ticket.nodeId)
-            refreshPageFocusBookmark(node)
-            interactionVersion += 1
-            committedTextPositions.remove(ticket.nodeId)
-            if (let Some(position) <- candidate) { committedTextPositions[ticket.nodeId] = position }
-            positionQueryCandidate = None
-            positionQuerySemantic = None
-            publish()
+        publish: () -> Unit, selectionTransferId!: UInt64 = 0u64): Bool {
+        return this.commitAcceptedSelectionAttempt(ticket, sourceAnchor16, sourceFocus16,
+            proxyStart16, proxyEnd16, publish, selectionTransferId: selectionTransferId).committed
+    }
+
+    private func commitAcceptedSelectionAttempt(ticket: CjguiAcceptedSelectionTicket,
+        sourceAnchor16: Int64, sourceFocus16: Int64, proxyStart16: Int64, proxyEnd16: Int64,
+        publish: () -> Unit, selectionTransferId!: UInt64 = 0u64): CjguiAcceptedSelectionAttempt {
+        let session = match (ownedTextSession) {
+            case Some(value) => value
+            case None => return CjguiAcceptedSelectionAttempt(false, CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, false)
         }
-        if (!ok) { let _ = this.declareOwnedTextSession() }
-        selectionCommitActive = false
-        return ok
+        let bytes = match (session.sourceBytesForSelection16(sourceAnchor16, sourceFocus16)) {
+            case Some(value) => value
+            case None =>
+                let restored = if (selectionTransferId != 0u64) {
+                    this.finishSelectionTransferAbort(selectionTransferId)
+                } else { false }
+                return CjguiAcceptedSelectionAttempt(false, CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, restored)
+        }
+        return this.commitAcceptedSourceSelectionAttempt(ticket, bytes[0], bytes[1], proxyStart16, proxyEnd16,
+            publish, selectionTransferId: selectionTransferId)
+    }
+
+    /// Experimental admission result for ordinary consumers. Long input
+    /// surfaces keep the original source ticket in the existing restore slot
+    /// while their private TextKit graph is prepared. Retained is not committed;
+    /// only publish observes the owner/native terminal and may change the UI.
+    public func submitAcceptedSelection(ticket: CjguiAcceptedSelectionTicket,
+        sourceAnchor16: Int64, sourceFocus16: Int64, proxyStart16: Int64, proxyEnd16: Int64,
+        publish: () -> Unit): CjguiSelectionSubmission {
+        if (cjguiUtf16Length(ticket.value) < 1024 && internalRendererSelectionTransferSupported()) {
+            let attempt = this.commitAcceptedSelectionAttempt(ticket, sourceAnchor16, sourceFocus16,
+                proxyStart16, proxyEnd16, publish)
+            if (attempt.committed) { return CjguiSelectionSubmission.Committed }
+            if (attempt.nativeStatus == CJGUI_INTERNAL_RENDERER_SCENE_STALE && attempt.restoredA &&
+                this.acceptedSelectionTicketMatches(ticket)) {
+                let id = this.requestAcceptedSelectionRestore(ticket, sourceAnchor16, sourceFocus16,
+                    proxyStart16, proxyEnd16, publish)
+                if (id >= 0) { return CjguiSelectionSubmission.Retained(id) }
+            }
+            return CjguiSelectionSubmission.NotAdmitted("selection_ticket_or_installation")
+        }
+        let id = this.requestAcceptedSelectionRestore(ticket, sourceAnchor16, sourceFocus16,
+            proxyStart16, proxyEnd16, publish)
+        return if (id >= 0) { CjguiSelectionSubmission.Retained(id) }
+            else { CjguiSelectionSubmission.NotAdmitted("selection_ticket_or_restore_admission") }
+    }
+
+    /// Global UTF-8 counterpart: retaining the focus proxy does not materialize
+    /// or shorten the directed source range (including a whole-document choice).
+    public func submitAcceptedSourceSelection(ticket: CjguiAcceptedSelectionTicket,
+        sourceAnchorByte: Int64, sourceFocusByte: Int64, proxyStart16: Int64, proxyEnd16: Int64,
+        publish: () -> Unit): CjguiSelectionSubmission {
+        if (cjguiUtf16Length(ticket.value) < 1024 && internalRendererSelectionTransferSupported()) {
+            let attempt = this.commitAcceptedSourceSelectionAttempt(ticket, sourceAnchorByte, sourceFocusByte,
+                proxyStart16, proxyEnd16, publish)
+            if (attempt.committed) { return CjguiSelectionSubmission.Committed }
+            if (attempt.nativeStatus == CJGUI_INTERNAL_RENDERER_SCENE_STALE && attempt.restoredA &&
+                this.acceptedSelectionTicketMatches(ticket)) {
+                let id = this.requestAcceptedSelectionRestore(ticket, sourceAnchorByte, sourceFocusByte,
+                    proxyStart16, proxyEnd16, publish, sourceCoordinatesAreBytes: true)
+                if (id >= 0) { return CjguiSelectionSubmission.Retained(id) }
+            }
+            return CjguiSelectionSubmission.NotAdmitted("source_selection_ticket_or_installation")
+        }
+        let id = this.requestAcceptedSelectionRestore(ticket, sourceAnchorByte, sourceFocusByte,
+            proxyStart16, proxyEnd16, publish, sourceCoordinatesAreBytes: true)
+        return if (id >= 0) { CjguiSelectionSubmission.Retained(id) }
+            else { CjguiSelectionSubmission.NotAdmitted("source_selection_ticket_or_restore_admission") }
+    }
+
+    /// Experimental global UTF-8 source selection, sharing the exact owner /
+    /// native decision used by bounded UTF-16 selection. The input surface is
+    /// only the local focus intersection; it cannot shorten these endpoints.
+    /// The owner proves boundary, version and revision before reservation.
+    public func commitAcceptedSourceSelection(ticket: CjguiAcceptedSelectionTicket,
+        sourceAnchorByte: Int64, sourceFocusByte: Int64, proxyStart16: Int64, proxyEnd16: Int64,
+        publish: () -> Unit, selectionTransferId!: UInt64 = 0u64): Bool {
+        return this.commitAcceptedSourceSelectionAttempt(ticket, sourceAnchorByte, sourceFocusByte,
+            proxyStart16, proxyEnd16, publish, selectionTransferId: selectionTransferId).committed
+    }
+
+    private func commitAcceptedSourceSelectionAttempt(ticket: CjguiAcceptedSelectionTicket,
+        sourceAnchorByte: Int64, sourceFocusByte: Int64, proxyStart16: Int64, proxyEnd16: Int64,
+        publish: () -> Unit, selectionTransferId!: UInt64 = 0u64): CjguiAcceptedSelectionAttempt {
+        let cancelSpan = this.beginOwnerTracePhase(339u32, request: selectionTransferId)
+        cancelPreparedCandidate("accepted_selection")
+        this.endOwnerTracePhase(339u32, cancelSpan, request: selectionTransferId)
+        if (selectionTransferId != 0u64 &&
+            (pendingSelectionTransferProof.isNone() ||
+             pendingSelectionTransferProof.getOrThrow().candidate.transferId != selectionTransferId)) {
+            let restored = this.finishSelectionTransferAbort(selectionTransferId)
+            return CjguiAcceptedSelectionAttempt(false, CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, restored)
+        }
+        let identitySpan = this.beginOwnerTracePhase(340u32, request: selectionTransferId)
+        let identityMatches = !selectionCommitActive && this.acceptedSelectionTicketMatches(ticket)
+        this.endOwnerTracePhase(340u32, identitySpan, request: selectionTransferId)
+        if (!identityMatches) {
+            let entryReason = if (selectionCommitActive) { "commit_active" } else { "ticket_stale" }
+            getStdOut().writeln("CJGUI_SELECTION_COMMIT_REFUSED stage=entry reason=${entryReason}")
+            if (selectionTransferId != 0u64) {
+                let rolledBack = this.finishSelectionTransferAbort(selectionTransferId)
+                // A failed rollback still owns its recovery capsule. Keep its
+                // identity, and the last accepted proof, until recovery finishes.
+                if (rolledBack) { pendingSelectionTransferProof = None }
+            }
+            return CjguiAcceptedSelectionAttempt(false, CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, false)
+        }
+        let session = ownedTextSession.getOrThrow()
+        // Even a collapsed or same-node choice uses the owner/native decision.
+        // The caller may prepare explicitly; all ordinary public selections
+        // otherwise take the same actual-A capture here.
+        let transfer = if (selectionTransferId != 0u64) { selectionTransferId } else {
+            match (this.prepareSelectionTransferFromInstalledSource(ticket,
+                if (sourceAnchorByte <= sourceFocusByte) { proxyStart16 } else { proxyEnd16 },
+                if (sourceAnchorByte <= sourceFocusByte) { proxyEnd16 } else { proxyStart16 })) {
+                case Some(id) => id
+                case None => return CjguiAcceptedSelectionAttempt(false,
+                    CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, false)
+            }
+        }
+        let positionSpan = this.beginOwnerTracePhase(341u32, request: transfer)
+        let candidate = this.positionCandidateForSelection(ticket,
+            if (sourceFocusByte < sourceAnchorByte) { proxyStart16 } else { proxyEnd16 })
+        this.endOwnerTracePhase(341u32, positionSpan, request: transfer)
+        selectionCommitActive = true
+        selectionTransferOwnerRevision = -1
+        this.selectionCommitFailureStage = ""
+        let verified = CjguiSelectionTransferReceiptBox()
+        let installStatus = CjguiSelectionInstallStatusBox()
+        let decision = CjguiNativeSelectionDecision(sessionToken, transfer)
+        let commitSpan = this.beginOwnerTracePhase(342u32, request: transfer)
+        let committed = session.commitReservedSourceSelectionTicket(ticket.semantic,
+            sourceAnchorByte, sourceFocusByte, decision, { reservedRevision =>
+                selectionTransferOwnerRevision = reservedRevision
+                let result = internalRendererInstallSelectionTransferB(sessionToken, transfer)
+                installStatus.value = result.status
+                if (result.status == CJGUI_INTERNAL_RENDERER_OK) { verified.value = Some(result.receipt) }
+                else {
+                    let state = internalRendererSelectionTransferState(sessionToken, transfer)
+                    if (state[0] == CJGUI_INTERNAL_RENDERER_OK &&
+                        (state[1] == CJGUI_SELECTION_TRANSFER_PENDING || state[1] == CJGUI_SELECTION_TRANSFER_PREPARING)) {
+                        let _ = internalRendererAdmitSelectionTransferInput(sessionToken, transfer)
+                    }
+                }
+            })
+        this.endOwnerTracePhase(342u32, commitSpan, request: transfer)
+        if (committed) {
+            // Native's terminal is final. Cleanup is retryable bookkeeping,
+            // never a second decision on the accepted choice.
+            if (let Some(context) <- pendingSelectionTransferProof) {
+                if (let Some(receipt) <- verified.value) {
+                    context.activate(receipt)
+                    activeSelectionTransferProof = Some(context)
+                    if (getVariable("CJGUI_TRACE_IME_PUMP") == Some("1")) {
+                        getStdOut().writeln("CJGUI_SELECTION_OWNER_RECEIPT mono_ns=${unsafe { cjgui_internal_renderer_owner_clock_ns() }} " +
+                            "transfer=${transfer} owner_version=${ticket.semantic.contentVersion} owner_revision=${selectionTransferOwnerRevision} " +
+                            "source_anchor=${sourceAnchorByte} source_focus=${sourceFocusByte} context_epoch=${ticket.semantic.contextEpoch} " +
+                            "scene=${receipt.sceneVersion} projection=${receipt.projectionVersion} binding=${receipt.bindingEpoch} " +
+                            "node=${receipt.nodeId} resource=${receipt.resourceId} kind=${receipt.nodeKind} " +
+                            "proxy_generation=${receipt.proxyGeneration} native_selection_revision=${receipt.selectionRevision} " +
+                            "proxy_start16=${receipt.selectionStart16} proxy_end16=${receipt.selectionEnd16}")
+                    }
+                    textSessionBindingEpoch = receipt.bindingEpoch
+                    // A source proxy is still the owned MULTILINE surface.
+                    // Treating it as a TEXT presentation would release and
+                    // redeclare its freshly installed identity on refresh.
+                    if (ticket.nodeKind == CJGUI_COMPOSABLE_UI_TEXT) {
+                        presentationTextSessionNodeId = ticket.nodeId
+                        presentationTextSessionResourceId = ticket.resourceId
+                        presentationTextSessionSceneVersion = ticket.sceneVersion
+                    } else {
+                        presentationTextSessionNodeId = -1
+                        presentationTextSessionResourceId = -1
+                        presentationTextSessionSceneVersion = -1
+                    }
+                    installedRangeSessionGeneration = context.candidate.sourceRendererSessionGeneration
+                }
+            }
+            let retirementSpan = this.beginOwnerTracePhase(343u32, request: transfer)
+            let cleanup = internalRendererDiscardSelectionTransferCapsule(sessionToken, transfer)
+            if (cleanup == CJGUI_INTERNAL_RENDERER_OK) {
+                let _ = internalRendererReleaseSelectionTransfer(sessionToken, transfer)
+            } else { selectionTransferRetirement = transfer }
+            pendingSelectionTransferProof = None
+            this.endOwnerTracePhase(343u32, retirementSpan, request: transfer)
+            // Publication responsibility belongs to the window even when the
+            // caller's declaration is byte-for-byte equal to the prior one.
+            let publicationSpan = this.beginOwnerTracePhase(344u32, request: transfer)
+            this.requestRefresh()
+            let current = session.freezeSelectionTicket()
+            if (current.contentVersion == ticket.semantic.contentVersion &&
+                current.sourceVersion == ticket.semantic.sourceVersion &&
+                current.selectionRevision == selectionTransferOwnerRevision) {
+                // The receipt includes actual native focus. Publish that same
+                // target to the window before the next scene: a restore may
+                // have started from a toolbar button, whose old focus would
+                // otherwise clear the just-installed source caret on refresh.
+                this.recordProjectedFocus(nativeInputScene.nodeForId(ticket.nodeId),
+                    rememberBookmark: false, installedRange: Some((proxyStart16, proxyEnd16)))
+                focusedSelectionStart = proxyStart16; focusedSelectionEnd = proxyEnd16
+                refreshPageFocusBookmark(nativeInputScene.nodeForId(ticket.nodeId))
+                interactionVersion += 1
+                committedTextPositions.remove(ticket.nodeId)
+                if (let Some(position) <- candidate) { committedTextPositions[ticket.nodeId] = position }
+                positionQueryCandidate = None; positionQuerySemantic = None
+                publish()
+                if (macCaretDispatchActive) {
+                    let _ = this.finishMacCaretInput(1u32)
+                }
+            } else { this.requestRefresh() }
+            selectionCommitActive = false
+            this.endOwnerTracePhase(344u32, publicationSpan, request: transfer)
+            // Preserve the pre-armed source receipt path used by ordinary
+            // native source clicks. This is preparation only: it neither
+            // moves focus nor changes the committed owner choice.
+            let handoffSpan = this.beginOwnerTracePhase(345u32, request: transfer)
+            let _ = this.preparePendingSourceHandoff()
+            this.endOwnerTracePhase(345u32, handoffSpan, request: transfer)
+            return CjguiAcceptedSelectionAttempt(true, CJGUI_INTERNAL_RENDERER_OK, true)
+        } else {
+            let restored = this.finishSelectionTransferAbort(transfer)
+            if (restored) { pendingSelectionTransferProof = None }
+            this.selectionCommitFailureStage = if (!restored) { "recovery_blocked" }
+                else if (installStatus.value >= 0) { "install_or_restore:${installStatus.value}" }
+                else { "owner_reservation_aborted" }
+            getStdOut().writeln("CJGUI_SELECTION_COMMIT_REFUSED stage=${this.selectionCommitFailureStage}")
+            selectionCommitActive = false
+            return CjguiAcceptedSelectionAttempt(false, installStatus.value, restored)
+        }
     }
 
     // One framework-owned recovery slot, with a monotonically increasing id.
     // Same-value selections still supersede it through selectionRevision.
     private var pendingSelectionRestore: ?CjguiPendingSelectionRestore = None
+    private var pendingSelectionRestoreTransferId: UInt64 = 0u64
     private var pendingSelectionRestoreAttempts: Int64 = 0
     private var pendingSelectionRestoreScene: Int64 = -1
     private var selectionRestoreSequence: Int64 = 0
@@ -12213,9 +16334,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var automaticSelectionRestoreTicket: ?CjguiTextSelectionTicket = None
     private var automaticSelectionRestoreBinding: UInt64 = 0
 
+    private func supersedePendingSelectionRestore(): Bool {
+        if (let Some(request) <- pendingSelectionRestore) {
+            this.finishSelectionRestore(request.id, "superseded")
+        }
+        return pendingSelectionRestore.isNone()
+    }
+
     public func requestTextSelectionRestore(nodeId: Int64, resourceId: Int64, nodeKind: Int64,
         value: String, start16: Int64, end16: Int64): Int64 {
-        if (selectionCommitActive) { return -1 }
+        if (selectionCommitActive || this.closeStopsNewOwnerWork()) { return -1 }
         let session = match (ownedTextSession) { case Some(s) => s; case None => return -1 }
         if (!session.isBound() || start16 < 0 || end16 < start16 || end16 > cjguiUtf16Length(value)) { return -1 }
         // A menu can close before an already mapped selection reaches native.
@@ -12232,6 +16360,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return request.id
             }
         }
+        if (!this.supersedePendingSelectionRestore()) { return -1 }
         selectionRestoreSequence += 1
         pendingSelectionRestore = Some(CjguiPendingSelectionRestore(selectionRestoreSequence,
             textSessionBindingEpoch, session.freezeSelectionTicket(), nodeId, resourceId, nodeKind,
@@ -12241,6 +16370,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pendingSelectionRestoreScene = -1
         getStdOut().writeln("CJGUI_SEL_RESTORE_REQ id=${selectionRestoreSequence} epoch=${textSessionBindingEpoch} node=${nodeId} sel=${start16}:${end16}")
         getStdOut().flush()
+        this.armSourceSelectionInstallGate()
         return selectionRestoreSequence
     }
 
@@ -12249,26 +16379,46 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// Only the framework installs focus, selection and presentation ownership.
     public func requestAcceptedSelectionRestore(ticket: CjguiAcceptedSelectionTicket,
         sourceAnchor16: Int64, sourceFocus16: Int64, proxyStart16: Int64, proxyEnd16: Int64,
-        publish: () -> Unit): Int64 {
-        if (selectionCommitActive || !this.acceptedSelectionTicketMatches(ticket) ||
+        publish: () -> Unit, sourceCoordinatesAreBytes!: Bool = false): Int64 {
+        if (selectionCommitActive || this.closeStopsNewOwnerWork() || !this.acceptedSelectionTicketMatches(ticket) ||
             proxyStart16 < 0 || proxyEnd16 < proxyStart16 || proxyEnd16 > cjguiUtf16Length(ticket.value)) { return -1 }
         let session = ownedTextSession.getOrThrow()
-        if (sourceAnchor16 < 0 || sourceFocus16 < 0 ||
-            sourceAnchor16 > cjguiUtf16Length(session.mirrorText()) ||
-            sourceFocus16 > cjguiUtf16Length(session.mirrorText())) { return -1 }
+        if (sourceAnchor16 < 0 || sourceFocus16 < 0 || (!sourceCoordinatesAreBytes &&
+            (sourceAnchor16 > cjguiUtf16Length(session.mirrorText()) ||
+             sourceFocus16 > cjguiUtf16Length(session.mirrorText())))) { return -1 }
+        if (!this.supersedePendingSelectionRestore()) { return -1 }
         selectionRestoreSequence += 1
         pendingSelectionRestore = Some(CjguiPendingSelectionRestore(selectionRestoreSequence,
             ticket.bindingEpoch, ticket.semantic, ticket.nodeId, ticket.resourceId, ticket.nodeKind,
-            ticket.value, proxyStart16, proxyEnd16, sourceAnchor16, sourceFocus16, true, publish))
+            ticket.value, proxyStart16, proxyEnd16, sourceAnchor16, sourceFocus16, true, publish,
+            sourceCoordinatesAreBytes: sourceCoordinatesAreBytes,
+            targetCaptureRevision: this.pointerCaptureVersionFor(nativeInputScene.nodeForId(ticket.nodeId))))
+        if (macCaretDispatchActive && macCaretInput.isSome()) {
+            macCaretRestoreId = selectionRestoreSequence
+        }
         pendingSelectionRestoreAttempts = 0
         pendingSelectionRestoreScene = -1
         getStdOut().writeln("CJGUI_SEL_RESTORE_REQ id=${selectionRestoreSequence} epoch=${ticket.bindingEpoch} node=${ticket.nodeId} sel=${proxyStart16}:${proxyEnd16} mapped=true")
         getStdOut().flush()
+        this.armSourceSelectionInstallGate()
         return selectionRestoreSequence
+    }
+
+    private func armSourceSelectionInstallGate(): Unit {
+        if (ownerTurnBudget.isNone() &&
+            !(internalRendererInstalledRangeSupported() && textRangeEditDeltaDeliveryEnabled)) { return }
+        if (let Some(request) <- pendingSelectionRestore) {
+            if (!request.commitSourceSelection && request.nodeId == ownedTextSessionNodeId && request.resourceId == ownedTextSessionResourceId &&
+                request.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) {
+                let _ = unsafe { cjgui_internal_renderer_set_source_install_gate(sessionToken,
+                    request.bindingEpoch, UInt64(request.id), 1u8) }
+            }
+        }
     }
 
     public func requestOwnedSelectionRestore(): Bool {
         let session = match (ownedTextSession) { case Some(s) => s; case None => return false }
+        if (!session.selectionCoordinatesMatchMirror()) { return false }
         let (a, b) = session.selection16()
         return this.requestTextSelectionRestore(ownedTextSessionNodeId, ownedTextSessionResourceId,
             ownedTextSessionNodeKind, session.mirrorText(), a, b) >= 0
@@ -12285,10 +16435,35 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     }
 
     private func finishSelectionRestore(id: Int64, reason: String): Unit {
+        if (let Some(request) <- pendingSelectionRestore) {
+            if (request.id == id) {
+                if (pendingSelectionRestoreTransferId != 0u64) {
+                    if (reason != "installed" &&
+                        !this.finishSelectionTransferAbort(pendingSelectionRestoreTransferId)) {
+                        this.traceSelectionRestoreWait(id, "resource_retirement_retained")
+                        return
+                    }
+                    pendingSelectionRestoreTransferId = 0u64
+                    pendingSelectionTransferProof = None
+                }
+                if (let Some(budget) <- ownerTurnBudget) {
+                    budget.releasePreparedOwner(sessionToken + 0x8000000000000000u64)
+                }
+                let _ = unsafe { cjgui_internal_renderer_set_source_install_gate(sessionToken,
+                    request.bindingEpoch, UInt64(request.id), 0u8) }
+                pendingSelectionRestore = None
+            }
+        }
         selectionRestoreTerminalId = id
         selectionRestoreTerminalReason = reason
-        if (let Some(request) <- pendingSelectionRestore) {
-            if (request.id == id) { pendingSelectionRestore = None }
+        if (macCaretRestoreId == id) {
+            if (!this.finishMacCaretInput(if (reason == "installed") {
+                1u32
+            } else {
+                3u32
+            })) {
+                let _ = this.finishMacCaretInput(3u32)
+            }
         }
         getStdOut().writeln("CJGUI_SEL_RESTORE_END id=${id} reason=${reason}")
         getStdOut().flush()
@@ -12307,7 +16482,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
     }
     public func pumpPendingSelectionRestore(): Unit {
-        if (selectionCommitActive) { return }
+        let phaseStarted = this.ownerPhaseStarted()
+        try {
+        if (selectionCommitActive || this.closeStopsNewOwnerWork()) { return }
         let request = match (pendingSelectionRestore) { case Some(r) => r; case None => return }
         let session = match (ownedTextSession) {
             case Some(s) => s
@@ -12319,14 +16496,180 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         }
         let node = nativeInputScene.nodeForId(request.nodeId)
         if (node.nodeId != request.nodeId || node.resourceId != request.resourceId ||
-            node.nodeKind != request.nodeKind || node.value != request.value) { return }
+            node.nodeKind != request.nodeKind || node.value != request.value) {
+            if (request.commitSourceSelection) {
+                this.finishSelectionRestore(request.id, "source_mapping_superseded")
+            }
+            return
+        }
+        // Equal text does not prove an equal source range. Reuse the existing
+        // capture revision, whose consumer contract includes the accepted map,
+        // before allowing this already admitted request onto a newer scene.
+        if (request.commitSourceSelection &&
+            this.pointerCaptureVersionFor(node) != request.targetCaptureRevision) {
+            this.finishSelectionRestore(request.id, "source_mapping_superseded")
+            return
+        }
+        // An owned-source restore can follow Undo or a public selection while
+        // native still owns a presentation proxy. It needs the same A -> B
+        // decision as a pointer choice; legacy arm requires B already active.
+        // The frozen owner ticket, not this request's local proxy intersection,
+        // supplies the directed global source range. This settles selection
+        // and input ownership only; it never replays the accepted body edit.
+        let ownerSelection = session.sourceSelectionSnapshot()
+        let restoresOwnedSource = !request.commitSourceSelection &&
+            request.nodeId == ownedTextSessionNodeId && request.resourceId == ownedTextSessionResourceId &&
+            request.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+        if ((request.commitSourceSelection || restoresOwnedSource) && ownerSelection.isSome() &&
+            internalRendererInstalledRangeSupported() && textRangeEditDeltaDeliveryEnabled) {
+            let selected = ownerSelection.getOrThrow()
+            if (restoresOwnedSource && (selected.version != request.semantic.contentVersion ||
+                selected.revision != request.semantic.selectionRevision ||
+                selected.anchorByte < 0 || selected.focusByte < 0)) {
+                this.finishSelectionRestore(request.id, "identity_superseded")
+                return
+            }
+            let sourceAnchor = if (restoresOwnedSource) { selected.anchorByte } else { request.sourceAnchor16 }
+            let sourceFocus = if (restoresOwnedSource) { selected.focusByte } else { request.sourceFocus16 }
+            let sourceBytes = restoresOwnedSource || request.sourceCoordinatesAreBytes
+            if (let Some(proof) <- pendingSelectionTransferProof) {
+                if (pendingSelectionRestoreTransferId == proof.candidate.transferId &&
+                    proof.candidate.targetSceneVersion != UInt64(nativeInputScene.version)) {
+                    // Only the private resource has expired. Keep the original
+                    // source ticket and completion callback while retiring it;
+                    // A is restored before input is reopened. Replay may admit
+                    // a new owner choice, so the next turn rechecks all facts.
+                    if (this.finishSelectionTransferAbort(proof.candidate.transferId)) {
+                        pendingSelectionRestoreTransferId = 0u64
+                        pendingSelectionTransferProof = None
+                        if (let Some(budget) <- ownerTurnBudget) {
+                            budget.releasePreparedOwner(sessionToken + 0x8000000000000000u64)
+                        }
+                        this.traceSelectionRestoreWait(request.id, "preparation_scene_rebase_retained")
+                    } else {
+                        this.traceSelectionRestoreWait(request.id, "resource_retirement_retained")
+                    }
+                    return
+                }
+            }
+            if (pendingSelectionRestoreScene != nativeInputScene.version) {
+                pendingSelectionRestoreScene = nativeInputScene.version
+                pendingSelectionRestoreAttempts = 0
+            }
+            if (pendingSelectionRestoreAttempts >= 8) {
+                this.traceSelectionRestoreWait(request.id, "source_attempt_limit_retained")
+                return
+            }
+            if (!this.ownerBudgetAdmits(8000, "selection_install")) { return }
+            let ticket = CjguiAcceptedSelectionTicket(request.bindingEpoch, request.semantic,
+                nativeInputScene.version, request.nodeId, request.resourceId, request.nodeKind, request.value)
+            if (cjguiUtf16Length(request.value) >= 1024) {
+                if (pendingSelectionRestoreTransferId == 0u64) {
+                    // Temporarily detach this same request, so the capture
+                    // entry cannot mistake it for a newer competing choice.
+                    pendingSelectionRestore = None
+                    let transfer = this.prepareSelectionTransferFromInstalledSource(ticket,
+                        if (sourceAnchor <= sourceFocus) { request.anchor16 } else { request.focus16 },
+                        if (sourceAnchor <= sourceFocus) { request.focus16 } else { request.anchor16 })
+                    pendingSelectionRestore = Some(request)
+                    if (let Some(id) <- transfer) { pendingSelectionRestoreTransferId = id }
+                    else {
+                        this.traceSelectionRestoreWait(request.id, "source_capture_not_admitted")
+                        return
+                    }
+                }
+                let state = internalRendererSelectionTransferState(sessionToken, pendingSelectionRestoreTransferId)
+                if (state[0] != CJGUI_INTERNAL_RENDERER_OK || state[1] != CJGUI_SELECTION_TRANSFER_PENDING) {
+                    this.finishSelectionRestore(request.id, "input_superseded")
+                    return
+                }
+                let sharedDeadline = match (ownerTurnBudget) {
+                    case Some(budget) => budget.deadlineNs()
+                    case None => 0u64
+                }
+                let now = unsafe { cjgui_internal_renderer_owner_clock_ns() }
+                let deadline = if (sharedDeadline != 0u64) { sharedDeadline } else {
+                    if (now <= UInt64.Max - 4000000u64) { now + 4000000u64 } else { UInt64.Max }
+                }
+                let prepared = internalRendererPrepareSelectionTransferB(sessionToken,
+                    pendingSelectionRestoreTransferId, deadline)
+                if (prepared[0] == CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED) {
+                    this.traceSelectionRestoreWait(request.id, "preparation_capacity_retained")
+                    return
+                }
+                if (prepared[0] != CJGUI_INTERNAL_RENDERER_OK) {
+                    this.finishSelectionRestore(request.id, "preparation_invalidated:${prepared[0]}")
+                    return
+                }
+                if (!prepared[1]) {
+                    if (let Some(budget) <- ownerTurnBudget) {
+                        let _ = budget.retainPreparedOwner(sessionToken + 0x8000000000000000u64)
+                    }
+                    this.traceSelectionRestoreWait(request.id, "private_input_preparing")
+                    return
+                }
+            }
+            // Transfer preparation sees this same request, held on this stack;
+            // it is not a competing pending selection. A failed attempt puts
+            // it back only while its original owner identity is still current.
+            pendingSelectionRestore = None
+            let preparedTransfer = pendingSelectionRestoreTransferId
+            let hadPreparedTransfer = preparedTransfer != 0u64
+            pendingSelectionRestoreAttempts += 1
+            let attempt = if (sourceBytes) {
+                this.commitAcceptedSourceSelectionAttempt(ticket, sourceAnchor,
+                    sourceFocus, request.anchor16, request.focus16, request.publish,
+                    selectionTransferId: pendingSelectionRestoreTransferId)
+            } else {
+                this.commitAcceptedSelectionAttempt(ticket, request.sourceAnchor16,
+                    request.sourceFocus16, request.anchor16, request.focus16, request.publish,
+                    selectionTransferId: pendingSelectionRestoreTransferId)
+            }
+            let installed = attempt.committed
+            pendingSelectionRestoreTransferId = if (!installed && pendingSelectionTransferProof.isSome()) {
+                preparedTransfer
+            } else { 0u64 }
+            pendingSelectionRestore = Some(request)
+            if (installed) {
+                this.finishSelectionRestore(request.id, "installed")
+            } else if (attempt.nativeStatus == CJGUI_INTERNAL_RENDERER_SCENE_STALE && attempt.restoredA &&
+                request.bindingEpoch == textSessionBindingEpoch &&
+                session.selectionTicketMatches(request.semantic) && this.acceptedSelectionTicketMatches(ticket)) {
+                this.traceSelectionRestoreWait(request.id, "native_input_aborted_pending_retained")
+            } else if (hadPreparedTransfer) {
+                this.finishSelectionRestore(request.id, "selection_not_admitted")
+            } else if (request.bindingEpoch == textSessionBindingEpoch &&
+                session.selectionTicketMatches(request.semantic)) {
+                this.traceSelectionRestoreWait(request.id, "selection_transfer_pending")
+            } else {
+                this.finishSelectionRestore(request.id, "identity_superseded")
+            }
+            return
+        }
         if (pendingSelectionRestoreScene != nativeInputScene.version) {
             pendingSelectionRestoreScene = nativeInputScene.version
             pendingSelectionRestoreAttempts = 0
         }
         if (pendingSelectionRestoreAttempts >= 8) { return } // retained, named, bounded per accepted scene
+        // Deferral keeps the request, semantic ticket and attempts unchanged.
+        if (!this.ownerBudgetAdmits(8000, "selection_install")) { return }
+        let carriesInstalledSource = internalRendererInstalledRangeSupported() && textRangeEditDeltaDeliveryEnabled &&
+            request.nodeId == ownedTextSessionNodeId && request.resourceId == ownedTextSessionResourceId &&
+            request.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+        // A ranged source restore needs the actual installation receipt even
+        // when its caller has not attached a shared owner budget. Keep the
+        // same ticket on the prepared-proxy path; the legacy focus-then-arm
+        // path cannot establish this candidate's input provenance.
+        let sourceInstall = (ownerTurnBudget.isSome() || carriesInstalledSource) && request.nodeId == ownedTextSessionNodeId &&
+            request.resourceId == ownedTextSessionResourceId &&
+            request.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT && request.value.size <= 65536
+        if (sourceInstall && revealAcceptedNodeIfNeeded(request.nodeId)) {
+            this.requestRefresh()
+            return
+        }
+        cancelPreparedCandidate("selection_install")
         pendingSelectionRestoreAttempts += 1
-        if (!this.focusAcceptedNodeById(request.nodeId)) {
+        if (!sourceInstall && !this.focusAcceptedNodeById(request.nodeId)) {
             this.traceSelectionRestoreWait(request.id, "focus:${lastNativeFailure}")
             return
         }
@@ -12335,11 +16678,67 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             return
         }
         let installScene = nativeInputScene.version
+        var sourceBasis: ?CjguiInstalledRangeBasis = None
+        if (carriesInstalledSource) {
+            if (installedRangeCandidateRequest != request.id || installedRangeCandidateScene != installScene ||
+                installedRangeCandidate.isNone()) {
+                if (let Some(previous) <- installedRangeCandidate) {
+                    internalRendererCancelInstalledRange(sessionToken, previous.nonce)
+                }
+                installedRangeNonceSequence += 1u64
+                installedRangeCandidate = session.freezeInstalledRangeBasis(installedRangeNonceSequence,
+                    UInt64(instanceToken), textSessionBindingEpoch)
+                installedRangeCandidateRequest = request.id
+                installedRangeCandidateScene = installScene
+            }
+            sourceBasis = installedRangeCandidate
+            let basis = match (sourceBasis) {
+                case Some(b) => b
+                case None => this.traceSelectionRestoreWait(request.id, "source_basis_unavailable"); return
+            }
+            if (basis.text != request.value) {
+                this.traceSelectionRestoreWait(request.id, "source_basis_text_changed")
+                return
+            }
+            let armed = internalRendererArmInstalledRange(sessionToken, basis,
+                UInt64(installScene), UInt64(request.nodeId), request.resourceId)
+            if (armed != CJGUI_INTERNAL_RENDERER_OK) {
+                this.traceSelectionRestoreWait(request.id, "source_basis_arm:${armed}")
+                return
+            }
+        }
         let install = { =>
             if (request.bindingEpoch != textSessionBindingEpoch ||
                 !session.selectionTicketMatches(request.semantic)) { return false }
-            let result = internalRendererRestoreComposableSelection(sessionToken, request.nodeId, request.resourceId,
-                request.nodeKind, installScene, request.value, request.anchor16, request.focus16)
+            let installStarted = this.ownerPhaseStarted()
+            let result = if (sourceInstall) {
+                let sharedDeadline = match (ownerTurnBudget) {
+                    case Some(budget) => budget.deadlineNs()
+                    case None => 0u64
+                }
+                let now = unsafe { cjgui_internal_renderer_owner_clock_ns() }
+                // No active shared turn still gets a bounded preparation
+                // unit, rather than deadline=0's synchronous legacy tail.
+                let deadline = if (sharedDeadline != 0u64) { sharedDeadline } else {
+                    if (now <= UInt64.Max - 8000000u64) { now + 8000000u64 } else { UInt64.Max }
+                }
+                internalRendererInstallOwnedSourceSelection(sessionToken, request.nodeId, request.resourceId,
+                    installScene, request.bindingEpoch, request.id, deadline,
+                    request.value, request.anchor16, request.focus16)
+            } else {
+                let legacy = internalRendererRestoreComposableSelection(sessionToken, request.nodeId, request.resourceId,
+                    request.nodeKind, installScene, request.value, request.anchor16, request.focus16)
+                (legacy[0], legacy[1], legacy[2], false)
+            }
+            this.traceOwnerPhase("selection_native_install", installStarted)
+            if (result[3]) {
+                if (let Some(budget) <- ownerTurnBudget) {
+                    let _ = budget.retainPreparedOwner(sessionToken + 0x8000000000000000u64)
+                }
+                pendingSelectionRestoreAttempts -= 1
+                this.traceSelectionRestoreWait(request.id, "owner_budget_deferred")
+                return false
+            }
             if (result[0] != CJGUI_INTERNAL_RENDERER_OK) {
                 this.traceSelectionRestoreWait(request.id, "selection_install:${result[0]}")
             }
@@ -12357,6 +16756,17 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             selectionCommitActive = false
             return
         }
+        if (let Some(basis) <- sourceBasis) {
+            if (!this.finishInstalledRangeBasis(session, basis, installScene, request.nodeId, request.resourceId)) {
+                internalRendererCancelInstalledRange(sessionToken, basis.nonce)
+                installedRangeCandidate = None
+                selectionCommitActive = false
+                this.traceSelectionRestoreWait(request.id, "installed_source_receipt_stale")
+                return
+            }
+            installedRangeCandidate = None
+            installedRangeCandidateRequest = -1
+        }
         if (!request.commitSourceSelection && session.needsNativeSelectionRestore() &&
             !session.confirmNativeSelectionRestored(request.semantic.contentVersion,
                 if (request.sourceAnchor16 < request.sourceFocus16) { request.sourceAnchor16 } else { request.sourceFocus16 },
@@ -12366,6 +16776,16 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             selectionCommitActive = false
             return
         }
+        let publishStarted = this.ownerPhaseStarted()
+        if (sourceInstall) {
+            this.recordProjectedFocus(node, rememberBookmark: false,
+                installedRange: Some((request.anchor16, request.focus16)))
+            if (request.bindingEpoch != textSessionBindingEpoch) {
+                selectionCommitActive = false
+                this.finishSelectionRestore(request.id, "binding_changed")
+                return
+            }
+        }
         this.publishSelectionSurface(request.nodeId, request.resourceId, request.nodeKind)
         let result = (Int64(CJGUI_INTERNAL_RENDERER_OK), request.anchor16, request.focus16)
         focusedSelectionStart = result[1]
@@ -12374,10 +16794,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         interactionVersion += 1
         this.invalidatePlainPositionBranch()
         request.publish()
+        this.traceOwnerPhase("selection_publish", publishStarted)
         selectionCommitActive = false
         getStdOut().writeln("CJGUI_SEL_RESTORE_DONE id=${request.id} attempts=${pendingSelectionRestoreAttempts} sel=${result[1]}:${result[2]}")
         getStdOut().flush()
         this.finishSelectionRestore(request.id, "installed")
+        } finally {
+            this.traceOwnerPhase("selection_restore", phaseStarted)
+        }
     }
 
     /// M2（2026-09-30）：视觉左/右邻位的**共同查询核心**——会话拥有表面
@@ -12552,18 +16976,30 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         readbackCompleted!: UInt8, windowBackgroundToken!: String,
         windowBackgroundColorScheme!: UInt32,
         consumedRequestEpoch!: Int64): Bool {
+        let phaseStarted = this.beginOwnerTracePhase(106u32)
+        try {
         finalizeWorkloadAttempt("accepted")
         renderedRoot = root
         renderedScene = paintScene
-        publishAcceptedBindingEpochs(paintScene)
+        let bindingSpan = this.beginOwnerTracePhase(102u32)
+        try {
+            publishAcceptedBindingEpochs(paintScene)
+        } finally {
+            this.endOwnerTracePhase(102u32, bindingSpan)
+        }
         nativeInputScene = paintScene
+        if (macSliderCapture.isSome()) { certifyMacSliderCaptureAfterProjection() }
         // Publish these three versions at the same accepted native boundary as
         // the visual sidecar. Interaction-paint-only frames leave them alone;
         // rejected candidates cannot advance any of them.
         geometryContentVersion = declaredVersion
         geometryLayoutVersion = paintScene.version
         geometryTransformVersion = geometryTransformVersion + 1
+        var partStarted = this.ownerPhaseStarted()
         reconcilePresentationTextSessionSurface()
+        this.traceOwnerPhase("accepted_text_surface", partStarted)
+        let viewSpan = this.beginOwnerTracePhase(107u32)
+        try {
         reconcileAnimationBindingsAfterAcceptedChange()
         commitStagedSceneViewports()
         commitStagedSceneSplitTracks()
@@ -12604,17 +17040,24 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             pendingRefreshReason = "none"
         }
         identityRegistry.commitCandidate()
+        } finally {
+            this.endOwnerTracePhase(107u32, viewSpan)
+        }
+        partStarted = this.beginOwnerTracePhase(103u32)
         flushPendingScopedFocus()
         flushPendingSemanticFocus()
+        this.endOwnerTracePhase(103u32, partStarted)
         // A participant's commit is only the Cangjie-side candidate swap;
         // it runs after, never instead of, native acceptance. Implementors
         // must keep it total. If an application callback nevertheless throws
         // here (or during focus restoration), the window is terminally
         // closed below rather than falsely rolling the accepted scene back.
+        partStarted = this.beginOwnerTracePhase(104u32)
         if (let Some(value) <- participant) {
             value.commitSceneRefresh()
             replaceCommandBindings(candidateCommands)
         }
+        this.endOwnerTracePhase(104u32, partStarted)
         replaceDataTransferBindings(candidateDataTransferBindings)
         settleTransferSceneReceipts(candidateDataTransferBindings, paintScene.version, frameIndex)
         // Native staging/present accepted this exact scene. Failed native
@@ -12623,10 +17066,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         layoutReuseCache.commitPass()
         updateModalFocus(root)
         // A1：关闭意图挂起时不再恢复焦点（关闭态不得绑定交互状态）。
+        partStarted = this.beginOwnerTracePhase(105u32)
         if (!closeIntentPending) {
             restoreFocusAfterProjectionChange(previouslySubmittedScene)
             restoreOwnedTextSelectionAfterAcceptedScene()
         }
+        this.endOwnerTracePhase(105u32, partStarted)
         reconcilePointerCaptureAfterProjection()
         reconcilePressLeaseAfterProjection()
         syncDiagnosticOverlayAfterAcceptance()
@@ -12647,6 +17092,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pendingLocalTextValue = ""
         pendingLocalTextOwnerRevision = -1
         return true
+        } finally {
+            this.endOwnerTracePhase(106u32, phaseStarted)
+        }
     }
 
     /// A1：交互投影的接受收尾。交互投影没有 participant/identity/layout 候选，
@@ -12659,6 +17107,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         renderedScene = paintScene
         publishAcceptedBindingEpochs(paintScene)
         nativeInputScene = paintScene
+        if (macSliderCapture.isSome()) { certifyMacSliderCaptureAfterProjection() }
         reconcilePointerCaptureAfterProjection()
         reconcilePressLeaseAfterProjection()
         reconcilePresentationTextSessionSurface()
@@ -13216,6 +17665,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 return "cross_window_view_state_shared:scroll"
             }
             if (owner == 0) {
+                let identity = viewport.viewStateIdentity()
+                if (!CjguiCandidateViewportReservations.reserve(identity, instanceToken)) {
+                    return "cross_window_view_state_reserved:scroll"
+                }
+                var retained = false
+                for (value in reservedCandidateViewports) { if (value == identity) { retained = true } }
+                if (!retained) { reservedCandidateViewports.add(identity) }
                 stagedViewStateViewports.add(viewport)
             }
         }
@@ -13265,6 +17721,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// Drops the ownership this candidate staged. Nothing was published, so no
     /// accepted object and no other window's right is touched.
     private func discardStagedViewStateOwnership(): Unit {
+        for (identity in reservedCandidateViewports) {
+            CjguiCandidateViewportReservations.release(identity, instanceToken)
+        }
+        reservedCandidateViewports.clear()
         stagedViewStateViewports = ArrayList<CjguiComposableUiScrollViewport>()
         stagedViewStateSplits = ArrayList<CjguiComposableUiSplitState>()
         stagedViewStateTabs = ArrayList<CjguiComposableUiTabsState>()
@@ -13444,6 +17904,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return false
     }
     private func noteRefreshFailure(status: Int32): Bool {
+        if (status == CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR) {
+            getStdOut().writeln("CJGUI_REFRESH_INTERNAL_ERROR startup_phase=${startupPhase} " +
+                "prepared=${preparingCandidate.isSome()} static=${staticLayoutPreparation.isSome()}")
+        }
         if (sessionToken != CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN && isWindowOpen) {
             let _ = internalRendererDiscardComposableSceneCandidate(sessionToken)
         }
@@ -13539,6 +18003,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return "internal_error"
     }
     private func discardSession(reason: String) {
+        cancelPreparedCandidate("window_close")
+        if (let Some(request) <- pendingSelectionRestore) {
+            this.finishSelectionRestore(request.id, "window_closed")
+            if (pendingSelectionRestore.isSome()) {
+                discardRetryReason = reason
+                closeIntentPending = true
+                return
+            }
+        }
         // Destroy is the commit boundary for closing. A rejected destroy still
         // owns its accepted scene, mutable views, participant resources and
         // native session; no other window may claim them until it succeeds.
@@ -13787,12 +18260,21 @@ public enum CjguiVerticalMoveResult {
     | Rejected(String)
 }
 
-/// Astra 裁决（2026-09-30）：共同分发点的五类**终态**。"已消费"与"发生修改"
-/// 分开——只有 `NotApplicable` 允许回落（事件在接管前确定不归本处理器负责）；
-/// 其余四类一律终止该意图，不得再走逻辑移动或平台默认执行。
+/// A cross-node TEXT edge hit whose scene, row, layout lease, stop and UTF-8
+/// display byte were validated against one accepted native layout.
+public enum CjguiNodeEdgeLandingResult {
+    | Ready(Int64, Float64, UInt32)
+    | NeedPrepare(String)
+    | Rejected(String)
+}
+
+/// Common intent admission. Only NotApplicable permits platform fallback.
+/// Retained keeps a request id until selectionRestoreState reports completion;
+/// it neither claims a committed selection nor repeats the key on the platform.
 public enum CjguiPlainIntentDisposition {
     | NotApplicable
     | Success
+    | Retained(Int64)
     | AtBoundary
     | NeedPrepare(String)
     | Refused(String)
@@ -13818,6 +18300,66 @@ public class CjguiAcceptedSelectionTicket {
         this.value = value
     }
 }
+
+/// One retained physical Up/Down input waiting for its accepted owner scene.
+/// The identity and source ticket are copied from the actual window pump; the
+/// framework does not synthesize navigation events for product callbacks.
+public class CjguiVisualInputIntent {
+    public let rendererSessionGeneration: UInt64
+    public let sequence: UInt64
+    public let previousSequence: UInt64
+    public let sourceTicket: CjguiAcceptedSelectionTicket
+    public let direction: String
+    public let shift: Bool
+    public let preferredX: Float64
+    public let transferId: UInt64
+    init(rendererSessionGeneration: UInt64, sequence: UInt64, previousSequence: UInt64,
+        sourceTicket: CjguiAcceptedSelectionTicket, direction: String, shift: Bool,
+        preferredX: Float64, transferId: UInt64) {
+        this.rendererSessionGeneration = rendererSessionGeneration
+        this.sequence = sequence
+        this.previousSequence = previousSequence
+        this.sourceTicket = sourceTicket
+        this.direction = direction
+        this.shift = shift
+        this.preferredX = preferredX
+        this.transferId = transferId
+    }
+    func rebased(ticket: CjguiAcceptedSelectionTicket, preferred: Float64): CjguiVisualInputIntent {
+        return CjguiVisualInputIntent(rendererSessionGeneration, sequence, previousSequence,
+            ticket, direction, shift, preferred, transferId)
+    }
+    func withTransfer(transfer: UInt64): CjguiVisualInputIntent {
+        return CjguiVisualInputIntent(rendererSessionGeneration, sequence, previousSequence,
+            sourceTicket, direction, shift, preferredX, transfer)
+    }
+}
+
+public enum CjguiVisualInputIntentOutcome {
+    | Committed
+    | AtBoundary
+    | Aborted
+}
+
+/// Experimental selection admission. Retained ids are completed by
+/// selectionRestoreState; callbacks run only after the unique commit.
+private struct CjguiAcceptedSelectionAttempt {
+    let committed: Bool
+    let nativeStatus: Int32
+    let restoredA: Bool
+    init(committed: Bool, nativeStatus: Int32, restoredA: Bool) {
+        this.committed = committed
+        this.nativeStatus = nativeStatus
+        this.restoredA = restoredA
+    }
+}
+
+public enum CjguiSelectionSubmission {
+    | Committed
+    | Retained(Int64)
+    | NotAdmitted(String)
+}
+
 struct CjguiPendingSelectionRestore {
     let id: Int64
     let bindingEpoch: UInt64
@@ -13831,10 +18373,13 @@ struct CjguiPendingSelectionRestore {
     let sourceAnchor16: Int64
     let sourceFocus16: Int64
     let commitSourceSelection: Bool
+    let sourceCoordinatesAreBytes: Bool
+    let targetCaptureRevision: Int64
     let publish: () -> Unit
     init(id: Int64, binding: UInt64, semantic: CjguiTextSelectionTicket, node: Int64,
         resource: Int64, kind: Int64, value: String, anchor: Int64, focus: Int64,
-        sourceAnchor: Int64, sourceFocus: Int64, commitSource: Bool, publish: () -> Unit) {
+        sourceAnchor: Int64, sourceFocus: Int64, commitSource: Bool, publish: () -> Unit,
+        sourceCoordinatesAreBytes!: Bool = false, targetCaptureRevision!: Int64 = -1) {
         this.id = id
         this.bindingEpoch = binding
         this.semantic = semantic
@@ -13847,6 +18392,8 @@ struct CjguiPendingSelectionRestore {
         this.sourceAnchor16 = sourceAnchor
         this.sourceFocus16 = sourceFocus
         this.commitSourceSelection = commitSource
+        this.sourceCoordinatesAreBytes = sourceCoordinatesAreBytes
+        this.targetCaptureRevision = targetCaptureRevision
         this.publish = publish
     }
 }

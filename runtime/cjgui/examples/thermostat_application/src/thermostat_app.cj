@@ -94,7 +94,21 @@ public class CjguiThermostatDomain <: CjguiSharedOperationDomain & CjguiSharedOp
         imageCatalog = Some(catalog)
     }
 
+    // round12-R2：宿主可挂**表面状态闭包**（accepted 读回几何/当前编辑身份），
+    // 随每次 GET_CONTEXT 公开——读回定位不依赖 hilog node-rect。未挂时载荷保持
+    // 旧形状（ownerState 为空，传输层自动省略该行）。
+    private var stateProvider: ?(() -> String) = None
+
+    public func attachStateProvider(provider: () -> String): Unit {
+        stateProvider = Some(provider)
+    }
+
     public func contextSnapshot(): CjguiSharedOperationContextSnapshot {
+        let ownerState = if (let Some(provider) <- stateProvider) {
+            provider()
+        } else {
+            ""
+        }
         return CjguiSharedOperationContextSnapshot(versionValue, "恒温示例", resourceType(),
             ArrayList<CjguiSharedOperationResource>([
                 CjguiSharedOperationResource(CjguiThermostatDomain.resourceId, "恒温器",
@@ -105,7 +119,7 @@ public class CjguiThermostatDomain <: CjguiSharedOperationDomain & CjguiSharedOp
                         CjguiSharedOperationField("note", CjguiSharedOperationValue.string(noteValue)),
                         CjguiSharedOperationField("imageVersion", CjguiSharedOperationValue.integer(imageVersionValue))
                     ]))
-            ]))
+            ]), ownerState: ownerState)
     }
 
     public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> {
@@ -327,6 +341,11 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     public static let nodeIdTempUp: Int64 = 22
     public static let nodeIdEco: Int64 = 23
     public static let nodeIdNote: Int64 = 24
+    // presentation 消费者：备注 TEXT 投影（非 INPUT 锚）。同一 note owner 字段
+    // 的自绘呈现——点选/拖选经**公共持留排版命中**（窗口 hitTest，消费 A2 租约
+    // 表）安装选区，系统输入经**公共范围会话适配**（CjguiGeneratedFieldRange
+    // Session）写同一 owner 事务（SET_NOTE）；不建产品私有 native 路径。
+    public static let nodeIdNotePresentation: Int64 = 25
     public static let nodeIdImage: Int64 = 31
     public static let nodeIdImageSwitch: Int64 = 32
     // C（h-source-preview-next）：样式阶段循环按钮（本地 UI 状态，不经 owner）。
@@ -350,9 +369,105 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     // 消费挂起请求。
     public static let nodeIdFocusNoteNav: Int64 = 944
     private var pendingFocusSemantic: ?String = None
+    private var pendingPresentationFocus: Bool = false
+    private var pendingPresentationFocusBase: Int64 = -1
 
     public func requestFocusSemantic(semanticId: String): Unit {
         pendingFocusSemantic = Some(semanticId)
+    }
+
+    // presentation 锚点的**场景接受后**焦点请求：bind 的镜像声明在下一次
+    // present 提交后才晋升 accepted，焦点必须等它（与 Pharos focusReassert
+    // 同一形态），否则 owned 门以 decl=0 拒绝、无 live context。
+    public func requestPresentationFocusAfterAccept(): Unit {
+        pendingPresentationFocus = true
+        pendingPresentationFocusBase = match (presentationWindow) {
+            case Some(window) => window.lastAcceptedSceneVersion()
+            case None => -1
+        }
+    }
+
+    /// 仅当 bind 时的镜像声明已经随一次 accepted 场景晋升（accepted 版本
+    /// 相对请求时**推进**）才放行焦点；宿主循环逐 tick 轮询本入口。
+    /// 待决未放行期间由宿主循环代为请求刷新（指针派发运行在渲染线程，
+    /// 那里的 requestRefresh 可能被线程策略丢弃；宿主线程的请求是权威通道）。
+    public func presentationFocusPending(): Bool {
+        return pendingPresentationFocus
+    }
+
+    /// 宿主出口：本窗口**采纳**这份落点的事实（恢复链 kind-55 的收场凭据）。
+    ///
+    /// 之前 thermo 只读 `pres-diag` 那一类前置条件，采纳事实本身没有消费者：
+    /// 框架已经把它记在窗口里、Pharos 侧也在用，独立消费者这条腿因此拿不到
+    /// 「同实例、同当前身份的窗口采纳」凭据，只能退回「签了票/装了就算通过」。
+    /// 计数只在窗口采纳成功后前进（平台安装成功但窗口拒绝采纳只进 failed），
+    /// 所以这一行既不等于「票据已签发」也不等于「平台已安装」，三者不能互相顶替。
+    /// 只在计数前进的那一次返回一行，其余 tick 返回 None（不制造 hilog 噪声）。
+    public func takeRestoreAdoptionFact(): ?String {
+        let window = match (presentationWindow) {
+            case Some(value) => value
+            case None => return None
+        }
+        let count = window.textSessionRestoreCount()
+        if (count <= lastRestoreAdoptedCount) {
+            return None
+        }
+        lastRestoreAdoptedCount = count
+        let (request, ctx, node, start, end, ownerVersion, projectionVersion) =
+            window.lastRestoreAdoptionFact()
+        return Some("count=${count} failed=${window.textSessionRestoreFailureCount()} " +
+            "request=${request} ctx=${ctx} node=${node} adopted=${start}:${end} " +
+            "owner_version=${ownerVersion} v=${projectionVersion}")
+    }
+
+    public func presentationFocusDiag(): String {
+        var accepted: Int64 = -1
+        var refresh: String = "no-window"
+        var edits: String = "no-window"
+        if (let Some(window) <- presentationWindow) {
+            accepted = window.lastAcceptedSceneVersion()
+            refresh = window.refreshDiagnostics()
+            let lastDecision = window.textSessionLastDecision()
+            let lastDesc = match (lastDecision) {
+                case Some(e) => "ticket=${e.ticket} accepted=${e.accepted} reason=${e.reason}"
+                case None => "last=none"
+            }
+            edits = "decisions=${window.textSessionRangeDecisionCount()} " +
+                "accepted=${window.textSessionAcceptedCount()} refused=${window.textSessionRefusedCount()} " +
+                lastDesc
+        }
+        return "pending=${pendingPresentationFocus} base=${pendingPresentationFocusBase} accepted=${accepted} rev=${localRevision} | ${refresh} | ${edits}"
+    }
+
+    public func takePendingPresentationFocus(): Bool {
+        if (!pendingPresentationFocus) {
+            return false
+        }
+        var accepted: Int64 = -1
+        if (let Some(window) <- presentationWindow) {
+            accepted = window.lastAcceptedSceneVersion()
+        }
+        if (accepted < 0) {
+            // 无窗口：待决作废（具名事实是「不可编排」，不是「再等等」）。
+            pendingPresentationFocus = false
+            return false
+        }
+        if (accepted <= pendingPresentationFocusBase) {
+            // 声明尚未随 accepted 场景晋升：保留待决，下一 tick 再查。
+            return false
+        }
+        // B3（2026-10-06）：版本推进只是"发生过一次 accepted present"，并不证明
+        // 那次 present 冻结并结算了**本代**镜像声明（同场景刷新、别的候选都会推进
+        // 版本）。放行的权威事实是窗口的声明晋升就绪；base 比较只保留作活性前置。
+        let ready = match (presentationWindow) {
+            case Some(window) => window.ownedTextMirrorDeclarationReady()
+            case None => false
+        }
+        if (!ready) {
+            return false
+        }
+        pendingPresentationFocus = false
+        return true
     }
 
     // H2：滚动物理策略与活动由**窗口**拥有；样例不再逐个枚举视口，也不再有
@@ -366,6 +481,15 @@ public class CjguiThermostatController <: CjguiComposableUiController &
 
     private let domain: CjguiThermostatDomain
     private let generatedRegion: CjguiGeneratedUiWindowRegion
+    private let generatedBinding: CjguiThermostatGeneratedBinding
+    // presentation 消费者的窗口引用与会话簿记：bindRangeTextSession 的唯一绑定
+    // 语义由窗口拥有，这里只持有「当前绑定是否仍是本锚点」的判别事实。
+    private var presentationWindow: ?CjguiComposableUiWindow = None
+    private var notePresentationSession: ?CjguiTextSession = None
+    private var notePresentationAnchor: ?CjguiPresentationHitTicket = None
+    // 窗口采纳计数的**本实例**上次读数：只在前进的那一次交出一行事实，重复 tick
+    // 不再重报（计数是窗口终身累计，别处的增加不能冒充本次交接）。
+    private var lastRestoreAdoptedCount: Int64 = 0
     private var localRevision: Int64
     private var statusText: String
     // C：样式阶段（0 混合 → 1 修改 → 2 倒置 → 3 重叠 → 4 超 64 → 5 清除）。
@@ -375,12 +499,19 @@ public class CjguiThermostatController <: CjguiComposableUiController &
 
     public init(domain: CjguiThermostatDomain) {
         this.domain = domain
+        this.generatedBinding = CjguiThermostatGeneratedBinding(domain)
         this.generatedRegion = CjguiGeneratedUiWindowRegion(
-            CjguiThermostatGeneratedBinding.catalog(domain), CjguiThermostatGeneratedBinding(domain),
+            CjguiThermostatGeneratedBinding.catalog(domain), this.generatedBinding,
             "thermo-generated")
         this.localRevision = 1
         this.statusText = "编辑后应用恒温配置"
         this.styleRunsPhase = 0
+    }
+
+    /// presentation 消费者的窗口接线：宿主在窗口创建后注入（与 attachWindow
+    /// 同一窗口对象）。会话绑定与命中都走该窗口的公共入口。
+    public func attachPresentationWindow(window: CjguiComposableUiWindow): Unit {
+        presentationWindow = Some(window)
     }
 
     public func uiSceneVersion(): Int64 {
@@ -528,9 +659,27 @@ public class CjguiThermostatController <: CjguiComposableUiController &
                 cornerRadius: 10, textColor: CjguiComposableUiColor(0.95, 0.93, 0.88, 1.0)),
             fieldId: "note", operationActionName: "SET_NOTE",
             operationResourceId: CjguiThermostatDomain.resourceId, displayValueRole: "applied"))
+        // presentation 消费者：同一 note 值的 TEXT 投影（非 INPUT 锚）。
+        // pointerInteractive 让指针相位到达控制器；fieldId/writer 声明使公共
+        // 范围会话适配（生成字段桥）可绑。值仍是 owner 快照投影（draft 期由
+        // 会话镜像接管呈现）。
+        cardBox.add(cjguiComposableText(CjguiThermostatController.nodeIdNotePresentation,
+            "thermo-note-presentation", snapshot.note,
+            CjguiComposableUiStyle(fixedHeight: 64, growX: 1, fontSize: 26.0,
+                pointerInteractive: true,
+                background: CjguiComposableUiColor(0.16, 0.12, 0.08, 1.0),
+                border: CjguiComposableUiColor(0.44, 0.36, 0.26, 1.0), borderWidth: 1,
+                cornerRadius: 10, textColor: CjguiComposableUiColor(0.97, 0.94, 0.88, 1.0)),
+            resourceId: CjguiThermostatDomain.resourceId, fieldId: "note",
+            operationActionName: "SET_NOTE",
+            operationResourceId: CjguiThermostatDomain.resourceId, displayValueRole: "applied"))
         cardBox.add(cjguiComposableText(30, "thermo-status", statusLine(), value,
             resourceId: CjguiThermostatDomain.resourceId, fieldId: "eco",
             displayValueRole: "applied"))
+        // 底部留白：扩大卡片滚动区的滚动余量，让备注 presentation 锚（25）在
+        // 键盘升起（表面避让收缩）时也能滚到可见带上完成点选/拖选。
+        cardBox.add(cjguiComposableVertical(36, "thermo-card-spacer",
+            CjguiComposableUiStyle(fixedHeight: 240, growX: 1)))
         // H 触摸滚动：手写视口（>3 屏有界内容，混排文字/图片/按钮/编辑器）。
         // 滚动经共享 viewport 的 scroll 意图通道，不改 owner；区内按钮与
         // 编辑器照常推进 owner，与生成 scrollArea 共同调用同一机制。
@@ -605,6 +754,12 @@ public class CjguiThermostatController <: CjguiComposableUiController &
             localRevision += 1
             return generatedResult
         }
+        if (event.node.nodeId == CjguiThermostatController.nodeIdNotePresentation &&
+            (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN ||
+                event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE ||
+                event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END)) {
+            return handleNotePresentationPointer(event)
+        }
         let snapshot = domain.thermostatSnapshot()
         if (event.eventKind == 27 && event.node.nodeId == CjguiThermostatController.nodeIdFocusNoteNav) {
             // 显式目标导航：请求聚焦滚动区内编辑器（屏外 reveal→系统输入）。
@@ -642,6 +797,104 @@ public class CjguiThermostatController <: CjguiComposableUiController &
             return applyNote(domain.executeFromHuman(invokeNote(event.text, snapshot.version)))
         }
         return CjguiComposableUiDispatchResult(false)
+    }
+
+    // ---- presentation 消费者（备注 TEXT 投影） ----
+    // 点选/拖选：BEGIN 冻结锚点 caret；END 经**公共持留排版命中**取落点并按
+    // 公共范围会话安装选区（restore 链在 accepted 场景上安装、回 ADOPTED2）。
+    // 命中具名不保留/未命中时不臆造 caret，保持上一合法选区。
+
+    private func boundNotePresentationSession(window: CjguiComposableUiWindow): CjguiTextSession {
+        if (let Some(bound) <- notePresentationSession) {
+            if (window.ownedTextSessionBoundNodeId() == CjguiThermostatController.nodeIdNotePresentation) {
+                // 会话仍绑定本锚点：不重建（组合态/选区保留，与生成字段绑定同一语义）。
+                return bound
+            }
+        }
+        let session = CjguiGeneratedFieldRangeSession(generatedBinding, "note")
+        let bound = window.bindRangeTextSession(CjguiThermostatController.nodeIdNotePresentation,
+            "thermo-note-presentation", session, session,
+            CjguiThermostatDomain.resourceId, CJGUI_COMPOSABLE_UI_TEXT)
+        notePresentationSession = Some(bound)
+        return bound
+    }
+
+    /// 公共持留排版命中：点选位置 → 备注 UTF-16 caret。命中失败返回 -1
+    /// （layout_not_retained 等具名结果），调用方不臆造落点。
+    /// BEGIN 冻结命中票据（查询内已核对预期场景），END 用框架入口复核后才换算。
+    /// 换算只发生在票据逐项复核通过之后，不存在旧坐标贴当前版本。
+    private func freezeNotePresentationHit(window: CjguiComposableUiWindow,
+        event: CjguiComposableUiEvent): ?CjguiPresentationHitTicket {
+        return window.freezePresentationHit(CjguiThermostatController.nodeIdNotePresentation,
+            Float64(event.pointerX), Float64(event.pointerY))
+    }
+
+    private func handleNotePresentationPointer(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        let window = match (presentationWindow) {
+            case Some(value) => value
+            case None => return CjguiComposableUiDispatchResult(false)
+        }
+        let session = boundNotePresentationSession(window)
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN) {
+            notePresentationAnchor = freezeNotePresentationHit(window, event)
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) {
+            let focusTicket = freezeNotePresentationHit(window, event)
+            let anchorTicket = notePresentationAnchor
+            notePresentationAnchor = None
+            let anchorAdopted = match (anchorTicket) {
+                case Some(t) => window.adoptPresentationHitCaret(
+                    CjguiThermostatController.nodeIdNotePresentation, t)
+                case None => (1, -1)
+            }
+            let focusAdopted = match (focusTicket) {
+                case Some(t) => window.adoptPresentationHitCaret(
+                    CjguiThermostatController.nodeIdNotePresentation, t)
+                case None => (1, -1)
+            }
+            println("THERMO_PRES_END anchor=${anchorAdopted[0]}:${anchorAdopted[1]} focus=${focusAdopted[0]}:${focusAdopted[1]}")
+            if (anchorAdopted[0] != 0 || focusAdopted[0] != 0) {
+                println("THERMO_PRES_END stale_ticket anchorStatus=${anchorAdopted[0]} focusStatus=${focusAdopted[0]}")
+                return CjguiComposableUiDispatchResult(true)
+            }
+            let anchor16 = anchorAdopted[1]
+            let focus16 = focusAdopted[1]
+            if (focus16 >= 0) {
+                var start16 = focus16
+                var end16 = focus16
+                if (anchor16 >= 0 && anchor16 != focus16) {
+                    start16 = if (anchor16 < focus16) { anchor16 } else { focus16 }
+                    end16 = if (anchor16 < focus16) { focus16 } else { anchor16 }
+                }
+                session.setSelection16(start16, end16)
+                session.markNativeSelectionRestoreRequired()
+                // B3：就绪事实取窗口侧的**镜像声明晋升**（声明已随当前绑定写入
+                // native，且其后完成过至少一次 accepted present）。BEGIN 时绑定
+                // 成功不等于这代声明可编辑——同手势内聚焦只会再建一个上下文，
+                // 先者的恢复票据从此 stale。落点判据在 END 现读，不用缓存。
+                let declarationReady = window.ownedTextMirrorDeclarationReady()
+                println("THERMO_PRES_END declarationReady=${declarationReady} " +
+                    "focusPending=${presentationFocusPending()}")
+                if (declarationReady && !presentationFocusPending()) {
+                    // 重复点选已就绪锚点且无待决首绑焦点：焦点直接请求即可复用
+                    // live context。不得与待决请求各建一个上下文
+                    //（双上下文会让先者的恢复票据永远 stale，输入门保持关闭）。
+                    let _focused = window.focusAcceptedSemanticNode("thermo-note-presentation")
+                } else {
+                    // 声明尚未晋升（首绑/换绑/owner 推进后的重声明）：镜像声明要
+                    // 等本次重建 accept 后才晋升，焦点由宿主循环在场景接受后消费
+                    //（requestPresentationFocusAfterAccept），不按时间等待。
+                    requestPresentationFocusAfterAccept()
+                    localRevision += 1
+                    // 本地修订要显式请求刷新才会触发重建/提交（宿主 tick 只泵
+                    // 事件；宿主线程的刷新请求是权威通道）。
+                    window.requestRefresh()
+                }
+            }
+            return CjguiComposableUiDispatchResult(focus16 >= 0)
+        }
+        return CjguiComposableUiDispatchResult(true)
     }
 
     public func requestWindowClose(): CjguiComposableUiDispatchResult {

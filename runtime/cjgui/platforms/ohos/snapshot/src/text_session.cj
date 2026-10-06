@@ -497,6 +497,16 @@ public class CjguiTextSession {
         return this.selectionNeedsNativeRestore
     }
 
+    /// 交接锚点携带（窗口恢复入口）：`bind()` 会把选区归零并清掉恢复意图。当
+    /// `bindRangeTextSession` 在新会话上按**同 node/resource/kind** 的既有落点
+    /// 重新 `setSelection16` 之后，用本方法把它标记为待 native 安装，让既有的
+    /// `restoreOwnedTextSelectionAfterAcceptedScene` → 恢复票 → `proxy restore ack
+    /// accepted` 链在下一个 accepted 场景上自然接管。不绕过任何提交/门票校验，
+    /// 不改变落点来源（只接受窗口确实持有的同身份落点）。
+    public func markNativeSelectionRestoreRequired(): Unit {
+        this.selectionNeedsNativeRestore = true
+    }
+
     public func confirmNativeSelectionRestored(version: Int64, start16: Int64, end16: Int64): Bool {
         if (!this.selectionNeedsNativeRestore || version != this.selectionVersion ||
             version != this.window.contentVersion() || start16 != this.selStart16 ||

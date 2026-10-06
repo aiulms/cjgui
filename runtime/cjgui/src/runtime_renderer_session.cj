@@ -62,6 +62,7 @@ let CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED: Int32 = 28
 let CJGUI_INTERNAL_RENDERER_PNG_PAYLOAD_TOO_LARGE: Int32 = 29
 let CJGUI_INTERNAL_RENDERER_PNG_QUEUE_BUDGET_EXCEEDED: Int32 = 30
 let CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED: Int32 = 31
+let CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED: Int32 = 32
 // M1（2026-09-30）：位置查询的具名拒绝码——无此节点（17）、无已持留排版（18）、
 // 场景尚未 staged（19）、调用方携带的 accepted 场景版本已前进（33）。
 let CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND: Int32 = 17
@@ -72,6 +73,17 @@ let CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID: Int32 = 34
 // M2：视觉导航的行插入点枚举超出有界预算——不具名邻位，调用方保持 caret。
 let CJGUI_INTERNAL_RENDERER_VISUAL_NAV_UNSUPPORTED: Int32 = 35
 let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
+let CJGUI_SELECTION_TRANSFER_EMPTY: UInt32 = 0u32
+let CJGUI_SELECTION_TRANSFER_PREPARING: UInt32 = 1u32
+let CJGUI_SELECTION_TRANSFER_PENDING: UInt32 = 2u32
+let CJGUI_SELECTION_TRANSFER_FINALIZING: UInt32 = 3u32
+let CJGUI_SELECTION_TRANSFER_COMMITTED: UInt32 = 4u32
+let CJGUI_SELECTION_TRANSFER_ABORTED: UInt32 = 5u32
+let CJGUI_SELECTION_TRANSFER_RECOVERY_BLOCKED: UInt32 = 6u32
+let CJGUI_SELECTION_INPUT_ALLOW: UInt32 = 0u32
+let CJGUI_SELECTION_INPUT_RETAINED_CANCEL: UInt32 = 1u32
+let CJGUI_SELECTION_INPUT_RECOVERY_BLOCKED: UInt32 = 2u32
+let CJGUI_SELECTION_INPUT_STALE: UInt32 = 3u32
 // Secondary pointer context request; the C enum value is mirrored here without
 // changing the POD event ABI.
 let CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST: UInt32 = 56u32
@@ -80,6 +92,145 @@ let CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST: UInt32 
 let CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN: UInt64 = 0
 
 // ---- @C struct mappings (layout-identical to the C POD structs) ----
+
+// New package-private sideband records. Existing Node/Event PODs are unchanged.
+@C
+struct CjguiInternalInstalledRangeCandidate {
+    var nonce: UInt64 = 0
+    var rendererSessionGeneration: UInt64 = 0
+    var windowInstanceToken: UInt64 = 0
+    var bindingEpoch: UInt64 = 0
+    var contextEpoch: UInt64 = 0
+    var mirrorRevision: UInt64 = 0
+    var ownerVersion: Int64 = -1
+    var installedSceneVersion: UInt64 = 0
+    var nodeId: UInt64 = 0
+    var resourceId: Int64 = -1
+    var sourceStartByte: UInt64 = 0
+    var sourceEndByte: UInt64 = 0
+    var sourceTextUtf8: CPointer<UInt8> = CPointer<UInt8>()
+    var sourceTextUtf8Length: UInt32 = 0
+}
+
+@C
+struct CjguiInternalSelectionTransferCandidate {
+    var transferId: UInt64 = 0
+    var sourceInstalledNonce: UInt64 = 0
+    var sourceRendererSessionGeneration: UInt64 = 0
+    var sourceWindowInstanceToken: UInt64 = 0
+    var sourceBindingEpoch: UInt64 = 0
+    var sourceContextEpoch: UInt64 = 0
+    var sourceMirrorRevision: UInt64 = 0
+    var sourceOwnerVersion: Int64 = -1
+    var sourceAcceptedVersion: Int64 = -1
+    var sourceAcceptedSequence: UInt64 = 0
+    var sourceStartByte: UInt64 = 0
+    var sourceEndByte: UInt64 = 0
+    var sourceProxyGeneration: UInt64 = 0
+    var sourceSelectionRevision: UInt64 = 0
+    var sourceNodeId: UInt64 = 0
+    var sourceProjectionVersion: UInt64 = 0
+    var sourceResourceId: Int64 = -1
+    var sourceNodeKind: UInt32 = 0
+    var sourceSceneVersion: UInt64 = 0
+    var sourceSelectionStart16: UInt32 = 0
+    var sourceSelectionEnd16: UInt32 = 0
+    var sourceBodyUtf8: CPointer<UInt8> = CPointer<UInt8>()
+    var sourceBodyUtf8Length: UInt32 = 0
+    var targetNodeId: UInt64 = 0
+    var targetProjectionVersion: UInt64 = 0
+    var targetResourceId: Int64 = -1
+    var targetNodeKind: UInt32 = 0
+    var targetSceneVersion: UInt64 = 0
+    var targetAnchor16: UInt32 = 0
+    var targetFocus16: UInt32 = 0
+    var targetBodyUtf8: CPointer<UInt8> = CPointer<UInt8>()
+    var targetBodyUtf8Length: UInt32 = 0
+}
+
+@C
+struct CjguiInternalSelectionTransferReceipt {
+    var transferId: UInt64 = 0
+    var sceneVersion: UInt64 = 0
+    var bindingEpoch: UInt64 = 0
+    var nodeId: UInt64 = 0
+    var projectionVersion: UInt64 = 0
+    var resourceId: Int64 = -1
+    var nodeKind: UInt32 = 0
+    var selectionStart16: UInt32 = 0
+    var selectionEnd16: UInt32 = 0
+    var selectionRevision: UInt64 = 0
+    var proxyGeneration: UInt64 = 0
+    var firstResponder: UInt8 = 0
+}
+
+@C
+struct CjguiInternalInstalledRangeReceipt {
+    var nonce: UInt64 = 0
+    var rendererSessionGeneration: UInt64 = 0
+    var windowInstanceToken: UInt64 = 0
+    var bindingEpoch: UInt64 = 0
+    var contextEpoch: UInt64 = 0
+    var mirrorRevision: UInt64 = 0
+    var ownerVersion: Int64 = -1
+    var installedSceneVersion: UInt64 = 0
+    var nodeId: UInt64 = 0
+    var resourceId: Int64 = -1
+    var sourceStartByte: UInt64 = 0
+    var sourceEndByte: UInt64 = 0
+    var proxyGeneration: UInt64 = 0
+    var selectionRevision: UInt64 = 0
+    var actualSelectionStart16: UInt32 = 0
+    var actualSelectionEnd16: UInt32 = 0
+    var acceptedSequence: UInt64 = 0
+    var acceptedVersion: Int64 = -1
+}
+
+@C
+struct CjguiInternalInstalledRangeIntent {
+    var nonce: UInt64 = 0
+    var rendererSessionGeneration: UInt64 = 0
+    var windowInstanceToken: UInt64 = 0
+    var bindingEpoch: UInt64 = 0
+    var contextEpoch: UInt64 = 0
+    var mirrorRevision: UInt64 = 0
+    var ownerVersion: Int64 = -1
+    var installedSceneVersion: UInt64 = 0
+    var nodeId: UInt64 = 0
+    var resourceId: Int64 = -1
+    var sourceStartByte: UInt64 = 0
+    var sourceEndByte: UInt64 = 0
+    var proxyGeneration: UInt64 = 0
+    var selectionRevision: UInt64 = 0
+    var seq: UInt64 = 0
+    var previousSeq: UInt64 = 0
+    var observedAckSeq: UInt64 = 0
+    var observedAckVersion: Int64 = -1
+    var wholeChoiceNonce: UInt64 = 0
+    var wholeChoicePreviousSeq: UInt64 = 0
+    var flags: UInt32 = 0
+    var rangeStart16: UInt32 = 0
+    var rangeLength16: UInt32 = 0
+    var selectionStart16: UInt32 = 0
+    var selectionEnd16: UInt32 = 0
+    var preBodyUtf8: CPointer<UInt8> = CPointer<UInt8>()
+    var preBodyUtf8Length: UInt32 = 0
+    var replacementUtf8: CPointer<UInt8> = CPointer<UInt8>()
+    var replacementUtf8Length: UInt32 = 0
+    var postBodyUtf8: CPointer<UInt8> = CPointer<UInt8>()
+    var postBodyUtf8Length: UInt32 = 0
+}
+
+class InternalRendererInstalledRangeClaim {
+    let raw: CjguiInternalInstalledRangeIntent
+    let input: CjguiInstalledRangeInput
+    let replacement: String
+    let postBody: String
+    init(raw: CjguiInternalInstalledRangeIntent, input: CjguiInstalledRangeInput,
+        replacement: String, postBody: String) {
+        this.raw = raw; this.input = input; this.replacement = replacement; this.postBody = postBody
+    }
+}
 
 @C
 struct CjguiInternalRendererConfig {
@@ -784,7 +935,25 @@ struct InternalRendererTicketStats {
     }
 }
 
+@C
+struct InternalRendererActivationPrefix {
+    var sessionGeneration: UInt64 = 0u64
+    var nonce: UInt64 = 0u64
+    var sceneVersion: UInt64 = 0u64
+    var nodeId: UInt64 = 0u64
+    var resourceId: Int64 = 0
+    var bindingEpoch: UInt64 = 0u64
+    var nodeKind: UInt32 = 0u32
+    var ordinal: UInt32 = 0u32
+    var secondKind: UInt32 = 0u32
+    var memberCount: UInt32 = 0u32
+    var memberKind: UInt32 = 0u32
+}
+
 struct InternalRendererPumpResult {
+    let activationPrefix: InternalRendererActivationPrefix
+    let installedRangeOwned: Bool
+    let installedRangeClaim: ?InternalRendererInstalledRangeClaim
     let status: Int32
     let eventKind: UInt32
     let recordIndex: UInt32
@@ -816,6 +985,9 @@ struct InternalRendererPumpResult {
     let gesturePointerId: Int64
     let gestureEpoch: UInt64
     let acceptedBindingEpoch: UInt64
+    let inputSessionGeneration: UInt64
+    let inputSequence: UInt64
+    let inputPreviousSequence: UInt64
     init(status: Int32, eventKind: UInt32, recordIndex: UInt32, selectionStart: UInt32, selectionEnd: UInt32,
         nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64, nodeKind: UInt32, pointerX: Int64,
         pointerY: Int64, pointerVisualX: Float64, pointerVisualY: Float64, pointerTranslateX: Float64,
@@ -825,7 +997,15 @@ struct InternalRendererPumpResult {
         bindingEpoch: UInt64, dataTransferEventId: UInt64,
         gestureAppInstance: UInt64, gestureComponentInstance: UInt64,
         gestureSurfaceGeneration: UInt64, gesturePointerId: Int64,
-        gestureEpoch: UInt64, acceptedBindingEpoch: UInt64) {
+        gestureEpoch: UInt64, acceptedBindingEpoch: UInt64,
+        installedRangeOwned!: Bool = false,
+        installedRangeClaim!: ?InternalRendererInstalledRangeClaim = None,
+        activationPrefix!: InternalRendererActivationPrefix = InternalRendererActivationPrefix(),
+        inputSessionGeneration!: UInt64 = 0u64, inputSequence!: UInt64 = 0u64,
+        inputPreviousSequence!: UInt64 = 0u64) {
+        this.activationPrefix = activationPrefix
+        this.installedRangeOwned = installedRangeOwned
+        this.installedRangeClaim = installedRangeClaim
         this.status = status
         this.eventKind = eventKind
         this.recordIndex = recordIndex
@@ -857,6 +1037,9 @@ struct InternalRendererPumpResult {
         this.gesturePointerId = gesturePointerId
         this.gestureEpoch = gestureEpoch
         this.acceptedBindingEpoch = acceptedBindingEpoch
+        this.inputSessionGeneration = inputSessionGeneration
+        this.inputSequence = inputSequence
+        this.inputPreviousSequence = inputPreviousSequence
     }
 }
 
@@ -929,6 +1112,24 @@ struct InternalRendererWindowBackgroundResult {
     }
 }
 
+struct InternalRendererSelectionTransferVerifyBResult {
+    let status: Int32
+    let receipt: CjguiInternalSelectionTransferReceipt
+    init(status: Int32, receipt: CjguiInternalSelectionTransferReceipt) {
+        this.status = status
+        this.receipt = receipt
+    }
+}
+
+struct InternalRendererActivationPrefixResult {
+    let status: Int32
+    let prefix: InternalRendererActivationPrefix
+    init(status: Int32, prefix: InternalRendererActivationPrefix) {
+        this.status = status
+        this.prefix = prefix
+    }
+}
+
 // ---- foreign func declarations (internal/unstable C ABI) ----
 
 foreign {
@@ -946,6 +1147,20 @@ foreign {
         config: CPointer<CjguiInternalRendererConfig>,
         outStatus: CPointer<Int32>
     ): UInt64
+
+    func cjgui_internal_renderer_coordinate_lifetime(session: UInt64,
+        outSessionGeneration: CPointer<UInt64>): UInt64
+
+    func cjgui_internal_renderer_owner_consumed_pointer_coordinate_lifetime(session: UInt64,
+        outSessionGeneration: CPointer<UInt64>, outCoordinateEpoch: CPointer<UInt64>): Int32
+
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_consumed_pointer_fifo(session: UInt64,
+        generation: CPointer<UInt64>, binding: CPointer<UInt64>, first: CPointer<UInt64>,
+        last: CPointer<UInt64>, previous: CPointer<UInt64>, phase: CPointer<UInt32>): Int32
+
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_background_version(): UInt32
 
     func cjgui_internal_renderer_set_window_title(session: UInt64, title: CString): Int32
 
@@ -998,6 +1213,22 @@ foreign {
         color: CPointer<CjguiInternalRendererClearColor>,
         outObservation: CPointer<CjguiInternalRendererFrameObservation>
     ): Int32
+
+    func cjgui_internal_renderer_begin_composable_preparation(session: UInt64, preparationId: UInt64,
+        baseSceneVersion: UInt64, projectionVersion: UInt64, nodeCount: UInt32): Int32
+    func cjgui_internal_renderer_prepare_composable_node(session: UInt64, preparationId: UInt64, nodeIndex: UInt32,
+        node: CPointer<CjguiInternalRendererComposableNode>, geometry: CPointer<CjguiInternalRendererComposableGeometry>,
+        label: CString, value: CString, semanticId: CString, bindingKey: CString, rowKey: CString,
+        parentRowKey: CString, semanticLabel: CString, encodedRuns: CString): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_prepare_composable_node_batch(session: UInt64, preparationId: UInt64,
+        firstIndex: UInt32, count: UInt32, nodes: CPointer<CjguiInternalRendererComposableNode>,
+        geometry: CPointer<CjguiInternalRendererComposableGeometry>, strings: CPointer<CString>,
+        deadlineNs: UInt64, outCopied: CPointer<UInt32>): Int32
+    func cjgui_internal_renderer_advance_composable_preparation(session: UInt64, preparationId: UInt64,
+        deadlineNs: UInt64, outReady: CPointer<UInt32>): Int32
+    func cjgui_internal_renderer_promote_composable_preparation(session: UInt64, preparationId: UInt64): Int32
+    func cjgui_internal_renderer_cancel_composable_preparation(session: UInt64, preparationId: UInt64): Int32
 
     func cjgui_internal_renderer_configure_composable_scene(
         session: UInt64,
@@ -1182,7 +1413,141 @@ foreign {
         session: UInt64, outWorkload: CPointer<CjguiInternalRendererDiagnosticWorkload>
     ): Int32
 
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_diagnostic_scalar_snapshot(session: UInt64,
+        expectedGeneration: UInt64, expectedSceneVersion: UInt64,
+        outProgress: CPointer<CjguiInternalRendererComposableDisplayProgress>,
+        outWorkload: CPointer<CjguiInternalRendererDiagnosticWorkload>,
+        outTiming: CPointer<CjguiInternalRendererDiagnosticTiming>): Int32
+
     func cjgui_internal_renderer_set_diagnostic_timing(session: UInt64, enabled: UInt32): Int32
+
+    // Internal, opt-in phase clock. Zero means diagnostics are disabled.
+    func cjgui_internal_renderer_owner_trace_ns(): UInt64
+    func cjgui_internal_renderer_owner_clock_ns(): UInt64
+    func cjgui_internal_renderer_owner_thread_cpu_ns(): UInt64
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_trace_record(kind: UInt32, session: UInt64,
+        turn: UInt64, request: UInt64, dispatch: UInt64, generation: UInt64,
+        phase: UInt32, span: UInt64): UInt64
+    func cjgui_internal_renderer_owner_trace_managed_record(kind: UInt32, session: UInt64,
+        turn: UInt64, request: UInt64, dispatch: UInt64, generation: UInt64,
+        phase: UInt32, span: UInt64, managedId: UInt64, withWatch: UInt8): UInt64
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_trace_boundary(session: UInt64, turn: UInt64,
+        stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32, value: UInt64,
+        managedId: UInt64): Unit
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_trace_dispatch_begin(session: UInt64, turn: UInt64,
+        request: UInt64, generation: UInt64, phase: UInt32, span: UInt64): UInt64
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_trace_set_turn(turn: UInt64): Unit
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_trace_dispatch_event(kind: UInt32, session: UInt64,
+        turn: UInt64, request: UInt64, dispatch: UInt64, generation: UInt64,
+        phase: UInt32, span: UInt64): Unit
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_trace_export(): Unit
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_finalize_owner_trace(): UInt8
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_acquire_application_cleanup(): UInt64
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_complete_application_cleanup(ticket: UInt64): UInt8
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_trace_legacy_span(session: UInt64, turn: UInt64,
+        request: UInt64, generation: UInt64, phase: UInt32, startedNs: UInt64): Unit
+    func cjgui_internal_renderer_source_install_pending_scalar(session: UInt64): UInt8
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_installed_range_arm(session: UInt64,
+        candidate: CPointer<CjguiInternalInstalledRangeCandidate>): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_installed_range_receipt(session: UInt64, nonce: UInt64,
+        receipt: CPointer<CjguiInternalInstalledRangeReceipt>): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_installed_range_active_receipt(session: UInt64, nonce: UInt64,
+        receipt: CPointer<CjguiInternalInstalledRangeReceipt>): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_installed_range_activate(session: UInt64, nonce: UInt64,
+        proxyGeneration: UInt64, selectionRevision: UInt64): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_installed_range_cancel(session: UInt64, nonce: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_create(session: UInt64, outTransferId: CPointer<UInt64>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_publish_pending(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_begin_finalizing(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_request_cancel(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_commit(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_finish_abort(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_recovery_blocked(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_state(session: UInt64, transferId: UInt64,
+        outState: CPointer<UInt32>, outCancelled: CPointer<UInt8>, outReferences: CPointer<UInt32>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_admit_input(session: UInt64, transferId: UInt64,
+        outAdmission: CPointer<UInt32>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_retain(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_release(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_capture_a(session: UInt64,
+        candidate: CPointer<CjguiInternalSelectionTransferCandidate>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_capture_current(session: UInt64,
+        candidate: CPointer<CjguiInternalSelectionTransferCandidate>, bytes: CPointer<UInt8>, capacity: UInt32): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_prepare_b(session: UInt64, transferId: UInt64,
+        deadlineNs: UInt64, outReady: CPointer<UInt8>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_install_b(session: UInt64, transferId: UInt64,
+        outReceipt: CPointer<CjguiInternalSelectionTransferReceipt>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_verify_b(session: UInt64, transferId: UInt64,
+        outReceipt: CPointer<CjguiInternalSelectionTransferReceipt>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_restore_a(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_replay_input(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_selection_transfer_discard_capsule(session: UInt64, transferId: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_source_handoff_arm(session: UInt64,
+        candidate: CPointer<CjguiInternalInstalledRangeCandidate>, expectedBindingEpoch: UInt64,
+        expectedNodeId: UInt64, expectedResourceId: Int64, expectedNodeKind: UInt32): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_source_handoff_confirm_selection(session: UInt64, nonce: UInt64,
+        selectionStart16: UInt32, selectionEnd16: UInt32): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_source_handoff_activate(session: UInt64, nonce: UInt64,
+        proxyGeneration: UInt64, selectionRevision: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_source_handoff_finish(session: UInt64, nonce: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_source_handoff_cancel(session: UInt64, nonce: UInt64): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_claim_last_pumped_range(session: UInt64, node: UInt64,
+        resource: Int64, binding: UInt64, scene: UInt64,
+        intent: CPointer<CjguiInternalInstalledRangeIntent>): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_copy_claimed_range_bytes(session: UInt64, seq: UInt64,
+        preBody: CPointer<UInt8>, preCapacity: UInt32,
+        replacement: CPointer<UInt8>, replacementCapacity: UInt32,
+        postBody: CPointer<UInt8>, postCapacity: UInt32): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_ack_installed_range(session: UInt64,
+        intent: CPointer<CjguiInternalInstalledRangeIntent>, accepted: UInt32, versionAfter: Int64): Int32
+    @When[os == "macOS" || os == "Windows"]
+    func cjgui_internal_renderer_release_installed_range(session: UInt64,
+        document: UInt64, binding: UInt64): Int32
+    func cjgui_internal_renderer_set_source_install_gate(session: UInt64, bindingEpoch: UInt64,
+        requestId: UInt64, pending: UInt8): Int32
 
     func cjgui_internal_renderer_diagnostic_timing(
         session: UInt64, outTiming: CPointer<CjguiInternalRendererDiagnosticTiming>
@@ -1206,6 +1571,12 @@ foreign {
         outSelectionStart: CPointer<UInt32>,
         outSelectionEnd: CPointer<UInt32>
     ): Int32
+
+    func cjgui_internal_renderer_install_owned_source_selection(
+        session: UInt64, nodeId: UInt64, resourceId: Int64, sceneVersion: UInt64,
+        bindingEpoch: UInt64, requestId: UInt64, deadlineNs: UInt64, value: CString,
+        start: UInt32, end: UInt32, outStart: CPointer<UInt32>, outEnd: CPointer<UInt32>,
+        outDeferred: CPointer<UInt8>): Int32
 
     func cjgui_internal_renderer_read_composable_selection(
         session: UInt64,
@@ -1327,6 +1698,9 @@ foreign {
         timeoutMs: UInt32,
         outEvent: CPointer<CjguiInternalRendererEvent>
     ): Int32
+
+    func cjgui_internal_renderer_pump_event_measured(session: UInt64, timeoutMs: UInt32,
+        outEvent: CPointer<CjguiInternalRendererEvent>, outIdleWaitNs: CPointer<UInt64>): Int32
 
     func cjgui_internal_renderer_pumped_pointer_geometry(
         session: UInt64,
@@ -1458,6 +1832,48 @@ func internalRendererStageWindowBackground(session: UInt64, projectionVersion: U
     return unsafe { cjgui_internal_renderer_stage_window_background(session, projectionVersion, mode, colorScheme) }
 }
 
+// Pure atomic private lifetime read; never waits on AppKit or owns a native object.
+func internalRendererCoordinateLifetime(session: UInt64): (UInt64, UInt64) {
+    var generation: UInt64 = 0u64
+    let coordinate = unsafe { cjgui_internal_renderer_coordinate_lifetime(session, inout generation) }
+    return (generation, coordinate)
+}
+
+func internalRendererConsumedPointerCoordinateLifetime(session: UInt64): (UInt64, UInt64) {
+    var generation: UInt64 = 0u64
+    var coordinate: UInt64 = 0u64
+    let ok = unsafe { cjgui_internal_renderer_owner_consumed_pointer_coordinate_lifetime(
+        session, inout generation, inout coordinate) }
+    return if (ok == 1) { (generation, coordinate) } else { (0u64, 0u64) }
+}
+
+@When[os == "macOS"]
+func internalRendererConsumedPointerFifo(session: UInt64): CjguiMacSliderPointerFifo {
+    var generation: UInt64 = 0u64
+    var binding: UInt64 = 0u64
+    var first: UInt64 = 0u64
+    var last: UInt64 = 0u64
+    var previous: UInt64 = 0u64
+    var phase: UInt32 = 0u32
+    let ok = unsafe { cjgui_internal_renderer_owner_consumed_pointer_fifo(session,
+        inout generation, inout binding, inout first, inout last, inout previous, inout phase) }
+    return if (ok == 1) { CjguiMacSliderPointerFifo(generation, binding, first, last, previous, phase) }
+        else { CjguiMacSliderPointerFifo(0u64, 0u64, 0u64, 0u64, 0u64, 0u32) }
+}
+
+@When[os != "macOS"]
+func internalRendererConsumedPointerFifo(session: UInt64): CjguiMacSliderPointerFifo {
+    return CjguiMacSliderPointerFifo(0u64, 0u64, 0u64, 0u64, 0u64, 0u32)
+}
+
+@When[os == "macOS"]
+func internalRendererSelectionBackgroundVersion(): UInt32 {
+    return unsafe { cjgui_internal_renderer_selection_background_version() }
+}
+
+@When[os != "macOS"]
+func internalRendererSelectionBackgroundVersion(): UInt32 { return 0u32 }
+
 func internalRendererWindowBackgroundSnapshot(session: UInt64): InternalRendererWindowBackgroundResult {
     var snapshot = CjguiInternalRendererWindowBackgroundSnapshot()
     let status = unsafe { cjgui_internal_renderer_window_background_snapshot(session, inout snapshot) }
@@ -1522,21 +1938,50 @@ func internalRendererPumpEventCanaryInvalidSession(): Bool {
         wrapper.canaryTail1 == 0xA5A5A5A55A5A5A5A && wrapper.canaryTail2 == 0x5A5A5A5AA5A5A5A5
 }
 
-func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32): InternalRendererPumpResult {
+func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32,
+    budget!: ?CjguiOwnerTurnBudget = None): InternalRendererPumpResult {
     var event = CjguiInternalRendererEvent()
     var geometry = CjguiInternalRendererPointerEventGeometry()
+    var activationPrefix = InternalRendererActivationPrefix()
+    var inputProvenance = InternalRendererInputProvenance(0u64, 0u64, 0u64, 0u32)
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     unsafe {
-        status = cjgui_internal_renderer_pump_event(session, timeoutMs, inout event)
-        if (status == CJGUI_INTERNAL_RENDERER_OK) {
+        if (let Some(ownerBudget) <- budget) {
+            var idleWaitNs: UInt64 = 0
+            cjguiOwnerTraceBoundary(session, 0u64, 300u32, 0u32, timeoutMs, 0u64, UInt64.Max)
+            status = cjgui_internal_renderer_pump_event_measured(session, timeoutMs, inout event, inout idleWaitNs)
+            cjguiOwnerTraceBoundary(session, 0u64, 301u32, event.kind, timeoutMs, idleWaitNs, UInt64.Max)
+            ownerBudget.creditPumpIdle(Int64(idleWaitNs))
+            cjguiOwnerTraceBoundary(session, 0u64, 302u32, event.kind, timeoutMs, idleWaitNs, UInt64.Max)
+        } else {
+            status = cjgui_internal_renderer_pump_event(session, timeoutMs, inout event)
+        }
+        // NONE has no captured pointer. Its geometry query used to synchronously
+        // revisit AppKit after the measured idle wait. For real events, native
+        // returns the geometry copied with this consumed event's private ticket.
+        if (status == CJGUI_INTERNAL_RENDERER_OK && event.kind != 0u32) {
+            let prefix = internalRendererConsumedActivationPrefix(session)
+            activationPrefix = prefix.prefix
+            if (prefix.status != CJGUI_INTERNAL_RENDERER_OK) { status = prefix.status }
             let geometryStatus = cjgui_internal_renderer_pumped_pointer_geometry(session, inout geometry)
             if (geometryStatus != CJGUI_INTERNAL_RENDERER_OK) { geometry.present = 0 }
+            inputProvenance = internalRendererConsumedInputProvenance(session)
+            if (!inputProvenance.isValidFor(event.kind)) {
+                inputProvenance = InternalRendererInputProvenance(0u64, 0u64, 0u64, 0u32)
+            }
         }
     }
+    // Fixed native-ring boundaries use the native clock and actual OS TID.
+    // They intentionally do not look up a managed thread or install a watch.
+    cjguiOwnerTraceBoundary(session, 0u64, 303u32, event.kind, timeoutMs, inputProvenance.sequence, UInt64.Max)
     let exact = geometry.present == 1u32 && geometry.kind == event.kind && geometry.nodeId == event.nodeId &&
         geometry.projectionVersion == event.projectionVersion && geometry.resourceId == event.resourceId &&
         geometry.nodeKind == event.nodeKind
-    return InternalRendererPumpResult(status, event.kind, event.recordIndex, event.selectionStart, event.selectionEnd,
+    let range: (Bool, ?InternalRendererInstalledRangeClaim) = if (status == CJGUI_INTERNAL_RENDERER_OK && event.kind == 51u32) {
+        internalRendererClaimInstalledRange(session, event.nodeId, event.resourceId,
+            event.bindingEpoch, event.projectionVersion)
+    } else { (false, None) }
+    let result = InternalRendererPumpResult(status, event.kind, event.recordIndex, event.selectionStart, event.selectionEnd,
         event.nodeId, event.projectionVersion, event.resourceId, event.nodeKind, event.pointerX, event.pointerY,
         if (exact) { geometry.x } else { Float64(event.pointerX) },
         if (exact) { geometry.y } else { Float64(event.pointerY) },
@@ -1546,13 +1991,821 @@ func internalRendererPumpEvent(session: UInt64, timeoutMs: UInt32): InternalRend
         event.markedStart16, event.markedLength16, event.compositionId, event.bindingEpoch,
         event.dataTransferEventId, event.gestureAppInstance, event.gestureComponentInstance,
         event.gestureSurfaceGeneration, event.gesturePointerId, event.gestureEpoch,
-        event.acceptedBindingEpoch)
+        event.acceptedBindingEpoch, installedRangeOwned: range[0], installedRangeClaim: range[1],
+        activationPrefix: activationPrefix,
+        inputSessionGeneration: inputProvenance.sessionGeneration,
+        inputSequence: inputProvenance.sequence,
+        inputPreviousSequence: inputProvenance.previousSequence)
+    cjguiOwnerTraceBoundary(session, 0u64, 304u32, event.kind, timeoutMs, inputProvenance.sequence, UInt64.Max)
+    return result
 }
+
+@When[os == "macOS"]
+foreign {
+    func cjgui_internal_renderer_consumed_activation_prefix(
+        session: UInt64, outPrefix: CPointer<InternalRendererActivationPrefix>): Int32
+    func cjgui_internal_renderer_owner_consumed_input_provenance(session: UInt64,
+        outSessionGeneration: CPointer<UInt64>, outSequence: CPointer<UInt64>,
+        outPreviousSequence: CPointer<UInt64>, outEventKind: CPointer<UInt32>): Int32
+    func cjgui_internal_renderer_finish_caret_input(session: UInt64, generation: UInt64,
+        sequence: UInt64, previous: UInt64, outcome: UInt32, nonce: UInt64,
+        proxyGeneration: UInt64, selectionRevision: UInt64, ownerVersion: Int64,
+        contextEpoch: UInt64, windowToken: UInt64): Int32
+    func cjgui_internal_renderer_bind_caret_selection_transfer(session: UInt64, transferId: UInt64,
+        generation: UInt64, sequence: UInt64, previousSequence: UInt64): Int32
+}
+
+@When[os == "macOS"]
+func internalRendererBindCaretSelectionTransfer(session: UInt64, transferId: UInt64,
+    input: InternalRendererInputProvenance): Int32 {
+    unsafe { cjgui_internal_renderer_bind_caret_selection_transfer(session, transferId,
+        input.sessionGeneration, input.sequence, input.previousSequence) }
+}
+@When[os != "macOS"]
+func internalRendererBindCaretSelectionTransfer(session: UInt64, transferId: UInt64,
+    input: InternalRendererInputProvenance): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererFinishCaretInput(session: UInt64, input: InternalRendererInputProvenance,
+    outcome: UInt32, receipt: ?CjguiInternalInstalledRangeReceipt): Int32 {
+    let r = match (receipt) {
+        case Some(value) => value
+        case None => CjguiInternalInstalledRangeReceipt()
+    }
+    return unsafe { cjgui_internal_renderer_finish_caret_input(session, input.sessionGeneration,
+        input.sequence, input.previousSequence, outcome, r.nonce, r.proxyGeneration,
+        r.selectionRevision, r.acceptedVersion, r.contextEpoch, r.windowInstanceToken) }
+}
+@When[os != "macOS"]
+func internalRendererFinishCaretInput(session: UInt64, input: InternalRendererInputProvenance,
+    outcome: UInt32, receipt: ?CjguiInternalInstalledRangeReceipt): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+// Immutable, bounded copy of one refused physical input. This private bridge
+// carries its actual installation source, never a replacement Node/Event POD.
+class InternalRendererCaretRecovery {
+    let session: UInt64
+    let metadata: Array<UInt64>
+    let content: String
+    let reason: String
+    init(session: UInt64, metadata: Array<UInt64>, content: String, reason: String) {
+        this.session = session
+        this.metadata = metadata
+        this.content = content
+        this.reason = reason
+    }
+}
+
+@When[os == "macOS"]
+foreign {
+    func cjgui_internal_renderer_peek_caret_recovery(session: UInt64, metadata: CPointer<UInt64>, count: UInt32): Int32
+
+    func cjgui_internal_renderer_copy_caret_recovery(session: UInt64, generation: UInt64, recoveryId: UInt64,
+        payload: CPointer<UInt8>, payloadLength: UInt32, reason: CPointer<UInt8>, reasonLength: UInt32): Int32
+
+    func cjgui_internal_renderer_finish_caret_recovery(session: UInt64, generation: UInt64, recoveryId: UInt64,
+        disposition: UInt32): Int32
+
+    func cjgui_internal_renderer_cancel_caret_prefix(session: UInt64, windowToken: UInt64, bindingEpoch: UInt64): Int32
+}
+
+@When[os == "macOS"]
+func internalRendererPeekCaretRecovery(session: UInt64): (Int32, ?InternalRendererCaretRecovery) {
+    let metadata = Array<UInt64>(21, repeat: 0u64)
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let out = acquireArrayRawData(metadata)
+        status = cjgui_internal_renderer_peek_caret_recovery(session, out.pointer, 21u32)
+        releaseArrayRawData(out)
+    }
+    if (status != CJGUI_INTERNAL_RENDERER_OK || metadata[0] == 0u64) {
+        return (status, None)
+    }
+    if (metadata[0] >= 281474976710656u64 || metadata[1] == 0u64 || metadata[12] > 262144u64 || metadata[18] > 256u64 ||
+        metadata[4] > UInt64(Int64.Max) || metadata[5] > UInt64(Int64.Max) || metadata[6] > metadata[7] || metadata[7] >
+        UInt64(Int64.Max)) {
+        return (CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, None)
+    }
+    let payload = Array<UInt8>(Int64(metadata[12]), repeat: 0u8)
+    let reason = Array<UInt8>(Int64(metadata[18]), repeat: 0u8)
+    unsafe {
+        let p = acquireArrayRawData(payload);
+        let r = acquireArrayRawData(reason)
+        status = cjgui_internal_renderer_copy_caret_recovery(session, metadata[1], metadata[0], p.pointer,
+            UInt32(payload.size), r.pointer, UInt32(reason.size))
+        releaseArrayRawData(r);
+        releaseArrayRawData(p)
+    }
+    if (status != CJGUI_INTERNAL_RENDERER_OK) {
+        return (status, None)
+    }
+    return (status, Some(
+            InternalRendererCaretRecovery(session, metadata, String.fromUtf8(payload), String.fromUtf8(reason))))
+}
+
+@When[os != "macOS"]
+func internalRendererPeekCaretRecovery(session: UInt64): (Int32, ?InternalRendererCaretRecovery) {
+    return (CJGUI_INTERNAL_RENDERER_OK, None)
+}
+
+@When[os == "macOS"]
+func internalRendererFinishCaretRecovery(recovery: InternalRendererCaretRecovery, disposition: UInt32): Int32 {
+    return unsafe { cjgui_internal_renderer_finish_caret_recovery(recovery.session, recovery.metadata[1],
+        recovery.metadata[0], disposition) }
+}
+
+@When[os != "macOS"]
+func internalRendererFinishCaretRecovery(recovery: InternalRendererCaretRecovery, disposition: UInt32): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererCancelCaretPrefix(session: UInt64, windowToken: UInt64, bindingEpoch: UInt64): Int32 {
+    return unsafe { cjgui_internal_renderer_cancel_caret_prefix(session, windowToken, bindingEpoch) }
+}
+
+@When[os != "macOS"]
+func internalRendererCancelCaretPrefix(session: UInt64, windowToken: UInt64, bindingEpoch: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_OK
+}
+
+@When[os == "macOS"]
+func internalRendererConsumedActivationPrefix(session: UInt64): InternalRendererActivationPrefixResult {
+    var value = InternalRendererActivationPrefix()
+    let status = unsafe { cjgui_internal_renderer_consumed_activation_prefix(session, inout value) }
+    return InternalRendererActivationPrefixResult(status,
+        if (status == CJGUI_INTERNAL_RENDERER_OK) { value } else { InternalRendererActivationPrefix() })
+}
+
+@When[os != "macOS"]
+func internalRendererConsumedActivationPrefix(session: UInt64): InternalRendererActivationPrefixResult {
+    return InternalRendererActivationPrefixResult(CJGUI_INTERNAL_RENDERER_OK, InternalRendererActivationPrefix())
+}
+
+struct InternalRendererInputProvenance {
+    let sessionGeneration: UInt64
+    let sequence: UInt64
+    let previousSequence: UInt64
+    let eventKind: UInt32
+    init(sessionGeneration: UInt64, sequence: UInt64, previousSequence: UInt64, eventKind: UInt32) {
+        this.sessionGeneration = sessionGeneration
+        this.sequence = sequence
+        this.previousSequence = previousSequence
+        this.eventKind = eventKind
+    }
+    func isValidFor(expectedKind: UInt32): Bool {
+        return sessionGeneration != 0u64 && sequence != 0u64 &&
+            previousSequence != UInt64.Max && previousSequence + 1 == sequence && eventKind == expectedKind
+    }
+}
+
+@When[os == "macOS"]
+func internalRendererConsumedInputProvenance(session: UInt64): InternalRendererInputProvenance {
+    var generation: UInt64 = 0u64
+    var sequence: UInt64 = 0u64
+    var previous: UInt64 = 0u64
+    var kind: UInt32 = 0u32
+    let status = unsafe { cjgui_internal_renderer_owner_consumed_input_provenance(session,
+        inout generation, inout sequence, inout previous, inout kind) }
+    if (status == 0) {
+        return InternalRendererInputProvenance(0u64, 0u64, 0u64, 0u32)
+    }
+    return InternalRendererInputProvenance(generation, sequence, previous, kind)
+}
+@When[os != "macOS"]
+func internalRendererConsumedInputProvenance(session: UInt64): InternalRendererInputProvenance {
+    return InternalRendererInputProvenance(0u64, 0u64, 0u64, 0u32)
+}
+
+@When[os == "macOS"]
+func internalRendererInstalledRangeSupported(): Bool { true }
+@When[os != "macOS"]
+func internalRendererInstalledRangeSupported(): Bool { false }
+
+// 普通来源范围（installed-range 链）能力：macOS 与 Windows 各自实现生产者侧。
+// 跨选择 transfer / source-handoff 仍由上面的 macOS-only 能力门控制。
+@When[os == "macOS" || os == "Windows"]
+func internalRendererSourceRangeSupported(): Bool { true }
+@When[os != "macOS" && os != "Windows"]
+func internalRendererSourceRangeSupported(): Bool { false }
+
+// 跨选择 transfer 能力：当前仅 macOS 有完整原生实现。Windows 的普通选择提交
+// 直接走 restore 路径（原生已实现），不进入 transfer 分支。
+@When[os == "macOS"]
+func internalRendererSelectionTransferSupported(): Bool { true }
+@When[os != "macOS"]
+func internalRendererSelectionTransferSupported(): Bool { false }
+
+// Private, macOS-only common decision cell used by owner selection transfers.
+// The numeric status is kept internal so tests can drive exact transition
+// boundaries without creating a public state API.
+@When[os == "macOS"]
+func internalRendererCreateSelectionTransfer(session: UInt64): (Int32, UInt64) {
+    var transferId: UInt64 = 0u64
+    let status = unsafe { cjgui_internal_renderer_selection_transfer_create(session, inout transferId) }
+    return (status, transferId)
+}
+@When[os != "macOS"]
+func internalRendererCreateSelectionTransfer(session: UInt64): (Int32, UInt64) {
+    return (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u64)
+}
+
+@When[os == "macOS"]
+func internalRendererPublishSelectionTransferPending(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_publish_pending(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererPublishSelectionTransferPending(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererBeginSelectionTransferFinalizing(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_begin_finalizing(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererBeginSelectionTransferFinalizing(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererRequestSelectionTransferCancel(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_request_cancel(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererRequestSelectionTransferCancel(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererCommitSelectionTransfer(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_commit(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererCommitSelectionTransfer(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererFinishSelectionTransferAbort(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_finish_abort(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererFinishSelectionTransferAbort(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererBlockSelectionTransferRecovery(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_recovery_blocked(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererBlockSelectionTransferRecovery(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererSelectionTransferState(session: UInt64, transferId: UInt64): (Int32, UInt32, UInt8, UInt32) {
+    var state: UInt32 = 0u32
+    var cancelled: UInt8 = 0u8
+    var references: UInt32 = 0u32
+    let status = unsafe { cjgui_internal_renderer_selection_transfer_state(session, transferId,
+        inout state, inout cancelled, inout references) }
+    return (status, state, cancelled, references)
+}
+@When[os != "macOS"]
+func internalRendererSelectionTransferState(session: UInt64, transferId: UInt64): (Int32, UInt32, UInt8, UInt32) {
+    return (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u32, 0u8, 0u32)
+}
+
+@When[os == "macOS"]
+func internalRendererAdmitSelectionTransferInput(session: UInt64, transferId: UInt64): (Int32, UInt32) {
+    var admission: UInt32 = 3u32
+    let status = unsafe { cjgui_internal_renderer_selection_transfer_admit_input(session, transferId, inout admission) }
+    return (status, admission)
+}
+@When[os != "macOS"]
+func internalRendererAdmitSelectionTransferInput(session: UInt64, transferId: UInt64): (Int32, UInt32) {
+    return (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 3u32)
+}
+
+@When[os == "macOS"]
+func internalRendererRetainSelectionTransfer(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_retain(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererRetainSelectionTransfer(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererReleaseSelectionTransfer(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_release(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererReleaseSelectionTransfer(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererCaptureSelectionTransferCandidate(session: UInt64,
+    candidate: CjguiInternalSelectionTransferCandidate, sourceBody: String, targetBody: String): Int32 {
+    var frozen = candidate
+    let sourceBytes = sourceBody.toArray()
+    let targetBytes = targetBody.toArray()
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let sourceData = acquireArrayRawData(sourceBytes)
+        let targetData = acquireArrayRawData(targetBytes)
+        frozen.sourceBodyUtf8 = sourceData.pointer
+        frozen.sourceBodyUtf8Length = UInt32(sourceBytes.size)
+        frozen.targetBodyUtf8 = targetData.pointer
+        frozen.targetBodyUtf8Length = UInt32(targetBytes.size)
+        status = cjgui_internal_renderer_selection_transfer_capture_a(session, inout frozen)
+        releaseArrayRawData(targetData)
+        releaseArrayRawData(sourceData)
+    }
+    return status
+}
+@When[os != "macOS"]
+func internalRendererCaptureSelectionTransferCandidate(session: UInt64,
+    candidate: CjguiInternalSelectionTransferCandidate, sourceBody: String, targetBody: String): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererCaptureSelectionTransferA(session: UInt64, transferId: UInt64,
+    sourceNodeId: UInt64, sourceProjectionVersion: UInt64, sourceResourceId: Int64,
+    sourceNodeKind: UInt32, sourceSceneVersion: UInt64, sourceSelectionStart16: UInt32,
+    sourceSelectionEnd16: UInt32, sourceBody: String,
+    nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64, nodeKind: UInt32,
+    sceneVersion: UInt64, anchor16: UInt32, focus16: UInt32, body: String): Int32 {
+    var candidate = CjguiInternalSelectionTransferCandidate()
+    candidate.transferId = transferId; candidate.targetNodeId = nodeId
+    candidate.sourceNodeId = sourceNodeId
+    candidate.sourceProjectionVersion = sourceProjectionVersion
+    candidate.sourceResourceId = sourceResourceId
+    candidate.sourceNodeKind = sourceNodeKind
+    candidate.sourceSceneVersion = sourceSceneVersion
+    candidate.sourceSelectionStart16 = sourceSelectionStart16
+    candidate.sourceSelectionEnd16 = sourceSelectionEnd16
+    candidate.targetProjectionVersion = projectionVersion; candidate.targetResourceId = resourceId
+    candidate.targetNodeKind = nodeKind; candidate.targetSceneVersion = sceneVersion
+    candidate.targetAnchor16 = anchor16; candidate.targetFocus16 = focus16
+    let sourceBytes = sourceBody.toArray()
+    let bytes = body.toArray()
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let sourceData = acquireArrayRawData(sourceBytes)
+        let data = acquireArrayRawData(bytes)
+        candidate.sourceBodyUtf8 = sourceData.pointer
+        candidate.sourceBodyUtf8Length = UInt32(sourceBytes.size)
+        candidate.targetBodyUtf8 = data.pointer
+        candidate.targetBodyUtf8Length = UInt32(bytes.size)
+        status = cjgui_internal_renderer_selection_transfer_capture_a(session, inout candidate)
+        releaseArrayRawData(data)
+        releaseArrayRawData(sourceData)
+    }
+    return status
+}
+@When[os != "macOS"]
+func internalRendererCaptureSelectionTransferA(session: UInt64, transferId: UInt64,
+    sourceNodeId: UInt64, sourceProjectionVersion: UInt64, sourceResourceId: Int64,
+    sourceNodeKind: UInt32, sourceSceneVersion: UInt64, sourceSelectionStart16: UInt32,
+    sourceSelectionEnd16: UInt32, sourceBody: String,
+    nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64, nodeKind: UInt32,
+    sceneVersion: UInt64, anchor16: UInt32, focus16: UInt32, body: String): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+class InternalRendererCaptureSelectionResult {
+    let status: Int32
+    let candidate: CjguiInternalSelectionTransferCandidate
+    let sourceBody: String
+    init(status: Int32, candidate: CjguiInternalSelectionTransferCandidate, sourceBody: String) {
+        this.status = status; this.candidate = candidate; this.sourceBody = sourceBody
+    }
+}
+
+@When[os == "macOS"]
+func internalRendererCaptureCurrentSelectionTransfer(session: UInt64,
+    candidate: CjguiInternalSelectionTransferCandidate, targetBody: String):
+    InternalRendererCaptureSelectionResult {
+    var frozen = candidate
+    let source = Array<UInt8>(65536, repeat: 0u8)
+    let target = targetBody.toArray()
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let output = acquireArrayRawData(source)
+        let input = acquireArrayRawData(target)
+        frozen.targetBodyUtf8 = input.pointer; frozen.targetBodyUtf8Length = UInt32(target.size)
+        status = cjgui_internal_renderer_selection_transfer_capture_current(session, inout frozen,
+            output.pointer, 65536u32)
+        releaseArrayRawData(input); releaseArrayRawData(output)
+    }
+    let body = if (status == CJGUI_INTERNAL_RENDERER_OK && frozen.sourceBodyUtf8Length <= 65536u32) {
+        String.fromUtf8(source.slice(0, Int64(frozen.sourceBodyUtf8Length)))
+    } else { "" }
+    return InternalRendererCaptureSelectionResult(status, frozen, body)
+}
+@When[os != "macOS"]
+func internalRendererCaptureCurrentSelectionTransfer(session: UInt64,
+    candidate: CjguiInternalSelectionTransferCandidate, targetBody: String):
+    InternalRendererCaptureSelectionResult {
+    return InternalRendererCaptureSelectionResult(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, candidate, "")
+}
+
+@When[os == "macOS"]
+func internalRendererPrepareSelectionTransferB(session: UInt64, transferId: UInt64,
+    deadlineNs: UInt64): (Int32, Bool) {
+    var ready = 0u8
+    let status = unsafe { cjgui_internal_renderer_selection_transfer_prepare_b(
+        session, transferId, deadlineNs, inout ready) }
+    return (status, ready != 0u8)
+}
+@When[os != "macOS"]
+func internalRendererPrepareSelectionTransferB(session: UInt64, transferId: UInt64,
+    deadlineNs: UInt64): (Int32, Bool) {
+    return (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, false)
+}
+
+@When[os == "macOS"]
+func internalRendererInstallSelectionTransferB(session: UInt64, transferId: UInt64):
+    InternalRendererSelectionTransferVerifyBResult {
+    var receipt = CjguiInternalSelectionTransferReceipt()
+    let status = unsafe { cjgui_internal_renderer_selection_transfer_install_b(session, transferId, inout receipt) }
+    return InternalRendererSelectionTransferVerifyBResult(status, receipt)
+}
+@When[os != "macOS"]
+func internalRendererInstallSelectionTransferB(session: UInt64, transferId: UInt64):
+    InternalRendererSelectionTransferVerifyBResult {
+    return InternalRendererSelectionTransferVerifyBResult(
+        CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, CjguiInternalSelectionTransferReceipt())
+}
+
+@When[os == "macOS"]
+func internalRendererVerifySelectionTransferB(session: UInt64, transferId: UInt64):
+    InternalRendererSelectionTransferVerifyBResult {
+    var receipt = CjguiInternalSelectionTransferReceipt()
+    let status = unsafe { cjgui_internal_renderer_selection_transfer_verify_b(session, transferId, inout receipt) }
+    return InternalRendererSelectionTransferVerifyBResult(status, receipt)
+}
+@When[os != "macOS"]
+func internalRendererVerifySelectionTransferB(session: UInt64, transferId: UInt64):
+    InternalRendererSelectionTransferVerifyBResult {
+    return InternalRendererSelectionTransferVerifyBResult(
+        CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, CjguiInternalSelectionTransferReceipt())
+}
+
+@When[os == "macOS"]
+func internalRendererRestoreSelectionTransferA(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_restore_a(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererRestoreSelectionTransferA(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererReplaySelectionTransferInput(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_replay_input(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererReplaySelectionTransferInput(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererDiscardSelectionTransferCapsule(session: UInt64, transferId: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_selection_transfer_discard_capsule(session, transferId) }
+}
+@When[os != "macOS"]
+func internalRendererDiscardSelectionTransferCapsule(session: UInt64, transferId: UInt64): Int32 {
+    CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererArmInstalledRange(session: UInt64, basis: CjguiInstalledRangeBasis,
+    scene: UInt64, node: UInt64, resource: Int64): Int32 {
+    var candidate = CjguiInternalInstalledRangeCandidate()
+    candidate.nonce = basis.nonce; candidate.windowInstanceToken = basis.document
+    candidate.bindingEpoch = basis.binding; candidate.contextEpoch = UInt64(basis.context)
+    candidate.mirrorRevision = UInt64(basis.mirror); candidate.ownerVersion = basis.ownerVersion
+    candidate.installedSceneVersion = scene; candidate.nodeId = node; candidate.resourceId = resource
+    candidate.sourceStartByte = UInt64(basis.sourceStart); candidate.sourceEndByte = UInt64(basis.sourceEnd)
+    let bytes = basis.text.toArray()
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let data = acquireArrayRawData(bytes)
+        candidate.sourceTextUtf8 = data.pointer; candidate.sourceTextUtf8Length = UInt32(bytes.size)
+        status = cjgui_internal_renderer_installed_range_arm(session, inout candidate)
+        releaseArrayRawData(data)
+    }
+    return status
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererArmInstalledRange(session: UInt64, basis: CjguiInstalledRangeBasis,
+    scene: UInt64, node: UInt64, resource: Int64): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererInstalledRangeReceipt(session: UInt64, nonce: UInt64): ?CjguiInternalInstalledRangeReceipt {
+    var receipt = CjguiInternalInstalledRangeReceipt()
+    let status = unsafe { cjgui_internal_renderer_installed_range_receipt(session, nonce, inout receipt) }
+    return if (status == CJGUI_INTERNAL_RENDERER_OK) { Some(receipt) } else { None }
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererInstalledRangeReceipt(session: UInt64, nonce: UInt64): ?CjguiInternalInstalledRangeReceipt { None }
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererActiveInstalledRangeReceipt(session: UInt64, nonce: UInt64):
+    ?CjguiInternalInstalledRangeReceipt {
+    var receipt = CjguiInternalInstalledRangeReceipt()
+    let status = unsafe { cjgui_internal_renderer_installed_range_active_receipt(session, nonce, inout receipt) }
+    return if (status == CJGUI_INTERNAL_RENDERER_OK) { Some(receipt) } else { None }
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererActiveInstalledRangeReceipt(session: UInt64, nonce: UInt64):
+    ?CjguiInternalInstalledRangeReceipt { None }
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererActivateInstalledRange(session: UInt64, nonce: UInt64,
+    proxy: UInt64, selectionRevision: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_installed_range_activate(session, nonce, proxy, selectionRevision) }
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererActivateInstalledRange(session: UInt64, nonce: UInt64,
+    proxy: UInt64, selectionRevision: UInt64): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererCancelInstalledRange(session: UInt64, nonce: UInt64): Unit {
+    let _ = unsafe { cjgui_internal_renderer_installed_range_cancel(session, nonce) }
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererCancelInstalledRange(session: UInt64, nonce: UInt64): Unit {}
+
+@When[os == "macOS"]
+func internalRendererArmSourceHandoff(session: UInt64, basis: CjguiInstalledRangeBasis,
+    scene: UInt64, node: UInt64, resource: Int64,
+    expectedBinding: UInt64, expectedNode: UInt64, expectedResource: Int64,
+    expectedKind: UInt32): Int32 {
+    var candidate = CjguiInternalInstalledRangeCandidate()
+    candidate.nonce = basis.nonce; candidate.windowInstanceToken = basis.document
+    candidate.bindingEpoch = basis.binding; candidate.contextEpoch = UInt64(basis.context)
+    candidate.mirrorRevision = UInt64(basis.mirror); candidate.ownerVersion = basis.ownerVersion
+    candidate.installedSceneVersion = scene; candidate.nodeId = node; candidate.resourceId = resource
+    candidate.sourceStartByte = UInt64(basis.sourceStart); candidate.sourceEndByte = UInt64(basis.sourceEnd)
+    let bytes = basis.text.toArray()
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let data = acquireArrayRawData(bytes)
+        candidate.sourceTextUtf8 = data.pointer; candidate.sourceTextUtf8Length = UInt32(bytes.size)
+        status = cjgui_internal_renderer_source_handoff_arm(session, inout candidate,
+            expectedBinding, expectedNode, expectedResource, expectedKind)
+        releaseArrayRawData(data)
+    }
+    return status
+}
+@When[os != "macOS"]
+func internalRendererArmSourceHandoff(session: UInt64, basis: CjguiInstalledRangeBasis,
+    scene: UInt64, node: UInt64, resource: Int64,
+    expectedBinding: UInt64, expectedNode: UInt64, expectedResource: Int64,
+    expectedKind: UInt32): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS"]
+func internalRendererConfirmSourceHandoffSelection(session: UInt64, nonce: UInt64,
+    selectionStart16: UInt32, selectionEnd16: UInt32): Int32 {
+    unsafe { cjgui_internal_renderer_source_handoff_confirm_selection(session, nonce,
+        selectionStart16, selectionEnd16) }
+}
+@When[os != "macOS"]
+func internalRendererConfirmSourceHandoffSelection(session: UInt64, nonce: UInt64,
+    selectionStart16: UInt32, selectionEnd16: UInt32): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS"]
+func internalRendererActivateSourceHandoff(session: UInt64, nonce: UInt64,
+    proxy: UInt64, selectionRevision: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_source_handoff_activate(session, nonce, proxy, selectionRevision) }
+}
+@When[os != "macOS"]
+func internalRendererActivateSourceHandoff(session: UInt64, nonce: UInt64,
+    proxy: UInt64, selectionRevision: UInt64): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS"]
+func internalRendererFinishSourceHandoff(session: UInt64, nonce: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_source_handoff_finish(session, nonce) }
+}
+@When[os != "macOS"]
+func internalRendererFinishSourceHandoff(session: UInt64, nonce: UInt64): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS"]
+func internalRendererCancelSourceHandoff(session: UInt64, nonce: UInt64): Int32 {
+    unsafe { cjgui_internal_renderer_source_handoff_cancel(session, nonce) }
+}
+@When[os != "macOS"]
+func internalRendererCancelSourceHandoff(session: UInt64, nonce: UInt64): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererReleaseInstalledRange(session: UInt64, document: UInt64, binding: UInt64): Unit {
+    let _ = unsafe { cjgui_internal_renderer_release_installed_range(session, document, binding) }
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererReleaseInstalledRange(session: UInt64, document: UInt64, binding: UInt64): Unit {}
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererAckInstalledRange(session: UInt64, claim: InternalRendererInstalledRangeClaim,
+    accepted: Bool, version: Int64): Int32 {
+    var raw = claim.raw
+    unsafe { cjgui_internal_renderer_ack_installed_range(session, inout raw,
+        if (accepted) { 1u32 } else { 0u32 }, version) }
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererAckInstalledRange(session: UInt64, claim: InternalRendererInstalledRangeClaim,
+    accepted: Bool, version: Int64): Int32 { CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
+@When[os == "macOS" || os == "Windows"]
+func internalRendererClaimInstalledRange(session: UInt64, node: UInt64, resource: Int64,
+    binding: UInt64, scene: UInt64): (Bool, ?InternalRendererInstalledRangeClaim) {
+    var raw = CjguiInternalInstalledRangeIntent()
+    let status = unsafe { cjgui_internal_renderer_claim_last_pumped_range(session, node, resource,
+        binding, scene, inout raw) }
+    if (status == CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND) { return (false, None) }
+    // Non-OK owned claims have already been retired by the native claim gate.
+    if (status != CJGUI_INTERNAL_RENDERER_OK) { return (true, None) }
+    let payloadBytes = Int64(raw.preBodyUtf8Length) + Int64(raw.replacementUtf8Length) +
+        Int64(raw.postBodyUtf8Length)
+    if (payloadBytes > CJGUI_INSTALLED_RANGE_PAYLOAD_BUDGET / CJGUI_INSTALLED_RANGE_PAYLOAD_COPIES) {
+        // The materialized source window may grow after an edit. Enforce the
+        // already-reserved payload/copy budget instead of rejecting a one-byte
+        // insertion into a full 64 KiB window. Settle any invalid reservation.
+        let _ = unsafe { cjgui_internal_renderer_ack_installed_range(session, inout raw, 0u32, -1) }
+        return (true, None)
+    }
+    let pre = Array<UInt8>(Int64(raw.preBodyUtf8Length), repeat: 0)
+    let replacement = Array<UInt8>(Int64(raw.replacementUtf8Length), repeat: 0)
+    let post = Array<UInt8>(Int64(raw.postBodyUtf8Length), repeat: 0)
+    var copied: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        let preData = acquireArrayRawData(pre)
+        let replacementData = acquireArrayRawData(replacement)
+        let postData = acquireArrayRawData(post)
+        copied = cjgui_internal_renderer_copy_claimed_range_bytes(session, raw.seq,
+            preData.pointer, raw.preBodyUtf8Length, replacementData.pointer, raw.replacementUtf8Length,
+            postData.pointer, raw.postBodyUtf8Length)
+        releaseArrayRawData(postData); releaseArrayRawData(replacementData); releaseArrayRawData(preData)
+    }
+    if (copied != CJGUI_INTERNAL_RENDERER_OK) {
+        let _ = unsafe { cjgui_internal_renderer_ack_installed_range(session, inout raw, 0u32, -1) }
+        return (true, None)
+    }
+    let basis = CjguiInstalledRangeBasis(raw.nonce, raw.windowInstanceToken, raw.bindingEpoch,
+        Int64(raw.contextEpoch), Int64(raw.mirrorRevision), raw.ownerVersion,
+        Int64(raw.sourceStartByte), Int64(raw.sourceEndByte), "")
+    let input = CjguiInstalledRangeInput(basis, raw.proxyGeneration, raw.seq, raw.previousSeq,
+        raw.observedAckSeq, raw.observedAckVersion, String.fromUtf8(pre),
+        Int64(raw.rangeStart16), Int64(raw.rangeStart16) + Int64(raw.rangeLength16),
+        wholeChoiceNonce: raw.wholeChoiceNonce, wholeChoicePrevious: raw.wholeChoicePreviousSeq)
+    return (true, Some(InternalRendererInstalledRangeClaim(raw, input, String.fromUtf8(replacement), String.fromUtf8(post))))
+}
+@When[os != "macOS" && os != "Windows"]
+func internalRendererClaimInstalledRange(session: UInt64, node: UInt64, resource: Int64,
+    binding: UInt64, scene: UInt64): (Bool, ?InternalRendererInstalledRangeClaim) { (false, None) }
 
 func internalRendererConfigureComposableScene(session: UInt64, projectionVersion: UInt64, nodeCount: UInt32): Int32 {
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     unsafe { status = cjgui_internal_renderer_configure_composable_scene(session, projectionVersion, nodeCount) }
     return status
+}
+
+@When[os == "macOS"]
+foreign {
+    func cjgui_internal_renderer_prepare_frame_resources(session: UInt64, request: UInt64,
+        deadlineNs: UInt64, outReady: CPointer<UInt32>): Int32
+}
+@When[os == "macOS"]
+func internalRendererPrepareFrameResources(session: UInt64, request: UInt64,
+    deadlineNs: UInt64): (Int32, Bool) {
+    var ready = 0u32
+    let status = unsafe { cjgui_internal_renderer_prepare_frame_resources(session, request, deadlineNs, inout ready) }
+    return (status, ready == 1u32)
+}
+@When[os != "macOS"]
+func internalRendererPrepareFrameResources(session: UInt64, request: UInt64,
+    deadlineNs: UInt64): (Int32, Bool) { (CJGUI_INTERNAL_RENDERER_OK, true) }
+
+// Package-private owned scratch bridge; no native object escapes this module.
+func internalRendererBeginComposablePreparation(session: UInt64, preparationId: UInt64,
+    baseSceneVersion: UInt64, projectionVersion: UInt64, nodeCount: UInt32): Int32 {
+    return unsafe { cjgui_internal_renderer_begin_composable_preparation(session, preparationId,
+        baseSceneVersion, projectionVersion, nodeCount) }
+}
+func internalRendererAdvanceComposablePreparation(session: UInt64, preparationId: UInt64,
+    deadlineNs: UInt64): (Int32, Bool) {
+    var ready: UInt32 = 0u32
+    let status = unsafe { cjgui_internal_renderer_advance_composable_preparation(
+        session, preparationId, deadlineNs, inout ready) }
+    return (status, ready == 1u32)
+}
+func internalRendererPromoteComposablePreparation(session: UInt64, preparationId: UInt64): Int32 {
+    return unsafe { cjgui_internal_renderer_promote_composable_preparation(session, preparationId) }
+}
+func internalRendererCancelComposablePreparation(session: UInt64, preparationId: UInt64): Int32 {
+    return unsafe { cjgui_internal_renderer_cancel_composable_preparation(session, preparationId) }
+}
+func internalRendererPrepareComposableNode(session: UInt64, preparationId: UInt64, nodeIndex: UInt32,
+    node: CjguiInternalRendererComposableNode, geometry: CjguiInternalRendererComposableGeometry,
+    label: String, value: String, semanticId: String, semanticBindingKey: String, semanticRowKey: String,
+    semanticParentRowKey: String, semanticLabel: String, encodedRuns: String): Int32 {
+    var mutableNode = node
+    var mutableGeometry = geometry
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    let preparedCString0 = unsafe { LibC.mallocCString(label) }
+    let preparedCString1 = unsafe { LibC.mallocCString(value) }
+    let preparedCString2 = unsafe { LibC.mallocCString(semanticId) }
+    let preparedCString3 = unsafe { LibC.mallocCString(semanticBindingKey) }
+    let preparedCString4 = unsafe { LibC.mallocCString(semanticRowKey) }
+    let preparedCString5 = unsafe { LibC.mallocCString(semanticParentRowKey) }
+    let preparedCString6 = unsafe { LibC.mallocCString(semanticLabel) }
+    let preparedCString7 = unsafe { LibC.mallocCString(encodedRuns) }
+    try (preparedStringResource0 = preparedCString0.asResource()) {
+        try (preparedStringResource1 = preparedCString1.asResource()) {
+            try (preparedStringResource2 = preparedCString2.asResource()) {
+                try (preparedStringResource3 = preparedCString3.asResource()) {
+                    try (preparedStringResource4 = preparedCString4.asResource()) {
+                        try (preparedStringResource5 = preparedCString5.asResource()) {
+                            try (preparedStringResource6 = preparedCString6.asResource()) {
+                                try (preparedStringResource7 = preparedCString7.asResource()) {
+                                    unsafe { status = cjgui_internal_renderer_prepare_composable_node(session, preparationId, nodeIndex,
+                                        inout mutableNode, inout mutableGeometry, preparedStringResource0.value, preparedStringResource1.value, preparedStringResource2.value, preparedStringResource3.value,
+                                        preparedStringResource4.value, preparedStringResource5.value, preparedStringResource6.value, preparedStringResource7.value) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return status
+}
+
+@When[os == "macOS"]
+func internalRendererPrepareComposableNodeBatch(session: UInt64, preparationId: UInt64, firstIndex: UInt32,
+    nodes: Array<CjguiInternalRendererComposableNode>, geometry: Array<CjguiInternalRendererComposableGeometry>,
+    strings: Array<String>, deadlineNs: UInt64): (Int32, UInt32) {
+    if (nodes.size <= 0 || nodes.size > 8 || geometry.size != nodes.size || strings.size != nodes.size * 8) {
+        return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0u32)
+    }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    var copied: UInt32 = 0
+    let nativeNodes = unsafe { LibC.malloc<CjguiInternalRendererComposableNode>(count: nodes.size) }
+    try (nodeMemory = nativeNodes.asResource()) {
+    let nativeGeometry = unsafe { LibC.malloc<CjguiInternalRendererComposableGeometry>(count: nodes.size) }
+    try (geometryMemory = nativeGeometry.asResource()) {
+    let nativeStrings = unsafe { LibC.malloc<CString>(count: strings.size) }
+    try (stringMemory = nativeStrings.asResource()) {
+    var filledStrings: Int64 = 0
+    try {
+        for (i in 0..nodes.size) {
+            unsafe { nativeNodes.write(i, nodes[i]); nativeGeometry.write(i, geometry[i]) }
+        }
+        for (text in strings) {
+            let value = unsafe { LibC.mallocCString(text) }
+            unsafe { nativeStrings.write(filledStrings, value) }
+            filledStrings += 1
+        }
+        status = unsafe { cjgui_internal_renderer_prepare_composable_node_batch(session, preparationId,
+            firstIndex, UInt32(nodes.size), nativeNodes, nativeGeometry, nativeStrings, deadlineNs, inout copied) }
+    } finally {
+        for (i in 0..filledStrings) { unsafe { LibC.free(nativeStrings.read(i)) } }
+    }
+    }
+    }
+    }
+    return (status, copied)
+}
+
+@When[os != "macOS"]
+func internalRendererPrepareComposableNodeBatch(session: UInt64, preparationId: UInt64, firstIndex: UInt32,
+    nodes: Array<CjguiInternalRendererComposableNode>, geometry: Array<CjguiInternalRendererComposableGeometry>,
+    strings: Array<String>, deadlineNs: UInt64): (Int32, UInt32) {
+    // No OHOS bridge or snapshot change. Its existing scalar call remains the
+    // implementation if this main-tree helper is compiled on another platform.
+    if (nodes.size <= 0 || nodes.size > 8 || geometry.size != nodes.size || strings.size != nodes.size * 8) {
+        return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0u32)
+    }
+    var copied: UInt32 = 0
+    for (i in 0..nodes.size) {
+        let s = i * 8
+        let status = internalRendererPrepareComposableNode(session, preparationId, firstIndex + UInt32(i),
+            nodes[i], geometry[i], strings[s], strings[s + 1], strings[s + 2], strings[s + 3], strings[s + 4],
+            strings[s + 5], strings[s + 6], strings[s + 7])
+        if (status != CJGUI_INTERNAL_RENDERER_OK) { return (status, copied) }
+        copied += 1u32
+    }
+    return (CJGUI_INTERNAL_RENDERER_OK, copied)
 }
 
 func internalRendererSetComposableSceneGeometry(session: UInt64, projectionVersion: UInt64,
@@ -1944,12 +3197,48 @@ func internalRendererComposableViewport(session: UInt64): InternalRendererViewpo
         viewport.resourceCompletionVersion)
 }
 
+// Ordinary copied result, not an ABI/POD or a retained native object.
+struct InternalRendererDiagnosticScalarSnapshotResult {
+    let status: Int32
+    let progress: CjguiInternalRendererComposableDisplayProgress
+    let workload: CjguiInternalRendererDiagnosticWorkload
+    let timing: CjguiInternalRendererDiagnosticTiming
+    init(status: Int32, progress: CjguiInternalRendererComposableDisplayProgress,
+        workload: CjguiInternalRendererDiagnosticWorkload, timing: CjguiInternalRendererDiagnosticTiming) {
+        this.status = status
+        this.progress = progress
+        this.workload = workload
+        this.timing = timing
+    }
+}
+
+@When[os == "macOS"]
+func internalRendererDiagnosticScalarSnapshot(session: UInt64, sceneVersion: UInt64):
+    InternalRendererDiagnosticScalarSnapshotResult {
+    let (generation, _) = internalRendererCoordinateLifetime(session)
+    var progress = CjguiInternalRendererComposableDisplayProgress()
+    var workload = CjguiInternalRendererDiagnosticWorkload()
+    var timing = CjguiInternalRendererDiagnosticTiming()
+    let status = unsafe { cjgui_internal_renderer_diagnostic_scalar_snapshot(session,
+        generation, sceneVersion, inout progress, inout workload, inout timing) }
+    return InternalRendererDiagnosticScalarSnapshotResult(status, progress, workload, timing)
+}
+
+@When[os != "macOS"]
+func internalRendererDiagnosticScalarSnapshot(session: UInt64, sceneVersion: UInt64):
+    InternalRendererDiagnosticScalarSnapshotResult {
+    return InternalRendererDiagnosticScalarSnapshotResult(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
+        CjguiInternalRendererComposableDisplayProgress(), CjguiInternalRendererDiagnosticWorkload(),
+        CjguiInternalRendererDiagnosticTiming())
+}
+
 /// Reads already-observed renderer facts only. It must never schedule a frame
 /// or touch the native input FIFO, so an external GET can safely call it.
 func internalRendererComposableDisplayProgress(session: UInt64): InternalRendererComposableDisplayProgressResult {
     var progress = CjguiInternalRendererComposableDisplayProgress()
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     unsafe { status = cjgui_internal_renderer_composable_display_progress(session, inout progress) }
+    cjguiOwnerTraceBoundary(session, 0u64, 142u32, 0u32, 75u32, 0u64, UInt64.Max)
     return InternalRendererComposableDisplayProgressResult(
         status,
         progress.submittedFrameIndex,
@@ -1965,6 +3254,38 @@ func internalRendererComposableDisplayProgress(session: UInt64): InternalRendere
         progress.effectCompletion,
         progress
     )
+}
+
+/// Observe the last complete main-thread publication for this exact accepted
+/// scene. This is not an input/restore ACK or a fresh native-state barrier.
+/// A missing/stale publication remains unavailable; do not queue a main hop
+/// merely to turn an observation into a value.
+@When[os == "macOS"]
+func internalRendererPublishedComposableDisplayProgress(session: UInt64, sceneVersion: UInt64):
+    InternalRendererComposableDisplayProgressResult {
+    let copied = internalRendererDiagnosticScalarSnapshot(session, sceneVersion)
+    let progress = copied.progress
+    return InternalRendererComposableDisplayProgressResult(
+        copied.status,
+        progress.submittedFrameIndex,
+        progress.observedMetalCompletionFrameIndex,
+        progress.observedMetalFailureFrameIndex,
+        progress.observedMetalGpuDurationMicros,
+        progress.overlayDrawnProjectionVersion,
+        progress.effectSubmittedSceneVersion,
+        progress.effectSubmittedFrameIndex,
+        progress.effectRequestedRadiusPoints,
+        progress.effectMode,
+        progress.effectFallbackReason,
+        progress.effectCompletion,
+        progress
+    )
+}
+
+@When[os != "macOS"]
+func internalRendererPublishedComposableDisplayProgress(session: UInt64, sceneVersion: UInt64):
+    InternalRendererComposableDisplayProgressResult {
+    return internalRendererComposableDisplayProgress(session)
 }
 
 func internalRendererFocusComposableNode(session: UInt64, nodeId: Int64): Int32 {
@@ -1995,6 +3316,28 @@ func internalRendererRestoreComposableSelection(session: UInt64, nodeId: Int64, 
         }
     }
     return (status, Int64(appliedStart), Int64(appliedEnd))
+}
+
+func internalRendererInstallOwnedSourceSelection(session: UInt64, nodeId: Int64, resourceId: Int64,
+    sceneVersion: Int64, bindingEpoch: UInt64, requestId: Int64, deadlineNs: UInt64,
+    value: String, start: Int64, end: Int64): (Int32, Int64, Int64, Bool) {
+    if (nodeId < 0 || sceneVersion < 0 || requestId <= 0 || start < 0 || end < start ||
+        end > 4294967295 || value.size > 65536) {
+        return (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0, 0, false)
+    }
+    let cValue = unsafe { LibC.mallocCString(value) }
+    var appliedStart: UInt32 = 0
+    var appliedEnd: UInt32 = 0
+    var deferred: UInt8 = 0
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (valueResource = cValue.asResource()) {
+        unsafe {
+            status = cjgui_internal_renderer_install_owned_source_selection(session, UInt64(nodeId), resourceId,
+                UInt64(sceneVersion), bindingEpoch, UInt64(requestId), deadlineNs, valueResource.value,
+                UInt32(start), UInt32(end), inout appliedStart, inout appliedEnd, inout deferred)
+        }
+    }
+    return (status, Int64(appliedStart), Int64(appliedEnd), deferred != 0u8)
 }
 
 func internalRendererReadComposableSelection(session: UInt64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
@@ -2162,6 +3505,9 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
     private var lastMeasurementStatus: Int32
     private var measurementPassNativeElapsedMsValue: Int64
     private var measurementPassNativeCallCountValue: Int64
+    private var measurementPassCacheHitCountValue: Int64 = 0
+    private var measurementPassCacheEvictionCountValue: Int64 = 0
+    private var measurementEnvironmentResizeVersion: UInt64 = UInt64.Max
     init(session: UInt64) {
         this.session = session
         this.fallback = CjguiComposableUiFallbackTextMeasurer()
@@ -2174,7 +3520,15 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
     /// `CjguiComposableUiWindow` drops its per-session cache before any
     /// viewport/backing-scale generation can reuse same-point measurements.
     public func layoutMeasurementEnvironmentKey(): String {
-        return "cjgui-native-text-session-${session}-multiline-natural-height-v1"
+        return "cjgui-native-text-session-${session}-resize-${measurementEnvironmentResizeVersion}-multiline-natural-height-v1"
+    }
+    // Only the window passes the actual native viewport generation. Point
+    // bounds can stay equal while a backing/font environment changes.
+    func useMeasurementEnvironment(resizeVersion: UInt64): Unit {
+        if (measurementEnvironmentResizeVersion != resizeVersion) {
+            cache.clear()
+            measurementEnvironmentResizeVersion = resizeVersion
+        }
     }
     /// A refresh may make many measurement calls. The cached successful
     /// entries are retained, while failure health applies only to this pass.
@@ -2182,6 +3536,8 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
         lastMeasurementStatus = CJGUI_INTERNAL_RENDERER_OK
         measurementPassNativeElapsedMsValue = 0
         measurementPassNativeCallCountValue = 0
+        measurementPassCacheHitCountValue = 0
+        measurementPassCacheEvictionCountValue = 0
     }
     public func measurementStatus(): Int32 {
         return lastMeasurementStatus
@@ -2192,15 +3548,57 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
     public func measurementPassNativeCallCount(): Int64 {
         return measurementPassNativeCallCountValue
     }
-    public func measure(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64): CjguiComposableUiTextMeasurement {
-        var cachedIndex: Int64 = 0
-        while (cachedIndex < cache.size) {
-            let cached = cache[cachedIndex]
-            if (cached.matches(value, style, maximumWidth, 0)) {
-                return cached.measurement
+    func measurementPassCacheHitCount(): Int64 { return measurementPassCacheHitCountValue }
+    func measurementPassCacheEvictionCount(): Int64 { return measurementPassCacheEvictionCountValue }
+    func measurementCacheEntryCount(): Int64 { return cache.size }
+
+    func cachedMeasurement(value: String, style: CjguiComposableUiStyle,
+        width: Int64, kind: Int64): ?CjguiComposableUiTextMeasurement {
+        var index: Int64 = 0
+        while (index < cache.size) {
+            let entry = cache[index]
+            if (entry.matches(value, style, width, kind)) {
+                // A hit is actual reuse of a successful query from this
+                // session/font environment. Retain its recent position so a
+                // single changing status label cannot evict the whole pass.
+                if (index != cache.size - 1) {
+                    cache.remove(at: index)
+                    cache.add(entry)
+                }
+                measurementPassCacheHitCountValue += 1
+                return Some(entry.measurement)
             }
-            cachedIndex += 1
+            index += 1
         }
+        return None
+    }
+
+    private func retainMeasurement(entry: CjguiInternalRendererTextMeasurementCacheEntry): Unit {
+        // Keep the same 128-entry bound; retire only the least recently used
+        // successful scalar result. Window environment changes still replace
+        // this entire session measurer through the existing invalidation path.
+        if (cache.size >= 128) {
+            cache.remove(at: 0)
+            measurementPassCacheEvictionCountValue += 1
+        }
+        cache.add(entry)
+    }
+    func retainPreparedMeasurement(value: String, style: CjguiComposableUiStyle, width: Int64, kind: Int64,
+        measured: CjguiComposableUiTextMeasurement, expectedEnvironment: String): Bool {
+        if (layoutMeasurementEnvironmentKey() != expectedEnvironment) {
+            return false
+        }
+        // Preparation is pure geometry. Keeping a successful result in the
+        // same bounded cache lets a later selection-only scene reuse it.
+        if (cachedMeasurement(value, style, width, kind).isNone()) {
+            retainMeasurement(
+                CjguiInternalRendererTextMeasurementCacheEntry(value, style.fontSize, style.fontWeight, style.fontFamily,
+                    width, kind, measured))
+        }
+        return true
+    }
+    public func measure(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64): CjguiComposableUiTextMeasurement {
+        if (let Some(cached) <- cachedMeasurement(value, style, maximumWidth, 0)) { return cached }
         let cText = unsafe { LibC.mallocCString(value) }
         var native = CjguiInternalRendererTextMeasurement()
         var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
@@ -2249,13 +3647,7 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
             Int64(native.lineHeight),
             Int64(native.baseline)
         )
-        // Bound memory even for a long-lived dashboard with unbounded external
-        // labels. Clearing only evicts reusable scalar entries; it never
-        // changes the already committed native scene.
-        if (cache.size >= 128) {
-            cache = ArrayList<CjguiInternalRendererTextMeasurementCacheEntry>()
-        }
-        cache.add(
+        retainMeasurement(
             CjguiInternalRendererTextMeasurementCacheEntry(
                 value,
                 style.fontSize,
@@ -2269,14 +3661,7 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
         return result
     }
     public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
-        var cachedIndex: Int64 = 0
-        while (cachedIndex < cache.size) {
-            let cached = cache[cachedIndex]
-            if (cached.matches(value, style, contentWidth, 1)) {
-                return Some(cached.measurement.height)
-            }
-            cachedIndex += 1
-        }
+        if (let Some(cached) <- cachedMeasurement(value, style, contentWidth, 1)) { return Some(cached.height) }
         let cText = unsafe { LibC.mallocCString(value) }
         var nativeHeight: UInt32 = 0
         var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
@@ -2291,10 +3676,12 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
         try (textResource = cText.asResource()) {
             unsafe {
                 status = cjgui_internal_renderer_measure_composable_multiline_natural_height(session, textResource.value,
-                    style.fontSize, if (style.fontWeight > 0) {
-                        1u32
-                    } else {
+                    style.fontSize, if (style.fontWeight <= 0) {
                         0u32
+                    } else if (style.fontWeight > 1000) {
+                        1000u32
+                    } else {
+                        UInt32(style.fontWeight)
                     }, composableFontFamilyCode(style.fontFamily), boundedWidth, inout nativeHeight)
             }
         }
@@ -2311,13 +3698,233 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
             return None
         }
         let result = CjguiComposableUiTextMeasurement(0, Int64(nativeHeight), 1, 0)
-        if (cache.size >= 128) {
-            cache = ArrayList<CjguiInternalRendererTextMeasurementCacheEntry>()
-        }
-        cache.add(
+        retainMeasurement(
             CjguiInternalRendererTextMeasurementCacheEntry(value, style.fontSize, style.fontWeight, style.fontFamily,
                 contentWidth, 1, result))
         return Some(Int64(nativeHeight))
+    }
+}
+
+// These results belong to one frozen static candidate, never to a public
+// text owner or native input ticket. A yield is distinct from failed geometry.
+class CjguiLayoutMeasurementNeedBudget <: Exception {
+    init() { super("layout_measurement_need_budget") }
+}
+
+// A private TextKit graph is still measuring an immutable candidate input.
+// Capacity has no accepted job and is retried only for a bounded number of
+// owner turns; an active job can wait without rebuilding the candidate tree.
+class CjguiLayoutMeasurementNeedWorker <: Exception {
+    let capacity: Bool
+    init(capacity: Bool) {
+        super(if (capacity) { "layout_measurement_worker_capacity" } else {
+            "layout_measurement_worker_pending"
+        })
+        this.capacity = capacity
+    }
+}
+
+class CjguiLayoutPreparationFailure <: Exception {
+    init(reason: String) { super(reason) }
+}
+
+class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment & CjguiComposableUiLayoutPacer {
+    private let base: CjguiInternalRendererTextMeasurer
+    private let budget: CjguiOwnerTurnBudget
+    private let environment: String
+    private let pins = ArrayList<CjguiInternalRendererTextMeasurementCacheEntry>()
+    private var keyBytes: Int64 = 0
+    private var failure: String = "none"
+    private let maximumEntries: Int64
+    private let maximumBytes: Int64
+    private var pendingMultiline: ?CjguiAsyncMultilineHeightJob = None
+    private var pendingTextMetrics: ?CjguiAsyncTextMetricsJob = None
+    private var multilineWorkerStartCount: Int64 = 0
+    init(base: CjguiInternalRendererTextMeasurer, budget: CjguiOwnerTurnBudget, maximumEntries!: Int64 = 512,
+        maximumBytes!: Int64 = 1048576) {
+        this.base = base
+        this.budget = budget
+        this.environment = base.layoutMeasurementEnvironmentKey()
+        this.maximumEntries = maximumEntries
+        this.maximumBytes = maximumBytes
+    }
+    public func layoutMeasurementEnvironmentKey(): String {
+        return environment
+    }
+    public func checkpointLayoutSlice(): Unit {
+        checkpoint(false)
+    }
+    func pinCount(): Int64 {
+        return pins.size
+    }
+    func retainedKeyBytes(): Int64 {
+        return keyBytes
+    }
+    func failureReason(): String {
+        return failure
+    }
+    func workerStartCount(): Int64 {
+        return multilineWorkerStartCount
+    }
+    func release(): Unit {
+        if (let Some(job) <- pendingMultiline) {
+            job.release(false)
+        }
+        if (let Some(job) <- pendingTextMetrics) {
+            job.release(false)
+        }
+        pendingMultiline = None
+        pendingTextMetrics = None
+        pins.clear()
+        keyBytes = 0
+    }
+    /// Poll before a new clone/layout pass. A pending worker must not force
+    /// repeated owner-side tree traversal, and cancellation releases its job.
+    func pollPendingMultiline(): Bool {
+        if (let Some(textJob) <- pendingTextMetrics) {
+            let (status, measured, _) = textJob.poll()
+            if (status == CJGUI_ASYNC_MEASURE_PENDING) {
+                return false
+            }
+            pendingTextMetrics = None
+            textJob.release(status == CJGUI_ASYNC_MEASURE_READY)
+            if (status != CJGUI_ASYNC_MEASURE_READY || measured.lineHeight <= 0) {
+                fail("layout_native_text_worker_failed")
+            }
+            if (!base.retainPreparedMeasurement(textJob.value, textJob.style, textJob.maximumWidth, 0, measured,
+                environment)) {
+                fail("layout_measurement_environment_changed")
+            }
+            let _ = pin(textJob.value, textJob.style, textJob.maximumWidth, 0, measured)
+        }
+        let job = match (pendingMultiline) {
+            case Some(value) => value
+            case None => return true
+        }
+        let (status, height, _) = job.poll()
+        if (status == CJGUI_ASYNC_MEASURE_PENDING) {
+            return false
+        }
+        pendingMultiline = None
+        job.release(status == CJGUI_ASYNC_MEASURE_READY)
+        if (status != CJGUI_ASYNC_MEASURE_READY || height <= 0) {
+            fail("layout_native_multiline_worker_failed")
+        }
+        let measured = CjguiComposableUiTextMeasurement(0, height, 1, 0)
+        if (!base.retainPreparedMeasurement(job.value, job.style, job.contentWidth, 1, measured, environment)) {
+            fail("layout_measurement_environment_changed")
+        }
+        let _ = pin(job.value, job.style, job.contentWidth, 1, measured)
+        return true
+    }
+    private func checkpoint(cold: Bool): Unit {
+        if (failure != "none") {
+            throw CjguiLayoutPreparationFailure(failure)
+        }
+        if (base.layoutMeasurementEnvironmentKey() != environment) {
+            fail("layout_measurement_environment_changed")
+        }
+        // The native call is indivisible. Reserve includes return/cleanup and
+        // other owner work; it is admission, not a worst-case timing claim.
+        if (!budget.admits(if (cold) {
+            4000
+        } else {
+            1000
+        })) {
+            throw CjguiLayoutMeasurementNeedBudget()
+        }
+    }
+    private func fail(reason: String): Nothing {
+        failure = reason
+        throw CjguiLayoutPreparationFailure(reason)
+    }
+    private func lookup(value: String, style: CjguiComposableUiStyle, width: Int64, kind: Int64): ?CjguiComposableUiTextMeasurement {
+        checkpoint(false)
+        for (entry in pins) {
+            if (entry.matches(value, style, width, kind)) {
+                return Some(entry.measurement)
+            }
+        }
+        return None
+    }
+    private func pin(value: String, style: CjguiComposableUiStyle, width: Int64, kind: Int64,
+        measured: CjguiComposableUiTextMeasurement): CjguiComposableUiTextMeasurement {
+        let bytes = value.size + style.fontFamily.size + 64
+        if (pins.size >= maximumEntries || bytes > maximumBytes - keyBytes) {
+            fail("layout_measurement_pin_capacity")
+        }
+        // Both old LRU hits and newly successful native results are pinned.
+        // No metric is evicted before the candidate completes or is cancelled.
+        pins.add(
+            CjguiInternalRendererTextMeasurementCacheEntry(value, style.fontSize, style.fontWeight, style.fontFamily,
+                width, kind, measured))
+        keyBytes += bytes
+        return measured
+    }
+    public func measure(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64): CjguiComposableUiTextMeasurement {
+        if (let Some(found) <- lookup(value, style, maximumWidth, 0)) {
+            return found
+        }
+        if (let Some(found) <- base.cachedMeasurement(value, style, maximumWidth, 0)) {
+            return pin(value, style, maximumWidth, 0, found)
+        }
+        // A small UI label retains the existing bounded synchronous route.
+        // A long TEXT cold miss is indivisible even when it contains newlines;
+        // it must yield before entering NSString drawing on the AppKit thread.
+        if (value.size > 1024) {
+            if (let Some(job) <- pendingTextMetrics) {
+                if (!job.matches(value, style, maximumWidth)) {
+                    fail("layout_text_worker_identity_changed")
+                }
+                throw CjguiLayoutMeasurementNeedWorker(false)
+            }
+            if (pendingMultiline.isSome()) {
+                fail("layout_worker_kind_changed")
+            }
+            checkpoint(true)
+            let (status, started) = beginCjguiAsyncTextMetrics(value, style, maximumWidth)
+            if (status == CJGUI_ASYNC_MEASURE_STARTED && started.isSome()) {
+                pendingTextMetrics = started
+                multilineWorkerStartCount += 1
+                throw CjguiLayoutMeasurementNeedWorker(false)
+            }
+            if (status == CJGUI_ASYNC_MEASURE_DEFERRED_CAPACITY) {
+                throw CjguiLayoutMeasurementNeedWorker(true)
+            }
+            fail("layout_native_text_worker_unavailable")
+        }
+        // This runs BEFORE CString allocation/conversion/FFI in the real base.
+        checkpoint(true)
+        let actual = base.measure(value, style, maximumWidth)
+        if (base.measurementStatus() != CJGUI_INTERNAL_RENDERER_OK) {
+            fail("layout_native_measurement_failed")
+        }
+        return pin(value, style, maximumWidth, 0, actual)
+    }
+    public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
+        if (let Some(found) <- lookup(value, style, contentWidth, 1)) {
+            return Some(found.height)
+        }
+        if (let Some(found) <- base.cachedMeasurement(value, style, contentWidth, 1)) {
+            return Some(pin(value, style, contentWidth, 1, found).height)
+        }
+        if (let Some(job) <- pendingMultiline) {
+            if (!job.matches(value, style, contentWidth)) {
+                fail("layout_multiline_worker_identity_changed")
+            }
+            throw CjguiLayoutMeasurementNeedWorker(false)
+        }
+        checkpoint(true)
+        let (status, started) = beginCjguiAsyncMultilineHeight(value, style, contentWidth)
+        if (status == CJGUI_ASYNC_MEASURE_STARTED && started.isSome()) {
+            pendingMultiline = started
+            multilineWorkerStartCount += 1
+            throw CjguiLayoutMeasurementNeedWorker(false)
+        }
+        if (status == CJGUI_ASYNC_MEASURE_DEFERRED_CAPACITY) {
+            throw CjguiLayoutMeasurementNeedWorker(true)
+        }
+        fail("layout_native_multiline_worker_unavailable")
     }
 }
 
@@ -2577,17 +4184,42 @@ func internalRendererDataTransferEventBinary(session: UInt64, eventId: UInt64): 
 
 func internalRendererRequestClose(session: UInt64): Int32 {
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    cjguiOwnerTraceBoundary(session, 0u64, 167u32, 0u32, 166u32, 0u64, UInt64.Max)
     unsafe {
         status = cjgui_internal_renderer_request_close(session)
     }
+    cjguiOwnerTraceBoundary(session, 0u64, 168u32, 0u32, 166u32,
+        if (status >= 0) { UInt64(status) } else { UInt64.Max }, UInt64.Max)
     return status
 }
 
+// macOS destroy already closes the actual NSWindow synchronously before it
+// releases the session. A separate pre-close adds an unnecessary main hop.
+// Other backends keep their original pre-close protocol.
+@When[os == "macOS"]
+func internalRendererRequestCloseBeforeDestroy(session: UInt64): Unit {}
+
+@When[os != "macOS"]
+func internalRendererRequestCloseBeforeDestroy(session: UInt64): Unit {
+    let _ = internalRendererRequestClose(session)
+}
+
+@When[os == "macOS"]
+func internalRendererCloseStopsNewOwnerWork(closePending: Bool, retryPending: Bool): Bool {
+    return closePending || retryPending
+}
+
+@When[os != "macOS"]
+func internalRendererCloseStopsNewOwnerWork(closePending: Bool, retryPending: Bool): Bool { return false }
+
 func internalRendererDestroy(session: UInt64): Int32 {
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    cjguiOwnerTraceBoundary(session, 0u64, 164u32, 0u32, 163u32, 0u64, UInt64.Max)
     unsafe {
         status = cjgui_internal_renderer_destroy(session)
     }
+    cjguiOwnerTraceBoundary(session, 0u64, 165u32, 0u32, 163u32,
+        if (status >= 0) { UInt64(status) } else { UInt64.Max }, UInt64.Max)
     return status
 }
 

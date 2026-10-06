@@ -289,13 +289,65 @@ def main() -> int:
         #    取备注自己的生产证据：native 精确范围增量（`ime range delta node=313`）
         #    + 备注 accepted 投影值更新（`accepted node=313 value=…`）。
         pre = m.freeze_baseline(port)
+        # 备注输入判据（去替代物）：只认**本腿窗内**的 delta，且以备注自身公开
+        # 版本+1 与按已安装选区独立算出的完整期望字节判定；不以历史 delta 冒充。
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import verify_pharos_dual_owner as vdo
+        note_rid_now = vdo.find_note_resource(port)
+        try:
+            before_note = vdo.read_public(port, note_rid_now) if note_rid_now else None
+        except RuntimeError:
+            before_note = None
+
+        def _u16_to_byte(buf: bytes, u16: int):
+            text = buf.decode('utf-8', 'replace')
+            units = 0
+            for idx, ch in enumerate(text):
+                if units == u16:
+                    return len(text[:idx].encode('utf-8'))
+                units += 2 if (ord(ch) >= 0x10000) else 1
+            return len(text.encode('utf-8')) if units == u16 else None
+
+        want_note = None
+        _sel_inst = results.get('note_installed_selection')
+        if before_note is not None and _sel_inst:
+            _bs = _u16_to_byte(bytes.fromhex(before_note[1]), _sel_inst[0])
+            _be = _u16_to_byte(bytes.fromhex(before_note[1]), _sel_inst[1])
+            if _bs is not None and _be is not None and _be >= _bs:
+                _raw = bytes.fromhex(before_note[1])
+                want_note = (_raw[:_bs] + args.text.encode('utf-8') + _raw[_be:]).hex()
         pre_rows = m.hilog_rows()
+        fence = pre_rows[-1] if pre_rows else ''
         m.uitest('text', args.text)
-        time.sleep(2.5)
+        after_note = None
+        _deadline = time.time() + 10.0
+        while time.time() < _deadline:
+            try:
+                after_note = vdo.read_public(port, note_rid_now) if note_rid_now else None
+            except RuntimeError:
+                after_note = None
+            if (before_note is not None and after_note is not None and want_note is not None
+                    and after_note[0] == before_note[0] + 1 and after_note[1] == want_note):
+                break
+            time.sleep(0.2)
         after = m.save_evidence(out, '05-note-no-click-input', port, extra={'identity': pid})
         results['steps'].append(after)
         post_rows = m.hilog_rows()
-        note_deltas = [r for r in post_rows if 'ime range delta node=313' in r]
+        try:
+            _si = vdo.fence_index(post_rows, fence) if fence else 0
+            _seg = post_rows[_si:]
+        except Exception:
+            _seg = []
+        note_deltas = [r for r in _seg if 'ime range delta node=313' in r]
+        results['note_range_delta_rows'] = note_deltas[-2:]
+        results['note_bytes_before'] = before_note[1][:160] if before_note else None
+        results['note_expected'] = (want_note[:160] if want_note else None)
+        results['note_bytes_after'] = after_note[1][:160] if after_note else None
+        results['note_owner_received_input'] = bool(note_deltas)
+        results['note_input_version_exactly_once'] = bool(
+            note_deltas and before_note is not None and after_note is not None
+            and want_note is not None and after_note[0] == before_note[0] + 1
+            and after_note[1] == want_note)
         # 输入后的备注投影：preservesActiveLocalText 窗口内 accepted 的 value 字段
         # 可为空（native 编辑缓冲绘制），所以 accepted value 不是可靠通道；以
         # `text layout painted node=313 units=` 的 units 变化作为备注内容更新的
@@ -372,13 +424,26 @@ def main() -> int:
         results['a_side_inserted_exact'] = (bins == '回'.encode('utf-8').hex())
         results['a_side_maindoc_received_input'] = (
             after_body['version'] != pre_body['version'])
-        # 切回源码后备注列不在场景里（投影值为空是预期）。备注 owner 仍存活且
-        # 内容保留的判据：备注代理在本轮释放前曾以非空 units 渲染（种子 + 输入
-        # 后的文本），且本轮备注 range delta 存在——两者合取说明第二 owner 的
-        # 内容经历了真实输入并保留在自己的会话里（A→B→A 的 B 侧留痕）。
-        note_units_seen = m.note_rendered_units(313)
+        # 切回源码后以备注**公开读回**精确核对：同一资源号、版本与全文精确等于
+        # 输入后的冻结快照（零写保留），不以 units/历史 delta 含有冒充。
+        _rid_r = None
+        try:
+            _rid_r = vdo.find_note_resource(port)
+        except Exception:
+            _rid_r = None
+        note_after_roundtrip = None
+        if note_rid_now and _rid_r == note_rid_now:
+            try:
+                note_after_roundtrip = vdo.read_public(port, note_rid_now)
+            except RuntimeError:
+                note_after_roundtrip = None
+        results['a_side_note_after_roundtrip'] = (
+            note_after_roundtrip[0] if note_after_roundtrip else None)
         results['a_side_note_unchanged'] = bool(
-            (note_units_seen and note_units_seen >= 20) or note_deltas)
+            after_note is not None and note_after_roundtrip is not None
+            and _rid_r == note_rid_now
+            and note_after_roundtrip[0] == after_note[0]
+            and note_after_roundtrip[1] == after_note[1])
         required += ['a_side_source_toggle', 'a_side_bind_owner_back',
                      'maindoc_unpolluted_after_note',
                      'a_side_version_exactly_once', 'a_side_inserted_exact',

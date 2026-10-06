@@ -49,3 +49,42 @@
 - 调试残留已清：`CJGUI_DBG*` 零残留；qorr/nav/heartbeat 写盘已删；仅剩环境变量门控探针 4 处 fopen（默认关闭）；`git diff --check` 干净。
 - 上架包 a3343b67（含懒 Attach，三文件 CLEAN+LAZY_OK）；relay obj 四代齐（5f3c/f59f/76430b40/0297fa59）+ snapshot；来宾 SDK llc 已核原版（1ea68362…）。
 - 阻塞：来宾 `Pharos Mark Windows Source` 目录已不在，无 main.exe，整链 accept 与固定门重跑需重新上架源包+构建+（若 BC 漂移）重冻。本轮未新跑 guest 验收，不以本地验证冒充整链通过。
+
+## 六、验收毒素二分：agent 通道流量无罪（2026-10-06 晚间，AGENT_CLEAN）
+
+- 同一启动内：STAGE1 缝点击切到 source（`PHAROS_MODE visual=false`）→ agent discover（400B）/snapshot（v1）/read（103B）→ STAGE2 缝点击切回 visual（`PHAROS_MODE visual=true`）。
+- 结论：agent 通道流量不毒化后续按压；accept 必挂另有原因（待查：截图、前台 ALT、中文夹具、settle 等待）。
+- 探针：`agentbisect2.ps1`（基线+agent+再点，两阶段期望各一）。
+
+## 七、A/B 调用线程反例 RED（2026-10-06 晚间，dispatcher 缺口定锤）
+
+- harness：`renderer-contract/dispatcher_ab_thread_probe.c`（主线程 A 建会话+pump，工作线程 B 再 pump 同 session，读 `debug_last_pump_tid`）。
+- 结果：`window_tid=19004`，`pumpA_caller=11292 pumpA_exec=11292`，`pumpB_caller=10804 pumpB_exec=10804`，`verdict=CALLER_THREAD_EXEC`（exit=1）。
+- 结论：当前实现直接在调用线程执行会话逻辑；AttachThreadInput 只解决焦点/输入队列可见性，不解决执行归属。完整 dispatcher（命令封送到固定 UI 线程）必须做。
+- 观测点：renderer `lastPumpTid` 字段＋入口记录＋`debug_last_pump_tid` 导出（harness 用 extern 声明，未改公共头）。
+
+## 八、A/B 调用线程反例复跑 RED（2026-10-06 晚间第二轮，dispatcher 缺口再确认）
+
+- harness：`renderer-contract/dispatcher_ab_thread_probe.c`（98805ae7），观测点 renderer `lastPumpTid`＋`debug_last_pump_tid`（961f7d5d）。
+- 结果：`window_tid=10832`，`pumpA_caller=16788 pumpA_exec=16788`，`pumpB_caller=14888 pumpB_exec=14888`，`verdict=CALLER_THREAD_EXEC`（exit=1）。
+- 与首轮（19004/11292/10804）一致：执行 tid 恒等于调用 tid，与 UI 线程无关。AttachThreadInput 不解决执行归属，完整 dispatcher 必须做。
+
+## 九、完整 UI dispatcher phase-1 落地并转绿（2026-10-06 晚间）
+
+- 机制：per-session 命令环（64 槽，调用者栈指针，INFINITE 等待＋UI 有界切片）；
+  C ABI pump/destroy 封送到 UI（泵）线程执行；find/create/destroy/计数走
+  全局表锁；destroy 拆分为 UI 侧 phase-A（retiring＋取消排队＋IME 分离）
+  与调用侧 phase-B（join＋资源释放＋槽位回收）；pump 等待改 MsgWait
+  （rawWake＋cmdWake＋QS_ALLINPUT）＋嵌套非 pump/destroy 搬运＋停止检查；
+  UI 环等待集加 cmdWakeEvent 并每轮搬运；UI 线程内重入直接执行，UI 线程
+  调 destroy 具名拒绝（防自 join 死锁）；pre-ready 无 UI 线程时走旧直连路径。
+- A/B 反例转绿：`window_tid=12380`，`pumpA_exec=12380 pumpB_exec=12380`，
+  `verdict=FIXED_UI_THREAD`（exit=0）。此前两轮 RED（CALLER_THREAD_EXEC）已归档。
+- 回归：零超时公平 `gotClose=1`；跨线程泵 `got42=1`；全部 exit=0。
+- 关闭探针：`destroy1 status=0 workerPumps=30 workerBad=0`，worker 正常 join；
+  `pump2_after OK`（另一窗存活）；`pump1_after_destroy=11`；
+  `destroy1_again=11`；`verdict=CLOSE_ISOLATED`（exit=0）。
+- 渲染器工作树哈希：`e1f10c9c…`→`b62e4ee1…`（dispatcher 落地）。
+- 残留（phase-2）：其余约 115 个导出函数仍驱动线程直调（ Neuroscience 批次
+  迁移）；`form_event_text`/`pumped_pointer_geometry` 读面租约未加固；
+  调用侧无界等待改有界看门狗；以上均不影响本包已验行为。

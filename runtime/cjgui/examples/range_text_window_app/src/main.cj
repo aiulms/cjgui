@@ -50,7 +50,11 @@ private let RANGE_TEXT_OWNER_RECEIPT_INSERT_HEX_BYTES: Int64 = 128
 private let RANGE_TEXT_OWNER_RECEIPT_CONTEXT_BYTES: Int64 = 32
 
 private func rangeTextHexPrefix(bytes: Array<Byte>, maximumBytes: Int64): String {
-    let count = if (Int64(bytes.size) < maximumBytes) { Int64(bytes.size) } else { maximumBytes }
+    let count = if (Int64(bytes.size) < maximumBytes) {
+        Int64(bytes.size)
+    } else {
+        maximumBytes
+    }
     let digits = "0123456789abcdef".toArray()
     let output = ArrayList<UInt8>()
     var index: Int64 = 0
@@ -63,9 +67,145 @@ private func rangeTextHexPrefix(bytes: Array<Byte>, maximumBytes: Int64): String
     return String.fromUtf8(output.toArray())
 }
 
+let RANGE_TEXT_WRITER_SETTLED: Int64 = 1
+let RANGE_TEXT_WRITER_RETAINED: Int64 = 2
+let RANGE_TEXT_WRITER_NOT_ADMITTED: Int64 = 3
+let RANGE_TEXT_WRITER_FAILED: Int64 = 4
+let RANGE_TEXT_WRITER_MAX_ITEMS: Int64 = 64
+let RANGE_TEXT_WRITER_MAX_BYTES: Int64 = 1048576
+
+/// Caller-owned full intent. Capacity refusal returns this exact value so the
+/// producer can retry without reconstructing bytes, callbacks or request ids.
+public class PlainRangeTextWriterIntent<T> {
+    public let operationId: String
+    public let payloadIdentity: String
+    public let retainedBytes: Int64
+    let run: () -> T
+
+    public init(operationId: String, payloadIdentity: String, retainedBytes: Int64, run: () -> T) {
+        this.operationId = operationId
+        this.payloadIdentity = payloadIdentity
+        this.retainedBytes = retainedBytes
+        this.run = run
+    }
+}
+
+public class PlainRangeTextWriterTicket<T> {
+    public let operationId: String
+    private var kind: Int64 = 0
+    private var completedValue: Option<T> = None
+    private var failureText: String = ""
+    init(operationId: String) {
+        this.operationId = operationId
+    }
+    public func status(): Int64 {
+        return this.kind
+    }
+    public func result(): Option<T> {
+        return this.completedValue
+    }
+    public func failure(): String {
+        return this.failureText
+    }
+    func complete(value: T): Unit {
+        this.completedValue = Some(value)
+        this.kind = RANGE_TEXT_WRITER_SETTLED
+    }
+    func fail(reason: String): Unit {
+        this.failureText = reason
+        this.kind = RANGE_TEXT_WRITER_FAILED
+    }
+}
+
+private abstract class PlainRangeTextQueuedWriter {
+    public let operationId: String
+    public let payloadIdentity: String
+    public let retainedBytes: Int64
+    init(operationId: String, payloadIdentity: String, retainedBytes: Int64) {
+        this.operationId = operationId
+        this.payloadIdentity = payloadIdentity
+        this.retainedBytes = retainedBytes
+    }
+    public func execute(): Unit
+}
+
+private class PlainRangeTextTypedQueuedWriter<T> <: PlainRangeTextQueuedWriter {
+    private let intent: PlainRangeTextWriterIntent<T>
+    public let ticket: PlainRangeTextWriterTicket<T>
+    init(intent: PlainRangeTextWriterIntent<T>, ticket: PlainRangeTextWriterTicket<T>) {
+        super(intent.operationId, intent.payloadIdentity, intent.retainedBytes)
+        this.intent = intent
+        this.ticket = ticket
+    }
+    public override func execute(): Unit {
+        try {
+            this.ticket.complete(this.intent.run())
+        } catch (error: Exception) {
+            this.ticket.fail(error.toString())
+        }
+    }
+}
+
+public class PlainRangeTextWriterAdmission<T> {
+    public let kind: Int64
+    public let value: Option<T>
+    public let ticket: Option<PlainRangeTextWriterTicket<T>>
+    public let notAdmittedIntent: Option<PlainRangeTextWriterIntent<T>>
+    public let reason: String
+    init(kind: Int64, value: Option<T>, ticket: Option<PlainRangeTextWriterTicket<T>>,
+        notAdmittedIntent: Option<PlainRangeTextWriterIntent<T>>, reason: String) {
+        this.kind = kind
+        this.value = value
+        this.ticket = ticket
+        this.notAdmittedIntent = notAdmittedIntent
+        this.reason = reason
+    }
+}
+
+public class PlainRangeTextWriterRetainedException<T> <: Exception {
+    public let admission: PlainRangeTextWriterAdmission<T>
+    public init(admission: PlainRangeTextWriterAdmission<T>) {
+        super("plain range text writer deferred; caller must retain or retry the typed admission")
+        this.admission = admission
+    }
+}
+
+private class PlainRangeTextSelectionTransfer {
+    let version: Int64
+    let revisionA: Int64
+    let anchorA: Int64
+    let focusA: Int64
+    let revisionB: Int64
+    let anchorB: Int64
+    let focusB: Int64
+    let decision: CjguiSelectionDecision
+    init(version: Int64, revisionA: Int64, anchorA: Int64, focusA: Int64, revisionB: Int64, anchorB: Int64,
+        focusB: Int64, decision: CjguiSelectionDecision) {
+        this.version = version
+        this.revisionA = revisionA
+        this.anchorA = anchorA
+        this.focusA = focusA
+        this.revisionB = revisionB
+        this.anchorB = anchorB
+        this.focusB = focusB
+        this.decision = decision
+    }
+}
+
+private class PlainRangeTextUndoEntry {
+    let bytes: Array<Byte>
+    let anchorByte: Int64
+    let focusByte: Int64
+    init(bytes: Array<Byte>, anchorByte: Int64, focusByte: Int64) {
+        this.bytes = bytes
+        this.anchorByte = anchorByte
+        this.focusByte = focusByte
+    }
+}
+
 /// Plain byte-array or file-span truth. Reads are bounded; the sink is the only
 /// writer and refuses a base version it no longer holds.
-private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSink {
+class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSink & CjguiRangeTextSelectionOwner {
     private var bytes: Array<Byte>
     private var filePath: String = ""
     private var file: Option<File> = None
@@ -93,16 +233,39 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
     private var lastReadBytes: Int64 = 0
     private var lastReadMicros: Int64 = 0
     private var lastPrepareDescription: String = "none"
+    /// This store is consumed on the application's single owner executor. The native decision port
+    /// is atomic/scalar-only; queued closures run only after a terminal is folded by that executor.
+    private var selectionAnchorByte: Int64 = 0
+    private var selectionFocusByte: Int64 = 0
+    private var selectionRevision: Int64 = 0
+    /// Stable logical identity for this owner lifetime. File-backed instances use
+    /// their configured source path; the in-memory example has one named source.
+    private let selectionDocumentId: String
+    private let selectionSessionEpoch: Int64 = 1
+    private let selectionViewGeneration: Int64 = 1
+    private var selectionTransfer: Option<PlainRangeTextSelectionTransfer> = None
+    private let retainedWriters: ArrayList<PlainRangeTextQueuedWriter> = ArrayList<PlainRangeTextQueuedWriter>()
+    private var retainedWriterBytes: Int64 = 0
+    private let undoHistory: ArrayList<PlainRangeTextUndoEntry> = ArrayList<PlainRangeTextUndoEntry>()
+    private let redoHistory: ArrayList<PlainRangeTextUndoEntry> = ArrayList<PlainRangeTextUndoEntry>()
+    private let enableUndoHistory: Bool
+    private var nextWriterId: Int64 = 1
 
     init(text: String, refuseFirstEdit!: Bool = false, filePath!: String = "", maxFileReadBytes!: Int64 = 65536,
-        timingDiagnostics!: Bool = false) {
+        timingDiagnostics!: Bool = false, enableUndoHistory!: Bool = false) {
         this.filePath = filePath
+        this.selectionDocumentId = if (filePath == "") {
+            "cjgui-range-text-window-app:memory"
+        } else {
+            "cjgui-range-text-window-app:file:${filePath}"
+        }
         this.maxFileReadBytes = if (maxFileReadBytes < 4) {
             4
         } else {
             maxFileReadBytes
         }
         this.timingDiagnostics = timingDiagnostics
+        this.enableUndoHistory = enableUndoHistory
         this.forceFirstRefusal = refuseFirstEdit
         if (filePath == "") {
             this.bytes = text.toArray()
@@ -147,13 +310,19 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
     }
 
     public func close(): Unit {
-        if (let Some(handle) <- this.file) {
-            handle.close()
-            this.file = None
+        let intent = PlainRangeTextWriterIntent<Unit>(this.nextWriterOperationId("close"), "close", 32, {
+            => if (let Some(handle) <- this.file) {
+                handle.close()
+                this.file = None
+            }
+        })
+        let admission = this.submitOwnerWriter(intent)
+        if (admission.kind != RANGE_TEXT_WRITER_SETTLED) {
+            throw PlainRangeTextWriterRetainedException(admission)
         }
     }
 
-    private func splitPieceList(source: ArrayList<RangeTextPiece>, position: Int64): (ArrayList<RangeTextPiece>,
+    private func splitPieceList(source: ArrayList<RangeTextPiece>, position: Int64): (ArrayList<RangeTextPiece>, 
         ArrayList<RangeTextPiece>) {
         let left = ArrayList<RangeTextPiece>()
         let right = ArrayList<RangeTextPiece>()
@@ -307,7 +476,9 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
             startAdjustments += 1
         }
         var ownerEnd = sampleEnd + RANGE_TEXT_OWNER_RECEIPT_CONTEXT_BYTES
-        if (ownerEnd > this.logicalBytes) { ownerEnd = this.logicalBytes }
+        if (ownerEnd > this.logicalBytes) {
+            ownerEnd = this.logicalBytes
+        }
         endAdjustments = 0
         while (ownerEnd > sampleEnd && endAdjustments < 3 && !this.isUtf8Boundary(ownerEnd)) {
             ownerEnd -= 1
@@ -322,8 +493,7 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
                 "source_start=${sourceStart} source_end=${sourceEnd} inserted_bytes=${Int64(insertedBytes.size)} " +
                 "inserted_hex=${insertedHex} inserted_hex_omitted=${Int64(insertedBytes.size) - insertedHexCount} " +
                 "owner_start=${ownerStart} owner_end=${ownerEnd} owner_bytes=${Int64(ownerBytes.size)} " +
-                "owner_hex=${ownerHex} owner_hex_omitted=0"
-        )
+                "owner_hex=${ownerHex} owner_hex_omitted=0")
         getStdOut().flush()
     }
 
@@ -333,6 +503,246 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
 
     public func rangeTextVersion(): Int64 {
         return this.version
+    }
+
+    public func sourceSelectionSnapshot(): CjguiSourceSelectionSnapshot {
+        var anchor = this.selectionAnchorByte
+        var focus = this.selectionFocusByte
+        var revision = this.selectionRevision
+        if (let Some(transfer) <- this.selectionTransfer) {
+            let state = transfer.decision.state()
+            if (state == 3) {
+                anchor = transfer.anchorB
+                focus = transfer.focusB
+                revision = transfer.revisionB
+            } else {
+                anchor = transfer.anchorA
+                focus = transfer.focusA
+                revision = transfer.revisionA
+            }
+            return CjguiSourceSelectionSnapshot(transfer.version, revision, anchor, focus,
+                documentId: this.selectionDocumentId, sessionEpoch: this.selectionSessionEpoch,
+                viewGeneration: this.selectionViewGeneration)
+        }
+        return CjguiSourceSelectionSnapshot(this.version, revision, anchor, focus, documentId: this.selectionDocumentId,
+            sessionEpoch: this.selectionSessionEpoch, viewGeneration: this.selectionViewGeneration)
+    }
+
+    public func setSourceSelection(version: Int64, anchorByte: Int64, focusByte: Int64): Bool {
+        let operationId = this.nextWriterOperationId("selection")
+        let identity = "${version}:${anchorByte}:${focusByte}"
+        let intent = PlainRangeTextWriterIntent<Bool>(
+            operationId,
+            identity,
+            64,
+            {
+                =>
+                    if (this.version != version || !this.validSelectionBytes(anchorByte, focusByte)) {
+                        return false
+                    }
+                    this.installSelection(anchorByte, focusByte)
+                    return true
+            }
+        )
+        let admission = this.submitOwnerWriter(intent)
+        if (admission.kind == RANGE_TEXT_WRITER_SETTLED) {
+            return admission.value.getOrThrow()
+        }
+        throw PlainRangeTextWriterRetainedException(admission)
+    }
+
+    public func reserveSourceSelection(version: Int64, revision: Int64, anchorByte: Int64, focusByte: Int64,
+        decision: CjguiSelectionDecision): Int64 {
+        if (this.selectionTransfer.isSome() || version != this.version || revision != this.selectionRevision ||
+            decision.state() != 1 || !this.validSelectionBytes(anchorByte, focusByte)) {
+            return -1
+        }
+        let reservedRevision = this.selectionRevision + 1
+        this.selectionTransfer = Some(
+            PlainRangeTextSelectionTransfer(version, this.selectionRevision, this.selectionAnchorByte,
+                this.selectionFocusByte, reservedRevision, anchorByte, focusByte, decision))
+        return reservedRevision
+    }
+
+    public func settleSourceSelection(revision: Int64): Unit {
+        if (let Some(transfer) <- this.selectionTransfer) {
+            if (transfer.revisionB != revision) {
+                return
+            }
+            let state = transfer.decision.state()
+            if (state == 3 || state == 4 || state == 6 || state == 0) {
+                if (state == 3) {
+                    this.selectionAnchorByte = transfer.anchorB
+                    this.selectionFocusByte = transfer.focusB
+                    this.selectionRevision = transfer.revisionB
+                } else {
+                    this.selectionAnchorByte = transfer.anchorA
+                    this.selectionFocusByte = transfer.focusA
+                    this.selectionRevision = transfer.revisionA
+                }
+                this.selectionTransfer = None
+                let _ = this.drainRetainedWriters()
+            }
+        }
+    }
+
+    public func submitOwnerWriter<T>(intent: PlainRangeTextWriterIntent<T>): PlainRangeTextWriterAdmission<T> {
+        if (this.retainedWriters.size > 0 || !this.admitOrFoldSelectionForWriter()) {
+            return this.retainOwnerWriter(intent)
+        }
+        return PlainRangeTextWriterAdmission(RANGE_TEXT_WRITER_SETTLED, Some(intent.run()), None, None, "")
+    }
+
+    private func nextWriterOperationId(prefix: String): String {
+        let value = this.nextWriterId
+        this.nextWriterId += 1
+        return "${prefix}-${value}"
+    }
+
+    private func validSelectionBytes(anchor: Int64, focus: Int64): Bool {
+        return anchor >= 0 && focus >= 0 && anchor <= this.logicalBytes && focus <= this.logicalBytes &&
+            this.isUtf8Boundary(anchor) && this.isUtf8Boundary(focus)
+    }
+
+    private func installSelection(anchor: Int64, focus: Int64): Unit {
+        this.selectionAnchorByte = anchor
+        this.selectionFocusByte = focus
+        this.selectionRevision += 1
+    }
+
+    private func captureUndoEntry(): PlainRangeTextUndoEntry {
+        return PlainRangeTextUndoEntry(this.bytes.slice(0, Int64(this.bytes.size)), this.selectionAnchorByte,
+            this.selectionFocusByte)
+    }
+
+    private func pushUndoEntry(stack: ArrayList<PlainRangeTextUndoEntry>, entry: PlainRangeTextUndoEntry): Unit {
+        stack.add(entry)
+        while (stack.size > 32) {
+            stack.remove(at: 0)
+        }
+    }
+
+    public func undoOwnerEdit(): Bool {
+        let intent = PlainRangeTextWriterIntent<Bool>(
+            this.nextWriterOperationId("undo"),
+            "undo",
+            64,
+            {
+                =>
+                    if (this.isFileBacked() || this.undoHistory.size == 0) {
+                        return false
+                    }
+                    this.pushUndoEntry(this.redoHistory, this.captureUndoEntry())
+                    let entry = this.undoHistory.remove(at: this.undoHistory.size - 1)
+                    this.bytes = entry.bytes.slice(0, Int64(entry.bytes.size))
+                    this.logicalBytes = Int64(this.bytes.size)
+                    this.version += 1
+                    this.appliedEdits += 1
+                    this.lastAppliedRange = "undo"
+                    this.lastInsertedByteCount = this.logicalBytes
+                    this.installSelection(entry.anchorByte, entry.focusByte)
+                    return true
+            }
+        )
+        let admission = this.submitOwnerWriter(intent)
+        if (admission.kind == RANGE_TEXT_WRITER_SETTLED) {
+            return admission.value.getOrThrow()
+        }
+        throw PlainRangeTextWriterRetainedException(admission)
+    }
+
+    public func redoOwnerEdit(): Bool {
+        let intent = PlainRangeTextWriterIntent<Bool>(
+            this.nextWriterOperationId("redo"),
+            "redo",
+            64,
+            {
+                =>
+                    if (this.isFileBacked() || this.redoHistory.size == 0) {
+                        return false
+                    }
+                    this.pushUndoEntry(this.undoHistory, this.captureUndoEntry())
+                    let entry = this.redoHistory.remove(at: this.redoHistory.size - 1)
+                    this.bytes = entry.bytes.slice(0, Int64(entry.bytes.size))
+                    this.logicalBytes = Int64(this.bytes.size)
+                    this.version += 1
+                    this.appliedEdits += 1
+                    this.lastAppliedRange = "redo"
+                    this.lastInsertedByteCount = this.logicalBytes
+                    this.installSelection(entry.anchorByte, entry.focusByte)
+                    return true
+            }
+        )
+        let admission = this.submitOwnerWriter(intent)
+        if (admission.kind == RANGE_TEXT_WRITER_SETTLED) {
+            return admission.value.getOrThrow()
+        }
+        throw PlainRangeTextWriterRetainedException(admission)
+    }
+
+    private func admitOrFoldSelectionForWriter(): Bool {
+        if (let Some(transfer) <- this.selectionTransfer) {
+            var state = transfer.decision.state()
+            if (state == 1) {
+                if (!transfer.decision.admitWriter()) {
+                    state = transfer.decision.state()
+                } else {
+                    state = transfer.decision.state()
+                }
+            }
+            if (state == 2 || state == 5 || state == 1) {
+                return false
+            }
+            if (state == 3) {
+                this.selectionAnchorByte = transfer.anchorB
+                this.selectionFocusByte = transfer.focusB
+                this.selectionRevision = transfer.revisionB
+            } else if (state == 4 || state == 6 || state == 0) {
+                this.selectionAnchorByte = transfer.anchorA
+                this.selectionFocusByte = transfer.focusA
+                this.selectionRevision = transfer.revisionA
+            } else {
+                return false
+            }
+            this.selectionTransfer = None
+        }
+        return true
+    }
+
+    private func retainOwnerWriter<T>(intent: PlainRangeTextWriterIntent<T>): PlainRangeTextWriterAdmission<T> {
+        if (intent.retainedBytes < 0 || intent.retainedBytes > RANGE_TEXT_WRITER_MAX_BYTES ||
+            this.retainedWriters.size >= RANGE_TEXT_WRITER_MAX_ITEMS || intent.retainedBytes >
+            RANGE_TEXT_WRITER_MAX_BYTES - this.retainedWriterBytes) {
+            return PlainRangeTextWriterAdmission(RANGE_TEXT_WRITER_NOT_ADMITTED, None, None, Some(intent),
+                "selection_finalization_retention_capacity")
+        }
+        var index: Int64 = 0
+        while (index < this.retainedWriters.size) {
+            let existing = this.retainedWriters[index]
+            if (existing.operationId == intent.operationId && existing.payloadIdentity == intent.payloadIdentity) {
+                if (let Some(typed) <- (existing as PlainRangeTextTypedQueuedWriter<T>)) {
+                    return PlainRangeTextWriterAdmission(RANGE_TEXT_WRITER_RETAINED, None, Some(typed.ticket), None, "")
+                }
+                return PlainRangeTextWriterAdmission(RANGE_TEXT_WRITER_NOT_ADMITTED, None, None, Some(intent),
+                    "selection_finalization_operation_type_conflict")
+            }
+            index += 1
+        }
+        let ticket = PlainRangeTextWriterTicket<T>(intent.operationId)
+        this.retainedWriters.add(PlainRangeTextTypedQueuedWriter<T>(intent, ticket))
+        this.retainedWriterBytes += intent.retainedBytes
+        return PlainRangeTextWriterAdmission(RANGE_TEXT_WRITER_RETAINED, None, Some(ticket), None, "")
+    }
+
+    private func drainRetainedWriters(): Int64 {
+        var drained: Int64 = 0
+        while (this.retainedWriters.size > 0 && this.admitOrFoldSelectionForWriter()) {
+            let task = this.retainedWriters.remove(at: 0)
+            this.retainedWriterBytes -= task.retainedBytes
+            task.execute()
+            drained += 1
+        }
+        return drained
     }
 
     public func confirmRangeTextVersion(expectedVersion: Int64, action: () -> Bool): Bool {
@@ -368,6 +778,13 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
 
     public func rangeTextByteLength(): Int64 {
         return this.logicalBytes
+    }
+
+    public func retainedWriterCount(): Int64 {
+        return this.retainedWriters.size
+    }
+    public func retainedWriterByteCount(): Int64 {
+        return this.retainedWriterBytes
     }
 
     public func readRangeText(startByte: Int64, maxBytes: Int64): CjguiRangeTextSlice {
@@ -436,6 +853,21 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
     }
 
     public func applyRangeTextEdit(baseVersion: Int64, startByte: Int64, endByte: Int64, inserted: String): CjguiRangeTextEditOutcome {
+        let operationId = this.nextWriterOperationId("body")
+        let intent = PlainRangeTextWriterIntent<CjguiRangeTextEditOutcome>(operationId,
+            "${baseVersion}:${startByte}:${endByte}:${inserted}", 128 + Int64(inserted.toArray().size), {
+                => return this.applyRangeTextEditNow(baseVersion, startByte, endByte, inserted)
+            })
+        let admission = this.submitOwnerWriter(intent)
+        if (admission.kind == RANGE_TEXT_WRITER_SETTLED) {
+            return admission.value.getOrThrow()
+        }
+        // The Sink has no deferred result variant. Propagate a typed ticket/intent instead of
+        // returning a rejection that the framework could ACK before this closure later writes.
+        throw PlainRangeTextWriterRetainedException(admission)
+    }
+
+    private func applyRangeTextEditNow(baseVersion: Int64, startByte: Int64, endByte: Int64, inserted: String): CjguiRangeTextEditOutcome {
         if (this.forceFirstRefusal) {
             // 一次性探针拒绝：不写 owner、不推进版本；记一次拒绝供计数守恒。
             this.forceFirstRefusal = false
@@ -450,7 +882,12 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
             this.rejectedEdits += 1
             return CjguiRangeTextEditOutcome.rejected(this.version, "invalid_range")
         }
-        if (this.isFileBacked() && endByte - startByte > 128) {
+        // A whole-owner replacement drops file spans by reference. It neither
+        // reads the removed body nor changes the backing file; only the small
+        // inserted String is materialized. Other file edits keep the original
+        // bounded span admission, including a large local-window selection.
+        let wholeOwnerRange = startByte == 0 && endByte == this.logicalBytes
+        if (this.isFileBacked() && endByte - startByte > 128 && !wholeOwnerRange) {
             this.rejectedEdits += 1
             return CjguiRangeTextEditOutcome.rejected(this.version, "file_edit_span_limit_128")
         }
@@ -462,6 +899,10 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
         if (this.isFileBacked() && (!this.isUtf8Boundary(startByte) || !this.isUtf8Boundary(endByte))) {
             this.rejectedEdits += 1
             return CjguiRangeTextEditOutcome.rejected(this.version, "not_utf8_boundary")
+        }
+        if (this.enableUndoHistory) {
+            this.pushUndoEntry(this.undoHistory, this.captureUndoEntry())
+            this.redoHistory.clear()
         }
         if (this.isFileBacked()) {
             let (left, _) = this.splitPieces(startByte)
@@ -499,12 +940,230 @@ private class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSi
         this.appliedEdits += 1
         this.lastAppliedRange = "${startByte}:${endByte}"
         this.lastInsertedByteCount = Int64(insertedBytes.size)
+        this.installSelection(startByte + Int64(insertedBytes.size), startByte + Int64(insertedBytes.size))
         this.logAcceptedOwnerEdit(before, startByte, endByte, insertedBytes)
         return CjguiRangeTextEditOutcome.accepted(before, this.version)
     }
 }
 
-private class RangeTextWindowController <: CjguiComposableUiController & CjguiComposableUiContextMenuRequestHandler & CjguiComposableUiPlatformThemeConsumer {
+/// A plain source slice, not a second owner. Its endpoints are absolute UTF-8
+/// bytes; only the accepted immutable binding is used by pointer/input events.
+class RangeTextPreviewBinding {
+    let contextEpoch: Int64
+    let ownerVersion: Int64
+    let sourceStart: Int64
+    let text: String
+
+    init(contextEpoch: Int64, ownerVersion: Int64, sourceStart: Int64, mirrorText: String, maxBytes!: Int64 = 24) {
+        this.contextEpoch = contextEpoch
+        this.ownerVersion = ownerVersion
+        this.sourceStart = sourceStart
+        let prefix = ArrayList<UInt8>()
+        for (rune in mirrorText.runes()) {
+            let encoded = rune.toString().toArray()
+            if (prefix.size + encoded.size > maxBytes) {
+                break
+            }
+            for (byte in encoded) {
+                prefix.add(byte)
+            }
+        }
+        this.text = String.fromUtf8(prefix.toArray())
+    }
+
+    func sourceEnd(): Int64 {
+        return this.sourceStart + Int64(this.text.toArray().size)
+    }
+
+    /// Validate this accepted preview as an exact byte slice of the current
+    /// bounded mirror. A fragment may begin inside the mirror; matching the
+    /// entire mirror string would incorrectly reject every nonzero pane.
+    func matchesMirror(epoch: Int64, ownerVersion: Int64, mirrorStart: Int64, mirrorText: String): Bool {
+        if (this.contextEpoch != epoch || this.ownerVersion != ownerVersion || this.sourceStart < 0 || mirrorStart < 0 ||
+            this.sourceStart < mirrorStart) {
+            return false
+        }
+        let localStart = this.sourceStart - mirrorStart
+        let expected = this.text.toArray()
+        let mirror = mirrorText.toArray()
+        let localLength = Int64(expected.size)
+        let mirrorLength = Int64(mirror.size)
+        if (this.sourceStart > Int64.Max - localLength || mirrorStart > Int64.Max - mirrorLength) {
+            return false
+        }
+        if (localStart > mirrorLength || localLength > mirrorLength - localStart) {
+            return false
+        }
+        let actual = mirror.slice(localStart, localLength)
+        if (actual.size != expected.size) {
+            return false
+        }
+        var index: Int64 = 0
+        while (index < localLength) {
+            if (actual[index] != expected[index]) {
+                return false
+            }
+            index += 1
+        }
+        return true
+    }
+
+    func sameSource(other: RangeTextPreviewBinding): Bool {
+        return this.contextEpoch == other.contextEpoch && this.ownerVersion == other.ownerVersion && this.sourceStart == other
+            .sourceStart && this.text == other.text
+    }
+
+    func sourceRangeUtf16(start16: Int64, end16: Int64): ?(Int64, Int64) {
+        if (start16 < 0 || end16 < start16) {
+            return None
+        }
+        let start = match (cjguiUtf16OffsetToUtf8(this.text, start16)) {
+            case Some(v) => v;
+            case None => return None
+        }
+        let end = match (cjguiUtf16OffsetToUtf8(this.text, end16)) {
+            case Some(v) => v;
+            case None => return None
+        }
+        return Some((this.sourceStart + start, this.sourceStart + end))
+    }
+}
+
+func rangeTextTwoPaneBindings(contextEpoch: Int64, ownerVersion: Int64, sourceStart: Int64, text: String): Option<(RangeTextPreviewBinding, 
+    RangeTextPreviewBinding)> {
+    let bytes = text.toArray()
+    var split: Int64 = -1
+    var i: Int64 = 0
+    while (i < Int64(bytes.size)) {
+        if (bytes[i] == 10u8) {
+            split = i
+            break
+        }
+        i += 1
+    }
+    if (split < 0) {
+        return None
+    }
+    let first = String.fromUtf8(bytes.slice(0, split))
+    let second = String.fromUtf8(bytes.slice(split + 1, Int64(bytes.size) - split - 1))
+    return Some(
+        (RangeTextPreviewBinding(contextEpoch, ownerVersion, sourceStart, first), RangeTextPreviewBinding(contextEpoch,
+                ownerVersion, sourceStart + split + 1, second)))
+}
+
+func rangeTextPaneSelection(binding: RangeTextPreviewBinding, anchor: Int64, focus: Int64): (Int64, Int64) {
+    let low = if (anchor < focus) {
+        anchor
+    } else {
+        focus
+    }
+    let high = if (anchor > focus) {
+        anchor
+    } else {
+        focus
+    }
+    // The owner range is global. The native proxy receives its local
+    // intersection, including the exact insertion point for a collapsed range.
+    let start = if (low < binding.sourceStart) {
+        binding.sourceStart
+    } else if (low > binding.sourceEnd()) {
+        binding.sourceEnd()
+    } else {
+        low
+    }
+    let end = if (high < binding.sourceStart) {
+        binding.sourceStart
+    } else if (high > binding.sourceEnd()) {
+        binding.sourceEnd()
+    } else {
+        high
+    }
+    return (start - binding.sourceStart, end - binding.sourceStart)
+}
+
+class RangeTextPreviewCaptureRevision {
+    private var revision: Int64 = 0
+    private var previous: ?RangeTextPreviewBinding = None
+    private var liveEpoch: Int64 = -1
+    private var liveVersion: Int64 = -1
+    private var liveStart: Int64 = -1
+
+    func observe(binding: ?RangeTextPreviewBinding, epoch: Int64, version: Int64, start: Int64): Int64 {
+        var sameBinding = binding.isNone() && this.previous.isNone()
+        if (let Some(current) <- binding) {
+            if (let Some(prior) <- this.previous) {
+                sameBinding = prior.sameSource(current)
+            }
+        }
+        if (!sameBinding || epoch != this.liveEpoch || version != this.liveVersion || start != this.liveStart) {
+            if (this.revision == Int64.Max) {
+                throw Exception("range_preview_capture_revision_exhausted")
+            }
+            this.revision += 1
+            this.previous = binding
+            this.liveEpoch = epoch
+            this.liveVersion = version
+            this.liveStart = start
+        }
+        return this.revision
+    }
+}
+
+@When[os == "macOS"]
+func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposableUiTextStyleRun> {
+    if (end <= start) {
+        return Array<CjguiComposableUiTextStyleRun>()
+    }
+    return [CjguiComposableUiTextStyleRun.selectionBackground(start, end, CjguiComposableUiColor(0.25, 0.50, 0.85, 0.42))]
+}
+
+@When[os != "macOS"]
+func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposableUiTextStyleRun> {
+    return Array<CjguiComposableUiTextStyleRun>()
+}
+
+func rangeTextPreviewNode(binding: ?RangeTextPreviewBinding, ink: CjguiComposableUiColor, selectionStart!: Int64 = 0,
+    selectionEnd!: Int64 = 0, nodeId!: Int64 = 9, semanticId!: String = "range-text-preview",
+    fieldId!: String = "plain-text-preview", resourceId!: Int64 = 102): CjguiComposableUiNode {
+    let text = match (binding) {
+        case Some(value) => value.text;
+        case None => ""
+    }
+    return cjguiComposableText(nodeId, semanticId, text,
+        CjguiComposableUiStyle(fixedHeight: if (text.size > 24) {
+            0
+        } else {
+            34
+        }, fontSize: 16.0, textColor: ink, pointerInteractive: true), resourceId: resourceId, fieldId: fieldId,
+        displayValueRole: "source-preview", textStyleRuns: rangeTextPreviewSelectionRuns(selectionStart, selectionEnd))
+}
+
+/// Resolve a drag point against the two currently accepted preview fragments.
+/// The native pointer capture keeps BEGIN's node as `event.node`, so UPDATE and
+/// END must use the accepted scene geometry to select the pane under the point.
+func rangeTextPreviewTargetNodeAtPoint(firstRect: ?(Int64, Int64, Int64, Int64),
+    secondRect: ?(Int64, Int64, Int64, Int64), x: Int64, y: Int64): Int64 {
+    if (let Some((left, top, width, height)) <- secondRect) {
+        if (x >= left && x <= left + width && y >= top && y <= top + height) {
+            return 11
+        }
+    }
+    if (let Some((left, top, width, height)) <- firstRect) {
+        if (x >= left && x <= left + width && y >= top && y <= top + height) {
+            return 9
+        }
+    }
+    return -1
+}
+
+func rangeTextPreviewSourceByteAtHit(preview: RangeTextPreviewBinding, localHit: Int64): ?Int64 {
+    if (localHit < 0 || localHit > Int64(preview.text.toArray().size)) {
+        return None
+    }
+    return Some(preview.sourceStart + localHit)
+}
+
+class RangeTextWindowController <: CjguiComposableUiController & CjguiComposableUiContextMenuRequestHandler & CjguiComposableUiPlatformThemeConsumer & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiBusinessOwnerRevisionProvider & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiCompositionRangeProvider & CjguiComposableUiWindowBackgroundProvider {
     private let store: PlainRangeTextStore
     /// 1b:镜像与会话由**窗口**拥有。消费方只交出 owner 的读/写接缝,并保留只读查询
     /// 句柄;它既没有第二条正文写入路径,也不在 `buildUi` 里轮询恢复回执。
@@ -513,6 +1172,7 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
     private var fullTextEvents: Int64 = 0
     /// 窗口拥有会话后仍到达 owner 的范围意图数。必须恒为 0:非零即第二条写入路径复活。
     private var leakedRangeEvents: Int64 = 0
+    private var recoveryRevision: Int64 = 0
     /// Context-menu state is declarative app state; framework retains and
     /// validates the accepted target/selection ticket behind this request.
     private var contextMenuRequest: Option<CjguiComposableUiContextMenuRequest> = None
@@ -523,13 +1183,27 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
     private let fileBacked: Bool
     private var usesDarkAppearance: Bool = true
     private var themeRevision: Int64 = 0
+    private var previewDecorationRevision: Int64 = 0
+    private var candidatePreview: ?RangeTextPreviewBinding = None
+    private var acceptedPreview: ?RangeTextPreviewBinding = None
+    private var candidateSecondPreview: ?RangeTextPreviewBinding = None
+    private var acceptedSecondPreview: ?RangeTextPreviewBinding = None
+    private let twoPaneFixture: Bool
+    private let previewByteLimit: Int64
+    private let previewCaptureRevision = RangeTextPreviewCaptureRevision()
+    private var previewDragActive: Bool = false
+    private var previewDragRevision: Int64 = -1
+    private var previewDragAnchorByte: Int64 = 0
 
     init(initialText: String, capacityBytes!: Int64 = 65536, refuseFirstEdit!: Bool = false, filePath!: String = "",
-        timingDiagnostics!: Bool = false) {
+        timingDiagnostics!: Bool = false, twoPaneFixture!: Bool = false, previewByteLimit!: Int64 = 24) {
         this.store = PlainRangeTextStore(initialText, refuseFirstEdit: refuseFirstEdit, filePath: filePath,
-            maxFileReadBytes: capacityBytes, timingDiagnostics: timingDiagnostics)
+            maxFileReadBytes: capacityBytes, timingDiagnostics: timingDiagnostics,
+            enableUndoHistory: twoPaneFixture && filePath == "")
         this.capacityBytes = capacityBytes
         this.fileBacked = filePath != ""
+        this.twoPaneFixture = twoPaneFixture && filePath == ""
+        this.previewByteLimit = previewByteLimit
     }
 
     /// 由窗口建立并拥有会话;返回值只供消费方做只读查询(选区/组合/校准状态)。
@@ -545,9 +1219,308 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
     }
 
     public func uiSceneVersion(): Int64 {
-        // 会话写入不经 `applyUiEvent`,所以声明场景的版本必须跟着**正文**走:
-        // owner 每接受一笔写入,消费方声明的场景就换代一次。
-        return 1 + this.store.appliedEditCount() + this.themeRevision
+        // Public selection, Undo and native input all project the same owner
+        // choice. A selection-only change must also refresh the declaration.
+        return 1 + this.recoveryRevision + this.store.appliedEditCount() + this.store.sourceSelectionSnapshot().revision + this.themeRevision + this
+            .previewDecorationRevision
+    }
+
+    public func uiBusinessOwnerRevision(): Int64 {
+        return this.store.rangeTextVersion()
+    }
+
+    public func beginSceneRefresh(): Bool {
+        this.candidatePreview = None
+        return true
+    }
+    public func prepareSceneRefresh(): Bool {
+        return true
+    }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        let commands = ArrayList<CjguiComposableUiCommand>()
+        if (this.twoPaneFixture) {
+            commands.add(CjguiComposableUiCommand("range-text-undo", 14, CjguiComposableUiShortcut("z")))
+            commands.add(CjguiComposableUiCommand("range-text-redo", 15,
+                CjguiComposableUiShortcut("z", usesShift: true)))
+        }
+        return commands
+    }
+    public func commitSceneRefresh(): Unit {
+        var same = false
+        if (let Some(candidate) <- this.candidatePreview) {
+            if (let Some(accepted) <- this.acceptedPreview) {
+                same = accepted.sameSource(candidate)
+            }
+        }
+        if (!same) {
+            this.previewDragActive = false
+            this.previewDragRevision = -1
+        }
+        this.acceptedPreview = this.candidatePreview
+        this.acceptedSecondPreview = this.candidateSecondPreview
+        this.candidatePreview = None
+        this.candidateSecondPreview = None
+    }
+    public func rollbackSceneRefresh(): Unit {
+        this.candidatePreview = None
+    }
+
+    public func pointerCaptureVersion(node: CjguiComposableUiLayoutNode): Int64 {
+        if ((node.nodeId != 9 && node.nodeId != 11) || node.nodeKind != CJGUI_COMPOSABLE_UI_TEXT) {
+            return this.uiSceneVersion()
+        }
+        let bound = match (this.session) {
+            case Some(value) => value;
+            case None => return this.uiSceneVersion()
+        }
+        return this
+            .previewCaptureRevision
+            .observe(this.acceptedPreview, bound.contextEpochValue(), this.store.rangeTextVersion(),
+                bound.mirrorSnapshot().startByte)
+    }
+
+    private func currentPreview(): ?RangeTextPreviewBinding {
+        let preview = match (this.acceptedPreview) {
+            case Some(value) => value;
+            case None => return None
+        }
+        let bound = match (this.session) {
+            case Some(value) => value;
+            case None => return None
+        }
+        let mirror = bound.mirrorSnapshot()
+        if (!mirror.prepared || preview.contextEpoch != bound.contextEpochValue() || preview.ownerVersion !=
+            this.store.rangeTextVersion() || mirror.contentVersion != preview.ownerVersion || mirror.contextEpoch != preview
+            .contextEpoch ||
+            !preview.matchesMirror(mirror.contextEpoch, mirror.contentVersion, mirror.startByte, mirror.text)) {
+            return None
+        }
+        return Some(preview)
+    }
+
+    private func previewForNode(nodeId: Int64): ?RangeTextPreviewBinding {
+        if (nodeId == 11) {
+            let preview = match (this.acceptedSecondPreview) {
+                case Some(value) => value;
+                case None => return None
+            }
+            let bound = match (this.session) {
+                case Some(value) => value;
+                case None => return None
+            }
+            let mirror = bound.mirrorSnapshot()
+            if (!mirror.prepared || preview.contextEpoch != bound.contextEpochValue() || preview.ownerVersion !=
+                this.store.rangeTextVersion() || mirror.contentVersion != preview.ownerVersion || mirror.contextEpoch != preview
+                .contextEpoch ||
+                !preview.matchesMirror(mirror.contextEpoch, mirror.contentVersion, mirror.startByte, mirror.text)) {
+                return None
+            }
+            return Some(preview)
+        }
+        return this.currentPreview()
+    }
+
+    private func windowUtf16ForSourceByte(sourceByte: Int64): Option<Int64> {
+        let bound = match (this.session) {
+            case Some(value) => value;
+            case None => return None
+        }
+        let mirror = bound.mirrorSnapshot()
+        let local = sourceByte - mirror.startByte
+        if (local < 0 || local > Int64(mirror.text.toArray().size)) {
+            return None
+        }
+        return cjguiUtf8OffsetToUtf16(mirror.text, local)
+    }
+
+    public func prepareCompositionSourceRange(node: CjguiComposableUiLayoutNode, start16: Int64, end16: Int64,
+        sceneVersion: Int64): CjguiMappedCompositionRange {
+        let window = match (this.hostWindow) {
+            case Some(value) => value;
+            case None => return CjguiMappedCompositionRange(None, reason: "preview_window_missing")
+        }
+        let preview = match (this.previewForNode(node.nodeId)) {
+            case Some(value) => value;
+            case None => return CjguiMappedCompositionRange(None, reason: "preview_source_stale")
+        }
+        let expectedResource = if (node.nodeId == 11) {
+            103
+        } else {
+            102
+        }
+        if ((node.nodeId != 9 && node.nodeId != 11) || node.resourceId != expectedResource || node.nodeKind !=
+            CJGUI_COMPOSABLE_UI_TEXT || node.value != preview.text || sceneVersion != window
+            .windowProjection()
+            .acceptedSceneVersion) {
+            return CjguiMappedCompositionRange(None, reason: "preview_target_or_scene_stale")
+        }
+        let range = match (preview.sourceRangeUtf16(start16, end16)) {
+            case Some(value) => value;
+            case None => return CjguiMappedCompositionRange(None, reason: "preview_utf16_range_invalid")
+        }
+        let prepared = this.session.getOrThrow().prepareSourceRange(preview.ownerVersion, range[0], range[1])
+        getStdOut().writeln(
+            "RANGE_TEXT_PREVIEW_RANGE node=${node.nodeId} scene=${sceneVersion} " +
+                "source=${range[0]}:${range[1]} version=${preview.ownerVersion} prepared=${prepared.isSome()}")
+        getStdOut().flush()
+        return CjguiMappedCompositionRange(prepared, reason: if (prepared.isSome()) {
+            ""
+        } else {
+            "preview_prepare_refused"
+        })
+    }
+
+    private func applyPreviewPointer(event: CjguiComposableUiEvent): Bool {
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_CANCEL) {
+            this.previewDragActive = false
+            this.previewDragRevision = -1
+            getStdOut().writeln(
+                "RANGE_TEXT_PREVIEW_POINTER phase=cancel owner_version=${this.store.rangeTextVersion()}")
+            getStdOut().flush()
+            return true
+        }
+        let begin = event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN
+        let end = event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END
+        let window = match (this.hostWindow) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let revision = this.pointerCaptureVersion(event.node)
+        if (!begin && (!this.previewDragActive || revision != this.previewDragRevision)) {
+            return false
+        }
+        let acceptedNodes = window.acceptedSceneNodes()
+        var firstAccepted = false
+        var secondAccepted = false
+        for (node in acceptedNodes) {
+            if (node.nodeId == 9 && node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT && node.resourceId == 102 &&
+                this.previewForNode(9).isSome() && node.value == this.previewForNode(9).getOrThrow().text) {
+                firstAccepted = true
+            }
+            if (node.nodeId == 11 && node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT && node.resourceId == 103 &&
+                this.previewForNode(11).isSome() && node.value == this.previewForNode(11).getOrThrow().text) {
+                secondAccepted = true
+            }
+        }
+        if (begin && !firstAccepted && !secondAccepted) {
+            return false
+        }
+        let targetNodeId = if (begin) {
+            event.node.nodeId
+        } else {
+            rangeTextPreviewTargetNodeAtPoint(if (firstAccepted) {
+                window.nodeRect(9)
+            } else {
+                None
+            }, if (secondAccepted) {
+                window.nodeRect(11)
+            } else {
+                None
+            }, event.pointerX, event.pointerY)
+        }
+        if (targetNodeId != 9 && targetNodeId != 11) {
+            return false
+        }
+        var targetNode: ?CjguiComposableUiLayoutNode = None
+        for (node in acceptedNodes) {
+            if (node.nodeId == targetNodeId) {
+                targetNode = Some(node)
+                break
+            }
+        }
+        let acceptedTarget = match (targetNode) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let preview = match (this.previewForNode(targetNodeId)) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let expectedResource = if (targetNodeId == 11) {
+            103
+        } else {
+            102
+        }
+        if (acceptedTarget.nodeKind != CJGUI_COMPOSABLE_UI_TEXT || acceptedTarget.resourceId != expectedResource ||
+            acceptedTarget.value != preview.text) {
+            return false
+        }
+        if (begin) {
+            window.invalidatePlainPositionBranch()
+        }
+        let (status, hit, affinity) = window.hitTestComposableTextDetailed(targetNodeId, Float64(event.pointerX),
+            Float64(event.pointerY))
+        if (status != 0 || hit < 0 || hit > Int64(preview.text.toArray().size)) {
+            return false
+        }
+        let focusByte = match (rangeTextPreviewSourceByteAtHit(preview, hit)) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let anchorByte = if (begin) {
+            focusByte
+        } else {
+            this.previewDragAnchorByte
+        }
+        let anchor16 = match (this.windowUtf16ForSourceByte(anchorByte)) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let focus16 = match (this.windowUtf16ForSourceByte(focusByte)) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let proxySelectionBytes = rangeTextPaneSelection(preview, anchorByte, focusByte)
+        let proxyStart16 = match (cjguiUtf8OffsetToUtf16(preview.text, proxySelectionBytes[0])) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let proxyEnd16 = match (cjguiUtf8OffsetToUtf16(preview.text, proxySelectionBytes[1])) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let ticket = match (window.freezeAcceptedSelection(targetNodeId)) {
+            case Some(value) => value;
+            case None => return false
+        }
+        let submission = window.submitAcceptedSelection(ticket, anchor16, focus16, proxyStart16, proxyEnd16, {
+            => this.previewDecorationRevision += 1
+        })
+        let applied = match (submission) {
+            case CjguiSelectionSubmission.Committed => true
+            case CjguiSelectionSubmission.Retained(id) =>
+                getStdOut().writeln(
+                    "RANGE_TEXT_PREVIEW_RETAINED id=${id} source_anchor=${anchorByte} source_focus=${focusByte} owner_written=false")
+                true
+            case CjguiSelectionSubmission.NotAdmitted(reason) =>
+                getStdOut().writeln("RANGE_TEXT_PREVIEW_NOT_ADMITTED reason=${reason}")
+                false
+        }
+        if (begin) {
+            // Never replace the BEGIN-era owner certificate with a post-callback value.
+            this.previewDragActive = applied && this.pointerCaptureVersion(event.node) == revision
+            this.previewDragRevision = if (this.previewDragActive) {
+                revision
+            } else {
+                -1
+            }
+            if (this.previewDragActive) {
+                this.previewDragAnchorByte = anchorByte
+            }
+        }
+        if (end) {
+            this.previewDragActive = false
+            this.previewDragRevision = -1
+        }
+        let (ownerSelectionStart16, ownerSelectionEnd16) = this.session.getOrThrow().selection16()
+        getStdOut().writeln(
+            "RANGE_TEXT_PREVIEW_POINTER phase=${if (begin) { "begin" } else if (end) { "end" } else { "update" }} " +
+                "node=${event.node.nodeId} target_node=${targetNodeId} event_scene=${event.projectionVersion} accepted_scene=${window.windowProjection().acceptedSceneVersion} " +
+                "source_anchor=${anchorByte} source_focus=${focusByte} " +
+                "owner_version=${this.store.rangeTextVersion()} owner_selection_utf16=${ownerSelectionStart16}:${ownerSelectionEnd16} " +
+                "affinity=${affinity} applied=${applied}")
+        getStdOut().flush()
+        return applied
     }
 
     public func applyPlatformColorScheme(scheme: CjguiComposableUiColorScheme): Bool {
@@ -559,6 +1532,10 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
         this.usesDarkAppearance = dark
         this.themeRevision += 1
         return true
+    }
+
+    public func candidateWindowBackground(): String {
+        return CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA
     }
 
     public func buildUi(): CjguiComposableUiNode {
@@ -579,6 +1556,88 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
         root.add(
             cjguiComposableText(3, "range-text-status", this.statusLine(),
                 CjguiComposableUiStyle(fixedHeight: 20, fontSize: 11.0, textColor: ink)))
+        if (let Some(window) <- this.hostWindow) {
+            let drafts = window.textSessionRecoveryDrafts()
+            if (drafts.size > 0) {
+                let actions = cjguiComposableHorizontal(20, "range-text-recovery-actions",
+                    CjguiComposableUiStyle(gap: 8, fixedHeight: 30))
+                actions.add(cjguiComposableButton(21, "range-text-recovery-retrieve", "取回未提交输入",
+                    "RANGE_RECOVERY_RETRIEVE", 102, CjguiComposableUiStyle(fixedWidth: 148, fixedHeight: 30,
+                    background: buttonBackground, textColor: ink)))
+                actions.add(cjguiComposableButton(22, "range-text-recovery-discard", "放弃草稿",
+                    "RANGE_RECOVERY_DISCARD", 102, CjguiComposableUiStyle(fixedWidth: 100, fixedHeight: 30,
+                    background: buttonBackground, textColor: ink)))
+                root.add(actions)
+            }
+        }
+        if (let Some(bound) <- this.session) {
+            let mirror = bound.mirrorSnapshot()
+            if (mirror.prepared && mirror.contentVersion == this.store.rangeTextVersion() && mirror.contextEpoch ==
+                bound.contextEpochValue()) {
+                this.candidatePreview = Some(
+                    RangeTextPreviewBinding(mirror.contextEpoch, mirror.contentVersion, mirror.startByte, mirror.text,
+                        maxBytes: this.previewByteLimit))
+                if (this.twoPaneFixture) {
+                    if (let Some(panes) <- rangeTextTwoPaneBindings(mirror.contextEpoch, mirror.contentVersion,
+                        mirror.startByte, mirror.text)) {
+                        this.candidatePreview = Some(panes[0])
+                        this.candidateSecondPreview = Some(panes[1])
+                    }
+                }
+            }
+        }
+        var displayedAnchor: Int64 = 0
+        var displayedFocus: Int64 = 0
+        let sourceChoice = this.store.sourceSelectionSnapshot()
+        if (let Some(candidate) <- this.candidatePreview) {
+            if (sourceChoice.version == candidate.ownerVersion) {
+                displayedAnchor = sourceChoice.anchorByte
+                displayedFocus = sourceChoice.focusByte
+            }
+        }
+        let selectedBytes = if (displayedFocus >= displayedAnchor) {
+            displayedFocus - displayedAnchor
+        } else {
+            displayedAnchor - displayedFocus
+        }
+        if (this.twoPaneFixture && this.candidatePreview.isSome() && this.candidateSecondPreview.isSome()) {
+            let first = this.candidatePreview.getOrThrow()
+            let second = this.candidateSecondPreview.getOrThrow()
+            let firstSelection = rangeTextPaneSelection(first, displayedAnchor, displayedFocus)
+            let secondSelection = rangeTextPaneSelection(second, displayedAnchor, displayedFocus)
+            let panes = cjguiComposableHorizontal(12, "range-text-two-pane",
+                CjguiComposableUiStyle(gap: 10, fixedHeight: 92, growX: 1))
+            panes.add(
+                rangeTextPreviewNode(Some(first), ink, selectionStart: firstSelection[0],
+                    selectionEnd: firstSelection[1]))
+            let secondNode = rangeTextPreviewNode(Some(second), ink, selectionStart: secondSelection[0],
+                selectionEnd: secondSelection[1], nodeId: 11, semanticId: "range-text-preview-second",
+                fieldId: "plain-text-preview-second", resourceId: 103)
+            panes.add(secondNode)
+            root.add(panes)
+            let controls = cjguiComposableHorizontal(13, "range-text-undo-controls",
+                CjguiComposableUiStyle(gap: 8, fixedHeight: 34))
+            controls.add(
+                cjguiComposableButton(14, "range-text-undo", "撤销并恢复选区", "RANGE_TEXT_UNDO", 0,
+                    CjguiComposableUiStyle(fixedWidth: 140, fixedHeight: 30, background: buttonBackground,
+                        textColor: ink)))
+            controls.add(
+                cjguiComposableButton(15, "range-text-redo", "重做", "RANGE_TEXT_REDO", 0,
+                    CjguiComposableUiStyle(fixedWidth: 70, fixedHeight: 30, background: buttonBackground, textColor: ink)))
+            root.add(controls)
+        } else {
+            let local = if (let Some(binding) <- this.candidatePreview) {
+                rangeTextPaneSelection(binding, displayedAnchor, displayedFocus)
+            } else {
+                (0, 0)
+            }
+            root.add(rangeTextPreviewNode(this.candidatePreview, ink, selectionStart: local[0], selectionEnd: local[1]))
+        }
+        root.add(
+            cjguiComposableText(10, "range-text-preview-selection",
+                "Plain owner choice ${sourceChoice.anchorByte}:${sourceChoice.focusByte} " +
+                    "rev=${sourceChoice.revision} (${selectedBytes} bytes)",
+                CjguiComposableUiStyle(fixedHeight: 20, fontSize: 12.0, textColor: ink)))
         if (this.fileBacked) {
             let navigation = cjguiComposableHorizontal(8, "range-text-navigation",
                 CjguiComposableUiStyle(gap: 8, fixedHeight: 32))
@@ -598,7 +1657,7 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
         // 窗口在回滚代理之后自己交回会话,消费方不轮询、不自签自认。
         root.add(
             cjguiComposableMultilineTextInput(4, "range-text-body", "", this.mirrorText(), 102,
-                CjguiComposableUiStyle(fixedHeight: 420, textColor: ink), tabInsertsText: true))
+                CjguiComposableUiStyle(fixedHeight: 360, textColor: ink), tabInsertsText: true))
         let host = cjguiComposableLayerHost(900, "range-text-layer-host", CjguiComposableUiStyle(growX: 1, growY: 1))
         host.add(root)
         if (contextMenuVisible) {
@@ -638,6 +1697,7 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
             coverage = "partial(${session.unpreparedReason()})"
         }
         let (coverageStart, coverageEnd) = session.coverageBytes()
+        let selection = this.store.sourceSelectionSnapshot()
         return "v${this.store.rangeTextVersion()} bytes=${this.store.byteCount()} source=${if (this.fileBacked) { "file" } else { "memory" }} " +
             "edits=${this.store.appliedEditCount()} rejected=${this.store.rejectedEditCount()} " +
             "window=${coverageStart}..${coverageEnd} coverage=${coverage} " +
@@ -645,10 +1705,82 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
             "epoch=${session.contextEpochValue()} calibrating=${session.awaitingCalibration()} " +
             "decisions=${window.textSessionRangeDecisionCount()} restored=${window.textSessionRestoreCount()} " +
             "restore_failures=${window.textSessionRestoreFailureCount()} " +
+            "selection=${selection.anchorByte}:${selection.focusByte} selection_revision=${selection.revision} " +
+            "retained_writers=${this.store.retainedWriterCount()} recovery_drafts=${window.textSessionRecoveryDrafts().size} " +
             "last=${this.store.lastAppliedRangeText()} ${this.store.timingSummary()}"
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == 27 && (event.node.actionName == "RANGE_RECOVERY_RETRIEVE" ||
+            event.node.actionName == "RANGE_RECOVERY_DISCARD")) {
+            let window = match (this.hostWindow) { case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false) }
+            let bound = match (this.session) { case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false) }
+            let drafts = window.textSessionRecoveryDrafts()
+            if (drafts.isEmpty()) { return CjguiComposableUiDispatchResult(false) }
+            let draft = drafts[0]
+            if (event.node.actionName == "RANGE_RECOVERY_DISCARD") {
+                let discarded = bound.discardRecoveryDraft(draft.draftId)
+                if (discarded) { this.recoveryRevision += 1; window.requestRefresh() }
+                return CjguiComposableUiDispatchResult(discarded)
+            }
+            if (!bound.canConsumeRecoveryDraft(draft.draftId)) { return CjguiComposableUiDispatchResult(false) }
+            let current = this.store.sourceSelectionSnapshot()
+            let start = if (current.anchorByte < current.focusByte) { current.anchorByte } else { current.focusByte }
+            let end = if (current.anchorByte > current.focusByte) { current.anchorByte } else { current.focusByte }
+            let prepared = match (bound.prepareSourceRange(current.version, start, end)) {
+                case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false)
+            }
+            // Explicit user retrieval is one new owner edit at the current
+            // selection. Frozen recovery coordinates remain evidence only.
+            let decision = prepared.replace(draft.content)
+            if (decision.ticket >= 0) { let _ = bound.acknowledge(decision.ticket, decision.contextEpoch) }
+            if (decision.accepted) {
+                let consumed = bound.consumeRecoveryDraft(draft.draftId).isSome()
+                let _ = window.requestOwnedSelectionRestore()
+                this.recoveryRevision += 1; window.requestRefresh()
+                getStdOut().writeln("RANGE_TEXT_RECOVERY draft=${draft.draftId} owner_version=${this.store.rangeTextVersion()} consumed=${consumed}")
+                getStdOut().flush()
+            }
+            return CjguiComposableUiDispatchResult(decision.accepted)
+        }
+        if ((event.node.nodeId == 9 || event.node.nodeId == 11) && event.node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT && (event
+            .eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN || event.eventKind ==
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE || event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END ||
+            event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_CANCEL)) {
+            return CjguiComposableUiDispatchResult(this.applyPreviewPointer(event))
+        }
+        if (event.eventKind == 27 && (event.node.actionName == "RANGE_TEXT_UNDO" || event.node.actionName ==
+            "RANGE_TEXT_REDO")) {
+            let bound = match (this.session) {
+                case Some(value) => value;
+                case None => return CjguiComposableUiDispatchResult(false)
+            }
+            let window = match (this.hostWindow) {
+                case Some(value) => value;
+                case None => return CjguiComposableUiDispatchResult(false)
+            }
+            let changed = if (event.node.actionName == "RANGE_TEXT_UNDO") {
+                this.store.undoOwnerEdit()
+            } else {
+                this.store.redoOwnerEdit()
+            }
+            if (changed) {
+                let source = this.store.sourceSelectionSnapshot()
+                // Undo has already committed to the owner. Refresh its body
+                // before mapping that same-version choice into the proxy;
+                // revealByte alone does not reload an in-window old mirror.
+                let _ = bound.refreshMirror()
+                let _ = bound.revealByte(source.anchorByte)
+                let _ = bound.selection16()
+                let queued = window.requestOwnedSelectionRestore()
+                getStdOut().writeln(
+                    "RANGE_TEXT_HISTORY_RESTORE owner_version=${source.version} " +
+                        "mirror_version=${bound.mirrorSnapshot().contentVersion} queued=${queued}")
+                getStdOut().flush()
+                window.requestRefresh()
+            }
+            return CjguiComposableUiDispatchResult(changed)
+        }
         if (event.eventKind == 27 && (event.node.actionName == "RANGE_TEXT_FIRST" || event.node.actionName ==
             "RANGE_TEXT_MIDDLE" || event.node.actionName == "RANGE_TEXT_LAST")) {
             if (!this.fileBacked) {
@@ -670,14 +1802,30 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
                 }
             }
             let moved = bound.revealByte(target)
+            let mirror = bound.mirrorSnapshot()
+            let bytes = mirror.text.toArray()
+            var local = target - mirror.startByte
+            // A document proportion can land inside a UTF-8 scalar. Choose
+            // the next exact boundary in this already bounded mirror.
+            while (local >= 0 && local < Int64(bytes.size) && bytes[local] >= 0x80 && bytes[local] <= 0xBF) {
+                local += 1
+            }
+            var restoreRequested = false
             match (this.hostWindow) {
-                case Some(window) => window.requestRefresh()
+                case Some(window) =>
+                    if (mirror.prepared && local >= 0 && local <= Int64(bytes.size)) {
+                        if (let Some(caret) <- cjguiUtf8OffsetToUtf16(mirror.text, local)) {
+                            bound.setSelection16(caret, caret)
+                            restoreRequested = window.requestOwnedSelectionRestore()
+                        }
+                    }
+                    window.requestRefresh()
                 case None => ()
             }
             getStdOut().writeln(
                 "RANGE_TEXT_PREPARE action=${event.node.actionName} target=${target} " +
                     "window_start=${bound.mirrorSnapshot().startByte} window_bytes=${bound.mirrorSnapshot().text.toArray().size} moved=${moved} " +
-                    this.store.timingSummary())
+                    "restore_requested=${restoreRequested} " + this.store.timingSummary())
             getStdOut().flush()
             return CjguiComposableUiDispatchResult(true)
         }
@@ -792,6 +1940,7 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
     }
 
     public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        if (eventKind == 11) { this.recoveryRevision += 1; return CjguiComposableUiDispatchResult(true) }
         return CjguiComposableUiDispatchResult(false)
     }
 
@@ -845,6 +1994,36 @@ private class RangeTextWindowController <: CjguiComposableUiController & CjguiCo
         return this.store.ownerSnapshot()
     }
 
+    // A small file consumer can expose its exact owner at normal shutdown.
+    // The same bounded source read is used; a large owner remains metadata-only.
+    public func boundedOwnerHex(): String {
+        let version = this.store.rangeTextVersion()
+        let size = this.store.rangeTextByteLength()
+        if (size > 65536) {
+            return "available=false reason=owner_exceeds_64KiB version=${version} total=${size}"
+        }
+        let bytes = ArrayList<Byte>()
+        var cursor: Int64 = 0
+        while (cursor < size) {
+            let slice = this.store.readRangeText(cursor, size - cursor)
+            let page = slice.content.toArray()
+            let count = Int64(page.size)
+            if (!slice.complete || slice.actualStart != cursor || slice.contentVersion != version ||
+                this.store.rangeTextVersion() != version || slice.byteLength != size || count <= 0 || count > size -
+                cursor) {
+                return "available=false reason=owner_snapshot_incomplete version=${version} total=${size}"
+            }
+            for (byte in page) {
+                bytes.add(byte)
+            }
+            cursor += count
+        }
+        if (this.store.rangeTextVersion() != version || this.store.rangeTextByteLength() != size) {
+            return "available=false reason=owner_snapshot_incomplete version=${version} total=${size}"
+        }
+        return "available=true version=${version} start=0 bytes=${size} hex=${rangeTextHexPrefix(bytes.toArray(), 65536)}"
+    }
+
     public func storeTimingSummary(): String {
         return this.store.timingSummary()
     }
@@ -860,12 +2039,29 @@ private func defaultDocumentText(): String {
         "中文、emoji 与 ASCII 混排：😀 世界 hello\n"
 }
 
+private func defaultTwoPaneFixtureText(): String {
+    return "first pane: A😀B\nsecond pane: C中文D\n"
+}
+
 main(args: Array<String>): Int64 {
+    return cjguiRunMacosApplication({=> runRangeTextApplication(args)})
+}
+
+private func runRangeTextApplication(args: Array<String>): Int64 {
+    let twoPaneFixture = match (getVariable("RANGE_TEXT_TWO_PANE")) {
+        case Some(flag) => flag == "1"
+        case None => false
+    }
     // 测试种子入口：字素语料可由环境注入（普通消费者消费同一公共能力的验收
     // 用）；不设置时保持默认文档。
     let initialText = match (getVariable("RANGE_TEXT_INITIAL")) {
         case Some(seed) => seed
-        case None => defaultDocumentText()
+        case None =>
+            if (twoPaneFixture) {
+                defaultTwoPaneFixtureText()
+            } else {
+                defaultDocumentText()
+            }
     }
     // M3 拒绝恢复探针开关：RANGE_TEXT_REFUSE_FIRST=1 ⇒ store 首笔编辑强制拒绝。
     let refuseFirst = match (getVariable("RANGE_TEXT_REFUSE_FIRST")) {
@@ -889,17 +2085,34 @@ main(args: Array<String>): Int64 {
         case Some(flag) => flag == "1"
         case None => false
     }
+    var previewByteLimit: Int64 = 24
+    if (let Some(limitText) <- getVariable("RANGE_TEXT_PREVIEW_BYTES")) {
+        try {
+            let limit = Int64.parse(limitText)
+            if (limit >= 1 && limit <= capacityBytes) {
+                previewByteLimit = limit
+            }
+        } catch (_) {}
+    }
     let controller = RangeTextWindowController(initialText, capacityBytes: capacityBytes, refuseFirstEdit: refuseFirst,
-        filePath: filePath, timingDiagnostics: timingDiagnostics)
+        filePath: filePath, timingDiagnostics: timingDiagnostics, twoPaneFixture: twoPaneFixture,
+        previewByteLimit: previewByteLimit)
+    let windowTitle = match (getVariable("RANGE_TEXT_WINDOW_TITLE")) {
+        case Some(title) => title
+        case None => "CJGUI Range Text Consumer"
+    }
     let host = CjguiMacosApplicationHost(
         controller,
-        configuration: CjguiMacosApplicationWindowConfiguration("CJGUI Range Text Consumer", 900u32, 620u32,
+        configuration: CjguiMacosApplicationWindowConfiguration(windowTitle, 900u32, 620u32,
             rangeTextEditDeltaDelivery: true)
     )
     // 窗口拥有会话:必须在 start 之前绑定,首次投影发布的正文才是镜像。
     let session = controller.attach(host.window())
-    let started = host.start()
     let window = host.window()
+    let ownerTurnBudget = CjguiOwnerTurnBudget()
+    window.useOwnerTurnBudget(ownerTurnBudget)
+    // Startup uses the same retained preparation path as later owner turns.
+    let started = host.start()
     if (!started) {
         let progress = window.windowProgress()
         getStdOut().writeln(
@@ -914,9 +2127,10 @@ main(args: Array<String>): Int64 {
     // 同一运行内的正文 raster/upload 计数（成本核对）：启用窗口的负载诊断并在
     // READY/SUMMARY 各记录一次，会话身份一致才可比。
     let workloadEnabled = window.setWorkloadDiagnostics(true)
-    let workloadBase = window.diagnosticSnapshot(maximumNodes: 1)
+    let workloadBase = window.diagnosticScalarSnapshot()
     getStdOut().writeln(
         "RANGE_TEXT_READY delivery_enabled=${window.isTextRangeEditDeltaDeliveryEnabled()} " +
+            "starting_preparing=${window.isStartingPreparing()} " +
             "session_node=${session.boundNode()} session_bound=${session.isBound()} " +
             "mirror_bytes=${window.textSessionMirrorText().toArray().size} " + "owner=${controller.ownerSnapshot()} " +
             "capacity_bytes=${capacityBytes} " + "workload_enabled=${workloadEnabled} " + controller
@@ -932,22 +2146,38 @@ main(args: Array<String>): Int64 {
     // （raster/upload 计数/字节）——写入类别与纯选区/导航（edits 不变）可区分。
     var lastSnapshotEdits: Int64 = controller.ownerAppliedEditCount()
     while (host.isOpen()) {
-        let _ = host.pumpOneTurn()
-        turn += 1
-        if (turn % 5 == 0) {
-            let live = window.diagnosticSnapshot(maximumNodes: 1)
-            if (live.status == "ok") {
-                lastWorkload = live
+        let traceTurn = turn + 1
+        let traceSpan = window.beginOwnerTraceTurn(traceTurn)
+        let _ = ownerTurnBudget.begin()
+        try {
+            let _ = host.pumpOneTurn()
+            turn += 1
+            if (turn % 5 == 0) {
+                let live = window.diagnosticScalarSnapshot()
+                if (live.status == "ok") {
+                    lastWorkload = live
+                }
             }
-        }
-        let appliedNow = controller.ownerAppliedEditCount()
-        if (appliedNow != lastSnapshotEdits) {
-            getStdOut().writeln(
-                "RANGE_TEXT_WORKLOAD_STEP edits=${appliedNow} " +
-                    "raster=${lastWorkload.textRasterCount}/${lastWorkload.textRasterBytes}/${lastWorkload.textRasterMicros} " +
-                    "upload=${lastWorkload.textUploadCount}/${lastWorkload.textUploadBytes}/${lastWorkload.textUploadMicros}")
-            getStdOut().flush()
-            lastSnapshotEdits = appliedNow
+            let appliedNow = controller.ownerAppliedEditCount()
+            if (appliedNow != lastSnapshotEdits) {
+                getStdOut().writeln(
+                    "RANGE_TEXT_WORKLOAD_STEP edits=${appliedNow} " +
+                        "raster=${lastWorkload.textRasterCount}/${lastWorkload.textRasterBytes}/${lastWorkload.textRasterMicros} " +
+                        "upload=${lastWorkload.textUploadCount}/${lastWorkload.textUploadBytes}/${lastWorkload.textUploadMicros}")
+                if (timingDiagnostics) {
+                    // Read the owner after every accepted writer, including Undo
+                    // and Redo, through the existing version-checked bounded reader.
+                    // This diagnostic work remains inside the complete owner turn.
+                    getStdOut().writeln("RANGE_TEXT_OWNER_AFTER_WRITE ${controller.boundedOwnerHex()}")
+                }
+                getStdOut().flush()
+                lastSnapshotEdits = appliedNow
+            }
+        } finally {
+            window.recordOwnerTraceBoundary(traceTurn, 143u32)
+            window.endOwnerTraceTurn(traceTurn, traceSpan)
+            ownerTurnBudget.end()
+            window.recordOwnerTraceBoundary(traceTurn, 145u32)
         }
     }
     let workloadFinal = lastWorkload
@@ -966,6 +2196,12 @@ main(args: Array<String>): Int64 {
     } else {
         // File mode never asks the owner to materialise a whole-document String.
         getStdOut().writeln("RANGE_TEXT_OWNER_SNAPSHOT ${controller.ownerSnapshot()}")
+        let snapshotStarted = MonoTime.now()
+        getStdOut().writeln("RANGE_TEXT_OWNER_BOUNDED ${controller.boundedOwnerHex()}")
+        getStdOut().flush()
+        getStdOut().writeln(
+            "RANGE_TEXT_OWNER_BOUNDED_COST wall_us=${(MonoTime.now() - snapshotStarted).toMicroseconds()} " +
+                "scope=normal_shutdown_read_format_write_flush")
     }
     getStdOut().writeln(
         "RANGE_TEXT_WORKLOAD phase=final state=${workloadFinal.status} " + "session=${workloadFinal.sessionIdentity} " +
@@ -974,5 +2210,6 @@ main(args: Array<String>): Int64 {
     getStdOut().writeln("RANGE_TEXT_SUMMARY ${controller.summary()}")
     getStdOut().flush()
     controller.close()
+    // The enclosing macOS entry scope exports after this real cleanup tail.
     return 0
 }

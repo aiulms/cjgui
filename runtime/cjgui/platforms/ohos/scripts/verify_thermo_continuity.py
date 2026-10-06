@@ -117,6 +117,41 @@ def inject_tap(x, y):
 BUNDLE_THERMO = "com.example.cjguithermo"
 
 
+def readback_owner_state():
+    """round12-R2：thermo 自己的 OWNER_STATE 读回（本包 CAP，共享端口）。"""
+    _, resp = business(["GET_CONTEXT 0"])
+    if not isinstance(resp, str):
+        return None
+    mo = re.search(r"OWNER_STATE_UTF8_HEX (\d+) ([0-9a-fA-F]*)", resp)
+    if not mo:
+        return None
+    return bytes.fromhex(mo.group(2)).decode("utf-8", "replace")
+
+
+def readback_semantic_point(semantic):
+    """round12-R2：读回几何定位（accepted 发布边界冻结的 geo 记录 + 平台
+    XComponent 原点）。日志 node-rect 全缺也可定位；失败返回 None（原因随
+    EVIDENCE 落盘由调用方处理）。"""
+    state = readback_owner_state()
+    if not state:
+        return None
+    geo = _m.parse_geo_section(state)
+    if geo is None:
+        return None
+    rec, why = _m.find_geo_record(geo, semantic)
+    if rec is None:
+        return None
+    if rec['invisible']:
+        return None
+    pt = _m.hittable_point(rec)
+    if pt is None:
+        return None
+    origin = _m.surface_origin_px()
+    if origin is None:
+        return None
+    return (origin[0] + pt[0] * geo['density'], origin[1] + pt[1] * geo['density'])
+
+
 def thermo_semantic_point(semantic):
     """thermo 自己的语义命中链。_m.accepted_semantic_point 按 Pharos bundle
     做 PID 过滤（后台 Pharos 的行会污染 rect/transform），这里按 thermo PID

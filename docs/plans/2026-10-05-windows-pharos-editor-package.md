@@ -2,14 +2,77 @@
 
 **框架与产品责任校准（2026-10-06）。** 本包同时负责CJGUI Windows后端和现有Pharos消费，不是只把编辑器在来宾中跑起来。窗口/消息泵/线程/输入来源/安装交接/排版命中/GPU与文件平台语义归框架后端；平台无关的选择、owner、布局及资源契约优先复用CJGUI公共核心，发现公共缺口应沿真实责任层修复。产品只留文档与Markdown语义和声明式接线，不能复制公共机制或用慢打、重投绕过框架缺陷。保护E/H写集是禁止覆盖并行工作，不是禁止本包必要的公共框架修改；先核现有契约与diff，按最小影响实施并验证相关调用兼容。按原整包连续完成，不以单个探针或构建修复结束；报告分别列框架机制、平台适配、产品接线及正常消费依据。本条仅澄清原范围，不恢复已暂停线程。
 
-本包由用户交给 Windows 执行模型启动。2026-10-06 用户再次暂停长上下文执行线程，准备换工具接续；目标与 A–F 固定验收门不变。最新接续以本页「2026-10-06 源码复核」为准，10-05 节及执行记录保留为历史。指导本次只复核源码、已有运行原件与控制通道边界并更新本任务，不代替执行者开发，不恢复旧线程或启动虚拟机。
+本包由用户交给 Windows 执行模型启动。2026-10-06 用户再次暂停长上下文执行线程，准备换工具接续；目标与 A–F 固定验收门不变。最新接续以本页「冻结隔离、完整 UI 归属与输入交接」为准，较早源码复核及执行记录保留为历史，不能将其中已修事项或旧咨询要求重新执行。指导本次只复核源码、已有运行原件与控制通道边界并更新本任务，不代替执行者开发，不恢复旧线程或启动虚拟机。
 
 **交付目标：让现有 Pharos Mark 在 Windows 上完成正常写作链：打开文档 → 源码编辑 → Markdown 预览 → 回到原选区继续编辑 → 公开 Agent 修改 → 人继续输入 → 撤销／重做 → 保存 → 关闭重开。** 使用现有编辑器检验 Windows 后端；设置、thermo 或另写一个玩具编辑器不作为前置交付。
 
 这是一包连续实施任务，包含必要旧问题、Windows 后端和产品消费。内部按依赖安排工作，最后集中报告；不要每完成一个探针就停止询问是否继续。不能把“编译出窗口／画出文字”改称整包完成，也不承诺一个夜间就达到 macOS 全部能力。
 
+<a id="windows-dispatch-input-package-20261006"></a>
+## 2026-10-06 接续方案：冻结隔离、完整 UI 归属与输入交接（当前执行依据）
+
+**决定：采用隔离后的 A，不等待 E/H 整仓合龙；先完成下述两项框架机制，再直接闭合原整包。** 目录遗失需在来宾核实，但不是架构阻塞。并行源码量大也不等于不能构建一个冻结副本。用户恢复执行后，重上架、隔离构建和本包必要框架修复均在原授权内，不再为它们逐项请示。此文档更新本身不恢复暂停线程。
+
+### 本次复核事实与可复用资产
+
+- 指导核了正典 native、共享消费、runner、[本轮索引](../../artifacts/windows-pharos-20261005/evidence/20261006-rework/INDEX.md)及[Astra 答复](../../artifacts/windows-pharos-20261005/consultations/input-handoff-thread-affinity/answer.md)，未运行 VM 或重跑设备链。保留删 restamp、真实来源 claim、UTF-8 终止修复、能力拆分和已有 owner 决策/ACK 重试；这些确有接线。不能把它们改称完整输入交接已经完成。
+- 本地 [源码 ZIP](../../artifacts/windows-pharos-20261005/guest-transfer/pharos-windows-source.zip) 实算 `a3343b67…`，118 个源码条目及生成清单一致；本次核查时它们也与当前正典逐项一致，含 `main.cj=8cb1f174…`、renderer `27f819bc…`。可先冻结此 ZIP 恢复构建基线。它不自动包含本节后续修复，最终需另冻新包并建立差分来源。
+- 已有专用线程创建 HWND/D3D，但其余导出 API 仍直接在调用线程执行，`require_session` 仅查非空。所谓创建/懒 Attach/Detach 是 **Win32 `AttachThreadInput`**；不是运行时线程 attach，也没有实现 Astra 的命令封送。消息环目前仅存 message/wParam/lParam，IME 内容、修饰键在晚到的消费时才读，来源冻结仍不完整。
+- 安装门内字符、导航和组合开始仍有直接返回路径；native 安装成功即清门，早于共享 owner 确认。满 32 个 range claim 会释放第 33 笔载荷；事件入队失败还可能让前驱序号先行推进。这些是当前源码可定位缺口，尚非本轮新增设备丢字证明。
+- `pread` 的串行位置恢复 RED/GREEN 接受；它仍由 seek/read/restore 三步组成，不能由此推出共享 fd 并发语义成立。旧 `not_main_thread` 已有首次失配原件，不能再写成只有 M:N 猜测；但新 dispatcher 是否解决，仍要在最终正常包验收。
+
+### 1．构建隔离：恢复已有产物路径，避免反复编译和踩现场
+
+使用既有 Parallels Windows VM 与常驻 worker。核 UUID、SDK 实际版本及 worker 身份；不重装 SDK，不循环 `prlctl exec` 开新终端。沿用第六节的直接 EXE 退出码与中文/空格路径门。
+
+1. 保留现有 ZIP、四代 relay 原件及日志；新建 `C:\cjgui-windows-w1\runs\<run-id>\source`、`relay`、`accept`。源码、target、日志和结果均按 run 隔离。现有 `stage_pharos_windows.py` 会删固定 staging/覆盖 ZIP，先参数化输出目录；不在旧现场原样执行。解包后逐项核 manifest，不能只看顶层哈希或复制成功。
+2. 框架修复先落正典 W 责任层；把本轮明确的修复及其必要共享依赖同步到隔离快照，保留前后清单。共享文件按函数核差分，不能覆盖 E/H 整文件。若公共 API 已并行变更，就冻结相互匹配的依赖集并编译验证；不把等待整仓结束当默认方案。最终产物只来自冻结目录，不边构建边读取变化的 live 树。
+3. relay 复用键包含实际 BC 内容哈希、工具链/llc 身份、目标 ABI 与全部影响代码生成的参数，输出路径等非语义差异应明确归一。匹配已归档关系才可复用 obj；不匹配只为该新 BC 重生成一次。不得拿旧 EXE、旧捕获日志充当本轮结果。先完成 native 快速反例与必要 FFI 设计，再做昂贵的应用 BC 构建；不是每改一个 native 分支就重跑 25 分钟 llc。
+4. 不重复已失败的 PATH/CANGJIE_HOME/junction/bin-copy 重定向实验，见[原记录 §3](../../artifacts/windows-pharos-20261005/evidence/20261006-rework/RED-GREEN-20261006.md)。本包可沿用已建立的受控 SDK 临时交换，补齐安全边界：同 SDK 独占构建锁；原版 llc 与 llc-real 双哈希准入；**交换及交换后校验都进入恢复保护**；正常/失败/取消均恢复并核原版哈希。现脚本交换在 try/finally 前，须修。worker 取消不得把唯一恢复责任方一并杀掉；保留可验活的外层恢复责任。wrapper 与 PS 的硬编码路径一起改为本轮目录。
+
+### 2．框架方案一：完整原生 UI dispatcher，仓颉 owner 不迁移
+
+采用已取得的 Astra 方案：进程内一个原生 UI dispatcher 管理 renderer sessions。仓颉继续由单一逻辑 owner 串行运行控制器和 DocumentSession；后台解析只提交待采纳结果。**不另造 Windows 编辑器、不把 owner 搬进 WndProc、不用 cjProcessorNum=1 或 re-home 解决线程归属。**
+
+- 将 session 有关的 C ABI 入口变为命令封送，原实现成为 dispatcher 内部函数。session 查找/代次判断、HWND/焦点/IMM32、D3D immediate context、DXGI Present/resize/释放统一在 UI 线程执行并保留内部线程断言；只读纯值查询可用明确的不可变快照。不能先在调用线程取得可变 session 裸指针再排队。
+- 命令拥有所需输入/输出和生命周期，队列有容量、命令 ID 与结局。调用者栈指针不得在返回后仍被 UI 使用；开始执行后的超时不是“未执行”，不得重发副作用。未开始的命令可原子取消，已开始的结果持留待取。UI 内合法重入走内部函数，不能同步等自己；出队后释放队列锁再调用可能重入的系统 API。
+- `pump(timeout)` 是待满足的取事件请求，dispatcher 必须继续处理消息与其他命令，不把整个 UI 线程堵在该请求上。零超时仍服务已就绪消息；FIFO 持续有值、连续鼠标移动、无输入三类负载都要公平且有界，无事时阻塞等待。事件文字/几何/claim 的出队租约须覆盖调用者完成复制，不被另一次 pump 或 destroy 提前释放。
+- 关闭以 session 代次退役新准入、完成/拒绝等待者、保存未决输入，再由 UI 线程结束 IME、销毁 HWND/图形资源；关闭一窗不能停止其他窗。禁止线程仍运行就清零 session/释放资源。`request_application_stop` 应投到 dispatcher，不能对任意调用线程直接 PostQuitMessage。
+- 逻辑 owner 检查不能被 native 封送替代：同一 host 的并发 turn 必须被拒绝或由既定 owner 串行交接。不同调用 OS tid 的合法调用与不同逻辑 owner 并发必须分别检测；不把某次运行未迁移当作线程正确性证明。
+
+**本组固定反例：** 原生 A/B 两调用线程操作同一 session，实际执行 tid 始终为 UI tid；真实仓颉默认调度负载正常；两个逻辑 owner 并发调用被拦；pump 等待中 resize/关闭仍收敛且另一窗存活；SetFocus 重入无死锁；命令执行中超时不二次提交/不悬空输出；持续 FIFO 下 OS 消息不饿死。记录实际 API 调用的 caller/execution/HWND tid、session 代次和返回状态，不依赖旧错误字段。
+
+实现参考只读 [GPUI dispatcher](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/gpui_windows/src/dispatcher.rs>) 的队列与唤醒；系统约束见 [Windows 窗口线程归属](https://learn.microsoft.com/en-us/windows/win32/procthread/creating-windows-in-threads)、[D3D11 多线程](https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-render-multi-thread-intro)。不引入 GPUI 等运行时依赖。AttachThreadInput 仅在有证明的焦点操作中短时配对使用，不再承担线程正确性。
+
+### 3．框架方案二：捕获、安装、owner 结算组成一条输入交接
+
+复用已经接通的 arm/receipt、claim→共享 `submitInstalledRange16`→owner 决策→ACK，不恢复 restamp 或同文旁路。Windows 普通 SourceRange 能力与尚未实现的 selection-transfer 分开；不为本包开启全部 macOS transfer。
+
+- **捕获时拥有事实。** WndProc 当场复制 IME RESULTSTR、同消息后继 COMPSTR、相位、composition ID；同时冻结修饰键、重复次数、捕获顺序、目标绑定/安装请求和实际来源。之后不能重新读“现在的”HIMC、Shift 或 scene 补来源。`projectionVersion` 始终保留产生时版本。指针/press 的旧几何也不能被刷新成新 scene；按已有 press 租约连续性判决。
+- **安装成功先 provisional。** 按 `Ready → Holding(request,captureCut) → ProvisionalInstalled → OwnerConfirmed(receipt) → Draining → Ready` 实施；native 安装成功不能先清门。以 Windows 窄适配的 request/outcome/receipt 完成入口，区分 installed、superseded、conflict、closed；owner 后续检查失败不放行，调用失败不能忘掉请求。取消/换绑后的输入保留旧目标，不能投给新 request。
+- **导航是顺序屏障。** 纯字符可沿共享已接受前缀连续物化；导航/选择/组合开始后，暂存后续原始意图，等共享处理器裁决与新选择安装确认后再生成范围。固定 `A→Left→B` 应为 `BA`，不能由旧 caret 得到 `AB`。ACK 重试只补确认，不再次 replace；发布 scene 也不等于前缀 ACK，不能丢未结算后缀。
+- **容量有责任。** 将待决队列、claim、shadow 和必要副本合并计费，预留恢复/组合终态槽。普通突发有界，首次超限的原目标及完整载荷可取回，之后拒绝必须可见；不承诺无限输入全部保留。32 claim 的第33笔、raw 环满、分配/事件入队失败均不能仅计数并吞字；序号/前驱仅随成功准入提交，失败不得留下不存在的前驱。预留恢复载荷必须有正常可达的取回/放弃责任方，不能只有测试打印。
+
+**本组固定反例：** XY 连发且每笔之间 present；同 binding 外部同长度写/同字节新版本；A→B→A 身份复用；门内 `A→Left→B`；门内 RESULTSTR/RESULTSTR+COMPSTR/END；捕获 Shift+Left 后松 Shift 再消费；native 安装成功后 owner 拒绝；旧请求结束不放行新请求；owner 已提交但 ACK 失败；第33笔与入队失败后下一笔。每项核原来源、唯一结局及完整载荷/owner 字节；不能靠250ms慢打、重复投递、扩大等待或放松共同守卫拿绿。
+
+### 4．两项机制完成后，连续完成原编辑器整包
+
+先在同一正常 Pharos 走完整小文档主链：中文/空格路径打开→无刻意逐字延时的系统输入→中段非空选区→Markdown 预览→无编辑切回→免点击精确替换→Undo/Redo→公开 Agent 改版→人继续输入→保存→同二进制新实例重开及续写。各步使用动作前冻结源跨度/版本/完整字节独立计算期望，截图对应同实例和相应 accepted 结果。诊断 CLICK_NODE/SendMessage 不能冒充最终 SendInput；每次投递核发送数/焦点，观察结算可轮询，但不重复动作救绿。
+
+随后完成**本页第六节原固定门**：系统 IME、Unicode、几何/生命周期、PNG/失败恢复、20笔真实工作重叠、成本原数、空闲/回收及含空格同源交付。默认窗口下模式按钮已有超出裁剪区的原记录，须分清产品布局声明和框架测量/命中，在责任层修正常尺寸可达性；只把验收窗口放到特定大尺寸不能宣称默认交互已可用。保存前补共享 fd 的两个位置读真实交错及顺序读取反例；若 Windows 文件垫片仍不能履约，就修窄平台文件服务或证明/实施覆盖所有相关访问的串行所有权，不能只给 pread 自身加一把锁便宣称与其他 read/seek 不竞争。保留现有串行 GREEN，不重建通用 POSIX 库。
+
+本轮不追加 1GiB、完整 visual 结构编辑、UIA、Linux、Android 或另一新应用。探针用于压缩定位与构建成本；机制门通过就继续正常产品，不把工作变成新一轮纯验证器工程。旧矩阵按影响复用，产物变更后的主链与受影响面绑定最终同一源集。性能在虚拟 GPU/x64 模拟层如实分项报告，不以工作时长推导性能或承诺物理机器结果。
+
+### 执行、咨询与结束规则
+
+执行模型由用户当前工具决定。用户已说明 GLM5.3 无额度，本包不再调用 Pi/GLM，也不要求执行者再向同型号咨询；旧第七节与早先 Pi 模板不作为本轮开工条件。已经取得 Astra 裁决，以上方案直接实施，不重复问同一架构。查 Microsoft Learn/本机 SDK 及仓颉技能解决 API 细节；仅出现推翻既定前提的新证据时，整理具体冲突交指导，其他独立项继续。既有失败次数不因换工具清零。
+
+恢复后按整包持续推进，不以“咨询完成/探针绿/源码改完/上下文深”停止；只在用户叫停、真实外部阻塞或必须交回的新架构矛盾时中止依赖工作。工具/目录/本地构建缺口在本包内修。写集可分工，guest 构建/SDK交换/桌面串行，保留用户及 E/H 的进程/文件/剪贴板/暂存/stash。结尾集中报告框架机制、平台接线、正常消费、明确未验边界与可启动产物；清理准确归属的自有临时资源，核 SDK 恢复，不 stage/commit/push。
+
 <a id="windows-input-pump-review-20261006"></a>
 ## 2026-10-06 源码复核：恢复正确输入，再闭合原编辑器整包
+
+本节是较早复核原件；其中已完成的修复、已取得的咨询以及工具隔离实验按上方当前执行依据更新，不把旧措辞重复下发。
 
 **方向没有变；当前不能按原报告继续堆后半链。** 保留 Win32 + D3D11/DXGI + DirectWrite + IMM32 + WIC、同一个 Pharos 及共同 owner/会话/解析/保存。构建、UTF-8 manifest、native 适配、PRESS_BEGIN 先于 FOCUS、runner 有界取消的有效成果复用；不重跑 W0/W1。当前仍没有最终正常编辑器整链证据。接续的新框架能力是：Windows 宿主有界且不饿死输入的消息泵、真实来源可解释的范围输入接续，以及同源正常编辑器消费。
 
@@ -229,7 +292,7 @@ D3D11 的纹理、字形和图片必须有预算、缓存键、引用及设备�
 
 本包不要求 macOS 的 1GiB／全部 visual 结构编辑／全部生成式面板／UIA 与讲述人／物理多屏／安装签名发布同步完成。这些继续属于目标能力，未实现就留在后续，不拿初包成功宣称三端完全等价。
 
-## 七、咨询必须执行，不能遇到问题盲猜或重新选方向
+## 七、原咨询安排（历史；本轮以上方执行规则为准）
 
 执行模型由用户当前工具配置决定。咨询使用独立上下文，不能把长会话里的既有归因当成前提。沿用 [AGENTS 的咨询纪律](../../AGENTS.md#independent-model-consultation)，本包用户新指定的技术顾问为 **`gpt-6.1-sol`**，取代旧模板里的 `gpt-6-sol`；不把口头型号写成不存在的 `slo`。
 

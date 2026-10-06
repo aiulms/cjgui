@@ -4,7 +4,8 @@ arbitration counterexamples.
 
 抽取 ohos_renderer.cpp 的真实手势函数（待定→视口滚动/指针拖动仲裁、有效抬起
 点击、取消与旧代、滚动位移合并、绑定冻结、捕获恰好一次终结、聚焦幂等与跨
-字段草稿结算），在宿主 clang++ 下用最小 Session 副本断言。
+字段草稿结算、展示锚活绑定的重复点选不退役（含逐项身份漂移正控与无条件失焦
+变异反例）），在宿主 clang++ 下用最小 Session 副本断言。
 """
 import pathlib
 import subprocess
@@ -566,6 +567,227 @@ int main() {
 '''
 
 
+# B 组（2026-10-06 复核接续）：展示型 presentation TEXT 锚的重复点选。
+# isEditableTextKind（ohos_renderer.cpp:302-305）只覆盖 TextInput/IntegerInput/
+# Multiline，**不含 kKindText=3**，所以 presentation TEXT 的点击永远落到
+# executePendingTapLocked 的「其他交互节点」分支。该分支原先无条件
+# enqueueEndEditingForTapLocked：同一活绑定上的第二次点击把**自己的**编辑上下文
+# 退役并挂上 PendingEnd，宿主随后在同一手势的 POINTER_END 里重焦同一节点只能换
+# 新上下文编号（设备实测 ctx2→3），退役空档里旧恢复票被
+# `proxy restore ticket rejected: no live context` 拒签，此后 ctx=3 的 8 张票
+# （请求 3..10）全部 platform_install_failed，安装/采纳链再未恢复。
+# 修复把退役收成 `if (!tapHitsLiveEditingBindingLocked(s, node))`，两相位指针事件
+# 仍无条件交付。两腿互锁，各自独立成一个可执行二进制：
+#   KEEP     —— 同绑定重复点选保留活上下文（修复本身）。
+#   CONTROLS —— 逐项只改身份的一个分量后失焦必须完整保留（防止修复退化成
+#               「永不失焦」）。
+# 无条件失焦的变异反例（unconditional_blur_red_source）只须把 KEEP 腿打红，
+# CONTROLS 腿在旧实现下仍须全绿，否则控制腿只是装饰。
+TAP_SCENARIO_HELPERS = r'''
+// 单节点最小场景：node25 = 活编辑上下文所在的展示锚（presentation TEXT，kind=3，
+// 交互、非只读）。宿主在同一手势的 POINTER_END 里对它重焦，因此它既是「当前活编
+// 辑上下文自己的节点」，又不是可编辑文本类型——修复针对的正是这一对事实。
+// 逐分量漂移由**改 accepted 侧**实现（换 id/资源/类型/语义名/epoch），使控制腿
+// 与 KEEP 腿只差一个身份分量，部分损坏的谓词才会被单独抓住。
+static void addPresentationScene(Session &s) {
+  SceneNode anchor = makeNode(25, CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT, 20, 40, 300, 60, 100, 9801, true);
+  anchor.semanticId = "thermo-note-presentation";
+  s.accepted.push_back(anchor);
+}
+// 活上下文一律用**真实生产激活函数**建立（与 R5/R7 腿同一习惯）：ctx 编号、
+// editingContextLive 与完整绑定身份（node/resource/kind/field/accepted epoch）
+// 都由 beginEditingOnNodeLocked 自己写入，反例才有真实的退场对象可断言。
+static int64_t focusAnchorAndTakeContext(Session &s, size_t index) {
+  beginEditingOnNodeLocked(s, s.accepted[index]);
+  return s.editingContextId;
+}
+// 退役记录必须冻结**将死上下文自己**的身份（不是当前焦点），并按 tap 失焦语义
+// 留待 pump 投递时结算（合成时不产生文本事件——那条语义由 R6 断言）。
+static bool holdsPendingEndFor(const Session &s, int64_t contextId, const char *field) {
+  if (s.pendingEnds.size() != 1) return false;
+  const Session::PendingEnd &end = s.pendingEnds.front();
+  return end.contextId == contextId && end.fieldName == field && end.settleOnDelivery;
+}
+// 指针语义未退化的判据：除恰好一对 POINTER_BEGIN/END 外没有任何其他事件，且两
+// 相位都带被点节点自己的身份与完整 GestureKey。
+static bool pointerPairDelivered(const Session &s, uint64_t epoch) {
+  if (s.events.size() != 2) return false;  // 无包含视口 ⇒ 除两相位外不得有任何事件
+  if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return false;
+  for (const QueuedEvent &ev : s.events) {
+    if (ev.nodeId != 25 || ev.resourceId != 9801 || ev.nodeKind != kKindText) return false;
+    if (ev.projectionVersion != 100 || ev.gestureEpoch != epoch) return false;
+    if (ev.appInstance != 1 || ev.componentInstance != 2 || ev.surfaceGeneration != 7 ||
+        ev.pointerId != 0) return false;
+    if (ev.pointerX != 150 || ev.pointerY != 70) return false;
+  }
+  return s.events.front().kind == kEvPointerBegin && s.events.back().kind == kEvPointerEnd;
+}
+'''
+
+# KEEP 腿主断言（同绑定点击后上下文仍 live 且未退役）的退出码。变异反例必须精确
+# 指认**这个**码变红——「非零退出」本身不区分是哪条腿拒的。C++ 里用同名占位符注入，
+# 保持单一事实源。
+TAP_KEEP_LEG_TRIP_EXIT = 220
+
+MAIN_TAP_LIVE_BINDING_KEEP = (MAIN_ORIGINAL.split("int main() {")[0] + TAP_SCENARIO_HELPERS + r'''
+int main() {
+  // T1 同绑定重复点选保留上下文：BEGIN/END 走真实合成链落到
+  // executePendingTapLocked 的「其他交互节点」分支，命中目标正是当前活编辑绑定。
+  // 断言全部落在真实状态迁移上：上下文仍 live、未 retired、编号未换、没有为该
+  // ctx 挂收场记录、退役体的票据取消未被调用，而两相位指针事件照常恰好各一条
+  // （指针语义没有退化）。
+  {
+    Session s; addPresentationScene(s);
+    const int64_t ctx = focusAnchorAndTakeContext(s, 0);
+    if (!s.editing || !s.editingContextLive || s.editorRetired) return 221;
+    if (s.editingNodeId != 25 || s.editingResourceId != 9801 || s.editingNodeKind != kKindText) return 222;
+    if (s.editingFieldName != "thermo-note-presentation") return 223;
+    if (s.editingAcceptedBindingEpoch != s.accepted[0].pod.acceptedBindingEpoch) return 224;
+    // 门自身（真实摘录的生产谓词）在完整绑定相等时必须判真。
+    if (!tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 225;
+    const size_t cancellations = g_cancelledRestoreReasons.size();
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 501, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 501, 150.0f, 70.0f);
+    // 主断言：同一绑定上的点选不得把自己的活上下文制造成一次失焦。
+    if (!s.editingContextLive || s.editorRetired) return TAP_KEEP_TRIP;
+    if (s.editingContextId != ctx) return 227;  // 未换号（设备缺陷正是 ctx2→3）
+    if (!s.pendingEnds.empty()) return 228;     // 未为该 ctx 挂收场记录
+    // 退役体（含 cancelProxyRestoreRequest("retired")）整段未被调用。
+    if (g_cancelledRestoreReasons.size() != cancellations) return 229;
+    if (!pointerPairDelivered(s, 501)) return 230;
+    if (countKind(s, kEvActivate) != 0 || countKind(s, kEvFocus) != 0) return 231;
+    if (countKind(s, kEvTextChanged) != 0) return 232;  // 未退役 ⇒ 无结算
+    if (!tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 233;
+    // 设备场景是**重复**点选：第二次同样原地保留（丢票正是从这次退役空档开始的）。
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 502, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 502, 150.0f, 70.0f);
+    if (!s.editingContextLive || s.editorRetired) return 234;
+    if (s.editingContextId != ctx) return 235;
+    if (!s.pendingEnds.empty()) return 236;
+    if (g_cancelledRestoreReasons.size() != cancellations) return 237;
+    if (s.editingNodeId != 25 || s.editingFieldName != "thermo-note-presentation") return 238;
+    // 第二次点击仍恰好贡献一对新相位（累计 4 条，两两同号不同 gestureEpoch）。
+    if (s.events.size() != 4) return 239;
+    if (countKind(s, kEvPointerBegin) != 2 || countKind(s, kEvPointerEnd) != 2) return 240;
+    if (s.events[2].kind != kEvPointerBegin || s.events[3].kind != kEvPointerEnd) return 241;
+    if (s.events[2].gestureEpoch != 502 || s.events[3].gestureEpoch != 502) return 242;
+  }
+  return 0;
+}
+''').replace("TAP_KEEP_TRIP", str(TAP_KEEP_LEG_TRIP_EXIT))
+
+MAIN_TAP_LIVE_BINDING_CONTROLS = MAIN_ORIGINAL.split("int main() {")[0] + TAP_SCENARIO_HELPERS + r'''
+int main() {
+  // 与 KEEP 腿同构的场景，每次只让完整绑定身份的**一个分量**不等（或让上下文
+  // 本身已不活/已退役/未在编辑）。每子例独立返回码 ⇒ 谓词少比一项就红一项。
+  // C-a 换 nodeId（同资源/类型/语义名/epoch）：命中的不是当前活绑定的节点。
+  {
+    Session s; addPresentationScene(s);
+    const int64_t ctx = focusAnchorAndTakeContext(s, 0);
+    s.accepted[0].pod.nodeId = 24;
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 160;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 511, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 511, 150.0f, 70.0f);
+    if (s.editingContextLive || !s.editorRetired) return 161;
+    if (!holdsPendingEndFor(s, ctx, "thermo-note-presentation")) return 162;
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 163;
+    if (s.events.size() != 2) return 164;
+  }
+  // C-b 换 acceptedBindingEpoch（accepted 重声明 ⇒ 同值同号也不是同一对象）。
+  {
+    Session s; addPresentationScene(s);
+    const int64_t ctx = focusAnchorAndTakeContext(s, 0);
+    s.accepted[0].pod.acceptedBindingEpoch = 2;  // BEGIN 冻结新 epoch ⇒ 语义冻结门仍放行
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 166;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 512, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 512, 150.0f, 70.0f);
+    if (s.editingContextLive || !s.editorRetired) return 167;
+    if (!holdsPendingEndFor(s, ctx, "thermo-note-presentation")) return 168;
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 169;
+    if (s.events.back().acceptedBindingEpoch != 2) return 170;  // 相位取当前 accepted 事实
+  }
+  // C-c 换 semanticId（同槽改字段名 = 真换绑）：收场记录须冻结**旧**字段名。
+  {
+    Session s; addPresentationScene(s);
+    const int64_t ctx = focusAnchorAndTakeContext(s, 0);
+    s.accepted[0].semanticId = "thermo-note-rebound";
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 172;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 513, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 513, 150.0f, 70.0f);
+    if (s.editingContextLive || !s.editorRetired) return 173;
+    if (!holdsPendingEndFor(s, ctx, "thermo-note-presentation")) return 174;
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 175;
+  }
+  // C-d 换 resourceId（同 id 换承载资源）。
+  {
+    Session s; addPresentationScene(s);
+    const int64_t ctx = focusAnchorAndTakeContext(s, 0);
+    s.accepted[0].pod.resourceId = 9802;
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 177;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 514, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 514, 150.0f, 70.0f);
+    if (s.editingContextLive || !s.editorRetired) return 178;
+    if (!holdsPendingEndFor(s, ctx, "thermo-note-presentation")) return 179;
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 180;
+  }
+  // C-e 换 nodeKind（展示文本改投影成非文本交互层；仍走同一分支）。
+  {
+    Session s; addPresentationScene(s);
+    const int64_t ctx = focusAnchorAndTakeContext(s, 0);
+    s.accepted[0].pod.nodeKind = kKindImage;
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 182;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 515, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 515, 150.0f, 70.0f);
+    if (s.editingContextLive || !s.editorRetired) return 183;
+    if (!holdsPendingEndFor(s, ctx, "thermo-note-presentation")) return 184;
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 185;
+  }
+  // C-f 上下文已退役（只留 s.editorRetired 这一项在挡）。收场出口自带
+  // !editorRetired 幂等门，其效果被吸收成「什么都没再发生」，所以这一子例对
+  // editorRetired 这一项的判别力来自真实门的返回值（186）与不复活的会话状态，
+  // 这里如实记账，不用状态迁移假装它可单独观测。
+  {
+    Session s; addPresentationScene(s);
+    focusAnchorAndTakeContext(s, 0);
+    const size_t cancellations = g_cancelledRestoreReasons.size();
+    s.editorRetired = true;
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 186;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 516, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 516, 150.0f, 70.0f);
+    if (!s.editorRetired) return 187;                        // 已退役会话不得复活
+    if (!s.pendingEnds.empty()) return 188;                  // 同一上下文不补第二条收场
+    if (g_cancelledRestoreReasons.size() != cancellations) return 189;
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 190;
+  }
+  // C-g 上下文不再 live（首绑缺声明的失败路径形状：editing=true、未 retired，
+  // 但 live=false）。这一子例可整段观测——门必须判假，收场必须照常挂上。
+  {
+    Session s; addPresentationScene(s);
+    const int64_t ctx = focusAnchorAndTakeContext(s, 0);
+    s.editingContextLive = false;
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 192;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 517, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 517, 150.0f, 70.0f);
+    if (s.editingContextLive || !s.editorRetired) return 193;
+    if (!holdsPendingEndFor(s, ctx, "thermo-note-presentation")) return 194;
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 195;
+  }
+  // C-h 未在编辑（editing=false 而身份字段留旧值）：门判假，指针相位照旧。
+  {
+    Session s; addPresentationScene(s);
+    focusAnchorAndTakeContext(s, 0);
+    s.editing = false;
+    if (tapHitsLiveEditingBindingLocked(s, s.accepted[0])) return 197;
+    touch(s, CJGUI_OHOS_TOUCH_BEGIN, 518, 150.0f, 70.0f);
+    touch(s, CJGUI_OHOS_TOUCH_END, 518, 150.0f, 70.0f);
+    if (countKind(s, kEvPointerBegin) != 1 || countKind(s, kEvPointerEnd) != 1) return 198;
+    if (s.editorRetired) return 199;  // 未编辑 ⇒ 收场出口 no-op，不产生退役状态
+  }
+  return 0;
+}
+'''
+
+
 def extract_method(text: str, signature: str) -> str:
     start = text.index(signature)
     opening = text.index("{", start)
@@ -575,6 +797,21 @@ def extract_method(text: str, signature: str) -> str:
         if depth == 0:
             return text[start:index + 1]
     raise ValueError("unterminated method")
+
+
+def span(text: str, start_anchor: str, end_anchor: str) -> str:
+    """生产原文切片（含两端）：替身的纯数据字段用它注入，字段漂移即编译失败。"""
+    start = text.index(start_anchor)
+    return text[start:text.index(end_anchor, start) + len(end_anchor)]
+
+
+# H 线（可视编辑包）新增的 Session owned 身份字段与 A1 三段镜像声明。锚点是生产
+# 声明行本身：改名/改类型/删字段都会让这里 index() 抛错或让摘录编译失败，
+# 而不是让 ownedMirrorDeclarationLocked 的换绑借用门静默少判。
+OWNED_ID_ANCHORS = ('    bool ownedTextSessionEnabled = false;',
+                    '    uint64_t ownedTextSessionBindingEpoch = 0;')
+MIRROR_ANCHORS = ('    struct OwnedMirrorDeclaration {',
+                  '    int64_t editingMirrorOwnerVersion = -1;')
 
 
 def extract_constants(text: str) -> str:
@@ -601,6 +838,13 @@ __TOUCHGESTURE__
   int64_t textPressBeginMs = 0;
   bool editing = false;
   bool editorRetired = false;
+  // 可视编辑包（2026-10-05）：owned 会话锚点与 A1 三段镜像声明字段取**生产原文**
+  // （build_harness_text 用 span 注入两处占位）。begin_edit 的播种分支与
+  // ownedMirrorDeclarationLocked 的换绑借用门都读它们；手写副本落后于生产（曾缺
+  // declaredBindingEpoch / editingMirrorOwnerVersion）只会让那道门静默少判，
+  // 字段漂移必须在这里编译期失败。
+  %OWNED_ID_FIELDS%
+  %MIRROR_FIELDS%
   uint64_t editingNodeId = 0;
   int64_t editingResourceId = -1;
   uint32_t editingNodeKind = 0;
@@ -730,10 +974,12 @@ struct SceneNode {
 # begin_edit 引用 settle；velocity/stamp 供 synth 引用；synth 引用其余。
 # anchor_* 必须排在 end_edit/begin_edit/tap/synth 之前：这四个都会调用它们。
 EXTRACT_ORDER = ["editable_kind", "hit", "viewport_hit", "identity", "stamp", "velocity", "cancel",
+                 "mirror_decl", "classify_enum", "classify", "open_stream", "queue_phase",
                  "anchor_record", "anchor_clear", "clamp", "push_end",
                  "end_edit", "text_changed", "settle", "begin_edit", "drag_matches", "drag_init",
                  "handle_begin", "extent_queue", "word_request", "selection_apply", "scroll_intent",
-                 "consume", "tap_count", "tap_remember", "caret_menu_hit", "tap_select", "tap", "synth"]
+                 "consume", "tap_count", "tap_remember", "caret_menu_hit", "tap_select",
+                 "tap_live_binding", "tap", "synth"]
 
 
 def selection_declarations(source: str, include_menu_intent: bool = True) -> tuple[str, str]:
@@ -760,6 +1006,12 @@ def build_harness_text(main_text: str, source_text: str | None = None) -> str:
         "stamp": "void stampTouchEvent(const Session &s, QueuedEvent &ev)",
         "velocity": "double estimateReleaseVelocityPxPerMs(const Session::TouchGesture &g)",
         "cancel": "void cancelTouchGestureLocked(Session &s)",
+        "mirror_decl": "static const Session::OwnedMirrorDeclaration *ownedMirrorDeclarationLocked(const Session &s,\n    uint64_t nodeId, int64_t resourceId, uint32_t nodeKind)",
+        # 可视编辑包 C 组：共用跨阈值分类与指针流助手（真实生产函数，非桩）。
+        "classify_enum": "enum class CrossThresholdDragClass",
+        "classify": "CrossThresholdDragClass classifyCrossThresholdDragLocked(const Session &s, float dx, float dy)",
+        "open_stream": "static bool openPointerStreamAtGestureStartLocked(Session &s)",
+        "queue_phase": "static void queuePointerPhaseLocked(Session &s, uint32_t kind, float x, float y)",
         # 人类锚（H1-R.a）原样摘出：end_edit/begin_edit 清锚，tap/synth 在人的落点上
         # 记锚。它是触摸链自己的可观测结果，不是可以桩掉的外部依赖。
         "anchor_record": "static void recordHumanSelectionAnchorLocked(Session &s, const char *origin)",
@@ -782,13 +1034,16 @@ def build_harness_text(main_text: str, source_text: str | None = None) -> str:
                           "                              int64_t delta)\n{"),
         "consume": "int64_t consumeScrollSampleLocked(Session &s, float dySample)",
         "tap": "void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)",
+        "tap_live_binding": "bool tapHitsLiveEditingBindingLocked(const Session &s, const SceneNode &node)",
         "tap_count": "uint32_t consecutiveTextTapCountLocked(Session &s, const RawTouchSample &sample)",
         "tap_remember": "void rememberTextTapLocked(Session &s, float x, float y)",
         "caret_menu_hit": "bool collapsedCaretMenuHitLocked(const Session &s, float x, float y)",
         "tap_select": "bool requestConsecutiveTapSelectLocked(Session &s, const SceneNode &node)",
         "synth": "void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)",
     }
-    body = "\n".join(extract_method(source, signatures[name]) for name in EXTRACT_ORDER)
+    body = "\n\n".join(
+        extracted + ";" if (extracted := extract_method(source, signatures[name])).startswith("enum class") else extracted
+        for name in EXTRACT_ORDER)
     harness = '#include "cjgui_internal_renderer.h"\n#include "cjgui_ohos_ingress.h"\n'
     harness += '#include <atomic>\n#include <cmath>\n#include <cstdint>\n#include <deque>\n'
     harness += '#include <memory>\n#include <mutex>\n#include <string>\n#include <vector>\n#include <algorithm>\n#include <utility>\n'
@@ -835,7 +1090,11 @@ static Session *lookupSessionLocked(uint64_t session) {
     exact_cancel = extract_method(source,
         "CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(")
     handles, selection_state = selection_declarations(source)
-    harness += STUBS + queued + raw + handles + REPLICA.replace("__TOUCHGESTURE__", gesture).replace("__SELECTIONSTATE__", selection_state)
+    harness += (STUBS + queued + raw + handles
+                + REPLICA.replace("__TOUCHGESTURE__", gesture)
+                        .replace("__SELECTIONSTATE__", selection_state)
+                        .replace("%OWNED_ID_FIELDS%", span(source, *OWNED_ID_ANCHORS))
+                        .replace("%MIRROR_FIELDS%", span(source, *MIRROR_ANCHORS)))
     harness += '''bool selectionDragMatchesLocked(Session &, const Session::SelectionDrag &);
 static void recordHumanSelectionAnchorLocked(Session &, const char *);
 '''
@@ -891,6 +1150,29 @@ def legacy_binding_red_source() -> str:
     if red.count(frozen_condition) != 1:
         raise AssertionError("frozen fling condition not found exactly once")
     red = red.replace(frozen_condition, "true)")
+    return red
+
+
+# 生产「其他交互节点」分支的当前形态（修复后）与其修复前形态。两串都按原文精确
+# 匹配：门的写法一改，unconditional_blur_red_source 就以 AssertionError 报出，
+# 而不是悄悄产出一个从未被反演的"变异"并把绿色误报成判别力。
+TAP_BLUR_GUARDED = ("    if (!tapHitsLiveEditingBindingLocked(s, node)) {\n"
+                    "        enqueueEndEditingForTapLocked(s);\n"
+                    "    }\n")
+TAP_BLUR_UNCONDITIONAL = "    enqueueEndEditingForTapLocked(s);\n"
+
+
+def unconditional_blur_red_source() -> str:
+    """Test-only inversion of the tap blur back to the pre-fix unconditional form:
+    the guarded call in executePendingTapLocked's "other interactive node" branch
+    becomes a bare enqueueEndEditingForTapLocked(s). Used by the mutation control;
+    never written back to the tree."""
+    source = SOURCE.read_text()
+    if source.count(TAP_BLUR_GUARDED) != 1:
+        raise AssertionError("guarded same-binding tap blur is not the single form in production")
+    red = source.replace(TAP_BLUR_GUARDED, TAP_BLUR_UNCONDITIONAL)
+    if red == source:
+        raise AssertionError("unconditional blur inversion did not apply")
     return red
 
 
@@ -982,6 +1264,83 @@ template <class... Args> static void captureLog(const char *format, Args... args
             completed = subprocess.run([str(binary)], capture_output=True)
             self.assertNotEqual(completed.returncode, 0,
                                 "legacy zero-tail/fling re-stamp behavior must fail the frozen counterexamples")
+
+    def test_repeated_tap_on_live_presentation_binding_keeps_the_context(self) -> None:
+        """B 组 KEEP 腿：presentation TEXT 锚（kind=kKindText=3，不在
+        isEditableTextKind 里）的**当前活编辑绑定**被重复点选时，同一手势不得把
+        自己的编辑上下文退役——真实链（BEGIN/END→executePendingTapLocked）后
+        live 仍真、editorRetired 仍假、ctx 编号不变、pendingEnds 为空、退役体的
+        票据取消未发生；两相位指针事件仍恰好各一条并带被点节点自己的身份。"""
+        harness = build_harness_text(MAIN_TAP_LIVE_BINDING_KEEP)
+        # 被跑的必须是生产原文：新门与 tap 函数本体都要真的被摘进二进制，
+        # 缺一边就等于在测桩。
+        self.assertIn("bool tapHitsLiveEditingBindingLocked(const Session &s, const SceneNode &node)", harness)
+        self.assertIn("void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)", harness)
+        self.assertIn(TAP_BLUR_GUARDED, harness)
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "tap_live_binding_keep.cpp"
+            binary = pathlib.Path(directory) / "tap_live_binding_keep"
+            path.write_text(harness)
+            subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-Wno-unused-const-variable", "-Wno-unused-function",
+                            "-I", str(SNAPSHOT), "-I", str(INGRESS.parent),
+                            str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
+    def test_tap_blur_still_retires_on_any_single_binding_identity_drift(self) -> None:
+        """B 组 CONTROLS 腿（正向控制）：与 KEEP 腿同构的场景里每次只让完整绑定
+        身份的一个分量不等（nodeId / acceptedBindingEpoch / semanticId / resourceId /
+        nodeKind），或让上下文本身已退役 / 不再 live / 未在编辑。每种漂移都必须
+        照常完整退役：editorRetired=true、editingContextLive=false、恰好一条
+        PendingEnd 且冻结将死上下文自己的 ctx 与旧字段名，指针两相位照旧交付。
+        这一腿挡住的是「修复退化成永不失焦」以及谓词少比一项。"""
+        harness = build_harness_text(MAIN_TAP_LIVE_BINDING_CONTROLS)
+        self.assertIn("void enqueueEndEditingForTapLocked(Session &s)", harness)
+        self.assertIn("static void pushPendingEndLocked(", harness)
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "tap_live_binding_controls.cpp"
+            binary = pathlib.Path(directory) / "tap_live_binding_controls"
+            path.write_text(harness)
+            subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-Wno-unused-const-variable", "-Wno-unused-function",
+                            "-I", str(SNAPSHOT), "-I", str(INGRESS.parent),
+                            str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
+    def test_unconditional_blur_mutation_trips_only_the_same_binding_leg(self) -> None:
+        """变异反例：把生产的门反演回修复前的无条件 enqueueEndEditingForTapLocked，
+        KEEP 腿必须以**自己的主断言退出码**变红（指认到腿，而非「随便哪条红了」），
+        而 CONTROLS 腿在旧实现下必须仍全绿——否则控制腿只是装饰，KEEP 腿的红也无
+        从归因。旧形式确实是让它变红的那一处改动。"""
+        red = unconditional_blur_red_source()
+        keep_harness = build_harness_text(MAIN_TAP_LIVE_BINDING_KEEP, source_text=red)
+        controls_harness = build_harness_text(MAIN_TAP_LIVE_BINDING_CONTROLS, source_text=red)
+        # 变异确实落到被摘出的 tap 函数体里（门没了），而谓词函数本身仍在源码里
+        # ——变的只有那一句调用。
+        self.assertNotIn(TAP_BLUR_GUARDED, keep_harness)
+        self.assertIn("bool tapHitsLiveEditingBindingLocked(const Session &s, const SceneNode &node)", keep_harness)
+        with tempfile.TemporaryDirectory() as directory:
+            keep_path = pathlib.Path(directory) / "tap_live_binding_keep_legacy.cpp"
+            keep_binary = pathlib.Path(directory) / "tap_live_binding_keep_legacy"
+            keep_path.write_text(keep_harness)
+            controls_path = pathlib.Path(directory) / "tap_live_binding_controls_legacy.cpp"
+            controls_binary = pathlib.Path(directory) / "tap_live_binding_controls_legacy"
+            controls_path.write_text(controls_harness)
+            # 旧形式让生产谓词在自己的 tap 里失去调用点，编译告警与判据无关，
+            # 因此与既有负对照一样不带 -Werror（只跑，不听告警）。
+            for source_path, target in ((keep_path, keep_binary), (controls_path, controls_binary)):
+                subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra",
+                                "-Wno-unused-const-variable", "-Wno-unused-function",
+                                "-I", str(SNAPSHOT), "-I", str(INGRESS.parent),
+                                str(source_path), "-o", str(target)], check=True)
+            keep = subprocess.run([str(keep_binary)], capture_output=True)
+            self.assertEqual(keep.returncode, TAP_KEEP_LEG_TRIP_EXIT,
+                             "pre-fix unconditional blur must trip the same-binding preservation "
+                             "assertion itself, not some other leg")
+            controls = subprocess.run([str(controls_binary)], capture_output=True)
+            self.assertEqual(controls.returncode, 0,
+                             "single-component identity drift must retire under the legacy form too; "
+                             "a red control leg here means the controls are not discriminating")
 
 
 if __name__ == "__main__":

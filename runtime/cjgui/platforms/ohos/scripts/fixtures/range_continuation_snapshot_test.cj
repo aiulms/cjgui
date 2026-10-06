@@ -20,7 +20,7 @@ func queuedOldProjectionRangeContinuesOnlyOwnerAcceptedChain(): Unit {
     @Assert(w.commit(InternalRendererPumpResult(51u32, 1u64, 1u32, 5u32), ""))
     w.nativeInputScene = HarnessScene(2, "a Z")
     let next = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1, selectionRange: (1, 1))
     @Assert(next.nodeId, 107)
     @Assert(w.commit(InternalRendererPumpResult(51u32, 1u64, 1u32, 1u32), "l"))
     @Assert(w.owner.text(), "al Z")
@@ -34,7 +34,7 @@ func actualSessionRejectsExternalOwnerBetweenQueuedRangeEvents(): Unit {
     w.nativeInputScene = HarnessScene(2, "a Z")
     w.owner.bumpVersionOnly()
     let next = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1, selectionRange: (1, 1))
     @Assert(next.nodeId, -1)
     @Assert(!w.commit(InternalRendererPumpResult(51u32, 1u64, 1u32, 1u32), "l"))
     @Assert(w.owner.text(), "a Z")
@@ -50,7 +50,7 @@ func rangeInsertedFragmentEqualToWholeMirrorIsStillARealDelta(): Unit {
     @Assert(w.owner.text(), "aa")
     w.nativeInputScene = HarnessScene(2, "aa")
     let next = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "aa", 1)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "aa", 1, selectionRange: (2, 2))
     @Assert(next.nodeId, 107)
     @Assert(w.commit(InternalRendererPumpResult(51u32, 1u64, 1u32, 1u32), "aa"))
     @Assert(w.owner.text(), "aaaa")
@@ -74,7 +74,7 @@ func blurCancelsTheLocalContinuationCredential(): Unit {
     w.nativeInputScene = HarnessScene(2, "a Z")
     w.clearLocalTextContinuation()
     let next = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1, selectionRange: (1, 1))
     @Assert(next.nodeId, -1)
 }
 
@@ -86,7 +86,7 @@ func severalAcceptedScenesRetainTheSameQueuedRangeOrigin(): Unit {
     @Assert(w.commit(InternalRendererPumpResult(51u32, 1u64, 1u32, 1u32), "l"))
     w.nativeInputScene = HarnessScene(3, "al Z")
     let next = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "p", 1)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "p", 1, selectionRange: (2, 2))
     @Assert(next.nodeId, 107)
     @Assert(w.commit(InternalRendererPumpResult(51u32, 1u64, 2u32, 2u32), "p"))
     @Assert(w.owner.text(), "alp Z")
@@ -113,7 +113,7 @@ func externalDifferentValueRevokesTheSameQueuedRangeOrigin(): Unit {
     w.nativeInputScene = HarnessScene(2, "a Z")
     w.owner.externalWrite(0, 0, "Agent:")
     let next = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "l", 1, selectionRange: (1, 1))
     @Assert(next.nodeId, -1)
     @Assert(!w.commit(InternalRendererPumpResult(51u32, 1u64, 1u32, 1u32), "l"))
     @Assert(w.owner.text(), "Agent:a Z")
@@ -129,9 +129,9 @@ func newLocalOriginCannotAdmitEarlierOrFutureProjection(): Unit {
     @Assert(w.commit(InternalRendererPumpResult(51u32, 10u64, 1u32, 1u32), "l"))
     w.nativeInputScene = HarnessScene(11, "al Z")
     let old = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "p", 1)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "p", 1, selectionRange: (2, 2))
     let future = w.resolveLocalTextContinuation(51, 107, 77,
-        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "p", 12)
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, "p", 12, selectionRange: (2, 2))
     @Assert(old.nodeId, -1)
     @Assert(future.nodeId, -1)
 }
@@ -216,7 +216,11 @@ func selectionContinuationRequiresUnrevokedLocalOrigin(): Unit {
     let w = RangeWindowHarness()
     @Assert(w.commit(InternalRendererPumpResult(51u32, 1u64, 1u32, 5u32), ""))
     w.nativeInputScene = HarnessScene(2, "a Z")
+    // 现行契约（owned 锚点同权）：身份与当前 accepted 场景严格相符的选区回声
+    // 不经本地续写凭据——正控先证该回声可被严格路径解析。
+    @Assert(w.select(InternalRendererPumpResult(33u32, 1u64, 2u32, 2u32), "a Z"))
+    w.nativeInputScene = HarnessScene(2, "a Z")
     w.clearLocalTextContinuation()
-    @Assert(!w.select(InternalRendererPumpResult(33u32, 1u64, 2u32, 2u32), "a Z"))
-    @Assert(w.observedStart, 0)
+    // 非严格事件（落后一代，只能走本地续写）：凭据已撤 ⇒ 必须拒绝。
+    @Assert(!w.select(InternalRendererPumpResult(33u32, 1u64, 2u32, 1u32), "a Z"))
 }

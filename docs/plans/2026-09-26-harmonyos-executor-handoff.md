@@ -1,13 +1,13 @@
 # CJGUI 鸿蒙后端：无上下文执行工具交接
 
-更新日期：2026-09-28。用户已授权接续实施。本文件将当前整包任务整理为新工具可直接执行的交接说明，不另立阶段或维护第二份进度账。唯一当前状态仍见 [ACTIVE_DIRECTION](../../runtime/cjgui/ACTIVE_DIRECTION.md)，详细历史和原始判据见[阶段任务页](2026-09-25-harmonyos-backend-first-chain-prompt.md#review5-current-package)。
+更新日期：2026-10-05。当前执行入口为[可视编辑交付后复核与接续 A–E](#h-visual-edit-review-20261005)，继续现有 Pharos 的 OHOS 可视编辑目标。用户已授权接续实施。本文件保留原阶段与证据，不另建执行卡；唯一当前状态见 [ACTIVE_DIRECTION](../../runtime/cjgui/ACTIVE_DIRECTION.md)，更早原始判据见[历史阶段页](2026-09-25-harmonyos-backend-first-chain-prompt.md#review5-current-package)。
 
 **执行要求：必要返工与新框架能力一起推进，持续完成整个工作包。等待编译、Codex 咨询、子代理或其他进程时，优先推进真实独立、尚未阻塞的任务；客观依赖或资源互斥使其他工作无法安全推进时，才等待。** 具体操作规则见第十节。
 
 <a id="review9-current-package"></a>
 ## 第九次指导复核：统一资源生命周期，完成当前可达项（2026-09-27）
 
-**当前结论（2026-10-02）：**S1样式反例修复与Pharos共享类接线保留；本次生产函数离线反例仍证实旧end误寄、绑定幂等漏epoch、安装挂起/假成功，双owner总门可接受错区间和误删。thermo尚未调用新生命周期。按[当前R1–R4整包](#h-source-preview-followup-20261001)接续，S1–S4未整体收口；旧N1–N4不重跑。
+**当前结论（2026-10-04 round18指导验收）：**confirmed 已实际接入统一轮次迁移，原三反例及固定完成门全部通过；[本段工具收尾正式结束](#h-round18-tooling-accepted-20261004)。当前正常消费与R-C版本准入继续有效，不再按旧指导重开设备/生产/构建工作。
 
 <a id="review9-handover-review"></a>
 ### 收尾限域复核：修接续入口，保留能力门控待验（2026-09-27）
@@ -307,22 +307,360 @@ bridge 队列、核心/renderer 身份、焦点和消费按写集推进；等待
 **两个交付切面。** H1：一个真实 Pharos normal HAP 的小文档源码编辑→人/Agent接续→撤销/重做→保存重开。H2：[原惯性 r10 必做修复](#h-inertial-scroll-review-20260929)及共同窗口消费。二者均属本包，完成情况分别报告；完整惯性不是 H1 的总前置，ABI/冻结绑定则是运行新 GUI 的安全前置。不得用 H1 通过替 H2 结项，也不因惯性细节把产品目标构建、存储端口和宿主工作全部停下。完整 visual、出版导出与 GB 文件后续再做。
 
 <a id="h-source-preview-followup-20261001"></a>
-#### H 接续：把共享输入交接做成完整事务，完成严格双 owner 消费（2026-10-02 指导复核）
+#### H 接续：固定当前源锚，完成免点击交接与实际提交观察（2026-10-03 round5 后复核）
 
-**2026-10-02 R3补轮指导复核：有实质进展，整包不接受“全部收口、无剩余”。** 保留新 provider／范围桥、共享类接线、完整绑定幂等和 end FIFO、固定截止/native拒绝修复，以及执行者报告的 thermo 精确字符串与 Pharos 双owner运行结果；后者仍按原HAP/脚本范围记录。本次没有重建HAP或操作设备，仅核源码和原JSON，用当前生产函数与同步命令做隔离反例。新增桥的二次复用、正典交付和新检查器仍有下列确定缺口；R1原提交契约也未兑现。旧N1–N4/S1与未受影响绿色不重开。
+**最新结论：round5 两款正常消费者的输入／精确 owner 结果保留；整包尚未关闭。** 指导离线复现了恢复证据错配与转发跨行误判，B 必需的 T2 入队／分发顺序仍是 `pass:null`；本节末“round5 后指导”是当前接续要求。此前 round4 已修项保留，不按历史表重新返工。继续迁移现有 Pharos，复用共同 owner、范围会话、共享代理和提交票。Astra 第二轮对 app owner 串行路径的[最终裁决](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/h-r1-source-admission-astra/answer-followup-1.md>)保持有效，不扩张任意线程 native 调用保证或另造调度器。
 
-| 接续项（同一包，非新产品范围） | 本次证据与要求 |
+**本轮实际接受。** 新 [present 登记测试](../../runtime/cjgui/platforms/ohos/scripts/test_r1_present_registration_native.py)调用生产 present／configure／query／ACK，由 present 自己登记 pending，复用真实 WaitableJob；指导独立跑得 **3/3**，破坏登记、放开未 ACK 门禁两项变异均被拒。绘制和线程调度为明确替身，结论限定票据入口与结算契约，**该子项关闭，不再重写或循环复验**。此前 renderer 修复、thermo `c74759e6…` 15腿、原9/9隔离与 macOS 正常构建原证保留。执行者报告本轮 normal Pharos `39b32eea…` 启动5/5；本次指导未部署或操作设备。
+
+**round4 指导记录（历史，已修项不重开）。** [隔离原函数判别](../../artifacts/h-r-final-20261002/guidance-review/round4-review.json)与[复现入口](../../artifacts/h-r-final-20261002/guidance-review/round4-review.py)不接设备、不修改生产或历史 JSON。它们证明的是检查器盲区，不能把工具问题直接归因到应用。
+
+| 待修位置 | 当前事实与影响 |
 | --- | --- |
-| **正典同源交付（R3）** | `thermostat_application` 的五个provider入口、note历史/重基、两处operationResourceId仅存在`labs/ohos_thermo_app/entry/thermostat_application/src`，正式`runtime/cjgui/examples/thermostat_application/src`缺失。[实际同步段反例](../../artifacts/h-r-final-20261002/guidance-review/driver-and-sync.json)在临时副本执行原rsync，provider由存在变为消失。把所需改动归回正典应用，核对entry配置与构建参数的权威来源；连续两次正式同步不得丢接线。从无旧target的独立装配目录经正式入口完成最终一次normal构建，不以手改lab副本交付；不重写已正确的同步基础设施。 |
-| **活动会话绑定（R3框架）** | [原方法仓颉反例](../../artifacts/h-r-final-20261002/guidance-review/binding-result.json)：A942首次绑定及重复聚焦正控成立；窗口改绑B313后回A，实际仍313；同node更换semantic仍沿用旧field-A。region的四字段缓存不能代表窗口当前绑定，主树/snapshot同缺口。以窗口实际活动会话、accepted完整身份与绑定代次判幂等；同绑定重复focus保留组合/选区，真正换绑、关闭/重开、其他region接管后回访必须重绑。先验证当前accepted目标，再绑定；迟到旧FOCUS不得夺回新owner。程序化与平台FOCUS共用一次接入，核对回调重复、返回值与重入边界。将反例纳入现有真实窗口/region测试，不只保留本指导的最小替身。 |
-| **thermo总门与资源归属（R4工具）** | [当前函数/实际main反例](../../artifacts/h-r-final-20261002/guidance-review/driver-and-sync.json)：找不到PID退到全局日志；新无关INSTALLED触发旧[0,4)配对；fport创建rc32仍rm固定映射。严格绑定target/bundle/PID/连接实例、field/context/mount、安装序号与动作前游标；失配/日志缺失具名失败，不回退旧记录。使用既有转发归属工具，创建确认和当前映射匹配才清理。插入、替换、外部SET_NOTE、继续输入各冻结owner版本与完整字节，校验真实回执及恰好一次，不只最终字符串相同；零输入/重复写/错PID/旧确认/错字段/创建失败负控须使实际总门失败。保存原协议回包及当轮相关完整日志，不能只保存自报summary；可重用确实存在的原件，不补造。 |
-| **提交来源与输入权限（原R1未完）** | 当前仅比较`acceptedPaintTicketId < editingBornTicketId`，两条成功路径已先交换accepted树，再决定跳过sync；未落实原Astra的来源/父accepted/完整绑定后像在Flush前的准入。[原函数反例](../../artifacts/h-r-final-20261002/guidance-review/ticket-result.json)沿现有测试6a造状态，得到`accepted_nodes=0 live=1 input_context_accepted=1`。这是现有测试状态的反例，不冒充设备上已复现乱序。不能把票号大小改名lineage就算闭合；核实实际串行提交可达性和等价契约，若该状态不可达，用真实提交入口证明并移除虚假的保活正控。来源过期/不完整候选仍须在不可逆提交前拒绝，有效删除/只读化首次发布即退役，缓冲修改前验证当前accepted授权。已有end FIFO/完整身份修复保留。 |
+| `verify_pharos_dual_owner.py::reach_mode` | 虽删掉主流程的补点，辅助函数仍最多8轮切换，每轮超时点击正文／固定(660,900)作为 kick。隔离运行得“切换→正文补点→再切换→成功”。10/10负控把整个 reach_mode 替身化，未覆盖此路径；不能据此声称全链免点击。 |
+| `restored_selection`／基线源锚 | 正文查询接受 node313、ctx99 的备注 ACK，并给它拼上正文 mount；围栏丢失退回0后会接受旧 ACK。基线又允许扫描整段历史，再把旧位置 clamp 到当前文末。裁剪不是同版本原锚证明；返回文末也不能证明恢复中段。 |
+| `verify_r1_pre_permission_replay.py` | `accepted-swap` 是同步或pending结算后的成功发布，**不是 SurfaceFlush 入口**；Flush 后租约／几何失败或尚未结算都可能没有该行，不能以日志缺失推出Flush=0。探针仍不确定本次触发票、未投递并关联T2来证明 owner 顺序；隔离输入中其他session99的票456也被计入。 |
+| 转发与归属 | 不再启动即rm、finally清理、触发异常退出是进步；但 `hdc` 丢弃返回码，ensure_forward仅查stdout含OK。隔离的退出32／stdout OK仍取得清理权。尚无明确target、当轮PID／session与token绑定，不能算归属闭合。 |
 
-**执行顺序与终点。** 先将上述当前反例接入受影响测试，再连续修正典来源、活动绑定、总门和原R1剩余。新公开范围桥保留experimental；读取的版本/长度/正文应来自同一一致观察，写入仍由owner原子校验，沿既有有界字段契约，不扩成GB会话。新报告测试实际点的是`hand-scroll-note`，不能仅因经过region就称运行时生成字段已消费；最终同一thermo运行中增加公共候选生成TEXT的焦点→输入→owner读回，再切至另一owner/编辑面并回访，证明共享桥可重新获得正确绑定。Pharos只补受本次共享变更影响的双owner/旧输入隔离链，不循环全部历史。
+round4 唯一归档的完整驱动 JSON 停在 `note_surface_not_reachable`。报告中的一次“免点击发回字、字节+3”可保留为局部观察，尚无可审阅的完整原锚链。**预览／备注阶段目前未归因，不预先标为设备抖动或产品既有问题。**
 
-最终冻结一次源码，经正式同步/构建得到Pharos＋thermo normal包，记录正典输入→同步副本→平台/模板→HAP→当轮PID的可复核关系。修改共享主树需一次受影响macOS普通消费者定向检查；不接管E大文档，不改其在途函数或重跑E整包。成本仅沿本轮采样记同身份聚焦重绑次数、安装次数、终态停止及owner读回；不另建成本表。全部新增边界通过后只更新本节和ACTIVE/STATUS的H短状态，报告实现／正常消费／未验范围。
+**A．先固定一次有效准备与原锚，随后跑真正的免点击往返。**
 
-**咨询与停止打补丁。** 普通明确接线直接做；查当前华为SDK/官方文档的focus/attach/selection契约，成熟框架仅参考活动客户端、提交来源和失效机制，简记采用与差异，不引依赖。R1已有[Astra原裁决](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/consultations/s2-identity-handoff-astra/answer.md>)；若认为当前串行结构改变适用前提，将本次反例、实际提交路径和拟定不变量交`gpt-6-astra/max`一次聚焦只读裁决，不再问泛泛路线。日常疑难Pi显式`zai-coding-cn/glm-5.3`独立上下文；复杂根因无可靠方案用`gpt-6-sol/max`。沿两仓AGENTS累计失败规则，不以换模型清零、延时/冷启动追绿或新增宽限替代机制。重放入口见[replay.py](../../artifacts/h-r-final-20261002/guidance-review/replay.py)；仓颉编译在临时目录，不使用共享cjpm target。
+1. **准备阶段允许一次真实点击正文中段建立锚点。** 使用自有临时夹具，前后有可区别的内容；重置后先确认当前 owner版本／完整字节、accepted正文绑定及平台实际选区，再冻结源字节caret。准备点击不计作切回后的补点。不要从旧日志找位置、不要在检查器里clamp旧锚；越界／版本不合／身份缺失具名失败或重新取得当前事实，不以文末默认位置替代中段恢复。
+2. 一次进入B并按现有独立oracle完成非空选择替换；一次切回A；框架自行恢复后，一次输入“回”，必须在冻结中段caret、removed=0、恰好一笔owner事务、全文精确，B版本／正文不变。检查器所有调用层都不得追加正文click/tap/focus、kick、重复toggle或重发输入。等待状态可以有界轮询，用户动作只能投一次。
+3. **允许框架现有两条合法路径**：显式恢复票，或重新挂载时安装当前快照；不为了符合探针强制新增ProxyRestoreRequest，也不强制context／ticket数值递增。两条路径都须绑定当前owner／版本、accepted node／binding、mount／context及本次交接，读到实际平台选择并确认窗口采用；单纯focus日志或任意selection forwarded不等于已安装／已采用。补齐必要只读观察即可，不另造生命周期。
+4. 围栏淘汰必须具名 `evidence_lost` 或用明确的当轮游标／身份恢复，不能自动从0扫描。恢复ACK按完整目标配对，不能只取最后一条并拼接别的mount。负控接实际 `reach_mode` 和恢复解析：错节点／旧context、丢围栏、旧版本越界锚、返回错误位置／默认文末、辅助点击都必须被对应判据拒绝；设备边界可以替身，不能把待测切换函数本身stub掉。
+5. 若单次切换仍失败，一轮有界记录 `命令入队/分发→previewMode/revision→buildUi→accepted版本/节点→焦点/挂载→平台安装/窗口采纳`，按断点修复，产品只供模式版本／owner／SourceMap，共同交接修框架。沿用已有模式版本和日志资产；不要重复重装、增等待或用“设备抖动”结束归因。
+
+**B．只补实际 Flush 与 owner 顺序观察，不重开已通过的登记测试。**
+
+- 正控以同一target／bundle／PID／app实例／session／ticket证明真实 `OH_Drawing_SurfaceFlush` 进入、返回及该票合法终态。负控冻结T1后确认许可前held／超时取消，释放后按**T1自身**观察 Flush调用数0与唯一终态；后续T2合法刷新不能混入。`accepted-swap`只作为成功发布证据。不能用“整个hilog没有新票”或“没有成功发布”替代；观察缺失、轮转或别的实例一律不能判绿。
+- 复用现有实际Flush计量，缺票号时在verify构建最小补有界记录，关联入队／许可／Flush／完成；不改变正常调度或公共ABI。一次真实TCP T2在T1许可前held时入队，在waitFor返回前dispatch=0；取消返回后可继续。记录入队/dispatch/终态顺序，不用CONTROL统计返回冒充业务分发证明。许可后PENDING允许后续业务，未ACK拒新候选由已通过离线入口链覆盖，不再另外追设备组3竞态。
+- 先复用[现有入口](../../runtime/cjgui/platforms/ohos/scripts/run_pending_real_device_checks.sh)已经验证的创建与清理契约：指定target，子进程退出0加明确创建回执、实际映射匹配才拥有清理权；对仅在脚本内的实现可抽必要薄工具，不能只复制“stdout有OK”的弱判断。核本轮PID/session/token与临时文档，所有出口有归属清理和失败归档，未知端点不写应用。用户7856转发与原实例保留。
+
+**C．完成一轮受影响正常消费并交付。**
+
+先离线使上述工具反例有判别力，再运行设备；不要带着已知错误的判据试跑。仅测试改动复用匹配指纹的normal产物；确有共享生产修复才正式入口串行重建，Pharos跑原锚往返，thermo只补受影响共同输入链。闸门包与normal分列，本次结束保留正常包和必要原证，按准确身份回收自有实例／转发；用户正文、剪贴板及E写集不动。无需重跑已绿3/3、正典同步、N1–N4、图片／惯性全矩阵、macOS或E大文档。
+
+**本轮结果（2026-10-03，round5-C）。** 共同输入链的「备注面不可达」经**两轮 GLM 独立只读咨询**定位到真实断点并修复，三处共享生产改动（框架 Cangjie×2 + 渲染器×1）加一处页面缺口：
+
+- **① 框架·空正文 no-op 跳过**（`composable_ui_window.cj` `bindRangeTextSession`）：carry 命中空正文 + carried 等于 bind 后选区时不再 arming——平台在空正文上只有唯一合法落点 0，该票是**可证明的平台无操作**。
+- **② 框架·资格门**（`carriedSelectionFor`）：只有「同节点重绑」或「已有冻结锚（`nodeSelectionMemory`）」才交回落点；**首绑新节点一律 None**。根因：kind-31 FOCUS 事件结构性携带 (0,0)，窗口先 `rememberInteraction(...,31,0,0)` 再 bind，第一分支对刚聚焦节点必读到该缺省投影（滞后于人锚，非竞争）。
+- **③ 渲染器·人锚优先守卫**（`ohos_renderer.cpp` 签发入口 `cjgui_internal_renderer_recover_text_proxy_ticket`）：本票若伴随**未消费人锚**、身份一致、票目标与人的真实落点分歧，则在一切状态改动前**拒绝 arming**（不执行 native 落点硬写），native 保持人的点击，由 pending caret 推送走同一条共享生命周期安装。只挂本入口，不扩大 owner 回滚／坐标重基行为面；复用既有状态码，**未新增 ABI**。
+- **④ 页面·`action==='restore'` 处理器**（thermo `labs/ohos_thermo_asm_r3` 页）：第二消费者此前缺此分支，恢复通知落入通用挂载路径被静默丢弃→票据永不 ACK→输入门永久关闭。补后与 Pharos 页同一实现。
+
+**设备（normal 包，串行重建 Pharos 与 thermo，执行者归档）。** thermo `verify_thermo_shared_lifecycle.py` **status=OK，报告9/9**：install confirmed[0,0]／input-insert v+26 精确／nonempty-select[0,4]／exact-replace v+1 精确／external-set 精确／post-external-select[15,15]／continue-input v+1 精确／generated-select[1,1]／generated-input v+2／**hand-revisit-select[12,12]** v+1／generated-revisit[1,1] v+2。事务数按各腿 `expected_txns` 核对，逐字符输入26笔、G1/G2各2笔，不表述成“各腿恰好一笔”。Pharos `verify_pharos_dual_owner.py` **status=OK，11/11 必需值**，含 `a_resume_at_frozen_anchor` 与 `a_resume_removed_is_zero`；指导复算其最终 owner hex 与保存期望一致、v2→3、字节[5,5)插入“回”，但完整恢复身份仍受下述检查器缺口限制。**离线**：票据登记 **3/3**、窗口恢复采纳 fixture **14/14**、文本代理恢复 native **8/8**按原证保留。修复前 thermo 40票 armed／0 accepted／15 platform_ack_deadline／25 human_commit_supersedes，修复后上述计数为0，共享生命周期有10行确认；这是该次运行的恢复路径观察，不替代逐请求身份验收。
+
+**证据边界。** 原 normal HAP `c74759e6…` 15腿、此前 renderer 原证与 macOS 正常构建**保留不重跑**；本结果只覆盖受影响共同输入链与 Pharos 原锚往返。残余：人锚 pending 窗口内窗口按有界重试重复签发（实测每轮 8 次、**未**触发预算耗尽，由锚采纳解门），如需免烧 attempts 需给该拒绝一个可区分状态码（本包遵守「不新增 ABI」未做）。
+
+<a id="h-round6-evidence-wait-review-20261003"></a>
+
+**当前结论：A来源修复按针对性范围收下，B/C保留；D新增读回仍有生产与验收反例，整包未收口。执行本节“round9交付后指导”。** [指导实测](../../artifacts/h-r-final-20261002/guidance-review/round10-review.md)优先于紧随其后的执行者历史自验表述。
+
+**round9 执行者自验原记录（2026-10-03；D“模式收口/只补几何”结论已由下方round9交付后指导纠正，A来源修复保留）。** 原任务继续，未另开卡、未恢复第三条常驻线、未重造编辑器、未扩功能、未接管 macOS E 线。D 的复杂根因与 A 的不可区分性按要求交 [Pi→精确 `zai-coding-cn/glm-5.3` 独立只读咨询](../../artifacts/consultations/h-round9-abcd-20261003/answer.md)（材料含「ACTIVATE 已送达」与「tag 沉默不能当流控证明」两条反证，exit 0）。顾问指出了我第一版 A 接缝的**三处实缺陷**（进程级槽、撕裂读、打印时读取），已全部按其协议修掉。已有 B 四边界实证按指示**未重跑**。
+
+| 项 | 实现 | 独立反例 | 设备 |
+| --- | --- | --- | --- |
+| **A 恢复证据的真实来源** | 生产新增 **H 私有只读接缝**：`QueuedEvent` 本就在入队时冻结 `editingContextId`/`editingContextGeneration`，但公共 `CjguiInternalRendererEvent` POD 无此二字段（有 `_Static_assert(sizeof==184)` 与 offsetof 断言，**不可扩**），出队时只剩 `recordIndex` 一个布尔量——这正是「ADOPTED2 没有来源」的根因。现在出队时把该事件**自己**的冻结来源交回窗口（`ohos_renderer_last_event_provenance`，per-session 槽、在 `g_sessions.lock` 下**一次读出三元组**），ADOPTED2 打印 `source_ctx=`/`source_gen=`，拿不到就写 `unverified`，**绝不拿当前挂载反填**。检查器 `_mount_lifecycle` 按生产真实状态转移改写：幂等 focus（同 live binding，`beginEditingOnNodeLocked` 直接 return）**不开新代**；`proxy released by framework ctx=C` **只终结它所指的那个 ctx**；`proxy restore terminated` 是**请求生命周期**，不注销编辑会话；换挂载时**一律**清空 ADOPTED2/观测/BIND_OWNER（round8 漏了「同 node/field 但 ctx 变」这条路径，旧 owner 绑定因此能补齐新挂载）。缺当前挂载的 BIND_OWNER 即拒（round8 的 `if bind_versions` 在空列表时整段跳过）；缺冻结来源即拒 | [恢复证据来源 25 例](../../runtime/cjgui/platforms/ohos/scripts/test_restore_evidence_source_negatives.py) 全绿：复核件的**两条正控 + 六条反例逐条固化**，另加字段级负控。无一条靠改预期、关合法路径或捞历史同值记录求绿 | normal 包 ADOPTED2 实测带 `source_ctx=1 source_gen=1`（真实冻结值）；A 的完整设备复验随整链一起，**本轮未绿**（见下） |
+| **D 模式切换的最终 accepted 状态** | **撤回 round8 的「按域流控」归因**（我自己重算即否定：切换后 renderer 域有 24 行、且 DGLES/SyncFence 行证明日志流未截断；owner 28268 在 `wait enter ticket=5` 之后仍有 renderer 行，渲染线程 28270 的最后一行是 `flush send buffer` + `SyncFence: fence is invalid : -1`）。按顾问裁决建**有界只读 accepted 状态读回**（拉取式、不经 hilog）：每 session「当前结算」单值槽 + 在途票据 + 最近 K=8 张票据环，含票号/结算 decision/原生终态/accepted 版本/来源 ctx/发布节点数 + **面节点语义清单**（按 nodeKind 选文本节点、有界截断）。通用 renderer **只报不解释**——`accepted faces` 里硬编码的 `pharos-*` 前缀已撤，换成中性 `accepted commit v= ticket= nodes= semantic=`；**分类归产品**（`previewFacts()` 声明 `face=`，挂进公开状态线，与 mode 同线同读回）与**驱动**（自己的前缀词表）两层，互为独立验证。判据改为**三方一致**：产品声明 × 中性事实（ACCEPTED 票据）× 驱动独立期望，任一不一致具名 | [票据阶段 8 例](../../runtime/cjgui/platforms/ohos/scripts/test_ticket_phase_readback_negatives.py) + [提交标记与面 10 例](../../runtime/cjgui/platforms/ohos/scripts/test_scene_face_commit_marker_negatives.py) 全绿；既有 [dual owner 负控 19](../../runtime/cjgui/platforms/ohos/scripts/test_dual_owner_negative_controls.py) 19/19（3 条具名因读回更精确而更新） | **模式切换已收口**：normal 包两次切换（`ensure-source`、`enter-b`）均以 `owner-state+scene-click` 通过三方一致判定。整链**未**完成，见下 |
+
+**D 整链未完成的部分（如实说）。** `round9/pharos-final4`（normal HAP，763 项清单，`seam absent`）已越过 round8 卡死的那一步——两次模式切换都通过——随后停在 `note_surface_not_reachable`：**B 面备注节点的命中点读不到**。诊断是观察而非提交：`accepted commit v=3/v=4 nodes=16` 都在，但归档流里 `accepted node=313` 与 `node-rect id=313` **各 0 条**。判据 `accepted_semantic_point` 仍从 hilog 的 `node-rect` 行取**物理像素**矩形加视口变换，而 accepted 转储的指纹门在几何未变时不重发；本轮读回给的是 vp 坐标、且只带**首个**文本节点，不能替代。所以「切回 A 再回访 B」与 thermo 恢复腿复验**本轮未做**。
+
+**下一步最窄的收敛点**：把读回的面节点清单从「nodeId + semanticId」扩到「nodeId + semanticId + 物理像素矩形」，让 B 面命中点不再依赖指纹门控的 `node-rect` 行。本轮**未**做、未验证，因此不登记完成。
+
+**本轮明确未闭合/未验。** ① **D 的 A→B→A→B 整链未绿**（现为具名 `note_surface_not_reachable`，是诚实的观察缺失）；② A 的完整设备复验随整链一起，本轮无新结论；③ thermo 恢复腿复验未做；④ macOS `cjpm test` 链接失败仍是本轮之前既有问题（测试专用符号在 `#ifdef CJGUI_INTERNAL_TESTING` 内、sidecar 脚本不定义该宏），属 E 写集未动；⑤ **B 四边界按指示未重跑**。
+
+**本轮我自己犯的三个错（如实记）**。(a) 票据 decision 枚举我凭印象写成 1=ACCEPTED/2=REJECTED，真值是 **NONE=0 PENDING=1 ACCEPTED=2 REJECTED=3**（`native/cjgui_internal_renderer.h:304`），于是每次成功提交都被读成「被拒」，根因判据整个反向；负控桩现在**从生产头文件抽**枚举，改枚举即失效。(b) `scene_face` 的扫描窗口下界取成提交标记行本身，而逐节点行打印在标记**之前**，面恒为 None。(c) 指纹门压掉逐节点行后，驱动的独立分类失去输入——这是我 round8 降噪措施的直接代价，本轮用读回的面节点清单补上。
+
+
+
+**round10 执行者自验原记录（2026-10-03；下方指导已否定“D1–D3离线闭合”，字段错位设备绿跑无效）。** 原任务继续，未另开卡、未重造编辑器、未扩功能、未接管 macOS E 线。D 的机制问题按要求交 [Pi→精确 `zai-coding-cn/glm-5.3` 独立只读咨询](../../artifacts/consultations/h-round10-d1234-20261003/answer.md)（材料含 round10 六条反例与「同步失败/准入拒绝/停机取消三者的 cancelled 语义」问题，exit 0）。顾问确认 D1 的 `REJECTED + 私有 reason 位` 形状可行，但指出我把三类终态混成一类，并给出 D2 锁序、D3 基线、D4 现成符号的逐条裁决。A 来源修复、B 四边界、C 恢复终态按有效证据保留，未重跑 T2 与全矩阵。
+
+| 项 | 实现 | 独立反例 | 设备 |
+| --- | --- | --- | --- |
+| **D1 终态统一发布** | 四条出口各自修正：① 同步成功发布**移到** `submittedFrameIndex += 1` 之后（原来早于递增 ⇒ 读回 frame 少 1）；② 延迟成功发布移到 `decision/frameIndex/terminalStatus` 全部落定**之后**（原来早于四字段 ⇒ 读回 `PENDING(1)/frame0`）；③ 延迟拒绝（rollback 出口）**补发布**，只写票据终态、**accepted 保持旧值**，走独立的 `cjguiOhosPublishTicketTerminal`，不碰成功发布器；④ 同步失败/取消在登记在途后**补发布**并清在途（原来直接 return ⇒ 永远显示在途）。query/ACK/重复结算按既有 `p.settled` 早退不重复发布。`reason(x)` 按顾问裁决改三值：0=协议内结算、1=present 同步终态失败（`phase==Done`）、2=`phase==Cancelled`（准入拒绝/停机取消），取自 `job->phaseSnapshot()` 而非硬编码 | [生产发布/查询一致性 27 项](../../runtime/cjgui/platforms/ohos/scripts/test_readback_publish_consistency.py)：**逐字抽取并编译运行** `ohos_renderer.cpp` 的发布与序列化实现（非手造串），覆盖 sync_success/delayed_success/delayed_reject/sync_fail 四条真实出口 + 槽位复用 + 全新实例；另有 5 项**源码级发布时机检查**（变异实测：把延迟发布移回四字段之前会被检出并指出缺哪些写入） | 见下方「设备绿跑的限定」 |
+| **D2 session 生命周期与锁** | `OhosAcceptedFactSlot` 加 `token` 字段；`create` 与 `destroy` 都复位该槽（原来两者都不复位 ⇒ 槽位复用后新实例读到上一个实例的 proj/last/节点/票环）；读回在**持有 `g_sessions.lock`** 时完成 token→slot 解析与 token 校验（原来未持该锁就调 `sessionSlotLocked`，存在销毁/复用窗口）；锁序固定 `g_sessions.lock → g_acceptedFactLock`，发布侧同序。token 不匹配返回**空串**而非 `nullptr`（仓颉侧按 `isEmpty()` 分流，没有 null 检查——顾问 §3.2）。修正了「全部静态分配」的不实注释（环内 semanticId 与面节点清单是动态存储） | 同上（5–6 项：复用后 proj/tickets 归零、销毁后旧 token 读回为空、新实例无事实） | 同上 |
+| **D3 单份响应判据** | 新增 `public_snapshot(port)`：一次 GET_CONTEXT、一次解析成 dict；`current_mode`/`ticket_outcome`/`driver_face` 全部改为消费**同一份**快照（round10 假绿：旧 `settled()` 一次判定内取三份响应，6 份各自都不满足「MODE=preview 且 accepted 为 preview」却被拼成成功）。票据环正则改为吃满 7 段并**锚定**（原来未锚定，遇到新增 `/x` 后缀会静默丢字段）。新增 `action_baseline`（token/epoch/last/max_ticket）与 `ticket_verdict`：判定要求票号 > 基线且 reason 正确，历史 ACCEPTED 不能冒充本次。面分类多前缀并存时具名 `driver_face_ambiguous`，**不取第一个前缀**。`already_at_target` 单列（已在目标且基线自洽时不要求无效制造新提交，也不计为一次切换） | [单份快照判据 13 项](../../runtime/cjgui/platforms/ohos/scripts/test_single_snapshot_judgment_negatives.py)：**逐字复现 round10 的 6 份假绿**并断言新判据恒不通过；一致快照正控、历史票冒充、会话重建、epoch 倒退、reason 0/1/2/缺失四映射、多面并存、读回全缺、在途票据 | 同上 |
+| **D4 目标几何** | **未做**（见「未闭合」） | — | — |
+
+**设备绿跑及其限定（如实说）。** `round10/pharos-final2` 用正式入口串行构建的 normal HAP（764 项清单、`seam absent`）跑出 **status=OK，11 项 required_values 全 true**，A→B→A→B 四段判据分别是 `ensure-source/enter-b/back-a/（回访）= submitted_target`（票号 7→9→40 单调递增、decision=2、reason=0、驱动独立分类逐段给出 source/preview/source/preview），`a_restore=restore_ack`（ctx=10、node=107、owner_version=3），A 续写 `exactly_once/exact_owner/removed_is_zero` 全 true。
+
+**但那次绿跑的二进制含一处本轮引入的真实缺陷**：我给读回 head 加 `token=%llu` 时只改了格式串、**漏了对应实参**，导致其后每个字段整体错位一格（编译器只报 `more '%' conversions than data arguments`，不指出是哪一格）。证据就在那次结果里：`last=0` 而同一份票环里存在 `ticket=5 decision=2` 的真实票据——`last` 读到的其实是 `unackedDecision`。**因此该绿跑不能作为 D 收口证据**：判据虽然通过，但读回的字段身份当时是错的。修正已落地（实参补齐），`clang -fsyntax-only` 与 D1/D2 探针都确认字段对齐（`token=201 epoch=1 proj=20 … frame=8 last=11`，`last` 与票环票号一致）。**修正后的重建被环境守卫拦住**：build_and_run 的重链步骤要删除过期中间产物，而本会话的安全删除守卫按「本轮删除计数 ≥ 50」拦截（Pharos `libcjgui_app.so`、thermo `libcjgui_ohos_renderer.a.tmp`），逐轮重试计数只增（51→52）。这是环境策略、不是代码或判据缺陷；我没有绕过它。
+
+**本轮我自己犯的错（如实记）。** (a) 给格式串加字段时漏实参，造成读回字段整体错位——**而我先据此得出了「产品在模式切换时重建渲染会话」的错误结论**（token 6→8→10 递增，其实是错位后的 epoch 值）。修正实参后，token 与 epoch 的语义才各归各位。(b) 身份守卫我先写成「token 相等」，正是 (a) 的错位让它看起来成立；改为 epoch 单调性后才对。 **指导更正：这条自评错误，放宽token正是错位数据诱发的残留；epoch不能替代session身份，必须按下方D3修正实现、测试与文档。** (c) 我的 `reach_mode` 重写把模块级 `MAP_ROW` 吞掉了，设备首跑直接 `NameError`，已恢复。(d) 负控桩的三处保真度缺口（状态线缺 `token=`、票环缺 `/x`、模式动作不发新票）让新判据在桩上无法判定，逐一补齐后才 19/19。
+
+**本轮明确未闭合/未验。** ① **D 的收口证据不成立**：绿跑用的是字段错位二进制，修正后未能重建复跑（环境守卫）；必须重跑一次才算数。② **D4 有界目标几何未做**：备注命中点仍靠指纹门控的 `node-rect` 日志行（顾问已给出可复用符号：`hitTestAccepted`、`RenderThread::effectiveClips`/`pointInsideClips`、`physicalToLayout`、`s->surfaceDensity`，并明确要求**不要**用 `hitTestAccepted` 做几何读出、几何在**发布时**算）。③ **thermo 受影响恢复/输入腿未跑**：其构建同样被守卫拦在重链步骤（renderer `.a` 已按新源码编译成功，604K/19:12）。④ A 的完整设备复验、thermo、A→B→A→B 的画面与 owner 字节对应，均待 ①②③ 解除后同批做。⑤ B 四边界、C 29/29 按指示未重跑。⑥ macOS `cjpm test` 链接失败仍是既有问题（E 写集未动）。
+
+**round12 执行者自验原记录（2026-10-03；生产与编辑事实保留，全部收口及身份门控判断由下方round12交付后指导更正）。** 原任务继续，未另开卡、未动 E/macOS 与 Node/Event POD、不 stage/commit/push。[round12 GREEN](../../artifacts/h-r-final-20261002/round12-fix/round12-green.json) 与全部反例逐条相反。
+
+| 项 | 实现 | 独立反例 | 设备 |
+| --- | --- | --- | --- |
+| **R1 权威当前身份** | 生产：`OhosAcceptedFact.editing`（发布冻结）**删除**；getter 在**查询时刻**持 sessions→fact 锁序读 Session 现值（`cjguiOhosEditingIdentityOf`），`edit=live ctx/gen/node/res/kind/b/v/field` 或 `edit=none` 显式表达；accepted 投影事实与当前身份分别命名，查询零状态推进。驱动：读回身份为**权威当前快照**——扫描内历史 focus/release 行把代际身份退役到 None 时由它补位，最终配对逐字段对它核验；hint live=false/不完整 + 任何旧证据 → `readback_edit_not_live`/不救绿；恢复等待循环加**观察期身份稳定**复核（判定 hint ≠ 复核 hint → `identity_changed_during_observation` 继续观察，不重投动作） | [round12-green](../../artifacts/h-r-final-20261002/round12-fix/round12-green.json)：换焦 ctx9 无新帧读回即 ctx9；retire 即 none；**当前 ctx9+完整旧 ctx7 日志 → restore_ack_identity_not_current**、**live=false+完整旧日志 → restore_ack_no_current_identity**、同 ctx 无 focus 行 → 成立、异 ctx 无旧行 → 拒绝。[mount 套件](../../runtime/cjgui/platforms/ohos/scripts/test_mount_lifecycle_pairing_negatives.py) 31 项（含 4 条权威门真负控） | span 运行实测：备注换焦 ctx4→release 后正文 ctx5 恢复证据靠权威补位配对成功 |
+| **R2 读回几何消费** | 生产：`faceTruncated` 随发布整组复位（9 面→1 面不再残留）；geo 记录增**逐条裁剪约束** `q=x,y,w,h,r`（≤4，与 pointInsideClips 同源），AABB 仅作保守参考。驱动：`readback_target_point` 候选点经**同一 clip 语义**（矩形+圆角就近角心）验证，显式点不可命中具名 `point_not_hittable`；`surface_origin_px` 重写为**只认** dumpLayout XComponent bounds/origBounds，缺失返回 None（不回退 (0,0)/屏宽比例）；新增 `readback_target_rect`；正文/备注/模式按钮（verify_pharos_dual_owner 全部 5 处）与 thermo 全部点击/拖选改走读回几何，查询次数随结果落盘 | [target_geometry 套件](../../runtime/cjgui/platforms/ohos/scripts/test_target_geometry_readback.py)：圆角目标（祖先 clip r50）驱动点 (15,15) 过生产判点、显式 (7,15) 具名拒绝、(25,25) 接受；原点缺失具名 `surface_origin_unavailable`；[round12-green] 断言驱动日志几何调用 **0 处** | Pharos 读回 `density=3.5 viewport=1320x2622`（44 次查询落盘 span 运行）；thermo 全腿点击/拖选同入口 |
+| **R3 两条消费** | Pharos：verifier 增 `--anchor-mode span`（正文中段非空选区：caret 探测点同行拖选 → 冻结平台确认的非空中段跨度 → A→B→A 无正文编辑 → 免点击首笔精确替换，期望从冻结字节独立计算，removed=跨度字节>0、恰一笔）。thermo：生成字段安装**等价证据链**（平台安装 `ime select rc=0` 同挂载 + 同选区观测 + ADOPTED2 冻结来源 + 读回当前 ctx 四件套逐条核对，缺一即 None）+ 回访前重取当前发布读回几何（输入后布局下移，旧点会点空）；thermo 域增 `attachStateProvider` 缝、宿主挂 `window.acceptedStateText()`（OWNER_STATE 通道此前是 Pharos 产品专属，thermo 读回为空） | [dual_owner 套件](../../runtime/cjgui/platforms/ohos/scripts/test_dual_owner_negative_controls.py) 21 项：span 正控（removed=3B 恰一笔）+ 退化拖选具名 `a_body_span_unconfirmed`（折叠不得写成非空）；[generated_install_equivalence 套件](../../runtime/cjgui/platforms/ohos/scripts/test_generated_install_equivalence_negatives.py) 7 项（缺安装/旧 ctx/缺采纳/无当前身份全 None，标准配对优先） | Pharos span `OK` 12/12（冻结 [2,4)、bytes 2:8、removed 6B、restore_ack ctx5 完整身份）；thermo `OK` 全腿：手写安装/插入 exactly-once(26)/非空替换 exactly-once/外部改版续写/**生成字段安装+输入 G1 exactly-once**/手写回访 H/**生成回访 G2 exactly-once**（[thermo-shared.json](../../artifacts/h-r-final-20261002/round12-fix/thermo-legs4/thermo-shared.json)） |
+| **R4 最终汇合** | 正式入口串行构建：normal Pharos `959d5095…`、同源 normal thermo `f1ae83d2…`（重链/闭包/启动断言全绿；thermo 域/宿主接线改动同源编译） | — | 同一构建上：caret 模式 **11/11 OK**（[pharos-caret](../../artifacts/h-r-final-20261002/round12-fix/pharos-caret/dual-owner.json)，caret 正控保留）；span 模式 **12/12 OK**（[pharos-span2](../../artifacts/h-r-final-20261002/round12-fix/pharos-span2/dual-owner.json)）；thermo 全腿 OK。当前身份（读回 `edit=live ctx=… gen=… field=…`）、安装/采纳来源、owner 字节/版本、同版几何与 [OWNER_STATE 终态](../../artifacts/h-r-final-20261002/round12-fix/owner_state_final.txt) 已存证 |
+
+**过程与边界**：① thermo 首跑 `note_nav_not_reachable` 系我误在启动后清 hilog（node-rect 被清属预期行为，正确流程不清）——如实记录，非生产缺陷；② thermo 域 ownerState 构造两次括号错误由构建红逐次修正（正式入口同一命令重跑，无守卫拒绝——asm_r3 入口守卫拒绝原件沿用上一轮留证，本轮经 ohos_thermo_app 入口构建不受影响）；③ 离线 15 套全绿（readback/single_snapshot/target_geometry/mount 31/round6/dual_owner 21/t2/scene_face/r1 243/s2/ime_selection/generated_range/thermo_driver 9/generated_install_equivalence 7/cjpm 31）；④ 用户 7856 转发保留，自有实例与临时转发已回收，未 stage/commit/push。
+
+**round13 执行者自验原记录（2026-10-04；R1/R2/R4已接受，R3/R5的完成判断由下方指导限定；GREEN未覆盖RED）。** 原任务继续；本轮**零生产改动、零 HAP 重建**（Pharos `959d5095…` 与 thermo `f1ae83d2…` 原样复用，f1ae83d2 磁盘哈希与构建日志一致已复核）；改动全部在 H 验证工具、负控与既有文档。[round13 GREEN](../../artifacts/h-r-final-20261002/round13-fix/round13-green.json) 五类缺陷全反转。
+
+| 项 | 实现 | 独立反例 | 设备 |
+| --- | --- | --- | --- |
+| **R1 wire→解析→判定** | `edit=` 段的**共享解析规范** `parse_edit_section`（h_source_preview_consumption，两验证器共用）：live（含 gen/gen 进权威元组）/ none（{'live':False}）/ malformed / absent 四类互辨。`public_snapshot` 弃用旧「ctx 紧邻 node」正则改走共享规范；`_mount_lifecycle` 种子与 `_mount_lifecycle` focus 行在行=读回同挂载时继承 gen（身份保持完整元组）。四态权威门：absent/malformed/none 各自具名（`readback_edit_absent`/`_malformed`/`_not_live`），一律不借历史日志 | [wire 回放](../../runtime/cjgui/platforms/ohos/scripts/test_wire_parse_replay.py)：caret/span 两份 round12 原始 raw-responses.json **24/24 live 全解析**（RED 0/24）、none 5/5、ctx 集合与归档事实一致；同身份 ACK/采纳无 focus 行 → restore_ack 且 basis=readback_edit_identity；同日志身份改 none → readback_edit_not_live。单快照套件改走真实共享解析 | — |
+| **R2 观察状态机** | 恢复等待循环重写为**成功/等待/具名终态**三态：成功需同身份双读稳定（读回 seq 落盘 `restore_read_seq`）；身份变化 → 等待态继续有界观察（不 break、不读不存在的 sel、不重投动作）；在途判据按**请求号**（max armed > max terminated）而非行字符串字典序；耗尽转 `observe_window_exhausted`（保存最后未证实原因）。[dual_owner 套件](../../runtime/cjgui/platforms/ohos/scripts/test_dual_owner_negative_controls.py) 26 项新增 5 例实际 main 反例：none/malformed/absent+完整旧日志全具名拒绝；身份变一次后稳定 → 收敛成功且 toggle 次数=基线（零额外动作）；持续变化 → 有界具名收敛且零额外动作 | 同左（全套件 exit0） | — |
+| **R3 thermo 统一最终守卫** | `_standard_terminal_gate` + `_install_adoption_identity_gate`：两种安装来源（terminal 标准 / `ime select` 等价）共用同一套最终判据——同挂载完整身份观测（ctx/node/resource/kind/binding/v 缺一即拒）、ADOPTED2 全字段（owner_version/source_gen 必在，非 unverified）与观测逐字段（projection==v、binding、source_ctx==ctx）、读回权威身份挂载字段逐字段相等（v 是投影版本不属挂载身份，读取时点更新不比较——设备实测 v4→v5 误拒已修）、事件顺序观测 ≤ 采纳。标准链无窗口事实 → 拒绝；拖选终点窗口事实 = `human anchor recorded origin=selection_drag_end`（设备不发 ADOPTED2，实测）。[equivalence 套件](../../runtime/cjgui/platforms/ohos/scripts/test_generated_install_equivalence_negatives.py) 22 项：resource/kind/binding/projection/owner_version 冲突、source_gen 缺失/unverified、读回 ctx/binding/field 不符、采纳先于观测——全部 None | 同左 | thermo 同 HAP 全腿 OK（见 R4） |
+| **R4 几何结论** | 有界候选集扩至内缩角点/边中点（圆角约束有效区常贴 AABB 角）；候选全被拒 → 如实 `point_unavailable`（不再误称 fully_invisible——那是已证明全裁专属） | [target_geometry 套件]：16×16 节点+圆角祖先 clip 自动点 (15,15) 命中且过生产判点；4×4 无样本 → point_unavailable；vis=1 仍 fully_invisible | — |
+| **R5 重放与原件** | Pharos：两份归档 wire 离线回放全过（见 R1）；未重建未重跑设备。thermo：`round12-fix/thermo-legs4` 确无四件套原件（只有摘要）→ 在**已核哈希 HAP f1ae83d2** 上重跑受影响切面并落盘有序原件：[thermo-final](../../artifacts/h-r-final-20261002/round13-fix/thermo-final/) 全腿 OK（生成安装+G1/手写 H/生成回访 G2 各 exactly-once）+ `hilog_cjgui_rows.txt`（141 条安装/观测/采纳有序原行）+ `owner_state_final.txt`（当时读回 `edit=live ctx=5 gen=1 node=802001 … field=component-2-1`）+ identity.txt；verifier 增加**有序原件落盘**（先于转发清理），不再只写摘要 | round13-green.json 全部反转（含 RED 原件保留于 guidance-review） | Pharos caret 11/11 与 span 12/12 归档原件离线重放全过（未重跑设备——无生产改动） |
+
+**过程与边界**：离线 16 套全绿（新增 wire 回放、equivalence 22 项扩至统一守卫、dual_owner 26、mount 31）。调试期三个非生产曲折如实记录：① thermo 首跑 note_nav 失败系误清 hilog 与 17857 遗留转发未清（forward_unavailable），按身份清理后复跑；② 单快照套件 run_reach 的 ns 语义曾被本会话改为 dict(NS) 拷贝导致 mutation 失效，已恢复 NS 传递语义；③ GREEN 脚本的确认读注入时机由 restore_read_seq（判定/确认读序号落盘）定位。E/macOS、共同 POD、用户 7856/正文/剪贴板/既有暂存保留；自有实例停止、自有临时转发清理；未 stage/commit/push。
+
+<a id="h-round13-thermo-review-20261004"></a>
+**round15 执行者自验原记录（2026-10-04；旧七形状转绿属实，B接受；A轮次退役与C版本缺失边界按下方指导限定）。** 原任务继续；本轮只改 H 验证器与负控/文档，未动生产、未建 HAP、未操作设备。七失败形状先固化为常驻反例 [test_selection_state_and_fence_negatives.py](../../runtime/cjgui/platforms/ohos/scripts/test_selection_state_and_fence_negatives.py)（RED 复现后再修），修后全部转绿；[round15 GREEN 复判](../../artifacts/h-r-final-20261002/round15-fix/round15-green-final.json) 七形状 wrong=false、六份 thermo-rerun7 真实原件重放 all-equal/obs_row 严格路径/gen+owner 全 match，[旧九类 RED 复判](../../artifacts/h-r-final-20261002/round14-fix/round14-green-recheck-r5.json) exit0。
+
+| 组 | 实现 | 判别 |
+| --- | --- | --- |
+| **A 选择状态退役** | `confirmed_selection` 收集**全部**等价 select 凭据（删掉首条 break；同 sel 去重——相同 sel 是同轮次重复凭据，不合并不同轮次）；过门取**最后通过完整链者**后，再取围栏后本挂载（按 CjguiProxyKey ctx）**最新选择状态行**（观测/select/terminal 任一）：其 sel ≠ 当前成功选区 ⇒ 最新轮次未完成（新观测未采纳）或最新凭据冲突失败 ⇒ 旧成功退役返回 None。标准/等价仍共用同一道 `_final_adoption_identity_gate`，无按日志形状的优先分支 | 两条完整 select 先 1:1 后 2:2 → 2:2；新 2:2 观测未采纳 → None（旧 1:1 退役）；新 2:2 source_gen=999 冲突 → None（不复活）；稍后完整新链恢复 → 成立（同套件正控） |
+| **B 围栏排他** | `_fence_marker` 记录末行原文+ts+原快照行号；`_resolve_fence`：原文行新快照**唯一出现** → 其后（排他，同毫秒后行位置可证保留）；多现 → None（同文歧义）；零出现（轮转）→ 回退 ts **严格大于**（整个同毫秒窗口排除——先后无法证明就不算新证据）；仅 {'ts'} 同上；仅 {'index'} 非 0 → None；未知形状 → None。fence=0 显式初始安装语义保留；`confirmed_selection`/`find_generated_semantic` 对 None 边界等待跳过，不回退 0 | 原快照原样回放零新行 → None；{'index':7} → None；六份原件（ts 围栏、证据 ts 均严格晚于围栏）重放全过 |
+| **C 读回收敛与版本准入** | `_judge_round`：`_readback_full()` None/抛异常/畸形 state 统一归一为本轮不可用（记 error，判定照走无身份 → 不成立），有界轮询耗尽返回 None，不抛异常不借 expect 旧身份；新增**owner 版本准入**：当次公开 VERSION ≠ 本腿冻结基线 → 本轮具名 `owner_version_advanced` 不可通过（判定点归档），VERSION==基线正控仍成立；readback v（projection）推进不受限 | rb None → None（不再 AttributeError）；VERSION 30 vs 基线 29 → None；VERSION 29 → (1,1) 正控 |
+
+**归档负控适配**：round14 recheck 的 ok 腿受控读回 VERSION 30→29（round15-C 版本准入后的正控适配，输入行与九类 RED 期望未改）、归档检查取**最后一轮**判定——[九类 RED 复判 exit0](../../artifacts/h-r-final-20261002/round14-fix/round14-green-recheck-r5.json)。离线 16 套全绿。E/macOS、共同 POD、用户资源与既有暂存保留；未 stage/commit/push。
+
+<a id="h-round14-offline-review-20261004"></a>
+**round16 执行者自验原记录（2026-10-04；R-C接受，原GREEN属实；R-A的pending及terminal配对按下方指导限定）。** 原任务继续；本轮只改 H 验证器与负控，未动生产/HAP、未操作设备。[round16 GREEN](../../artifacts/h-r-final-20261002/round16-fix/round16-green.json)：selection_cases 5/5 期望成立、wire_cases 3/3（missing/advanced 拒绝、equal 正控通过）、real_final 6/6（原 wire+日志重放，obs_row 严格路径、gen/owner 全 match）；旧九类 RED 复判 [exit0](../../artifacts/h-r-final-20261002/round14-fix/round14-green-recheck-r6.json)（sha 与当前源一致）。RED 原件（round16-review.json）未覆盖。
+
+| 项 | 实现 | 判别 |
+| --- | --- | --- |
+| **R-A 选择轮次折叠** | `confirmed_selection` 重写为**按序折叠选择轮次**：同挂载证据（观测/select/terminal 配对/ADOPTED2）按序归入当前轮次；**sel 变化（含回到历史坐标）即开新轮次**，旧轮次退出当前状态；删除 `seen_sels` 跨历史去重。判定**只评最后一轮**：证据窗口限于本轮起点到快照末尾（不能扫围栏历史借旧采纳），过完整门 → 返回该轮 sel 与**该轮**事实（obs/adopt 行号属该轮）；最后一轮未采纳/来源冲突/证据不全 → None。安装凭据：轮内有 terminal 配对优先（平台回执），否则等价 select；守卫的 attach_confirmed 补位/obs_row 严格分支自行判定。ADOPTED2 与当前轮 sel 不符 → 丢弃（不借给回到旧坐标的新轮次）；ADOPTED2 先于 app 侧行到达（跨线程）→ 挂 pending，同 sel 轮次开始时归入且轮次窗口起点前移到采纳行；异 sel 观测介入 → pending 失效（选择已离开该坐标） | [round16-review 四条 RED 全反转](../../artifacts/h-r-final-20261002/round16-fix/round16-green.json)：ABA 回 A 未采纳 → None；回 A 来源冲突 → None；三段完整 → 末段 A 且 obs/adopt 行号属末段（minimum_fact_index）；单段/两段正控保持。选择轮次常驻用例 8/8 保持 |
+| **R-C 缺版本准入** | `_judge_round`：当次公开 owner 版本**缺失/非法（None）与已推进（≠基线）一律具名不可通过**（`owner_version_missing` / `owner_version_advanced`，判定点归档 round_reason），不借 expect 旧值、不自动更新基线；readback v（projection）推进不受限。归一同时覆盖 `_readback_full()` None/异常/畸形 | [wire 用例](../../artifacts/h-r-final-20261002/round16-fix/round16-green.json)：真实 7b 原回包只删 VERSION 行经 parse_response→fields_of→_readback_full→wait_confirmed → None + round_reason=owner_version_missing（RED 曾 [1,1]/round_reason=None）；VERSION 30 → owner_version_advanced 拒绝；原回包正控 → (1,1) |
+
+**离线**：受影响套件全绿（选择轮次常驻 8 项、equivalence 全量含 fallback/负控、thermo driver、dual_owner 26、wire 回放、单快照、mount、round6 等）。**过程记录**：本轮多轮判据迭代（install 凭据优先级、pending 采纳 stale 规则、ADOPTED2 跨轮丢弃）均以上述两套件+round16 抽取式反例即时判别，一次中间态 nine-RED 复判曾对中间态源码 sha 记录失败，最终态 sha（b95a863）复判 exit0 且与当前源一致。E/macOS、共同 POD、用户资源与既有暂存保留；未 stage/commit/push。
+
+**round17 执行者自验原记录（2026-10-04；四条RED反转属实，confirmed未接轮次迁移由下方指导限定）。** 原任务继续；本轮只改 H 验证器与负控，未动生产/HAP、未操作设备。[round17 GREEN 复判](../../artifacts/h-r-final-20261002/round17-fix/round17-green-final.json)：四条 RED 反转（failing_cases=[]）、四正控成立；[round16 判据重放](../../artifacts/h-r-final-20261002/round17-fix/round16-review-replay.json) selection 5/5（含 aba_all_complete 末段事实行号 ≥ 前缀）+ wire 3/3 + real 6/6；旧九类 RED 复判 [exit0](../../artifacts/h-r-final-20261002/round14-fix/round14-green-recheck-r7.json)。四条 RED 原件冻结为 [round17-red-frozen.json](../../artifacts/h-r-final-20261002/round17-fix/round17-red-frozen.json)（首次误用 --out round17-green.json 写出的 RED 原样改名保留，未覆盖）。
+
+| 项 | 实现 | 判别 |
+| --- | --- | --- |
+| **A1 切轮统一退役** | 折叠循环重构为**统一开关点**：obs/select/confirmed/terminal 任一本挂载状态行的 sel 变化即开新轮次；**每个开关点统一处理** pending 采纳（异 sel 即退役）与 last_confirmed（异 sel 即退役），不再三套清理规则复制。pending 采纳只在同 sel 轮次开始时归入且轮次窗口起点前移到采纳行（跨线程顺序兼容）；异 sel 观测介入即失效 | pending_crosses_select_boundary（ADOPTED2 A→select B→select A→confirm A→terminal A）→ None（不再借第 2 行旧采纳）；pending_crosses_terminal_boundary（ADOPTED2 A→confirm B→terminal B→confirm A→terminal A）→ None |
+| **A2 terminal 配对所有权** | terminal 只有与**本轮尚未消费**的 confirmed（同挂载/field/sel）配对后才写入 `round['terminal']` 安装凭据，配对即消费 `last_confirmed`；未配对 terminal 仅记录 `terminal_unpaired` 状态（round sel 已更新），不提供安装资格、不遮蔽轮内合法 select；重复回执（同 sel 再配对）不新造凭据、不抹掉已成立凭据（`cur['terminal']` 非 None 即不再写） | unpaired_terminal_as_install（obs A→ADOPTED2 A→terminal A 无 confirmed）→ None；confirmed_reused_across_rounds（A 完整→B→A 新 obs/adopt/terminal 无新 confirmed）→ None |
+| **正控保持** | strict（select+obs+adopted+confirm+terminal 完整链）、attach_fallback（ADOPTED2+confirm+terminal 补位）、foreign_mount_noise（异挂载 select 噪声）、intervening_obs_retires_pending | 四正控全部成立；[选择轮次常驻 8+12=20 项](../../runtime/cjgui/platforms/ohos/scripts/test_selection_state_and_fence_negatives.py) exit0 |
+
+**离线**：受影响套件全绿（选择轮次 20、equivalence 全量、thermo driver、dual_owner 26、wire 回放、单快照、mount、round6 等）。E/macOS、共同 POD、用户资源与既有暂存保留；未 stage/commit/push。
+
+<a id="h-round15-selection-epoch-review-20261004"></a>
+<a id="h-round16-round-ownership-review-20261004"></a>
+**round18 执行者自验（2026-10-04；confirmed 轮次迁移接线收口，GREEN 另存）。** 原任务继续；本轮只改 H 验证器与负控，未动生产/HAP、未操作设备。RED 先复现（[round18-red-repro.json](../../artifacts/h-r-final-20261002/round18-fix/round18-red-repro.json) 三条 failing 与冻结件一致），修后 [round18 GREEN](../../artifacts/h-r-final-20261002/round18-fix/round18-green.json) 6/6；[round17 重放](../../artifacts/h-r-final-20261002/round18-fix/round17-replay.json) 8/8、[round16 重放](../../artifacts/h-r-final-20261002/round18-fix/round16-replay.json) selection 5/5 + wire 3/3 + real 6/6、[旧九类 RED](../../artifacts/h-r-final-20261002/round14-fix/round14-green-recheck-r9.json) exit0。
+
+| 项 | 实现 | 判别 |
+| --- | --- | --- |
+| **统一迁移入口** | 折叠循环重构为单一本地 `_transition(sel, idx)`：sel 变化开新轮次并统一退役异 sel 的 pending 采纳与 last_confirmed（回旧坐标不复活），同 sel 延续；**OBS/select/confirmed/terminal 四分支实际调用同一入口**（先按本挂载/field/ctx 过滤再迁移） | confirmed_new_choice_unfinished（完整 A→confirmed B 未完成）→ None（不再返回旧 A） |
+| **confirmed 先迁移后保存** | confirmed 分支顺序改为 `_transition(sel)` → `state['confirmed'] = (sel, idx)`——新值不再被丢弃，供本轮 terminal 一次配对 | pending_crosses_confirmed_only（pending A→confirmed B→confirmed A→terminal A）→ None（不再借旧采纳）；new_confirmed_then_complete_strict（A 完整→confirmed B→obs/ADOPTED2/terminal B）→ (2,2) 且 obs/adopt/confirmed_idx 全部 ≥ len(A)（事实属 B 轮） |
+| **矛盾采纳丢弃** | ADOPTED2 与当前活动轮 sel 不符且 cur 非空 ⇒ 丢弃（合法顺序下 obs 先行切轮；无 obs 的异 sel 采纳是被取代/不可观测状态的矛盾形状）——不挂 pending 借给回到该坐标的新轮次。cur 为空时仍 pending（初始跨线程补位保留） | 三正控保持：paired_initial_fallback（初始 ADOPTED2→confirmed→terminal 补位）(1,1)；unpaired_terminal_with_valid_select (1,1)；duplicate_terminal 保留原配对 (idx=首 terminal)。round14 冻结 RED「观测是另一选区」在九类复判中保持拒绝 |
+
+**固定完成门全过**：本轮三反例+三正控（[常驻套件](../../runtime/cjgui/platforms/ohos/scripts/test_selection_state_and_fence_negatives.py) 16→27 项 exit0，含 r18 事实归属检查）、上一轮 8 项、round16 选择 5/wire 3/六份真实原件 6/6、旧九类 RED exit0。离线受影响套件全绿。E/macOS、共同 POD、用户资源与既有暂存保留；未 stage/commit/push。
+
+<a id="h-round17-confirmed-transition-review-20261004"></a>
+<a id="h-round18-tooling-accepted-20261004"></a>
+**round18指导验收（2026-10-04：固定完成门通过，本段工具收尾结束）。** 当前验证器SHA `d4a076c808fc8f77434d542e5aadbc6d8a83de387f31fe2f327404d739586199` 与执行者GREEN一致。指导核对四个分支实际调用同一 `_transition`，confirmed先迁移再保存，terminal本轮一次配对；活动轮异sel采纳不再挂pending，初始合法补位保留。
+
+**独立复跑。** [本轮三反例/三正控6/6](../../artifacts/h-r-final-20261002/guidance-review/round18-acceptance-current.json)、[上一轮8/8](../../artifacts/h-r-final-20261002/guidance-review/round18-acceptance-previous.json)、[round16选择5/wire3/六份真实原件6/6](../../artifacts/h-r-final-20261002/guidance-review/round18-acceptance-originals.json)全部通过。末段完整B返回B且证据行均属B轮；常驻脚本本次输出23条OK、exit0（按原始输出口径校正报告24/文档27，不新增测试凑数）。[执行回执与原始输出](../../artifacts/h-r-final-20261002/guidance-review/round18-acceptance-runs.json)留存。旧九类RED的执行者r9原件与当前验证器哈希一致，按影响复用，不重复全矩阵。
+
+**结束范围。** 本包固定目标无剩余项，原[指导任务与冻结RED](../../artifacts/h-r-final-20261002/guidance-review/round18-review.md)保留为历史，不再作为在途待办。R-C与正常编辑/恢复/生成/回访/完整owner原件继续有效；后续只因新的实际功能需求或具体回归开启新任务。本次指导只做离线复核与文档更新，未改验证器/生产/E/POD，未操作设备、HAP、hilog或全量构建，未stage/commit/push。既有物理设备性能、marked/cancel版本边界及发布审核未由本工具包新增证明；历史构建入口/链接问题不自动转为本包待办。
+
+<a id="h-visual-edit-package-20261004"></a>
+### 新包：OHOS 排版正文可视编辑（2026-10-04 开工）
+
+**当前指导入口（2026-10-05）：**接续下方[可视编辑交付后复核 A–E](#h-visual-edit-review-20261005)。探索性设备编辑成立，原整包尚未通过；下列执行者记录中的“全链绿／独立消费者／多标量”以本次复核的证据范围为准。旧 round18 工具包仍已结束，不重新开启。
+
+**目标（用户 /goal 原文）**：让现有 Pharos 在 HarmonyOS 上直接在排版后的正文（可视编辑）上编辑。复用 document_core / app_services / markdown_engine / editor_surface / SourceMap 与共同文本会话；不新建正文内容、撤销历史或 Markdown 编辑规则。A 接通公共文字位置能力（绘制、触摸命中、光标与选区消费同一份已接受排版及其身份；旧场景/旧绑定/旧位置不得写入新正文）；B 可视编辑规则（段落/标题/强调/折行定位、系统输入、非空选区替换与删除，中文/emoji/多标量字素，显示位置→源码跨度复用 editor_surface/SourceMap，无法唯一映射具名拒绝）；C 同一最终 normal HAP 闭环（源码→可视→触摸定位→系统输入→非空替换→Undo/Redo→Agent 公开改版→映射后继续输入→切回源码→保存→关闭重开，逐笔核对版本、精确源跨度和完整 owner 字节，一个已有独立消费者消费新增公共文字能力）；D 沿用 256KiB 准入并记录成本原数。上文 D 行"预览只读"的旧范围由本包取代。
+
+**现状事实（探针 HAP `72573d9d…`，PID 2983，2026-10-04 设备核实）**：预览分支不传 caret/selection 参数、覆盖文案"预览（只读）"；预览 accepted 帧 v=4 只有片段节点 1000/1001/1002（kind=3，pointerInteractive），节点 107 不在树中；切模式后旧源码代理按 `action=end` 退场，无新代理挂载——预览当前真只读。探针 [probe1](../../artifacts/visual-edit-20261004/probe1/visual-edit.json)：`body_geometry_missing/not_in_accepted`（脚本用 107 找几何，属探针自身待改，非产品缺陷）。
+
+**机制核对结论（源码级）**：OHOS 已有公共 affordance——`hitTestComposableText`（命中与绘制同一份 attributed text）、`isPointerCapturable` 对 pointerInteractive TEXT 的 BEGIN/UPDATE/END 投递（注释即为此场景而写）、`canReceiveFocus` 对 pointerInteractive 文本节点开门、IME 上下文门 `isReadOnly==0 && isInteractive!=0`（pointerInteractive 节点满足）。原生 tap 对 TEXT kind 不建编辑上下文（`isEditableTextKind` 只认输入框 kind），旧位置不会经 tap 写入。
+
+**框架缺口（五项记录，修在 CJGUI）**：① 失败场景：owned 范围会话锚在非输入框节点（可视模式的会话锚点）时，`beginEditingOnNodeLocked`/`recoverTextProxyTicketLocked` 以 accepted **节点值**播种/校验编辑缓冲，片段/容器节点值≠会话镜像（源码），IME 增量与镜像错位；② 实际负责模块：`ohos_renderer.cpp` 三触点（编辑上下文播种、restore 票据校验、`set_composable_owned_text_session` 声明携镜像）+ `composable_ui_window.cj` declare 携镜像与镜像修订推进 + `focusComposableNodeLocked`/窗口 `focusProjectedNode` 对 owned 会话锚点（presentation 节点）的焦点豁免；③ 需要的公共契约：owned 会话的**文本事实=会话镜像**，锚点节点只提供身份与几何；④ 编辑器/第二消费者：Pharos 预览正文（锚点=visualCarrier 190，加 pointerInteractive），第二消费者按既有 note/独立探针补；⑤ 针对性回归：源码模式既有链不受影响（节点值==镜像的既有等价路径保持），可视模式点击→映射→安装→输入→重投影逐腿。
+
+**设计决定**：锚点=visualCarrier（id 190，semantic `pharos-editor-scroll-content`）+ `pointerInteractive: true`（surface.cj 产品包）；进入预览 `bindRangeTextSession(190, …)` 同一 bridge（同 owner），切回源码走既有 `rebindBodySession`；指针命中→`hitTestComposableText`→`PharosVisualSourceBinding.mapDisplayRange`→`session.setSelection16+markNativeSelectionRestoreRequired`；跨片段选区具名拒绝（`selection_crosses_visual_fragments`，沿 macOS 词汇）；caret 绘制走 surface 既有 caretNodeId/caretDisplayOffset/selectionStart/End 参数；owner 推进后 caret 按片段局部坐标重放（沿 macOS node-local replay）。
+
+**实施顺序**：CJGUI 镜像播种（读该仓 AGENTS 后动 native+window，同 target 串行）→ 产品接线（surface/controller）→ 验证器重写（`verify_pharos_visual_edit.py` 改用片段节点几何与 PHAROS_VISUAL_* 事实行）→ final normal HAP 闭环（B 逐腿+C+独立消费者+D 成本）。证据目录 `artifacts/visual-edit-20261004/`。
+
+**接线落地与设备证据（2026-10-05，探针 final HAP `1c68ce59…`）。** 设计→实现的差异共六处，均为设备实测逼出的身份/事实修正：① 绑定身份必须与 accepted 节点逐位一致（carrier resource=-1、kind=VERTICAL，不是编辑器的 1/MULTILINE）；② native 编辑缓冲播种/恢复/arm 快照以**声明的会话镜像**为文本事实（`set_composable_owned_text_session` 携镜像文本，presentation 锚点不再用节点值）；③ `hit_test_composable_text` 扩展 presentation TEXT 命中（accepted pod 值+runs 现排一次，与绘制同一 layoutTextStyled；指针派发运行在渲染线程，内联执行避免队列自等死锁——实测自等 2s 超时状态 7）；④ `applyPaint` 重建样式补携 `pointerInteractive`（否则 resolved 场景与 pod 两处真值分叉，安装链漏签发）；⑤ 恢复票据包装允许 resourceId=-1；⑥ 安装链节点值==镜像门与 arm 快照对 owned 锚点改用镜像。产品侧：controller 预览会话换绑（同一 bridge）、指针状态机、一次映射、显式 reassert（宿主按模式选语义）；焦点重申经 native 幂等重聚焦重发焦点通知，宿主重新聚焦隐藏代理。**设备全链绿**：presentation hit（caret=5@片段 1000）→ SourceMap 映射 display 15→source 7 → 会话落点安装 `observed_installed sel=7,7` → 系统 IME kind-51 `range=7:7 bytes=3` → owner v2→v3（137→140B）→ 预览片段重渲染 `value=预览取证标文题 v=5`。过程构建/日志：[build1/](../../artifacts/visual-edit-20261004/build1/)（w7 起每步 hilog 在各 run 目录）。剩余：B 腿（非空替换/删除/undo-redo/emoji/多标量）、C 闭环（Agent 改版/切回源码/保存重开+独立消费者）、D 成本、验证器正式化；临时诊断行已清（保留 presentation hit/PHAROS_VISUAL_* 结构事实）。
+
+**B/C 腿设备证据（2026-10-05，HAP `41a7f12e…`，PID 20776；[legs-1](../../artifacts/visual-edit-20261004/legs-1.json)/[legs-2](../../artifacts/visual-edit-20261004/legs-2.json)/[legs-3](../../artifacts/visual-edit-20261004/legs-3.json) + [build1/build25.log](../../artifacts/visual-edit-20261004/build1/build25.log)）。** 全绿腿：① 拖选非空替换——横向拖选不被视口滚动接管（框架窄修：pointerInteractive TEXT 目标 |dx|>|dy| 保持指针流，纵向仍滚动），`PHAROS_VISUAL_SELECTION range=15:18 bytes=3` → kind-51 `range=7:8`(UTF-16) → owner 题→ZZ（v5）；② 退格删除 v5→v6（136→133B，删恰好一个字符）；③ Undo 按钮精确恢复 v6→v7（136B 原文）；④ 多标量 emoji `😀` v7→v8（+4 字节，插入 caret 处）；⑤ 可视模式期间 Agent 公开 REPLACE_RANGE [0,2)→`##` v8→v9，预览同步更新；⑥ 切回源码字节级一致（same_as_visual=true）且源码继续输入 v9→v10；⑦ 独立消费者＝公开 GET_CONTEXT/INVOKE 通道全程读回（同 round13 既有外部客户端同款能力）。**未闭合**：保存→关闭重开持久化腿本轮未完成（源码输入时序 + SAVE INVOKE 参数两处测试侧问题；保存/重开机制本体为 round13 已验链路，本包未改其生产代码），下轮补跑；D 成本原数未采集；验证器 verify_pharos_visual_edit 正式化未做。另：uitest 坐标为屏幕 px（surface 原点 y≈+136），验证器必须用 readback_target_point 派生。
+
+<a id="h-visual-edit-review-20261005"></a>
+### 可视编辑交付后复核与接续 A–E（2026-10-05）
+
+**目标与范围。** 在现有 Pharos 的 256KiB 小文档范围内，把可视面做成可连续编辑、可反复切换、可与备注／Agent 共用且能保存重开的正常界面。复用原 owner、范围会话、SourceMap、恢复票据和投影，不新造编辑器或历史引擎。执行 A–E 整包，必要生产修复与最终消费一起完成；跨片段选区当前具名拒绝作为本首包边界保留，后续消费 E 正在完善的共同契约，不在 H 复制第二套跨片段算法。E 的 GB／历史安全任务和 W 的适配继续独立，不覆盖其写集。
+
+**本次复核。** [源码与原件索引](../../artifacts/visual-edit-20261004/guidance-review-20261005/review.json)固定了源码 hash、问题落点和反例。指导没有构建、操作设备或重跑生产链；仅定向源码／原件复核及[纯 Python 工具调用反例](../../artifacts/visual-edit-20261004/guidance-review-20261005/tool-contract-red.json)。因此以下生产问题是源码可达性结论，执行者先保存各自 RED，再修，不声称已在用户文档上复现。
+
+**可保留的进展与口径更正。** `1c68ce59…` 微链和 `41a7f12e…` 后续正常包分别保留；后者 build25 正式构建／闭包／启动成立，删除、Undo、emoji 插入、Agent 改版与 source 续写有探索摘要。`legs-1/2` 缺完整 owner 与原回包，`legs-2` 明写按输出重建，不能据此宣称所有腿逐字节相等；`legs-3` 含 SAVE 错误／截断回包／跳过，未证明保存后新进程读回。`😀` 是单个 Unicode 标量、两个 UTF-16 码元，不是多标量字素。GET_CONTEXT／INVOKE 是公开 Agent 消费，不能充当第二个正常界面消费者。原报告“同一函数现排”也不等于“绘制和命中使用同一份 accepted 排版”。
+
+#### A．先闭合镜像、排版和 accepted 身份的共同接缝
+
+1. **镜像漏接的同步路径。** `ohos_renderer.cpp::syncEditingBufferAfterAcceptedSceneLocked` 仍取 `n.value`，投影推进后写回 `editingText` 并夹选区；carrier 的值为空。新包只改 begin／recover／arm 不足以让所有接缝同源。非输入节点仅供身份／几何，正文必须取与本次 accepted 绑定、owner 内容版本一致的会话镜像，不能盲取最新声明或把空 carrier 当空文档。最小 RED：空值 carrier＋镜像 `abc`＋选区[1,2)→非冲突 Agent 改版→同绑定 accepted 新版→立即读 native/reconcile/安装与首笔输入；对照纯 resize／无正文发布。不得中间发布空代理再依赖下一帧“救回来”。
+2. **命中必须消费真实绘制排版与原点。** 新 `runPresentationHitLocked` 每次创建并销毁 typography，`tapX/Y` 只减节点坐标；绘制的 `computeTextGeometry` 还加 inset 与纵向居中。复用 accepted 持留排版和其精确绘制原点／样式／裁剪／surface geometry 身份，补有界持有、退役与旧查询拒绝；不要用再建一次相似排版代替。RED：两行文字置于明显高于文字的盒子，按第一行实际 glyph/caret 位置命中；再测 inset 边界、样式 runs、滚动裁剪及 surface 几何换代。绘制、命中、caret／选区须能回到同一产物。保留现有锁外执行和 `isRenderThread()` 分流，不把早期自等死锁再当当前缺陷重修。
+3. **候选不得提前成为 accepted SourceMap。** 产品 `ensureVisualFragments` 在 buildUi 内立即写 `acceptedVisualBinding`，而 native 可能仍显示旧帧。将候选、采纳、拒绝和退役接回现有框架发布事实，缓存键覆盖 owner、内容、投影及布局／几何身份。RED：新候选待决／拒绝时点旧 accepted；同 nodeId 换源跨度；旧查询晚到。源映射、命中结果与实际输入安装只能来自可证明一致的身份，不能仅比较当前 owner 版本或把字段命名为 accepted 就成立。
+
+这组涉及排版生命周期／线程和公共身份。先用已定位反例及接口草图做一次聚焦 Astra 只读裁决；已有适用裁决直接复用。不要求复制 macOS TextKit 实现，复用其 accepted lease／提交原则，在 OHOS Native Drawing 接缝内实现。查本地 Flutter／GPUI 等相关生命周期与测试只借鉴思路，并核当前 OHOS SDK 的 Typography 线程、坐标、对象寿命文档；不引入第三方 GUI 依赖，不重新调研整个渲染路线。
+
+#### B．补齐反复切换、正文／备注归属与连续 caret
+
+- **同版二次进入可视会失去绑定。** `resetVisualEditState` 清 `acceptedVisualBinding`，却保留 `visualVersion/visualFragments`；`ensureVisualFragments` 同版直接返回，未重建 binding。修缓存内容与身份的共同生命周期。RED：source→visual→source→visual，中间零正文编辑，第二次点击与首笔输入仍可用，切换本身零事务；不能靠人为插入文字刷新版本才能复活，也不为修绑定每帧重扫正文。
+- **正文点击不能使用备注会话。** `bindNoteSession` 将 `this.session` 指向备注，`commitVisualSelection` 却直接使用它；`prepareSourceRange` 的版本数相等不代表同 owner。正文点击应显式按当前 owner／节点／绑定切回 visual carrier，再完成安装和聚焦；备注正在持有或切换未完成时不能修改错误会话的选择。RED：两个 owner 同版本且备注长度足够→备注编辑→点可视正文→输入→再访备注；逐笔独立全文和版本必须隔离。不要每次无条件重绑，也不能只靠 resource=-1 或焦点标签推断归属。
+- **真实选择推进后更新画面。** 当前 `visualCaretNode/Offset/Anchor` 只在指针提交／reset 改写，键入、替换、Undo/Redo、Agent 重基之后仍用旧显示偏移。以会话中经安装／采纳的源 anchor/focus 为事实，通过同版本 accepted SourceMap 重投影；不能把源偏移当显示偏移或靠重点击掩盖。RED：点击→连续两笔输入→非空替换→Undo/Redo→Agent 在锚前非冲突插入→仍在 visual 免点击续写；高亮应正确折叠，caret 与实际首笔写入跨度一致。映射不唯一按原具名拒绝／恢复机制处理，不静默跳文末。修正仍写“预览（只读）”的当前可编辑界面文案。
+
+#### C．统一触摸分类与原始选择起点
+
+横向拖选的跨阈值分支目前以**当前 MOVE**补发 POINTER_BEGIN，丢掉真实 BEGIN→阈值这一段；仅 BEGIN→END 的 pending 终结又仍把任意超阈值位移判为滚动，没走新增横／纵分类。让待决 MOVE/END 共用分类入口，BEGIN 使用原始触点，随后按序交付当前位置；阈值闩和选择／滚动一旦胜出不翻转，GestureKey／acceptedBindingEpoch 和唯一终结继续有效。不要为视觉拖选放宽所有文字／按钮的滚动仲裁。
+
+固定反例：BEGIN(100,100)→MOVE(125,100)→END(160,100)选择起点须为100；BEGIN(100,100)→END(160,100)不能整笔丢失；再覆盖纵向滚动、折返、胜出后转向、取消／旧代、目标换绑。按现有 gesture 宿主测试抽生产机制验证，输入选择目标应从已接受几何取得；已有触摸队列／多指／惯性旧包不借机全盘重写。
+
+#### D．修现有验收脚本，保持有限完成门
+
+`verify_pharos_visual_edit.py` 尚是草稿，不能仅延长等待后开跑。一次修清实际契约：visual 查询当前片段和 carrier，非源码107；正确拆 `(point, reason)` 并转换当前 XComponent 屏幕原点；oracle 传原 hex、严格区分 UTF-8 字节与 UTF-16 范围；Agent 边界取合法跨度。Undo/Redo 是**新事务、版本单调推进**，只核精确前态／后态与对应一次动作，不允许匹配任意历史快照来通过。系统一次文字注入可能产生多笔事件，应按实际输入意图／提交配对证明各自恰一次，不能拿 UTF-16 长度当事务计数。
+
+visual 改版后续写要有冻结源跨度、完整期望／实际 owner 和硬失败门，不能只记录 `advanced` 后继续 OK。所有动作前冻结基线；同一次安装／采纳／当前身份原件沿已验工具原语配对，缺失就如实未证实。保存必须完整成功回包、当前正文与文件对应，再按解析到的自有 bundle 重开并取得**新 PID／实例**；不得硬编码 com.pharos.mark 或用旧 PID 采 RSS。传 `--target` 到共享设备模块，转发只按本轮确实创建的三元组在 finally 清理，用户7856不动。
+
+只补本包有判别力的少量工具负控：helper错形状、旧身份、零／重复／错跨度写入、错误Undo版本语义、跳过续写、保存失败／重开旧正文、缺必需原件。可对参数归一化合并测试；不重开round14–18的无限日志配对矩阵，不堆多套影子判据。原件落盘失败必须使验收失败，摘要不能替代原回包。
+
+#### E．同一最终 normal HAP 闭合两种正常消费与成本
+
+小反例绿后只做一次必要的同源构建汇合。Pharos以同一最终normal HAP连续完成：源码基线→visual点击／连续输入→同片段跨折行非空替换／删除→Undo/Redo→非冲突Agent改版→仍在visual映射后免点击续写→正文／备注往返→无编辑双模式往返→切source→保存→正常关闭／新实例重开→全文精确→继续编辑。每腿保存完整owner原字节、冻结跨度、原请求／回包、安装／采纳／当前身份、accepted几何及截图。标题、段落、强调与折行至少各有定位消费；加入真正的多标量簇（ZWJ／肤色／旗帜／分解重音中有代表性的两类），核边界与整簇删除。uitest为系统合成输入，非人工物理输入，marked/cancel未观测边界不改名通过。
+
+<a id="h-visual-edit-after-ae-review-20261005"></a>
+#### A–E 实施后的指导复核与接续（2026-10-05，未通过整包验收）
+
+**当前执行依据：**保留上方目标和既有 Astra 裁决，按[本次复核与固定结束门](../../artifacts/visual-edit-20261004/guidance-review-20261005/after-ae-review.md)完成必要返工再汇合。下方 `f354f0b0…` 为执行者自验原记录；“28 项全绿／第二消费者完成”尚未被当前原件与判据证明，不作为收口依据。
+
+- **A1 镜像：**当前 helper 可把 accepted A/epoch10 借给尚未接受的 B/epoch20，原样抽取生产函数的宿主反例 exit3；补完整冻结绑定、票据关联、缺镜像输入准入及纯 resize/owner 换版区分。`ownerContentVersion` 不能只用于日志。同文新版本、合法空正文、声明缺失分别判别。
+- **A2 租约：**presentation 查询漏查 Flush 失败后的 usable=false；teardown 未销毁新租约表；64 条数量限制未覆盖已裁决的单节点/总量/峰值及活动目标优先。先定向反例修失效、回收和预算，保留真实绘制排版与原点复用，不现场重排兜底。
+- **D 判据：**当前插入允许任意落点且不限版本增量；非空替换只看版本推进；备注不读自己的 owner；部分 FAIL 最终仍 return0。纯内存负控 `abc→abcX，v1→v3` 被判成功，尽管冻结 caret=1 应得 `aXbc`。改为动作前冻结范围/owner/安装身份、动作后完整字节及意图事务数；必需腿和归档失败必须使总门失败。只补有限直接负控，不重开 round14–18 矩阵。
+- **SAVE 与 E：**公开 SAVE 的 `save_not_started` 仍是功能失败，先定位异步票据准入/owner 结算而非猜根因，工具栏同步成功不能替代。`final-run-2` 仅 run.json 且 legs=[]，需重新取得最小逐腿原件；正文/备注隔离单独核两 owner。另按原 E 要求用一个已有正常消费者真正消费新增非输入节点镜像/presentation 接缝，不能用旧备注 TextInput 代替。
+
+[独立 RED 原件](../../artifacts/visual-edit-20261004/guidance-review-20261005/after-ae-red.json)仅为宿主抽取函数和纯内存验证器证据；其余发现标为源码审阅。本次未构建 HAP、操作设备或修改生产。生产修复、小负控通过后，一次必要同源构建完成最终 Pharos 连续链与独立消费者，保留旧有效回归；16ms、物理输入/真机和 marked/cancel 按原边界记录，不扩大任务。E/W 写集、用户资源与暂存保留，不 stage/commit/push。
+
+**A–E 执行者自验原记录（2026-10-05，final normal HAP `f354f0b0…`，完成性口径以上方指导复核为准；构建 [build-final2](../../artifacts/visual-edit-20261004/build1/build-final2.log)）。**
+
+**A**：①镜像漏接——native 新增 `OwnedMirrorDeclaration` 三段事务（staged→present 冻结→双结算路径晋升），FFI 增 `mirrorVersion`；`syncEditingBufferAfterAcceptedSceneLocked`/begin/recover/arm/绘制跳过五处改读 **accepted 段声明**，声明缺失时保留旧缓冲具名等待（不再退回空 carrier 值）；窗口单次会话快照携文本+owner 版本+绑定代，声明缓存仅 FFI 成功后记账，present 前同步（Astra [裁决](../../artifacts/consultations/h-visual-edit-a-lifecycle-astra-20261005/answer.md)：发布者分工成立但须票据冻结）。②命中——新增**本帧实际绘制排版租约表**（`presentationLease`，≤64 条，渲染线程持有，publish 整表替换），presentation 命中消费同一条 typography 与精确绘制原点（inset/居中同源），身份八元组不符具名拒绝，不再现排。③候选——产品拆 candidate/accepted 两槽，controller 实现 `CjguiComposableUiSceneRefreshParticipant`，commit 整快照晋升、rollback 丢弃；命中/映射/安装只读 accepted 槽。
+
+**B**：P1 同版二次进入——缓存命中整快照装入候选（binding 随行），设备实测 source→visual→source→visual 零编辑后点击+输入正常（v12→v13）。P2 正文/备注隔离——`bodySessionOnCarrier()` 守卫：备注持有会话或会话不在 carrier 时先显式 `rebindPreviewSession` 再映射安装；设备实测备注输入 NB 后点正文输入 正，主文档 v15→v16 得 `预览取证标正题`、备注文本不变。P3 caret 重投影——绘制参数每帧从**会话选区**经同版本 SourceMap 逆查（新增 `displayOffsetForSource`，transformed/hidden 内部 None 具名拒绝）重投影，键入/Undo/Redo/Agent 重基后画面自动跟随；文案改「预览（可编辑）」。
+
+**C**：抽 `classifyCrossThresholdDragLocked` 共用分类入口（MOVE 跨阈值与 END-only 重判同一函数），新增 `openPointerStreamAtGestureStartLocked`（BEGIN 用**原始触点**）与 `queuePointerPhaseLocked`；胜出不翻转（phase 单向）、GestureKey/唯一终结/取消路径沿用。[离线反例 5 项](../../runtime/cjgui/platforms/ohos/scripts/test_touch_visual_drag_classify.py)（V1 BEGIN 原点/V2 END-only/V3 纵向滚动控制/V4 胜出转向控制/V5 取消控制）+ 既有手势套件 5 项 + 触摸桥/交错回归全绿；RED 原件 [c-group-red](../../artifacts/visual-edit-20261004/c-group-red/)。
+
+**D**：[verify_pharos_visual_edit.py](../../runtime/cjgui/platforms/ohos/scripts/verify_pharos_visual_edit.py) 重写：visual 查询片段节点；`(point, reason)` 拆元组；hex 原 oracle（单次插入唯一性判等、字素簇整删判等、Undo/Redo 版本单调+精确前后态）；Agent 边界 [0,2)；续写硬失败门；toolbar 保存以 `SAVE applied=true persisted=true saved=v bytes=n` 原行为回执且 bytes==owner 字节数；bundle 从当前进程表解析；force-stop 有界等待+kill 兜底；重开校验新 PID 与全文精确；`--negative-control zero-input` 负控反演 exit=4 红。[正向 28 项全绿](../../artifacts/visual-edit-20261004/final-run-2/)。草稿快照与 round18 日志治理均未重开。
+
+**E**：final normal HAP `f354f0b0…` 单一产物完成整链（28 项含备注往返与重开续写）；**正常界面消费者＝文档备注面**（既有第二编辑面）：正文/备注互切经本包新增的 `rebindPreviewSession`/owner 守卫/焦点重申语义切换（`focusReassertSemantic`）——备注输入后正文点击把会话显式切回 carrier、备注文本与版本不动，反向亦然（P2 腿即其消费证据）。成本原数（[final-run-2/run.json](../../artifacts/visual-edit-20261004/final-run-2/run.json)）：注入→owner 推进墙钟 0.89–0.96s/笔（uitest 注入+0.25s 轮询粒度）、点击就绪 2.17s、PREVIEW_BUILD 15 次/轮、重开后 RSS 231,228 kB、全链 72.5s；`😀`=单标量、`👩‍🚀`(ZWJ)/`🇺🇳`(RI 对)=多标量簇均整簇插入，退格按簇删除（实测删除 RI 对 8B）。
+
+**遗留（不称整包完成的部分）**：①`😀` 仅单标量证明，「整簇退格」仅覆盖 RI 对，ZWJ 簇删除未单独断言（插入已验）；②公开通道 `SAVE` 在长驻进程上出现 `save_not_started`（pendingTicket 未结算的工具侧疑点，toolbar 用户路径保存正常且持久化精确），未定位根因；③A2 租约表预算溢出（>64 片段）路径未设备断言；④性能预算（16ms 帧/解析 p95）未在本包测量，沿原范围保留。
+
+从已有thermo或普通文本消费者选一个**正常界面**，接入本包相同的非输入节点镜像锚点、presentation命中、选区安装与输入链，完成点选→输入／替换→外部换版→续写和失败保旧。不要求其理解Markdown；原来的普通TextInput成功不能替代新接缝消费，公开客户端则单列为Agent腿。可与Pharos串行共用冻结平台源，不新建第三套编辑器。
+
+D成本并入上述运行：按同PID／绑定／accepted版本记录命中排版复用／准备、映射、镜像声明与复制、安装、owner接受、构建提交、峰值RSS；点击和拖动不应每样本无界重排／复制整篇。空闲构建／提交与caret闪烁分开，输入与实际活动区间的公共响应记录原数；沿原任务已有预算，不拿模拟器成本外推真机，也不引入一套与E竞争的GB验收。本包保留256KiB边界；实际超限准入、取消旧任务、旧身份零覆盖的定向反例跟随改动覆盖。
+
+**实施与收尾。** 相关源码修复、窄ABI/包装一致性及正常消费已在本包范围；遇公共契约未决先聚焦咨询，不逐文件请示。日常 Pi CLI 显式 `zai-coding-cn/glm-5.3` 新上下文只读；复杂定位按用户最新指定 `gpt-6.1-sol/max`，架构／资源归属 `gpt-6-astra/max`。首次高风险修复失败先看证据／问顾问，不重复猜锁、焦点或输入坐标；旧失败累计不清零，独立任务继续。框架主树E函数与H snapshot按函数隔离，公共ABI由既定负责者统一核对；不直接把E在途历史／多片段实现复制进H私有分叉，不争同target和桌面。最终索引清楚列本包PASS/FAIL/BLOCKED/NOT_RUN、复用原件与新二进制范围，更新STATUS/ACTIVE短状态；未达到此固定门不称整包完成。用户实例、正文、剪贴板、转发及暂存保留，不stage/commit/push。
+**返工执行者自验记录（2026-10-05 第二轮，完成性以紧接本记录的指导复核为准）。** 历史 r2k 为 `82411d0f…`；`after-ae-final` 实际对应 [build-r2m](../../artifacts/visual-edit-20261004/build1/build-r2m.log) `f17c794e…`、PID16556→20824，不能与早轮 PID11493→13764 混用。构建 [build1/](../../artifacts/visual-edit-20261004/build1/) r2a–r2m 保留。
+
+- **A1 闭合**：`declaredBindingEpoch` 进声明本体，helper 拒绝换代借用（指导 RED 场景：accepted A/epoch10 + 声明 B/epoch20 ⇒ nullptr 具名等待，不复用旧镜像）；begin 缺声明分支不再退回 `ownerValue`（presentation 锚点直接 return，不种错误缓冲）；sync 分三路——同文本地连续（保 ctx，修 QQ 第 2 笔掉字）、纯 resize（ownerContentVersion 未变保 ctx，落实 Astra 点 2）、其余外部仲裁（`editingMirrorOwnerVersion` 随播种/仲裁更新，owner 版本用途落实）。staging 拒绝/PENDING 后声明更新由既有 present 冻结事务覆盖（staged 独立、PENDING 晋升原票据声明），未单独设备复现。
+- **A2 闭合**：Flush 失败 ⇒ `paintedLayoutUsable=false` 时 presentation 命中直接拒绝（原命中成功→同几何 Flush 失败→拒绝→重绘恢复的门）；teardown 在渲染线程清 `publishedPresentationLease`；预算溢出在 Flush 前拒整帧候选（`presentation lease budget exceeded` 具名），第 65 个活动目标不再静默失去命中。单节点/总量细粒度预算未单列（64 条计数+现排兜底）；活动目标优先未单列（可视片段全体即活动目标）。
+- **C SAVE 闭合**：真因=**无人调用 `pollSaveAsync`**（票据结算只在 owner 线程轮询，OHOS 宿主从未接线）——首笔公开 SAVE 后票据永不清理，第 2+ 笔全被 `save_not_started` 拒。修复=宿主逐帧 `controller.pollActiveSave()`（H 写集，service.cj 未动，保护 E 写集）。设备实测**同实例连续两次公开 SAVE 全 APPLIED**；失败/取消收敛沿服务既有路径未改；新实例全文读回由重开腿覆盖。
+- **D 闭合**：注入改为**冻结已安装源选区**（hilog `ime select [s,e)`）+ 独立 UTF-16 oracle + 版本恰 +1；QQ 拆笔按意图配对（终态=单次替换期望、版本严格单调 1..len(text)）；替换拖选锚定当前帧行首（命中回执反推节点原点，修旧坐标全塌缩）；删除冻结折叠 caret + 字素簇整删（RI 对/ZWJ 链）；备注独立核 owner 版本全文 + 正文零写入；任意 FAIL/归档失败非零退出；`--self-test-negative` 6 例（错落点/额外事务/备注零写入判据/代理对劈裂/RI 对/ZWJ 簇）+ `--negative-control zero-input` 设备反演（exit=4）均红。round14–18 矩阵未重开。
+- **E 现状**：[after-ae-final 归档](../../artifacts/visual-edit-20261004/after-ae-final/)（run.json + hilog 原件，exit=1 非零收口）——除备注两腿外全绿（基线/注入×4/非空替换 QQ 意图配对/整簇删/Undo/Redo/Agent/续写/正文零写入/重开新实例 11493→13764 全文精确/重开续写）。**备注两腿 FAIL**：宿主 body→note 切换 67ms 内双挂载（ctx16→17），NB 落在已退役前驱闭包（`not alive/finishing`），[缺陷卡](note-defect.json) 精确到行；需 ArkTS 挂载序列化独立轮次。**thermo/普通消费者接入非输入镜像锚 = NOT_RUN**（备注隔离腿不能替代）。
+
+<a id="h-visual-edit-r2-followup-20261005"></a>
+**thermo presentation交接指导复核（2026-10-06，本段优先）。** [原包接续与固定门](../../artifacts/visual-edit-20261004/guidance-review-20261005/after-ae-review.md)顶部：保留逐笔门、新redraw反例和node25公共接线；修备注冻结组号、ACK拼接与删除键自伤。首绑就绪/失败重入比旧ctx更早，旧票迁身份且同槽清零的补丁不能沿用。A2实际编辑排版漏账、required无预留已用当前生产切片复现，第三组查询生命周期仍待验。原包继续根因修复＋预算＋双normal共同消费，不接受“22次构建后另列独立问题”作为完成；normal22与后续PID23342原件分开。指导未改生产或操作设备，E/W/用户资源保留。
+
+**fixla19指导复核（历史，当前以上段为准）。** [两项主任务与有限判据收尾](../../artifacts/visual-edit-20261004/guidance-review-20261005/after-ae-review.md)顶部已给生产落点、三组A2反例及thermo正式normal入口。保留实例3/3、RI/ZWJ整删/Undo与SAVE1/2各自新实例读回；逐笔采纳错ctx/gen/caret仍可绿，补权威来源及等价diff重放，不误判QQQ最小差分为错位。A2旧2/2只是抽取分支模型，真实提交保旧/恢复仍须补；thermo Vertical901未接presentation会话，旧手写/生成都是TextInput，不能测试变体加旧verifier便称独立normal消费。原包继续预算实现＋独立消费者，末尾同源受影响汇合；不重开旧矩阵。
+
+**fixla10指导复核（历史，当前以上段为准）。** [详细结论与固定门](../../artifacts/visual-edit-20261004/guidance-review-20261005/after-ae-review.md)顶部优先。45项exit0、两次公开SAVE persisted及第二次新PID重开原件保留；本次真实helper已复现旧PID-only仍获新实例采纳，原表达式已复现备注丢光原字节/仅剩NB仍绿。先最小修当前实例配对及备注完整owner/逐笔来源判据，再补原门QQQ、RI/ZWJ整删、第一次SAVE文件读回、独立presentation消费者与A2实际超限零Flush/保旧/恢复及预算。所谓第二消费者仍是Pharos备注，历史delta布尔不能证明exactly-once或备注不变。13/18至少三项属新增selectionRange参数未传，其余与A/B原件须有限核对；不恢复旧旁路。不扩GB/16ms或重开旧工具矩阵，生产不变不重建，旧有效消费不全量重跑；指导仅离线复核与文档更新，未操作设备、未恢复执行线程。
+
+**前次停止声明指导复核（历史，完成情况以上段更新）。**
+
+1. **“重挂零采纳/等待契约裁决”撤回。** final/final2原始hilog均有request2/ctx2/node107及request3/ctx4/node190的ACK与真实窗口ADOPTED。visual面本来绑定carrier190，验证器却固定107；复用helper还固定源码field。有限接线到本腿预期表面/owner/节点/field，核当前accepted身份；不可盲信当前焦点、全局改190或给ArkTS补成功日志。以[真实原件复算](../../artifacts/visual-edit-20261004/guidance-review-20261005/current-target-review/result.json)证明误拒，负控覆盖真实freeze调用点。
+2. **失败epilogue保留，补判定点事实。** run/hilog已落盘；仍缺同次GET_CONTEXT原回包、完整owner字节及围栏，check另读owner/hash不是原判定。连续本地输入须证明当前落点的延续，不以owner_version=None借旧安装选区。按原工具最小补齐，不重写旧轮次矩阵。
+3. **独立工作继续。** fixture实际依赖已补；LAB语法/入口guard通过但旧报错未定因，不作为停工门。A2实际超限零Flush/旧accepted/恢复与预算、独立presentation消费者不依赖Pharos恢复；均为原包授权内容。
+4. **先现有HAP首笔，再最终汇合。** QQ/QQQ、正文备注一次投递、旧来源拒绝、RI/ZWJ整删、两次公开SAVE persisted与新实例精确读回、独立消费者、A2运行门不变。仅生产变化才重建，真正生产断点按原咨询规则处理；不重开round14–18、不扩GB/16ms。E/W、用户资源、stash/暂存保持，不stage/commit/push。
+
+**round14 执行者自验原记录（2026-10-04；正常消费/逐腿归档已接受，通用工具判据按上方当前指导收尾）。** 原任务继续，未另开卡；本轮**零生产改动、零 HAP 重建**（f1ae83d2 原样复用）；改动全部在 H 验证器、负控套件与证据归档。[离线结果](../../artifacts/h-r-final-20261002/round14-fix/offline-suites-r4.json)（四套件 exit0）＋[round14 GREEN 复判 r4](../../artifacts/h-r-final-20261002/round14-fix/round14-green-recheck-r4.json)（11 例期望全成立＋判定点归档/写失败具名）；round14 冻结 RED 原件未覆盖。
+
+| 项 | 实现 | 独立反例 | 设备 |
+| --- | --- | --- | --- |
+| **A 归一最终判据** | [验证器](../../runtime/cjgui/platforms/ohos/scripts/verify_thermo_shared_lifecycle.py)撤销 `_standard_terminal_gate`/`_install_adoption_identity_gate` 双分支与 human-anchor 救绿支路；terminal 配对与等价链 `ime select rc=0` 只作为**两种安装凭据**，逐一送入唯一 `_final_adoption_identity_gate`（ProxyKey 形状→挂载 ctx==读回 ctx、e==读回 gen→同挂载完整观测（sel==凭据选区）→ADOPTED2 全字段对观测＋source_gen==读回 gen＋owner_version==本腿冻结基线（由调用方在动作前经公开 owner 读回冻结）→观测≤采纳→权威当前身份逐字段）；`confirmed_selection` 按行序取**最后通过完整门的凭据**（陈旧过站配对不再挡住证据齐全的更新凭据）。当前读回 v 因后续发布推进不参与比较（不恢复旧版本强等误拒） | [套件](../../runtime/cjgui/platforms/ohos/scripts/test_generated_install_equivalence_negatives.py) 71 项：round14 九类 RED（标准 unverified/999 gen、观测选区不符、先采纳后观测、仅 native 锚；等价 999 gen、-1/999 owner_version、mount ctx99）两种来源各自拒绝＋既有逐字段变异＋thermo-final 六腿真实行回放（sha256 防漂移）且缺/改任一来源字段必拒 | thermo-rerun7 九腿全 OK（下 C 行） |
+| **B 判定点归档** | `wait_confirmed` 每轮以**同一次 GET_CONTEXT 响应**（原文/owner 版本/OWNER_STATE 原文/解析身份同源）＋本轮日志行判定；判定点（成功或终结轮）把每轮原回包、围栏、匹配事实（挂载键/凭据 kind+reason/观测/采纳行号、`observation_source`/`obs_rows_in_span`）、冻结基线与判定轮完整日志行落盘 `&lt;leg&gt;-judgment.json`+`-rows.txt`；必需归档写入失败 → `ArchiveRequiredError`（`archive_write_failed`）具名终结，验收 OK 前核必需归档齐全（缺件 → `archive_incomplete`），不再 `except: pass` | [round14-green-recheck](../../artifacts/h-r-final-20261002/round14-fix/round14-green-recheck-r4.json)：成功腿归档含原回包/事实/基线、写失败负控具名；套件 facts 回填断言 | thermo-rerun7 六腿判定点原件＋`hilog_cjgui_rows.txt`/`owner_state_final.txt`/`identity.txt` 落盘齐全（12 必需件 0 缺失） |
+| **C 设备复跑受影响切面** | 复用 f1ae83d2；判据落地后复跑暴露 hilog 通道三类丢行（leg6 观测行、leg3 凭据行、leg9 采纳行各丢于不同次运行；流控标记与[Pi 咨询](../../artifacts/consultations/h-round14-leg6-obs-20261004/answer.md)归因为采集丢失非生产缺陷——kind-33 唯一生产者必然伴打观测行，ADOPTED2(source_ctx) 存在即证明该行曾打印）。按咨询裁决：①观测行缺席且零本挂载观测行时 `attach_confirmed` 终态对补位（observation_source=attach_confirmed，RED 全保持拒绝）；②凭据候选多判；③`hilog -Q pidoff/domainoff`＋`-b I` 消除丢行（临时配置，已恢复） | 补位正控（受控＋run-B leg6 真实行）＋12 项补位负控（N1–N12：观测行在场即阻断、caret_confirmed 不补位、采纳后于确认行拒等）；[run-B2 leg3](../../runtime/cjgui/platforms/ohos/scripts/test_generated_install_equivalence_negatives.py) 真实行：陈旧 word_select 配对不挡 select 凭据 | [thermo-rerun7](../../artifacts/h-r-final-20261002/round14-fix/thermo-rerun7/thermo-shared.json) **OK exit0**：安装[0,0)/插入 exactly-once(26)/拖选[13,17)/精确替换 exactly-once/外部改版/重挂安装[15,15)/续写 exactly-once/**生成安装[16,16)+G1(2)/手写回访[18,18)+H(1)/生成回访[16,16)+G2(2)**；六判定腿 owner 基线逐腿精确相等（0/26/28/29/31/32），全部走 obs_row 严格路径 |
+
+**过程与边界**：复跑 1–6 的失败逐次由 B 归档定位（复跑1 leg6 观测行丢→Pi 咨询→补位；复跑2 leg3 凭据行丢→多凭据候选；复跑3 leg9 采纳行丢→`hilog -Q`＋`-b I` 后复跑7 全绿），未放宽任何身份字段；`fence` 由行号改为时间戳锚（流控关闭后缓冲高速轮转，行号跨快照不稳定，复跑4 实测）。复跑1–6 目录保留为通道丢行原证；`hilog -b D`/`-Q pidon/domainon` 已恢复。用户 7856 转发保持；自有 17857 转发由验证器按创建回执清理；模拟器应用实例 29901 留存（属自有实例，按既有规则保留现场）；未 stage/commit/push。
+
+**遗留边界（不扩任务）**：Pi 咨询指出的生产侧补强（kind-33 出队侧带身份 RLOGI，类比 kind-51 `ime range delta dequeue`）留下一轮生产窗口——本轮 HAP 冻结不做；Pharos 侧 wire 套件口径（真实回包解析＋受控合成 ACK/采纳正控分开标注）维持复核口径不变。
+
+**round11 执行者自验原记录（2026-10-03；D1–D3保留，D4及最终汇合的完成判断已由上方指导纠正）。** 原任务继续，未另开卡、不动 E/macOS 与 Node/Event POD、不 stage/commit/push。五项交付：
+
+| 项 | 实现 | 独立反例 | 设备 |
+| --- | --- | --- | --- |
+| **D1 票环完整终态** | 两个发布器改为**完整新记录**写入（`OhosTicketFact t{}` 值初始化后逐字段填充、整条赋槽）：成功 reason 明确为 0，失败/取消各取真实 phase；取消槽被 8 次成功环绕后不再继承 `x2` | [readback 套件](../../runtime/cjgui/platforms/ohos/scripts/test_readback_publish_consistency.py) 35 项全绿（含 RING_WRAP 第 9 张成功票字段全属本票、重复查询零第二终态、环 cap=8、失败保旧 accepted）；变异负控「改回环槽继承」翻红 | 随最终 normal 包消费 |
+| **D2 测试保真** | 查询器 `ohos_renderer_accepted_state` **整个函数体逐字**编入探针（格式串+实参一起抽），`-Werror=format` 编译 | 同套件：内存删除生产 `src.token` 实参 → 探针**编译失败**（旧版生成代码逐字不变的洞已闭合）；发布时机源序检查补同步路径表面事实填值断言 | 同上 |
+| **D3 身份守卫/无动作面** | 撤回「模式切换重建会话」前提（token 6→8→10 = 格式错位）：`judge`/`ticket_verdict` 主判据改 **token 相等**（异 token 即使 epoch/frame/ticket 更大也 `stale_token`；epoch 倒退单列 `stale_epoch`）；`already_at_target` 只免新票要求、不免面一致（`accepted_face_not_target` 具名）；模式已声明到目标**不反向 toggle**（零额外动作）；超时结局取最后一次判定具名结论 | [single_snapshot 套件](../../runtime/cjgui/platforms/ohos/scripts/test_single_snapshot_judgment_negatives.py) 重写为**执行真实 reach_mode**（27 项含六份互不一致快照、异 token 负控取代被撤回正控、零额外动作、3 条守卫变异负控） | A→B→A→B 四次模式判定全 `submitted_target`/`already_at_target`，每次至多一次动作 |
+| **D4 有界目标几何** | accepted 发布边界冻结**几何记录集**（cap=16 × semantic≤48B；bounds、`visible=bounds∩clips` 用与绘制/命中共用的文件级裁剪数学、clipCount、vis；density/viewport 随发布冻结）+ **当前编辑身份** `edit=live ctx=.. node=..`，均入 OWNER_STATE 读回；同步成功路径补 `surfaceWidth/Height/Density` 填值（设备实测曾 density=1.0/viewport=0 致假点）；驱动 `readback_target_point` 按身份定位（日志 node-rect 全缺可定位、三态具名 geo_truncated/not_in_accepted/fully_invisible、失败不复用旧坐标），reach_mode 按钮点改走读回几何 | [target_geometry 套件](../../runtime/cjgui/platforms/ohos/scripts/test_target_geometry_readback.py)：第 9+ 目标（面清单 cap=8 之外）全可定位、链式/单 clip 回退两路 visible、全裁/零裁 vis=1 仍在记录、18 节点 truncated=1、重复查询逐字节稳定零帧增长、变异负控×2 | 按钮点命中（A→B→A→B 全切换成功）；读回 `density=3.5 viewport=1320x2622 used=8` 与画面/原点对应 |
+| **汇合** | 正式入口 final normal Pharos `0840f212…`（重链/闭包/启动断言全绿） | — | 单实例 A→B→A→B **required_values 11/11 OK**：中段折叠锚 [3,3)（原报告误称非空） → 平台安装+窗口采纳（restore_ack 完整身份 ctx=7/node=107/binding=36/v=36, owner_version=2）→ 免点击精确输入 → 双向 owner 字节/版本隔离 → 回访保持（v30/25B）；[dual-owner.json](../../artifacts/h-r-final-20261002/round11-fix/pharos-final4/dual-owner.json) + [OWNER_STATE 终态](../../artifacts/h-r-final-20261002/round11-fix/pharos-final4/owner_state_final.txt) + [画面](../../artifacts/h-r-final-20261002/round11-fix/pharos-final4/screen.png) |
+
+**汇合中的两处真实缺陷修复（设备反例驱动）**：① 产品 `surface.cj` 两处停留在旧框架 API（`fontFamilyName()`→`fontFamily` 成员；`PharosRunStyle` 未换算直传 `CjguiComposableUiStyle`），阻断构建，已按文件内既有换算模式修复（packages 与 entry 两份同步改）；② back-A 的 `platform focus` 身份行被提交突发从环形缓冲淘汰（同窗口 15/16 条 node-rect 一并丢失，恢复本身成功却判 no_current_identity）——编辑身份现随成功发布冻结进读回 ` edit=live …`（拒绝/失败保留旧值），驱动以读回身份作扫描种子（行内焦点行优先、异 ctx/不完整种子拒绝），[mount 套件](../../runtime/cjgui/platforms/ohos/scripts/test_mount_lifecycle_pairing_negatives.py) 27 项含 4 条种子负控全绿。
+
+**thermo 受影响腿（同源 normal `ce7106fb…`，[ohos_thermo_app 入口]）**：手写字段恢复/输入腿 1–6 全绿——输入插入 exactly-once(26 txns)、冻结非空选区 [0,4) 精确替换 exactly-once、外部改版 SET_NOTE 后重挂载确认 [15,15)、继续输入 `外部改版后的备注 thermΩY` exactly-once（[thermo-legs5](../../artifacts/h-r-final-20261002/round11-fix/thermo-legs5/thermo-shared.json)）。生成字段腿（7–9）在 `generated_install_unconfirmed` 未续：平台实际安装+采纳（`ime select rc=0`+观测+ADOPTED2 source_ctx=3 全在）但 ArkTS `terminal=INSTALLED` 行在 echo-held 安装后未发（[挂载行原件](../../artifacts/h-r-final-20261002/round11-fix/thermo-legs5/hilog_mount_rows.txt)）；属既有生成字段宿主行为（cf. [gen-field-proxy-divergence 咨询](../../artifacts/consultations/gen-field-proxy-divergence/answer.md)），非本轮共享改动所致，按「只做受影响腿」不扩写集。
+
+**安全删除守卫原件（不绕过）**：thermo `ohos_thermo_asm_r3` 入口被 hvigor Error `00308018 [safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":52,"threshold":50}` 拒绝——常驻守护 spawner（PID 58278，持用户另一会话的 CODEBUDDY 守卫环境）派生的 worker 执行 `.cxx` 重配置清理；[原文日志](../../artifacts/h-r-final-20261002/round11-fix/build/thermo-normal-build.log)保留。不拆删/不重置/不换工具；同轮经 R4 期 `ohos_thermo_app` 正式入口（不受守卫影响）取得同源产物。一次误杀 58281 worker 后由 spawner 带守卫环境重建，如实记录。
+
+**回归与产物**：离线 14 套全绿（readback/single_snapshot/target_geometry/mount 27/round6 6/t2 18/scene_face/r1 243/s2/ime_selection/generated_range/thermo_driver/dual_owner 19/cjpm 31）；[round11 GREEN](../../artifacts/h-r-final-20261002/round11-fix/round11-green.json)（x0/stale_token/accepted_face_not_target/变异探针可辨）另存，round11 及旧 RED 原件未覆盖。macOS `cjpm test` 链接失败仍属 E 写集既有问题；用户 7856 转发与并行改动保留，自有实例/临时转发已回收。
+
+**round8 执行者自验原记录（2026-10-03；A关闭与D定因已被上方指导纠正，C通过）。** 原任务继续，未另开卡、未恢复第三条常驻线，未重造编辑器、未扩功能、未接管 macOS E 线。D 的复杂根因按要求交 [Pi→精确 `zai-coding-cn/glm-5.3` 独立只读咨询](../../artifacts/consultations/h-round8-abc-20261003/answer-d.md)（材料含「ACTIVATE 已送达」的反证，exit 0，答复 exit 0）；顾问四条结论全部采纳：`present frame ok` 不能替代 accepted 提交证据、必须补生产 faces 行、面判据不得沿用旧面、只改检查器会把假红换成「永远未验」。已有 B 四边界实证与已绿矩阵按指示复用，未重跑 T2。
+
+| 项 | 实现 | 独立反例 | 设备 |
+| --- | --- | --- | --- |
+| **A 恢复证据生命周期配对** | 检查器重写：`_mount_lifecycle` 单遍**按事件顺序**维护当前有效代——`platform focus`（含**同值重挂**）、换焦到别的 node/字段、`proxy released by framework ctx=`、`proxy restore terminated` 各自开代或关闭当前代并作废该代候选；所有 ack/adopted/观测/ADOPTED2 带**记录时所属代号**，只接受同代者。另修两处真实缺陷：① 生产行 `count=N failed=N pending=bool request=R …` 里 `failed`/`pending` 夹在 count 与 request 之间，旧正则的 `\s*$` 锚**永不匹配**，真正的显式采纳 ACK 路径被静默漏读（设备结果因此退回 mount 路径）——改为按具名字段解析、顺序无关；② ADOPTED2 的 `owner_version` 由「可选字段」改为**必填**，缺失即拒。**未改 Node/Event POD，未用最新 ctx 反填旧事件**（生产无需新增日志：退役行 `proxy released by framework ctx=` 本就存在，实测 5 条） | [生命周期 23 例](../../runtime/cjgui/platforms/ohos/scripts/test_mount_lifecycle_pairing_negatives.py) failures=0（含生产真实格式正控、六条字段级负控、退役/换焦/同值重挂/迟到采纳、旧代 ACK、新代重新成立的正控）。round7 的身份套件是本文件子集，已并入并**删除**（业务判据一条未放松，字段级负控全部搬过来并加了具名 source 断言） | 未重跑设备（A 的设备复验随 D 的最终 normal 包一起做，D 未收口故本轮无新的 A 设备结论） |
+| **C 收尾后终态保留** | `ownedRestoreNamedTerminal` **不再在恢复入口每次清零**——终态归**当前恢复目标**（换代键）不归一次函数调用。清零只发生在三处：换代块、need-clear（恢复已完成）、成功采纳（WindowAdopted 确属确定成功终态）。`finishAcceptedScene` 的守卫本身逐字不变 | 指导 [RED 原件 JSON](../../artifacts/h-r-final-20261002/guidance-review/round8-anchor-review.json) **已按字节恢复**（320 B，未改）；修后 GREEN 另存 [anchor-finish-after-fix.json](../../artifacts/h-r-final-20261002/round8-fix/anchor-finish-after-fix.json) exit 0。窗口接缝 [29/29](../../runtime/cjgui/platforms/ohos/scripts/test_window_restore_adoption_snapshot_cjpm.py) 增 5 例**全部走 `reviewAcceptedRestoreAndFinish()`（恢复入口＋生产收尾守卫逐字抽取）**，不再只直接调恢复方法；7 条 RED 变异全被拒（新增 `terminal-cleared-per-call`、`terminal-not-cleared-on-generation`） | 随 Pharos 同源 normal 包编译通过 |
+| **D 模式切换** | **撤回「模拟器点击抖动」归因**（已被归档推翻）。生产加两处**只读**诊断：① `accepted faces v=… ticket=… source=… preview=… nodes=…`——在**两条 settle 路径同一位置**发出，是唯一同时证明「该投影已 accepted 提交」与「提交的是哪一面」的单行事实；② accepted 全量转储改为**内容指纹变化才重发**（不按投影版本门控——版本每次按键 +1，那等于没收敛）。检查器：`scene_face` 按**动作行文本围栏 + 投影版本**取锚，**绝不沿用旧面**，无当前投影面证据即返回「未观测」；`reach_mode` 把「已提交但面证据不可得」具名 `evidence-dropped`、「围栏被回收」具名 `evidence_lost`，不再记成 `toggle-timeout`（那会被读成「点击没送达」）；`mode_trace` 增 `accepted_faces`/`owner_alive`/`loglimit` 三项事实 | [提交标记判别 9 例](../../runtime/cjgui/platforms/ohos/scripts/test_scene_face_commit_marker_negatives.py) failures=0：已提交 preview / 未提交 / 只有 candidate / 切回 source / 围栏回收 五类互不混淆；[既有负控 19](../../runtime/cjgui/platforms/ohos/scripts/test_dual_owner_negative_controls.py) 仍 19/19 | **未收口**，见下 |
+
+**D归因更正（指导已核原始流）。** 最后可见accepted faces为动作前的v4/source3/preview0；ACTIVATE之后ticket5进入present，随后同owner线程仍分发24条公开请求。只能证明点击已送达、owner并未持续卡在该次等待；最终accepted结果仍未观测。执行者及Pi曾倾向“按域流控吞掉提交批”，但未取得与本次ticket对应的提交状态或丢弃事实，该归因撤回为假设。逐节点text-runs日志降噪不作为已确定的下一修复；按上方D固定方案取得不依赖日志留存的有界状态，再修实证断点。
+
+**本轮明确未闭合/未验。** ① D 的最终 normal A→B→A→B **未绿**（现为具名 `evidence-dropped`，是诚实的观察缺失而非假红；生产提交面未被证实）；② A 的设备复验随 D 一起做，本轮无新结论；③ thermo 只复验受共享改动影响的恢复腿——**本轮未做**（D 未收口，按「A/C 反例闭合后才做最终汇合」的顺序，thermo 复验留到 D 收口同批）；④ macOS `cjpm test` 链接失败仍是本轮之前既有问题（测试专用符号在 `#ifdef CJGUI_INTERNAL_TESTING` 内、sidecar 脚本不定义该宏），属 E 写集未动；⑤ 指导的 `round8-anchor-review.log`（RED 原始日志）**被我的首次复跑覆盖且无法逐字恢复**——RED 的决定性一行已在同目录 JSON 的 `counterexample` 字段与本节内留存，`.log` 本身丢失，如实记录。
+
+**round7 执行者自验（2026-10-03；整体结论以下方“round7交付后指导”为准，A–D未收口）。** 原任务继续，未另开卡、未恢复第三条开发线。编码前按要求把本节三张方案表、拟增阶段记录点与 round7 反例交 [Pi→精确 `zai-coding-cn/glm-5.3` 聚焦只读检查](../../artifacts/consultations/h-abcd-phase-record-20261003/answer.md)（答复 exit 0）；顾问结论：ADOPTED2 的 ctx **不得**用「打印时的最新上下文」补，观测行必须对每次转发都打印，B 的判据必须落在跨语言共享单调序号上，C 的换代键必须含选择意图修订且 Expired 直返必须排在换代块之后。全部采纳，未升级 Astra/Sol。
+
+| 项 | 实现（生产） | 独立反例 | 设备消费 |
+| --- | --- | --- | --- |
+| **A 当前身份元组** | `platform focus` 补 `resource/kind/binding/v`；`ime selection observation forwarded` 改为**每次转发都打印**并补 `node/resource/kind/binding/v`（原来只在 `!changed` 时打印，changed=true 整行缺失）；ADOPTED2 补 `owner_version`（窗口自持，未改 Node/Event POD） | 16例原套件（已并入[当前生命周期套件](../../runtime/cjgui/platforms/ohos/scripts/test_mount_lifecycle_pairing_negatives.py)）：六负控逐项独立变红（resource/kind/binding/projection/owner_version/ctx/换焦/缺当前身份/薄观测），两条合法路径正控通过 | Pharos `a_restore=mount_snapshot` **带完整身份元组**（ctx=7/node=107/resource=1/kind=10/binding=36/v=36，观测 complete，ADOPTED2 逐字段相等，owner_version=2 对上 BIND_OWNER） |
+| **B 真实阶段边界** | 新增 `cjgui_ohos_observation_seq()`（进程内 `std::atomic` 单调序号，**跨 C++/仓颉唯一可共享全序域**）；`waitFor` 紧前/紧后各打 `present wait enter/exit … seq=`；transport `submit()` 在 `BRIDGE_LOCK` 内、紧贴 `context.queue.add(t)` 取号并打 `stage=enqueue … seq=`；`owner-claim` 补 seq。hilog 行序与毫秒时间戳**不参与判定** | [18 例](../../runtime/cjgui/platforms/ohos/scripts/test_t2_ordering_negatives.py)＋[243 项](../../runtime/cjgui/platforms/ohos/scripts/test_r1_pre_permission_replay_negatives.py)（含行序倒置不改变结论、M18/M19 新变异） | T2 实验：`enter(T1)=127 < enqueue(T2)=128 < exit(T1)=129 <= claim(T2)=130`，T1=24/T2=41 唯一配对，v11→12 恰 +1，failures=0 |
+| **B `--target`** | — | `main()` 必填 `--target`；`hdc()`/`hdc_run()` 成为**唯一**设备出口并统一注入 `-t`（原来只有 fport 三条带 target）；缺 target 时零设备命令；清理改为 rm 后**复查映射**，`forward_cleanup` 与 `target` 落进 result.json 并折进退出码 | 本轮 `target=127.0.0.1:5555`、`forward_cleanup=removed` |
+| **C 到期终态** | 换代键由 `(epoch, contentVersion, binding)` 扩为**并入 sel16 与本编辑面选区意图修订**（新增 `ownedSelectionIntentRevision`，只在窗口拥有该节点的 kind-28/31/33 上推进——刻意不用全局 `interactionVersion`，它同样被层显隐/按钮聚焦 bumping，用它会让别人点的按钮撤销本编辑面终态）；`ownedAnchorWaitExpired` 改为**终态直返**（零签发/零 attempts/零失败计数/不改写终态）；显式重试走 `needsNativeSelectionRestore` 的 **false→true 边沿**；`finishAcceptedScene` 只在未记具名终态时写 `"none"`（原来无条件擦，同一次调用栈内抹掉 deadline/budget_exhausted） | 指导 [RED 原件](../../artifacts/h-r-final-20261002/guidance-review/round7-anchor-review.json)（`calls_final=9 attempts=8 failures=1`）**未改动**；[修后 GREEN](../../artifacts/h-r-final-20261002/round7-fix/anchor-review-after-fix.json) 另存；窗口接缝 [24/24](../../runtime/cjgui/platforms/ohos/scripts/test_window_restore_adoption_snapshot_cjpm.py) 含四个新用例，5 条 RED 变异全部被拒 | 随 Pharos/thermo 同源 normal 包消费 |
+
+**两处偏离固定方案的实现决定（已按可区分反例取证）。** ① 换代键里的「人意图修订」用**本编辑面专用**计数而不是全局 `interactionVersion`——后者被层显隐与按钮聚焦 bumping，若用它当换代键，「别人点的按钮」会撤销本编辑面的 Expired 终态，终态退化为随手可清的暂态。② B 的 T2 身份围栏用**序号围栏**而不是传输账本 requestId 差集——本脚本自己的对照触发也是 `REPLACE_RANGE`，id 差集会把它们算成候选（首跑即具名 `t2_candidate_ambiguous`，见下）。
+
+**仍未通过 / 未验（不掩盖）。**
+- **Pharos 双 owner 链在 A→B→A 之后的「再访 B」步未绿**：首跑 `revisit_tap_failed`、复跑 `preview_mode_not_reached`（**首个**模式切换就 `toggle-timeout`）。执行者曾归因为模拟器点击抖动，该归因已被下方原始日志复核纠正：两次ACTIVATE均已入队/分发，owner模式已到preview；仍须区分accepted场景失败与观察缺失。首跑A续写全文及版本原数保留在 [`pharos-final/dual-owner.json`](../../artifacts/h-r-final-20261002/round7/pharos-final/dual-owner.json)（`a_resume` 逐字节相等、`exactly_once=true`、`removed_is_zero=true`、v2→3、`b_unchanged_during_a=true`、`forward_cleanup=removed`）。
+- **macOS `cjpm test` 链接失败（本轮之前既有，属 E 写集）**：`composable_ui_press_lease_test.cj` 需要的 `cjgui_internal_renderer_test_composable_drawable_pixel` 等符号在 `native/cjgui_internal_renderer.m` 里位于 `#ifdef CJGUI_INTERNAL_TESTING` 之内，而 `build_cjgui_internal_renderer_sidecar.sh` 不定义该宏，静态库里没有这些符号。实测：加 `-DCJGUI_INTERNAL_TESTING` 编译即出现 3 个该符号。**未改 E 的 macOS 树**；框架 `cjpm build --skip-script` 成功，H 侧改动由针对性测试覆盖。
+- 物理设备性能、系统 marked/cancel 版本边界、发布审核按原界限保留，未因本轮变化重测。
+
+**round7交付后指导（历史；当前执行以上方round8交付后指导为准）。** 原任务继续，不另开卡、不开第三条常驻线。指导只读当前源码与原件，运行两组已有小负控及一个隔离target的生产接缝反例，未改生产、未操作设备。目标仍是现有Pharos鸿蒙编辑器的可靠交接与共同操作，不重造编辑器、不扩新功能。E/macOS大文档另线继续。
+
+**已验证成果保留。** [离线复核脚本](../../artifacts/h-r-final-20261002/guidance-review/round8-review.py)与[结果](../../artifacts/h-r-final-20261002/guidance-review/round8-review.json)重读round7原始流，确认T1=24、T2=41的`127 < 128 < 129 <= 130`及唯一候选；本轮重跑身份16例、T2边界18例仍通过。B的共同序号、只写T2、完整owner/版本核验、必填target与replay清理结果保留，不再重写调度或默认重跑verify实验。C截止后native calls=1、attempts=0、failures=0已成立；Pharos A续写v2→3精确、thermo normal消费保留。旧round7 RED与round7-fix GREEN均不覆盖。
+
+| 本轮需处理 | 决定性事实 | 归属 |
+| --- | --- | --- |
+| A恢复证据 | 当前函数仍接受三条独立反例：ADOPTED2缺owner_version；ctx7旧采纳＋ctx8新focus/同值观测拼成成功；框架已release ctx7但没有新focus时旧事实仍成功。另，真实生产行`count=2 failed=2 pending=false request=4 …`不匹配显式采纳正则，真正ACK路径被漏掉，当前设备结果退回mount路径。 | 验收工具与必要H内部只读事实；不据此宣称正文已错写。 |
+| C终态保留 | [生产反例](../../artifacts/h-r-final-20261002/guidance-review/round8-anchor-review.json)把恢复入口与finishAcceptedScene的实际收尾条件一起执行：截止后下一次accepted收尾得到`expired=true calls=1 attempts=0 failures=0 reason=none need=true`。入口每次把ownedRestoreNamedTerminal清false，Expired直返后收尾便清除原因。旧24例没有包含这段收尾。 | H snapshot恢复状态与可观察终态。 |
+| D模式切换 | 两份失败原件均为PID21093；13:45:45.334和13:52:19.467均有node961的activate enqueue/dequeue，随后提交ticket38/42；mode_trace均为owner_state=preview而scene_face=source。复跑还有13:52:19.485的present frame ok。日志同时存在LOGLIMIT丢行，scene_face会沿用旧source绘制行。 | 先查最终accepted与观察有效性，再按证据修产品/框架或驱动；已经排除“点击根本没送达”的解释，尚不能仅凭frame ok判场景成功。 |
+
+**A：按生命周期归属配对，先修真实格式。** 复用已有请求票与冻结字段，解析生产真实行的具名字段，不要求request紧跟count，不把failed/pending等真实字段导致的漏读变成“没有回执”。保留真实原行作正控；关键字段缺失或歧义拒绝。owner_version必须存在并与冻结owner同域匹配，不能用`if present`跳过。检查器按事件顺序维护当前有效context/mount的生命周期；任意换焦、release/end/retire、同值重挂均退役旧候选，不能先取最终focus再从整个历史捞同值事实。挂载观测与窗口采纳必须能归属到同一次事件/挂载：优先现有冻结请求/记录身份；不足只补H内部窄只读来源标识，不改公共Node/Event POD，不用“最新ctx”反填。歧义只能未证实，不靠相同node/sel/version推定。两条合法路径仍要有正控，新ctx无采纳、迟到旧采纳、缺版本、退役后旧回包分别拒绝。同步受影响旧harness的提取入口和生产格式，旧案例的业务判据不放宽。
+
+**C：终态归当前恢复目标，不归一次函数调用。** 保留当前deadline、新意图换代、零重签发/零失败计数机制；只修同一目标在完整accepted收尾之后仍可观察到截止或失败终态。新有效选择意图/换绑/成功采纳/显式重试才按原状态转移撤销或建立新代；无关刷新不能把未恢复写成none。不要用全局错误字符串永久粘住其他新错误，也不要每帧再记一次失败。复用[反例脚本](../../artifacts/h-r-final-20261002/guidance-review/round8-anchor-review.py)，它明确只提取生产恢复方法及真实finish条件，数据/FFI/钟沿用原harness替身；新GREEN另存。补完整收尾后连续pump、真失败预算耗尽、新意图恢复及旧确认无副作用的判别，不再只直接调用restore方法证明收尾。
+
+**D：一次动作的端到端定位与正常汇合。** 先按round8结果给出的原始行号读失败窗口，不从重新调点击坐标或反复运行整链开始。现有preview分支的revision推进仍在；复核最终HAP的源清单/同步钩子后，沿同一动作的命令分发、产品revision/buildUi、candidate、native ticket终态、窗口accepted版本及实际节点/画面收齐事实。原日志没有exit/accepted行不能推出没返回；同一owner线程后续仍在处理公开请求，LOGLIMIT也已实锤。优先已有状态读回或有界、按版本的诊断快照，日志按当前PID/实例采集并控制冗余，不开全局debug刷屏。scene_face不得把观察缺失沿用成当前source，也不能仅凭owner_state=preview改判PASS；须有该次accepted投影/节点与真实画面的对应证据。必要鸿蒙日志/查询API查当前SDK及官方文档。
+
+定位后只修实证断点：若生产已正确而观察丢失，就修可观测性/验收；若候选拒绝、版本未发布或绘制失败，修实际生产机制。禁止额外正文补点、重复toggle、扩大等待或重复碰概率。当前失败累计继续沿用；新的复杂根因用Pi精确GLM5.3独立上下文，含此次“ACTIVATE已送达”的反证，要求质疑旧归因。已有Pi/Astra方案前提未变直接复用，不每轮重问同一表。公共契约/并发归属实质未决可直接Astra/max，复杂根因Sol/max；首次加一次新证据追问仍无可靠方案，把同一动作证据交指导，独立A/C继续，不改名结案。
+
+A/C反例闭合后，正式入口串行构建并做一次受影响Pharos normal双owner A→B→A→B：冻结非空/中段落点、平台实际安装/同挂载采纳、免点击精确续写、两owner全文隔离及回访保持；thermo按共享生产改动仅复验受影响恢复腿。只有改到B生产边界/调度/观测时才重跑T2；不重跑N1–N4/图片/惯性/GB全矩阵。normal与verify原件各自绑定清单，不漏产品CJGUI_CONSUMER_SYNC及包库名、不让默认同步覆盖产品源。转发沿本轮归属精确清理，退出和最终回执真实反映结果；用户7856、正文、剪贴板、实例与既有暂存保留。
+
+**责任和收尾。** H写集＝OHOS host/snapshot/transport/ArkTS、Pharos OHOS产品与受影响驱动；macOS侧test-only符号装配问题归E原任务，H不为跑全量强开测试宏或改E生产。通用机制按设计导航参考现成实现，仅借思路不引依赖；本包已有明确状态机无需重扫大仓。最终只短更本节、ACTIVE、STATUS的H段和现有证据索引，报告已交付/未闭合/真实成本；不称“A/B/C全完只差抖动”，不把错误终态或测试漏判登记成完成。未获要求不stage/commit/push。
+
+**以下为前次复核依据，已修项不重开。**
 
 **前次复核依据（历史；已修项按上方最新复核保留）。** S1 样式事务的原反例修复、Pharos 接入共享类、getter 异常终结、attach 拒绝退避及部分旧 end 身份冻结均保留；不认可“S1–S4全部完成，只剩可选日志字段”。当前三个离线生产函数反例证明：旧 finish 仍可误寄 end、新绑定幂等判断不完整、安装生命周期可能永挂或错误成功，双 owner 驱动会接受错误替换。本次只审阅源码/原件并跑离线小反例，未构建 HAP、操作模拟器、改生产代码或恢复线程。
 

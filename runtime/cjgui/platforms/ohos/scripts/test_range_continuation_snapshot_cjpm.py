@@ -31,19 +31,25 @@ def harness(red=None):
     owner_source=(ROOT/'src/text_session_test.cj').read_text()
     owner=balanced(owner_source,owner_source.index('class FakeTextOwner <:'))
     # Test-owner only: exercise a normalized Sink result against real session
-    # reads. No production owner or window decision is replaced.
-    owner=owner.replace('    var rejectAll: Bool = false','    var rejectAll: Bool = false\n    var normalizeNext: Bool = false',1)
-    owner=owner.replace('this.splice(startByte, endByte, inserted)\n        return CjguiRangeTextEditOutcome.accepted',
-                        'this.splice(startByte, endByte, if (normalizeNext) { "normalized" } else { inserted })\n        return CjguiRangeTextEditOutcome.accepted',1)
+    # reads. No production owner or window decision is replaced. 两处替换都必须
+    # 命中（静默漂移会让 normalizeNext 失效、归一化用例假通过）。
+    _reject_anchor='    var rejectAll: Bool = false'
+    assert owner.count(_reject_anchor)==1,'owner rejectAll anchor drift'
+    owner=owner.replace(_reject_anchor,_reject_anchor+'\n    var normalizeNext: Bool = false',1)
+    _splice_anchor='this.splice(startByte, endByte, inserted)\n        if (this.refuseReadsAfterNextAccept) {'
+    assert owner.count(_splice_anchor)==1,'owner splice anchor drift'
+    owner=owner.replace(_splice_anchor,
+                        'this.splice(startByte, endByte, if (normalizeNext) { "normalized" } else { inserted })\n        if (this.refuseReadsAfterNextAccept) {',1)
     constants='\n'.join(re.findall(r'^public let CJGUI_COMPOSABLE_UI_(?:TEXT_INPUT|INTEGER_INPUT|MULTILINE_TEXT_INPUT): Int64 = \d+$',(SNAPSHOT/'composable_ui.cj').read_text(),re.M))
     marker='                    if (nativeEvent.eventKind == 28u32 && dispatch.didApply && isEditableTextNodeKind('
     assert source.count(marker)==1
     start=source.index(marker);end=source.index('                    if (nativeEvent.eventKind == 31u32 && controller.uiSceneVersion()',start)
     stamp=source[start:end]
-    methods='\n'.join(method(source,n) for n in ('routeOwnedTextSessionRangeEdit','resolveLocalTextContinuation','isEditableTextNodeKind','clearLocalTextContinuation','clearPendingLocalTextValue','recordOwnedRangeLocalAcceptance','resolveOwnedRangeContinuation','ownedRangeMirrorMatches','noteUnresolvedOwnedRangeEvent','adoptOwnedTextSelection'))
+    methods='\n'.join(method(source,n) for n in ('routeOwnedTextSessionRangeEdit','resolveLocalTextContinuation','isEditableTextNodeKind','clearLocalTextContinuation','clearPendingLocalTextValue','ownedTextBindingHolds','recordOwnedRangeLocalAcceptance','resolveOwnedRangeContinuation','ownedRangeMirrorMatches','noteUnresolvedOwnedRangeEvent','adoptOwnedTextSelection'))
     methods+='\n'+method(source,'resolvePlatformSelectionEvent')
     local_class=balanced(source,source.index('private class CjguiLocalRangeContinuation {')).replace('private class','class',1)
     binding_func=balanced(source,source.index('func cjguiSameFocusedTextBinding('))
+    binding_func+='\n'+balanced(source,source.index('func cjguiSameOwnedAnchorBinding('))
     constants+='\n'+local_class+'\n'+binding_func+'\n'+ '\n'.join(re.findall(r'^private let CJGUI_OWNED_SELECTION_[^\n]+',source,re.M)).replace('private let','let')
     selection_source=balanced((SNAPSHOT/'composable_ui.cj').read_text(),(SNAPSHOT/'composable_ui.cj').read_text().index('    public func resolveSelection('))
     template=HERE/'fixtures/range_continuation_snapshot_harness.cj.txt'

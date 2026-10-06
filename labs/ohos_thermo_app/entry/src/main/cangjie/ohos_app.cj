@@ -363,6 +363,7 @@ func serveOnce(connection: CjguiSharedOperationExternalConnection): Bool {
 }
 func ohosApplicationLoop(): Unit {
     var ticks: Int64 = 0
+    var lastPresDiag: String = ""
     // 第七次复核 Q3：域/外部连接/传输监听全部前移到 surface 等待之前——
     // KnownShimNoRef 拒绝发布 degradedActive 后 surface 永不就绪，owner/
     // 传输替身测试（外部协议在等待窗口内服务）仍可用；不做此前移则替身
@@ -443,6 +444,14 @@ func ohosApplicationLoop(): Unit {
             rangeTextEditDeltaDelivery: true))
     let window = host.window()
     controller.generatedUiRegion().attachWindow(window)
+    // presentation 消费者（备注 TEXT 投影）：窗口引用注入，点选/拖选经公共
+    // 持留排版命中与公共范围会话适配。
+    controller.attachPresentationWindow(window)
+    // round12-R2：挂表面状态闭包——accepted 读回（几何记录/当前编辑身份）随
+    // 每次 GET_CONTEXT 公开，读回定位与安装等价链不依赖 hilog node-rect。
+    domain.attachStateProvider({ =>
+        window.acceptedStateText()
+    })
     let progressReady = connection.enableWindowProgressReads(window)
     if (!progressReady) {
         cjguiOhosWarn("CjguiApp", "window progress reads unavailable")
@@ -540,6 +549,27 @@ func ohosApplicationLoop(): Unit {
         if (let Some(semantic) <- controller.takePendingFocusRequest()) {
             let focused = window.focusAcceptedSemanticNode(semantic)
             cjguiOhosInfo("CjguiApp", "nav focus ${semantic} -> focused=${focused}")
+        }
+        // 接续诊断按**状态迁移**打印，不再按 tick 周期刷屏：焦点请求/声明晋升/
+        // 拒绝原因的变化仍是可核对证据，空闲期不产生 hilog 噪声。
+        let presDiag = controller.presentationFocusDiag()
+        if (presDiag != lastPresDiag) {
+            lastPresDiag = presDiag
+            cjguiOhosInfo("CjguiApp", "pres-diag ${presDiag}")
+        }
+        if (controller.presentationFocusPending()) {
+            // 声明晋升需要一次真实 accepted 提交；宿主线程的刷新请求是权威通道。
+            window.requestRefresh()
+        }
+        if (controller.takePendingPresentationFocus()) {
+            let focused = window.focusAcceptedSemanticNode("thermo-note-presentation")
+            cjguiOhosInfo("CjguiApp", "presentation focus -> focused=${focused}")
+        }
+        // 窗口采纳事实按**状态迁移**逐笔留证（宿主 hilog 入口，不是 println：
+        // 产品侧 println 不落 hilog，实测一轮 THERMO_* 行在原件里为 0）。没有这一行
+        // 就没有「同实例、同当前身份的窗口采纳」凭据，验收只能退回签票/安装。
+        if (let Some(adoption) <- controller.takeRestoreAdoptionFact()) {
+            cjguiOhosInfo("CjguiApp", "THERMO_OHOS_RESTORE_ADOPTED ${adoption}")
         }
         ticks += 1
         APP_LOOP_TICKS.store(ticks)

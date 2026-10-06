@@ -18,9 +18,13 @@ interface ImeFocusPayload {
   action?: string;
   context: number;
   field: string;
+  nodeId?: number;
   oldContext?: number;
+  baseVersion?: number;
   selStart?: number;
   selEnd?: number;
+  text?: string;
+  request?: number;
 }
 
 interface ImeReconcilePending {
@@ -31,6 +35,9 @@ interface ImeReconcilePending {
   sessionToken: number;
   appInstance: number;
   disappeared: boolean;
+  // R3补轮：重挂目标的 field 身份。外部换版 reconcile 与旧节点相同
+  //（= oldMount.fieldId）；焦点切换跨编辑面时是新目标（生成/手写互切）。
+  targetField: string;
 }
 
 // 上下文快照（来自 ohos_renderer_ime_context_json）。
@@ -132,16 +139,20 @@ class ThermoImeSelectionHost implements CjguiImeSelectionHost {
   commitInstalled(start: number, end: number, contextId: number): string {
     const rc: string = entryNapi.imeSetSelection(start, end, contextId) as string;
     // R2：只有 native 真实接受（rc=0）才落"已安装"账目。
+    const m: CjguiTextProxyMount | null = this.page.imeMount;
     if (rc === '0') {
       this.page.imeSelStart = start;
       this.page.imeSelEnd = end;
-      const m: CjguiTextProxyMount | null = this.page.imeMount;
       if (m !== null) {
         this.page.proxyRegistry.observeSelection(m, start, end);
       }
     }
-    hilog.info(DOMAIN, TAG, 'ime selection confirmed [%{public}d,%{public}d) rc=%{public}s (shared lifecycle)',
-      start, end, rc);
+    // 确认行携带**同一请求的完整身份**（挂载 key 含 context/mount 代 + field）：
+    // 总门按身份配对，错字段/跨 mount 拼接不能借坐标相等误配（指导复核反例）。
+    const mountKey: string = m !== null ? m.key.describe() : 'none';
+    const mountField: string = m !== null ? m.fieldId : 'none';
+    hilog.info(DOMAIN, TAG, 'ime selection confirmed [%{public}d,%{public}d) rc=%{public}s '
+      + '(shared lifecycle) mount=%{public}s field=%{public}s', start, end, rc, mountKey, mountField);
     return rc;
   }
 
@@ -278,6 +289,9 @@ struct Index {
   private proxyFocused: boolean = false;
   // 旧 TextInput 必须真正卸载后才从外部换版的新 context 重新挂载。
   private pendingReconcile: ImeReconcilePending | null = null;
+  // 交接在飞期间到达的恢复请求只登记冻结目标（请求号、区间、文本沿用原票），
+  // 由就绪事件接续，不在旧组件卸载前创建新 current，也不重签。
+  private pendingRestoreIntent: ImeFocusPayload | null = null;
   // native 落点安装槽（native→平台）。两个来源：挂载时按上下文快照装初值；native
   // 推 action=caret（命中、长按全选、编辑命令移动了落点）时装新值。平台把新聚焦
   // TextInput 的光标重置到末尾（华为 FAQ），不装回代理就会覆盖 native 刚落账的
@@ -293,6 +307,8 @@ struct Index {
   // proxySelMount/proxySelStart/proxySelEnd/proxySelSeq 状态机退役。
   private selectionLifecycle: CjguiImeSelectionLifecycle = new CjguiImeSelectionLifecycle(
     new ThermoImeSelectionHost(this));
+  // 每次真实挂载递增，保证代理控件 id 唯一（见 mountEditingSnapshot 注释）。
+  private proxyMountSerial: number = 1;
 
   // C：框架公共文字代理注册表（ProxyKey 五元冻结身份 + 单槽 current 校验）。
   // 桥接能力在此适配 entryNapi；模板不直接依赖具体桥。
@@ -422,7 +438,11 @@ struct Index {
       // 挂载实例经 @Builder 按值捕获：事件闭包持有**创建时**身份（第六次
       // 复核第 3 项），迟到/退役实例的回调绝不借 currentMount() 改名。
       if (this.imeCtx !== 0) {
-        this.proxyTextInput(this.imeMount)
+        // 结构身份 = 挂载键。ForEach 的键变即销毁旧节点并重建，新节点在**构造**时
+        // 绑定当前 controller；不再依赖 `imeCtx` 恰好归零过一帧（见 liveProxyMounts）。
+        ForEach(this.liveProxyMounts(), (m: CjguiTextProxyMount) => {
+          this.proxyTextInput(m)
+        }, (m: CjguiTextProxyMount) => m.key.describe())
         CjguiTextSelectionMenu({ context: this.imeCtx, onInstall: (ctx: number) => this.onMenuInstalled(ctx) })
       }
     }
@@ -435,6 +455,23 @@ struct Index {
       });
       this.refreshHostState();
     })
+  }
+
+  // 代理组件的结构身份来源：只列出**当前**挂载。
+  // 为什么必须由挂载键驱动重建（B 组 2026-10-06 Astra 复核）：
+  // `imeMount` 与 `imeTextController` 都是普通字段（换挂载不触发渲染），而外层
+  // `if (this.imeCtx !== 0)` 在 ctx 2→3 时仍落在同一分支——ArkUI 条件渲染只在
+  // **分支改变**时移除/重建，`.id()` 也不是重建键。于是旧组件被复用、新 controller
+  // 从未绑定到任何节点：getSelection() 返回 undefined、按新 controlId 的
+  // requestFocus 打不到节点（设备原件 `Request focus id can not found` /
+  // `JSTextEditableController is NULL`），FOCUSED 与 IME attach 双双落空，
+  // 安装/窗口采纳链从此失联（ctx=3 八张票全部 platform_install_failed）。
+  // 渲染本身仍由 `imeCtx` 触发（每个挂载点赋值非零、每个 end 归零），因此这里
+  // 读取到的 `imeMount` 与本轮渲染一致；键变 → ForEach 销毁旧节点并按新
+  // controller 重建，不再要求"归零恰好跨过一次渲染"。
+  private liveProxyMounts(): CjguiTextProxyMount[] {
+    const m: CjguiTextProxyMount | null = this.imeMount;
+    return m === null ? [] : [m];
   }
 
   // 隐藏代理组件：m 为本次构建捕获的挂载身份。事件闭包一律使用 m 自身，
@@ -454,6 +491,16 @@ struct Index {
         // 不只依赖渲染器焦点请求 → requestFocus 的程序化路径。
         .focusable(true)
         .focusOnTouch(true)
+        // 焦点注册表就绪由节点自身入场事件驱动：组件进入渲染树之前 requestFocus 必然
+        // `Request focus id can not found`（ctx=1 实测 attempt=0 抛、attempt=1 成），
+        // 而换挂载后的 5 次固定重试可能整体落空（ctx=2 实测 0..4 全抛 ⇒
+        // `ime proxy never focused` ⇒ 键盘会话从未建立 ⇒ 恢复票按观测超时终态）。
+        // onAppear 是"节点已在树里"的就绪信号，由它重驱一次，不是再加时间等待。
+        .onAppear(() => {
+          if (this.proxyRegistry.delayedFocus(m) && !this.proxyFocused) {
+            this.requestProxyFocus(m, 0);
+          }
+        })
         .onFocus(() => {
           if (!this.proxyRegistry.isCurrent(m)) {
             hilog.info(DOMAIN, TAG, 'ime stale focus ignored mount=%{public}s', m.key.describe());
@@ -464,9 +511,20 @@ struct Index {
           this.status = `editing ${m.fieldId}: 已聚焦，请直接打字（回车提交）`;
           hilog.info(DOMAIN, TAG, 'ime proxy FOCUSED field=%{public}s mount=%{public}s',
             m.fieldId, m.key.describe());
-          // R3：共享生命周期统一入口——待办仍在时按新焦点补装（attach 门控、
-          // 跨帧确认与 native 结算都在共享类；页面不再自己重投）。
-          this.selectionLifecycle.maybeInstall(m, 'focus');
+          // R4（2026-10-02 Astra 裁决）：焦点到达是**无条件的会话补建点**——attach
+          // 是会话级事实，与有无待装选区无关（与 Pharos 页面同一入口）。此前只调
+          // maybeInstall 会在未 attach 时只记日志、不发起会话；恢复让位清 pending
+          // 后同样会永久关闭会话建立入口。
+          this.selectionLifecycle.requestAttach(m, 'focus');
+          // 就绪接续：交接在飞时登记的冻结目标，只在这份挂载真正取得焦点后接续
+          // 同一请求（沿用原请求号与既有截止，不重签票）。
+          const intent: ImeFocusPayload | null = this.pendingRestoreIntent;
+          if (intent !== null && intent.context === m.key.contextId) {
+            this.pendingRestoreIntent = null;
+            hilog.info(DOMAIN, TAG, 'ime restore intent resumed on focus ctx=%{public}d req=%{public}d',
+              m.key.contextId, intent.request ?? 0);
+            this.onProxyRestore(intent);
+          }
         })
         .onWillInsert((): boolean => this.proxyRegistry.onWillInsert(m))
         .onWillChange((value: EditableTextChangeValue): boolean => this.proxyRegistry.onWillChange(m, value))
@@ -558,6 +616,18 @@ struct Index {
 
   // ---- 文字代理交接 -------------------------------------------------------
 
+  // 编辑身份：contextId + editGeneration + sessionToken + appInstance。焦点切换
+  // 是否必须经「卸载→等 onDisAppear→重挂」，判据是**这份身份变了没有**，不是
+  // 「context 号变没变」——同号但 editGeneration 已推进（换绑/重建）时组件同样
+  // 不会重建，同帧 finish+mount 就是注册表查不到新 id、requestFocus 落空那条
+  // 已实测失败的路。onFocusRequest 与 mountEditingSnapshot 共用本判据。
+  private sameEditIdentity(m: CjguiTextProxyMount, snap: ImeSnapshot, appInstance: number): boolean {
+    return m.key.contextId === snap.context
+      && m.key.editGeneration === snap.generation
+      && m.key.sessionToken === snap.sessionToken
+      && m.key.appInstance === appInstance;
+  }
+
   private onFocusRequest(payload: string): void {
     hilog.info(DOMAIN, TAG, 'ime focus payload=%{public}s', payload);
     let ctx: number = 0;
@@ -578,6 +648,14 @@ struct Index {
 
     if (action === 'reconcile') {
       this.onReconcileRequest(oldContext, ctx);
+      return;
+    }
+
+    // 框架侧回滚/安装票据：owner 拒绝了范围编辑或 owned 锚点恢复时，隐藏代理
+    // 按票据安装 accepted 值与落点并 ACK。presentation 消费者（备注 TEXT 投影）
+    // 的首次安装也走这张票。
+    if (action === 'restore') {
+      this.onProxyRestore(parsed);
       return;
     }
 
@@ -647,13 +725,33 @@ struct Index {
     // 收尾旧挂载，页面不能绕过其身份判定直调 NAPI。
     const oldMount: CjguiTextProxyMount | null = this.imeMount;
     const appInstance: number = this.readHostAppInstance();
-    if (oldMount !== null && oldMount.key.contextId === snap.context &&
-      oldMount.key.editGeneration === snap.generation &&
-      oldMount.key.appInstance === appInstance && oldMount.key.sessionToken === snap.sessionToken &&
+    if (oldMount !== null && this.sameEditIdentity(oldMount, snap, appInstance) &&
       this.proxyRegistry.isCurrent(oldMount)) {
       return;
     }
     if (oldMount !== null) {
+      // R3补轮：焦点切换必须走「卸载→等 onDisAppear 回执→重挂」，不能同帧
+      // finish+mount——TextInput 组件不重建，新 controlId 不进焦点注册表，
+      // requestFocus 全落空（设备实测 ctx3 注入零事件）。判据是**编辑身份变了没**
+      // （含 editGeneration），不只 context 号：同号换代会绕过这一门。
+      if (!this.sameEditIdentity(oldMount, snap, appInstance)) {
+        const oldVerdict: string = this.proxyRegistry.submitAndFinish(oldMount, 'focus-moved');
+        this.recordProxyFinish(oldMount, oldVerdict, 'focus-moved');
+        this.pendingReconcile = {
+          oldMount: oldMount,
+          newContext: snap.context,
+          baseVersion: snap.baseVersion,
+          nodeId: snap.nodeId,
+          sessionToken: snap.sessionToken,
+          appInstance: this.readHostAppInstance(),
+          disappeared: false,
+          targetField: snap.field,
+        };
+        hilog.info(DOMAIN, TAG,
+          'ime focus switch deferred to reconcile old=%{public}d new=%{public}d field=%{public}s',
+          oldMount.key.contextId, snap.context, snap.field);
+        return;
+      }
       const oldVerdict: string = this.proxyRegistry.submitAndFinish(oldMount, 'focus-moved');
       this.recordProxyFinish(oldMount, oldVerdict, 'focus-moved');
     }
@@ -752,8 +850,9 @@ struct Index {
     this.pendingReconcile = {
       oldMount: oldMount, newContext: snap.context, baseVersion: snap.baseVersion,
       nodeId: snap.nodeId,
-      sessionToken: snap.sessionToken, appInstance: appInstance, disappeared: false
-    };
+      sessionToken: snap.sessionToken, appInstance: appInstance, disappeared: false,
+        targetField: oldMount.fieldId,
+      };
     this.imeLastClosedCtx = oldContext;
     this.imeMount = null;
     this.imeCtx = 0;
@@ -785,7 +884,7 @@ struct Index {
       const snap: ImeSnapshot | null = this.readLiveEditingSnapshot();
       if (snap === null || snap.context < pending.newContext ||
         snap.baseVersion < pending.baseVersion ||
-        snap.nodeId !== pending.nodeId || snap.field !== pending.oldMount.fieldId ||
+        snap.nodeId !== pending.nodeId || snap.field !== pending.targetField ||
         snap.sessionToken !== pending.sessionToken ||
         this.readHostAppInstance() !== pending.appInstance) {
         this.pendingReconcile = null;
@@ -805,6 +904,30 @@ struct Index {
   }
 
   private mountEditingSnapshot(snap: ImeSnapshot): void {
+    // R3补轮：焦点切换跨上下文（生成/手写编辑面互切、直接换绑）时必须走
+    // 「卸载→等 onDisAppear 回执→重挂」的同一 reconcile 纪律——同帧替换不
+    // 重建 TextInput 组件，.id() 变更不进入焦点注册表，requestFocus 以新 id
+    // 找不到节点（设备实测 ctx3 五次尝试全 throw、注入零事件）。
+    const previousMount: CjguiTextProxyMount | null = this.imeMount;
+    if (previousMount !== null &&
+        !this.sameEditIdentity(previousMount, snap, this.readHostAppInstance())) {
+      const verdict: string = this.proxyRegistry.submitAndFinish(previousMount, 'focus-moved');
+      this.recordProxyFinish(previousMount, verdict, 'focus-moved');
+      this.pendingReconcile = {
+        oldMount: previousMount,
+        newContext: snap.context,
+        baseVersion: snap.baseVersion,
+        nodeId: snap.nodeId,
+        sessionToken: snap.sessionToken,
+        appInstance: this.readHostAppInstance(),
+        disappeared: false,
+        targetField: snap.field,
+      };
+      hilog.info(DOMAIN, TAG,
+        'ime focus switch deferred to reconcile old=%{public}d new=%{public}d field=%{public}s',
+        previousMount.key.contextId, snap.context, snap.field);
+      return;
+    }
     const staleTask = this.proxyRestoreTask;
     if (staleTask !== null) staleTask.terminal = true;
     this.proxyRestoreTask = null;
@@ -841,7 +964,12 @@ struct Index {
     // surface 代、mount 代由注册表递增），迟到焦点定时器由注册表校验后定向。
     const retiredMount: CjguiTextProxyMount | null = this.imeMount;
     const mount: CjguiTextProxyMount = this.proxyRegistry.mount(
-      snap.context, snap.generation, 'cjguiImeProxy', snap.field,
+      snap.context, snap.generation,
+      // R3补轮：控件 id 按挂载唯一——快速换挂载（直接焦点切换）时同 id 会让
+      // ArkUI 的 id 查找解析到尚未卸载的旧 TextInput，requestFocus 全部落空
+      //（设备实测 ctx3 五次尝试均无 FOCUSED，注入无事件）；唯一 id 保证聚焦
+      // 命中新挂载。
+      'cjguiImeProxy-c' + snap.context + '-m' + this.proxyMountSerial++, snap.field,
       appInstance, snap.sessionToken, snap.text);
     this.imeMount = mount;
     // 每次挂载换新 controller（与 Pharos 同一 2026-10-01 咨询 X4 修复）：跨挂载
@@ -1053,6 +1181,127 @@ struct Index {
       return;
     }
     this.observeSelection(task);
+  }
+
+  private onProxyRestore(payload: ImeFocusPayload): void {
+    const ctx: number = payload.context;
+    const request: number = payload.request ?? 0;
+    if (this.imeCtx === 0 || ctx !== this.imeCtx) {
+      // owned 锚点的恢复票据可能先于（或取代）焦点通知到达：负载携带完整身份，
+      // 读回 live 快照与负载同 context 时先按快照挂载（与焦点路径同一挂载尾），
+      // 再继续安装；live 不匹配才是真迟到回滚。
+      const live: ImeSnapshot | null = this.readLiveEditingSnapshot();
+      if (request > 0 && this.pendingReconcile !== null) {
+        // 交接在飞：旧组件的卸载回执尚未到达，restore 不得凭 `imeCtx==0` 提前发布
+        // 新 current。设备原件（PID 31760）：12:53:41.573 `restore req=3` 提前挂载
+        // ctx=2，其后五次 requestFocus 全 `Request focus id can not found`，
+        // req=3..11 八票烧尽，腿报 post_external_install_unconfirmed。
+        // 这里只登记冻结目标并沿用原票请求号与既有截止；挂载完成并取得焦点后由
+        // onProxyRestore 接续同一请求，不重新签票。
+        this.pendingRestoreIntent = payload;
+        hilog.info(DOMAIN, TAG,
+          'ime restore intent parked during reconcile ctx=%{public}d req=%{public}d', ctx, request);
+        return;
+      }
+      if (request > 0 && live !== null && live.context === ctx &&
+        live.nodeId === (payload.nodeId ?? -1) && live.field === payload.field &&
+        this.imeCtx !== ctx) {
+        hilog.info(DOMAIN, TAG, 'ime restore mounts live snapshot ctx=%{public}d req=%{public}d',
+          ctx, request);
+        const oldMount: CjguiTextProxyMount | null = this.imeMount;
+        if (oldMount !== null && oldMount.key.contextId !== ctx) {
+          const oldVerdict: string = this.proxyRegistry.submitAndFinish(oldMount, 'focus-moved');
+          this.recordProxyFinish(oldMount, oldVerdict, 'focus-moved');
+        }
+        this.mountEditingSnapshot(live);
+      } else {
+        // 迟到回滚：旧上下文/退役载，绝不允许它改写当前显示，也不得回报成功。
+        hilog.info(DOMAIN, TAG, 'ime restore ignored ctx=%{public}d active=%{public}d req=%{public}d',
+          ctx, this.imeCtx, request);
+        this.ackProxyRestore(ctx, request, 0, 0, false, 'stale_context');
+        return;
+      }
+    }
+    const mount: CjguiTextProxyMount | null = this.imeMount;
+    if (mount === null || mount.key.contextId !== ctx ||
+      (payload.field !== undefined && payload.field.length > 0 && payload.field !== mount.fieldId)) {
+      hilog.info(DOMAIN, TAG, 'ime restore ignored: live identity mismatch ctx=%{public}d req=%{public}d',
+        ctx, request);
+      this.ackProxyRestore(ctx, request, 0, 0, false, 'identity_mismatch');
+      return;
+    }
+    const start: number = payload.selStart ?? -1;
+    const end: number = payload.selEnd ?? -1;
+    const text: string = typeof payload.text === 'string' ? payload.text : this.imeText;
+    const live: ProxyRestoreTask | null = this.proxyRestoreTask;
+    if (request > 0 && live !== null && live.request === request && !live.terminal &&
+      live.targetText === text && live.targetStart === start && live.targetEnd === end) {
+      // 同一请求的重复下发：继续等这张任务的观测，不重复写正文。
+      return;
+    }
+    if (live !== null && !live.terminal) {
+      // 目标已改变：先给旧任务确定终态，禁止活跃槽被无声覆写。
+      live.terminal = true;
+      this.ackProxyRestore(ctx, live.request, this.imeSelStart, this.imeSelEnd, false, 'superseded_in_shell');
+    }
+    if (start < 0 || end < start) {
+      this.ackProxyRestore(ctx, request, 0, 0, false, 'invalid_target');
+      return;
+    }
+    const needsText: boolean = text !== this.imeText;
+    if (!needsText) {
+      // 无正文恢复：挂载路径（共享生命周期 attach 安装）通常已把落点装在目标。
+      // 读数一致即如实 ACK，不接管共享生命周期——接管会在组件绑定落定前抢装、
+      // mismatch → ack false → native 重签循环，输入门保持关闭。
+      let observedStart: number = -1;
+      let observedEnd: number = -1;
+      try {
+        const range = this.imeTextController.getSelection();
+        observedStart = range?.start ?? -1;
+        observedEnd = range?.end ?? -1;
+      } catch (err) {
+        hilog.warn(DOMAIN, TAG, 'ime restore pre-read threw: %{public}s', String(err));
+      }
+      if (observedStart === start && observedEnd === end &&
+        this.selectionLifecycle.isAttachedTo(mount)) {
+        // 相等读数只有在**该挂载真的 attach**（输入会话确实落在这个组件上）时才算
+        // 安装事实：组件刚挂载或尚未绑定时 getSelection() 会读到残留或默认 (0,0)，
+        // 恰好等于目标也毫不证明「这份落点是本次恢复装的」。attach 是共享生命周期的
+        // 事实（showTextInput 成功才置位），页面不自建更强的判据。
+        hilog.info(DOMAIN, TAG, 'ime restore already installed req=%{public}d sel=%{public}d,%{public}d',
+          request, start, end);
+        this.ackProxyRestore(ctx, request, start, end, true, 'already_installed');
+        return;
+      }
+    }
+    const task = new ProxyRestoreTask(mount, request, text, start, end, needsText);
+    this.proxyRestoreTask = task;
+    // S2/r18：恢复事务接管落点安装——让位只转移执行权，共享生命周期在框架内
+    // 让位并保留同一待办与原截止（不再这里 settle，以免清掉保留中的原请求）。
+    this.armRestoreDeadline(task, 1500);
+    if (needsText) {
+      // 只发起一次文本写入；成功与否由同挂载携带目标值的回声决定。
+      this.imeText = text;
+      this.status = `proxy restoring ctx=${ctx}`;
+      return;
+    }
+    // 无正文恢复且读数不一致：等的是**该挂载的 attach 事实**，不是固定时长。控件
+    // 刚挂载时控制器尚未绑定组件，此刻抢装必然读回不一致 → ack false → native 重签
+    // 循环（本轮 ctx=3 的八张票正是此形）。时间等待不能替代就绪：轮询生命周期，
+    // 票面截止（armRestoreDeadline）仍是唯一时限，超时由既有具名终态收场。
+    this.installSelectionWhenAttached(task);
+  }
+
+  private installSelectionWhenAttached(task: ProxyRestoreTask): void {
+    if (task.terminal || this.proxyRestoreTask !== task ||
+      !this.proxyRegistry.isCurrent(task.mount)) {
+      return; // 任务已被取代或已终结：不再抢装过期落点
+    }
+    if (this.selectionLifecycle.isAttachedTo(task.mount)) {
+      this.beginSelectionPhase(task);
+      return;
+    }
+    setTimeout((): void => this.installSelectionWhenAttached(task), 20);
   }
 
   private observeSelection(task: ProxyRestoreTask): void {

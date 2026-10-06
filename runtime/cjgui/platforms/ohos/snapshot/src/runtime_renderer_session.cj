@@ -52,6 +52,11 @@ let CJGUI_INTERNAL_RENDERER_PRESENT_PENDING: Int32 = 20
 let CJGUI_INTERNAL_RENDERER_INVALID_UTF8: Int32 = 14
 let CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED: Int32 = 16
 let CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY: Int32 = 18
+let CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED: Int32 = 32
+let CJGUI_INTERNAL_RENDERER_SCENE_STALE: Int32 = 33
+// H 内部恢复票据的「等待人锚」回执：与 PRESENT_PENDING 同类，是**有终态的等待**
+// 而不是拒绝。窗口不得把它计入失败重试预算，也不得据此声称选区已落位。
+let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING: Int32 = 36
 let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
 
 // Invalid session token sentinel.
@@ -772,7 +777,9 @@ foreign {
         resourceId: Int64,
         nodeKind: UInt32,
         bindingEpoch: UInt64,
-        enabled: Int32
+        enabled: Int32,
+        mirrorText: CString,
+        mirrorVersion: Int64
     ): Int32
 
     func cjgui_internal_renderer_recover_active_text_proxy(
@@ -972,6 +979,28 @@ foreign {
     // 设备上不可见。这个出口只把字符串记进渲染器日志，不读写会话状态。
     func ohos_renderer_window_log(message: CString): Int32
 
+    // round9-A（H 私有只读接缝）：取**最近一次出队事件**在入队时冻结的来源身份
+    // （editingContextId + editingContextGeneration）。公共事件 POD 没有这两个
+    // 字段（POD 布局有静态断言，不可扩），所以窗口无法从事件本身知道它属于哪个
+    // 挂载；这个出口把「该事件自己的」来源交回窗口，使采纳事实能带来源而不是
+    // 打印时的当前值。返回 0=有来源，1=本次事件没有来源身份，-1=参数错。
+    // 在会话锁下一次读出 (ctx, gen, seq) 三元组：避免多次独立读撕裂成
+    // 「事件 N 的 ctx + 事件 N+1 的 gen」。seq 随每次成功出队推进。
+    func ohos_renderer_last_event_provenance(session: UInt64,
+        outCtx: CPointer<Int64>, outGen: CPointer<UInt64>, outSeq: CPointer<UInt64>
+    ): Int32
+
+    // round9-D：拉取式有界只读状态读回，返回 native 拼好的**中性事实串**。
+    //
+    // 形状与本仓库既有的 `cjgui_internal_renderer_form_event_text` 相同：native 持有
+    // 缓冲、调用方只读一次（借用指针，下一次调用会覆盖）。不用几十个出参——票据环
+    // 展开后是 109 个实参，既不可读也超出编译器接受范围。
+    //
+    // 事实**不经过 hilog**：设备日志是环形缓冲且按 tag 限流，「没看到某行」推不出
+    // 「没发生」。串里**不含**产品语义分类（无 source/preview 字样）——面归产品判。
+    // 返回 nullptr 表示会话不存在。
+    func ohos_renderer_accepted_state(session: UInt64): CString
+
     func cjgui_internal_renderer_cancel_composable_pointer_capture(session: UInt64): Int32    func cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(session: UInt64,
         appInstance: UInt64, componentInstance: UInt64, surfaceGeneration: UInt64,
         pointerId: Int64, gestureEpoch: UInt64): Int32
@@ -1007,8 +1036,14 @@ foreign {
         nodeId: UInt64,
         x: Float64,
         y: Float64,
+        expectedSceneVersion: UInt64,
         outByteOffset: CPointer<UInt32>,
         outAffinity: CPointer<UInt32>
+    ): Int32
+
+    func cjgui_internal_renderer_accepted_scene_version(
+        session: UInt64,
+        outSceneVersion: CPointer<UInt64>
     ): Int32
 
     func cjgui_internal_renderer_set_composable_text_runs(
@@ -1517,6 +1552,53 @@ func internalRendererWindowLog(message: String): Unit {
     }
 }
 
+/// round9-A：读回「最近一次出队事件」的冻结来源身份。
+///
+/// 返回 `(hasSource, ctx, generation, seq)`。`hasSource=false` 时**不得**推测来源
+/// （例如按当前挂载反填）——那正是旧采纳事实与新挂载不可区分的成因。纯只读。
+///
+/// **必须在 `pump` 返回非 NONE 之后立刻调用**，并把结果随该事件一起传下去；
+/// 不能等到处理事件的深处再读。窗口的 pump 是一个 drain 循环
+/// （`pumpWithRefreshPolicy` 先排空 FIFO 再统一发布），循环内可能又出队了
+/// 下一条事件——那时读到的是**下一条**的来源，打印出的 `source_ctx` 属于错误的
+/// 事件而且没有任何报警。
+func internalRendererLastEventProvenance(session: UInt64): (Bool, Int64, UInt64, UInt64) {
+    var ctx: Int64 = 0
+    var gen: UInt64 = 0u64
+    var seq: UInt64 = 0u64
+    // 本仓库的 FFI 出参惯例是 inout（见文件头「inout pointers are only valid for
+    // the duration of the call」），不是裸 pointer(&x)。
+    var rc: Int32 = -1
+    unsafe {
+        rc = ohos_renderer_last_event_provenance(session, inout ctx, inout gen, inout seq)
+    }
+    if (rc != 0) {
+        return (false, 0, 0u64, seq)
+    }
+    return (true, ctx, gen, seq)
+}
+
+/// round9-D：本窗口此刻的 accepted / 票据阶段事实（一行中性事实串的原文）。
+///
+/// 全部是**中性事实**：当前 accepted 投影版本、节点数、semantic 摘要、帧号、最近一次
+/// 提交的票号，在途票据（票号/结算/终态/来源/候选节点数），以及最近 K=8 张已结算
+/// 票据的阶段。**不含**任何产品语义分类——「这一帧是 source 面还是 preview 面」
+/// 由调用方按自己的词表判定（通用层硬编码产品前缀会让两层各写一套分类表而互相
+/// 矛盾）。
+///
+/// 返回空串表示读回不可用（会话不存在或出口未生效）——调用方必须把它与「读到但
+/// 不是目标」分开具名，**不得**当成「没提交」。
+public func internalRendererReadAcceptedStateText(session: UInt64): String {
+    if (session == CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN) {
+        return ""
+    }
+    // 与 internalRendererFormEventText 同一写法：借用指针直接 toString（native
+    // 持有缓冲，下一次调用覆盖）。
+    let borrowed = unsafe { ohos_renderer_accepted_state(session) }
+    let text = borrowed.toString()
+    return if (text.isEmpty()) { "" } else { "ACCEPTED " + text }
+}
+
 /// 取走"人在 native 表面上亲手放置的落点"（H1-R.a），返回 (taken, anchorSeq)。
 /// taken=1 表示 native 有一枚**未消费**的锚，其冻结的节点身份与本次选区事件的身份、
 /// UTF-16 值全部相同；此刻它已被置为已消费，同一锚不会被二次采纳。0 = 无匹配（零改动）。
@@ -1596,7 +1678,9 @@ func internalRendererRecoverTextProxyTicket(session: UInt64, nodeId: Int64, reso
     nodeKind: Int64, sceneVersion: Int64, acceptedValue: String, start: Int64,
     end: Int64): (Int32, InternalRendererProxyRestoreTicket) {
     var ticket = CjguiInternalRendererProxyRestoreTicket()
-    if (nodeId < 0 || nodeKind < 0 || sceneVersion < 0 || resourceId < 0 ||
+    // resourceId = -1 合法：presentation 锚点节点（可视编辑包，如预览正文容器）
+    // 声明时不带资源号，native 侧按完整身份校验，这里不再提前拒绝。
+    if (nodeId < 0 || nodeKind < 0 || sceneVersion < 0 || resourceId < -1 ||
         (start < 0 && start != CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT) ||
         (end < 0 && end != CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT) ||
         end > CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_END_OF_TEXT ||
@@ -2046,17 +2130,26 @@ func internalRendererSetComposableRangeEditDelta(session: UInt64, enabled: Bool)
 /// 声明(或撤回)窗口拥有的那个文本节点:它的平台组字相位以 kind 52 送达该
 /// 会话,对应整值/范围事件被抑制。`bindingEpoch` 原样回传,供窗口拒绝换绑前
 /// 入队的旧回调;`enabled` 为 false 时撤回声明。
+/// 可视编辑包（2026-10-04）：锚点节点可以是 presentation 节点（accepted 值≠
+/// 会话镜像），声明同时携带**镜像文本**作为锚点的编辑缓冲事实；原生在播种/
+/// 恢复校验时优先消费它，节点只提供身份与几何。撤回时传空串。
 func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt64, resourceId: Int64,
-    nodeKind: UInt32, bindingEpoch: UInt64, enabled: Bool): Int32 {
+    nodeKind: UInt32, bindingEpoch: UInt64, enabled: Bool, mirrorText!: String = "",
+    mirrorVersion!: Int64 = -1): Int32 {
     let flag: Int32 = if (enabled) {
         1
     } else {
         0
     }
-    return unsafe {
-        cjgui_internal_renderer_set_composable_owned_text_session(session, nodeId, resourceId, nodeKind,
-            bindingEpoch, flag)
+    let cMirror = unsafe { LibC.mallocCString(mirrorText) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (mirrorResource = cMirror.asResource()) {
+        unsafe {
+            status = cjgui_internal_renderer_set_composable_owned_text_session(session, nodeId,
+                resourceId, nodeKind, bindingEpoch, flag, mirrorResource.value, mirrorVersion)
+        }
     }
+    return status
 }
 
 func internalRendererFormEventText(session: UInt64): String {

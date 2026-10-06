@@ -37,6 +37,7 @@ STUBS = r'''
 #include <cstdio>
 #include <cstddef>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -134,6 +135,12 @@ typedef FakeFontCollection OH_Drawing_FontCollection;
 static FakeTextStyle *OH_Drawing_CreateTextStyle() { return new FakeTextStyle(); }
 static void OH_Drawing_SetTextStyleFontSize(FakeTextStyle *s, double size) { s->fontSize = size; }
 static void OH_Drawing_SetTextStyleFontWeight(FakeTextStyle *s, int weight) { (void)s; (void)weight; }
+// 样式 run（C 组）用到的两个 SDK 入口：假排版模型不分族/底色，只保住签名。
+enum { FONT_STYLE_NORMAL = 0, FONT_STYLE_ITALIC = 3 };
+static void OH_Drawing_SetTextStyleFontStyle(FakeTextStyle *s, int style) { (void)s; (void)style; }
+static void OH_Drawing_SetTextStyleBackgroundBrush(FakeTextStyle *s, FakeBrush *brush) {
+  (void)s; (void)brush;
+}
 static void OH_Drawing_SetTextStyleColor(FakeTextStyle *s, uint32_t color) { s->color = color; }
 static void OH_Drawing_SetTextStyleFontFamilies(FakeTextStyle *s, uint32_t count, const char **names) {
   (void)s; (void)count; (void)names;
@@ -375,6 +382,8 @@ struct SceneNode {
   std::string value;
   std::string semanticId;
   OhosImageRef image;
+  // A2 租约准入按生产 SceneNode 的样式 run 字段计数（build_harness 注入原文）。
+  %SCENE_STYLE_RUNS%
 };
 struct Session {
   bool caretBlinkVisible=true;
@@ -392,6 +401,11 @@ struct Session {
   uint64_t editingNodeId = 0;
   int64_t editingResourceId = -1;
   std::u16string editingText;
+  // H 线（可视编辑包 A1）：绘制路径的 presentation 跳过判定读 owned 会话锚点与
+  // accepted 段镜像声明。下面两处占位符由 build_harness 用生产原文切片注入；
+  // 手写副本落后只会让那道门静默少判，字段漂移必须在编译期失败。
+  %OWNED_ID_FIELDS%
+  %MIRROR_FIELDS%
   uint32_t caretUtf16 = 0;
   uint32_t selStartUtf16 = 0;
   uint32_t selEndUtf16 = 0;
@@ -435,9 +449,23 @@ CLASS_BODY_MARKERS = [
     "void drawSelectionBoxes(OH_Drawing_Canvas *canvas, OH_Drawing_Typography *typography,",
     "void drawNodeText(OH_Drawing_Canvas *canvas, const SceneNode &node, TextPaintFrame &frame)",
     "double prefixWidthUtf16(const std::u16string &text, uint32_t prefixUnits, double fontSize,",
+    # A2（租约预算）与 C 组（样式 run）新增的成员：计费函数和真正的排版入口都取
+    # 生产原文，桩掉就等于用 harness 自己的假设验生产的保留判定。
+    "static size_t leaseTableUnits(const std::map<uint64_t,",
+    "Measured layoutTextStyled(const std::string &text, double fontSize, uint32_t fontWeight,",
+    # A2：presentation 命中消费本帧实际绘制的租约条目（executeCaretHitTest 的
+    # 分流点）。保留判定与"绝不现场重排"都在真实函数里，桩掉就验不到生产行为。
+    "CjguiInternalRendererStatus runPresentationHitLocked(CaretHitTestJob *job)",
     "void executeCaretHitTest(CaretHitTestJob *job)",
     "void publishPaintedLayout(TextPaintFrame &frame)",
     "void invalidatePaintedLayout(uint64_t session)",
+]
+
+# 文件级生产 helper：绘制路径（drawNodeText）现在经 owned 镜像声明判断
+# presentation 节点是否跳过 accepted 值绘制；借用门是真判据，原样摘出。
+FILE_SCOPE_HELPERS = [
+    "bool isEditableTextKind(uint32_t kind)",
+    "static const Session::OwnedMirrorDeclaration *ownedMirrorDeclarationLocked(const Session &s,",
 ]
 
 SUPPORT = [
@@ -459,6 +487,12 @@ CONSTANT_LINES = [
     "constexpr uint32_t kKindMultiline = 10;",
     "constexpr double kTextInsetSingleLine = 2.0;",
     "constexpr double kTextInsetMultiline = 6.0;",
+    # A2：presentation 排版租约的三界预算（条目数 / 单节点文本 / 单节点 runs /
+    # 全表单元）。绘制路径的保留判定直接读它们，值改了行为就改，取生产原文行。
+    "constexpr size_t kPresentationLeaseMax = 64;",
+    "constexpr size_t kPresentationLeaseNodeTextMax = 16384;",
+    "constexpr size_t kPresentationLeaseNodeRunsMax = 64;",
+    "constexpr size_t kPresentationLeaseTotalUnitsMax = 262144;",
 ]
 
 MAIN_BODY = r"""
@@ -740,7 +774,7 @@ int main() {
     const auto before=g_layoutSerial;renderer.hitForTest(&job);
     EXPECT(job.status==CJGUI_INTERNAL_RENDERER_OK,95);EXPECT(g_layoutSerial==before,96);
     s.acceptedPaintTicketId=10;renderer.hitForTest(&job);EXPECT(job.status==CJGUI_INTERNAL_RENDERER_PRESENT_PENDING,97);
-    TextPaintFrame candidate{4242,10,node.pod.projectionVersion,nullptr};renderer.drawNodeText(&canvas,node,candidate);
+    TextPaintFrame candidate=newFrame(4242,10,node.pod.projectionVersion);renderer.drawNodeText(&canvas,node,candidate);
     renderer.publishPaintedLayout(candidate);s.acceptedPaintTicketId=9;
     renderer.hitForTest(&job);EXPECT(job.status==CJGUI_INTERNAL_RENDERER_PRESENT_PENDING,98);
     s.acceptedPaintTicketId=10;const auto after=g_layoutSerial;renderer.hitForTest(&job);
@@ -748,7 +782,7 @@ int main() {
     renderer.paintedLayoutUsable=false;renderer.hitForTest(&job);EXPECT(job.status==CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY,101);
     renderer.paintedLayoutUsable=true;renderer.permitGeometryRevision++;
     renderer.hitForTest(&job);EXPECT(job.status==CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED,102);renderer.permitGeometryRevision--;
-    TextPaintFrame absent{4242,10,node.pod.projectionVersion,nullptr};renderer.publishPaintedLayout(absent);
+    TextPaintFrame absent=newFrame(4242,10,node.pod.projectionVersion);renderer.publishPaintedLayout(absent);
     EXPECT(!renderer.lastPaintLayout,103);renderer.hitForTest(&job);EXPECT(job.status==CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY,104);
   }
 
@@ -787,7 +821,7 @@ int main() {
   {
     resetRecording();auto node=bodyNode(600,300,"word other");auto &s=bindEditing(node,node.value,4,0,4);
     renderer.drawForTest(&canvas,node);EXPECT(s.selectionHandles.valid,141);
-    TextPaintFrame absent{4242,s.acceptedPaintTicketId,0,nullptr};renderer.publishPaintedLayout(absent);
+    TextPaintFrame absent=newFrame(4242,s.acceptedPaintTicketId,0);renderer.publishPaintedLayout(absent);
     EXPECT(!s.selectionHandles.valid,142);
     renderer.drawForTest(&canvas,node);EXPECT(s.selectionHandles.valid,143);
     renderer.invalidatePaintedLayout(s.token);EXPECT(!s.selectionHandles.valid&&!renderer.paintedLayoutUsable,144);
@@ -839,6 +873,7 @@ INCLUDES = """#include <algorithm>
 #include <cstring>
 #include <dlfcn.h>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -849,6 +884,21 @@ INCLUDES = """#include <algorithm>
 """
 
 
+def span(source_text: str, start_anchor: str, end_anchor: str) -> str:
+    """生产原文切片（含两端）：纯数据字段用它注入，字段漂移即编译失败。"""
+    start = source_text.index(start_anchor)
+    return source_text[start:source_text.index(end_anchor, start) + len(end_anchor)]
+
+
+# Session 替身的 owned 会话锚点身份与 A1 三段镜像声明（含 editingMirrorOwnerVersion）。
+OWNED_ID_ANCHORS = ('    bool ownedTextSessionEnabled = false;',
+                    '    uint64_t ownedTextSessionBindingEpoch = 0;')
+MIRROR_ANCHORS = ('    struct OwnedMirrorDeclaration {',
+                  '    int64_t editingMirrorOwnerVersion = -1;')
+LEASE_TABLE_ANCHOR = ('    std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> '
+                      'publishedPresentationLease;')
+
+
 def build_harness(source_text: str) -> str:
     # 顺序不是随意的：STUBS 的假排版模型会调用真实 utf8ToUtf16，REPLICA 的 Session
     # 又是 composedBuffer 的参数类型，两边互相需要，所以先统一前置声明再定义。
@@ -856,6 +906,8 @@ def build_harness(source_text: str) -> str:
     harness += "struct Session;\n"
     # The multiline signature's comma marker is for extraction, not a declaration.
     harness += "\n".join(sig + ";" for sig in SUPPORT if not sig.endswith(",")) + "\n"
+    # C 组样式 run 的载体类型（SceneNode 与 CaretHitTestJob 都带它）。
+    harness += extract_decl(source_text, "struct OhosTextStyleRun {") + "\n"
     harness += STUBS
     harness += system_grapheme.production_service() + "\n"
     harness += "\n".join(extract_line(source_text, line) for line in CONSTANT_LINES) + "\n"
@@ -865,11 +917,25 @@ def build_harness(source_text: str) -> str:
     harness += "\n".join(extract_decl(source_text, sig) for sig in SUPPORT)
     harness += extract_decl(source_text, "struct PaintedTextLayout {")
     harness += extract_decl(source_text, "struct TextPaintFrame {")
+    # A2 给 TextPaintFrame 加了租约表成员（无默认初始化器），聚合的花括号写法在
+    # -Werror 下变成"漏初始化"。改由测试侧具名赋值构造帧；被测函数原文一个字不动。
+    harness += '''static TextPaintFrame newFrame(uint64_t session, uint64_t ticket, uint64_t projectionVersion) {
+  TextPaintFrame frame;
+  frame.session = session;
+  frame.ticket = ticket;
+  frame.projectionVersion = projectionVersion;
+  return frame;
+}
+'''
     harness += extract_decl(source_text, "void sourceParagraphRange16(const std::u16string &text, uint32_t caret, uint32_t &lo, uint32_t &hi)")
     harness += extract_decl(source_text, "struct CaretHitTestJob : WaitableJob {")
+    harness += "\n".join(extract_decl(source_text, marker) for marker in FILE_SCOPE_HELPERS) + "\n"
     harness += "\nstruct RenderThreadStub {\n"
     harness += r'''
     std::unique_ptr<PaintedTextLayout> lastPaintLayout;
+    // A2：已发布帧的 presentation 排版租约表（drawNodeText 的保留判定与
+    // publishPaintedLayout 的整表换代都读它），字段声明取生产原文。
+    %PUBLISHED_LEASE_TABLE%
     bool paintedLayoutUsable=false;uint64_t textLayoutsBuilt=0,textLayoutInputBytes=0,textPaintSerial=0,renderEpoch=1,boundGeneration=7,permitGeometryRevision=1;
     void *boundWindow=reinterpret_cast<void*>(9);int32_t surfaceW=1320,surfaceH=2856;double surfaceDensity=3.5;
     static bool pointInsideClips(const SceneNodePod &,float,float){return true;}
@@ -878,7 +944,8 @@ def build_harness(source_text: str) -> str:
       return window==boundWindow&&generation==boundGeneration&&w==surfaceW&&h==surfaceH&&revision==permitGeometryRevision;
     }
     void drawForTest(FakeCanvas *canvas,const SceneNode &node) {
-      TextPaintFrame frame{4242,g_sessions.sessions[0].acceptedPaintTicketId,node.pod.projectionVersion,nullptr};
+      TextPaintFrame frame = newFrame(4242, g_sessions.sessions[0].acceptedPaintTicketId,
+                                      node.pod.projectionVersion);
       drawNodeText(canvas,node,frame);publishPaintedLayout(frame);
     }
     void hitForTest(CaretHitTestJob *job) {
@@ -892,6 +959,17 @@ def build_harness(source_text: str) -> str:
     harness += "\n".join(extract_decl(source_text, marker) for marker in CLASS_BODY_MARKERS)
     harness += "\n};\n"
     harness += MAIN_BODY
+    # 纯数据字段一律用生产原文替换占位符：字段漂移会在编译期叫出来，而不是让
+    # 保留判定或镜像借用门静默少判。占位符只出现在代码行，绝不出现在注释里
+    # （否则一次 replace 会把注释里的名字也换成整段声明）。
+    for token, replacement in (
+            ("%OWNED_ID_FIELDS%", span(source_text, *OWNED_ID_ANCHORS)),
+            ("%MIRROR_FIELDS%", span(source_text, *MIRROR_ANCHORS)),
+            ("%SCENE_STYLE_RUNS%",
+             extract_line(source_text, "    std::vector<OhosTextStyleRun> textStyleRuns;")),
+            ("%PUBLISHED_LEASE_TABLE%", extract_line(source_text, LEASE_TABLE_ANCHOR))):
+        assert harness.count(token) == 1, f"占位符 {token} 未唯一出现"
+        harness = harness.replace(token, replacement)
     return harness
 
 

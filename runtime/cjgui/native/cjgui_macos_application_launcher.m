@@ -101,6 +101,14 @@ static void *CjguiRuntimeWorker(void *unused) {
     if (gCjguiRuntimeReady && entry && start) {
         start(entry);
     }
+    const char *trace = getenv("CJGUI_OWNER_PHASE_TRACE");
+    if (trace && strcmp(trace, "1") == 0) {
+        uint64_t tid = 0;
+        pthread_threadid_np(NULL, &tid);
+        fprintf(stderr, "CJGUI_APPLICATION_RUNTIME_START_RETURN tid=%llu mono_ns=%llu managed_completion=unknown\n",
+            (unsigned long long)tid, (unsigned long long)cjgui_internal_renderer_owner_clock_ns());
+        fflush(stderr);
+    }
     // Runtime start schedules managed work and may return before application
     // `main` completes. The framework host therefore requests AppKit stop
     // only after its actual close/failure cleanup path finishes.
@@ -161,5 +169,13 @@ int CJ_MRT_CjRuntimeStart(void *entry) {
     NSApplication *application = [NSApplication sharedApplication];
     [application setActivationPolicy:NSApplicationActivationPolicyRegular];
     [application run];
+    const char *trace = getenv("CJGUI_OWNER_PHASE_TRACE");
+    if (trace && strcmp(trace, "1") == 0) {
+        uint64_t tid = 0;
+        pthread_threadid_np(NULL, &tid);
+        fprintf(stderr, "CJGUI_APPLICATION_LAUNCHER_RETURN tid=%llu mono_ns=%llu\n",
+            (unsigned long long)tid, (unsigned long long)cjgui_internal_renderer_owner_clock_ns());
+        fflush(stderr);
+    }
     return EXIT_SUCCESS;
 }

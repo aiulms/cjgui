@@ -7,12 +7,19 @@ typeset -ga CJGUI_FRAMEWORK_SOURCE_NAMES
 CJGUI_FRAMEWORK_SOURCE_NAMES=(
   composable_ui.cj
   composable_ui_component_instance.cj
+  composable_grid.cj
   composable_vector_graphics.cj
   composable_vector_graphics_component.cj
   range_text.cj
   text_grapheme.cj
-  text_session.cj
+  text_selection_authority.cj
+text_session.cj
+  installed_range_input.cj
+  owner_turn_budget.cj
   composable_ui_window.cj
+  mac_text_pointer_capture.cj
+  mac_slider_pointer_capture.cj
+  mac_activation_prefix.cj
   composable_ui_wheel.cj
   composable_ui_diagnostics.cj
   composable_ui_animation.cj
@@ -22,7 +29,10 @@ CJGUI_FRAMEWORK_SOURCE_NAMES=(
   composable_ui_platform_state.cj
   composable_ui_platform_accent.cj
   macos_application_host.cj
+  windows_application_host.cj
+  macos_application_cleanup.cj
   runtime_renderer_text_geometry_query.cj
+  async_multiline_measure.cj
   runtime_renderer_session.cj
 )
 typeset -ga CJGUI_GENERATED_SOURCE_NAMES

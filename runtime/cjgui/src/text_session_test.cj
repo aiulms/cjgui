@@ -161,6 +161,163 @@ func makeSession(owner: FakeTextOwner, nodeId!: Int64 = 1001,
     return session
 }
 
+@Test
+func wholeChoiceUsesExactOwnerEndpointsAndBoundedReads(): Unit {
+    let owner = FakeTextOwner("0123456789abcdefghijklmnopqrstuvwxyz🙂")
+    let session = makeSession(owner, materializeLimit: 8)
+    let _ = session.revealByte(24)
+    let choice = session.selectWholeDocument(1).getOrThrow()
+    @Assert(choice.byteLength, Int64(owner.data.size))
+    @Assert(choice.isCurrent(), true)
+    let unaligned = session.replaceRange16(0, cjguiUtf16Length(session.mirrorSnapshot().text), "partial")
+    @Assert(unaligned.accepted, false)
+    @Assert(owner.writeCalls, 0)
+    let edited = choice.replace("x")
+    @Assert(edited.accepted, true)
+    @Assert(owner.text(), "x")
+    @Assert(owner.ver, 2)
+    @Assert(owner.writeCalls, 1)
+    @Assert(owner.maxReadBytes <= 8, true)
+    @Assert(choice.isCurrent(), false)
+    @Assert(session.acknowledge(edited.ticket, edited.contextEpoch), true)
+    @Assert(choice.replace("replay").accepted, false)
+    @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func wholeChoiceSameValueNewChoiceAndOwnerWriteRevokeAuthority(): Unit {
+    let owner = FakeTextOwner("0123456789abcdefghijklmnopqrstuvwxyz")
+    let session = makeSession(owner, materializeLimit: 8)
+    let old = session.selectWholeDocument(1).getOrThrow()
+    let newer = session.selectWholeDocument(1).getOrThrow()
+    @Assert(old.isCurrent(), false)
+    @Assert(old.replace("").accepted, false)
+    @Assert(owner.writeCalls, 0)
+    session.setSelection16(0, 0)
+    @Assert(newer.isCurrent(), false)
+    @Assert(newer.replace("").accepted, false)
+    @Assert(owner.writeCalls, 0)
+    let beforeOwner = session.selectWholeDocument(1).getOrThrow()
+    owner.bumpVersionOnly()
+    @Assert(beforeOwner.isCurrent(), false)
+    @Assert(beforeOwner.replace("").accepted, false)
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.text(), "0123456789abcdefghijklmnopqrstuvwxyz")
+}
+
+@Test
+func wholeChoiceFailureKeepsOwnerAndRemoteWindow(): Unit {
+    let owner = FakeTextOwner("0123456789abcdefghijklmnopqrstuvwxyz")
+    let session = makeSession(owner, materializeLimit: 8)
+    let _ = session.revealByte(24)
+    let prior = session.mirrorSnapshot()
+    let choice = session.selectWholeDocument(1).getOrThrow()
+    owner.rejectAll = true
+    let refused = choice.replace("")
+    @Assert(refused.accepted, false)
+    @Assert(owner.text(), "0123456789abcdefghijklmnopqrstuvwxyz")
+    @Assert(owner.ver, 1)
+    @Assert(session.mirrorSnapshot().startByte, prior.startByte)
+    @Assert(session.mirrorSnapshot().text, prior.text)
+    @Assert(choice.isCurrent(), true)
+    @Assert(session.acknowledge(refused.ticket, refused.contextEpoch), true)
+}
+
+@Test
+func wholeChoiceAcceptedReadFailureNeverResubmits(): Unit {
+    let owner = FakeTextOwner("0123456789abcdefghijklmnopqrstuvwxyz")
+    let session = makeSession(owner, materializeLimit: 8)
+    let choice = session.selectWholeDocument(1).getOrThrow()
+    owner.refuseReadsAfterNextAccept = true
+    let edited = choice.replace("x")
+    @Assert(edited.accepted, true)
+    @Assert(owner.text(), "x")
+    @Assert(owner.writeCalls, 1)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(choice.replace("replay").accepted, false)
+    @Assert(owner.writeCalls, 1)
+}
+
+// Cross-fragment owner-range contract. B's actual local TextKit selection is
+// [0,2), while the owner choice is [3,7) across A/B. Only the product
+// descriptor's directed global endpoints are submitted to the source session.
+@Test
+func crossFragmentOrdinaryInputReplacesAuthorizedOwnerChoiceExactlyOnce(): Unit {
+    let owner = FakeTextOwner("abcdeFGHIJ")
+    let session = makeSession(owner, materializeLimit: 10)
+    let choiceCurrent = true
+    let first = session.submitAuthorizedSelectionRange(77u64, 1u64, 1u64, 0u64,
+        1, 11, 3, 7, "X", { => choiceCurrent })
+    @Assert(first.accepted, true)
+    @Assert(owner.text(), "abcXHIJ")
+    @Assert(owner.writeCalls, 1)
+    let duplicate = session.submitAuthorizedSelectionRange(77u64, 1u64, 1u64, 0u64,
+        1, 11, 3, 7, "X", { => choiceCurrent })
+    @Assert(duplicate.ticket, first.ticket)
+    @Assert(owner.writeCalls, 1)
+    let conflict = session.submitAuthorizedSelectionRange(77u64, 1u64, 1u64, 0u64,
+        1, 11, 3, 7, "Y", { => choiceCurrent })
+    @Assert(conflict.accepted, false)
+    @Assert(conflict.reason, "selection_input_id_conflict")
+    @Assert(owner.text(), "abcXHIJ")
+    @Assert(session.hasAuthorizedSelectionInputMemo(77u64, 1u64), true)
+    @Assert(session.acknowledgeAuthorizedSelectionInput(77u64, 1u64), true)
+    @Assert(session.hasAuthorizedSelectionInputMemo(77u64, 1u64), false)
+    @Assert(session.acknowledgeAuthorizedSelectionInput(77u64, 1u64), true)
+    @Assert(session.acknowledgeAuthorizedSelectionInput(78u64, 1u64), false)
+    @Assert(session.acknowledge(first.ticket, first.contextEpoch), true)
+    let replay = session.submitAuthorizedSelectionRange(77u64, 1u64, 1u64, 0u64,
+        1, 11, 3, 7, "X", { => false })
+    @Assert(replay.accepted, false)
+    @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func crossFragmentInputUsesAfterReceiptAndRejectsLateSameValueChoice(): Unit {
+    let owner = FakeTextOwner("abcdeFGHIJ")
+    let session = makeSession(owner, materializeLimit: 10)
+    let currentChoice = true
+    let first = session.submitAuthorizedSelectionRange(78u64, 1u64, 1u64, 0u64,
+        1, 20, 3, 7, "X", { => currentChoice })
+    @Assert(first.accepted, true)
+    @Assert(session.acknowledge(first.ticket, first.contextEpoch), true)
+    @Assert(session.acknowledgeAuthorizedSelectionInput(78u64, 1u64), true)
+    // The owner publishes the first accepted edit and a new collapsed choice
+    // at byte 4. The next native input names its actual predecessor.
+    let second = session.submitAuthorizedSelectionRange(78u64, 2u64, 2u64, 1u64,
+        2, 21, 4, 4, "Y", { => currentChoice })
+    @Assert(second.accepted, true)
+    @Assert(owner.text(), "abcXYHIJ")
+    @Assert(owner.writeCalls, 2)
+    @Assert(session.acknowledge(second.ticket, second.contextEpoch), true)
+    @Assert(session.acknowledgeAuthorizedSelectionInput(78u64, 2u64), true)
+
+    // A same-value selection still has a new revision. A delayed callback for
+    // that old revision is rejected even though bytes and endpoints match.
+    let stale = session.submitAuthorizedSelectionRange(78u64, 3u64, 3u64, 2u64,
+        2, 21, 4, 4, "Z", { => false })
+    @Assert(stale.accepted, false)
+    @Assert(stale.reason, "selection_input_choice_stale")
+    @Assert(owner.text(), "abcXYHIJ")
+    @Assert(owner.writeCalls, 2)
+}
+
+@Test
+func crossFragmentInputRechecksChoiceAfterSourcePreparation(): Unit {
+    let owner = FakeTextOwner("abcdeFGHIJ")
+    let session = makeSession(owner, materializeLimit: 4)
+    let checks = ArrayList<Int64>()
+    let staleAtSubmit = session.submitAuthorizedSelectionRange(79u64, 1u64, 1u64, 0u64,
+        1, 30, 3, 7, "X", { =>
+            checks.add(1)
+            return checks.size == 1
+        })
+    @Assert(staleAtSubmit.accepted, false)
+    @Assert(staleAtSubmit.reason, "selection_input_choice_stale")
+    @Assert(owner.text(), "abcdeFGHIJ")
+    @Assert(owner.writeCalls, 0)
+}
+
 // 大正文夹具:只按单元复制,不依赖任何会话能力。
 func repeatedText(unit: String, times: Int64): String {
     let src = unit.toArray()
@@ -460,6 +617,11 @@ func testBoundedContextNeverReadsWholeDocument(): Unit {
 
     // 消费方显式把上下文移动到目标绝对位置后,同一编辑才落地。
     @Assert(session.revealByte(2000))
+    // Moving storage is not accepting a new selection. Old proxy coordinates
+    // cannot authorize input at the same local number in a different mirror.
+    @Assert(session.replaceRange16(5, 5, "Q").accepted, false)
+    @Assert(big.writeCalls, 1)
+    session.setSelection16(5, 5)
     let inside = session.replaceRange16(5, 5, "Q")
     @Assert(inside.accepted)
     @Assert(big.data.size, 4098)
@@ -590,6 +752,56 @@ func testPreparedSourceRangeWritesOnceFromFarBoundedPage(): Unit {
     @Assert(owner.writeCalls, 1)
     @Assert(!token.replace("Z").accepted)
     @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func testPreparedSelectionMirrorMoveCannotReinterpretOldPublicRange(): Unit {
+    let owner = FakeTextOwner("abcdefghABCDEFGHijklmnopIJKLMNOP")
+    let session = makeSession(owner, materializeLimit: 8)
+    session.setSelection16(2, 2)
+    let original = session.freezeSelectionTicket()
+    let prepared = session.prepareSourceRange(1, 24, 24)
+    @Assert(prepared.isSome(), true)
+    @Assert(session.mirrorSnapshot().startByte, 24)
+    @Assert(session.selectionTicketMatches(original), false)
+    let failedInstall = session.commitSelectionTicket(session.freezeSelectionTicket(), 1, 1, { => false })
+    @Assert(failedInstall, false)
+    let kept = session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).getOrThrow()
+    @Assert(kept[1], 2)
+    @Assert(kept[2], 2)
+    @Assert(session.selectedSourceRange().isNone(), true)
+    @Assert(session.freezeInstalledRangeHandoffBasis(91, 41, 3).isNone(), true)
+    @Assert(session.replaceRange16(2, 2, "WRONG").accepted, false)
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.text(), "abcdefghABCDEFGHijklmnopIJKLMNOP")
+}
+
+@Test
+func testPreparedSelectionMirrorMoveCannotConfirmAliasedNativeSelection(): Unit {
+    let owner = FakeTextOwner("abcdefghABCDEFGHijklmnopIJKLMNOP")
+    let session = makeSession(owner, materializeLimit: 8)
+    session.setSelection16(2, 2)
+    @Assert(session.applyDirectedPlainSelection(2, 2), true)
+    @Assert(session.prepareSourceRange(1, 24, 24).isSome(), true)
+    @Assert(session.confirmNativeSelectionRestored(1, 2, 2), false)
+    @Assert(session.handlePlainIntent(MoveRight).handled, false)
+    @Assert(owner.writeCalls, 0)
+    let kept = session.sourceRangeForSelectionTicket(session.freezeSelectionTicket()).getOrThrow()
+    @Assert(kept[1], 2)
+}
+
+@Test
+func testPreparedSelectionMirrorMoveCommitsNewChoiceOnlyAfterInstall(): Unit {
+    let owner = FakeTextOwner("abcdefghABCDEFGHijklmnopIJKLMNOP")
+    let session = makeSession(owner, materializeLimit: 8)
+    session.setSelection16(2, 2)
+    @Assert(session.prepareSourceRange(1, 24, 24).isSome(), true)
+    @Assert(session.commitSelectionTicket(session.freezeSelectionTicket(), 1, 1, { => true }), true)
+    let selected = session.selectedSourceRange().getOrThrow()
+    @Assert(selected[1], 25)
+    @Assert(session.replaceRange16(1, 1, "X").accepted, true)
+    @Assert(owner.writeCalls, 1)
+    @Assert(owner.text(), "abcdefghABCDEFGHijklmnopIXJKLMNOP")
 }
 
 @Test
@@ -2401,5 +2613,48 @@ func testAcceptedCaretRebasesAcrossExternalWriteWhileReadsUnavailable(): Unit {
     @Assert(restored[0], 3)
     @Assert(restored[1], 14)
     @Assert(restored[2], 14)
+    @Assert(owner.writeCalls, 1)
+}
+
+@Test
+func installedSelectionSourceSnapshotRequiresCurrentOwnerAckedChain(): Unit {
+    let owner = FakeTextOwner("ABCDE")
+    let session = makeSession(owner)
+    let basis = session.freezeInstalledRangeBasis(91u64, 7u64, 3u64).getOrThrow()
+    @Assert(session.activateInstalledRangeBasis(basis, 5u64), true)
+    let frozen = session.freezeInstalledSelectionSource(7u64, 3u64).getOrThrow()
+    @Assert(frozen.basis.nonce, 91u64)
+    @Assert(frozen.acceptedSequence, 0u64)
+    @Assert(frozen.acceptedVersion, basis.ownerVersion)
+    @Assert(frozen.sourceStart, basis.sourceStart)
+    @Assert(frozen.sourceEnd, basis.sourceEnd)
+    @Assert(frozen.proxyGeneration, 5u64)
+    @Assert(frozen.body, "ABCDE")
+
+    owner.bumpVersionOnly()
+    @Assert(session.freezeInstalledSelectionSource(7u64, 3u64).isNone(), true)
+    @Assert(session.freezeInstalledSelectionSource(8u64, 3u64).isNone(), true)
+}
+
+// Native ACK settlement can be retried after the owner has accepted. The
+// duplicate confirmation names the same complete FIFO identity and must stay
+// successful without submitting the owner edit a second time.
+@Test
+func crossFragmentAcceptedInputConfirmationIsIdempotentForSameIdentity(): Unit {
+    let owner = FakeTextOwner("abcdeFGHIJ")
+    let session = makeSession(owner, materializeLimit: 10)
+    let choiceCurrent = true
+    let first = session.submitAuthorizedSelectionRange(88u64, 4u64, 1u64, 0u64,
+        1, 31, 3, 7, "X", { => choiceCurrent })
+    @Assert(first.accepted, true)
+    @Assert(owner.text(), "abcXHIJ")
+    @Assert(owner.writeCalls, 1)
+    @Assert(session.acknowledge(first.ticket, first.contextEpoch), true)
+
+    @Assert(session.hasAuthorizedSelectionInputMemo(88u64, 4u64), true)
+    @Assert(session.acknowledgeAuthorizedSelectionInput(88u64, 4u64), true)
+    @Assert(session.hasAuthorizedSelectionInputMemo(88u64, 4u64), false)
+    @Assert(session.acknowledgeAuthorizedSelectionInput(88u64, 4u64), true)
+    @Assert(owner.text(), "abcXHIJ")
     @Assert(owner.writeCalls, 1)
 }

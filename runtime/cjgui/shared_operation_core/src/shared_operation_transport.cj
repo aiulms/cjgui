@@ -3,6 +3,7 @@ package cjgui_shared_operation_core
 import std.collection.*
 import std.collection.concurrent.*
 import std.convert.*
+import std.env.*
 import std.fs.*
 import std.net.*
 import std.posix.*
@@ -400,18 +401,18 @@ internal class CjguiSharedOperationPendingClientRequest {
 }
 
 internal class CjguiSharedOperationAcceptedClient {
-    let client: UnixSocket
+    let client: StreamingSocket
 
-    init(client: UnixSocket) {
+    init(client: StreamingSocket) {
         this.client = client
     }
 }
 
 private class CjguiSharedOperationActiveClient {
     let leaseId: Int64
-    let client: UnixSocket
+    let client: StreamingSocket
 
-    init(leaseId: Int64, client: UnixSocket) {
+    init(leaseId: Int64, client: StreamingSocket) {
         this.leaseId = leaseId
         this.client = client
     }
@@ -511,7 +512,7 @@ internal class CjguiSharedOperationIoState {
         }
     }
 
-    func tryAccept(client: UnixSocket): Bool {
+    func tryAccept(client: StreamingSocket): Bool {
         if (!isRunning()) {
             return false
         }
@@ -540,7 +541,7 @@ internal class CjguiSharedOperationIoState {
         return accepted
     }
 
-    func activateClient(client: UnixSocket): ?Int64 {
+    func activateClient(client: StreamingSocket): ?Int64 {
         return synchronized(lock) {
             if (!running) {
                 None
@@ -708,7 +709,7 @@ internal class CjguiSharedOperationIoState {
     }
 
     func stop(): Unit {
-        let clientsToClose = ArrayList<UnixSocket>()
+        let clientsToClose = ArrayList<StreamingSocket>()
         let requestsToCancel = ArrayList<CjguiSharedOperationPendingClientRequest>()
         synchronized(lock) {
             running = false
@@ -743,16 +744,17 @@ internal class CjguiSharedOperationIoState {
     }
 }
 
-private func closeClientQuietly(client: UnixSocket): Unit {
+private func closeClientQuietly(client: StreamingSocket): Unit {
     try {
         client.close()
     } catch (_) {
     }
 }
 
-/// Experimental private-descriptor Unix-socket transport for a registered
-/// application domain. It knows contract validation and authorization only;
-/// actual actions are always delegated to the domain's real handlers.
+/// Experimental private-descriptor local transport for a registered
+/// application domain. Unix platforms use a private Unix socket; Windows uses
+/// a loopback-only TCP endpoint. Contract validation and authorization remain
+/// shared, and actual actions are always delegated to the domain's handlers.
 public class CjguiSharedOperationExternalConnection {
     public var socketPath: String
     private let domain: CjguiSharedOperationDomain
@@ -803,7 +805,7 @@ public class CjguiSharedOperationExternalConnection {
     /// Test-only ready-queue observation (see CjguiSharedOperationReadyRequestObserver).
     private var testReadyRequestObserver: ?CjguiSharedOperationReadyRequestObserver
     private var readyRequestSequence: Int64
-    private var server: ?UnixServerSocket
+    private var server: ?ServerSocket
     private var ioState: ?CjguiSharedOperationIoState
     private var privateDirectory: ?Path
     private var descriptorPath: String
@@ -1614,6 +1616,11 @@ public class CjguiSharedOperationExternalConnection {
             return false
         }
         cleanupOwnedTransport()
+        return startPlatformTransportUnlocked()
+    }
+
+    @When[os != "Windows"]
+    private func startPlatformTransportUnlocked(): Bool {
         try {
             let directory = Directory.createTemp("/tmp")
             if (chmod(directory.toString(), 0o700u32) != 0) {
@@ -1644,6 +1651,41 @@ public class CjguiSharedOperationExternalConnection {
                 return false
             }
             if (chmod(descriptorPath, 0o600u32) != 0) {
+                cleanupOwnedTransport()
+                return false
+            }
+            let newIoState = CjguiSharedOperationIoState()
+            ioState = Some(newIoState)
+            startIoWorkers(boundServer, newIoState)
+            return true
+        } catch (_) {
+            cleanupOwnedTransport()
+            return false
+        }
+    }
+
+    @When[os == "Windows"]
+    private func startPlatformTransportUnlocked(): Bool {
+        try {
+            let tempRoot = getVariable("TEMP").getOrThrow()
+            let directory = Directory.createTemp(tempRoot)
+            privateDirectory = Some(directory)
+            let newDescriptorPath = directory.join("connection.cjgui").toString()
+            let boundServer = TcpServerSocket(bindAt: IPSocketAddress("127.0.0.1", 0))
+            boundServer.bind()
+            let localAddress = (boundServer.localAddress as IPSocketAddress).getOrThrow()
+            let newEndpoint = "tcp://127.0.0.1:${localAddress.port}"
+            endpointGeneration += 1
+            socketPath = newEndpoint
+            descriptorPath = newDescriptorPath
+            ownsSocketPath = false
+            server = Some(boundServer)
+            if (let Some(payload) <- descriptorPayload()) {
+                try (descriptor = File.create(descriptorPath)) {
+                    ownsDescriptorPath = true
+                    descriptor.write(payload.toArray())
+                }
+            } else {
                 cleanupOwnedTransport()
                 return false
             }
@@ -1709,7 +1751,7 @@ public class CjguiSharedOperationExternalConnection {
         ownsSocketPath = false
     }
 
-    private func startIoWorkers(server: UnixServerSocket, state: CjguiSharedOperationIoState): Unit {
+    private func startIoWorkers(server: ServerSocket, state: CjguiSharedOperationIoState): Unit {
         state.retainWorker(spawn {=> acceptClients(server, state)})
         var workerIndex = 0
         while (workerIndex < CJGUI_SHARED_OPERATION_IO_WORKER_COUNT) {
@@ -1718,7 +1760,7 @@ public class CjguiSharedOperationExternalConnection {
         }
     }
 
-    private func acceptClients(server: UnixServerSocket, state: CjguiSharedOperationIoState): Unit {
+    private func acceptClients(server: ServerSocket, state: CjguiSharedOperationIoState): Unit {
         if (!state.tryEnterWorker()) {
             return
         }
@@ -1755,7 +1797,7 @@ public class CjguiSharedOperationExternalConnection {
         state.workerExited()
     }
 
-    private func serveQueuedClient(client: UnixSocket, state: CjguiSharedOperationIoState): Unit {
+    private func serveQueuedClient(client: StreamingSocket, state: CjguiSharedOperationIoState): Unit {
         if (let Some(clientLeaseId) <- state.activateClient(client)) {
             let read = readClientFrame(client, state)
             if (read.isComplete) {
@@ -1820,7 +1862,7 @@ public class CjguiSharedOperationExternalConnection {
         closeClientQuietly(client)
     }
 
-    private func readClientFrame(client: UnixSocket, state: CjguiSharedOperationIoState): CjguiSharedOperationClientRead {
+    private func readClientFrame(client: StreamingSocket, state: CjguiSharedOperationIoState): CjguiSharedOperationClientRead {
         let decoder = CjguiSharedOperationFrameAccumulator()
         let started = MonoTime.now()
         while (state.isRunning()) {
@@ -1855,7 +1897,7 @@ public class CjguiSharedOperationExternalConnection {
     /// Completion means only the kernel accepted the stream bytes; a peer that
     /// closes after a successful domain action is not retried automatically.
     private func writeFrameWithDeadline(
-        client: UnixSocket,
+        client: StreamingSocket,
         frame: Array<Byte>,
         state: CjguiSharedOperationIoState
     ): Bool {
@@ -1874,7 +1916,7 @@ public class CjguiSharedOperationExternalConnection {
                 client.write(frame.slice(offset, count))
                 offset += count
             } catch (_: SocketTimeoutException) {
-                // UnixSocket.write reports no byte count.  A timed-out call
+                // StreamingSocket.write reports no byte count.  A timed-out call
                 // therefore cannot prove that this slice transferred zero
                 // bytes; retrying the same offset could duplicate a suffix
                 // and corrupt the framed stream.  Close this one-shot peer

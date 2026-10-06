@@ -9,7 +9,13 @@
     },
     {
       "leg": "input-insert",
-      "note": "thermo shared lifecycle ok"
+      "version_before": 0,
+      "expected": "thermo shared lifecycle ok",
+      "note": "thermo shared lifecycle ok",
+      "version_after": 26,
+      "version_delta": 26,
+      "expected_txns": 26,
+      "exactly_once": true
     },
     {
       "leg": "nonempty-select",
@@ -20,16 +26,20 @@
     },
     {
       "leg": "exact-replace",
+      "version_before": 26,
+      "expected": "Xmo shared lifecycle ok",
+      "note": "Xmo shared lifecycle ok",
+      "version_after": 27,
+      "version_delta": 1,
+      "expected_txns": 1,
+      "exactly_once": true,
       "frozen_selection": [
         0,
         4
-      ],
-      "expected": "Xmo shared lifecycle ok",
-      "note": "Xmo shared lifecycle ok"
+      ]
     },
     {
       "leg": "external-set",
-      "applied": true,
       "note": "外部改版后的备注 thermΩ"
     },
     {
@@ -41,18 +51,125 @@
     },
     {
       "leg": "continue-input",
+      "version_before": 28,
+      "expected": "外部改版后的备注 thermΩY",
+      "note": "外部改版后的备注 thermΩY",
+      "version_after": 29,
+      "version_delta": 1,
+      "expected_txns": 1,
+      "exactly_once": true,
       "frozen_selection": [
         15,
         15
-      ],
-      "expected": "外部改版后的备注 thermΩY",
-      "note": "外部改版后的备注 thermΩY"
+      ]
+    },
+    {
+      "leg": "generated-node",
+      "node": 802001,
+      "semantic": "component-2-1"
+    },
+    {
+      "leg": "generated-point",
+      "point": [
+        136.55172413793102,
+        781.2440318302387
+      ]
+    },
+    {
+      "leg": "generated-select",
+      "selection": [
+        1,
+        1
+      ]
+    },
+    {
+      "leg": "generated-input",
+      "version_before": 29,
+      "expected": "外G1部改版后的备注 thermΩY",
+      "note": "外G1部改版后的备注 thermΩY",
+      "version_after": 31,
+      "version_delta": 2,
+      "expected_txns": 2,
+      "exactly_once": true
+    },
+    {
+      "leg": "hand-revisit-select",
+      "selection": [
+        12,
+        12
+      ]
+    },
+    {
+      "leg": "hand-revisit-input",
+      "version_before": 31,
+      "expected": "外G1部改版后的备注 tHhermΩY",
+      "note": "外G1部改版后的备注 tHhermΩY",
+      "version_after": 32,
+      "version_delta": 1,
+      "expected_txns": 1,
+      "exactly_once": true
+    },
+    {
+      "leg": "generated-revisit-select",
+      "selection": [
+        1,
+        1
+      ]
+    },
+    {
+      "leg": "generated-revisit-input",
+      "version_before": 32,
+      "expected": "外G2G1部改版后的备注 tHhermΩY",
+      "note": "外G2G1部改版后的备注 tHhermΩY",
+      "version_after": 34,
+      "version_delta": 2,
+      "expected_txns": 2,
+      "exactly_once": true
+    }
+  ],
+  "transactions": [
+    {
+      "leg": "input-insert",
+      "version_before": 0
+    },
+    {
+      "leg": "exact-replace",
+      "version_before": 26
+    },
+    {
+      "leg": "external-set",
+      "applied": true
+    },
+    {
+      "leg": "continue-input",
+      "version_before": 28
+    },
+    {
+      "leg": "candidate-submit",
+      "structure_version": 0,
+      "applied": true,
+      "candidate_accepted": true,
+      "resp": "PROTOCOL CJGUI_SHARED_OPERATION/2\nKIND GENERATED_UI_SUBMIT\nAPPLIED true\nREASON none\nPATH none\nVERSION_BEFORE 0\nVERSION_AFTER 0\nCANDIDATE_ACCEPTED true\nSCENE_ACCEPTED false\nCANDIDATE_VERSION 1\nENDPOINT_EPOCH 0\nENDPOINT_INSTANCE 08b660ffec7f1"
+    },
+    {
+      "leg": "generated-input",
+      "version_before": 29
+    },
+    {
+      "leg": "hand-revisit-input",
+      "version_before": 31
+    },
+    {
+      "leg": "generated-revisit-input",
+      "version_before": 32
     }
   ],
   "identity": {
     "bundle": "com.example.cjguithermo",
-    "pid": "28542"
+    "pid": "32148"
   },
+  "forward_created": true,
+  "baseline_version": 0,
   "install": {
     "confirmed": true,
     "selection": [

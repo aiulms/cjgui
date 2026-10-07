@@ -6,6 +6,12 @@
 
 ![编辑器首页实录预览](poster.png)
 
+## 公开下载
+
+[直接下载本次成片，无需登录](https://raw.githubusercontent.com/aiulms/cjgui/8f9091c2a03cded04ac1875dfaa293987208962f/docs/contest/2026-10-07/demo/CJGUI%20%E5%88%9D%E8%B5%9B%E5%8F%82%E8%B5%9B%E6%BC%94%E7%A4%BA.mp4)。已核对下载文件与本地成片 SHA256 完全一致。服务以 application/octet-stream 返回，浏览器可下载后观看。
+
+固定源码与素材提交为 `8f9091c2a03cded04ac1875dfaa293987208962f`，初赛材料标签 `cjgui-contest-20261007`；公开下载构建已通过，见 [源码状态](../SOURCE_STATUS.md)。
+
 ## 演示顺序
 
 | 时间 | 内容 | 证据范围 |

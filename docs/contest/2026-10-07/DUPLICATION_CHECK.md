@@ -28,6 +28,6 @@
 
 ## 判断边界
 
-这是公开目录与邻近项目说明的有范围核查，不是对两个组织所有源码的逐行审计，也不是赛事的提前资格认定。判断重点为功能和交付链路；后续如发现同类共同操作或生成绑定实现，应更新本说明及比较依据。
+本次核查范围为公开目录与邻近项目说明，比较核心功能及应用中的实际使用。赛事评审据此及其他证据认定资格；后续发现同类共同操作或生成绑定实现时，更新本说明和比较依据。
 
 CJGUI 的源码定位：runtime/cjgui/src/；共享操作：runtime/cjgui/shared_operation_core/；普通消费者：runtime/cjgui/examples/shared_document_window_app/ 和 rule_set_window_app/。外部 GUI 框架仅参考实现思路，不引入依赖。

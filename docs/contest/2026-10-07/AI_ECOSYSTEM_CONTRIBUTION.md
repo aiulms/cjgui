@@ -1,50 +1,58 @@
 # CJGUI 仓颉 AI 生态贡献说明
 
-申请成果：CJGUI 通用共享操作工具与人机接续示例。类型：工具、工作流和示例。
+申请成果：CJGUI 通用共享操作工具与人机接续示例。类型：工具、工作流、示例。
 
-## 解决的问题
+## 把 AI 工具接进正在使用的应用
 
-Agent 操作桌面应用时，需要知道可操作的对象、参数和规则，并在修改后读回真实状态。CJGUI 的应用以仓颉声明资源、字段和动作，公开客户端动态读取这些能力，经应用签发的连接凭据调用业务操作。此工具可用于 Agent 工具适配，也可用于普通脚本、调试和集成测试。
+人在窗口里选中一条记录，希望 AI 帮忙整理内容。工具需要知道当前是什么对象、允许改哪些字段、能执行哪些动作，还需要把结果交回用户正在看的界面。CJGUI 为仓颉应用提供这样的入口。
 
-本次贡献属于作品仓库内独立可复用模块，源码和文档入口为 runtime/cjgui/shared_operation_core/。我们未将普通 AI 辅助写代码计作生态加分，未声称实现通用 Agent 规划器或 MCP 服务端。
+应用声明资源、字段、动作和规则，公开客户端发现这些能力，经授权调用真实业务操作，再读取结果。手写界面和生成界面共用这些数据。开发者可以把客户端接到自己的 Agent 工具中，让模型参与当前任务，用户继续在窗口里检查和操作。
 
-## 源码与复用入口
+本次成果包括仓颉服务端契约、通用 Python 客户端、多个应用示例和测试，位于同一开源仓库内，可按模块复用。生态贡献申请对应这套工具和接入方法。
 
-- 作品与贡献仓库：https://gitcode.com/aiulms/cjgui
-- 仓颉契约、业务域、传输与测试：runtime/cjgui/shared_operation_core/src/
-- 通用 Python 客户端：runtime/cjgui/shared_operation_core/client.py
-- 客户端完整说明：runtime/cjgui/shared_operation_core/README.md
-- 文档窗口：runtime/cjgui/examples/shared_document_window_app/
-- 规则编辑器：runtime/cjgui/examples/rule_set_window_app/
-- 其他普通消费者：shared_operation_second_consumer、backup_rule_config_consumer。
+## 从哪里开始
 
-## 运行和调用
+| 内容 | 仓库路径 |
+| --- | --- |
+| 仓颉契约、业务操作、传输与测试 | runtime/cjgui/shared_operation_core/src/ |
+| 通用 Python 客户端 | runtime/cjgui/shared_operation_core/client.py |
+| 客户端说明 | runtime/cjgui/shared_operation_core/README.md |
+| 文档窗口示例 | runtime/cjgui/examples/shared_document_window_app/ |
+| 规则编辑器示例 | runtime/cjgui/examples/rule_set_window_app/ |
+| 生成式任务面板 | runtime/cjgui/examples/generated_panel_consumer/ |
 
-准备 macOS/Apple Silicon、仓颉 1.1.3、Xcode Command Line Tools 和 Python 3。按验证报告使用源码包或已公开的对应版本；设置 CANGJIE_HOME 并 source 其 envsetup.sh。
+成果仓库：[CJGUI](https://gitcode.com/aiulms/cjgui)。更多消费者包括 shared_operation_second_consumer 和 backup_rule_config_consumer，可用于理解同一客户端怎样服务不同业务。
+
+## 运行一个可以共同操作的窗口
+
+准备 macOS/Apple Silicon、仓颉 1.1.3、Xcode Command Line Tools 和 Python 3。按[源码版本说明](SOURCE_STATUS.md)取得本次源码，设置 CANGJIE_HOME 并载入工具链环境。
 
 ```sh
+source "$CANGJIE_HOME/envsetup.sh"
 zsh runtime/cjgui/examples/shared_document_window_app/run.sh --with-connection
-# 应用输出 DESCRIPTOR_PATH 后，使用这次实例签发的路径
+```
+
+应用输出本次实例的 DESCRIPTOR_PATH。把该路径设为 DESCRIPTOR，然后查看它提供的能力与当前内容：
+
+```sh
 python3 runtime/cjgui/shared_operation_core/client.py "$DESCRIPTOR" --json describe
 python3 runtime/cjgui/shared_operation_core/client.py "$DESCRIPTOR" --json get
 ```
 
-调用者从当前描述读取资源 ID、动作、参数、位置单位及文档版本，再按 client.py 的 invoke/read-range/replace-range 入口操作。不要猜测旧 socket 或复用已关闭实例的 descriptor。凭据保持在本机私有目录，不进入日志、视频和代码仓。
+根据返回的资源 ID、动作、参数和文档版本调用 invoke、read-range 或 replace-range。文本位置使用应用声明的单位。连接凭据仅供当前实例使用，保留在本机私有目录。
 
-生成式消费者还提供 generated-capabilities、generated-fields、generated-structure、generated-submit 等入口。生成候选必须引用应用已声明字段、动作和受支持组件。接收候选不等于画面接受，需读取候选终态和当前结构版本。
+## Agent 可以怎样使用
 
-## 可复用的处理流程
+一次操作先发现应用能力，读取当前内容与版本，再提交合法请求，最后读回结果。遇到版本冲突时，重新读取当前内容后决定下一步；人仍可在正常窗口中继续工作。
 
-1. 发现当前实例允许的对象与操作。
-2. 获取对应业务版本和位置单位。
-3. 构造带预期版本的合法操作并调用。
-4. 读回业务状态、候选终态和窗口进度。
-5. 人继续在正常窗口中编辑；冲突由业务规则处理。
+客户端可用作 Agent 的进程工具或 Python 适配层。模型和任务规划由应用开发者接入，资源与动作由应用声明。生成式消费者还提供 generated-capabilities、generated-fields、generated-structure 和 generated-submit，可供工具发现可用组件和字段、提交面板结构并查询终态。
 
-客户端可作为外部 Agent 的进程工具或 Python 适配层。资源和动作来自应用，客户端不写死某个业务消费者。模型调用需要应用或 Agent 另行接入；当前演示仅证明脚本调用公开工具和人机接续链路。
+同一字段的类型、校验与写入动作同时服务手写控件、生成控件和工具调用。开发者可以据此把“在窗口中操作”和“让 AI 帮忙操作”接进一个应用。
 
-## 验证与限制
+## 已提供的验证
 
-本次 Python 客户端六组测试合计 96 项通过；其中使用协议兼容对端的测试属于客户端契约验证，不能代替正常应用集成。正常窗口演示及仓颉测试的环境、版本、命令和结果见 VALIDATION.md。
+正常任务面板实录展示了人提交任务、外部工具追加备注，以及应用拒绝修改已冻结标题的过程。结果直接显示在手写区和生成区，详见[演示说明](demo/README.md)。
 
-所有 API 当前为 experimental。授权、失效、版本冲突和读回由协议处理；没有完成全平台无障碍、云端远程安全方案或大模型自主使用评估。加分是否成立及分数由赛事评审认定。
+共享核心 100/100、公开 Python 客户端六组 96/96 测试通过；协议契约测试与正常应用记录见[验证报告](VALIDATION.md)。框架、客户端和示例采用 Apache License 2.0。
+
+当前接口为 experimental，演示调用者为脚本客户端；真实模型接入后的协作效果仍需评测。项目提供应用工具入口，Agent 规划和 MCP 适配可由上层接入。

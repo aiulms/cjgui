@@ -1,0 +1,37 @@
+{
+  "source_commit": "8f9091c2a03cded04ac1875dfaa293987208962f",
+  "anonymous_gitcode_clone": true,
+  "clone_head": "8f9091c2a03cded04ac1875dfaa293987208962f",
+  "baseline_hashes_verified": 4826,
+  "documentation_overlays": [
+    ".gitignore",
+    "README.md"
+  ],
+  "public_movie_url": "https://raw.githubusercontent.com/aiulms/cjgui/8f9091c2a03cded04ac1875dfaa293987208962f/docs/contest/2026-10-07/demo/CJGUI%20%E5%88%9D%E8%B5%9B%E5%8F%82%E8%B5%9B%E6%BC%94%E7%A4%BA.mp4",
+  "anonymous_movie_download_status": 200,
+  "movie_content_type": "application/octet-stream",
+  "movie_bytes": 4419309,
+  "movie_sha256": "f3673b4a48aefb43195caf6299155aac584cd06e4c999ffb2a17e36c59109bec",
+  "verified_remote_source_commits": {
+    "GitCode": "8f9091c2a03cded04ac1875dfaa293987208962f",
+    "GitHub": "8f9091c2a03cded04ac1875dfaa293987208962f"
+  },
+  "clean_build_checks": [
+    {
+      "log": "public-clean-clone-build.log",
+      "exit_code": 0,
+      "elapsed_seconds": 42.726,
+      "command": "source $CANGJIE_HOME/envsetup.sh\nunset CJGUI_NATIVE_CLANG_FLAGS_APPEND CJGUI_INTERNAL_TESTING CJGUI_INTERNAL_RENDERER_TESTING\nzsh runtime/cjgui/examples/shared_document_window_app/run.sh --build-only",
+      "working_directory": "."
+    },
+    {
+      "log": "public-clean-framework-build.log",
+      "exit_code": 0,
+      "elapsed_seconds": 32.026,
+      "command": "source $CANGJIE_HOME/envsetup.sh\ncjpm build --skip-script",
+      "working_directory": "runtime/cjgui"
+    }
+  ],
+  "unit_test_source_content_unchanged": true,
+  "final_material_tag": "cjgui-contest-20261007"
+}

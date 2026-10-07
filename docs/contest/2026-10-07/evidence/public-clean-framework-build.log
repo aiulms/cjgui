@@ -1,0 +1,322 @@
+warning: unused import 'std.collection.*'
+ ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_field_write_rule.cj:3:1:
+  |
+3 | import std.collection.*
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused import 'std.sync.*'
+ ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease.cj:5:1:
+  |
+5 | import std.sync.*
+  | ^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused import 'std.env.*'
+ ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:6:1:
+  |
+6 | import std.env.*
+  | ^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused import 'std.collection.*'
+ ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_text_document_snapshot.cj:3:1:
+  |
+3 | import std.collection.*
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: function 'chmod' is deprecated.
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:1626:17:
+     |
+1626 |             if (chmod(directory.toString(), 0o700u32) != 0) {
+     |                 ^^^^^ deprecated
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff deprecated`
+
+warning: function 'chmod' is deprecated.
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:1640:17:
+     |
+1640 |             if (chmod(socketPath, 0o600u32) != 0) {
+     |                 ^^^^^ deprecated
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff deprecated`
+
+warning: function 'chmod' is deprecated.
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:1653:17:
+     |
+1653 |             if (chmod(descriptorPath, 0o600u32) != 0) {
+     |                 ^^^^^ deprecated
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff deprecated`
+
+warning: unused variable:'state'
+  ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_field_write_rule.cj:47:28:
+   |
+47 |     func stateRejectionFor(state: CjguiSharedFieldState): String {
+   |                            ^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused function:'systemClock'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease.cj:158:5:
+    |
+158 |       func systemClock(): CjguiSharedOperationSnapshotClock {
+    |  _____^
+159 | |         return this.clock
+160 | |     }
+    | |_____^ unused function
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'token'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:403:33:
+    |
+403 |     func candidateTicketPayload(token: Int64): String {
+    |                                 ^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'streamEpoch'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:416:25:
+    |
+416 |     func changesPayload(streamEpoch: Int64, cursor: Int64): String {
+    |                         ^^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'cursor'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:416:45:
+    |
+416 |     func changesPayload(streamEpoch: Int64, cursor: Int64): String {
+    |                                             ^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'section'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:423:25:
+    |
+423 |     func sectionPayload(section: String, expectedCursor: Int64): String {
+    |                         ^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'expectedCursor'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:423:42:
+    |
+423 |     func sectionPayload(section: String, expectedCursor: Int64): String {
+    |                                          ^^^^^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+14 warnings generated, 14 warnings printed.
+warning: unused import 'std.env.*'
+  ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_generated.cj:12:1:
+   |
+12 | import std.env.*
+   | ^^^^^^^^^^^^^^^^ unused import
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused import 'cjgui_shared_operation_core.*'
+ ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/windows_application_host.cj:3:1:
+  |
+3 | import cjgui_shared_operation_core.*
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'translatedState'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_animation.cj:275:9:
+    |
+275 |         translatedState!: Bool) {
+    |         ^^^^^^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'context'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_composite_component.cj:297:32:
+    |
+297 |     public func buildComposite(context: CjguiCompositeBuildContext): CjguiComposableUiNode {
+    |                                ^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'priorError'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_tree.cj:397:13:
+    |
+397 |         let priorError = lastErrorValue
+    |             ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'node'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:647:35:
+    |
+647 |     func dataTransferOwnerVersion(node: CjguiComposableUiLayoutNode): Int64 { return -1 }
+    |                                   ^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'nodeId'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:648:29:
+    |
+648 |     func rejectDataTransfer(nodeId: Int64, eventKind: Int64, reason: String): CjguiComposableUiDispatchResult {
+    |                             ^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'eventKind'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:648:44:
+    |
+648 |     func rejectDataTransfer(nodeId: Int64, eventKind: Int64, reason: String): CjguiComposableUiDispatchResult {
+    |                                            ^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'reason'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:648:62:
+    |
+648 |     func rejectDataTransfer(nodeId: Int64, eventKind: Int64, reason: String): CjguiComposableUiDispatchResult {
+    |                                                              ^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'requestId'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:745:34:
+    |
+745 |     func contextMenuRequestEnded(requestId: Int64, reason: String): Unit { }
+    |                                  ^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'reason'
+   ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:745:52:
+    |
+745 |     func contextMenuRequestEnded(requestId: Int64, reason: String): Unit { }
+    |                                                    ^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'lo'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/text_session.cj:1258:13:
+     |
+1258 |         let lo = if (anchor16 <= focus16) { anchor16 } else { focus16 }
+     |             ^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'hi'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/text_session.cj:1259:13:
+     |
+1259 |         let hi = if (anchor16 <= focus16) { focus16 } else { anchor16 }
+     |             ^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'path'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_generated.cj:1690:72:
+     |
+1690 |     private func validateImageResource(node: CjguiGeneratedUiNodeSpec, path: String): ?String {
+     |                                                                        ^^^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'path'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_generated.cj:1725:95:
+     |
+1725 |     private func validatePropertyValue(property: CjguiGeneratedUiPropertySpec, value: String, path: String): ?String {
+     |                                                                                               ^^^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'path'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_generated.cj:1820:103:
+     |
+1820 |     private func validateBinding(node: CjguiGeneratedUiNodeSpec, spec: CjguiGeneratedUiComponentSpec, path: String): ?String {
+     |                                                                                                       ^^^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'fieldId'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_generated.cj:1953:28:
+     |
+1953 |     func fieldAvailability(fieldId: String): CjguiSharedAvailability {
+     |                            ^^^^^^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'actionName'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_generated.cj:1958:29:
+     |
+1958 |     func actionAvailability(actionName: String): CjguiSharedAvailability {
+     |                             ^^^^^^^^^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'provider'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_generated.cj:2588:61:
+     |
+2588 |     public func submit(candidate: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
+     |                                                             ^^^^^^^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unreachable block in 'if' expression
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:3019:38:
+     |
+3019 |             if (startupTraceStarted) { endOwnerTraceTurn(startupTraceTurn, startupTraceSpan) }
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable block in 'if' expression
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'session'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/runtime_renderer_session.cj:4200:48:
+     |
+4200 | func internalRendererRequestCloseBeforeDestroy(session: UInt64): Unit {}
+     |                                                ^^^^^^^ unused variable
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused function:'cjguiTextGeometryCaretStatus'
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:6600:5:
+     |
+6600 |       private func cjguiTextGeometryCaretStatus(nodeId: Int64, displayByte: Int64): Int32 {
+     |  _____^
+6601 | |         return cjguiTextGeometryCaretStatus(this.sessionToken, nodeId, displayByte, 1.0,
+     | | ...
+6603 | |     }
+     | |_____^ unused function
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unreachable block in 'if' expression
+    ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:7813:36:
+     |
+7813 |               if (acceptedCandidate) {
+     |  ____________________________________^
+7814 | |                 // Do not invoke participant rollback after native present or
+     | | ...
+7821 | |             }
+     | |_____________^ unreachable block in 'if' expression
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused function:'frozenBindingStillOwned'
+     ==> $MATERIAL_WORK/public-clean-clone/runtime/cjgui/src/composable_ui_window.cj:15739:5:
+      |
+15739 |       private func frozenBindingStillOwned(frozen: CjguiTextSession, epochFrozen!: UInt64): Bool {
+      |  _____^
+15740 | |         // 绑定代次（每次重绑/释放/呈现面切换推进）+ 窗口当前拥有的会话仍绑定在
+      | | ...
+15750 | |     }
+      | |_____^ unused function
+      |
+      # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+24 warnings generated, 24 warnings printed.
+cjpm build success

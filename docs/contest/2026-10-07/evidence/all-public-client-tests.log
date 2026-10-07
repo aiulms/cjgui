@@ -1,0 +1,7 @@
+................................................................................................
+----------------------------------------------------------------------
+Ran 96 tests in 8.122s
+
+OK
+MEASURED changed_round_bytes=261 section_bytes=307 + 301 snapshot_bytes=4436
+MEASURED snapshot_bytes=18816 unchanged_round_bytes=216 tree_nodes=200

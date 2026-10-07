@@ -43,6 +43,7 @@ obj/
 __pycache__/
 runtime/cjgui/**/.cjgui/
 runtime/cjgui/**/native/lib/
+runtime/cjgui/**/.cache/
 runtime/cjgui/independent_consumer_tmp_20260913/
 
 # External repository mirrors and reference checkouts.

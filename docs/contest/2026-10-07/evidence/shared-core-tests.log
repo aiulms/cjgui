@@ -1,0 +1,602 @@
+warning: unused import 'std.collection.*'
+ ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_field_write_rule.cj:3:1:
+  |
+3 | import std.collection.*
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused import 'std.sync.*'
+ ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease.cj:5:1:
+  |
+5 | import std.sync.*
+  | ^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused import 'std.env.*'
+ ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:6:1:
+  |
+6 | import std.env.*
+  | ^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused import 'std.collection.*'
+ ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_text_document_snapshot.cj:3:1:
+  |
+3 | import std.collection.*
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: function 'chmod' is deprecated.
+    ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:1626:17:
+     |
+1626 |             if (chmod(directory.toString(), 0o700u32) != 0) {
+     |                 ^^^^^ deprecated
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff deprecated`
+
+warning: function 'chmod' is deprecated.
+    ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:1640:17:
+     |
+1640 |             if (chmod(socketPath, 0o600u32) != 0) {
+     |                 ^^^^^ deprecated
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff deprecated`
+
+warning: function 'chmod' is deprecated.
+    ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_transport.cj:1653:17:
+     |
+1653 |             if (chmod(descriptorPath, 0o600u32) != 0) {
+     |                 ^^^^^ deprecated
+     |
+     # note: this warning can be suppressed by setting the compiler option `-Woff deprecated`
+
+warning: unused variable:'state'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_field_write_rule.cj:47:28:
+   |
+47 |     func stateRejectionFor(state: CjguiSharedFieldState): String {
+   |                            ^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'token'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:403:33:
+    |
+403 |     func candidateTicketPayload(token: Int64): String {
+    |                                 ^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'streamEpoch'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:416:25:
+    |
+416 |     func changesPayload(streamEpoch: Int64, cursor: Int64): String {
+    |                         ^^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'cursor'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:416:45:
+    |
+416 |     func changesPayload(streamEpoch: Int64, cursor: Int64): String {
+    |                                             ^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'section'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:423:25:
+    |
+423 |     func sectionPayload(section: String, expectedCursor: Int64): String {
+    |                         ^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'expectedCursor'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract.cj:423:42:
+    |
+423 |     func sectionPayload(section: String, expectedCursor: Int64): String {
+    |                                          ^^^^^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+13 warnings generated, 13 warnings printed.
+warning: unused import 'std.collection.*'
+ ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_field_availability_test.cj:9:1:
+  |
+9 | import std.collection.*
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+  |
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_changes_test.cj:17:34:
+   |
+17 |     public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult { return CjguiSharedOperationActionResult(false, false, 1, 1, "not_supported") }
+   |                                  ^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_changes_test.cj:18:37:
+   |
+18 |     public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult { return CjguiSharedOperationActionResult(false, false, 1, 1, "not_supported") }
+   |                                     ^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'candidatePayload'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_observation_protocol_test.cj:22:33:
+   |
+22 |     public func submitStructure(candidatePayload: String, expectedVersion: Int64):
+   |                                 ^^^^^^^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_text_document_test.cj:27:34:
+   |
+27 |     public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+   |                                  ^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_text_document_test.cj:31:37:
+   |
+31 |     public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+   |                                     ^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'candidatePayload'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_candidate_protocol_test.cj:33:33:
+   |
+33 |     public func submitStructure(candidatePayload: String, expectedVersion: Int64):
+   |                                 ^^^^^^^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'candidatePayload'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_candidate_protocol_test.cj:57:33:
+   |
+57 |     public func submitStructure(candidatePayload: String, expectedVersion: Int64):
+   |                                 ^^^^^^^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'candidatePayload'
+  ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_observation_protocol_test.cj:61:33:
+   |
+61 |     public func submitStructure(candidatePayload: String, expectedVersion: Int64):
+   |                                 ^^^^^^^^^^^^^^^^ unused variable
+   |
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_transport_lifecycle_test.cj:109:34:
+    |
+109 |     public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                  ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_transport_lifecycle_test.cj:113:37:
+    |
+113 |     public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                     ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'resourceId'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease_test.cj:114:39:
+    |
+114 |     public func snapshotResourceState(resourceId: Int64): CjguiSharedOperationSnapshotResourceState {
+    |                                       ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease_test.cj:136:34:
+    |
+136 |     public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                  ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease_test.cj:140:37:
+    |
+140 |     public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                     ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract_test.cj:208:34:
+    |
+208 |     public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                  ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract_test.cj:211:37:
+    |
+211 |     public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                     ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract_test.cj:425:34:
+    |
+425 |     public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                  ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'invocation'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_contract_test.cj:429:37:
+    |
+429 |     public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+    |                                     ^^^^^^^^^^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+warning: unused variable:'token'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease_test.cj:887:9:
+    |
+887 |     let token = snapshotProbeField(
+    |         ^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+note: the warning occurs after the macro is expanded
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease_test.cj:877:1:
+    |
+877 |   @Test
+    |  _^
+878 | | func closeDrainsDeferredReleasesAtTheLastOwnerSafePoint(): Unit {
+    | | ...
+917 | | }
+    | |_^
+    |
+note: the code after the macro is expanded as follows
+     |
+     |   /* 877.1 */@Attribute[TEST_GENERATED] class TestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint <: TestClass {
+     |  _^
+     | | /* 877.2 */    init() {
+     | | /* 877.3 */    }
+     | | /* 877.4 */    private func classConfiguration(): Configuration {
+     | | /* 877.5 */        let configuration = Configuration()
+     | | /* 877.6 */        configuration.set(KeyFromTopLevel.fromTopLevel, true)
+     | | /* 877.7 */
+     | | /* 877.8 */        return configuration
+     | | /* 877.9 */    }
+     | | /* 877.10 */    public override func asTestSuite(): TestSuite {
+     | | /* 877.11 */
+     | | /* 877.12 */        let suiteConfiguration = classConfiguration()
+     | | /* 877.13 */        let suiteBuilder = TestSuite.builder("TestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint").configure(suiteConfiguration)
+     | | /* 877.14 */
+     | | /* 877.15 */        { => let caseConfig = Configuration()
+     | | /* 877.16 */            caseConfig.set(KeyFromTopLevel.fromTopLevel, true)
+     | | /* 877.17 */
+     | | /* 877.18 */            let closeDrainsDeferredReleasesAtTheLastOwnerSafePointTestFunc = { => closeDrainsDeferredReleasesAtTheLastOwnerSafePoint();() }
+     | | /* 877.19 */            suiteBuilder.add(
+     | | /* 877.20 */            UnitTestCase.create(
+     | | /* 877.21 */            "closeDrainsDeferredReleasesAtTheLastOwnerSafePoint",
+     | | /* 877.22 */            configuration: caseConfig,
+     | | /* 877.23 */            body: closeDrainsDeferredReleasesAtTheLastOwnerSafePointTestFunc
+     | | /* 877.24 */            )
+     | | /* 877.25 */            )
+     | | /* 877.26 */
+     | | /* 877.27 */        }()
+     | | /* 877.28 */
+     | | /* 877.29 */        return suiteBuilder.build()
+     | | /* 877.30 */    }
+     | | /* 877.31 */    private func inheritedFromClassAnnotatedByTestTemplate < T >(): TestSuite where T <: TestClass {
+     | | /* 877.32 */        throw Exception("Unreachable code")
+     | | /* 877.33 */    }
+     | | /* 877.34 */}
+     | | /* 877.35 */func closeDrainsDeferredReleasesAtTheLastOwnerSafePoint(): Unit {
+     | | /* 877.36 */
+     | | /* 877.37 */    let counters = SnapshotProbeCounters()
+     | | /* 877.38 */    let provider = SnapshotProbeProvider(counters)
+     | | /* 877.39 */    let clock = SnapshotProbeClock()
+     | | /* 877.40 */    let connection = CjguiSharedOperationExternalConnection(SnapshotProbeDomain(),
+     | | /* 877.41 */    snapshotProbeAuthorization())
+     | | /* 877.42 */    assertEqual("connection.enableSnapshotReads(provider, clock: clock)", "true", connection.enableSnapshotReads(provider, clock: clock), true, isDelta: false,)
+     | | /* 877.43 */    assertEqual("connection.start()", "true", connection.start(), true, isDelta: false,)
+     | | /* 877.44 */    let token = snapshotProbeField(
+     | | /* 877.45 */    snapshotProbeAcquire(connection, connection.endpointInstance(), connection.endpointEpoch(),
+     | | /* 877.46 */    "req-close-drain", provider.instanceValue, "ANY", 60000), "TOKEN")
+     | | /* 877.47 */    clock.advance(61000)
+     | | /* 877.48 */    counters.failReleaseAttempts = 2
+     | | /* 877.49 */    connection.pump(0u32)
+     | | /* 877.50 */    assertEqual("connection.snapshotLeaseDiagnostics().contains(\"cleanup_pending=1\")", "true", connection.snapshotLeaseDiagnostics().contains("cleanup_pending=1"), true, isDelta: false,)
+     | | /* 877.51 */    assertEqual("counters.released", "0", counters.released, 0, isDelta: false,)
+     | | /* 877.52 */
+     | | /* 877.53 */    connection.close()
+     | | /* 877.54 */    assertEqual("counters.released", "1", counters.released, 1, isDelta: false,)
+     | | /* 877.55 */    assertEqual("connection.snapshotLeaseDiagnostics().contains(\"cleanup_pending=0\")", "true", connection.snapshotLeaseDiagnostics().contains("cleanup_pending=0"), true, isDelta: false,)
+     | | /* 877.56 */
+     | | /* 877.57 */
+     | | /* 877.58 */    let counters2 = SnapshotProbeCounters()
+     | | /* 877.59 */    let provider2 = SnapshotProbeProvider(counters2)
+     | | /* 877.60 */    let clock2 = SnapshotProbeClock()
+     | | /* 877.61 */    let failing = CjguiSharedOperationExternalConnection(SnapshotProbeDomain(),
+     | | /* 877.62 */    snapshotProbeAuthorization())
+     | | /* 877.63 */    assertEqual("failing.enableSnapshotReads(provider2, clock: clock2)", "true", failing.enableSnapshotReads(provider2, clock: clock2), true, isDelta: false,)
+     | | /* 877.64 */    assertEqual("failing.start()", "true", failing.start(), true, isDelta: false,)
+     | | /* 877.65 */    let token2 = snapshotProbeField(
+     | | /* 877.66 */    snapshotProbeAcquire(failing, failing.endpointInstance(), failing.endpointEpoch(),
+     | | /* 877.67 */    "req-close-stuck", provider2.instanceValue, "ANY", 60000), "TOKEN")
+     | | /* 877.68 */    clock2.advance(61000)
+     | | /* 877.69 */    counters2.failReleaseAttempts = 99
+     | | /* 877.70 */    failing.close()
+     | | /* 877.71 */    assertEqual("counters2.released", "0", counters2.released, 0, isDelta: false,)
+     | | /* 877.72 */    let diag = failing.snapshotLeaseDiagnostics()
+     | | /* 877.73 */    assertEqual("diag.contains(\"cleanup_pending=1\")", "true", diag.contains("cleanup_pending=1"), true, isDelta: false,)
+     | | /* 877.74 */}
+     | | /* 877.75 */
+     | | /* 877.76 */
+     | | /* 877.77 */interface TestPackageExtension_TestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint {
+     | | /* 877.78 */    func registerTestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint(): Unit
+     | | /* 877.79 */}
+     | | /* 877.80 */extend TestPackage <: TestPackageExtension_TestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint {
+     | | /* 877.81 */    @Attribute[TEST_REGISTER]
+     | | /* 877.82 */    public func registerTestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint() {
+     | | /* 877.83 */        registerSuite({ => TestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint().asTestSuite() })
+     | | /* 877.84 */    }
+     | | /* 877.85 */}
+     | | /* 877.86 */
+     | |____________^
+     |
+note: which is expanded as follows
+     |
+     | /* 877.44 */    let token = snapshotProbeField(
+     |                     ^^^^^
+     |
+
+warning: unused variable:'token2'
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease_test.cj:908:9:
+    |
+908 |     let token2 = snapshotProbeField(
+    |         ^ unused variable
+    |
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+note: the warning occurs after the macro is expanded
+   ==> $MATERIAL_WORK/candidate/runtime/cjgui/shared_operation_core/src/shared_operation_snapshot_lease_test.cj:877:1:
+    |
+877 |   @Test
+    |  _^
+878 | | func closeDrainsDeferredReleasesAtTheLastOwnerSafePoint(): Unit {
+    | | ...
+917 | | }
+    | |_^
+    |
+note: which is expanded as follows
+     |
+     | /* 877.65 */    let token2 = snapshotProbeField(
+     |                     ^^^^^^
+     |
+
+20 warnings generated, 20 warnings printed.
+--------------------------------------------------------------------------------------------------
+TP: cjgui_shared_operation_core, time elapsed: 2657472000 ns, RESULT:
+    TCS: TestCase_sharedFormBindingKeepsStableFieldSlotsAcrossDifferentApplications, time elapsed: 670000 ns, RESULT:
+    [ PASSED ] CASE: sharedFormBindingKeepsStableFieldSlotsAcrossDifferentApplications (231000 ns)
+    TCS: TestCase_availabilityForNeverInventsARequestedValue, time elapsed: 117000 ns, RESULT:
+    [ PASSED ] CASE: availabilityForNeverInventsARequestedValue (42000 ns)
+    TCS: TestCase_candidateTicketReadCarriesOnlyItsOwnAttempt, time elapsed: 322000 ns, RESULT:
+    [ PASSED ] CASE: candidateTicketReadCarriesOnlyItsOwnAttempt (254000 ns)
+    TCS: TestCase_candidateSubmitReplyHandsBackTheAttemptToken, time elapsed: 111000 ns, RESULT:
+    [ PASSED ] CASE: candidateSubmitReplyHandsBackTheAttemptToken (38000 ns)
+    TCS: TestCase_candidateTicketWithoutProviderTableReportsUnknown, time elapsed: 82000 ns, RESULT:
+    [ PASSED ] CASE: candidateTicketWithoutProviderTableReportsUnknown (25000 ns)
+    TCS: TestCase_transportReturnsBoundedAuthorizedChangesAndRequiresResyncExplicitly, time elapsed: 177000 ns, RESULT:
+    [ PASSED ] CASE: transportReturnsBoundedAuthorizedChangesAndRequiresResyncExplicitly (115000 ns)
+    TCS: TestCase_changeCursorWithAnotherDocumentIdentityRequiresResyncRatherThanEmptyChanges, time elapsed: 82000 ns, RESULT:
+    [ PASSED ] CASE: changeCursorWithAnotherDocumentIdentityRequiresResyncRatherThanEmptyChanges (13000 ns)
+    TCS: TestCase_genericTransportDescribesAndExecutesDeveloperRegisteredAction, time elapsed: 341000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportDescribesAndExecutesDeveloperRegisteredAction (282000 ns)
+    TCS: TestCase_genericTransportUsesARealTokenForAnEmptyStringField, time elapsed: 93000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportUsesARealTokenForAnEmptyStringField (30000 ns)
+    TCS: TestCase_genericTransportRejectsUnauthorizedInvalidAndStaleCallsBeforeBusinessMutation, time elapsed: 135000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportRejectsUnauthorizedInvalidAndStaleCallsBeforeBusinessMutation (59000 ns)
+    TCS: TestCase_genericTransportFiltersRelationScopesAlongsideExplicitTargets, time elapsed: 92000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportFiltersRelationScopesAlongsideExplicitTargets (35000 ns)
+    TCS: TestCase_genericTransportEnumeratesAndReadsAnExactLiveWindowTargetWithoutFallback, time elapsed: 240000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportEnumeratesAndReadsAnExactLiveWindowTargetWithoutFallback (156000 ns)
+    TCS: TestCase_genericTransportReadsTargetedProgressAndInteractionWithoutSiblingFallback, time elapsed: 166000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportReadsTargetedProgressAndInteractionWithoutSiblingFallback (110000 ns)
+    TCS: TestCase_genericTransportAddsOnlyAnActiveProjectionProvidedByTheWindow, time elapsed: 148000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportAddsOnlyAnActiveProjectionProvidedByTheWindow (92000 ns)
+    TCS: TestCase_genericTransportPublishesLogicalCollectionOnlyToFullContextReader, time elapsed: 117000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportPublishesLogicalCollectionOnlyToFullContextReader (31000 ns)
+    TCS: TestCase_genericTransportDoesNotMislabelButtonFocusAsATextSelection, time elapsed: 101000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportDoesNotMislabelButtonFocusAsATextSelection (39000 ns)
+    TCS: TestCase_genericTransportAcceptsDashedSemanticIdsFromComposableWindowTrees, time elapsed: 94000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportAcceptsDashedSemanticIdsFromComposableWindowTrees (38000 ns)
+    TCS: TestCase_genericTransportClassifiesInvalidProjectionInsteadOfClaimingItIsTooLarge, time elapsed: 88000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportClassifiesInvalidProjectionInsteadOfClaimingItIsTooLarge (30000 ns)
+    TCS: TestCase_genericTransportDoesNotInventAWindowForHeadlessDomains, time elapsed: 90000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportDoesNotInventAWindowForHeadlessDomains (27000 ns)
+    TCS: TestCase_genericTransportUsesOwnerTargetedSnapshotWithoutBuildingTheFullContext, time elapsed: 97000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportUsesOwnerTargetedSnapshotWithoutBuildingTheFullContext (38000 ns)
+    TCS: TestCase_genericTransportReadsNarrowWindowProgressWithoutSerializingContextResources, time elapsed: 178000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportReadsNarrowWindowProgressWithoutSerializingContextResources (89000 ns)
+    TCS: TestCase_windowBackgroundProgressHasNeutralDefaultsAndNeverClaimsVisualOutput, time elapsed: 106000 ns, RESULT:
+    [ PASSED ] CASE: windowBackgroundProgressHasNeutralDefaultsAndNeverClaimsVisualOutput (16000 ns)
+    TCS: TestCase_genericTransportRequiresAllResourceInteractionGrantBeforeEmittingInteractionFacts, time elapsed: 109000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportRequiresAllResourceInteractionGrantBeforeEmittingInteractionFacts (33000 ns)
+    TCS: TestCase_genericTransportPublishesThreeDistinctFocusFacts, time elapsed: 95000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportPublishesThreeDistinctFocusFacts (35000 ns)
+    TCS: TestCase_sharedOperationValueHasOneCanonicalTextForm, time elapsed: 85000 ns, RESULT:
+    [ PASSED ] CASE: sharedOperationValueHasOneCanonicalTextForm (4000 ns)
+    TCS: TestCase_unavailableTimingKeepsPublicWindowSnapshotReadable, time elapsed: 116000 ns, RESULT:
+    [ PASSED ] CASE: unavailableTimingKeepsPublicWindowSnapshotReadable (45000 ns)
+    TCS: TestCase_timingSentinelDoesNotAdmitOtherNegativeValues, time elapsed: 92000 ns, RESULT:
+    [ PASSED ] CASE: timingSentinelDoesNotAdmitOtherNegativeValues (30000 ns)
+    TCS: TestCase_importedImageOwnerWillAcceptOnceAndPreserveOldOnConflict, time elapsed: 102000 ns, RESULT:
+    [ PASSED ] CASE: importedImageOwnerWillAcceptOnceAndPreserveOldOnConflict (33000 ns)
+    TCS: TestCase_ownerPublishesSafeMetadataAndSelectsOnlyPreviouslyImportedImages, time elapsed: 81000 ns, RESULT:
+    [ PASSED ] CASE: ownerPublishesSafeMetadataAndSelectsOnlyPreviouslyImportedImages (11000 ns)
+    TCS: TestCase_ownedImageSelectionUsesOwnerCasAndCannotMutateForUnknownOrStaleIds, time elapsed: 82000 ns, RESULT:
+    [ PASSED ] CASE: ownedImageSelectionUsesOwnerCasAndCannotMutateForUnknownOrStaleIds (8000 ns)
+    TCS: TestCase_retainedImageHistoryEvictsOldestNonCurrentAndStaysWithinTwoMiB, time elapsed: 86814000 ns, RESULT:
+    [ PASSED ] CASE: retainedImageHistoryEvictsOldestNonCurrentAndStaysWithinTwoMiB (86637000 ns)
+    TCS: TestCase_imageOfferByteLimitRejectsOversizedPayloadBeforeOwnerMutation, time elapsed: 2505000 ns, RESULT:
+    [ PASSED ] CASE: imageOfferByteLimitRejectsOversizedPayloadBeforeOwnerMutation (2289000 ns)
+    TCS: TestCase_externalImageOwnerDomainUsesExistingAuthorizationAndCasWithoutExposingBytes, time elapsed: 219000 ns, RESULT:
+    [ PASSED ] CASE: externalImageOwnerDomainUsesExistingAuthorizationAndCasWithoutExposingBytes (134000 ns)
+    TCS: TestCase_imageOwnerDomainRejectsNonPositiveSlotIdentity, time elapsed: 100000 ns, RESULT:
+    [ PASSED ] CASE: imageOwnerDomainRejectsNonPositiveSlotIdentity (29000 ns)
+    TCS: TestCase_originalListConsumerUsesTheGenericDomainHandlerForHumanAndExternalActions, time elapsed: 137000 ns, RESULT:
+    [ PASSED ] CASE: originalListConsumerUsesTheGenericDomainHandlerForHumanAndExternalActions (63000 ns)
+    TCS: TestCase_titleIsOneSharedOperationForHumanAndExternalConsumers, time elapsed: 87000 ns, RESULT:
+    [ PASSED ] CASE: titleIsOneSharedOperationForHumanAndExternalConsumers (15000 ns)
+    TCS: TestCase_snapshotReadIsOneEnvelopeWithTheEndpointEpoch, time elapsed: 105000 ns, RESULT:
+    [ PASSED ] CASE: snapshotReadIsOneEnvelopeWithTheEndpointEpoch (35000 ns)
+    TCS: TestCase_sectionReadIsRefusedWhenItsCursorMoved, time elapsed: 104000 ns, RESULT:
+    [ PASSED ] CASE: sectionReadIsRefusedWhenItsCursorMoved (43000 ns)
+    TCS: TestCase_changesReadCarriesOnlyTheBoundedChangeBody, time elapsed: 100000 ns, RESULT:
+    [ PASSED ] CASE: changesReadCarriesOnlyTheBoundedChangeBody (32000 ns)
+    TCS: TestCase_snapshotLeaseKeepsItsFixedVersionWhileLiveContentMoves, time elapsed: 174000 ns, RESULT:
+    [ PASSED ] CASE: snapshotLeaseKeepsItsFixedVersionWhileLiveContentMoves (107000 ns)
+    TCS: TestCase_snapshotReleaseIsIdempotentAndKeepsItsFirstReason, time elapsed: 120000 ns, RESULT:
+    [ PASSED ] CASE: snapshotReleaseIsIdempotentAndKeepsItsFirstReason (59000 ns)
+    TCS: TestCase_snapshotLeaseExpiresOnTheOwnerClockWithoutTraffic, time elapsed: 115000 ns, RESULT:
+    [ PASSED ] CASE: snapshotLeaseExpiresOnTheOwnerClockWithoutTraffic (45000 ns)
+    TCS: TestCase_snapshotAcquireIsIdempotentPerRequestId, time elapsed: 106000 ns, RESULT:
+    [ PASSED ] CASE: snapshotAcquireIsIdempotentPerRequestId (40000 ns)
+    TCS: TestCase_snapshotLeaseLimitsRefuseNewAcquiresWithoutDisturbingExistingLeases, time elapsed: 127000 ns, RESULT:
+    [ PASSED ] CASE: snapshotLeaseLimitsRefuseNewAcquiresWithoutDisturbingExistingLeases (66000 ns)
+    TCS: TestCase_snapshotLeasesOfTheSameVersionReleaseIndependently, time elapsed: 126000 ns, RESULT:
+    [ PASSED ] CASE: snapshotLeasesOfTheSameVersionReleaseIndependently (58000 ns)
+    TCS: TestCase_snapshotAcquireRefusesAHandleOverItsReservationBudget, time elapsed: 89000 ns, RESULT:
+    [ PASSED ] CASE: snapshotAcquireRefusesAHandleOverItsReservationBudget (23000 ns)
+    TCS: TestCase_snapshotResourceInvalidationEndsMatchingLeasesByName, time elapsed: 123000 ns, RESULT:
+    [ PASSED ] CASE: snapshotResourceInvalidationEndsMatchingLeasesByName (54000 ns)
+    TCS: TestCase_snapshotProviderShortReadBecomesANamedProviderError, time elapsed: 100000 ns, RESULT:
+    [ PASSED ] CASE: snapshotProviderShortReadBecomesANamedProviderError (36000 ns)
+    TCS: TestCase_snapshotAcquireWithoutARequestIdTakesANewSnapshot, time elapsed: 105000 ns, RESULT:
+    [ PASSED ] CASE: snapshotAcquireWithoutARequestIdTakesANewSnapshot (38000 ns)
+    TCS: TestCase_snapshotEndpointCloseReleasesEveryHandle, time elapsed: 79000 ns, RESULT:
+    [ PASSED ] CASE: snapshotEndpointCloseReleasesEveryHandle (22000 ns)
+    TCS: TestCase_snapshotAcquireRefusesAForeignEndpointInstance, time elapsed: 71000 ns, RESULT:
+    [ PASSED ] CASE: snapshotAcquireRefusesAForeignEndpointInstance (14000 ns)
+    TCS: TestCase_snapshotCapabilityRequiresProviderAndAuthorizationEpoch, time elapsed: 102000 ns, RESULT:
+    [ PASSED ] CASE: snapshotCapabilityRequiresProviderAndAuthorizationEpoch (44000 ns)
+    TCS: TestCase_snapshotReadRefusesRangesOutsideTheFrozenLength, time elapsed: 102000 ns, RESULT:
+    [ PASSED ] CASE: snapshotReadRefusesRangesOutsideTheFrozenLength (46000 ns)
+    TCS: TestCase_revokedAuthorizationIsDeadUntilExplicitRegrant, time elapsed: 127000 ns, RESULT:
+    [ PASSED ] CASE: revokedAuthorizationIsDeadUntilExplicitRegrant (68000 ns)
+    TCS: TestCase_revokedCredentialsStayDeadAcrossGrantRounds, time elapsed: 103000 ns, RESULT:
+    [ PASSED ] CASE: revokedCredentialsStayDeadAcrossGrantRounds (44000 ns)
+    TCS: TestCase_revokedCredentialHistoryIsBoundedAndHonestlyCounted, time elapsed: 211000 ns, RESULT:
+    [ PASSED ] CASE: revokedCredentialHistoryIsBoundedAndHonestlyCounted (150000 ns)
+    TCS: TestCase_reinstallRefusesWhileTheOldTableStillHoldsCleanup, time elapsed: 65365000 ns, RESULT:
+    [ PASSED ] CASE: reinstallRefusesWhileTheOldTableStillHoldsCleanup (65192000 ns)
+    TCS: TestCase_idleEndpointReclaimsLeasesOnTheOwnerBeat, time elapsed: 138000 ns, RESULT:
+    [ PASSED ] CASE: idleEndpointReclaimsLeasesOnTheOwnerBeat (48000 ns)
+    TCS: TestCase_terminalRecordsRecycleCapacityAfterTheirBoundedWindow, time elapsed: 178000 ns, RESULT:
+    [ PASSED ] CASE: terminalRecordsRecycleCapacityAfterTheirBoundedWindow (108000 ns)
+    TCS: TestCase_closeDrainsDeferredReleasesAtTheLastOwnerSafePoint, time elapsed: 108708000 ns, RESULT:
+    [ PASSED ] CASE: closeDrainsDeferredReleasesAtTheLastOwnerSafePoint (108534000 ns)
+    TCS: TestCase_secondConsumerLifecycleIsolatesCredentialsAcrossRegrant, time elapsed: 44485000 ns, RESULT:
+    [ PASSED ] CASE: secondConsumerLifecycleIsolatesCredentialsAcrossRegrant (44281000 ns)
+    TCS: TestCase_transferContractWillBoundTextAndStructuredOffers, time elapsed: 409000 ns, RESULT:
+    [ PASSED ] CASE: transferContractWillBoundTextAndStructuredOffers (13000 ns)
+    TCS: TestCase_transferContractWillRejectWrongFormatTargetAndOperation, time elapsed: 167000 ns, RESULT:
+    [ PASSED ] CASE: transferContractWillRejectWrongFormatTargetAndOperation (7000 ns)
+    TCS: TestCase_transferBinaryOfferWillCopyBytesAndNeverMatchText, time elapsed: 103000 ns, RESULT:
+    [ PASSED ] CASE: transferBinaryOfferWillCopyBytesAndNeverMatchText (20000 ns)
+    TCS: TestCase_transferResultWillPreserveExistingActionCasOutcome, time elapsed: 80000 ns, RESULT:
+    [ PASSED ] CASE: transferResultWillPreserveExistingActionCasOutcome (5000 ns)
+    TCS: TestCase_publicGetContextKeepsLegacyEmptyOwnerStateSnapshotCompatible, time elapsed: 178000 ns, RESULT:
+    [ PASSED ] CASE: publicGetContextKeepsLegacyEmptyOwnerStateSnapshotCompatible (52000 ns)
+    TCS: TestCase_publicGetContextReadsOwnerStateAsExactUtf8Bytes, time elapsed: 96000 ns, RESULT:
+    [ PASSED ] CASE: publicGetContextReadsOwnerStateAsExactUtf8Bytes (19000 ns)
+    TCS: TestCase_publicGetContextNamesOwnerStateStringLimitRejection, time elapsed: 361000 ns, RESULT:
+    [ PASSED ] CASE: publicGetContextNamesOwnerStateStringLimitRejection (305000 ns)
+    TCS: TestCase_genericTransportClassifiesActualOversizedSnapshot, time elapsed: 111916000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportClassifiesActualOversizedSnapshot (111742000 ns)
+    TCS: TestCase_genericTransportFramesUnicodeAndOwnsIndependentPrivateEndpoints, time elapsed: 44409000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportFramesUnicodeAndOwnsIndependentPrivateEndpoints (44262000 ns)
+    TCS: TestCase_genericTransportReturnsToWindowPumpBeforeSlowFragmentDeadline, time elapsed: 208833000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportReturnsToWindowPumpBeforeSlowFragmentDeadline (208628000 ns)
+    TCS: TestCase_genericTransportServesCompletePeerWhileAnotherPeerStallsMidFrame, time elapsed: 231418000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportServesCompletePeerWhileAnotherPeerStallsMidFrame (231209000 ns)
+    TCS: TestCase_genericTransportDeliversDispatchedResponseDuringBoundedClose, time elapsed: 33419000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportDeliversDispatchedResponseDuringBoundedClose (33263000 ns)
+    TCS: TestCase_genericTransportSeparatesLargeReceiverCompletionFromNonReaderClose, time elapsed: 936063000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportSeparatesLargeReceiverCompletionFromNonReaderClose (935878000 ns)
+    TCS: TestCase_genericTransportExpiresUnclaimedRequestsWithoutLateMutation, time elapsed: 355507000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportExpiresUnclaimedRequestsWithoutLateMutation (355332000 ns)
+    TCS: TestCase_genericTransportOwnerClaimHonorsAbsoluteReadyDeadline, time elapsed: 261810000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportOwnerClaimHonorsAbsoluteReadyDeadline (261602000 ns)
+    TCS: TestCase_genericTransportKeepsExpiredPayloadBytesUntilOwnerDrain, time elapsed: 83349000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportKeepsExpiredPayloadBytesUntilOwnerDrain (83151000 ns)
+    TCS: TestCase_genericTransportReportsBoundedWorkerExitObservation, time elapsed: 101000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportReportsBoundedWorkerExitObservation (7000 ns)
+    TCS: TestCase_genericTransportRestartsSameProcessWithFreshWorkerState, time elapsed: 66597000 ns, RESULT:
+    [ PASSED ] CASE: genericTransportRestartsSameProcessWithFreshWorkerState (66403000 ns)
+    TCS: TestCase_textDocumentFileBindingAtomicallySavesReopensAndRefusesAnExternalOverwrite, time elapsed: 758000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentFileBindingAtomicallySavesReopensAndRefusesAnExternalOverwrite (665000 ns)
+    TCS: TestCase_textDocumentFileBindingCoordinatesInstancesAndNeverClobbersAClaimedNewTarget, time elapsed: 987000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentFileBindingCoordinatesInstancesAndNeverClobbersAClaimedNewTarget (914000 ns)
+    TCS: TestCase_plainTextSnapshotLeaseFreezesTheDocumentAndReleasesEveryCopy, time elapsed: 310000 ns, RESULT:
+    [ PASSED ] CASE: plainTextSnapshotLeaseFreezesTheDocumentAndReleasesEveryCopy (238000 ns)
+    TCS: TestCase_plainTextSnapshotRefusesWrongInstanceClosedAndUnknownResources, time elapsed: 166000 ns, RESULT:
+    [ PASSED ] CASE: plainTextSnapshotRefusesWrongInstanceClosedAndUnknownResources (104000 ns)
+    TCS: TestCase_plainTextSnapshotHonoursTheReservationAndTheClusterBoundary, time elapsed: 162000 ns, RESULT:
+    [ PASSED ] CASE: plainTextSnapshotHonoursTheReservationAndTheClusterBoundary (89000 ns)
+    TCS: TestCase_plainTextSnapshotCloseInvalidatesHeldLeases, time elapsed: 137000 ns, RESULT:
+    [ PASSED ] CASE: plainTextSnapshotCloseInvalidatesHeldLeases (72000 ns)
+    TCS: TestCase_transportDiscoversAndReturnsAuthorizedBoundedDocumentRange, time elapsed: 118000 ns, RESULT:
+    [ PASSED ] CASE: transportDiscoversAndReturnsAuthorizedBoundedDocumentRange (60000 ns)
+    TCS: TestCase_textDocumentRejectsUnicodeInteriorOffsetsAndStaleExternalEdits, time elapsed: 76000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentRejectsUnicodeInteriorOffsetsAndStaleExternalEdits (7000 ns)
+    TCS: TestCase_textDocumentConvertsNativeUtf16SelectionsWithoutSplittingClusters, time elapsed: 72000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentConvertsNativeUtf16SelectionsWithoutSplittingClusters (8000 ns)
+    TCS: TestCase_textDocumentKeepsCrlfAndRegionalIndicatorPairBoundaries, time elapsed: 68000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentKeepsCrlfAndRegionalIndicatorPairBoundaries (3000 ns)
+    TCS: TestCase_textDocumentKeepsBoundedUndoRedoWithoutCopyingDocumentTruth, time elapsed: 81000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentKeepsBoundedUndoRedoWithoutCopyingDocumentTruth (13000 ns)
+    TCS: TestCase_textDocumentAtomicallyAppliesOriginalVersionMultiRangeReplacementAsOneUndo, time elapsed: 69000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentAtomicallyAppliesOriginalVersionMultiRangeReplacementAsOneUndo (11000 ns)
+    TCS: TestCase_textDocumentAppliesNativeProjectionAsOneClusterSafeHumanUndo, time elapsed: 74000 ns, RESULT:
+    [ PASSED ] CASE: textDocumentAppliesNativeProjectionAsOneClusterSafeHumanUndo (8000 ns)
+    TCS: TestCase_documentWorkspaceKeepsRangeTruthSelectionAndStaleWritesOnTheirOriginalDocument, time elapsed: 83000 ns, RESULT:
+    [ PASSED ] CASE: documentWorkspaceKeepsRangeTruthSelectionAndStaleWritesOnTheirOriginalDocument (21000 ns)
+    TCS: TestCase_documentTextTransferUsesTheExistingHumanRangeOwner, time elapsed: 70000 ns, RESULT:
+    [ PASSED ] CASE: documentTextTransferUsesTheExistingHumanRangeOwner (15000 ns)
+    TCS: TestCase_documentTextTransferUsesExistingExternalRangeCasAndRejectsStaleTarget, time elapsed: 63000 ns, RESULT:
+    [ PASSED ] CASE: documentTextTransferUsesExistingExternalRangeCasAndRejectsStaleTarget (12000 ns)
+    TCS: TestCase_documentWorkspaceSharesHumanUndoRedoWithoutTurningSelectionIntoDocumentContent, time elapsed: 76000 ns, RESULT:
+    [ PASSED ] CASE: documentWorkspaceSharesHumanUndoRedoWithoutTurningSelectionIntoDocumentContent (17000 ns)
+    TCS: TestCase_documentWorkspaceAppliesNativeProjectionThroughOneClusterSafeUndoEntry, time elapsed: 68000 ns, RESULT:
+    [ PASSED ] CASE: documentWorkspaceAppliesNativeProjectionThroughOneClusterSafeUndoEntry (12000 ns)
+    TCS: TestCase_documentWorkspacePublishesAndAtomicallyExecutesMultiRangeReplacement, time elapsed: 83000 ns, RESULT:
+    [ PASSED ] CASE: documentWorkspacePublishesAndAtomicallyExecutesMultiRangeReplacement (20000 ns)
+    TCS: TestCase_documentWorkspaceTargetedContextReadsOnlyTheRequestedOpenDocument, time elapsed: 77000 ns, RESULT:
+    [ PASSED ] CASE: documentWorkspaceTargetedContextReadsOnlyTheRequestedOpenDocument (15000 ns)
+    TCS: TestCase_previewLimitUsesTheWorkspaceOwnerCasWithoutEditingDocumentContent, time elapsed: 79000 ns, RESULT:
+    [ PASSED ] CASE: previewLimitUsesTheWorkspaceOwnerCasWithoutEditingDocumentContent (14000 ns)
+Summary: TOTAL: 100
+    PASSED: 100, SKIPPED: 0, ERROR: 0
+    FAILED: 0
+--------------------------------------------------------------------------------------------------
+Project tests finished, time elapsed: 2658390000 ns, RESULT:
+TP: cjgui_shared_operation_core.*, time elapsed: 2658343000 ns, RESULT:
+    PASSED:
+    TP: cjgui_shared_operation_core, time elapsed: 2657472000 ns
+Summary: TOTAL: 100
+    PASSED: 100, SKIPPED: 0, ERROR: 0
+    FAILED: 0
+--------------------------------------------------------------------------------------------------
+cjpm test success

@@ -1,0 +1,80 @@
+{
+  "duration": 134.732,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "narration": "Apple Tingting speech synthesis",
+  "sources": [
+    {
+      "scene": "intro",
+      "start": 0.0,
+      "duration": 16,
+      "spoken_text": "CJGUI 面向仓颉应用开发者，提供自绘界面，并让窗口和授权外部接口共用业务数据与规则。下面通过编辑器、生成面板和鸿蒙样例，展示当前的开发预览。",
+      "source": "authored explanatory card",
+      "playback_speed": 1,
+      "source_sha256": null
+    },
+    {
+      "scene": "home",
+      "start": 16.0,
+      "duration": 25,
+      "spoken_text": "这是使用 CJGUI 的 Pharos Mark 编辑器。左侧是实际运行的笔记列表，滚动后，条目和右侧预览一起更新。框架提供组件、布局、自绘文字和滚动能力，应用负责自己的文档数据。",
+      "source": "2026-10-07 isolated Pharos Mark homepage window recording",
+      "playback_speed": 1,
+      "source_sha256": "8f15f9e94b3525de5ec353d11141cd1961a8410356b7f3a0636209b6d2a190c8",
+      "editor_binary_sha256": "341cf9ccfc4f2dfd4ba740254146e116e7398d0a4212405bdb6b3162b76c5c67"
+    },
+    {
+      "scene": "generated",
+      "start": 41.0,
+      "duration": 36,
+      "spoken_text": "接着看生成式任务板。这个面板通过公开结构接口构建，绑定应用已经声明的标题、备注和提交动作。人在窗口提交任务，生成区和手写区的标题同时变为只读。外部客户端仍可补充备注；再次修改已提交标题，则被同一条业务规则拒绝。",
+      "source": "2026-10-07 generated_panel_consumer normal window recording",
+      "playback_speed": 1,
+      "source_sha256": "e309122d8b60afbcf22a2035caae3aaf540d9ef7cb4e65efa2824da6b13e10f9",
+      "framework_source_manifest_sha256": "12ff1f8582c14e6bb3c7c06178478d4fd610e314137026d117881387b9d9f3b9"
+    },
+    {
+      "scene": "ohos",
+      "start": 77.0,
+      "duration": 24,
+      "spoken_text": "鸿蒙侧已有独立的温控和编辑器样例。这两张画面来自模拟器的正常消费者，能看到自绘文本、排版和系统键盘。当前通过 XComponent 和系统绘制接口接入仓颉核心，完整输入交接与真机交付仍在完善。",
+      "source": "real screenshots",
+      "playback_speed": 1,
+      "source_sha256": null
+    },
+    {
+      "scene": "evidence",
+      "start": 101.0,
+      "duration": 21,
+      "spoken_text": "本次候选框架五百六十项、共享核心一百项、公开客户端九十六项测试通过。源码指纹、命令和结果在验证报告。系统输入、跨帧选择和 Windows 接入继续完善，当前公共接口为开发预览。",
+      "source": "authored explanatory card",
+      "playback_speed": 1,
+      "source_sha256": null
+    },
+    {
+      "scene": "end",
+      "start": 122.0,
+      "duration": 12.732,
+      "spoken_text": "我们希望仓颉开发者只维护一份业务规则，就能服务窗口、生成面板和授权的外部工具。源码、文档与复现材料已整理在作品仓库。",
+      "source": "authored explanatory card",
+      "playback_speed": 1,
+      "source_sha256": null
+    }
+  ],
+  "screenshot_sources": [
+    {
+      "path": "ohos-thermostat-r22.jpeg",
+      "sha256": "80d7ddf12d4cc46345cd0d913ffe982d9dcb3ce392f6e99181ddb97bab2b68f9",
+      "source_repository_path": "artifacts/visual-edit-20261004/guidance-review-20261005/h-viz-final-20261006/thermo-consumer-r22/leg-external-set.jpeg",
+      "hap_sha256": "0611289c1f68de1be43d01c00a85031fbfed39dbedda602b5a3c43c363ec0501"
+    },
+    {
+      "path": "ohos-pharos-final4.png",
+      "sha256": "4dc366c2160fe849bb3352456a7aa16a08be2c7db88bae8a0d9ac3b16f826ce9",
+      "source_repository_path": "artifacts/h-r-final-20261002/round11-fix/pharos-final4/screen.png"
+    }
+  ],
+  "movie_sha256": "f3673b4a48aefb43195caf6299155aac584cd06e4c999ffb2a17e36c59109bec",
+  "scope": "Edited demonstration with separately identified macOS candidate, existing editor integration, and archived OHOS simulator consumers."
+}

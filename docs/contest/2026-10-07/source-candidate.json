@@ -1,0 +1,86 @@
+{
+  "base_commit": "3b1ad6e57dff601627db0d28167d5a3c7ac8df10",
+  "restored_existing_sources": [
+    {
+      "path": "runtime/cjgui/src/composable_ui_generated_region_diag.cj",
+      "sha256": "b2fbc51dbc9261dc1dedb840117c3196212262ab0acceb5a6903edcb08ac52a3"
+    },
+    {
+      "path": "runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_generated_region_diag.cj",
+      "sha256": "37d51a23012c05fc037365050463e68468c4c44d18385ff1cece62d3f2ae68f4"
+    },
+    {
+      "path": "runtime/cjgui/native/cjgui_async_multiline_bridge.m",
+      "sha256": "f20aada7b7dacb20d0d4ccff51f02dff68515e8cf7e91179eeb4010fcc0d7468"
+    },
+    {
+      "path": "runtime/cjgui/native/cjgui_async_multiline_measure.h",
+      "sha256": "58ee0d061699eaef9712aa217e0601e5e2ef2588451664fea1e8023336f4bad3"
+    },
+    {
+      "path": "runtime/cjgui/native/cjgui_async_multiline_measure.m",
+      "sha256": "c4da8b5e0114eed454d7bfd7e72f582b59db74b6d162daf431fca2c3914028b6"
+    },
+    {
+      "path": "runtime/cjgui/native/cjgui_composable_font_snapshot.h",
+      "sha256": "0d1466415c667e3e4f2e0369bb8827c7a98ac55d452f139d9170c54161063ebd"
+    },
+    {
+      "path": "runtime/cjgui/src/async_multiline_measure.cj",
+      "sha256": "880ba572fc1c18c1d291ec658209d6589f5f844283f5296c508518f1f7754cce"
+    },
+    {
+      "path": "runtime/cjgui/src/installed_range_input.cj",
+      "sha256": "3427ff6b246c0a64520f55f519d90c771b6e38495cb2fcae41334b97a88b21a9"
+    },
+    {
+      "path": "runtime/cjgui/src/mac_activation_prefix.cj",
+      "sha256": "6625f50020455174c5edbf6d3c33b3ae2bd9a4dfa10b5a60d57a900cfe765115"
+    },
+    {
+      "path": "runtime/cjgui/src/mac_slider_pointer_capture.cj",
+      "sha256": "4cb1d64157915821ec009a3042f32f1d2ee4e8f78b65161c3a8b92310e2b9b7c"
+    },
+    {
+      "path": "runtime/cjgui/src/mac_text_pointer_capture.cj",
+      "sha256": "42f8a075a0a2b3bf06953636dad390016253eb660aa50fb7b4a0e506ea9af3c0"
+    },
+    {
+      "path": "runtime/cjgui/src/macos_application_cleanup.cj",
+      "sha256": "0503cfb3368d4aa335a3c1beb6ced02b1291b0dc385d1f5f4cc44f17dee00c27"
+    },
+    {
+      "path": "runtime/cjgui/src/owner_turn_budget.cj",
+      "sha256": "53a9f381da1ca0d444a362b1f044d8558aab25534cb38131fd28c4c531063d4a"
+    },
+    {
+      "path": "runtime/cjgui/src/text_selection_authority.cj",
+      "sha256": "6c0d1eae7bb7ab5f571a2f34e2029864cf72b6ff96fa8d7ab2fd9351b274a0bc"
+    },
+    {
+      "path": "runtime/cjgui/src/windows_application_host.cj",
+      "sha256": "6ca93eadfb867afc4f3737cbca1de89db8c951e0468a1e557b023a073357b5e0"
+    }
+  ],
+  "production_source_modified": false,
+  "generated_cache_removed": true,
+  "tracked_overlays": [],
+  "source_snapshot_kind": "macOS contest preview based on committed HEAD with omitted required existing production sources restored",
+  "main_workspace_source_modified_by_material_task": false,
+  "excluded_unpublished_tests": [
+    "runtime/cjgui/src/composable_ui_layout_preparation_test.cj",
+    "runtime/cjgui/src/composable_ui_mac_text_capture_test.cj",
+    "runtime/cjgui/src/composable_ui_node_edge_landing_test.cj",
+    "runtime/cjgui/src/composable_ui_prepared_candidate_test.cj",
+    "runtime/cjgui/src/composable_ui_source_handoff_test.cj",
+    "runtime/cjgui/src/composable_ui_static_layout_owner_test.cj",
+    "runtime/cjgui/src/composable_ui_text_measurement_cache_test.cj",
+    "runtime/cjgui/src/installed_range_input_test.cj",
+    "runtime/cjgui/src/mac_activation_prefix_test.cj",
+    "runtime/cjgui/src/owner_turn_budget_test.cj",
+    "runtime/cjgui/src/text_selection_authority_test.cj"
+  ],
+  "uncommitted_production_changes_excluded": true,
+  "source_manifest_sha256": "12ff1f8582c14e6bb3c7c06178478d4fd610e314137026d117881387b9d9f3b9",
+  "source_file_count": 4828
+}

@@ -1,0 +1,1 @@
+{"entries": [{"name": "APPLIED", "values": ["false"]}, {"name": "CONFLICT", "values": ["false"]}, {"name": "VERSION_BEFORE", "values": ["5"]}, {"name": "VERSION_AFTER", "values": ["5"]}, {"name": "REASON", "values": ["title_frozen_after_submit"]}], "kind": "RESULT", "protocol": "CJGUI_SHARED_OPERATION/2"}

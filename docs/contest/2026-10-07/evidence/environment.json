@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-07",
+  "os": "26.6",
+  "arch": "arm64",
+  "python": "3.12.14",
+  "cangjie": "1.1.3",
+  "active_sdk": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+  "native_test_sdk": "MacOSX15.4.sdk (sidecar default)",
+  "command_line_tools": "/Library/Developer/CommandLineTools"
+}

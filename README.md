@@ -100,6 +100,7 @@ zsh /tmp/MyCJGUIApp/run.sh
 - [开发文档](runtime/cjgui/README.md)：组件、布局、输入、生成界面与渲染。
 - [共同操作设计](docs/core/AI_NATIVE_UI_SEMANTICS.md)：字段、上下文、动作和授权。
 - [开发动态](runtime/cjgui/ACTIVE_DIRECTION.md) · [设计导航](docs/plans/DESIGN_INTENT_INDEX.md) · [完整文档目录](docs/README.md)。
+- [初赛材料](docs/contest/2026-10-07/README.md)：项目提案、验证、查重与演示。
 - [协作规则](AGENTS.md) · [问题反馈](docs/setup/CANGJIE_ISSUE_LEDGER.md)。
 
 ## 许可证

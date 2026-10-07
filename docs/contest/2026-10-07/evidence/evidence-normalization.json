@@ -1,0 +1,38 @@
+[
+  {
+    "path": "evidence/normal-app-build.log",
+    "before_sha256": "58514155156fe5abb8bdfe24b7cb5c8ca5cedbbddb4cc23c88c7ced07b35d97e",
+    "after_sha256": "8a16a9db241407eb42ae6913ddc6f40f3ee853ca82e2a2b26e9a30491ff52b8f",
+    "transformation": "remove trailing whitespace; keep line content and ordering"
+  },
+  {
+    "path": "evidence/contest-cjgui-tests.log",
+    "before_sha256": "d7563687f3128b1bef9ea5100d080d8b8b618f06e3feabcda0530f3b514f98eb",
+    "after_sha256": "b28034cc256a31d486382308ae9277458478157ce104918301d0c9cdf6cd7163",
+    "transformation": "remove trailing whitespace; keep line content and ordering"
+  },
+  {
+    "path": "evidence/shared-core-tests.log",
+    "before_sha256": "14ebfa8e403e7f858905f20fb3d133a091900ec348b80030ab6e8cc9404d4822",
+    "after_sha256": "3c5c13d3361698ed03c5596d7cab0d6991419f48809e8beaf3f74eeafc61db7c",
+    "transformation": "remove trailing whitespace; keep line content and ordering"
+  },
+  {
+    "path": "evidence/all-public-client-tests.log",
+    "before_sha256": "69d567ec4ce100540d8b842d2b3ee65a80dc32235c89bb543d431ed34ae5675a",
+    "after_sha256": "69d567ec4ce100540d8b842d2b3ee65a80dc32235c89bb543d431ed34ae5675a",
+    "transformation": "remove trailing whitespace; keep line content and ordering"
+  },
+  {
+    "path": "evidence/generated-app-build.log",
+    "before_sha256": "09a3aeb76821070ee5ca8dc18901d2ed4229f421a2f3a806170af5bb1819a0dd",
+    "after_sha256": "f6c871f2806cccbd8c1c78b7c6095e7cac479fa9152f5a9949200e21eba79f34",
+    "transformation": "remove trailing whitespace; keep line content and ordering"
+  },
+  {
+    "path": "demo/CJGUI \u521d\u8d5b\u53c2\u8d5b\u6f14\u793a.srt",
+    "before_sha256": "df6f689f6de1fa8dc0146693e7cd7b035cfcb8ab7a9ed28fb6d02ffe4efded2d",
+    "after_sha256": "52a567c55b30fc64d031a3422d1730a942332a5bcba6c663f513dbc072980bbf",
+    "transformation": "remove trailing whitespace; keep line content and ordering"
+  }
+]

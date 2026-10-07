@@ -1,0 +1,24 @@
+GENERATED_UI_STRUCTURE 1
+NODE 0 board vertical
+PROPERTY 0 board padding 16
+PROPERTY 0 board gap 12
+PROPERTY 0 board background #eef3fbff
+NODE 1 introduction label
+PROPERTY 1 introduction text 共同编辑一项任务
+PROPERTY 1 introduction fontSize 22
+PROPERTY 1 introduction textColor #142438ff
+NODE 1 taskCard taskEditCard
+PROPERTY 1 taskCard caption 生成组件绑定应用声明的标题和备注
+PROPERTY 1 taskCard textColor #142438ff
+PROPERTY 1 taskCard background #edf3ffff
+PROPERTY 1 taskCard border #7194caff
+PROPERTY 1 taskCard gap 12
+NODE 1 marked booleanInput field=marked
+PROPERTY 1 marked label 提交当前任务
+NODE 1 explanation label
+PROPERTY 1 explanation text 人在控件输入，外部客户端经授权操作同一份业务内容。
+PROPERTY 1 explanation textColor #142438ff
+NODE 1 limits label
+PROPERTY 1 limits text 标题必填，最多 120 字；备注最多 200 字。规则由应用管理。
+PROPERTY 1 limits textColor #142438ff
+END

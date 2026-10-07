@@ -2,14 +2,14 @@
 
 ## 已公开的参赛源码与成片
 
-固定源码提交：`8f9091c2a03cded04ac1875dfaa293987208962f`。GitCode 与 GitHub 已同步，匿名 GitCode 克隆的 HEAD 与该提交一致。后续文档补记不改变这份源码；初赛材料固定标签为 `cjgui-contest-20261007`。
+固定源码提交：`8f9091c2a03cded04ac1875dfaa293987208962f`。GitCode 与 GitHub 已同步，匿名 GitCode 克隆的 HEAD 与该提交一致。后续文档补记不改变这份源码；初版源码与材料归档标签为 `cjgui-contest-20261007`；随后文字修订见 main，固定源码与视频保持原指纹。
 
 - [GitCode 固定源码](https://gitcode.com/aiulms/cjgui/tree/8f9091c2a03cded04ac1875dfaa293987208962f)
 - [GitHub 固定源码](https://github.com/aiulms/cjgui/tree/8f9091c2a03cded04ac1875dfaa293987208962f)
 - [参赛成片直接下载，无需登录](https://raw.githubusercontent.com/aiulms/cjgui/8f9091c2a03cded04ac1875dfaa293987208962f/docs/contest/2026-10-07/demo/CJGUI%20%E5%88%9D%E8%B5%9B%E5%8F%82%E8%B5%9B%E6%BC%94%E7%A4%BA.mp4)
 - [演示章节与素材范围](demo/README.md)
 
-匿名下载返回 HTTP 200，成片大小 4,419,309 字节，SHA256 为 `f3673b4a48aefb43195caf6299155aac584cd06e4c999ffb2a17e36c59109bec`，与本地成片完全一致。服务器返回 application/octet-stream，因此该固定链接提供下载；网页内嵌播放能力不作为通过项。
+匿名下载返回 HTTP 200，成片大小 4,419,309 字节，SHA256 为 `f3673b4a48aefb43195caf6299155aac584cd06e4c999ffb2a17e36c59109bec`，与本地成片完全一致。服务器以 application/octet-stream 返回文件，可下载后观看。
 
 ## 复现来源与指纹
 
@@ -22,8 +22,9 @@
 在新目录匿名克隆 GitCode main，确认 HEAD 为上述固定源码提交、没有旧 target/.cache/native/lib 后，执行普通消费者构建和框架构建：
 
 ```bash
-git clone --depth 1 --single-branch --branch main https://gitcode.com/aiulms/cjgui.git
+git clone https://gitcode.com/aiulms/cjgui.git
 cd cjgui
+git checkout 8f9091c2a03cded04ac1875dfaa293987208962f
 # 设置 CANGJIE_HOME 为仓颉 1.1.3 工具链目录
 source "$CANGJIE_HOME/envsetup.sh"
 unset CJGUI_NATIVE_CLANG_FLAGS_APPEND CJGUI_INTERNAL_TESTING CJGUI_INTERNAL_RENDERER_TESTING
@@ -32,7 +33,7 @@ cd runtime/cjgui
 cjpm build --skip-script
 ```
 
-两项退出码均为 0，普通应用完成 native 编译、仓颉构建、bundle 创建及 ad hoc 签名；框架 `cjpm build --skip-script` 成功。记录见 [普通应用构建](evidence/public-clean-clone-build.log)、[框架构建](evidence/public-clean-framework-build.log)和[下载与指纹核对](evidence/publication-verification.json)。未来 main 继续推进时，复现请先 checkout 固定提交或初赛标签。
+两项退出码均为 0，普通应用完成 native 编译、仓颉构建、bundle 创建及 ad hoc 签名；框架 `cjpm build --skip-script` 成功。记录见 [普通应用构建](evidence/public-clean-clone-build.log)、[框架构建](evidence/public-clean-framework-build.log)和[下载与指纹核对](evidence/publication-verification.json)。以上给出固定提交的复现命令；匿名构建记录在公开提交 8f9091c2 时完成。归档标签指向 64815411，仅补充材料记录，生产源码相同。
 
 ## 历史差异与完成范围
 

@@ -64,7 +64,31 @@ def ctx(port):
     return request(["GET_CONTEXT 0"], port)
 
 
+def current_document_resource(context):
+    """Discover the current instance; never retarget a previously captured resource."""
+    name = re.search(r'^CONTEXT_NAME_UTF8_HEX \d+ ([0-9a-fA-F]+)$', context, re.M)
+    if not name:
+        raise RuntimeError('GET_CONTEXT missing current document identity')
+    candidates = re.findall(r'^RESOURCE (\d+) \d+ ([0-9a-fA-F]+) \d+$', context, re.M)
+    matching = [int(r) for r, identity in candidates if identity.lower() == name.group(1).lower()]
+    if len(matching) != 1:
+        raise RuntimeError('GET_CONTEXT current resource is absent or ambiguous')
+    return matching[0]
+
+
 def read_all(port):
+    """One bounded observation; a version conflict refreshes the entire frozen read."""
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            return _read_all_once(port)
+        except RuntimeError as error:
+            if 'version_conflict' not in str(error) or time.monotonic() >= deadline:
+                raise
+            time.sleep(.04)
+
+
+def _read_all_once(port):
     """全文读回。GET_CONTEXT 的 byteLength 是文档真实字节长度；分窗时中间
     窗尾可能落在多字节字符内部（invalid_text_boundary 非单调：77 拒 82 收），
     对窗尾做 ≤4 字节回退，不做二分——二分把非边界误当越界会收敛到假长度，
@@ -75,6 +99,7 @@ def read_all(port):
     if not mv or not ml:
         raise RuntimeError("GET_CONTEXT missing version/byteLength")
     version, total = int(mv.group(1)), int(ml.group(1))
+    resource = current_document_resource(c)
     chunks = []
     off = 0
     while off < total:
@@ -83,7 +108,7 @@ def read_all(port):
         back = 0
         while want - back > off and back <= 4:
             resp = request(["PROTOCOL CJGUI_SHARED_OPERATION/2", f"AUTH {CAP}",
-                            f"READ_RANGE 1 {off} {want - back} {version}"], port)
+                            f"READ_RANGE {resource} {off} {want - back} {version}"], port)
             if "CONTENT_UTF8_HEX" in resp:
                 break
             back += 1
@@ -100,12 +125,51 @@ def read_all(port):
 
 def agent_replace(port, start, end, text_hex, version):
     n = len(text_hex) // 2
+    resource = current_document_resource(ctx(port))
     return request([
         "PROTOCOL CJGUI_SHARED_OPERATION/2", f"AUTH {CAP}",
-        f"INVOKE {version} REPLACE_RANGE 1 4", "ID 1",
+        f"INVOKE {version} REPLACE_RANGE 1 4", f"ID {resource}",
         f"ARG start INTEGER {start}", f"ARG end INTEGER {end}",
         f"ARG text STRING {n} {text_hex}",
         f"ARG expectedVersion INTEGER {version}"], port)
+
+
+def close_current_recent_task(bundle, out):
+    """Normal system recent-task dismissal, scoped to an exact bundle's snapshot."""
+    out=__import__('pathlib').Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    def tree(label):
+        remote='/data/local/tmp/h-close-layout.json'
+        hdc('shell','uitest','dumpLayout','-p',remote)
+        raw=hdc('shell','cat',remote).stdout
+        (out/(label+'.json')).write_text(raw)
+        return json.loads(raw)
+    initial=tree('close-before-layout')
+    dims=list(map(int,re.findall(r'\d+',initial['attributes']['bounds'])))
+    width,height=dims[2],dims[3]
+    # Use the system desktop's gesture region. A drag starting above that
+    # region can instead scroll the app, and is not a close operation.
+    uitest('keyEvent', 'Home')
+    hdc('shell','uinput','-T','-m',str(width//2),str(height-2),str(width//2),str(height*56//100),'-k','1000','600')
+    recent=tree('close-recents-layout')
+    def walk(node):
+        yield node.get('attributes',{})
+        for child in node.get('children',[]):yield from walk(child)
+    candidates=[r for r in walk(recent) if r.get('id','').startswith('Snapshot_'+bundle+'_')]
+    visible=[]
+    for c in candidates:
+        rect=list(map(int,re.findall(r'\d+',c['bounds'])))
+        if len(rect)==4 and rect[2]-rect[0]>width//3:visible.append(rect)
+    if len(visible)!=1:raise RuntimeError('exact owned recent task snapshot unavailable; no dismissal sent')
+    x1,y1,x2,y2=visible[0];cx=(x1+x2)//2
+    before=hdc('shell','pidof',bundle).stdout.strip()
+    result=uitest('swipe',str(cx),str((y1+y2)//2),str(cx),str(max(y1-180,0)),'1800')
+    deadline=time.monotonic()+8
+    while time.monotonic()<deadline:
+        after=hdc('shell','pidof',bundle).stdout.strip()
+        if after!=before:return {'closed':True,'pid_before':before,'pid_after':after,'tool':result.stdout}
+        time.sleep(.1)
+    return {'closed':False,'pid_before':before,'pid_after':after,'tool':result.stdout}
 
 
 def hilog_rows():

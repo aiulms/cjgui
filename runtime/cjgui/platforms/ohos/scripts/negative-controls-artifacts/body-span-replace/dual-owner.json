@@ -1,0 +1,292 @@
+{
+  "steps": [],
+  "identity": {
+    "pid": 11,
+    "bundle": "controlled"
+  },
+  "log_fence0": "10-02 09:00:00.002 proxy mounted key=app1/s1/c3/e1/m1 field=pharos-editor-body",
+  "forward": {
+    "owned": true,
+    "basis": "created+verified"
+  },
+  "fixture_reset": true,
+  "mode_probes": [
+    {
+      "ensure-source": "already_at_target",
+      "token": 201,
+      "epoch": 9,
+      "frame": 6,
+      "last": 3,
+      "unacked": 0,
+      "baseline_token": 201,
+      "baseline_max_ticket": 3,
+      "driver_face": "source",
+      "face_list_truncated": false
+    },
+    {
+      "enter-b": "submitted_target",
+      "token": 201,
+      "epoch": 10,
+      "frame": 7,
+      "last": 4,
+      "unacked": 0,
+      "baseline_token": 201,
+      "baseline_max_ticket": 3,
+      "driver_face": "preview",
+      "face_list_truncated": false,
+      "ticket": 4,
+      "decision": 2,
+      "reason": 0,
+      "snapshot_token": 201
+    },
+    {
+      "back-a": "submitted_target",
+      "token": 201,
+      "epoch": 10,
+      "frame": 7,
+      "last": 5,
+      "unacked": 0,
+      "baseline_token": 201,
+      "baseline_max_ticket": 4,
+      "driver_face": "source",
+      "face_list_truncated": false,
+      "ticket": 5,
+      "decision": 2,
+      "reason": 0,
+      "snapshot_token": 201
+    },
+    {
+      "revisit-b": "submitted_target",
+      "token": 201,
+      "epoch": 10,
+      "frame": 7,
+      "last": 6,
+      "unacked": 0,
+      "baseline_token": 201,
+      "baseline_max_ticket": 5,
+      "driver_face": "preview",
+      "face_list_truncated": false,
+      "ticket": 6,
+      "decision": 2,
+      "reason": 0,
+      "snapshot_token": 201
+    }
+  ],
+  "baseline": {
+    "ensure-source": {
+      "token": 201,
+      "mode": "source",
+      "epoch": 9,
+      "frame": 6,
+      "last": 3,
+      "max_ticket": 3,
+      "readable": true
+    },
+    "enter-b": {
+      "token": 201,
+      "mode": "source",
+      "epoch": 9,
+      "frame": 6,
+      "last": 3,
+      "max_ticket": 3,
+      "readable": true
+    },
+    "back-a": {
+      "token": 201,
+      "mode": "preview",
+      "epoch": 10,
+      "frame": 7,
+      "last": 4,
+      "max_ticket": 4,
+      "readable": true
+    },
+    "revisit-b": {
+      "token": 201,
+      "mode": "source",
+      "epoch": 10,
+      "frame": 7,
+      "last": 5,
+      "max_ticket": 5,
+      "readable": true
+    }
+  },
+  "main_owner": "pharos-main",
+  "note_resource_id": 1001,
+  "a_freeze": {
+    "main_version": 1,
+    "main_hex": "61e59b9e6263646566",
+    "note_hex": "616263646566",
+    "span_utf16": [
+      2,
+      5
+    ],
+    "anchor_utf16": [
+      2,
+      5
+    ]
+  },
+  "body_node": 107,
+  "geo_query_count": 6,
+  "a_anchor_doc_len16": 7,
+  "a_anchor_probe": [
+    {
+      "vp": [
+        20,
+        18
+      ],
+      "sel": [
+        3,
+        3
+      ]
+    }
+  ],
+  "a_anchor": {
+    "sel": [
+      3,
+      3
+    ],
+    "node": 107
+  },
+  "anchor_mode": "span",
+  "toggle_evidence": "submitted_target",
+  "b_freeze": {
+    "note_version": 2,
+    "note_bytes": 6,
+    "main_version": 1
+  },
+  "b_replace": {
+    "version_before": 2,
+    "version_after": 3,
+    "exactly_once": true,
+    "frozen_selection_utf16": [
+      1,
+      3
+    ],
+    "frozen_span_bytes": [
+      1,
+      3
+    ],
+    "expected_hex": "614e646566",
+    "expected_bytes": 5,
+    "actual_hex": "614e646566",
+    "actual_bytes": 5,
+    "exact_owner": true,
+    "removed_bytes": 2,
+    "inserted_is_N": true
+  },
+  "a_unchanged_during_b": {
+    "version_before": 1,
+    "version_after": 1,
+    "version_equal": true,
+    "bytes_equal": true,
+    "bytes_before": 9,
+    "bytes_after": 9,
+    "hex_after": "61e59b9e6263646566"
+  },
+  "restore_read_seq": [
+    13,
+    14
+  ],
+  "a_restore": {
+    "source": "mount_snapshot",
+    "sel": [
+      2,
+      5
+    ],
+    "node": 107,
+    "ctx": 9,
+    "ticket": null,
+    "version": null,
+    "owner_version": 1,
+    "current_identity": {
+      "ctx": 9,
+      "node": 107,
+      "field": "pharos-editor-body",
+      "resource": 54,
+      "kind": 10,
+      "binding": 6,
+      "v": 6,
+      "gen": 1,
+      "basis": "readback_edit_identity"
+    },
+    "observed": {
+      "ctx": 9,
+      "sel": [
+        2,
+        5
+      ],
+      "complete": true,
+      "node": 107,
+      "resource": 54,
+      "kind": 10,
+      "binding": 6,
+      "v": 6
+    },
+    "adopted2": {
+      "node": 107,
+      "resource": 54,
+      "kind": 10,
+      "sel": [
+        2,
+        5
+      ],
+      "projection": 6,
+      "binding": 6,
+      "owner_version": 1,
+      "source_ctx": 9,
+      "source_gen": 1
+    },
+    "adoption_count_basis": "frozen-source+window-adoption-fact+identity-tuple"
+  },
+  "a_restore_adopted_before": 0,
+  "a_restored_to_frozen_anchor": true,
+  "a_restore_bind_basis": "node=107/107 source=mount_snapshot",
+  "a_resume": {
+    "version_before": 1,
+    "version_after": 2,
+    "exactly_once": true,
+    "frozen_selection_utf16": [
+      2,
+      5
+    ],
+    "frozen_span_bytes": [
+      4,
+      7
+    ],
+    "expected_hex": "61e59b9ee59b9e6566",
+    "actual_hex": "61e59b9ee59b9e6566",
+    "exact_owner": true,
+    "removed_bytes": 3,
+    "removed_is_zero": false,
+    "anchor_utf16": [
+      2,
+      5
+    ],
+    "restored_to_anchor": true,
+    "restore_source": "mount_snapshot",
+    "restore_ticket": null,
+    "anchor_doc_len16": 7
+  },
+  "b_unchanged_during_a": true,
+  "b_revisit": {
+    "version": 3,
+    "bytes": 5,
+    "preserved": true
+  },
+  "required_values": {
+    "fixture_reset": true,
+    "b_replace_exactly_once": true,
+    "b_replace_exact_owner": true,
+    "b_install_confirmed": true,
+    "a_unchanged_during_b": true,
+    "a_resume_exactly_once": true,
+    "a_resume_exact_owner": true,
+    "a_resume_at_frozen_anchor": true,
+    "b_unchanged_during_a": true,
+    "b_revisit_preserved": true,
+    "a_freeze_span_nonempty_mid": true,
+    "a_resume_removed_matches_span": true
+  },
+  "status": "OK",
+  "forward_cleanup": "removed"
+}

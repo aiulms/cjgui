@@ -31,13 +31,12 @@ source "$HERE/env.sh"
   done
   echo
   echo "## 以 sha256 冻结的源码（lab 内实际参与编译者）"
-  find "$LAB/entry/cjgui/src" "$LAB/entry/shared_operation_core/src" \
-      "$LAB/entry/settings_counter_application/src" "$LAB/entry/ohos_transport/src" \
-      "$LAB/entry/src/main/cpp" "$LAB/entry/src/main/cangjie" "$LAB/entry/src/main/ets" \
-      "$LAB/entry/src/main/resources" -type f -print0 2>/dev/null | sort -z \
-      | while IFS= read -r -d '' f; do
+  # Follow this consumer's actual local dependency graph, including transitive
+  # shared packages and their compile options. A missing reachable module is
+  # an error, rather than a partial freeze or an unrelated sample fallback.
+  python3 "$HERE/source_inputs.py" "$LAB" | while IFS= read -r -d '' f; do
     shasum -a 256 "$f"
-  done || true   # 可选目录：不存在时 find 非零，不得中止整个清单
+  done
   echo
   echo "## 工程与构建配置"
   find "$LAB" -maxdepth 2 \( -name '*.json5' -o -name '*.ts' -o -name 'oh-package*.json5' \) -type f -print0 \

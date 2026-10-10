@@ -2337,6 +2337,58 @@ func testPlainIntentReverseShiftCollapsesNotExpands(): Unit {
 }
 
 @Test
+func testPlainIntentDocumentBoundaryKeepsDirectedAnchorAndZeroOwnerWrites(): Unit {
+    let owner = FakeTextOwner("A中😀B")
+    let session = makeSession(owner)
+    session.setSelection16(2, 2)
+    let start = session.handlePlainIntent(CjguiTextPlainIntent.MoveDocumentStart)
+    @Assert(start.handled, true)
+    @Assert(start.selectionStart16, 0)
+    @Assert(start.selectionEnd16, 0)
+    confirmPlainSelectionPush(session)
+    session.setSelection16(2, 2)
+    let extendedSelection = session.handlePlainIntent(CjguiTextPlainIntent.ExtendDocumentEnd)
+    @Assert(extendedSelection.handled, true)
+    @Assert(extendedSelection.selectionStart16, 2)
+    @Assert(extendedSelection.selectionEnd16, 5)
+    confirmPlainSelectionPush(session)
+    let reverse = session.handlePlainIntent(CjguiTextPlainIntent.ExtendDocumentStart)
+    @Assert(reverse.selectionStart16, 0)
+    @Assert(reverse.selectionEnd16, 2)
+    confirmPlainSelectionPush(session)
+    let end = session.handlePlainIntent(CjguiTextPlainIntent.MoveDocumentEnd)
+    @Assert(end.selectionStart16, 5)
+    @Assert(end.selectionEnd16, 5)
+    @Assert(owner.text(), "A中😀B")
+    @Assert(owner.ver, 1)
+    @Assert(owner.writeCalls, 0)
+}
+
+
+@Test
+func testPlainIntentDocumentBoundaryRejectsPartialMirror(): Unit {
+    let owner = FakeTextOwner("0123456789abcdefghijklmnopqrstuv")
+    let session = makeSession(owner, materializeLimit: 8)
+    let _ = session.revealByte(12)
+    let mirror = session.mirrorSnapshot()
+    @Assert(mirror.startByte > 0, true)
+    @Assert(mirror.startByte + Int64(mirror.text.toArray().size) < owner.data.size, true)
+    session.setSelection16(1, 1)
+    let start = session.handlePlainIntent(CjguiTextPlainIntent.MoveDocumentStart)
+    @Assert(start.handled, false)
+    @Assert(start.reason, "at_window_start")
+    let end = session.handlePlainIntent(CjguiTextPlainIntent.ExtendDocumentEnd)
+    @Assert(end.handled, false)
+    @Assert(end.reason, "at_window_end")
+    let (a, b) = session.selection16()
+    @Assert(a, 1)
+    @Assert(b, 1)
+    @Assert(owner.text(), "0123456789abcdefghijklmnopqrstuv")
+    @Assert(owner.ver, 1)
+    @Assert(owner.writeCalls, 0)
+}
+
+@Test
 func testPlainIntentSelectionCollapseAtDocumentEdges(): Unit {
     // 反例 3：abcd 选 [0,2) 在文首按 Left、选 [1,4) 在文尾按 Right——都必须先
     // 折叠成功（零事务），不因贴边被拒。

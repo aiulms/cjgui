@@ -20,14 +20,17 @@ mkdir -p "$OUTPUT_DIR/native"
   SDKROOT="$SDKROOT_PATH" cjpm build --skip-script
 )
 
-clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong \
-  -DCJGUI_INTERNAL_TESTING -isysroot "$SDKROOT_PATH" -mmacosx-version-min=12.0 \
-  -c "$RUNTIME_DIR/native/cjgui_internal_renderer.m" -o "$OUTPUT_DIR/native/cjgui_internal_renderer.o"
-clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong \
-  -isysroot "$SDKROOT_PATH" -mmacosx-version-min=12.0 \
-  -c "$RUNTIME_DIR/native/cjgui_native_bridge.m" -o "$OUTPUT_DIR/native/cjgui_native_bridge.o"
+# Native closure must match build_cjgui_internal_renderer_sidecar.sh: the framework sources in
+# CJGUI_FRAMEWORK_SOURCE_PATHS reference the async multiline measure symbols, so a renderer-only
+# archive links as undefined symbols (_CjguiAsyncTextMetricsPoll and friends).
+for native_source in cjgui_internal_renderer cjgui_native_bridge cjgui_async_multiline_measure cjgui_async_multiline_bridge; do
+  clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong \
+    -DCJGUI_INTERNAL_TESTING -isysroot "$SDKROOT_PATH" -mmacosx-version-min=12.0 \
+    -c "$RUNTIME_DIR/native/${native_source}.m" -o "$OUTPUT_DIR/native/${native_source}.o"
+done
 ar rcs "$OUTPUT_DIR/native/libcjgui_pointer_capture_lifecycle.a" \
-  "$OUTPUT_DIR/native/cjgui_internal_renderer.o" "$OUTPUT_DIR/native/cjgui_native_bridge.o"
+  "$OUTPUT_DIR/native/cjgui_internal_renderer.o" "$OUTPUT_DIR/native/cjgui_native_bridge.o" \
+  "$OUTPUT_DIR/native/cjgui_async_multiline_measure.o" "$OUTPUT_DIR/native/cjgui_async_multiline_bridge.o"
 
 cjc --sysroot "$SDKROOT_PATH" \
   --import-path "$RUNTIME_DIR/shared_operation_core/target/release/cjgui_shared_operation_core" \

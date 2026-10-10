@@ -276,6 +276,10 @@ public enum CjguiTextPlainIntent {
     | MoveRight
     | ExtendLeft
     | ExtendRight
+    | MoveDocumentStart
+    | MoveDocumentEnd
+    | ExtendDocumentStart
+    | ExtendDocumentEnd
 }
 
 /// 一次普通文字意图的判决结果。`handled=false` 是具名拒绝（零写入、零选区
@@ -304,6 +308,10 @@ public class CjguiTextSession {
 
     private var contextEpoch: Int64 = 0
     private var editSeq: Int64 = 0
+    // One actual accepted owner-write receipt, retained independently of ACK
+    // removal. Internal consumers may identify an edit made by their callback;
+    // a current mirror/version is never substituted for this immutable fact.
+    private var latestAppliedEdit: ?CjguiTextSessionEdit = None
     /// 提交票据:与会话对象的生存期一样单调,不随重绑归零,旧回执不可能撞号。
     private var ticketSeq: Int64 = 0
     /// 镜像修订:每次重新准备有界上下文都推进,编辑范围据此判定是否仍然适用。
@@ -446,6 +454,10 @@ public class CjguiTextSession {
         return this.editSeq
     }
 
+    func internalLatestAppliedEdit(): ?CjguiTextSessionEdit {
+        return this.latestAppliedEdit
+    }
+
     public func mirrorRevisionValue(): Int64 {
         return this.mirrorRevision
     }
@@ -458,6 +470,7 @@ public class CjguiTextSession {
     /// 复用,旧上下文里的回执与组合回调不能跨代次校准新会话。绑定即准备自己的
     /// 有界上下文(不是整篇读取),之后镜像常驻。
     public func bind(): Unit {
+        this.latestAppliedEdit = None
         this.wholeDocumentChoice = None
         this.installedRangeChain = None
         this.selectionInputMemos.clear()
@@ -493,6 +506,7 @@ public class CjguiTextSession {
     /// 解绑语义由 `bind` 推进代次 + 窗口归属变化实现:旧 nodeId 上的后续编辑与
     /// 旧回执都因代次不符而具名拒绝,组合草稿随上下文一起丢弃。
     public func invalidate(): Unit {
+        this.latestAppliedEdit = None
         this.installedRangeChain = None
         this.selectionInputMemos.clear()
         this.selectionInputLastTransferId = 0u64
@@ -567,10 +581,41 @@ public class CjguiTextSession {
             rebased = this.window.rebaseSelection(this.selectionVersion, this.selectionStartByte,
                 this.selectionEndByte)
         }
-        let changed = this.window.refresh()
+        var changed = this.window.refresh()
         if (changed) {
             this.mirrorRevision += 1
             this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+        }
+        if (externalChange && !this.compositionActive) {
+            if (let Some(owner) <- this.window.selectionOwner()) {
+                // This owner has already settled its directed choice with the
+                // transaction (including Undo/Redo). Rebasing the old local
+                // choice can fail across a whole replacement and leave a
+                // bounded mirror beyond the new document. Prepare the actual
+                // owner choice, without writing a selection or signing input.
+                let selected = owner.sourceSelectionSnapshot()
+                if (selected.version == this.window.contentVersion()) {
+                    if (selected.anchorByte >= 0 && selected.focusByte >= 0) {
+                        let start = if (selected.anchorByte < selected.focusByte) {
+                            selected.anchorByte
+                        } else { selected.focusByte }
+                        let coverStart = this.window.windowStartByte()
+                        let coverEnd = coverStart + cjguiUtf8Length(this.window.text())
+                        if (!this.window.isPrepared() || start < coverStart || start > coverEnd) {
+                            if (this.window.revealByte(start)) {
+                                this.mirrorRevision += 1
+                                this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+                                changed = true
+                            }
+                        }
+                    }
+                    // A whole directed choice may exceed this bounded page.
+                    // It remains the owner's choice for a mapped presentation;
+                    // it is not a failed native edit or a calibration unlock.
+                    this.refreshOwnerSelectionProjection()
+                    return changed
+                }
+            }
         }
         if (externalChange) {
             if (let Some(mapped) <- rebased) {
@@ -1017,6 +1062,29 @@ public class CjguiTextSession {
         let total16 = this.mirrorUtf16Length
         let (lo, hi) = this.selection16()
         let bytes = text.toArray()
+        if (match (intent) {
+            case MoveDocumentStart | MoveDocumentEnd | ExtendDocumentStart | ExtendDocumentEnd => true
+            case _ => false
+        }) {
+            let atStart = match (intent) {
+                case MoveDocumentStart | ExtendDocumentStart => true
+                case _ => false
+            }
+            let edge = this.mirrorEdgeRefusalReason(atStart: atStart)
+            if (edge != if (atStart) { "at_document_start" } else { "at_document_end" }) {
+                return CjguiPlainIntentOutcome(handled: false, reason: edge,
+                    wroteOwner: false, start16: lo, end16: hi)
+            }
+            let target = if (atStart) { 0 } else { total16 }
+            if (match (intent) {
+                case ExtendDocumentStart | ExtendDocumentEnd => true
+                case _ => false
+            }) {
+                let anchor = if (this.selectionAnchor16 >= 0) { this.selectionAnchor16 } else { hi }
+                return this.applyDirectedSelection(anchor, target)
+            }
+            return this.applyPlainSelection(target, target)
+        }
         if (match (intent) { case DeleteBackward | DeleteForward => true case _ => false }) {
             if (this.selectionNeedsNativeRestore) {
                 return CjguiPlainIntentOutcome(handled: false, reason: "selection_native_alignment_required",
@@ -2631,7 +2699,7 @@ public class CjguiTextSession {
     public func submitAuthorizedSelectionRange(transferId: UInt64, inputId: UInt64,
         sequence: UInt64, previousSequence: UInt64, expectedVersion: Int64,
         choiceRevision: Int64, anchorByte: Int64, focusByte: Int64, replacement: String,
-        choiceIsCurrent: () -> Bool): CjguiTextSessionEdit {
+        choiceIsCurrent: () -> Bool, frozenSourceChoice!: ?CjguiSourceSelectionSnapshot = None): CjguiTextSessionEdit {
         for (memo in selectionInputMemos) {
             if (memo.inputId == inputId) {
                 if (memo.matches(transferId, inputId, sequence, previousSequence, expectedVersion,
@@ -2639,6 +2707,13 @@ public class CjguiTextSession {
                 return this.edit(this.editSeq, false, this.window.sourceVersion(), "selection_input_id_conflict")
             }
         }
+        // Capture before callbacks or preparation. Native admission passes its
+        // already frozen owner choice; synchronous consumers freeze at entry.
+        // Neither path may obtain a newer choice after a failed preparation.
+        let originalChoice = if (frozenSourceChoice.isSome()) { frozenSourceChoice }
+            else { this.sourceSelectionSnapshot() }
+        let originalContext = this.contextEpoch
+        let originalMirror = this.mirrorRevision
         if (!this.bound || transferId == 0u64 || inputId == 0u64 || sequence == 0u64 ||
             previousSequence == UInt64.Max || previousSequence + 1u64 != sequence ||
             expectedVersion < 0 || choiceRevision < 0 || anchorByte < 0 || focusByte < 0 ||
@@ -2692,6 +2767,18 @@ public class CjguiTextSession {
         let prepared = match (this.prepareSourceRange(expectedVersion, lo, hi)) {
             case Some(value) => value
             case None =>
+                if (this.lastReason == CJGUI_RANGE_TEXT_REASON_BUDGET && originalChoice.isSome()) {
+                    let choice = originalChoice.getOrThrow()
+                    let sameChoice = choice.version == expectedVersion && choice.revision == choiceRevision &&
+                        choice.anchorByte == anchorByte && choice.focusByte == focusByte
+                    let decision = if (sameChoice) {
+                        this.submitPreparedSourceRange(originalContext, originalMirror, expectedVersion,
+                            lo, hi, replacement, false, choiceIsCurrent, sourceChoice: Some(choice))
+                    } else { this.edit(this.editSeq, false, this.window.sourceVersion(), "selection_input_choice_stale") }
+                    this.rememberSelectionInput(transferId, inputId, sequence, previousSequence, expectedVersion,
+                        choiceRevision, anchorByte, focusByte, replacement, decision)
+                    return decision
+                }
                 let rejected = this.edit(this.editSeq, false, this.window.sourceVersion(), this.lastReason)
                 this.rememberSelectionInput(transferId, inputId, sequence, previousSequence,
                     expectedVersion, choiceRevision, anchorByte, focusByte, replacement, rejected)
@@ -2914,7 +3001,8 @@ public class CjguiTextSession {
 
     private func submitPreparedSourceRange(epoch: Int64, mirror: Int64, expectedVersion: Int64,
         startByte: Int64, endByte: Int64, text: String,
-        sourceProxyChanged: Bool, choiceIsCurrent: () -> Bool): CjguiTextSessionEdit {
+        sourceProxyChanged: Bool, choiceIsCurrent: () -> Bool,
+        sourceChoice!: ?CjguiSourceSelectionSnapshot = None): CjguiTextSessionEdit {
         if (!this.bound || epoch != this.contextEpoch || mirror != this.mirrorRevision ||
             this.needsCalibration || this.compositionActive || !this.window.isPrepared()) {
             this.lastReason = "prepared_range_stale"
@@ -2931,7 +3019,10 @@ public class CjguiTextSession {
         }
         this.ticketSeq += 1
         let ticket = this.ticketSeq
-        let outcome = this.window.applyByteEdit(startByte, endByte, text)
+        let outcome = match (sourceChoice) {
+            case Some(choice) => this.window.applySelectedSourceEdit(choice, text)
+            case None => this.window.applyByteEdit(startByte, endByte, text)
+        }
         if (outcome.applied) {
             this.editSeq += 1
             // This is an accepted human range edit, so its new caret is the
@@ -3016,6 +3107,10 @@ public class CjguiTextSession {
             this.lastReason = CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
+        let priorStart = this.window.windowStartByte()
+        let priorText = this.window.text()
+        let nativePostimage = priorText[0..startByte - priorStart] + text +
+            priorText[endByte - priorStart..priorText.size]
         this.ticketSeq += 1
         let ticket = this.ticketSeq
         let outcome = this.window.applyByteEdit(startByte, endByte, text)
@@ -3035,6 +3130,9 @@ public class CjguiTextSession {
             } else { None }
             if (let Some(caret16) <- mappedCaret) {
                 this.setSelection16(caret16, caret16)
+                if (this.window.windowStartByte() != priorStart || this.window.text() != nativePostimage) {
+                    this.selectionNeedsNativeRestore = true
+                }
                 this.lastReason = ""
             } else {
                 // The owner transaction is already accepted. Keep its receipt,
@@ -3061,8 +3159,13 @@ public class CjguiTextSession {
 
     private func edit(seq: Int64, accepted: Bool, versionAfter: Int64, reason: String,
         ticket: Int64): CjguiTextSessionEdit {
-        return CjguiTextSessionEdit(seq, ticket, accepted, versionAfter, this.mirrorRevision,
+        let result = CjguiTextSessionEdit(seq, ticket, accepted, versionAfter, this.mirrorRevision,
             this.contextEpoch, reason)
+        if (accepted && ticket >= 0 && versionAfter >= 0 && seq > 0 &&
+            (this.latestAppliedEdit.isNone() || seq > this.latestAppliedEdit.getOrThrow().seq)) {
+            this.latestAppliedEdit = Some(result)
+        }
+        return result
     }
 
     private func ignoredCompositionEvent(reason: String): CjguiTextSessionEdit {

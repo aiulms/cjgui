@@ -403,6 +403,27 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     /// 计数只在窗口采纳成功后前进（平台安装成功但窗口拒绝采纳只进 failed），
     /// 所以这一行既不等于「票据已签发」也不等于「平台已安装」，三者不能互相顶替。
     /// 只在计数前进的那一次返回一行，其余 tick 返回 None（不制造 hilog 噪声）。
+    /// Public context observation for the normal presentation consumer.
+    public func noteSelectionFact(): String {
+        let text = match (notePresentationSession) {
+            case Some(value) => value
+            case None => return "NOTE_SELECTION unavailable"
+        }
+        let window = match (presentationWindow) {
+            case Some(value) => value
+            case None => return "NOTE_SELECTION unavailable"
+        }
+        let mirror = text.mirrorSnapshot()
+        let range = text.selection16()
+        let (request, context, node, start, end, owner, projection) = window.lastRestoreAdoptionFact()
+        return "NOTE_SELECTION ownerVersion=${domain.thermostatSnapshot().version} " +
+            "mirrorVersion=${mirror.contentVersion} sourceContext=${mirror.contextEpoch} " +
+            "range=${range[0]}:${range[1]} needsRestore=${text.needsNativeSelectionRestore()} " +
+            "restorePending=${window.isPlatformRestorePending()} restoreRequest=${request} " +
+            "restoreContext=${context} restoreNode=${node} restoredRange=${start}:${end} " +
+            "restoreOwner=${owner} restoreProjection=${projection} " + this.lastPresentationEndFact
+    }
+
     public func takeRestoreAdoptionFact(): ?String {
         let window = match (presentationWindow) {
             case Some(value) => value
@@ -486,6 +507,7 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     // 语义由窗口拥有，这里只持有「当前绑定是否仍是本锚点」的判别事实。
     private var presentationWindow: ?CjguiComposableUiWindow = None
     private var notePresentationSession: ?CjguiTextSession = None
+    private var lastPresentationEndFact: String = "NOTE_END none"
     private var notePresentationAnchor: ?CjguiPresentationHitTicket = None
     // 窗口采纳计数的**本实例**上次读数：只在前进的那一次交出一行事实，重复 tick
     // 不再重报（计数是窗口终身累计，别处的增加不能冒充本次交接）。
@@ -509,9 +531,11 @@ public class CjguiThermostatController <: CjguiComposableUiController &
     }
 
     /// presentation 消费者的窗口接线：宿主在窗口创建后注入（与 attachWindow
-    /// 同一窗口对象）。会话绑定与命中都走该窗口的公共入口。
+    /// 同一窗口对象）。会话绑定与命中都走该窗口的公共入口。绑定在窗口注入时
+    /// 即建立（第一个 D 候选之前），来源声明随候选构建冻结，不等首次点击再补。
     public func attachPresentationWindow(window: CjguiComposableUiWindow): Unit {
         presentationWindow = Some(window)
+        boundNotePresentationSession(window)
     }
 
     public func uiSceneVersion(): Int64 {
@@ -665,7 +689,7 @@ public class CjguiThermostatController <: CjguiComposableUiController &
         // 会话镜像接管呈现）。
         cardBox.add(cjguiComposableText(CjguiThermostatController.nodeIdNotePresentation,
             "thermo-note-presentation", snapshot.note,
-            CjguiComposableUiStyle(fixedHeight: 64, growX: 1, fontSize: 26.0,
+            CjguiComposableUiStyle(minHeight: 64, growX: 1, fontSize: 26.0,
                 pointerInteractive: true,
                 background: CjguiComposableUiColor(0.16, 0.12, 0.08, 1.0),
                 border: CjguiComposableUiColor(0.44, 0.36, 0.26, 1.0), borderWidth: 1,
@@ -839,36 +863,41 @@ public class CjguiThermostatController <: CjguiComposableUiController &
             notePresentationAnchor = freezeNotePresentationHit(window, event)
             return CjguiComposableUiDispatchResult(true)
         }
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE) {
+            let focus = freezeNotePresentationHit(window, event)
+            if (let Some(anchor) <- notePresentationAnchor) {
+                if (let Some(active) <- focus) {
+                    let result = window.extendCapturedPresentationSelection(
+                        CjguiThermostatController.nodeIdNotePresentation, anchor, active)
+                    println("THERMO_PRES_UPDATE submit=${result[0]} range=${result[1]}:${result[2]}")
+                    if (result[0] == 0) {
+                        localRevision += 1
+                        window.requestRefresh()
+                    }
+                }
+            }
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END) {
+            // 提交即复核即设置：窗口公共入口对双票据一次复核并在同一执行序内
+            // 设置源选区；本处不再拿裸 UTF-16 数调无版本 setter。
             let focusTicket = freezeNotePresentationHit(window, event)
             let anchorTicket = notePresentationAnchor
             notePresentationAnchor = None
-            let anchorAdopted = match (anchorTicket) {
-                case Some(t) => window.adoptPresentationHitCaret(
-                    CjguiThermostatController.nodeIdNotePresentation, t)
-                case None => (1, -1)
+            let submitted = match ((anchorTicket, focusTicket)) {
+                case (Some(a), Some(f)) => window.extendCapturedPresentationSelection(
+                    CjguiThermostatController.nodeIdNotePresentation, a, f)
+                case _ => (1, -1, -1)
             }
-            let focusAdopted = match (focusTicket) {
-                case Some(t) => window.adoptPresentationHitCaret(
-                    CjguiThermostatController.nodeIdNotePresentation, t)
-                case None => (1, -1)
-            }
-            println("THERMO_PRES_END anchor=${anchorAdopted[0]}:${anchorAdopted[1]} focus=${focusAdopted[0]}:${focusAdopted[1]}")
-            if (anchorAdopted[0] != 0 || focusAdopted[0] != 0) {
-                println("THERMO_PRES_END stale_ticket anchorStatus=${anchorAdopted[0]} focusStatus=${focusAdopted[0]}")
+            println("THERMO_PRES_END submit=${submitted[0]} range=${submitted[1]}:${submitted[2]}")
+            if (submitted[0] != 0) {
+                println("THERMO_PRES_END stale_ticket status=${submitted[0]}")
                 return CjguiComposableUiDispatchResult(true)
             }
-            let anchor16 = anchorAdopted[1]
-            let focus16 = focusAdopted[1]
-            if (focus16 >= 0) {
-                var start16 = focus16
-                var end16 = focus16
-                if (anchor16 >= 0 && anchor16 != focus16) {
-                    start16 = if (anchor16 < focus16) { anchor16 } else { focus16 }
-                    end16 = if (anchor16 < focus16) { focus16 } else { anchor16 }
-                }
-                session.setSelection16(start16, end16)
-                session.markNativeSelectionRestoreRequired()
+            if (submitted[1] >= 0) {
+                this.lastPresentationEndFact = "NOTE_END ownerVersion=${domain.thermostatSnapshot().version} " +
+                    "range=${submitted[1]}:${submitted[2]} scene=${window.lastAcceptedSceneVersion()}"
+                // 选区已由公共提交入口按已证值设置并触发恢复；此处只做焦点就绪。
                 // B3：就绪事实取窗口侧的**镜像声明晋升**（声明已随当前绑定写入
                 // native，且其后完成过至少一次 accepted present）。BEGIN 时绑定
                 // 成功不等于这代声明可编辑——同手势内聚焦只会再建一个上下文，
@@ -892,7 +921,7 @@ public class CjguiThermostatController <: CjguiComposableUiController &
                     window.requestRefresh()
                 }
             }
-            return CjguiComposableUiDispatchResult(focus16 >= 0)
+            return CjguiComposableUiDispatchResult(true)
         }
         return CjguiComposableUiDispatchResult(true)
     }

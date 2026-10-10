@@ -5,6 +5,30 @@ import std.collection.*
 import std.time.*
 
 @When[os == "macOS"]
+func cjguiSchedulingWorkRevision(): UInt64 {
+    return unsafe { cjgui_internal_renderer_owner_work_revision() }
+}
+
+@When[os != "macOS"]
+func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
+
+@When[os == "macOS"]
+func cjguiCommonSchedulingEnabled(): Bool { return true }
+
+@When[os != "macOS"]
+func cjguiCommonSchedulingEnabled(): Bool { return false }
+
+@When[os == "macOS"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_work(revision, deadline, inout idle) }
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
+
+@When[os != "macOS"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
+
+@When[os == "macOS"]
 func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32,
     value: UInt64, managedId: UInt64): Unit {
     unsafe { cjgui_internal_renderer_owner_trace_boundary(session, turn, stage, relatedKind, relatedPhase, value,
@@ -15,8 +39,8 @@ func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relat
 func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32,
     value: UInt64, managedId: UInt64): Unit {}
 
-// Trace calls are private macOS diagnostics. Other platform builds retain the
-// same owner budget while compiling these helpers to inert values.
+// Platform diagnostics retain the same owner budget. Windows records fixed
+// native-clock spans only; it does not register the macOS sampler watches.
 @When[os == "macOS"]
 func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
     generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
@@ -72,11 +96,25 @@ func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, g
     unsafe { cjgui_internal_renderer_owner_trace_legacy_span(session, turn, request, generation, phase, startedNs) }
 }
 
-@When[os != "macOS"]
+@When[os == "Windows"]
+func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
+    startedNs: UInt64): Unit {
+    let _ = unsafe { cjgui_internal_renderer_owner_trace_managed_record(17u32, session, turn, request,
+        0u64, generation, phase, startedNs, UInt64.Max, 0u8) }
+}
+
+@When[os != "macOS" && os != "Windows"]
 func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
     startedNs: UInt64): Unit {}
 
-@When[os != "macOS"]
+@When[os == "Windows"]
+func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
+    generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
+    return unsafe { cjgui_internal_renderer_owner_trace_managed_record(kind, session, turn, request, dispatch,
+        generation, phase, span, UInt64.Max, 0u8) }
+}
+
+@When[os != "macOS" && os != "Windows"]
 func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
     generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
     return 0u64
@@ -107,6 +145,11 @@ public class CjguiOwnerTurnBudget {
     private var limitNs: Int64 = 0
     private var idleNs: Int64 = 0
     private var turn: Int64 = 0
+    private var schedulingRevision: UInt64 = 0u64
+    private var schedulingWaitFinished: Bool = false
+    private var nextSchedulingWakeNs: Int64 = Int64.Max
+    private var readyContinuation: Bool = false
+    private var schedulingWait: (UInt64, UInt64) -> Int64 = cjguiWaitSchedulingWork
     private let preparedOwners = ArrayList<UInt64>()
     // A window deferred behind an earlier sibling keeps its turn in this
     // bounded queue. Input is still drained against each accepted scene;
@@ -131,6 +174,10 @@ public class CjguiOwnerTurnBudget {
         startedNs = now()
         limitNs = budgetMicroseconds.saturatingMul(1000)
         idleNs = 0
+        schedulingRevision = cjguiSchedulingWorkRevision()
+        schedulingWaitFinished = false
+        nextSchedulingWakeNs = Int64.Max
+        readyContinuation = false
         turn += 1
         refreshPriority = if (refreshWaiters.size > 0) {
             refreshWaiters[0]
@@ -174,6 +221,40 @@ public class CjguiOwnerTurnBudget {
         } else {
             (limitNs - work) / 1000
         }
+    }
+
+    /// Experimental scheduling wall clock. Idle credit belongs only to the
+    /// resource allowance above; it never extends this round's deadline.
+    public func remainingSchedulingMicroseconds(): Int64 {
+        if (!active) { return 0 }
+        let elapsed = max(0, now() - startedNs)
+        return if (elapsed >= limitNs) { 0 } else { (limitNs - elapsed) / 1000 }
+    }
+
+    func schedulingDeadlineNs(): UInt64 {
+        return if (active) { UInt64(startedNs.saturatingAdd(limitNs)) } else { 0u64 }
+    }
+
+    func needsReadyContinuation(): Unit { readyContinuation = true }
+
+    // Each live host contributes its existing animation/activity deadline to
+    // the one outer wait. Later siblings cannot extend an earlier deadline.
+    func limitSchedulingWait(microseconds: Int64): Unit {
+        if (!active || microseconds < 0) { return }
+        nextSchedulingWakeNs = min(nextSchedulingWakeNs, now().saturatingAdd(microseconds.saturatingMul(1000)))
+    }
+
+    /// Complete the serialized consumer round after every host and owner job.
+    /// One common condition wakes for any live host or resource completion.
+    /// Reentry and sibling hosts cannot renew the absolute deadline.
+    public func finishScheduling(): Int64 {
+        if (!active || schedulingWaitFinished) { return 0 }
+        schedulingWaitFinished = true
+        if (readyContinuation || remainingSchedulingMicroseconds() <= 0) { return 0 }
+        let wake = min(schedulingDeadlineNs(), UInt64(max(0, nextSchedulingWakeNs)))
+        let idle = schedulingWait(schedulingRevision, wake)
+        creditPumpIdle(idle)
+        return max(0, idle) / 1000
     }
 
     /// Diagnostic elapsed owner work for the active turn, excluding only
@@ -294,5 +375,9 @@ public class CjguiOwnerTurnBudget {
 
     func testUseClock(clock: () -> Int64): Unit {
         now = clock
+    }
+
+    func testUseSchedulingWait(wait: (UInt64, UInt64) -> Int64): Unit {
+        schedulingWait = wait
     }
 }

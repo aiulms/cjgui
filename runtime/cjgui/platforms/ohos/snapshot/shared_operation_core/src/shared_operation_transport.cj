@@ -3025,7 +3025,11 @@ public class CjguiSharedOperationExternalConnection {
         if (!body.isAvailable) {
             return errorPayload(body.failureReason)
         }
-        return "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND SNAPSHOT\n${body.body}END"
+        // Same native-transport discovery as the common core: this is identity, not authority.
+        let payload = "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND SNAPSHOT\n" +
+            "ENDPOINT_INSTANCE ${this.endpointInstanceValue}\nENDPOINT_BIND_GENERATION ${this.endpointGeneration}\n" +
+            "${body.body}END"
+        return if (isBoundedPayload(payload)) { payload } else { errorPayload("snapshot_over_budget") }
     }
 
     private func windowProgressPayload(

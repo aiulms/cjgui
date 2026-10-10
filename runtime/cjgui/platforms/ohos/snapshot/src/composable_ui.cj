@@ -1472,6 +1472,7 @@ public class CjguiComposableUiScrollViewport {
     // 与提交之间又来了更新的请求（B），必须按新合法范围夹紧后保留 B 的身份。
     private var requestGenerationValue: Int64 = 0
     private var stagedRequestGenerationValue: Int64 = 0
+    private var acceptedRequestGenerationValue: Int64 = 0
     // The layout's CANDIDATE facts for the solve currently in flight. They are
     // promoted only when the window accepts the scene that contains this
     // viewport, so a rejected/early-returned candidate can never leak into the
@@ -1581,6 +1582,13 @@ public class CjguiComposableUiScrollViewport {
     /// 请求代次（诊断/测试只读）：它与 requested 值同源，任何有效写入都推进。
     public func requestGeneration(): Int64 {
         return requestGenerationValue
+    }
+
+    /// Experimental: request identity carried by the currently accepted solve.
+    /// Offset refinement can change its geometry without changing this identity;
+    /// a rejected candidate or a later pending request cannot publish it.
+    public func acceptedRequestGeneration(): Int64 {
+        return acceptedRequestGenerationValue
     }
 
     public func scrollBy(delta: Int64): Bool {
@@ -1899,6 +1907,7 @@ public class CjguiComposableUiScrollViewport {
             // 身份：A 的接受只能确认 A，不能覆盖 B；也不把它记成 B 已确认。
             requestedOffsetValue = clamp(requestedOffsetValue)
         }
+        acceptedRequestGenerationValue = stagedRequestGenerationValue
         acceptedSolveCountValue += 1
         stagedSolvedValue = false
     }
@@ -1948,18 +1957,38 @@ public class CjguiComposableUiVirtualListState {
     private var lastViewportHeight: Int64
     private var lastRowStride: Int64
     private var anchorIntraRowOffsetValue: Int64
+    // One framework capture lease, never an unbounded keep-alive cache.
+    private var variableCaptureSerial: Int64 = 0
+    private var variableCaptureToken: Int64 = 0
+    private var variableCaptureKey: String = ""
+    private var variableCaptureTitle: String = ""
+    private var variableCaptureRevision: Int64 = -1
+    private var variableCaptureGeneration: Int64 = -1
     private var hasPendingUserScroll: Bool
     private var lastDataIssueValue: String
     // Variable-height entries are a sparse, bounded correction index over a
     // uniform unseen-row estimate. They contain no component tree or domain
     // content, so a 10,000-row source never becomes a 10,000-row UI cache.
+    // Bounded candidate diagnostic: one control and two anomalies per capture.
+    private var variableMeasurementSerial: Int64 = 0
+    private var variableEvictionSerial: Int64 = 0
+    private var variableDiagnosticEvictionStart: Int64 = 0
+    private var variableDiagnosticEvictionSeen: Bool = false
+    private var variableDiagnosticMismatchSeen: Bool = false
+    private var variableDiagnosticSamples: Int64 = 0
+    private var variableRecentMeasurements: ArrayList<String> = ArrayList<String>()
     private var variableHeightCache: ArrayList<CjguiComposableUiVariableHeightCacheEntry>
+    private var variableMeasurementCandidateActive: Bool = false
+    private var variableCandidateMeasurementKeys = ArrayList<String>()
+    private var variableCandidateMeasurementIssue: String = ""
     private var variableMeasurementWidth: Int64
     private var variableMeasurementGeneration: Int64
     private var variableAnchorIndexValue: Int64
     private var variableMaterializedOriginValue: Int64
     private var variableEstimatedHeightValue: Int64
     private var variableRowGapValue: Int64
+    private var sharedViewportIdentityValue: Int64 = -1
+    private var sharedViewportRequestGenerationValue: Int64 = -1
 
     public init() {
         this.scrollOffsetValue = 0
@@ -1980,6 +2009,22 @@ public class CjguiComposableUiVirtualListState {
         this.variableMaterializedOriginValue = 0
         this.variableEstimatedHeightValue = 1
         this.variableRowGapValue = 0
+    }
+
+    // A collection derives its materialized rows from the same window viewport
+    // that owns wheel, reveal and edge activity. Consume only a new request or
+    // a different viewport identity; an unchanged request keeps the collection's
+    // stable-key adjustment when row geometry/content changes.
+    func adoptSharedViewportRequest(viewport: CjguiComposableUiScrollViewport): Unit {
+        let identity = viewport.viewStateIdentity()
+        let generation = viewport.requestGeneration()
+        if (identity == sharedViewportIdentityValue && generation == sharedViewportRequestGenerationValue) {
+            return
+        }
+        sharedViewportIdentityValue = identity
+        sharedViewportRequestGenerationValue = generation
+        scrollOffsetValue = viewport.offset()
+        hasPendingUserScroll = true
     }
 
     public func scrollOffset(): Int64 {
@@ -2415,8 +2460,11 @@ public class CjguiComposableUiVirtualListState {
             let anchorIndex = liveVariableIndexForKey(source, count, anchorKeyValue)
             if (anchorIndex >= 0) {
                 variableAnchorIndexValue = anchorIndex
-                let rowHeight = variableHeightAtIndex(anchorIndex, estimate)
-                let intra = if (anchorIntraRowOffsetValue < rowHeight) {
+                // The offset locator assigns the trailing gap to this row.
+                // Preserve that same stride on the next layout; comparing only
+                // its painted height resets accepted offsets inside the gap.
+                let rowStride = variableHeightAtIndex(anchorIndex, estimate).saturatingAdd(gap)
+                let intra = if (anchorIntraRowOffsetValue < rowStride) {
                     anchorIntraRowOffsetValue
                 } else {
                     0
@@ -2554,6 +2602,74 @@ public class CjguiComposableUiVirtualListState {
         return true
     }
 
+    // Candidate pins are identities only, within the existing 128-entry
+    // measurement cache. A newly measured overscan/capture row cannot evict
+    // a row whose actual height this candidate will use for geometry.
+    func beginVariableMeasurementCandidate(): Unit {
+        variableCandidateMeasurementKeys = ArrayList<String>()
+        variableCandidateMeasurementIssue = ""
+        variableMeasurementCandidateActive = true
+    }
+    func endVariableMeasurementCandidate(): Unit {
+        variableCandidateMeasurementKeys = ArrayList<String>()
+        variableMeasurementCandidateActive = false
+    }
+    func variableMeasurementCandidateIssue(): String { return variableCandidateMeasurementIssue }
+    private func isVariableCandidateMeasurementKey(key: String): Bool {
+        for (candidate in variableCandidateMeasurementKeys) {
+            if (candidate == key) { return true }
+        }
+        return false
+    }
+    private func variableMeasurementEvictionIndex(): Int64 {
+        var index: Int64 = 0
+        while (index < variableHeightCache.size) {
+            if (!variableMeasurementCandidateActive ||
+                !isVariableCandidateMeasurementKey(variableHeightCache[index].key)) { return index }
+            index += 1
+        }
+        return -1
+    }
+    // Narrow the pins to the exact final ordinary rows before adding capture.
+    // Validate their frozen item and actual height before solving positions,
+    // source anchor and extents from the same remaining correction set.
+    func retainVariableCandidateMeasurements(rows: ArrayList<CjguiComposableUiNode>,
+        source: CjguiComposableUiVariableHeightListSource): String {
+        if (variableCandidateMeasurementIssue.size > 0) { return variableCandidateMeasurementIssue }
+        if (rows.size > CJGUI_COMPOSABLE_UI_MAX_VIRTUAL_MATERIALIZED_ROWS) {
+            return "variable_candidate_measurement_budget"
+        }
+        if (source.measurementGeneration() != variableMeasurementGeneration) {
+            return "variable_candidate_measurement_generation"
+        }
+        let keys = ArrayList<String>()
+        for (row in rows) {
+            let key = row.variableRowKey()
+            if (key.size == 0) { continue }
+            for (prior in keys) {
+                if (prior == key) { return "variable_candidate_measurement_duplicate" }
+            }
+            let index = source.indexForKey(key)
+            if (index < 0 || index >= normalizedCount(source.itemCount())) {
+                return "variable_candidate_measurement_source"
+            }
+            let item = source.itemAt(index)
+            let cacheIndex = variableCacheIndexForKey(key)
+            if (item.key != key || item.title != row.variableRowTitle() ||
+                item.layoutRevision != row.variableRowRevision() || cacheIndex < 0) {
+                return "variable_candidate_measurement_identity"
+            }
+            let entry = variableHeightCache[cacheIndex]
+            if (!entry.measured || entry.liveIndex != index || entry.title != item.title ||
+                entry.layoutRevision != item.layoutRevision || entry.resolvedHeight != row.layoutHeightOverride()) {
+                return "variable_candidate_measurement_geometry"
+            }
+            keys.add(key)
+        }
+        variableCandidateMeasurementKeys = keys
+        return ""
+    }
+
     /// The materializer calls this only after building an ordinary visible
     /// subtree and asking the existing text/layout measurer for its height.
     func recordVariableMeasurement(item: CjguiComposableUiVariableHeightListItem, height: Int64, index: Int64): Unit {
@@ -2565,7 +2681,32 @@ public class CjguiComposableUiVirtualListState {
         } else {
             variableEstimateForItem(item, variableEstimatedHeightValue)
         }
+        if (variableMeasurementCandidateActive && !isVariableCandidateMeasurementKey(item.key)) {
+            if (variableCandidateMeasurementKeys.size >= CJGUI_COMPOSABLE_UI_MAX_VIRTUAL_MATERIALIZED_ROWS) {
+                variableCandidateMeasurementIssue = "variable_candidate_measurement_budget"
+                return
+            }
+            variableCandidateMeasurementKeys.add(item.key)
+        }
         let cacheIndex = variableCacheIndexForKey(item.key)
+        let evictionIndex = if (cacheIndex < 0 && variableHeightCache.size >= 128) {
+            variableMeasurementEvictionIndex()
+        } else { -1 }
+        if (cacheIndex < 0 && variableHeightCache.size >= 128 && evictionIndex < 0) {
+            variableCandidateMeasurementIssue = "variable_candidate_measurement_budget"
+            return
+        }
+        variableMeasurementSerial += 1
+        var removed = "none"
+        if (cacheIndex < 0 && variableHeightCache.size >= 128) {
+            let entry = variableHeightCache[evictionIndex]
+            removed = "${entry.key}:${entry.liveIndex}:${entry.resolvedHeight}"
+            variableEvictionSerial += 1
+        }
+        if (variableRecentMeasurements.size >= 8) { let _ = variableRecentMeasurements.remove(at: 0) }
+        variableRecentMeasurements.add("measure=${variableMeasurementSerial} key=${item.key} index=${index} " +
+            "revision=${item.layoutRevision} width=${variableMeasurementWidth} height=${resolved} " +
+            "estimate=${variableEstimatedHeightValue} op=${if (cacheIndex >= 0) { "update" } else { "add" }} evict=${removed}")
         if (cacheIndex >= 0) {
             let entry = variableHeightCache[cacheIndex]
             entry.title = item.title
@@ -2576,7 +2717,7 @@ public class CjguiComposableUiVirtualListState {
             return
         }
         if (variableHeightCache.size >= 128) {
-            let _ = variableHeightCache.remove(at: 0)
+            let _ = variableHeightCache.remove(at: evictionIndex)
         }
         variableHeightCache.add(
             CjguiComposableUiVariableHeightCacheEntry(
@@ -2588,6 +2729,70 @@ public class CjguiComposableUiVirtualListState {
                 index
             )
         )
+    }
+
+    func retainVariableCapture(key: String, title: String, revision: Int64, generation: Int64): Int64 {
+        if (key.size == 0 || variableCaptureToken != 0 || variableCaptureSerial == Int64.Max) { return 0 }
+        variableCaptureSerial += 1
+        variableCaptureToken = variableCaptureSerial
+        variableDiagnosticSamples = 0
+        variableDiagnosticEvictionStart = variableEvictionSerial
+        variableDiagnosticEvictionSeen = false
+        variableDiagnosticMismatchSeen = false
+        variableCaptureKey = key; variableCaptureTitle = title
+        variableCaptureRevision = revision; variableCaptureGeneration = generation
+        return variableCaptureToken
+    }
+    func releaseVariableCapture(token: Int64): Bool {
+        if (token <= 0 || token != variableCaptureToken) { return false }
+        variableCaptureToken = 0; variableCaptureKey = ""; variableCaptureTitle = ""
+        variableCaptureRevision = -1; variableCaptureGeneration = -1
+        return true
+    }
+    func retainedVariableCaptureIndex(source: CjguiComposableUiVariableHeightListSource): Int64 {
+        if (variableCaptureToken <= 0 || source.measurementGeneration() != variableCaptureGeneration) { return -1 }
+        let index = source.indexForKey(variableCaptureKey)
+        if (index < 0 || index >= normalizedCount(source.itemCount())) { return -1 }
+        let item = source.itemAt(index)
+        return if (item.key == variableCaptureKey && item.title == variableCaptureTitle &&
+            item.layoutRevision == variableCaptureRevision) { index } else { -1 }
+    }
+    func variableCandidateDiagnostic(rows: ArrayList<CjguiComposableUiNode>, source: CjguiComposableUiVariableHeightListSource): String {
+        if (variableCaptureToken <= 0 || variableDiagnosticSamples >= 3) { return "" }
+        var mismatch = false
+        var rowFacts = ""
+        var previousIndex: Int64 = -2
+        var previousEnd: Int64 = 0
+        for (row in rows) {
+            let index = source.indexForKey(row.variableRowKey())
+            let offset = row.variableRowOffset()
+            let height = row.layoutHeightOverride()
+            let cacheIndex = variableCacheIndexForKey(row.variableRowKey())
+            let cached = if (cacheIndex >= 0) { variableHeightCache[cacheIndex].resolvedHeight } else { variableEstimatedHeightValue }
+            let contiguous = index == previousIndex + 1
+            if (height != cached || (contiguous && offset != previousEnd + variableRowGapValue)) { mismatch = true }
+            rowFacts += "\nrow=${row.nodeId} key=${row.variableRowKey()} index=${index} revision=${row.variableRowRevision()} " +
+                "offset=${offset} height=${height} cache=${cached} gap=${variableRowGapValue} measure=${variableMeasurementSerial}"
+            previousIndex = index; previousEnd = offset + height
+        }
+        if (variableDiagnosticSamples > 0) {
+            if (mismatch && !variableDiagnosticMismatchSeen) { variableDiagnosticMismatchSeen = true }
+            else if (!variableDiagnosticEvictionSeen && variableEvictionSerial > variableDiagnosticEvictionStart) {
+                variableDiagnosticEvictionSeen = true
+            } else { return "" }
+        }
+        variableDiagnosticSamples += 1
+        var mutations = ""
+        for (mutation in variableRecentMeasurements) { mutations += "\n${mutation}" }
+        return "sample=${variableDiagnosticSamples} mismatch=${mismatch} evictions=${variableEvictionSerial} viewport=${sharedViewportIdentityValue} " +
+            "request=${sharedViewportRequestGenerationValue} anchor=${anchorKeyValue} anchorIndex=${variableAnchorIndexValue} " +
+            "intra=${anchorIntraRowOffsetValue} captureKey=${variableCaptureKey} width=${variableMeasurementWidth} " +
+            "sourceGeneration=${variableMeasurementGeneration} measure=${variableMeasurementSerial} " +
+            "origin=${variableMaterializedOriginValue} offset=${scrollOffsetValue}" + rowFacts + mutations
+    }
+
+    func variableRowOffset(index: Int64, count: Int64): Int64 {
+        return variableOffsetForIndex(count, index, variableEstimatedHeightValue, variableRowGapValue)
     }
 
     private func variableTotalHeight(count: Int64, estimate: Int64, gap: Int64): Int64 {
@@ -2894,11 +3099,11 @@ public class CjguiComposableUiTextStyleRun {
     public let backgroundGreen: Float64
     public let backgroundBlue: Float64
     public let backgroundAlpha: Float64
+    private let selectionBackgroundOnly: Bool
 
-    public init(start: Int64, end: Int64, fontSize: Float64, fontWeight: Int64,
-        fontFamily: String, red: Float64, green: Float64, blue: Float64, alpha: Float64,
-        hasBackground!: Bool = false, backgroundRed!: Float64 = 0.0, backgroundGreen!: Float64 = 0.0,
-        backgroundBlue!: Float64 = 0.0, backgroundAlpha!: Float64 = 1.0) {
+    public init(start: Int64, end: Int64, fontSize: Float64, fontWeight: Int64, fontFamily: String, red: Float64,
+        green: Float64, blue: Float64, alpha: Float64, hasBackground!: Bool = false, backgroundRed!: Float64 = 0.0,
+        backgroundGreen!: Float64 = 0.0, backgroundBlue!: Float64 = 0.0, backgroundAlpha!: Float64 = 1.0) {
         this.start = start
         this.end = end
         this.fontSize = fontSize
@@ -2913,7 +3118,36 @@ public class CjguiComposableUiTextStyleRun {
         this.backgroundGreen = backgroundGreen
         this.backgroundBlue = backgroundBlue
         this.backgroundAlpha = backgroundAlpha
+        this.selectionBackgroundOnly = false
     }
+
+    private init(start: Int64, end: Int64, color: CjguiComposableUiColor) {
+        this.start = start
+        this.end = end
+        this.fontSize = 0.0
+        this.fontWeight = 0
+        this.fontFamily = "system"
+        this.red = 0.0
+        this.green = 0.0
+        this.blue = 0.0
+        this.alpha = 0.0
+        this.hasBackground = true
+        this.backgroundRed = color.red
+        this.backgroundGreen = color.green
+        this.backgroundBlue = color.blue
+        this.backgroundAlpha = color.alpha
+        this.selectionBackgroundOnly = true
+    }
+
+    /// Experimental: an OHOS selection decoration applied over ordinary runs.
+    /// Admission validates the range against the actual UTF-8 display value.
+    /// The OHOS backend consumes the same tagged background-only wire contract.
+    public static func selectionBackground(start: Int64, end: Int64,
+        color: CjguiComposableUiColor): CjguiComposableUiTextStyleRun {
+        return CjguiComposableUiTextStyleRun(start, end, color)
+    }
+
+    func isSelectionBackground(): Bool { return selectionBackgroundOnly }
 
     /// The wire form the renderer accepts: one run per `;`, fields separated by
     /// `:` as start:end:fontSize:weight:family:r:g:b:a.
@@ -2932,10 +3166,38 @@ public class CjguiComposableUiTextStyleRun {
         } else {
             0
         }
-        return "${this.start}:${this.end}:${this.fontSize}:${this.fontWeight}:${family}:" +
+        let ordinary = "${this.start}:${this.end}:${this.fontSize}:${this.fontWeight}:${family}:" +
             "${this.red}:${this.green}:${this.blue}:${this.alpha}:${background}:" +
             "${this.backgroundRed}:${this.backgroundGreen}:${this.backgroundBlue}:${this.backgroundAlpha}"
+        return if (selectionBackgroundOnly) { ordinary + ":1" } else { ordinary }
     }
+}
+
+func cjguiSelectionBackgroundRunsRejection(value: String,
+    runs: Array<CjguiComposableUiTextStyleRun>): ?String {
+    var decorations: Int64 = 0
+    var bytes: ?Array<UInt8> = None
+    for (run in runs) {
+        if (!run.isSelectionBackground()) { continue }
+        decorations += 1
+        if (decorations > 1024 || runs.size > 2048 || value.size > 65536) {
+            return Some("selection_background_budget_exceeded")
+        }
+        if (run.start < 0 || run.end <= run.start || run.end > Int64(value.size) ||
+            run.end > Int64(UInt32.Max)) { return Some("selection_background_range_invalid") }
+        if (bytes.isNone()) { bytes = Some(value.toArray()) }
+        let actual = bytes.getOrThrow()
+        if ((run.start < actual.size && (actual[run.start] & 0xC0) == 0x80) ||
+            (run.end < actual.size && (actual[run.end] & 0xC0) == 0x80)) {
+            return Some("selection_background_utf8_boundary_invalid")
+        }
+        for (component in [run.backgroundRed, run.backgroundGreen, run.backgroundBlue, run.backgroundAlpha]) {
+            if (component != component || component < 0.0 || component > 1.0) {
+                return Some("selection_background_color_invalid")
+            }
+        }
+    }
+    return None
 }
 
 /// One Cangjie-owned component declaration.  `resourceId` and `actionName`
@@ -3035,6 +3297,12 @@ public class CjguiComposableUiNode {
     private let virtualListOverscanValue: Int64
     private let virtualContentHeightValue: Int64
     private let virtualVerticalOriginValue: Int64
+    // Current materialization facts only; rows are rebuilt from their live source.
+    private var variableRowKeyValue: String = ""
+    private var variableCandidateDiagnosticValue: String = ""
+    private var variableRowTitleValue: String = ""
+    private var variableRowRevisionValue: Int64 = -1
+    private var variableRowOffsetValue: Int64 = -1
     // Layer metadata remains entirely in Cangjie. `layerId` is a stable
     // identity, while `layerKind` is a descriptive projection value rather
     // than a native menu/dialog switch.
@@ -3269,6 +3537,21 @@ public class CjguiComposableUiNode {
     func virtualContentHeight(): Int64 {
         return virtualContentHeightValue
     }
+    func markVariableRow(key: String, title: String, revision: Int64): Unit {
+        variableRowKeyValue = key; variableRowTitleValue = title; variableRowRevisionValue = revision
+    }
+    func variableRowKey(): String { return variableRowKeyValue }
+    func setVariableCandidateDiagnostic(value: String): Unit { variableCandidateDiagnosticValue = value }
+    func takeVariableCandidateDiagnostic(): String {
+        let value = variableCandidateDiagnosticValue
+        variableCandidateDiagnosticValue = ""
+        return value
+    }
+    func variableRowTitle(): String { return variableRowTitleValue }
+    func variableRowRevision(): Int64 { return variableRowRevisionValue }
+    func setVariableRowOffset(offset: Int64): Unit { variableRowOffsetValue = offset }
+    func variableRowOffset(): Int64 { return variableRowOffsetValue }
+
     func virtualVerticalOrigin(): Int64 {
         return virtualVerticalOriginValue
     }
@@ -3371,7 +3654,8 @@ public class CjguiComposableUiNode {
     /// window rewrite an already-accepted public projection. Sources and
     /// their domain-owned list state remain references, while transient
     /// materialised rows are rebuilt only for this candidate.
-    func cloneForWindowCandidate(): CjguiComposableUiNode {
+    func cloneForWindowCandidate(includeChildren!: Bool = true,
+        virtualContentHeightOverride!: Int64 = -1, virtualVerticalOriginOverride!: Int64 = -1): CjguiComposableUiNode {
         let cloned = CjguiComposableUiNode(nodeId, semanticId, nodeKind, label, value, actionName, resourceId, style,
             // The window snapshots the declaration; presentation runs are part of
             // the declaration and must survive the snapshot, otherwise every
@@ -3389,7 +3673,8 @@ public class CjguiComposableUiNode {
             variableHeightListSource: variableHeightListSourceValue, virtualListState: virtualListStateValue,
             virtualListContentNodeId: virtualListContentNodeIdValue, virtualListRowHeight: virtualListRowHeightValue,
             virtualListRowGap: virtualListRowGapValue, virtualListOverscan: virtualListOverscanValue,
-            virtualContentHeight: virtualContentHeightValue, virtualVerticalOrigin: virtualVerticalOriginValue,
+            virtualContentHeight: if (virtualContentHeightOverride >= 0) { virtualContentHeightOverride } else { virtualContentHeightValue },
+            virtualVerticalOrigin: if (virtualVerticalOriginOverride >= 0) { virtualVerticalOriginOverride } else { virtualVerticalOriginValue },
             layerId: layerIdValue, layerKind: layerKindValue, layerOwnerSemanticId: layerOwnerSemanticIdValue,
             layerAnchorSemanticId: layerAnchorSemanticIdValue, layerAnchorNodeId: layerAnchorNodeIdValue,
             layerAnchorReference: layerAnchorReferenceValue, layerIsModal: layerIsModalValue,
@@ -3403,13 +3688,21 @@ public class CjguiComposableUiNode {
             interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
             semanticIncarnation: semanticIncarnation,
             identity: scopedIdentityValue)
+        cloned.markVariableRow(variableRowKeyValue, variableRowTitleValue, variableRowRevisionValue)
+        cloned.setVariableRowOffset(variableRowOffsetValue)
         var ownsVirtualChildren = false
         if (let Some(_) <- virtualListSourceValue) { ownsVirtualChildren = true }
         if (let Some(_) <- variableHeightListSourceValue) { ownsVirtualChildren = true }
-        if (!ownsVirtualChildren) {
+        if (includeChildren && !ownsVirtualChildren) {
             for (child in childNodes) {
                 cloned.add(child.cloneForWindowCandidate())
             }
+        } else if (includeChildren && variableHeightListSourceValue.isSome() && childNodes.size == 1 &&
+            childNodes[0].nodeId == virtualListContentNodeIdValue &&
+            childNodes[0].nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) {
+            // Preserve the declared content identity and input metadata, but
+            // never copy previously materialized rows into a new candidate.
+            cloned.add(childNodes[0].cloneForWindowCandidate(includeChildren: false))
         }
         return cloned
     }
@@ -4763,8 +5056,15 @@ public class CjguiComposableUiScene {
         this.version = version
         this.viewport = viewport
         this.resolvedNodes = ArrayList<CjguiComposableUiLayoutNode>(nodes)
-        this.validValue = valid
-        this.layoutErrorValue = layoutError
+        var decorationError = ""
+        for (node in nodes) {
+            if (let Some(reason) <- cjguiSelectionBackgroundRunsRejection(node.value, node.textStyleRuns)) {
+                decorationError = reason
+                break
+            }
+        }
+        this.validValue = valid && decorationError.isEmpty()
+        this.layoutErrorValue = if (decorationError.isEmpty()) { layoutError } else { decorationError }
     }
     public func nodes(): ArrayList<CjguiComposableUiLayoutNode> {
         return ArrayList<CjguiComposableUiLayoutNode>(resolvedNodes)
@@ -5521,6 +5821,7 @@ public class CjguiComposableUiLayoutReuseCache {
         appendInt(builder, byteCount, cacheable, node.layoutHeightOverride())
         appendInt(builder, byteCount, cacheable, node.virtualContentHeight())
         appendInt(builder, byteCount, cacheable, node.virtualVerticalOrigin())
+        appendInt(builder, byteCount, cacheable, node.variableRowOffset())
         appendString(builder, byteCount, cacheable, node.explicitInputScopeId())
         appendStyle(builder, byteCount, cacheable, node.style)
         let children = node.children()
@@ -5974,7 +6275,9 @@ public class CjguiComposableUiLayoutEngine {
             } else {
                 0
             }
-            let offset = if (let Some(viewport) <- node.scrollViewport) {
+            let offset = if (node.variableHeightListSource().isSome() && node.virtualListState().isSome()) {
+                node.scrollOffset
+            } else if (let Some(viewport) <- node.scrollViewport) {
                 // A viewport-bound scroll area takes its offset from the PUBLIC
                 // viewport: that ONE view state is shared by the author, the
                 // wheel, the keyboard reveal and the accepted scene. The
@@ -6292,7 +6595,11 @@ public class CjguiComposableUiLayoutEngine {
         source: CjguiComposableUiVariableHeightListSource, state: CjguiComposableUiVirtualListState,
         inner: CjguiComposableUiRect, measurer: CjguiComposableUiTextMeasurer,
         work: CjguiComposableUiLayoutWorkCounter, identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
+        if (let Some(viewport) <- node.scrollViewport) {
+            state.adoptSharedViewportRequest(viewport)
+        }
         state.prepareVariableMeasurementContext(source, inner.width)
+        state.beginVariableMeasurementCandidate()
         let _ = state.updateVariableMaterializedRange(source, node.virtualListRowHeight(), node.virtualListRowGap(),
             inner.height, node.virtualListOverscan())
         let count = if (source.itemCount() > 0) {
@@ -6305,6 +6612,7 @@ public class CjguiComposableUiLayoutEngine {
         let measuredRows = buildVariableHeightRows(node, source, state, builtStart, builtEnd, inner.width, measurer,
             work, identityRegistry)
         if (work.dynamicIdentityIssue.size > 0) {
+            state.endVariableMeasurementCandidate()
             return
         }
         let viewportEnd = state.scrollOffset().saturatingAdd(if (inner.height > 0) {
@@ -6323,6 +6631,7 @@ public class CjguiComposableUiLayoutEngine {
                 work, identityRegistry)
             measuredRows.add(all: appended)
             if (work.dynamicIdentityIssue.size > 0) {
+                state.endVariableMeasurementCandidate()
                 return
             }
             builtEnd = nextEnd
@@ -6337,6 +6646,7 @@ public class CjguiComposableUiLayoutEngine {
             measuredRows.add(all: buildVariableHeightRows(node, source, state, builtEnd, nextEnd, inner.width, measurer,
                 work, identityRegistry))
             if (work.dynamicIdentityIssue.size > 0) {
+                state.endVariableMeasurementCandidate()
                 return
             }
             builtEnd = nextEnd
@@ -6367,27 +6677,64 @@ public class CjguiComposableUiLayoutEngine {
             // just the current bounded range and publish its own final total;
             // normal stable sources always take the reuse branch above.
             state.noteDataIssue("range_changed_during_measurement")
+            state.beginVariableMeasurementCandidate()
             finalRows.add(all: buildVariableHeightRows(node, source, state, finalStart, finalEnd, inner.width, measurer,
                 work, identityRegistry))
             if (work.dynamicIdentityIssue.size > 0) {
+                state.endVariableMeasurementCandidate()
                 return
             }
             totalHeight = state.updateVariableMaterializedRange(source, node.virtualListRowHeight(),
                 node.virtualListRowGap(), inner.height, node.virtualListOverscan())
         }
+        let ordinaryMeasurementIssue = state.retainVariableCandidateMeasurements(finalRows, source)
+        if (ordinaryMeasurementIssue.size > 0) {
+            work.dynamicIdentityIssue = ordinaryMeasurementIssue
+            state.endVariableMeasurementCandidate()
+            return
+        }
+        // Rebuild at most one captured row outside the visible interval. Keep
+        // its stable identity through ordinary accepted layout, rather than
+        // relaxing capture gates or replaying an old row/geometry snapshot.
+        let retainedIndex = state.retainedVariableCaptureIndex(source)
+        if (retainedIndex >= 0 && (retainedIndex < finalStart || retainedIndex >= finalEnd) &&
+            finalRows.size < CJGUI_COMPOSABLE_UI_MAX_VIRTUAL_MATERIALIZED_ROWS) {
+            let retained = buildVariableHeightRows(node, source, state, retainedIndex, retainedIndex + 1,
+                inner.width, measurer, work, identityRegistry)
+            if (work.dynamicIdentityIssue.size > 0) { state.endVariableMeasurementCandidate(); return }
+            finalRows.add(all: retained)
+        }
+        let finalMeasurementIssue = state.retainVariableCandidateMeasurements(finalRows, source)
+        if (finalMeasurementIssue.size > 0) {
+            work.dynamicIdentityIssue = finalMeasurementIssue
+            state.endVariableMeasurementCandidate()
+            return
+        }
+        // Sparse rows retain their logical position; adding an offscreen row
+        // cannot shift the visible range or create a huge spacer allocation.
+        for (row in finalRows) {
+            if (row.variableRowKey().size == 0) { continue }
+            let index = source.indexForKey(row.variableRowKey())
+            if (index >= 0 && index < count && source.itemAt(index).key == row.variableRowKey()) {
+                row.setVariableRowOffset(state.variableRowOffset(index, count))
+            }
+        }
+        totalHeight = state.updateVariableMaterializedRange(source, node.virtualListRowHeight(),
+            node.virtualListRowGap(), inner.height, node.virtualListOverscan())
         node.scrollOffset = state.scrollOffset()
-        let content = CjguiComposableUiNode(
-            node.virtualListContentNodeId(),
-            "${node.semanticId}_materialized",
-            CJGUI_COMPOSABLE_UI_VERTICAL,
-            "",
-            "",
-            "",
-            -1,
-            CjguiComposableUiStyle(gap: node.virtualListRowGap()),
-            virtualContentHeight: totalHeight,
-            virtualVerticalOrigin: state.variableMaterializedOrigin()
-        )
+        node.setVariableCandidateDiagnostic(state.variableCandidateDiagnostic(finalRows, source))
+        let templates = node.children()
+        let template: ?CjguiComposableUiNode = if (templates.size == 1 && templates[0].nodeId == node.virtualListContentNodeId() &&
+            templates[0].nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) { Some(templates[0]) } else { None }
+        let content = if (let Some(value) <- template) {
+            value.cloneForWindowCandidate(includeChildren: false, virtualContentHeightOverride: totalHeight,
+                virtualVerticalOriginOverride: state.variableMaterializedOrigin())
+        } else {
+            CjguiComposableUiNode(node.virtualListContentNodeId(), "${node.semanticId}_materialized",
+                CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, CjguiComposableUiStyle(gap: node.virtualListRowGap()),
+                virtualContentHeight: totalHeight, virtualVerticalOrigin: state.variableMaterializedOrigin())
+        }
+        state.endVariableMeasurementCandidate()
         content.replaceChildren(finalRows)
         node.replaceChildren(ArrayList<CjguiComposableUiNode>([content]))
         if (let Some(registry) <- identityRegistry) {
@@ -6432,7 +6779,12 @@ public class CjguiComposableUiLayoutEngine {
                 }
                 let measuredHeight = preferredHeight(row, availableWidth, measurer)
                 row.forceLayoutHeight(measuredHeight)
+                row.markVariableRow(item.key, item.title, item.layoutRevision)
                 state.recordVariableMeasurement(item, measuredHeight, index)
+                if (state.variableMeasurementCandidateIssue().size > 0) {
+                    work.dynamicIdentityIssue = state.variableMeasurementCandidateIssue()
+                    return rows
+                }
                 rows.add(row)
             } else {
                 state.noteDataIssue(if (item.key.size == 0) {
@@ -6549,7 +6901,10 @@ public class CjguiComposableUiLayoutEngine {
             let height = heights[index]
             let width = widths[index]
             let x = alignedOrigin(inner.x, inner.width, width, child.style.alignX)
-            layoutNodeOrReuse(child, CjguiComposableUiRect(x, cursor, width, height), clipConstraints, output, measurer,
+            let rowY = if (owner.virtualContentHeight() > 0 && child.variableRowOffset() >= 0) {
+                inner.y + child.variableRowOffset()
+            } else { cursor }
+            layoutNodeOrReuse(child, CjguiComposableUiRect(x, rowY, width, height), clipConstraints, output, measurer,
                 inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
             cursor += height + gap
             index += 1

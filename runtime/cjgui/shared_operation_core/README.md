@@ -5,6 +5,17 @@ operation descriptor. It is deliberately generic: resources, actions and
 parameter shapes come from the running application, not from this repository
 or a hard-coded consumer list.
 
+This directory holds **two** clients over the same descriptor and the same
+permission system, and both are documented here:
+
+| Client | What it is for |
+| --- | --- |
+| `client.py` | The generic CLI/importable API: read resources and live content, invoke dynamically named actions, observe changes. See [CLI workflow](#cli-workflow). |
+| `cjgui_generated_client.py` | The typed client for **runtime-generated UI**: discover published capabilities, read the accepted structure, submit a candidate structure and observe acceptance. See [Runtime-generated UI](#runtime-generated-ui-experimental). |
+
+Neither adds a business owner, a model runtime or a second permission gateway;
+a caller may use one or both against a single running application.
+
 ## Start a shared-document window
 
 The normal document window starts **without** an external endpoint:
@@ -227,6 +238,109 @@ compare-and-swap primitive. A non-CJGUI process that changes the file after the
 last comparison and does not honor the lock can still race the final rename.
 For shared ownership, have every writer use the CJGUI binding/lock or a
 separate application-level coordinator.
+
+## Runtime-generated UI (experimental)
+
+An application may register the components, fields and actions it is willing to
+publish, and let an external caller build **and later modify** interface structure at
+runtime. The generated structure enters the same accepted component/layout/scene
+chain as a hand-written one, and the fields, drafts and actions still belong to the
+original business owner: a generated control and a hand-written control share one
+state, not two.
+
+An application opts in by registering a capability catalog and a structure holder
+(`CjguiGeneratedUiCapabilityCatalog` / `CjguiGeneratedUiStructureHolder`) and
+implementing `CjguiGeneratedUiBindingProvider` for live draft/applied values and
+action executability. The registration side and the candidate text grammar are
+described in the main [runtime README](../README.md#运行时生成式接入experimental已接通公开闭环).
+
+### CLI
+
+The same `client.py` exposes the generated-UI reads and the structure compare-and-swap:
+
+```sh
+python3 client.py "$DESCRIPTOR" --json generated-capabilities   # kinds, properties, fields, actions, bounds
+python3 client.py "$DESCRIPTOR" --json generated-structure      # accepted structure + structure version
+python3 client.py "$DESCRIPTOR" --json generated-fields         # live draft/applied/error/focus/selection projection
+python3 client.py "$DESCRIPTOR" --json generated-instances      # accepted instances addressed by declared key
+python3 client.py "$DESCRIPTOR" --json generated-snapshot       # ONE atomic snapshot: cursor, owner/scene facts, sections
+python3 client.py "$DESCRIPTOR" --json generated-submit \
+  --structure-version N --payload-file candidate.txt            # SUBMIT_GENERATED_UI, structure CAS
+python3 client.py "$DESCRIPTOR" --json generated-candidate --token T   # the outcome of one submit attempt
+```
+
+`generated-capabilities` publishes, per field, the contract the caller needs — type,
+shared resource, owner write operation, declared constraints and current
+executability — so a caller never has to guess which operation a field belongs to:
+
+```
+FIELD <fieldId> <editorKind> resource=<shared-resource-id> writer=<owner-operation|none> required=<0|1> min=<n> max=<n> callable=<0|1>
+```
+
+### Candidate format
+
+The candidate encoding is replaceable; the value model, not the byte layout, is the
+contract (`CjguiGeneratedUiEncoding` is the thin adapter). A text candidate looks like:
+
+```
+GENERATED_UI_STRUCTURE 1
+NODE 0 panel vertical
+NODE 1 nameField textInput field=label
+PROPERTY 1 nameField label 生成输入框
+NODE 1 applyBtn action action=APPLY_DRAFT
+PROPERTY 1 applyBtn label 应用草稿
+END
+```
+
+Every rejection carries a concrete position and reason **and keeps the previous
+accepted structure and its routing** — a failed candidate never partially replaces a
+working interface: `unknown_component` / `unknown_property` / `duplicate_key` /
+`unknown_action` / `unknown_field` / `max_depth_exceeded` / `max_nodes_exceeded` /
+`property_too_long` / `structure_version_conflict` / `malformed_node`.
+
+### Typed client
+
+`cjgui_generated_client.py` turns the same line protocols into typed objects, so a
+Python consumer (or a model-driven bridge) does not re-implement a parser or hard-code
+an action name, a field id or a resource id:
+
+```python
+from cjgui_generated_client import GeneratedNode, GeneratedUiSession
+
+session = GeneratedUiSession.connect(descriptor_path)
+capabilities = session.capabilities()            # discover what the app will present
+before = session.structure()                     # accepted version to CAS against
+result = session.submit(nodes, before.version)   # returns an attempt ticket
+state = session.wait_for_candidate(result.ticket())
+```
+
+A token is allocated per attempt, so two submitters sharing a base version stay
+distinguishable. The module re-exports the fixed-snapshot lease helpers from
+`client.py` rather than re-implementing them, so both clients keep one wire line and
+one parser.
+
+### What is deliberately not here
+
+- **No UI-presentation claim.** Reading the accepted structure or geometry says what
+  the window accepted, not what a GPU displayed. `WINDOW_PRESENTATION_STATE
+  unavailable` retains that honest platform limit for both clients.
+- **No automatic merge and no automatic replay.** A stale version, a rejected
+  candidate, a superseded candidate, a closed endpoint and a timeout are **different**
+  results and are reported separately; retrying a `4`/`5`/`6` blindly is wrong here too.
+
+### Examples and tests
+
+- `example_generated_consumption.py` — discover → build → submit → wait → read back, with no hard-coded action, field or resource name.
+- `example_generated_observation.py`, `example_generated_candidate_race.py` — incremental observation and concurrent submitters.
+- `test_generated_client*.py` — typed-client, deadline, observation, TCP-forward and ticket coverage.
+- [`examples/generated_panel_consumer/`](../examples/generated_panel_consumer/) — a normal consumer in the framework tree.
+
+Contract, acceptance and phase plan:
+[generation contract](../../../docs/core/AI_NATIVE_UI_SEMANTICS.md#运行时生成与修改界面) ·
+[runtime-generated-UI acceptance](../../../docs/core/CJGUI_UI_FRAMEWORK_COMPLETENESS_CRITERIA.md#运行时生成式界面验收) ·
+[phase plan](../../../docs/plans/2026-09-19-runtime-generated-ui-milestone.md).
+Whether a given capability is implemented is stated in
+[ACTIVE_DIRECTION.md](../ACTIVE_DIRECTION.md), not here.
 
 ## Fair-scheduling performance baseline
 

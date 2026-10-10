@@ -289,6 +289,7 @@ struct InternalRendererPumpResult {{
 }}
 
 struct InternalRendererProxyRestoreTicket {{
+    let deadlineMonoMs: Int64 = 9000
     let requestId: UInt64
     let contextId: Int64
     let contextGeneration: UInt64
@@ -532,6 +533,9 @@ func internalRendererTakeHumanSelectionAnchor(session: UInt64, nodeId: Int64, re
     return (harnessAnchorStatus, harnessAnchorSeq)
 }}
 
+func internalRendererPublishRestoredChoice(session: UInt64,request:UInt64,basis:String): Bool {{return true}}
+func internalRendererFinishRefusedInput(session:UInt64,ticket:Int64,request:UInt64,basis:String): Bool {{return true}}
+
 func internalRendererConsumeProxyRestoreTicket(session: UInt64, requestId: UInt64,
     adoptedStart: Int64, adoptedEnd: Int64): Bool {{
     harnessTicketConsumeCalls += 1
@@ -620,6 +624,7 @@ class CjguiComposableUiWindow {{
     var textSessionRestores: Int64 = 0
     var textSessionRestoreFailures: Int64 = 0
     var lastNativeFailure: String = ""
+    var refusedOhosInputId: Int64 = 0
     var refusedRangeTextPending: Bool = false
     var refusedRangeTextNodeId: Int64 = -1
     var refusedRangeTextResourceId: Int64 = -1
@@ -692,8 +697,12 @@ class CjguiComposableUiWindow {{
         sessionContentVersion: Int64, session: ?CjguiTextSession, requestId: UInt64,
         bindingEpoch: UInt64, projectionVersion: UInt64, canonicalStart: Int64, canonicalEnd: Int64,
         refusalRecovery!: Bool = false, receiptEpoch!: Int64 = 1, receiptMirror!: Int64 = 2): Unit {{
+        let requested = match (session) {{
+            case Some(value) => value.selection16()
+            case None => (canonicalStart, canonicalEnd)
+        }}
         pendingPlatformRestore = Some(CjguiPendingPlatformRestore(nodeId, resourceId, nodeKind,
-            acceptedVersion, canonicalStart, canonicalEnd, receiptEpoch, receiptMirror, refusalRecovery,
+            acceptedVersion, requested[0], requested[1], receiptEpoch, receiptMirror, refusalRecovery,
             sessionContentVersion, session,
             InternalRendererProxyRestoreTicket(requestId, 7, 3u64, bindingEpoch, projectionVersion,
                 canonicalStart, canonicalEnd)))

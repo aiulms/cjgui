@@ -288,14 +288,23 @@ public func cjguiUtf8Length(value: String): Int64 {
 }
 
 /// UTF-16 code-unit length, which is the unit AppKit reports.
+// String owns valid UTF-8. Walk its scalar lead bytes once; do not allocate
+// a temporary String and Array for each rune in a bounded input mirror.
+func cjguiUtf8ScalarWidth(lead: Byte): Int64 {
+    if ((lead & 0x80u8) == 0u8) { return 1 }
+    if ((lead & 0xE0u8) == 0xC0u8) { return 2 }
+    if ((lead & 0xF0u8) == 0xE0u8) { return 3 }
+    return 4
+}
+
 public func cjguiUtf16Length(value: String): Int64 {
+    let bytes = value.toArray()
+    var cursor: Int64 = 0
     var units: Int64 = 0
-    for (rune in value.runes()) {
-        if (rune.toString().toArray().size == 4) {
-            units += 2
-        } else {
-            units += 1
-        }
+    while (cursor < bytes.size) {
+        let width = cjguiUtf8ScalarWidth(bytes[cursor])
+        units += if (width == 4) { 2 } else { 1 }
+        cursor += width
     }
     return units
 }
@@ -368,62 +377,34 @@ public func cjguiValidUtf8End(bytes: Array<Byte>, start: Int64, limit: Int64): I
 /// Convert a UTF-16 code-unit offset inside `value` into a UTF-8 byte offset.
 /// Returns `None` when the offset would split a surrogate pair.
 public func cjguiUtf16OffsetToUtf8(value: String, utf16Offset: Int64): ?Int64 {
-    if (utf16Offset < 0) {
-        return None
-    }
+    if (utf16Offset < 0) { return None }
+    let bytes = value.toArray()
+    var cursor: Int64 = 0
     var units: Int64 = 0
-    var bytes: Int64 = 0
-    if (utf16Offset == 0) {
-        return Some(0)
+    while (cursor < bytes.size) {
+        if (units == utf16Offset) { return Some(cursor) }
+        let width = cjguiUtf8ScalarWidth(bytes[cursor])
+        units += if (width == 4) { 2 } else { 1 }
+        if (units > utf16Offset) { return None }
+        cursor += width
     }
-    for (rune in value.runes()) {
-        let encoded = rune.toString()
-        let byteLength = Int64(encoded.toArray().size)
-        let unitLength = if (byteLength == 4) { 2 } else { 1 }
-        if (units + unitLength == utf16Offset) {
-            return Some(bytes + byteLength)
-        }
-        if (units + unitLength > utf16Offset) {
-            // The offset lands inside this scalar (a split surrogate pair).
-            return None
-        }
-        units += unitLength
-        bytes += byteLength
-    }
-    if (units == utf16Offset) {
-        return Some(bytes)
-    }
-    return None
+    return if (units == utf16Offset) { Some(cursor) } else { None }
 }
 
 /// Convert a UTF-8 byte offset inside `value` into a UTF-16 code-unit offset.
 /// Returns `None` when the offset splits a UTF-8 scalar.
 public func cjguiUtf8OffsetToUtf16(value: String, byteOffset: Int64): ?Int64 {
-    if (byteOffset < 0) {
-        return None
-    }
+    if (byteOffset < 0 || byteOffset > value.size) { return None }
+    let bytes = value.toArray()
+    var cursor: Int64 = 0
     var units: Int64 = 0
-    var bytes: Int64 = 0
-    if (byteOffset == 0) {
-        return Some(0)
+    while (cursor < byteOffset) {
+        let width = cjguiUtf8ScalarWidth(bytes[cursor])
+        cursor += width
+        if (cursor > byteOffset) { return None }
+        units += if (width == 4) { 2 } else { 1 }
     }
-    for (rune in value.runes()) {
-        let encoded = rune.toString()
-        let byteLength = Int64(encoded.toArray().size)
-        let unitLength = if (byteLength == 4) { 2 } else { 1 }
-        if (bytes + byteLength == byteOffset) {
-            return Some(units + unitLength)
-        }
-        if (bytes + byteLength > byteOffset) {
-            return None
-        }
-        bytes += byteLength
-        units += unitLength
-    }
-    if (bytes == byteOffset) {
-        return Some(units)
-    }
-    return None
+    return Some(units)
 }
 
 /// A bounded, materialised projection of a range text source.
@@ -437,6 +418,7 @@ public class CjguiRangeTextWindow {
     private let source: CjguiRangeTextSource
     private let sink: CjguiRangeTextEditSink
     private let materializeLimit: Int64
+    private let materializeUtf16Limit: Int64
     private var startByte: Int64 = 0
     private var value: String = ""
     private var version: Int64 = 0
@@ -453,7 +435,8 @@ public class CjguiRangeTextWindow {
         semanticId: String,
         source: CjguiRangeTextSource,
         sink: CjguiRangeTextEditSink,
-        materializeLimit!: Int64 = 65536) {
+        materializeLimit!: Int64 = 65536, materializeUtf16Limit!: Int64 = 0) {
+        this.materializeUtf16Limit = materializeUtf16Limit
         this.nodeIdValue = nodeId
         this.semanticIdValue = semanticId
         this.source = source
@@ -490,12 +473,12 @@ public class CjguiRangeTextWindow {
     /// through the sink since the last `refresh`. A caller that must detect a
     /// stale mirror (an input session holding a composition, for instance) has
     /// to compare against this, not against `contentVersion()`.
-    public func sourceVersion(): Int64 {
-        return this.source.rangeTextVersion()
+    public func selectionOwner(): ?CjguiRangeTextSelectionOwner {
+        return this.source as CjguiRangeTextSelectionOwner
     }
 
-    func selectionOwner(): ?CjguiRangeTextSelectionOwner {
-        return this.source as CjguiRangeTextSelectionOwner
+    public func sourceVersion(): Int64 {
+        return this.source.rangeTextVersion()
     }
 
     /// The callback is the final session-only state transition. Source/owner
@@ -581,15 +564,30 @@ public class CjguiRangeTextWindow {
         let validSpan = slice.actualStart >= 0 && slice.actualStart >= slice.requestedStart &&
             withinBudget && endByte >= slice.actualStart &&
             (slice.byteLength < 0 || endByte <= slice.byteLength)
+        var projected = if (validSpan) { slice.content } else { "" }
+        if (validSpan && this.materializeUtf16Limit > 0 &&
+            cjguiUtf16Length(projected) > this.materializeUtf16Limit) {
+            // Preserve the platform's grapheme boundary at the presentation cap. The source
+            // byte budget was checked BEFORE this trim; an oversized provider still refuses.
+            var stop16 = this.materializeUtf16Limit
+            var stop = cjguiUtf16OffsetToUtf8(projected, stop16)
+            if (stop.isNone() && stop16 > 0) { stop16 -= 1; stop = cjguiUtf16OffsetToUtf8(projected, stop16) }
+            if (let Some(byte) <- stop) {
+                if (let Some(cluster) <- cjguiGraphemeClusterRangeUtf8(projected, byte)) {
+                    projected = String.fromUtf8(projected.toArray().slice(0, cluster[0]))
+                } else { projected = "" }
+            } else { projected = "" }
+        }
+        let projectedBytes = if (this.materializeUtf16Limit > 0) { cjguiUtf8Length(projected) } else { contentBytes }
         this.startByte = slice.actualStart
-        this.value = if (validSpan) { slice.content } else { "" }
+        this.value = projected
         this.version = slice.contentVersion
         this.totalBytes = slice.byteLength
         this.prepared = slice.complete && validSpan &&
             (slice.byteLength < 0 || slice.actualStart == slice.byteLength ||
-                contentBytes > 0)
+                projectedBytes > 0)
         this.complete = this.prepared && slice.byteLength >= 0 &&
-            slice.actualStart == 0 && endByte == slice.byteLength
+            slice.actualStart == 0 && slice.actualStart + projectedBytes == slice.byteLength
         this.pendingReason = if (!withinBudget) {
             CJGUI_RANGE_TEXT_REASON_BUDGET
         } else if (!validSpan) {
@@ -716,6 +714,28 @@ public class CjguiRangeTextWindow {
         }
         this.rejectedEditCount += 1
         return CjguiRangeTextEditOutcome.rejected(this.version, CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY)
+    }
+
+    /// A global replacement is authorized by the owner source choice, never by
+    /// widening local coordinate admission. The optional sink checks identity atomically.
+    public func applySelectedSourceEdit(choice: CjguiSourceSelectionSnapshot,
+        inserted: String): CjguiRangeTextEditOutcome {
+        let writer = this.sink as CjguiRangeTextSelectionEditSink
+        if (!this.prepared || choice.version != this.version || choice.version != this.sourceVersion()) {
+            return CjguiRangeTextEditOutcome.rejected(this.version, "source_selection_stale")
+        }
+        if (let Some(value) <- writer) {
+            let outcome = value.applySourceSelectionEdit(choice, inserted)
+            if (outcome.applied) {
+                this.forwardedEditCount += 1
+                // A wide removal can retire the entire old mirror anchor.
+                // Only the accepted replacement establishes these coordinates.
+                this.startByte = if (choice.anchorByte < choice.focusByte) { choice.anchorByte } else { choice.focusByte }
+                let _ = this.refresh()
+            } else { this.rejectedEditCount += 1 }
+            return outcome
+        }
+        return CjguiRangeTextEditOutcome.rejected(this.version, "source_selection_edit_unavailable")
     }
 
     /// Forward one edit already expressed in document byte coordinates.

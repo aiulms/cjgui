@@ -1,6 +1,16 @@
 package cjgui
 import std.collection.*
 func internalRendererTakeHumanSelectionAnchor(token: UInt64, node: Int64, resource: Int64, kind: Int64, projection: Int64, epoch: Int64, a: Int64, b: Int64): Array<Int64> { return [0, 0] }
+func internalRendererInputDirtyTicket(token: UInt64):Int64 {return 0}
+var completionFailNext=false
+var completionCalls=0
+var completionVersion: Int64 = -1
+var completionPostOrigin: Int64 = -1
+func internalRendererInputOwnerCompletion(token: UInt64,id: Int64,accepted: Bool,
+ ownerVersion!:Int64 = -1,postOrigin!:Int64 = -1,basis!:String = ""): Bool {
+ completionCalls+=1;completionVersion=ownerVersion;completionPostOrigin=postOrigin
+ if(completionFailNext){completionFailNext=false;return false};return true
+}
 // @CONSTANTS
 // @OWNER
 
@@ -74,9 +84,16 @@ class RangeWindowHarness {
     var ownedTextSession: ?CjguiTextSession
     let ownedTextSessionNodeId: Int64 = 107
     var ownedRangeLocalContinuation: ?CjguiLocalRangeContinuation = None
+    var lastAcceptedOhosInput: ?CjguiOhosInputTicketFact = None
+    var lastAcceptedOhosInputResultBasis: String = ""
+    var lastAcceptedOhosPostOrigin: Int64 = -1
+    var lastAcceptedOhosPostVersion: Int64 = -1
     let ownedTextSessionNodeKind: Int64 = CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
     let ownedTextSessionResourceId: Int64 = 77
     let textSessionBindingEpoch: UInt64 = 3u64
+    var refusedOhosInputId: Int64 = 0
+    var refusedRangeTextAttempts: Int64 = 0
+    let pendingOhosInputCompletions=ArrayList<(CjguiOhosInputTicketFact,Bool,Int64,Int64,String)>()
     let sessionToken: UInt64 = 1u64
     var refusedRangeTextPending: Bool = false
     var refusedRangeTextNodeId: Int64 = -1
@@ -104,15 +121,23 @@ class RangeWindowHarness {
     var focusedResourceId: Int64 = 77
     var focusedNodeKind: Int64 = CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
     var nativeInputScene: HarnessScene = HarnessScene(1, "alpha Z")
-    init(text!: String = "alpha Z") {
-        owner = FakeTextOwner(text)
+    init(text!: String = "alpha Z", wide!: Bool = false) {
+        testInputOrigin = None
+        let sourceOwner = WideSelectionInputTestOwner()
+        owner = if (wide) { sourceOwner.owner.body } else { FakeTextOwner(text) }
         controller = HarnessController(owner)
         nativeInputScene = HarnessScene(1, text)
-        let range = CjguiRangeTextWindow(107, "body", owner, owner, materializeLimit: 65536)
+        let range = if (wide) { CjguiRangeTextWindow(107, "body", sourceOwner, sourceOwner, materializeLimit: 32) }
+            else { CjguiRangeTextWindow(107, "body", owner, owner, materializeLimit: 65536) }
         let session = CjguiTextSession(range)
         session.bind()
         session.setSelection16(0, 5)
         ownedTextSession = Some(session)
+        if (wide) {
+            let _ = session.prepareSourceRange(1, 4101, 4101)
+            let _ = session.setDirectedSourceSelection(1, 5, 4101)
+            nativeInputScene = HarnessScene(1, session.mirrorText())
+        }
     }
     func currentBusinessOwnerRevision(): Int64 { return owner.ver }
     func stamp(nativeEvent: InternalRendererPumpResult, continuation: CjguiComposableUiLayoutNode,
@@ -121,8 +146,12 @@ class RangeWindowHarness {
         // @STAMP
     }
     func commit(event: InternalRendererPumpResult, text: String): Bool {
-        let target = nativeInputScene.nodeForId(107)
-        let result = routeOwnedTextSessionRangeEdit(event, target, text)
+        let admission: ?CjguiOhosRangeInputAdmission=match(testInputOrigin) {
+            case Some(t) => Some(admitOhosRangeInput(event,text,t))
+            case None => None
+        }
+        let target=match(admission) { case Some(value) => value.node; case None => nativeInputScene.nodeForId(107) }
+        let result = routeOwnedTextSessionRangeEdit(event,target,text,inputAdmission:admission)
         let applied = match (result) { case Some(r) => r.didApply; case None => false }
         stamp(event, target, text, applied)
         return applied

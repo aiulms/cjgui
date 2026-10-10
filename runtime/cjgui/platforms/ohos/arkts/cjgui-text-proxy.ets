@@ -10,7 +10,105 @@
 //  - mountGeneration：**每次真实挂载**递增；同一 context 的第二次挂载也得到
 //    新 key，旧挂载的迟到回调一律被拒。
 
+import { FrameCallback } from '@ohos.arkui.UIContext';
+
 const TAG_PROXY = 'CjguiTextProxy';
+
+// onIdle is after rendering, rather than an elapsed-time guess that text has settled.
+export class CjguiImeFrameCallback extends FrameCallback {
+  private callback: (() => void) | null;
+  constructor(callback: () => void) { super(); this.callback = callback; }
+  onFrame(frameTimeInNano: number): void {}
+  cancel(): void { this.callback = null; }
+  onIdle(timeLeftInNano: number): void {
+    const callback = this.callback;
+    this.callback = null;
+    if (callback !== null) { callback(); }
+  }
+}
+
+export interface CjguiImeRestorePayload {
+  request?: number;
+  context: number;
+  generation?: number;
+  focusGeneration?: number;
+  appInstance?: number;
+  sessionToken?: number;
+  nodeId?: number;
+  resourceId?: number;
+  nodeKind?: number;
+  bindingEpoch?: number;
+  baseVersion?: number;
+  deadlineMonoMs?: number;
+  field: string;
+  text?: string;
+  selStart?: number;
+  selEnd?: number;
+}
+
+// Native's frozen request. A mount is bound once later, never copied from current state.
+export class CjguiImeRestoreTicket {
+  readonly request: number;
+  readonly context: number;
+  readonly generation: number;
+  readonly focusGeneration: number;
+  readonly appInstance: number;
+  readonly sessionToken: number;
+  readonly nodeId: number;
+  readonly resourceId: number;
+  readonly nodeKind: number;
+  readonly bindingEpoch: number;
+  readonly baseVersion: number;
+  readonly deadlineMonoMs: number;
+  readonly field: string;
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
+  constructor(payload: CjguiImeRestorePayload) {
+    this.request = payload.request ?? -1;
+    this.context = payload.context;
+    this.generation = payload.generation ?? -1;
+    this.focusGeneration = payload.focusGeneration ?? -1;
+    this.appInstance = payload.appInstance ?? -1;
+    this.sessionToken = payload.sessionToken ?? -1;
+    this.nodeId = payload.nodeId ?? -1;
+    // -1 is native's valid no-resource presentation container, so missing
+    // identity needs a distinct invalid sentinel. Exact target matching remains.
+    this.resourceId = payload.resourceId ?? -2;
+    this.nodeKind = payload.nodeKind ?? -1;
+    this.bindingEpoch = payload.bindingEpoch ?? -1;
+    this.baseVersion = payload.baseVersion ?? -1;
+    this.deadlineMonoMs = payload.deadlineMonoMs ?? -1;
+    this.field = payload.field;
+    this.text = payload.text ?? '';
+    this.start = payload.selStart ?? -1;
+    this.end = payload.selEnd ?? -1;
+  }
+  valid(): boolean {
+    return [this.request, this.context, this.generation, this.focusGeneration, this.appInstance, this.sessionToken,
+      this.nodeId, this.resourceId, this.nodeKind, this.bindingEpoch, this.baseVersion,
+      this.deadlineMonoMs, this.start, this.end].every((value: number): boolean => Number.isSafeInteger(value))
+      && this.request >= 0 && this.context > 0 && this.generation > 0 && this.focusGeneration > 0 && this.appInstance > 0
+      && this.sessionToken > 0 && this.nodeId > 0 && this.resourceId >= -1 && this.nodeKind >= 0
+      && this.bindingEpoch >= 0 && this.baseVersion >= 0 && this.field.length > 0
+      && this.start >= 0 && this.end >= this.start && this.end <= this.text.length;
+  }
+}
+
+// NAPI geometry is already vp. The clipped viewport never changes the actual layout width.
+export class CjguiProxyGeometry {
+  readonly x: number; readonly y: number; readonly width: number; readonly height: number;
+  readonly clipX: number; readonly clipY: number; readonly clipWidth: number; readonly clipHeight: number;
+  constructor(x: number, proxyX: number, proxyY: number, layoutWidth: number, proxyWidth: number, proxyHeight: number) {
+    this.x = x; this.y = proxyY; this.width = layoutWidth; this.height = proxyHeight;
+    this.clipX = proxyX; this.clipY = proxyY; this.clipWidth = proxyWidth; this.clipHeight = proxyHeight;
+  }
+  valid(): boolean {
+    return [this.x, this.y, this.width, this.height, this.clipX, this.clipY, this.clipWidth, this.clipHeight]
+      .every((n: number): boolean => Number.isFinite(n)) && this.width > 0 && this.height > 0
+      && this.clipWidth > 0 && this.clipHeight > 0;
+  }
+}
 
 export class CjguiProxyKey {
   readonly appInstance: number;
@@ -29,7 +127,8 @@ export class CjguiProxyKey {
   }
 
   sameContext(other: CjguiProxyKey): boolean {
-    return other !== undefined && other.contextId === this.contextId
+    return other !== undefined && other.appInstance === this.appInstance
+      && other.sessionToken === this.sessionToken && other.contextId === this.contextId
       && other.editGeneration === this.editGeneration
       && other.mountGeneration === this.mountGeneration;
   }
@@ -40,15 +139,38 @@ export class CjguiProxyKey {
   }
 }
 
+export class CjguiProxyInputChange {
+  readonly id: number; readonly before: string; readonly after: string;
+  readonly start: number; readonly end: number; readonly afterStart: number; readonly afterEnd: number;
+  constructor(id: number, before: string, after: string, start: number, end: number, afterStart: number, afterEnd: number) {
+    this.id=id; this.before=before; this.after=after; this.start=start; this.end=end;
+    this.afterStart=afterStart; this.afterEnd=afterEnd;
+  }
+}
+export class CjguiProxyPublication {
+  readonly sequence: number; readonly key: CjguiProxyKey; readonly generation: number;
+  readonly before: string; readonly after: string; readonly reason: string;
+  readonly beforePreviewOffset: number; readonly beforePreviewText: string;
+  willObserved: boolean = false; consumed: boolean = false;
+  constructor(sequence: number, key: CjguiProxyKey, generation: number, before: string, after: string, reason: string, previewOffset: number, previewText: string) {
+    this.sequence=sequence; this.key=key; this.generation=generation; this.before=before; this.after=after; this.reason=reason;
+    this.beforePreviewOffset=previewOffset; this.beforePreviewText=previewText;
+  }
+}
+
 // 一次挂载的全部可变状态。除模板外任何人不得写。
 export class CjguiTextProxyMount {
   readonly key: CjguiProxyKey;
   readonly controlId: string;
   readonly fieldId: string;
   draft: string;
+  focusGeneration: number = 0;
+  structuralOperation: number = 0;
   alive: boolean;
   finishing: boolean;
   previewKnown: boolean = false;
+  lastPreviewOffset: number = -1;
+  lastPreviewText: string = "";
   composing: boolean = false;
   // R2（2026-10-02 复核）：真实输入流证据是**本挂载**的观测——正文 A 上有过
   // 输入不能给新备注 B 的 12800009 开门。由注册表在真实改文（value != draft）
@@ -57,6 +179,10 @@ export class CjguiTextProxyMount {
   selectionText: string = '';
   selectionStart: number = -1;
   selectionEnd: number = -1;
+  pendingInput: CjguiProxyInputChange | null = null;
+  semanticEchoes: CjguiProxyInputChange[] = [];
+  publication: CjguiProxyPublication | null = null;
+  publicationSequence: number = 0;
   insertPending: boolean = false;
   deleteOperation: CjguiProxyDeleteOperation | null = null;
 
@@ -67,6 +193,17 @@ export class CjguiTextProxyMount {
     this.draft = initialText;
     this.alive = true;
     this.finishing = false;
+  }
+  registerPublication(text: string, reason: string): void {
+    this.publication = new CjguiProxyPublication(++this.publicationSequence, this.key,
+      this.focusGeneration, reason === 'mount' ? '' : this.draft, text, reason, this.lastPreviewOffset, this.lastPreviewText);
+  }
+  observePublication(text: string): boolean {
+    const p = this.publication;
+    if (p === null || this.pendingInput !== null || !p.key.sameContext(this.key)
+      || p.generation !== this.focusGeneration || p.after !== text) { return false; }
+    if (!p.consumed && !p.willObserved && p.reason !== 'mount') { return false; }
+    p.consumed = true; this.draft = text; return true;
   }
 }
 
@@ -118,14 +255,19 @@ export interface CjguiTextProxyBridge {
   // native 同样按全文投影；不能把片段当成全文或把范围当成 owner 替换区间。
   previewRange(contextId: number, text: string, start: number, end: number): string;
   commit(contextId: number, text: string): string;    // rc '0' = 接受
-  finish(contextId: number): string;                  // rc '0' = 结束
+  finish(contextId: number): string;                  // legacy explicit finish seam
+  finishProxy(key: CjguiProxyKey, generation: number, text: string): string;
+  inputWill(mount: CjguiTextProxyMount, change: CjguiProxyInputChange): string;
+  inputChange(mount: CjguiTextProxyMount, ticket: number, text: string): string;
+  focusAuthority(key: CjguiProxyKey, operation: number, generation: number,
+    targetContext: number, targetGeneration: number): string;
   logWarn(msg: string): void;
   logInfo(msg: string): void;
 }
 
-// 挂载注册表：单一 current 挂载 + 全部历史挂载的迟到回调防线。
+// Only current/predecessor are retained here. Old closures carry their own identity and
+// fail isCurrent/validate; an all-history map would retain every obsolete bounded draft.
 export class CjguiTextProxyRegistry {
-  private mounts: Map<number, CjguiTextProxyMount> = new Map();
   private current: CjguiTextProxyMount | null = null;
   private bridge: CjguiTextProxyBridge;
   private mountGeneration: number = 0;
@@ -149,12 +291,22 @@ export class CjguiTextProxyRegistry {
     const key = new CjguiProxyKey(appInstance, sessionToken, contextId,
       editGeneration, this.mountGeneration);
     const m = new CjguiTextProxyMount(key, controlId, fieldId, initialText);
-    this.mounts.set(key.mountGeneration, m);
+    m.focusGeneration = Number(this.bridge.focusAuthority(key, 1, 0, 0, 0));
+    if (!Number.isSafeInteger(m.focusGeneration) || m.focusGeneration <= 0) { m.alive = false; }
     this.current = m;
     // 新挂载取代任何待消费的退役前驱（交接记录至多一条）。
     this.retiredPredecessor = null;
+    m.registerPublication(initialText, 'mount');
     this.bridge.logInfo(`proxy mounted key=${key.describe()} field=${fieldId}`);
     return m;
+  }
+
+  acceptNativeFocus(m: CjguiTextProxyMount, expectedGeneration: number): boolean {
+    if (m === null || this.current !== m || !m.alive || m.finishing || expectedGeneration <= 0) { return false; }
+    const generation = Number(this.bridge.focusAuthority(m.key, 1, 0, 0, 0));
+    if (generation !== expectedGeneration) { return false; }
+    m.focusGeneration = generation;
+    return this.isCurrent(m);
   }
 
   currentMount(): CjguiTextProxyMount | null {
@@ -169,7 +321,21 @@ export class CjguiTextProxyRegistry {
   // 只读身份查询：m 是否仍是当前挂载（存活且未在收尾）。
   // 页面 selection 转发等只读场景用它做事件时校验，不产生副作用。
   isCurrent(m: CjguiTextProxyMount): boolean {
-    return m !== null && m !== undefined && m.alive && !m.finishing && this.current === m;
+    return m !== null && m !== undefined && m.alive && !m.finishing && this.current === m
+      && m.focusGeneration > 0
+      && Number(this.bridge.focusAuthority(m.key, 2, m.focusGeneration, 0, 0)) === m.focusGeneration;
+  }
+
+  // Physical key intent carries this mount's identity. Other fields and compositions
+  // retain the platform's normal handling when native has no owned range session.
+  plainKey(m: CjguiTextProxyMount, keyCode: number, down: boolean, shift: boolean,
+    blocked: boolean, send: (context: number, generation: number, intent: string) => string): boolean {
+    if (!down || blocked || !this.validate(m) || m.composing) { return false; }
+    let intent: string = '';
+    if (keyCode === 2014) { intent = shift ? 'extendLeft' : 'left'; }
+    else if (keyCode === 2015) { intent = shift ? 'extendRight' : 'right'; }
+    else { return false; }
+    return send(m.key.contextId, m.key.editGeneration, intent) === '0';
   }
 
   // 迟到回调防线：只有「存活 + 仍是 current」的挂载才被处理。
@@ -185,7 +351,7 @@ export class CjguiTextProxyRegistry {
       this.bridge.logWarn(`proxy callback rejected (stale mount) ctl=${m.controlId}`);
       return false;
     }
-    return true;
+    return this.isCurrent(m);
   }
 
   // JS/ArkTS 字符串下标为 UTF-16 码元；范围边界不得切开代理对。
@@ -239,6 +405,51 @@ export class CjguiTextProxyRegistry {
         && options.rangeAfter.end === op.start;
     }
     m.insertPending = false;
+    const options = value.options;
+    const publication = m.publication;
+    if (publication !== null && !publication.consumed && options !== undefined &&
+      publication.key.sameContext(m.key) && publication.generation === m.focusGeneration &&
+      options.oldContent === publication.before && value.content === publication.after &&
+      value.previewText !== undefined && value.previewText.offset === -1 && value.previewText.value === '' &&
+      options.oldPreviewText !== undefined && options.oldPreviewText.offset === publication.beforePreviewOffset &&
+      options.oldPreviewText.value === publication.beforePreviewText &&
+      options.rangeBefore.start === 0 && options.rangeBefore.end === publication.before.length &&
+      options.rangeAfter.start === 0 && options.rangeAfter.end === publication.after.length) {
+      publication.willObserved = true; return true;
+    }
+    if (publication !== null && !publication.consumed && value.content === publication.after) {
+      this.bridge.logWarn('publication Will refused: frozen metadata mismatch'); return false;
+    }
+    const ordinary = value.previewText !== undefined && value.previewText.offset === -1 && value.previewText.value === '' &&
+      options !== undefined && options.oldPreviewText !== undefined && options.oldPreviewText.offset === -1 && options.oldPreviewText.value === '';
+    if (!ordinary) { return true; } // Existing marked semantics remain a separate route.
+    if (m.pendingInput !== null || options!.oldContent !== m.draft) { return false; }
+    const before = options!.rangeBefore; const after = options!.rangeAfter;
+    // SDK TextRange endpoints are optional. A missing endpoint is refused rather
+    // than inferred from the current selection or the component's defaults.
+    const start = before.start ?? -1; const end = before.end ?? -1;
+    const afterStart = after.start ?? -1; const afterEnd = after.end ?? -1;
+    if (![start,end,afterStart,afterEnd].every((n: number): boolean => Number.isSafeInteger(n)) ||
+      start < 0 || end < start || end > m.draft.length || afterStart !== start ||
+      afterEnd < afterStart || afterEnd > value.content.length || !this.utf16Boundary(m.draft,start) ||
+      !this.utf16Boundary(m.draft,end) || !this.utf16Boundary(value.content,afterStart) ||
+      !this.utf16Boundary(value.content,afterEnd) ||
+      m.draft.slice(0,start)+value.content.slice(afterStart,afterEnd)+m.draft.slice(end) !== value.content) { return false; }
+    return this.freezeInput(m, new CjguiProxyInputChange(0,m.draft,value.content,start,end,afterStart,afterEnd));
+  }
+  private freezeInput(m: CjguiTextProxyMount, change: CjguiProxyInputChange): boolean {
+    if (change.before === change.after && m.semanticEchoes.length >= 32) { return false; }
+    const id = Number(this.bridge.inputWill(m,change));
+    if (!this.isCurrent(m) || !Number.isSafeInteger(id) || id <= 0) {
+      this.bridge.logWarn('input Will refused: immutable origin or capacity unavailable'); return false;
+    }
+    m.publication = null; // A human command retires prior publication echoes before Change.
+    const admitted = new CjguiProxyInputChange(id,change.before,change.after,change.start,change.end,change.afterStart,change.afterEnd);
+    if (change.before === change.after) {
+      // Native queues the semantic command once at Will. Keep only bounded observation receipts.
+      m.semanticEchoes.push(admitted);
+      m.trafficSeen = true;
+    } else { m.pendingInput = admitted; }
     return true;
   }
 
@@ -275,7 +486,8 @@ export class CjguiTextProxyRegistry {
     if (start <= range.start) { return true; } // exact whole cluster or explicit multi-cluster deletion
     const op = new CjguiProxyDeleteOperation(m.draft,
       m.draft.slice(0, range.start) + m.draft.slice(range.end), range.start, range.end);
-    m.deleteOperation = op; // BEFORE controller: it re-enters WillChange.
+    if (!this.freezeInput(m,new CjguiProxyInputChange(0,op.before,op.expected,op.start,op.end,op.start,op.start))) { return false; }
+    m.deleteOperation = op; // Original human command precedes controller publication; echo cannot issue another ticket.
     try { deleteRange(op.start, op.end); op.state = 'awaiting_echo'; }
     catch (_) { op.state = 'failed'; this.bridge.logWarn('plain delete failed: controller_exception'); }
     if (op.state === 'awaiting_echo') {
@@ -298,6 +510,36 @@ export class CjguiTextProxyRegistry {
     if (!this.validate(m)) {
       return 'stale';
     }
+    const publicationMetadata = previewText === undefined || previewText === null ||
+      (previewText.offset === -1 && previewText.value === '');
+    if (publicationMetadata && m.observePublication(value)) {
+      m.previewKnown = previewText !== undefined && previewText !== null && previewText.offset === -1 && previewText.value === '';
+      m.composing = false; m.lastPreviewOffset = -1; m.lastPreviewText = '';
+      this.bridge.logInfo(`publication echo key=${m.key.describe()} sequence=${m.publication!.sequence}`); return 'ok';
+    }
+    const input = m.pendingInput;
+    const ordinary = previewText !== undefined && previewText !== null && previewText.offset === -1 && previewText.value === '';
+    // A late same-value Change is an observation of an already queued command,
+    // never a second transaction or a surrogate for a different pending Change.
+    if (ordinary && (input === null || input.after !== value)) {
+      const index = m.semanticEchoes.findIndex((c: CjguiProxyInputChange): boolean => c.after === value);
+      if (index >= 0) { m.semanticEchoes.splice(index, 1); return 'ok'; }
+    }
+    if (input !== null) {
+      m.pendingInput = null;
+      if (!ordinary || input.before !== m.draft || input.after !== value ||
+        this.bridge.inputChange(m,input.id,value) !== '0') {
+        this.bridge.logWarn('input Change refused: exact Will pairing failed'); return this.rejectInput(m);
+      }
+      if (!this.isCurrent(m)) { return 'stale'; }
+      m.draft = value; m.trafficSeen = true; m.previewKnown = true; m.composing = false;
+      m.lastPreviewOffset = -1; m.lastPreviewText = '';
+      m.insertPending = false; m.deleteOperation = null; return 'ok';
+    }
+    const marked = previewText !== undefined && previewText !== null && typeof previewText.value === 'string' && previewText.value.length > 0;
+    if (value !== m.draft && !marked && !m.composing) {
+      this.bridge.logWarn('input Change refused: frozen Will missing'); return this.rejectInput(m);
+    }
     // R2：真实改文（value != 当前 draft）= 本挂载的真实输入流观测。
     if (value !== m.draft) {
       m.trafficSeen = true;
@@ -309,6 +551,8 @@ export class CjguiTextProxyRegistry {
       // Always forward the REAL value once, including an unexpected/coalesced echo.
       m.deleteOperation = null;
     }
+    m.lastPreviewOffset = previewText?.offset ?? -2;
+    m.lastPreviewText = previewText?.value ?? '';
     m.previewKnown = previewText !== undefined && previewText !== null
       && previewText.offset === -1 && previewText.value === '';
     m.composing = previewText !== undefined && previewText !== null && typeof previewText.value === 'string' && previewText.value.length > 0;
@@ -320,7 +564,8 @@ export class CjguiTextProxyRegistry {
     const rc: string = hasMarkedRange
       ? this.bridge.previewRange(m.key.contextId, value, previewText!.offset,
         previewText!.offset + previewText!.value.length)
-      : this.bridge.preview(m.key.contextId, value);
+      : (marked ? this.bridge.previewRange(m.key.contextId, value, -1, -1)
+        : this.bridge.preview(m.key.contextId, value));
     // bridge 可以同步触发新的焦点/挂载；旧回调不得更新页面显示。
     if (!this.isCurrent(m)) {
       return 'stale';
@@ -338,10 +583,21 @@ export class CjguiTextProxyRegistry {
     }
     return 'ok';
   }
+  private rejectInput(m: CjguiTextProxyMount): string {
+    m.alive = false;
+    if (this.current === m) { this.current = null; }
+    this.retiredPredecessor = m;
+    return 'rejected';
+  }
   // submit/blur：先置 finishing，再提交回**它自己的** context，最后只清理 m。
   // 返回裁决：'ok'=提交与结束均接受；'rejected'=至少一步被 owner 拒绝；
   // 'stale'=身份校验失败（未触碰 owner）。
   submitAndFinish(m: CjguiTextProxyMount, reason: string): string {
+    if (m !== null && m !== undefined && m.structuralOperation > 0) {
+      const end = this.bridge.focusAuthority(m.key, 4, m.focusGeneration, 0, 0);
+      m.alive = false;
+      return end === '0' ? 'stale' : 'rejected';
+    }
     // R5：对退役前驱的明确终结请求直接使交接记录失效（不得留下可被迟到
     // reconcile 消费的幽灵）；前驱已 alive=false，validate 会判 stale。
     if (this.retiredPredecessor === m) {
@@ -351,9 +607,9 @@ export class CjguiTextProxyRegistry {
       return 'stale';
     }
     m.finishing = true;
-    const rc: string = this.bridge.commit(m.key.contextId, m.draft);
-    this.bridge.logInfo(`commit reason=${reason} ctx=${m.key.contextId} rc=${rc}`);
-    const end: string = this.bridge.finish(m.key.contextId);
+    const rc: string = this.bridge.finishProxy(m.key, m.focusGeneration, m.draft);
+    this.bridge.logInfo(`qualified settlement reason=${reason} ctx=${m.key.contextId} rc=${rc}`);
+    const end: string = rc;
     this.bridge.logInfo(`finish ctx=${m.key.contextId} rc=${end}`);
     m.alive = false;
     if (this.current === m) {
@@ -369,18 +625,17 @@ export class CjguiTextProxyRegistry {
   // 新 context 的初值必须由页面重新读取 owner 快照后另行 mount。
   // R5：也接受**本注册表认可的退役前驱**（preview 被 stale 拒后留下的交接记录），
   // 且只消费一次；绝不误清另一份 current。
-  retireForReconcile(m: CjguiTextProxyMount, oldContext: number): string {
+  retireForReconcile(m: CjguiTextProxyMount, oldContext: number, targetContext: number, targetGeneration: number): string {
     const isCurrent: boolean = this.current === m && m.alive && !m.finishing;
     const isPredecessor: boolean = this.retiredPredecessor === m;
     if ((!isCurrent && !isPredecessor) || m.key.contextId !== oldContext) {
       return 'stale';
     }
-    if (this.current === m) {
-      this.current = null;
-    }
-    if (this.retiredPredecessor === m) {
-      this.retiredPredecessor = null;
-    }
+    const operation = Number(this.bridge.focusAuthority(m.key, 3, m.focusGeneration, targetContext, targetGeneration));
+    if (!Number.isSafeInteger(operation) || operation <= 0) { return 'stale'; }
+    m.structuralOperation = operation; // Registration completes BEFORE page/controller unmount.
+    if (this.current === m) { this.current = null; }
+    if (this.retiredPredecessor === m) { this.retiredPredecessor = null; }
     m.alive = false;
     this.bridge.logInfo(`proxy retired for external reconcile ctx=${oldContext}`);
     return 'retired';
@@ -397,7 +652,7 @@ export class CjguiTextProxyRegistry {
       this.bridge.logWarn(`delayed focus rejected (stale mount) ctl=${m.controlId}`);
       return false;
     }
-    return true;
+    return this.isCurrent(m);
   }
 
   // 框架侧 end 通知：只有当前挂载响应；其余一律记录并忽略。
@@ -461,6 +716,14 @@ export interface CjguiImeSelectionHost {
   isCurrentMount(mount: CjguiTextProxyMount): boolean;
   // 恢复事务占用查询（非空时安装让位，具名 UNCONFIRMED）。
   restoreTaskActive(): boolean;
+  currentMount(): CjguiTextProxyMount | null;
+  restoreTargetEligible(ticket: CjguiImeRestoreTicket): boolean;
+  // CLOCK_MONOTONIC domain: SDK systemDateTime.getUptime(ACTIVE, false).
+  monotonicNowMs(): number;
+  writeRestoreText(mount: CjguiTextProxyMount, text: string): void;
+  afterComponentFrame(mount: CjguiTextProxyMount, callback: () => void): CjguiImeFrameCallback;
+  commitRestore(ticket: CjguiImeRestoreTicket, start: number, end: number,
+    ok: boolean, reason: string): string;
   logInfo(msg: string): void;
   logWarn(msg: string): void;
 }
@@ -500,6 +763,183 @@ export class CjguiImeSelectionLifecycle {
   // selSeq）与原绝对截止（deadlineTimer 不清），零 setter、零采纳；恢复落定后
   // 原请求凭原 seq 与原截止继续，不重新 arm/重计截止。新 arm/显式退役清此旗。
   private yieldedToRestore: boolean = false;
+  private restoreTicket: CjguiImeRestoreTicket | null = null;
+  private restoreMount: CjguiTextProxyMount | null = null;
+  private restoreBodyObserved: boolean = false;
+  private restoreBodySettled: boolean = false;
+  private restoreBodyEpoch: number = 0;
+  private restoreWriteSent: boolean = false;
+  private restoreSetterSent: boolean = false;
+  private restoreExistingWrite: boolean = false;
+  private restoreDeadlineTimer: number = -1;
+  private restoreSerial: number = 1;
+  private restoreSeq: number = -2;
+  private restoreOlderSelectionSeq: number = -1;
+  private restoreLastTerminal: CjguiImeRestoreTicket | null = null;
+  private restoreBodyFrame: CjguiImeFrameCallback | null = null;
+
+  hasRestore(): boolean { return this.restoreTicket !== null; }
+
+  restore(ticket: CjguiImeRestoreTicket): void {
+    const last = this.restoreLastTerminal;
+    if (ticket.request > 0 && last !== null && last.request === ticket.request && last.context === ticket.context &&
+      last.sessionToken === ticket.sessionToken && last.appInstance === ticket.appInstance) { return; }
+    const old = this.restoreTicket;
+    if (ticket.request > 0 && old !== null && old.request === ticket.request && old.context === ticket.context &&
+      old.sessionToken === ticket.sessionToken && old.appInstance === ticket.appInstance) {
+      // Same request cannot replace its frozen text/identity/deadline.
+      return;
+    }
+    if (old !== null) { this.finishRestore(false, -1, -1, 'superseded_request'); }
+    this.restoreTicket = ticket;
+    this.restoreMount = null;
+    this.restoreBodyObserved = false;
+    this.restoreBodySettled = false;
+    this.restoreWriteSent = false;
+    this.restoreSetterSent = false;
+    this.restoreExistingWrite = false;
+    this.restoreBodyEpoch += 1;
+    this.restoreSeq = -(++this.restoreSerial);
+    this.restoreOlderSelectionSeq = this.selMount === null ? -1 : this.selSeq;
+    if (!ticket.valid() || !this.host.restoreTargetEligible(ticket)) {
+      this.finishRestore(false, -1, -1, 'invalid_restore_target');
+      return;
+    }
+    const remaining = ticket.deadlineMonoMs - this.host.monotonicNowMs();
+    if (remaining <= 0) { this.finishRestore(false, -1, -1, 'original_deadline'); return; }
+    this.restoreDeadlineTimer = setTimeout(() => {
+      if (this.restoreTicket === ticket) { this.finishRestore(false, -1, -1, 'original_deadline'); }
+    }, remaining);
+    this.restoreMountAvailable(this.host.currentMount());
+  }
+
+  restoreMountAvailable(mount: CjguiTextProxyMount | null): void {
+    const ticket = this.restoreTicket;
+    if (ticket === null) { return; }
+    if (!this.host.restoreTargetEligible(ticket) || this.host.monotonicNowMs() >= ticket.deadlineMonoMs) {
+      this.finishRestore(false, -1, -1, 'restore_target_retired'); return;
+    }
+    if (this.restoreMount !== null) {
+      if (mount !== this.restoreMount || !this.host.isCurrentMount(this.restoreMount)) {
+        this.finishRestore(false, -1, -1, 'restore_bound_mount_retired');
+      }
+      return;
+    }
+    // A valid native target can wait across old component disappearance. It does not
+    // acquire the old component or follow another generation with the same context.
+    if (mount === null || !this.host.isCurrentMount(mount) || mount.key.contextId !== ticket.context) { return; }
+    if (mount.key.editGeneration !== ticket.generation || mount.focusGeneration !== ticket.focusGeneration || mount.key.appInstance !== ticket.appInstance ||
+      mount.key.sessionToken !== ticket.sessionToken || mount.fieldId !== ticket.field) {
+      this.finishRestore(false, -1, -1, 'restore_mount_identity_mismatch'); return;
+    }
+    this.restoreMount = mount;
+    this.restoreBodyObserved = mount.draft === ticket.text;
+    // A same-mount, same-body ordinary write already in flight is the same
+    // platform command. Transfer confirmation ownership, never send it again.
+    this.restoreExistingWrite = this.restoreBodyObserved && this.selMount === mount &&
+      this.selSeq === this.restoreOlderSelectionSeq && this.installSentSeq === this.selSeq &&
+      this.selStart === ticket.start && this.selEnd === ticket.end;
+    if (!this.restoreBodyObserved) {
+      this.restoreWriteSent = true;
+      mount.registerPublication(ticket.text, 'restore');
+      this.host.writeRestoreText(mount, ticket.text);
+    } else { this.waitRestoreBodyFrame(mount, ticket); }
+    this.driveRestore('target-mounted');
+  }
+
+  observeRestoreText(mount: CjguiTextProxyMount, text: string): boolean {
+    const ticket = this.restoreTicket;
+    if (ticket === null || mount !== this.restoreMount || !this.host.isCurrentMount(mount)) { return false; }
+    if (text !== ticket.text || mount.pendingInput !== null) {
+      this.finishRestore(false, -1, -1, 'human_input_supersedes'); return false;
+    }
+    if (!this.restoreWriteSent) { return false; }
+    if (this.restoreSetterSent) {
+      this.finishRestore(false, -1, -1, 'text_changed_after_selection'); return true;
+    }
+    if (!mount.observePublication(text)) { return false; }
+    this.restoreBodyObserved = true;
+    mount.draft = text;
+    this.waitRestoreBodyFrame(mount, ticket);
+    return true;
+  }
+
+  private waitRestoreBodyFrame(mount: CjguiTextProxyMount, ticket: CjguiImeRestoreTicket): void {
+    const epoch = ++this.restoreBodyEpoch;
+    this.restoreBodySettled = false;
+    if (this.restoreBodyFrame !== null) { this.restoreBodyFrame.cancel(); }
+    this.restoreBodyFrame = this.host.afterComponentFrame(mount, () => {
+      this.restoreBodyFrame = null;
+      if (this.restoreTicket !== ticket || this.restoreMount !== mount || epoch !== this.restoreBodyEpoch ||
+        !this.host.isCurrentMount(mount)) { return; }
+      this.restoreBodySettled = true;
+      this.driveRestore('body-rendered');
+    });
+  }
+
+  observeRestoreSelection(mount: CjguiTextProxyMount, start: number, end: number): boolean {
+    const ticket = this.restoreTicket;
+    if (ticket === null || this.restoreMount !== mount) { return false; }
+    if (this.restoreSetterSent && (start !== ticket.start || end !== ticket.end)) {
+      this.finishRestore(false, start, end, 'late_selection_reset');
+    }
+    // An event can invalidate confirmation; it cannot provide both cross-frame reads.
+    return true;
+  }
+
+  private driveRestore(reason: string): void {
+    const ticket = this.restoreTicket;
+    const mount = this.restoreMount;
+    if (ticket === null || mount === null) { return; }
+    if (!this.host.restoreTargetEligible(ticket) || !this.host.isCurrentMount(mount) ||
+      this.host.monotonicNowMs() >= ticket.deadlineMonoMs) {
+      this.finishRestore(false, -1, -1, 'restore_execution_retired'); return;
+    }
+    if (!this.restoreBodyObserved || !this.restoreBodySettled || this.attachedMount !== mount) { return; }
+    this.install(mount, ticket.start, ticket.end, 0, this.restoreSeq, `restore-${ticket.request}-${reason}`);
+  }
+
+  private isRestoreExecution(mount: CjguiTextProxyMount, seq: number): boolean {
+    return this.restoreTicket !== null && this.restoreMount === mount && seq === this.restoreSeq;
+  }
+
+  private executionCurrent(mount: CjguiTextProxyMount, seq: number): boolean {
+    if (!this.host.isCurrentMount(mount)) { return false; }
+    if (this.isRestoreExecution(mount, seq)) {
+      const ticket = this.restoreTicket!;
+      return this.host.restoreTargetEligible(ticket) && this.host.monotonicNowMs() < ticket.deadlineMonoMs;
+    }
+    return seq === this.selSeq && this.selMount === mount;
+  }
+
+  private settleExecution(mount: CjguiTextProxyMount, seq: number, terminal: string, reason: string,
+    start: number = -1, end: number = -1): void {
+    if (this.isRestoreExecution(mount, seq)) {
+      this.finishRestore(terminal === 'INSTALLED', start, end, reason);
+    } else if (this.selMount === mount && this.selSeq === seq) { this.settle(mount, terminal, reason); }
+  }
+
+  private finishRestore(ok: boolean, start: number, end: number, reason: string): void {
+    const ticket = this.restoreTicket;
+    const mount = this.restoreMount;
+    if (ticket === null) { return; }
+    // Retire callbacks before calling native, including synchronous component callbacks.
+    this.restoreTicket = null;
+    this.restoreLastTerminal = ticket;
+    this.restoreMount = null;
+    this.restoreBodyEpoch += 1;
+    if (this.restoreBodyFrame !== null) { this.restoreBodyFrame.cancel(); this.restoreBodyFrame = null; }
+    if (this.restoreDeadlineTimer !== -1) { clearTimeout(this.restoreDeadlineTimer); this.restoreDeadlineTimer = -1; }
+    const rc = this.host.commitRestore(ticket, start, end, ok, reason);
+    this.host.logInfo(`ime restore terminal request=${ticket.request} ctx=${ticket.context} ok=${ok} rc=${rc} reason=${reason}`);
+    if (this.selMount !== null && mount === this.selMount &&
+      (this.selSeq <= this.restoreOlderSelectionSeq || (ok && rc === '0' && this.selStart === start && this.selEnd === end))) {
+      this.settle(this.selMount, ok && rc === '0' ? 'INSTALLED' : 'UNCONFIRMED', 'restore_owner_settled');
+    } else if (this.selMount !== null && reason !== 'human_input_supersedes' &&
+      reason !== 'mount_changed_retired' && reason !== 'restore_bound_mount_retired') {
+      this.maybeInstall(this.selMount, 'restore-owner-released');
+    }
+  }
 
   constructor(host: CjguiImeSelectionHost) {
     this.host = host;
@@ -528,6 +968,7 @@ export class CjguiImeSelectionLifecycle {
 
   // 挂载变更：会话事实随旧挂载失效（新挂载必须重新走 attach）。
   invalidateAttachmentFor(mount: CjguiTextProxyMount): void {
+    if (this.restoreMount === mount) { this.finishRestore(false, -1, -1, 'mount_changed_retired'); }
     if (this.attachedMount === mount) {
       this.attachedMount = null;
     }
@@ -681,6 +1122,7 @@ export class CjguiImeSelectionLifecycle {
   // 门控 = 本次挂载 + 已完成 attach（attach 之前发出的选区请求会被随后的
   // 接续动作覆盖；平台对未聚焦组件的 setTextSelection 是早退 no-op）。
   maybeInstall(mount: CjguiTextProxyMount, reason: string): void {
+    this.driveRestore(reason);
     if (this.selMount !== mount || !this.host.isCurrentMount(mount)) {
       return;
     }
@@ -695,10 +1137,10 @@ export class CjguiImeSelectionLifecycle {
   // 随后的重置覆盖，因此按挂载身份重投至多 8 次；观测到目标值即由回声终结。
   private install(mount: CjguiTextProxyMount, start: number, end: number,
     attempt: number, seq: number, reason: string): void {
-    if (seq !== this.selSeq || this.selMount !== mount || !this.host.isCurrentMount(mount)) {
+    if (!this.executionCurrent(mount, seq)) {
       return; // 已被新目标/新挂载/收尾取代的过期定时器
     }
-    if (this.host.restoreTaskActive()) {
+    if (!this.isRestoreExecution(mount, seq) && this.host.restoreTaskActive()) {
       // 恢复事务自己按票据装选区，不与之争夺控制器。让位只转移执行权：保留
       // 同一待办（selMount/selSeq）与原绝对截止（不清 deadlineTimer），零
       // setter、零采纳；恢复落定后原请求凭原 seq 继续，不重新 arm/重计截止。
@@ -724,7 +1166,7 @@ export class CjguiImeSelectionLifecycle {
       this.host.logInfo(`ime proxy selection deferred (attach pending) reason=${reason} attempt=${attempt}`);
       if (attempt >= 8) {
         // 耗尽不是成功，也不静默清待办——记 UNCONFIRMED，由 native/窗口重签。
-        this.settle(mount, 'UNCONFIRMED', `${reason}_attach_pending_exhausted`);
+        this.settleExecution(mount, seq, 'UNCONFIRMED', `${reason}_attach_pending_exhausted`);
         return;
       }
       setTimeout(() => {
@@ -735,18 +1177,21 @@ export class CjguiImeSelectionLifecycle {
     try {
       // R4：同一请求不重复下发平台 setter（跨帧确认窗口仍在跑）；重复下发只会
       // 让平台把落点再推一次、与确认窗口抢光标。seq 单调，故不会误挡新请求。
-      if (seq === this.installSentSeq) {
+      if (this.isRestoreExecution(mount, seq) ? this.restoreSetterSent : seq === this.installSentSeq) {
         return;
       }
-      this.installSentSeq = seq;
-      this.host.setSelection(start, end);
+      if (this.isRestoreExecution(mount, seq)) { this.restoreSetterSent = true; }
+      else { this.installSentSeq = seq; }
+      if (this.isRestoreExecution(mount, seq) && this.restoreExistingWrite) {
+        this.host.logInfo(`ime restore adopts in-flight selection request=${this.restoreTicket!.request}`);
+      } else { this.host.setSelection(start, end); }
       // R2：程序选区命令已下发——它的平台回声按本命令的括号消费。
       this.echoMount = mount;
       this.echoOpen = true;
       this.host.logInfo(`ime proxy selection set [${start},${end}) reason=${reason} attempt=${attempt}`);
     } catch (err) {
       this.host.logWarn(`ime proxy selection threw reason=${reason} err=${String(err)}`);
-      this.settle(mount, 'UNCONFIRMED', `${reason}_throw`);
+      this.settleExecution(mount, seq, 'UNCONFIRMED', `${reason}_throw`);
       return;
     }
     // setter 返回不构成安装证据（同值 setter 可不产生回声）；只做一次读数
@@ -775,11 +1220,10 @@ export class CjguiImeSelectionLifecycle {
   // 即失败证据（终态，不重置预算重投）。
   confirm(mount: CjguiTextProxyMount, start: number, end: number,
     seq: number, reason: string, round: number): void {
-    if (seq !== this.selSeq || this.selMount !== mount ||
-      !this.host.isCurrentMount(mount) || this.attachedMount !== mount) {
+    if (!this.executionCurrent(mount, seq) || this.attachedMount !== mount) {
       return; // 已被新目标/新挂载/收尾取代
     }
-    if (this.host.restoreTaskActive()) {
+    if (!this.isRestoreExecution(mount, seq) && this.host.restoreTaskActive()) {
       // 在飞确认让位：保留同一待办（selMount/selSeq）与原绝对截止（不清
       // deadlineTimer），不读数、不采纳、不结算；恢复释放后接续原轮次
       // （同 round），绝不重发 setter（confirm 本来就不下发平台写）。
@@ -812,7 +1256,7 @@ export class CjguiImeSelectionLifecycle {
       // S2：getter 异常是终态证据，不是可跳过的一次读数——裸 return 会让安装
       // 永久 pending（离线证据 getter_throw → pending、无后续计时）。按失配
       // 分支同一条路结算 UNCONFIRMED，保留可恢复源选择。
-      this.settle(mount, 'UNCONFIRMED', `${reason}_confirm_getter_threw`);
+      this.settleExecution(mount, seq, 'UNCONFIRMED', `${reason}_confirm_getter_threw`);
       return;
     }
     if (observedStart !== start || observedEnd !== end) {
@@ -821,10 +1265,14 @@ export class CjguiImeSelectionLifecycle {
       // 确认窗口内的失配是终态证据：setter 已下发而读数仍不等于目标，说明平台
       // 把落点折叠/覆盖了；以重置预算重装只会无界循环。结算 UNCONFIRMED，
       // 由窗口按恢复事务有界重签。
-      this.settle(mount, 'UNCONFIRMED', `${reason}_confirm_mismatch`);
+      this.settleExecution(mount, seq, 'UNCONFIRMED', `${reason}_confirm_mismatch`, observedStart, observedEnd);
       return;
     }
     if (round + 1 >= 2) {
+      if (this.isRestoreExecution(mount, seq)) {
+        this.settleExecution(mount, seq, 'INSTALLED', `${reason}_confirmed`, observedStart, observedEnd);
+        return;
+      }
       // 连续两帧命中：平台的稳定落点，而不是控制器自回声。
       // R2：native 的接受结果是 INSTALLED 的组成部分——rc != '0' 按具名
       // UNCONFIRMED 收口，保留可恢复源选择（生产反例：imeSetSelection
@@ -897,8 +1345,9 @@ export class CjguiImeSelectionLifecycle {
 
   // 待办被真人改文取代（输入优先于落点安装：不把光标拉回旧位置）。
   supersededByHumanInput(mount: CjguiTextProxyMount): void {
+    if (this.restoreMount === mount) { this.finishRestore(false, -1, -1, 'human_input_supersedes'); }
     if (this.selMount === mount) {
-      this.selMount = null;
+      this.settle(mount, 'UNCONFIRMED', 'human_input_supersedes');
     }
   }
 }

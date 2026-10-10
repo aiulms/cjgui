@@ -30,10 +30,23 @@ text_session.cj
   composable_ui_platform_accent.cj
   macos_application_host.cj
   windows_application_host.cj
+  application_host.cj
   macos_application_cleanup.cj
   runtime_renderer_text_geometry_query.cj
   async_multiline_measure.cj
   runtime_renderer_session.cj
+  composable_ui_selection_completion.cj
+  composable_ui_source_recovery.cj
+  composable_ui_selection_paint.cj
+  # 平台替身文件：每个文件都带 `@When[os != "macOS"]` 分支，正是其它平台需要的
+  # 声明。common 窗口引用了它们（owner handoff、边缘滚动 ack、文字捕获续写、
+  # 有界准备退休），遗漏会让 Windows 目标编译报未声明；它们与
+  # mac_text_pointer_capture.cj 等既有条目同类。
+  composable_ui_mac_owner_handoff.cj
+  composable_ui_mac_edge_scroll.cj
+  composable_ui_mac_text_continuation.cj
+  composable_ui_mac_retirement.cj
+  composable_ui_mac_caret_edit.cj
 )
 typeset -ga CJGUI_GENERATED_SOURCE_NAMES
 CJGUI_GENERATED_SOURCE_NAMES=(composable_ui_composite_component.cj composable_ui_generated.cj)

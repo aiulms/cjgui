@@ -614,3 +614,428 @@ func siblingViewportSharingCoordinatesIsNotAnAncestor(): Unit {
     @Assert(outerNode.nodeId > 0, true)
     @Assert(inOuter || outerNode.bounds.width > 0, true)
 }
+
+private func scrollOriginTestTree(viewport: CjguiComposableUiScrollViewport, spacerHeight: Int64,
+    targetNodeId!: Int64 = 8105, body!: String = "anchor body", fontSize!: Float64 = 14.0,
+    textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>(),
+    prefixHeight!: Int64 = 0): CjguiComposableUiNode {
+    let root = cjguiComposableVertical(8100, "origin-root", CjguiComposableUiStyle())
+    let outsideClip = cjguiComposableVertical(8101, "origin-outside-clip",
+        CjguiComposableUiStyle(fixedWidth: 220, fixedHeight: 150, clipsContent: true))
+    let scroll = cjguiComposableScrollArea(8102, "origin-scroll", viewport,
+        CjguiComposableUiStyle(fixedWidth: 200, fixedHeight: 100))
+    let content = cjguiComposableVertical(8103, "origin-content",
+        CjguiComposableUiStyle(gap: 0, clipsContent: true))
+    if (prefixHeight > 0) {
+        content.add(cjguiComposableVertical(8107, "origin-prepend",
+            CjguiComposableUiStyle(fixedHeight: prefixHeight)))
+    }
+    content.add(cjguiComposableVertical(8104, "origin-spacer",
+        CjguiComposableUiStyle(fixedHeight: spacerHeight)))
+    content.add(cjguiComposableText(targetNodeId, "origin-anchor", body,
+        CjguiComposableUiStyle(fixedHeight: 24, fontFamily: "system", fontSize: fontSize),
+        textStyleRuns: textStyleRuns))
+    content.add(cjguiComposableVertical(8106, "origin-tail", CjguiComposableUiStyle(fixedHeight: 300)))
+    scroll.add(content)
+    outsideClip.add(scroll)
+    root.add(outsideClip)
+    return root
+}
+
+private func scrollOriginTicketFromAccepted(viewport: CjguiComposableUiScrollViewport,
+    accepted: CjguiComposableUiScene, binding: CjguiComposableUiScrollOriginBinding,
+    nodeId!: Int64 = 8105): CjguiComposableUiScrollOriginAnchor {
+    let acceptedNode = accepted.nodeForId(nodeId)
+    let scrollNode = accepted.nodeForId(8102)
+    let innerTop = scrollNode.bounds.y + scrollNode.style.padding
+    return CjguiComposableUiScrollOriginAnchor(viewport.viewStateIdentity(), viewport.ownerWindowToken(),
+        viewport.acceptedSolveCount(), viewport.requestGeneration(), binding, "document-anchor-4", 4,
+        acceptedNode.nodeId, acceptedNode.value, "captured", acceptedNode.bounds.width,
+        acceptedNode.bounds.y - innerTop, 0.375, 4.5, acceptedNode,
+        acceptedOffset: viewport.acceptedOffset(), requestedOffset: viewport.offset())
+}
+
+private func acceptScrollOriginInitial(viewport: CjguiComposableUiScrollViewport,
+    binding: CjguiComposableUiScrollOriginBinding,
+    textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>(),
+    targetNodeId!: Int64 = 8105, body!: String = "anchor body", fontSize!: Float64 = 14.0): CjguiComposableUiScene {
+    @Assert(viewport.claimOwner(91), true)
+    @Assert(viewport.stageCoordinateOrigin(binding), "scroll_origin_initial")
+    let first = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50,
+        targetNodeId: targetNodeId, body: body, fontSize: fontSize, textStyleRuns: textStyleRuns),
+        CjguiComposableUiRect(0, 0, 240, 170), 1)
+    @Assert(first.isValid(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.requestOffset(40), true)
+    let scrolled = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50,
+        targetNodeId: targetNodeId, body: body, fontSize: fontSize, textStyleRuns: textStyleRuns),
+        CjguiComposableUiRect(0, 0, 240, 170), 2)
+    @Assert(scrolled.isValid(), true)
+    viewport.commitStagedExtents()
+    return scrolled
+}
+
+@Test
+func scrollOriginPassivePrependAdmitsNegativeGlobalDomain(): Unit {
+    let unbound = CjguiComposableUiScrollViewport()
+    @Assert(unbound.requestOffset(-20), false)
+    @Assert(unbound.offset(), 0)
+
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 14, "same-map", "mid-fragment-base")
+    let initial = acceptScrollOriginInitial(viewport, bindingA)
+    // An active source jump establishes local origin zero within a mid-document
+    // fragment; scrolling within that window then creates the accepted geometry.
+    viewport.requestOriginNavigation()
+    @Assert(viewport.stageCoordinateOrigin(bindingA), "scroll_origin_navigation")
+    let navigated = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(navigated.isValid(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedOriginOffset(), 0)
+    @Assert(viewport.acceptedOffset(), 0)
+    @Assert(viewport.requestOffset(40), true)
+    let accepted = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50),
+        CjguiComposableUiRect(0, 0, 240, 170), 4)
+    @Assert(accepted.isValid(), true)
+    viewport.commitStagedExtents()
+    let oldScroll = accepted.nodeForId(8102)
+    let oldAnchor = accepted.nodeForId(8105)
+    let oldRelativeY = oldAnchor.bounds.y - oldScroll.bounds.y
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, bindingA)
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 14, "same-map", "prepended-origin")
+
+    @Assert(viewport.stageCoordinateOrigin(bindingB, anchor: Some(ticket), targetNodeId: 8105,
+        targetLocalByte: 4), "scroll_origin_anchor_staged")
+    let prepended = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50,
+        prefixHeight: 20), CjguiComposableUiRect(0, 0, 240, 170), 5)
+    @Assert(prepended.isValid(), true)
+    @Assert(viewport.pendingOriginOffset(), -20)
+    @Assert(prepended.nodeForId(8105).bounds.y - prepended.nodeForId(8102).bounds.y, oldRelativeY)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedOriginOffset(), -20)
+    @Assert(viewport.minimumOffset(), -20)
+    @Assert(viewport.maximumOffset() > viewport.minimumOffset(), true)
+    @Assert(viewport.reveal(-25, -21), true)
+    @Assert(viewport.offset(), -20)
+    @Assert(viewport.offset() >= viewport.minimumOffset(), true)
+    // Global content ends may themselves lie below zero in a very short
+    // bounded window; staging/refinement must preserve that endpoint instead
+    // of fabricating a zero-sized scroll range.
+    viewport.stageExtents(-30, 100, -20)
+    viewport.refineStagedExtents(-31, 100, -20)
+    viewport.commitStagedExtents()
+    @Assert(viewport.contentExtent(), -31)
+    @Assert(viewport.maximumOffset(), -20)
+    @Assert(initial.isValid(), true)
+}
+
+@Test
+func scrollOriginHandoffPreservesPendingScrollDelta(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 13, "same-map", "origin-A")
+    let accepted = acceptScrollOriginInitial(viewport, bindingA)
+    let oldAnchor = accepted.nodeForId(8105)
+    let oldY = oldAnchor.bounds.y - accepted.nodeForId(8102).bounds.y
+    @Assert(viewport.acceptedOffset(), 40)
+    @Assert(viewport.requestOffset(55), true)
+    // The accepted scene still shows 40 while this immutable ticket captures
+    // the in-flight request for 55 before its canonical candidate is solved.
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, bindingA)
+    @Assert(ticket.acceptedOffset, 40)
+    @Assert(ticket.requestedOffset, 55)
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 13, "same-map", "origin-B")
+    @Assert(viewport.stageCoordinateOrigin(bindingB, anchor: Some(ticket), targetNodeId: 8105,
+        targetLocalByte: 4), "scroll_origin_anchor_staged")
+    let candidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(candidate.isValid(), true)
+    @Assert(viewport.pendingOriginOffset(), 20)
+    // The existing request must move the glyph up by 15 px through the new
+    // materialized origin, rather than being canceled by the anchor correction.
+    @Assert(candidate.nodeForId(8105).bounds.y - candidate.nodeForId(8102).bounds.y, oldY - 15)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedOriginOffset(), 20)
+    @Assert(viewport.acceptedOffset(), 55)
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_unchanged")
+    let following = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 4)
+    @Assert(following.isValid(), true)
+    @Assert(following.nodeForId(8105).bounds.y, candidate.nodeForId(8105).bounds.y)
+}
+
+@Test
+func scrollOriginInitialPreparationCancellationCanRestartBeforeAcceptance(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    @Assert(viewport.claimOwner(91), true)
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 13, "map-A", "origin-A")
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 13, "map-B", "origin-B")
+    @Assert(viewport.stageCoordinateOrigin(bindingA), "scroll_origin_initial")
+    // The normal product cancels measurement preparation before its first
+    // accepted scene when owner metadata arrives. There is no accepted origin
+    // for a passive ticket to prove, and the abandoned candidate owns no fact.
+    viewport.discardStagedExtents()
+    @Assert(viewport.acceptedSolveCount(), 0)
+    @Assert(viewport.acceptedCoordinateOrigin().isNone(), true)
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_initial")
+    let candidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50),
+        CjguiComposableUiRect(0, 0, 240, 170), 1)
+    @Assert(candidate.isValid(), true)
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+    // Even an initial solve must not publish its old geometry as a newer
+    // candidate's binding merely because neither has reached acceptance yet.
+    @Assert(viewport.stageCoordinateOrigin(bindingA), "scroll_origin_initial")
+    @Assert(viewport.canCommitCoordinateOrigin(), false)
+    viewport.discardStagedExtents()
+    let replacement = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50),
+        CjguiComposableUiRect(0, 0, 240, 170), 2)
+    @Assert(replacement.isValid(), true)
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+}
+
+@Test
+func scrollOriginSameLayoutOriginRebindsOrdinaryContentVersion(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 11, "map-v1", "local-zero-A")
+    let accepted = acceptScrollOriginInitial(viewport, bindingA)
+    let oldOffset = viewport.acceptedOffset()
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 12, "map-v2", "local-zero-A")
+
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_rebound")
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().ownerVersion, 11)
+    @Assert(viewport.pendingOriginAnchor().isNone(), true)
+    let rebound = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50,
+        body: "updated body"), CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(rebound.isValid(), true)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().mapIdentity, "map-v1")
+    @Assert(viewport.acceptedOffset(), oldOffset)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().ownerVersion, 12)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().mapIdentity, "map-v2")
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "local-zero-A")
+    @Assert(viewport.acceptedOffset(), oldOffset)
+    @Assert(accepted.isValid(), true)
+}
+
+@Test
+func scrollOriginPassiveHandoffPreservesAcceptedGlyphAndClipOwnership(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 8, "same-map", "origin-A")
+    @Assert(bindingA.matches(CjguiComposableUiScrollOriginBinding("document", 8, "same-map", "origin-A")), true)
+    @Assert(bindingA.matches(CjguiComposableUiScrollOriginBinding("document", 8, "same-map", "origin-B")), false)
+    @Assert(bindingA.matches(CjguiComposableUiScrollOriginBinding("other-document", 8, "same-map", "origin-A")), false)
+    @Assert(bindingA.matches(CjguiComposableUiScrollOriginBinding("document", 9, "same-map", "origin-A")), false)
+    @Assert(bindingA.matches(CjguiComposableUiScrollOriginBinding("document", 8, "new-map", "origin-A")), false)
+    let ordinaryRun = CjguiComposableUiTextStyleRun(0, 11, 14.0, 0, "system",
+        0.1, 0.2, 0.3, 1.0, hasBackground: true, backgroundRed: 0.9,
+        backgroundGreen: 0.8, backgroundBlue: 0.7, backgroundAlpha: 0.6)
+    let selectionA = CjguiComposableUiTextStyleRun.selectionBackground(1, 4,
+        CjguiComposableUiColor(0.2, 0.3, 0.4, 0.5))
+    let accepted = acceptScrollOriginInitial(viewport, bindingA, textStyleRuns: [ordinaryRun, selectionA])
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, bindingA)
+    let oldAnchor = accepted.nodeForId(8105)
+    let oldY = oldAnchor.bounds.y
+    let oldOuterClipY = accepted.nodeForId(8105).clipConstraints()[1].rect.y
+    let oldScrollClipY = accepted.nodeForId(8105).clipConstraints()[2].rect.y
+    let oldInnerClipY = accepted.nodeForId(8105).clipConstraints()[3].rect.y
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 8, "same-map", "origin-B")
+
+    // Same map id and same logical request value are not enough to reuse old
+    // coordinates. A ticket plus this candidate's real layout proves the move.
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_handoff_required")
+    @Assert(viewport.acceptedOriginOffset(), 0)
+    let refused = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(refused.isValid(), false)
+    @Assert(refused.layoutError(), "scroll_origin_handoff_required")
+    let selectionB = CjguiComposableUiTextStyleRun.selectionBackground(4, 8,
+        CjguiComposableUiColor(0.8, 0.1, 0.2, 0.7))
+    @Assert(viewport.stageCoordinateOrigin(bindingB, anchor: Some(ticket), targetNodeId: 8125,
+        targetLocalByte: 4), "scroll_origin_anchor_staged")
+    let candidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30,
+        targetNodeId: 8125, textStyleRuns: [ordinaryRun, selectionB]),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(candidate.isValid(), true)
+    @Assert(viewport.hasPendingRequest(), true)
+    @Assert(viewport.acceptedOriginOffset(), 0)
+    let candidateAnchor = candidate.nodeForId(8125)
+    @Assert(candidateAnchor.bounds.y, oldY)
+    let constraints = candidateAnchor.clipConstraints()
+    @Assert(constraints[1].rect.y, oldOuterClipY)
+    @Assert(constraints[2].rect.y, oldScrollClipY)
+    @Assert(constraints[3].rect.y, oldInnerClipY + 20)
+    // Discard retains A and its pending immutable ticket. Re-solving the same
+    // candidate is still eligible for one atomic origin/geometry acceptance.
+    viewport.discardStagedExtents()
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+    @Assert(viewport.pendingOriginAnchor().isSome(), true)
+    let retry = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30,
+        targetNodeId: 8125, textStyleRuns: [ordinaryRun, selectionB]),
+        CjguiComposableUiRect(0, 0, 240, 170), 4)
+    @Assert(retry.isValid(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedOriginOffset(), 20)
+    @Assert(viewport.acceptedOffset(), 40)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-B")
+    @Assert(retry.nodeForId(8125).bounds.y, oldY)
+    @Assert(ticket.pixelRemainder, 0.375)
+    @Assert(ticket.glyphRelativeY, 4.5)
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_unchanged")
+    let following = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30,
+        targetNodeId: 8125, textStyleRuns: [ordinaryRun, selectionB]),
+        CjguiComposableUiRect(0, 0, 240, 170), 5)
+    @Assert(following.isValid(), true)
+    @Assert(following.nodeForId(8125).bounds.y, oldY)
+}
+
+@Test
+func scrollOriginCrossNodeRejectsDifferentBodyAndFont(): Unit {
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 10, "same-map", "origin-A")
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 10, "same-map", "origin-B")
+
+    let bodyViewport = CjguiComposableUiScrollViewport()
+    let bodyAccepted = acceptScrollOriginInitial(bodyViewport, bindingA)
+    let bodyTicket = scrollOriginTicketFromAccepted(bodyViewport, bodyAccepted, bindingA)
+    @Assert(bodyViewport.stageCoordinateOrigin(bindingB, anchor: Some(bodyTicket), targetNodeId: 8125,
+        targetLocalByte: 4), "scroll_origin_anchor_staged")
+    let bodyCandidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(bodyViewport, 30,
+        targetNodeId: 8125, body: "other body"), CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(bodyCandidate.isValid(), false)
+    @Assert(bodyCandidate.layoutError(), "scroll_origin_anchor_geometry_incompatible")
+
+    let fontViewport = CjguiComposableUiScrollViewport()
+    let fontAccepted = acceptScrollOriginInitial(fontViewport, bindingA)
+    let fontTicket = scrollOriginTicketFromAccepted(fontViewport, fontAccepted, bindingA)
+    @Assert(fontViewport.stageCoordinateOrigin(bindingB, anchor: Some(fontTicket), targetNodeId: 8125,
+        targetLocalByte: 4), "scroll_origin_anchor_staged")
+    let fontCandidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(fontViewport, 30,
+        targetNodeId: 8125, fontSize: 18.0), CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(fontCandidate.isValid(), false)
+    @Assert(fontCandidate.layoutError(), "scroll_origin_anchor_geometry_incompatible")
+
+    let runFontViewport = CjguiComposableUiScrollViewport()
+    let baseRun = CjguiComposableUiTextStyleRun(0, 11, 14.0, 0, "system",
+        0.1, 0.2, 0.3, 1.0, hasBackground: true, backgroundRed: 0.9,
+        backgroundGreen: 0.8, backgroundBlue: 0.7, backgroundAlpha: 0.6)
+    let runFontAccepted = acceptScrollOriginInitial(runFontViewport, bindingA, textStyleRuns: [baseRun])
+    let runFontTicket = scrollOriginTicketFromAccepted(runFontViewport, runFontAccepted, bindingA)
+    @Assert(runFontViewport.stageCoordinateOrigin(bindingB, anchor: Some(runFontTicket), targetNodeId: 8125,
+        targetLocalByte: 4), "scroll_origin_anchor_staged")
+    let changedRun = CjguiComposableUiTextStyleRun(0, 11, 18.0, 0, "system",
+        0.1, 0.2, 0.3, 1.0, hasBackground: true, backgroundRed: 0.9,
+        backgroundGreen: 0.8, backgroundBlue: 0.7, backgroundAlpha: 0.6)
+    let runFontCandidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(runFontViewport, 30,
+        targetNodeId: 8125, textStyleRuns: [changedRun]), CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(runFontCandidate.isValid(), false)
+    @Assert(runFontCandidate.layoutError(), "scroll_origin_anchor_geometry_incompatible")
+}
+
+@Test
+func scrollOriginLateRequestCannotCommitSolvedOldGeometry(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 15, "same-map", "origin-A")
+    let accepted = acceptScrollOriginInitial(viewport, bindingA)
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, bindingA)
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 15, "same-map", "origin-B")
+    @Assert(viewport.stageCoordinateOrigin(bindingB, anchor: Some(ticket), targetNodeId: 8105,
+        targetLocalByte: 4), "scroll_origin_anchor_staged")
+    let solved = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(solved.isValid(), true)
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+
+    @Assert(viewport.requestOffset(70), true)
+    @Assert(viewport.pendingOriginAnchor().isNone(), true)
+    // The immutable solved proof survives pending-ticket retirement and blocks
+    // this old geometry until the window discards it.
+    @Assert(viewport.canCommitCoordinateOrigin(), false)
+    viewport.discardStagedExtents()
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+
+    // A fresh ordinary A-origin solve may then accept the newer B request under
+    // the existing request-generation semantics.
+    let ordinary = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 4)
+    @Assert(ordinary.isValid(), true)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedOffset(), 70)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+}
+
+@Test
+func scrollRequestAndNavigationSupersedePassiveOriginAnchor(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 9, "same-map", "origin-A")
+    let accepted = acceptScrollOriginInitial(viewport, bindingA)
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, bindingA)
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 9, "same-map", "origin-B")
+    @Assert(viewport.requestOffset(70), true)
+    @Assert(viewport.stageCoordinateOrigin(bindingB, anchor: Some(ticket), targetNodeId: 8105,
+        targetLocalByte: 4), "scroll_origin_anchor_stale")
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+    @Assert(viewport.pendingOriginAnchor().isNone(), true)
+
+    viewport.requestOriginNavigation()
+    @Assert(viewport.offset(), 0)
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_navigation")
+    let navigated = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(navigated.isValid(), true)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedOriginOffset(), 0)
+    @Assert(viewport.acceptedOffset(), 0)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-B")
+}
+
+@Test
+func scrollOriginNavigationSurvivesAcceptedUnboundIntermediateSolve(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 9, "map-A", "origin-A")
+    let _ = acceptScrollOriginInitial(viewport, bindingA)
+    viewport.requestOriginNavigation()
+    let request = viewport.requestGeneration()
+    // Loading/progress may accept a scene before the requested SourceMap
+    // exists. It never called stageCoordinateOrigin for the destination.
+    let interim = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 50),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(interim.isValid(), true)
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.requestGeneration(), request)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 9, "map-B", "origin-B")
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_navigation")
+    let destination = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 4)
+    @Assert(destination.isValid(), true)
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-B")
+    @Assert(viewport.acceptedOffset(), 0)
+    let bindingC = CjguiComposableUiScrollOriginBinding("document", 9, "map-C", "origin-C")
+    @Assert(viewport.stageCoordinateOrigin(bindingC), "scroll_origin_handoff_required")
+}
+
+@Test
+func scrollOriginNavigationCandidateCannotConsumeNewNavigation(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let bindingA = CjguiComposableUiScrollOriginBinding("document", 9, "map-A", "origin-A")
+    let _ = acceptScrollOriginInitial(viewport, bindingA)
+    viewport.requestOriginNavigation()
+    let bindingB = CjguiComposableUiScrollOriginBinding("document", 9, "map-B", "origin-B")
+    @Assert(viewport.stageCoordinateOrigin(bindingB), "scroll_origin_navigation")
+    let candidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30),
+        CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(candidate.isValid(), true)
+    viewport.requestOriginNavigation()
+    @Assert(viewport.canCommitCoordinateOrigin(), false)
+    viewport.discardStagedExtents()
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin, "origin-A")
+    let bindingC = CjguiComposableUiScrollOriginBinding("document", 9, "map-C", "origin-C")
+    @Assert(viewport.stageCoordinateOrigin(bindingC), "scroll_origin_navigation")
+}

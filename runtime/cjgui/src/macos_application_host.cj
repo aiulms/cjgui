@@ -563,6 +563,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// released both after a result and after a propagated callback failure.
     private func pumpOneTurnWhileGuarded(turnBudgetMs: UInt32): CjguiMacosApplicationTurnResult {
         let started = MonoTime.now()
+        let roundStartedNs = unsafe { cjgui_internal_renderer_owner_clock_ns() }
+        let observedWork = cjguiSchedulingWorkRevision()
         var externalActionCount: Int64 = 0
         if (let Some(connection) <- externalConnection) {
             while (externalActionCount < 16) {
@@ -710,11 +712,21 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         if (anyActiveAnimation && waitBudget > CJGUI_COMPOSABLE_UI_ANIMATION_FRAME_WAIT_MS) {
             waitBudget = CJGUI_COMPOSABLE_UI_ANIMATION_FRAME_WAIT_MS
         }
+        // Every live window has already serviced ready FIFO work above. Wait
+        // once for any host or worker, using the original outer wall deadline;
+        // a sibling becoming ready cannot be stranded behind the chosen host.
+        if (cjguiCommonSchedulingEnabled() && waitBudget > 0u32) {
+            let absoluteDeadline = roundStartedNs + UInt64(turnBudgetMs) * 1000000u64
+            let animationDeadline = unsafe { cjgui_internal_renderer_owner_clock_ns() } +
+                UInt64(waitBudget) * 1000000u64
+            let _ = cjguiWaitSchedulingWork(observedWork, min(absoluteDeadline, animationDeadline))
+        }
+        let pumpWait = if (cjguiCommonSchedulingEnabled()) { 0u32 } else { waitBudget }
         if (let Some(waitedWindow) <- window(waitedIdentifier)) {
             let waited = if (hasPostRefreshObserver) {
-                waitedWindow.pump(waitBudget)
+                waitedWindow.pump(pumpWait)
             } else {
-                waitedWindow.pumpEventsWithoutRefresh(waitBudget)
+                waitedWindow.pumpEventsWithoutRefresh(pumpWait)
             }
             if (waitedWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
                 return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,

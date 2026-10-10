@@ -484,6 +484,19 @@ Hello, clang
 4. Would upgrading the bundled linker / TAPI support be the intended fix?
 ````
 
+### CJ-20261008-001：1.1.3 macOS 大模块 O2 的 LLVM 优化成本
+
+- 状态：`UNCLASSIFIED`；尚未证明编译器缺陷，也未对外提交。
+- 优先级：`P2`；影响范围为 cold build，运行验收分别计量。
+- 平台/版本：本机 macOS arm64，`/Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3`，Compiler 1.1.3。
+- 影响：Mac E 正常包 cold build。此前普通 cjc 默认 O0；应用的 `override-compile-option = "-O2"` 会同时优化源码依赖。
+- 复现入口：Pharos `tools/run_editor.sh --build-only`，隔离 `PHAROS_STAGE_DIR=/private/tmp/pharos-e-r3-final21`；本轮明确 `PHAROS_RUN_TIMEOUT=900`。命令/失败原件为 [/private/tmp/pharos-e-r3-final21-build3.log](/private/tmp/pharos-e-r3-final21-build3.log) 与产品 `artifacts/builds/run-20261008-044548-94975.log`。
+- 实际观测：CJGUI 的 20,727,872B bitcode 在 `opt -passes=default<O2> --cangjie-pipeline`；一次样本中该子进程已运行11分16秒，CPU约98.8%，RSS 11,362,400KiB。它最终完成框架产物；该轮随后在应用新增日志的字符串语法处失败，修语法后的 build4 已复用框架缓存。编译等待不能归为开窗、输入或 renderer 延迟。
+- 运行收益只在独立范围确认：同一冻结1GiB的公开 `fullFileHash`，O0=10.014s、O1=8.867s、O2=1.084s，长度/摘要相同；尚不能由此证明整体应用性能门。证据见 `artifacts/e-astra-mechanisms-20261005/caret-regression/hash-optimization.json`。
+- 当前归因：已定位时间主要在 LLVM opt，尚未定位具体 pass/函数；不猜为语法、AX或GPU问题。普通输入机制及安全门不因此放宽。
+- 新样本：应用入口 O2 的 build4 触及900秒编译上限，未启动验收窗口；O1入口仍呈同类高成本，画像后主动停止，未算通过。见 `artifacts/e-astra-mechanisms-20261005/caret-regression/compiler-cost.json`；选项顺序小工程证实顶层 override 后于主包选项，不能借包级设置只排除入口。
+- 临时处理与移除条件：正常入口恢复原默认编译；O2限定到document_core、markdown_engine和macOS原生代码，不更改CJGUI共享清单、系统工具链或运行契约。正常包的cold build与运行收益均待实测；以后有单函数/单 pass 反例或工具链升级时复查，再判断入口优化或上游反馈。编译等待与运行验收分别记录，不以增量 build 时间冒充 cold build。
+
 ## 8. 不进入本账本的问题
 
 以下问题不默认进入本账本：

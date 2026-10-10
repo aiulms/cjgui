@@ -223,6 +223,9 @@ public class CjguiTextSession {
     private var selEnd16: Int64 = 0
     /// Absolute source-byte selection is the durable view anchor. UTF-16
     /// coordinates above are only its projection into the current mirror.
+    private var selectionRevision: Int64 = 0
+    private var selectionAnchorByte: Int64 = -1
+    private var selectionFocusByte: Int64 = -1
     private var selectionVersion: Int64 = -1
     private var selectionStartByte: Int64 = -1
     private var selectionEndByte: Int64 = -1
@@ -365,6 +368,7 @@ public class CjguiTextSession {
         this.selectionStartByte = this.window.windowStartByte()
         this.selectionEndByte = this.selectionStartByte
         this.selectionNeedsNativeRestore = false
+        this.setSelection16(0, 0)
     }
 
     /// 解绑语义由 `bind` 推进代次 + 窗口归属变化实现:旧 nodeId 上的后续编辑与
@@ -440,6 +444,10 @@ public class CjguiTextSession {
             this.mirrorRevision += 1
             this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
         }
+        if (this.window.selectionOwner().isSome()) {
+            let _ = this.refreshSourceChoiceProjection(externalChange)
+            return changed
+        }
         if (externalChange) {
             if (let Some(mapped) <- rebased) {
                 if (mapped[0] == this.window.contentVersion() &&
@@ -459,6 +467,8 @@ public class CjguiTextSession {
     }
 
     private func invalidateSourceSelection(reason: String): Unit {
+        this.selectionRevision += 1
+        this.selectionAnchorByte = -1; this.selectionFocusByte = -1
         this.selectionVersion = -1
         this.selectionStartByte = -1
         this.selectionEndByte = -1
@@ -535,20 +545,25 @@ public class CjguiTextSession {
     /// 安装值：写回选区、把 `selectionVersion` 对齐到该正文版本、清除待恢复位。
     public func adoptNativeSelectionRestored(version: Int64, start16: Int64, end16: Int64): Bool {
         if (version != this.window.contentVersion()) {
-            // 安装区间属于更旧的一份正文：不采纳，留给下一次接受后的重试。
-            this.lastReason = "selection_restore_version_stale"
-            return false
+            this.lastReason = "selection_restore_version_stale"; return false
         }
-        if (!this.window.confirmContentVersion({ =>
-            this.setSelection16(start16, end16)
-            this.selectionNeedsNativeRestore = false
-            this.lastReason = ""
-            return true
-        })) {
-            this.lastReason = "selection_restore_source_stale"
-            return false
+        if (this.sourceChoiceOutsideMirror()) {
+            if (!this.refreshSourceChoiceProjection(false) || start16 != this.selStart16 || end16 != this.selEnd16) {
+                this.lastReason = "selection_restore_choice_stale"; return false
+            }
+        } else {
+            let installed = this.window.documentRangeForUtf16(start16, end16 - start16)
+            let sameChoice = installed.isSome() && this.selectionVersion == version &&
+                installed.getOrThrow()[0] == this.selectionStartByte && installed.getOrThrow()[1] == this.selectionEndByte
+            if (!sameChoice) {
+                // The selection writer is outside the owner's pure confirm callback.
+                this.setSelection16(start16, end16)
+                if (this.selectionVersion != version || this.selStart16 != start16 || this.selEnd16 != end16) { return false }
+            }
         }
-        return true
+        return this.window.confirmContentVersion({ =>
+            this.selectionNeedsNativeRestore = false; this.lastReason = ""; return true
+        })
     }
 
     /// 人类锚（H1-R.a）：采纳 native 在**人亲手落点**时冻结的一次性锚，把它写成会话
@@ -596,7 +611,8 @@ public class CjguiTextSession {
         })) {
             return false
         }
-        return true
+        this.setSelection16(start16, end16)
+        return this.selectionVersion == this.window.contentVersion()
     }
 
     /// 人类锚采纳的**只读**预检（除序号外的全部失败条件）。窗口必须在取走 native 锚
@@ -649,6 +665,16 @@ public class CjguiTextSession {
         if (version != this.window.contentVersion()) {
             this.lastReason = "adopt_precheck_version_stale"
             return false
+        }
+        if (this.sourceChoiceOutsideMirror()) {
+            let owner = this.window.selectionOwner()
+            if (owner.isNone()) { return false }
+            let choice = owner.getOrThrow().sourceSelectionSnapshot()
+            if (start16 != this.selStart16 || end16 != this.selEnd16 ||
+                choice.version != version || choice.revision != this.selectionRevision ||
+                choice.anchorByte != this.selectionAnchorByte || choice.focusByte != this.selectionFocusByte) {
+                this.lastReason = "adopt_precheck_choice_stale"; return false
+            }
         }
         if (refusalRecovery && this.needsCalibration) {
             if (contextEpoch != this.contextEpoch || mirrorRevision != this.mirrorRevision) {
@@ -712,6 +738,10 @@ public class CjguiTextSession {
             this.lastReason = this.window.unpreparedReason()
             return false
         }
+        if (!this.sourceChoiceOutsideMirror()) {
+            this.setSelection16(if (selectionStart16 >= 0) { selectionStart16 } else { this.selStart16 },
+                if (selectionEnd16 >= 0) { selectionEnd16 } else { this.selEnd16 })
+        }
         if (!this.window.confirmContentVersion({ =>
             // Source runs this tiny state change in the same boundary as its
             // owner-version check. Native work and mirror reads are outside it.
@@ -720,11 +750,6 @@ public class CjguiTextSession {
             // The platform has installed this exact mirror and its actual
             // selection. The native result, when available, is authoritative;
             // direct pure-session consumers keep their explicit local range.
-            if (selectionStart16 >= 0 && selectionEnd16 >= selectionStart16) {
-                this.setSelection16(selectionStart16, selectionEnd16)
-            } else {
-                this.setSelection16(this.selStart16, this.selEnd16)
-            }
             this.selectionNeedsNativeRestore = false
             this.lastReason = ""
             return true
@@ -747,6 +772,8 @@ public class CjguiTextSession {
         if (moved) {
             this.mirrorRevision += 1
             this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+            let _ = this.projectClippedSourceChoice()
+            this.selectionNeedsNativeRestore = true
         }
         return moved
     }
@@ -759,24 +786,106 @@ public class CjguiTextSession {
 
     /// 纯选区变化(平台选区导航/鼠标):只推进视图状态,不产生事务、不推进内容版本。
     public func setSelection16(start16: Int64, end16: Int64): Unit {
-        let lo = if (start16 <= end16) { start16 } else { end16 }
-        let hi = if (start16 <= end16) { end16 } else { start16 }
-        this.selStart16 = this.clamp16(lo)
-        this.selEnd16 = if (hi < 0) { 0 } else { if (hi > this.mirrorUtf16Length) { this.mirrorUtf16Length } else { hi } }
-        let sourceRange = this.window.documentRangeForUtf16(this.selStart16,
-            this.selEnd16 - this.selStart16)
-        if (let Some(bytes) <- sourceRange) {
-            this.selectionVersion = this.window.contentVersion()
-            this.selectionStartByte = bytes[0]
-            this.selectionEndByte = bytes[1]
-        } else {
-            this.invalidateSourceSelection("selection_not_utf8_boundary")
+        let a = this.clamp16(start16); let b = this.clamp16(end16)
+        let mappedA = this.window.documentRangeForUtf16(a, 0)
+        let mappedB = this.window.documentRangeForUtf16(b, 0)
+        if (mappedA.isSome() && mappedB.isSome()) {
+            let _ = this.setDirectedSourceSelection(this.window.contentVersion(),
+                mappedA.getOrThrow()[0], mappedB.getOrThrow()[0])
+        } else { this.invalidateSourceSelection("selection_not_utf8_boundary") }
+    }
+
+    /// A precise proxy echo observes the already projected global choice. It must
+    /// not turn its clipped endpoints into a new source selection or unlock restoration.
+    public func nativeSelectionEchoMatches(start16: Int64, end16: Int64): Bool {
+        if (!this.bound || !this.window.isPrepared() || !this.sourceChoiceOutsideMirror() ||
+            start16 != this.selStart16 || end16 != this.selEnd16 ||
+            this.selectionVersion != this.window.contentVersion() ||
+            this.selectionVersion != this.window.sourceVersion()) { return false }
+        let owner = match (this.window.selectionOwner()) { case Some(value) => value case None => return false }
+        let choice = owner.sourceSelectionSnapshot()
+        return choice.version == this.selectionVersion && choice.revision == this.selectionRevision &&
+            choice.anchorByte == this.selectionAnchorByte && choice.focusByte == this.selectionFocusByte
+    }
+
+    /// Same-version global choice; the owner validates UTF-8 endpoints and keeps direction.
+    /// Paging only changes its local projection. It never creates a new body transaction.
+    public func setDirectedSourceSelection(expectedVersion: Int64, anchorByte: Int64,
+        focusByte: Int64): Bool {
+        if (!this.bound || expectedVersion != this.window.contentVersion() ||
+            expectedVersion != this.window.sourceVersion() || anchorByte < 0 || focusByte < 0 ||
+            anchorByte > this.window.sourceByteLength() || focusByte > this.window.sourceByteLength()) { return false }
+        if (let Some(owner) <- this.window.selectionOwner()) {
+            if (!owner.setSourceSelection(expectedVersion, anchorByte, focusByte)) {
+                this.lastReason = "source_selection_stale"; return false
+            }
+            return this.refreshSourceChoiceProjection(false)
         }
+        let lo = if (anchorByte < focusByte) { anchorByte } else { focusByte }
+        let hi = if (anchorByte > focusByte) { anchorByte } else { focusByte }
+        if (lo < this.window.windowStartByte() || hi > this.window.windowStartByte() + cjguiUtf8Length(this.window.text())) { return false }
+        this.selectionRevision += 1
+        this.selectionVersion = expectedVersion
+        this.selectionAnchorByte = anchorByte; this.selectionFocusByte = focusByte
+        this.selectionStartByte = lo; this.selectionEndByte = hi
+        return this.projectClippedSourceChoice()
+    }
+
+    private func sourceChoiceOutsideMirror(): Bool {
+        return this.selectionStartByte < this.window.windowStartByte() ||
+            this.selectionEndByte > this.window.windowStartByte() + cjguiUtf8Length(this.window.text())
+    }
+
+    private func clampSourceByte(value: Int64, lo: Int64, hi: Int64): Int64 {
+        return if (value < lo) { lo } else { if (value > hi) { hi } else { value } }
+    }
+
+    private func projectClippedSourceChoice(): Bool {
+        if (!this.window.isPrepared() || this.selectionVersion != this.window.contentVersion() ||
+            this.selectionStartByte < 0) { return false }
+        let start = this.window.windowStartByte()
+        let end = start + cjguiUtf8Length(this.window.text())
+        let lo = this.clampSourceByte(this.selectionStartByte, start, end)
+        let hi = this.clampSourceByte(this.selectionEndByte, start, end)
+        let a = cjguiUtf8OffsetToUtf16(this.window.text(), lo - start)
+        let b = cjguiUtf8OffsetToUtf16(this.window.text(), hi - start)
+        if (a.isNone() || b.isNone()) { return false }
+        this.selStart16 = a.getOrThrow(); this.selEnd16 = b.getOrThrow()
+        return true
+    }
+
+    private func refreshSourceChoiceProjection(requireRestore: Bool): Bool {
+        let owner = match (this.window.selectionOwner()) { case Some(value) => value; case None => return false }
+        let choice = owner.sourceSelectionSnapshot()
+        if (choice.version != this.window.contentVersion() || choice.anchorByte < 0 || choice.focusByte < 0) { return false }
+        let changed = choice.revision != this.selectionRevision || choice.version != this.selectionVersion
+        this.selectionRevision = choice.revision; this.selectionVersion = choice.version
+        this.selectionAnchorByte = choice.anchorByte; this.selectionFocusByte = choice.focusByte
+        this.selectionStartByte = if (choice.anchorByte < choice.focusByte) { choice.anchorByte } else { choice.focusByte }
+        this.selectionEndByte = if (choice.anchorByte > choice.focusByte) { choice.anchorByte } else { choice.focusByte }
+        let projected = this.projectClippedSourceChoice()
+        if (projected && requireRestore && changed) { this.selectionNeedsNativeRestore = true }
+        return projected
     }
 
     /// The accepted source span represented by the current UTF-16 selection.
     /// It is read-only evidence for a caller about to use `replaceRange16`;
     /// the replacement still performs its own same-version owner arbitration.
+    // OHOS private producer basis, frozen with the mirror declaration. Same bytes
+    // do not erase owner/mirror/choice revisions or source direction.
+    func ohosInputSourceBasis(): String {
+        let m = this.mirrorSnapshot()
+        if (!m.prepared || !this.bound) { return "" }
+        if (let Some(owner) <- this.window.selectionOwner()) {
+            let c = owner.sourceSelectionSnapshot()
+            if (c.version != this.selectionVersion || c.revision != this.selectionRevision ||
+                c.anchorByte != this.selectionAnchorByte || c.focusByte != this.selectionFocusByte) { return "" }
+        }
+        return "${m.contextEpoch},${m.mirrorRevision},${m.contentVersion},${m.sourceVersion},${m.startByte},${m.sourceByteLength}," +
+            "${this.selectionVersion},${this.selectionRevision},${this.selectionAnchorByte},${this.selectionFocusByte}," +
+            "${this.selStart16},${this.selEnd16}"
+    }
+
     public func selectedSourceRange(): ?(Int64, Int64, Int64) {
         if (!this.bound || this.selectionVersion < 0 ||
             this.selectionStartByte < 0 || this.selectionEndByte < this.selectionStartByte ||
@@ -847,6 +956,10 @@ public class CjguiTextSession {
         if (alignmentBlock != "") {
             return CjguiPlainIntentOutcome(handled: false, reason: alignmentBlock,
                 wroteOwner: false, start16: failA, end16: failB)
+        }
+        if (this.window.selectionOwner().isSome() &&
+            match (intent) { case MoveLeft | MoveRight | ExtendLeft | ExtendRight => true case _ => false }) {
+            return this.navigateSourceChoice(intent)
         }
         let text = this.window.text()
         let total16 = this.mirrorUtf16Length
@@ -950,6 +1063,52 @@ public class CjguiTextSession {
         }
         return CjguiPlainIntentOutcome(handled: false, reason: "intent_unknown",
             wroteOwner: false, start16: lo, end16: hi)
+    }
+
+    private func navigateSourceChoice(intent: CjguiTextPlainIntent): CjguiPlainIntentOutcome {
+        let left = match (intent) { case MoveLeft | ExtendLeft => true case _ => false }
+        let extending = match (intent) { case ExtendLeft | ExtendRight => true case _ => false }
+        let version = this.selectionVersion
+        let anchor = this.selectionAnchorByte
+        let focus = this.selectionFocusByte
+        if (anchor < 0 || focus < 0) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "selection_unprojected", wroteOwner: false,
+                start16: this.selStart16, end16: this.selEnd16)
+        }
+        var target = focus
+        if (!extending && anchor != focus) {
+            target = if (left) { this.selectionStartByte } else { this.selectionEndByte }
+        } else {
+            if ((left && focus == 0) || (!left && focus >= this.window.sourceByteLength())) {
+                return CjguiPlainIntentOutcome(handled: false,
+                    reason: if (left) { "at_document_start" } else { "at_document_end" },
+                    wroteOwner: false, start16: this.selStart16, end16: this.selEnd16)
+            }
+            let start = this.window.windowStartByte()
+            let end = start + cjguiUtf8Length(this.window.text())
+            if ((left && focus <= start) || (!left && focus >= end)) {
+                let _ = this.revealByte(if (left) { focus - 1 } else { focus + 1 })
+            }
+            let local = focus - this.window.windowStartByte()
+            let probe = if (left) { local - 1 } else { local }
+            let cluster = cjguiGraphemeClusterRangeUtf8(this.window.text(), probe)
+            if (cluster.isNone()) {
+                return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable", wroteOwner: false,
+                    start16: this.selStart16, end16: this.selEnd16)
+            }
+            target = this.window.windowStartByte() + if (left) { cluster.getOrThrow()[0] } else { cluster.getOrThrow()[1] }
+        }
+        let moved = this.window.revealByte(target)
+        if (moved) {
+            this.mirrorRevision += 1; this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+        }
+        if (!this.setDirectedSourceSelection(version, if (extending) { anchor } else { target }, target)) {
+            return CjguiPlainIntentOutcome(handled: false, reason: "source_selection_stale", wroteOwner: false,
+                start16: this.selStart16, end16: this.selEnd16)
+        }
+        this.selectionNeedsNativeRestore = true
+        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false,
+            start16: this.selStart16, end16: this.selEnd16)
     }
 
     private func applyPlainSelection(start16: Int64, end16: Int64): CjguiPlainIntentOutcome {
@@ -1895,6 +2054,26 @@ public class CjguiTextSession {
     /// Prepare an already-mapped absolute source span. Mapping display syntax
     /// remains with the application; the session proves one bounded mirror
     /// covers both UTF-8 endpoints at the requested owner version.
+    func ohosVerifyPostimage(version: Int64, origin: Int64, text: String): Bool {
+        return this.bound && !this.needsCalibration && !this.compositionActive &&
+            this.window.ohosVerifyPostimage(version, origin, text)
+    }
+    // A verified predecessor postimage maps the original local numbers, never the current new mirror.
+    func ohosContinueRange16(version: Int64, origin: Int64, before: String,
+        start16: Int64, end16: Int64, text: String): CjguiTextSessionEdit {
+        if (!this.ohosVerifyPostimage(version, origin, before)) {
+            return this.edit(this.editSeq,false,version,"input_postimage_mapping_stale")
+        }
+        let a = match (cjguiUtf16OffsetToUtf8(before,start16)) { case Some(v) => v; case None => -1 }
+        let b = match (cjguiUtf16OffsetToUtf8(before,end16)) { case Some(v) => v; case None => -1 }
+        if (a < 0 || b < a) { return this.edit(this.editSeq,false,version,"input_postimage_range_invalid") }
+        let prepared = this.prepareSourceRange(version,origin+a,origin+b)
+        return match (prepared) {
+            case Some(ticket) => ticket.replace(text, sourceProxyChanged: true)
+            case None => this.edit(this.editSeq,false,version,"input_postimage_prepare_refused")
+        }
+    }
+
     public func prepareSourceRange(expectedVersion: Int64, startByte: Int64,
         endByte: Int64): ?CjguiPreparedSourceRange {
         if (!this.bound) {
@@ -1934,19 +2113,26 @@ public class CjguiTextSession {
         }
         let epoch = this.contextEpoch
         let mirror = this.mirrorRevision
+        let choiceRevision = this.selectionRevision
         this.lastReason = ""
         return Some(CjguiPreparedSourceRange(expectedVersion, startByte, endByte, epoch, mirror,
             { text, sourceProxyChanged =>
-                return this.submitPreparedSourceRange(epoch, mirror, expectedVersion,
+                return this.submitPreparedSourceRange(epoch, mirror, choiceRevision, expectedVersion,
                     startByte, endByte, text, sourceProxyChanged)
             }))
     }
 
-    private func submitPreparedSourceRange(epoch: Int64, mirror: Int64, expectedVersion: Int64,
+    private func submitPreparedSourceRange(epoch: Int64, mirror: Int64, choiceRevision: Int64, expectedVersion: Int64,
         startByte: Int64, endByte: Int64, text: String,
         sourceProxyChanged: Bool): CjguiTextSessionEdit {
+        if (let Some(owner) <- this.window.selectionOwner()) {
+            if (owner.sourceSelectionSnapshot().revision != choiceRevision) {
+                this.lastReason = "prepared_range_stale"
+                return this.edit(this.editSeq, false, -1, this.lastReason)
+            }
+        }
         if (!this.bound || epoch != this.contextEpoch || mirror != this.mirrorRevision ||
-            this.needsCalibration || this.compositionActive || !this.window.isPrepared()) {
+            choiceRevision != this.selectionRevision || this.needsCalibration || this.compositionActive || !this.window.isPrepared()) {
             this.lastReason = "prepared_range_stale"
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
@@ -1960,24 +2146,18 @@ public class CjguiTextSession {
         let outcome = this.window.applyByteEdit(startByte, endByte, text)
         if (outcome.applied) {
             this.editSeq += 1
+            let caretByte = startByte + cjguiUtf8Length(text)
+            let _ = this.window.revealByte(caretByte)
             this.mirrorRevision += 1
             this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
-            if (this.selectionVersion >= 0 && this.selectionStartByte >= 0) {
-                if (let Some(mapped) <- this.window.rebaseSelection(this.selectionVersion,
-                    this.selectionStartByte, this.selectionEndByte)) {
-                    if (mapped[0] == outcome.versionAfter &&
-                        this.projectSourceSelection(mapped[1], mapped[2])) {
-                        this.selectionVersion = mapped[0]
-                        this.selectionStartByte = mapped[1]
-                        this.selectionEndByte = mapped[2]
-                        this.selectionNeedsNativeRestore = true
-                    } else {
-                        this.invalidateSourceSelection("selection_projection_unavailable")
-                    }
-                } else {
-                    this.invalidateSourceSelection("selection_rebase_unavailable")
-                }
+            if (this.window.selectionOwner().isSome()) {
+                let _ = this.refreshSourceChoiceProjection(false)
+            } else {
+                let caret = cjguiUtf8OffsetToUtf16(this.window.text(), caretByte - this.window.windowStartByte())
+                if (let Some(caret16) <- caret) { this.setSelection16(caret16, caret16) }
+                else { this.invalidateSourceSelection("accepted_caret_unprepared") }
             }
+            this.selectionNeedsNativeRestore = !sourceProxyChanged
             this.lastReason = ""
             let accepted = this.edit(this.editSeq, true, outcome.versionAfter, "", ticket)
             this.pending.add(CjguiTextSessionPending(ticket, mirror, accepted,
@@ -1993,6 +2173,40 @@ public class CjguiTextSession {
             this.calibrationRecalibrated = false
         }
         return rejected
+    }
+
+    private func submitCurrentSourceChoice(text: String): CjguiTextSessionEdit {
+        let owner = match (this.window.selectionOwner()) {
+            case Some(value) => value
+            case None => return this.edit(this.editSeq, false, this.window.sourceVersion(), "source_selection_edit_unavailable")
+        }
+        let choice = owner.sourceSelectionSnapshot()
+        if (choice.version != this.selectionVersion || choice.revision != this.selectionRevision ||
+            choice.anchorByte != this.selectionAnchorByte || choice.focusByte != this.selectionFocusByte) {
+            this.lastReason = "source_selection_stale"
+            return this.edit(this.editSeq, false, this.window.sourceVersion(), this.lastReason)
+        }
+        let mirror = this.mirrorRevision
+        this.ticketSeq += 1
+        let ticket = this.ticketSeq
+        let outcome = this.window.applySelectedSourceEdit(choice, text)
+        if (outcome.applied) {
+            this.editSeq += 1
+            let lo = if (choice.anchorByte < choice.focusByte) { choice.anchorByte } else { choice.focusByte }
+            let caret = lo + cjguiUtf8Length(text)
+            let _ = this.window.revealByte(caret)
+            this.mirrorRevision += 1
+            this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+            let _ = this.refreshSourceChoiceProjection(false)
+            this.selectionNeedsNativeRestore = true
+            this.lastReason = ""
+        } else {
+            this.lastReason = outcome.reason
+            this.needsCalibration = true; this.calibrationRecalibrated = false
+        }
+        let result = this.edit(this.editSeq, outcome.applied, outcome.versionAfter, this.lastReason, ticket)
+        this.pending.add(CjguiTextSessionPending(ticket, mirror, result))
+        return result
     }
 
     /// 会话内部的唯一写入路径:换算只发生在已准备的有界镜像上,得到绝对文档字节
@@ -2032,6 +2246,13 @@ public class CjguiTextSession {
             this.lastReason = CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
+        if (this.sourceChoiceOutsideMirror()) {
+            if (lo != this.selStart16 || hi != this.selEnd16) {
+                this.lastReason = "source_selection_proxy_range_stale"
+                return this.edit(this.editSeq, false, this.window.sourceVersion(), this.lastReason)
+            }
+            return this.submitCurrentSourceChoice(text)
+        }
         let baseMirror = this.mirrorRevision
         // 先在镜像里换算:换算失败是**提交前**的具名拒绝(owner 完全没被触碰),与
         // "owner 收到但拒绝"是两类事件 —— 只有后者让平台代理与 accepted 正文分叉。
@@ -2043,6 +2264,10 @@ public class CjguiTextSession {
             this.lastReason = CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
+        let priorStart = this.window.windowStartByte()
+        let priorText = this.window.text()
+        let nativePostimage = priorText[0..startByte - priorStart] + text +
+            priorText[endByte - priorStart..priorText.size]
         this.ticketSeq += 1
         let ticket = this.ticketSeq
         let outcome = this.window.applyByteEdit(startByte, endByte, text)
@@ -2062,6 +2287,12 @@ public class CjguiTextSession {
             } else { None }
             if (let Some(caret16) <- mappedCaret) {
                 this.setSelection16(caret16, caret16)
+                // A bounded reload may trim or move the native edit's postimage. The owner
+                // accepted the edit, but only a same-version restore receipt can make that new
+                // local coordinate system available to another input. Do not accept a mount echo.
+                if (this.window.windowStartByte() != priorStart || this.window.text() != nativePostimage) {
+                    this.selectionNeedsNativeRestore = true
+                }
                 this.lastReason = ""
             } else {
                 // The owner transaction is already accepted. Keep its receipt,

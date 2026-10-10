@@ -1,0 +1,155 @@
+package cjgui
+
+let CJGUI_INTERNAL_RENDERER_OK: Int32 = 0
+let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 2
+let CJGUI_INTERNAL_RENDERER_SCENE_STALE: Int32 = 33
+
+foreign {
+    func cjgui_internal_renderer_hit_test_composable_text(session: UInt64, nodeId: UInt64,
+        x: Float64, y: Float64, expectedSceneVersion: UInt64,
+        outByteOffset: CPointer<UInt32>, outAffinity: CPointer<UInt32>): Int32
+    func cjgui_internal_renderer_accepted_scene_version(session: UInt64,
+        outSceneVersion: CPointer<UInt64>): Int32
+    func stub_set_scene_gen(v: UInt64): Unit
+}
+
+// ---- stub data containers (FFI hit + owner model are stand-ins, as reviewed) ----
+
+public class CjguiComposableUiLayoutNode {
+    public var nodeId: Int64
+    public var value: String
+    public var resourceId: Int64
+    public var nodeKind: Int64
+    public init(nodeId: Int64, value: String, resourceId: Int64, nodeKind: Int64) {
+        this.nodeId = nodeId
+        this.value = value
+        this.resourceId = resourceId
+        this.nodeKind = nodeKind
+    }
+    public static func missing(): CjguiComposableUiLayoutNode {
+        return CjguiComposableUiLayoutNode(-1, "", -1, -1)
+    }
+}
+
+public class CjguiComposableUiScene {
+    public var version: Int64
+    public var node: CjguiComposableUiLayoutNode
+    public init(version: Int64, node: CjguiComposableUiLayoutNode) {
+        this.version = version
+        this.node = node
+    }
+    public func nodeForId(id: Int64): CjguiComposableUiLayoutNode {
+        if (node.nodeId == id) {
+            return node
+        }
+        return CjguiComposableUiLayoutNode.missing()
+    }
+}
+
+public class HarnessMirrorOwner {
+    public var body: String
+    public var version: Int64
+    public var contextEpoch: Int64
+    public var revision: Int64
+    public init(body: String, version: Int64) {
+        this.body = body
+        this.version = version
+        this.contextEpoch = 4
+        this.revision = 1
+    }
+    public func text(): String { return body }
+    public func contentVersion(): Int64 { return version }
+}
+
+public class HarnessSession {
+    public var owner: HarnessMirrorOwner
+    public var mirrorUtf16Length: Int64
+    public var selStart16: Int64 = 0
+    public var selEnd16: Int64 = 0
+    public var selectionVersion: Int64 = -1
+    public var selectionStartByte: Int64 = -1
+    public var selectionEndByte: Int64 = -1
+    public var restoreMarked: Bool = false
+    public init(owner: HarnessMirrorOwner) {
+        this.owner = owner
+        this.mirrorUtf16Length = HarnessSession.utf16Length(owner.body)
+    }
+    public static func utf16Length(t: String): Int64 {
+        var units: Int64 = 0
+        for (rune in t.runes()) {
+            units += if (rune.toString().size >= 4) { 2 } else { 1 }
+        }
+        return units
+    }
+    public static func byteOffsetOf(t: String, unitsWanted: Int64): Int64 {
+        var units: Int64 = 0
+        var bytes: Int64 = 0
+        for (rune in t.runes()) {
+            if (units >= unitsWanted) { break }
+            let width = rune.toString().size
+            bytes += width
+            units += if (width >= 4) { 2 } else { 1 }
+        }
+        return bytes
+    }
+    public func mirrorSnapshot(): CjguiTextSessionMirrorSnapshot {
+        return CjguiTextSessionMirrorSnapshot(owner.contextEpoch, owner.revision,
+            owner.version, owner.version, 0, owner.body.size, owner.body, true, true, "")
+    }
+    public func setSelection16(start16: Int64, end16: Int64): Unit {
+        let lo = if (start16 <= end16) { start16 } else { end16 }
+        let hi = if (start16 <= end16) { end16 } else { start16 }
+        let clampedLo = if (lo < 0) { 0 } else { lo }
+        let len = HarnessSession.utf16Length(owner.body)
+        this.selStart16 = if (clampedLo > len) { len } else { clampedLo }
+        this.selEnd16 = if (hi < 0) { 0 } else { if (hi > len) { len } else { hi } }
+        this.selectionVersion = owner.version
+        this.selectionStartByte = HarnessSession.byteOffsetOf(owner.body, this.selStart16)
+        this.selectionEndByte = HarnessSession.byteOffsetOf(owner.body, this.selEnd16)
+    }
+    public func markNativeSelectionRestoreRequired(): Unit {
+        restoreMarked = true
+    }
+}
+
+// ---- harness window: members mirror production names; methods below are the
+// real extracted production methods (decide/apply/freeze/submit/frozenScene) ----
+
+public class PresentationSourceHarnessWindow {
+    public var sessionToken: UInt64 = 42u64
+    public var isWindowOpen: Bool = true
+    public var nativeInputScene: CjguiComposableUiScene =
+        CjguiComposableUiScene(7, CjguiComposableUiLayoutNode(25, "éA", 9801, 3))
+    public var ownedTextSession: ?HarnessSession = None
+    public var ownedTextSessionNodeId: Int64 = -1
+    public var textSessionBindingEpoch: UInt64 = 11u64
+    public var acceptedPresentationSource: ?CjguiPresentationSourceRecord = None
+
+    public func bind(nodeId: Int64, body: String, version: Int64): Unit {
+        // 建模生产 release+bind：代次先推进，再建新会话并同步建立来源声明。
+        textSessionBindingEpoch += 1
+        ownedTextSession = Some(HarnessSession(HarnessMirrorOwner(body, version)))
+        ownedTextSessionNodeId = nodeId
+        establishPresentationSourceAtBind()
+    }
+    public func unbind(): Unit {
+        ownedTextSession = None
+        ownedTextSessionNodeId = -1
+    }
+    public func advanceMirror(body: String, version: Int64): Unit {
+        if (let Some(s) <- ownedTextSession) {
+            s.owner.body = body
+            s.owner.version = version
+            s.mirrorUtf16Length = HarnessSession.utf16Length(body)
+        }
+    }
+    public func setDisplay(value: String): Unit {
+        nativeInputScene.node.value = value
+    }
+    public func currentSource(): ?CjguiPresentationSourceRecord {
+        return acceptedPresentationSource
+    }
+// @METHODS
+}
+
+// @TYPES

@@ -136,7 +136,12 @@ int main() {
 '''
 
 REPLICA = r'''
+struct SceneNode { struct { uint64_t nodeId=0,projectionVersion=0,acceptedBindingEpoch=0; int64_t resourceId=-1; uint32_t nodeKind=0; } pod; };
 struct Session {
+  bool selectionIntentConfirmed=false;
+  int64_t editingContextId=0,editingMirrorOwnerVersion=-1;
+  uint64_t editingContextGeneration=0;
+  std::vector<SceneNode> accepted;
   uint32_t textMenuIntent=0;
   bool caretBlinkResetPending=false;
   int32_t caretAffinity=0;
@@ -179,7 +184,9 @@ struct QueuedEvent {
   uint64_t projectionVersion = 0;
   int64_t resourceId = -1;
   uint32_t nodeKind = 0;
-  uint64_t bindingEpoch = 0;
+  uint64_t bindingEpoch = 0, acceptedBindingEpoch = 0, editingContextGeneration = 0;
+  int64_t editingContextId = 0;
+  CjguiOhosEditTickets::Ticket inputTicket;
   std::string text;
 };
 '''
@@ -195,7 +202,7 @@ SIGNATURES = [
     "bool editorOwnsTextSession(const Session &s)",
     "void editorEnqueueTextChanged(Session &s)",
     ("bool editorEnqueueTextCommit(Session &s, const std::u16string &previous, "
-     "const std::u16string &next)"),
+     "const std::u16string &next"),
 ]
 
 
@@ -211,7 +218,7 @@ def extract_method(text: str, signature: str) -> str:
 
 
 def build_harness(source_text: str) -> str:
-    harness = '#include "cjgui_ohos_ingress.h"\n'
+    harness = '#include "cjgui_ohos_ingress.h"\n#include "cjgui_ohos_edit_ticket.h"\n'
     harness += STUBS
     harness += REPLICA
     harness += "\n".join(extract_method(source_text, sig) for sig in SIGNATURES)

@@ -27,6 +27,7 @@ static const uint64_t kProbeTimerDelayMicros = 4000;
 @property(nonatomic, copy) dispatch_block_t pendingTimerAction;
 @property(nonatomic, assign) BOOL timerActionRan;
 @property(nonatomic, assign) BOOL arrivalQueued;
+@property(nonatomic, assign) BOOL arrivalObservedReadyNone;
 @property(nonatomic, assign) BOOL abaTimerActionRan;
 @property(nonatomic, assign) NSUInteger incompleteCases;
 @property(nonatomic, assign) BOOL watchdogFired;
@@ -48,19 +49,17 @@ static const uint64_t kProbeTimerDelayMicros = 4000;
 - (BOOL)queuePrivateKind:(uint32_t)kind forSession:(uint64_t)token {
     CJGuiInternalSession *ctx = CjguiLookupSession(token);
     if (!ctx || ctx.destroyed) return NO;
-    CJGuiInternalQueuedInteraction *interaction =
-        [[CJGuiInternalQueuedInteraction alloc] initWithKind:kind
-                                                recordIndex:0
-                                             selectionStart:0
-                                               selectionEnd:0
-                                                   formText:@""
-                                                     nodeId:0
-                                         projectionVersion:0
-                                                resourceId:-1
-                                                   nodeKind:0];
-    if (!interaction) return NO;
-    [ctx.pendingInteractions addObject:interaction];
-    return YES;
+    NSUInteger index = CjguiOwnerPumpTicketIndex(token);
+    if (index != NSNotFound) {
+        pthread_mutex_lock(&gCjguiOwnerPumpTicketLock);
+        CjguiOwnerPumpTicket *ticket = &gCjguiOwnerPumpTickets[index];
+        self.arrivalObservedReadyNone = ticket->state == CjguiOwnerPumpTicketReady &&
+            ticket->session == token && ticket->sessionGeneration == ctx.sessionGeneration &&
+            ticket->status == CJGUI_INTERNAL_RENDERER_OK &&
+            ticket->event.kind == CJGUI_INTERNAL_RENDERER_EVENT_NONE;
+        pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
+    }
+    return CjguiEnqueueInteraction(ctx, kind, 0, @"", 0, 0);
 }
 
 - (uint64_t)createSession {
@@ -178,6 +177,7 @@ static const uint64_t kProbeTimerDelayMicros = 4000;
     self.timerActionRan = NO;
     self.timerEntered = NO;
     self.timerEnteredOffsetMicros = 0;
+    self.arrivalObservedReadyNone = NO;
     dispatch_async(self.workerQueue, ^{
         CjguiInternalRendererEvent event = {0};
         uint64_t started = CjguiCaretBlinkClockMicros();
@@ -377,8 +377,16 @@ static const uint64_t kProbeTimerDelayMicros = 4000;
         [self check:self.timerEntered && timerOffset >= 2000 && timerOffset <
                    (uint64_t)kProbePumpTimeoutMs * 1000u
             message:"timer was absent, too early, or entered after the production deadline"];
-        [self check:elapsed >= kProbeMinimumWaitMicros && elapsed <= kProbeMaximumReadbackMicros
-            message:"pump did not observe its bounded positive wait"];
+        if (caseName[0] == 'e') {
+            [self check:elapsed >= kProbeMinimumWaitMicros && elapsed <= kProbeMaximumReadbackMicros
+                message:"empty positive-timeout pump did not observe its bounded wait"];
+        } else if (self.arrivalObservedReadyNone) {
+            [self check:elapsed < kProbeMinimumWaitMicros && elapsed <= kProbeMaximumReadbackMicros
+                message:"READY_NONE arrival missed prompt same-ticket service inside the original wait"];
+        } else {
+            [self check:elapsed <= kProbeMaximumReadbackMicros
+                message:"delayed event exceeded the bounded readback limit"];
+        }
     }
 
     switch (phase) {
@@ -408,6 +416,9 @@ static const uint64_t kProbeTimerDelayMicros = 4000;
             break;
         }
         case 3: {
+            if (self.arrivalObservedReadyNone)
+                [self check:ownerCalls == 1
+                    message:"READY_NONE FIFO arrival required a later owner ticket instead of same-ticket reservice"];
             if (!self.timerActionRan || !self.arrivalQueued) {
                 printf("NATIVE_PUMP_WAIT_UNKNOWN host_count=1 case=delayed_arrival reason=%s event_enqueued=%u\n",
                     self.timerActionRan ? "target_fifo_enqueue_failed" : "arrival_timer_outside_16ms_window",
@@ -441,6 +452,9 @@ static const uint64_t kProbeTimerDelayMicros = 4000;
             break;
         }
         case 5: {
+            if (self.arrivalObservedReadyNone)
+                [self check:ownerCalls == 1
+                    message:"host_count=2 READY_NONE arrival required a later owner ticket"];
             if (!self.timerActionRan || !self.arrivalQueued) {
                 printf("NATIVE_PUMP_WAIT_UNKNOWN host_count=2 case=delayed_arrival reason=%s event_enqueued=%u\n",
                     self.timerActionRan ? "target_fifo_enqueue_failed" : "arrival_timer_outside_16ms_window",
@@ -484,6 +498,9 @@ static const uint64_t kProbeTimerDelayMicros = 4000;
             break;
         }
         case 7: {
+            if (self.arrivalObservedReadyNone)
+                [self check:ownerCalls == 1
+                    message:"host_count=4 READY_NONE arrival required a later owner ticket"];
             if (!self.timerActionRan || !self.arrivalQueued) {
                 printf("NATIVE_PUMP_WAIT_UNKNOWN host_count=4 case=delayed_arrival reason=%s event_enqueued=%u\n",
                     self.timerActionRan ? "target_fifo_enqueue_failed" : "arrival_timer_outside_16ms_window",

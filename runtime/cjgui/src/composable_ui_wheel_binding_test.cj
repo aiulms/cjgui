@@ -1,5 +1,31 @@
 package cjgui
 
+import std.collection.*
+
+@Test
+func composableQueuedEdgeWheelPointsKeepMagnitudeAndStationaryFraction(): Unit {
+    let controller = QueuedWheelBindingController()
+    let viewport = CjguiComposableUiScrollViewport()
+    controller.bindViewport(Some(viewport))
+    controller.setConsumesDelta(false)
+    let window = queuedWheelWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        // Native residence packets carry phase 0: stationary ticks belong to
+        // one continuous accepted binding, without starting a new gesture.
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -2.44, 0u32), 0)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -2.61, 0u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.acceptedOffset(), 5)
+        for (_ in 0..4) {
+            @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.25, 0u32), 0)
+            @Assert(window.pump(0u32).isOpen, true)
+        }
+        @Assert(viewport.acceptedOffset(), 6)
+        @Assert(controller.packetCount(), 6)
+    } finally { window.close() }
+}
+
 foreign {
     func cjgui_internal_renderer_test_enqueue_composable_wheel(
         session: UInt64, nodeId: UInt64, deltaY: Float64, phase: UInt32, momentum: UInt32
@@ -197,6 +223,89 @@ private func queuedWheelEnqueue(session: UInt64, deltaY: Float64, phase: UInt32)
     }
 }
 
+@Test
+func composableQueuedWheelFrameworkPrecisePixelMagnitude(): Unit {
+    let controller = QueuedWheelBindingController()
+    let viewport = CjguiComposableUiScrollViewport()
+    controller.bindViewport(Some(viewport))
+    controller.setConsumesDelta(false)
+    let window = queuedWheelWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        for (delta in [-1.0, -20.0, -40.0]) {
+            let _ = viewport.requestOffset(0)
+            @Assert(window.refresh(), true)
+            @Assert(queuedWheelEnqueue(window.testSessionToken(), delta, 1u32), 0)
+            @Assert(window.pump(0u32).isOpen, true)
+            @Assert(viewport.offset(), Int64(-delta))
+            @Assert(viewport.acceptedOffset(), Int64(-delta))
+        }
+        let _ = viewport.requestOffset(0)
+        @Assert(window.refresh(), true)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 1u32), 0)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 4u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.offset(), 40)
+        @Assert(viewport.acceptedOffset(), 40)
+    } finally { window.close() }
+}
+
+@Test
+func composableQueuedWheelFrameworkPreciseFractionLifetime(): Unit {
+    let controller = QueuedWheelBindingController()
+    let viewport = CjguiComposableUiScrollViewport()
+    controller.bindViewport(Some(viewport))
+    controller.setConsumesDelta(false)
+    let window = queuedWheelWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        for (index in 0..4) {
+            @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.25,
+                if (index == 0) { 1u32 } else { 4u32 }), 0)
+        }
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.acceptedOffset(), 1)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.25, 4u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.requestOffset(100), true)
+        @Assert(window.refresh(), true)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.75, 4u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.acceptedOffset(), 100)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.25, 4u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.acceptedOffset(), 101)
+        // A terminal packet clears only the subpixel remainder. It neither
+        // steps the viewport nor dispatches a fabricated business event.
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.5, 4u32), 0)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), 0.0, 8u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.5, 4u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.acceptedOffset(), 101)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -0.5, 4u32), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.acceptedOffset(), 102)
+    } finally { window.close() }
+}
+
+@Test
+func composableQueuedWheelFrameworkCoarseKeepsStep(): Unit {
+    let controller = QueuedWheelBindingController()
+    let viewport = CjguiComposableUiScrollViewport()
+    controller.bindViewport(Some(viewport))
+    controller.setConsumesDelta(false)
+    let window = queuedWheelWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        @Assert(queuedWheelEnqueueForged(window.testSessionToken(),
+            UInt64(window.acceptedWheelSceneVersionForTest()), queuedWheelAcceptedResource(window),
+            UInt32(CJGUI_COMPOSABLE_UI_SCROLL_AREA), "cjgui-wheel-v1|0|-20|0|0|0"), 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(viewport.acceptedOffset(), viewport.viewportExtent() / 2)
+    } finally { window.close() }
+}
+
 private func queuedWheelEnqueueMomentum(session: UInt64, deltaY: Float64, phase: UInt32,
     momentum: UInt32): Int32 {
     return unsafe {
@@ -221,6 +330,285 @@ private func queuedWheelEnqueueForged(session: UInt64, projectionVersion: UInt64
 
 private func queuedWheelWindow(controller: QueuedWheelBindingController): CjguiComposableUiWindow {
     return CjguiComposableUiWindow(controller)
+}
+
+// This consumer keeps business and UI revisions stable for a framework-owned
+// wheel. Its real participant counts distinguish finishing frozen A from
+// cancelling/rebuilding it after the later viewport request B.
+private class RetainedViewportWheelController <: CjguiComposableUiController &
+    CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiBusinessOwnerRevisionProvider {
+    let viewport = CjguiComposableUiScrollViewport()
+    var revision: Int64 = 1
+    var ownerRevision: Int64 = 1
+    var builds: Int64 = 0
+    var commits: Int64 = 0
+    var rollbacks: Int64 = 0
+    var wheels: Int64 = 0
+    var spendOnWheel: Bool = false
+    var spent: Bool = false
+    var changeUiOnWheel: Bool = false
+    var changeOwnerOnWheel: Bool = false
+    var spendOnBuild: Bool = false
+    public func uiSceneVersion(): Int64 { return revision }
+    public func uiBusinessOwnerRevision(): Int64 { return ownerRevision }
+    public func beginSceneRefresh(): Bool { return true }
+    public func prepareSceneRefresh(): Bool { return true }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> { return ArrayList() }
+    public func commitSceneRefresh(): Unit { commits += 1 }
+    public func rollbackSceneRefresh(): Unit { rollbacks += 1 }
+    public func buildUi(): CjguiComposableUiNode {
+        builds += 1
+        let root = cjguiComposableVertical(QUEUED_WHEEL_ROOT_ID, "retained-wheel-root",
+            CjguiComposableUiStyle(fixedWidth: 320, fixedHeight: 220))
+        let scroll = cjguiComposableScrollArea(QUEUED_WHEEL_NODE_ID, "retained-wheel-viewport", viewport,
+            CjguiComposableUiStyle(fixedWidth: 240, fixedHeight: 140))
+        scroll.add(cjguiComposableText(9302, "retained-wheel-body", "unchanged owner bytes",
+            CjguiComposableUiStyle(fixedHeight: 360)))
+        root.add(scroll)
+        if (spendOnBuild) { spent = true }
+        return root
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_SCROLL && event.frameworkScrollApplied) {
+            wheels += 1
+            if (spendOnWheel) { spent = true }
+            if (changeUiOnWheel) { revision += 1 }
+            if (changeOwnerOnWheel) { ownerRevision += 1 }
+            return CjguiComposableUiDispatchResult(true)
+        }
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+private func readyRetainedViewportWheel(controller: RetainedViewportWheelController,
+    window: CjguiComposableUiWindow, budget: CjguiOwnerTurnBudget): Unit {
+    @Assert(window.start(), true)
+    window.useOwnerTurnBudget(budget)
+    // Charge known owner work after the actual native packet reaches Ready.
+    // No synthetic receipt or prepared data is supplied by the fixture.
+    budget.testUseClock({ =>
+        let actual = Int64(unsafe { cjgui_internal_renderer_owner_clock_ns() })
+        actual + if (window.testPreparedCandidateReady()) { 10000000 } else { 0 }
+    })
+    @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 1u32), 0)
+    @Assert(budget.begin(), true)
+    @Assert(window.pump(0u32).isOpen, true)
+    budget.end()
+    var turn: Int64 = 0
+    while (!window.testPreparedCandidateReady() && turn < 48) {
+        @Assert(budget.begin(), true)
+        let _ = window.refreshIfNeeded()
+        budget.end()
+        turn += 1
+    }
+    let originalViewportAReady = window.testPreparedCandidateReady()
+    @Assert(originalViewportAReady, true)
+    @Assert(controller.builds, 2)
+    @Assert(controller.commits, 1)
+    @Assert(controller.rollbacks, 0)
+    @Assert(controller.viewport.acceptedOffset(), 0)
+    @Assert(controller.viewport.offset(), 20)
+    // This charge begins in the next real wheel callback, after budget.begin.
+    budget.testUseClock({ =>
+        Int64(unsafe { cjgui_internal_renderer_owner_clock_ns() }) +
+            if (controller.spent) { 12000000 } else { 0 }
+    })
+    controller.spendOnWheel = true
+}
+
+@Test
+func composableQueuedWheelRetainsFrozenViewportAAndLaterRequestB(): Unit {
+    let controller = RetainedViewportWheelController()
+    let window = CjguiComposableUiWindow(controller)
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        readyRetainedViewportWheel(controller, window, budget)
+        let originalY = window.acceptedNodeBounds("retained-wheel-body").getOrThrow().y
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 4u32), 0)
+        @Assert(budget.begin(), true)
+        @Assert(window.pump(0u32).isOpen, true)
+        budget.end()
+        let laterWheelRetainedOriginalA = window.testPreparedCandidateReady()
+        println("CJGUI_VIEWPORT_RETAIN_FIXTURE after_wheel_b ready=${laterWheelRetainedOriginalA} " +
+            "builds=${controller.builds} rollbacks=${controller.rollbacks} " +
+            "accepted=${controller.viewport.acceptedOffset()} requested=${controller.viewport.offset()}")
+        @Assert(laterWheelRetainedOriginalA, true)
+        @Assert(controller.builds, 2)
+        @Assert(controller.rollbacks, 0)
+        @Assert(controller.viewport.acceptedOffset(), 0)
+        @Assert(controller.viewport.offset(), 40)
+        controller.spent = false
+        controller.spendOnWheel = false
+        @Assert(budget.begin(), true)
+        @Assert(window.refreshIfNeeded(), true)
+        budget.end()
+        @Assert(controller.commits, 2)
+        @Assert(controller.viewport.acceptedOffset(), 20)
+        @Assert(controller.viewport.offset(), 40)
+        @Assert(window.acceptedNodeText("retained-wheel-body") ?? "", "unchanged owner bytes")
+        @Assert(window.acceptedNodeBounds("retained-wheel-body").getOrThrow().y, originalY - 20)
+        var turn: Int64 = 0
+        while (controller.viewport.acceptedOffset() != 40 && turn < 48) {
+            @Assert(budget.begin(), true)
+            let _ = window.refreshIfNeeded()
+            budget.end()
+            turn += 1
+        }
+        @Assert(controller.viewport.acceptedOffset(), 40)
+        @Assert(controller.viewport.offset(), 40)
+        @Assert(controller.builds, 3)
+        @Assert(controller.commits, 3)
+        @Assert(controller.rollbacks, 0)
+        @Assert(controller.wheels, 2)
+        @Assert(window.acceptedNodeBounds("retained-wheel-body").getOrThrow().y, originalY - 40)
+    } finally { budget.end(); window.close() }
+}
+
+@Test
+func composableQueuedWheelDomainChangeStillRetiresFrozenViewport(): Unit {
+    for (changeUi in [true, false]) {
+        let controller = RetainedViewportWheelController()
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            readyRetainedViewportWheel(controller, window, budget)
+            controller.changeUiOnWheel = changeUi
+            controller.changeOwnerOnWheel = !changeUi
+            @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 4u32), 0)
+            @Assert(budget.begin(), true)
+            @Assert(window.pump(0u32).isOpen, true)
+            budget.end()
+            @Assert(window.testPreparedCandidateReady(), false)
+            @Assert(controller.rollbacks, 1)
+            @Assert(controller.commits, 1)
+            @Assert(controller.viewport.acceptedOffset(), 0)
+            @Assert(controller.viewport.offset(), 40)
+        } finally { budget.end(); window.close() }
+    }
+}
+
+@Test
+func composableQueuedWheelBatchCoalescesAfterOriginalViewport(): Unit {
+    let controller = RetainedViewportWheelController()
+    let window = CjguiComposableUiWindow(controller)
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        readyRetainedViewportWheel(controller, window, budget)
+        let originalY = window.acceptedNodeBounds("retained-wheel-body").getOrThrow().y
+        controller.spendOnWheel = false
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 4u32), 0)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 4u32), 0)
+        @Assert(budget.begin(), true)
+        @Assert(window.pumpEventsWithoutRefresh(0u32).isOpen, true)
+        budget.end()
+        @Assert(controller.wheels, 3)
+        let sameBatchRetainedOriginalA = window.testPreparedCandidateReady()
+        @Assert(sameBatchRetainedOriginalA, true)
+        @Assert(controller.builds, 2)
+        @Assert(controller.rollbacks, 0)
+        @Assert(controller.viewport.acceptedOffset(), 0)
+        @Assert(controller.viewport.offset(), 60)
+        @Assert(budget.begin(), true)
+        @Assert(window.refreshIfNeeded(), true)
+        budget.end()
+        @Assert(controller.viewport.acceptedOffset(), 20)
+        @Assert(controller.viewport.offset(), 60)
+        @Assert(window.acceptedNodeBounds("retained-wheel-body").getOrThrow().y, originalY - 20)
+        var turn: Int64 = 0
+        while (controller.viewport.acceptedOffset() != 60 && turn < 48) {
+            @Assert(budget.begin(), true)
+            let _ = window.refreshIfNeeded()
+            budget.end()
+            turn += 1
+        }
+        @Assert(controller.viewport.acceptedOffset(), 60)
+        @Assert(controller.viewport.offset(), 60)
+        @Assert(controller.builds, 3)
+        @Assert(controller.commits, 3)
+        @Assert(controller.rollbacks, 0)
+        @Assert(window.acceptedNodeBounds("retained-wheel-body").getOrThrow().y, originalY - 60)
+    } finally { budget.end(); window.close() }
+}
+
+@Test
+func composableQueuedWheelUnrecordedViewportRequestRetiresOriginal(): Unit {
+    let controller = RetainedViewportWheelController()
+    let window = CjguiComposableUiWindow(controller)
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        readyRetainedViewportWheel(controller, window, budget)
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 4u32), 0)
+        @Assert(budget.begin(), true)
+        @Assert(window.pump(0u32).isOpen, true)
+        budget.end()
+        @Assert(window.testPreparedCandidateReady(), true)
+        @Assert(controller.viewport.requestOffset(60), true)
+        controller.spent = false
+        controller.spendOnWheel = false
+        @Assert(budget.begin(), true)
+        let _ = window.refreshIfNeeded()
+        budget.end()
+        @Assert(controller.rollbacks, 1)
+        @Assert(controller.commits, 1)
+        @Assert(controller.viewport.acceptedOffset(), 0)
+        @Assert(controller.viewport.offset(), 60)
+        @Assert(window.acceptedNodeText("retained-wheel-body") ?? "", "unchanged owner bytes")
+    } finally { budget.end(); window.close() }
+}
+
+@Test
+func composableQueuedWheelExplicitRefreshStillRetiresOriginal(): Unit {
+    let controller = RetainedViewportWheelController()
+    let window = CjguiComposableUiWindow(controller)
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        readyRetainedViewportWheel(controller, window, budget)
+        @Assert(controller.viewport.requestOffset(40), true)
+        window.requestRefresh()
+        @Assert(window.testPreparedCandidateReady(), false)
+        @Assert(controller.rollbacks, 1)
+        @Assert(controller.commits, 1)
+        @Assert(controller.viewport.acceptedOffset(), 0)
+        @Assert(controller.viewport.offset(), 40)
+    } finally { budget.end(); window.close() }
+}
+
+@Test
+func composableQueuedWheelIncompleteStaticLayoutStillRetiresOriginal(): Unit {
+    let controller = RetainedViewportWheelController()
+    let window = CjguiComposableUiWindow(controller)
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        @Assert(window.start(), true)
+        window.useOwnerTurnBudget(budget)
+        budget.testUseClock({ => Int64(unsafe { cjgui_internal_renderer_owner_clock_ns() }) +
+            if (controller.spent) { 12000000 } else { 0 } })
+        controller.spendOnBuild = true
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 1u32), 0)
+        @Assert(budget.begin(), true)
+        @Assert(window.pump(0u32).isOpen, true)
+        budget.end()
+        @Assert(window.testStaticLayoutPreparing(), true)
+        @Assert(controller.builds, 2)
+        @Assert(controller.rollbacks, 0)
+        controller.spent = false
+        controller.spendOnBuild = false
+        @Assert(queuedWheelEnqueue(window.testSessionToken(), -20.0, 4u32), 0)
+        @Assert(budget.begin(), true)
+        @Assert(window.pumpEventsWithoutRefresh(0u32).isOpen, true)
+        budget.end()
+        @Assert(window.testStaticLayoutPreparing(), false)
+        @Assert(controller.rollbacks, 1)
+        @Assert(controller.commits, 1)
+        @Assert(controller.viewport.acceptedOffset(), 0)
+        @Assert(controller.viewport.offset(), 40)
+    } finally { budget.end(); window.close() }
 }
 
 private func queuedWheelAcceptedResource(window: CjguiComposableUiWindow): Int64 {

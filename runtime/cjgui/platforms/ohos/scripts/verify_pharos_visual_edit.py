@@ -848,6 +848,41 @@ def _main_impl():
                 _chain_caret = _detail['end_caret16']
                 _chain_version = _v
                 _chain_fence = (m.hilog_rows() or [''])[-1]
+                if text == '👩‍🚀':
+                    # r26 回归：ZWJ 中段输入后不重点击，直接续写哨兵“哨”。
+                    # 若暂态文尾被装回平台，哨兵将落在错误位置（全文/版本失配）
+                    # 或采纳配对失配；核安装/采纳位置、owner 精确范围/版本/全文，
+                    # 画面帧由 check() 经快门自动附带。
+                    _sb = '哨'
+                    _sb_want = expected_insert(bytes.fromhex(hx0), _chain_caret,
+                                               _chain_caret, _sb)
+                    if _sb_want is None:
+                        check('sentinel after ZWJ: caret splits scalar', False,
+                              f'caret={_chain_caret}')
+                        return 4
+                    _sbt0 = time.time()
+                    _sok, _sdetail, _sv, _shx = pair_injection_strokes(
+                        SURFACE_TARGETS['visual']['node'], _chain_version, hx0,
+                        _chain_caret, None, _sb, identity=_chain_identity)
+                    _sb_end = (_sdetail or {}).get('end_caret16')
+                    _sb_ok = (_sok and _sb_end == _chain_caret + 1 and
+                              bytes.fromhex(_shx) == _sb_want)
+                    check('sentinel after ZWJ: exact position/version/full-text', _sb_ok,
+                          f'v {_chain_version}->{_sv} end={_sb_end} '
+                          f'latency={time.time()-_sbt0:.2f}s',
+                          snapshot=(_sv, _shx))
+                    if not _sb_ok:
+                        return 4
+                    # 删哨兵恢复链尾（精确移除），后继 RI/整删腿的链端假设不变。
+                    uitest_maybe('keyEvent', '2055')
+                    _rv, _rh, _rok = wait_owner_value(_sv, bytes.fromhex(hx0))
+                    check('sentinel removed exactly (bytes+version)',
+                          _rok and _rv == _sv + 1, f'v {_sv}->{_rv}')
+                    if not (_rok and _rv == _sv + 1):
+                        return 4
+                    v0, hx0 = _rv, _rh
+                    _chain_version = _rv
+                    _chain_fence = (m.hilog_rows() or [''])[-1]
         # ---- 3b. 两类多标量簇整删 + Undo（链尾即已知簇末：先 RI 对、再 ZWJ 链） ----
         def _cluster_delete_expect(buf, caret16, want_text):
             cb = utf16_to_byte(buf, caret16)
@@ -939,6 +974,96 @@ def _main_impl():
             return 42
         results['replace'] = {'span': [s16, e16], 'before_v': v_pre, 'after_v': v_rep}
         v0, hx0 = v_rep, hx_rep
+        # ---- 4a. 大范围替换后免点击续写（r27 收缩回归腿） ----
+        # 沿编辑器可见区纵拖选中大跨度（旧 end 须超出替换后新文长），替换成单字
+        # 后不点击直接续写哨兵：若收缩钳位被装回平台，续写将落错位置（全文/版本
+        # 失配）或采纳失配。起笔在标题之下以保留正文头 '##'（后继 agent 腿
+        # 依赖）；跨度与端点算术冻结核验，不猜布局。画面帧由 check() 经快门附带。
+        _lr_rect, _lr_why = m.readback_target_rect('pharos-editor-scroll-content', PORT)
+        _lr_okrect = (_lr_rect is not None and _lr_rect[3] >= 160)
+        check('large-replace: editor rect measurable', _lr_okrect,
+              f'rect={_lr_rect} why={_lr_why}')
+        if not _lr_okrect:
+            return 44
+        _rx, _ry, _rw, _rh = _lr_rect
+        # 点按扫描定行＋横拖/对角拖选（纵向长拖会被滚动视图吃掉；横向无滚动容器，
+        # 同 §4 已证的点按建焦＋横拖形状）：沿编辑器纵向点按 4 处并冻结 caret，
+        # 对每处做同行横拖＋下拉两行对角拖，取旧端超出新文长余量（margin）最大者。
+        # margin = old_end - (total - (end-start) + inserted_units)，即旧 end 超出
+        # 替换后新文长的单位数（本腿插入 1 单位，故亦为 2e - s - 1 - total）；
+        # 点按/拖选都不改正文，全程冻结核验。起笔须在正文头 '##' 之后
+        # （后继 agent 腿依赖 [0,2)）。
+        _lsel = None
+        _ldec = None
+        _laux = None
+        _lmargin = None
+        for _pyv in (_ry + 40, _ry + _rh * 0.35, _ry + _rh * 0.6, _ry + _rh * 0.85):
+            _pp, _pw = m.readback_target_point('pharos-editor-scroll-content', PORT,
+                                               vp_x=_rx + 60, vp_y=_pyv)
+            if _pp is None:
+                continue
+            _pe, _we = m.readback_target_point('pharos-editor-scroll-content', PORT,
+                                               vp_x=_rx + _rw - 10, vp_y=_pyv)
+            _pe2, _we2 = m.readback_target_point('pharos-editor-scroll-content', PORT,
+                                                 vp_x=_rx + _rw - 10, vp_y=_pyv + 80)
+            for _tgt in (_pe, _pe2):
+                if _tgt is None:
+                    continue
+                uitest_maybe('click', str(_pp[0]), str(_pp[1])); time.sleep(1.0)
+                _csel, _, _ = freeze_body_selection(surface='visual')
+                if _csel is None or _csel[0] != _csel[1]:
+                    continue
+                uitest_maybe('drag', str(_pp[0]), str(_pp[1]),
+                             str(_tgt[0]), str(_tgt[1])); time.sleep(1.6)
+                _rows_lr = m.hilog_rows()
+                _cand, _cdec, _caux = freeze_body_selection(surface='visual')
+                if _cand is not None and _cand[1] > _cand[0] and _cand[0] >= 2:
+                    _cv, _chx = owner()
+                    _ct = sum(2 if ord(c) >= 0x10000 else 1
+                              for c in bytes.fromhex(_chx).decode('utf-8'))
+                    _marg = 2 * _cand[1] - _cand[0] - 1 - _ct
+                    if _lmargin is None or _marg > _lmargin:
+                        _lsel, _ldec, _laux, _lmargin = _cand, _cdec, _caux, _marg
+            if _lsel is not None and _lmargin is not None and _lmargin >= 10:
+                break
+        _lv_pre, _lhx_pre = owner()
+        _ltext = bytes.fromhex(_lhx_pre).decode('utf-8')
+        _ltotal = sum(2 if ord(c) >= 0x10000 else 1 for c in _ltext)
+        _lspan_ok = (_lsel is not None and _lsel[1] > _lsel[0] and _lsel[0] >= 2 and
+                     _lmargin is not None and _lmargin >= 10 and
+                     _lsel[1] > _ltotal - (_lsel[1] - _lsel[0]) + 1)
+        check('large-replace: frozen NON-EMPTY large span (old end exceeds new length)',
+              _lspan_ok, f'sel={_lsel} total={_ltotal} margin={_lmargin}')
+        if not _lspan_ok:
+            return 45
+        _ls16, _le16 = _lsel
+        _lok, _ldetail, _lv_rep, _lhx_rep = pair_injection_strokes(
+            SURFACE_TARGETS['visual']['node'], _lv_pre, _lhx_pre, _ls16, (_ls16, _le16), 'Q',
+            identity=(_ldec or {}).get('current_identity'))
+        results.setdefault('stroke_pairs', []).append(
+            {'label': 'large replace Q', 'detail': _ldetail})
+        check('large-replace: exact frozen-span Q (per-stroke paired)', _lok,
+              f'v {_lv_pre}->{_lv_rep} span=[{_ls16},{_le16}) '
+              f'strokes={_ldetail.get("summary", "")} fail={_ldetail.get("fail")}')
+        if not _lok:
+            return 46
+        # 替换后不点击直接续写（同挂载连续续写形状：以后像 caret 为准，不重建冻结；
+        # 若收缩钳位被装回平台，哨兵将落错位置或采纳失配）。
+        # Q 为单码元，替换采纳落点 = span 起点 + 1。
+        _lc = _ls16 + 1
+        _cok, _cdetail, _cv, _chx = pair_injection_strokes(
+            SURFACE_TARGETS['visual']['node'], _lv_rep, _lhx_rep, _lc, None, '标',
+            identity=(_ldec or {}).get('current_identity'))
+        _cend = (_cdetail or {}).get('end_caret16')
+        _cok_full = (_cok and _cend == _lc + 1)
+        check('continue after large replace: exact position/version/full-text', _cok_full,
+              f'v {_lv_rep}->{_cv} caret={_lc} end={_cend} '
+              f'strokes={(_cdetail or {}).get("summary", "")} '
+              f'fail={(_cdetail or {}).get("fail")}',
+              snapshot=(_cv, _chx))
+        if not _cok_full:
+            return 46
+        v0, hx0 = _cv, _chx
         # ---- 4b. QQQ 单次投递（三字符；允许拆笔，逐笔核范围/版本链/合法前缀/采纳落点） ----
         # 折叠 caret 冻结后一次投递：QQ 已覆盖非空替换路径，此处专验三字符拆笔逐笔。
         sel = None

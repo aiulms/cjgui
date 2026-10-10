@@ -611,3 +611,65 @@ func genericTransportRestartsSameProcessWithFreshWorkerState(): Unit {
     connection.close()
     @Assert(false, true)
 }
+
+/// A receiver can be descheduled after a prefix without exhausting the
+/// advertised 512 ms frame-write budget. No request or partial response is
+/// retried: this single framed response must either arrive exactly or fail.
+@Test
+func genericTransportHonorsWholeWriteBudgetForBriefReceiverSchedulingGap(): Unit {
+    let connection = CjguiSharedOperationExternalConnection(largeLifecycleList(), largeLifecycleAuthorization())
+    @Assert(connection.start(), true)
+    if (let Some(info) <- connection.connectionInfo()) {
+        // Freeze a complete ordinary response from this unchanged read-only
+        // domain, then require every byte of the paused receiver's frame.
+        let immediate = spawn { =>
+            requestLifecyclePayloadWithTimeout(info.socketPath, largeLifecycleContextPayload(), 3000)
+        }
+        var immediateDispatched = false
+        let immediateStarted = MonoTime.now()
+        while ((MonoTime.now() - immediateStarted).toMilliseconds() < 1200) {
+            if (connection.pump(5u32)) { immediateDispatched = true; break }
+        }
+        let expected = immediate.get()
+        @Assert(immediateDispatched, true)
+        @Assert(expected.contains("KIND SNAPSHOT"), true)
+        @Assert(expected.size > 4 * 1024 * 1024, true)
+        let receiver = spawn { =>
+            var response = ""
+            try (client = UnixSocket(info.socketPath)) {
+                client.connect()
+                client.readTimeout = Some(Duration.second * 3)
+                client.write(CjguiSharedOperationFrame.encode(largeLifecycleContextPayload()))
+                let decoder = CjguiSharedOperationFrameAccumulator()
+                let buffer = Array<Byte>(4096, repeat: 0)
+                var paused = false
+                while (true) {
+                    let count = client.read(buffer)
+                    if (count <= 0) { break }
+                    let result = decoder.append(buffer, count)
+                    if (result.isComplete) { response = result.payload; break }
+                    if (result.isMalformed) { break }
+                    if (!paused) {
+                        paused = true
+                        sleep(Duration.millisecond * 40)
+                    }
+                }
+            } catch (_: Exception) {}
+            response
+        }
+        let started = MonoTime.now()
+        var dispatched = false
+        while ((MonoTime.now() - started).toMilliseconds() < 1200) {
+            if (connection.pump(5u32)) { dispatched = true; break }
+        }
+        let response = receiver.get()
+        connection.close()
+        @Assert(dispatched, true)
+        @Assert(response.contains("KIND SNAPSHOT"), true)
+        @Assert(response, expected)
+        @Assert(response.endsWith("END"), true)
+        return
+    }
+    connection.close()
+    @Assert(false, true)
+}

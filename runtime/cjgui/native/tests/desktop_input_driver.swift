@@ -346,6 +346,17 @@ case "move-fast":
     movePointer(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0, settleMicros: 1_000)
 case "press":
     mouseDown(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0)
+case "drag-move":
+    // Continue the existing press without an extra down/up. Acceptance can
+    // observe the picture while the button is still held, including residence.
+    if let source = CGEventSource(stateID: .hidSystemState),
+       let event = CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged,
+                           mouseCursorPosition: CGPoint(x: Double(args[1]) ?? 0,
+                                                        y: Double(args[2]) ?? 0),
+                           mouseButton: .left) {
+        event.post(tap: .cghidEventTap)
+    }
+    usleep(25_000)
 case "release":
     mouseUp(x: Double(args[1]) ?? 0, y: Double(args[2]) ?? 0)
 case "cmd-click":

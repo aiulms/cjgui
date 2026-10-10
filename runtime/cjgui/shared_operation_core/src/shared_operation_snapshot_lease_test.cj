@@ -197,6 +197,27 @@ private func snapshotProbeAcquire(connection: CjguiSharedOperationExternalConnec
         "${expectedVersion} ${ttlMs}"))
 }
 
+/// Native transports dispatch the public payload without a Unix descriptor. A client must
+/// discover the SAME endpoint nonce before acquiring a fixed version; restarting with resource
+/// id 7101 is not permission to reuse the old nonce.
+@Test
+func snapshotLeaseContextPublishesCurrentEndpointIdentity(): Unit {
+    let counters = SnapshotProbeCounters()
+    let provider = SnapshotProbeProvider(counters)
+    let connection = CjguiSharedOperationExternalConnection(SnapshotProbeDomain(),
+        snapshotProbeAuthorization())
+    @Assert(connection.enableSnapshotReads(provider), true)
+    let context = connection.dispatchPayload(snapshotProbeRequest("GET_CONTEXT 1\nID ${SNAPSHOT_PROBE_RESOURCE}"))
+    @Assert(snapshotProbeField(context, "ENDPOINT_INSTANCE"), connection.endpointInstance())
+    @Assert(snapshotProbeField(context, "ENDPOINT_BIND_GENERATION"), "${connection.endpointEpoch()}")
+    let reopened = CjguiSharedOperationExternalConnection(SnapshotProbeDomain(), snapshotProbeAuthorization())
+    @Assert(reopened.enableSnapshotReads(provider), true)
+    @Assert(reopened.endpointInstance() != connection.endpointInstance(), true)
+    let refused = snapshotProbeAcquire(reopened, connection.endpointInstance(), connection.endpointEpoch(),
+        "old-context", provider.instanceValue, "ANY", 60000)
+    @Assert(refused.contains("snapshot_endpoint_changed"), true)
+}
+
 /// A lease holds ONE version: the same token keeps returning the frozen bytes
 /// after the live document moves on, and a NEW acquire is what observes v2.
 @Test

@@ -5,16 +5,20 @@ import std.collection.*
 private class ProductionFocusRecoveryController <: CjguiComposableUiController {
     var revision: Int64 = 1
     var resourceId: Int64 = 9901
+    var includeCommand: Bool = false
     public func uiSceneVersion(): Int64 { return revision }
     public func buildUi(): CjguiComposableUiNode {
         let root = cjguiComposableVertical(9900, "focus-recovery-root", CjguiComposableUiStyle())
         root.add(cjguiComposableTextInput(9901, "focus-recovery-editor", "Editor", "draft", resourceId,
             CjguiComposableUiStyle(fixedWidth: 220, fixedHeight: 36)))
+        if (includeCommand) {
+            root.add(cjguiComposableButton(9902, "focus-recovery-command", "Command", "COMMAND", 9902,
+                CjguiComposableUiStyle(fixedWidth: 100, fixedHeight: 30)))
+        }
         return root
     }
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
-        let _ = event
-        return CjguiComposableUiDispatchResult(false)
+        return CjguiComposableUiDispatchResult(includeCommand && event.node.nodeId == 9902)
     }
     public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
         let _ = eventKind
@@ -24,6 +28,25 @@ private class ProductionFocusRecoveryController <: CjguiComposableUiController {
     public func requestWindowClose(): CjguiComposableUiDispatchResult {
         return CjguiComposableUiDispatchResult(true, shouldClose: true)
     }
+}
+
+@Test
+func productionBoundCommandPreservesItsExistingTextFocus(): Unit {
+    let controller = ProductionFocusRecoveryController()
+    controller.includeCommand = true
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    @Assert(window.refresh(), true)
+    let statuses = ArrayList<Int32>()
+    statuses.add(CJGUI_INTERNAL_RENDERER_OK)
+    window.setFocusNativeStatusesForTest(statuses)
+    @Assert(window.focusAcceptedSemanticNode("focus-recovery-editor"), true)
+    @Assert(window.focusedNodeIdForTest(), 9901)
+    @Assert(window.declareCommand(CjguiComposableUiCommand("focus-command", 9902,
+        CjguiComposableUiShortcut("z"))), true)
+    @Assert(window.invokeCommand("focus-command"), true)
+    @Assert(window.focusedNodeIdForTest(), 9901)
+    window.close()
 }
 
 @Test

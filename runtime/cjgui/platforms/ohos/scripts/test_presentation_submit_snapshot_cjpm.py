@@ -48,8 +48,12 @@ def harness(red=None):
 RED_GUARDS = {
     # 去绑定门：ABA（同文同景不同绑定）会被误接受。
     'binding': ('ticket.bindingEpoch != currentBinding', 'false'),
-    # 去正文门：owner 推进（éA→AB）会被误接受，旧坐标贴当前版本。
+    # 去显示正文门：D 推进会被误接受，旧坐标贴当前版本。
     'text': ('ticket.displayText != currentText', 'false'),
+    # 去镜像正文门：旧显示/新正文（D 仍 éA、M 已 AB/v2）会被误接受登记到 v2。
+    'mirror-text': ('ticket.mirrorText != currentMirrorText', 'false'),
+    # 去镜像版本门：同字节新版本（M 正文同、版本 1→3）会被误接受。
+    'mirror-version': ('ticket.mirrorVersion != currentMirrorVersion', 'false'),
     # 去场景门：纯几何新帧会被误接受。
     'scene': ('ticket.sceneVersion != currentScene', 'false'),
     # 改换算（按字节数当单位）：emoji 4 字节会被算成 4 单位而非 2。

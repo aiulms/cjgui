@@ -2130,6 +2130,72 @@ public struct CjguiComposableUiActivityStep {
     }
 }
 
+/// Experimental identity for one source coordinate origin. A map identity may
+/// stay the same while its local byte zero changes, so all four fields take
+/// part in the binding comparison.
+public class CjguiComposableUiScrollOriginBinding {
+    public let ownerIdentity: String
+    public let ownerVersion: Int64
+    public let mapIdentity: String
+    public let layoutOrigin: String
+    public init(ownerIdentity: String, ownerVersion: Int64, mapIdentity: String, layoutOrigin: String) {
+        this.ownerIdentity = ownerIdentity
+        this.ownerVersion = ownerVersion
+        this.mapIdentity = mapIdentity
+        this.layoutOrigin = layoutOrigin
+    }
+    public func matches(other: CjguiComposableUiScrollOriginBinding): Bool {
+        return ownerIdentity == other.ownerIdentity && ownerVersion == other.ownerVersion &&
+            mapIdentity == other.mapIdentity && layoutOrigin == other.layoutOrigin
+    }
+}
+
+/// Frozen proof for a passive layout-origin handoff. The package-private
+/// constructor keeps ordinary product code from inventing accepted geometry;
+/// the window creates tickets from its accepted scene and the real text map.
+public class CjguiComposableUiScrollOriginAnchor {
+    public let viewportIdentity: Int64
+    public let windowToken: Int64
+    public let acceptedSolve: Int64
+    public let requestGeneration: Int64
+    public let acceptedBinding: CjguiComposableUiScrollOriginBinding
+    public let sourceAnchor: String
+    public let localByte: Int64
+    public let nodeId: Int64
+    public let body: String
+    public let oldStyle: String
+    public let oldWidth: Int64
+    public let oldNodeRelativeViewportY: Int64
+    public let acceptedOffset: Int64
+    public let requestedOffset: Int64
+    public let pixelRemainder: Float64
+    public let glyphRelativeY: Float64
+    let acceptedNode: CjguiComposableUiLayoutNode
+    init(viewportIdentity: Int64, windowToken: Int64, acceptedSolve: Int64, requestGeneration: Int64,
+        acceptedBinding: CjguiComposableUiScrollOriginBinding, sourceAnchor: String, localByte: Int64,
+        nodeId: Int64, body: String, oldStyle: String, oldWidth: Int64, oldNodeRelativeViewportY: Int64,
+        pixelRemainder: Float64, glyphRelativeY: Float64, acceptedNode: CjguiComposableUiLayoutNode,
+        acceptedOffset!: Int64 = 0, requestedOffset!: Int64 = 0) {
+        this.viewportIdentity = viewportIdentity
+        this.windowToken = windowToken
+        this.acceptedSolve = acceptedSolve
+        this.requestGeneration = requestGeneration
+        this.acceptedBinding = acceptedBinding
+        this.sourceAnchor = sourceAnchor
+        this.localByte = localByte
+        this.nodeId = nodeId
+        this.body = body
+        this.oldStyle = oldStyle
+        this.oldWidth = oldWidth
+        this.oldNodeRelativeViewportY = oldNodeRelativeViewportY
+        this.acceptedOffset = acceptedOffset
+        this.requestedOffset = requestedOffset
+        this.pixelRemainder = pixelRemainder
+        this.glyphRelativeY = glyphRelativeY
+        this.acceptedNode = acceptedNode
+    }
+}
+
 public class CjguiComposableUiScrollViewport {
     // The window INSTANCE that accepted a scene containing this viewport. A
     // viewport is per-window view state: sharing ONE mutable object between two
@@ -2144,6 +2210,29 @@ public class CjguiComposableUiScrollViewport {
     private var acceptedOffsetValue: Int64 = 0
     private var contentExtentValue: Int64 = 0
     private var viewportExtentValue: Int64 = 0
+    // Logical offsets remain in the source map's original coordinate domain.
+    // The origin only converts that absolute request into the local layout
+    // offset used by the current bounded window.
+    private var acceptedOriginOffsetValue: Int64 = 0
+    private var stagedOriginOffsetValue: Int64 = 0
+    private var acceptedOriginBindingValue: ?CjguiComposableUiScrollOriginBinding = None
+    private var stagedOriginBindingValue: ?CjguiComposableUiScrollOriginBinding = None
+    private var stagedOriginAnchorValue: ?CjguiComposableUiScrollOriginAnchor = None
+    // Preserve the proof for a completed passive-origin candidate separately
+    // from the mutable pending ticket that a later request may retire.
+    private var solvedOriginAnchorValue: ?CjguiComposableUiScrollOriginAnchor = None
+    private var solvedOriginBindingValue: ?CjguiComposableUiScrollOriginBinding = None
+    private var stagedOriginTargetNodeIdValue: Int64 = -1
+    private var stagedOriginTargetLocalByteValue: Int64 = -1
+    private var stagedOriginNavigationValue: Bool = false
+    // A source destination may not exist while an intermediate loading scene
+    // is accepted. Only an explicit binding staged for this navigation can
+    // consume its intent; the layout also freezes that request generation.
+    private var stagedOriginNavigationBoundValue: Bool = false
+    private var solvedOriginNavigationGenerationValue: Int64 = -1
+    private var originStagePendingValue: Bool = false
+    private var originStageRefusalValue: String = ""
+    private var stagedOriginTicketRequestGenerationValue: Int64 = -1
     private var acceptedSolveCountValue: Int64 = 0
     // H2：请求代次。每一次**有效**的请求变化（显式请求 / 初始化定位 / 夹紧 /
     // 惯性写入）都推进它。候选把「布局实际读到的代次」与 extents 一起冻结；
@@ -2151,6 +2240,7 @@ public class CjguiComposableUiScrollViewport {
     // 与提交之间又来了更新的请求（B），必须按新合法范围夹紧后保留 B 的身份。
     private var requestGenerationValue: Int64 = 0
     private var stagedRequestGenerationValue: Int64 = 0
+    private var acceptedRequestGenerationValue: Int64 = 0
     // The layout's CANDIDATE facts for the solve currently in flight. They are
     // promoted only when the window accepts the scene that contains this
     // viewport, so a rejected/early-returned candidate can never leak into the
@@ -2170,6 +2260,48 @@ public class CjguiComposableUiScrollViewport {
     }
     public func contentExtent(): Int64 {
         return contentExtentValue
+    }
+    /// Smallest absolute request represented by the currently accepted local
+    /// coordinate window.
+    public func minimumOffset(): Int64 {
+        return acceptedOriginOffsetValue
+    }
+    public func acceptedOriginOffset(): Int64 {
+        return acceptedOriginOffsetValue
+    }
+    /// Candidate origin, when one is waiting for its scene to be accepted.
+    public func pendingOriginOffset(): Int64 {
+        return if (originStagePendingValue) { stagedOriginOffsetValue } else { acceptedOriginOffsetValue }
+    }
+    public func acceptedOriginBinding(): ?CjguiComposableUiScrollOriginBinding {
+        return acceptedOriginBindingValue
+    }
+    public func acceptedCoordinateOrigin(): ?CjguiComposableUiScrollOriginBinding {
+        return acceptedOriginBindingValue
+    }
+    public func stagedOriginAnchor(): ?CjguiComposableUiScrollOriginAnchor {
+        return stagedOriginAnchorValue
+    }
+    public func pendingOriginAnchor(): ?CjguiComposableUiScrollOriginAnchor {
+        return stagedOriginAnchorValue
+    }
+    public func stagedOriginTargetNodeId(): Int64 {
+        return stagedOriginTargetNodeIdValue
+    }
+    public func stagedOriginTargetLocalByte(): Int64 {
+        return stagedOriginTargetLocalByteValue
+    }
+    public func stagedOriginNavigation(): Bool {
+        return stagedOriginNavigationValue
+    }
+    public func originStagePending(): Bool {
+        return originStagePendingValue
+    }
+    func originStageRefusal(): String {
+        return originStageRefusalValue
+    }
+    func layoutCoordinateOriginBinding(): ?CjguiComposableUiScrollOriginBinding {
+        return if (let Some(binding) <- stagedOriginBindingValue) { Some(binding) } else { acceptedOriginBindingValue }
     }
     /// Claims this viewport for one window instance. Returns false when a
     /// DIFFERENT window already accepted a scene containing it: the caller must
@@ -2218,25 +2350,217 @@ public class CjguiComposableUiScrollViewport {
     }
     public func maximumOffset(): Int64 {
         let span = contentExtentValue - viewportExtentValue
-        return if (span > 0) {
-            span
-        } else {
-            0
-        }
+        return if (span > acceptedOriginOffsetValue) { span } else { acceptedOriginOffsetValue }
     }
     public func hasPendingRequest(): Bool {
-        return requestedOffsetValue != acceptedOffsetValue
+        return requestedOffsetValue != acceptedOffsetValue || originStagePendingValue
     }
     /// Requests an offset for the NEXT build. It is clamped to the extents the
     /// layout last accepted and is never reported as accepted by itself.
     public func requestOffset(offset: Int64): Bool {
-        let clamped = clamp(offset)
+        let clamped = if (stagedOriginNavigationValue) {
+            let localMaximum = if (contentExtentValue > acceptedOriginOffsetValue + viewportExtentValue) {
+                contentExtentValue - acceptedOriginOffsetValue - viewportExtentValue
+            } else { 0 }
+            if (offset < 0) { 0 } else if (offset > localMaximum) { localMaximum } else { offset }
+        } else {
+            clamp(offset)
+        }
         if (clamped == requestedOffsetValue) {
             return false
         }
         requestedOffsetValue = clamped
         requestGenerationValue += 1
+        // A request after ticket issuance retires the ticket even when the
+        // accepted scene has not moved yet.
+        stagedOriginAnchorValue = None
+        stagedOriginTicketRequestGenerationValue = -1
+        if (!stagedOriginNavigationValue && originStagePendingValue) {
+            stagedOriginBindingValue = acceptedOriginBindingValue
+            originStagePendingValue = false
+        }
         return true
+    }
+    /// Stage a binding change for the next canonical solve. Passive changes need
+    /// a ticket frozen from the current accepted scene; first binding and an
+    /// explicit navigation may start at the local origin without one.
+    public func stageCoordinateOrigin(binding: CjguiComposableUiScrollOriginBinding,
+        anchor!: ?CjguiComposableUiScrollOriginAnchor = None, targetNodeId!: Int64 = -1,
+        targetLocalByte!: Int64 = -1): String {
+        if (binding.ownerIdentity.size == 0 || binding.mapIdentity.size == 0 || binding.layoutOrigin.size == 0) {
+            originStageRefusalValue = "scroll_origin_binding_invalid"
+            return "scroll_origin_binding_invalid"
+        }
+        if (stagedOriginNavigationValue) {
+            stagedOriginNavigationBoundValue = true
+            stagedOriginBindingValue = Some(binding)
+            stagedOriginAnchorValue = None
+            stagedOriginTargetNodeIdValue = -1
+            stagedOriginTargetLocalByteValue = -1
+            stagedOriginTicketRequestGenerationValue = -1
+            originStagePendingValue = true
+            originStageRefusalValue = ""
+            return "scroll_origin_navigation"
+        }
+        if (let Some(accepted) <- acceptedOriginBindingValue) {
+            if (accepted.matches(binding)) {
+                stagedOriginBindingValue = Some(binding)
+                stagedOriginAnchorValue = None
+                stagedOriginTargetNodeIdValue = -1
+                stagedOriginTargetLocalByteValue = -1
+                stagedOriginTicketRequestGenerationValue = -1
+                stagedOriginNavigationValue = false
+                originStagePendingValue = false
+                originStageRefusalValue = ""
+                return "scroll_origin_unchanged"
+            }
+            // A new owner version or source-map identity may describe ordinary
+            // content edits in the same coordinate system. Rebind it with the
+            // next canonical scene, without reusing an old geometry ticket.
+            // A changed owner or layout origin still requires a passive anchor.
+            if (accepted.ownerIdentity == binding.ownerIdentity &&
+                accepted.layoutOrigin == binding.layoutOrigin) {
+                stagedOriginBindingValue = Some(binding)
+                stagedOriginAnchorValue = None
+                stagedOriginTargetNodeIdValue = -1
+                stagedOriginTargetLocalByteValue = -1
+                stagedOriginTicketRequestGenerationValue = -1
+                stagedOriginNavigationValue = false
+                originStagePendingValue = true
+                originStageRefusalValue = ""
+                return "scroll_origin_rebound"
+            }
+        } else if (acceptedSolveCountValue == 0) {
+            // A discarded first preparation is still only a candidate. No
+            // accepted origin exists for a handoff ticket to certify yet.
+            stagedOriginBindingValue = Some(binding)
+            stagedOriginAnchorValue = None
+            stagedOriginTargetNodeIdValue = -1
+            stagedOriginTargetLocalByteValue = -1
+            stagedOriginTicketRequestGenerationValue = -1
+            stagedOriginNavigationValue = false
+            originStagePendingValue = true
+            originStageRefusalValue = ""
+            return "scroll_origin_initial"
+        }
+        if (let Some(ticket) <- anchor) {
+            let acceptedMatches = if (let Some(accepted) <- acceptedOriginBindingValue) {
+                accepted.matches(ticket.acceptedBinding)
+            } else {
+                false
+            }
+            if (ticket.viewportIdentity != viewStateIdentityValue || ticket.windowToken <= 0 ||
+                ticket.windowToken != ownerWindowTokenValue || ticket.acceptedSolve != acceptedSolveCountValue ||
+                ticket.requestGeneration != requestGenerationValue || !acceptedMatches ||
+                ticket.localByte != targetLocalByte ||
+                ticket.oldWidth <= 0 ||
+                ticket.acceptedBinding.ownerIdentity != binding.ownerIdentity ||
+                ticket.acceptedBinding.ownerVersion != binding.ownerVersion) {
+                originStageRefusalValue = "scroll_origin_anchor_stale"
+                return "scroll_origin_anchor_stale"
+            }
+            stagedOriginBindingValue = Some(binding)
+            stagedOriginAnchorValue = Some(ticket)
+            stagedOriginTargetNodeIdValue = targetNodeId
+            stagedOriginTargetLocalByteValue = targetLocalByte
+            stagedOriginTicketRequestGenerationValue = ticket.requestGeneration
+            originStagePendingValue = true
+            originStageRefusalValue = ""
+            return "scroll_origin_anchor_staged"
+        }
+        originStageRefusalValue = "scroll_origin_handoff_required"
+        return "scroll_origin_handoff_required"
+    }
+    /// Active navigation intentionally resets the local layout origin to zero.
+    /// It has its own request generation and supersedes any passive ticket.
+    public func requestOriginNavigation(): Unit {
+        stagedOriginNavigationValue = true
+        stagedOriginNavigationBoundValue = false
+        stagedOriginBindingValue = acceptedOriginBindingValue
+        stagedOriginAnchorValue = None
+        stagedOriginTargetNodeIdValue = -1
+        stagedOriginTargetLocalByteValue = -1
+        stagedOriginTicketRequestGenerationValue = -1
+        originStagePendingValue = true
+        requestedOffsetValue = 0
+        requestGenerationValue += 1
+        originStageRefusalValue = ""
+    }
+    /// Candidate layout origin, without publishing it as accepted state.
+    func layoutOriginOffset(): Int64 {
+        return if (originStagePendingValue && stagedOriginNavigationValue) { 0 } else { acceptedOriginOffsetValue }
+    }
+    func stageResolvedOrigin(offset: Int64): Unit {
+        stagedOriginOffsetValue = if (allowsSignedOriginCoordinates() || offset >= 0) { offset } else { 0 }
+        if (stagedOriginNavigationValue) {
+            stagedOriginOffsetValue = 0
+        }
+        originStagePendingValue = stagedOriginBindingValue.isSome() &&
+            (if (let Some(accepted) <- acceptedOriginBindingValue) {
+                if (let Some(staged) <- stagedOriginBindingValue) { !accepted.matches(staged) } else { false }
+            } else { true }) || stagedOriginNavigationValue
+    }
+    func beginCoordinateOriginSolve(): Unit {
+        solvedOriginAnchorValue = None
+        solvedOriginBindingValue = None
+        solvedOriginNavigationGenerationValue = -1
+    }
+    func freezeSolvedCoordinateOrigin(ticket: CjguiComposableUiScrollOriginAnchor): Bool {
+        if (!stagedOriginTicketIsCurrent(ticket)) { return false }
+        solvedOriginAnchorValue = Some(ticket)
+        solvedOriginBindingValue = stagedOriginBindingValue
+        return true
+    }
+    func stagedOriginTicketIsCurrent(ticket: CjguiComposableUiScrollOriginAnchor): Bool {
+        if (requestGenerationValue != ticket.requestGeneration ||
+            acceptedSolveCountValue != ticket.acceptedSolve || ownerWindowTokenValue != ticket.windowToken ||
+            ticket.viewportIdentity != viewStateIdentityValue || stagedOriginTicketRequestGenerationValue !=
+            ticket.requestGeneration) {
+            return false
+        }
+        if (let Some(current) <- stagedOriginAnchorValue) {
+            return current.requestGeneration == ticket.requestGeneration && current.acceptedSolve == ticket.acceptedSolve &&
+                current.windowToken == ticket.windowToken && current.sourceAnchor == ticket.sourceAnchor &&
+                current.nodeId == ticket.nodeId && current.localByte == ticket.localByte
+        }
+        return false
+    }
+    /// Window admission guard for the short interval between layout and scene
+    /// acceptance. A normal newer scroll may follow the existing A-then-B
+    /// commit rule; a passive coordinate handoff cannot publish after its proof
+    /// ticket has been retired.
+    func canCommitCoordinateOrigin(): Bool {
+        if (solvedOriginNavigationGenerationValue >= 0 &&
+            (!stagedOriginNavigationValue || !stagedOriginNavigationBoundValue ||
+                solvedOriginNavigationGenerationValue != requestGenerationValue)) { return false }
+        if (stagedSolvedValue) {
+            let bindingMatches = match (solvedOriginBindingValue) {
+                case Some(solved) => if (let Some(current) <- layoutCoordinateOriginBinding()) {
+                    solved.matches(current)
+                } else { false }
+                case None => layoutCoordinateOriginBinding().isNone()
+            }
+            if (!bindingMatches) { return false }
+        }
+        if (let Some(ticket) <- solvedOriginAnchorValue) {
+            let acceptedMatches = if (let Some(accepted) <- acceptedOriginBindingValue) {
+                accepted.matches(ticket.acceptedBinding)
+            } else { false }
+            let candidateBindingMatches = if (let Some(binding) <- solvedOriginBindingValue) {
+                binding.ownerIdentity == ticket.acceptedBinding.ownerIdentity &&
+                    binding.ownerVersion == ticket.acceptedBinding.ownerVersion
+            } else { false }
+            let stagedBindingMatches = if (let Some(solved) <- solvedOriginBindingValue) {
+                if (let Some(current) <- stagedOriginBindingValue) { solved.matches(current) } else { false }
+            } else { false }
+            return ticket.viewportIdentity == viewStateIdentityValue &&
+                ticket.windowToken == ownerWindowTokenValue && ticket.acceptedSolve == acceptedSolveCountValue &&
+                ticket.requestGeneration == requestGenerationValue &&
+                ticket.requestedOffset == requestedOffsetValue && ticket.acceptedOffset == acceptedOffsetValue &&
+                acceptedMatches && candidateBindingMatches && stagedBindingMatches &&
+                originStageRefusalValue.size == 0
+        }
+        return originStageRefusalValue.size == 0
     }
     /// The declaration's INITIAL value for a brand-new instance. Unlike
     /// `requestOffset` it does not clamp against extents that are not known yet:
@@ -2252,6 +2576,12 @@ public class CjguiComposableUiScrollViewport {
         if (next != requestedOffsetValue) {
             requestedOffsetValue = next
         }
+        stagedOriginAnchorValue = None
+        stagedOriginTicketRequestGenerationValue = -1
+        if (!stagedOriginNavigationValue && originStagePendingValue) {
+            stagedOriginBindingValue = acceptedOriginBindingValue
+            originStagePendingValue = false
+        }
         // 初始化定位也是一次请求：它必须使先前在途候选的确认失效，否则首帧
         // 之后、接受之前的定位会被旧候选的提交吞掉。
         requestGenerationValue += 1
@@ -2260,6 +2590,13 @@ public class CjguiComposableUiScrollViewport {
     /// 请求代次（诊断/测试只读）：它与 requested 值同源，任何有效写入都推进。
     public func requestGeneration(): Int64 {
         return requestGenerationValue
+    }
+
+    /// Experimental: request identity carried by the currently accepted solve.
+    /// Offset refinement can change its geometry without changing this identity;
+    /// a rejected candidate or a later pending request cannot publish it.
+    public func acceptedRequestGeneration(): Int64 {
+        return acceptedRequestGenerationValue
     }
 
     public func scrollBy(delta: Int64): Bool {
@@ -2399,7 +2736,7 @@ public class CjguiComposableUiScrollViewport {
         let remaining = if (inertialVelocityPxPerMs > 0.0) {
             maximumOffset() - requestedOffsetValue
         } else {
-            requestedOffsetValue
+            requestedOffsetValue - minimumOffset()
         }
         let bound = if (remaining > 0) {
             Float64(remaining)
@@ -2437,7 +2774,7 @@ public class CjguiComposableUiScrollViewport {
             let atEdge = if (inertialVelocityPxPerMs > 0.0) {
                 requestedOffsetValue >= maximumOffset()
             } else {
-                requestedOffsetValue <= 0
+                requestedOffsetValue <= minimumOffset()
             }
             if (atEdge) {
                 active = false
@@ -2498,10 +2835,11 @@ public class CjguiComposableUiScrollViewport {
     /// Reveals [start, end) of the content. Returns true when the request moved,
     /// so "already visible" and "a new scene is needed" stay distinguishable.
     public func reveal(start: Int64, end: Int64, margin!: Int64 = 0): Bool {
-        let top = if (start - margin > 0) {
+        let minimum = if (allowsSignedOriginCoordinates()) { minimumOffset() } else { 0 }
+        let top = if (start - margin > minimum) {
             start - margin
         } else {
-            0
+            minimum
         }
         let bottom = end + margin
         if (top < acceptedOffsetValue) {
@@ -2518,24 +2856,44 @@ public class CjguiComposableUiScrollViewport {
     /// contains this viewport (`commitStagedExtents`). An empty scroll area stages
     /// zero content and a zero offset while keeping the viewport's real geometry.
     public func stageExtents(content: Int64, viewport: Int64, offset: Int64): Unit {
-        stagedContentExtentValue = if (content > 0) {
+        stagedContentExtentValue = if (allowsSignedOriginCoordinates()) {
             content
-        } else {
-            0
-        }
+        } else if (content > 0) { content } else { 0 }
         stagedViewportExtentValue = if (viewport > 0) {
             viewport
         } else {
             0
         }
-        stagedOffsetValue = if (offset > 0) {
-            offset
-        } else {
-            0
-        }
+        stagedOffsetValue = offset
+        let stagedMinimum = if (originStagePendingValue) { stagedOriginOffsetValue } else { acceptedOriginOffsetValue }
+        let stagedMaximum = if (stagedContentExtentValue - stagedViewportExtentValue > stagedMinimum) {
+            stagedContentExtentValue - stagedViewportExtentValue
+        } else { stagedMinimum }
+        if (stagedOffsetValue < stagedMinimum) { stagedOffsetValue = stagedMinimum }
+        if (stagedOffsetValue > stagedMaximum) { stagedOffsetValue = stagedMaximum }
         // 与 extents 一起冻结「布局实际读到的请求代次」。提交时只有代次仍然
         // 相同才说明布局读到的就是当前请求；否则必须保留后到请求的身份。
         stagedRequestGenerationValue = requestGenerationValue
+        solvedOriginBindingValue = layoutCoordinateOriginBinding()
+        solvedOriginNavigationGenerationValue = if (stagedOriginNavigationValue &&
+            stagedOriginNavigationBoundValue) { requestGenerationValue } else { -1 }
+        stagedSolvedValue = true
+    }
+
+    /// Refines geometry after the canonical child solve while retaining the
+    /// request generation frozen by the earlier stageExtents call.
+    func refineStagedExtents(content: Int64, viewport: Int64, offset: Int64): Unit {
+        stagedContentExtentValue = if (allowsSignedOriginCoordinates()) {
+            content
+        } else if (content > 0) { content } else { 0 }
+        stagedViewportExtentValue = if (viewport > 0) { viewport } else { 0 }
+        stagedOffsetValue = offset
+        let stagedMinimum = if (originStagePendingValue) { stagedOriginOffsetValue } else { acceptedOriginOffsetValue }
+        let stagedMaximum = if (stagedContentExtentValue - stagedViewportExtentValue > stagedMinimum) {
+            stagedContentExtentValue - stagedViewportExtentValue
+        } else { stagedMinimum }
+        if (stagedOffsetValue < stagedMinimum) { stagedOffsetValue = stagedMinimum }
+        if (stagedOffsetValue > stagedMaximum) { stagedOffsetValue = stagedMaximum }
         stagedSolvedValue = true
     }
 
@@ -2553,23 +2911,31 @@ public class CjguiComposableUiScrollViewport {
         if (!stagedSolvedValue) {
             return
         }
+        let acceptedOrigin = if (originStagePendingValue) { stagedOriginOffsetValue } else { acceptedOriginOffsetValue }
         let span = stagedContentExtentValue - stagedViewportExtentValue
-        let maximum = if (span > 0) {
-            span
-        } else {
-            0
-        }
+        let maximum = if (span > acceptedOrigin) { span } else { acceptedOrigin }
         let clamped = if (stagedOffsetValue > maximum) {
             maximum
+        } else if (stagedOffsetValue < acceptedOrigin) {
+            acceptedOrigin
         } else {
             stagedOffsetValue
         }
         contentExtentValue = stagedContentExtentValue
         viewportExtentValue = stagedViewportExtentValue
-        acceptedOffsetValue = if (clamped > 0) {
-            clamped
-        } else {
-            0
+        acceptedOriginOffsetValue = acceptedOrigin
+        acceptedOffsetValue = clamped
+        if (originStagePendingValue) {
+            acceptedOriginBindingValue = stagedOriginBindingValue
+            originStagePendingValue = false
+            if (!stagedOriginNavigationValue || (stagedOriginNavigationBoundValue &&
+                solvedOriginNavigationGenerationValue == requestGenerationValue)) {
+                stagedOriginNavigationValue = false
+                stagedOriginNavigationBoundValue = false
+            }
+            stagedOriginAnchorValue = None
+            stagedOriginTargetNodeIdValue = -1
+            stagedOriginTargetLocalByteValue = -1
         }
         if (requestGenerationValue == stagedRequestGenerationValue) {
             // 布局读到的就是这个请求：它已被呈现，不再待决。
@@ -2581,8 +2947,12 @@ public class CjguiComposableUiScrollViewport {
             let rebased = clamp(requestedOffsetValue)
             requestedOffsetValue = rebased
         }
+        acceptedRequestGenerationValue = stagedRequestGenerationValue
         acceptedSolveCountValue += 1
         stagedSolvedValue = false
+        solvedOriginAnchorValue = None
+        solvedOriginBindingValue = None
+        solvedOriginNavigationGenerationValue = -1
     }
 
     /// Drops the staged solve of a candidate the window did NOT accept. The
@@ -2591,6 +2961,9 @@ public class CjguiComposableUiScrollViewport {
     /// instead of silently forgetting or mislabelling it.
     public func discardStagedExtents(): Unit {
         stagedSolvedValue = false
+        solvedOriginAnchorValue = None
+        solvedOriginBindingValue = None
+        solvedOriginNavigationGenerationValue = -1
     }
     /// Content can shrink or disappear: the requested offset never keeps an
     /// out-of-range value that would show blank space. If this actually changes
@@ -2605,8 +2978,11 @@ public class CjguiComposableUiScrollViewport {
         requestGenerationValue += 1
     }
     private func clamp(offset: Int64): Int64 {
-        if (offset < 0) {
+        if (!allowsSignedOriginCoordinates() && offset < 0) {
             return 0
+        }
+        if (offset < acceptedOriginOffsetValue) {
+            return acceptedOriginOffsetValue
         }
         let maximum = maximumOffset()
         return if (offset > maximum) {
@@ -2614,6 +2990,9 @@ public class CjguiComposableUiScrollViewport {
         } else {
             offset
         }
+    }
+    private func allowsSignedOriginCoordinates(): Bool {
+        return acceptedOriginBindingValue.isSome() || stagedOriginBindingValue.isSome()
     }
 }
 
@@ -2630,18 +3009,30 @@ public class CjguiComposableUiVirtualListState {
     private var lastViewportHeight: Int64
     private var lastRowStride: Int64
     private var anchorIntraRowOffsetValue: Int64
+    // One framework capture lease, never an unbounded keep-alive cache.
+    private var variableCaptureSerial: Int64 = 0
+    private var variableCaptureToken: Int64 = 0
+    private var variableCaptureKey: String = ""
+    private var variableCaptureTitle: String = ""
+    private var variableCaptureRevision: Int64 = -1
+    private var variableCaptureGeneration: Int64 = -1
     private var hasPendingUserScroll: Bool
     private var lastDataIssueValue: String
     // Variable-height entries are a sparse, bounded correction index over a
     // uniform unseen-row estimate. They contain no component tree or domain
     // content, so a 10,000-row source never becomes a 10,000-row UI cache.
     private var variableHeightCache: ArrayList<CjguiComposableUiVariableHeightCacheEntry>
+    private var variableMeasurementCandidateActive: Bool = false
+    private var variableCandidateMeasurementKeys = ArrayList<String>()
+    private var variableCandidateMeasurementIssue: String = ""
     private var variableMeasurementWidth: Int64
     private var variableMeasurementGeneration: Int64
     private var variableAnchorIndexValue: Int64
     private var variableMaterializedOriginValue: Int64
     private var variableEstimatedHeightValue: Int64
     private var variableRowGapValue: Int64
+    private var sharedViewportIdentityValue: Int64 = -1
+    private var sharedViewportRequestGenerationValue: Int64 = -1
 
     public init() {
         this.scrollOffsetValue = 0
@@ -2662,6 +3053,22 @@ public class CjguiComposableUiVirtualListState {
         this.variableMaterializedOriginValue = 0
         this.variableEstimatedHeightValue = 1
         this.variableRowGapValue = 0
+    }
+
+    // A collection derives its materialized rows from the same window viewport
+    // that owns wheel, reveal and edge activity. Consume only a new request or
+    // a different viewport identity; an unchanged request keeps the collection's
+    // stable-key adjustment when row geometry/content changes.
+    func adoptSharedViewportRequest(viewport: CjguiComposableUiScrollViewport): Unit {
+        let identity = viewport.viewStateIdentity()
+        let generation = viewport.requestGeneration()
+        if (identity == sharedViewportIdentityValue && generation == sharedViewportRequestGenerationValue) {
+            return
+        }
+        sharedViewportIdentityValue = identity
+        sharedViewportRequestGenerationValue = generation
+        scrollOffsetValue = viewport.offset()
+        hasPendingUserScroll = true
     }
 
     public func scrollOffset(): Int64 {
@@ -3097,8 +3504,11 @@ public class CjguiComposableUiVirtualListState {
             let anchorIndex = liveVariableIndexForKey(source, count, anchorKeyValue)
             if (anchorIndex >= 0) {
                 variableAnchorIndexValue = anchorIndex
-                let rowHeight = variableHeightAtIndex(anchorIndex, estimate)
-                let intra = if (anchorIntraRowOffsetValue < rowHeight) {
+                // The offset locator assigns the trailing gap to this row.
+                // Preserve that same stride on the next layout; comparing only
+                // its painted height resets accepted offsets inside the gap.
+                let rowStride = variableHeightAtIndex(anchorIndex, estimate).saturatingAdd(gap)
+                let intra = if (anchorIntraRowOffsetValue < rowStride) {
                     anchorIntraRowOffsetValue
                 } else {
                     0
@@ -3236,6 +3646,74 @@ public class CjguiComposableUiVirtualListState {
         return true
     }
 
+    // Candidate pins are identities only, within the existing 128-entry
+    // measurement cache. A newly measured overscan/capture row cannot evict
+    // a row whose actual height this candidate will use for geometry.
+    func beginVariableMeasurementCandidate(): Unit {
+        variableCandidateMeasurementKeys = ArrayList<String>()
+        variableCandidateMeasurementIssue = ""
+        variableMeasurementCandidateActive = true
+    }
+    func endVariableMeasurementCandidate(): Unit {
+        variableCandidateMeasurementKeys = ArrayList<String>()
+        variableMeasurementCandidateActive = false
+    }
+    func variableMeasurementCandidateIssue(): String { return variableCandidateMeasurementIssue }
+    private func isVariableCandidateMeasurementKey(key: String): Bool {
+        for (candidate in variableCandidateMeasurementKeys) {
+            if (candidate == key) { return true }
+        }
+        return false
+    }
+    private func variableMeasurementEvictionIndex(): Int64 {
+        var index: Int64 = 0
+        while (index < variableHeightCache.size) {
+            if (!variableMeasurementCandidateActive ||
+                !isVariableCandidateMeasurementKey(variableHeightCache[index].key)) { return index }
+            index += 1
+        }
+        return -1
+    }
+    // Narrow the pins to the exact final ordinary rows before adding capture.
+    // Validate their frozen item and actual height before solving positions,
+    // source anchor and extents from the same remaining correction set.
+    func retainVariableCandidateMeasurements(rows: ArrayList<CjguiComposableUiNode>,
+        source: CjguiComposableUiVariableHeightListSource): String {
+        if (variableCandidateMeasurementIssue.size > 0) { return variableCandidateMeasurementIssue }
+        if (rows.size > CJGUI_COMPOSABLE_UI_MAX_VIRTUAL_MATERIALIZED_ROWS) {
+            return "variable_candidate_measurement_budget"
+        }
+        if (source.measurementGeneration() != variableMeasurementGeneration) {
+            return "variable_candidate_measurement_generation"
+        }
+        let keys = ArrayList<String>()
+        for (row in rows) {
+            let key = row.variableRowKey()
+            if (key.size == 0) { continue }
+            for (prior in keys) {
+                if (prior == key) { return "variable_candidate_measurement_duplicate" }
+            }
+            let index = source.indexForKey(key)
+            if (index < 0 || index >= normalizedCount(source.itemCount())) {
+                return "variable_candidate_measurement_source"
+            }
+            let item = source.itemAt(index)
+            let cacheIndex = variableCacheIndexForKey(key)
+            if (item.key != key || item.title != row.variableRowTitle() ||
+                item.layoutRevision != row.variableRowRevision() || cacheIndex < 0) {
+                return "variable_candidate_measurement_identity"
+            }
+            let entry = variableHeightCache[cacheIndex]
+            if (!entry.measured || entry.liveIndex != index || entry.title != item.title ||
+                entry.layoutRevision != item.layoutRevision || entry.resolvedHeight != row.layoutHeightOverride()) {
+                return "variable_candidate_measurement_geometry"
+            }
+            keys.add(key)
+        }
+        variableCandidateMeasurementKeys = keys
+        return ""
+    }
+
     /// The materializer calls this only after building an ordinary visible
     /// subtree and asking the existing text/layout measurer for its height.
     func recordVariableMeasurement(item: CjguiComposableUiVariableHeightListItem, height: Int64, index: Int64): Unit {
@@ -3247,7 +3725,21 @@ public class CjguiComposableUiVirtualListState {
         } else {
             variableEstimateForItem(item, variableEstimatedHeightValue)
         }
+        if (variableMeasurementCandidateActive && !isVariableCandidateMeasurementKey(item.key)) {
+            if (variableCandidateMeasurementKeys.size >= CJGUI_COMPOSABLE_UI_MAX_VIRTUAL_MATERIALIZED_ROWS) {
+                variableCandidateMeasurementIssue = "variable_candidate_measurement_budget"
+                return
+            }
+            variableCandidateMeasurementKeys.add(item.key)
+        }
         let cacheIndex = variableCacheIndexForKey(item.key)
+        let evictionIndex = if (cacheIndex < 0 && variableHeightCache.size >= 128) {
+            variableMeasurementEvictionIndex()
+        } else { -1 }
+        if (cacheIndex < 0 && variableHeightCache.size >= 128 && evictionIndex < 0) {
+            variableCandidateMeasurementIssue = "variable_candidate_measurement_budget"
+            return
+        }
         if (cacheIndex >= 0) {
             let entry = variableHeightCache[cacheIndex]
             entry.title = item.title
@@ -3258,7 +3750,7 @@ public class CjguiComposableUiVirtualListState {
             return
         }
         if (variableHeightCache.size >= 128) {
-            let _ = variableHeightCache.remove(at: 0)
+            let _ = variableHeightCache.remove(at: evictionIndex)
         }
         variableHeightCache.add(
             CjguiComposableUiVariableHeightCacheEntry(
@@ -3270,6 +3762,32 @@ public class CjguiComposableUiVirtualListState {
                 index
             )
         )
+    }
+
+    func retainVariableCapture(key: String, title: String, revision: Int64, generation: Int64): Int64 {
+        if (key.size == 0 || variableCaptureToken != 0 || variableCaptureSerial == Int64.Max) { return 0 }
+        variableCaptureSerial += 1
+        variableCaptureToken = variableCaptureSerial
+        variableCaptureKey = key; variableCaptureTitle = title
+        variableCaptureRevision = revision; variableCaptureGeneration = generation
+        return variableCaptureToken
+    }
+    func releaseVariableCapture(token: Int64): Bool {
+        if (token <= 0 || token != variableCaptureToken) { return false }
+        variableCaptureToken = 0; variableCaptureKey = ""; variableCaptureTitle = ""
+        variableCaptureRevision = -1; variableCaptureGeneration = -1
+        return true
+    }
+    func retainedVariableCaptureIndex(source: CjguiComposableUiVariableHeightListSource): Int64 {
+        if (variableCaptureToken <= 0 || source.measurementGeneration() != variableCaptureGeneration) { return -1 }
+        let index = source.indexForKey(variableCaptureKey)
+        if (index < 0 || index >= normalizedCount(source.itemCount())) { return -1 }
+        let item = source.itemAt(index)
+        return if (item.key == variableCaptureKey && item.title == variableCaptureTitle &&
+            item.layoutRevision == variableCaptureRevision) { index } else { -1 }
+    }
+    func variableRowOffset(index: Int64, count: Int64): Int64 {
+        return variableOffsetForIndex(count, index, variableEstimatedHeightValue, variableRowGapValue)
     }
 
     private func variableTotalHeight(count: Int64, estimate: Int64, gap: Int64): Int64 {
@@ -3577,6 +4095,7 @@ public class CjguiComposableUiTextStyleRun {
     public let backgroundBlue: Float64
     public let backgroundAlpha: Float64
     private let selectionBackgroundOnly: Bool
+    private let selectionBackgroundPlatformColor: Bool
 
     public init(start: Int64, end: Int64, fontSize: Float64, fontWeight: Int64, fontFamily: String, red: Float64,
         green: Float64, blue: Float64, alpha: Float64, hasBackground!: Bool = false, backgroundRed!: Float64 = 0.0,
@@ -3596,9 +4115,11 @@ public class CjguiComposableUiTextStyleRun {
         this.backgroundBlue = backgroundBlue
         this.backgroundAlpha = backgroundAlpha
         this.selectionBackgroundOnly = false
+        this.selectionBackgroundPlatformColor = false
     }
 
-    private init(start: Int64, end: Int64, color: CjguiComposableUiColor) {
+    private init(start: Int64, end: Int64, color: CjguiComposableUiColor,
+        platformColor!: Bool = false) {
         this.start = start
         this.end = end
         this.fontSize = 0.0
@@ -3614,6 +4135,7 @@ public class CjguiComposableUiTextStyleRun {
         this.backgroundBlue = color.blue
         this.backgroundAlpha = color.alpha
         this.selectionBackgroundOnly = true
+        this.selectionBackgroundPlatformColor = platformColor
     }
 
     /// Experimental: a macOS selection decoration applied over ordinary runs.
@@ -3624,7 +4146,18 @@ public class CjguiComposableUiTextStyleRun {
         return CjguiComposableUiTextStyleRun(start, end, color)
     }
 
+    /// Experimental: use the same platform selection colour as the focused
+    /// text proxy, including its alpha and effective appearance. Range and
+    /// UTF-8 admission are identical to an explicit selection background.
+    /// Requires selection-background backend version 2; no font or foreground
+    /// attribute is granted by this declaration.
+    public static func platformSelectionBackground(start: Int64, end: Int64): CjguiComposableUiTextStyleRun {
+        return CjguiComposableUiTextStyleRun(start, end, CjguiComposableUiColor(0.0, 0.0, 0.0, 0.0),
+            platformColor: true)
+    }
+
     func isSelectionBackground(): Bool { return selectionBackgroundOnly }
+    func usesPlatformSelectionBackground(): Bool { return selectionBackgroundPlatformColor }
 
     /// The wire form the renderer accepts: one run per `;`, fields separated by
     /// `:` as start:end:fontSize:weight:family:r:g:b:a.
@@ -3646,7 +4179,9 @@ public class CjguiComposableUiTextStyleRun {
         let ordinary = "${this.start}:${this.end}:${this.fontSize}:${this.fontWeight}:${family}:" +
             "${this.red}:${this.green}:${this.blue}:${this.alpha}:${background}:" +
             "${this.backgroundRed}:${this.backgroundGreen}:${this.backgroundBlue}:${this.backgroundAlpha}"
-        return if (selectionBackgroundOnly) { ordinary + ":1" } else { ordinary }
+        return if (selectionBackgroundOnly) {
+            ordinary + if (selectionBackgroundPlatformColor) { ":2" } else { ":1" }
+        } else { ordinary }
     }
 }
 
@@ -3790,6 +4325,11 @@ public class CjguiComposableUiNode {
     private let virtualListOverscanValue: Int64
     private let virtualContentHeightValue: Int64
     private let virtualVerticalOriginValue: Int64
+    // Current materialization facts only; rows are rebuilt from their live source.
+    private var variableRowKeyValue: String = ""
+    private var variableRowTitleValue: String = ""
+    private var variableRowRevisionValue: Int64 = -1
+    private var variableRowOffsetValue: Int64 = -1
     // Layer metadata remains entirely in Cangjie. `layerId` is a stable
     // identity, while `layerKind` is a descriptive projection value rather
     // than a native menu/dialog switch.
@@ -4043,6 +4583,15 @@ public class CjguiComposableUiNode {
     func virtualContentHeight(): Int64 {
         return virtualContentHeightValue
     }
+    func markVariableRow(key: String, title: String, revision: Int64): Unit {
+        variableRowKeyValue = key; variableRowTitleValue = title; variableRowRevisionValue = revision
+    }
+    func variableRowKey(): String { return variableRowKeyValue }
+    func variableRowTitle(): String { return variableRowTitleValue }
+    func variableRowRevision(): Int64 { return variableRowRevisionValue }
+    func setVariableRowOffset(offset: Int64): Unit { variableRowOffsetValue = offset }
+    func variableRowOffset(): Int64 { return variableRowOffsetValue }
+
     func virtualVerticalOrigin(): Int64 {
         return virtualVerticalOriginValue
     }
@@ -4154,7 +4703,8 @@ public class CjguiComposableUiNode {
     /// window rewrite an already-accepted public projection. Sources and
     /// their domain-owned list state remain references, while transient
     /// materialised rows are rebuilt only for this candidate.
-    func cloneForWindowCandidate(): CjguiComposableUiNode {
+    func cloneForWindowCandidate(includeChildren!: Bool = true,
+        virtualContentHeightOverride!: Int64 = -1, virtualVerticalOriginOverride!: Int64 = -1): CjguiComposableUiNode {
         let cloned = CjguiComposableUiNode(nodeId, semanticId, nodeKind, label, value, actionName, resourceId, style,
             // The window snapshots the declaration; presentation runs are part of
             // the declaration and must survive the snapshot, otherwise every
@@ -4173,7 +4723,8 @@ public class CjguiComposableUiNode {
             variableHeightListSource: variableHeightListSourceValue, virtualListState: virtualListStateValue,
             virtualListContentNodeId: virtualListContentNodeIdValue, virtualListRowHeight: virtualListRowHeightValue,
             virtualListRowGap: virtualListRowGapValue, virtualListOverscan: virtualListOverscanValue,
-            virtualContentHeight: virtualContentHeightValue, virtualVerticalOrigin: virtualVerticalOriginValue,
+            virtualContentHeight: if (virtualContentHeightOverride >= 0) { virtualContentHeightOverride } else { virtualContentHeightValue },
+            virtualVerticalOrigin: if (virtualVerticalOriginOverride >= 0) { virtualVerticalOriginOverride } else { virtualVerticalOriginValue },
             layerId: layerIdValue, layerKind: layerKindValue, layerOwnerSemanticId: layerOwnerSemanticIdValue,
             layerAnchorSemanticId: layerAnchorSemanticIdValue, layerAnchorNodeId: layerAnchorNodeIdValue,
             layerAnchorAtPoint: layerAnchorAtPointValue, layerAnchorPointX: layerAnchorPointXValue,
@@ -4192,6 +4743,8 @@ public class CjguiComposableUiNode {
             semanticExpanded: semanticExpanded, semanticLevel: semanticLevel, semanticKey: semanticKey,
             semanticParentKey: semanticParentKey, semanticIncarnation: semanticIncarnation,
             identity: scopedIdentityValue)
+        cloned.markVariableRow(variableRowKeyValue, variableRowTitleValue, variableRowRevisionValue)
+        cloned.setVariableRowOffset(variableRowOffsetValue)
         var ownsVirtualChildren = false
         if (let Some(_) <- virtualListSourceValue) {
             ownsVirtualChildren = true
@@ -4199,10 +4752,16 @@ public class CjguiComposableUiNode {
         if (let Some(_) <- variableHeightListSourceValue) {
             ownsVirtualChildren = true
         }
-        if (!ownsVirtualChildren) {
+        if (includeChildren && !ownsVirtualChildren) {
             for (child in childNodes) {
                 cloned.add(child.cloneForWindowCandidate())
             }
+        } else if (includeChildren && variableHeightListSourceValue.isSome() && childNodes.size == 1 &&
+            childNodes[0].nodeId == virtualListContentNodeIdValue &&
+            childNodes[0].nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) {
+            // Preserve the declared content identity and input metadata, but
+            // never copy previously materialized rows into a new candidate.
+            cloned.add(childNodes[0].cloneForWindowCandidate(includeChildren: false))
         }
         return cloned
     }
@@ -5587,6 +6146,7 @@ public class CjguiComposableUiLayoutNode {
             imageResourcePath: imageResourcePath, imageResourceId: imageResourceId,
             imageResourceVersion: imageResourceVersion, imageContentMode: imageContentMode,
             imageTransferOffer: imageTransferOffer,
+            textStyleRuns: textStyleRuns,
             tabInsertsText: tabInsertsText, layerId: layerId, layerKind: layerKind, inputScopeId: inputScopeId,
             pointerControlRole: pointerControlRole, pointerControlAxis: pointerControlAxis,
             pointerControlMinimum: pointerControlMinimum, pointerControlMaximum: pointerControlMaximum,
@@ -5601,6 +6161,45 @@ public class CjguiComposableUiLayoutNode {
         let resolved = CjguiComposableUiLayoutNode(projectionNode, bounds, clip, inputScopeId: inputScopeId,
             clipCornerRadius: clipCornerRadius, clipConstraints: resolvedClipConstraints,
             resolvedPaintStyle: Some(resolvedStyle))
+        resolved.subtreeNodeCount = subtreeNodeCount
+        return resolved
+    }
+    /// Rebuild this immutable projection node with candidate geometry while
+    /// retaining every semantic, paint, resource and subtree field verbatim.
+    /// Used only by the scroll-origin handoff after the canonical child solve.
+    func withResolvedGeometry(resolvedBounds: CjguiComposableUiRect,
+        resolvedConstraints: ArrayList<CjguiComposableUiClipConstraint>): CjguiComposableUiLayoutNode {
+        var resolvedClip = resolvedBounds
+        if (resolvedConstraints.size > 0) {
+            resolvedClip = resolvedConstraints[0].rect.intersect(resolvedBounds)
+            var index: Int64 = 1
+            while (index < resolvedConstraints.size) {
+                resolvedClip = resolvedClip.intersect(resolvedConstraints[index].rect)
+                index += 1
+            }
+        }
+        let projectionNode = CjguiComposableUiNode(nodeId, semanticId, nodeKind, label, value, actionName, resourceId,
+            declaredStyle, scrollViewport: scrollViewport, splitState: splitState, enabled: isEnabled,
+            readOnly: isReadOnly, fieldId: fieldId, tabsState: tabsState, tabsPageKey: tabsPageKey,
+            tabsPageActive: tabsPageActive, tabsTitleHeight: tabsTitleHeight, operationActionName: operationActionName,
+            operationResourceId: operationResourceId, displayValueRole: displayValueRole,
+            imageResourcePath: imageResourcePath, imageResourceId: imageResourceId,
+            imageResourceVersion: imageResourceVersion, imageContentMode: imageContentMode,
+            imageTransferOffer: imageTransferOffer, textStyleRuns: textStyleRuns,
+            tabInsertsText: tabInsertsText, layerId: layerId,
+            layerKind: layerKind, inputScopeId: inputScopeId, pointerControlRole: pointerControlRole,
+            pointerControlAxis: pointerControlAxis, pointerControlMinimum: pointerControlMinimum,
+            pointerControlMaximum: pointerControlMaximum, pointerControlStep: pointerControlStep,
+            pointerControlHandleThickness: pointerControlHandleThickness,
+            pointerControlFirstSize: pointerControlFirstSize, pointerControlSecondMinimum: pointerControlSecondMinimum,
+            interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState,
+            semanticRole: semanticRole, semanticLabel: semanticLabel, semanticSelected: semanticSelected,
+            semanticExpandable: semanticExpandable, semanticExpanded: semanticExpanded,
+            semanticLevel: semanticLevel, semanticKey: semanticKey, semanticParentKey: semanticParentKey,
+            semanticIncarnation: semanticIncarnation, identity: scopedIdentityValue)
+        let resolved = CjguiComposableUiLayoutNode(projectionNode, resolvedBounds, resolvedClip,
+            inputScopeId: inputScopeId, clipCornerRadius: clipCornerRadius,
+            clipConstraints: resolvedConstraints, resolvedPaintStyle: Some(style))
         resolved.subtreeNodeCount = subtreeNodeCount
         return resolved
     }
@@ -5915,6 +6514,7 @@ public class CjguiComposableUiScene {
     private let validValue: Bool
     private let layoutErrorValue: String
     let hasSelectionBackground: Bool
+    let hasPlatformSelectionBackground: Bool
     public init(version: Int64, viewport: CjguiComposableUiRect, nodes: ArrayList<CjguiComposableUiLayoutNode>,
         valid!: Bool = true, layoutError!: String = "") {
         this.version = version
@@ -5926,10 +6526,12 @@ public class CjguiComposableUiScene {
         var geometryError = ""
         var index: Int64 = 0
         var selectionBackground = false
+        var platformSelectionBackground = false
         while (index < nodes.size) {
             let node = nodes[index]
             for (run in node.textStyleRuns) {
                 if (run.isSelectionBackground()) { selectionBackground = true }
+                if (run.usesPlatformSelectionBackground()) { platformSelectionBackground = true }
             }
             if (let Some(reason) <- cjguiSelectionBackgroundRunsRejection(node.value, node.textStyleRuns)) {
                 geometryError = reason
@@ -5987,6 +6589,7 @@ public class CjguiComposableUiScene {
         }
         this.resolvedVisualGeometry = geometries
         this.hasSelectionBackground = selectionBackground
+        this.hasPlatformSelectionBackground = platformSelectionBackground
         this.validValue = valid && geometryError.size == 0
         this.layoutErrorValue = if (layoutError.size > 0) { layoutError } else { geometryError }
     }
@@ -6812,6 +7415,7 @@ public class CjguiComposableUiLayoutReuseCache {
         appendInt(builder, byteCount, cacheable, node.layoutHeightOverride())
         appendInt(builder, byteCount, cacheable, node.virtualContentHeight())
         appendInt(builder, byteCount, cacheable, node.virtualVerticalOrigin())
+        appendInt(builder, byteCount, cacheable, node.variableRowOffset())
         appendString(builder, byteCount, cacheable, node.explicitInputScopeId())
         appendStyle(builder, byteCount, cacheable, node.style)
         let children = node.children()
@@ -7237,6 +7841,76 @@ public class CjguiComposableUiLayoutEngine {
         return ""
     }
 
+    private static func scrollOriginTextStyleMatches(left: CjguiComposableUiLayoutNode,
+        right: CjguiComposableUiLayoutNode): Bool {
+        let a = left.declaredStyle
+        let b = right.declaredStyle
+        if (a.fontSize != b.fontSize || a.fontWeight != b.fontWeight || a.fontFamily != b.fontFamily ||
+            a.padding != b.padding || a.fixedWidth != b.fixedWidth || a.fixedHeight != b.fixedHeight ||
+            a.minWidth != b.minWidth || a.maxWidth != b.maxWidth || a.idealWidth != b.idealWidth ||
+            a.minHeight != b.minHeight || a.maxHeight != b.maxHeight || a.idealHeight != b.idealHeight ||
+            a.alignX != b.alignX || a.alignY != b.alignY || a.offsetX != b.offsetX || a.offsetY != b.offsetY ||
+            a.translateX != b.translateX || a.translateY != b.translateY) {
+            return false
+        }
+        // Selection backgrounds are transient paint-only decorations. Ignore
+        // them while keeping every ordinary run attribute in the shaping
+        // compatibility check (including inline-code backgrounds).
+        var leftIndex: Int64 = 0
+        var rightIndex: Int64 = 0
+        while (true) {
+            while (leftIndex < left.textStyleRuns.size &&
+                left.textStyleRuns[leftIndex].isSelectionBackground()) {
+                leftIndex += 1
+            }
+            while (rightIndex < right.textStyleRuns.size &&
+                right.textStyleRuns[rightIndex].isSelectionBackground()) {
+                rightIndex += 1
+            }
+            if (leftIndex >= left.textStyleRuns.size || rightIndex >= right.textStyleRuns.size) {
+                return leftIndex >= left.textStyleRuns.size && rightIndex >= right.textStyleRuns.size
+            }
+            let x = left.textStyleRuns[leftIndex]
+            let y = right.textStyleRuns[rightIndex]
+            if (x.start != y.start || x.end != y.end || x.fontSize != y.fontSize ||
+                x.fontWeight != y.fontWeight || x.fontFamily != y.fontFamily || x.red != y.red ||
+                x.green != y.green || x.blue != y.blue || x.alpha != y.alpha ||
+                x.hasBackground != y.hasBackground || x.backgroundRed != y.backgroundRed ||
+                x.backgroundGreen != y.backgroundGreen || x.backgroundBlue != y.backgroundBlue ||
+                x.backgroundAlpha != y.backgroundAlpha) {
+                return false
+            }
+            leftIndex += 1
+            rightIndex += 1
+        }
+        return false
+    }
+
+    private static func translateScrollCandidate(nodes: ArrayList<CjguiComposableUiLayoutNode>, deltaY: Int64,
+        fixedClipCount: Int64): Unit {
+        if (deltaY == 0) {
+            return
+        }
+        var index: Int64 = 0
+        while (index < nodes.size) {
+            let old = nodes[index]
+            let constraints = old.clipConstraints()
+            var constraintIndex = fixedClipCount
+            while (constraintIndex < constraints.size) {
+                let constraint = constraints[constraintIndex]
+                constraints[constraintIndex] = CjguiComposableUiClipConstraint(
+                    CjguiComposableUiRect(constraint.rect.x, constraint.rect.y + deltaY,
+                        constraint.rect.width, constraint.rect.height), cornerRadius: constraint.cornerRadius,
+                    ownerIdentity: constraint.ownerIdentity)
+                constraintIndex += 1
+            }
+            nodes[index] = old.withResolvedGeometry(
+                CjguiComposableUiRect(old.bounds.x, old.bounds.y + deltaY, old.bounds.width, old.bounds.height),
+                constraints)
+            index += 1
+        }
+    }
+
     public static func layout(root: CjguiComposableUiNode, viewport: CjguiComposableUiRect, version: Int64): CjguiComposableUiScene {
         return layoutWithMetrics(root, viewport, version, CjguiComposableUiFallbackTextMeasurer()).scene
     }
@@ -7400,7 +8074,16 @@ public class CjguiComposableUiLayoutEngine {
                 // content and zero offset, but its own geometry is preserved
                 // instead of leaving a stale extent from an earlier solve.
                 if (let Some(viewport) <- node.scrollViewport) {
-                    viewport.stageExtents(0, inner.height, 0)
+                    if (viewport.originStageRefusal().size > 0 || viewport.pendingOriginAnchor().isSome()) {
+                        work.dynamicIdentityIssue = if (viewport.originStageRefusal().size > 0) {
+                            viewport.originStageRefusal()
+                        } else { "scroll_origin_anchor_target_missing" }
+                        finishSubtreeNode(output, subtreeStartIndex)
+                        return
+                    }
+                    let origin = viewport.layoutOriginOffset()
+                    viewport.stageResolvedOrigin(origin)
+                    viewport.stageExtents(origin, inner.height, origin)
                     CjguiComposableUiLayoutEngine.recordStagedViewport(work, viewport)
                 }
             }
@@ -7419,7 +8102,10 @@ public class CjguiComposableUiLayoutEngine {
             } else {
                 0
             }
-            let offset = if (let Some(viewport) <- node.scrollViewport) {
+            var originOffset: Int64 = 0
+            var offset = if (node.variableHeightListSource().isSome() && node.virtualListState().isSome()) {
+                node.scrollOffset
+            } else if (let Some(viewport) <- node.scrollViewport) {
                 // A viewport-bound scroll area takes its offset from the PUBLIC
                 // viewport: that ONE view state is shared by the author, the
                 // wheel, the keyboard reveal and the accepted scene. The
@@ -7427,13 +8113,25 @@ public class CjguiComposableUiLayoutEngine {
                 // a window that clones its declared tree for a projection still
                 // MOVES the content instead of publishing an offset the layout
                 // never used.
-                let requested = viewport.offset()
-                if (requested > maximumOffset) {
-                    maximumOffset
-                } else if (requested < 0) {
+                if (viewport.originStageRefusal().size > 0) {
+                    work.dynamicIdentityIssue = viewport.originStageRefusal()
+                    finishSubtreeNode(output, subtreeStartIndex)
+                    return
+                }
+                viewport.beginCoordinateOriginSolve()
+                originOffset = viewport.layoutOriginOffset()
+                let requestBase = if (viewport.stagedOriginNavigation()) {
                     0
                 } else {
-                    requested
+                    viewport.acceptedOriginOffset()
+                }
+                let requestedLocal = viewport.offset() - requestBase
+                if (requestedLocal > maximumOffset) {
+                    maximumOffset
+                } else if (requestedLocal < 0) {
+                    0
+                } else {
+                    requestedLocal
                 }
             } else if (node.scrollOffset > maximumOffset) {
                 maximumOffset
@@ -7442,18 +8140,6 @@ public class CjguiComposableUiLayoutEngine {
             } else {
                 node.scrollOffset
             }
-            if (let Some(viewport) <- node.scrollViewport) {
-                // CANDIDATE facts: they become accepted only when the window
-                // accepts the scene that contains this viewport, so a wheel
-                // request can never be read as accepted while the layer is still
-                // a candidate.
-                viewport.stageExtents(natural, inner.height, offset)
-                CjguiComposableUiLayoutEngine.recordStagedViewport(work, viewport)
-            }
-            // Content placement: the scroll contract pins top-anchored content
-            // minus the offset. Only when the whole content fits with room to
-            // spare does the declared anchor resolve the spare space (a short
-            // list centered in a tall viewport is the home-screen case).
             let anchorShift = if (natural <= inner.height) {
                 let spare = inner.height - natural
                 if (node.style.scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER) {
@@ -7467,11 +8153,86 @@ public class CjguiComposableUiLayoutEngine {
                 0
             }
             let contentBounds = CjguiComposableUiRect(inner.x, inner.y - offset + anchorShift, inner.width, natural)
+            if (let Some(viewport) <- node.scrollViewport) {
+                // CANDIDATE facts: they become accepted only when the window
+                // accepts the scene that contains this viewport, so a wheel
+                // request can never be read as accepted while the layer is still
+                // a candidate.
+                viewport.stageResolvedOrigin(originOffset)
+                viewport.stageExtents(originOffset + natural, inner.height, originOffset + offset)
+                CjguiComposableUiLayoutEngine.recordStagedViewport(work, viewport)
+                let ticket = viewport.pendingOriginAnchor()
+                if (let Some(anchor) <- ticket) {
+                    // Resolve the anchor against the same canonical child solve
+                    // that will be published. No current selection, cached
+                    // scene, or post-layout product geometry is spliced in.
+                    let temporary = ArrayList<CjguiComposableUiLayoutNode>()
+                    let fixedClipCount = childClipConstraints.size
+                    layoutNode(content, contentBounds, childClipConstraints, temporary, measurer, inputScope, work,
+                        reuseCache: reuseCache, reuseDepth: reuseDepth + 1,
+                        identityRegistry: identityRegistry)
+                    if (!viewport.stagedOriginTicketIsCurrent(anchor)) {
+                        work.dynamicIdentityIssue = "scroll_origin_anchor_stale"
+                        finishSubtreeNode(output, subtreeStartIndex)
+                        return
+                    }
+                    var anchorIndex: Int64 = -1
+                    var searchIndex: Int64 = 0
+                    while (searchIndex < temporary.size) {
+                        if (temporary[searchIndex].nodeId == viewport.stagedOriginTargetNodeId()) {
+                            anchorIndex = searchIndex
+                            break
+                        }
+                        searchIndex += 1
+                    }
+                    if (work.dynamicIdentityIssue.size > 0) {
+                        finishSubtreeNode(output, subtreeStartIndex)
+                        return
+                    }
+                    if (anchorIndex < 0) {
+                        work.dynamicIdentityIssue = "scroll_origin_anchor_target_missing"
+                        finishSubtreeNode(output, subtreeStartIndex)
+                        return
+                    }
+                    let candidateAnchor = temporary[anchorIndex]
+                    if (candidateAnchor.value != anchor.body || candidateAnchor.bounds.width != anchor.oldWidth ||
+                        !scrollOriginTextStyleMatches(anchor.acceptedNode, candidateAnchor)) {
+                        work.dynamicIdentityIssue = "scroll_origin_anchor_geometry_incompatible"
+                        finishSubtreeNode(output, subtreeStartIndex)
+                        return
+                    }
+                    let unappliedRequestedDelta = anchor.requestedOffset - anchor.acceptedOffset
+                    let nextOrigin = viewport.acceptedOriginOffset() + anchor.oldNodeRelativeViewportY -
+                        unappliedRequestedDelta - (candidateAnchor.bounds.y - inner.y)
+                    viewport.stageResolvedOrigin(nextOrigin)
+                    translateScrollCandidate(temporary, nextOrigin - viewport.acceptedOriginOffset(), fixedClipCount)
+                    output.add(all: temporary)
+                    // Translation changed the local origin, not the logical
+                    // request already consumed by this solve. Adding nextOrigin
+                    // again would make the following ordinary solve jump.
+                    viewport.refineStagedExtents(nextOrigin + natural, inner.height, originOffset + offset)
+                    if (!viewport.freezeSolvedCoordinateOrigin(anchor)) {
+                        work.dynamicIdentityIssue = "scroll_origin_anchor_stale"
+                        finishSubtreeNode(output, subtreeStartIndex)
+                        return
+                    }
+                } else {
+                    layoutNode(content, contentBounds, childClipConstraints, output, measurer, inputScope, work,
+                        reuseCache: reuseCache, reuseDepth: reuseDepth + 1,
+                        identityRegistry: identityRegistry)
+                }
+            } else {
+                layoutNode(content, contentBounds, childClipConstraints, output, measurer, inputScope, work,
+                    reuseCache: reuseCache, reuseDepth: reuseDepth + 1,
+                    identityRegistry: identityRegistry)
+            }
+            // Content placement: the scroll contract pins top-anchored content
+            // minus the offset. Only when the whole content fits with room to
+            // spare does the declared anchor resolve the spare space (a short
+            // list centered in a tall viewport is the home-screen case).
             // The virtual content was just materialized from mutable source
             // state. It remains on the canonical path for this solve rather
             // than entering the stable-region cache.
-            layoutNode(content, contentBounds, childClipConstraints, output, measurer, inputScope, work,
-                reuseCache: reuseCache, reuseDepth: reuseDepth + 1, identityRegistry: identityRegistry)
             finishSubtreeNode(output, subtreeStartIndex)
             return
         }
@@ -7781,7 +8542,11 @@ public class CjguiComposableUiLayoutEngine {
         source: CjguiComposableUiVariableHeightListSource, state: CjguiComposableUiVirtualListState,
         inner: CjguiComposableUiRect, measurer: CjguiComposableUiTextMeasurer, work: CjguiComposableUiLayoutWorkCounter,
         identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
+        if (let Some(viewport) <- node.scrollViewport) {
+            state.adoptSharedViewportRequest(viewport)
+        }
         state.prepareVariableMeasurementContext(source, inner.width)
+        state.beginVariableMeasurementCandidate()
         let _ = state.updateVariableMaterializedRange(source, node.virtualListRowHeight(), node.virtualListRowGap(),
             inner.height, node.virtualListOverscan())
         let count = if (source.itemCount() > 0) {
@@ -7794,6 +8559,7 @@ public class CjguiComposableUiLayoutEngine {
         let measuredRows = buildVariableHeightRows(node, source, state, builtStart, builtEnd, inner.width, measurer,
             work, identityRegistry)
         if (work.dynamicIdentityIssue.size > 0) {
+            state.endVariableMeasurementCandidate()
             return
         }
         let viewportEnd = state.scrollOffset().saturatingAdd(if (inner.height > 0) {
@@ -7812,6 +8578,7 @@ public class CjguiComposableUiLayoutEngine {
                 identityRegistry)
             measuredRows.add(all: appended)
             if (work.dynamicIdentityIssue.size > 0) {
+                state.endVariableMeasurementCandidate()
                 return
             }
             builtEnd = nextEnd
@@ -7827,6 +8594,7 @@ public class CjguiComposableUiLayoutEngine {
                 all: buildVariableHeightRows(node, source, state, builtEnd, nextEnd, inner.width, measurer, work,
                     identityRegistry))
             if (work.dynamicIdentityIssue.size > 0) {
+                state.endVariableMeasurementCandidate()
                 return
             }
             builtEnd = nextEnd
@@ -7857,28 +8625,64 @@ public class CjguiComposableUiLayoutEngine {
             // just the current bounded range and publish its own final total;
             // normal stable sources always take the reuse branch above.
             state.noteDataIssue("range_changed_during_measurement")
+            state.beginVariableMeasurementCandidate()
             finalRows.add(
                 all: buildVariableHeightRows(node, source, state, finalStart, finalEnd, inner.width, measurer, work,
                     identityRegistry))
             if (work.dynamicIdentityIssue.size > 0) {
+                state.endVariableMeasurementCandidate()
                 return
             }
             totalHeight = state.updateVariableMaterializedRange(source, node.virtualListRowHeight(),
                 node.virtualListRowGap(), inner.height, node.virtualListOverscan())
         }
+        let ordinaryMeasurementIssue = state.retainVariableCandidateMeasurements(finalRows, source)
+        if (ordinaryMeasurementIssue.size > 0) {
+            work.dynamicIdentityIssue = ordinaryMeasurementIssue
+            state.endVariableMeasurementCandidate()
+            return
+        }
+        // Rebuild at most one captured row outside the visible interval. Keep
+        // its stable identity through ordinary accepted layout, rather than
+        // relaxing capture gates or replaying an old row/geometry snapshot.
+        let retainedIndex = state.retainedVariableCaptureIndex(source)
+        if (retainedIndex >= 0 && (retainedIndex < finalStart || retainedIndex >= finalEnd) &&
+            finalRows.size < CJGUI_COMPOSABLE_UI_MAX_VIRTUAL_MATERIALIZED_ROWS) {
+            let retained = buildVariableHeightRows(node, source, state, retainedIndex, retainedIndex + 1,
+                inner.width, measurer, work, identityRegistry)
+            if (work.dynamicIdentityIssue.size > 0) { state.endVariableMeasurementCandidate(); return }
+            finalRows.add(all: retained)
+        }
+        let finalMeasurementIssue = state.retainVariableCandidateMeasurements(finalRows, source)
+        if (finalMeasurementIssue.size > 0) {
+            work.dynamicIdentityIssue = finalMeasurementIssue
+            state.endVariableMeasurementCandidate()
+            return
+        }
+        // Sparse rows retain their logical position; adding an offscreen row
+        // cannot shift the visible range or create a huge spacer allocation.
+        for (row in finalRows) {
+            if (row.variableRowKey().size == 0) { continue }
+            let index = source.indexForKey(row.variableRowKey())
+            if (index >= 0 && index < count && source.itemAt(index).key == row.variableRowKey()) {
+                row.setVariableRowOffset(state.variableRowOffset(index, count))
+            }
+        }
+        totalHeight = state.updateVariableMaterializedRange(source, node.virtualListRowHeight(),
+            node.virtualListRowGap(), inner.height, node.virtualListOverscan())
         node.scrollOffset = state.scrollOffset()
-        let content = CjguiComposableUiNode(
-            node.virtualListContentNodeId(),
-            "${node.semanticId}_materialized",
-            CJGUI_COMPOSABLE_UI_VERTICAL,
-            "",
-            "",
-            "",
-            -1,
-            CjguiComposableUiStyle(gap: node.virtualListRowGap()),
-            virtualContentHeight: totalHeight,
-            virtualVerticalOrigin: state.variableMaterializedOrigin()
-        )
+        let templates = node.children()
+        let template: ?CjguiComposableUiNode = if (templates.size == 1 && templates[0].nodeId == node.virtualListContentNodeId() &&
+            templates[0].nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) { Some(templates[0]) } else { None }
+        let content = if (let Some(value) <- template) {
+            value.cloneForWindowCandidate(includeChildren: false, virtualContentHeightOverride: totalHeight,
+                virtualVerticalOriginOverride: state.variableMaterializedOrigin())
+        } else {
+            CjguiComposableUiNode(node.virtualListContentNodeId(), "${node.semanticId}_materialized",
+                CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, CjguiComposableUiStyle(gap: node.virtualListRowGap()),
+                virtualContentHeight: totalHeight, virtualVerticalOrigin: state.variableMaterializedOrigin())
+        }
+        state.endVariableMeasurementCandidate()
         content.replaceChildren(finalRows)
         node.replaceChildren(ArrayList<CjguiComposableUiNode>([content]))
         if (let Some(registry) <- identityRegistry) {
@@ -7922,7 +8726,12 @@ public class CjguiComposableUiLayoutEngine {
                 }
                 let measuredHeight = preferredHeight(row, availableWidth, measurer)
                 row.forceLayoutHeight(measuredHeight)
+                row.markVariableRow(item.key, item.title, item.layoutRevision)
                 state.recordVariableMeasurement(item, measuredHeight, index)
+                if (state.variableMeasurementCandidateIssue().size > 0) {
+                    work.dynamicIdentityIssue = state.variableMeasurementCandidateIssue()
+                    return rows
+                }
                 rows.add(row)
             } else {
                 state.noteDataIssue(if (item.key.size == 0) {
@@ -8039,7 +8848,10 @@ public class CjguiComposableUiLayoutEngine {
             let height = heights[index]
             let width = widths[index]
             let x = alignedOrigin(inner.x, inner.width, width, child.style.alignX)
-            layoutNodeOrReuse(child, CjguiComposableUiRect(x, cursor, width, height), clipConstraints, output, measurer,
+            let rowY = if (owner.virtualContentHeight() > 0 && child.variableRowOffset() >= 0) {
+                inner.y + child.variableRowOffset()
+            } else { cursor }
+            layoutNodeOrReuse(child, CjguiComposableUiRect(x, rowY, width, height), clipConstraints, output, measurer,
                 inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
             cursor += height + gap
             index += 1

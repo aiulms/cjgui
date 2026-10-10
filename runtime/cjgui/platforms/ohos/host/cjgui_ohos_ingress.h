@@ -100,6 +100,8 @@ struct CjguiOhosIngress {
     int (*simulateSurfaceCreated)(void);
     // D 夹具：探针触摸注入（宿主推入触摸队列，带当前代际）。
     int (*injectTouch)(uint32_t action, float x, float y);
+    // Frozen into a renderer Session at creation, not reconstructed at restore delivery.
+    uint64_t (*appInstance)();
 };
 
 #ifdef __cplusplus

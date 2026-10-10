@@ -1,0 +1,75 @@
+{
+  "steps": [],
+  "identity": {
+    "pid": 11,
+    "bundle": "controlled"
+  },
+  "log_fence0": "10-02 09:00:00.002 proxy mounted key=app1/s1/c3/e1/m1 field=pharos-editor-body",
+  "forward": {
+    "owned": true,
+    "basis": "created+verified"
+  },
+  "fixture_reset": true,
+  "mode_probes": [
+    {
+      "ensure-source": "already_at_target",
+      "token": 201,
+      "epoch": 9,
+      "frame": 6,
+      "last": 3,
+      "unacked": 0,
+      "baseline_token": 201,
+      "baseline_max_ticket": 3,
+      "driver_face": "source",
+      "face_list_truncated": false
+    }
+  ],
+  "baseline": {
+    "ensure-source": {
+      "token": 201,
+      "mode": "source",
+      "epoch": 9,
+      "frame": 6,
+      "last": 3,
+      "max_ticket": 3,
+      "readable": true
+    }
+  },
+  "main_owner": "pharos-main",
+  "note_resource_id": 1001,
+  "a_freeze": {
+    "main_version": 1,
+    "main_hex": "61e59b9e6263646566",
+    "note_hex": "616263646566",
+    "main_bytes": 9
+  },
+  "body_node": 107,
+  "geo_query_count": 3,
+  "a_anchor_doc_len16": 7,
+  "a_anchor_probe": [
+    {
+      "vp": [
+        20,
+        18
+      ],
+      "sel": [
+        3,
+        3
+      ]
+    }
+  ],
+  "a_anchor": {
+    "sel": [
+      3,
+      3
+    ],
+    "node": 107
+  },
+  "anchor_mode": "span",
+  "status": "a_body_span_unconfirmed",
+  "a_body_span_selection": [
+    4,
+    4
+  ],
+  "forward_cleanup": "removed"
+}

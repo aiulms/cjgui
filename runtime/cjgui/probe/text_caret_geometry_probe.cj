@@ -44,13 +44,17 @@ foreign {
 
 private func caretRect(window: CjguiComposableUiWindow, nodeId: Int64,
     displayByte: Int64): ?Array<Float64> {
-    return cjguiTextGeometryCaretRect(window.testSessionToken(), nodeId, displayByte, 1.5)
+    // The query is bound to the ACCEPTED scene: passing the current accepted version keeps the
+    // named `scene_stale` refusal reachable instead of silently answering from a newer scene.
+    return cjguiTextGeometryCaretRect(window.testSessionToken(), nodeId, displayByte, 1.5,
+        UInt64(window.windowProgress().acceptedSceneVersion))
 }
 
 private func caretReason(window: CjguiComposableUiWindow, nodeId: Int64,
     displayByte: Int64): String {
     return cjguiTextGeometryReasonForStatus(
-        cjguiTextGeometryCaretStatus(window.testSessionToken(), nodeId, displayByte, 1.5))
+        cjguiTextGeometryCaretStatus(window.testSessionToken(), nodeId, displayByte, 1.5,
+            UInt64(window.windowProgress().acceptedSceneVersion)))
 }
 
 /// 一个正文节点一族:值只由场景给出,几何只由框架的 accepted 排版给出。

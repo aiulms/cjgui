@@ -2,6 +2,8 @@
 
 基线：2026-09-26。用途：分清实际欠缺、实施归属和依赖，让编辑器、鸿蒙与第三条通用框架线并行推进。本文是规划清单；当前执行对象、开工/暂停及阶段结果仍只由 [ACTIVE_DIRECTION](../../runtime/cjgui/ACTIVE_DIRECTION.md) 指向，不另建逐轮台账。
 
+**咨询规则（2026-10-08）：**旧阶段的默认/强制模型路由已撤销；现行授权与问题升级统一见 [AGENTS](../../AGENTS.md#independent-model-consultation)。历史咨询事实、答复和验证结果保留，不构成重新调用授权。
+
 ## 1. 三条线分别交付什么
 
 | 执行线 | 主责 | 框架与应用边界 |
@@ -204,7 +206,7 @@ A 的准入/native 修复与 B 的纯时间状态、消费者准备可以交错�
 - 当前桌面证据不以“是否另一个模型再跑一次”作为验收标准。已有足够原证直接复用；针对缺失的 hover 完整输出、修复影响和新交互集中跑一轮，记录源版本、日志、退出码与产物。用户当前暂停/接管优先；否则沿既有桌面授权和单操作者规则，不自行增加逐次审批。
 - A/B/C 汇合后统一从含空格导出根构建运行两个消费者，实际消费修后的动效和系统可用性。复算源/客户端/资源指纹，原反例稳定且注入失败可被拒；GPU 完成不可得、VoiceOver 尚缺人工证据、物理跨屏和 OHOS snapshot 分别保留，不改名通过。
 
-**推进方式。** 本包由第三线实施，必要返工和 C 的独立工作交错。涉及文字纹理/alpha、accepted 绑定或公共动效语义的不明契约提前咨询 Astra；实现/验证器/平台适配根因给 Sol，型号与档位按用户当前选择。给出最小反例和原始结果，已有裁决直接落实。同 target 构建、共享 native 符号和桌面串行，等待时推进独立模块/消费者；无新变化不重复全套测试，不追加逐轮 Markdown。包末仅更新本页结果与 ACTIVE 的短状态，指导不在本次启动执行任务。
+**推进方式。** 本包由第三线实施，必要返工和 C 的独立工作交错。涉及文字纹理/alpha、accepted 绑定或公共动效语义的不明契约，由当前执行者结合源码与最小反例归因；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型。升级时给出原始结果，已有裁决前提未变直接落实。同 target 构建、共享 native 符号和桌面串行，等待时推进独立模块/消费者；无新变化不重复全套测试，不追加逐轮 Markdown。包末仅更新本页结果与 ACTIVE 的短状态，指导不在本次启动执行任务。
 
 **执行者包末记录（2026-09-27，验证器在其可运行范围内 PASS；指导结论见下一节）**
 
@@ -251,7 +253,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 批量补 38 个脚本是本轮漏项修复，不是去重。当前通用 window 调用 generated 模块的 Registry，静态扫描有 36 个脚本显式编入 window 而未列 generated；`zsh -n` 不能检验编译符号闭包。完成第 2 项的依赖下沉后，将重复核心源集集中为一个可导入的构建清单/助手，探针仅追加各自入口和必要测试开关；导出/指纹复用同一权威源集或明确子集，保留测试/实验的排除规则，避免全目录通配混入入口。验证一个最小非生成探针、一个生成消费者及清单闭包，再随最终含空格导出确认两个消费者消费本包新链。
 
-执行按独立写集交错；构建、咨询等待期间继续未阻塞的注册/主题/脚本工作，同 target 和桌面串行。复杂技术根因咨询 Sol，accepted 事务/代次/属性所有权等契约不明时咨询 Astra，使用用户当前指定型号与档位；已有裁决直接实施。以代码接线和可消费结果推进，受影响测试与集中链通过后停止重复自验，包末更新本节结果及 ACTIVE 短状态。P4 保留在规划中，本接续继续完成 P2/P3 的通用能力。
+执行按独立写集交错；构建、咨询等待期间继续未阻塞的注册/主题/脚本工作，同 target 和桌面串行。问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型；accepted 事务/代次/属性所有权等契约先由当前执行者结合源码和反例核实，已有裁决直接实施。以代码接线和可消费结果推进，受影响测试与集中链通过后停止重复自验，包末更新本节结果及 ACTIVE 短状态。P4 保留在规划中，本接续继续完成 P2/P3 的通用能力。
 
 **本次执行结果（2026-09-27，第三次复核接续）。** 保留上节 298/298、注入 29 FAILED、字形 alpha 0.502/0.251 和纯 alpha 工作量证据；本次未以新探针替代这些原证。聚焦多行先以旧 run 残留及空格背景缺失建立反例，再精确撤销框架 run 属性、保留平台属性，并以相同 range/origin 绘制背景；修后同一实例的“背景+斜体→普通→空 run”属性及像素均通过（`/private/tmp/cjgui-p3-active-multiline.log`）。首次交互颜色基线、候选目标 stage/commit/discard、主题重定向和窗口 token + accepted binding epoch 已接入；A→B→A、跨窗口旧 token、拒绝候选、纯重排连续性及 reduce-motion 终值由受影响单测覆盖。共同动效规则从通用模块注册，生成目录发现并校验引用，合法候选 accepted 后由生成控件实际动作驱动，目标/呈现/活动状态可读；非法引用/规格整候选拒绝并保留旧界面。
 
@@ -289,7 +291,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 4. **两消费者贯通。** 在现有 UI-only 与生成消费者中安排小而完整的页签、树/滚动、按钮/复选框场景。生成侧由真实公开客户端提交结构并改状态，键盘、AX 动作与指针进入同一 owner；精确读回动作次数和状态。验证重排、失效引用、禁用、非法候选保旧、主题和窗口大小变化。尝试一段真正的 VoiceOver 导航与动作，记录角色/标签/状态及 owner 结果；AX 查询、工具驱动 VoiceOver、人工体验分别标证据，某种输入环境不可用不阻塞其余实现。材质前台观感在同一消费窗口条件具备时补验，沿用用户系统偏好；仍为减少透明度回退则如实保留该范围。
 5. **有界验证与交付。** 新缺陷先用有判别力的最小反例定位，再修负责该能力的框架模块；测语义投影/通知更新量及空闲零工作，在两窗同负载中确认一窗操作后另一窗仍推进。可控 scale/resize 复用既有入口，物理跨屏独立标记。包末只做一次受影响回归与同源含空格双消费者导出，核对所用最终输入指纹；此前效果组/blur/材质的稳定证据按未改范围复用。诊断只补角色/身份/状态/范围和实际计数，不另建庞大工具。
 
-**执行方式。** 先核对实际实现，已接通项直接复用；把实现、正常消费和相关测试连续完成，避免只写状态或循环验收。普通接线直接处理；复杂平台技术咨询 `gpt-6-sol`，公共语义/身份/并发架构不明确时咨询 `gpt-6-astra`，通过 Codex CLI 提交精确源码与反例，已有裁决直接落实。按 AGENTS 协调共享 native 符号、同 target 构建和桌面；等待期间推进独立工作。最终只在本节集中记录交付和真实剩余项，ACTIVE 保持短状态；未授权不 stage/commit/push。
+**执行方式。** 先核对实际实现，已接通项直接复用；把实现、正常消费和相关测试连续完成，避免只写状态或循环验收。普通接线直接处理；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型，公共语义/身份/并发架构不明确时先核源码与可区分反例，已有裁决直接落实。按 AGENTS 协调共享 native 符号、同 target 构建和桌面；等待期间推进独立工作。最终只在本节集中记录交付和真实剩余项，ACTIVE 保持短状态；未授权不 stage/commit/push。
 
 **本包交付与边界（2026-09-27）。** 共同节点现声明页签组/页签、滚动区/树/行、按钮/复选框的角色、标签、逻辑父子、选中/展开/禁用；手写、注册组合与生成节点投影到同一 accepted 身份。macOS AX 从 accepted 场景建立层级和动作，只让当前绑定代次响应；重排保留引用、换绑/删除使旧引用失效，隐藏页不暴露动作，等价重绘不重复通知。生成候选对行状态做准入，拒绝保留旧结构与动作；窗口用 accepted 行身份执行方向键、激活与 reveal，页签焦点/选中及绘制比较也跟随声明状态。正常生成应用曾通过公开客户端把 `controlLeaf` 从未选中提交为选中（accepted 版本 1→2），非法展开候选被拒且版本保持 2；真实 Tab、方向键、Return、AXPress 和指针到达同一 owner。手写应用真实 AX 在两页切换后仅活动页标题 selected=1，隐藏页不可读，按钮/树/复选框都有共同角色。AX 原生重排、换绑、层级、通知与空闲探针 `verify_composable_control_ax_semantics.sh` 通过。
 
@@ -365,7 +367,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 最终运行受影响框架/客户端用例、`cjpm build --skip-script`、正常应用链及含空格导出消费；源清单复用 `lib_cjgui_source_set.sh`，指纹覆盖新增模块、native、资源、客户端、两个消费者和实际产物。在 E 线可构建接续点，对共享 renderer 补一次受影响的文字/交互集成；注明其源码指纹，旧 P2/P3 证据按版本保留。既有 signal 11 若重现自动留栈并分层定位，不靠多次偶然绿色认定修复。
 
-**执行节奏与咨询。** 执行者先读 AGENTS、ACTIVE、本节及直接相关源码；写仓颉前读 `cangjie-coding` 技能。先用当前管线画出 A3 的 alpha/所有权边界，带必要源码向 `gpt-6-astra`（Codex CLI，只读，xhigh）作一次聚焦契约咨询，然后连续实现可消费链；复杂技术故障向 `gpt-6-sol`（同为只读/xhigh）提供复现、假设与结果。已有裁决直接用，普通接线自行完成；Laya 如可用只作辅助判断。遵循 AGENTS 的失败升级阈值，减少在同一猜测上换补丁。编译/咨询等待期间推进独立模块、消费者或判据，同 target 和桌面串行；确无独立工作才等待。验证按影响运行，充分通过后进入下一项；包末只在本节记录结果与证据链接、ACTIVE 写短状态，不追加逐轮长文。完成报告列清新增公共能力、两条真实消费链、性能原样本和实际剩余项。
+**执行节奏与问题升级。** 执行者先读 AGENTS、ACTIVE、本节及直接相关源码；写仓颉前读 `cangjie-coding` 技能。先用当前管线画出 A3 的 alpha/所有权边界，结合必要源码和反例明确契约，然后连续实现可消费链；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型，升级时提供复现、假设与结果。已有裁决直接用，普通接线自行完成；Laya 如可用只作辅助判断。遵循 AGENTS 的失败升级阈值，减少在同一猜测上换补丁。编译/咨询等待期间推进独立模块、消费者或判据，同 target 和桌面串行；确无独立工作才等待。验证按影响运行，充分通过后进入下一项；包末只在本节记录结果与证据链接、ACTIVE 写短状态，不追加逐轮长文。完成报告列清新增公共能力、两条真实消费链、性能原样本和实际剩余项。
 
 **P4 前段实施与验收范围（2026-09-27）。** 已接通 experimental `EffectGroup` 的手写/命名/生成/组合共同准入、accepted 事务、公开目录及候选：组内容先隔离绘制，再统一施加局部线性 alpha mask 与组 opacity，以 `normal` 或 `multiply` 合入此前父目标。节点自身 paint opacity、布局、命中和 owner 不随组效果改变。Metal 保留原有 straight 片元绘制；离屏 BGRA8Unorm 目标存预乘结果，组采样使用预乘 source-over，multiply 按上文两遍固定功能混合，未采样正在写入的 attachment。父背景变化重做合成，单改 opacity 复用组内容；内容、尺寸/scale、绑定或声明改变时失效。离屏目标按 accepted/在途代次持有，分配前限制尺寸、深度、组数与总字节，拒绝保留旧画面；GPU 完成前不复用在途纹理。公共说明及后端支持范围见 `runtime/cjgui/README.md`。Astra 的契约咨询、Sol 的资源/交互根因咨询均为只读建议，以下运行结果独立验收。
 
@@ -436,7 +438,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 已有系统材质适配、`windowBackground` 生成声明/公开状态、UI-only/生成消费者及验收入口正在接线，直接完成已有实现，不从头再建一套。当前汇合重点是**主题值与材质请求随同一场景提交**：候选冻结、accepted 后发布，拒绝/失败保持先前已接受事实。公共值说明请求、实际安装/回退、原因与身份；系统宿主已安装、GPU 提交完成和桌面实际合成是不同证据。
 
-接着完成两个正常消费者的开启/切换/清除/回退/恢复，生成侧经公开客户端提交并读回；核对主题、减少透明度、焦点/resize、多窗隔离与关闭释放，以及原控件/文本 owner 的连续性。复用已接受的组效果、模糊和缓存证据，只补本次受影响检查；最终对汇合源码做一次串行构建/相关回归、实际消费和含空格同源导出。原生适配与主题事务的咨询结论直接用于实施；有新证据再追问。等待构建或咨询时推进独立消费接线，确无安全独立工作才等待。只在本节汇总结果并更新 ACTIVE，保持 E/H 写集。
+接着完成两个正常消费者的开启/切换/清除/回退/恢复，生成侧经公开客户端提交并读回；核对主题、减少透明度、焦点/resize、多窗隔离与关闭释放，以及原控件/文本 owner 的连续性。复用已接受的组效果、模糊和缓存证据，只补本次受影响检查；最终对汇合源码做一次串行构建/相关回归、实际消费和含空格同源导出。原生适配与主题事务的既有咨询结论在前提未变时直接用于实施；新证据或冲突由当前执行者核实，必要时按 AGENTS 向指导升级，不自动追问顾问。等待构建或咨询时推进独立消费接线，确无安全独立工作才等待。只在本节汇总结果并更新 ACTIVE，保持 E/H 写集。
 
 **实施边界与事务。** 公共 `opaque/system_content_area` 是窗口内容区背景请求，和应用内部效果组的 backdrop blur 分开；生成根属性只在既有授权、候选验证及 scene accept 后生效。macOS 窄适配在透明 `NSWindow` 内容宿主内固定放置不透明回退层、`NSVisualEffectView` 和透明 Metal 层，材质采用 `UnderWindowBackground`、`BehindWindow`、`FollowsWindowActiveState`；原生对象及枚举不出公共接口。窗口级候选把材质模式与有效浅/深主题一起冻结、stage、接受或回滚；pending/失败不改旧状态，交互帧复用已接受主题。主题只赋给材质 view 的 `NSAppearance`，浅/深回退层与 Metal clear 同色；减少透明度时发布 `opaque_fallback/reduce_transparency`，恢复后沿本窗刷新提交，不把已编码等同已提交。依据本机 macOS SDK，并对照 Apple 的 [UnderWindowBackground](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/underwindowbackground?changes=latest_major)、[BehindWindow](https://developer.apple.com/documentation/appkit/nsvisualeffectview/blendingmode-swift.enum/behindwindow)、[减少透明度偏好](https://developer.apple.com/documentation/appkit/nsworkspace/accessibilitydisplayshouldreducetransparency?language=objc) 与 [NSAppearance](https://developer.apple.com/documentation/appkit/nsappearance)。公共发现说明 macOS experimental 与 OHOS snapshot 未发布；窗口与生成 `EFFECTS` 增量分别读到接受请求、后端、实际模式、稳定原因、主题、身份、scene/frame、请求/环境/观察代次及完成态，桌面视觉结果明确为 `unobserved`。
 
@@ -457,7 +459,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 2. **有界、同版本的只读快照。** 从已有 accepted 场景派生窗口/绑定身份、layout bounds、有效祖先裁剪、效果输出和采样范围；资源/帧统计沿已有入口汇合。明确字段属于 accepted、最近刷新、实际提交还是异步完成，分别标身份/时间；缺失或 GPU 不可测保留 unavailable，不写 0。build/layout/prepare/submit 与 raster/upload、效果 pass/缓存/活资源/在途字节按真实可用范围发布，嵌套耗时不重复相加。按可见节点或显式上限读取并给截断标记，不扫描全文、复制正文或同步等待 GPU；默认关闭，按需或状态变化采样。
 3. **同快照的可关闭边界叠加。** 正常窗口可显示布局、裁剪、效果输出/采样框及选定 accepted 身份。复用当前绘制链，选择不改变业务布局、命中、Tab/AX 次序和 owner 的实现位置；诊断不被自身背景模糊或效果缓存再次采样，亦不维护第二份几何。当前全帧绘制如实标注，不命名成局部重绘。滚动、resize、重排和拒绝候选时对应实际在用场景；关闭后正常画面恢复且空闲不持续提交。
 4. **正常消费与 VoiceOver。** UI-only、生成消费者均经公共框架入口启用/关闭诊断；生成候选从真实客户端进入 accepted 后，读回同一节点身份、边界和工作量。用裁剪/越界阴影及一次拒绝候选证明诊断反映在用场景，开关不改变业务内容或操作结果，双窗不串值，关闭重开不复活旧身份。沿已有桌面授权完成一次 VoiceOver 首次引导处理，再导航页签/树/按钮并激活动作，记录朗读/选中/owner；恢复先前辅助功能状态。环境仍确实阻断时留具体证据，继续独立诊断交付，不把 AX 查询改名为 VoiceOver 验收，也不重测全部已过键鼠矩阵。
-5. **验证、交付与咨询。** 记录诊断开/关的 CPU/资源额外成本、采样上限及停止后零工作。旧缺陷最小反例→机制修复→受影响回归；包末一次串行构建、相关检查与含空格双消费者导出，公共入口随包交付。复杂技术用 `gpt-6-sol`；accepted/提交快照一致性、资源寿命或架构方案未定用 `gpt-6-astra`，按当前可用次高档聚焦只读咨询。等待期间推进不改在编译输入的独立模块/消费接线，完成链路才更新本页和 ACTIVE，过程输出留日志。保留 E/H 改动，未经要求不 stage/commit/push。
+5. **验证、交付与问题升级。** 记录诊断开/关的 CPU/资源额外成本、采样上限及停止后零工作。旧缺陷最小反例→机制修复→受影响回归；包末一次串行构建、相关检查与含空格双消费者导出，公共入口随包交付。accepted/提交快照一致性、资源寿命或架构方案先由当前执行者结合源码与反例核实；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型。等待期间推进不改在编译输入的独立模块/消费接线，完成链路才更新本页和 ACTIVE，过程输出留日志。保留 E/H 改动，未经要求不 stage/commit/push。
 
 **本包结果（2026-09-27，F 线）。**
 
@@ -486,7 +488,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 **D．机制反例、成本和同源交付。** 必要反例覆盖标准 UTI 对照、字节损坏/超限、同 key 换绑迟到结果、源/目标关闭、取消与重复回调；每类检查 owner/accepted/临时资源的前后值。复用有界诊断记录取数、复制、解码、owner 接受与 scene 呈现的阶段成本；小图、接近已发布上限、超限三档分别报告，接近上限导入期间另一正常窗口的公开操作仍可服务，沿原 100/150 ms owner/scene 预算判断，明确载荷/计时起点与冷/热范围。系统取数若不可抢占，指出阻塞区间并缩小已发布支持预算或升级方案，不用事后取消冒充提前避免分配。空闲不新增轮询/提交，缓存/队列/临时资源按上限和生命周期收敛。
 
-按改动范围运行旧文本/结构化传输回归及新反例，包末做一次框架构建、受影响测试和含空格同源导出双消费者真实链；无改动的 P1–P4 与诊断基线直接复用。VoiceOver 保持待验，只有新增可区分证据/环境条件时才续查，不反复切系统设置。二进制所有权、异步接受或跨窗口事务方案未明时提前用 `gpt-6-astra` 只读咨询；复杂平台实现用 `gpt-6-sol`，按可用次高档，沿 AGENTS 的失败升级规则，Laya 仅辅助。等待编译/咨询期间推进独立任务，同 target 构建和桌面操作串行。只在本节集中写实现与证据、ACTIVE 写短状态；保留 E/H 写集，未经要求不 stage/commit/push。
+按改动范围运行旧文本/结构化传输回归及新反例，包末做一次框架构建、受影响测试和含空格同源导出双消费者真实链；无改动的 P1–P4 与诊断基线直接复用。VoiceOver 保持待验，只有新增可区分证据/环境条件时才续查，不反复切系统设置。二进制所有权、异步接受或跨窗口事务方案先由当前执行者结合源码与反例核实；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型，Laya 仅辅助。等待编译/咨询期间推进独立任务，同 target 构建和桌面操作串行。只在本节集中写实现与证据、ACTIVE 写短状态；保留 E/H 写集，未经要求不 stage/commit/push。
 
 **2026-09-28 实施与判别。** A–C 已接入现有传输、accepted 场景与图片 owner：`image/png` 使用系统 `public.png`，不可变二进制 offer 带字节数和 `fnv30x2` 摘要；每项 512 KiB、尺寸各 2048、像素 1,048,576、排队 2 MiB、在途 4、待处理 16、记录 64，纹理缓存 8 项/32 MiB。PNG 经既有解码和图片呈现路径，原 owner 版本只在接受后推进；生成目标随 accepted 结构重排保持身份，换绑、删除和拒绝候选用绑定代次拦住旧结果。手写和生成消费者共用声明与公开能力目录，原 owner `SELECT_OWNED_IMAGE` 精确读回。标准独立 `NSPasteboardItem` 的 80 B PNG（SHA-256 `091f92661b0eeb27b20812642590bf63f902d392ef93d38dcc5759e40f53951f`）真实 Cmd+V 后，手写 owner v1、生成 owner v1 且可见；真实系统 down/move/up 跨窗拖入先落生成静态目标 v2，再在接受重排后落动态目标 v4，接收端 `prepare→perform` 状态 0、源端 `ended operation=1`，公开选择 v5 与原摘要一致。native Metal readback 判出红、绿、蓝源像素；非法 27 B 与超限 524,289 B 都保留生成 owner v7 的 492,058 B 旧图。取消、重复完成、预算不足和释放后恢复的探针通过，close 后 native 缓存 0、记录 0；weak ledger 为 4，不记为零。
 
@@ -515,7 +517,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 关键反例集中覆盖：PNG 旁路、同点换 scale 误走 no-change、新旧 frame/scale 混读、失败后恢复及另一窗口隔离。使用关系/局部像素、精确身份与操作读回判别；必要错误注入应能使对应检查失败，不重跑 P4 全部效果矩阵。记录每次转换前后 build/layout/raster/upload、效果 live/in-flight 字节、CPU 阶段和可得 GPU 完成；正常同 host 另一窗的带身份请求按原 100/150 ms owner/scene 预算，给样本数、原始分布和真实重叠范围。转换结束、重复读取及空闲时计数收敛；未知指标保持 unavailable。
 
-包末按改动影响一次构建/针对性测试和含空格同源导出，保留源码/资源/客户端指纹。复杂平台根因咨询 `gpt-6-sol`；准入所有权、异步资源或公共一致性契约不明时提前咨询 `gpt-6-astra`，用当前可用次高思考档并带最小源码/反例；Laya 只辅助，不代替运行证据。等待构建/咨询推进独立代码或消费接线；同 target 构建和桌面串行。只集中更新本节及 ACTIVE 短状态，已有基线按影响复用，保留 E/H 写集，不 stage/commit/push。
+包末按改动影响一次构建/针对性测试和含空格同源导出，保留源码/资源/客户端指纹。准入所有权、异步资源或公共一致性契约先由当前执行者结合最小源码与反例核实；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型；Laya 只辅助，不代替运行证据。等待构建/咨询推进独立代码或消费接线；同 target 构建和桌面串行。只集中更新本节及 ACTIVE 短状态，已有基线按影响复用，保留 E/H 写集，不 stage/commit/push。
 
 **2026-09-28 实施结果与判别。** A：公共 `createBinary → ImageFromTransfer → scene` 的 2049×1 旁路先实测为 `status=0/records=1/loaders=1`，现与粘贴预准备、缓存未命中重建同走同步 PNG 准入；超尺寸/超像素在解码前拒绝且 `records=loaders=0`，同 offer 换字节拒绝，候选丢弃、源窗关闭及末窗关闭分别回收而不伤另一窗口。静态非隔行 8-bit RGB/RGBA 两种判别像素通过；灰度、索引、16-bit 给 `png_unsupported`，坏 deflate 给 `png_decode_failed`，编码项/排队/纹理预算各有稳定原因。公开能力由共同定义派生，声明系统 `public.png`、512 KiB/2048×2048/1,048,576 像素及系统取数先物化边界。仓颉直接声明 1/1 针对性测试、native 资源/重建/关闭探针通过（`/private/tmp/cjgui-f-scale/direct-test.log`、`/private/tmp/cjgui-png-resource-budget/20260928020016-20723/result.log`）。准入/解码在主线程同步完成；提交后的纹理由既有 GPU 持有和资源域账本覆盖，未声称系统 pasteboard 预物化也受 512 KiB 分配上限保护。
 
@@ -535,7 +537,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 **A．把 PNG 准备引用真正交给候选。** 先建立“8 个仍受场景引用的不同图片 + 第 9 张新 PNG”反例，记录准备、修剪、候选取得 texture/key、解码次数、loader 和实际存活字节。再补移除 accepted、清除缓存/其他持有后同 offer 冷重显；不能只删字典而保留活纹理来声称完成冷路径。复用当前准入，明确准备持有→候选持有→accepted/GPU 使用→释放的交接：新节点已拥有准确资源后才能归还准备引用；候选失败、替代与关闭只释放自己的份额，重复 build 不累积。具体用已有引用计数或小型内部租约表达，由执行者依当前结构落实，不能仅把某次 prune 禁用。
 
-所有 transfer-origin 的首次/缓存未命中解码须经同一准入和预算机制；普通加载器不得成为回退旁路。保持资源域可解释的 encoded/decoded/in-flight 账目、同身份内容不可换、稳定错误与旧 accepted 保留。明确 8 项是可回收缓存限额还是全部 live 限额，场景持有与 GPU 在途不能为了满足缓存数量提前销毁；超出硬预算时在解码/分配前拒绝。判据是单次合法准备无额外无预算解码、压力拒绝不污染旧场景、反复失败/移除/关窗最终收敛。复用现有预算咨询结论；若交接或账本归属仍不明确，带这条精确调用链咨询 Astra 再改。
+所有 transfer-origin 的首次/缓存未命中解码须经同一准入和预算机制；普通加载器不得成为回退旁路。保持资源域可解释的 encoded/decoded/in-flight 账目、同身份内容不可换、稳定错误与旧 accepted 保留。明确 8 项是可回收缓存限额还是全部 live 限额，场景持有与 GPU 在途不能为了满足缓存数量提前销毁；超出硬预算时在解码/分配前拒绝。判据是单次合法准备无额外无预算解码、压力拒绝不污染旧场景、反复失败/移除/关窗最终收敛。复用现有预算咨询结论；若交接或账本归属仍不明确，先以这条精确调用链和反例归因，反复失败按 AGENTS 携证据升级指导，不自动咨询。
 
 **B．收紧空文字布局的职责，恢复稀疏节点复用。** 原失败日志保留，先一次记录 clone 原因、nodeId/kind/几何，区分 setter 的必要 clone 与空布局分支的额外 clone。结构节点、向量、图片等非文字不得被当成空段落；同时保留旧文字资源/装饰的必要清理和候选 COW，使同槽换 kind、清空正文、裁剪与失焦不会留下旧资源。合法空文字/输入节点仍能提供 accepted 光标几何，零尺寸或暂时裁剪的情况用明确状态处理，不能每次都分配后才发现没有可准备的几何。
 
@@ -547,7 +549,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 同 host A 做局部改色/图片切换/几何转换时，B 的带身份请求记录 ready→owner→scene；在实际在途区间采集，有意保持的测试闸门只用于正确性交错，不计作自然性能。补齐上一包未覆盖的转换重叠响应；沿既有正常负载 owner/scene 100/150 ms 预算，分别报告 CPU 时间、工作量和内存/资源，给原始样本/分位数及测量范围。节点少分配不直接等于端到端同比加速；若预算失败，沿实测瓶颈修机制或带证据升级，不能降低载荷、放宽判据后沿用原结论。
 
-包末一次受影响回归、构建与含空格同源双消费者导出；PNG 子集/无压力粘贴、DPI/效果算法和未变输入基线按影响复用。快速整串工具输入丢字、人工 VoiceOver/物理跨屏等旧边界保留，各按证据归属接续，不把慢速投递成功当作快速输入已修。复杂技术问题用 `gpt-6-sol` 聚焦只读咨询，资源所有权/架构算法用 `gpt-6-astra`，思考档按当前可用次高；Laya 辅助。普通接线直接推进，失败升级沿 AGENTS。A/B 各自的证据与消费者接线可交错推进，同 target 构建/桌面串行；等待编译或咨询时做独立必要工作。只在本节集中报告、ACTIVE 保持短状态，保留 E/H 并行改动，不 stage/commit/push。
+包末一次受影响回归、构建与含空格同源双消费者导出；PNG 子集/无压力粘贴、DPI/效果算法和未变输入基线按影响复用。快速整串工具输入丢字、人工 VoiceOver/物理跨屏等旧边界保留，各按证据归属接续，不把慢速投递成功当作快速输入已修。问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型，资源所有权/架构算法先核源码与反例；Laya 辅助。普通接线直接推进，失败升级沿 AGENTS。A/B 各自的证据与消费者接线可交错推进，同 target 构建/桌面串行；等待编译或咨询时做独立必要工作。只在本节集中报告、ACTIVE 保持短状态，保留 E/H 并行改动，不 stage/commit/push。
 
 **本包实施与判别（2026-09-28）。** A：native PNG 资源域以每 session、精确 token/代次租约把 preparation 交给候选；候选配置成功后才交接，accepted/失败/替代/关窗各归还自己的持有。transfer-origin 缓存未命中不得退回普通 loader，仍按原准入及预算拒绝。原 8 项缓存满时第 9 图无租约解码启动 17→19、候选拿不到纹理；修后 19→20 且候选持有，同 offer 在所有持有释放后冷重显 25→26，旧弱引用已消失；两窗取消 23→23 不误毁存活窗口。压力拒绝保旧且释放待决持有。原始记录：`/private/tmp/cjgui-f-local-png-after-configure.log`。
 
@@ -570,7 +572,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 **复用与借鉴。** 继续使用 `CjguiComposableUiDataTransferDeclaration/Event/Provider`、native eventId/bindingEpoch、`CjguiSharedOperationTransferOffer/AcceptRequest/Result`、owner CAS、PNG 准入和 candidate lease，结果回执仅是同一事务的投影。macOS 文件输入按 AppKit [pasteboard URL 读取选项](https://developer.apple.com/documentation/appkit/nspasteboard/readingoptionkey)及实际 SDK 声明接入；携带系统访问范围的 URL 按 [NSURL 访问生命周期](https://developer.apple.com/documentation/Foundation/NSURL/startAccessingSecurityScopedResource%28%29)管理，只有实际取得的访问才成对归还，不能把普通非沙箱文件一律当作需要 security scope。先使用本机 SDK/官方接口核实线程和访问要求；共同身份、事务和有界值留在仓颉，URL/文件句柄由窄平台适配器拥有。扩展当前机制，不另造文件仓库、业务 owner 或第二套传输服务。
 
-**A．一次补清提交阶段与成本。** 给现有两窗探针加真实 native stage/present/command-buffer commit 的边界时间戳，按 session、scene/frame 和请求身份关联。区分 host turn、CPU 资源准备/编码/提交、GPU scheduled/completed；统一到可比较的单调时间域，不能直接比较未换算的两个时钟。旧 `native_stage_overlap` 按真实含义更名或兼容标注。受控闸门可证明 B 在指定边界进入公共队列、恢复后恰好到 owner/accepted，闸门等待不算自然性能。自然样本记录真实交叠数量、载荷和 ready→owner→scene，沿用 100/150 ms 判据；阶段太短未捕获则具名未观测，不伪造每阶段并行或无限复跑。已有布局在途的三组通过结果继续有效。若发现同步等待/GPU fence 占住 host，带精确边界与原数咨询后修机制，不先推倒调度。正常消费者只需复用现有最小诊断；细分不可得的 GPU 指标继续 unavailable。
+**A．一次补清提交阶段与成本。** 给现有两窗探针加真实 native stage/present/command-buffer commit 的边界时间戳，按 session、scene/frame 和请求身份关联。区分 host turn、CPU 资源准备/编码/提交、GPU scheduled/completed；统一到可比较的单调时间域，不能直接比较未换算的两个时钟。旧 `native_stage_overlap` 按真实含义更名或兼容标注。受控闸门可证明 B 在指定边界进入公共队列、恢复后恰好到 owner/accepted，闸门等待不算自然性能。自然样本记录真实交叠数量、载荷和 ready→owner→scene，沿用 100/150 ms 判据；阶段太短未捕获则具名未观测，不伪造每阶段并行或无限复跑。已有布局在途的三组通过结果继续有效。若发现同步等待/GPU fence 占住 host，先按精确边界与原数归因再修机制，未决问题按 AGENTS 携证据升级指导，不先推倒调度或自动咨询。正常消费者只需复用现有最小诊断；细分不可得的 GPU 指标继续 unavailable。
 
 **B．单个本地 PNG 文件进入既有传输链。** 在声明允许该来源的 PNG 接收目标上，支持 Finder 文件复制后粘贴、文件拖入两条系统路径；手写和生成目录共用来源能力声明、上限和拒绝原因。首片限定单个本地普通 PNG，格式取实际字节准入，不依赖扩展名；多文件/目录/非本地 URL/其他图片格式/文件承诺等明确报告本片未支持，不能悄悄取第一项。若同一系统 offer 同时含 PNG 字节和文件 URL，使用声明明确的选择顺序，一次接收最多提交一次。
 
@@ -584,7 +586,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 记录读取/复制/解码/owner/提交的实际成本和有界工作量；异步读取期间另一窗带身份操作继续到 owner/accepted，held 实验与自然时延分列。包末按改动影响跑针对性反例、构建、公共客户端与一次含空格同源双消费者导出，固定源码/产物指纹。直接 PNG 原压力反例、向量三档和已验输入按影响复用。受控 scale、真实桌面输入、人工 VoiceOver、物理跨屏分别说明；后两项未验不改名通过。
 
-**推进规则。** A 的阶段观测、B 的文件适配、C 的结果投影可按明确写集交错推进；核心并发/异步身份/资源归属方案未定先用 `gpt-6-astra`，复杂技术根因用 `gpt-6-sol` 聚焦只读咨询，按当前可用次高档，Laya 辅助判断。普通 API/语法先读技能和现有实现。等待编译、咨询或资源占用时推进独立工作；同 target 构建与桌面协调串行。保留 E 的 `wheelScrollable`/文本与 H 后端改动，只在完整实现切面或新事实时短更本节、ACTIVE，包末集中报告，不增加逐轮台账。未经要求不 stage/commit/push。
+**推进规则。** A 的阶段观测、B 的文件适配、C 的结果投影可按明确写集交错推进；核心并发/异步身份/资源归属方案先核源码与反例；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型，Laya 辅助判断。普通 API/语法先读技能和现有实现。等待编译、咨询或资源占用时推进独立工作；同 target 构建与桌面协调串行。保留 E 的 `wheelScrollable`/文本与 H 后端改动，只在完整实现切面或新事实时短更本节、ACTIVE，包末集中报告，不增加逐轮台账。未经要求不 stage/commit/push。
 
 **执行结果（2026-09-28；Finder 真拖入尚待前台补证）。** A：TESTING 时间线现以同一 native 单调时钟记录精确 session/scene/frame 的 stage、encode、present、commit、GPU scheduled/completed。自然 recolor/image/geometry 各 20 笔的 B owner/accepted 上界 p95 分别为 `75/92`、`73/91`、`71/89 ms`，均满足 100/150 ms；真实 CPU 提交交叠为 `0/60`，不声称自然重叠。present→commit 的 41,000 µs 受控闸门中，B producer 于闸内投递，B owner/accepted 为 `54/71 ms`，闸门等待未混入自然分位数；原始 `/private/tmp/cjgui-f-file-two-window-gate.log`。B/C：普通 PNG 目标按声明接受单个本地 `public.file-url`（512 KiB/项、4 在途、2 MiB 全局预留），单 fd/O_NOFOLLOW/本地普通文件检查和有界异步读取后进入原 PNG 准入与 owner CAS；同项 URL+PNG 只取声明的 URL 优先路径。回执沿现有授权入口按窗口 session+event 查询/增量读取，保留 64 项及明确 unknown/expired，记录源、accepted 目标与代次、digest、owner 前后版本和可证 scene/frame；异步完成保留捕获身份，重绑旧结果取消，队列满时为在途读取预留终态槽。native 受控 paste/drop、混合 offer、多文件、超限、held-read→重绑探针通过（`/private/tmp/cjgui-f-file-native-final.log`）。
 
@@ -604,13 +606,13 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 **1．修文件读取准入与生命周期。** 复用单 fd、有界 buffer 和统一清理出口：worker 开始先判取消；以非阻塞打开方式取得 fd 后判定普通本地文件，必要时调整 fd 标志再执行有界读取。类型准入不应被 FIFO 打开阻塞。现有 gate 在 `open` 前，只证明捕获身份不变；补一个仅测试的“已打开且首段 read 完成”闸门，覆盖中途截断、路径替换和关窗，逐项核旧 owner/图像保持、具名失败或窗口退役、fd/实际取得的 URL scope/预留归还，以及另一窗口仍可接收。读取前后变化检查纳入适用的 ctime 等事实，并写清检测边界；stat 前后相同不等于绝对不可变文件快照。本片产物仍是有界读取得到的不可变字节 offer，共用现有 PNG 解码与 owner CAS。
 
-**2．统一回执身份、保留与终态。** 查找、结算、去重和淘汰统一按窗口 session + event 身份；明确旧 session 查询的保留/过期策略，避免重开复用旧水位。在途项有界固定保留、终态按预算淘汰；满额时先裁决新接收，不能在 owner 写入后才发现无处记录。淘汰水位必须兼容乱序完成，不能因高 eventId 先完成就把较早在途项当过期。保留现有公开 schema 的兼容性，`superseded_before_scene` 只结算一次；相同终态重复到达不增加 revision。上表反例覆盖普通字节 PNG 与文件 URL 共享的入口，公共客户端读取证明观察不会触发处理或提交。若身份/容量方案仍不明确，带这几个反例提前咨询 Astra，再连续实施。
+**2．统一回执身份、保留与终态。** 查找、结算、去重和淘汰统一按窗口 session + event 身份；明确旧 session 查询的保留/过期策略，避免重开复用旧水位。在途项有界固定保留、终态按预算淘汰；满额时先裁决新接收，不能在 owner 写入后才发现无处记录。淘汰水位必须兼容乱序完成，不能因高 eventId 先完成就把较早在途项当过期。保留现有公开 schema 的兼容性，`superseded_before_scene` 只结算一次；相同终态重复到达不增加 revision。上表反例覆盖普通字节 PNG 与文件 URL 共享的入口，公共客户端读取证明观察不会触发处理或提交。若身份/容量方案仍不明确，先用这几个反例归因，按 AGENTS 携未决证据升级指导；方案明确后连续实施，不自动咨询。
 
 **3．补齐提交观测的精确边界。** 原闸门日志中 `producer_post=1195884991375` 在闸内，但 `native_enqueue=1195885045541` 晚于 `gate_end=1195885030666` 及 `commit=1195885030708`。源码由 `dispatch_async(main)` 后才调用 `CjguiEnqueueComposableInteraction`，因此成立的是“闸内向主线程投递、释放后进入框架并到 owner/accepted”，尚未证明原 A 要求的公共队列闸内接收。复用已有真实公开请求/owner 队列链做一笔受控判别，记录实际接收/入队位置、请求身份、释放后 owner 恰好一次及 accepted；无需为观测另造调度器。若实际队列也受主线程约束，如实报告这项机制事实及响应结果，再按原预算判断是否需要调度修改。补区分 commit 调用前/返回后（现 `commitCallMicros` 实在返回后采样）；scheduled/completed 是 host 回调时刻，不能当 GPU 执行或物理呈现时刻。原 60 笔自然样本保留，口径为 producer post→owner/accepted 观察上界；0/60 不要求反复重跑变成非零。
 
 **4．完成正常系统消费后一次汇合。** 在同一最终版本的 UI-only 与生成消费者补 Finder 真文件拖入，取得系统 drop、accepted 目标及代次、唯一回执、owner 精确读回和可见图片；复用已验文件粘贴，不要求用户口头回报。使用独立可辨识窗口和含空格/中文文件名，桌面操作协调串行；锁屏时记录边界并推进上述独立代码。当前导出记录中的 Finder 输入来自作者目录应用，导出应用证明的是构建和自验，二者分别引用；最终导出至少让两消费者的文件输入/回执经过实际运行，修正后指纹覆盖相应源码。按影响跑新增反例、构建、公共客户端和一次包末同源导出，原 PNG 压力、向量三档和未受影响输入证据继续复用。
 
-**执行方式。** 这是 F 原 A–D 的完整接续，不逐个缺陷停工请示。普通实现直接推进；复杂技术根因咨询 `gpt-6-sol`，生命周期/并发与公共身份契约未定咨询 `gpt-6-astra`，按当前可用次高档聚焦只读；Laya 仅辅助判定。编译/咨询等待时做未阻塞的实现，确无独立工作时再等待。只在形成可消费切面或新事实时短更本节和 ACTIVE，包末集中报告代码、反例、真实消费及剩余边界。
+**执行方式。** 这是 F 原 A–D 的完整接续，不逐个缺陷停工请示。普通实现直接推进；生命周期/并发与公共身份契约先核源码与反例，问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型；Laya 仅辅助判定。编译/咨询等待时做未阻塞的实现，确无独立工作时再等待。只在形成可消费切面或新事实时短更本节和 ACTIVE，包末集中报告代码、反例、真实消费及剩余边界。
 
 **F 接续结果（2026-09-28）。** native 文件 worker 在打开前检查取消，以 `O_NONBLOCK|O_NOFOLLOW` 打开后核普通文件，并核读前后 fd/路径的大小、设备/inode、mtime/ctime；首段读取后测试闸门覆盖截断、路径替换和关窗。FIFO 在同进程另一窗合法 PNG 之前得到具名拒绝，不再占住共享队列；测试核 fd、实际取得的 URL scope 与预留归还。边界是读前后元数据校验及最终不可变字节 offer，不声称获得原子文件快照。回执改为 session+event 精确查找/去重，以 native 首次投递序号拒绝重放；63 个在途固定保留并预留一个容量拒绝的终态槽，满额在 owner 前裁决，终态按 revision 淘汰并保留有界精确 tombstone。旧 session 在保留期仍可查；tombstone 保留期返回 expired，tombstone 自身淘汰后返回 unknown；superseded 只结算一次。新增五个仓颉反例（重开 event 1、held-read 跨 65 个终态、乱序较低 eventId、容量拒绝、superseded 后多帧）均通过；CJGUI `382/382`，native 传输探针通过，`cjpm build --skip-script` 通过。受控公共请求 `SET_PREVIEW_LIMIT` 的真实 UDS `ready` 在 native 闸内：`gate_start=1201769320083`、`ready=1201769321718`、`gate_end=1201769371208 µs`（ready 相对基点 `2802 µs`，由 MonoTime 顺序采样映射到 native 时钟；精度边界见下方复核）；释放后 owner 版本 `0→1`、accepted scene `1→2`、`pump_rounds=1`、恰好一次。旧主线程 post 闸门仅保留其原口径。commit 现分别记调用前与返回后，GPU scheduled/completed 仍仅指 host 回调。最终两窗探针 60/60 在途、CPU 提交自然交叠 `0/60`；recolor/image/geometry 的 owner p95 `72/77/73 ms`、accepted 观察上界 p95 `90/94/90 ms`，20 个 scale 样本通过；原数 `/private/tmp/cjgui-f-receipt-two-window/probe.log`，受控请求 `/private/tmp/cjgui_public_submit_gate_run4.log`。
 
@@ -656,7 +658,7 @@ hover 判据按 enter/leave 事件边界分段：反向必须发生在原目标�
 
 **参考机制与实施节奏。** 按 [本地开源实现参考](DESIGN_INTENT_INDEX.md#本地开源实现参考)定向查 Flutter `proxy_box.dart` 的 `RenderTransform.hitTestChildren/paint/applyPaintTransform` 及两个 `transform_test.dart` 的往返、嵌套命中和纯平移不增层用例。指导本次核对本地 `8db55268667c`：借鉴统一有效变换、逆映射、纯平移直接绘制和边界测试；CJGUI 保留自身 accepted 事务和整数布局，声明单位是逻辑点，不照搬 `RenderFractionalTranslation` 的尺寸比例语义。只借思路，不引入参考框架依赖。先读关键符号和测试，前提不变复用结论；新反例涉及其他机制时自行定位相关参考，不等导航补齐。
 
-几何归属、queued event、FFI/缓存契约存在实质歧义时，带精确源码与区分反例通过 Codex CLI 聚焦只读咨询 `gpt-6-astra`；复杂技术定位用 `gpt-6-sol`，按当前可用次高档，普通接线直接实施，Laya 辅助判断。共享 `composable_ui.cj/window.cj`、native 文字几何等符号先协调单一写入者，其余声明/测试/消费者并行推进；同 target 构建与前台串行。等待编译或咨询时做独立必要工作，已有通过且未受影响的验证直接复用。只在形成真实切面或新事实时短更本节与 ACTIVE，最终集中报告，保持 E/H 在途改动与两仓未提交状态。
+几何归属、queued event、FFI/缓存契约存在实质歧义时，由当前执行者结合精确源码与区分反例归因；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型，普通接线直接实施，Laya 辅助判断。共享 `composable_ui.cj/window.cj`、native 文字几何等符号先协调单一写入者，其余声明/测试/消费者并行推进；同 target 构建与前台串行。等待编译或咨询时做独立必要工作，已有通过且未受影响的验证直接复用。只在形成真实切面或新事实时短更本节与 ACTIVE，最终集中报告，保持 E/H 在途改动与两仓未提交状态。
 
 **F 执行结果（2026-09-28，macOS 范围）。** A：公共队列 ready 采样改为单调钟前后夹取并做精确刻度换算，一笔受控请求的 ready 区间 `1204572450209..1204572450214` 完全位于 native gate `1204572448950..1204572500176`，owner/accepted 各一次；保留自然 CPU 提交交叠 `0/60` 的原范围。已从原会话输出归档生成 Finder event 4 的公开回包：`session=cjgui_window_7602123560637981538_1`、`target=component-4-1/node=804001/binding_epoch=2`、`owner=3→4`、`scene=687→703`、`revision=12/stable_reads=3`，原解析记录 `/private/tmp/cjgui-f11-event4-public-original.txt` 指向原会话行；原始协议字节当时未单独保存，故只称公开客户端解析回包。
 
@@ -693,9 +695,9 @@ D：两款正常应用及公开生成客户端在本机实际运行；手写真�
 
 同 host 另一窗用原公开队列少量可归因请求核响应、关闭隔离和停止收敛；本包不重建性能平台。包末从最终同源含空格导出运行两消费者，保留输入来源、源码/产物身份、owner 精确值和图像证据；定向原生/框架反例、受影响 build/test 与一次汇合完成即可，未影响的图片压力和旧图表原证复用。物理跨屏、VoiceOver、H 支持仍按各自边界；本包成功不自动关闭它们。
 
-**E．机制参考、咨询与推进。** 沿 [本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)，复用已读 Flutter `RenderTransform` 与 transform tests，补读 [viewport.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/rendering/viewport.dart>) 的 `getOffsetToReveal/showInViewport`：先变换到目标祖先坐标，再判断显露及可行滚动，不能混 layout/visual 两空间。本次核对本地 `8db55268667c` 的相关符号；CJGUI 仍保留整数 viewport、accepted 事务及自身 tile，不照搬 Flutter 的 sliver/组件树、不引入依赖。文字覆盖先核现有 CJGUI tile 与 admission；现有机制解决不了的新问题再定向查一个相关成熟实现，不通读参考仓库。
+**E．机制参考、问题升级与推进。** 沿 [本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)，复用已读 Flutter `RenderTransform` 与 transform tests，补读 [viewport.dart](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/flutter/packages/flutter/lib/src/rendering/viewport.dart>) 的 `getOffsetToReveal/showInViewport`：先变换到目标祖先坐标，再判断显露及可行滚动，不能混 layout/visual 两空间。本次核对本地 `8db55268667c` 的相关符号；CJGUI 仍保留整数 viewport、accepted 事务及自身 tile，不照搬 Flutter 的 sliver/组件树、不引入依赖。文字覆盖先核现有 CJGUI tile 与 admission；现有机制解决不了的新问题再定向查一个相关成熟实现，不通读参考仓库。
 
-普通接线直接做；缓存覆盖/候选资源归属或捕获版本方案有实质歧义，带本页原反例及必要源码通过 Codex CLI 向 `gpt-6-astra` 聚焦只读咨询；复杂技术定位用 `gpt-6-sol`，按当前可用次高档。已明确的修复不重复付费裁决，模型答复以实现和反例验证。批量可复核日志分类可用 `laya-ask`，明确规则直接判断；分类不能替代源码、根因与实际验收。A 与 B/C 可按符号写集交错，native 同一段由一个执行者集成；同 target 构建、桌面串行，等待期间做独立必要工作。形成可消费切面或新事实再短更本节与 ACTIVE，包末集中报告，不新建执行卡/逐轮长日志。保留 E/H 在途改动和未提交状态。
+普通接线直接做；缓存覆盖/候选资源归属或捕获版本方案有实质歧义，由当前执行者结合本页原反例及必要源码归因；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型。已明确的修复直接实施，已有模型答复仍以实现和反例验证。批量可复核日志分类可用 `laya-ask`，明确规则直接判断；分类不能替代源码、根因与实际验收。A 与 B/C 可按符号写集交错，native 同一段由一个执行者集成；同 target 构建、桌面串行，等待期间做独立必要工作。形成可消费切面或新事实再短更本节与 ACTIVE，包末集中报告，不新建执行卡/逐轮长日志。保留 E/H 在途改动和未提交状态。
 
 **本包实施与定向证据（2026-09-28，F）。** A：split 拖动经 accepted visual geometry 映到 track，再按既有整数尺寸规则量化；reveal 使用目标与各真实 clip owner 的 accepted 变换，内向外求可达滚动。捕获绑定/手势代次、split revision CAS 与同一合法拖动跨自身接受刷新接续已入框架；旧版本排队输入保留冻结身份，换绑/退役安全拒绝。稀疏 COW 下 scene 21 复用 scene 20 的 POD 时，入队事件仍标 scene 21；native 排队/换绑反例通过。另以真实窗口反例确定单视口自身 clip 必须随目标滚动；双层排队请求若把目标移出内层 clip，撤销该请求并求满足两层的偏移，若同时满足两层则保留原请求。五项新判别及两项原嵌套身份回归均通过，分别见 `/private/tmp/cjgui-f11-green-*.log`；不可行与可行排队请求的原始 RED 输出保留在 `/private/tmp/cjgui-f11-final-reveal*.log`。生产路径前台手写分栏 `360→410→360`、滚动 `0→540` 的旧源码实例原证见 `/private/tmp/cjgui-f11-review-adaptive-capture-continuous.log`，不混记为最终导出实例。
 
@@ -739,7 +741,7 @@ A1 与 H 正在接续的通用焦点 pending/重试状态机共享函数，A2 �
 
 **E．参考、协作与一次最终交付。** 按[本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)复用已核的 Flutter `RenderTransform` 几何链，定向查 `animation_controller.dart::_animateToInternal/_startSimulation/stop` 的当前值接续、时钟与停止机制。指导本次核对本地相关符号；借鉴状态机与测试设计，不引入框架依赖，也不照搬Flutter渲染树。CJGUI自身accepted事务、绑定和有界tile仍是实现基础。
 
-普通接线直接实施；本包涉及候选资源/输入版本与动画失败恢复，方案有歧义时提前携精确源码和反例通过Codex CLI咨询 `gpt-6-astra`，复杂技术根因用 `gpt-6-sol`，当前可用次高档；既有结论前提不变则复用。`laya-ask`用于成批可复核分类，不能替代机制判断。A的独立分支、B/C可按写集并行；同target构建、native同段和桌面串行，等待时做独立必要工作，确无工作用等待工具。
+普通接线直接实施；本包涉及候选资源/输入版本与动画失败恢复，方案有歧义时先核精确源码和反例；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型；既有结论前提不变则复用。`laya-ask`用于成批可复核分类，不能替代机制判断。A的独立分支、B/C可按写集并行；同target构建、native同段和桌面串行，等待时做独立必要工作，确无工作用等待工具。
 
 包末按改动影响集中验证：上述三反例、位置通道状态/失败/身份、真实采样、两正常消费者输入和公开回包。最终冻结含空格导出，两款应用自身构建运行并消费新能力；把必要的前台链合到最终实例，保留源码/产物指纹。当前共享树在途变化另记，不能用旧二进制为新源码背书。只短更本节和ACTIVE，不另起逐轮执行卡。E/H并行内容、用户实例及剪贴板保留，未经要求不stage/commit/push。系统候选窗实体视觉、物理跨屏、VoiceOver、H后端分别保持实际未验边界。
 
@@ -777,7 +779,7 @@ A1 与 H 正在接续的通用焦点 pending/重试状态机共享函数，A2 �
 
 同host沿现有固定公开队列负载，在A活动期间采一批自然请求（复用原20样本规模），分别记录ready→owner/accepted原样本及p95，沿100/150ms预算；121ms单次最终回包不替代此判据。受控PENDING闸门只用于交错正确性，不计入自然性能，也不要求制造native/GPU重叠。仅当新计数暴露异常才继续优化。包末相关反例、受影响build/test及一次最终含空格导出汇合；同一最终双应用合并完成上述D链，身份和指纹固定，不反复重跑未变PNG/Finder/P4全套。
 
-**实施顺序与咨询。** 先把A/B的现有机制、六项反例和拟议统一状态边界整理成一次聚焦只读问题，通过Codex CLI咨询 `gpt-6-astra`（档位按ACTIVE当前可用次高档），重点裁决“旧票接受→新请求继续”的身份、确认与联合准入；不让咨询方重扫全仓。复杂技术定位用 `gpt-6-sol`；方案明确的接线直接完成。咨询或编译期间可并行C、定向测试和消费者布置，同一native段/同target构建/桌面串行。参考沿本节原Flutter动画入口和导航，重点学习取消重建的生命周期与当前值接续；其同步帧模型不替代CJGUI异步accepted裁决，只借鉴思想、不引依赖。`laya-ask`用于批量可复核日志分类，不替代根因判断。无新代码、失败或证据疑点不重复验证；工作量大不作为将A/B核心机制再推下一包的理由，有真实架构阻塞按AGENTS升级、其余独立任务继续。只在本节集中记录修复与原数，ACTIVE保持短状态，不另建任务卡或逐轮长报告。保留E/H并行改动，未授权不stage/commit/push。
+**实施顺序与问题升级。** 先由当前执行者结合A/B的现有机制、六项反例和拟议统一状态边界，明确“旧票接受→新请求继续”的身份、确认与联合准入，不重扫全仓；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型，方案明确的接线直接完成。咨询或编译期间可并行C、定向测试和消费者布置，同一native段/同target构建/桌面串行。参考沿本节原Flutter动画入口和导航，重点学习取消重建的生命周期与当前值接续；其同步帧模型不替代CJGUI异步accepted裁决，只借鉴思想、不引依赖。`laya-ask`用于批量可复核日志分类，不替代根因判断。无新代码、失败或证据疑点不重复验证；工作量大不作为将A/B核心机制再推下一包的理由，有真实架构阻塞按AGENTS升级、其余独立任务继续。只在本节集中记录修复与原数，ACTIVE保持短状态，不另建任务卡或逐轮长报告。保留E/H并行改动，未授权不stage/commit/push。
 
 **执行接续（2026-09-29，F）：** 旧通道样本、联合目标/clear、incarnation 退役及第33个暴露目标四项先在旧机制得到失败；focused 单行越覆盖的 native 旧版在 `single_line_missing_tile_rejects_before_acceptance` 退出56。修复后以候选捕获的呈现 revision 确认实际接受工作，旧 PENDING 票据接受时发布旧画面、保留后来请求并从 accepted checkpoint 重定向新通道；通道实例 generation 与完整 accepted 绑定分离，联合目标和声明刷新共用预检，接受边界回收退役元数据。活动单行与多行共用可见 tile 准入及在途预算；单行注入失败保留原画面、草稿和选区，恢复后覆盖完整，覆盖内平移不再栅格化。A/B 六项确定性测试及真实 PENDING 测试通过；native 单行与原多行/亚点测试通过。split 自身刷新接续与祖先独立移动安全取消分别通过定向测试；wrong-thread 拒绝后同一实例合法 pump 和 close 通过，原 owner、descriptor 保留直至关闭。
 
@@ -828,7 +830,7 @@ A3 语义桥在 F11 固定导出的两正常应用上以 AX 查询核对通过�
 
 按变化补通知次数、稳定身份/退役、查询工作量和空闲提交不增加的最小观察；VoiceOver 开关与操作前后对照，不另建全套诊断平台。无新生产改动时复用本包固定导出、构建和性能原证；需要修桥接/共同语义时，受影响反例通过后完成一次核心 build、相关测试及含空格同源双消费者汇合，再用最终版完成 C。只有新计数/延迟出现异常才扩展性能定位。GPU 物理呈现、跨屏硬件及 H 后端不自动纳入本包。
 
-复杂平台根因通过 Codex CLI 聚焦咨询 `gpt-6-sol`；新的公共语义/生命周期方案不明确时用 `gpt-6-astra`，采用当前可用次高思考档，附准确请求与原始结果。现有 accepted/owner/输入会话裁决不重问。仓颉编码先读 skill；`laya-ask` 用于可复核的批量日志分类，不能代替平台研究或实际操作。等待构建/咨询时推进独立工作，同 target 和桌面操作串行。只在原节记录闭环和新事实，ACTIVE 短更，不另开执行卡或逐轮长文；保留 E/H 并行修改，不 stage/commit/push。
+复杂平台根因、新的公共语义/生命周期方案由当前执行者结合准确请求与原始结果归因；问题归因与升级按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型。现有 accepted/owner/输入会话裁决不重问。仓颉编码先读 skill；`laya-ask` 用于可复核的批量日志分类，不能代替平台研究或实际操作。等待构建/咨询时推进独立工作，同 target 和桌面操作串行。只在原节记录闭环和新事实，ACTIVE 短更，不另开执行卡或逐轮长文；保留 E/H 并行修改，不 stage/commit/push。
 
 <a id="f-accessibility-consumption-review"></a>
 #### F5 指导复核与整包接续（2026-09-29）
@@ -837,15 +839,15 @@ A3 语义桥在 F11 固定导出的两正常应用上以 AX 查询核对通过�
 
 **接受的补证。** `/private/tmp/cjgui-f5-wrongthread/wrong-thread.log:48` 与探针356行确认同实例合法恢复、owner `512→320`、二次受控拒绝及后续224/最终清理；F11两款输入前非空选区与完整字节、手写旧点v1/新点v2原回包已补齐，均属普通 CGEvent/AX 范围。wrong-thread 的 `!refusedConsumption` 尚不能单独排除“报错却偷消费”，下次触碰该探针时在恢复dispatch前补 owner=320/begins不变的独立断言即可，不据此重复整套旧包。
 
-**1．先修验收入口，不能把失败启动当平台限制。** `vo-syslog.txt:1254/1269/1425`、`:1608/1623/1779` 已给出可区分线索。按 Apple [启动/关闭说明](https://support.apple.com/en-az/guide/voiceover/vo2682/mac)用系统公开开关或标准快捷键启动；不能只 `open -a VoiceOver` 后见进程便宣告 ready。识别并正常退出 Quickstart，保留用户原设置；做一次无输入、跨越原约10秒退出窗口的存活/就绪正控，再投一个导航/激活命令。查当前 VO 修饰键、导航分组与焦点跟随设置，按[导航说明](https://support.apple.com/en-gb/guide/voiceover/cpvounav/mac)区分 VO 光标和键盘焦点；树/组不能仅用连续右箭头即判不可达。驱动 `postVoiceOverCommand` 第一笔 Control flagsChanged 已同时带 Option，应校准完整按下/释放序列；不宣称它已被证明导致退出。若正控仍失败，带启动时间线及准确事件咨询 Sol，一次有新证据的追问后升级，停止无差别重启/换和弦；同时继续下面独立生产修复。
+**1．先修验收入口，不能把失败启动当平台限制。** `vo-syslog.txt:1254/1269/1425`、`:1608/1623/1779` 已给出可区分线索。按 Apple [启动/关闭说明](https://support.apple.com/en-az/guide/voiceover/vo2682/mac)用系统公开开关或标准快捷键启动；不能只 `open -a VoiceOver` 后见进程便宣告 ready。识别并正常退出 Quickstart，保留用户原设置；做一次无输入、跨越原约10秒退出窗口的存活/就绪正控，再投一个导航/激活命令。查当前 VO 修饰键、导航分组与焦点跟随设置，按[导航说明](https://support.apple.com/en-gb/guide/voiceover/cpvounav/mac)区分 VO 光标和键盘焦点；树/组不能仅用连续右箭头即判不可达。驱动 `postVoiceOverCommand` 第一笔 Control flagsChanged 已同时带 Option，应校准完整按下/释放序列；不宣称它已被证明导致退出。若正控仍失败，带启动时间线及准确事件按 AGENTS 升级指导，停止无差别重启/换和弦，不自动咨询；同时继续下面独立生产修复。
 
 **2．修标准 AX selector 到真实输入/owner 的接线。** 本机 SDK `NSAccessibilityProtocols.h:251/727` 要求 `isAccessibilityFocused`、`setAccessibilityFocused:`、`setAccessibilitySelectedTextRange:(NSRange)`；当前 `CJGuiInternalComposableAccessibilityAction`（renderer约8545–8583）使用 `accessibilityFocused`、`accessibilitySetFocused:`、`accessibilitySetSelectedTextRange:(NSValue*)`，value setter同样未覆盖标准 `setAccessibilityValue:`。这是已核实的入口不匹配；具体客户端失败结果先用正式 AX 请求固定，不凭源码宣称已复现所有症状。接回既有 focusNode、选区、文本会话与 owner，统一 settable/只读/禁用准入，不增加第二编辑通道。外部 AX 写焦点必须读到真实焦点/firstResponder与公共 WINDOW_FOCUS；以 CFRange 写非空 Unicode 选区后精确读回，value 操作进入原 owner；失效 wrapper 与禁止写入零副作用。`composable_scene_probe.m:1404` 直接调用自定义 getter 不能继续充作标准协议判据，补正式 selector 和进程外 AX 的区分反例。F 只修 AX 适配，不接管 E 的正文、IME 或新字素机制。
 
-**3．落实可见范围与屏外可达，不把裁剪当身份销毁。** `accessibilityVisibleCharacterRange`（约8572）当前无条件 `0..全文`；`reconcileAccessibilityActions`（约8931/9016）把 clip 为零的节点排除并退役 wrapper，均与原 B 要求不符。按同一 accepted 排版事实提供有界可见范围，无法得到时明确不可用，不能用全文/零矩形冒充；查询不得触发全文布局。对已物化且绑定仍有效的节点区分“在屏外”与“已移除/换绑”，复用当前 viewport/reveal 和身份，不把 GB 文档全量建成 AX 节点。以部分裁剪单行/多行滚动前后范围、保留旧引用→滚出→导航/reveal→滚回、真移除/ABA三组反例闭合；命中仍受当前裁剪限制。保留重排/resize有效身份，按 accepted 变化发需要的通知，空闲无通知/提交增长。树标准动作、虚拟节点可达若方案不明确，先用本地 Flutter AX 实现与测试作机制参考，必要时 Astra 裁决，不另起一套语义树所有权。
+**3．落实可见范围与屏外可达，不把裁剪当身份销毁。** `accessibilityVisibleCharacterRange`（约8572）当前无条件 `0..全文`；`reconcileAccessibilityActions`（约8931/9016）把 clip 为零的节点排除并退役 wrapper，均与原 B 要求不符。按同一 accepted 排版事实提供有界可见范围，无法得到时明确不可用，不能用全文/零矩形冒充；查询不得触发全文布局。对已物化且绑定仍有效的节点区分“在屏外”与“已移除/换绑”，复用当前 viewport/reveal 和身份，不把 GB 文档全量建成 AX 节点。以部分裁剪单行/多行滚动前后范围、保留旧引用→滚出→导航/reveal→滚回、真移除/ABA三组反例闭合；命中仍受当前裁剪限制。保留重排/resize有效身份，按 accepted 变化发需要的通知，空闲无通知/提交增长。树标准动作、虚拟节点可达若方案不明确，先用本地 Flutter AX 实现与测试作机制参考，再按 AGENTS 携未决证据升级指导，不自动咨询，不另起一套语义树所有权。
 
 **4．一轮正常消费，建立真实 VO 因果链。** 修后复用两款消费者，生成侧经公开候选进入同一 accepted 事务。先建立一个能区别普通 Space 的 VO 按钮正控：记录紧邻前后完整 owner 回包、VO 就绪与目标身份，利用 VO 光标与键盘焦点分离或受控入口观察区分 AX 动作与普通 keyDown，补 VO 关闭时同和弦对照；不得只凭一次 owner 变化判 VO 成功。正常链合计覆盖页签/树变化、屏外可达、短输入编辑、同 key 重排及拒绝保旧，保留每款的 PID/semantic/scene 与可归因角色/名称/状态输出。实际失败修所属机制，直接 AXPress/普通输入仍单列。只在生产修改后做一次受影响测试、核心构建与含空格同源汇合；未变 F11 原证直接复用。
 
-**推进与报告。** 先完成2/3的确定机制和1的启动判别，独立工作交错进行，最后汇合4，不把每个探针结果拆成新一轮文档。技术根因用 `gpt-6-sol`、公共契约/生命周期不明用 `gpt-6-astra`，按当前可用次高思考档；咨询提供原始反例并只读，普通明确接线直接实施。`laya-ask` 可批量归类日志，不能代替根因或通过判定。等待编译/咨询时推进独立工作；同 target、桌面串行，发现外部输入污染立即隔离该段，不重投用户动作。只短更本节与 ACTIVE，集中报告生产变化、判别结果和剩余项；保留 E/H 写集，不 stage/commit/push。
+**推进与报告。** 先完成2/3的确定机制和1的启动判别，独立工作交错进行，最后汇合4，不把每个探针结果拆成新一轮文档。技术根因、公共契约/生命周期由当前执行者结合原始反例归因，问题升级与咨询授权按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)，不自动启动或替换咨询模型；普通明确接线直接实施。`laya-ask` 可批量归类日志，不能代替根因或通过判定。等待编译/咨询时推进独立工作；同 target、桌面串行，发现外部输入污染立即隔离该段，不重投用户动作。只短更本节与 ACTIVE，集中报告生产变化、判别结果和剩余项；保留 E/H 写集，不 stage/commit/push。
 
 ## 5. 不把“技术清单”误当交付目标
 
@@ -888,7 +890,7 @@ A3 语义桥在 F11 固定导出的两正常应用上以 AX 查询核对通过�
 
 新一轮构建前固定输入/指纹；同target串行，必要时各用已存在的独立产物目录但不私建分支/worktree。E桌面输入与H模拟器的主机前台操作也须错开。构建/咨询等待时推进不会修改该次构建输入的工作；不因等待而重复稳定验证。
 
-日常根因/方案咨询按 [Pi独立GLM5.3入口](../../AGENTS.md#independent-model-consultation)，主执行也是GLM5.3仍适用；复杂未决公共契约直接Astra、技术仍无解用Sol，不要求三层都问。模型答复不作验收，Laya仅用于可复核批量分类。
+根因与方案由当前执行者结合源码、相关本地参考和可区分反例自主判断；反复失败按 [AGENTS 现行规则](../../AGENTS.md#independent-model-consultation)携证据升级指导，独立工作继续。只有用户当前明确授权咨询时，才按指定模型和范围执行；已有答复按适用前提复用，不能作为验收证明。Laya仅用于可复核批量分类。
 
 **互斥与交付。** 同一桌面、模拟器 target 和同一构建目录只由一个执行者操作；等候时推进确实独立工作，完成后使用等待工具，不重复扫描或重跑旧绿色套件。临时 +1 触及 E/H 写集时，转交相关片段的独占集成权，其他独立工作继续。每个包保留反例、正常产品消费和必要第二消费者，按修改风险一次汇合；不把每个补丁拆成报告。未经用户要求不 stage/commit/push，不重启暂停任务/自动化；执行对象仍由用户选择。
 

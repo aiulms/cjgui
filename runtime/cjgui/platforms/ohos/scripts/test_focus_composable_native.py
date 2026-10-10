@@ -55,6 +55,8 @@ def harness() -> str:
     checked = "CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node_checked("
     if checked in source:
         functions.append(extract_function(source, checked))
+    functions.append(extract_function(source, 'extern "C" uint64_t cjgui_ohos_focus_generation('))
+    functions.append(extract_function(source, 'extern "C" CjguiInternalRendererStatus cjgui_ohos_restore_focus_checked('))
     body = "\n\n".join(functions)
     names = ["kKindTextInput", "kKindIntegerInput", "kKindMultiline"]
     if "kEvFocus" in body:
@@ -63,13 +65,14 @@ def harness() -> str:
                           for name in names)
     text = r'''
 #include "cjgui_internal_renderer.h"
+#include "cjgui_ohos_focus_authority.h"
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
 #define RLOGI(...) do {} while (0)
 ''' + constants + r'''
-struct SceneNode { CjguiInternalRendererComposableNode pod{}; };
+struct SceneNode { CjguiInternalRendererComposableNode pod{}; std::string semanticId; };
 struct QueuedEvent {
     uint32_t kind = 0;
     uint32_t recordIndex = 0;
@@ -81,6 +84,9 @@ struct QueuedEvent {
 struct Session {
     std::vector<SceneNode> accepted;
     std::vector<QueuedEvent> events;
+    CjguiOhosFocusAuthority focusAuthority;
+    bool editingContextLive = false, editorRetired = false;
+    uint64_t editingNodeId = 0, editingAcceptedBindingEpoch = 0;
     bool editing = false;
     bool editingContextRevealRequested = false;
     int64_t editingContextId = 0;
@@ -94,7 +100,10 @@ static int g_editingCalls = 0;
 static Session *lookupSessionLocked(uint64_t session) {
     return session == 1 ? g_testSession : nullptr;
 }
-static void beginEditingOnNodeLocked(Session &session, const SceneNode &) {
+static void beginEditingOnNodeLocked(Session &session, const SceneNode &node) {
+    session.editingContextLive = true;
+    session.editingNodeId = node.pod.nodeId;
+    session.editingAcceptedBindingEpoch = node.pod.acceptedBindingEpoch;
     session.editing = true;
     session.editingContextId = ++g_editingCalls;
 }
@@ -123,6 +132,21 @@ static bool rejectedWithoutSideEffects(Session &session) {
            g_editingCalls == 0 && session.events.empty();
 }
 int main() {
+    {
+        Session session; session.accepted.push_back(editor(0, 0, 100, 20));
+        g_testSession = &session; g_editingCalls = 0;
+        if (cjgui_internal_renderer_focus_composable_node_checked(1,77,5) != CJGUI_INTERNAL_RENDERER_OK) return 11;
+        const auto original = cjgui_ohos_focus_generation(1);
+        if (!original || cjgui_ohos_restore_focus_checked(1,77,5,original) != CJGUI_INTERNAL_RENDERER_OK || g_editingCalls != 1) return 12;
+        session.focusAuthority.revoke(original);
+        if (cjgui_ohos_focus_generation(1) || cjgui_ohos_restore_focus_checked(1,77,5,original) == CJGUI_INTERNAL_RENDERER_OK || g_editingCalls != 1) return 13;
+        session.focusAuthority.setForeground(false);
+        if (cjgui_internal_renderer_focus_composable_node_checked(1,77,5) == CJGUI_INTERNAL_RENDERER_OK || g_editingCalls != 1) return 14;
+        session.focusAuthority.setForeground(true);
+        if (cjgui_ohos_restore_focus_checked(1,77,5,original) == CJGUI_INTERNAL_RENDERER_OK) return 15;
+        if (cjgui_internal_renderer_focus_composable_node_checked(1,77,5) != CJGUI_INTERNAL_RENDERER_OK) return 16;
+        if (cjgui_ohos_restore_focus_checked(1,77,5,original) == CJGUI_INTERNAL_RENDERER_OK) return 17;
+    }
     {
         Session session;
         session.accepted.push_back(editor(0, 200, 100, 20));
@@ -210,7 +234,7 @@ class NativeFocusTest(unittest.TestCase):
             binary = Path(directory) / "focus"
             source.write_text(harness(), encoding="utf-8")
             subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
-                            "-I", str(SNAPSHOT), str(source), "-o", str(binary)], check=True)
+                            "-I", str(SNAPSHOT), "-I", str(PLATFORM / "host"), str(source), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
 

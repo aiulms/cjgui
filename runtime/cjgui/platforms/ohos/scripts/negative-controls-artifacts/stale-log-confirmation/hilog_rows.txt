@@ -1,0 +1,15 @@
+10-01 07:59:00.000 proxy mounted key=app0/s0/c18/e2/m1 field=pharos-document-note
+10-01 07:59:00.000 ime selection confirmed [5,7) rc=0 (shared lifecycle) mount=app0/s0/c18/e2/m1 field=pharos-document-note
+10-01 07:59:00.032 ime proxy selection terminal=INSTALLED reason=attach_confirmed target=[5,7) mount=app0/s0/c18/e2/m1 field=pharos-document-note
+10-02 09:00:00.000 node-rect id=107 x=0 y=0 w=400 h=400 clip=(0,0,400,400)
+10-02 09:00:00.001 accepted node=107 semantic=pharos-editor-body kind=10 label=pharos-editor-body value=abc v=2
+10-02 09:00:00.0015 accepted commit v=2 ticket=1 nodes=16 semantic=111111
+10-02 09:00:00.002 proxy mounted key=app1/s1/c3/e1/m1 field=pharos-editor-body
+10-02 09:00:01.000 ime selection confirmed [1,1) rc=0 (shared lifecycle) mount=app1/s1/c3/e1/m1 field=pharos-editor-body
+10-02 09:00:01.010 ime proxy selection terminal=INSTALLED reason=attach_confirmed target=[1,1) mount=app1/s1/c3/e1/m1 field=pharos-editor-body
+10-02 09:00:01.500 caret hit applied tap=(20.0,10.1) node=(333.0,96.0) kind=10 composed=3 caret=1 ok=1
+10-02 09:00:01.520 human anchor recorded origin=caret_hit seq=1 node=107 sel=1:1
+10-02 09:00:02.000 node-rect id=313 x=10 y=10 w=100 h=40 clip=(0,0,400,400)
+10-02 09:00:02.001 accepted node=313 semantic=pharos-document-note kind=10 label=pharos-document-note value=abcdef v=4
+10-02 09:00:02.0015 accepted commit v=4 ticket=2 nodes=19 semantic=222222
+10-02 09:00:02.002 proxy mounted key=app1/s1/c7/e1/m2 field=pharos-document-note

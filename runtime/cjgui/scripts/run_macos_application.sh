@@ -136,7 +136,7 @@ for native_input in "$RENDERER_SOURCE" "$BRIDGE_SOURCE" "$ASYNC_MEASURE_SOURCE" 
 done
 
 typeset -a CLANG_FLAGS
-CLANG_FLAGS=(-fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong -mmacosx-version-min=12.0)
+CLANG_FLAGS=(-O2 -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong -mmacosx-version-min=12.0)
 # This is an explicit build input (for example a temporary -D flag in a reproducer), not an application argument.
 if [[ -n "${CJGUI_NATIVE_CLANG_FLAGS_APPEND:-}" ]]; then
   CLANG_FLAGS+=( ${=CJGUI_NATIVE_CLANG_FLAGS_APPEND} )

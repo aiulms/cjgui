@@ -27,7 +27,7 @@ async_bridge_object="$output_dir/cjgui_async_multiline_bridge.o"
 archive="$output_dir/libcjgui_internal_renderer.a"
 fingerprint_file="$output_dir/cjgui_internal_renderer_sidecar.fingerprint"
 typeset -a compile_flags
-compile_flags=(-fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong -mmacosx-version-min=12.0)
+compile_flags=(-O2 -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong -mmacosx-version-min=12.0)
 # Keep the package build hook aligned with the macOS application host.  A
 # caller may explicitly add a temporary native compile flag for an isolated
 # reproducer; it must reach the sidecar which cjpm links, and participate in

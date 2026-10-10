@@ -1,0 +1,424 @@
+{
+  "steps": [],
+  "identity": {
+    "pid": 11,
+    "bundle": "controlled"
+  },
+  "log_fence0": "10-02 09:00:00.002 proxy mounted key=app1/s1/c3/e1/m1 field=pharos-editor-body",
+  "forward": {
+    "owned": true,
+    "basis": "created+verified"
+  },
+  "fixture_reset": true,
+  "mode_probes": [
+    {
+      "ensure-source": "already_at_target",
+      "token": 201,
+      "epoch": 9,
+      "frame": 6,
+      "last": 3,
+      "unacked": 0,
+      "baseline_token": 201,
+      "baseline_max_ticket": 3,
+      "driver_face": "source",
+      "face_list_truncated": false
+    }
+  ],
+  "baseline": {
+    "ensure-source": {
+      "token": 201,
+      "mode": "source",
+      "epoch": 9,
+      "frame": 6,
+      "last": 3,
+      "max_ticket": 3,
+      "readable": true
+    }
+  },
+  "main_owner": "pharos-main",
+  "note_resource_id": 1001,
+  "a_freeze": {
+    "main_version": 1,
+    "main_hex": "616263",
+    "note_hex": "616263646566",
+    "main_bytes": 3
+  },
+  "body_node": 107,
+  "geo_query_count": 53,
+  "a_anchor_doc_len16": 3,
+  "a_anchor_probe": [
+    {
+      "vp": [
+        20,
+        18
+      ],
+      "sel": [
+        99,
+        99
+      ]
+    },
+    {
+      "vp": [
+        60,
+        18
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        18
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        18
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        24
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        24
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        24
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        24
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        30
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        30
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        30
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        30
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        36
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        36
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        36
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        36
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        42
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        42
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        42
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        42
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        48
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        48
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        48
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        48
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        54
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        54
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        54
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        54
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        60
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        60
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        60
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        60
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        66
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        66
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        66
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        66
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        72
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        72
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        72
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        72
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        78
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        78
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        78
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        78
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        84
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        84
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        84
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        84
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        20,
+        90
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        60,
+        90
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        110,
+        90
+      ],
+      "sel": null
+    },
+    {
+      "vp": [
+        170,
+        90
+      ],
+      "sel": null
+    }
+  ],
+  "a_anchor": {
+    "sel": null,
+    "node": 107
+  },
+  "status": "a_anchor_unconfirmed",
+  "forward_cleanup": "removed"
+}

@@ -15,6 +15,8 @@ private class PositionOriginWindowController <: CjguiComposableUiController & Cj
     var stageResult: String = "none"
     var duplicateResult: String = "none"
     var conflictResult: String = "none"
+    var commits: Int64 = 0
+    var rollbacks: Int64 = 0
     let key: String = "semantic:origin-window-moving"
 
     public func beginSceneRefresh(): Bool {
@@ -34,10 +36,11 @@ private class PositionOriginWindowController <: CjguiComposableUiController & Cj
     public func prepareSceneRefresh(): Bool { return !rejectCandidate }
     public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> { return ArrayList() }
     public func commitSceneRefresh(): Unit {
+        commits += 1
         acceptedBase = candidateBase
         requestRebase = false
     }
-    public func rollbackSceneRefresh(): Unit { candidateBase = acceptedBase }
+    public func rollbackSceneRefresh(): Unit { rollbacks += 1; candidateBase = acceptedBase }
     public func uiSceneVersion(): Int64 { return revision }
     public func buildUi(): CjguiComposableUiNode {
         let root = cjguiComposableVertical(9970, "origin-window-root", CjguiComposableUiStyle())
@@ -59,6 +62,57 @@ private class PositionOriginWindowController <: CjguiComposableUiController & Cj
     public func requestWindowClose(): CjguiComposableUiDispatchResult {
         return CjguiComposableUiDispatchResult(true, shouldClose: true)
     }
+}
+
+@Test
+func fPositionOriginPreparedRebaseSurvivesActiveAnimationTickBeforeRest(): Unit {
+    let controller = PositionOriginWindowController()
+    let window = CjguiComposableUiWindow(controller)
+    controller.window = Some(window)
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let start = MonoTime.now()
+        @Assert(window.animateNodeTranslation(controller.key, 0.0, -116.0,
+            spec: CjguiComposableUiAnimationSpec.spring(stiffness: 500.0, dampingRatio: 1.0),
+            atTime: start), true)
+        let _ = window.advanceAnimations(atTime: start + Duration.millisecond * 100)
+        let before = originWindowState(window, controller.key)
+        @Assert(before.active, true)
+        @Assert(before.presented.y < -58.0, true)
+        controller.ticket = before.originTicket
+        controller.requestRebase = true
+        controller.revision += 1
+        window.useOwnerTurnBudget(budget)
+        let clock = Int64(unsafe { cjgui_internal_renderer_owner_clock_ns() })
+        budget.testUseClock({ => clock })
+        @Assert(budget.begin(), true)
+        @Assert(window.refreshIfNeeded(), false)
+        budget.end()
+        @Assert(budget.hasPreparedWork(), true)
+        @Assert(controller.stageResult, "staged")
+        let rollbacks = controller.rollbacks
+        let _ = window.advanceAnimations(atTime: start + Duration.millisecond * 110)
+        // An unrelated animation opportunity must not retire the semantic
+        // candidate that owns this accepted-origin compensation.
+        @Assert(controller.rollbacks, rollbacks)
+        @Assert(budget.hasPreparedWork(), true)
+        var turns = 0
+        while (budget.hasPreparedWork() && turns < 8) {
+            @Assert(budget.begin(), true)
+            let _ = window.refreshIfNeeded()
+            budget.end()
+            turns += 1
+        }
+        @Assert(budget.hasPreparedWork(), false)
+        @Assert(controller.acceptedBase, 142)
+        let after = originWindowState(window, controller.key)
+        @Assert(after.active, true)
+        @Assert(after.target.y, -58.0)
+        @Assert(abs(after.presented.y - before.presented.y - 58.0) < 1.0e-8, true)
+        @Assert(controller.rollbacks, rollbacks)
+    } finally { budget.end(); window.close() }
 }
 
 private func originWindowState(window: CjguiComposableUiWindow, key: String): CjguiComposableUiPositionStatus {

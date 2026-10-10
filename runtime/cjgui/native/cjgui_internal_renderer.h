@@ -107,6 +107,14 @@ typedef enum CjguiInternalRendererStatus {
     // insertion points within the bounded budget: no neighbor is named, the
     // caller keeps caret and selection (M2 contract; never a half-line scan).
     CJGUI_INTERNAL_RENDERER_VISUAL_NAV_UNSUPPORTED = 35,
+    // A marshaled UI-thread command waited out its bounded watchdog before it
+    // started: it was atomically cancelled and never executed. The caller may
+    // submit a fresh command but must not assume any effect happened.
+    CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT = 37,
+    // A marshaled UI-thread command was already running when its wait expired:
+    // it ran exactly once and its result is retained for reap. The caller must
+    // NOT resubmit the side effect; reap the outcome, then re-read state.
+    CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT = 38,
     // An extended private style run has an unknown tag or malformed fields.
     // No candidate using it may become accepted or fall back to ordinary runs.
     CJGUI_INTERNAL_RENDERER_STYLE_RUN_INVALID = 36,
@@ -436,6 +444,17 @@ typedef struct CjguiInternalRendererDiagnosticWorkload {
     uint64_t textTextureLiveBytes;
     uint64_t textCandidatePeakBytes;
 } CjguiInternalRendererDiagnosticWorkload;
+
+// Current cumulative work counters, independent of accepted-scene snapshots.
+// A refresh binds its first read's generation and must use it at completion.
+typedef struct CjguiInternalRendererWorkloadAttemptCounts {
+    uint64_t sessionGeneration;
+    uint64_t nodeWriteCount;
+    uint64_t nodeCloneCount;
+    uint64_t nodeAllocationCount;
+    uint64_t textLayoutPreparationCount;
+    uint64_t imageDecodeStartCount;
+} CjguiInternalRendererWorkloadAttemptCounts;
 
 // Fixed-size opt-in per-session timing totals. Durations are nanoseconds from
 // mach_continuous_time; counts retain one window's position work only.
@@ -869,6 +888,28 @@ void cjgui_internal_renderer_publish_owner_consumed_pointer_fifo(uint64_t sessio
     uint64_t sessionGeneration, uint64_t bindingEpoch, uint64_t firstSequence,
     uint64_t lastSequence, uint64_t previousSequence, uint32_t phase);
 
+// Private BEGIN receipt. The native hit's scene/epoch/coordinate identity is
+// retained until its exact FIFO BEGIN is claimed. No current mirror is sampled.
+typedef struct CjguiInternalRendererPointerBeginOrigin {
+    uint64_t sessionGeneration;
+    uint64_t coordinateEpoch;
+    uint64_t gestureEpoch;
+    uint64_t sceneVersion;
+    uint64_t nodeId;
+    int64_t resourceId;
+    uint32_t nodeKind;
+    uint32_t reserved;
+    uint64_t acceptedBindingEpoch;
+    uint64_t sourcePublication;
+} CjguiInternalRendererPointerBeginOrigin;
+// Scalar source publication: native DOWN captures this exact accepted owner
+// fact identity even when a semantic acceptance reuses the same native scene.
+CjguiInternalRendererStatus cjgui_internal_renderer_publish_pointer_begin_source(uint64_t session,
+    uint64_t generation, uint64_t publication, uint64_t sceneVersion);
+int cjgui_internal_renderer_pointer_begin_frame_retained(uint64_t session, uint64_t publication);
+CjguiInternalRendererStatus cjgui_internal_renderer_consume_pointer_begin_origin(uint64_t session,
+    uint64_t gestureEpoch, CjguiInternalRendererPointerBeginOrigin *outOrigin);
+
 // Physical Up/Down key provenance captured at the native FIFO enqueue. The
 // main snapshot is copied into the async pump ticket; only the owner-consumed
 // snapshot may be read by Cangjie after a successful event pump. Zero means
@@ -894,6 +935,25 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_caret_input(uint64_t 
 CjguiInternalRendererStatus cjgui_internal_renderer_bind_caret_selection_transfer(
     uint64_t session, uint64_t transferId, uint64_t generation,
     uint64_t sequence, uint64_t previousSequence);
+
+// Private owner-to-input boundary; actual A and future owner authority remain
+// separate. The public Event/Node ABI carries no new native object.
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_begin(uint64_t session,
+    const char *document, int64_t documentEpoch, uint64_t window, uint64_t context,
+    uint64_t binding, int64_t beforeVersion, uint64_t rangeNonce, uint64_t rangeSequence,
+    uint64_t *outId);
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_seal(uint64_t session,
+    uint64_t id, int64_t afterVersion, int64_t selectionRevision, int64_t anchorByte,
+    int64_t focusByte, int64_t editTicket);
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_bind(uint64_t session,
+    uint64_t id, uint64_t transfer);
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_complete(uint64_t session,
+    uint64_t id, uint64_t transfer, int64_t version, int64_t selectionRevision,
+    int64_t anchorByte, int64_t focusByte);
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_abort(uint64_t session, uint64_t id);
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_state(uint64_t session, uint64_t id);
+CjguiInternalRendererStatus cjgui_internal_renderer_parked_text_input_focus(uint64_t session,
+    uint64_t window, uint64_t context, uint64_t node, int64_t resource, uint32_t kind);
 
 // Returns non-zero only for a pending standard Quit that had no key CJGUI
 // window and has at least one application-lifecycle owner. The Cangjie
@@ -1001,6 +1061,15 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_node_batc
     uint64_t preparationId, uint32_t firstIndex, uint32_t count,
     const CjguiInternalRendererComposableNode *nodes, const CjguiInternalRendererComposableGeometry *geometry,
     const char *const *strings, uint64_t deadlineNs, uint32_t *outCopied);
+// Reuses declarations already cloned from the accepted scene while writing
+// this candidate's current geometry. Cangjie proves all eight UTF-8 string
+// values equal before calling; native independently checks the complete POD
+// (except candidate projectionVersion) and the preparation's live source
+// basis. outReused is the valid successful prefix; zero is a safe cache miss.
+CjguiInternalRendererStatus cjgui_internal_renderer_reuse_composable_node_batch(uint64_t session,
+    uint64_t preparationId, uint32_t firstIndex, uint32_t count,
+    const CjguiInternalRendererComposableNode *nodes, const CjguiInternalRendererComposableGeometry *geometry,
+    uint64_t deadlineNs, uint32_t *outReused);
 CjguiInternalRendererStatus cjgui_internal_renderer_advance_composable_preparation(uint64_t session, uint64_t preparationId,
     uint64_t deadlineNs, uint32_t *outReady);
 CjguiInternalRendererStatus cjgui_internal_renderer_promote_composable_preparation(uint64_t session, uint64_t preparationId);
@@ -1173,6 +1242,10 @@ cjgui_internal_renderer_diagnostic_resources(
 CjguiInternalRendererStatus
 cjgui_internal_renderer_diagnostic_workload(
     uint64_t session, CjguiInternalRendererDiagnosticWorkload *outWorkload);
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_workload_attempt_counts(uint64_t session,
+    uint64_t expectedGeneration, CjguiInternalRendererWorkloadAttemptCounts *outCounts);
 CjguiInternalRendererStatus
 cjgui_internal_renderer_set_diagnostic_timing(uint64_t session, uint32_t enabled);
 CjguiInternalRendererStatus
@@ -2441,7 +2514,10 @@ enum {
     CJGUI_OWNER_PHASE_NATIVE_REQUEST_CLOSE = 166,
     CJGUI_OWNER_PHASE_REQUEST_CLOSE_CJ_BEGIN = 167,
     CJGUI_OWNER_PHASE_REQUEST_CLOSE_CJ_END = 168,
-    CJGUI_OWNER_PHASE_CANCEL_PREPARED_CANDIDATE_BEGIN = 169
+    CJGUI_OWNER_PHASE_CANCEL_PREPARED_CANDIDATE_BEGIN = 169,
+    CJGUI_OWNER_PHASE_PREPARATION_DECLARATIONS_COPIED = 182,
+    CJGUI_OWNER_PHASE_PREPARATION_DECLARATIONS_REUSED = 183,
+    CJGUI_OWNER_PHASE_PREPARATION_GEOMETRY_WRITTEN = 184
 };
 uint64_t cjgui_internal_renderer_owner_trace_record(uint32_t kind, uint64_t session,
     uint64_t turn, uint64_t request, uint64_t dispatch, uint64_t generation,
@@ -2581,6 +2657,11 @@ typedef enum CjguiInternalSelectionTransferAdmission {
     CJGUI_SELECTION_INPUT_RECOVERY_BLOCKED = 2,
     CJGUI_SELECTION_INPUT_STALE = 3
 } CjguiInternalSelectionTransferAdmission;
+// Frozen candidate-local caret. preparationId=0 names the staged transaction;
+// nonzero names its private preparation. Absence is an explicit declaration.
+CjguiInternalRendererStatus cjgui_internal_renderer_stage_candidate_caret(uint64_t session,
+    uint64_t preparationId, uint64_t sceneVersion, uint8_t present,
+    int64_t nodeId, int64_t localByte, uint32_t affinity);
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_create(
     uint64_t session, uint64_t *outTransferId);
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_publish_pending(
@@ -2668,6 +2749,15 @@ CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_capture_a
 // retain exact projection checks. A nonzero requested projection stays strict.
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_capture_current(
     uint64_t session, CjguiInternalSelectionTransferCandidate *candidate, uint8_t *aBytes, uint32_t capacity);
+// Actual A receipt -> private target from this staged scene. No install occurs.
+CjguiInternalRendererStatus cjgui_internal_renderer_capture_candidate_selection(uint64_t session,
+    CjguiInternalSelectionTransferCandidate *candidate, const CjguiInternalSelectionTransferReceipt *sourceReceipt,
+    uint8_t *aBytes, uint32_t capacity, uint64_t targetContextEpoch, uint64_t targetMirrorRevision,
+    int64_t ownerRevision, uint64_t gestureEpoch);
+CjguiInternalRendererStatus cjgui_internal_renderer_prepare_candidate_selection(uint64_t session,
+    uint64_t transferId, uint64_t deadlineNs, uint8_t *outReady);
+CjguiInternalRendererStatus cjgui_internal_renderer_candidate_selection_receipt(uint64_t session,
+    uint64_t sceneVersion, uint64_t transferId, CjguiInternalSelectionTransferReceipt *outReceipt);
 // Incrementally prepare a private B TextKit graph while the existing transfer
 // remains Pending. ready is 1 only after worker retirement and graph adoption.
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_prepare_b(
@@ -2678,6 +2768,17 @@ CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_install_b
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_verify_b(
     uint64_t session, uint64_t transferId, CjguiInternalSelectionTransferReceipt *outReceipt);
 // Restore A and verify body, selection, active identity and first responder.
+// Internal paint publication uses the actual immutable B receipt. It never
+// authorizes input or edits the owner. Full candidates must be built after the
+// callback and carry that publication; stale paints return SCENE_STALE.
+CjguiInternalRendererStatus cjgui_internal_renderer_finish_selection_paint_publication(
+    uint64_t session, uint64_t transferId, uint64_t generation, uint64_t binding,
+    uint64_t proxyGeneration, uint64_t nativeRevision, int64_t ownerVersion,
+    int64_t ownerRevision, uint8_t proxyOnly, uint8_t *outNeedsProjection);
+CjguiInternalRendererStatus cjgui_internal_renderer_stage_selection_paint_publication(
+    uint64_t session, uint64_t transferId, uint64_t generation, uint64_t binding,
+    int64_t ownerVersion, int64_t ownerRevision, uint64_t sceneVersion);
+
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_restore_a(
     uint64_t session, uint64_t transferId);
 // Replay retained original AppKit input only after the caller has published
@@ -2744,6 +2845,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_release_installed_range(
 CjguiInternalRendererStatus
 cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs,
     CjguiInternalRendererEvent *outEvent, uint64_t *outIdleWaitNs);
+
+// A pending acquisition or a READY event still owns the accepted input scene.
+// READY NONE is terminal and carries no scene-dependent input. Thread-safe,
+// observational, and scoped to the live session generation.
+uint32_t cjgui_internal_renderer_owner_pump_has_unconsumed_input(uint64_t session);
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_pump_event(uint64_t session,
@@ -2974,6 +3080,65 @@ cjgui_internal_renderer_destroy(uint64_t session);
 
 // occupiedSessionCount() -> number of currently occupied session slots.
 uint32_t cjgui_internal_renderer_occupied_session_count(void);
+
+// Distinct owner-edit settlement: never relaxes navigation's zero-write rule.
+CjguiInternalRendererStatus cjgui_internal_renderer_mark_caret_edit_applied(
+    uint64_t session, uint64_t generation, uint64_t sequence, uint64_t previous,
+    int64_t beforeVersion, int64_t afterVersion, uint64_t contextEpoch, uint64_t windowToken);
+
+// Internal acceptance receipt for stationary pointer residence.
+CjguiInternalRendererStatus cjgui_internal_renderer_ack_drag_edge_viewport(
+    uint64_t session, uint64_t gesture, uint64_t node, int64_t resource,
+    uint64_t binding, uint64_t identity, int64_t requestGeneration,
+    int64_t requested, int64_t accepted, uint64_t scene, uint32_t phase);
+
+// Private, candidate-scoped continuation for a captured text drag whose
+// original rendered fragment is being windowed out. The offer contains only
+// copied numeric identities; native freezes the accepted focus node's exact
+// semantic key/value and compares them against the staged successor scene.
+// It never retargets queued input. Complete is called only after Cangjie has
+// accepted the candidate and revalidated its owner/source proof.
+typedef struct CjguiInternalPointerCaptureContinuationOffer {
+    uint64_t gestureEpoch;
+    uint64_t sessionGeneration;
+    uint64_t windowInstanceToken;
+    uint64_t coordinateGeneration;
+    uint64_t originNodeId;
+    int64_t originResourceId;
+    uint32_t originNodeKind;
+    uint64_t originProjectionVersion;
+    uint64_t candidateSceneVersion;
+    uint64_t viewportNodeId;
+    int64_t viewportResourceId;
+    uint32_t viewportNodeKind;
+    uint64_t viewportBindingEpoch;
+    uint64_t viewportIdentity;
+    int64_t requestGeneration;
+    int64_t requestedOffset;
+    int64_t acceptedOffset;
+    uint64_t selectionTransferId;
+    uint64_t selectionReceiptSceneVersion;
+    uint64_t selectionBindingEpoch;
+    uint64_t proxyGeneration;
+    uint64_t nativeSelectionRevision;
+    int64_t ownerVersion;
+    int64_t ownerRevision;
+    uint64_t focusNodeId;
+    int64_t focusResourceId;
+    uint32_t focusNodeKind;
+    int64_t focusSemanticIncarnation;
+} CjguiInternalPointerCaptureContinuationOffer;
+CjguiInternalRendererStatus cjgui_internal_renderer_offer_pointer_capture_continuation(
+    uint64_t session, const CjguiInternalPointerCaptureContinuationOffer *offer);
+CjguiInternalRendererStatus cjgui_internal_renderer_complete_pointer_capture_continuation(
+    uint64_t session, uint64_t gestureEpoch, uint64_t candidateSceneVersion,
+    uint64_t selectionTransferId, int64_t ownerVersion, int64_t ownerRevision);
+CjguiInternalRendererStatus cjgui_internal_renderer_discard_pointer_capture_continuation(
+    uint64_t session, uint64_t gestureEpoch, uint64_t candidateSceneVersion);
+
+// Internal owner-budget retirement continuation; quota unchanged.
+CjguiInternalRendererStatus cjgui_internal_renderer_drain_composable_retirement(
+    uint64_t session, uint64_t ownerDeadline, uint8_t *outMayBegin);
 
 #ifdef __cplusplus
 }

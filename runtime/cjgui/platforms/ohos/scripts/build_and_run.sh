@@ -4,7 +4,7 @@
 # 失败语义：
 #  - 任一必需库缺失、HAP 缺失、启动断言不成立 → 非零退出（环境阻塞与产品失败
 #    分开：环境阻塞单独打印 ENV-BLOCK，产品失败打印 PRODUCT-FAIL）。
-#  - 断言只认本轮日志：先清空设备日志缓冲再启动，旧日志不能冒充本轮成功。
+#  - 断言只认本轮 PID；共享设备可保留其他应用日志。
 #
 # 用法： bash build_and_run.sh <LAB_ROOT> [--no-emulator-start] [--run-id <id>]
 # 负对照（必须产出失败，用于证明闸门有效）：
@@ -433,6 +433,10 @@ if [ "${CJGUI_NEGATIVE_STALE_LOG:-0}" = "1" ]; then
   echo "负对照：保留旧实例日志、不启动（预期 PID 绑定拒绝旧 marker）"
   STALE_LOG_MODE=1
   LOG_CLEARED="skipped(stale-negative)"
+elif [ "${CJGUI_PRESERVE_DEVICE_LOGS:-0}" = "1" ]; then
+  # Parallel consumers keep their original buffers. Startup still requires the
+  # new launch PID; this is explicitly not a successful global log clear.
+  LOG_CLEARED="preserved(pid-bound)"
 else
   LOG_CLEARED="failed"
   if "$HDC" shell "hilog -r" >/dev/null 2>&1; then
@@ -440,7 +444,7 @@ else
   fi
 fi
 echo "  hilog clear: $LOG_CLEARED"
-if [ "$LOG_CLEARED" != "ok" ] && [ "$STALE_LOG_MODE" != "1" ]; then
+if [ "$LOG_CLEARED" != "ok" ] && [ "$LOG_CLEARED" != "preserved(pid-bound)" ] && [ "$STALE_LOG_MODE" != "1" ]; then
   echo "PRODUCT-FAIL 清空日志缓冲失败：本轮日志起点不可信，启动断言不能作为证据"
   exit 1
 fi

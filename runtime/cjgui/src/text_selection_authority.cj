@@ -60,3 +60,10 @@ class CjguiNativeSelectionDecision <: CjguiSelectionDecision {
         return admitted[0] == CJGUI_INTERNAL_RENDERER_OK && admitted[1] == 0u32
     }
 }
+
+/// Experimental opt-in writer for a current owner source choice. The sink must
+/// arbitrate the entire frozen identity at its real transaction/journal boundary.
+/// No selected interior is materialised by the framework.
+public interface CjguiRangeTextSelectionEditSink {
+    func applySourceSelectionEdit(choice: CjguiSourceSelectionSnapshot, inserted: String): CjguiRangeTextEditOutcome
+}

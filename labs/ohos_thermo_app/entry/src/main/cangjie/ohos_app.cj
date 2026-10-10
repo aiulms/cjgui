@@ -154,7 +154,7 @@ public func cjgui_ohos_app_main_cangjie(ingress: CPointer<Unit>): Int32 {
 // host.start 失败、Phase B 正常结束）汇入此处：停止接单 → 传输收敛 →
 // 按事实结束已启动 renderer → 终态日志。真正未启动的部件记 not_started，
 // 不伪造成功 shutdown。
-func ohosCleanupTail(reason: String): Unit {
+func ohosCleanupTail(reason: String): Bool {
     OhosTransportBridge.requestStop()
     let transportClosed = OhosTransportBridge.awaitClosed(2000)
     let (queued, _qbytes, conns, inflight, lifecycle) = OhosTransportBridge.snapshotCounters()
@@ -170,6 +170,8 @@ func ohosCleanupTail(reason: String): Unit {
         "shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} " +
         "transport_closed=${transportClosed} queued=${queued} conns=${conns} " +
         "inflight=${inflight} lifecycle=${lifecycle}")
+    return transportClosed && queued == 0 && conns == 0 && inflight == 0 &&
+        (!rendererStarted || (shutdownStatus == 0 && shutdownDone == 1))
 }
 
 // A1 矩阵：闸门命令派发（第八次复核链1：pre-surface 替身服务复用同一派发）。
@@ -423,10 +425,9 @@ func ohosApplicationLoop(): Unit {
     }
     if (standinStop && !surfaceReady) {
         // 第九次复核 C：替身阶段停止走统一清理尾部
-        unsafe { cjgui_ohos_notify_owner_exit(0) }   // 按请求停止——renderer 已被
-        // STUB_ARM 等测试路径启动时按事实 shutdown，否则如实记 not_started。
         controller.generatedUiRegion().rejectPendingOnClose()
-        ohosCleanupTail("stand-in stopped")
+        let cleaned = ohosCleanupTail("stand-in stopped")
+        unsafe { cjgui_ohos_notify_owner_exit(if (cleaned) { 0 } else { 1 }) }
         return
     }
     cjguiOhosInfo("CjguiApp", "surface ready; starting settings-counter host")
@@ -450,7 +451,7 @@ func ohosApplicationLoop(): Unit {
     // round12-R2：挂表面状态闭包——accepted 读回（几何记录/当前编辑身份）随
     // 每次 GET_CONTEXT 公开，读回定位与安装等价链不依赖 hilog node-rect。
     domain.attachStateProvider({ =>
-        window.acceptedStateText()
+        window.acceptedStateText() + " " + controller.noteSelectionFact()
     })
     let progressReady = connection.enableWindowProgressReads(window)
     if (!progressReady) {
@@ -594,7 +595,16 @@ func ohosApplicationLoop(): Unit {
     host.close()
     let shutdownStatus = unsafe { ohos_renderer_shutdown_render_thread() }
     let shutdownDone = unsafe { cjgui_ohos_renderer_shutdown_done() }
-    ohosCleanupTail("phase-b closed")
+    // Shutdown has made the original in-flight ticket terminal. Consume its
+    // existing owner settlement gate before declaring this owner orderly.
+    if (window.isOpen()) {
+        let _ = window.refreshIfNeeded()
+    }
+    let tailCleaned = ohosCleanupTail("phase-b closed")
+    let orderly = transportClosed && tailCleaned && shutdownStatus == 0 && shutdownDone == 1 &&
+        !window.isOpen() && !host.isOpen()
+    unsafe { cjgui_ohos_notify_owner_exit(if (orderly) { 0 } else { 1 }) }
     cjguiOhosInfo("CjguiApp",
-        "host closed; stop_requested=${stopRequested} render_shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} ticks=${ticks}")
+        "host closed; stop_requested=${stopRequested} render_shutdown_status=${shutdownStatus} shutdown_done=${shutdownDone} " +
+        "tail_cleaned=${tailCleaned} owner_orderly=${orderly} ticks=${ticks}")
 }

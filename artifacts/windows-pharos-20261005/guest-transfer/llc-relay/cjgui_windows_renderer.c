@@ -337,6 +337,19 @@ struct CjguiWindowsRendererSession {
 #define CJGUI_WINDOWS_INSTALL_OUTCOME_SUPERSEDED 4u
 #define CJGUI_WINDOWS_INSTALL_OUTCOME_CONFLICT 5u
 #define CJGUI_WINDOWS_INSTALL_OUTCOME_CLOSED 6u
+    uint32_t navBarrierArmed;
+    uint32_t navReplayActive;
+#define CJGUI_WINDOWS_NAV_HOLD_CAPACITY 16u
+#define CJGUI_WINDOWS_NAV_HOLD_BYTES 65536u
+    struct {
+        uint32_t isDelete;
+        char *bytes;
+        uint32_t length;
+        int64_t modifiers;
+    } navHold[CJGUI_WINDOWS_NAV_HOLD_CAPACITY];
+    uint32_t navHoldHead;
+    uint32_t navHoldCount;
+    uint64_t navHoldBytes;
     // Windows 正常产品链的声明接受状态（无 OS 菜单栏 / 剪贴板投影）。
     uint64_t commandMenuProjectionVersion;
     uint32_t commandMenuPendingCount;
@@ -914,6 +927,13 @@ static int handle_windows_ime_composition(CjguiWindowsRendererSession *s, LPARAM
 static void end_windows_ime_composition(CjguiWindowsRendererSession *s);
 static void clear_pending_owned_input(CjguiWindowsRendererSession *s);
 static void range_disarm(CjguiWindowsRendererSession *s);
+static void nav_barrier_release(CjguiWindowsRendererSession *s, int replay);
+static int nav_intent_is_movement(const char *intent);
+static int nav_intent_is_delete(const char *intent);
+static int nav_barrier_hold_char(CjguiWindowsRendererSession *s,
+    const char *insert, uint32_t insertLength);
+static int nav_barrier_hold_delete(CjguiWindowsRendererSession *s,
+    const char *intent, int64_t frozenModifiers);
 static void finish_windows_composition_after_presentation(CjguiWindowsRendererSession *s);
 static void start_pending_ime_successor(CjguiWindowsRendererSession *s);
 static void synchronize_owned_proxy_after_presentation(CjguiWindowsRendererSession *s);
@@ -4187,6 +4207,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_source_install_gate(
         s->sourceInstallRequestId = requestId;
         s->sourceInstallPending = 1u;
         s->sourceInstallProvisional = 0u;
+        nav_barrier_release(s, 1);
         return CJGUI_INTERNAL_RENDERER_OK;
     }
     if (!s->sourceInstallPending) return CJGUI_INTERNAL_RENDERER_OK;
@@ -4199,6 +4220,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_source_install_gate(
     s->sourceInstallBindingEpoch = 0u;
     s->sourceInstallRequestId = 0u;
     s->sourceInstallProvisional = 0u;
+    nav_barrier_release(s, 1);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -5189,6 +5211,7 @@ static void destroy_ui_phase_a(CjguiWindowsRendererSession *s) {
 }
 
 static void destroy_caller_phase_b(CjguiWindowsRendererSession *s) {
+    nav_barrier_release(s, 0);
     release_scene(&s->candidateScene);
     release_scene(&s->acceptedScene);
     for (uint32_t i = 0; i < s->textRunDeclarationCount; ++i)
@@ -6133,6 +6156,7 @@ static int replace_utf8_range16(const char *base, uint32_t start16, uint32_t end
 // 门只约束与其同代 owner 会话的票据，避免旧票阻塞新会话。
 static int source_install_gate_holds_input(CjguiWindowsRendererSession *s) {
     if (!s || !s->sourceInstallPending) return 0;
+    if (s->navReplayActive) return 0;
     if (!s->ownedTextSessionEnabled || !s->ownedTextSessionBindingEpoch ||
         s->sourceInstallBindingEpoch != s->ownedTextSessionBindingEpoch) return 0;
     if (s->sourceInstallGatedInputs != UINT64_MAX) ++s->sourceInstallGatedInputs;
@@ -6415,6 +6439,9 @@ static int queue_owned_range_replace(CjguiWindowsRendererSession *s,
         return 0;
     }
     if (source_install_gate_holds_input(s)) { qorr_debug_log("drop_gate", s, insert, 0); return 0; }
+    if (s->navBarrierArmed && !s->navReplayActive) {
+        return nav_barrier_hold_char(s, insert, insertLength);
+    }
     if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive) { qorr_debug_log("drop_comp", s, insert, 0); return 1; }
     uint64_t bindingEpoch = s->ownedTextSessionBindingEpoch;
     CjguiWindowsSceneNode *node = scene_node_by_id(&s->acceptedScene, s->ownedTextSessionNodeId);
@@ -6677,6 +6704,9 @@ static int enqueue_windows_navigation(CjguiWindowsRendererSession *s, const char
     if (!s || !intent || !s->ownedTextSessionEnabled || !s->ownedTextSessionBindingEpoch ||
         GetFocus() != s->hwnd) return 0;
     if (source_install_gate_holds_input(s)) return 0;
+    if (s->navBarrierArmed && !s->navReplayActive && nav_intent_is_delete(intent)) {
+        return nav_barrier_hold_delete(s, intent, frozenModifiers);
+    }
     CjguiWindowsSceneNode *node = scene_node_by_id(&s->acceptedScene, s->ownedTextSessionNodeId);
     if (!node || node->node.resourceId != s->ownedTextSessionResourceId ||
         node->node.nodeKind != s->ownedTextSessionNodeKind) return 0;
@@ -6689,7 +6719,9 @@ static int enqueue_windows_navigation(CjguiWindowsRendererSession *s, const char
     event.nodeKind = s->ownedTextSessionNodeKind;
     event.bindingEpoch = s->ownedTextSessionBindingEpoch;
     event.modifierFlags = frozenModifiers;
-    return push_event_payload(s, &event, intent, (uint32_t)strlen(intent));
+    if (!push_event_payload(s, &event, intent, (uint32_t)strlen(intent))) return 0;
+    if (nav_intent_is_movement(intent)) s->navBarrierArmed = 1u;
+    return 1;
 }
 
 static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key,
@@ -6717,6 +6749,104 @@ static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key,
     }
     if (!intent) return 0;
     return enqueue_windows_navigation(s, intent, frozenModifiers);
+}
+
+static int nav_intent_is_movement(const char *intent) {
+    if (!intent) return 0;
+    return strcmp(intent, "left") == 0 || strcmp(intent, "right") == 0 ||
+        strcmp(intent, "up") == 0 || strcmp(intent, "down") == 0 ||
+        strcmp(intent, "home") == 0 || strcmp(intent, "end") == 0;
+}
+
+static int nav_intent_is_delete(const char *intent) {
+    if (!intent) return 0;
+    return strcmp(intent, "deleteBackward") == 0 || strcmp(intent, "deleteForward") == 0;
+}
+
+static int nav_barrier_hold_char(CjguiWindowsRendererSession *s,
+    const char *insert, uint32_t insertLength) {
+    if (!s || !insert) return 0;
+    if (s->navHoldCount >= CJGUI_WINDOWS_NAV_HOLD_CAPACITY ||
+        s->navHoldBytes + insertLength > CJGUI_WINDOWS_NAV_HOLD_BYTES) {
+        s->eventQueueFull = 1u;
+        return 1;
+    }
+    char *copy = duplicate_utf8_bytes(insert, insertLength);
+    if (!copy) {
+        s->eventQueueFull = 1u;
+        return 1;
+    }
+    uint32_t slot = (s->navHoldHead + s->navHoldCount) % CJGUI_WINDOWS_NAV_HOLD_CAPACITY;
+    s->navHold[slot].isDelete = 0u;
+    s->navHold[slot].bytes = copy;
+    s->navHold[slot].length = insertLength;
+    s->navHold[slot].modifiers = 0;
+    s->navHoldCount += 1u;
+    s->navHoldBytes += insertLength;
+    return 1;
+}
+
+static int nav_barrier_hold_delete(CjguiWindowsRendererSession *s,
+    const char *intent, int64_t frozenModifiers) {
+    if (!s || !intent) return 0;
+    uint32_t intentLength = (uint32_t)strlen(intent);
+    if (s->navHoldCount >= CJGUI_WINDOWS_NAV_HOLD_CAPACITY ||
+        s->navHoldBytes + intentLength > CJGUI_WINDOWS_NAV_HOLD_BYTES) {
+        s->eventQueueFull = 1u;
+        return 1;
+    }
+    char *copy = duplicate_utf8_bytes(intent, intentLength);
+    if (!copy) {
+        s->eventQueueFull = 1u;
+        return 1;
+    }
+    uint32_t slot = (s->navHoldHead + s->navHoldCount) % CJGUI_WINDOWS_NAV_HOLD_CAPACITY;
+    s->navHold[slot].isDelete = 1u;
+    s->navHold[slot].bytes = copy;
+    s->navHold[slot].length = intentLength;
+    s->navHold[slot].modifiers = frozenModifiers;
+    s->navHoldCount += 1u;
+    s->navHoldBytes += intentLength;
+    return 1;
+}
+
+static void nav_barrier_release(CjguiWindowsRendererSession *s, int replay) {
+    if (!s || !s->navBarrierArmed) return;
+    struct {
+        uint32_t isDelete;
+        char *bytes;
+        uint32_t length;
+        int64_t modifiers;
+    } held[CJGUI_WINDOWS_NAV_HOLD_CAPACITY];
+    uint32_t heldCount = 0u;
+    while (s->navHoldCount > 0u && heldCount < CJGUI_WINDOWS_NAV_HOLD_CAPACITY) {
+        uint32_t slot = s->navHoldHead % CJGUI_WINDOWS_NAV_HOLD_CAPACITY;
+        held[heldCount].isDelete = s->navHold[slot].isDelete;
+        held[heldCount].bytes = s->navHold[slot].bytes;
+        held[heldCount].length = s->navHold[slot].length;
+        held[heldCount].modifiers = s->navHold[slot].modifiers;
+        s->navHold[slot].bytes = NULL;
+        s->navHold[slot].length = 0u;
+        s->navHoldHead = (s->navHoldHead + 1u) % CJGUI_WINDOWS_NAV_HOLD_CAPACITY;
+        s->navHoldCount -= 1u;
+        heldCount += 1u;
+    }
+    s->navHoldBytes = 0u;
+    s->navBarrierArmed = 0u;
+    if (!replay) {
+        for (uint32_t i = 0u; i < heldCount; ++i) free(held[i].bytes);
+        return;
+    }
+    s->navReplayActive = 1u;
+    for (uint32_t i = 0u; i < heldCount; ++i) {
+        if (held[i].isDelete) {
+            (void)enqueue_windows_navigation(s, held[i].bytes, held[i].modifiers);
+        } else {
+            (void)queue_owned_range_replace(s, held[i].bytes, held[i].length);
+        }
+        free(held[i].bytes);
+    }
+    s->navReplayActive = 0u;
 }
 
 static int read_imm_utf8(HIMC context, DWORD index, char **outText,
@@ -7113,6 +7243,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
         return CJGUI_INTERNAL_RENDERER_GRAPHEME_BOUNDARY_INVALID;
     s->selectionStart16 = selectionStart; s->selectionEnd16 = selectionEnd;
     *outSelectionStart = selectionStart; *outSelectionEnd = selectionEnd;
+    nav_barrier_release(s, 1);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 

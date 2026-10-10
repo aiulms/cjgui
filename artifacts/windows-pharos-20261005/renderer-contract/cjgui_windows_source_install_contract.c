@@ -7,8 +7,9 @@
 //   selection; the gated-input counter must read exactly 3.
 // Control 2 (atomic install): installing A while focus sits on B must
 //   succeed with the correct ticket (proxy + focus + non-empty range land
-//   together, gate consumed) and fail with a wrong epoch leaving B intact;
-//   the first keystroke after install replaces exactly the new frozen range.
+//   together, gate goes provisional and stays held) and fail with a wrong
+//   epoch leaving B intact; after the owner settles the gate, the first
+//   keystroke replaces exactly the new frozen range.
 // Control 3 (recover): recovering non-active target B while A is edited
 //   must refuse with proxy/selection/pending input preserved (A keeps typing).
 #include <stdio.h>
@@ -17,8 +18,11 @@
 #include <windows.h>
 
 #include "cjgui_internal_renderer.h"
+#include "probe_recovery_receiver.h"
 
 uint64_t cjgui_internal_renderer_source_install_gated_inputs(uint64_t session);
+extern uint32_t cjgui_internal_renderer_debug_source_install_state(uint64_t token,
+    uint32_t *outProvisional, uint32_t *outOutcome);
 
 static LPARAM logical_to_client_point(double x, double y, uint32_t dpi) {
     double scale = (double)dpi / 96.0;
@@ -104,7 +108,7 @@ int main(void) {
         status = cjgui_internal_renderer_present_composable_scene(session, &frame);
     if (status != CJGUI_INTERNAL_RENDERER_OK || frame.frameIndex == 0u) {
         fprintf(stderr, "WINDOWS_INSTALL_RED scene_status=%d\n", status);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 11;
     }
     CjguiInternalRendererWindowBackgroundSnapshot snapshot;
@@ -112,7 +116,7 @@ int main(void) {
     status = cjgui_internal_renderer_window_background_snapshot(session, &snapshot);
     if (status != CJGUI_INTERNAL_RENDERER_OK || snapshot.acceptedSceneVersion == 0u) {
         fprintf(stderr, "WINDOWS_INSTALL_RED snapshot_status=%d\n", status);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 12;
     }
     uint64_t sceneVersion = snapshot.acceptedSceneVersion;
@@ -121,7 +125,7 @@ int main(void) {
     if (cjgui_internal_renderer_window_number(session, &hwndValue) != CJGUI_INTERNAL_RENDERER_OK ||
         !hwndValue) {
         fprintf(stderr, "WINDOWS_INSTALL_RED no_hwnd\n");
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 13;
     }
     HWND hwnd = (HWND)(intptr_t)hwndValue;
@@ -149,7 +153,7 @@ int main(void) {
             nodeA.nodeId, 0, nodeA.nodeKind, 9u, 1u);
     if (status != CJGUI_INTERNAL_RENDERER_OK) {
         fprintf(stderr, "WINDOWS_INSTALL_RED bind_status=%d\n", status);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 14;
     }
     pump_all(session, &event, NULL, NULL, 0u);
@@ -157,7 +161,7 @@ int main(void) {
     status = cjgui_internal_renderer_set_source_install_gate(session, 9u, 1001u, 1u);
     if (status != CJGUI_INTERNAL_RENDERER_OK) {
         fprintf(stderr, "WINDOWS_INSTALL_RED arm_status=%d\n", status);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 15;
     }
     // Control 1: gated char / delete / navigation must not transact.
@@ -170,8 +174,17 @@ int main(void) {
     if (gatedRange != 0u || gatedNav != 0u || gated != 3u) {
         fprintf(stderr, "WINDOWS_INSTALL_RED gate_leak range=%u nav=%u gated=%llu\n",
             gatedRange, gatedNav, (unsigned long long)gated);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 16;
+    }
+    // Independent gate control settles by cancellation, then the real test
+    // receiver stores all three held operations before ACK. The install control
+    // begins with a fresh request instead of silently forgetting held inputs.
+    extern CjguiInternalRendererStatus cjgui_internal_renderer_finish_source_install(uint64_t,uint64_t,uint32_t,uint64_t);
+    if(cjgui_internal_renderer_finish_source_install(session,1001u,2u,0u)!=0 ||
+        probe_receive_recovery(session)!=3 ||
+        cjgui_internal_renderer_set_source_install_gate(session,9u,1003u,1u)!=0){
+        fprintf(stderr,"WINDOWS_INSTALL_RED gate_recovery_transfer\n");probe_destroy_with_recovery(session);return 16;
     }
     // Move focus to B; the correct ticket for A must still install atomically.
     click_node(session, hwnd, dpi, 16 + 240.0, 128 + 36.0, nodeB.nodeId);
@@ -180,24 +193,43 @@ int main(void) {
     uint32_t outStart = 0u, outEnd = 0u;
     uint8_t deferred = 0u;
     status = cjgui_internal_renderer_install_owned_source_selection(session,
-        nodeA.nodeId, 0, sceneVersion, 9u, 1001u, deadline,
+        nodeA.nodeId, 0, sceneVersion, 9u, 1003u, deadline,
         "hello world", 0u, 5u, &outStart, &outEnd, &deferred);
     if (status != CJGUI_INTERNAL_RENDERER_OK || deferred || outStart != 0u || outEnd != 5u) {
         fprintf(stderr, "WINDOWS_INSTALL_RED install_status=%d deferred=%u sel=%u:%u\n",
             status, deferred, outStart, outEnd);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 17;
     }
-    if (cjgui_internal_renderer_source_install_pending_scalar(session) != 0u) {
-        fprintf(stderr, "WINDOWS_INSTALL_RED gate_not_consumed\n");
-        (void)cjgui_internal_renderer_destroy(session);
+    uint32_t prov = 0u, outcome = 0u;
+    uint32_t stillPending =
+        cjgui_internal_renderer_debug_source_install_state(session, &prov, &outcome);
+    if (!stillPending || !prov || outcome != 1u) {
+        fprintf(stderr, "WINDOWS_INSTALL_RED not_provisional pending=%u prov=%u outcome=%u\n",
+            stillPending, prov, outcome);
+        (void)probe_destroy_with_recovery(session);
+        return 18;
+    }
+    // Owner settles the gate; only then may input flow again.
+    status = cjgui_internal_renderer_set_source_install_gate(session, 9u, 1003u, 0u);
+    if (status != CJGUI_INTERNAL_RENDERER_OK) {
+        fprintf(stderr, "WINDOWS_INSTALL_RED settle_status=%d\n", status);
+        (void)probe_destroy_with_recovery(session);
+        return 18;
+    }
+    stillPending =
+        cjgui_internal_renderer_debug_source_install_state(session, &prov, &outcome);
+    if (stillPending || prov || outcome != 2u) {
+        fprintf(stderr, "WINDOWS_INSTALL_RED not_confirmed pending=%u prov=%u outcome=%u\n",
+            stillPending, prov, outcome);
+        (void)probe_destroy_with_recovery(session);
         return 18;
     }
     // Wrong epoch must refuse and leave everything (focus A, range 0:5) intact.
     status = cjgui_internal_renderer_set_source_install_gate(session, 9u, 1002u, 1u);
     if (status != CJGUI_INTERNAL_RENDERER_OK) {
         fprintf(stderr, "WINDOWS_INSTALL_RED rearm_status=%d\n", status);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 19;
     }
     outStart = 0u; outEnd = 0u; deferred = 0u;
@@ -206,13 +238,13 @@ int main(void) {
         "hello world", 0u, 2u, &outStart, &outEnd, &deferred);
     if (status == CJGUI_INTERNAL_RENDERER_OK) {
         fprintf(stderr, "WINDOWS_INSTALL_RED stale_epoch_accepted\n");
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 20;
     }
     status = cjgui_internal_renderer_set_source_install_gate(session, 9u, 1002u, 0u);
     if (status != CJGUI_INTERNAL_RENDERER_OK) {
         fprintf(stderr, "WINDOWS_INSTALL_RED disarm_status=%d\n", status);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 21;
     }
     // First keystroke after install replaces exactly the new frozen range.
@@ -232,7 +264,7 @@ int main(void) {
             event.kind, (unsigned long long)event.nodeId, eventText,
             (long long)event.replacementStart16, (long long)event.replacementLength16,
             event.selectionStart, event.selectionEnd);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 22;
     }
     // Control 3: recovering non-active B must refuse; A keeps typing.
@@ -241,7 +273,7 @@ int main(void) {
         nodeB.nodeId, 0, nodeB.nodeKind, "other text", &recStart, &recEnd);
     if (status == CJGUI_INTERNAL_RENDERER_OK) {
         fprintf(stderr, "WINDOWS_INSTALL_RED foreign_recover_accepted\n");
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 23;
     }
     (void)SendMessageW(hwnd, WM_CHAR, (WPARAM)L'Y', (LPARAM)1);
@@ -254,10 +286,10 @@ int main(void) {
     if (!secondOk) {
         fprintf(stderr, "WINDOWS_INSTALL_RED continue_after_refuse kind=%u node=%llu text=%s\n",
             event.kind, (unsigned long long)event.nodeId, eventText);
-        (void)cjgui_internal_renderer_destroy(session);
+        (void)probe_destroy_with_recovery(session);
         return 24;
     }
     printf("WINDOWS_INSTALL_CONTRACT PASS gate=3 install=0:5 first=X stale_refused recover_refused continue=Y\n");
-    (void)cjgui_internal_renderer_destroy(session);
+    (void)probe_destroy_with_recovery(session);
     return 0;
 }

@@ -40,16 +40,33 @@ def harness(red=None):
     assert owner.count(_splice_anchor)==1,'owner splice anchor drift'
     owner=owner.replace(_splice_anchor,
                         'this.splice(startByte, endByte, if (normalizeNext) { "normalized" } else { inserted })\n        if (this.refuseReadsAfterNextAccept) {',1)
+    # The old compact owner throws beyond EOF. Real bounded sources return an
+    # EOF-adjusted slice after a wide replacement shortens the document.
+    eof='let start = if (startByte < 0) { 0 } else { startByte }'
+    assert owner.count(eof)==1
+    owner=owner.replace(eof,'let start = min(max(startByte, 0), Int64(this.data.size))',1)
+    selection_owner=(ROOT/'src/text_selection_authority_test.cj').read_text()
+    owner+='\n'+balanced(selection_owner,selection_owner.index('class SelectionAuthorityTestOwner <:'))
+    wide_owner=(ROOT/'src/text_selection_wide_input_test.cj').read_text()
+    owner+='\n'+balanced(wide_owner,wide_owner.index('class WideSelectionInputTestOwner <:'))
+    authority=(SNAPSHOT/'text_selection_authority.cj').read_text()
+    authority=authority[authority.index('public class CjguiSourceSelectionSnapshot'):]
     constants='\n'.join(re.findall(r'^public let CJGUI_COMPOSABLE_UI_(?:TEXT_INPUT|INTEGER_INPUT|MULTILINE_TEXT_INPUT): Int64 = \d+$',(SNAPSHOT/'composable_ui.cj').read_text(),re.M))
     marker='                    if (nativeEvent.eventKind == 28u32 && dispatch.didApply && isEditableTextNodeKind('
     assert source.count(marker)==1
     start=source.index(marker);end=source.index('                    if (nativeEvent.eventKind == 31u32 && controller.uiSceneVersion()',start)
     stamp=source[start:end]
-    methods='\n'.join(method(source,n) for n in ('routeOwnedTextSessionRangeEdit','resolveLocalTextContinuation','isEditableTextNodeKind','clearLocalTextContinuation','clearPendingLocalTextValue','ownedTextBindingHolds','recordOwnedRangeLocalAcceptance','resolveOwnedRangeContinuation','ownedRangeMirrorMatches','noteUnresolvedOwnedRangeEvent','adoptOwnedTextSelection'))
+    methods='\n'.join(method(source,n) for n in ('finishOhosInput','noteRefusedOhosInput','flushOhosInputCompletions','admitOhosRangeInput','routeOwnedTextSessionRangeEdit','resolveLocalTextContinuation','isEditableTextNodeKind','clearLocalTextContinuation','clearPendingLocalTextValue','ownedTextBindingHolds','recordOwnedRangeLocalAcceptance','resolveOwnedRangeContinuation','ownedRangeMirrorMatches','noteUnresolvedOwnedRangeEvent','adoptOwnedTextSelection'))
     methods+='\n'+method(source,'resolvePlatformSelectionEvent')
     local_class=balanced(source,source.index('private class CjguiLocalRangeContinuation {')).replace('private class','class',1)
+    local_class+='\n'+balanced(source,source.index('private class CjguiOhosRangeInputAdmission {')).replace('private class','class',1)
     binding_func=balanced(source,source.index('func cjguiSameFocusedTextBinding('))
     binding_func+='\n'+balanced(source,source.index('func cjguiSameOwnedAnchorBinding('))
+    runtime=(SNAPSHOT/'runtime_renderer_session.cj').read_text()
+    constants+='\n'+balanced(runtime,runtime.index('class CjguiOhosInputTicketFact {'))
+    constants+='\nvar testInputOrigin: ?CjguiOhosInputTicketFact = None\nfunc internalRendererInputTicket(token: UInt64): ?CjguiOhosInputTicketFact { return testInputOrigin }'
+    constants+='\nfunc internalRendererWindowLog(message: String): Unit {}'
+    constants+='\n'+authority
     constants+='\n'+local_class+'\n'+binding_func+'\n'+ '\n'.join(re.findall(r'^private let CJGUI_OWNED_SELECTION_[^\n]+',source,re.M)).replace('private let','let')
     selection_source=balanced((SNAPSHOT/'composable_ui.cj').read_text(),(SNAPSHOT/'composable_ui.cj').read_text().index('    public func resolveSelection('))
     template=HERE/'fixtures/range_continuation_snapshot_harness.cj.txt'
@@ -61,6 +78,8 @@ def harness(red=None):
     return result
 
 RED_GUARDS={
+    'postimage-origin':('let proposedOrigin = sourceStart - prefix','let proposedOrigin = beforeMirror.startByte'),
+    'input-source-choice':('rootBasis == basis && t.before == session.mirrorText()', 'true && t.before == session.mirrorText()'),
     'owner-revision':('mirror.sourceVersion == c.mirror.contentVersion','true'),
     'exact-postimage':('!exactLocalPostimage || !before.prepared','false || !before.prepared'),
     'full-mirror':('pendingLocalTextValue = after.text','pendingLocalTextValue = eventText'),

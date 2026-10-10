@@ -1911,7 +1911,12 @@ public class CjguiSharedOperationExternalConnection {
                 return false
             }
             let count = min(chunkSize, frame.size - offset)
-            client.writeTimeout = Some(Duration.millisecond * min(CJGUI_SHARED_OPERATION_IO_SLICE_MS, remainingMs))
+            // The repeatable I/O slice is not a frame-write deadline. A
+            // timed-out Unit-returning write cannot be resumed safely, so a
+            // normal receiver scheduling gap must use the frame's remaining
+            // absolute budget. Endpoint stop closes active sockets to wake
+            // this worker; it does not wait for the writer deadline.
+            client.writeTimeout = Some(Duration.millisecond * remainingMs)
             try {
                 client.write(frame.slice(offset, count))
                 offset += count
@@ -3067,7 +3072,13 @@ public class CjguiSharedOperationExternalConnection {
         if (!body.isAvailable) {
             return errorPayload(body.failureReason)
         }
-        return "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND SNAPSHOT\n${body.body}END"
+        // Also publish the descriptor's non-authorizing nonce for native transports that use
+        // dispatchPayload without a Unix socket. Fixed-snapshot clients echo this identity;
+        // a repeated resource id after restart must never revive the previous endpoint.
+        let payload = "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND SNAPSHOT\n" +
+            "ENDPOINT_INSTANCE ${this.endpointInstanceValue}\nENDPOINT_BIND_GENERATION ${this.endpointGeneration}\n" +
+            "${body.body}END"
+        return if (isBoundedPayload(payload)) { payload } else { errorPayload("snapshot_over_budget") }
     }
 
     private func windowProgressPayload(

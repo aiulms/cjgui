@@ -2,6 +2,7 @@ package cjgui
 
 import std.collection.*
 import std.time.*
+import std.convert.*
 
 // runtime_renderer_session.cj
 //
@@ -957,6 +958,10 @@ foreign {
         outProgress: CPointer<CjguiInternalRendererComposableDisplayProgress>
     ): Int32
 
+    func cjgui_ohos_focus_generation(session: UInt64): UInt64
+    func cjgui_ohos_restore_focus_checked(session: UInt64, nodeId: UInt64,
+        expectedBindingEpoch: UInt64, focusGeneration: UInt64): Int32
+
     func cjgui_internal_renderer_focus_composable_node(session: UInt64, nodeId: UInt64): Int32
     func cjgui_internal_renderer_focus_composable_node_checked(
         session: UInt64, nodeId: UInt64, expectedBindingEpoch: UInt64): Int32
@@ -979,6 +984,15 @@ foreign {
     // 设备上不可见。这个出口只把字符串记进渲染器日志，不读写会话状态。
     func ohos_renderer_window_log(message: CString): Int32
 
+    // H 连续写作包 A：键盘遮挡上沿（surface 内 px；-1=无键盘）与编辑 caret
+    // 场景矩形（vp）。只读；写入在平台桥与渲染线程绘制点。
+    func ohos_renderer_keyboard_overlay_top_vp(): Float64
+    func ohos_renderer_effective_visible_band(session: UInt64, expectedScene: UInt64,
+        outWidth: CPointer<Float64>, outHeight: CPointer<Float64>): Int32
+    func ohos_renderer_accepted_active_caret_rect(session: UInt64, expectedScene: UInt64,
+        outNodeId: CPointer<UInt64>, outBinding: CPointer<UInt64>, outLeftVp: CPointer<Float64>,
+        outTopVp: CPointer<Float64>, outRightVp: CPointer<Float64>, outBottomVp: CPointer<Float64>): Int32
+
     // round9-A（H 私有只读接缝）：取**最近一次出队事件**在入队时冻结的来源身份
     // （editingContextId + editingContextGeneration）。公共事件 POD 没有这两个
     // 字段（POD 布局有静态断言，不可扩），所以窗口无法从事件本身知道它属于哪个
@@ -1000,6 +1014,19 @@ foreign {
     // 「没发生」。串里**不含**产品语义分类（无 source/preview 字样）——面归产品判。
     // 返回 nullptr 表示会话不存在。
     func ohos_renderer_accepted_state(session: UInt64): CString
+    func cjgui_ohos_declare_owned_text_source(session: UInt64, nodeId: UInt64, resourceId: Int64,
+        nodeKind: UInt32, bindingEpoch: UInt64, enabled: Int32, mirrorText: CString,
+        mirrorVersion: Int64, basis: CString): Int32
+    func ohos_renderer_caret_paint_progress(session: UInt64): UInt64
+    func ohos_renderer_input_ticket_fact(session: UInt64, part: UInt32): CString
+    func ohos_renderer_publish_choice(session: UInt64, basis: CString, accepted: Int32): Int32
+    func ohos_renderer_input_dirty_ticket(session: UInt64): UInt64
+    func ohos_renderer_finish_refused_input(session: UInt64, ticket: UInt64, request: UInt64, basis: CString): Int32
+    func ohos_renderer_publish_restore_choice(session: UInt64, request: UInt64, basis: CString): Int32
+    func ohos_renderer_input_owner_completion(session: UInt64, ticket: UInt64, accepted: Int32): Int32
+    func ohos_renderer_complete_owned_input(session: UInt64, ticket: UInt64, accepted: Int32,
+        ownerVersion: Int64, postOrigin: Int64, basis: CString): Int32
+
 
     func cjgui_internal_renderer_cancel_composable_pointer_capture(session: UInt64): Int32    func cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(session: UInt64,
         appInstance: UInt64, componentInstance: UInt64, surfaceGeneration: UInt64,
@@ -1507,6 +1534,15 @@ func internalRendererComposableDisplayProgress(session: UInt64): InternalRendere
     )
 }
 
+func internalRendererFocusGeneration(session: UInt64): UInt64 {
+    unsafe { return cjgui_ohos_focus_generation(session) }
+}
+func internalRendererRestoreFocus(session: UInt64, nodeId: Int64,
+    expectedBindingEpoch: UInt64, focusGeneration: UInt64): Int32 {
+    if (nodeId < 0 || focusGeneration == 0) { return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR }
+    unsafe { return cjgui_ohos_restore_focus_checked(session, UInt64(nodeId), expectedBindingEpoch, focusGeneration) }
+}
+
 func internalRendererFocusComposableNode(session: UInt64, nodeId: Int64, expectedBindingEpoch: UInt64): Int32 {
     if (nodeId < 0) {
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
@@ -1550,6 +1586,45 @@ func internalRendererWindowLog(message: String): Unit {
             let _ = ohos_renderer_window_log(resource.value)
         }
     }
+}
+
+/// H 连续写作包 A：读回键盘遮挡上沿（场景 vp；<0 = 无键盘）。
+func internalRendererKeyboardOverlayTopVp(): Float64 {
+    var value: Float64 = -1.0
+    unsafe {
+        value = ohos_renderer_keyboard_overlay_top_vp()
+    }
+    return value
+}
+
+/// H 连续写作包 A：读回当前编辑 caret 的场景矩形（vp）。(0=无有效编辑 caret)
+func internalRendererEffectiveVisibleBand(session: UInt64, expectedScene: UInt64):
+    (Int32, Float64, Float64) {
+    var width: Float64 = 0.0
+    var height: Float64 = 0.0
+    var status: Int32 = 0
+    unsafe { status = ohos_renderer_effective_visible_band(session, expectedScene, inout width, inout height) }
+    return (status, width, height)
+}
+
+func internalRendererCaretPaintProgress(session: UInt64): UInt64 {
+    return unsafe { ohos_renderer_caret_paint_progress(session) }
+}
+
+func internalRendererAcceptedActiveCaretRect(session: UInt64, expectedScene: UInt64):
+    (Int32, UInt64, UInt64, Float64, Float64, Float64, Float64) {
+    var nodeId: UInt64 = 0
+    var binding: UInt64 = 0
+    var leftVp: Float64 = 0.0
+    var topVp: Float64 = 0.0
+    var bottomVp: Float64 = 0.0
+    var rightVp: Float64 = 0.0
+    var status: Int32 = -1
+    unsafe {
+        status = ohos_renderer_accepted_active_caret_rect(session, expectedScene, inout nodeId,
+            inout binding, inout leftVp, inout topVp, inout rightVp, inout bottomVp)
+    }
+    return (status, nodeId, binding, leftVp, topVp, rightVp, bottomVp)
 }
 
 /// round9-A：读回「最近一次出队事件」的冻结来源身份。
@@ -2135,7 +2210,7 @@ func internalRendererSetComposableRangeEditDelta(session: UInt64, enabled: Bool)
 /// 恢复校验时优先消费它，节点只提供身份与几何。撤回时传空串。
 func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt64, resourceId: Int64,
     nodeKind: UInt32, bindingEpoch: UInt64, enabled: Bool, mirrorText!: String = "",
-    mirrorVersion!: Int64 = -1): Int32 {
+    mirrorVersion!: Int64 = -1, sourceBasis!: String = ""): Int32 {
     let flag: Int32 = if (enabled) {
         1
     } else {
@@ -2144,12 +2219,110 @@ func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt
     let cMirror = unsafe { LibC.mallocCString(mirrorText) }
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     try (mirrorResource = cMirror.asResource()) {
-        unsafe {
-            status = cjgui_internal_renderer_set_composable_owned_text_session(session, nodeId,
-                resourceId, nodeKind, bindingEpoch, flag, mirrorResource.value, mirrorVersion)
+        let cBasis = unsafe { LibC.mallocCString(sourceBasis) }
+        try (basisResource = cBasis.asResource()) {
+            unsafe {
+                status = cjgui_ohos_declare_owned_text_source(session, nodeId,
+                    resourceId, nodeKind, bindingEpoch, flag, mirrorResource.value, mirrorVersion, basisResource.value)
+            }
         }
     }
     return status
+}
+
+// Read immediately for this pump result, before another event is dequeued.
+class CjguiOhosInputTicketFact {
+    let id: Int64; let predecessor: Int64; let key: String; let basis: String
+    let before: String; let after: String; let field: String
+    let choiceBasis: String; let observation: Int64
+    let node: Int64; let resource: Int64; let nodeKind: Int64
+    let ownerBinding: UInt64; let acceptedBinding: UInt64; let projection: UInt64
+    let start16: Int64; let end16: Int64; let inserted: String; let malformed: Bool; let transferred: Bool
+    init(id: Int64, predecessor: Int64, key: String, basis: String,
+        before: String, after: String, field: String, choiceBasis!: String = "", observation!: Int64 = 0,
+        node!: Int64 = -1, resource!: Int64 = -1, nodeKind!: Int64 = -1,
+        ownerBinding!: UInt64 = 0u64, acceptedBinding!: UInt64 = 0u64, projection!: UInt64 = 0u64,
+        start16!: Int64 = -1, end16!: Int64 = -1, inserted!: String = "", malformed!: Bool = false, transferred!: Bool = false) {
+        this.id=id; this.predecessor=predecessor; this.key=key; this.basis=basis
+        this.before=before; this.after=after; this.field=field; this.choiceBasis=choiceBasis; this.observation=observation
+        this.node=node; this.resource=resource; this.nodeKind=nodeKind
+        this.ownerBinding=ownerBinding; this.acceptedBinding=acceptedBinding; this.projection=projection
+        this.start16=start16; this.end16=end16; this.inserted=inserted; this.malformed=malformed; this.transferred=transferred
+    }
+}
+func internalRendererInputTicket(session: UInt64): ?CjguiOhosInputTicketFact {
+    let raw = unsafe { ohos_renderer_input_ticket_fact(session, 0u32) }.toString()
+    if (raw.isEmpty()) { return None }
+    // Presence and validity differ: a malformed real origin never falls back
+    // to a legacy callback lacking a source ticket.
+    let invalid = CjguiOhosInputTicketFact(-1,0,"","","","","",malformed:true)
+    let parts = raw.split("|")
+    if (parts.size != 4) { return Some(invalid) }
+    let id = match (Int64.tryParse(parts[0])) { case Some(v) => v; case None => return Some(invalid) }
+    let predecessor = match (Int64.tryParse(parts[1])) { case Some(v) => v; case None => return Some(invalid) }
+    if (id <= 0 || predecessor < 0 || parts[2].isEmpty()) { return Some(invalid) }
+    let before = unsafe { ohos_renderer_input_ticket_fact(session, 1u32) }.toString()
+    let after = unsafe { ohos_renderer_input_ticket_fact(session, 2u32) }.toString()
+    let field = unsafe { ohos_renderer_input_ticket_fact(session, 3u32) }.toString()
+    let choice = unsafe { ohos_renderer_input_ticket_fact(session, 4u32) }.toString()
+    let observation = match (Int64.tryParse(unsafe { ohos_renderer_input_ticket_fact(session, 5u32) }.toString())) { case Some(v) => v; case None => 0 }
+    let metadata = unsafe { ohos_renderer_input_ticket_fact(session, 6u32) }.toString().split(",")
+    if (metadata.size != 8) { return Some(invalid) }
+    var values = ArrayList<Int64>()
+    for (part in metadata) {
+        let v = match (Int64.tryParse(part)) { case Some(value) => value; case None => return Some(invalid) }
+        values.add(v)
+    }
+    if (values[0] <= 0 || values[2] <= 0 || values[3] <= 0 || values[4] <= 0 || values[5] < 0 ||
+        values[6] < 0 || values[7] < values[6]) { return Some(invalid) }
+    let inserted = unsafe { ohos_renderer_input_ticket_fact(session, 7u32) }.toString()
+    return Some(CjguiOhosInputTicketFact(id,predecessor,parts[2],parts[3],before,after,field,
+        choiceBasis:choice,observation:observation,node:values[0],resource:values[1],nodeKind:values[2],
+        projection:UInt64(values[3]),acceptedBinding:UInt64(values[4]),ownerBinding:UInt64(values[5]),
+        start16:values[6],end16:values[7],inserted:inserted,
+        transferred: unsafe { ohos_renderer_input_ticket_fact(session,8u32) }.toString() == "1"))
+}
+
+func internalRendererPublishObservedChoice(session: UInt64, basis: String, accepted: Bool): Bool {
+    let c = unsafe { LibC.mallocCString(basis) }
+    var published = false
+    try (resource = c.asResource()) {
+        published = unsafe { ohos_renderer_publish_choice(session, resource.value, if (accepted) { 1 } else { 0 }) } == 0
+    }
+    return published
+}
+func internalRendererInputDirtyTicket(session: UInt64): Int64 {
+    return Int64(unsafe { ohos_renderer_input_dirty_ticket(session) })
+}
+func internalRendererPublishRestoredChoice(session: UInt64, request: UInt64, basis: String): Bool {
+    let c=unsafe { LibC.mallocCString(basis) }
+    var okay=false
+    try (resource=c.asResource()) {
+        okay = unsafe { ohos_renderer_publish_restore_choice(session,request,resource.value) } == 0
+    }
+    return okay
+}
+func internalRendererFinishRefusedInput(session: UInt64, ticket: Int64, request: UInt64, basis: String): Bool {
+    let c=unsafe { LibC.mallocCString(basis) }
+    var okay=false
+    try (resource=c.asResource()) {
+        okay = unsafe { ohos_renderer_finish_refused_input(session,UInt64(ticket),request,resource.value) } == 0
+    }
+    return okay
+}
+func internalRendererInputOwnerCompletion(session: UInt64, id: Int64, accepted: Bool,
+    ownerVersion!: Int64 = -1, postOrigin!: Int64 = -1, basis!: String = ""): Bool {
+    if (id <= 0) { return false }
+    if (ownerVersion < 0) {
+        return unsafe { ohos_renderer_input_owner_completion(session, UInt64(id), if (accepted) { 1 } else { 0 }) } == 0
+    }
+    let c=unsafe { LibC.mallocCString(basis) }
+    var okay=false
+    try (resource=c.asResource()) {
+        okay = unsafe { ohos_renderer_complete_owned_input(session,UInt64(id),if(accepted){1}else{0},
+            ownerVersion,postOrigin,resource.value) } == 0
+    }
+    return okay
 }
 
 func internalRendererFormEventText(session: UInt64): String {

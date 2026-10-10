@@ -71,9 +71,10 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, TAG, 'test gate fail-first-frame from launch params rc=%{public}d', rc);
   }
 
-  onDestroy(): void {
+  onDestroy(): Promise<void> {
     hilog.info(DOMAIN, TAG, 'onDestroy');
-    entryNapi.appShutdown();
+    // Keep the UI loop alive until the same host instance has really drained.
+    return entryNapi.appShutdown();
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {

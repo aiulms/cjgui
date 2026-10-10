@@ -3,15 +3,49 @@ package cjgui
 import std.unittest.*
 import std.unittest.testmacro.*
 
+@Test
+func diagnosticsWorkloadAttemptCurrentCountsAndReopen(): Unit {
+    let owner = DiagnosticAcceptedController()
+    let window = CjguiComposableUiWindow(owner)
+    @Assert(window.start(), true)
+    @Assert(window.setWorkloadDiagnostics(true), true)
+    let before = window.diagnosticSnapshot(maximumNodes: 1)
+    @Assert(before.workloadStatus, "enabled")
+    @Assert(before.lastAttemptWorkloadResult, "none")
+    owner.buttonLabel = "Actual changed node text"
+    owner.revision += 1
+    @Assert(window.refresh(), true)
+    let after = window.diagnosticSnapshot(maximumNodes: 1)
+    @Assert(after.lastAttemptWorkloadResult, "accepted")
+    @Assert(after.lastAttemptNodeWrites > 0, true)
+    @Assert(after.lastAttemptNodeWrites, after.nodeWriteCount - before.nodeWriteCount)
+    @Assert(after.lastAttemptNodeClones, after.nodeCloneCount - before.nodeCloneCount)
+    @Assert(after.lastAttemptNodeAllocations, after.nodeAllocationCount - before.nodeAllocationCount)
+    @Assert(after.lastAttemptTextLayoutPreparations,
+        after.textLayoutPreparationCount - before.textLayoutPreparationCount)
+    @Assert(after.lastAttemptImageDecodeStarts, after.imageDecodeStartCount - before.imageDecodeStartCount)
+    let accepted = after.acceptedSceneVersion
+    @Assert(window.diagnosticSnapshot(maximumNodes: 1).acceptedSceneVersion, accepted)
+    window.close()
+    @Assert(window.start(), true)
+    @Assert(window.setWorkloadDiagnostics(true), true)
+    let reopened = window.diagnosticSnapshot(maximumNodes: 1)
+    @Assert(reopened.sessionIdentity != after.sessionIdentity, true)
+    @Assert(reopened.lastAttemptWorkloadResult, "none")
+    @Assert(reopened.lastAttemptNodeWrites, -1)
+    window.close()
+}
+
 private class DiagnosticAcceptedController <: CjguiComposableUiController {
     var revision: Int64 = 1
     var showSelected: Bool = true
+    var buttonLabel: String = "Button"
 
     public func uiSceneVersion(): Int64 { return revision }
     public func buildUi(): CjguiComposableUiNode {
         let root = cjguiComposableVertical(1, "diagnostic-root", CjguiComposableUiStyle())
         if (showSelected) {
-            root.add(cjguiComposableButton(2, "diagnostic-button", "Button", "PRESS", 0,
+            root.add(cjguiComposableButton(2, "diagnostic-button", buttonLabel, "PRESS", 0,
                 CjguiComposableUiStyle(fixedWidth: 120, fixedHeight: 32)))
         }
         return root

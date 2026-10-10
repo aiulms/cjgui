@@ -4,6 +4,7 @@ name = "cjgui_range_text_window_app"
 version = "0.0.0"
 output-type = "executable"
 src-dir = "src"
+compile-option = "-O1"
 link-option = "-framework AppKit -framework Metal -framework MetalKit -framework QuartzCore -lobjc -headerpad_max_install_names"
 
 [dependencies]

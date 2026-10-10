@@ -2,6 +2,49 @@ package cjgui
 
 import std.collection.*
 
+// The synchronous pointer callback may submit a retained source selection.
+// Capture its provenance here, before that callback. Completion must carry
+// this value; observing a later active gesture cannot manufacture it.
+class CjguiMacTextPointerSelectionDispatch {
+    let capture: CjguiMacTextCaptureFacts
+    let sequence: UInt64
+    let eventKind: Int64
+    let previousChoice: CjguiSourceSelectionSnapshot
+    // A mapped reinstall may retain this dispatch only by freezing the actual
+    // predecessor installation at request admission. It is not a new input.
+    let reinstallationSource: ?CjguiInstalledSelectionCompletion
+    // A reinstall retains the physical dispatch unchanged. Its current lease
+    // can only be the successor frozen after native continuation completed.
+    let installedCapture: ?CjguiMacTextCaptureFacts
+    init(capture: CjguiMacTextCaptureFacts, sequence: UInt64, eventKind: Int64,
+        choice: CjguiSourceSelectionSnapshot,
+        reinstallationSource!: ?CjguiInstalledSelectionCompletion = None,
+        installedCapture!: ?CjguiMacTextCaptureFacts = None) {
+        this.capture = capture; this.sequence = sequence; this.eventKind = eventKind; this.previousChoice = choice
+        this.reinstallationSource = reinstallationSource
+        this.installedCapture = installedCapture
+    }
+}
+
+class CjguiMacTextPointerContinuation {
+    let dispatch: CjguiMacTextPointerSelectionDispatch
+    let capture: CjguiMacTextCaptureFacts
+    let completed: CjguiInstalledSelectionCompletion
+    let targetRevision: Int64
+    var offeredScene: Int64 = -1
+    init(dispatch: CjguiMacTextPointerSelectionDispatch, completed: CjguiInstalledSelectionCompletion,
+        targetRevision: Int64, acceptedCapture!: ?CjguiMacTextCaptureFacts = None) {
+        this.dispatch = dispatch; this.completed = completed; this.targetRevision = targetRevision
+        this.capture = acceptedCapture ?? dispatch.installedCapture ?? dispatch.capture
+    }
+}
+
+func cjguiSameSourceChoice(a: CjguiSourceSelectionSnapshot, b: CjguiSourceSelectionSnapshot): Bool {
+    return a.documentId == b.documentId && a.sessionEpoch == b.sessionEpoch &&
+        a.viewGeneration == b.viewGeneration && a.version == b.version && a.revision == b.revision &&
+        a.anchorByte == b.anchorByte && a.focusByte == b.focusByte
+}
+
 // Private mac queued-TEXT capture facts. One original accepted target, bounded
 // arrays, no owner body materialization or native object in the public API.
 func cjguiFreezeMacCaptureStyle(style: CjguiComposableUiStyle): CjguiComposableUiStyle {
@@ -60,6 +103,25 @@ func cjguiFreezeMacCaptureStyle(style: CjguiComposableUiStyle): CjguiComposableU
         effectRejection: style.effectRejection)
 }
 
+// One immutable accepted scroll ancestry. Requested offsets are never proof.
+// Multiple ancestors remain fail-closed until their motion can be composed.
+class CjguiMacTextCaptureScrollFacts {
+    let binding: CjguiComposableUiScrollBindingRecord
+    let ownerWindow: Int64
+    let offset: Int64
+    let contentExtent: Int64
+    let viewportExtent: Int64
+    let containerBounds: CjguiComposableUiRect
+    init(binding: CjguiComposableUiScrollBindingRecord, container: CjguiComposableUiLayoutNode) {
+        this.binding = binding
+        this.ownerWindow = binding.viewport.ownerWindowToken()
+        this.offset = binding.viewport.acceptedOffset()
+        this.contentExtent = binding.viewport.contentExtent()
+        this.viewportExtent = binding.viewport.viewportExtent()
+        this.containerBounds = container.bounds
+    }
+}
+
 class CjguiMacTextCaptureFacts {
     let serial: UInt64
     let node: CjguiComposableUiLayoutNode
@@ -77,6 +139,7 @@ class CjguiMacTextCaptureFacts {
     let modalLayer: String
     let clipOwners: ArrayList<CjguiComposableUiLayoutNode>
     let clipEpochs: ArrayList<UInt64>
+    let scroll: ?CjguiMacTextCaptureScrollFacts
     let acceptedScenes = ArrayList<Int64>()
     var revokedReason: String = ""
     init(serial: UInt64, node: CjguiComposableUiLayoutNode,
@@ -84,7 +147,8 @@ class CjguiMacTextCaptureFacts {
         ownerRevision: Int64, bindingEpoch: UInt64, gestureEpoch: UInt64,
         nativeSession: UInt64, nativeGeneration: UInt64, coordinateGeneration: UInt64,
         modalLayer: String, clipOwners: ArrayList<CjguiComposableUiLayoutNode>,
-        clipEpochs: ArrayList<UInt64>, scene: Int64) {
+        clipEpochs: ArrayList<UInt64>, scene: Int64,
+        scroll!: ?CjguiMacTextCaptureScrollFacts = None) {
         this.serial = serial
         this.node = node
         this.style = cjguiFreezeMacCaptureStyle(node.style)
@@ -102,6 +166,7 @@ class CjguiMacTextCaptureFacts {
         this.modalLayer = modalLayer
         this.clipOwners = ArrayList<CjguiComposableUiLayoutNode>(clipOwners)
         this.clipEpochs = ArrayList<UInt64>(clipEpochs)
+        this.scroll = scroll
         acceptedScenes.add(scene)
     }
     func revoke(reason: String): Unit {
@@ -124,5 +189,16 @@ class CjguiMacTextCaptureFacts {
         if (revokedReason.size > 0) { return false }
         for (accepted in acceptedScenes) { if (accepted == scene) { return true } }
         return false
+    }
+}
+
+// One accepted publication's immutable owner/mapping/geometry facts. Native
+// BEGIN receipts pin only the frames they actually reference, not all redraws.
+class CjguiMacTextPointerBeginFrame {
+    let publication: UInt64
+    let scene: Int64
+    let targets: ArrayList<CjguiMacTextCaptureFacts>
+    init(publication: UInt64, scene: Int64, targets: ArrayList<CjguiMacTextCaptureFacts>) {
+        this.publication = publication; this.scene = scene; this.targets = targets
     }
 }

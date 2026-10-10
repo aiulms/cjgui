@@ -31,6 +31,7 @@
 #include <cmath>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -809,6 +810,18 @@ std::mutex g_hostTransitionMutex;
 uint64_t g_ownerOutcomeInstance = 0;
 int32_t g_ownerOutcome = -1;  // -1=未返回，0=有序退出，1=失败
 
+// Receipt of the existing monitor, not another stopping state machine.
+// One monotonic deadline is shared by observation and the UIAbility Promise.
+struct HostStopObservation {
+    uint64_t instance = 0;
+    bool terminal = false, success = false;
+    const char *reason = "host_stop_pending";
+    std::chrono::steady_clock::time_point deadline{};
+};
+HostStopObservation g_stopObservation; // g_hostTransitionMutex
+std::condition_variable g_stopCv;
+constexpr auto kHostStopBudget = std::chrono::seconds(10);
+
 // 「是否已启动」由 phase 推导（唯一真相）。
 bool hostStarted() {
     int phase = g_hostPhase.load();
@@ -1339,6 +1352,8 @@ static int32_t bridgeSimulateSurfaceCreatedImpl(void)
     return 0;
 }
 
+static uint64_t ingressAppInstance() { return g_appInstance.load(); }
+
 CjguiOhosIngress g_ingress = {
     ingressSurfaceActive,
     ingressTouchDequeue,
@@ -1357,6 +1372,7 @@ CjguiOhosIngress g_ingress = {
     nullptr,   // simulateSurfaceRetired（IngressSimulateRegistrar 填入）
     nullptr,   // simulateSurfaceCreated
     nullptr,   // injectTouch
+    ingressAppInstance,
 };
 
 
@@ -1885,6 +1901,14 @@ void dispatchTouchImpl(OH_NativeXComponent *component, void *window) {
             }
             g_activePointerId = touch.id;
         } else {
+            if (action == kTouchEnd || action == kTouchCancel) {
+                // Observe the platform terminal before pointer filtering. This
+                // distinguishes missing OS delivery from a rejected identity
+                // without inventing a terminal for a still-held gesture.
+                HLOGI("platform touch terminal action=%{public}u id=%{public}d active=%{public}d gen=%{public}llu",
+                      action, touch.id, g_activePointerId,
+                      static_cast<unsigned long long>(generation));
+            }
             if (g_activePointerId < 0 || touch.id != g_activePointerId) {
                 return;  // 副指的 MOVE/UP/CANCEL 不终结、不移动主指手势
             }
@@ -1938,12 +1962,20 @@ static napi_value ProbeCangjie(napi_env env, napi_callback_info info) {
 }
 
 using SetFocusSinkFn = void (*)(void (*)(const char *fieldName));
+using SetDocumentIntentSinkFn = void (*)(int32_t (*)(const char *json));
+using SetKeyboardOverlayFn = void (*)(int32_t topPxInSurface);
 using RequestAppStopFn = int32_t (*)();
 using ShutdownRenderFn = int32_t (*)();
 using ShutdownDoneFn = int32_t (*)();
 using ImeContextCommitFn = int32_t (*)(const char *, size_t, int64_t);
 using ImeContextPreviewFn = int32_t (*)(const char *, size_t, int64_t);
+using ImePlainKeyFn = int32_t (*)(const char *, int64_t, uint64_t);
 using ImeContextEndFn = int32_t (*)(int64_t);
+using FocusAuthorityFn = int64_t (*)(uint64_t, uint64_t, int64_t, uint64_t, uint64_t, int32_t, uint64_t, int64_t, uint64_t);
+using FocusForegroundFn = void (*)(uint64_t, int32_t);
+using InputWillFn = int64_t (*)(const char *,size_t,const char *,size_t,const char *,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t);
+using InputChangeFn = int32_t (*)(const char *,size_t,uint64_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t);
+using FinishProxyFn = int32_t (*)(const char *, size_t, uint64_t, uint64_t, int64_t, uint64_t, uint64_t, uint64_t);
 using ImeContextQueryFn = int32_t (*)(char *, int32_t);
 using ImeGraphemeQueryFn = int32_t (*)(const char *, size_t, int32_t, int64_t, int32_t *, int32_t *);
 using ImeSetSelectionFn = int32_t (*)(int32_t, int32_t, int64_t);
@@ -1974,6 +2006,8 @@ static std::atomic<int32_t> g_testGateLastRc{-2};
 static std::atomic<int32_t> g_testGateLastMs{-1};
 static std::atomic<int32_t> g_testGateLastCount{-1};
 static SetFocusSinkFn setFocusSinkFn = nullptr;
+static SetDocumentIntentSinkFn setDocumentIntentSinkFn = nullptr;
+static SetKeyboardOverlayFn setKeyboardOverlayFn = nullptr;
 static RequestAppStopFn requestAppStopFn = nullptr;
 static ShutdownRenderFn shutdownRenderFn = nullptr;
 static ShutdownDoneFn shutdownDoneFn = nullptr;
@@ -1983,11 +2017,17 @@ static ImeContextPreviewFn imeContextPreviewFn = nullptr;
 using ImeContextPreviewRangeFn = int32_t (*)(const char *, size_t, int32_t, int32_t, int64_t);
 static ImeContextPreviewRangeFn imeContextPreviewRangeFn = nullptr;
 static ImeContextEndFn imeContextEndFn = nullptr;
+static FocusAuthorityFn focusAuthorityFn = nullptr;
+static FocusForegroundFn focusForegroundFn = nullptr;
+static FinishProxyFn finishProxyFn = nullptr;
+static InputWillFn inputWillFn = nullptr;
+static InputChangeFn inputChangeFn = nullptr;
 static ImeContextQueryFn imeContextQueryFn = nullptr;
 // 菜单有界元数据（B）：与整文查询同一符号族，但只含 O(1) 字段。
 using ImeMenuMetaFn = int32_t (*)(char *, int32_t);
 static ImeMenuMetaFn imeMenuMetaFn = nullptr;
 static ImeGraphemeQueryFn imeGraphemeQueryFn = nullptr;
+static ImePlainKeyFn imePlainKeyFn = nullptr;
 static ImeSetSelectionFn imeSetSelectionFn = nullptr;
 static ImeMenuCommandFn imeMenuCommandFn = nullptr;
 static ImeRestoreAckFn imeRestoreAckFn = nullptr;
@@ -2080,6 +2120,10 @@ static void resolvePlatformEntryPoints(void *handle)
     }
     setFocusSinkFn = reinterpret_cast<SetFocusSinkFn>(
         dlsym(handle, "ohos_renderer_set_focus_sink"));
+    setDocumentIntentSinkFn = reinterpret_cast<SetDocumentIntentSinkFn>(
+        dlsym(handle, "ohos_renderer_set_document_intent_sink"));
+    setKeyboardOverlayFn = reinterpret_cast<SetKeyboardOverlayFn>(
+        dlsym(handle, "ohos_renderer_set_keyboard_overlay_px"));
     requestAppStopFn = reinterpret_cast<RequestAppStopFn>(
         dlsym(handle, "cjgui_ohos_request_application_stop"));
     if (requestAppStopFn == nullptr) {
@@ -2113,6 +2157,13 @@ static void resolvePlatformEntryPoints(void *handle)
         dlsym(handle, "ohos_renderer_ime_preview_range_ctx"));
     imeContextEndFn = reinterpret_cast<ImeContextEndFn>(
         dlsym(handle, "ohos_renderer_ime_finish_editing_ctx"));
+    focusAuthorityFn = reinterpret_cast<FocusAuthorityFn>(dlsym(handle, "ohos_renderer_focus_authority"));
+    focusForegroundFn = reinterpret_cast<FocusForegroundFn>(dlsym(handle, "ohos_renderer_focus_foreground"));
+    finishProxyFn = reinterpret_cast<FinishProxyFn>(dlsym(handle, "ohos_renderer_finish_proxy"));
+    inputWillFn = reinterpret_cast<InputWillFn>(dlsym(handle,"ohos_renderer_input_will"));
+    inputChangeFn = reinterpret_cast<InputChangeFn>(dlsym(handle,"ohos_renderer_input_change"));
+    if(!inputWillFn || !inputChangeFn) HLOGW("paired input entry unavailable");
+    if (!focusAuthorityFn || !focusForegroundFn || !finishProxyFn) HLOGW("focus authority entry unavailable");
     imeGraphemeQueryFn = reinterpret_cast<ImeGraphemeQueryFn>(
         dlsym(handle, "ohos_renderer_ime_grapheme_range_ctx"));
     imeContextQueryFn = reinterpret_cast<ImeContextQueryFn>(
@@ -2120,6 +2171,8 @@ static void resolvePlatformEntryPoints(void *handle)
     imeMenuMetaFn = reinterpret_cast<ImeMenuMetaFn>(
         dlsym(handle, "ohos_renderer_ime_menu_meta_json"));
     if (imeMenuMetaFn == nullptr) HLOGW("symbol missing: ohos_renderer_ime_menu_meta_json");
+    imePlainKeyFn = reinterpret_cast<ImePlainKeyFn>(
+        dlsym(handle, "ohos_renderer_ime_plain_key_ctx"));
     imeSetSelectionFn = reinterpret_cast<ImeSetSelectionFn>(
         dlsym(handle, "ohos_renderer_ime_set_selection_ctx"));
     imeMenuCommandFn = reinterpret_cast<ImeMenuCommandFn>(
@@ -2129,6 +2182,8 @@ static void resolvePlatformEntryPoints(void *handle)
 
     // 逐个点名缺失项：文字代理的任一环节缺失都应显式可见，不能静默降级。
     if (setFocusSinkFn == nullptr) HLOGW("symbol missing: ohos_renderer_set_focus_sink");
+    if (setDocumentIntentSinkFn == nullptr) HLOGW("symbol missing: ohos_renderer_set_document_intent_sink");
+    if (setKeyboardOverlayFn == nullptr) HLOGW("symbol missing: ohos_renderer_set_keyboard_overlay_px");
     if (requestAppStopFn == nullptr) HLOGW("symbol missing: request_application_stop");
     if (shutdownRenderFn == nullptr) HLOGW("symbol missing: shutdown_render_thread");
     if (shutdownDoneFn == nullptr) HLOGW("symbol missing: renderer_shutdown_done");
@@ -2205,6 +2260,8 @@ static void resolvePlatformEntryPoints(void *handle)
 
 // 前置声明：定义在 RegisterFocusRequest 之后（依赖 g_focusRequestFn）。
 static void RequestFocusFromRenderer(const std::string &payload);
+// 前置声明：定义在 RegisterDocumentIntent 之后（依赖 g_documentIntentFn）。
+static int32_t DocumentIntentSink(const char *json);
 
 // 渲染器焦点请求：payload 是带不透明上下文编号的 JSON（{"context":N,"field":"..."}）。
 // 宿主只做透明转发，不解释字段名与几何。
@@ -2319,6 +2376,8 @@ static napi_value StartHost(napi_env env, napi_callback_info info) {
         g_ownerThreadId = std::thread::id{};
         g_ownerOutcomeInstance = startAppInstance;
         g_ownerOutcome = -1;
+        g_stopObservation = {};
+        g_stopCv.notify_all(); // old waiters may only report instance_changed
         g_stopRequested.store(false);
         g_ownerReady.store(false);
         g_ownerExited.store(false);
@@ -2422,6 +2481,7 @@ static napi_value StartHost(napi_env env, napi_callback_info info) {
             g_resetInstanceObservationsFn();
         }
         if (setFocusSinkFn) setFocusSinkFn(FocusRequestSink);
+        if (setDocumentIntentSinkFn) setDocumentIntentSinkFn(DocumentIntentSink);
         auto appMain = reinterpret_cast<AppMainFn>(dlsym(g_cangjieLib, "cjgui_ohos_app_main"));
         if (appMain == nullptr) {
             HLOGE("cjgui_ohos_app_main missing: %s", dlerror());
@@ -2488,8 +2548,21 @@ static void startStopMonitorOnce(uint64_t stopAppInstance) {
     //   ③ 窗口会话/票据收敛（occupied=0、unacked=0、pending=0）；
     //   ④ 本实例 surface 使用许可与 native 引用全部归还。
     // 传输侧的结果由 owner 清理后声明，失败不会发布有序 owner 结果。
+    {
+        std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+        if (g_appInstance.load() != stopAppInstance ||
+            g_ownerOutcomeInstance != stopAppInstance ||
+            g_stopObservation.instance == stopAppInstance) return;
+        g_stopObservation = {stopAppInstance, false, false, "host_stop_pending",
+            std::chrono::steady_clock::now() + kHostStopBudget};
+    }
     std::thread([stopAppInstance]() {
-        const int maxRounds = 1000;   // ≤10s 有界观察
+        std::chrono::steady_clock::time_point deadline;
+        {
+            std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+            if (g_stopObservation.instance != stopAppInstance) return;
+            deadline = g_stopObservation.deadline;
+        }
         bool ownerJoined = false;
         bool rendererDone = false;
         int32_t occupied = -1;
@@ -2499,7 +2572,7 @@ static void startStopMonitorOnce(uint64_t stopAppInstance) {
         int64_t refsUnclosed = -1;
         bool converged = false;
         bool rendererNotStarted = false;
-        for (int i = 0; i < maxRounds; ++i) {
+        while (std::chrono::steady_clock::now() < deadline) {
             int32_t ownerOutcome = -1;
             int phase = kHostFailed;
             {
@@ -2546,23 +2619,23 @@ static void startStopMonitorOnce(uint64_t stopAppInstance) {
                 g_hostPhase.store(kHostStopped);
                 settled = true;
             }
+            // Publish the measured final log before waking the Promise waiter.
+            if (settled) {
+                HLOGI("stop settled appInstance=%{public}llu ownerJoined=1 rendererDone=%{public}d rendererNotStarted=%{public}d sessions=0 unacked=0 pending=0 refsUnclosed=0 activeSurfaces=0 (phase=stopped)",
+                      static_cast<unsigned long long>(stopAppInstance), rendererDone ? 1 : 0,
+                      rendererNotStarted ? 1 : 0);
+            } else {
+                HLOGW("stop NOT settled within 10s appInstance=%{public}llu ownerJoined=%{public}d rendererDone=%{public}d sessions=%{public}d unacked=%{public}lld pending=%{public}lld refsUnclosed=%{public}lld activeSurfaces=%{public}d phase=%{public}s (start identity retained)",
+                      static_cast<unsigned long long>(stopAppInstance), ownerJoined ? 1 : 0, rendererDone ? 1 : 0,
+                      occupied, static_cast<long long>(unacked), static_cast<long long>(pending),
+                      static_cast<long long>(refsUnclosed), activeSurfaces, hostPhaseName(after));
+            }
+            g_stopObservation.terminal = true;
+            g_stopObservation.success = settled;
+            g_stopObservation.reason = settled ? "host_stop_settled" :
+                after == kHostFailed ? "host_stop_failed" : "host_stop_timeout";
+            g_stopCv.notify_all();
         }
-        if (settled) {
-            HLOGI("stop settled appInstance=%{public}llu ownerJoined=1 rendererDone=%{public}d rendererNotStarted=%{public}d sessions=0 unacked=0 pending=0 refsUnclosed=0 activeSurfaces=0 (phase=stopped)",
-                  static_cast<unsigned long long>(stopAppInstance), rendererDone ? 1 : 0,
-                  rendererNotStarted ? 1 : 0);
-            return;
-        }
-        if (after == kHostFailed) {
-            HLOGW("stop monitor: host phase=failed; settlement not claimed appInstance=%{public}llu",
-                  static_cast<unsigned long long>(stopAppInstance));
-            return;
-        }
-        // 未收敛：保留 stopping 与启动身份，如实报告未完成——不谎称已停止。
-        HLOGW("stop NOT settled within 10s appInstance=%{public}llu ownerJoined=%{public}d rendererDone=%{public}d sessions=%{public}d unacked=%{public}lld pending=%{public}lld refsUnclosed=%{public}lld activeSurfaces=%{public}d phase=%{public}s (start identity retained)",
-              static_cast<unsigned long long>(stopAppInstance), ownerJoined ? 1 : 0, rendererDone ? 1 : 0,
-              occupied, static_cast<long long>(unacked), static_cast<long long>(pending),
-              static_cast<long long>(refsUnclosed), activeSurfaces, hostPhaseName(g_hostPhase.load()));
     }).detach();
 }
 
@@ -2852,13 +2925,112 @@ static napi_value AppForeground(napi_env env, napi_callback_info info) {
     if (argc >= 1) {
         napi_get_value_bool(env, argv[0], &foreground);
     }
+    // Revoke before publishing background; becoming foreground never issues a token.
+    if (focusForegroundFn) focusForegroundFn(g_appInstance.load(), foreground ? 1 : 0);
     g_foreground.store(foreground ? 1 : 0);
     HLOGI("foreground=%d", foreground ? 1 : 0);
     return nullptr;
 }
 
+struct ShutdownAwait {
+    napi_env env = nullptr;
+    napi_async_work work = nullptr;
+    napi_deferred deferred = nullptr;
+    napi_ref promise = nullptr;
+    uint64_t instance = 0;
+    std::atomic<bool> envAlive{true};
+    bool completed = false, hookRegistered = false; // UI thread only
+    bool success = false; // worker writes, Complete reads after work completion
+    const char *reason = "host_stop_pending";
+};
+// A single bounded UI-owned Promise cache. Repeated onDestroy shares it.
+static ShutdownAwait *g_shutdownAwait = nullptr;
+
+static void ShutdownEnvCleanup(void *data) {
+    auto *wait = static_cast<ShutdownAwait *>(data);
+    wait->envAlive.store(false);
+    wait->hookRegistered = false;
+    if (g_shutdownAwait == wait) g_shutdownAwait = nullptr;
+    HLOGW("shutdown Promise environment invalidated appInstance=%{public}llu",
+          static_cast<unsigned long long>(wait->instance));
+    if (wait->promise) napi_delete_reference(wait->env, wait->promise);
+    wait->promise = nullptr;
+    if (wait->completed) {
+        delete wait;
+    } else {
+        // Queued cancellation still receives Complete; executing work is woken
+        // by envAlive and owns its payload until that callback. No UI join.
+        if (wait->work) napi_cancel_async_work(wait->env, wait->work);
+        g_stopCv.notify_all();
+    }
+}
+
+static void ShutdownAwaitExecute(napi_env, void *data) {
+    auto *wait = static_cast<ShutdownAwait *>(data);
+    std::unique_lock<std::mutex> stateLock(g_hostTransitionMutex);
+    if (wait->instance == 0 && g_appInstance.load() == 0 && g_hostPhase.load() == kHostIdle) {
+        wait->success = true;
+        wait->reason = "host_not_started";
+        return;
+    }
+    if (g_stopObservation.instance == wait->instance) {
+        // The monitor already owns this deadline. Never add another ten seconds.
+        const auto deadline = g_stopObservation.deadline;
+        g_stopCv.wait_until(stateLock, deadline, [&] {
+            return !wait->envAlive.load() || g_appInstance.load() != wait->instance ||
+                g_ownerOutcomeInstance != wait->instance || g_hostPhase.load() == kHostFailed ||
+                g_stopObservation.terminal;
+        });
+    }
+    if (!wait->envAlive.load()) wait->reason = "host_stop_environment_invalidated";
+    else if (g_appInstance.load() != wait->instance || g_ownerOutcomeInstance != wait->instance)
+        wait->reason = "host_stop_instance_changed";
+    else if (g_hostPhase.load() == kHostFailed) wait->reason = "host_stop_failed";
+    else if (g_stopObservation.instance != wait->instance) wait->reason = "host_stop_receipt_missing";
+    else if (!g_stopObservation.terminal) wait->reason = "host_stop_timeout";
+    else {
+        wait->success = g_stopObservation.success && g_hostPhase.load() == kHostStopped;
+        wait->reason = g_stopObservation.reason;
+    }
+}
+
+static void ShutdownAwaitComplete(napi_env env, napi_status status, void *data) {
+    auto *wait = static_cast<ShutdownAwait *>(data);
+    if (wait->envAlive.load() && env != nullptr) {
+        {
+            std::lock_guard<std::mutex> stateLock(g_hostTransitionMutex);
+            if (g_appInstance.load() != wait->instance) {
+                wait->success = false;
+                wait->reason = "host_stop_instance_changed";
+            }
+        }
+        if (status != napi_ok) {
+            wait->success = false;
+            wait->reason = "host_stop_wait_cancelled";
+        }
+        HLOGI("shutdown Promise terminal appInstance=%{public}llu success=%{public}d reason=%{public}s",
+              static_cast<unsigned long long>(wait->instance), wait->success ? 1 : 0, wait->reason);
+        napi_value result = nullptr;
+        if (wait->success) {
+            napi_get_undefined(env, &result);
+            napi_resolve_deferred(env, wait->deferred, result);
+        } else {
+            napi_value message = nullptr;
+            napi_create_string_utf8(env, wait->reason, NAPI_AUTO_LENGTH, &message);
+            napi_create_error(env, nullptr, message, &result);
+            napi_reject_deferred(env, wait->deferred, result);
+        }
+    } else {
+        HLOGW("shutdown Promise callback suppressed: environment invalid appInstance=%{public}llu",
+              static_cast<unsigned long long>(wait->instance));
+    }
+    if (env != nullptr) napi_delete_async_work(env, wait->work);
+    wait->work = nullptr;
+    wait->completed = true;
+    if (!wait->envAlive.load()) delete wait;
+}
+
 static napi_value AppShutdown(napi_env env, napi_callback_info info) {
-    (void)env;
     (void)info;
     g_foreground.store(0);
     // Ability 真正销毁（非 surface 卸载）：进入一次性停止协议。
@@ -2867,7 +3039,50 @@ static napi_value AppShutdown(napi_env env, napi_callback_info info) {
     HLOGI("shutdown observed (started=%{public}d phase=%{public}s): requesting application stop",
           hostStarted() ? 1 : 0, hostPhaseName(g_hostPhase.load()));
     requestHostStopOnce("appShutdown");
-    return nullptr;
+    const uint64_t instance = g_appInstance.load();
+    // Orderly owner exit can publish Stopping just before its observer starts.
+    // The same monitor's once guard closes that gap without another stop request.
+    if (g_hostPhase.load() == kHostStopping) startStopMonitorOnce(instance);
+    if (g_shutdownAwait) {
+        if (g_shutdownAwait->env == env && g_shutdownAwait->instance == instance) {
+            napi_value promise = nullptr;
+            napi_get_reference_value(env, g_shutdownAwait->promise, &promise);
+            return promise;
+        }
+        if (!g_shutdownAwait->completed) {
+            napi_throw_error(env, nullptr, "host_stop_wait_in_flight");
+            return nullptr;
+        }
+        if (g_shutdownAwait->hookRegistered)
+            napi_remove_env_cleanup_hook(g_shutdownAwait->env, ShutdownEnvCleanup, g_shutdownAwait);
+        napi_delete_reference(g_shutdownAwait->env, g_shutdownAwait->promise);
+        delete g_shutdownAwait;
+        g_shutdownAwait = nullptr;
+    }
+    auto *wait = new ShutdownAwait;
+    wait->env = env;
+    wait->instance = instance;
+    napi_value promise = nullptr, name = nullptr;
+    napi_status rc = napi_create_promise(env, &wait->deferred, &promise);
+    if (rc == napi_ok) rc = napi_create_reference(env, promise, 1, &wait->promise);
+    if (rc == napi_ok) rc = napi_create_string_utf8(env, "CJGUIHostStop", NAPI_AUTO_LENGTH, &name);
+    if (rc == napi_ok) rc = napi_create_async_work(env, nullptr, name,
+        ShutdownAwaitExecute, ShutdownAwaitComplete, wait, &wait->work);
+    if (rc == napi_ok) {
+        rc = napi_add_env_cleanup_hook(env, ShutdownEnvCleanup, wait);
+        wait->hookRegistered = rc == napi_ok;
+    }
+    if (rc == napi_ok) rc = napi_queue_async_work(env, wait->work);
+    if (rc != napi_ok) {
+        if (wait->hookRegistered) napi_remove_env_cleanup_hook(env, ShutdownEnvCleanup, wait);
+        if (wait->work) napi_delete_async_work(env, wait->work);
+        if (wait->promise) napi_delete_reference(env, wait->promise);
+        delete wait;
+        napi_throw_error(env, nullptr, "host_stop_wait_schedule_failed");
+        return nullptr;
+    }
+    g_shutdownAwait = wait;
+    return promise;
 }
 
 static int g_initCalls = 0;
@@ -2905,6 +3120,52 @@ static void RequestFocusFromRenderer(const std::string &fieldName)
     if (g_focusRequestFn == nullptr) return;
     std::string *copy = new std::string(fieldName);
     napi_call_threadsafe_function(g_focusRequestFn, copy, napi_tsfn_nonblocking);
+}
+
+// ---- 通用「文档意图」通道（H 连续写作包）----
+// 平台桥只承载**系统文件能力**的请求/回执搬运：产品（仓颉 owner 线程）发出
+// 一次意图 JSON（选择导入文件 / 写出到用户选择的目标），ArkTS 页面按系统
+// picker + 文件 IO 完成，结果经应用私有目录回执文件返回（owner 循环有界轮询）。
+// 本层不解释任何产品语义：JSON 与文件路径由产品与页面约定。
+static napi_threadsafe_function g_documentIntentFn = nullptr;
+
+static void DocumentIntentCall(napi_env env, napi_value js_cb, void *context, void *data)
+{
+    (void)context;
+    std::string *payload = static_cast<std::string *>(data);
+    if (payload == nullptr) return;
+    if (env == nullptr || js_cb == nullptr) { delete payload; return; }
+    napi_value argv[1];
+    napi_create_string_utf8(env, payload->c_str(), NAPI_AUTO_LENGTH, &argv[0]);
+    napi_value undefinedResult;
+    napi_call_function(env, js_cb, js_cb, 1, argv, &undefinedResult);
+    delete payload;
+}
+
+static napi_value RegisterDocumentIntent(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    if (argc < 1) return nullptr;
+    napi_value resourceName;
+    napi_create_string_utf8(env, "CjguiDocumentIntent", NAPI_AUTO_LENGTH, &resourceName);
+    napi_create_threadsafe_function(env, argv[0], nullptr, resourceName, 0, 1, nullptr,
+                                    nullptr, nullptr, DocumentIntentCall, &g_documentIntentFn);
+    return nullptr;
+}
+
+// 渲染器侧（静态链入仓颉库）持有 sink；这里只做 threadsafe 转发。
+static int32_t DocumentIntentSink(const char *json)
+{
+    if (json == nullptr || g_documentIntentFn == nullptr) return 0;
+    std::string *copy = new std::string(json);
+    napi_status rc = napi_call_threadsafe_function(g_documentIntentFn, copy, napi_tsfn_nonblocking);
+    if (rc != napi_ok) {
+        delete copy;
+        return 0;
+    }
+    return 1;
 }
 
 // 兜底：napi 回调里若发现入口还没解析（例如宿主在装载前就被调用），
@@ -3009,6 +3270,24 @@ static napi_value ImeGraphemeRange(napi_env env, napi_callback_info info)
         std::to_string(start) + ",\"end\":" + std::to_string(end) + "}";
     napi_value result;
     napi_create_string_utf8(env, json.data(), json.size(), &result);
+    return result;
+}
+
+static napi_value ImePlainKey(napi_env env, napi_callback_info info)
+{
+    size_t argc = 3;
+    napi_value argv[3] = {nullptr, nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    resolveImeEntryPoints();
+    std::string intent;
+    int32_t rc = 1;
+    if (argc == 3 && imePlainKeyFn && readStringArg(env, argv[0], &intent)) {
+        const int64_t context = readInt64Arg(env, argv[1]);
+        const int64_t generation = readInt64Arg(env, argv[2]);
+        if (context > 0 && generation > 0) rc = imePlainKeyFn(intent.c_str(), context, static_cast<uint64_t>(generation));
+    }
+    napi_value result;
+    napi_create_string_utf8(env, rc == 0 ? "0" : rc == 2 ? "2" : "1", NAPI_AUTO_LENGTH, &result);
     return result;
 }
 
@@ -3137,6 +3416,61 @@ static napi_value ImeRestoreAck(napi_env env, napi_callback_info info)
     return result;
 }
 
+static napi_value ImeFinishProxy(napi_env env, napi_callback_info info)
+{
+    size_t argc = 7; napi_value argv[7] = {}; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    resolveImeEntryPoints(); std::string text; int32_t rc = 1;
+    if (argc == 7 && finishProxyFn && readStringArg(env, argv[0], &text)) {
+        rc = finishProxyFn(text.c_str(), text.size(), static_cast<uint64_t>(readInt64Arg(env, argv[1])),
+            static_cast<uint64_t>(readInt64Arg(env, argv[2])), readInt64Arg(env, argv[3]),
+            static_cast<uint64_t>(readInt64Arg(env, argv[4])), static_cast<uint64_t>(readInt64Arg(env, argv[5])),
+            static_cast<uint64_t>(readInt64Arg(env, argv[6])));
+    }
+    napi_value result; napi_create_string_utf8(env, rc == 0 ? "0" : "1", NAPI_AUTO_LENGTH, &result); return result;
+}
+
+static napi_value ImeFocusAuthority(napi_env env, napi_callback_info info)
+{
+    size_t argc = 9; napi_value argv[9] = {};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    resolveImeEntryPoints();
+    int64_t resultCode = -1;
+    if (argc == 9 && focusAuthorityFn) {
+        resultCode = focusAuthorityFn(static_cast<uint64_t>(readInt64Arg(env, argv[0])),
+            static_cast<uint64_t>(readInt64Arg(env, argv[1])), readInt64Arg(env, argv[2]),
+            static_cast<uint64_t>(readInt64Arg(env, argv[3])), static_cast<uint64_t>(readInt64Arg(env, argv[4])),
+            static_cast<int32_t>(readInt64Arg(env, argv[5])), static_cast<uint64_t>(readInt64Arg(env, argv[6])),
+            readInt64Arg(env, argv[7]), static_cast<uint64_t>(readInt64Arg(env, argv[8])));
+    }
+    const std::string text = std::to_string(resultCode);
+    napi_value result; napi_create_string_utf8(env, text.c_str(), text.size(), &result); return result;
+}
+
+static napi_value ImeInputWill(napi_env env,napi_callback_info info)
+{
+    size_t argc=13;napi_value argv[13]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();std::string before,after,field;int64_t id=-1;
+    bool valid=argc==13 && inputWillFn && readStringArg(env,argv[0],&before) &&
+        readStringArg(env,argv[1],&after) && readStringArg(env,argv[2],&field);
+    double numbers[10]{};
+    for(size_t i=0;valid&&i<10;++i)valid=napi_get_value_double(env,argv[i+3],&numbers[i])==napi_ok &&
+        std::isfinite(numbers[i]) && numbers[i]>=0 && std::floor(numbers[i])==numbers[i] && numbers[i]<=9007199254740991.0;
+    for(size_t i=0;valid&&i<4;++i)valid=numbers[i]<=UINT32_MAX;
+    if(valid)id=inputWillFn(before.c_str(),before.size(),after.c_str(),after.size(),field.c_str(),
+        numbers[0],numbers[1],numbers[2],numbers[3],numbers[4],numbers[5],numbers[6],numbers[7],numbers[8],numbers[9]);
+    const auto text=std::to_string(id);napi_value result;napi_create_string_utf8(env,text.c_str(),text.size(),&result);return result;
+}
+static napi_value ImeInputChange(napi_env env,napi_callback_info info)
+{
+    size_t argc=8;napi_value argv[8]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();std::string text;int32_t rc=1;
+    double numbers[7]{};bool valid=argc==8 && inputChangeFn && readStringArg(env,argv[0],&text);
+    for(size_t i=0;valid&&i<7;++i)valid=napi_get_value_double(env,argv[i+1],&numbers[i])==napi_ok &&
+        std::isfinite(numbers[i]) && numbers[i]>0 && std::floor(numbers[i])==numbers[i] && numbers[i]<=9007199254740991.0;
+    if(valid)rc=inputChangeFn(text.c_str(),text.size(),numbers[0],numbers[1],numbers[2],numbers[3],numbers[4],numbers[5],numbers[6]);
+    napi_value result;napi_create_string_utf8(env,rc==0?"0":"1",NAPI_AUTO_LENGTH,&result);return result;
+}
+
 static napi_value ImeFinishEditing(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
@@ -3150,6 +3484,24 @@ static napi_value ImeFinishEditing(napi_env env, napi_callback_info info)
     napi_value result;
     napi_create_string_utf8(env, rc == 0 ? "0" : "1", NAPI_AUTO_LENGTH, &result);
     return result;
+}
+
+
+// H 连续写作包 A：系统键盘遮挡上沿（surface 内 px；-1=无键盘）。ArkTS 侧由
+// keyboardHeightChange/initial avoid area 驱动；本层只做一次性转发。
+static napi_value SetKeyboardOverlay(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value argv[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    int64_t topPx = -1;
+    if (argc >= 1) {
+        topPx = readInt64Arg(env, argv[0]);
+    }
+    if (setKeyboardOverlayFn != nullptr) {
+        setKeyboardOverlayFn(static_cast<int32_t>(topPx));
+    }
+    return nullptr;
 }
 
 static napi_value Init(napi_env env, napi_value exports) {
@@ -3172,6 +3524,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"appForeground", nullptr, AppForeground, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"appShutdown", nullptr, AppShutdown, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"registerFocusRequest", nullptr, RegisterFocusRequest, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"registerDocumentIntent", nullptr, RegisterDocumentIntent, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setKeyboardOverlay", nullptr, SetKeyboardOverlay, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"shutdownState", nullptr, ShutdownState, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"hostState", nullptr, HostState, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setTestGate", nullptr, SetTestGate, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -3183,12 +3537,17 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"imeMenuMeta", nullptr, ImeMenuMeta, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeCommitText", nullptr, ImeCommitText, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeGraphemeRange", nullptr, ImeGraphemeRange, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeInputWill", nullptr, ImeInputWill, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeInputChange", nullptr, ImeInputChange, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePreviewText", nullptr, ImePreviewText, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePreviewRange", nullptr, ImePreviewRange, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imePlainKey", nullptr, ImePlainKey, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeSetSelection", nullptr, ImeSetSelection, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeMenuCommand", nullptr, ImeMenuCommand, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeRestoreAck", nullptr, ImeRestoreAck, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeFinishEditing", nullptr, ImeFinishEditing, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeFocusAuthority", nullptr, ImeFocusAuthority, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeFinishProxy", nullptr, ImeFinishProxy, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors);
 

@@ -7,7 +7,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { stripTypeScriptTypes } = require('node:module');
 
-const source = fs.readFileSync(path.join(__dirname, '../arkts/cjgui-text-proxy.ets'), 'utf8');
+global.FrameCallback = class {};
+const source = fs.readFileSync(path.join(__dirname, '../arkts/cjgui-text-proxy.ets'), 'utf8').replace(/^import .*;\s*$/gm, '');
 const modulePromise = import(`data:text/javascript,${encodeURIComponent(stripTypeScriptTypes(source, { mode: 'transform' }))}`);
 
 async function fixture(initialText = '中😀尾') {
@@ -16,6 +17,10 @@ async function fixture(initialText = '中😀尾') {
   let previewHook = null;
   let commitResult = '0';
   const bridge = {
+    inputWill(m,change) { calls.push(['inputWill',m.key.contextId,change]); return '1'; },
+    inputChange(m,ticket,text) { calls.push(['inputChange',m.key.contextId,ticket,text]); if(previewHook!==null)previewHook(); return '0'; },
+    finishProxy(key, generation, text) { calls.push(['commit', key.contextId, text]); return commitResult; },
+    focusAuthority(key, op) { if(op===4) {calls.push(['qualified-terminal',key.contextId]); return '0';} return '1'; },
     preview(context, value) {
       calls.push(['preview', context, value]);
       if (previewHook !== null) previewHook();
@@ -49,14 +54,14 @@ test('missing PreviewText range keeps the complete uncommitted draft', async () 
   assert.equal(f.registry.onChange(f.mount, '中😀拼尾', { value: '拼' }), 'ok');
   assert.equal(f.mount.draft, '中😀拼尾');
   assert.deepEqual(f.calls.filter(c => c[0] === 'preview' || c[0] === 'previewRange'),
-    [['preview', 10, '中😀拼尾']]);
+    [['previewRange', 10, '中😀拼尾', -1, -1]]);
 });
 
 test('negative PreviewText offset is a sentinel, not a range or cancellation', async () => {
   const f = await fixture();
   assert.equal(f.registry.onChange(f.mount, '中😀尾!', { offset: -1, value: '!' }), 'ok');
   assert.deepEqual(f.calls.filter(c => c[0] === 'preview' || c[0] === 'previewRange'),
-    [['preview', 10, '中😀尾!']]);
+    [['previewRange', 10, '中😀尾!', -1, -1]]);
   assert.equal(f.calls.some(c => c[0] === 'commit' || c[0] === 'finish'), false);
 });
 
@@ -64,14 +69,14 @@ test('out-of-bounds PreviewText offset cannot be clamped into a marked range', a
   const f = await fixture();
   assert.equal(f.registry.onChange(f.mount, '中😀尾!', { offset: 99, value: '!' }), 'ok');
   assert.deepEqual(f.calls.filter(c => c[0] === 'preview' || c[0] === 'previewRange'),
-    [['preview', 10, '中😀尾!']]);
+    [['previewRange', 10, '中😀尾!', -1, -1]]);
 });
 
 test('empty PreviewText metadata never implies a composition cancellation', async () => {
   const f = await fixture();
   assert.equal(f.registry.onChange(f.mount, '中😀尾', { offset: -1, value: '' }), 'ok');
   assert.deepEqual(f.calls.filter(c => c[0] === 'preview' || c[0] === 'previewRange'),
-    [['preview', 10, '中😀尾']]);
+    []);
   assert.equal(f.calls.some(c => c[0] === 'commit' || c[0] === 'finish'), false);
 });
 
@@ -100,12 +105,12 @@ test('PreviewText offset inside an emoji surrogate pair falls back to full draft
   const f = await fixture('中😀尾');
   assert.equal(f.registry.onChange(f.mount, '中😀尾', { offset: 2, value: '\uDE00' }), 'ok');
   assert.deepEqual(f.calls.filter(c => c[0] === 'preview' || c[0] === 'previewRange'),
-    [['preview', 10, '中😀尾']]);
+    [['previewRange', 10, '中😀尾', -1, -1]]);
 });
 
 test('marked span after another uncommitted edit still carries the full draft', async () => {
   const f = await fixture('ab');
-  assert.equal(f.registry.onChange(f.mount, 'aXb'), 'ok');
+  assert.equal(f.registry.onChange(f.mount, 'aXb', {value:'X'}), 'ok');
   f.calls.length = 0;
   assert.equal(f.registry.onChange(f.mount, 'aXYb', { offset: 2, value: 'Y' }), 'ok');
   assert.deepEqual(f.calls.filter(c => c[0] === 'preview' || c[0] === 'previewRange'),
@@ -125,7 +130,7 @@ test('stale mount after a synchronous focus replacement cannot update the page',
   f.setPreviewHook(() => {
     replacement = f.registry.mount(11, 7, 'proxy', 'other', 1, 1, 'fresh');
   });
-  assert.equal(f.registry.onChange(f.mount, 'old draft'), 'stale');
+  assert.equal(f.registry.onChange(f.mount, 'old draft', {offset:0,value:'old draft'}), 'stale');
   assert.equal(f.registry.currentMount(), replacement);
   assert.equal(replacement.draft, 'fresh');
   assert.equal(f.registry.submitAndFinish(f.mount, 'blur'), 'stale');
@@ -135,16 +140,16 @@ test('stale mount after a synchronous focus replacement cannot update the page',
 test('rejected owner commit is reported as rejected and does not claim success', async () => {
   const f = await fixture();
   f.setCommitResult('1');
-  assert.equal(f.registry.onChange(f.mount, '未提交'), 'ok');
+  assert.equal(f.registry.onChange(f.mount, '未提交', {value:'未提交'}), 'ok');
   assert.equal(f.registry.submitAndFinish(f.mount, 'submit'), 'rejected');
   assert.deepEqual(f.calls.filter(c => c[0] === 'commit'), [['commit', 10, '未提交']]);
 });
 
 test('external version reconcile retires an uncommitted draft without owner write', async () => {
   const f = await fixture('旧值');
-  assert.equal(f.registry.onChange(f.mount, '未提交草稿'), 'ok');
+  assert.equal(f.registry.onChange(f.mount, '未提交草稿', {value:'未提交草稿'}), 'ok');
   f.calls.length = 0;
-  assert.equal(f.registry.retireForReconcile(f.mount, 10), 'retired');
+  assert.equal(f.registry.retireForReconcile(f.mount, 10, 11, 7), 'retired');
   assert.equal(f.registry.currentMount(), null);
   assert.equal(f.mount.alive, false);
   assert.equal(f.mount.draft, '未提交草稿');
@@ -156,7 +161,7 @@ test('stale reconcile callback cannot retire a newer mount', async () => {
   const f = await fixture('旧值');
   const newer = f.registry.mount(11, 8, 'proxy', 'name', 1, 1, '新值');
   f.calls.length = 0;
-  assert.equal(f.registry.retireForReconcile(f.mount, 10), 'stale');
+  assert.equal(f.registry.retireForReconcile(f.mount, 10, 11, 7), 'stale');
   assert.equal(f.registry.retireForReconcile(newer, 10), 'stale');
   assert.equal(f.registry.currentMount(), newer);
   assert.equal(newer.alive, true);
@@ -177,7 +182,7 @@ test('partial combining backward corrects the platform once, awaits actual echo'
  const allow=f.registry.onWillDelete(f.mount,{direction:0,deleteOffset:3,deleteValue:'\u0301'},3,3,true,f.apply);
  assert.equal(allow,false);assert.deepEqual(f.edits,[[1,3]]);assert.equal(f.mount.draft,'xe\u0301');
  assert.equal(f.registry.onChange(f.mount,'x',{offset:-1,value:''}),'ok');
- assert.deepEqual(f.calls.filter(x=>x[0]==='preview').at(-1),['preview',10,'x']);
+ assert.deepEqual(f.calls.filter(x=>x[0]==='inputChange').at(-1),['inputChange',10,1,'x']);
 });
 test('known insert followed by deletion stays exact and never expands a compound range',async()=>{
  const f=await deleteFixture();f.registry.bridge.grapheme=()=>{throw Error('must not query');};

@@ -1,0 +1,17 @@
+{
+  "steps": [],
+  "identity": {
+    "pid": 11,
+    "bundle": "controlled"
+  },
+  "log_fence0": "10-02 09:00:00.002 proxy mounted key=app1/s1/c3/e1/m1 field=pharos-editor-body",
+  "forward": {
+    "owned": true,
+    "basis": "created+verified"
+  },
+  "fixture_reset": true,
+  "status": "driver_exception",
+  "exception": "AttributeError(\"'types.SimpleNamespace' object has no attribute 'parse_edit_section'\")",
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/verify_pharos_dual_owner.py\", line 1404, in main\n    if not reach_mode(port, 'source', results, 'ensure-source')[0]:\n           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/verify_pharos_dual_owner.py\", line 1136, in reach_mode\n    baseline = action_baseline(port)\n  File \"/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/verify_pharos_dual_owner.py\", line 291, in action_baseline\n    snap = public_snapshot(port)\n  File \"/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/scripts/verify_pharos_dual_owner.py\", line 242, in public_snapshot\n    snap['editing'] = m.parse_edit_section(state)\n                      ^^^^^^^^^^^^^^^^^^^^\nAttributeError: 'types.SimpleNamespace' object has no attribute 'parse_edit_section'\n",
+  "forward_cleanup": "removed"
+}

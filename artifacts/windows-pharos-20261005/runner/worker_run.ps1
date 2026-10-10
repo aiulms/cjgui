@@ -211,6 +211,7 @@ function Invoke-TaskJob([object]$Job, [string]$SessionRoot, [System.IO.Stream]$C
     $childJob = $null
     $stdoutTask = $null
     $stderrTask = $null
+    $startGate = $null
     $jobDirectory = Join-Path $SessionRoot ([Guid]::NewGuid().ToString('N'))
     try {
         if ([string]::IsNullOrWhiteSpace([string]$Job.name) -or
@@ -233,9 +234,12 @@ function Invoke-TaskJob([object]$Job, [string]$SessionRoot, [System.IO.Stream]$C
         $wrapper = @'
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$startGate = $null
 try {
     [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
     $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $startGate = [System.Threading.EventWaitHandle]::OpenExisting($env:PHAROS_TASK_START_GATE)
+    if (-not $startGate.WaitOne(10000)) { throw 'child_start_gate_timeout' }
     $global:LASTEXITCODE = $null
     & $env:PHAROS_TASK_SCRIPT
     if ($null -ne $global:LASTEXITCODE) { exit [int]$global:LASTEXITCODE }
@@ -243,6 +247,8 @@ try {
 } catch {
     [Console]::Error.WriteLine($_.ToString())
     exit 1
+} finally {
+    if ($null -ne $startGate) { $startGate.Dispose() }
 }
 '@
         [System.IO.File]::WriteAllText($wrapperPath, $wrapper, $utf8Bom)
@@ -260,12 +266,16 @@ try {
         $psi.EnvironmentVariables['PHAROS_WORKER_PID'] = [string]$PID
         $psi.EnvironmentVariables['PHAROS_TRANSFER_BASE'] = $env:PHAROS_TRANSFER_BASE
         $psi.EnvironmentVariables['PHAROS_TRANSFER_SESSION'] = $SessionId
+        $startGateName = 'Local\pharos-task-start-' + [Guid]::NewGuid().ToString('N')
+        $psi.EnvironmentVariables['PHAROS_TASK_START_GATE'] = $startGateName
+        $startGate = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::ManualReset, $startGateName)
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $psi
         if (-not $process.Start()) { throw 'child_process_start_failed' }
         $childJob = [PharosKillJob]::Assign($process)
         $stdoutTask = [PharosBoundedPipeCapture]::Drain($process.StandardOutput.BaseStream, $script:MaxOutputBytes)
         $stderrTask = [PharosBoundedPipeCapture]::Drain($process.StandardError.BaseStream, $script:MaxOutputBytes)
+        [void]$startGate.Set()
         $waitRemaining = [int]$Job.timeout_ms
         $completed = $false
         while ($waitRemaining -gt 0) {
@@ -334,6 +344,7 @@ try {
         $record.elapsed_ms = [int][Math]::Min([int]::MaxValue, $watch.ElapsedMilliseconds)
         if ($null -ne $childJob) { $childJob.Dispose() }
         if ($null -ne $process) { $process.Dispose() }
+        if ($null -ne $startGate) { $startGate.Dispose() }
         try { Remove-Item -LiteralPath $jobDirectory -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     }
     return [PSCustomObject]$record

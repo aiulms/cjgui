@@ -24,9 +24,10 @@ typedef void (*CjguiRuntimeStart)(void *entry);
 // Runtime parameter block, declared EXACTLY as the official open-source runtime
 // publishes it (https://github.com/Cangjie-Pub/cangjie_runtime,
 // runtime/src/Cangjie.h, struct RuntimeParam; the toolchain does not ship the
-// header). Zeroed fields mean "runtime default". The only field this host sets
-// is coParam.coStackSize: the launcher comment below explains why a GUI
-// application's layout solver needs far more than the 64 KB-class default.
+// header). InitCJRuntime's embedded defaults differ from the standard Cangjie
+// entry: heapSize=0 selects 64 MiB, and logLevel=0 is VERBOSE. Keep the normal
+// toolchain entry's finite 256 MiB heap and ERROR logging explicitly, alongside
+// the larger stack required by the GUI layout solver.
 struct CjguiHeapParam {
     size_t regionSize;
     size_t heapSize;
@@ -77,13 +78,14 @@ static CjguiRuntimeStart CjguiResolveRuntimeStart(void) {
 
 static void *CjguiRuntimeWorker(void *unused) {
     (void)unused;
-    // The only non-default parameter is the CJTHREAD stack size. The layout
-    // engine recurses per container level (measured: a 7-level visual body
+    // The layout engine recurses per container level (measured: a 7-level visual body
     // scene overflows the class-default cjthread stack before the scene is
     // ever accepted); 16 MiB is inside the runtime's documented [64KB, 1GB]
     // range and is only virtually reserved per cjthread.
     struct CjguiRuntimeParam runtimeParameter;
     memset(&runtimeParameter, 0, sizeof(runtimeParameter));
+    runtimeParameter.heapParam.heapSize = 256ULL * 1024; /* KB, same as the standard 1.1.3 entry */
+    runtimeParameter.logParam.logLevel = 5; /* RTLOG_ERROR; zero is not the default log level */
     runtimeParameter.coParam.coStackSize = 16ULL * 1024 * 1024 / 1024; /* KB */
     int initializationResult = InitCJRuntime(&runtimeParameter);
 

@@ -3,6 +3,100 @@ import std.unittest.*
 import std.unittest.testmacro.*
 
 @Test
+func verifiedOldProxyPostimageContinuesAfterCrossWindowReplacement(): Unit {
+    let w=RangeWindowHarness(wide: true)
+    let s=w.ownedTextSession.getOrThrow()
+    @Assert(s.mirrorText(), ":TAIL")
+    let basis=s.ohosInputSourceBasis()
+    testInputOrigin=Some(CjguiOhosInputTicketFact(71,0,"mount",basis,":TAIL","中:TAIL","body",choiceBasis:basis,observation:17,node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:0,end16:0,inserted:"中"))
+    @Assert(w.commit(InternalRendererPumpResult(51u32,1u64,0u32,0u32),"中"))
+    @Assert(w.owner.text(),"HEAD:中:TAIL")
+    @Assert(w.lastAcceptedOhosPostOrigin,5)
+    @Assert(s.mirrorText() != "中:TAIL")
+    testInputOrigin=Some(CjguiOhosInputTicketFact(72,71,"mount",basis,"中:TAIL","中续:TAIL","body",choiceBasis:basis,observation:17,node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:1,inserted:"续"))
+    @Assert(w.commit(InternalRendererPumpResult(51u32,1u64,1u32,1u32),"续"))
+    @Assert(w.owner.text(),"HEAD:中续:TAIL")
+    @Assert(w.owner.writeCalls,2)
+    @Assert(w.owner.maxReadBytes<=32)
+}
+
+@Test
+func normalizedOwnerPostimageCannotAcquireSuccessorMapping(): Unit {
+    let w=RangeWindowHarness(wide:true)
+    let s=w.ownedTextSession.getOrThrow();let basis=s.ohosInputSourceBasis()
+    w.owner.normalizeNext=true
+    testInputOrigin=Some(CjguiOhosInputTicketFact(71,0,"mount",basis,":TAIL","中:TAIL","body",choiceBasis:basis,observation:17,node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:0,end16:0,inserted:"中"))
+    @Assert(w.commit(InternalRendererPumpResult(51u32,1u64,0u32,0u32),"中"))
+    @Assert(w.lastAcceptedOhosPostOrigin,-1)
+    testInputOrigin=Some(CjguiOhosInputTicketFact(72,71,"mount",basis,"中:TAIL","中续:TAIL","body",choiceBasis:basis,observation:17,node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:1,inserted:"续"))
+    @Assert(!w.commit(InternalRendererPumpResult(51u32,1u64,1u32,1u32),"续"))
+    @Assert(w.owner.writeCalls,1)
+}
+
+@Test
+func resolvedObservationCannotBorrowAnotherChoiceOrExternalVersion(): Unit {
+    let w=RangeWindowHarness();let s=w.ownedTextSession.getOrThrow();let basis=s.ohosInputSourceBasis()
+    testInputOrigin=Some(CjguiOhosInputTicketFact(1,0,"mount",basis,"alpha Z","a Z","body",observation:17,node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:5,inserted:""))
+    @Assert(!w.commit(InternalRendererPumpResult(51u32,1u64,1u32,5u32),""))
+    @Assert(w.owner.writeCalls,0)
+    testInputOrigin=Some(CjguiOhosInputTicketFact(2,0,"mount",basis,"alpha Z","a Z","body",choiceBasis:basis,observation:18,node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:5,inserted:""))
+    @Assert(w.commit(InternalRendererPumpResult(51u32,1u64,1u32,5u32),""))
+    w.owner.bumpVersionOnly()
+    testInputOrigin=Some(CjguiOhosInputTicketFact(3,2,"mount",basis,"a Z","ax Z","body",choiceBasis:basis,observation:18,node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:1,inserted:"x"))
+    @Assert(!w.commit(InternalRendererPumpResult(51u32,1u64,1u32,1u32),"x"))
+    @Assert(w.owner.writeCalls,1)
+}
+
+@Test
+func frozenInputUsesActualRangeAndOneOwnerChain(): Unit {
+    let w = RangeWindowHarness(text: "ABABAB")
+    let session = w.ownedTextSession.getOrThrow()
+    let basis = session.ohosInputSourceBasis()
+    testInputOrigin = Some(CjguiOhosInputTicketFact(1,0,"exact-mount",basis,"ABABAB","ABABABAB","body",node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:0,end16:6,inserted:"ABABABAB"))
+    @Assert(w.commit(InternalRendererPumpResult(51u32,1u64,0u32,6u32),"ABABABAB"))
+    @Assert(w.owner.text(),"ABABABAB")
+    @Assert(w.owner.writeCalls,1)
+    testInputOrigin = Some(CjguiOhosInputTicketFact(2,1,"exact-mount",basis,"ABABABAB","ABABABABX","body",node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:8,end16:8,inserted:"X"))
+    @Assert(w.commit(InternalRendererPumpResult(51u32,1u64,8u32,8u32),"X"))
+    @Assert(w.owner.text(),"ABABABABX")
+    @Assert(w.owner.writeCalls,2)
+}
+
+@Test
+func identicalBytesNewOwnerVersionCannotReviveFrozenInput(): Unit {
+    let w = RangeWindowHarness()
+    let basis = w.ownedTextSession.getOrThrow().ohosInputSourceBasis()
+    testInputOrigin = Some(CjguiOhosInputTicketFact(1,0,"exact-mount",basis,"alpha Z","a Z","body",node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:5,inserted:""))
+    w.owner.ver += 1
+    @Assert(!w.commit(InternalRendererPumpResult(51u32,1u64,1u32,5u32),""))
+    @Assert(w.owner.writeCalls,0)
+    @Assert(w.lastTextSessionDecision.getOrThrow().reason,"input_source_ticket_stale")
+}
+
+@Test
+func choiceRevisionChangeCannotReuseSameTextInputCoordinates(): Unit {
+    let w = RangeWindowHarness()
+    let session = w.ownedTextSession.getOrThrow()
+    let basis = session.ohosInputSourceBasis()
+    testInputOrigin = Some(CjguiOhosInputTicketFact(1,0,"exact-mount",basis,"alpha Z","a Z","body",node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:5,inserted:""))
+    session.setSelection16(1,1)
+    @Assert(!w.commit(InternalRendererPumpResult(51u32,1u64,1u32,5u32),""))
+    @Assert(w.owner.writeCalls,0)
+}
+
+@Test
+func oldMountFactAndRepeatedTicketHaveNoSecondOwnerWrite(): Unit {
+    let w = RangeWindowHarness()
+    let basis = w.ownedTextSession.getOrThrow().ohosInputSourceBasis()
+    testInputOrigin = Some(CjguiOhosInputTicketFact(1,0,"exact-mount",basis,"alpha Z","a Z","body",node:107,resource:77,nodeKind:CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT,ownerBinding:3u64,acceptedBinding:3u64,projection:1u64,start16:1,end16:5,inserted:""))
+    @Assert(!w.commit(InternalRendererPumpResult(51u32,1u64,1u32,5u32,status:1u32),""))
+    @Assert(w.owner.writeCalls,0)
+    @Assert(w.commit(InternalRendererPumpResult(51u32,1u64,1u32,5u32),""))
+    @Assert(!w.commit(InternalRendererPumpResult(51u32,1u64,1u32,5u32),""))
+    @Assert(w.owner.writeCalls,1)
+}
+
+@Test
 func acceptedRangeRecordsExactOwnerMirrorInsteadOfInsertedFragment(): Unit {
     let w = RangeWindowHarness()
     let first = InternalRendererPumpResult(51u32, 1u64, 1u32, 5u32)

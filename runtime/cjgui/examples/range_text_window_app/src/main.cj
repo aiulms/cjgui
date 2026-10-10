@@ -205,6 +205,8 @@ private class PlainRangeTextUndoEntry {
 
 /// Plain byte-array or file-span truth. Reads are bounded; the sink is the only
 /// writer and refuses a base version it no longer holds.
+/// 选择写作的可选接缝（CjguiRangeTextSelectionEditSink）只在声明该接口的平台上
+/// 由下面的扩展 conform；选择能力本身（owner/source snapshot）不在这里丢失。
 class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSink & CjguiRangeTextSelectionOwner {
     private var bytes: Array<Byte>
     private var filePath: String = ""
@@ -852,6 +854,43 @@ class PlainRangeTextStore <: CjguiRangeTextSource & CjguiRangeTextEditSink & Cjg
         return CjguiRangeTextSlice(startByte, aligned, content, this.version, size, true, "")
     }
 
+    public func applySourceSelectionEdit(choice: CjguiSourceSelectionSnapshot,
+        inserted: String): CjguiRangeTextEditOutcome {
+        let insertedBytes = inserted.toArray()
+        // The identity includes every frozen owner/source-selection coordinate and the full
+        // replacement. A retained intent can therefore never be mistaken for a different write.
+        let payloadIdentity = "selection-edit|${choice.documentId.toArray().size}:${choice.documentId}|" +
+            "${choice.sessionEpoch}|${choice.viewGeneration}|${choice.version}|${choice.revision}|" +
+            "${choice.anchorByte}|${choice.focusByte}|${insertedBytes.size}:${inserted}"
+        let operationId = this.nextWriterOperationId("selection-edit")
+        let intent = PlainRangeTextWriterIntent<CjguiRangeTextEditOutcome>(operationId,
+            payloadIdentity, 128 + Int64(insertedBytes.size), {
+                =>
+                    let current = this.sourceSelectionSnapshot()
+                    if (current.documentId != choice.documentId || current.sessionEpoch != choice.sessionEpoch ||
+                        current.viewGeneration != choice.viewGeneration || current.version != choice.version ||
+                        current.revision != choice.revision || current.anchorByte != choice.anchorByte ||
+                        current.focusByte != choice.focusByte) {
+                        this.rejectedEdits += 1
+                        return CjguiRangeTextEditOutcome.conflict(this.version, "source_selection_stale")
+                    }
+                    let startByte = if (choice.anchorByte < choice.focusByte) { choice.anchorByte } else {
+                        choice.focusByte
+                    }
+                    let endByte = if (choice.anchorByte > choice.focusByte) { choice.anchorByte } else {
+                        choice.focusByte
+                    }
+                    return this.applyRangeTextEditNow(choice.version, startByte, endByte, inserted)
+            })
+        let admission = this.submitOwnerWriter(intent)
+        if (admission.kind == RANGE_TEXT_WRITER_SETTLED) {
+            return admission.value.getOrThrow()
+        }
+        // Preserve the same typed retention contract as ordinary range edits. The captured choice
+        // is checked only when its real FIFO writer closure executes, after selection finalization.
+        throw PlainRangeTextWriterRetainedException(admission)
+    }
+
     public func applyRangeTextEdit(baseVersion: Int64, startByte: Int64, endByte: Int64, inserted: String): CjguiRangeTextEditOutcome {
         let operationId = this.nextWriterOperationId("body")
         let intent = PlainRangeTextWriterIntent<CjguiRangeTextEditOutcome>(operationId,
@@ -1109,7 +1148,9 @@ class RangeTextPreviewCaptureRevision {
     }
 }
 
-@When[os == "macOS"]
+// 预览选区样式是跨平台的语义投影（同一份 range 用同一份背景色），所以 macOS 与
+// Windows 共用真实实现；没有该投影能力的平台才返回空，而不是让消费者自己分叉。
+@When[os == "macOS" || os == "Windows"]
 func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposableUiTextStyleRun> {
     if (end <= start) {
         return Array<CjguiComposableUiTextStyleRun>()
@@ -1117,7 +1158,7 @@ func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposa
     return [CjguiComposableUiTextStyleRun.selectionBackground(start, end, CjguiComposableUiColor(0.25, 0.50, 0.85, 0.42))]
 }
 
-@When[os != "macOS"]
+@When[os != "macOS" && os != "Windows"]
 func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposableUiTextStyleRun> {
     return Array<CjguiComposableUiTextStyleRun>()
 }
@@ -1163,7 +1204,7 @@ func rangeTextPreviewSourceByteAtHit(preview: RangeTextPreviewBinding, localHit:
     return Some(preview.sourceStart + localHit)
 }
 
-class RangeTextWindowController <: CjguiComposableUiController & CjguiComposableUiContextMenuRequestHandler & CjguiComposableUiPlatformThemeConsumer & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiBusinessOwnerRevisionProvider & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiCompositionRangeProvider & CjguiComposableUiWindowBackgroundProvider {
+class RangeTextWindowController <: CjguiComposableUiController & CjguiComposableUiContextMenuRequestHandler & CjguiComposableUiPlatformThemeConsumer & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiBusinessOwnerRevisionProvider & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiCompositionRangeProvider & CjguiComposableUiWindowBackgroundProvider & CjguiComposableUiSelectionCompletionProvider {
     private let store: PlainRangeTextStore
     /// 1b:镜像与会话由**窗口**拥有。消费方只交出 owner 的读/写接缝,并保留只读查询
     /// 句柄;它既没有第二条正文写入路径,也不在 `buildUi` 里轮询恢复回执。
@@ -1194,6 +1235,11 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
     private var previewDragActive: Bool = false
     private var previewDragRevision: Int64 = -1
     private var previewDragAnchorByte: Int64 = 0
+    private var installedPreviewNode: Int64 = -1
+    private var candidateSourceCompletion: ?CjguiInstalledSelectionCompletion = None
+    private var candidateSourceSelection: ?CjguiComposableUiCandidateSelectionProjection = None
+    private var previewPaneOrderReversed: Bool = false
+    private var previewSourceShifted: Bool = false
 
     init(initialText: String, capacityBytes!: Int64 = 65536, refuseFirstEdit!: Bool = false, filePath!: String = "",
         timingDiagnostics!: Bool = false, twoPaneFixture!: Bool = false, previewByteLimit!: Int64 = 24) {
@@ -1230,8 +1276,50 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
     }
 
     public func beginSceneRefresh(): Bool {
-        this.candidatePreview = None
+        this.candidatePreview = None; this.candidateSecondPreview = None
+        this.candidateSourceSelection = None
+        this.candidateSourceCompletion = match (this.hostWindow) {
+            case Some(window) => window.installedSelectionCompletion(); case None => None
+        }
         return true
+    }
+    public func candidateSelectionProjection(): ?CjguiComposableUiCandidateSelectionProjection {
+        return this.candidateSourceSelection
+    }
+    private func freezeCandidatePreviewSelection(): Unit {
+        this.candidateSourceSelection = None
+        if (let Some(source) <- this.candidateSourceCompletion) {
+            if (source.targetNodeKind != CJGUI_COMPOSABLE_UI_TEXT ||
+                (source.targetNodeId != 9 && source.targetNodeId != 11)) { return }
+        } else if (this.installedPreviewNode < 0) { return }
+        let bound = match (this.session) { case Some(value) => value; case None => return }
+        let selected = this.store.sourceSelectionSnapshot()
+        for (nodeId in [9, 11]) {
+            let preview = match (if (nodeId == 9) { this.candidatePreview } else { this.candidateSecondPreview }) {
+                case Some(value) => value; case None => continue
+            }
+            if (preview.ownerVersion != selected.version || selected.focusByte < preview.sourceStart ||
+                selected.focusByte > preview.sourceEnd()) { continue }
+            let local = rangeTextPaneSelection(preview, selected.anchorByte, selected.focusByte)
+            let a = if (selected.anchorByte <= selected.focusByte) { local[0] } else { local[1] }
+            let f = selected.focusByte - preview.sourceStart
+            let a16 = match (cjguiUtf8OffsetToUtf16(preview.text, a)) { case Some(value) => value; case None => return }
+            let f16 = match (cjguiUtf8OffsetToUtf16(preview.text, f)) { case Some(value) => value; case None => return }
+            this.candidateSourceSelection = Some(CjguiComposableUiCandidateSelectionProjection(
+                this.candidateSourceCompletion, selected, bound.freezeSelectionTicket(),
+                "${preview.contextEpoch}:${preview.ownerVersion}:${preview.sourceStart}:${preview.sourceEnd()}:${nodeId}",
+                nodeId, if (nodeId == 11) { 103 } else { 102 }, CJGUI_COMPOSABLE_UI_TEXT, preview.text,
+                a16, f16, f))
+            return
+        }
+    }
+    private func shiftPreviewSource(preview: RangeTextPreviewBinding): RangeTextPreviewBinding {
+        if (!this.previewSourceShifted) { return preview }
+        var firstBytes: Int64 = 0
+        for (rune in preview.text.runes()) { firstBytes = Int64(rune.toString().size); break }
+        let bytes = preview.text.toArray()
+        return RangeTextPreviewBinding(preview.contextEpoch, preview.ownerVersion, preview.sourceStart + firstBytes,
+            String.fromUtf8(bytes.slice(firstBytes, Int64(bytes.size) - firstBytes)))
     }
     public func prepareSceneRefresh(): Bool {
         return true
@@ -1242,6 +1330,10 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             commands.add(CjguiComposableUiCommand("range-text-undo", 14, CjguiComposableUiShortcut("z")))
             commands.add(CjguiComposableUiCommand("range-text-redo", 15,
                 CjguiComposableUiShortcut("z", usesShift: true)))
+            commands.add(CjguiComposableUiCommand("range-text-swap-panes", 16,
+                CjguiComposableUiShortcut("m", usesShift: true)))
+            commands.add(CjguiComposableUiCommand("range-text-shift-source", 17,
+                CjguiComposableUiShortcut("n", usesShift: true)))
         }
         return commands
     }
@@ -1249,7 +1341,11 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         var same = false
         if (let Some(candidate) <- this.candidatePreview) {
             if (let Some(accepted) <- this.acceptedPreview) {
-                same = accepted.sameSource(candidate)
+                // A mapping move preserves the source anchor; owner/context
+                // replacement retires it. Native certifies the actual handoff.
+                same = if ((this as CjguiComposableUiCandidateSelectionProvider).isSome()) {
+                    accepted.contextEpoch == candidate.contextEpoch && accepted.ownerVersion == candidate.ownerVersion
+                } else { accepted.sameSource(candidate) }
             }
         }
         if (!same) {
@@ -1260,9 +1356,74 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         this.acceptedSecondPreview = this.candidateSecondPreview
         this.candidatePreview = None
         this.candidateSecondPreview = None
+        if (this.previewDragActive) {
+            if (let Some(bound) <- this.session) {
+                this.previewDragRevision = this.previewCaptureRevision.observe(this.acceptedPreview,
+                    bound.contextEpochValue(), this.store.rangeTextVersion(), bound.mirrorSnapshot().startByte)
+            }
+        }
+        // Owner edits still use their original restore path. Same-choice
+        // mapping migration was already installed by the common candidate.
+        if ((this as CjguiComposableUiCandidateSelectionProvider).isNone() || this.candidateSourceCompletion.isNone()) {
+            this.restoreAcceptedPreviewChoice()
+        }
+        this.candidateSourceSelection = None
+    }
+
+    public func selectionInstallationCompleted(completion: CjguiInstalledSelectionCompletion): Unit {
+        let selected = this.store.sourceSelectionSnapshot()
+        if (completion.sourceSelection.version != selected.version ||
+            completion.sourceSelection.revision != selected.revision) { return }
+        this.installedPreviewNode = if (completion.targetNodeKind == CJGUI_COMPOSABLE_UI_TEXT &&
+            (completion.targetNodeId == 9 || completion.targetNodeId == 11)) {
+            completion.targetNodeId
+        } else { -1 }
+        if (this.twoPaneFixture) {
+            getStdOut().writeln("RANGE_TEXT_PREVIEW_COMPLETED transfer=${completion.transferId} " +
+                "node=${completion.targetNodeId} resource=${completion.targetResourceId} scene=${completion.targetSceneVersion} " +
+                "owner_version=${selected.version} owner_revision=${selected.revision} " +
+                "source_anchor=${selected.anchorByte} source_focus=${selected.focusByte} " +
+                "proxy_generation=${completion.targetProxyGeneration} proxy_start16=${completion.targetSelectionStart16} " +
+                "proxy_end16=${completion.targetSelectionEnd16}")
+            getStdOut().flush()
+        }
+    }
+
+    // This consumer owns its two plain byte-span maps. After native accepts
+    // their new owner version, map the existing choice into that exact pane
+    // and submit through the common immutable installation/receipt lifecycle.
+    private func restoreAcceptedPreviewChoice(): Unit {
+        if (this.installedPreviewNode < 0) { return }
+        let bound = match (this.session) { case Some(value) => value; case None => return }
+        let window = match (this.hostWindow) { case Some(value) => value; case None => return }
+        if (!window.isOpen() || !bound.needsNativeSelectionRestore()) { return }
+        let selected = this.store.sourceSelectionSnapshot()
+        for (nodeId in [this.installedPreviewNode, if (this.installedPreviewNode == 9) { 11 } else { 9 }]) {
+            let preview = match (this.previewForNode(nodeId)) { case Some(value) => value; case None => continue }
+            if (preview.ownerVersion != selected.version || selected.focusByte < preview.sourceStart ||
+                selected.focusByte > preview.sourceStart + Int64(preview.text.size)) { continue }
+            var acceptedMatches = false
+            for (node in window.acceptedSceneNodes()) {
+                if (node.nodeId == nodeId && node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT &&
+                    node.resourceId == (if (nodeId == 11) { 103 } else { 102 }) &&
+                    node.value == preview.text) { acceptedMatches = true }
+            }
+            if (!acceptedMatches) { continue }
+            let ticket = match (window.freezeAcceptedSelection(nodeId)) { case Some(value) => value; case None => continue }
+            let local = rangeTextPaneSelection(preview, selected.anchorByte, selected.focusByte)
+            let start = match (cjguiUtf8OffsetToUtf16(preview.text, local[0])) { case Some(value) => value; case None => return }
+            let end = match (cjguiUtf8OffsetToUtf16(preview.text, local[1])) { case Some(value) => value; case None => return }
+            let id = window.requestAcceptedSelectionRestore(ticket, selected.anchorByte, selected.focusByte,
+                start, end, { => }, sourceCoordinatesAreBytes: true)
+            getStdOut().writeln("RANGE_TEXT_PREVIEW_OWNER_RESTORE id=${id} owner_version=${selected.version} node=${nodeId}")
+            getStdOut().flush()
+            return
+        }
+        let _ = window.requestOwnedSelectionRestore()
     }
     public func rollbackSceneRefresh(): Unit {
-        this.candidatePreview = None
+        this.candidatePreview = None; this.candidateSecondPreview = None
+        this.candidateSourceSelection = None; this.candidateSourceCompletion = None
     }
 
     public func pointerCaptureVersion(node: CjguiComposableUiLayoutNode): Int64 {
@@ -1580,12 +1741,13 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
                 if (this.twoPaneFixture) {
                     if (let Some(panes) <- rangeTextTwoPaneBindings(mirror.contextEpoch, mirror.contentVersion,
                         mirror.startByte, mirror.text)) {
-                        this.candidatePreview = Some(panes[0])
-                        this.candidateSecondPreview = Some(panes[1])
+                        this.candidatePreview = Some(this.shiftPreviewSource(if (this.previewPaneOrderReversed) { panes[1] } else { panes[0] }))
+                        this.candidateSecondPreview = Some(this.shiftPreviewSource(if (this.previewPaneOrderReversed) { panes[0] } else { panes[1] }))
                     }
                 }
             }
         }
+        this.freezeCandidatePreviewSelection()
         var displayedAnchor: Int64 = 0
         var displayedFocus: Int64 = 0
         let sourceChoice = this.store.sourceSelectionSnapshot()
@@ -1624,6 +1786,10 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             controls.add(
                 cjguiComposableButton(15, "range-text-redo", "重做", "RANGE_TEXT_REDO", 0,
                     CjguiComposableUiStyle(fixedWidth: 70, fixedHeight: 30, background: buttonBackground, textColor: ink)))
+            controls.add(cjguiComposableButton(16, "range-text-swap-panes", "交换片段 ⇧⌘M", "RANGE_TEXT_SWAP_PANES", 0,
+                CjguiComposableUiStyle(fixedWidth: 135, fixedHeight: 30, background: buttonBackground, textColor: ink)))
+            controls.add(cjguiComposableButton(17, "range-text-shift-source", "移动源范围 ⇧⌘N", "RANGE_TEXT_SHIFT_SOURCE", 0,
+                CjguiComposableUiStyle(fixedWidth: 145, fixedHeight: 30, background: buttonBackground, textColor: ink)))
             root.add(controls)
         } else {
             let local = if (let Some(binding) <- this.candidatePreview) {
@@ -1749,6 +1915,13 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_CANCEL)) {
             return CjguiComposableUiDispatchResult(this.applyPreviewPointer(event))
         }
+        if (event.eventKind == 27 && this.twoPaneFixture &&
+            (event.node.actionName == "RANGE_TEXT_SWAP_PANES" || event.node.actionName == "RANGE_TEXT_SHIFT_SOURCE")) {
+            if (event.node.actionName == "RANGE_TEXT_SWAP_PANES") { this.previewPaneOrderReversed = !this.previewPaneOrderReversed }
+            else { this.previewSourceShifted = !this.previewSourceShifted }
+            this.previewDecorationRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.eventKind == 27 && (event.node.actionName == "RANGE_TEXT_UNDO" || event.node.actionName ==
             "RANGE_TEXT_REDO")) {
             let bound = match (this.session) {
@@ -1759,11 +1932,21 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
                 case Some(value) => value;
                 case None => return CjguiComposableUiDispatchResult(false)
             }
-            let changed = if (event.node.actionName == "RANGE_TEXT_UNDO") {
-                this.store.undoOwnerEdit()
-            } else {
-                this.store.redoOwnerEdit()
+            let change = { =>
+                let before = this.store.rangeTextVersion()
+                let applied = if (event.node.actionName == "RANGE_TEXT_UNDO") {
+                    this.store.undoOwnerEdit()
+                } else {
+                    this.store.redoOwnerEdit()
+                }
+                (applied, before, this.store.rangeTextVersion())
             }
+            // Declaration/owner consumers may use this controller before its
+            // native window is started. Live windows use the common handoff;
+            // an unstarted declaration has no installed input to transfer.
+            let changed = if (window.isOpen()) {
+                rangeTextOwnerSelectionTransaction(window, change)
+            } else { change()[0] }
             if (changed) {
                 let source = this.store.sourceSelectionSnapshot()
                 // Undo has already committed to the owner. Refresh its body
@@ -1772,10 +1955,21 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
                 let _ = bound.refreshMirror()
                 let _ = bound.revealByte(source.anchorByte)
                 let _ = bound.selection16()
-                let queued = window.requestOwnedSelectionRestore()
+                let queued = if (window.pendingSelectionRestoreId() >= 0) {
+                    true
+                } else if (this.installedPreviewNode < 0) {
+                    window.requestOwnedSelectionRestore()
+                } else {
+                    // The preview owns this choice. Its exact new byte-span
+                    // map is published by commitSceneRefresh before requesting
+                    // the one common restore; a source request here would be
+                    // superseded and abort the admitted history input prefix.
+                    false
+                }
                 getStdOut().writeln(
                     "RANGE_TEXT_HISTORY_RESTORE owner_version=${source.version} " +
-                        "mirror_version=${bound.mirrorSnapshot().contentVersion} queued=${queued}")
+                        "mirror_version=${bound.mirrorSnapshot().contentVersion} queued=${queued} " +
+                        "mapped_after_accept=${this.installedPreviewNode >= 0}")
                 getStdOut().flush()
                 window.requestRefresh()
             }
@@ -2033,6 +2227,40 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
     }
 }
 
+// 选择型 owner 事务的平台接缝。支持 owner handoff 的平台走共同正典；不支持的平台
+// 走正典在同样条件下本来就走的那一步（直接执行事务），不是消费者自己另造的行为。
+@When[os == "macOS"]
+func rangeTextOwnerSelectionTransaction(window: CjguiComposableUiWindow,
+    change: () -> (Bool, Int64, Int64)): Bool {
+    return window.performTextOwnerSelectionChange(change)
+}
+
+@When[os != "macOS"]
+func rangeTextOwnerSelectionTransaction(window: CjguiComposableUiWindow,
+    change: () -> (Bool, Int64, Int64)): Bool {
+    return change()[0]
+}
+
+// owner 回合预算的调度收尾计量只在实现该计量的平台上存在；其余平台不伪造空步骤，
+// 预算责任仍由既有的 begin→pumpOneTurn→end 承担。
+@When[os == "macOS"]
+func finishRangeTextOwnerScheduling(budget: CjguiOwnerTurnBudget): Unit {
+    let _ = budget.finishScheduling()
+}
+
+@When[os != "macOS"]
+func finishRangeTextOwnerScheduling(budget: CjguiOwnerTurnBudget): Unit {
+    return
+}
+
+// 可选的选择写作接缝只在声明该接口的框架版本上 conform；实现本身始终在类体内，
+// 因此选择能力不因平台而丢失。
+@When[os == "macOS"]
+extend PlainRangeTextStore <: CjguiRangeTextSelectionEditSink {}
+
+@When[os == "macOS"]
+extend RangeTextWindowController <: CjguiComposableUiCandidateSelectionProvider {}
+
 private func defaultDocumentText(): String {
     return "# Pharos Mark range text consumer\n" +
         "这个窗口只用导出的 CJGUI 公共包：自己的 source/sink 覆盖一个普通字节数组。\n" +
@@ -2045,6 +2273,23 @@ private func defaultTwoPaneFixtureText(): String {
 
 main(args: Array<String>): Int64 {
     return cjguiRunMacosApplication({=> runRangeTextApplication(args)})
+}
+
+/// 平台应用宿主工厂。普通消费者只依赖框架的最小公共面（CjguiApplicationHost）：
+/// 启动、跑一轮、是否还开着、关闭与取窗口都是同一行代码，消费者不复制平台主流程，
+/// 也不自带平台分支的启动/关闭逻辑。
+@When[os == "macOS"]
+private func rangeTextCreateHost(controller: CjguiComposableUiController, title: String): CjguiApplicationHost {
+    return CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration(title, 900u32, 620u32,
+            rangeTextEditDeltaDelivery: true))
+}
+
+@When[os == "Windows"]
+private func rangeTextCreateHost(controller: CjguiComposableUiController, title: String): CjguiApplicationHost {
+    return CjguiWindowsApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration(title, 900u32, 620u32,
+            rangeTextEditDeltaDelivery: true))
 }
 
 private func runRangeTextApplication(args: Array<String>): Int64 {
@@ -2101,11 +2346,7 @@ private func runRangeTextApplication(args: Array<String>): Int64 {
         case Some(title) => title
         case None => "CJGUI Range Text Consumer"
     }
-    let host = CjguiMacosApplicationHost(
-        controller,
-        configuration: CjguiMacosApplicationWindowConfiguration(windowTitle, 900u32, 620u32,
-            rangeTextEditDeltaDelivery: true)
-    )
+    let host: CjguiApplicationHost = rangeTextCreateHost(controller, windowTitle)
     // 窗口拥有会话:必须在 start 之前绑定,首次投影发布的正文才是镜像。
     let session = controller.attach(host.window())
     let window = host.window()
@@ -2121,7 +2362,7 @@ private func runRangeTextApplication(args: Array<String>): Int64 {
         getStdOut().flush()
         host.close()
         controller.close()
-        CjguiMacosApplicationHost.stopApplicationLoop()
+        cjguiStopApplicationLoop()
         return 1
     }
     // 同一运行内的正文 raster/upload 计数（成本核对）：启用窗口的负载诊断并在
@@ -2146,9 +2387,9 @@ private func runRangeTextApplication(args: Array<String>): Int64 {
     // （raster/upload 计数/字节）——写入类别与纯选区/导航（edits 不变）可区分。
     var lastSnapshotEdits: Int64 = controller.ownerAppliedEditCount()
     while (host.isOpen()) {
-        let traceTurn = turn + 1
-        let traceSpan = window.beginOwnerTraceTurn(traceTurn)
         let _ = ownerTurnBudget.begin()
+        let traceTurn = ownerTurnBudget.turnIdentity()
+        let traceSpan = window.beginOwnerTraceTurn(traceTurn)
         try {
             let _ = host.pumpOneTurn()
             turn += 1
@@ -2174,6 +2415,7 @@ private func runRangeTextApplication(args: Array<String>): Int64 {
                 lastSnapshotEdits = appliedNow
             }
         } finally {
+            finishRangeTextOwnerScheduling(ownerTurnBudget)
             window.recordOwnerTraceBoundary(traceTurn, 143u32)
             window.endOwnerTraceTurn(traceTurn, traceSpan)
             ownerTurnBudget.end()

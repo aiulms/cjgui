@@ -52,7 +52,7 @@ cp "$SNAPSHOT/cjgui_internal_renderer.h" "$MODULE/src/main/cpp/cjgui_internal_re
 cat > "$MODULE/cjgui/cjpm.toml" <<'TOML'
 [package]
   cjc-version = "1.1.3"
-  compile-option = "--dy-std"
+  compile-option = "--dy-std -O2"
   description = "CJGUI core (ohos snapshot)"
   name = "cjgui"
   output-type = "static"

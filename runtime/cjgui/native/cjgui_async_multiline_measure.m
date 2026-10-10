@@ -6,6 +6,16 @@
 #include <stdio.h>
 #include <time.h>
 
+// Private wake hint into the renderer's owner wait condition. The worker only
+// signals completion; it never publishes or consumes an owner ticket.
+#ifndef CJGUI_OWNER_NOTIFY_WORK_IMPLEMENTED
+__attribute__((weak)) void cjgui_internal_renderer_owner_notify_work(void) {}
+#endif
+
+static void CjguiAsyncMeasureNotifyOwnerWorkIfAvailable(void) {
+    cjgui_internal_renderer_owner_notify_work();
+}
+
 enum {
     kCjguiAsyncMeasureSlotCount = 4,
     kCjguiAsyncMeasureMaxJobBytes = 128 * 1024,
@@ -370,6 +380,7 @@ static void CjguiAsyncMeasureRunJob(CjguiAsyncMultilineMeasureJob *job,
         job.workerLive = NO;
         CjguiAsyncMeasureRetireIfUnownedLocked(slotIndex, job);
         pthread_mutex_unlock(&gCjguiAsyncMeasureLock);
+        CjguiAsyncMeasureNotifyOwnerWorkIfAvailable();
         uint64_t completedNs = CjguiAsyncMeasureNow();
         if (wasStarted) job.activeWallNs = completedNs - callbackEntryNs;
         CjguiAsyncMeasureTraceCompletion(job, completedNs,
@@ -424,6 +435,7 @@ static void CjguiAsyncMeasureRunJob(CjguiAsyncMultilineMeasureJob *job,
     }
     CjguiAsyncMeasureRetireIfUnownedLocked(slotIndex, job);
     pthread_mutex_unlock(&gCjguiAsyncMeasureLock);
+    CjguiAsyncMeasureNotifyOwnerWorkIfAvailable();
     uint64_t completedNs = CjguiAsyncMeasureNow();
     job.activeWallNs = completedNs - callbackEntryNs;
     CjguiAsyncMeasureTraceCompletion(job, completedNs, failure);

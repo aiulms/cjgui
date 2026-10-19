@@ -2,13 +2,13 @@
 
 **业务定义一次，手写界面、生成界面与 Agent 工具一起使用。**
 
-CJGUI 用仓颉实现组件、布局、状态和交互，通过原生后端运行在 **macOS、Windows 与鸿蒙**。它把应用的数据、当前上下文和业务动作开放为可发现、可校验的接口，让人能在窗口里操作，让 Agent 能直接读取和修改同一份内容，也能在运行中组合新的界面。
+CJGUI 用仓颉实现组件、布局、状态和交互，通过原生后端运行在 **macOS、Windows 与鸿蒙**。Linux 的 X11 + Vulkan 后端已进入第一阶段。它把应用的数据、当前上下文和业务动作开放为可发现、可校验的接口，让人能在窗口里操作，让 Agent 能直接读取和修改同一份内容，也能在运行中组合新的界面。
 
 适合编辑器、配置工具、数据工作台，以及需要让人和 AI 接续处理任务的应用。你决定业务、交互方式与模型，CJGUI 负责把界面、输入和公开操作接起来。
 
-[运行示例](#运行一个窗口) · [看实际演示](#人开始工具接续人继续) · [三平台进展](#三个原生后端共享仓颉核心) · [开发文档](runtime/cjgui/README.md)
+[运行示例](#运行一个窗口) · [看实际演示](#人开始工具接续人继续) · [平台进展](#平台后端共享仓颉核心) · [开发文档](runtime/cjgui/README.md)
 
-<sub>开发预览 · macOS / Apple Silicon 优先 · Windows 与鸿蒙已有正常应用验证 · Apache 2.0</sub>
+<sub>开发预览 · macOS / Apple Silicon 优先 · Windows 与鸿蒙已有正常应用验证 · Linux 第一阶段 · Apache 2.0</sub>
 
 | CJGUI 的重点 | 带给应用开发者什么 |
 | --- | --- |
@@ -62,35 +62,41 @@ CJGUI 用仓颉实现组件、布局、状态和交互，通过原生后端运�
 
 [组件、布局与渲染 API](runtime/cjgui/README.md) · [虚拟树与多选](runtime/cjgui/README.md#树形数据与多选experimental) · [文字资源复用](docs/plans/2026-09-23-incremental-text-style-binding-milestone.md)
 
-## 三个原生后端，共享仓颉核心
+## 平台后端，共享仓颉核心
 
 组件、业务状态和共同操作协议复用仓颉核心，平台后端处理窗口、绘制、文字与系统输入。Pharos Mark 是检验这条路线的编辑器应用；规则编辑器、温控与普通文本窗口用于验证框架能被不同应用复用。
 
-| 平台 | 系统能力 | 已有应用验证 |
+| 平台 | 系统能力 | 已验证能力 / 状态 |
 | --- | --- | --- |
 | **macOS** | AppKit · Metal · CoreText / TextKit | 多窗口、文本编辑、运行时生成界面、共同操作、虚拟列表与树、图片、主题及效果。 |
 | **Windows** | Win32 · Direct3D 11 / DXGI · DirectWrite | Pharos Mark 与独立文本窗口；有界场景准备、源码/预览往返、Undo/Redo、公开工具修改、人继续输入、保存重开。 |
 | **鸿蒙** | ArkTS 薄宿主 · XComponent · Native Drawing / Typography | Pharos Mark、设置与温控 HAP；触摸与系统输入、生成面板、共享图片、公开操作与保存重开。 |
+| **Linux** | X11 · Vulkan · XIM / CLIPBOARD | 第一阶段：文本输入、输入法候选、64KiB 剪贴板与范围读写已通；Wayland、硬件性能未验。 |
+| **Android** | 规划中 | 优先复用 Linux 线的 Vulkan 渲染路径；尚未开工。 |
 
 ### 最近推进的能力
 
-截至 **2026-10-12**，在既有组件与生成式接口之外，三平台正在把共享机制带入更完整的编辑和文件操作：
+截至 **2026-10-19**，三个已验平台继续把共享机制带入更完整的编辑和文件操作；Linux 线完成系统输入与剪贴板的第一阶段，Android 进入近期规划：
 
+- **Linux 已走通 X11 + Vulkan 的第一阶段**：XIM 输入法预编辑、候选与提交，异步 CLIPBOARD（64KiB），外部写入后继续输入与版本推进；普通文本窗口短回归通过。Wayland 与硬件性能未验。
 - **Windows 已走通 252KB、1MiB、8MiB 三档写作链**：选择、源码/预览切换、替换、撤销重做、公开工具修改与人续写、保存、正常关闭、新进程重开及全文核验。第二个普通文本应用也已使用共同框架机制。
 - **macOS 已有 1GiB 文档的实际操作与文件验证**：人输入、公开 Agent 协议修改、人继续输入，以及保存、正常关闭、新进程重开和固定版本全文比对。
 - **鸿蒙模拟器已完成 64MiB 与 1GiB 文档的部分正常操作链**：包含输入、保存、新进程重开与全文核验；温控应用同步验证共同输入、滚动及字段隔离。
+- **Android 进入近期规划**：计划复用 Linux 线正在验证的 Vulkan 渲染路径，尚未开工。
 
 这些结果证明了具体路径的可用范围。**GiB 文件验证通过，不代表 GiB 连续编辑已经流畅。** 长距离拖选、跨窗口输入衔接、预览选择反馈和内存成本仍在优化，下面列出各平台边界。
 
-[macOS 应用与打包](runtime/cjgui/MACOS_APPLICATION_HOST.md) · [Windows 阶段与构建说明](docs/plans/2026-10-09-windows-bounded-preparation.md) · [鸿蒙构建与部署](runtime/cjgui/platforms/ohos/README.md) · [最新开发状态](runtime/cjgui/ACTIVE_DIRECTION.md)
+[macOS 应用与打包](runtime/cjgui/MACOS_APPLICATION_HOST.md) · [Windows 阶段与构建说明](docs/plans/2026-10-09-windows-bounded-preparation.md) · [鸿蒙构建与部署](runtime/cjgui/platforms/ohos/README.md) · [Linux 状态](runtime/cjgui/platforms/linux/STATUS.md) · [最新开发状态](runtime/cjgui/ACTIVE_DIRECTION.md)
 
 <details>
 <summary>开发预览：平台条件与仍在完善的部分</summary>
 
-- 公共 API 仍为 experimental，三平台的覆盖范围不完全相同。Linux、Android 后端尚未交付。
+- 公共 API 仍为 experimental，各平台覆盖范围不完全相同。Linux 处于第一阶段，Android 尚未开工；二者均未交付。
 - **macOS** 以 Apple Silicon 为主要验证环境。大文件长拖选、输入交接、交互时延与滚动图形资源成本仍在优化；完整 VoiceOver 与物理跨屏表现未完成验证。Metal 主绘制路径仍提交完整帧。
 - **Windows** 的上述结果来自 Windows 11 ARM64 虚拟机中的 x64 应用。当前应用容量为 16MiB，已验写作链最大为原始 8MiB；预览拖选反馈延迟仍有用户复现。构建目前使用 Windows 捕获 → Mac LLVM 编译 → Windows 链接，普通仓颉构建崩溃问题仍保留。物理显卡、跨屏与完整 UI Automation 尚未验证。
 - **鸿蒙** 的上述结果限于当前 SDK 与模拟器。大文档跨窗替换、拒绝后的输入恢复、100ms 反馈与资源预算尚未全部通过；真机性能、输入法完整边界和发布审核另行验证。
+- **Linux** 当前只覆盖 X11 + XIM 文本输入与 CLIPBOARD，剪贴板上限 64KiB；Wayland、emoji、硬件性能与整包发布未验证。
+- **Android** 只有规划，没有可运行后端或应用验证。
 - 公开脚本客户端验证的是应用接口；真实模型的任务规划、工具选择和完成效果需单独评测。当前不承诺普遍 16ms 帧预算或各平台性能相当。
 
 </details>
